@@ -17,11 +17,10 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // WatchCmdbResourceChangeEventTaskParams 监听cmdb资源变更任务参数
@@ -118,6 +117,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	// 推送自定义上报数据
 	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		// 启动指标上报
 		reporter, err := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
 		if err != nil {

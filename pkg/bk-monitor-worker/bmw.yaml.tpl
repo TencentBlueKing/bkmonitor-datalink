@@ -218,7 +218,11 @@ taskConfig:
           layers: 10
           divisor: 2
     metrics:
-      semaphoreReportInterval: 5s
+      report:
+        semaphoreReportInterval: 5s
+        prometheus:
+          url: ""
+          headers: {}
       profile:
         enabled: false
         host: http://127.0.0.1:14040

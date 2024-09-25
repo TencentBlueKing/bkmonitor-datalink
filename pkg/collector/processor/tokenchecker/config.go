@@ -24,6 +24,7 @@ type Config struct {
 	DecodedIv  string `config:"decoded_iv" mapstructure:"decoded_iv"`
 
 	// type: fixed
+	MustEmptyToken bool   `config:"must_empty_token" mapstructure:"must_empty_token"`
 	FixedToken     string `config:"fixed_token" mapstructure:"fixed_token"`
 	TracesDataId   int32  `config:"traces_dataid" mapstructure:"traces_dataid"`
 	MetricsDataId  int32  `config:"metrics_dataid" mapstructure:"metrics_dataid"`

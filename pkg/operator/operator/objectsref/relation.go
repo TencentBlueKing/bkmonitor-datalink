@@ -26,13 +26,11 @@ const (
 	relationPodStatefulset       = "pod_with_statefulset_relation"
 	relationDaemonsetPod         = "daemonset_with_pod_relation"
 	relationDeploymentReplicaset = "deployment_with_replicaset_relation"
-
-	relationContainerPod = "container_with_pod_relation"
-
-	relationPodService        = "pod_with_service_relation"
-	relationK8sAddressService = "k8s_address_with_service_relation"
-	relationDomainService     = "domain_with_service_relation"
-	relationIngressService    = "ingress_with_service_relation"
+	relationContainerPod         = "container_with_pod_relation"
+	relationPodService           = "pod_with_service_relation"
+	relationK8sAddressService    = "k8s_address_with_service_relation"
+	relationDomainService        = "domain_with_service_relation"
+	relationIngressService       = "ingress_with_service_relation"
 )
 
 type relationMetric struct {

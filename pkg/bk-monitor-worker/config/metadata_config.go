@@ -123,6 +123,11 @@ var (
 	SkipInfluxdbTableIds []string
 	// 是否可以删除 consul 路径
 	CanDeleteConsulPath bool
+
+	// SloPushGatewayToken slo数据上报Token
+	SloPushGatewayToken string
+	// SloPushGatewayEndpoint slo数据上报端点
+	SloPushGatewayEndpoint string
 )
 
 func initMetadataVariables() {
@@ -181,4 +186,7 @@ func initMetadataVariables() {
 	BkdataIsAllowAllCmdbLevel = GetValue("taskConfig.metadata.bkdata.isAllowAllCmdbLevel", false)
 	SkipInfluxdbTableIds = GetValue("taskConfig.metadata.global.skipInfluxdbTableIds", []string{})
 	CanDeleteConsulPath = GetValue("taskConfig.metadata.global.CanDeleteConsulPath", false)
+
+	SloPushGatewayToken = GetValue("taskConfig.metadata.slo.sloPushGatewayToken", "")
+	SloPushGatewayEndpoint = GetValue("taskConfig.metadata.slo.sloPushGatewayEndpoint", "")
 }

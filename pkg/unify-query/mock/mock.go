@@ -29,11 +29,15 @@ import (
 
 var (
 	once sync.Once
+	Path string
 )
 
 func Init() {
 	once.Do(func() {
-		config.CustomConfigFilePath = `../../dist/local/unify-query.yaml`
+		if Path == "" {
+			Path = `../../dist/local/unify-query.yaml`
+		}
+		config.CustomConfigFilePath = Path
 		config.InitConfig()
 		log.InitTestLogger()
 
@@ -45,11 +49,9 @@ func SetOfflineDataArchiveMetadata(m offlineDataArchiveMetadata.Metadata) {
 	offlineDataArchive.MockMetaData(m)
 }
 
-func SetSpaceTsDbMockData(
-	ctx context.Context, path string, bucketName string, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo,
-	fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
+func SetSpaceTsDbMockData(ctx context.Context, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo, fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
 	Init()
-	sr, err := influxdb.SetSpaceTsDbRouter(ctx, path, bucketName, "", 100)
+	sr, err := influxdb.SetSpaceTsDbRouter(ctx, "mock", "mock", "", 100)
 	if err != nil {
 		panic(err)
 	}
@@ -79,7 +81,7 @@ func SetSpaceTsDbMockData(
 	}
 }
 
-func SetRedisClient(ctx context.Context, serverName string) {
+func SetRedisClient(ctx context.Context) {
 	Init()
 	host := viper.GetString("redis.host")
 	port := viper.GetInt("redis.port")
@@ -89,5 +91,5 @@ func SetRedisClient(ctx context.Context, serverName string) {
 		Addrs:    []string{fmt.Sprintf("%s:%d", host, port)},
 		Password: pwd,
 	}
-	redis.SetInstance(ctx, serverName, options)
+	redis.SetInstance(ctx, "mock", options)
 }

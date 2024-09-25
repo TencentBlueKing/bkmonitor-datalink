@@ -61,7 +61,10 @@ func (s BkDataStorageSvc) CreateDatabusClean(rt *resulttable.ResultTable) error 
 	if err != nil {
 		return err
 	}
-	consulConfig := NewClusterInfoSvc(storageCluster).ConsulConfig()
+	consulConfig, err := NewClusterInfoSvc(storageCluster).ConsulConfig()
+	if err != nil {
+		return err
+	}
 	domain := consulConfig.ClusterConfig.DomainName
 	port := consulConfig.ClusterConfig.Port
 	// kafka broker_url 以实际配置为准，如果没有配置，再使用默认的 broker url

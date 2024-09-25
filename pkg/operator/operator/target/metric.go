@@ -26,7 +26,8 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 )
 
 const (
@@ -37,7 +38,7 @@ const (
 )
 
 func IsBuiltinLabels(k string) bool {
-	for _, label := range ConfBuiltinLabels {
+	for _, label := range configs.G().BuiltinLabels {
 		if k == label {
 			return true
 		}
@@ -110,10 +111,10 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 	}
 
 	var path string
-	host := fmt.Sprintf("http://%s:%d", ConfServiceName, ConfServicePort)
+	host := fmt.Sprintf("http://%s:%d", configs.G().ServiceName, configs.G().HTTP.Port)
 	params := map[string]string{}
 
-	rules := utils.SplitTrim(t.RelabelRule, ",")
+	rules := stringx.SplitTrim(t.RelabelRule, ",")
 	for _, rule := range rules {
 		switch rule {
 		case relabelV1RuleWorkload:
@@ -212,8 +213,8 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 	cfg = append(cfg, yaml.MapItem{Key: "name", Value: t.Address + t.Path})
 	cfg = append(cfg, yaml.MapItem{Key: "version", Value: "1"})
 	cfg = append(cfg, yaml.MapItem{Key: "dataid", Value: t.DataID})
-	cfg = append(cfg, yaml.MapItem{Key: "max_timeout", Value: ConfMaxTimeout})
-	cfg = append(cfg, yaml.MapItem{Key: "min_period", Value: ConfMinPeriod})
+	cfg = append(cfg, yaml.MapItem{Key: "max_timeout", Value: "100s"})
+	cfg = append(cfg, yaml.MapItem{Key: "min_period", Value: "3s"})
 
 	task := make(yaml.MapSlice, 0)
 	task = append(task, yaml.MapItem{Key: "task_id", Value: t.generateTaskID()})

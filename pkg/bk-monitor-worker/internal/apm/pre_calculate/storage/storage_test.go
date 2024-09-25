@@ -33,7 +33,6 @@ func TestProxyInstance_WriteBatch(t *testing.T) {
 		SaveHoldMaxCount(1),
 		SaveHoldDuration(time.Second),
 		PrometheusWriterConfig(
-			remote.PrometheusWriterEnabled(true),
 			remote.PrometheusWriterUrl(config.PromRemoteWriteUrl),
 			remote.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
 		),
@@ -49,8 +48,8 @@ func TestProxyInstance_WriteBatch(t *testing.T) {
 	go func() {
 		dataChan <- SaveRequest{
 			Target: Prometheus,
-			Data: remote.PrometheusStorageData{
-				Value: []prompb.TimeSeries{
+			Data: PrometheusStorageData{
+				Value: prompb.WriteRequest{Timeseries: []prompb.TimeSeries{
 					{
 						Labels: []prompb.Label{
 							{
@@ -95,7 +94,7 @@ func TestProxyInstance_WriteBatch(t *testing.T) {
 							},
 						},
 					},
-				},
+				}},
 			},
 		}
 	}()

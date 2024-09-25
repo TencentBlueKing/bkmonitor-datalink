@@ -36,9 +36,11 @@ type MetricBeatConfig struct {
 
 	Module *common.Config `config:"module"`
 	// 是否使用自定义指标格式上报
-	CustomReport  bool `config:"custom_report"`
-	Workers       int
-	EnableAlignTs bool
+	CustomReport bool `config:"custom_report"`
+
+	Workers        int
+	SpreadWorkload bool
+	EnableAlignTs  bool
 }
 
 // InitIdent 覆盖BaseTaskParam的同名方法，因为metricbeat直接调用原方法会panic

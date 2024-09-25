@@ -56,13 +56,13 @@ func GetMetricValue(metricType io_prometheus_client.MetricType, metric *io_prome
 
 // CollectAndReportMetrics 采集&上报ES集群指标
 func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
-	logger.Infof("start to collect es cluster metrics, es cluster name [%s].", c.ClusterName)
+	logger.Infof("CollectAndReportMetrics:start to collect es cluster metrics, es cluster name [%s].", c.ClusterName)
 	// 从custom option中获取集群业务id
 	var bkBizID float64
 	var customOption map[string]interface{}
 	err := jsonx.Unmarshal([]byte(c.CustomOption), &customOption)
 	if err != nil {
-		return errors.WithMessage(err, "failed to unmarshal custom option")
+		return errors.WithMessage(err, "CollectAndReportMetrics:failed to unmarshal custom option")
 	}
 	if bkBizIDVal, ok := customOption["bk_biz_id"].(float64); ok {
 		bkBizID = bkBizIDVal
@@ -77,17 +77,20 @@ func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	}
 	var esURLs = elasticsearch.ComposeESHosts(schema, c.DomainName, c.Port)
 	var esUsername = c.Username
-	var esPassword = cipher.GetDBAESCipher().AESDecrypt(c.Password)
+	esPassword, err := cipher.GetDBAESCipher().AESDecrypt(c.Password)
+	if err != nil {
+		return errors.WithMessage(err, "CollectAndReportMetrics:failed to decrypt es cluster password")
+	}
 	esURL, err := url.Parse(esURLs[0])
 	if err != nil {
-		return errors.WithMessage(err, "failed to parse es cluster url")
+		return errors.WithMessage(err, "CollectAndReportMetrics:failed to parse es cluster url")
 	}
 	esURL.User = url.UserPassword(esUsername, esPassword)
 	var esURI = fmt.Sprintf("%s:%v", c.DomainName, c.Port)
 
 	_, err = net.DialTimeout("tcp", esURI, 5*time.Second)
 	if err != nil {
-		return errors.WithMessage(err, "esURL unreachable")
+		return errors.WithMessage(err, "CollectAndReportMetrics:esURL unreachable")
 	}
 
 	// 注册es指标收集器
@@ -99,7 +102,7 @@ func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 		collector.WithHTTPClient(httpClient),
 	)
 	if err != nil {
-		return errors.WithMessage(err, "failed to create elasticsearch collector")
+		return errors.WithMessage(err, "CollectAndReportMetrics:failed to create elasticsearch collector")
 	}
 	indicesCollector := collector.NewIndices(collectorLogger, httpClient, esURL, true, true)
 	shardsCollector := collector.NewShards(collectorLogger, httpClient, esURL)
@@ -126,7 +129,7 @@ func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 		registry.Unregister(esCollector)
 
 		if err != nil {
-			return errors.WithMessagef(err, "collect es %s metrics failed", metricType)
+			return errors.WithMessagef(err, "CollectAndReportMetrics:collect es %s metrics failed", metricType)
 		}
 
 		esMetrics := make([]*clustermetrics.EsMetric, 0)
@@ -163,7 +166,7 @@ func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 					if len(rtMatch) > 1 {
 						d["table_id"] = rtMatch[1]
 					}
-					logger.Debugf("index: %s, target_biz_id: %s, table_id: %s", index, d["target_biz_id"],
+					logger.Debugf("CollectAndReportMetrics:index: %s, target_biz_id: %s, table_id: %s", index, d["target_biz_id"],
 						d["table_id"])
 				}
 
@@ -178,24 +181,24 @@ func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 		}
 
 		if len(esMetrics) == 0 {
-			logger.Infof("skip to process es %s metrics [%s], all metric count: %v, current timestamp: %v ",
+			logger.Infof("CollectAndReportMetrics:skip to process es %s metrics [%s], all metric count: %v, current timestamp: %v ",
 				metricType, c.ClusterName, len(esMetrics), timestamp)
-			return nil
+			continue
 		}
 
-		logger.Infof("process es %s metrics success [%s], all metric count: %v, current timestamp: %v ",
+		logger.Infof("CollectAndReportMetrics:process es %s metrics success [%s], all metric count: %v, current timestamp: %v ",
 			metricType, c.ClusterName, len(esMetrics), timestamp)
 
 		customReportData := clustermetrics.CustomReportData{
 			DataId: cfg.ESClusterMetricReportDataId, AccessToken: cfg.ESClusterMetricReportAccessToken, Data: esMetrics}
 		jsonData, err := jsonx.Marshal(customReportData)
 		if err != nil {
-			return errors.WithMessage(err, "custom report data json marshal failed")
+			return errors.WithMessage(err, "CollectAndReportMetrics:custom report data json marshal failed")
 		}
 
 		u, err := url.Parse(cfg.ESClusterMetricReportUrl)
 		if err != nil {
-			return errors.WithMessage(err, "parse es cluster metric report url failed")
+			return errors.WithMessage(err, "CollectAndReportMetrics:parse es cluster metric report url failed")
 		}
 
 		customReportUrl := u.String()
@@ -204,7 +207,7 @@ func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := httpClient.Do(req)
 			if err != nil {
-				return errors.WithMessage(err, "report es metrics failed")
+				return errors.WithMessage(err, "CollectAndReportMetrics:report es metrics failed")
 			}
 			defer resp.Body.Close()
 
@@ -212,7 +215,7 @@ func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 		}()
 
 		elapsed := time.Since(start)
-		logger.Infof("report es %s metrics success [%s], task execution time：%s", metricType, c.ClusterName, elapsed)
+		logger.Infof("CollectAndReportMetrics:report es %s metrics success [%s], task execution time：%s", metricType, c.ClusterName, elapsed)
 	}
 
 	return nil

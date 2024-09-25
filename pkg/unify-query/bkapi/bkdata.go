@@ -10,8 +10,9 @@
 package bkapi
 
 import (
+	"encoding/json"
 	"fmt"
-	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/spf13/viper"
@@ -22,69 +23,91 @@ const (
 
 	QuerySync  = "query_sync"
 	QueryAsync = "query_async"
+
+	BkDataAuthenticationMethodKey = "bkdata_authentication_method"
+	BkDataDataTokenKey            = "bkdata_data_token"
 )
 
 var (
-	onceBkDataApi    sync.Once
-	defaultBkDataApi *BkDataApi
+	onceBkDataAPI    sync.Once
+	defaultBkDataAPI *BkDataAPI
 )
 
-type BkDataApi struct {
-	bkApi *BkApi
+type BkDataAPI struct {
+	bkAPI *BkAPI
 
-	uriPath              string
-	token                string
-	authenticationMethod string
+	uriPath string
+
+	authConfig map[string]string
+
+	clusterMap map[string]string
 }
 
-func GetBkDataApi() *BkDataApi {
-	onceBkDataApi.Do(func() {
-		defaultBkDataApi = &BkDataApi{
-			bkApi:                GetBkApi(),
-			token:                viper.GetString(BkDataTokenConfigPath),
-			authenticationMethod: viper.GetString(BkDataAuthenticationMethodConfigPath),
-			uriPath:              viper.GetString(BkDataUriPathConfigPath),
+func GetBkDataAPI() *BkDataAPI {
+	onceBkDataAPI.Do(func() {
+		// 加载独立集群配置
+		clusterSpaceUid := viper.GetStringMapStringSlice(BkDataClusterSpaceUidConfigPath)
+		clusterMap := make(map[string]string)
+
+		for name, su := range clusterSpaceUid {
+			for _, s := range su {
+				if s != "" && name != "" {
+					clusterMap[s] = name
+				}
+			}
+		}
+
+		bkAPI := GetBkAPI()
+		defaultBkDataAPI = &BkDataAPI{
+			bkAPI:   bkAPI,
+			uriPath: viper.GetString(BkDataUriPathConfigPath),
+			authConfig: map[string]string{
+				BkDataDataTokenKey:            viper.GetString(BkDataTokenConfigPath),
+				BkDataAuthenticationMethodKey: viper.GetString(BkDataAuthenticationMethodConfigPath),
+				BkUserNameKey:                 AdminUserName,
+				BkAppCodeKey:                  bkAPI.GetCode(),
+			},
+			clusterMap: clusterMap,
 		}
 	})
-	return defaultBkDataApi
+	return defaultBkDataAPI
 }
 
-func (i *BkDataApi) HttpHeaders(headers map[string]string) http.Header {
-	headers = i.Headers(headers)
-	netHeaders := make(http.Header, len(headers))
-	for k, v := range headers {
-		netHeaders[k] = []string{v}
-	}
-	return netHeaders
+func (i *BkDataAPI) GetDataAuth() map[string]string {
+	return i.authConfig
 }
 
-func (i *BkDataApi) Headers(headers map[string]string) map[string]string {
+func (i *BkDataAPI) Headers(headers map[string]string) map[string]string {
 	if len(headers) == 0 {
 		headers = make(map[string]string)
 	}
-	headers[BkDataAuthorization] = fmt.Sprintf(
-		`{"bkdata_authentication_method": "%s", "bkdata_data_token": "%s", "bk_username": "%s"}`,
-		i.authenticationMethod, i.token, AdminUserName,
-	)
-	return i.bkApi.Headers(headers)
+
+	auth, _ := json.Marshal(i.authConfig)
+	headers[BkDataAuthorization] = string(auth)
+	return i.bkAPI.Headers(headers)
 }
 
-func (i *BkDataApi) url(path string) string {
-	url := i.bkApi.Url(i.uriPath)
+func (i *BkDataAPI) url(path string) string {
+	url := i.bkAPI.Url(i.uriPath)
 	if path != "" {
 		url = fmt.Sprintf("%s/%s", url, path)
 	}
 	return url
 }
 
-func (i *BkDataApi) QueryAsyncUrl() string {
-	return i.url(QueryAsync)
+func (i *BkDataAPI) QueryUrlForES(spaceUid string) string {
+	return fmt.Sprintf("%s/es", i.QueryUrl(spaceUid))
 }
 
-func (i *BkDataApi) QuerySyncUrl() string {
-	return i.url(QuerySync)
-}
-
-func (i *BkDataApi) QueryEsUrl() string {
-	return fmt.Sprintf("%s/es", i.QuerySyncUrl())
+func (i *BkDataAPI) QueryUrl(spaceUid string) string {
+	p := make([]string, 0)
+	if spaceUid != "" {
+		if v, ok := i.clusterMap[spaceUid]; ok {
+			if v != "" {
+				p = append(p, v)
+			}
+		}
+	}
+	p = append(p, QuerySync)
+	return i.url(strings.Join(p, "/"))
 }

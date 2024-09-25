@@ -32,11 +32,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	tsdbInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 // mockData comment lint rebel
-func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
+func mockData(ctx context.Context, path, bucket string) *curl.MockCurl {
 	featureFlag.MockFeatureFlag(ctx, `{
     	"vm-query-or": {
     		"variations": {
@@ -71,234 +72,220 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 	victoriaMetricsStorageId := int64(1)
 	influxdbStorageId := int64(2)
 
-	mock.SetRedisClient(ctx, "demo")
-	mock.SetSpaceTsDbMockData(ctx, path, bucket,
-		ir.SpaceInfo{
-			"bkcc__1068": ir.Space{
-				"table_id_1.metric": &ir.SpaceResultTable{
-					TableId: "table_id_1.metric",
-					Filters: []map[string]string{
-						{
-							"bcs_cluster_id": "BCS-K8S-40899",
-							"namespace":      "ns-1",
-						},
-						{
-							"bcs_cluster_id": "BCS-K8S-40899",
-							"namespace":      "ns-2",
-						},
-						{
-							"bcs_cluster_id": "BCS-K8S-40899",
-							"namespace":      "ns-3",
-						},
-						{
-							"bcs_cluster_id": "BCS-K8S-40899",
-							"namespace":      "ns-4",
-						},
+	mock.SetRedisClient(ctx)
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		"bkcc__1068": ir.Space{
+			"table_id_1.metric": &ir.SpaceResultTable{
+				TableId: "table_id_1.metric",
+				Filters: []map[string]string{
+					{
+						"bcs_cluster_id": "BCS-K8S-40899",
+						"namespace":      "ns-1",
 					},
-				},
-				"table_id_2.metric": &ir.SpaceResultTable{
-					TableId: "table_id_2.metric",
-					Filters: []map[string]string{
-						{
-							"bcs_cluster_id": "cls-2",
-							"namespace":      "ns-1",
-						},
+					{
+						"bcs_cluster_id": "BCS-K8S-40899",
+						"namespace":      "ns-2",
 					},
-				},
-				"table_id_3.metric": &ir.SpaceResultTable{
-					TableId: "table_id_3.metric",
-					Filters: []map[string]string{
-						{
-							"bk_biz_id":      "bk_biz_id_1",
-							"bcs_cluster_id": "cls-3",
-						},
+					{
+						"bcs_cluster_id": "BCS-K8S-40899",
+						"namespace":      "ns-3",
+					},
+					{
+						"bcs_cluster_id": "BCS-K8S-40899",
+						"namespace":      "ns-4",
 					},
 				},
 			},
-		}, ir.ResultTableDetailInfo{
-			"table_id_1.metric": &ir.ResultTableDetail{
-				Fields:          []string{"container_cpu_usage_seconds_total"},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       victoriaMetricsStorageId,
-				DB:              redis.BkSplitMeasurement,
-				VmRt:            "vm_rt_1",
-				BcsClusterID:    "BCS-K8S-40899",
+			"table_id_2.metric": &ir.SpaceResultTable{
+				TableId: "table_id_2.metric",
+				Filters: []map[string]string{
+					{
+						"bcs_cluster_id": "cls-2",
+						"namespace":      "ns-1",
+					},
+				},
 			},
-			"table_id_2.metric": &ir.ResultTableDetail{
-				Fields:          []string{"container_cpu_usage_seconds_total"},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       victoriaMetricsStorageId,
-				DB:              redis.BkSplitMeasurement,
-				VmRt:            "vm_rt_2",
-				BcsClusterID:    "cls-2",
+			"table_id_3.metric": &ir.SpaceResultTable{
+				TableId: "table_id_3.metric",
+				Filters: []map[string]string{
+					{
+						"bk_biz_id":      "bk_biz_id_1",
+						"bcs_cluster_id": "cls-3",
+					},
+				},
 			},
-			"table_id_3.metric": &ir.ResultTableDetail{
-				Fields:          []string{"container_cpu_usage_seconds_total"},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       victoriaMetricsStorageId,
-				DB:              redis.BkSplitMeasurement,
-				VmRt:            "vm_rt_3",
-				BcsClusterID:    "cls-3",
-			},
-		}, nil, nil)
+		},
+	}, ir.ResultTableDetailInfo{
+		"table_id_1.metric": &ir.ResultTableDetail{
+			Fields:          []string{"container_cpu_usage_seconds_total"},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       victoriaMetricsStorageId,
+			DB:              redis.BkSplitMeasurement,
+			VmRt:            "vm_rt_1",
+			BcsClusterID:    "BCS-K8S-40899",
+		},
+		"table_id_2.metric": &ir.ResultTableDetail{
+			Fields:          []string{"container_cpu_usage_seconds_total"},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       victoriaMetricsStorageId,
+			DB:              redis.BkSplitMeasurement,
+			VmRt:            "vm_rt_2",
+			BcsClusterID:    "cls-2",
+		},
+		"table_id_3.metric": &ir.ResultTableDetail{
+			Fields:          []string{"container_cpu_usage_seconds_total"},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       victoriaMetricsStorageId,
+			DB:              redis.BkSplitMeasurement,
+			VmRt:            "vm_rt_3",
+			BcsClusterID:    "cls-3",
+		},
+	}, nil, nil)
 
-	mock.SetSpaceTsDbMockData(ctx, path, bucket,
-		ir.SpaceInfo{
-			consul.VictoriaMetricsStorageType: ir.Space{
-				"a.b_2": &ir.SpaceResultTable{
-					TableId: "a.b_2",
-					Filters: []map[string]string{
-						{
-							"filter": redis.BkSplitMeasurement,
-						},
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		consul.VictoriaMetricsStorageType: ir.Space{
+			"a.b_2": &ir.SpaceResultTable{
+				TableId: "a.b_2",
+				Filters: []map[string]string{
+					{
+						"filter": redis.BkSplitMeasurement,
 					},
 				},
-				"a.b_1": &ir.SpaceResultTable{
-					TableId: "a.b_1",
-					Filters: []map[string]string{
-						{
-							"filter": redis.BkSplitMeasurement,
-						},
+			},
+			"a.b_1": &ir.SpaceResultTable{
+				TableId: "a.b_1",
+				Filters: []map[string]string{
+					{
+						"filter": redis.BkSplitMeasurement,
 					},
 				},
 			},
 		},
-		ir.ResultTableDetailInfo{
-			"a.b_2": &ir.ResultTableDetail{
-				Fields:          []string{redis.BkSplitMeasurement},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       victoriaMetricsStorageId,
-				DB:              redis.BkSplitMeasurement,
-				VmRt:            consul.VictoriaMetricsStorageType,
-				BcsClusterID:    "cls-2",
-			},
-			"a.b_1": &ir.ResultTableDetail{
-				Fields:          []string{redis.BkSplitMeasurement},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       victoriaMetricsStorageId,
-				DB:              redis.BkSplitMeasurement,
-				VmRt:            consul.VictoriaMetricsStorageType,
-				BcsClusterID:    "cls-1",
-			},
+	}, ir.ResultTableDetailInfo{
+		"a.b_2": &ir.ResultTableDetail{
+			Fields:          []string{redis.BkSplitMeasurement},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       victoriaMetricsStorageId,
+			DB:              redis.BkSplitMeasurement,
+			VmRt:            consul.VictoriaMetricsStorageType,
+			BcsClusterID:    "cls-2",
 		},
-		nil, nil,
-	)
+		"a.b_1": &ir.ResultTableDetail{
+			Fields:          []string{redis.BkSplitMeasurement},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       victoriaMetricsStorageId,
+			DB:              redis.BkSplitMeasurement,
+			VmRt:            consul.VictoriaMetricsStorageType,
+			BcsClusterID:    "cls-1",
+		},
+	}, nil, nil)
 
-	mock.SetSpaceTsDbMockData(ctx, path, bucket,
-		ir.SpaceInfo{
-			consul.InfluxDBStorageType: ir.Space{
-				"a.b": &ir.SpaceResultTable{
-					TableId: "a.b",
-					Filters: []map[string]string{
-						{
-							"filter": redis.BkSplitMeasurement,
-						},
-					},
-				},
-				"system.cpu_summary": &ir.SpaceResultTable{
-					TableId: "system.cpu_summary",
-				},
-			},
-		},
-		ir.ResultTableDetailInfo{
-			"a.b": &ir.ResultTableDetail{
-				Fields:          []string{redis.BkSplitMeasurement},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       influxdbStorageId,
-				DB:              redis.BkSplitMeasurement,
-			},
-			"system.cpu_summary": &ir.ResultTableDetail{
-				Fields:          []string{"usage", "rate"},
-				MeasurementType: redis.BKTraditionalMeasurement,
-				StorageId:       influxdbStorageId,
-				DB:              "system",
-				Measurement:     "cpu_summary",
-			},
-		},
-		nil, nil,
-	)
-	mock.SetSpaceTsDbMockData(ctx, path, bucket,
-		ir.SpaceInfo{
-			"vm-query": ir.Space{
-				"table_id.__default__": &ir.SpaceResultTable{
-					TableId: "table_id.__default__",
-					Filters: []map[string]string{
-						{
-							"bcs_cluster_id": "cls",
-							"namespace":      "",
-						},
-					},
-				},
-				"100147_bcs_prom_computation_result_table_25428.__default__": &ir.SpaceResultTable{
-					TableId: "100147_bcs_prom_computation_result_table_25428.__default__",
-					Filters: []map[string]string{
-						{
-							"bcs_cluster_id": "BCS-K8S-25428",
-							"namespace":      "",
-						},
-						{
-							"bcs_cluster_id": "BCS-K8S-25430",
-							"namespace":      "",
-						},
-					},
-				},
-				"100147_bcs_prom_computation_result_table_25429.__default__": &ir.SpaceResultTable{
-					TableId: "100147_bcs_prom_computation_result_table_25429.__default__",
-					Filters: []map[string]string{
-						{
-							"bcs_cluster_id": "BCS-K8S-25429",
-							"namespace":      "",
-						},
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		consul.InfluxDBStorageType: ir.Space{
+			"a.b": &ir.SpaceResultTable{
+				TableId: "a.b",
+				Filters: []map[string]string{
+					{
+						"filter": redis.BkSplitMeasurement,
 					},
 				},
 			},
-		},
-		ir.ResultTableDetailInfo{
-			"table_id.__default__": &ir.ResultTableDetail{
-				Fields:          []string{"metric"},
-				MeasurementType: redis.BkSplitMeasurement,
-				Measurement:     "__default__",
-				StorageId:       victoriaMetricsStorageId,
-				DB:              "table_id",
-				VmRt:            "vm_rt",
-			},
-			"100147_bcs_prom_computation_result_table_25428.__default__": &ir.ResultTableDetail{
-				Fields:          []string{"container_cpu_usage_seconds_total"},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       victoriaMetricsStorageId,
-				DB:              "100147_bcs_prom_computation_result_table_25428",
-				Measurement:     "__default__",
-				VmRt:            "100147_bcs_prom_computation_result_table_25428",
-				DataLabel:       "100147_bcs_prom_computation_result_table_25428",
-			},
-			"100147_bcs_prom_computation_result_table_25429.__default__": &ir.ResultTableDetail{
-				Fields:          []string{"container_cpu_usage_seconds_total"},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       victoriaMetricsStorageId,
-				DB:              "100147_bcs_prom_computation_result_table_25429",
-				Measurement:     "__default__",
-				VmRt:            "100147_bcs_prom_computation_result_table_25429",
-				DataLabel:       "100147_bcs_prom_computation_result_table_25429",
+			"system.cpu_summary": &ir.SpaceResultTable{
+				TableId: "system.cpu_summary",
 			},
 		},
-		nil, nil,
-	)
-	mock.SetSpaceTsDbMockData(ctx, path, bucket,
-		ir.SpaceInfo{
-			"bkcc__100147": ir.Space{"custom_report_aggate.base": &ir.SpaceResultTable{
-				TableId: "custom_report_aggate.base",
-			}}},
-		ir.ResultTableDetailInfo{"custom_report_aggate.base": &ir.ResultTableDetail{
-			Fields:          []string{"bkmonitor_action_notice_api_call_count_total"},
+	}, ir.ResultTableDetailInfo{
+		"a.b": &ir.ResultTableDetail{
+			Fields:          []string{redis.BkSplitMeasurement},
 			MeasurementType: redis.BkSplitMeasurement,
 			StorageId:       influxdbStorageId,
-			DB:              "custom_report_aggate",
-			Measurement:     "base",
-		}},
-		nil, nil,
-	)
-	mockCurl := curl.NewMockCurl(map[string]string{
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=pushgateway_bkmonitor_unify_query&q=select+metric_value+as+_value%2C+time+as+_time%2C+bk_trace_id%2C+bk_span_id%2C+bk_trace_value%2C+bk_trace_timestamp+from+group2_cmdb_level+where+time+%3E+1682149980000000000+and+time+%3C+1682154605000000000+and+%28bk_obj_id%3D%27module%27+and+%28ip%3D%27127.0.0.2%27+and+%28bk_inst_id%3D%2714261%27+and+bk_biz_id%3D%277%27%29%29%29+and+metric_name+%3D+%27unify_query_request_count_total%27+and+%28bk_span_id+%21%3D+%27%27+or+bk_trace_id+%21%3D+%27%27%29++limit+100000000+slimit+100000000`: `{"results":[{"statement_id":0,"series":[{"name":"group2_cmdb_level","columns":["_time","_value","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"values":[["2023-04-22T07:53:28Z",114938716,"d8952469b9014ed6b36c19d396b15c61","0a97123ee5ad7fd8",1,1682150008967],["2023-04-22T07:53:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T07:53:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T07:53:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],["2023-04-22T07:53:28Z",114939201,"771073eb573336a6d3365022a512d6d8","fca46f1c065452e8",1,1682150008969],["2023-04-22T07:54:28Z",114949368,"5b4931bbeb7bf497ff46d9cd9579ab60","0b0713e4e0106e55",1,1682150068965],["2023-04-22T07:54:28Z",114949853,"7c3c66f8763071d315fe8136bf8ff35c","159d9534754dc66d",1,1682150068965],["2023-04-22T07:54:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T07:54:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T07:54:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937]],"partial":true}],"partial":true}]}
+			DB:              redis.BkSplitMeasurement,
+		},
+		"system.cpu_summary": &ir.ResultTableDetail{
+			Fields:          []string{"usage", "rate"},
+			MeasurementType: redis.BKTraditionalMeasurement,
+			StorageId:       influxdbStorageId,
+			DB:              "system",
+			Measurement:     "cpu_summary",
+		},
+	}, nil, nil)
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		"vm-query": ir.Space{
+			"table_id.__default__": &ir.SpaceResultTable{
+				TableId: "table_id.__default__",
+				Filters: []map[string]string{
+					{
+						"bcs_cluster_id": "cls",
+						"namespace":      "",
+					},
+				},
+			},
+			"100147_bcs_prom_computation_result_table_25428.__default__": &ir.SpaceResultTable{
+				TableId: "100147_bcs_prom_computation_result_table_25428.__default__",
+				Filters: []map[string]string{
+					{
+						"bcs_cluster_id": "BCS-K8S-25428",
+						"namespace":      "",
+					},
+					{
+						"bcs_cluster_id": "BCS-K8S-25430",
+						"namespace":      "",
+					},
+				},
+			},
+			"100147_bcs_prom_computation_result_table_25429.__default__": &ir.SpaceResultTable{
+				TableId: "100147_bcs_prom_computation_result_table_25429.__default__",
+				Filters: []map[string]string{
+					{
+						"bcs_cluster_id": "BCS-K8S-25429",
+						"namespace":      "",
+					},
+				},
+			},
+		},
+	}, ir.ResultTableDetailInfo{
+		"table_id.__default__": &ir.ResultTableDetail{
+			Fields:          []string{"metric"},
+			MeasurementType: redis.BkSplitMeasurement,
+			Measurement:     "__default__",
+			StorageId:       victoriaMetricsStorageId,
+			DB:              "table_id",
+			VmRt:            "vm_rt",
+		},
+		"100147_bcs_prom_computation_result_table_25428.__default__": &ir.ResultTableDetail{
+			Fields:          []string{"container_cpu_usage_seconds_total"},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       victoriaMetricsStorageId,
+			DB:              "100147_bcs_prom_computation_result_table_25428",
+			Measurement:     "__default__",
+			VmRt:            "100147_bcs_prom_computation_result_table_25428",
+			DataLabel:       "100147_bcs_prom_computation_result_table_25428",
+		},
+		"100147_bcs_prom_computation_result_table_25429.__default__": &ir.ResultTableDetail{
+			Fields:          []string{"container_cpu_usage_seconds_total"},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       victoriaMetricsStorageId,
+			DB:              "100147_bcs_prom_computation_result_table_25429",
+			Measurement:     "__default__",
+			VmRt:            "100147_bcs_prom_computation_result_table_25429",
+			DataLabel:       "100147_bcs_prom_computation_result_table_25429",
+		},
+	}, nil, nil)
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		"bkcc__100147": ir.Space{"custom_report_aggate.base": &ir.SpaceResultTable{
+			TableId: "custom_report_aggate.base",
+		}}}, ir.ResultTableDetailInfo{"custom_report_aggate.base": &ir.ResultTableDetail{
+		Fields:          []string{"bkmonitor_action_notice_api_call_count_total"},
+		MeasurementType: redis.BkSplitMeasurement,
+		StorageId:       influxdbStorageId,
+		DB:              "custom_report_aggate",
+		Measurement:     "base",
+	}}, nil, nil)
+
+	mockCurl := &curl.MockCurl{}
+	mockCurl.WithF(func(opt curl.Options) []byte {
+		res := map[string]string{
+			`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=pushgateway_bkmonitor_unify_query&q=select+metric_value+as+_value%2C+time+as+_time%2C+bk_trace_id%2C+bk_span_id%2C+bk_trace_value%2C+bk_trace_timestamp+from+group2_cmdb_level+where+time+%3E+1682149980000000000+and+time+%3C+1682154605000000000+and+%28bk_obj_id%3D%27module%27+and+%28ip%3D%27127.0.0.2%27+and+%28bk_inst_id%3D%2714261%27+and+bk_biz_id%3D%277%27%29%29%29+and+metric_name+%3D+%27unify_query_request_count_total%27+and+%28bk_span_id+%21%3D+%27%27+or+bk_trace_id+%21%3D+%27%27%29++limit+100000000+slimit+100000000`: `{"results":[{"statement_id":0,"series":[{"name":"group2_cmdb_level","columns":["_time","_value","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"values":[["2023-04-22T07:53:28Z",114938716,"d8952469b9014ed6b36c19d396b15c61","0a97123ee5ad7fd8",1,1682150008967],["2023-04-22T07:53:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T07:53:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T07:53:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],["2023-04-22T07:53:28Z",114939201,"771073eb573336a6d3365022a512d6d8","fca46f1c065452e8",1,1682150008969],["2023-04-22T07:54:28Z",114949368,"5b4931bbeb7bf497ff46d9cd9579ab60","0b0713e4e0106e55",1,1682150068965],["2023-04-22T07:54:28Z",114949853,"7c3c66f8763071d315fe8136bf8ff35c","159d9534754dc66d",1,1682150068965],["2023-04-22T07:54:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T07:54:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T07:54:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937]],"partial":true}],"partial":true}]}
 {"results":[{"statement_id":0,"series":[{"name":"group2_cmdb_level","columns":["_time","_value","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"values":[["2023-04-22T07:55:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T07:55:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T07:55:28Z",114959046,"c9659d0b28bdb0c8afbd21aedd6bacd3","94bc25ffa3cc44e5",1,1682150128965],["2023-04-22T07:55:28Z",114959529,"c9659d0b28bdb0c8afbd21aedd6bacd3","94bc25ffa3cc44e5",1,1682150128962],["2023-04-22T07:55:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],["2023-04-22T07:56:28Z",114968813,"5def2a6568efe57199022da6f7cfcf3f","1d761b6cc2aabe5e",1,1682150188964],["2023-04-22T07:56:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T07:56:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T07:56:28Z",114969300,"ca18ec94669be35fee1b4ae4a2e3df2a","c113aa392812404a",1,1682150188968],["2023-04-22T07:56:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937]],"partial":true}],"partial":true}]}
 {"results":[{"statement_id":0,"series":[{"name":"group2_cmdb_level","columns":["_time","_value","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"values":[["2023-04-22T07:57:28Z",114986134,"ab5b57bea973133a5cb1f89ee93ffd5a","191d6c2087b110de",1,1682150248965],["2023-04-22T07:57:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T07:57:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T07:57:28Z",114986622,"032fa9e22eaa486349f3a9d8ac1a0c76","7832acea944dc180",1,1682150248967],["2023-04-22T07:57:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],["2023-04-22T07:58:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T07:58:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T07:58:28Z",114997601,"0bd0b98c89250d1ab3e4fc77cdc9d619","4d3a86e07ac11e04",1,1682150308961],["2023-04-22T07:58:28Z",114998085,"09aeca94699ae82eec038c85573b68c4","687b908edb32b09f",1,1682150308967],["2023-04-22T07:58:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937]],"partial":true}],"partial":true}]}
 {"results":[{"statement_id":0,"series":[{"name":"group2_cmdb_level","columns":["_time","_value","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"values":[["2023-04-22T07:59:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T07:59:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T07:59:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],["2023-04-22T07:59:28Z",115009204,"595fb8f3671365cc1ad920d30a7c9c6e","d1f36e8cbdb25ce8",1,1682150368961],["2023-04-22T07:59:28Z",115008721,"595fb8f3671365cc1ad920d30a7c9c6e","d1f36e8cbdb25ce8",1,1682150368964],["2023-04-22T08:00:28Z",115021473,"5a6dbfa27835ac9b22d8a795477e3155","1954ae8cddc3a6fc",1,1682150428955],["2023-04-22T08:00:28Z",115020990,"5a6dbfa27835ac9b22d8a795477e3155","1954ae8cddc3a6fc",1,1682150428959],["2023-04-22T08:00:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T08:00:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T08:00:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937]],"partial":true}],"partial":true}]}
@@ -338,7 +325,7 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 {"results":[{"statement_id":0,"series":[{"name":"group2_cmdb_level","columns":["_time","_value","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"values":[["2023-04-22T09:07:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T09:07:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T09:07:28Z",115825085,"efd0e34e9126172d47ded9fdddec5a7b","8ddb9404521f177b",1,1682154448967],["2023-04-22T09:07:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],["2023-04-22T09:07:28Z",115824600,"b0705f41034b923baad5b10e376a58de","e1f7bb8fd52d0a7b",1,1682154448962],["2023-04-22T09:08:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T09:08:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T09:08:28Z",115835645,"42bb8976800e050326fa14c25b281924","600873b41a6ff1b2",1,1682154508966],["2023-04-22T09:08:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],["2023-04-22T09:08:28Z",115836130,"984e5e6ca13c09397100769e6d336039","db4129d930407fc8",1,1682154508964]],"partial":true}],"partial":true}]}
 {"results":[{"statement_id":0,"series":[{"name":"group2_cmdb_level","columns":["_time","_value","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"values":[["2023-04-22T09:09:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T09:09:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T09:09:28Z",115849354,"ff3d29f3ec4a8b2364d2a5ba7b0751be","66103693e7484b95",1,1682154568967],["2023-04-22T09:09:28Z",115849837,"ff3d29f3ec4a8b2364d2a5ba7b0751be","66103693e7484b95",1,1682154568963],["2023-04-22T09:09:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937]]}]}]}
 `,
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=system&q=select+mean%28%22usage%22%29+as+_value%2C+time+as+_time+from+cpu_summary+where+time+%3E+1677081599999000000+and+time+%3C+1677085659999000000++group+by+time%281m0s%29+limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T15:59:00Z",null],["2023-02-22T16:00:00Z",25.124152312094484],["2023-02-22T16:01:00Z",20.724334166696504],["2023-02-22T16:02:00Z",20.426171484280808],["2023-02-22T16:03:00Z",20.327529103992745]],"partial":true}],"partial":true}]}
+			`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=system&q=select+mean%28%22usage%22%29+as+_value%2C+time+as+_time+from+cpu_summary+where+time+%3E+1677081599999000000+and+time+%3C+1677085659999000000++group+by+time%281m0s%29+limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T15:59:00Z",null],["2023-02-22T16:00:00Z",25.124152312094484],["2023-02-22T16:01:00Z",20.724334166696504],["2023-02-22T16:02:00Z",20.426171484280808],["2023-02-22T16:03:00Z",20.327529103992745]],"partial":true}],"partial":true}]}
 {"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T16:04:00Z",20.468538578157883],["2023-02-22T16:05:00Z",20.25296970605787],["2023-02-22T16:06:00Z",19.9283445874921],["2023-02-22T16:07:00Z",19.612237758778733],["2023-02-22T16:08:00Z",20.187296617920314]],"partial":true}],"partial":true}]}
 {"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T16:09:00Z",20.916380134086413],["2023-02-22T16:10:00Z",22.554908120339377],["2023-02-22T16:11:00Z",20.253084390783837],["2023-02-22T16:12:00Z",20.48536897192481],["2023-02-22T16:13:00Z",20.090785116663426]],"partial":true}],"partial":true}]}
 {"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T16:14:00Z",20.25654085898734],["2023-02-22T16:15:00Z",21.041731249213385],["2023-02-22T16:16:00Z",20.43003902957978],["2023-02-22T16:17:00Z",20.038367095325594],["2023-02-22T16:18:00Z",20.202399021312875]],"partial":true}],"partial":true}]}
@@ -353,7 +340,7 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 {"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T16:59:00Z",21.344305007289915],["2023-02-22T17:00:00Z",25.937044373952602],["2023-02-22T17:01:00Z",20.421952975501853],["2023-02-22T17:02:00Z",20.121773311320066],["2023-02-22T17:03:00Z",19.74360429634455]],"partial":true}],"partial":true}]}
 {"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T17:04:00Z",19.90800208328392],["2023-02-22T17:05:00Z",20.48559522490759],["2023-02-22T17:06:00Z",20.0645267193599],["2023-02-22T17:07:00Z",26.77071273642816]]}]}]}
 `,
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=system&q=select+mean%28%22rate%22%29+as+_value%2C+time+as+_time+from+cpu_summary+where+time+%3E+1677081599999000000+and+time+%3C+1677085659999000000++group+by+time%281m0s%29+limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T15:59:00Z",null],["2023-02-22T16:00:00Z",25.124152312094484],["2023-02-22T16:01:00Z",20.724334166696504],["2023-02-22T16:02:00Z",20.426171484280808],["2023-02-22T16:03:00Z",20.327529103992745]],"partial":true}],"partial":true}]}
+			`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=system&q=select+mean%28%22rate%22%29+as+_value%2C+time+as+_time+from+cpu_summary+where+time+%3E+1677081599999000000+and+time+%3C+1677085659999000000++group+by+time%281m0s%29+limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T15:59:00Z",null],["2023-02-22T16:00:00Z",25.124152312094484],["2023-02-22T16:01:00Z",20.724334166696504],["2023-02-22T16:02:00Z",20.426171484280808],["2023-02-22T16:03:00Z",20.327529103992745]],"partial":true}],"partial":true}]}
 {"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T16:04:00Z",20.468538578157883],["2023-02-22T16:05:00Z",20.25296970605787],["2023-02-22T16:06:00Z",19.9283445874921],["2023-02-22T16:07:00Z",19.612237758778733],["2023-02-22T16:08:00Z",20.187296617920314]],"partial":true}],"partial":true}]}
 {"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T16:09:00Z",20.916380134086413],["2023-02-22T16:10:00Z",22.554908120339377],["2023-02-22T16:11:00Z",20.253084390783837],["2023-02-22T16:12:00Z",20.48536897192481],["2023-02-22T16:13:00Z",20.090785116663426]],"partial":true}],"partial":true}]}
 {"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T16:14:00Z",20.25654085898734],["2023-02-22T16:15:00Z",21.041731249213385],["2023-02-22T16:16:00Z",20.43003902957978],["2023-02-22T16:17:00Z",20.038367095325594],["2023-02-22T16:18:00Z",20.202399021312875]],"partial":true}],"partial":true}]}
@@ -368,18 +355,24 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 {"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T16:59:00Z",21.344305007289915],["2023-02-22T17:00:00Z",25.937044373952602],["2023-02-22T17:01:00Z",20.421952975501853],["2023-02-22T17:02:00Z",20.121773311320066],["2023-02-22T17:03:00Z",19.74360429634455]],"partial":true}],"partial":true}]}
 {"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T17:04:00Z",19.90800208328392],["2023-02-22T17:05:00Z",20.48559522490759],["2023-02-22T17:06:00Z",20.0645267193599],["2023-02-22T17:07:00Z",26.77071273642816]]}]}]}
 `,
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=custom_report_aggate&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+bkmonitor_action_notice_api_call_count_total+where+time+%3E+1692584759999000000+and+time+%3C+1692585659999000000+and+%28notice_way%3D%27weixin%27+and+status%3D%27failed%27%29++limit+100000000+slimit+100000000`: `{"results":[{"statement_id":0,"series":[{"name":"bkmonitor_action_notice_api_call_count_total","columns":["_time","_value","job","notice_way","status","target"],"values":[["2023-08-21T02:26:34.603Z",14568,"SLI","weixin","failed","unknown"],["2023-08-21T02:27:33.198Z",14568,"SLI","weixin","failed","unknown"],["2023-08-21T02:28:32.629Z",14568,"SLI","weixin","failed","unknown"],["2023-08-21T02:29:36.848Z",14568,"SLI","weixin","failed","unknown"],["2023-08-21T02:32:35.819Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:32:55.496Z",14569,"SLI","weixin","failed","unknown"],["2023-08-21T02:33:39.496Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:34:43.517Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:37:35.203Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:38:32.111Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:39:32.135Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:40:40.788Z",14570,"SLI","weixin","failed","unknown"]]}]}]}
+			`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=custom_report_aggate&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+bkmonitor_action_notice_api_call_count_total+where+time+%3E+1692584759999000000+and+time+%3C+1692585659999000000+and+%28notice_way%3D%27weixin%27+and+status%3D%27failed%27%29++limit+100000000+slimit+100000000`: `{"results":[{"statement_id":0,"series":[{"name":"bkmonitor_action_notice_api_call_count_total","columns":["_time","_value","job","notice_way","status","target"],"values":[["2023-08-21T02:26:34.603Z",14568,"SLI","weixin","failed","unknown"],["2023-08-21T02:27:33.198Z",14568,"SLI","weixin","failed","unknown"],["2023-08-21T02:28:32.629Z",14568,"SLI","weixin","failed","unknown"],["2023-08-21T02:29:36.848Z",14568,"SLI","weixin","failed","unknown"],["2023-08-21T02:32:35.819Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:32:55.496Z",14569,"SLI","weixin","failed","unknown"],["2023-08-21T02:33:39.496Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:34:43.517Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:37:35.203Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:38:32.111Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:39:32.135Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:40:40.788Z",14570,"SLI","weixin","failed","unknown"]]}]}]}
 `,
-		`victoria_metric/api`: `{"result": true, "code":"00", "data":{}}`,
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=system&q=select+count%28%22rate%22%29+as+_value%2C+time+as+_time+from+cpu_summary+where+time+%3E+1677081599999000000+and+time+%3C+1677085659999000000++group+by+time%281m0s%29+limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T15:59:00Z",null],["2023-02-22T16:00:00Z",25.124152312094484],["2023-02-22T16:01:00Z",20.724334166696504],["2023-02-22T16:02:00Z",20.426171484280808],["2023-02-22T16:03:00Z",20.327529103992745]],"partial":true}],"partial":true}]}
+			`victoria_metric/api`: `{"result": true, "code":"00", "data":{}}`,
+			`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=system&q=select+count%28%22rate%22%29+as+_value%2C+time+as+_time+from+cpu_summary+where+time+%3E+1677081599999000000+and+time+%3C+1677085659999000000++group+by+time%281m0s%29+limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T15:59:00Z",null],["2023-02-22T16:00:00Z",25.124152312094484],["2023-02-22T16:01:00Z",20.724334166696504],["2023-02-22T16:02:00Z",20.426171484280808],["2023-02-22T16:03:00Z",20.327529103992745]],"partial":true}],"partial":true}]}
 `,
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=system&q=select+count%28%22usage%22%29+as+_value%2C+time+as+_time+from+cpu_summary+where+time+%3E+1677081599999000000+and+time+%3C+1677085659999000000++group+by+time%281m0s%29+limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T15:59:00Z",null],["2023-02-22T16:00:00Z",25.124152312094484],["2023-02-22T16:01:00Z",20.724334166696504],["2023-02-22T16:02:00Z",20.426171484280808],["2023-02-22T16:03:00Z",20.327529103992745]],"partial":true}],"partial":true}]}
+			`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=system&q=select+count%28%22usage%22%29+as+_value%2C+time+as+_time+from+cpu_summary+where+time+%3E+1677081599999000000+and+time+%3C+1677085659999000000++group+by+time%281m0s%29+limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T15:59:00Z",null],["2023-02-22T16:00:00Z",25.124152312094484],["2023-02-22T16:01:00Z",20.724334166696504],["2023-02-22T16:02:00Z",20.426171484280808],["2023-02-22T16:03:00Z",20.327529103992745]],"partial":true}],"partial":true}]}
 `,
-	}, log.DefaultLogger)
+		}
+
+		if v, ok := res[opt.UrlPath]; ok {
+			return []byte(v)
+		}
+		return nil
+	})
 
 	inst, _ := tsdbInfluxdb.NewInstance(
-		context.TODO(),
-		tsdbInfluxdb.Options{
+		ctx,
+		&tsdbInfluxdb.Options{
 			Host:      "127.0.0.1",
 			Port:      80,
 			Curl:      mockCurl,
@@ -394,7 +387,19 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 		Instance: inst,
 	})
 
-	mock.SetRedisClient(context.TODO(), "test")
+	vmInst, _ := victoriaMetrics.NewInstance(ctx, &victoriaMetrics.Options{
+		Address: "127.0.0.1",
+		Curl:    mockCurl,
+
+		InfluxCompatible: true,
+		UseNativeOr:      true,
+	})
+	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
+		Type:     consul.VictoriaMetricsStorageType,
+		Instance: vmInst,
+	})
+
+	mock.SetRedisClient(context.TODO())
 	return mockCurl
 }
 
@@ -416,25 +421,18 @@ func TestQueryTsWithEs(t *testing.T) {
 	esTestStorageID := 999
 
 	mock.Init()
-	mock.SetRedisClient(ctx, "test")
-	mock.SetSpaceTsDbMockData(
-		ctx,
-		"query_reference.db",
-		"query_reference",
-		ir.SpaceInfo{
-			spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
+	mock.SetRedisClient(ctx)
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
+	}, ir.ResultTableDetailInfo{
+		tableID: &ir.ResultTableDetail{
+			MeasurementType: redis.BKTraditionalMeasurement,
+			StorageId:       int64(esTestStorageID),
+			DB:              db,
+			Measurement:     measurement,
+			TableId:         tableID,
 		},
-		ir.ResultTableDetailInfo{
-			tableID: &ir.ResultTableDetail{
-				MeasurementType: redis.BKTraditionalMeasurement,
-				StorageId:       int64(esTestStorageID),
-				DB:              db,
-				Measurement:     measurement,
-				TableId:         tableID,
-			},
-		},
-		nil, nil,
-	)
+	}, nil, nil)
 
 	ctx = metadata.InitHashID(ctx)
 
@@ -563,26 +561,19 @@ func TestQueryReference(t *testing.T) {
 	esTestStorageID := 999
 
 	mock.Init()
-	mock.SetRedisClient(ctx, "test")
-	mock.SetSpaceTsDbMockData(
-		ctx,
-		"query_reference.db",
-		"query_reference",
-		ir.SpaceInfo{
-			spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
+	mock.SetRedisClient(ctx)
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
+	}, ir.ResultTableDetailInfo{
+		tableID: &ir.ResultTableDetail{
+			Fields:          nil,
+			MeasurementType: redis.BKTraditionalMeasurement,
+			StorageId:       int64(esTestStorageID),
+			DB:              db,
+			Measurement:     measurement,
+			TableId:         tableID,
 		},
-		ir.ResultTableDetailInfo{
-			tableID: &ir.ResultTableDetail{
-				Fields:          nil,
-				MeasurementType: redis.BKTraditionalMeasurement,
-				StorageId:       int64(esTestStorageID),
-				DB:              db,
-				Measurement:     measurement,
-				TableId:         tableID,
-			},
-		},
-		nil, nil,
-	)
+	}, nil, nil)
 
 	ctx = metadata.InitHashID(ctx)
 
@@ -1116,6 +1107,115 @@ func TestQueryTs(t *testing.T) {
 	}
 }
 
+func TestQueryRawWithInstance(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	mock.SetRedisClient(ctx)
+
+	spaceUid := "space_uid_mock"
+	tableID := "table_id.mock"
+	storageID := 233
+
+	address := viper.GetString("mock.es.address")
+	username := viper.GetString("mock.es.username")
+	password := viper.GetString("mock.es.password")
+	timeout := viper.GetDuration("mock.es.timeout")
+	maxSize := viper.GetInt("mock.es.max_size")
+	maxRouting := viper.GetInt("mock.es.max_routing")
+
+	tsdb.SetStorage(strconv.Itoa(storageID), &tsdb.Storage{
+		Type:       consul.ElasticsearchStorageType,
+		Address:    address,
+		Username:   username,
+		Password:   password,
+		Timeout:    timeout,
+		MaxLimit:   maxSize,
+		MaxRouting: maxRouting,
+	})
+
+	resultTableDetail := &ir.ResultTableDetail{
+		DB:          "v2_2_bklog_bk_unify_query",
+		TableId:     tableID,
+		SourceType:  structured.BkLog,
+		StorageType: consul.BkSqlStorageType,
+		StorageId:   int64(storageID),
+	}
+	//resultTableDetail.Options.TimeField.Name = "thedate"
+	//resultTableDetail.Options.TimeField.Type = "long"
+	//resultTableDetail.Options.TimeField.Unit = elasticsearch.Microsecond
+	resultTableDetail.Options.NeedAddTime = true
+
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		spaceUid: ir.Space{
+			tableID: &ir.SpaceResultTable{TableId: tableID, Filters: make([]map[string]string, 0)},
+		},
+	}, ir.ResultTableDetailInfo{
+		tableID: resultTableDetail,
+	},
+		nil, nil,
+	)
+
+	start := "1723594000"
+	end := "1723595000"
+
+	tcs := map[string]struct {
+		queryTs  *structured.QueryTs
+		expected []map[string]any
+	}{
+		"query_bk_base_es_with_raw": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(tableID),
+						From:        1,
+						Limit:       10,
+						KeepColumns: []string{"__ext.container_id", "dtEventTimeStamp"},
+					},
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(tableID),
+						From:        20,
+						Limit:       10,
+						KeepColumns: []string{"__ext.io_kubernetes_pod", "dtEventTimeStamp"},
+					},
+				},
+				Start: start,
+				End:   end,
+			},
+		},
+		"query_bk_base_es_with_errors": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(tableID),
+						From:        1,
+						Limit:       1,
+						KeepColumns: []string{"__ext.container_id", "dtEventTimeStamp"},
+					},
+				},
+				Start: start,
+				End:   end,
+			},
+		},
+	}
+
+	for name, c := range tcs {
+		t.Run(name, func(t *testing.T) {
+			total, list, err := queryRawWithInstance(ctx, c.queryTs)
+			if err != nil {
+				panic(err.Error())
+			}
+			fmt.Printf("total: %d \nlength: %d \n", total, len(list))
+			for _, l := range list {
+				fmt.Printf("%v\n", l)
+			}
+		})
+	}
+}
+
 // TestQueryExemplar comment lint rebel
 func TestQueryExemplar(t *testing.T) {
 	ctx := context.Background()
@@ -1155,7 +1255,7 @@ func TestVmQueryParams(t *testing.T) {
 			username: "vm-query",
 			spaceUid: consul.VictoriaMetricsStorageType,
 			query:    `{"query_list":[{"field_name":"bk_split_measurement","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"increase","window":"1m0s"},"reference_name":"a","conditions":{"field_list":[{"field_name":"bcs_cluster_id","value":["cls-2"],"op":"req"},{"field_name":"bcs_cluster_id","value":["cls-2"],"op":"req"},{"field_name":"bk_biz_id","value":["100801"],"op":"eq"}],"condition_list":["and", "and"]}},{"field_name":"bk_split_measurement","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"delta","window":"1m0s"},"reference_name":"b"}],"metric_merge":"a / b","start_time":"0","end_time":"600","step":"60s"}`,
-			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","cluster_name":"","api_params":{"query":"sum by (bcs_cluster_id, namespace) (increase_prometheus(a[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (delta_prometheus(b[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_list":["victoria_metrics"],"metric_filter_condition":{"a":"filter=\"bk_split_measurement\", bcs_cluster_id=~\"cls-2\", bcs_cluster_id=~\"cls-2\", bk_biz_id=\"100801\", result_table_id=\"victoria_metrics\", __name__=\"bk_split_measurement_value\"","b":"filter=\"bk_split_measurement\", result_table_id=\"victoria_metrics\", __name__=\"bk_split_measurement_value\""}}`,
+			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","cluster_name":"","api_params":{"query":"sum by (bcs_cluster_id, namespace) (increase(a[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (delta(b[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_list":["victoria_metrics"],"metric_filter_condition":{"a":"filter=\"bk_split_measurement\", bcs_cluster_id=~\"cls-2\", bcs_cluster_id=~\"cls-2\", bk_biz_id=\"100801\", result_table_id=\"victoria_metrics\", __name__=\"bk_split_measurement_value\"","b":"filter=\"bk_split_measurement\", result_table_id=\"victoria_metrics\", __name__=\"bk_split_measurement_value\""}}`,
 		},
 		{
 			username: "vm-query-or",
@@ -1207,7 +1307,7 @@ func TestVmQueryParams(t *testing.T) {
 				query *structured.QueryTs
 				err   error
 			)
-			ctx, _ = context.WithCancel(ctx)
+			ctx := metadata.InitHashID(ctx)
 			metadata.SetUser(ctx, fmt.Sprintf("username:%s", c.username), c.spaceUid, "")
 
 			if c.promql != "" {
@@ -1228,12 +1328,9 @@ func TestVmQueryParams(t *testing.T) {
 				if c.error != nil {
 					assert.Contains(t, err.Error(), c.error.Error())
 				} else {
-					if len(mockCurl.Params) == 0 {
-						assert.Nil(t, err)
-					}
 					var vmParams map[string]string
-					if mockCurl.Params != nil {
-						err = json.Unmarshal(mockCurl.Params, &vmParams)
+					if mockCurl.Opts.Body != nil {
+						err = json.Unmarshal(mockCurl.Opts.Body, &vmParams)
 						assert.Nil(t, err)
 					}
 					if vmParams != nil {
@@ -1247,7 +1344,7 @@ func TestVmQueryParams(t *testing.T) {
 
 func TestStructAndPromQLConvert(t *testing.T) {
 	ctx := context.Background()
-	mock.SetRedisClient(ctx, "test-struct-promql")
+	mock.SetRedisClient(ctx)
 
 	testCase := map[string]struct {
 		queryStruct bool
@@ -2307,7 +2404,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 func setupCluterMetricsData(ctx context.Context) {
 	var err error
 	log.InitTestLogger()
-	mock.SetRedisClient(ctx, "handler_test")
+	mock.SetRedisClient(ctx)
 	_, err = redis.HSet(
 		ctx, "bkmonitor:cluster_metrics_meta", "influxdb_shard_write_points_ok",
 		"{\"metric_name\":\"influxdb_shard_write_points_ok\",\"tags\":[\"bkm_cluster\",\"database\",\"engine\",\"hostname\",\"id\",\"index_type\",\"path\",\"retention_policy\",\"wal_path\"]}")
@@ -2326,7 +2423,7 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 	ctx := context.Background()
 	setupCluterMetricsData(ctx)
 	log.InitTestLogger()
-	mock.SetRedisClient(ctx, "handler_test")
+	mock.SetRedisClient(ctx)
 	testCases := map[string]struct {
 		query  string
 		result string

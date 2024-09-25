@@ -30,7 +30,7 @@ import (
 	"k8s.io/client-go/util/retry"
 
 	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logconf"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logx"
 )
 
 func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig) (kubernetes.Interface, error) {
@@ -77,7 +77,7 @@ func NewTkexClient(host string, tlsConfig *rest.TLSClientConfig) (tkexversiond.I
 }
 
 func WaitForNamedCacheSync(ctx context.Context, controllerName string, inf cache.SharedIndexInformer) bool {
-	return operator.WaitForNamedCacheSync(ctx, controllerName, new(logconf.Logger), inf)
+	return operator.WaitForNamedCacheSync(ctx, controllerName, logx.New(controllerName), inf)
 }
 
 func CreateOrUpdateSecret(ctx context.Context, secretClient clientv1.SecretInterface, desired *corev1.Secret) error {

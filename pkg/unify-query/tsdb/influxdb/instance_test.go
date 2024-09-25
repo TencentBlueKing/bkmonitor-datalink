@@ -83,7 +83,7 @@ func TestInstance_MakeSQL(t *testing.T) {
 	}
 	start := time.UnixMilli(1718175000000)
 	end := time.UnixMilli(1718175600000)
-	option := Options{
+	option := &Options{
 		Host:     "127.0.0.1",
 		Port:     80,
 		Timeout:  time.Hour,

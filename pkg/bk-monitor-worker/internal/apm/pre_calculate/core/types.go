@@ -67,7 +67,7 @@ const (
 	KindConsumer SpanKind = 5
 )
 
-// SpanKindCategory kind to category mapping
+// SpanKindCategory kind to category Mapping
 type SpanKindCategory string
 
 const (
@@ -134,10 +134,15 @@ func (c *CommonField) DisplayKey() string {
 	}
 }
 
-// Contain whether the field is in mapping
+// Contain whether the field is in Mapping
 func (c *CommonField) Contain(collections map[string]string) bool {
 	_, exist := collections[c.FullKey]
 	return exist
+}
+
+// ToDimensionKey convert to metric dimension key
+func (c *CommonField) ToDimensionKey() string {
+	return strings.ReplaceAll(c.Key, ".", "_")
 }
 
 // FiledSource source of filed
@@ -165,6 +170,12 @@ var (
 	HttpUrlField     = CommonField{SourceAttributes, "http.url", toAttributes("http.url")}
 	NetPeerNameField = CommonField{
 		SourceAttributes, "net.peer.name", toAttributes("net.peer.name"),
+	}
+	NetPeerIpField = CommonField{
+		SourceAttributes, "net.peer.ip", toAttributes("net.peer.ip"),
+	}
+	NetPeerPortField = CommonField{
+		SourceAttributes, "net.peer.port", toAttributes("net.peer.port"),
 	}
 	ServerAddressField = CommonField{
 		SourceAttributes, "server.address", toAttributes("server.address"),
@@ -283,6 +294,18 @@ var (
 	NetHostIpField = CommonField{
 		SourceResource, "net.host.ip", toResource("net.host.ip"),
 	}
+	K8sBcsClusterId = CommonField{
+		SourceResource, "k8s.bcs.cluster.id", toResource("k8s.bcs.cluster.id"),
+	}
+	K8sNamespace = CommonField{
+		SourceResource, "k8s.namespace.name", toResource("k8s.namespace.name"),
+	}
+	K8sPodIp = CommonField{
+		SourceResource, "k8s.pod.ip", toResource("k8s.pod.ip"),
+	}
+	K8sPodName = CommonField{
+		SourceResource, "k8s.pod.name", toResource("k8s.pod.name"),
+	}
 	HostIpField = CommonField{
 		SourceResource, "host.ip", toResource("host.ip"),
 	}
@@ -304,6 +327,8 @@ var StandardFields = []CommonField{
 	HttpHostField,
 	HttpUrlField,
 	NetPeerNameField,
+	NetPeerIpField,
+	NetPeerPortField,
 	ServerAddressField,
 	PeerServiceField,
 	HttpSchemeField,
@@ -337,6 +362,10 @@ var StandardFields = []CommonField{
 	ServiceInstanceIdField,
 	NetHostIpField,
 	HostIpField,
+	K8sBcsClusterId,
+	K8sNamespace,
+	K8sPodIp,
+	K8sPodName,
 	NetHostPortField,
 	NetHostnameField,
 	BkInstanceIdField,
@@ -345,42 +374,14 @@ var StandardFields = []CommonField{
 }
 
 type CategoryPredicate struct {
+	Category     SpanCategory
 	AnyFields    []CommonField
 	OptionFields []CommonField
 }
 
-var CategoryPredicateFieldMapping = map[SpanCategory]CategoryPredicate{
-	CategoryHttp: {
-		AnyFields: []CommonField{
-			HttpHostField,
-			HttpUrlField,
-			NetPeerNameField,
-			PeerServiceField,
-			HttpSchemeField,
-			HttpFlavorField,
-			HttpMethodField,
-			HttpStatusCodeField,
-		},
-	},
-	CategoryRpc: {
-		AnyFields: []CommonField{
-			RpcMethodField,
-			RpcServiceField,
-			RpcSystemField,
-			RpcGrpcStatusCode,
-		},
-	},
-	CategoryDb: {
-		AnyFields: []CommonField{
-			DbNameField,
-			DbOperationField,
-			DbSystemField,
-			DbStatementField,
-			DbTypeField,
-			DbInstanceField,
-		},
-	},
-	CategoryMessaging: {
+var CategoryPredicateFields = []CategoryPredicate{
+	{
+		Category: CategoryMessaging,
 		AnyFields: []CommonField{
 			MessagingDestinationField,
 			MessagingSystemField,
@@ -392,13 +393,47 @@ var CategoryPredicateFieldMapping = map[SpanCategory]CategoryPredicate{
 			MessagingRocketmqKeyField,
 		},
 	},
-	CategoryAsyncBackend: {
+	{
+		Category: CategoryAsyncBackend,
 		AnyFields: []CommonField{
 			MessagingDestinationField,
 			MessagingDestinationKindField,
 			MessagingSystemField,
 			CeleryTaskNameField,
 			CeleryActionField,
+		},
+	},
+	{
+		Category: CategoryDb,
+		AnyFields: []CommonField{
+			DbNameField,
+			DbOperationField,
+			DbSystemField,
+			DbStatementField,
+			DbTypeField,
+			DbInstanceField,
+		},
+	},
+	{
+		Category: CategoryRpc,
+		AnyFields: []CommonField{
+			RpcMethodField,
+			RpcServiceField,
+			RpcSystemField,
+			RpcGrpcStatusCode,
+		},
+	},
+	{
+		Category: CategoryHttp,
+		AnyFields: []CommonField{
+			HttpHostField,
+			HttpUrlField,
+			NetPeerNameField,
+			PeerServiceField,
+			HttpSchemeField,
+			HttpFlavorField,
+			HttpMethodField,
+			HttpStatusCodeField,
 		},
 	},
 }

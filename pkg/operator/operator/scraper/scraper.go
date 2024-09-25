@@ -13,6 +13,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -54,9 +55,9 @@ type Scraper struct {
 	config TaskConfig
 }
 
-func (c *Scraper) doRequest(host string) (*http.Response, error) {
+func (c *Scraper) doRequest(ctx context.Context, host string) (*http.Response, error) {
 	u := host + c.config.MetricsPath
-	req, err := http.NewRequest(http.MethodGet, u, &bytes.Buffer{})
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, &bytes.Buffer{})
 	if err != nil {
 		return nil, err
 	}
@@ -70,12 +71,12 @@ func (c *Scraper) doRequest(host string) (*http.Response, error) {
 	return c.client.Do(req)
 }
 
-func (c *Scraper) StringCh() chan string {
+func (c *Scraper) StringCh(ctx context.Context) chan string {
 	ch := make(chan string, 1)
 	go func() {
 		defer close(ch)
 		for _, host := range c.config.Hosts {
-			resp, err := c.doRequest(host)
+			resp, err := c.doRequest(ctx, host)
 			if err != nil {
 				ch <- fmt.Sprintf("scraper error: host=%s, err=%v", host, err)
 				continue
@@ -92,7 +93,7 @@ func (c *Scraper) StringCh() chan string {
 			scanner := bufio.NewScanner(resp.Body)
 			for scanner.Scan() {
 				line := scanner.Text()
-				if strings.HasPrefix(line, "#") || line == "" {
+				if line == "" || strings.HasPrefix(line, "#") {
 					continue
 				}
 				ch <- line
@@ -103,11 +104,11 @@ func (c *Scraper) StringCh() chan string {
 	return ch
 }
 
-func (c *Scraper) Lines() (int, []error) {
+func (c *Scraper) Lines(ctx context.Context) (int, []error) {
 	var errs []error
 	var total int
 	for _, host := range c.config.Hosts {
-		resp, err := c.doRequest(host)
+		resp, err := c.doRequest(ctx, host)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -122,8 +123,8 @@ func (c *Scraper) Lines() (int, []error) {
 
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "#") || line == "" {
+			b := scanner.Bytes() // 不需要复制内存
+			if len(b) == 0 || bytes.HasPrefix(b, []byte("#")) {
 				continue
 			}
 			total++
@@ -176,7 +177,6 @@ func New(data []byte) (*Scraper, error) {
 	}
 
 	var dialer, tlsDialer transport.Dialer
-
 	dialer = transport.NetDialer(config.Timeout)
 	tlsDialer, err = transport.TLSDialer(dialer, tlsConfig, config.Timeout)
 	if err != nil {
@@ -198,6 +198,10 @@ func New(data []byte) (*Scraper, error) {
 			return nil, errors.Wrap(err, "parse proxy url failed")
 		}
 		trp.Proxy = http.ProxyURL(parsed)
+	}
+
+	if tlsConfig != nil && tlsConfig.Verification == transport.VerifyNone {
+		trp.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 
 	return &Scraper{

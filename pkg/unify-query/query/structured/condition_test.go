@@ -204,6 +204,227 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 	}
 }
 
+func TestConditionCompare(t *testing.T) {
+	testCases := map[string]struct {
+		condition Conditions
+		expected  bool
+	}{
+		"cluster two or not reg one": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionNotRegEqual,
+						Value:         []string{`k8s`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-2`},
+					},
+				},
+				ConditionList: []string{"or"},
+			},
+			expected: false,
+		},
+		"cluster two or not reg": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionNotRegEqual,
+						Value:         []string{`k8s`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-1`},
+					},
+				},
+				ConditionList: []string{"or"},
+			},
+			expected: true,
+		},
+		"cluster one contains": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-2`},
+					},
+				},
+			},
+			expected: false,
+		},
+		"cluster two or not contains": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionNotContains,
+						Value:         []string{`k8s-1`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-2`},
+					},
+				},
+				ConditionList: []string{"or"},
+			},
+			expected: false,
+		},
+		"cluster two or req": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionRegEqual,
+						Value:         []string{`k8s`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-2`},
+					},
+				},
+				ConditionList: []string{"or"},
+			},
+			expected: true,
+		},
+		"cluster two or contains": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-1`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-2`},
+					},
+				},
+				ConditionList: []string{"or"},
+			},
+			expected: true,
+		},
+		"cluster two and contains": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-1`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-2`},
+					},
+				},
+				ConditionList: []string{"and"},
+			},
+			expected: false,
+		},
+		"cluster two or contains multi values": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-1`, `k8s-2`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-3`},
+					},
+				},
+				ConditionList: []string{"or"},
+			},
+			expected: true,
+		},
+		"cluster three or contains multi values": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-1`, `k8s-2`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-3`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-1`},
+					},
+				},
+				ConditionList: []string{"and", "or"},
+			},
+			expected: true,
+		},
+		"cluster and ns two or contains multi values": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-1`, `k8s-2`},
+					},
+					{
+						DimensionName: "namespace",
+						Operator:      ConditionContains,
+						Value:         []string{`ns-1`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-3`},
+					},
+					{
+						DimensionName: "namespace",
+						Operator:      ConditionContains,
+						Value:         []string{`ns-2`},
+					},
+				},
+				ConditionList: []string{"and", "or", "and"},
+			},
+			expected: true,
+		},
+		"cluster with empty": {
+			condition: Conditions{},
+			expected:  true,
+		},
+		"cluster with nil": {
+			expected: true,
+		},
+	}
+
+	checkCluster := "k8s-1"
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			allConditions, err := c.condition.AnalysisConditions()
+			if err != nil {
+				panic(err)
+			}
+			res, err := allConditions.Compare(ClusterID, checkCluster)
+			if err != nil {
+				panic(err)
+			}
+			assert.Equal(t, c.expected, res)
+		})
+	}
+
+}
+
 // TestConditionFieldOperatorToProm
 func TestConditionFieldOperatorToProm(t *testing.T) {
 	testData := []struct {

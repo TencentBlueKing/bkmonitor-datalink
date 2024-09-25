@@ -11,6 +11,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -501,24 +502,24 @@ loop:
 
 			start := time.Now()
 			rtype := task.Record().RecordType
+			token := task.Record().Token
 			for i := 0; i < task.StageCount(); i++ {
 				// 任务执行应该事务的 一旦中间某一环执行失败那就整体失败
 				stage := task.StageAt(i)
 				logger.Debugf("process original stage: %s, recordType: %s", stage, rtype)
 				derivedRecord, err := c.pipelineMgr.GetProcessor(stage).Process(task.Record())
-				if err == define.ErrSkipEmptyRecord {
-					token := task.Record().Token
+				if errors.Is(err, define.ErrSkipEmptyRecord) {
 					DefaultMetricMonitor.IncSkippedCounter(task.PipelineName(), rtype, token.GetDataID(rtype), stage, token.Original)
 					logger.Warnf("skip empty record '%s' at stage: %v, token: %+v, err: %v", rtype, stage, token, err)
 					goto loop
 				}
-				if err == define.ErrEndOfPipeline {
+				if errors.Is(err, define.ErrEndOfPipeline) {
 					goto loop
 				}
 
 				if err != nil {
 					logger.Errorf("failed to process task: %v", err)
-					DefaultMetricMonitor.IncDroppedCounter(task.PipelineName(), rtype, task.Record().Token.GetDataID(rtype), stage)
+					DefaultMetricMonitor.IncDroppedCounter(task.PipelineName(), rtype, token.GetDataID(rtype), stage)
 					goto loop
 				}
 
@@ -529,7 +530,6 @@ loop:
 				}
 			}
 
-			token := task.Record().Token
 			DefaultMetricMonitor.ObserveHandledDuration(start, task.PipelineName(), rtype, token.GetDataID(rtype))
 
 			t0 := time.Now()
@@ -564,30 +564,29 @@ loop:
 
 			start := time.Now()
 			rtype := task.Record().RecordType
+			token := task.Record().Token
 			for i := 0; i < task.StageCount(); i++ {
 				// 任务执行应该事务的 一旦中间某一环执行失败那就整体失败
 				// 无需再关注是否为 derived 类型
 				stage := task.StageAt(i)
 				logger.Debugf("process derived stage: %s, recordType: %+v", stage, rtype)
 				_, err := c.pipelineMgr.GetProcessor(stage).Process(task.Record())
-				if err == define.ErrSkipEmptyRecord {
-					token := task.Record().Token
+				if errors.Is(err, define.ErrSkipEmptyRecord) {
 					logger.Warnf("skip empty record '%s' at stage: %v, token: %+v, err: %v", rtype, stage, token, err)
 					DefaultMetricMonitor.IncSkippedCounter(task.PipelineName(), rtype, token.GetDataID(rtype), stage, token.Original)
 					goto loop
 				}
-				if err == define.ErrEndOfPipeline {
+				if errors.Is(err, define.ErrEndOfPipeline) {
 					goto loop
 				}
 
 				if err != nil {
 					logger.Errorf("failed to process task: %v", err)
-					DefaultMetricMonitor.IncDroppedCounter(task.PipelineName(), rtype, task.Record().Token.GetDataID(rtype), stage)
+					DefaultMetricMonitor.IncDroppedCounter(task.PipelineName(), rtype, token.GetDataID(rtype), stage)
 					goto loop
 				}
 			}
 
-			token := task.Record().Token
 			DefaultMetricMonitor.ObserveHandledDuration(start, task.PipelineName(), rtype, token.GetDataID(rtype))
 
 			t0 := time.Now()

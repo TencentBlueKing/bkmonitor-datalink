@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -49,7 +50,7 @@ func (c *Operator) reconcileNodeEndpoints(ctx context.Context) {
 func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 	eps := &corev1.Endpoints{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: ConfKubeletName,
+			Name: configs.G().Kubelet.Name,
 			Labels: map[string]string{
 				"k8s-app":                      "kubelet",
 				"app.kubernetes.io/name":       "kubelet",
@@ -90,7 +91,7 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 	eps.Subsets[0].Addresses = addresses
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: ConfKubeletName,
+			Name: configs.G().Kubelet.Name,
 			Labels: map[string]string{
 				"k8s-app":                      "kubelet",
 				"app.kubernetes.io/name":       "kubelet",
@@ -117,15 +118,17 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 		},
 	}
 
-	err = k8sutils.CreateOrUpdateService(ctx, c.client.CoreV1().Services(ConfKubeletNamespace), svc)
+	err = k8sutils.CreateOrUpdateService(ctx, c.client.CoreV1().Services(configs.G().Kubelet.Namespace), svc)
 	if err != nil {
 		return errors.Wrap(err, "synchronizing kubelet service object failed")
 	}
+	logger.Infof("sync kubelet service %s", configs.G().Kubelet)
 
-	err = k8sutils.CreateOrUpdateEndpoints(ctx, c.client.CoreV1().Endpoints(ConfKubeletNamespace), eps)
+	err = k8sutils.CreateOrUpdateEndpoints(ctx, c.client.CoreV1().Endpoints(configs.G().Kubelet.Namespace), eps)
 	if err != nil {
 		return errors.Wrap(err, "synchronizing kubelet endpoints object failed")
 	}
+	logger.Infof("sync kubelet endpoints %s, address count (%d)", configs.G().Kubelet, len(addresses))
 
 	return nil
 }

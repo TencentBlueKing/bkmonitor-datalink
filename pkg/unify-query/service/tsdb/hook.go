@@ -48,19 +48,10 @@ func setDefaultConfig() {
 	viper.SetDefault(VmInfluxCompatibleConfigPath, true)
 	viper.SetDefault(VmUseNativeOrConfigPath, true)
 
-	viper.SetDefault(VmAuthenticationMethodConfigPath, "token")
-
-	viper.SetDefault(OfflineDataArchiveAddressConfigPath, "bk-datalink-offline-data-archive:8089")
-	viper.SetDefault(OfflineDataArchiveTimeoutConfigPath, "10m")
-	viper.SetDefault(OfflineDataArchiveGrpcMaxCallRecvMsgSizeConfigPath, 1024*1024*10)
-	viper.SetDefault(OfflineDataArchiveGrpcMaxCallSendMsgSizeConfigPath, 1024*1024*10)
-
 	viper.SetDefault(BkSqlTimeoutConfigPath, "30s")
-	viper.SetDefault(BkSqlIntervalTimeConfigPath, "300ms")
 	viper.SetDefault(BkSqlLimitConfigPath, 2e6)
 	viper.SetDefault(BkSqlToleranceConfigPath, 5)
 	viper.SetDefault(BkSqlContentTypeConfigPath, "application/json")
-	viper.SetDefault(BkSqlAuthenticationMethodConfigPath, "token")
 
 	viper.SetDefault(EsTimeoutConfigPath, "30s")
 	viper.SetDefault(EsMaxSizeConfigPath, 1e4)
@@ -84,35 +75,18 @@ func initConfig() {
 	InfluxDBRouterPrefix = viper.GetString(InfluxDBRouterPrefixConfigPath)
 
 	// victoriaMetrics 配置
-	VmAddress = viper.GetString(VmAddressConfigPath)
 	VmTimeout = viper.GetDuration(VmTimeoutConfigPath)
-	VmUriPath = viper.GetString(VmUriPathConfigPath)
 	VmContentType = viper.GetString(VmContentTypeConfigPath)
-	VmCode = viper.GetString(VmCodeConfigPath)
-	VmSecret = viper.GetString(VmSecretConfigPath)
-	VmToken = viper.GetString(VmTokenConfigPath)
-	VmAuthenticationMethod = viper.GetString(VmAuthenticationMethodConfigPath)
 	VmMaxConditionNum = viper.GetInt(VmMaxConditionNumConfigPath)
 
 	VmInfluxCompatible = viper.GetBool(VmInfluxCompatibleConfigPath)
 	VmUseNativeOr = viper.GetBool(VmUseNativeOrConfigPath)
 
 	// bksql 配置
-	BkSqlAddress = viper.GetString(BkSqlAddressConfigPath)
 	BkSqlTimeout = viper.GetDuration(BkSqlTimeoutConfigPath)
-	BkSqlIntervalTime = viper.GetDuration(BkSqlIntervalTimeConfigPath)
 	BkSqlLimit = viper.GetInt(BkSqlLimitConfigPath)
 	BkSqlTolerance = viper.GetInt(BkSqlToleranceConfigPath)
-	BkSqlAuthenticationMethod = viper.GetString(BkSqlAuthenticationMethodConfigPath)
 	BkSqlContentType = viper.GetString(BkSqlContentTypeConfigPath)
-	BkSqlCode = viper.GetString(BkSqlCodeConfigPath)
-	BkSqlSecret = viper.GetString(BkSqlSecretConfigPath)
-	BkSqlToken = viper.GetString(BkSqlTokenConfigPath)
-
-	OfflineDataArchiveAddress = viper.GetString(OfflineDataArchiveAddressConfigPath)
-	OfflineDataArchiveTimeout = viper.GetDuration(OfflineDataArchiveTimeoutConfigPath)
-	OfflineDataArchiveGrpcMaxCallRecvMsgSize = viper.GetInt(OfflineDataArchiveGrpcMaxCallRecvMsgSizeConfigPath)
-	OfflineDataArchiveGrpcMaxCallSendMsgSize = viper.GetInt(OfflineDataArchiveGrpcMaxCallSendMsgSizeConfigPath)
 
 	EsTimeout = viper.GetDuration(EsTimeoutConfigPath)
 	EsMaxRouting = viper.GetInt(EsMaxRoutingConfigPath)

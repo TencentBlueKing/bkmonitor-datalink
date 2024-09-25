@@ -56,9 +56,10 @@ func NewTimeSeriesGroupSvc(obj *customreport.TimeSeriesGroup) TimeSeriesGroupSvc
 }
 
 // UpdateTimeSeriesMetrics 从远端存储中同步TS的指标和维度对应关系
-func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, isInRtList bool) (bool, error) {
+func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, queryFromBkData bool) (bool, error) {
+	logger.Infof("UpdateTimeSeriesMetrics stated, vm_rt: %s, query_from_bkdata: %v", vmRt, queryFromBkData)
 	// 如果在白名单中，则通过计算平台获取指标数据
-	if isInRtList {
+	if queryFromBkData {
 		// 获取 vm rt及metric
 		vmMetrics, err := s.QueryMetricAndDimension(vmRt)
 		if err != nil {
@@ -67,11 +68,15 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, isInRtList boo
 		return s.UpdateMetrics(*vmMetrics)
 	}
 	// 获取 redis 中数据，用于后续指标及tag的更新
+	logger.Infof("UpdateTimeSeriesMetrics get redis data for vm_rt: %s", vmRt)
 	metricInfo, err := s.GetRedisData(cfg.GlobalFetchTimeSeriesMetricIntervalSeconds)
+	logger.Infof("UpdateTimeSeriesMetrics get redis data for vm_rt: %s, metric_info: %v", vmRt, metricInfo)
 	if err != nil {
+		logger.Errorf("UpdateTimeSeriesMetrics get redis data for vm_rt: %s, err: %v", vmRt, err)
 		return false, err
 	}
 	if len(metricInfo) == 0 {
+		logger.Infof("UpdateTimeSeriesMetrics get redis data for vm_rt: %s, metric_info is empty", vmRt)
 		return false, nil
 	}
 	// 记录是否有更新，然后推送redis并发布通知
@@ -108,6 +113,7 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 		}]
 	*/
 	// 获取要处理的指标和维度的标识
+	logger.Infof("GetRedisData stated, expired_time: %d,TimeSeriesGroupID: %v,TimeSeriesGroupName: %v", expiredTime, s.TimeSeriesGroupID, s.TimeSeriesGroupName)
 	metricKey := fmt.Sprintf("%s%d", cfg.MetadataMetricDimensionMetricKeyPrefix, s.BkDataID)
 	metricDimensionsKey := fmt.Sprintf("%s%d", cfg.MetadataMetricDimensionKeyPrefix, s.BkDataID)
 	fetchStep := cfg.MetadataMetricDimensionMaxMetricFetchStep
@@ -118,8 +124,10 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 	validBeginTimeStamp := nowTime.Add(-time.Duration(expiredTime) * time.Second).Unix()
 	validBeginTimeStampStr := fmt.Sprintf("%d", validBeginTimeStamp)
 	redisClient := redisStore.GetCacheRedisInstance()
+	logger.Infof("GetRedisData:, metricKey: %s, metricDimensionsKey: %s, fetchStep: %d", metricKey, metricDimensionsKey, fetchStep)
 	// 根据过滤参数，获取总量
 	zcountVal, err := redisClient.ZCount(metricKey, validBeginTimeStampStr, nowTimeStampStr)
+	logger.Infof("GetRedisData:validBeginTimeStampStr: %s,nowTimeStampStr %s, zcountVal: %d", validBeginTimeStampStr, nowTimeStampStr, zcountVal)
 	if err != nil {
 		return nil, fmt.Errorf("redis zcount cmd error, %v", err)
 	}
@@ -134,10 +142,11 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 		}
 		// 0. 首先获取有效期内的所有 metrics
 		metricsWithScores, err := redisClient.ZRangeByScoreWithScores(metricKey, &opt)
+		logger.Infof("GetRedisData:metricKey: %v,metricsWithScores: %v", metricKey, metricsWithScores)
 		// NOTE: 沿用python功能逻辑，容忍一步出错
 		if err != nil {
 			logger.Errorf(
-				"failed to get metrics from storage, params metricKey: %s, min: %s, max: %s",
+				"GetRedisData:failed to get metrics from storage, params metricKey: %s, min: %s, max: %s",
 				metricKey, validBeginTimeStampStr, nowTimeStampStr)
 			continue
 		}
@@ -149,7 +158,7 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 		}
 		dimensions, err := redisClient.HMGet(metricDimensionsKey, fields...)
 		if err != nil {
-			logger.Errorf("failed to get dimensions from metrics, err: %v", err)
+			logger.Errorf("GetRedisData:failed to get dimensions from metrics, err: %v", err)
 			continue
 		}
 		// 2. 尝试更新 metrics 和对应 dimensions(tags)
@@ -162,7 +171,7 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 			// 解析
 			var dimensionsMap map[string]interface{}
 			if err := jsonx.Unmarshal([]byte(fmt.Sprint(dimension)), &dimensionsMap); err != nil {
-				logger.Errorf("failed to parse dimension from dimensions info, dimension: %v", dimension)
+				logger.Errorf("GetRedisData:failed to parse dimension from dimensions info, dimension: %v", dimension)
 				continue
 			}
 			dimensionInfo, ok := dimensionsMap["dimensions"]
@@ -189,6 +198,7 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 func (s *TimeSeriesGroupSvc) UpdateMetrics(MetricInfoList []map[string]interface{}) (bool, error) {
 	isAutoDiscovery, err := s.IsAutoDiscovery()
 	tsmSvc := NewTimeSeriesMetricSvcSvc(nil)
+	logger.Infof("UpdateMetrics: TimeSeriesGroupId: %v,table_id: %v,isAutoDiscovery: %v", s.TimeSeriesGroupID, s.TableID, isAutoDiscovery)
 	// 刷新 ts 表中的指标和维度
 	updated, err := tsmSvc.BulkRefreshTSMetrics(s.TimeSeriesGroupID, s.TableID, MetricInfoList, isAutoDiscovery)
 	if err != nil {

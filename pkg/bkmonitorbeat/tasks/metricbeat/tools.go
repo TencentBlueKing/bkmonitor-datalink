@@ -51,7 +51,6 @@ func (t *Tool) Init(mbConfig *configs.MetricBeatConfig, globalConf define.Config
 		"period":            mbConfig.Period,
 		"temp_file_pattern": t.tempFilePattern,
 		"workers":           mbConfig.Workers,
-		"enable_align_ts":   mbConfig.EnableAlignTs,
 	})
 	if err != nil {
 		return errors.Wrap(err, "merge modules failed")
@@ -212,7 +211,7 @@ func alignTs(period, nowSecs int) int {
 	return n
 }
 
-func (t *Tool) waitUntil() {
+func (t *Tool) waitTsAlign() {
 	n := alignTs(int(t.mbConfig.Period.Seconds()), time.Now().Second())
 	if n <= 0 {
 		return
@@ -220,22 +219,33 @@ func (t *Tool) waitUntil() {
 	time.Sleep(time.Duration(n) * time.Second)
 }
 
+func (t *Tool) waitTsRandom() {
+	mod := time.Now().Nanosecond() % int(t.mbConfig.Period.Seconds())
+	if mod > 0 {
+		mod = mod / 2
+		time.Sleep(time.Duration(mod+1) * time.Second)
+	}
+}
+
 func (t *Tool) Run(ctx context.Context, e chan<- define.Event) error {
-	if t.mbConfig.EnableAlignTs {
-		t.waitUntil() // 采集时刻对齐
+	switch {
+	case t.mbConfig.EnableAlignTs:
+		t.waitTsAlign() // 采集时刻对齐
+	case t.mbConfig.SpreadWorkload:
+		t.waitTsRandom() // 随机打散任务
 	}
 
 	keepOneDimension := false
 	var batchsize int
 	var maxBatches int
 
-	globalConfig, ok := ctx.Value("gConfig").(*configs.Config)
+	gConfig, ok := ctx.Value("gConfig").(*configs.Config)
 	if !ok {
 		logger.Error("get global config failed")
 	} else {
-		keepOneDimension = globalConfig.KeepOneDimension
-		batchsize = globalConfig.MetricsBatchSize
-		maxBatches = globalConfig.MaxMetricBatches
+		keepOneDimension = gConfig.KeepOneDimension
+		batchsize = gConfig.MetricsBatchSize
+		maxBatches = gConfig.MaxMetricBatches
 	}
 
 	// 设置 batchsize 缺省值

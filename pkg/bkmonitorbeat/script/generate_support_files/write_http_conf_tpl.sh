@@ -60,5 +60,9 @@ tasks: {% for task in tasks %}
         # 内容匹配方式
         response_format: {{ step.response_format | default("eq", true) }}
         response_code: {{ step.response_code }}{% endfor %}{% endfor %}
+        {% if labels %}labels:
+        {% for label in labels %}{% for key, value in label.items() %}{{"-" if loop.first else " "}} {{key}}: "{{ value }}"
+        {% endfor %}{% endfor %}
+        {% endif %}
 EOF
 }

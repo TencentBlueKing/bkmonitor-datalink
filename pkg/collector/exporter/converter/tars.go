@@ -18,6 +18,7 @@ import (
 	"github.com/elastic/beats/libbeat/common"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -149,8 +150,8 @@ func (c tarsConverter) handleStat(token define.Token, dataID int32, ip string, d
 		role = "client"
 	}
 	for head, body := range sd.Stats {
-		masterName, _ := define.TokenFromString(head.MasterName)
-		slaveName, _ := define.TokenFromString(head.SlaveName)
+		masterName, _ := tokenparser.FromString(head.MasterName)
+		slaveName, _ := tokenparser.FromString(head.SlaveName)
 		dims := map[string]string{
 			"role":           role,
 			"master_name":    masterName,
@@ -191,7 +192,7 @@ func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, d
 	events := make([]define.Event, 0)
 	props := data.Data.(*define.TarsPropertyData).Props
 	for head, body := range props {
-		moduleName, _ := define.TokenFromString(head.ModuleName)
+		moduleName, _ := tokenparser.FromString(head.ModuleName)
 		originDims := map[string]string{
 			"ip":             head.Ip,
 			"module_name":    moduleName,

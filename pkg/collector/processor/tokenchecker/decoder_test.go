@@ -16,6 +16,8 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metacache"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 )
 
 func TestFixedDecoder(t *testing.T) {
@@ -56,8 +58,13 @@ var aes256TokenDecoderConfig = Config{
 
 func TestAes256Decoder(t *testing.T) {
 	decoder := NewTokenDecoder(aes256TokenDecoderConfig)
-	assert.Equal(t, decoderTypeAcs256, decoder.Type())
+	assert.Equal(t, decoderTypeAes256, decoder.Type())
 	assert.False(t, decoder.Skip())
+
+	const (
+		token1 = "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="
+		token2 = "Ymtia2JrYmtia2JrYmtia/0ZJ3tXGU6OT2oEqyruVbvWr0kNl7AzgSWPsnVzNBYWRULf8XE/mtQBHLas+jYCrw=="
+	)
 
 	cases := []struct {
 		Input     string
@@ -65,9 +72,9 @@ func TestAes256Decoder(t *testing.T) {
 		ErrPrefix string
 	}{
 		{
-			Input: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			Input: token1,
 			Token: define.Token{
-				Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+				Original:      token1,
 				TracesDataId:  1001,
 				MetricsDataId: 1002,
 				LogsDataId:    1003,
@@ -76,9 +83,9 @@ func TestAes256Decoder(t *testing.T) {
 			},
 		},
 		{
-			Input: "Ymtia2JrYmtia2JrYmtia/0ZJ3tXGU6OT2oEqyruVbvWr0kNl7AzgSWPsnVzNBYWRULf8XE/mtQBHLas+jYCrw==",
+			Input: token2,
 			Token: define.Token{
-				Original:       "Ymtia2JrYmtia2JrYmtia/0ZJ3tXGU6OT2oEqyruVbvWr0kNl7AzgSWPsnVzNBYWRULf8XE/mtQBHLas+jYCrw==",
+				Original:       token2,
 				TracesDataId:   1001,
 				MetricsDataId:  1002,
 				LogsDataId:     1003,
@@ -117,6 +124,168 @@ func TestAes256Decoder(t *testing.T) {
 	}
 }
 
+func TestAes256WithMetaDecoder(t *testing.T) {
+	decoderConfig := Config{
+		Type:       "aes256WithMeta",
+		Salt:       "bk",
+		DecodedIv:  "bkbkbkbkbkbkbkbk",
+		DecodedKey: "81be7fc6-5476-4934-9417-6d4d593728db",
+	}
+
+	const (
+		token1 = "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="
+		token2 = "Ymtia2JrYmtia2JrYmtia/0ZJ3tXGU6OT2oEqyruVbvWr0kNl7AzgSWPsnVzNBYWRULf8XE/mtQBHLas+jYCrw=="
+		token3 = "a1b82bada7904f0d92ec8390ab192cba"
+	)
+
+	cacher := metacache.New()
+	cacher.Set(token1, define.Token{
+		ProfilesDataId: 10001,
+		ProxyDataId:    10002,
+		BeatDataId:     10003,
+	})
+	cacher.Set(token3, define.Token{
+		AppName:        "foobar",
+		BizId:          10,
+		TracesDataId:   2001,
+		MetricsDataId:  2002,
+		LogsDataId:     2003,
+		ProfilesDataId: 2004,
+	})
+
+	decoder := newAes256WithMetaTokenDecoder(decoderConfig, cacher)
+	assert.Equal(t, decoderTypeAes256WithMeta, decoder.Type())
+	assert.False(t, decoder.Skip())
+
+	cases := []struct {
+		Input     string
+		Token     define.Token
+		ErrPrefix string
+	}{
+		{
+			Input: token1,
+			Token: define.Token{
+				Original:       token1,
+				TracesDataId:   1001,
+				MetricsDataId:  1002,
+				LogsDataId:     1003,
+				BizId:          2,
+				ProfilesDataId: 10001,
+				ProxyDataId:    10002,
+				BeatDataId:     10003,
+				AppName:        "oneapm-appname",
+			},
+		},
+		{
+			Input: token2,
+			Token: define.Token{
+				Original:       token2,
+				TracesDataId:   1001,
+				MetricsDataId:  1002,
+				LogsDataId:     1003,
+				ProfilesDataId: 1004,
+				BizId:          2,
+				AppName:        "oneapm-appname",
+			},
+		},
+		{
+			Input:     "YmstY29sbGVjdG9y",
+			Token:     define.Token{},
+			ErrPrefix: "invalid prefix-enc",
+		},
+		{
+			Input: token3,
+			Token: define.Token{
+				AppName:        "foobar",
+				BizId:          10,
+				TracesDataId:   2001,
+				MetricsDataId:  2002,
+				LogsDataId:     2003,
+				ProfilesDataId: 2004,
+			},
+		},
+	}
+
+	for _, c := range cases {
+		token, err := decoder.Decode(c.Input)
+		switch err {
+		case nil:
+			assert.Empty(t, c.ErrPrefix)
+		default:
+			assert.True(t, strings.Contains(err.Error(), c.ErrPrefix))
+		}
+
+		assert.Equal(t, c.Token, token)
+	}
+}
+
+func TestAes256WithMetaDecoderAndFixedBackup(t *testing.T) {
+	newConfig := func(mustEmptyToken bool) Config {
+		return Config{
+			// aes256
+			Type:       "aes256WithMeta|fixed",
+			Salt:       "bk",
+			DecodedIv:  "bkbkbkbkbkbkbkbk",
+			DecodedKey: "81be7fc6-5476-4934-9417-6d4d593728db",
+
+			// fixed
+			MustEmptyToken: mustEmptyToken,
+			TracesDataId:   3001,
+			MetricsDataId:  3002,
+			LogsDataId:     3003,
+			ProfilesDataId: 3004,
+		}
+	}
+
+	cases := []struct {
+		Input     string
+		Token     define.Token
+		ErrPrefix string
+		Decoder   combinedTokenDecoder
+	}{
+		{
+			Input: "",
+			Token: define.Token{
+				TracesDataId:   3001,
+				MetricsDataId:  3002,
+				LogsDataId:     3003,
+				ProfilesDataId: 3004,
+			},
+			Decoder: newCombinedTokenDecoder(newConfig(true)),
+		},
+		{
+			Input:     "foobar",
+			Token:     define.Token{},
+			Decoder:   newCombinedTokenDecoder(newConfig(true)),
+			ErrPrefix: "fixed tokenDecoder required empty token string",
+		},
+		{
+			Input: "foobar",
+			Token: define.Token{
+				TracesDataId:   3001,
+				MetricsDataId:  3002,
+				LogsDataId:     3003,
+				ProfilesDataId: 3004,
+			},
+			Decoder: newCombinedTokenDecoder(newConfig(false)),
+		},
+	}
+
+	for _, c := range cases {
+		token, err := c.Decoder.Decode(c.Input)
+		switch err {
+		case nil:
+			assert.Empty(t, c.ErrPrefix)
+		default:
+			assert.True(t, strings.Contains(err.Error(), c.ErrPrefix))
+		}
+
+		assert.Len(t, c.Decoder.decoders, 2)
+		assert.Equal(t, c.Token, token)
+		assert.Equal(t, "aes256WithMeta|fixed", c.Decoder.Type())
+	}
+}
+
 func TestProxyTokenDecoder(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		decoder := NewTokenDecoder(Config{
@@ -127,7 +296,7 @@ func TestProxyTokenDecoder(t *testing.T) {
 		assert.Equal(t, decoderTypeProxy, decoder.Type())
 		assert.False(t, decoder.Skip())
 
-		token, err := decoder.Decode(define.WrapProxyToken(define.Token{
+		token, err := decoder.Decode(tokenparser.WrapProxyToken(define.Token{
 			Original:    "test_proxy_token",
 			ProxyDataId: 999,
 		}))
@@ -143,7 +312,7 @@ func TestProxyTokenDecoder(t *testing.T) {
 			ProxyToken:  "test_proxy_token",
 		})
 
-		token, err := decoder.Decode(define.WrapProxyToken(define.Token{}))
+		token, err := decoder.Decode(tokenparser.WrapProxyToken(define.Token{}))
 		assert.Equal(t, "reject empty token", err.Error())
 		assert.Equal(t, int32(0), token.ProxyDataId)
 		assert.Equal(t, "", token.Original)
@@ -156,7 +325,7 @@ func TestProxyTokenDecoder(t *testing.T) {
 			ProxyToken:  "test_proxy_token",
 		})
 
-		token, err := decoder.Decode(define.WrapProxyToken(define.Token{
+		token, err := decoder.Decode(tokenparser.WrapProxyToken(define.Token{
 			Original:    "invalid",
 			ProxyDataId: 999,
 		}))

@@ -1,0 +1,5 @@
+[
+  "__name__=apm_service_with_apm_service_instance_relation,apm_service_name=testModule,apm_application_name=testApp,apm_service_instance_name=python:testModule:testAppName:192.168.0.1:",
+  "__name__=apm_service_instance_with_k8s_address_relation,apm_service_name=testModule,apm_application_name=testApp,apm_service_instance_name=python:testModule:testAppName:192.168.0.1:,address=,bcs_cluster_id=",
+  "__name__=apm_service_instance_with_system_relation,apm_service_name=testModule,apm_application_name=testApp,apm_service_instance_name=python:testModule:testAppName:192.168.0.1:,bk_target_ip=127.0.0.1"
+]

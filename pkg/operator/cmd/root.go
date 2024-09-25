@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/automaxprocs/maxprocs"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 )
 
 func init() {
@@ -26,7 +26,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVarP(&config.CustomConfigFilePath, "", "c", "", "config file (default $HOME/.bkmonitor-operator.yaml)")
+	rootCmd.PersistentFlags().StringVarP(&define.ConfigFilePath, "", "c", "", "config file path")
 }
 
 func Execute() error {

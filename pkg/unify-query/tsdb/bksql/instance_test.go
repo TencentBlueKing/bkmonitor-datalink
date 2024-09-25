@@ -27,15 +27,19 @@ func TestInstance_QueryRaw(t *testing.T) {
 
 	ctx := context.Background()
 	mock.Init()
-	cli := mockClient()
 
-	ins := &Instance{
-		Ctx:          ctx,
-		IntervalTime: 3e2 * time.Millisecond,
-		Timeout:      3e1 * time.Second,
-		Client:       cli,
-		MaxLimit:     1e4,
-		Tolerance:    5,
+	ins, err := NewInstance(ctx, Options{
+		Address:   "localhost",
+		Timeout:   time.Minute,
+		MaxLimit:  1e4,
+		Tolerance: 5,
+	})
+	if err != nil {
+		log.Fatalf(ctx, err.Error())
+	}
+	ins.client = mockClient()
+	if err != nil {
+		log.Fatalf(ctx, err.Error())
 	}
 	end := time.Now()
 	start := end.Add(time.Minute * -5)
@@ -82,7 +86,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 			if c.query.Field == "" {
 				c.query.Field = field
 			}
-			ss := ins.QueryRaw(ctx, c.query, start, end)
+			ss := ins.QuerySeriesSet(ctx, c.query, start, end)
 			for ss.Next() {
 				series := ss.At()
 				lbs := series.Labels()
@@ -178,10 +182,7 @@ func TestInstance_bkSql(t *testing.T) {
 		},
 	}
 
-	ins := Instance{
-		MaxLimit:  2e5,
-		Tolerance: 5,
-	}
+	ins := &Instance{}
 
 	for i, c := range testCases {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {

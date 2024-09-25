@@ -342,6 +342,12 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 				err = msgp.WrapError(err, "StorageName")
 				return
 			}
+		case "StorageType":
+			z.StorageType, err = dc.ReadString()
+			if err != nil {
+				err = msgp.WrapError(err, "StorageType")
+				return
+			}
 		case "ClusterName":
 			z.ClusterName, err = dc.ReadString()
 			if err != nil {
@@ -523,9 +529,9 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
-	// map header, size 15
+	// map header, size 16
 	// write "StorageId"
-	err = en.Append(0x8f, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
+	err = en.Append(0xde, 0x0, 0x10, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
 	if err != nil {
 		return
 	}
@@ -542,6 +548,16 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 	err = en.WriteString(z.StorageName)
 	if err != nil {
 		err = msgp.WrapError(err, "StorageName")
+		return
+	}
+	// write "StorageType"
+	err = en.Append(0xab, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x54, 0x79, 0x70, 0x65)
+	if err != nil {
+		return
+	}
+	err = en.WriteString(z.StorageType)
+	if err != nil {
+		err = msgp.WrapError(err, "StorageType")
 		return
 	}
 	// write "ClusterName"
@@ -736,13 +752,16 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 // MarshalMsg implements msgp.Marshaler
 func (z *ResultTableDetail) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 15
+	// map header, size 16
 	// string "StorageId"
-	o = append(o, 0x8f, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
+	o = append(o, 0xde, 0x0, 0x10, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
 	o = msgp.AppendInt64(o, z.StorageId)
 	// string "StorageName"
 	o = append(o, 0xab, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x4e, 0x61, 0x6d, 0x65)
 	o = msgp.AppendString(o, z.StorageName)
+	// string "StorageType"
+	o = append(o, 0xab, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x54, 0x79, 0x70, 0x65)
+	o = msgp.AppendString(o, z.StorageType)
 	// string "ClusterName"
 	o = append(o, 0xab, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x4e, 0x61, 0x6d, 0x65)
 	o = msgp.AppendString(o, z.ClusterName)
@@ -834,6 +853,12 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			z.StorageName, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "StorageName")
+				return
+			}
+		case "StorageType":
+			z.StorageType, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "StorageType")
 				return
 			}
 		case "ClusterName":
@@ -1018,7 +1043,7 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *ResultTableDetail) Msgsize() (s int) {
-	s = 1 + 10 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.StorageName) + 12 + msgp.StringPrefixSize + len(z.ClusterName) + 3 + msgp.StringPrefixSize + len(z.DB) + 8 + msgp.StringPrefixSize + len(z.TableId) + 12 + msgp.StringPrefixSize + len(z.Measurement) + 5 + msgp.StringPrefixSize + len(z.VmRt) + 7 + msgp.ArrayHeaderSize
+	s = 3 + 10 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.StorageName) + 12 + msgp.StringPrefixSize + len(z.StorageType) + 12 + msgp.StringPrefixSize + len(z.ClusterName) + 3 + msgp.StringPrefixSize + len(z.DB) + 8 + msgp.StringPrefixSize + len(z.TableId) + 12 + msgp.StringPrefixSize + len(z.Measurement) + 5 + msgp.StringPrefixSize + len(z.VmRt) + 7 + msgp.ArrayHeaderSize
 	for za0001 := range z.Fields {
 		s += msgp.StringPrefixSize + len(z.Fields[za0001])
 	}

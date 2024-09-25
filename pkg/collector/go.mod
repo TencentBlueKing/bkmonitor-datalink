@@ -31,6 +31,7 @@ require (
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pkg/errors v0.9.1
 	github.com/planetscale/vtprotobuf v0.6.0
+	github.com/prometheus-operator/prometheus-operator v0.59.1
 	github.com/prometheus/client_golang v1.13.0
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.37.0
@@ -49,6 +50,7 @@ require (
 	google.golang.org/grpc v1.63.1
 	google.golang.org/protobuf v1.33.0
 	gopkg.in/yaml.v2 v2.4.0
+	k8s.io/api v0.25.0
 	k8s.io/apimachinery v0.25.0
 	k8s.io/client-go v0.25.0
 	lukechampine.com/frand v1.4.2
@@ -61,7 +63,6 @@ require (
 	github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da // indirect
 	github.com/alecthomas/units v0.0.0-20211218093645-b94a6e3cc137 // indirect
 	github.com/armon/go-metrics v0.3.10 // indirect
-	github.com/asaskevich/EventBus v0.0.0-20200907212545-49d423059eef // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
@@ -86,7 +87,6 @@ require (
 	github.com/elastic/gosigar v0.11.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.9.0 // indirect
 	github.com/fatih/color v1.13.0 // indirect
-	github.com/fsnotify/fsnotify v1.5.4 // indirect
 	github.com/garyburd/redigo v1.6.2 // indirect
 	github.com/go-kit/log v0.2.1 // indirect
 	github.com/go-logfmt/logfmt v0.5.1 // indirect
@@ -112,7 +112,6 @@ require (
 	github.com/hashicorp/go-rootcerts v1.0.2 // indirect
 	github.com/hashicorp/go-uuid v1.0.2 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
-	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/hashicorp/serf v0.9.7 // indirect
 	github.com/imdario/mergo v0.3.12 // indirect
 	github.com/inconshreveable/mousetrap v1.0.0 // indirect
@@ -126,7 +125,6 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.14.4 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
-	github.com/magiconair/properties v1.8.6 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-colorable v0.1.12 // indirect
 	github.com/mattn/go-isatty v0.0.14 // indirect
@@ -143,23 +141,17 @@ require (
 	github.com/opencontainers/runtime-spec v1.0.3-0.20210326190908-1c3f411f0417 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
 	github.com/openzipkin/zipkin-go v0.4.0 // indirect
-	github.com/pelletier/go-toml v1.9.4 // indirect
-	github.com/pelletier/go-toml/v2 v2.0.0-beta.8 // indirect
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
 	github.com/philhofer/fwd v1.1.1 // indirect
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus-operator/prometheus-operator v0.59.1 // indirect
 	github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring v0.59.1 // indirect
 	github.com/prometheus-operator/prometheus-operator/pkg/client v0.59.1 // indirect
 	github.com/prometheus/procfs v0.8.0 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/spf13/afero v1.9.2 // indirect
 	github.com/spf13/cobra v1.4.0 // indirect
-	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
-	github.com/spf13/viper v1.11.0 // indirect
-	github.com/subosito/gotenv v1.2.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/uber/jaeger-client-go v2.30.0+incompatible // indirect
 	github.com/uber/jaeger-lib v2.4.1+incompatible // indirect
@@ -186,11 +178,9 @@ require (
 	google.golang.org/genproto v0.0.0-20240227224415-6ceb2ff114de // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240227224415-6ceb2ff114de // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	gopkg.in/ini.v1 v1.66.6 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	howett.net/plist v0.0.0-20181124034731-591f970eefbb // indirect
-	k8s.io/api v0.25.0 // indirect
 	k8s.io/apiextensions-apiserver v0.25.0 // indirect
 	k8s.io/component-base v0.25.0 // indirect
 	k8s.io/klog/v2 v2.80.0 // indirect

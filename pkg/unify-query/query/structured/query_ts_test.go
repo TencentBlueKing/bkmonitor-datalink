@@ -40,11 +40,9 @@ func TestQueryToMetric(t *testing.T) {
 	storageIdInt, _ := strconv.ParseInt(storageID, 10, 64)
 
 	ctx := context.Background()
-	mock.SetRedisClient(ctx, "test")
+	mock.SetRedisClient(ctx)
 	mock.SetSpaceTsDbMockData(
 		ctx,
-		"query_ts_test.db",
-		"query_ts_test",
 		ir.SpaceInfo{
 			spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
 		},
@@ -236,8 +234,8 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 }`,
 	)
 
-	mock.SetRedisClient(ctx, "")
-	mock.SetSpaceTsDbMockData(ctx, "demo", "vm-query", ir.SpaceInfo{
+	mock.SetRedisClient(ctx)
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
 		"vm-query": ir.Space{
 			"system.cpu_detail": &ir.SpaceResultTable{
 				TableId: "system.cpu_detail",

@@ -11,58 +11,42 @@ package objectsref
 
 import (
 	"sync"
-	"time"
+	"sync/atomic"
 )
-
-type namespaceKind struct {
-	namespace string
-	kind      string
-}
 
 var (
-	nsUpdated     time.Time
-	nkWorkloadMut sync.Mutex
-	nkWorkload    = map[namespaceKind]int{}
+	workloadMapMut sync.Mutex
+	workloadMap    map[string]int
 )
 
-func GetWorkloadInfo() (map[string]int, time.Time) {
-	ret := make(map[string]int)
-	nkWorkloadMut.Lock()
-	for k, v := range nkWorkload {
-		ret[k.kind] += v
+func GetWorkloadCount() map[string]int {
+	workloadMapMut.Lock()
+	defer workloadMapMut.Unlock()
+
+	counts := make(map[string]int)
+	for k, v := range workloadMap {
+		counts[k] = v
 	}
-	nkWorkloadMut.Unlock()
-	return ret, nsUpdated
+	return counts
 }
 
-type metricMonitor struct{}
+func setWorkloadCount(counts map[string]int) {
+	workloadMapMut.Lock()
+	defer workloadMapMut.Unlock()
 
-func newMetricMonitor() *metricMonitor {
-	return &metricMonitor{}
+	workloadMap = counts
 }
 
-func (mm *metricMonitor) SetWorkloadCount(v int, namespace, kind string) {
-	nkWorkloadMut.Lock()
-	nsUpdated = time.Now()
-	nkWorkload[namespaceKind{namespace: namespace, kind: kind}] = v
-	nkWorkloadMut.Unlock()
-}
+var clusterNode atomic.Int64
 
-var (
-	clusterNode          int
-	clusterNodeUpdatedAt time.Time
-)
-
-func GetClusterNodeInfo() (int, time.Time) {
-	return clusterNode, clusterNodeUpdatedAt
+func GetClusterNodeCount() int {
+	return int(clusterNode.Load())
 }
 
 func incClusterNodeCount() {
-	clusterNode++
-	clusterNodeUpdatedAt = time.Now()
+	clusterNode.Add(1)
 }
 
 func decClusterNodeCount() {
-	clusterNode--
-	clusterNodeUpdatedAt = time.Now()
+	clusterNode.Add(-1)
 }

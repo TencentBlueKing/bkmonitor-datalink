@@ -20,11 +20,10 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/semaphore"
 
-	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
+	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // DistributiveWindowOptions all configs
@@ -223,6 +222,7 @@ loop:
 				subWindow.processor = Processor{}
 			}
 			w.subWindows = make(map[int]*distributiveSubWindow)
+
 			break loop
 		}
 	}
@@ -334,6 +334,8 @@ func (d *distributiveSubWindow) detectNotify() {
 				continue
 			}
 			trace := v.(CollectTrace)
+			// gc
+			trace.Runtime = nil
 			d.eventChan <- Event{CollectTrace: trace, ReleaseCount: int64(trace.Graph.Length())}
 		}
 	}
@@ -357,7 +359,7 @@ loop:
 
 func (d *distributiveSubWindow) add(span StandardSpan) {
 	if err := d.sem.Acquire(d.ctx, 1); err != nil {
-		logger.Errorf("DataId: %s subWindow[%d] acquire semphore failed, error: %s, skip span", d.dataId, d.id, err)
+		d.logger.Errorf("DataId: %s subWindow[%d] acquire semphore failed, error: %s, skip span", d.dataId, d.id, err)
 		return
 	}
 

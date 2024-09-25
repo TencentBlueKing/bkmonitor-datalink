@@ -45,7 +45,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 		tablesCh = make(chan *influxdb.Tables, 1)
 		recvDone = make(chan struct{})
 
-		resp        = &PromData{}
+		resp        = NewPromData(query.ResultColumns)
 		totalTables = influxdb.NewTables()
 	)
 

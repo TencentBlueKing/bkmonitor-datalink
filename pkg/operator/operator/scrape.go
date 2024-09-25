@@ -42,6 +42,7 @@ type scrapeStat struct {
 type scrapeAnalyze struct {
 	Metric string `json:"metric"`
 	Count  int    `json:"count"`
+	Sample string `json:"sample"`
 }
 
 func (s scrapeStat) ID() string {
@@ -51,7 +52,7 @@ func (s scrapeStat) ID() string {
 func parseMetricName(s string) string {
 	i := strings.Index(s, "{")
 	if i > 0 {
-		return strings.TrimSpace(s[0:i])
+		return strings.TrimSpace(s[:i])
 	}
 
 	parts := strings.Fields(s)
@@ -64,14 +65,16 @@ func parseMetricName(s string) string {
 	return ""
 }
 
-func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor string, workers int) []scrapeAnalyze {
+func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor string, workers int, topn int) []scrapeAnalyze {
 	ch := c.scrapeLines(ctx, namespace, monitor, workers)
 
 	stats := make(map[string]int)
+	sample := make(map[string]string)
 	for line := range ch {
 		s := parseMetricName(line)
 		if s != "" {
 			stats[s]++
+			sample[s] = line
 		}
 	}
 
@@ -80,12 +83,20 @@ func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor string,
 		ret = append(ret, scrapeAnalyze{
 			Metric: k,
 			Count:  v,
+			Sample: sample[k],
 		})
 	}
 
 	sort.Slice(ret, func(i, j int) bool {
 		return ret[i].Count > ret[j].Count
 	})
+
+	if topn > 0 {
+		if len(ret) > topn {
+			return ret[:topn]
+		}
+	}
+
 	return ret
 }
 

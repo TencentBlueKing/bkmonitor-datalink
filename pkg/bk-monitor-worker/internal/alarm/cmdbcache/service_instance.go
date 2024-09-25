@@ -30,13 +30,13 @@ import (
 	"strings"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (

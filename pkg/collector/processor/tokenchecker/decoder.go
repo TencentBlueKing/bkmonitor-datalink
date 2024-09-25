@@ -154,7 +154,7 @@ func (d fixedTokenDecoder) Decode(s string) (define.Token, error) {
 
 	// 要求一定是空字符串才通过
 	if d.mustEmptyToken && s != "" {
-		return define.Token{}, errors.New("invalid token: empty token")
+		return define.Token{}, errors.New("invalid token: not empty token")
 	}
 
 	return d.token, nil

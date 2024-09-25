@@ -486,6 +486,65 @@ func TestSpaceRedisSvc_composeAllTypeTableIds(t *testing.T) {
 	}
 }
 
+func TestSpaceRedisSvc_GetRelatedSpacesAndBizIds(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 准备测试用数据
+	resourceIdTest1 := "1"
+	objs := []space.SpaceResource{
+		{
+			SpaceTypeId:  "bkci",
+			SpaceId:      "test6",
+			ResourceType: "bkcc",
+			ResourceId:   &resourceIdTest1,
+		},
+		{
+			SpaceTypeId:  "bkci",
+			SpaceId:      "test7",
+			ResourceType: "bkcc",
+			ResourceId:   &resourceIdTest1,
+		},
+	}
+	db.Delete(&objs)
+	for _, obj := range objs {
+		err := obj.Create(db)
+		assert.NoError(t, err)
+	}
+
+	relatedSpaceIds, err := NewSpacePusher().GetRelatedSpaces("bkcc", "1", "bkci")
+	assert.NoError(t, err)
+	assert.Equal(t, len(relatedSpaceIds), 2)
+	assert.Equal(t, relatedSpaceIds[0], "test6")
+	assert.Equal(t, relatedSpaceIds[1], "test7")
+
+	spaceObjs := []space.Space{
+		{
+			SpaceTypeId: "bkci",
+			SpaceId:     "test6",
+			SpaceName:   "testSpace6",
+			Id:          1050,
+		},
+		{
+			SpaceTypeId: "bkci",
+			SpaceId:     "test7",
+			SpaceName:   "testSpace7",
+			Id:          1051,
+		},
+	}
+	db.Delete(&spaceObjs)
+	for _, obj := range spaceObjs {
+		err := obj.Create(db)
+		assert.NoError(t, err)
+	}
+	relatedBizIds, err := NewSpacePusher().getBizIdsBySpace("bkcc", relatedSpaceIds)
+	assert.NoError(t, err)
+	assert.Equal(t, len(relatedBizIds), 2)
+	assert.Equal(t, relatedBizIds[0], -1050)
+	assert.Equal(t, relatedBizIds[1], -1051)
+
+}
+
 func TestSpaceRedisSvc_composeBcsSpaceBizTableIds(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB

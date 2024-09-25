@@ -39,7 +39,7 @@ const (
 
 func NewTokenDecoder(c Config) TokenDecoder {
 	if strings.Contains(c.Type, combinedDecoderSep) {
-		// 如果存在分割的多种 tokendeocer 串联
+		// 如果存在分割的多种 token decoder 串联并按序解析
 		return newCombinedTokenDecoder(c)
 	}
 

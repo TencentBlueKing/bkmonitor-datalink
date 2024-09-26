@@ -305,6 +305,10 @@ func (d *aes256TokenDecoder) decode(s string) (define.Token, error) {
 		return token, err
 	}
 
+	if len(d.iv) != block.BlockSize() {
+		return token, errors.Wrapf(err, "want %d but got %d", len(d.iv), block.BlockSize())
+	}
+
 	enc = enc[aes.BlockSize:]
 	stream := cipher.NewCBCDecrypter(block, d.iv)
 

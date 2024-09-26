@@ -321,10 +321,12 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	seriesNum := 0
 	pointsNum := 0
 
+	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
+
 	switch v := res.(type) {
 	case promPromql.Matrix:
 		for index, series := range v {
-			tables.Add(promql.NewTable(index, series, structured.QueryRawFormat(ctx)))
+			tables.Add(promql.NewTable(index, series, decodeFunc))
 
 			seriesNum++
 			pointsNum += len(series.Points)
@@ -332,7 +334,7 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	case promPromql.Vector:
 		for index, series := range v {
 			// 层级需要转换
-			tables.Add(promql.NewTableWithSample(index, series, structured.QueryRawFormat(ctx)))
+			tables.Add(promql.NewTableWithSample(index, series, decodeFunc))
 
 			seriesNum++
 			pointsNum++
@@ -494,10 +496,12 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 	seriesNum := 0
 	pointsNum := 0
 
+	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
+
 	switch v := res.(type) {
 	case promPromql.Matrix:
 		for index, series := range v {
-			tables.Add(promql.NewTable(index, series, structured.QueryRawFormat(ctx)))
+			tables.Add(promql.NewTable(index, series, decodeFunc))
 
 			seriesNum++
 			pointsNum += len(series.Points)
@@ -505,7 +509,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 	case promPromql.Vector:
 		for index, series := range v {
 			// 层级需要转换
-			tables.Add(promql.NewTableWithSample(index, series, structured.QueryRawFormat(ctx)))
+			tables.Add(promql.NewTableWithSample(index, series, decodeFunc))
 
 			seriesNum++
 			pointsNum++
@@ -661,16 +665,18 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	seriesNum := 0
 	pointsNum := 0
 
+	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
+
 	switch v := res.(type) {
 	case promPromql.Matrix:
 		for index, series := range v {
-			tables.Add(promql.NewTable(index, series, structured.QueryRawFormat(ctx)))
+			tables.Add(promql.NewTable(index, series, decodeFunc))
 			seriesNum++
 			pointsNum += len(series.Points)
 		}
 	case promPromql.Vector:
 		for index, series := range v {
-			tables.Add(promql.NewTableWithSample(index, series, structured.QueryRawFormat(ctx)))
+			tables.Add(promql.NewTableWithSample(index, series, decodeFunc))
 			seriesNum++
 			pointsNum++
 		}

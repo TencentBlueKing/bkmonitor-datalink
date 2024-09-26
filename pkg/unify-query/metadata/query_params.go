@@ -11,11 +11,13 @@ package metadata
 
 import (
 	"context"
+	"sync"
 )
 
 // QueryParams 查询信息
 type QueryParams struct {
-	ctx context.Context
+	ctx  context.Context
+	lock sync.Mutex
 
 	Start int64
 	End   int64
@@ -27,33 +29,32 @@ type QueryParams struct {
 
 func (q *QueryParams) SetIsSkipK8s(isSkipK8s bool) *QueryParams {
 	q.IsSkipK8s = isSkipK8s
-	q.set()
 	return q
 }
 
 func (q *QueryParams) SetIsReference(isReference bool) *QueryParams {
 	q.IsReference = isReference
-	q.set()
 	return q
 }
 
 func (q *QueryParams) SetDataSource(ds string) *QueryParams {
+	q.lock.Lock()
 	q.DataSource[ds] = struct{}{}
-	q.set()
+	q.lock.Unlock()
 	return q
 }
 
 func (q *QueryParams) SetTime(start, end int64) *QueryParams {
 	q.Start = start
 	q.End = end
-	q.set()
 	return q
 }
 
-func (q *QueryParams) set() {
+func (q *QueryParams) set() *QueryParams {
 	if md != nil {
 		md.set(q.ctx, QueryParamsKey, q)
 	}
+	return q
 }
 
 // GetQueryParams 读取
@@ -61,13 +62,14 @@ func GetQueryParams(ctx context.Context) *QueryParams {
 	if md != nil {
 		r, ok := md.get(ctx, QueryParamsKey)
 		if ok {
-			if v, ok := r.(*QueryParams); ok {
-				return v
+			if qp, ok := r.(*QueryParams); ok {
+				return qp
 			}
 		}
 	}
-	return &QueryParams{
+
+	return (&QueryParams{
 		ctx:        ctx,
 		DataSource: make(map[string]struct{}),
-	}
+	}).set()
 }

@@ -21,16 +21,16 @@ import (
 
 func TestGetPrivilegedConfig(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	w := &Watcher{
+	w := &dataIDWatcher{
 		ctx:     ctx,
 		cancel:  cancel,
 		dataids: make(map[string]IDSpec),
 	}
 
 	s := &Sidecar{
-		ctx:     ctx,
-		cancel:  cancel,
-		watcher: w,
+		ctx:    ctx,
+		cancel: cancel,
+		dw:     w,
 	}
 
 	var (

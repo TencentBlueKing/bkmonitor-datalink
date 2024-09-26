@@ -12,7 +12,6 @@ package pyroscope
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -57,6 +56,8 @@ const (
 // TagServiceName 需要忽略的服务 Tag 名称
 var ignoredTagNames = []string{"__session_id__"}
 
+var errNoTokenFound = errors.New("no profile token found")
+
 // HttpService 接收 pyroscope 上报的 profile 数据
 type HttpService struct {
 	receiver.Publisher
@@ -88,21 +89,20 @@ func Ready(config receiver.ComponentConfig) {
 	pushv1connect.RegisterPusherServiceHandler(receiver.RecvHttpRouter(), httpSvc)
 }
 
-func (s HttpService) Push(ctx context.Context, rpcReq *connect.Request[pushv1.PushRequest]) (*connect.Response[pushv1.PushResponse], error) {
+func (s HttpService) Push(_ context.Context, req *connect.Request[pushv1.PushRequest]) (*connect.Response[pushv1.PushResponse], error) {
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(rpcReq.Peer().Addr)
+	ip := utils.ParseRequestIP(req.Peer().Addr)
 	start := time.Now()
 
-	originToken := rpcReq.Header().Get(define.KeyToken)
+	originToken := req.Header().Get(define.KeyToken)
 	if originToken == "" {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		err := fmt.Errorf("invalid profile token, ip=%s", ip)
-		logger.Warnf(err.Error())
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		logger.Warnf("failed to get token, ip=%s, err: %s", ip, errNoTokenFound)
+		return nil, connect.NewError(connect.CodeInvalidArgument, errNoTokenFound)
 	}
 	token := define.Token{Original: originToken}
 
-	for _, rpcSeries := range rpcReq.Msg.Series {
+	for _, rpcSeries := range req.Msg.Series {
 		tags := make(map[string]string)
 		for _, label := range rpcSeries.Labels {
 			tags[label.Name] = label.Value
@@ -167,7 +167,7 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	defer req.Body.Close()
 
 	query := req.URL.Query()
-	startTime, endTime, err := getTimeFromQuery(query)
+	startTime, endTime, err := parseTimeFromQuery(query)
 	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
 		logger.Warnf("failed to parse startTime or endTime: %v", err)
@@ -181,7 +181,7 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 
 	format := query.Get("format")
 	if format == "" {
-		format = getFormatBySpy(spyName)
+		format = castFormatBySpy(spyName)
 	}
 	if format == "" {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
@@ -194,8 +194,8 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	token := tokenparser.FromHttpRequest(req)
 	if token == "" {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Warnf("failed to get profiles token, ip=%s, err: %v", ip, err)
-		receiver.WriteErrResponse(w, define.ContentTypeJson, http.StatusBadRequest, err)
+		logger.Warnf("failed to get profiles token, ip=%s, err: %v", ip, errNoTokenFound)
+		receiver.WriteErrResponse(w, define.ContentTypeJson, http.StatusBadRequest, errNoTokenFound)
 		return
 	}
 
@@ -211,7 +211,7 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	}()
 
 	// TODO 处理 prev_profile 字段
-	origin, err := convertToOrigin(spyName, f)
+	origin, err := parseField(spyName, f)
 	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
 		logger.Warnf("read profile failed, ip=%s, token=%s, err: %v", ip, token, err)
@@ -220,7 +220,7 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// TODO: handle SampleTypeConfig
-	appName, tags := getAppNameAndTags(req)
+	appName, tags := parseAppNameAndTags(req)
 	rawProfile := define.ProfilesRawData{
 		Data: origin,
 		Metadata: define.ProfileMetadata{
@@ -283,7 +283,7 @@ func parseTime(timestamp int64) time.Time {
 	}
 }
 
-func getTimeFromQuery(query url.Values) (time.Time, time.Time, error) {
+func parseTimeFromQuery(query url.Values) (time.Time, time.Time, error) {
 	var zero time.Time
 	startTs, err := strconv.ParseInt(query.Get("from"), 10, 64)
 	if err != nil {
@@ -297,7 +297,7 @@ func getTimeFromQuery(query url.Values) (time.Time, time.Time, error) {
 	return parseTime(startTs), parseTime(endTs), nil
 }
 
-func getFormatBySpy(spyName string) string {
+func castFormatBySpy(spyName string) string {
 	switch spyName {
 	case GoSpy:
 		return define.FormatPprof
@@ -313,50 +313,48 @@ func getFormatBySpy(spyName string) string {
 	}
 }
 
-// convertToOrigin 将 Http.Body 转换为 translator 所需的数据格式
-func convertToOrigin(spyName string, form *multipart.Form) (any, error) {
+// parseField 将 Http.Body 转换为 translator 所需的数据格式
+func parseField(spyName string, form *multipart.Form) (any, error) {
 	switch spyName {
 	case JavaSpy:
 		jfrBytes, err := ReadField(form, "jfr")
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to read jfr field, spyName=%s", spyName)
+			return nil, errors.Wrapf(err, "%s read jfr field failed", spyName)
 		}
 
 		labelsBytes, err := ReadField(form, "labels")
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to read labels field, spyName=%s", spyName)
+			return nil, errors.Wrapf(err, "%s read labels field failed", spyName)
 		}
-		logger.Debugf("receive jfr profile, data len: %d, labels len: %d", len(jfrBytes), len(labelsBytes))
 		return define.ProfileJfrFormatOrigin{Jfr: jfrBytes, Labels: labelsBytes}, nil
 
 	default:
 		profileBytes, err := ReadField(form, "profile")
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to read profile field, spyName=%s", spyName)
+			return nil, errors.Wrapf(err, "%s read profile field failed", spyName)
 		}
-		logger.Debugf("receive spyName: %s profile data len: %d", spyName, len(profileBytes))
 		return define.ProfilePprofFormatOrigin(profileBytes), nil
 	}
 }
 
-// getAppNameAndTags 获取 url 中的 tags 信息
+// parseAppNameAndTags 获取 url 中的 tags 信息
 // example: name = appName{key1=value1,key2=value2}
-func getAppNameAndTags(req *http.Request) (string, map[string]string) {
-	reportTags := make(map[string]string)
+func parseAppNameAndTags(req *http.Request) (string, map[string]string) {
+	tags := make(map[string]string)
 
 	valueDecoded, err := url.QueryUnescape(req.URL.Query().Get("name"))
 	if err != nil {
-		logger.Warnf("failed to parse query of params: name, error: %s", err)
-		return "", reportTags
+		logger.Warnf("failed to parse name params: %s", err)
+		return "", tags
 	}
 
 	if valueDecoded == "" {
-		return "", reportTags
+		return "", tags
 	}
 
 	parts := strings.SplitN(valueDecoded, "{", 2)
 	if len(parts) < 2 {
-		return valueDecoded, reportTags
+		return valueDecoded, tags
 	}
 
 	pairs := strings.Split(strings.TrimRight(parts[1], "}"), ",")
@@ -364,9 +362,9 @@ func getAppNameAndTags(req *http.Request) (string, map[string]string) {
 		kv := strings.SplitN(pair, "=", 2)
 		if len(kv) == 2 {
 			if !slices.Contains(ignoredTagNames, kv[0]) {
-				reportTags[kv[0]] = kv[1]
+				tags[kv[0]] = kv[1]
 			}
 		}
 	}
-	return parts[0], reportTags
+	return parts[0], tags
 }

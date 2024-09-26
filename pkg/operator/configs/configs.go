@@ -10,6 +10,7 @@
 package configs
 
 import (
+	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v2"
@@ -68,6 +69,10 @@ type Kubelet struct {
 	Enable    bool   `yaml:"enable"`
 	Namespace string `yaml:"namespace"`
 	Name      string `yaml:"name"`
+}
+
+func (k Kubelet) String() string {
+	return fmt.Sprintf("%s/%s", k.Namespace, k.Name)
 }
 
 // HTTP http 服务配置

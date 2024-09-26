@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -35,23 +36,24 @@ type AESCipher struct {
 }
 
 // AESDecrypt AES解密
-func (c AESCipher) AESDecrypt(encryptedPwd string) string {
+func (c AESCipher) AESDecrypt(encryptedPwd string) (string, error) {
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Warnf("decrypt password [%v] failed,return '', %v", encryptedPwd, r)
+			stack := debug.Stack()
+			logger.Warnf("AESDecrypt：decrypt password [%v] failed, return '', %v\n%s", encryptedPwd, r, stack)
 		}
 	}()
 	// 非加密串返回原密码
 	if c.Prefix != "" && !strings.HasPrefix(encryptedPwd, c.Prefix) {
-		return encryptedPwd
+		return encryptedPwd, nil
 	}
 	// 截取实际加密数据段
 	encryptedPwd = strings.TrimPrefix(encryptedPwd, c.Prefix)
 	// base64解码
 	decodedData, err := base64.StdEncoding.DecodeString(encryptedPwd)
 	if err != nil {
-		logger.Errorf("base64 decode password error, %s", err)
-		return ""
+		logger.Errorf("AESDecrypt：base64 decode password error, %s", err)
+		return "", err
 	}
 	// 获取key、IV和加密密码
 	key := sha256.Sum256([]byte(c.XKey))
@@ -65,8 +67,8 @@ func (c AESCipher) AESDecrypt(encryptedPwd string) string {
 
 	block, err := aes.NewCipher(key[:])
 	if err != nil {
-		logger.Errorf("new cipher error, %s", err)
-		return ""
+		logger.Errorf("AESDecrypt：new cipher error, %s", err)
+		return "", err
 	}
 	// CBC解密
 	decrypter := cipher.NewCBCDecrypter(block, iv)
@@ -75,15 +77,20 @@ func (c AESCipher) AESDecrypt(encryptedPwd string) string {
 
 	length := len(decryptedData)
 	padSize := int(decryptedData[length-1])
+	// 若填充大小大于数据长度，则说明数据不正确
+	if padSize > length {
+		return "", fmt.Errorf("AESDecrypt：invalid padding size")
+	}
 	realPwd := string(decryptedData[:(length - padSize)])
-	return realPwd
+	return realPwd, nil
 }
 
 // AESEncrypt AES加密
 func (c AESCipher) AESEncrypt(raw string) string {
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Warnf("encrypt password failed, return '', %v", r)
+			stack := debug.Stack()
+			logger.Warnf("AESEncrypt：encrypt password [%v] failed, return '', %v\n%s", raw, r, stack)
 		}
 	}()
 	rawBytes := []byte(raw)
@@ -133,6 +140,8 @@ var aesOnce sync.Once
 // GetDBAESCipher 获取db中AES字段的AESCipher
 func GetDBAESCipher() *AESCipher {
 	aesOnce.Do(func() {
+		// 从配置文件中获取AESKey,AESKey为空时会产生异常
+		logger.Infof("GetDBAESCipher：config.AesKey -> [%v], AESPrefix -> [%v]", config.AesKey, AESPrefix)
 		dbAESCipher = NewAESCipher(config.AesKey, AESPrefix, nil)
 	})
 	return dbAESCipher

@@ -22,23 +22,38 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metacache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
-	decoderTypeFixed  = "fixed"
-	decoderTypeAcs256 = "aes256"
-	decoderTypeProxy  = "proxy"
-	decoderTypeBeat   = "beat"
+	decoderTypeFixed          = "fixed"
+	decoderTypeAes256         = "aes256"
+	decoderTypeProxy          = "proxy"
+	decoderTypeBeat           = "beat"
+	decoderTypeAes256WithMeta = "aes256WithMeta"
+
+	combinedDecoderSep = "|"
 )
 
 func NewTokenDecoder(c Config) TokenDecoder {
+	if strings.Contains(c.Type, combinedDecoderSep) {
+		// 如果存在分割的多种 tokendeocer 串联
+		return newCombinedTokenDecoder(c)
+	}
+
+	return newTokenDecoder(c)
+}
+
+func newTokenDecoder(c Config) TokenDecoder {
 	switch c.Type {
 	case decoderTypeFixed:
 		return newFixedTokenDecoder(c)
-	case decoderTypeAcs256:
+	case decoderTypeAes256:
 		return newAes256TokenDecoder(c)
+	case decoderTypeAes256WithMeta:
+		return newAes256WithMetaTokenDecoder(c, innerMetaCacher{})
 	case decoderTypeProxy:
 		return newProxyTokenDecoder(c)
 	case decoderTypeBeat:
@@ -59,9 +74,53 @@ type TokenDecoder interface {
 	Decode(s string) (define.Token, error)
 }
 
+type combinedTokenDecoder struct {
+	typ      string
+	decoders []TokenDecoder
+}
+
+func newCombinedTokenDecoder(c Config) combinedTokenDecoder {
+	var decoders []TokenDecoder
+	types := strings.Split(c.Type, combinedDecoderSep)
+	for _, typ := range types {
+		newConfig := c
+		newConfig.Type = typ
+		decoders = append(decoders, newTokenDecoder(newConfig))
+	}
+
+	return combinedTokenDecoder{
+		typ:      c.Type,
+		decoders: decoders,
+	}
+}
+
+func (d combinedTokenDecoder) Type() string {
+	return d.typ
+}
+
+func (d combinedTokenDecoder) Skip() bool {
+	return false
+}
+
+func (d combinedTokenDecoder) Decode(s string) (define.Token, error) {
+	var token define.Token
+	var err error
+	for i := 0; i < len(d.decoders); i++ {
+		decoder := d.decoders[i]
+		token, err = decoder.Decode(s)
+		if err != nil {
+			continue
+		}
+		return token, nil
+	}
+
+	return token, err
+}
+
 // newFixedTokenDecoder 根据配置生成固定 Token
 func newFixedTokenDecoder(c Config) TokenDecoder {
 	return fixedTokenDecoder{
+		mustEmptyToken: c.MustEmptyToken,
 		token: define.Token{
 			Original:       c.FixedToken,
 			TracesDataId:   c.TracesDataId,
@@ -75,7 +134,8 @@ func newFixedTokenDecoder(c Config) TokenDecoder {
 }
 
 type fixedTokenDecoder struct {
-	token define.Token
+	mustEmptyToken bool
+	token          define.Token
 }
 
 func (d fixedTokenDecoder) Type() string {
@@ -86,8 +146,100 @@ func (d fixedTokenDecoder) Skip() bool {
 	return true
 }
 
-func (d fixedTokenDecoder) Decode(string) (define.Token, error) {
+func (d fixedTokenDecoder) Decode(s string) (define.Token, error) {
+	var empty define.Token
+	if d.token == empty {
+		return define.Token{}, errors.New("undefined fixed tokenDecoder")
+	}
+
+	// 要求一定是空字符串才通过
+	if d.mustEmptyToken && s != "" {
+		return define.Token{}, errors.New("fixed tokenDecoder required empty token string")
+	}
+
 	return d.token, nil
+}
+
+type innerMetaCacher struct{}
+
+func (innerMetaCacher) Get(k string) (define.Token, bool) {
+	return metacache.Get(k)
+}
+
+func (innerMetaCacher) Set(k string, v define.Token) {
+	metacache.Set(k, v)
+}
+
+// Aes256WithMetaTokenDecoder 使用 aes256 加盐算法 所有字段均由配置项指定 同时使用 metacache 数据作为备份
+func newAes256WithMetaTokenDecoder(c Config, cacher metacache.Cacher) *aes256WithMetaTokenDecoder {
+	return &aes256WithMetaTokenDecoder{
+		decoder: newAes256TokenDecoder(c),
+		cacher:  cacher,
+	}
+}
+
+type aes256WithMetaTokenDecoder struct {
+	decoder *aes256TokenDecoder
+	cacher  metacache.Cacher
+}
+
+func (d *aes256WithMetaTokenDecoder) Type() string {
+	return decoderTypeAes256WithMeta
+}
+
+func (d *aes256WithMetaTokenDecoder) Skip() bool {
+	return false
+}
+
+func (d *aes256WithMetaTokenDecoder) Decode(s string) (define.Token, error) {
+	cache, ok := d.cacher.Get(s)
+
+	token, err := d.decoder.Decode(s)
+	if err != nil {
+		if !ok {
+			return define.Token{}, err // 如果 cache 中也没有那就放弃
+		}
+		return cache, nil // 如果 cache 中存在那就使用
+	}
+
+	// 解析不报错的情况
+	// 1) cache 中不存在 那直接返回
+	if !ok {
+		return token, nil
+	}
+
+	// 2) cache 中存在 则需要补充
+	return mergeToken(cache, token), nil
+}
+
+// mergeToken 合并 token 优先以 dst 为主
+func mergeToken(cache, dst define.Token) define.Token {
+	token := dst
+	if len(dst.AppName) == 0 && len(cache.AppName) > 0 {
+		token.AppName = cache.AppName
+	}
+	if dst.BizId <= 0 && cache.BizId > 0 {
+		token.BizId = cache.BizId
+	}
+	if dst.MetricsDataId <= 0 && cache.MetricsDataId > 0 {
+		token.MetricsDataId = cache.MetricsDataId
+	}
+	if dst.TracesDataId <= 0 && cache.TracesDataId > 0 {
+		token.TracesDataId = cache.TracesDataId
+	}
+	if dst.ProfilesDataId <= 0 && cache.ProfilesDataId > 0 {
+		token.ProfilesDataId = cache.ProfilesDataId
+	}
+	if dst.LogsDataId <= 0 && cache.LogsDataId > 0 {
+		token.LogsDataId = cache.LogsDataId
+	}
+	if dst.ProxyDataId <= 0 && cache.ProxyDataId > 0 {
+		token.ProxyDataId = cache.ProxyDataId
+	}
+	if dst.BeatDataId <= 0 && cache.BeatDataId > 0 {
+		token.BeatDataId = cache.BeatDataId
+	}
+	return token
 }
 
 // Aes256TokenDecoder 使用 aes256 加盐算法 所有字段均由配置项指定
@@ -113,7 +265,7 @@ type aes256TokenDecoder struct {
 }
 
 func (d *aes256TokenDecoder) Type() string {
-	return decoderTypeAcs256
+	return decoderTypeAes256
 }
 
 func (d *aes256TokenDecoder) Skip() bool {

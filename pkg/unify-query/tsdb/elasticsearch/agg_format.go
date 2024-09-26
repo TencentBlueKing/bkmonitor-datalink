@@ -39,8 +39,7 @@ type aggFormat struct {
 
 	aggInfoList aggInfoList
 
-	toEs   func(k string) string
-	toProm func(k string) string
+	promDataFormat func(k string) string
 
 	timeFormat func(i int64) int64
 
@@ -63,7 +62,7 @@ func (a *aggFormat) put() {
 }
 
 func (a *aggFormat) addLabel(name, value string) {
-	name = a.toProm(name)
+	name = a.promDataFormat(name)
 
 	newLb := make(map[string]string)
 	for k, v := range a.item.labels {

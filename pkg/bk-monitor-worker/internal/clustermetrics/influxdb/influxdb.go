@@ -175,16 +175,21 @@ func (bl *BatchLoader) loadHostMetrics(ctx context.Context, instance *Instance) 
 		values.Set("db", "_internal")
 		values.Set("q", m.Config.SQL)
 		values.Set("epoch", "s")
+		pwd, err := cipher.GetDBAESCipher().AESDecrypt(instance.Host.Password)
+		if err != nil {
+			logger.Errorf("loadHostMetrics:Fail to decrypt password, %s", err)
+			return
+		}
 		options := http.Options{
 			BaseUrl:  fmt.Sprintf("http://%s:%d/query", instance.Host.DomainName, instance.Host.Port),
 			Params:   values,
 			Headers:  map[string]string{"Accept": "application/json"},
 			UserName: instance.Host.Username,
-			Password: cipher.GetDBAESCipher().AESDecrypt(instance.Host.Password),
+			Password: pwd,
 		}
 		resp, err := bl.client.Request(ctx, http.MethodGet, options)
 		if err != nil {
-			logger.Errorf("Fail to load influxdb host(%s) metrics, %s, %v", instance.HostName, err, options)
+			logger.Errorf("loadHostMetrics:Fail to load influxdb host(%s) metrics, %s, %v", instance.HostName, err, options)
 			return
 		}
 
@@ -193,7 +198,7 @@ func (bl *BatchLoader) loadHostMetrics(ctx context.Context, instance *Instance) 
 		resultData := Response{}
 		err = json.NewDecoder(resp.Body).Decode(&resultData)
 		if err != nil {
-			logger.Errorf("Fail to decode response body, %s", err)
+			logger.Errorf("loadHostMetrics:Fail to decode response body, %s", err)
 			return
 		}
 

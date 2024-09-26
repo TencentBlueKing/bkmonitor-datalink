@@ -198,6 +198,8 @@ type StandardSpan struct {
 	StatusCode  core.SpanStatusCode
 	Kind        int
 	Collections map[string]string
+
+	fromHistory bool
 }
 
 func (s *StandardSpan) GetFieldValue(f ...core.CommonField) string {
@@ -213,6 +215,10 @@ func (s *StandardSpan) GetFieldValue(f ...core.CommonField) string {
 
 func (s *StandardSpan) IsError() bool {
 	return s.StatusCode == core.StatusCodeError
+}
+
+func (s *StandardSpan) IsFromHistory() bool {
+	return s.fromHistory
 }
 
 func (s *StandardSpan) Elapsed() int {

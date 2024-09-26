@@ -7,31 +7,49 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package fasttime
+package operator
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestFastTime(t *testing.T) {
-	t0 := UnixTimestamp()
-	t1 := time.Now().Unix()
-	assert.Equal(t, t0, t1)
-}
-
-func BenchmarkFastTime(b *testing.B) {
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		UnixTimestamp()
+func TestParseMetricName(t *testing.T) {
+	cases := []struct {
+		input  string
+		output string
+	}{
+		{
+			input:  "foobar 1",
+			output: "foobar"},
+		{
+			input:  "foobar   1",
+			output: "foobar",
+		},
+		{
+			input:  "  foobar 1",
+			output: "foobar",
+		},
+		{
+			input:  `foobar{k1="v1"}`,
+			output: "foobar",
+		},
+		{
+			input:  `foobar{k1="v1"} 2`,
+			output: "foobar",
+		},
+		{
+			input:  `foobar{k1="v1"} 2 11`,
+			output: "foobar",
+		},
+		{
+			input:  ` foobar {k1="v1"} 2 11`,
+			output: "foobar",
+		},
 	}
-}
 
-func BenchmarkStdTime(b *testing.B) {
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		time.Now().Unix()
+	for _, c := range cases {
+		assert.Equal(t, c.output, parseMetricName(c.input))
 	}
 }

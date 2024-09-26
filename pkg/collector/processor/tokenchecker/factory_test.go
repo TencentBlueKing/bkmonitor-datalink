@@ -129,7 +129,8 @@ func aes256TokenChecker() tokenChecker {
 
 func skipTokenChecker() tokenChecker {
 	config := Config{
-		Type: "fixed",
+		Type:    "fixed",
+		AppName: "skip",
 	}
 
 	decoders := confengine.NewTierConfig()

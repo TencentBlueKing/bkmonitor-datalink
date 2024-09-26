@@ -61,31 +61,31 @@ func TestCreateOrUpdateFiles(t *testing.T) {
 
 	expectedEvents := []configFile{
 		{
-			name:   "token1.conf",
+			name:   "secret1-token1.conf",
 			action: actionCreateOrUpdate,
 			data:   []byte("foo"),
 		},
 		{
-			name:   "token2.conf",
+			name:   "secret1-token2.conf",
 			action: actionCreateOrUpdate,
 			data:   []byte("bar"),
 		},
 		{
-			name:   "token2.conf",
+			name:   "secret1-token2.conf",
 			action: actionDelete,
 		},
 		{
-			name:   "token1.conf",
+			name:   "secret1-token1.conf",
 			action: actionCreateOrUpdate,
 			data:   []byte("bar"),
 		},
 		{
-			name:   "token3.conf",
+			name:   "secret2-token3.conf",
 			action: actionCreateOrUpdate,
 			data:   []byte("foz"),
 		},
 		{
-			name:   "token1.conf",
+			name:   "secret1-token1.conf",
 			action: actionDelete,
 		},
 	}

@@ -129,7 +129,7 @@ func (sm *secretManager) createOrUpdateFiles(secret *corev1.Secret) {
 		if !strings.HasSuffix(k, ".conf") {
 			continue
 		}
-		data[k] = v
+		data[secret.Name+"-"+k] = v
 	}
 
 	preFiles, ok := sm.files[secret.Name]

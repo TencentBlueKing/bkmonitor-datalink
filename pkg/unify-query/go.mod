@@ -16,6 +16,7 @@ require (
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-gota/gota v0.12.0
 	github.com/go-redis/redis/v8 v8.11.5
+	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/golang/gddo v0.0.0-20210115222349-20d68f94ee1f
 	github.com/golang/mock v1.6.0
 	github.com/google/gops v0.3.26
@@ -41,7 +42,6 @@ require (
 	github.com/swaggo/swag v1.16.1
 	github.com/thomaspoignant/go-feature-flag v1.0.1
 	github.com/tinylib/msgp v1.1.6
-	github.com/zhuliquan/es-mapping v1.0.0
 	go.etcd.io/bbolt v1.3.3
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.32.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.42.0

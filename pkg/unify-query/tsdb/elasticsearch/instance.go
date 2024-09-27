@@ -283,8 +283,10 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			msg strings.Builder
 		)
 		if errors.As(err, &e) {
-			for _, rc := range e.Details.RootCause {
-				msg.WriteString(fmt.Sprintf("%s: %s, ", rc.Index, rc.Reason))
+			if e.Details != nil {
+				for _, rc := range e.Details.RootCause {
+					msg.WriteString(fmt.Sprintf("%s: %s, ", rc.Index, rc.Reason))
+				}
 			}
 			return nil, errors.New(msg.String())
 		} else {
@@ -618,12 +620,6 @@ func (i *Instance) QuerySeriesSet(
 		err error
 	)
 
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("es query error: %s", r)
-		}
-	}()
-
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-reference")
 	defer span.End(&err)
 
@@ -636,6 +632,13 @@ func (i *Instance) QuerySeriesSet(
 
 	go func() {
 		defer func() {
+			// es 查询有很多结构体无法判断的，会导致 panic
+			if r := recover(); r != nil {
+				rets <- &TimeSeriesResult{
+					Error: fmt.Errorf("es query error: %s", r),
+				}
+			}
+
 			close(rets)
 		}()
 
@@ -707,7 +710,7 @@ func (i *Instance) QuerySeriesSet(
 		return storage.ErrSeriesSet(err)
 	}
 
-	if len(qr.Timeseries) == 0 {
+	if qr == nil || len(qr.Timeseries) == 0 {
 		return storage.EmptySeriesSet()
 	}
 

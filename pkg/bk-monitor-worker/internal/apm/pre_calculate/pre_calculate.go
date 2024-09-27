@@ -47,6 +47,7 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 			window.EnabledTraceInfoCache(config.EnabledTraceInfoCache != 0),
 			window.TraceEsQueryRate(config.TraceEsQueryRate),
 			window.TraceMetricsReportEnabled(config.EnabledTraceMetricsReport),
+			window.TraceInfoReportEnabled(config.EnabledTraceInfoReport),
 			window.TraceMetricsLayer4ReportEnabled(config.MetricsProcessLayer4ExportEnabled),
 		).
 		WithStorageConfig(

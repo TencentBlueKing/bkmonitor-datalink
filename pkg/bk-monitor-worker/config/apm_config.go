@@ -18,6 +18,8 @@ import (
 var (
 	// NotifierChanBufferSize queue chan size
 	NotifierChanBufferSize int
+	// NotifierMessageQps Qps of queue
+	NotifierMessageQps int
 	// WindowMaxSize The maximum amount that a single trace can handle,
 	// beyond which the window will be forced to expire.
 	WindowMaxSize int
@@ -52,6 +54,8 @@ var (
 	EnabledTraceInfoCache int
 	// EnabledTraceMetricsReport enabled report metric
 	EnabledTraceMetricsReport bool
+	// EnabledTraceInfoReport enabled report info
+	EnabledTraceInfoReport bool
 	// TraceEsQueryRate To prevent too many es queries caused by bloom-filter,
 	// each dataId needs to set a threshold for the maximum number of requests in a minute. default is 20
 	TraceEsQueryRate int
@@ -127,6 +131,7 @@ var (
 
 func initApmVariables() {
 	NotifierChanBufferSize = GetValue("taskConfig.apmPreCalculate.notifier.chanBufferSize", 1000)
+	NotifierMessageQps = GetValue("taskConfig.apmPreCalculate.notifier.qps", 1000)
 
 	WindowMaxSize = GetValue("taskConfig.apmPreCalculate.window.maxSize", 100*100)
 	WindowExpireInterval = GetValue("taskConfig.apmPreCalculate.window.expireInterval", time.Minute, viper.GetDuration)
@@ -141,7 +146,8 @@ func initApmVariables() {
 	DistributiveWindowSubWindowMappingMaxSpanCount = GetValue("taskConfig.apmPreCalculate.window.distributive.mappingMaxSpanCount", 100000)
 
 	EnabledTraceInfoCache = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceInfoCache", 0)
-	EnabledTraceMetricsReport = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceMetricsReport", false)
+	EnabledTraceMetricsReport = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceMetricsReport", true)
+	EnabledTraceInfoReport = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceInfoReport", true)
 
 	TraceEsQueryRate = GetValue("taskConfig.apmPreCalculate.processor.traceEsQueryRate", 20)
 	StorageSaveRequestBufferSize = GetValue("taskConfig.apmPreCalculate.storage.saveRequestBufferSize", 1000)

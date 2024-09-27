@@ -33,7 +33,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/pool"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
@@ -55,9 +54,6 @@ type Instance struct {
 
 	timeout time.Duration
 	maxSize int
-
-	toEs   func(string) string
-	toProm func(string) string
 }
 
 type InstanceOption struct {
@@ -98,9 +94,6 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 		headers:     opt.Headers,
 		healthCheck: opt.HealthCheck,
 		timeout:     opt.Timeout,
-
-		toEs:   structured.QueryRawFormat(ctx),
-		toProm: structured.PromQueryFormat(ctx),
 	}
 
 	if opt.Address == "" {
@@ -290,8 +283,10 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			msg strings.Builder
 		)
 		if errors.As(err, &e) {
-			for _, rc := range e.Details.RootCause {
-				msg.WriteString(fmt.Sprintf("%s: %s, ", rc.Index, rc.Reason))
+			if e.Details != nil {
+				for _, rc := range e.Details.RootCause {
+					msg.WriteString(fmt.Sprintf("%s: %s, ", rc.Index, rc.Reason))
+				}
 			}
 			return nil, errors.New(msg.String())
 		} else {
@@ -625,19 +620,25 @@ func (i *Instance) QuerySeriesSet(
 		err error
 	)
 
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("es query error: %s", r)
-		}
-	}()
-
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-reference")
 	defer span.End(&err)
+
+	if len(query.Aggregates) == 0 {
+		err = fmt.Errorf("聚合函数不能为空以及聚合周期跟 Step 必须一样")
+		return storage.ErrSeriesSet(err)
+	}
 
 	rets := make(chan *TimeSeriesResult, 1)
 
 	go func() {
 		defer func() {
+			// es 查询有很多结构体无法判断的，会导致 panic
+			if r := recover(); r != nil {
+				rets <- &TimeSeriesResult{
+					Error: fmt.Errorf("es query error: %s", r),
+				}
+			}
+
 			close(rets)
 		}()
 
@@ -681,7 +682,7 @@ func (i *Instance) QuerySeriesSet(
 			WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.From, size).
 			WithMappings(mappings...).
 			WithOrders(query.Orders).
-			WithTransform(i.toEs, i.toProm)
+			WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc())
 
 		if len(query.Aggregates) > 0 {
 			i.queryWithAgg(ctx, qo, fact, rets)
@@ -709,7 +710,7 @@ func (i *Instance) QuerySeriesSet(
 		return storage.ErrSeriesSet(err)
 	}
 
-	if len(qr.Timeseries) == 0 {
+	if qr == nil || len(qr.Timeseries) == 0 {
 		return storage.EmptySeriesSet()
 	}
 

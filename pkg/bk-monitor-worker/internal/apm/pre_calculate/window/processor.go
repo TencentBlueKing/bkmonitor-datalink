@@ -104,7 +104,9 @@ func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event)
 	graph := event.Graph
 	graph.RefreshEdges()
 
-	p.ToTraceInfo(receiver, event)
+	if p.config.infoReportEnabled {
+		p.ToTraceInfo(receiver, event)
+	}
 	if p.config.metricReportEnabled {
 		p.metricProcessor.ToMetrics(receiver, graph)
 	}
@@ -112,6 +114,7 @@ func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event)
 
 func (p *Processor) revertToCollect(event *Event, exists []*StandardSpan) {
 	for _, s := range exists {
+		s.fromHistory = true
 		event.Graph.AddNode(Node{StandardSpan: *s})
 	}
 }
@@ -314,6 +317,7 @@ func (p *Processor) ToTraceInfo(receiver chan<- storage.SaveRequest, event Event
 		processCategoryStatistics(span.Collections, categoryStatistics)
 		processKindCategoryStatistics(span.Kind, kindCategoryStatistics)
 		collectCollections(collections, span.Collections)
+		metrics.RecordHandleTraceDelta(p.dataId, span.StartTime)
 	}
 
 	sort.Ints(startTimes)
@@ -531,6 +535,7 @@ type ProcessorOptions struct {
 	enabledInfoCache          bool
 	traceEsQueryRate          int
 	metricReportEnabled       bool
+	infoReportEnabled         bool
 	metricLayer4ReportEnabled bool
 }
 
@@ -556,6 +561,13 @@ func TraceEsQueryRate(r int) ProcessorOption {
 func TraceMetricsReportEnabled(e bool) ProcessorOption {
 	return func(options *ProcessorOptions) {
 		options.metricReportEnabled = e
+	}
+}
+
+// TraceInfoReportEnabled enable the trace info report
+func TraceInfoReportEnabled(e bool) ProcessorOption {
+	return func(options *ProcessorOptions) {
+		options.infoReportEnabled = e
 	}
 }
 

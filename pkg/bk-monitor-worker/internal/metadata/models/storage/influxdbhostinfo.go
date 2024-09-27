@@ -65,11 +65,16 @@ func (i *InfluxdbHostInfo) BeforeCreate(tx *gorm.DB) error {
 
 // GetConsulConfig 生成consul配置信息
 func (i InfluxdbHostInfo) GetConsulConfig() map[string]interface{} {
+	pwd, err := cipher.GetDBAESCipher().AESDecrypt(i.Password)
+	if err != nil {
+		logger.Error("GetConsulConfig:get influxdb host info password error", err)
+		return nil
+	}
 	return map[string]interface{}{
 		"domain_name":       i.DomainName,
 		"port":              i.Port,
 		"username":          i.Username,
-		"password":          cipher.GetDBAESCipher().AESDecrypt(i.Password),
+		"password":          pwd,
 		"status":            i.Status,
 		"backup_rate_limit": i.BackupRateLimit,
 		"grpc_port":         i.GrpcPort,

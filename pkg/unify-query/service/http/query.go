@@ -45,7 +45,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 		tablesCh = make(chan *influxdb.Tables, 1)
 		recvDone = make(chan struct{})
 
-		resp        = &PromData{}
+		resp        = NewPromData(query.ResultColumns)
 		totalTables = influxdb.NewTables()
 	)
 
@@ -80,6 +80,16 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 
 		totalTables = influxdb.MergeTables(tableList, false)
 	}()
+
+	ref, err := query.ToQueryReference(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ok, _, err := ref.CheckVmQuery(ctx)
+	// 如果查询 vm 的情况下则直接退出，因为 vm 不支持 Exemplar 数据
+	if ok {
+		return resp, nil
+	}
 
 	for _, qList := range query.QueryList {
 		queryMetric, err := qList.ToQueryMetric(ctx, query.SpaceUid)
@@ -311,10 +321,12 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	seriesNum := 0
 	pointsNum := 0
 
+	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
+
 	switch v := res.(type) {
 	case promPromql.Matrix:
 		for index, series := range v {
-			tables.Add(promql.NewTable(index, series, structured.QueryRawFormat(ctx)))
+			tables.Add(promql.NewTable(index, series, decodeFunc))
 
 			seriesNum++
 			pointsNum += len(series.Points)
@@ -322,7 +334,7 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	case promPromql.Vector:
 		for index, series := range v {
 			// 层级需要转换
-			tables.Add(promql.NewTableWithSample(index, series, structured.QueryRawFormat(ctx)))
+			tables.Add(promql.NewTableWithSample(index, series, decodeFunc))
 
 			seriesNum++
 			pointsNum++
@@ -484,10 +496,12 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 	seriesNum := 0
 	pointsNum := 0
 
+	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
+
 	switch v := res.(type) {
 	case promPromql.Matrix:
 		for index, series := range v {
-			tables.Add(promql.NewTable(index, series, structured.QueryRawFormat(ctx)))
+			tables.Add(promql.NewTable(index, series, decodeFunc))
 
 			seriesNum++
 			pointsNum += len(series.Points)
@@ -495,7 +509,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 	case promPromql.Vector:
 		for index, series := range v {
 			// 层级需要转换
-			tables.Add(promql.NewTableWithSample(index, series, structured.QueryRawFormat(ctx)))
+			tables.Add(promql.NewTableWithSample(index, series, decodeFunc))
 
 			seriesNum++
 			pointsNum++
@@ -651,16 +665,18 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	seriesNum := 0
 	pointsNum := 0
 
+	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
+
 	switch v := res.(type) {
 	case promPromql.Matrix:
 		for index, series := range v {
-			tables.Add(promql.NewTable(index, series, structured.QueryRawFormat(ctx)))
+			tables.Add(promql.NewTable(index, series, decodeFunc))
 			seriesNum++
 			pointsNum += len(series.Points)
 		}
 	case promPromql.Vector:
 		for index, series := range v {
-			tables.Add(promql.NewTableWithSample(index, series, structured.QueryRawFormat(ctx)))
+			tables.Add(promql.NewTableWithSample(index, series, decodeFunc))
 			seriesNum++
 			pointsNum++
 		}

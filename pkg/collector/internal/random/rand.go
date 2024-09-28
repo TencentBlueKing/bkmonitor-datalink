@@ -29,6 +29,10 @@ func String(n int) string {
 	return string(b)
 }
 
+func FastString(n int) string {
+	return yoloString(frand.Bytes(12))
+}
+
 // Dimensions 随机生成指定长度的维度
 func Dimensions(n int) map[string]string {
 	rand.Seed(time.Now().UnixNano())

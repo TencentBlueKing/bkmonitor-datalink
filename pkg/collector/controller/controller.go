@@ -23,7 +23,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/cleaner"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/hook"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labelstore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tracestore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/wait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pingserver"
@@ -40,7 +39,6 @@ import (
 const (
 	configFieldMaxProcs     = "max_procs"
 	configFieldLogging      = "logging"
-	configFieldLabelStorage = "label_storage"
 	configFieldTraceStorage = "trace_storage"
 	configFieldHook         = "hook"
 )
@@ -72,15 +70,6 @@ func SetupCoreNum(conf *confengine.Config) {
 type StorageConfig struct {
 	Type string `config:"type" mapstructure:"type"`
 	Dir  string `config:"dir" mapstructure:"dir"`
-}
-
-// SetupLabelStorage 初始化 Label Storage
-func SetupLabelStorage(conf *confengine.Config) {
-	var storConf StorageConfig
-	if err := conf.UnpackChild(configFieldLabelStorage, &storConf); err != nil {
-		logger.Warnf("unpack label storage config failed, may it lacks of fields: %s, then uses the default config", err)
-	}
-	labelstore.InitStorage(storConf.Dir, storConf.Type)
 }
 
 // SetupTraceStorage 初始化 Trace Storage
@@ -134,7 +123,6 @@ func Setup(conf *confengine.Config) error {
 	if err := SetupLogger(conf); err != nil {
 		return err
 	}
-	SetupLabelStorage(conf)
 	SetupTraceStorage(conf)
 	SetupHook(conf)
 	return nil

@@ -204,6 +204,7 @@ func (r *recorder) updateMetrics() {
 	for {
 		select {
 		case <-r.done:
+			r.storage.Clean() // 退出前释放
 			return
 
 		case <-ticker.C:

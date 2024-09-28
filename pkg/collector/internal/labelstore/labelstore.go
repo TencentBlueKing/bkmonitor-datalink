@@ -93,3 +93,11 @@ func (s *Storage) Exist(h uint64) bool {
 	_, ok := s.store[h]
 	return ok
 }
+
+func (s *Storage) Clean() {
+	s.mut.Lock()
+	defer s.mut.Unlock()
+
+	s.keys = nil
+	s.store = make(map[uint64]map[string]uint8)
+}

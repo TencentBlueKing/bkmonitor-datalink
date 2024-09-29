@@ -130,10 +130,8 @@ func (q *Queue) Clean() {
 	q.mut.Lock()
 	defer q.mut.Unlock()
 
-	for dataID, stor := range q.storages {
-		if err := stor.Clean(); err != nil {
-			logger.Errorf("failed to clean storage, dataID=%d, err: %v", dataID, err)
-		}
+	for _, storage := range q.storages {
+		storage.Clean()
 	}
 }
 

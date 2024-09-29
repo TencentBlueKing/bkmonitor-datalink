@@ -43,8 +43,11 @@ func New() *Storage {
 	}
 }
 
-func (s *Storage) Clean() error {
-	return nil
+func (s *Storage) Clean() {
+	s.mut.Lock()
+	defer s.mut.Unlock()
+
+	s.store = make(map[TraceKey]ptrace.Traces)
 }
 
 func (s *Storage) Get(k TraceKey) (ptrace.Traces, bool) {

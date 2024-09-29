@@ -49,13 +49,13 @@ func (s *Storage) SetIf(h uint64, labels map[string]string) {
 	}
 
 	s.mut.Lock()
+	defer s.mut.Unlock()
+
 	_, ok = s.store[h]
 	if ok {
-		s.mut.Unlock()
 		return
 	}
 
-	defer s.mut.Unlock()
 	kvs := make(map[string]uint8)
 	for k, v := range labels {
 		kvs[v] = s.getKeyIndex(k)

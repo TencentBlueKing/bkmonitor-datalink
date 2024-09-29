@@ -471,7 +471,7 @@ func (c *Operator) PodsRoute(w http.ResponseWriter, _ *http.Request) {
 	info, err := c.dw.GetClusterInfo()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"msg": "no bcs_cluster_id found"}`))
+		w.Write([]byte(fmt.Sprintf(`{"msg": "no bcs_cluster_id found: %s"}`, err)))
 		return
 	}
 

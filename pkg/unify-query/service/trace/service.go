@@ -85,7 +85,7 @@ func (s *Service) Start(ctx context.Context) {
 		err      error
 	)
 
-	if Enable == false {
+	if !Enable {
 		return
 	}
 

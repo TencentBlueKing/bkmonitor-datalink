@@ -460,6 +460,28 @@ func (c *Operator) WorkloadRoute(w http.ResponseWriter, _ *http.Request) {
 	writeResponse(w, c.objectsController.WorkloadsRelabelConfigs())
 }
 
+type podsResponse struct {
+	ClusterID string               `json:"bcs_cluster_id"`
+	BizID     string               `json:"bk_biz_id"`
+	Pods      []objectsref.PodInfo `json:"pods"`
+}
+
+func (c *Operator) PodsRoute(w http.ResponseWriter, _ *http.Request) {
+	pods := c.objectsController.AllPods()
+	info, err := c.dw.GetClusterInfo()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"msg": "no bcs_cluster_id found"}`))
+		return
+	}
+
+	writeResponse(w, podsResponse{
+		ClusterID: info.BcsClusterID,
+		BizID:     info.BizID,
+		Pods:      pods,
+	})
+}
+
 func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nodeName := vars["node"]
@@ -546,6 +568,7 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /cluster_info
 * GET /workload
 * GET /workload/node/{node}
+* GET /pods
 * GET /relation/metrics
 * GET /rule/metrics
 * GET /configs

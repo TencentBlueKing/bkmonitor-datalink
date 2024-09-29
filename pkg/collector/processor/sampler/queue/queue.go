@@ -109,7 +109,7 @@ type Queue struct {
 	policy     Policy
 	maxSpans   int
 	mut        sync.RWMutex
-	storages   map[int32]tracestore.Storage
+	storages   map[int32]*tracestore.Storage
 	span2trace map[int32]*traceIDMap
 }
 
@@ -117,7 +117,7 @@ func New(policy string, maxSpans int) *Queue {
 	return &Queue{
 		policy:     Policy(policy),
 		maxSpans:   maxSpans,
-		storages:   map[int32]tracestore.Storage{},
+		storages:   map[int32]*tracestore.Storage{},
 		span2trace: map[int32]*traceIDMap{},
 	}
 }
@@ -156,24 +156,26 @@ func (q *Queue) Put(dataID int32, traces ptrace.Traces) error {
 
 	// storages / span2trace 实例应该同时被创建
 	q.mut.RLock()
-	stor, ok := q.storages[dataID]
+	storage, ok := q.storages[dataID]
 	idMap := q.span2trace[dataID]
 	q.mut.RUnlock()
 
 	if ok {
 		idMap.Set(traceID, spanID)
-		return stor.Set(tk, traces)
+		storage.Set(tk, traces)
+		return nil
 	}
 
 	q.mut.Lock()
 	defer q.mut.Unlock()
 
 	// 先尝试读 避免并发创建
-	stor, ok = q.storages[dataID]
+	storage, ok = q.storages[dataID]
 	idMap = q.span2trace[dataID]
 	if ok {
 		idMap.Set(traceID, spanID)
-		return stor.Set(tk, traces)
+		storage.Set(tk, traces)
+		return nil
 	}
 
 	// 读取失败
@@ -182,10 +184,11 @@ func (q *Queue) Put(dataID int32, traces ptrace.Traces) error {
 	q.span2trace[dataID] = idMap
 	idMap.Set(traceID, spanID)
 
-	// 创建 stor
-	stor = tracestore.GetOrCreateStorage(dataID)
-	q.storages[dataID] = stor
-	return stor.Set(tk, traces)
+	// 创建 storage
+	storage = tracestore.New()
+	q.storages[dataID] = storage
+	storage.Set(tk, traces)
+	return nil
 }
 
 func (q *Queue) Pop(dataID int32, traceID pcommon.TraceID) []ptrace.Traces {
@@ -213,15 +216,12 @@ func (q *Queue) Pop(dataID int32, traceID pcommon.TraceID) []ptrace.Traces {
 
 	for i := 0; i < len(spanIDs); i++ {
 		tk := tracestore.TraceKey{TraceID: traceID, SpanID: spanIDs[i]}
-		traces, err := stor.Get(tk)
-		if err != nil {
-			logger.Errorf("failed to get tk=%v, err: %v", tk, err)
+		traces, ok := stor.Get(tk)
+		if !ok {
+			logger.Errorf("failed to get tk=%v", tk)
 			continue
 		}
-		if err := stor.Del(tk); err != nil {
-			logger.Errorf("failed to delete tk=%v, err: %v", tk, err)
-			continue
-		}
+		stor.Del(tk)
 		result = append(result, traces)
 	}
 	return result

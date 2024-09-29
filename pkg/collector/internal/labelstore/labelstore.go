@@ -10,338 +10,94 @@
 package labelstore
 
 import (
-	"encoding/binary"
-	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
-
-	"github.com/pkg/errors"
-	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/opt"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/cleaner"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-const (
-	// TypeBuiltin 使用内置 map 数据类型作为存储载体 并通过读写锁提高并发效率（默认）
-	// 优点：读写性能最好
-	// 缺点：耗内存 无法承受太大的数量级
-	// 建议：在数据量低于千万级的场景使用
-	TypeBuiltin = "builtin"
+// Storage 用于存储 traces 转 metrics 指标维度
+// 此场景下 labels key 相对固定且可枚举 对于所有 lbs 所有的 keys 均相同
+// 因此使用 index 来记录 key 减少内存开销
+type Storage struct {
+	mut sync.RWMutex
 
-	// TypeLeveldb 使用 leveldb 作为本地存储载体
-	// 优点：资源消耗较小 可以承受千万量级甚至更高的量
-	// 缺点：读写性能较差
-	// 建议：在数据量超过千万级的场景使用
-	TypeLeveldb = "leveldb"
-)
-
-// Storage 是对存储的抽象 实现方应保证所有操作都是线程安全的
-type Storage interface {
-	// Name 返回 Storage 名称 `Type:ID`
-	Name() string
-
-	// SetIf 更新 k 所对应的 labels 如果 k 已经存在 则不做任何处理
-	SetIf(k uint64, lbs labels.Labels) error
-
-	// Exist 判断 k 是否存在
-	Exist(k uint64) (bool, error)
-
-	// Del 删除 k 对应的键值对
-	Del(k uint64) error
-
-	// Get 获取 k 对应的 value
-	Get(k uint64) (labels.Labels, error)
-
-	// Clean 清理 Storage
-	Clean() error
+	keys  []string
+	store map[uint64]map[string]uint8
 }
 
-var ErrKeyNotFound = errors.New("key not found")
-
-func uint64ToBytes(n uint64) []byte {
-	b := make([]byte, 8)
-	binary.BigEndian.PutUint64(b, n)
-	return b
-}
-
-func init() {
-	cleaner.Register("leveldb/label_storage", CleanStorage)
-}
-
-type StorageController struct {
-	dir         string
-	typ         string
-	mut         sync.Mutex
-	leveldbStor map[string]*leveldbStorage
-	builtinStor map[string]*builtinStorage
-}
-
-var defaultStorageController = NewStorageController(".", "")
-
-func NewStorageController(dir, typ string) *StorageController {
-	return &StorageController{
-		dir:         dir,
-		typ:         typ,
-		leveldbStor: make(map[string]*leveldbStorage),
-		builtinStor: make(map[string]*builtinStorage),
+func New() *Storage {
+	return &Storage{
+		store: make(map[uint64]map[string]uint8),
 	}
 }
 
-func (sc *StorageController) getOrCreateLeveldbStorage(id string) (*leveldbStorage, error) {
-	sc.mut.Lock()
-	defer sc.mut.Unlock()
-
-	if stor, ok := sc.leveldbStor[id]; ok {
-		return stor, nil
-	}
-
-	stor, err := newLeveldbStorage(sc.dir, id)
-	if err != nil {
-		return nil, err
-	}
-
-	sc.leveldbStor[id] = stor
-	return stor, nil
-}
-
-func (sc *StorageController) getOrCreateBuiltinStorage(id string) *builtinStorage {
-	sc.mut.Lock()
-	defer sc.mut.Unlock()
-
-	if stor, ok := sc.builtinStor[id]; ok {
-		return stor
-	}
-
-	stor := newBuiltinStorage(id)
-	sc.builtinStor[id] = stor
-	return stor
-}
-
-// GetOrCreate 创建对应 Storage 实例
-func (sc *StorageController) GetOrCreate(id string) Storage {
-	var stor Storage
-	var err error
-	switch sc.typ {
-	case TypeLeveldb:
-		stor, err = sc.getOrCreateLeveldbStorage(id)
-		if err != nil {
-			logger.Errorf("failed to create leveldb storage, storid=%s, err: %v", id, err)
-			break
-		}
-	}
-	if stor != nil {
-		return stor
-	}
-
-	// BuiltinStorage 作为兜底方案
-	return sc.getOrCreateBuiltinStorage(id)
-}
-
-// Remove 清理 Storage 实例
-func (sc *StorageController) Remove(id string) {
-	sc.mut.Lock()
-	defer sc.mut.Unlock()
-
-	delete(sc.builtinStor, id)
-	delete(sc.leveldbStor, id)
-}
-
-// Clean 清理所有 Storage 实例
-func (sc *StorageController) Clean() error {
-	sc.mut.Lock()
-	defer sc.mut.Unlock()
-
-	errs := make([]error, 0)
-	for _, stor := range sc.builtinStor {
-		if err := stor.Clean(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	for _, stor := range sc.leveldbStor {
-		if err := stor.Clean(); err != nil {
-			errs = append(errs, err)
+func (s *Storage) getKeyIndex(k string) uint8 {
+	for i := 0; i < len(s.keys); i++ {
+		if s.keys[i] == k {
+			return uint8(i)
 		}
 	}
 
-	if len(errs) > 0 {
-		return errs[0]
-	}
-	return nil
+	s.keys = append(s.keys, k)
+	return uint8(len(s.keys) - 1)
 }
 
-// InitStorage 初始化全局 StorageController 配置
-func InitStorage(dir, typ string) {
-	if dir == "" {
-		dir = "."
-	}
-	defaultStorageController.dir = dir
-	defaultStorageController.typ = typ
-}
-
-// CleanStorage 清理全局 Storage
-func CleanStorage() error {
-	return defaultStorageController.Clean()
-}
-
-// GetOrCreateStorage 获取或创建 Storage
-func GetOrCreateStorage(id string) Storage {
-	return defaultStorageController.GetOrCreate(id)
-}
-
-// RemoveStorage 清理 Storage 实例
-func RemoveStorage(id string) {
-	defaultStorageController.Remove(id)
-}
-
-// builtinStorage 使用内置 map 作为存储载体
-type builtinStorage struct {
-	id    string
-	mut   sync.RWMutex
-	store map[uint64]labels.Labels
-}
-
-var _ Storage = (*builtinStorage)(nil)
-
-func newBuiltinStorage(id string) *builtinStorage {
-	return &builtinStorage{
-		id:    id,
-		store: map[uint64]labels.Labels{},
-	}
-}
-
-func (bs *builtinStorage) Clean() error {
-	bs.mut.Lock()
-	defer bs.mut.Unlock()
-
-	bs.store = map[uint64]labels.Labels{}
-	return nil
-}
-
-func (bs *builtinStorage) Name() string {
-	return fmt.Sprintf("%s:%s", TypeBuiltin, bs.id)
-}
-
-func (bs *builtinStorage) Get(k uint64) (labels.Labels, error) {
-	bs.mut.RLock()
-	defer bs.mut.RUnlock()
-
-	v, ok := bs.store[k]
-	if !ok {
-		return nil, ErrKeyNotFound
-	}
-	return v, nil
-}
-
-func (bs *builtinStorage) Exist(k uint64) (bool, error) {
-	bs.mut.RLock()
-	defer bs.mut.RUnlock()
-
-	_, ok := bs.store[k]
-	return ok, nil
-}
-
-func (bs *builtinStorage) SetIf(k uint64, v labels.Labels) error {
-	bs.mut.RLock()
-	_, ok := bs.store[k]
-	bs.mut.RUnlock()
+func (s *Storage) SetIf(h uint64, labels map[string]string) {
+	s.mut.RLock()
+	_, ok := s.store[h]
+	s.mut.RUnlock()
 	if ok {
-		return nil
+		return
 	}
 
-	bs.mut.Lock()
-	bs.store[k] = v
-	bs.mut.Unlock()
-	return nil
-}
-
-func (bs *builtinStorage) Del(k uint64) error {
-	bs.mut.Lock()
-	defer bs.mut.Unlock()
-
-	delete(bs.store, k)
-	return nil
-}
-
-// leveldbStorage 使用 leveldb 作为本地存储载体
-type leveldbStorage struct {
-	id string
-	db *leveldb.DB
-}
-
-var _ Storage = (*leveldbStorage)(nil)
-
-func newLeveldbStorage(dir, id string) (*leveldbStorage, error) {
-	dir = filepath.Join(dir, fmt.Sprintf("label_%s", id))
-	_ = os.RemoveAll(dir)             // 清理目录
-	_ = os.MkdirAll(dir, os.ModePerm) // 重建目录
-	logger.Infof("leveldb storage dir: %s", dir)
-
-	db, err := leveldb.OpenFile(dir, &opt.Options{NoSync: true})
-	if err != nil {
-		return nil, err
+	s.mut.Lock()
+	_, ok = s.store[h]
+	if ok {
+		s.mut.Unlock()
+		return
 	}
 
-	return &leveldbStorage{
-		id: id,
-		db: db,
-	}, nil
+	defer s.mut.Unlock()
+	kvs := make(map[string]uint8)
+	for k, v := range labels {
+		kvs[v] = s.getKeyIndex(k)
+	}
+	s.store[h] = kvs
 }
 
-func (ls *leveldbStorage) Name() string {
-	return fmt.Sprintf("%s:%s", TypeLeveldb, ls.id)
+func (s *Storage) Get(h uint64) (map[string]string, bool) {
+	s.mut.RLock()
+	defer s.mut.RUnlock()
+
+	kvs, ok := s.store[h]
+	if !ok {
+		return nil, false
+	}
+
+	ret := make(map[string]string)
+	for k, v := range kvs {
+		ret[s.keys[v]] = k
+	}
+	return ret, true
 }
 
-func (ls *leveldbStorage) Clean() error {
-	if ls.db == nil {
-		return nil
-	}
-	return ls.db.Close()
+func (s *Storage) Del(h uint64) {
+	s.mut.Lock()
+	defer s.mut.Unlock()
+
+	delete(s.store, h)
 }
 
-func (ls *leveldbStorage) Get(k uint64) (labels.Labels, error) {
-	v, err := ls.db.Get(uint64ToBytes(k), nil)
-	if err != nil {
-		return nil, err
-	}
+func (s *Storage) Exist(h uint64) bool {
+	s.mut.RLock()
+	defer s.mut.RUnlock()
 
-	var lbs labels.Labels
-	if _, err := lbs.UnmarshalMsg(v); err != nil {
-		return nil, err
-	}
-	return lbs, nil
+	_, ok := s.store[h]
+	return ok
 }
 
-func (ls *leveldbStorage) Exist(k uint64) (bool, error) {
-	v, err := ls.db.Get(uint64ToBytes(k), nil)
-	if errors.Is(err, leveldb.ErrNotFound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
+func (s *Storage) Clean() {
+	s.mut.Lock()
+	defer s.mut.Unlock()
 
-	return len(v) > 0, nil
-}
-
-func (ls *leveldbStorage) SetIf(k uint64, v labels.Labels) error {
-	_, err := ls.db.Get(uint64ToBytes(k), nil)
-	if err == nil {
-		// 表明 k 存在
-		return nil
-	}
-
-	b, err := v.MarshalMsg(nil)
-	if err != nil {
-		return err
-	}
-
-	return ls.db.Put(uint64ToBytes(k), b, nil)
-}
-
-func (ls *leveldbStorage) Del(k uint64) error {
-	return ls.db.Delete(uint64ToBytes(k), nil)
+	s.keys = nil
+	s.store = make(map[uint64]map[string]uint8)
 }

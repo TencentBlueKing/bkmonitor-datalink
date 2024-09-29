@@ -29,8 +29,9 @@ func String(n int) string {
 	return string(b)
 }
 
+// FastString 随机生成指定长度的字符串（效率更高 但内容不可读）
 func FastString(n int) string {
-	return yoloString(frand.Bytes(12))
+	return yoloString(frand.Bytes(n))
 }
 
 // Dimensions 随机生成指定长度的维度

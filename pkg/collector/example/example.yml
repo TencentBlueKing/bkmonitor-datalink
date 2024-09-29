@@ -56,11 +56,6 @@ resource_limit:
 
 # bk-collector self-config
 bk-collector:
-  # ============================= TraceStorage ===============================
-  trace_storage:
-    type: "builtin"
-    dir: "."
-
   # =============================== SubConfig ================================
   apm:
     patterns:

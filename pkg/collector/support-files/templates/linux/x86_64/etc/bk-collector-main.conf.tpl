@@ -70,12 +70,6 @@ bk-collector:
         - "curl -o /tmp/bk-collector-`date +%s`.profiles.tar.gz http://localhost:4318/debug/pprof/snapshot?debug=2"
 
 
-  # ============================= TraceStorage ===============================
-  trace_storage:
-    type: "builtin"
-    dir: "."
-
-
   # =============================== SubConfig ================================
   apm:
     patterns:

@@ -23,7 +23,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/cleaner"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/hook"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tracestore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/wait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pingserver"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
@@ -37,10 +36,9 @@ import (
 )
 
 const (
-	configFieldMaxProcs     = "max_procs"
-	configFieldLogging      = "logging"
-	configFieldTraceStorage = "trace_storage"
-	configFieldHook         = "hook"
+	configFieldMaxProcs = "max_procs"
+	configFieldLogging  = "logging"
+	configFieldHook     = "hook"
 )
 
 type Controller struct {
@@ -70,15 +68,6 @@ func SetupCoreNum(conf *confengine.Config) {
 type StorageConfig struct {
 	Type string `config:"type" mapstructure:"type"`
 	Dir  string `config:"dir" mapstructure:"dir"`
-}
-
-// SetupTraceStorage 初始化 Trace Storage
-func SetupTraceStorage(conf *confengine.Config) {
-	var storConf StorageConfig
-	if err := conf.UnpackChild(configFieldTraceStorage, &storConf); err != nil {
-		logger.Warnf("unpack trace storage config failed, may it lacks of fields: %s, then uses the default config", err)
-	}
-	tracestore.InitStorage(storConf.Dir, storConf.Type)
 }
 
 // SetupHook 初始化 Hook
@@ -123,7 +112,6 @@ func Setup(conf *confengine.Config) error {
 	if err := SetupLogger(conf); err != nil {
 		return err
 	}
-	SetupTraceStorage(conf)
 	SetupHook(conf)
 	return nil
 }

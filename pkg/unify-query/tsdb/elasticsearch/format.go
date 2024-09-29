@@ -50,6 +50,8 @@ const (
 
 	Nested = "nested"
 	Terms  = "terms"
+
+	ESStep = "."
 )
 
 const (
@@ -97,7 +99,7 @@ type TimeSeriesResult struct {
 func mapData(prefix string, data map[string]any, res map[string]any) {
 	for k, v := range data {
 		if prefix != "" {
-			k = prefix + structured.EsOldStep + k
+			k = prefix + ESStep + k
 		}
 		switch v.(type) {
 		case map[string]any:
@@ -121,7 +123,7 @@ func mapProperties(prefix string, data map[string]any, res map[string]string) {
 	if properties, ok := data[Properties]; ok {
 		for k, v := range properties.(map[string]any) {
 			if prefix != "" {
-				k = prefix + structured.EsOldStep + k
+				k = prefix + ESStep + k
 			}
 			switch v.(type) {
 			case map[string]any:
@@ -162,8 +164,7 @@ type FormatFactory struct {
 	valueField string
 	timeField  metadata.TimeField
 
-	toEs   func(k string) string
-	toProm func(k string) string
+	promDataFormat func(k string) string
 
 	timeFormat func(i int64) int64
 
@@ -240,9 +241,8 @@ func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField,
 	return f
 }
 
-func (f *FormatFactory) WithTransform(toEs, toProm func(string) string) *FormatFactory {
-	f.toEs = toEs
-	f.toProm = toProm
+func (f *FormatFactory) WithTransform(promDataFormat func(string) string) *FormatFactory {
+	f.promDataFormat = promDataFormat
 	return f
 }
 
@@ -312,9 +312,9 @@ func (f *FormatFactory) valueAgg(name, funcType string, args ...any) {
 }
 
 func (f *FormatFactory) NestedField(field string) string {
-	lbs := strings.Split(field, structured.EsOldStep)
+	lbs := strings.Split(field, ESStep)
 	for i := len(lbs) - 1; i >= 0; i-- {
-		checkKey := strings.Join(lbs[0:i], structured.EsOldStep)
+		checkKey := strings.Join(lbs[0:i], ESStep)
 		if v, ok := f.mapping[checkKey]; ok {
 			if v == Nested {
 				return checkKey
@@ -350,11 +350,10 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*pr
 	}()
 
 	af := &aggFormat{
-		aggInfoList: f.aggInfoList,
-		items:       make(items, 0),
-		toEs:        f.toEs,
-		toProm:      f.toProm,
-		timeFormat:  f.timeFormat,
+		aggInfoList:    f.aggInfoList,
+		items:          make(items, 0),
+		promDataFormat: f.promDataFormat,
+		timeFormat:     f.timeFormat,
 	}
 
 	af.get()
@@ -812,8 +811,8 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 			}
 		}
 
-		if f.toProm != nil {
-			k = f.toProm(k)
+		if f.promDataFormat != nil {
+			k = f.promDataFormat(k)
 		}
 
 		lbl = append(lbl, k)

@@ -22,6 +22,12 @@ func TestRandom(t *testing.T) {
 		assert.NotEqual(t, s1, s2)
 	})
 
+	t.Run("FastString", func(t *testing.T) {
+		s1 := FastString(10)
+		s2 := FastString(10)
+		assert.NotEqual(t, s1, s2)
+	})
+
 	t.Run("Dimensions", func(t *testing.T) {
 		d1 := Dimensions(10)
 		d2 := Dimensions(10)

@@ -583,7 +583,7 @@ func (i *Instance) grpcStream(
 		err    error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "influxdb-query-raw-grpc-stream")
+	ctx, span := trace.NewSpan(ctx, "influxdb-query-grpc-stream")
 	defer span.End(&err)
 
 	urlPath := fmt.Sprintf("%s:%d", i.host, i.grpcPort)

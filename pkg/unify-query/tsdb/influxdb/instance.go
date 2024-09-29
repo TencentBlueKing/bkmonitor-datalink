@@ -580,9 +580,11 @@ func (i *Instance) grpcStream(
 ) storage.SeriesSet {
 	var (
 		client remote.QueryTimeSeriesServiceClient
+		err    error
 	)
 
 	ctx, span := trace.NewSpan(ctx, "influxdb-query-raw-grpc-stream")
+	defer span.End(&err)
 
 	urlPath := fmt.Sprintf("%s:%d", i.host, i.grpcPort)
 
@@ -601,7 +603,7 @@ func (i *Instance) grpcStream(
 
 	client = influxdb.GetInfluxDBRouter().TimeSeriesClient(ctx, i.protocol, urlPath)
 	if client == nil {
-		log.Errorf(ctx, ErrorsHttpNotFound.Error())
+		err = ErrorsHttpNotFound
 		return storage.ErrSeriesSet(ErrorsHttpNotFound)
 	}
 

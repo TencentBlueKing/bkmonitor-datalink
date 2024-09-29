@@ -10,254 +10,148 @@
 package labelstore
 
 import (
-	"os"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
 )
 
-func makeTempDir(logf func(format string, args ...any)) string {
-	dir, err := os.MkdirTemp("", "stor_test")
-	if err != nil {
-		panic(err)
-	}
-	logf("make temp dir: %v", dir)
-	return dir
-}
-
-func removeTempDir(logf func(format string, args ...any), dir string) {
-	err := os.RemoveAll(dir)
-	if err != nil {
-		panic(err)
-	}
-	logf("remove temp dir: %v", dir)
-}
-
-func TestGlobalStorage(t *testing.T) {
-	InitStorage(".", TypeBuiltin)
-	stor := GetOrCreateStorage("1001")
-	assert.NotNil(t, stor)
-
-	assert.NoError(t, CleanStorage())
-	RemoveStorage("1001")
-}
-
-func TestBuiltinStorage(t *testing.T) {
-	sc := NewStorageController(".", TypeBuiltin)
-	defer sc.Clean()
-
-	stor := sc.GetOrCreate("1001")
-	defer sc.Remove("1001")
-	testStorage(t, stor)
-	assert.NoError(t, stor.Clean())
-}
-
-func TestLeveldbStorage(t *testing.T) {
-	dir := makeTempDir(t.Logf)
-	defer removeTempDir(t.Logf, dir)
-
-	sc := NewStorageController(dir, TypeLeveldb)
-	defer sc.Clean()
-
-	stor := sc.GetOrCreate("1001")
-	defer sc.Remove("1001")
-	testStorage(t, stor)
-	assert.NoError(t, stor.Clean())
-}
-
-func testStorage(t *testing.T, stor Storage) {
-	t.Log("testing storage", stor.Name())
-	for i := 0; i < 100; i++ {
-		err := stor.SetIf(uint64(i), labels.Labels{
-			{
-				Name:  "index",
-				Value: strconv.FormatInt(int64(i), 10),
+func TestStorageMulti(t *testing.T) {
+	cases := []struct {
+		h   uint64
+		lbs map[string]string
+	}{
+		{
+			h: 1,
+			lbs: map[string]string{
+				"service.name":           "service-name-1",
+				"service.version":        "service-version-1",
+				"telemetry.sdk.name":     "telemetry-sdk-name-1",
+				"telemetry.sdk.version":  "telemetry-sdk-version-1",
+				"telemetry.sdk.language": "telemetry-sdk-language-1",
 			},
-		})
-		assert.NoError(t, err)
+		},
+		{
+			h: 2,
+			lbs: map[string]string{
+				"service.name":           "service-name-2",
+				"service.version":        "service-version-2",
+				"telemetry.sdk.name":     "telemetry-sdk-name-2",
+				"telemetry.sdk.version":  "telemetry-sdk-version-2",
+				"telemetry.sdk.language": "telemetry-sdk-language-2",
+			},
+		},
 	}
 
-	for i := 0; i < 100; i++ {
-		lbs, err := stor.Get(uint64(i))
-		assert.NoError(t, err)
-		assert.Equal(t, labels.Labels{{Name: "index", Value: strconv.FormatInt(int64(i), 10)}}, lbs)
+	storage := New()
+	for _, c := range cases {
+		storage.SetIf(c.h, c.lbs)
 	}
-	assert.NoError(t, stor.Del(1)) // 删除此 key
 
-	var total int
-	for i := 0; i < 100; i++ {
-		exist, err := stor.Exist(uint64(i))
-		assert.NoError(t, err)
-		if exist {
-			total++
-		}
+	for _, c := range cases {
+		v, ok := storage.Get(c.h)
+		assert.True(t, ok)
+		assert.Equal(t, c.lbs, v)
 	}
-	assert.Equal(t, 99, total)
+
+	for _, c := range cases {
+		assert.True(t, storage.Exist(c.h))
+	}
+	assert.False(t, storage.Exist(3))
+
+	storage.Del(1)
+	assert.False(t, storage.Exist(1))
+	assert.Len(t, storage.keys, 5)
 }
 
 const (
 	setCount = 100000 // 10w
 	appCount = 10
-
-	block = false
 )
 
-// FailNow 是为了仅执行一次
-func blockForever() {
-	if block {
-		select {}
-	}
+var keys = []string{
+	"resource.bk.instance.id",
+	"span_name",
+	"kind",
+	"status.code",
+	"resource.service.name",
+	"resource.service.version",
+	"resource.telemetry.sdk.name",
+	"resource.telemetry.sdk.version",
+	"resource.telemetry.sdk.language",
+	"attributes.peer.service",
+	"attributes.http.method",
+	"attributes.http.status_code",
 }
 
-func benchmarkStorageSetIf(stor Storage) {
+func testStorageSetIf(storage *Storage) {
 	for i := 0; i < setCount; i++ {
-		lbs := random.FastDimensions(6)
-		_ = stor.SetIf(uint64(i), labels.FromMap(lbs))
+		lbs := make(map[string]string)
+		for _, k := range keys {
+			lbs[k] = random.FastString(6)
+		}
+		storage.SetIf(uint64(i), lbs)
 	}
 }
 
-func BenchmarkBuiltinSetIf(b *testing.B) {
-	storMap := make(map[int]Storage)
+func TestStorageSetIf(t *testing.T) {
 	start := time.Now()
-	wg := sync.WaitGroup{}
-	mut := sync.Mutex{}
+	var wg sync.WaitGroup
+
 	for i := 0; i < appCount; i++ {
-		id := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			stor := newBuiltinStorage(strconv.Itoa(id))
-			benchmarkStorageSetIf(stor)
-			mut.Lock()
-			storMap[id] = stor
-			mut.Unlock()
+			testStorageSetIf(New())
 		}()
 	}
 	wg.Wait()
-	prettyprint.RuntimeMemStats(b.Logf)
-	b.Logf("builtinStorage SetIf operation take: %v\n", time.Since(start))
-	b.FailNow()
+	prettyprint.RuntimeMemStats(t.Logf)
+	t.Logf("Storage SetIf operation take: %v\n", time.Since(start))
 }
 
-func BenchmarkLeveldbSetIf(b *testing.B) {
-	start := time.Now()
-	dir := makeTempDir(b.Logf)
-	defer removeTempDir(b.Logf, dir)
-
-	ctr := NewStorageController(dir, TypeLeveldb)
-	defer ctr.Clean()
-
-	storMap := make(map[int]Storage)
-	mut := sync.Mutex{}
-	wg := sync.WaitGroup{}
-	for i := 0; i < appCount; i++ {
-		id := i
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			mut.Lock()
-			stor := ctr.GetOrCreate(strconv.Itoa(id))
-			storMap[id] = stor
-			mut.Unlock()
-
-			benchmarkStorageSetIf(stor)
-		}()
-	}
-	wg.Wait()
-	prettyprint.RuntimeMemStats(b.Logf)
-	b.Logf("leveldbStorage SetIf operation take: %v\n", time.Since(start))
-	b.FailNow()
-}
-
-func benchmarkStorDel(stor Storage) {
+func testStorageDel(storage *Storage) {
 	for i := 0; i < setCount; i++ {
-		_ = stor.Del(uint64(i))
+		storage.Del(uint64(i))
 	}
 }
 
-func BenchmarkBuiltinDel(b *testing.B) {
-	storMap := make(map[int]Storage)
+func TestStorageDel(t *testing.T) {
+	var storages []*Storage
 	for i := 0; i < appCount; i++ {
-		stor := newBuiltinStorage(strconv.Itoa(i))
-		benchmarkStorageSetIf(stor)
-		storMap[i] = stor
+		storage := New()
+		storages = append(storages, storage)
+		testStorageSetIf(storage)
 	}
 	start := time.Now()
 	for i := 0; i < appCount; i++ {
-		benchmarkStorDel(storMap[i])
+		testStorageDel(storages[i])
 	}
-	prettyprint.RuntimeMemStats(b.Logf)
-	b.Logf("builtinStorage Del operation take: %v\n", time.Since(start))
-	b.FailNow()
+	prettyprint.RuntimeMemStats(t.Logf)
+	t.Logf("Storage Del operation take: %v\n", time.Since(start))
 }
 
-func BenchmarkLeveldbDel(b *testing.B) {
-	dir := makeTempDir(b.Logf)
-	defer removeTempDir(b.Logf, dir)
-
-	ctr := NewStorageController(dir, TypeLeveldb)
-	defer ctr.Clean()
-
-	storMap := make(map[int]Storage)
-	for i := 0; i < appCount; i++ {
-		stor := ctr.GetOrCreate(strconv.Itoa(i))
-		storMap[i] = stor
-	}
-	start := time.Now()
-	for i := 0; i < appCount; i++ {
-		benchmarkStorDel(storMap[i])
-	}
-	prettyprint.RuntimeMemStats(b.Logf)
-	b.Logf("leveldbStorage Del operation take: %v\n", time.Since(start))
-	b.FailNow()
-}
-
-func benchmarkStorGet(stor Storage) {
+func testStorageGet(storage *Storage) {
 	for i := 0; i < setCount; i++ {
-		stor.Get(uint64(i))
+		storage.Get(uint64(i))
 	}
 }
 
-func BenchmarkBuiltinGet(b *testing.B) {
-	storMap := make(map[int]Storage)
+func TestStorageGet(t *testing.T) {
+	var storages []*Storage
 	for i := 0; i < appCount; i++ {
-		stor := newBuiltinStorage(strconv.Itoa(i))
-		benchmarkStorageSetIf(stor)
-		storMap[i] = stor
+		storage := New()
+		testStorageSetIf(storage)
+		storages = append(storages, storage)
 	}
 	start := time.Now()
 	for i := 0; i < appCount; i++ {
-		benchmarkStorGet(storMap[i])
+		testStorageGet(storages[i])
 	}
-	prettyprint.RuntimeMemStats(b.Logf)
-	b.Logf("builtinStorage Get operation take: %v\n", time.Since(start))
-	b.FailNow()
-}
-
-func BenchmarkLeveldbGet(b *testing.B) {
-	dir := makeTempDir(b.Logf)
-	defer removeTempDir(b.Logf, dir)
-
-	ctr := NewStorageController(dir, TypeLeveldb)
-	defer ctr.Clean()
-
-	storMap := make(map[int]Storage)
-	for i := 0; i < appCount; i++ {
-		stor := ctr.GetOrCreate(strconv.Itoa(i))
-		storMap[i] = stor
-	}
-	start := time.Now()
-	for i := 0; i < appCount; i++ {
-		benchmarkStorGet(storMap[i])
-	}
-	prettyprint.RuntimeMemStats(b.Logf)
-	b.Logf("leveldbStorage Get operation take: %v\n", time.Since(start))
-	b.FailNow()
+	prettyprint.RuntimeMemStats(t.Logf)
+	t.Logf("Storage Get operation take: %v\n", time.Since(start))
 }

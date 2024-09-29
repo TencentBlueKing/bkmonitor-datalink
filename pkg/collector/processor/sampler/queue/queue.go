@@ -199,7 +199,7 @@ func (q *Queue) Pop(dataID int32, traceID pcommon.TraceID) []ptrace.Traces {
 	// storages / span2trace 实例应该同时存在
 	q.mut.RLock()
 	idMap := q.span2trace[dataID]
-	stor := q.storages[dataID]
+	storage := q.storages[dataID]
 	q.mut.RUnlock()
 
 	if idMap == nil {
@@ -216,12 +216,12 @@ func (q *Queue) Pop(dataID int32, traceID pcommon.TraceID) []ptrace.Traces {
 
 	for i := 0; i < len(spanIDs); i++ {
 		tk := tracestore.TraceKey{TraceID: traceID, SpanID: spanIDs[i]}
-		traces, ok := stor.Get(tk)
+		traces, ok := storage.Get(tk)
 		if !ok {
-			logger.Errorf("failed to get tk=%v", tk)
+			logger.Errorf("failed to get tk=%v, dataid=%d", tk, dataID)
 			continue
 		}
-		stor.Del(tk)
+		storage.Del(tk)
 		result = append(result, traces)
 	}
 	return result

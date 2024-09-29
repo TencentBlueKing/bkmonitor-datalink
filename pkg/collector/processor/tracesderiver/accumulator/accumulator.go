@@ -10,7 +10,6 @@
 package accumulator
 
 import (
-	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -160,7 +159,6 @@ type recorderOptions struct {
 	dataID              int32
 	buckets             []float64
 	gcInterval          time.Duration
-	storID              string
 	maxSeriesGrowthRate int
 }
 
@@ -171,7 +169,6 @@ func newRecorder(opts recorderOptions) *recorder {
 		done:                make(chan struct{}, 1),
 		metricName:          opts.metricName,
 		dataID:              opts.dataID,
-		storID:              opts.storID,
 		gcInterval:          opts.gcInterval,
 		maxSeries:           opts.maxSeries,
 		buckets:             toNanoseconds(buckets),
@@ -182,7 +179,6 @@ func newRecorder(opts recorderOptions) *recorder {
 
 	r.wg.Add(1)
 	go r.updateMetrics()
-	logger.Debugf("create new recorder, storid=%s", opts.storID)
 	return r
 }
 
@@ -723,12 +719,10 @@ func (a *Accumulator) Accumulate(dataID int32, dims map[string]string, value flo
 	if v, ok := a.recorders[dataID]; ok {
 		r = v
 	} else {
-		id := fmt.Sprintf("%s:%d", a.conf.MetricName, dataID)
 		opts := recorderOptions{
 			metricName:          a.conf.MetricName,
 			maxSeries:           a.conf.MaxSeries,
 			dataID:              dataID,
-			storID:              id,
 			buckets:             a.conf.GetBuckets(),
 			gcInterval:          a.conf.GcInterval,
 			maxSeriesGrowthRate: a.conf.MaxSeriesGrowthRate,

@@ -589,17 +589,17 @@ func (i *Instance) grpcStream(
 	urlPath := fmt.Sprintf("%s:%d", i.host, i.grpcPort)
 
 	user := metadata.GetUser(ctx)
-	span.Set("query-space-uid", user.SpaceUid)
-	span.Set("query-source", user.Source)
-	span.Set("query-username", user.Name)
-	span.Set("query-url-path", urlPath)
-	span.Set("query-db", db)
-	span.Set("query-rp", rp)
-	span.Set("query-measurement", measurement)
-	span.Set("query-field", field)
-	span.Set("query-where", where)
-	span.Set("query-slimit", int(slimit))
-	span.Set("query-limit", int(limit))
+	span.Set("grpc-query-space-uid", user.SpaceUid)
+	span.Set("grpc-query-source", user.Source)
+	span.Set("grpc-query-username", user.Name)
+	span.Set("grpc-query-url-path", urlPath)
+	span.Set("grpc-query-db", db)
+	span.Set("grpc-query-rp", rp)
+	span.Set("grpc-query-measurement", measurement)
+	span.Set("grpc-query-field", field)
+	span.Set("grpc-query-where", where)
+	span.Set("grpc-query-slimit", int(slimit))
+	span.Set("grpc-query-limit", int(limit))
 
 	client = influxdb.GetInfluxDBRouter().TimeSeriesClient(ctx, i.protocol, urlPath)
 	if client == nil {
@@ -618,7 +618,7 @@ func (i *Instance) grpcStream(
 	}
 
 	filterRequest, _ := json.Marshal(req)
-	span.Set("query-filter-request", string(filterRequest))
+	span.Set("grpc-query-filter-request", string(filterRequest))
 
 	stream, err := client.Raw(ctx, req)
 	if err != nil {
@@ -629,7 +629,7 @@ func (i *Instance) grpcStream(
 
 	name := fmt.Sprintf("%s://%s", i.protocol, i.host)
 
-	span.Set("start-stream-series-set", name)
+	span.Set("grpc-start-stream-series-set", name)
 
 	qry := &metadata.Query{TableID: fmt.Sprintf("%s.%s", db, measurement), Field: field}
 

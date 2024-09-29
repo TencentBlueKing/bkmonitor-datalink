@@ -56,11 +56,6 @@ resource_limit:
 
 # bk-collector self-config
 bk-collector:
-  # ============================= LabelStorage ===============================
-  label_storage:
-    type: "builtin"
-    dir: "."
-
   # ============================= TraceStorage ===============================
   trace_storage:
     type: "builtin"

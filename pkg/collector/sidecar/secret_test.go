@@ -42,6 +42,12 @@ func TestCreateOrUpdateFiles(t *testing.T) {
 			},
 		},
 		{
+			name: "secret3",
+			data: map[string][]byte{
+				"token1.json": compress("xyz"), // skip
+			},
+		},
+		{
 			name: "secret1",
 			data: map[string][]byte{
 				"token1.conf": compress("bar"),

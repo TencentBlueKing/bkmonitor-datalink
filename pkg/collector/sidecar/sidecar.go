@@ -80,7 +80,7 @@ func (s *Sidecar) Start() error {
 		case cf := <-s.sm.Watch():
 			err := s.handleChildConfigFiles(cf)
 			if err != nil {
-				logger.Errorf("%s child config failed, file=%s, err: %v", cf.action, cf.name, err)
+				logger.Errorf("%s child config (%s) failed: %v", cf.action, cf.name, err)
 			}
 			smTimer.Reset(time.Second * 5)
 

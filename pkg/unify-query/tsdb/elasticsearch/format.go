@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/olivere/elastic/v7"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -338,7 +339,7 @@ func (f *FormatFactory) nestedAgg(key string) {
 }
 
 // AggDataFormat 解析 es 的聚合计算
-func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*prompb.TimeSeries, error) {
+func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *prompb.Label) (map[string]*prompb.TimeSeries, error) {
 	if data == nil {
 		return nil, nil
 	}
@@ -367,19 +368,24 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*pr
 	timeSeriesMap := make(map[string]*prompb.TimeSeries)
 	for _, im := range af.items {
 		var (
-			tsLabels          []prompb.Label
-			seriesNameBuilder strings.Builder
+			tsLabels []prompb.Label
 		)
 		if len(im.labels) > 0 {
-			tsLabels = make([]prompb.Label, 0, len(im.labels))
 			for _, dim := range af.dims {
-				seriesNameBuilder.WriteString(dim)
-				seriesNameBuilder.WriteString(im.labels[dim])
 				tsLabels = append(tsLabels, prompb.Label{
 					Name:  dim,
 					Value: im.labels[dim],
 				})
 			}
+		}
+
+		if metricLabel != nil {
+			tsLabels = append(tsLabels, *metricLabel)
+		}
+
+		var seriesNameBuilder strings.Builder
+		for _, l := range tsLabels {
+			seriesNameBuilder.WriteString(l.String())
 		}
 
 		seriesKey := seriesNameBuilder.String()
@@ -564,6 +570,10 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 			}
 
 			for idx, dim := range am.Dimensions {
+				if dim == labels.MetricName {
+					continue
+				}
+
 				f.termAgg(dim, idx == 0)
 				f.nestedAgg(dim)
 			}

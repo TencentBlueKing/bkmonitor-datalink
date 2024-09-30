@@ -12,6 +12,10 @@ package metadata
 import (
 	"context"
 	"fmt"
+	"strings"
+
+	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/prompb"
 )
 
 func SetQueryReference(ctx context.Context, reference QueryReference) error {
@@ -36,4 +40,26 @@ func (q *Query) UUID(prefix string) string {
 		q.RetentionPolicy, q.DB, q.Measurement, q.Field, q.Condition,
 	)
 	return str
+}
+
+// MetricLabels 获取真实指标名称
+func (q *Query) MetricLabels(ctx context.Context) *prompb.Label {
+	if GetQueryParams(ctx).IsReference {
+		return nil
+	}
+
+	var metrics []string
+	if q.DataSource != "" {
+		metrics = append(metrics, q.DataSource)
+	}
+	for _, n := range strings.Split(q.TableID, ".") {
+		metrics = append(metrics, n)
+	}
+	if q.Field != "" {
+		metrics = append(metrics, q.Field)
+	}
+	return &prompb.Label{
+		Name:  labels.MetricName,
+		Value: strings.Join(metrics, ":"),
+	}
 }

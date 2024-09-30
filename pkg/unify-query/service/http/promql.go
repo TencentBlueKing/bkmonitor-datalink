@@ -90,7 +90,6 @@ func (d *PromData) Fill(tables *promql.Tables) error {
 		d.Tables = append(d.Tables, tableItem)
 	}
 	return nil
-
 }
 
 // Downsample 对结果数据进行降采样

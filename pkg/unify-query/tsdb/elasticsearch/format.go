@@ -165,7 +165,8 @@ type FormatFactory struct {
 	valueField string
 	timeField  metadata.TimeField
 
-	promDataFormat func(k string) string
+	decode func(k string) string
+	encode func(k string) string
 
 	timeFormat func(i int64) int64
 
@@ -190,6 +191,14 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 		ctx:         ctx,
 		mapping:     make(map[string]string),
 		aggInfoList: make(aggInfoList, 0),
+
+		// default encode / decode
+		encode: func(k string) string {
+			return k
+		},
+		decode: func(k string) string {
+			return k
+		},
 	}
 
 	return f
@@ -242,13 +251,24 @@ func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField,
 	return f
 }
 
-func (f *FormatFactory) WithTransform(promDataFormat func(string) string) *FormatFactory {
-	f.promDataFormat = promDataFormat
+func (f *FormatFactory) WithTransform(encode func(string) string, decode func(string) string) *FormatFactory {
+	if encode != nil {
+		f.encode = encode
+	}
+	if decode != nil {
+		f.decode = decode
+		// 如果有 decode valueField 需要重新载入
+		f.valueField = decode(f.valueField)
+	}
 	return f
 }
 
 func (f *FormatFactory) WithOrders(orders map[string]bool) *FormatFactory {
-	f.orders = orders
+	f.orders = make(metadata.Orders, len(orders))
+	for k, ok := range orders {
+		k1 := f.decode(k)
+		f.orders[k1] = ok
+	}
 	return f
 }
 
@@ -287,6 +307,8 @@ func (f *FormatFactory) timeAgg(name string, window, timezone string) {
 }
 
 func (f *FormatFactory) termAgg(name string, isFirst bool) {
+	name = f.decode(name)
+
 	info := TermAgg{
 		Name: name,
 	}
@@ -353,7 +375,7 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 	af := &aggFormat{
 		aggInfoList:    f.aggInfoList,
 		items:          make(items, 0),
-		promDataFormat: f.promDataFormat,
+		promDataFormat: f.encode,
 		timeFormat:     f.timeFormat,
 	}
 
@@ -639,7 +661,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 	for _, conditions := range allConditions {
 		andQuery := make([]elastic.Query, 0, len(conditions))
 		for _, con := range conditions {
-			key := con.DimensionName
+			key := f.decode(con.DimensionName)
 
 			// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
 			fieldType, ok := f.mapping[key]
@@ -821,8 +843,8 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 			}
 		}
 
-		if f.promDataFormat != nil {
-			k = f.promDataFormat(k)
+		if f.encode != nil {
+			k = f.encode(k)
 		}
 
 		lbl = append(lbl, k)

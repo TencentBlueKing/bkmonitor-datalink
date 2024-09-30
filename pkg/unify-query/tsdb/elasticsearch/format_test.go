@@ -262,7 +262,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).
 				WithQuery("value", c.timeField, start, end, 0, 0).
-				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc())
+				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
 
 			ss := elastic.NewSearchSource()
 			rangeQuery, err := fact.RangeQuery()

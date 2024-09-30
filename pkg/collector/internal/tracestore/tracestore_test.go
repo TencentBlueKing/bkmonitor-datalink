@@ -11,7 +11,6 @@ package tracestore
 
 import (
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -28,54 +27,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-func makeTempDir(logf func(format string, args ...any)) string {
-	dir, err := os.MkdirTemp("", "stor_test")
-	if err != nil {
-		panic(err)
-	}
-	logf("make temp dir: %v", dir)
-	return dir
-}
-
-func removeTempDir(logf func(format string, args ...any), dir string) {
-	err := os.RemoveAll(dir)
-	if err != nil {
-		panic(err)
-	}
-	logf("remove temp dir: %v", dir)
-}
-
-func TestGlobal(t *testing.T) {
-	InitStorage(".", "")
-	stor := GetOrCreateStorage(1001)
-	assert.NotNil(t, stor)
-	assert.NoError(t, CleanStorage())
-}
-
-func TestBuiltinStorage(t *testing.T) {
-	sc := NewStorageController(".", TypeBuiltin)
-	defer sc.Clean()
-
-	stor := sc.GetOrCreate(1001)
-	testStorage(t, stor)
-	assert.NoError(t, stor.Clean())
-}
-
-func TestLeveldbStorage(t *testing.T) {
-	dir := makeTempDir(t.Logf)
-	defer removeTempDir(t.Logf, dir)
-
-	sc := NewStorageController(dir, TypeLeveldb)
-	defer sc.Clean()
-
-	stor := sc.GetOrCreate(1001)
-	testStorage(t, stor)
-	assert.NoError(t, stor.Clean())
-}
-
-func testStorage(t *testing.T, stor Storage) {
-	t.Log("testing storage", stor.Name())
-
+func TestStorage(t *testing.T) {
+	storage := New()
 	g := generator.NewTracesGenerator(define.TracesOptions{
 		SpanCount: 1,
 	})
@@ -88,27 +41,25 @@ func testStorage(t *testing.T, stor Storage) {
 		spanID := pcommon.NewSpanID([8]byte{1, byte(i)})
 		span.SetTraceID(traceID)
 		span.SetSpanID(spanID)
-		err := stor.Set(TraceKey{TraceID: traceID, SpanID: spanID}, traces)
-		assert.NoError(t, err)
+		storage.Set(TraceKey{TraceID: traceID, SpanID: spanID}, traces)
 	}
 
 	for i := 0; i < 10; i++ {
 		traceID := pcommon.NewTraceID([16]byte{1, 2, 3, byte(i)})
 		spanID := pcommon.NewSpanID([8]byte{1, byte(i)})
 
-		traces, err := stor.Get(TraceKey{TraceID: traceID, SpanID: spanID})
-		assert.NoError(t, err)
+		traces, ok := storage.Get(TraceKey{TraceID: traceID, SpanID: spanID})
+		assert.True(t, ok)
 		assert.Equal(t, 1, traces.SpanCount())
 	}
 
 	traceID := pcommon.NewTraceID([16]byte{1, 2, 3, 1})
 	spanID := pcommon.NewSpanID([8]byte{1, 1})
 
-	err := stor.Del(TraceKey{TraceID: traceID, SpanID: spanID})
-	assert.NoError(t, err)
+	storage.Del(TraceKey{TraceID: traceID, SpanID: spanID})
 
-	_, err = stor.Get(TraceKey{TraceID: traceID, SpanID: spanID})
-	assert.Error(t, err)
+	_, ok := storage.Get(TraceKey{TraceID: traceID, SpanID: spanID})
+	assert.False(t, ok)
 }
 
 const (
@@ -124,7 +75,7 @@ type Option struct {
 	LinkCount      int
 }
 
-func benchmarkStoragePut(stor Storage, opt Option) {
+func testStoragePut(storage *Storage, opt Option) {
 	var resourceKeys, attributeKeys []string
 	for i := 0; i < opt.ResourceCount; i++ {
 		resourceKeys = append(resourceKeys, fmt.Sprintf("resource%d", i))
@@ -153,99 +104,31 @@ func benchmarkStoragePut(stor Storage, opt Option) {
 			TraceID: random.TraceID(),
 			SpanID:  random.SpanID(),
 		}
-		_ = stor.Set(tk, traces)
+		storage.Set(tk, traces)
 	}
 }
 
-func benchmarkBuiltinPut(b *testing.B, opt Option) {
-	storMap := make(map[int]Storage)
+func testBuiltinPut(t *testing.T, opt Option) {
 	start := time.Now()
 	wg := sync.WaitGroup{}
-	mut := sync.Mutex{}
 	for i := 0; i < appCount; i++ {
-		id := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			stor := newBuiltinStorage(int32(id))
-			benchmarkStoragePut(stor, opt)
-			mut.Lock()
-			storMap[id] = stor
-			mut.Unlock()
+			testStoragePut(New(), opt)
 		}()
 	}
 	wg.Wait()
-	prettyprint.RuntimeMemStats(b.Logf)
-	b.Logf("builtinStorage Put operation take: %v\n", time.Since(start))
-	b.FailNow()
+	prettyprint.RuntimeMemStats(t.Logf)
+	t.Logf("builtinStorage Put operation take: %v\n", time.Since(start))
 }
 
-func BenchmarkBuiltinPutSmallSize(b *testing.B) {
-	benchmarkBuiltinPut(b, Option{
+func TestStoragePutSmallSize(t *testing.T) {
+	testBuiltinPut(t, Option{
 		ResourceCount:  5,
 		AttributeCount: 5,
 		SpanCount:      10,
 		EventCount:     5,
 		LinkCount:      5,
-	})
-}
-
-func benchmarkLeveldbPut(b *testing.B, opt Option) {
-	start := time.Now()
-	dir := makeTempDir(b.Logf)
-	defer removeTempDir(b.Logf, dir)
-
-	ctr := NewStorageController(dir, TypeLeveldb)
-	defer ctr.Clean()
-
-	storMap := make(map[int]Storage)
-	mut := sync.Mutex{}
-	wg := sync.WaitGroup{}
-	for i := 0; i < appCount; i++ {
-		id := i
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			mut.Lock()
-			stor := ctr.GetOrCreate(int32(id))
-			storMap[id] = stor
-			mut.Unlock()
-
-			benchmarkStoragePut(stor, opt)
-		}()
-	}
-	wg.Wait()
-	prettyprint.RuntimeMemStats(b.Logf)
-	b.Logf("leveldbStorage Put operation take: %v\n", time.Since(start))
-	b.FailNow()
-}
-
-func BenchmarkLeveldbPutSmallSize(b *testing.B) {
-	benchmarkLeveldbPut(b, Option{
-		ResourceCount:  5,
-		AttributeCount: 5,
-		SpanCount:      10,
-		EventCount:     5,
-		LinkCount:      5,
-	})
-}
-
-func BenchmarkLeveldbPutMiddleSize(b *testing.B) {
-	benchmarkLeveldbPut(b, Option{
-		ResourceCount:  10,
-		AttributeCount: 10,
-		SpanCount:      30,
-		EventCount:     5,
-		LinkCount:      5,
-	})
-}
-
-func BenchmarkLeveldbPutLargeSize(b *testing.B) {
-	benchmarkLeveldbPut(b, Option{
-		ResourceCount:  30,
-		AttributeCount: 30,
-		SpanCount:      100,
-		EventCount:     20,
-		LinkCount:      20,
 	})
 }

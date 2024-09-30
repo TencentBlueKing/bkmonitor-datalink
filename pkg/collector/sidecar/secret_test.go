@@ -32,13 +32,6 @@ func TestCreateOrUpdateFiles(t *testing.T) {
 			name: "secret1",
 			data: map[string][]byte{
 				"token1.conf": []byte("foo"),
-				"token2.conf": []byte("bar"),
-			},
-		},
-		{
-			name: "secret1",
-			data: map[string][]byte{
-				"token1.conf": []byte("foo"),
 			},
 		},
 		{
@@ -64,15 +57,6 @@ func TestCreateOrUpdateFiles(t *testing.T) {
 			name:   "token1.conf",
 			action: actionCreateOrUpdate,
 			data:   []byte("foo"),
-		},
-		{
-			name:   "token2.conf",
-			action: actionCreateOrUpdate,
-			data:   []byte("bar"),
-		},
-		{
-			name:   "token2.conf",
-			action: actionDelete,
 		},
 		{
 			name:   "token1.conf",

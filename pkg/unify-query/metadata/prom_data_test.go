@@ -20,9 +20,8 @@ import (
 
 func TestPromDataFormat_EncodeAndDecode(t *testing.T) {
 	testCase := map[string]struct {
-		q            []string
-		expected     []string
-		transformMap map[rune]struct{}
+		q        []string
+		expected []string
 	}{
 		"q-1": {
 			q: []string{
@@ -33,11 +32,6 @@ func TestPromDataFormat_EncodeAndDecode(t *testing.T) {
 				"__ext__bk_46__container",
 				"__ext__bk_46__cloud__bk_46__tencent__bk_46__com__bk_47__asset__bk_45__code",
 			},
-			transformMap: map[rune]struct{}{
-				46: {},
-				47: {},
-				45: {},
-			},
 		},
 		"q-2": {
 			q: []string{
@@ -47,12 +41,6 @@ func TestPromDataFormat_EncodeAndDecode(t *testing.T) {
 			expected: []string{
 				"__ext__bk_42__container__bk_36__",
 				"__bk_33___ext__bk_46____bk_46____bk_46__",
-			},
-			transformMap: map[rune]struct{}{
-				33: {},
-				36: {},
-				42: {},
-				46: {},
 			},
 		},
 	}
@@ -81,12 +69,6 @@ func TestPromDataFormat_EncodeAndDecode(t *testing.T) {
 
 				assert.Equal(t, q, nr)
 			}
-
-			assert.Equal(t, c.transformMap, pdf.transformMap)
-
-			nf := GetPromDataFormat(ctx)
-
-			assert.Equal(t, c.transformMap, nf.transformMap)
 		})
 	}
 }

@@ -264,6 +264,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	bodyString := string(bodyJson)
 
 	span.Set("query-indexes", qo.indexes)
+	span.Set("query-body", bodyString)
 
 	log.Infof(ctx, "elasticsearch-query indexes: %s", qo.indexes)
 	log.Infof(ctx, "elasticsearch-query body: %s", bodyString)

@@ -28,13 +28,13 @@ func setDefaultConfig() {
 	viper.SetDefault(OtlpTypeConfigPath, "grpc")
 
 	viper.SetDefault(ServiceNameConfigPath, "unify-query")
-	viper.SetDefault(DataIDConfigPath, 0)
+	viper.SetDefault(EnableConfigPath, true)
 }
 
 // InitConfig
 func InitConfig() {
 
-	DataID = viper.GetInt64(DataIDConfigPath)
+	Enable = viper.GetBool(EnableConfigPath)
 
 	for key, value := range configLabels {
 		log.Debugf(context.TODO(), "key->[%s] value->[%s] now is added to labels", key, value)

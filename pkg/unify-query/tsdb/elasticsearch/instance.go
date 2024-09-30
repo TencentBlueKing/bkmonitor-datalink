@@ -316,12 +316,15 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 		rets <- ret
 	}()
 
+	metricLabel := qo.query.MetricLabels(ctx)
+
 	sr, err := i.esQuery(ctx, qo, fact)
 	if err != nil {
 		return
 	}
 
-	ret.TimeSeriesMap, err = fact.AggDataFormat(sr.Aggregations)
+	// 如果是非时间聚合计算，则无需进行指标名的拼接作用
+	ret.TimeSeriesMap, err = fact.AggDataFormat(sr.Aggregations, metricLabel)
 	if err != nil {
 		return
 	}

@@ -16,9 +16,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/gzip"
 )
 
 func TestCreateOrUpdateFiles(t *testing.T) {
+	compress := func(s string) []byte {
+		v, _ := gzip.Compress([]byte(s))
+		return v
+	}
+
 	sm := &secretManager{
 		files:  make(map[string]map[string][]byte),
 		events: make(chan configFile, 1024),
@@ -31,19 +38,19 @@ func TestCreateOrUpdateFiles(t *testing.T) {
 		{
 			name: "secret1",
 			data: map[string][]byte{
-				"token1.conf": []byte("foo"),
+				"token1.conf": compress("foo"),
 			},
 		},
 		{
 			name: "secret1",
 			data: map[string][]byte{
-				"token1.conf": []byte("bar"),
+				"token1.conf": compress("bar"),
 			},
 		},
 		{
 			name: "secret2",
 			data: map[string][]byte{
-				"token3.conf": []byte("foz"),
+				"token3.conf": compress("foz"),
 			},
 		},
 		{

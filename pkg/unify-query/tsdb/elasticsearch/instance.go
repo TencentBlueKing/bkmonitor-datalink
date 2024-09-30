@@ -683,7 +683,7 @@ func (i *Instance) QuerySeriesSet(
 			WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.From, size).
 			WithMappings(mappings...).
 			WithOrders(query.Orders).
-			WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc())
+			WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
 
 		if len(query.Aggregates) > 0 {
 			i.queryWithAgg(ctx, qo, fact, rets)

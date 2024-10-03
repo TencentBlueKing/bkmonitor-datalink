@@ -18,9 +18,9 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/licensecache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/licensechecker/licensestore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -140,7 +140,7 @@ func (p *licenseChecker) processTraces(record *define.Record) (*define.Record, e
 	}
 
 	logger.Debugf("get or create new cacher, token=%v", token)
-	cacher := licensecache.GetOrCreateCacher(token)
+	cacher := licensestore.GetOrCreate(token)
 	cacher.Set(instance)
 	return nil, nil
 }
@@ -178,7 +178,7 @@ func checkAgentNodeStatus(conf Config, token, instance string) (Status, Status) 
 	agentStatus := statusAgentOld
 	agentNodeNum := 0
 
-	cacher := licensecache.GetCacher(token)
+	cacher := licensestore.Get(token)
 	if cacher != nil {
 		agentNodeNum = cacher.Count()
 		if !cacher.Exist(instance) {

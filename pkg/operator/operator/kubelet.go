@@ -73,10 +73,10 @@ func (c *Operator) cleanupDeprecatedService(ctx context.Context) {
 		// 清理弃用 service 避免数据重复采集
 		err := client.Delete(ctx, svc.Name, metav1.DeleteOptions{})
 		if err != nil {
-			logger.Errorf("failed to delete service %s, err: %v", cfg, err)
+			logger.Errorf("failed to delete service %s/%s, err: %v", svc.Namespace, svc.Name, err)
 			continue
 		}
-		logger.Infof("cleanup deprecated service %s", cfg)
+		logger.Infof("cleanup deprecated service %s/%s", svc.Namespace, svc.Name)
 	}
 }
 

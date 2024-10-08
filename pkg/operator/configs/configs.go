@@ -75,6 +75,10 @@ func (k Kubelet) String() string {
 	return fmt.Sprintf("%s/%s", k.Namespace, k.Name)
 }
 
+func (k Kubelet) Validate() bool {
+	return k.Namespace != "" && k.Name != ""
+}
+
 // HTTP http 服务配置
 type HTTP struct {
 	Port int    `yaml:"port"`

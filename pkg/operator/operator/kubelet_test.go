@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/kylelemons/godebug/pretty"
+	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -98,4 +99,10 @@ func TestGetNodeAddresses(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWrapLabels(t *testing.T) {
+	matcher := "app.kubernetes.io/managed-by=bkmonitor-operator,app.kubernetes.io/name=kubelet,k8s-app=kubelet"
+	assert.Equal(t, matcher, kubeletServiceLabels.Matcher())
+	assert.Equal(t, map[string]string(kubeletServiceLabels), kubeletServiceLabels.Labels())
 }

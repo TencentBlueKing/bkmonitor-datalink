@@ -7,20 +7,15 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package licensecache
+package licensestore
 
 import (
 	"sync"
 	"time"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/cleaner"
 )
 
 // Cacher 接口定义
 type Cacher interface {
-	// Type 返回 Cacher 类型
-	Type() string
-
 	// Set 设置 key
 	Set(k string)
 
@@ -34,15 +29,15 @@ type Cacher interface {
 	Count() int
 }
 
-type CacherController struct {
+type controller struct {
 	mut        sync.RWMutex
 	cached     map[string]Cacher
 	stop       chan struct{}
 	gcInterval time.Duration
 }
 
-func NewCacherController() *CacherController {
-	cc := &CacherController{
+func newController() *controller {
+	cc := &controller{
 		cached: map[string]Cacher{},
 		stop:   make(chan struct{}),
 	}
@@ -50,18 +45,18 @@ func NewCacherController() *CacherController {
 	return cc
 }
 
-func (cc *CacherController) Clean() {
+func (cc *controller) Clean() {
 	close(cc.stop)
 }
 
-func (cc *CacherController) Get(k string) Cacher {
+func (cc *controller) Get(k string) Cacher {
 	cc.mut.RLock()
 	defer cc.mut.RUnlock()
 
 	return cc.cached[k]
 }
 
-func (cc *CacherController) GetOrCreate(k string) Cacher {
+func (cc *controller) GetOrCreate(k string) Cacher {
 	// 先尝试获取对应的 cacher
 	cc.mut.RLock()
 	cacher, ok := cc.cached[k]
@@ -82,7 +77,7 @@ func (cc *CacherController) GetOrCreate(k string) Cacher {
 	return cacher
 }
 
-func (cc *CacherController) gc() {
+func (cc *controller) gc() {
 	d := cc.gcInterval
 	if cc.gcInterval <= 0 {
 		d = time.Minute
@@ -107,21 +102,12 @@ func (cc *CacherController) gc() {
 	}
 }
 
-var defaultCacherController = NewCacherController()
+var defaultController = newController()
 
-func init() {
-	cleaner.Register("licensecache", CleanCacher)
+func Get(k string) Cacher {
+	return defaultController.Get(k)
 }
 
-func GetCacher(k string) Cacher {
-	return defaultCacherController.Get(k)
-}
-
-func GetOrCreateCacher(k string) Cacher {
-	return defaultCacherController.GetOrCreate(k)
-}
-
-func CleanCacher() error {
-	defaultCacherController.Clean()
-	return nil
+func GetOrCreate(k string) Cacher {
+	return defaultController.GetOrCreate(k)
 }

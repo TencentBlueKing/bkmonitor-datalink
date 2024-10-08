@@ -17,9 +17,9 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/licensecache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/licensechecker/licensestore"
 )
 
 func TestFactory(t *testing.T) {
@@ -144,7 +144,7 @@ func TestAgentNodeStatusProcess(t *testing.T) {
 	assert.Equal(t, statusAgentNew, agentStatus)
 	assert.Equal(t, statusNodeAccess, nodeStatus)
 
-	cacher := licensecache.GetOrCreateCacher("token_x1")
+	cacher := licensestore.GetOrCreate("token_x1")
 	cacher.Set("instance1")
 
 	agentStatus, nodeStatus = checkAgentNodeStatus(config, "token_x1", "instance2")

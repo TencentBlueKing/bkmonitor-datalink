@@ -23,9 +23,9 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labelstore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metricsbuilder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/labelstore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/fasttime"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )

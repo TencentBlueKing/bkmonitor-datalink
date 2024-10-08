@@ -66,6 +66,9 @@ func TestStorageMulti(t *testing.T) {
 	storage.Del(1)
 	assert.False(t, storage.Exist(1))
 	assert.Len(t, storage.keys, 5)
+
+	storage.Clean()
+	assert.Len(t, storage.keys, 0)
 }
 
 const (

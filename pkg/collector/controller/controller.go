@@ -21,7 +21,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/cleaner"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/hook"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/wait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pingserver"
@@ -347,13 +346,6 @@ func (c *Controller) Stop() error {
 
 	if c.clusterSvr != nil {
 		c.clusterSvr.Stop()
-	}
-
-	cleanFuncs := cleaner.CleanFuncs()
-	for name, fn := range cleanFuncs {
-		if err := fn(); err != nil {
-			logger.Errorf("failed to execute clean function, name=%s, err: %v", name, err)
-		}
 	}
 
 	c.cancel()

@@ -22,13 +22,13 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/action"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/gzip"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/target"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/gzip"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 

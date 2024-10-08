@@ -30,7 +30,6 @@ type Sidecar struct {
 	cancel context.CancelFunc
 
 	config *Config
-	dw     *dataIDWatcher
 	sm     *secretManager
 }
 
@@ -50,10 +49,6 @@ func New(ctx context.Context, config *Config) (*Sidecar, error) {
 		KeyFile:  config.TLS.KeyFile,
 		CAFile:   config.TLS.CAFile,
 	}
-	bkclient, err := k8sutils.NewBKClient(config.ApiServerHost, tlsConf)
-	if err != nil {
-		return nil, err
-	}
 
 	client, err := k8sutils.NewK8SClient(config.ApiServerHost, tlsConf)
 	if err != nil {
@@ -64,23 +59,15 @@ func New(ctx context.Context, config *Config) (*Sidecar, error) {
 	return &Sidecar{
 		ctx:    ctx,
 		cancel: cancel,
-		dw:     newDataIDWatcher(ctx, bkclient),
 		sm:     newSecretManager(ctx, config.Secret, client),
 		config: config,
 	}, nil
 }
 
 func (s *Sidecar) Start() error {
-	if err := s.dw.Start(); err != nil {
-		return err
-	}
-
 	if err := s.sm.Start(); err != nil {
 		return err
 	}
-
-	ticker := time.NewTicker(time.Second * 5)
-	defer ticker.Stop()
 
 	smTimer := time.NewTimer(time.Hour)
 	smTimer.Stop()
@@ -90,16 +77,10 @@ func (s *Sidecar) Start() error {
 		case <-s.ctx.Done():
 			return nil
 
-		case <-ticker.C:
-			err := s.handlePrivilegedConfigFile()
-			if err != nil {
-				logger.Errorf("failed to update privileged config: %v", err)
-			}
-
 		case cf := <-s.sm.Watch():
 			err := s.handleChildConfigFiles(cf)
 			if err != nil {
-				logger.Errorf("%s child config failed, file=%s, err: %v", cf.action, cf.name, err)
+				logger.Errorf("%s child config (%s) failed: %v", cf.action, cf.name, err)
 			}
 			smTimer.Reset(time.Second * 5)
 
@@ -113,7 +94,6 @@ func (s *Sidecar) Start() error {
 
 func (s *Sidecar) Stop() {
 	s.sm.Stop()
-	s.dw.Stop()
 }
 
 func (s *Sidecar) realPath(p string) string {

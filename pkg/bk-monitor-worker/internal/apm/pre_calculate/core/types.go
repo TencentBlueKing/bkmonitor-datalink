@@ -171,6 +171,9 @@ var (
 	NetPeerNameField = CommonField{
 		SourceAttributes, "net.peer.name", toAttributes("net.peer.name"),
 	}
+	NetPeerIpField = CommonField{
+		SourceAttributes, "net.peer.ip", toAttributes("net.peer.ip"),
+	}
 	NetPeerPortField = CommonField{
 		SourceAttributes, "net.peer.port", toAttributes("net.peer.port"),
 	}
@@ -324,6 +327,7 @@ var StandardFields = []CommonField{
 	HttpHostField,
 	HttpUrlField,
 	NetPeerNameField,
+	NetPeerIpField,
 	NetPeerPortField,
 	ServerAddressField,
 	PeerServiceField,

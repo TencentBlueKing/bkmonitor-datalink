@@ -15,7 +15,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tracestore"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/sampler/tracestore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -109,7 +109,7 @@ type Queue struct {
 	policy     Policy
 	maxSpans   int
 	mut        sync.RWMutex
-	storages   map[int32]tracestore.Storage
+	storages   map[int32]*tracestore.Storage
 	span2trace map[int32]*traceIDMap
 }
 
@@ -117,7 +117,7 @@ func New(policy string, maxSpans int) *Queue {
 	return &Queue{
 		policy:     Policy(policy),
 		maxSpans:   maxSpans,
-		storages:   map[int32]tracestore.Storage{},
+		storages:   map[int32]*tracestore.Storage{},
 		span2trace: map[int32]*traceIDMap{},
 	}
 }
@@ -130,10 +130,8 @@ func (q *Queue) Clean() {
 	q.mut.Lock()
 	defer q.mut.Unlock()
 
-	for dataID, stor := range q.storages {
-		if err := stor.Clean(); err != nil {
-			logger.Errorf("failed to clean storage, dataID=%d, err: %v", dataID, err)
-		}
+	for _, storage := range q.storages {
+		storage.Clean()
 	}
 }
 
@@ -156,24 +154,26 @@ func (q *Queue) Put(dataID int32, traces ptrace.Traces) error {
 
 	// storages / span2trace 实例应该同时被创建
 	q.mut.RLock()
-	stor, ok := q.storages[dataID]
+	storage, ok := q.storages[dataID]
 	idMap := q.span2trace[dataID]
 	q.mut.RUnlock()
 
 	if ok {
 		idMap.Set(traceID, spanID)
-		return stor.Set(tk, traces)
+		storage.Set(tk, traces)
+		return nil
 	}
 
 	q.mut.Lock()
 	defer q.mut.Unlock()
 
 	// 先尝试读 避免并发创建
-	stor, ok = q.storages[dataID]
+	storage, ok = q.storages[dataID]
 	idMap = q.span2trace[dataID]
 	if ok {
 		idMap.Set(traceID, spanID)
-		return stor.Set(tk, traces)
+		storage.Set(tk, traces)
+		return nil
 	}
 
 	// 读取失败
@@ -182,10 +182,11 @@ func (q *Queue) Put(dataID int32, traces ptrace.Traces) error {
 	q.span2trace[dataID] = idMap
 	idMap.Set(traceID, spanID)
 
-	// 创建 stor
-	stor = tracestore.GetOrCreateStorage(dataID)
-	q.storages[dataID] = stor
-	return stor.Set(tk, traces)
+	// 创建 storage
+	storage = tracestore.New()
+	q.storages[dataID] = storage
+	storage.Set(tk, traces)
+	return nil
 }
 
 func (q *Queue) Pop(dataID int32, traceID pcommon.TraceID) []ptrace.Traces {
@@ -196,7 +197,7 @@ func (q *Queue) Pop(dataID int32, traceID pcommon.TraceID) []ptrace.Traces {
 	// storages / span2trace 实例应该同时存在
 	q.mut.RLock()
 	idMap := q.span2trace[dataID]
-	stor := q.storages[dataID]
+	storage := q.storages[dataID]
 	q.mut.RUnlock()
 
 	if idMap == nil {
@@ -213,15 +214,12 @@ func (q *Queue) Pop(dataID int32, traceID pcommon.TraceID) []ptrace.Traces {
 
 	for i := 0; i < len(spanIDs); i++ {
 		tk := tracestore.TraceKey{TraceID: traceID, SpanID: spanIDs[i]}
-		traces, err := stor.Get(tk)
-		if err != nil {
-			logger.Errorf("failed to get tk=%v, err: %v", tk, err)
+		traces, ok := storage.Get(tk)
+		if !ok {
+			logger.Errorf("failed to get tk=%v, dataid=%d", tk, dataID)
 			continue
 		}
-		if err := stor.Del(tk); err != nil {
-			logger.Errorf("failed to delete tk=%v, err: %v", tk, err)
-			continue
-		}
+		storage.Del(tk)
 		result = append(result, traces)
 	}
 	return result

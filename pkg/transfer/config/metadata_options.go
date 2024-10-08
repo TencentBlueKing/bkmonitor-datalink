@@ -24,6 +24,10 @@ const (
 	PipelineConfigDimensionGroupName = "group_info"
 )
 
+const (
+	LogCleanFailedFlag = "__parse_failure"
+)
+
 // RT 类型
 const (
 	// ResultTableSchemaTypeFree :

@@ -7,33 +7,25 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package cleaner
+package sidecar
 
-import (
-	"sync"
-)
-
-type CleanFunc func() error
-
-var (
-	mut        sync.Mutex
-	cleanFuncs = map[string]CleanFunc{}
-)
-
-func Register(name string, fn CleanFunc) {
-	mut.Lock()
-	defer mut.Unlock()
-
-	cleanFuncs[name] = fn
+type Config struct {
+	ConfigPath    string       `yaml:"config_path"`
+	PidPath       string       `yaml:"pid_path"`
+	KubConfig     string       `yaml:"kubeconfig"`
+	ApiServerHost string       `yaml:"apiserver_host"`
+	TLS           TLSConfig    `yaml:"tls"`
+	Secret        SecretConfig `yaml:"secret"`
 }
 
-func CleanFuncs() map[string]CleanFunc {
-	mut.Lock()
-	defer mut.Unlock()
+type TLSConfig struct {
+	Insecure bool   `yaml:"insecure"`
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+	CAFile   string `yaml:"ca_file"`
+}
 
-	ret := make(map[string]CleanFunc)
-	for name, fn := range cleanFuncs {
-		ret[name] = fn
-	}
-	return ret
+type SecretConfig struct {
+	Namespace string `yaml:"namespace"`
+	Selector  string `yaml:"selector"`
 }

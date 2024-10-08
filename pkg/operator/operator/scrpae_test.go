@@ -7,44 +7,50 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package licensecache
+package operator
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestCacherController(t *testing.T) {
-	t.Run("base", func(t *testing.T) {
-		ctr := NewCacherController()
-		defer ctr.Clean()
-		assert.Nil(t, ctr.Get("key1"))
+func TestParseMetricName(t *testing.T) {
+	cases := []struct {
+		input  string
+		output string
+	}{
+		{
+			input:  "foobar 1",
+			output: "foobar",
+		},
+		{
+			input:  "foobar   1",
+			output: "foobar",
+		},
+		{
+			input:  "  foobar 1",
+			output: "foobar",
+		},
+		{
+			input:  `foobar{k1="v1"}`,
+			output: "foobar",
+		},
+		{
+			input:  `foobar{k1="v1"} 2`,
+			output: "foobar",
+		},
+		{
+			input:  `foobar{k1="v1"} 2 11`,
+			output: "foobar",
+		},
+		{
+			input:  ` foobar {k1="v1"} 2 11`,
+			output: "foobar",
+		},
+	}
 
-		cacher := ctr.GetOrCreate("key1")
-		assert.NotNil(t, cacher)
-
-		cacher.Set("1")
-		assert.True(t, cacher.Exist("1"))
-	})
-
-	t.Run("Gc", func(t *testing.T) {
-		ctr := &CacherController{
-			cached:     map[string]Cacher{},
-			stop:       make(chan struct{}),
-			gcInterval: time.Second,
-		}
-		go ctr.gc()
-		defer ctr.Clean()
-
-		cacher := ctr.GetOrCreate("key1")
-		cacher.Set("1")
-		ctr.GetOrCreate("key2")
-
-		time.Sleep(time.Millisecond * 1200)
-		assert.NotNil(t, ctr.Get("key1"))
-		assert.NotNil(t, ctr.GetOrCreate("key1"))
-		assert.Nil(t, ctr.Get("key2")) // gc
-	})
+	for _, c := range cases {
+		assert.Equal(t, c.output, parseMetricName(c.input))
+	}
 }

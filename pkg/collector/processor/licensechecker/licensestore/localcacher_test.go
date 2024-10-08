@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package licensecache
+package licensestore
 
 import (
 	"strconv"
@@ -18,7 +18,6 @@ import (
 
 func TestLocalCacher(t *testing.T) {
 	cacher := newLocalCacher()
-	assert.Equal(t, TypeLocalCacher, cacher.Type())
 
 	const n = 10
 	for i := 0; i < n; i++ {

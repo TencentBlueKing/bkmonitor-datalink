@@ -10,7 +10,6 @@
 package accumulator
 
 import (
-	"os"
 	"runtime"
 	"strconv"
 	"sync"
@@ -22,7 +21,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labelstore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
@@ -42,7 +40,7 @@ func TestCalcStats(t *testing.T) {
 		dataID:     1001,
 		buckets:    []float64{2, 5, 10, 15},
 		gcInterval: time.Minute,
-	}, labelstore.GetOrCreateStorage(strconv.Itoa(1001)))
+	})
 	defer r.Stop()
 
 	dims1 := map[string]string{"label1": "value1"}
@@ -210,37 +208,30 @@ func testAccumulatorPublish(t *testing.T, dt string, value float64, count int) {
 
 func TestAccumulatorPublishCount(t *testing.T) {
 	testAccumulatorPublish(t, TypeCount, 6, 1)
-	assert.NoError(t, labelstore.CleanStorage())
 }
 
 func TestAccumulatorPublishDelta(t *testing.T) {
 	testAccumulatorPublish(t, TypeDelta, 6, 1)
-	assert.NoError(t, labelstore.CleanStorage())
 }
 
 func TestAccumulatorPublishDeltaDuration(t *testing.T) {
 	testAccumulatorPublish(t, TypeDeltaDuration, 2.5*float64(time.Second), 1)
-	assert.NoError(t, labelstore.CleanStorage())
 }
 
 func TestAccumulatorPublishMin(t *testing.T) {
 	testAccumulatorPublish(t, TypeMin, 1e8, 1)
-	assert.NoError(t, labelstore.CleanStorage())
 }
 
 func TestAccumulatorPublishMax(t *testing.T) {
 	testAccumulatorPublish(t, TypeMax, 1e9, 1)
-	assert.NoError(t, labelstore.CleanStorage())
 }
 
 func TestAccumulatorPublishSum(t *testing.T) {
 	testAccumulatorPublish(t, TypeSum, 2.5*float64(time.Second), 1)
-	assert.NoError(t, labelstore.CleanStorage())
 }
 
 func TestAccumulatorPublishBucket(t *testing.T) {
 	testAccumulatorPublish(t, TypeBucket, 0, 12)
-	assert.NoError(t, labelstore.CleanStorage())
 }
 
 func TestAccumulatorPublishCount10(t *testing.T) {
@@ -273,7 +264,7 @@ func TestAccumulatorPublishCount10(t *testing.T) {
 	accumulator.Stop()
 }
 
-func testAccumulatorMemoryConsumption(b *testing.B, dir, mt string, dataIDCount, iter, dims int) {
+func testAccumulatorMemoryConsumption(b *testing.B, dataIDCount, iter, dims int) {
 	logger.SetLoggerLevel("info")
 	accumulator := New(&Config{
 		MetricName:      "bk_apm_count",
@@ -282,7 +273,6 @@ func testAccumulatorMemoryConsumption(b *testing.B, dir, mt string, dataIDCount,
 		PublishInterval: time.Hour,
 		Type:            TypeDelta,
 	}, func(r *define.Record) {})
-	labelstore.InitStorage(dir, mt)
 
 	var dataids []int32
 	for i := 1001; i <= 1001+dataIDCount; i++ {
@@ -322,17 +312,8 @@ const (
 	dimCount = 6
 )
 
-func BenchmarkAccumulatorBuiltinStorageConsumption(b *testing.B) {
-	testAccumulatorMemoryConsumption(b, "", labelstore.TypeBuiltin, appCount, setCount, dimCount)
-}
-
-func BenchmarkAccumulatorLeveldbStorageConsumption(b *testing.B) {
-	dir, err := os.MkdirTemp("", "accumulator")
-	assert.NoError(b, err)
-	b.Log("leveldb make tempdir:", dir)
-	testAccumulatorMemoryConsumption(b, dir, labelstore.TypeLeveldb, appCount, setCount, dimCount)
-	assert.NoError(b, os.RemoveAll(dir))
-	b.Log("leveldb clean tempdir:", dir)
+func BenchmarkAccumulatorStorageConsumption(b *testing.B) {
+	testAccumulatorMemoryConsumption(b, appCount, setCount, dimCount)
 }
 
 func BenchmarkStatsPointer(b *testing.B) {

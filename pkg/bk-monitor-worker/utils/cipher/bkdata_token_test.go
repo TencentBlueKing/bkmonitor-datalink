@@ -24,6 +24,7 @@ func TestTransformDataidToToken(t *testing.T) {
 	config.BkdataAESKey = ""
 	token := TransformDataidToToken(-1, -1, -1, -1, "")
 	c := NewAESCipher(config.AesKey, "", []byte(config.BkdataAESIv))
-	rawToken := c.AESDecrypt(token)
+	rawToken, err := c.AESDecrypt(token)
+	assert.Nil(t, err)
 	assert.Equal(t, "-1bk-1bk-1bk-1bk", rawToken)
 }

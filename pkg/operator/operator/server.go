@@ -94,7 +94,7 @@ func (c *Operator) CheckScrapeRoute(w http.ResponseWriter, r *http.Request) {
 	worker := r.URL.Query().Get("workers")
 	i, _ := strconv.Atoi(worker)
 
-	writeResponse(w, c.scrapeAll(r.Context(), i))
+	writeResponse(w, c.scrapeAllStats(r.Context(), i))
 }
 
 // CheckScrapeNamespaceMonitorRoute 根据命名空间查看拉取指标信息
@@ -111,9 +111,18 @@ func (c *Operator) CheckScrapeNamespaceMonitorRoute(w http.ResponseWriter, r *ht
 		return
 	}
 
-	worker := r.URL.Query().Get("workers")
-	i, _ := strconv.Atoi(worker)
-	ch := c.scrapeForce(r.Context(), namespace, monitor, i)
+	worker, _ := strconv.Atoi(r.URL.Query().Get("workers"))
+	topn, _ := strconv.Atoi(r.URL.Query().Get("topn"))
+
+	analyze := r.URL.Query().Get("analyze") // 分析指标
+	if analyze == "true" {
+		ret := c.scrapeAnalyze(r.Context(), namespace, monitor, worker, topn)
+		b, _ := json.Marshal(ret)
+		w.Write(b)
+		return
+	}
+
+	ch := c.scrapeLines(r.Context(), namespace, monitor, worker)
 	const batch = 1000
 	n := 0
 	for line := range ch {
@@ -214,7 +223,7 @@ const (
 `
 	formatScrapeStats = `
 [√] check scrape stats
-- Description: 总共发现 %d 个 monitor 资源，抓取数据行数为 %d，采集共出现 %d 次错误，更新时间 %s
+- Description: 总共发现 %d 个 monitor 资源，抓取数据行数为 %d，采集共出现 %d 次错误
 - Suggestion: 错误可能由 forwardLocal 导致（可忽略），可过滤 'scrape error' 关键字查看详细错误信息。
 * 部分指标会有黑白名单机制，此抓取数据不做任何过滤。
 * TOP%d 数据量如下，详细情况可访问 /check/scrape 路由。%s
@@ -341,7 +350,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	worker := r.URL.Query().Get("workers")
 	i, _ := strconv.Atoi(worker)
 	if onScrape == "true" {
-		stats := c.scrapeAll(r.Context(), i)
+		stats := c.scrapeAllStats(r.Context(), i)
 		n = 5
 		if n > stats.MonitorCount {
 			n = stats.MonitorCount
@@ -352,8 +361,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 		if stats.LinesTotal > 3000000 {
 			warning = "数据行数已超过 300w 警戒线，请重点关注数据库负载！"
 		}
-		scrapeUpdated := c.scrapeUpdated.Format(time.RFC3339)
-		writef(formatScrapeStats, stats.MonitorCount, stats.LinesTotal, stats.ErrorsTotal, scrapeUpdated, n, warning, string(b))
+		writef(formatScrapeStats, stats.MonitorCount, stats.LinesTotal, stats.ErrorsTotal, n, warning, string(b))
 	}
 
 	// 检查处理 secrets 是否有问题
@@ -547,8 +555,8 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /check?monitor=${monitor}&scrape=true|false&workers=N
 * GET /check/dataid
 * GET /check/scrape?workers=N
-* GET /check/scrape/{namespace}?workers=N
-* GET /check/scrape/{namespace}/{monitor}?workers=N
+* GET /check/scrape/{namespace}?workers=N&analyze=true|false&topn=M
+* GET /check/scrape/{namespace}/{monitor}?workers=N&analyze=true|false&topn=M
 * GET /check/namespace
 * GET /check/monitor_blacklist
 * GET /check/active_discover

@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/olivere/elastic/v7"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -50,6 +51,8 @@ const (
 
 	Nested = "nested"
 	Terms  = "terms"
+
+	ESStep = "."
 )
 
 const (
@@ -97,7 +100,7 @@ type TimeSeriesResult struct {
 func mapData(prefix string, data map[string]any, res map[string]any) {
 	for k, v := range data {
 		if prefix != "" {
-			k = prefix + structured.EsOldStep + k
+			k = prefix + ESStep + k
 		}
 		switch v.(type) {
 		case map[string]any:
@@ -121,7 +124,7 @@ func mapProperties(prefix string, data map[string]any, res map[string]string) {
 	if properties, ok := data[Properties]; ok {
 		for k, v := range properties.(map[string]any) {
 			if prefix != "" {
-				k = prefix + structured.EsOldStep + k
+				k = prefix + ESStep + k
 			}
 			switch v.(type) {
 			case map[string]any:
@@ -162,8 +165,8 @@ type FormatFactory struct {
 	valueField string
 	timeField  metadata.TimeField
 
-	toEs   func(k string) string
-	toProm func(k string) string
+	decode func(k string) string
+	encode func(k string) string
 
 	timeFormat func(i int64) int64
 
@@ -188,6 +191,14 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 		ctx:         ctx,
 		mapping:     make(map[string]string),
 		aggInfoList: make(aggInfoList, 0),
+
+		// default encode / decode
+		encode: func(k string) string {
+			return k
+		},
+		decode: func(k string) string {
+			return k
+		},
 	}
 
 	return f
@@ -240,14 +251,24 @@ func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField,
 	return f
 }
 
-func (f *FormatFactory) WithTransform(toEs, toProm func(string) string) *FormatFactory {
-	f.toEs = toEs
-	f.toProm = toProm
+func (f *FormatFactory) WithTransform(encode func(string) string, decode func(string) string) *FormatFactory {
+	if encode != nil {
+		f.encode = encode
+	}
+	if decode != nil {
+		f.decode = decode
+		// 如果有 decode valueField 需要重新载入
+		f.valueField = decode(f.valueField)
+	}
 	return f
 }
 
 func (f *FormatFactory) WithOrders(orders map[string]bool) *FormatFactory {
-	f.orders = orders
+	f.orders = make(metadata.Orders, len(orders))
+	for k, ok := range orders {
+		k1 := f.decode(k)
+		f.orders[k1] = ok
+	}
 	return f
 }
 
@@ -286,6 +307,8 @@ func (f *FormatFactory) timeAgg(name string, window, timezone string) {
 }
 
 func (f *FormatFactory) termAgg(name string, isFirst bool) {
+	name = f.decode(name)
+
 	info := TermAgg{
 		Name: name,
 	}
@@ -312,9 +335,9 @@ func (f *FormatFactory) valueAgg(name, funcType string, args ...any) {
 }
 
 func (f *FormatFactory) NestedField(field string) string {
-	lbs := strings.Split(field, structured.EsOldStep)
+	lbs := strings.Split(field, ESStep)
 	for i := len(lbs) - 1; i >= 0; i-- {
-		checkKey := strings.Join(lbs[0:i], structured.EsOldStep)
+		checkKey := strings.Join(lbs[0:i], ESStep)
 		if v, ok := f.mapping[checkKey]; ok {
 			if v == Nested {
 				return checkKey
@@ -338,7 +361,7 @@ func (f *FormatFactory) nestedAgg(key string) {
 }
 
 // AggDataFormat 解析 es 的聚合计算
-func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*prompb.TimeSeries, error) {
+func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *prompb.Label) (map[string]*prompb.TimeSeries, error) {
 	if data == nil {
 		return nil, nil
 	}
@@ -350,11 +373,10 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*pr
 	}()
 
 	af := &aggFormat{
-		aggInfoList: f.aggInfoList,
-		items:       make(items, 0),
-		toEs:        f.toEs,
-		toProm:      f.toProm,
-		timeFormat:  f.timeFormat,
+		aggInfoList:    f.aggInfoList,
+		items:          make(items, 0),
+		promDataFormat: f.encode,
+		timeFormat:     f.timeFormat,
 	}
 
 	af.get()
@@ -368,19 +390,24 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*pr
 	timeSeriesMap := make(map[string]*prompb.TimeSeries)
 	for _, im := range af.items {
 		var (
-			tsLabels          []prompb.Label
-			seriesNameBuilder strings.Builder
+			tsLabels []prompb.Label
 		)
 		if len(im.labels) > 0 {
-			tsLabels = make([]prompb.Label, 0, len(im.labels))
 			for _, dim := range af.dims {
-				seriesNameBuilder.WriteString(dim)
-				seriesNameBuilder.WriteString(im.labels[dim])
 				tsLabels = append(tsLabels, prompb.Label{
 					Name:  dim,
 					Value: im.labels[dim],
 				})
 			}
+		}
+
+		if metricLabel != nil {
+			tsLabels = append(tsLabels, *metricLabel)
+		}
+
+		var seriesNameBuilder strings.Builder
+		for _, l := range tsLabels {
+			seriesNameBuilder.WriteString(l.String())
 		}
 
 		seriesKey := seriesNameBuilder.String()
@@ -565,6 +592,10 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 			}
 
 			for idx, dim := range am.Dimensions {
+				if dim == labels.MetricName {
+					continue
+				}
+
 				f.termAgg(dim, idx == 0)
 				f.nestedAgg(dim)
 			}
@@ -630,7 +661,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 	for _, conditions := range allConditions {
 		andQuery := make([]elastic.Query, 0, len(conditions))
 		for _, con := range conditions {
-			key := con.DimensionName
+			key := f.decode(con.DimensionName)
 
 			// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
 			fieldType, ok := f.mapping[key]
@@ -812,8 +843,8 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 			}
 		}
 
-		if f.toProm != nil {
-			k = f.toProm(k)
+		if f.encode != nil {
+			k = f.encode(k)
 		}
 
 		lbl = append(lbl, k)

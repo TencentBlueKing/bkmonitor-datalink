@@ -240,11 +240,11 @@ func TestParseForm(t *testing.T) {
 	})
 }
 
-func TestGetAppNameAndTags(t *testing.T) {
+func TestParseAppNameAndTags(t *testing.T) {
 	t.Run("valid data", func(t *testing.T) {
 		url := localURL + "?name=profiling-test%7Bcustom1%3D123456%2CserviceName%3Dmy-profiling-proj%7D&units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr"
 		req := httptest.NewRequest(http.MethodPost, url, &bytes.Buffer{})
-		appName, tags := getAppNameAndTags(req)
+		appName, tags := parseAppNameAndTags(req)
 		assert.Equal(t, "profiling-test", appName)
 		assert.Equal(t, map[string]string{"custom1": "123456", "serviceName": "my-profiling-proj"}, tags)
 	})
@@ -252,7 +252,7 @@ func TestGetAppNameAndTags(t *testing.T) {
 	t.Run("empty tags", func(t *testing.T) {
 		url := localURL + "?name=profiling-test%7B%7D&units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr"
 		req := httptest.NewRequest(http.MethodPost, url, &bytes.Buffer{})
-		appName, tags := getAppNameAndTags(req)
+		appName, tags := parseAppNameAndTags(req)
 		assert.Equal(t, "profiling-test", appName)
 		assert.Empty(t, tags)
 	})
@@ -260,7 +260,7 @@ func TestGetAppNameAndTags(t *testing.T) {
 	t.Run("empty tags and empty app", func(t *testing.T) {
 		url := localURL + "?units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr"
 		req := httptest.NewRequest(http.MethodPost, url, &bytes.Buffer{})
-		appName, tags := getAppNameAndTags(req)
+		appName, tags := parseAppNameAndTags(req)
 		assert.Empty(t, appName)
 		assert.Empty(t, tags)
 	})
@@ -268,7 +268,7 @@ func TestGetAppNameAndTags(t *testing.T) {
 	t.Run("invalid tags", func(t *testing.T) {
 		url := localURL + "?name=profiling-test%7B%7D%7D%7D&units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr"
 		req := httptest.NewRequest(http.MethodPost, url, &bytes.Buffer{})
-		appName, tags := getAppNameAndTags(req)
+		appName, tags := parseAppNameAndTags(req)
 		assert.Equal(t, "profiling-test", appName)
 		assert.Empty(t, tags)
 	})

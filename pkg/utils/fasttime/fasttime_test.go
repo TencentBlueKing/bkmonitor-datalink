@@ -20,7 +20,6 @@ func TestFastTime(t *testing.T) {
 	t0 := UnixTimestamp()
 	t1 := time.Now().Unix()
 	assert.Equal(t, t0, t1)
-	time.Sleep(time.Second)
 }
 
 func BenchmarkFastTime(b *testing.B) {

@@ -84,7 +84,6 @@ type Operator struct {
 	daemonSetTaskCache   map[string]map[string]struct{}
 	statefulSetTaskCache map[int]map[string]struct{}
 	eventTaskCache       string
-	scrapeUpdated        time.Time
 
 	promSdConfigsBytes map[string][]byte // 无并发读写
 }
@@ -492,6 +491,7 @@ func (c *Operator) handleDiscoverNotify() {
 		c.mm.IncDispatchedTaskCounter(trigger)
 		c.dispatchTasks()
 		c.mm.ObserveDispatchedTaskDuration(trigger, now)
+		logger.Infof("trigger %s dispatch take: %v", trigger, time.Since(now))
 		last = now.Unix() // 更新最近一次调度的时间
 	}
 

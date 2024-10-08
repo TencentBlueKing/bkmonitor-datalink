@@ -2,6 +2,10 @@ type: 'subconfig'
 token: '{{ bk_data_token }}'
 bk_biz_id: {{ bk_biz_id }}
 bk_app_name: {{ bk_app_name }}
+traces_dataid: {{ trace_data_id | default(-1) }}
+metrics_dataid: {{ metric_data_id | default(-1) }}
+logs_dataid: {{ log_data_id | default(-1) }}
+profiles_dataid: {{ profile_data_id | default(-1) }}
 
 {% if sdk_config is defined %}
 skywalking_agent:

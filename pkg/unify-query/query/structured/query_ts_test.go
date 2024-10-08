@@ -43,8 +43,6 @@ func TestQueryToMetric(t *testing.T) {
 	mock.SetRedisClient(ctx)
 	mock.SetSpaceTsDbMockData(
 		ctx,
-		"query_ts_test.db",
-		"query_ts_test",
 		ir.SpaceInfo{
 			spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
 		},
@@ -586,9 +584,9 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 					QueryList: md.QueryList{
 						{
 							IsSingleMetric: false,
-							Measurement:    "cpu_summary",
-							Field:          "usage",
-							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_summary_raw", __name__="usage_value"`,
+							Measurement:    "group_default",
+							Field:          "metric_value",
+							VmCondition:    `__name__=~".*_value"`,
 						},
 					},
 				},
@@ -714,7 +712,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				Step:        "1m",
 			},
 			ok:     false,
-			promql: `a`,
+			promql: `sum by (ip) (last_over_time(a[1m]))`,
 		},
 		"非 vm 聚合查询验证 - 2": {
 			source: "username:other",
@@ -778,7 +776,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				Step:        "1m",
 			},
 			ok:     false,
-			promql: `topk(1, a)`,
+			promql: `topk(1, sum by (ip) (last_over_time(a[1m])))`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -370,9 +370,11 @@ func (r ResultTableSvc) CreateStorage(defaultStorage string, isSyncDb bool, stor
 
 // RefreshEtlConfig 更新ETL配置，确保其符合当前数据库配置
 func (r ResultTableSvc) RefreshEtlConfig() error {
+	logger.Infof("RefreshEtlConfig:table_id [%s] refresh etl config start", r.TableId)
 	db := mysql.GetDBSession().DB
 	var dsrt resulttable.DataSourceResultTable
 	if err := resulttable.NewDataSourceResultTableQuerySet(db).TableIdEq(r.TableId).One(&dsrt); err != nil {
+		logger.Errorf("RefreshEtlConfig:table_id [%s] refresh etl config error: %s", r.TableId, err)
 		return err
 	}
 	var ds resulttable.DataSource
@@ -382,7 +384,7 @@ func (r ResultTableSvc) RefreshEtlConfig() error {
 	if err := NewDataSourceSvc(&ds).RefreshConsulConfig(context.TODO()); err != nil {
 		return err
 	}
-	logger.Infof("table_id [%s] refresh etl config success", r.TableId)
+	logger.Infof("RefreshEtlConfig:table_id [%s] refresh etl config success", r.TableId)
 	return nil
 }
 

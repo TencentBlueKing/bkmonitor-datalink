@@ -53,14 +53,14 @@ func (lbs WrapLabels) Matcher() string {
 func (c *Operator) cleanupDeprecatedService(ctx context.Context) {
 	cfg := configs.G().Kubelet
 	if !cfg.Validate() {
-		logger.Error("invalid kubelet config")
+		logger.Errorf("invalid kubelet config %s", cfg)
 		return
 	}
 
 	client := c.client.CoreV1().Services(cfg.Namespace)
 	obj, err := client.List(ctx, metav1.ListOptions{LabelSelector: kubeletServiceLabels.Matcher()})
 	if err != nil {
-		logger.Errorf("failed to list services, namespace=%s, err: %v", cfg.Namespace, err)
+		logger.Errorf("failed to list services (%s), err: %v", cfg, err)
 		return
 	}
 

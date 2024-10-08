@@ -22,7 +22,8 @@ func TestParseMetricName(t *testing.T) {
 	}{
 		{
 			input:  "foobar 1",
-			output: "foobar"},
+			output: "foobar",
+		},
 		{
 			input:  "foobar   1",
 			output: "foobar",

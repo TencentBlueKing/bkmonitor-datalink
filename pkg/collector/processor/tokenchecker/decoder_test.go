@@ -257,7 +257,7 @@ func TestAes256WithMetaDecoderAndFixedBackup(t *testing.T) {
 			Input:     "foobar",
 			Token:     define.Token{},
 			Decoder:   newCombinedTokenDecoder(newConfig(true)),
-			ErrPrefix: "fixed tokenDecoder required empty token string",
+			ErrPrefix: "invalid token",
 		},
 		{
 			Input: "foobar",

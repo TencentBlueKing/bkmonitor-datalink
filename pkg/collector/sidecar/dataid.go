@@ -50,9 +50,9 @@ type IDSpec struct {
 	AppName string
 }
 
-// Watcher 负责监听和处理 DataID 资源
+// dataIDWatcher 负责监听和处理 DataID 资源
 // 目前仅负责处理 collector 自己归属的 dataid
-type Watcher struct {
+type dataIDWatcher struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	informer cache.SharedIndexInformer
@@ -61,11 +61,11 @@ type Watcher struct {
 	dataids map[string]IDSpec
 }
 
-func newWatcher(ctx context.Context, client bkversioned.Interface) *Watcher {
+func newDataIDWatcher(ctx context.Context, client bkversioned.Interface) *dataIDWatcher {
 	ctx, cancel := context.WithCancel(ctx)
 	factory := bkinformers.NewSharedInformerFactory(client, 5*time.Minute)
 
-	return &Watcher{
+	return &dataIDWatcher{
 		ctx:      ctx,
 		cancel:   cancel,
 		dataids:  make(map[string]IDSpec),
@@ -73,7 +73,7 @@ func newWatcher(ctx context.Context, client bkversioned.Interface) *Watcher {
 	}
 }
 
-func (w *Watcher) Start() error {
+func (w *dataIDWatcher) Start() error {
 	w.informer.AddEventHandler(
 		cache.ResourceEventHandlerFuncs{
 			AddFunc:    w.HandleDataIDAdd,
@@ -90,11 +90,11 @@ func (w *Watcher) Start() error {
 	return nil
 }
 
-func (w *Watcher) Stop() {
+func (w *dataIDWatcher) Stop() {
 	w.cancel()
 }
 
-func (w *Watcher) DataIDs() []IDSpec {
+func (w *dataIDWatcher) DataIDs() []IDSpec {
 	w.mut.Lock()
 	defer w.mut.Unlock()
 
@@ -109,7 +109,7 @@ func (w *Watcher) DataIDs() []IDSpec {
 	return ret
 }
 
-func (w *Watcher) upsertDataID(dataID *bkv1beta1.DataID) {
+func (w *dataIDWatcher) upsertDataID(dataID *bkv1beta1.DataID) {
 	// 只处理 collector 用途且 privileged scope 的 dataid
 	usage := dataID.Labels[keyUsage]
 	if !strings.HasPrefix(usage, usagePrefix) {
@@ -161,7 +161,7 @@ func (w *Watcher) upsertDataID(dataID *bkv1beta1.DataID) {
 	logger.Infof("handle dataid: %+v", w.dataids[uid])
 }
 
-func (w *Watcher) deleteDataID(dataID *bkv1beta1.DataID) {
+func (w *dataIDWatcher) deleteDataID(dataID *bkv1beta1.DataID) {
 	uid := fmt.Sprintf("%s/%d", dataID.Labels[keyTokenRef], dataID.Spec.DataID)
 
 	v, ok := w.dataids[uid]
@@ -171,7 +171,7 @@ func (w *Watcher) deleteDataID(dataID *bkv1beta1.DataID) {
 	delete(w.dataids, uid)
 }
 
-func (w *Watcher) HandleDataIDAdd(obj interface{}) {
+func (w *dataIDWatcher) HandleDataIDAdd(obj interface{}) {
 	w.mut.Lock()
 	defer w.mut.Unlock()
 
@@ -183,7 +183,7 @@ func (w *Watcher) HandleDataIDAdd(obj interface{}) {
 	w.upsertDataID(dataID)
 }
 
-func (w *Watcher) HandleDataIDDelete(obj interface{}) {
+func (w *dataIDWatcher) HandleDataIDDelete(obj interface{}) {
 	w.mut.Lock()
 	defer w.mut.Unlock()
 
@@ -195,7 +195,7 @@ func (w *Watcher) HandleDataIDDelete(obj interface{}) {
 	w.deleteDataID(dataID)
 }
 
-func (w *Watcher) HandleDataIDUpdate(oldObj interface{}, newObj interface{}) {
+func (w *dataIDWatcher) HandleDataIDUpdate(oldObj interface{}, newObj interface{}) {
 	w.mut.Lock()
 	defer w.mut.Unlock()
 

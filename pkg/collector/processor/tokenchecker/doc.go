@@ -34,6 +34,14 @@ processor:
       salt: "bk" # 加盐解密标识
       decoded_iv: "bkbkbkbkbkbkbkbk"
       decoded_key: "81be7fc6-5476-4934-9417-6d4d593728db"
+
+  - name: "token_checker/aes256WithMeta"
+    config:
+      type: "aes256WithMeta"
+      resource_key: "bk.data.token"
+      salt: "bk" # 加盐解密标识
+      decoded_iv: "bkbkbkbkbkbkbkbk"
+      decoded_key: "81be7fc6-5476-4934-9417-6d4d593728db"
 */
 
 package tokenchecker

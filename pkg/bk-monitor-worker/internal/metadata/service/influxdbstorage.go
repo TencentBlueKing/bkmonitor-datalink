@@ -42,7 +42,10 @@ func (k InfluxdbStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	clusterConsulConfig := NewClusterInfoSvc(clusterInfo).ConsulConfig()
+	clusterConsulConfig, err := NewClusterInfoSvc(clusterInfo).ConsulConfig()
+	if err != nil {
+		return nil, err
+	}
 	// 获取 influxdb 集群名称
 	defaultInstanceClusterName := ""
 	if k.InfluxdbProxyStorageId != 0 || &k.InfluxdbProxyStorageId != nil {

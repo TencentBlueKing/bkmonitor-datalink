@@ -11,6 +11,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -22,8 +23,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/cleaner"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/hook"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labelstore"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tracestore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/wait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pingserver"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
@@ -37,11 +36,9 @@ import (
 )
 
 const (
-	configFieldMaxProcs     = "max_procs"
-	configFieldLogging      = "logging"
-	configFieldLabelStorage = "label_storage"
-	configFieldTraceStorage = "trace_storage"
-	configFieldHook         = "hook"
+	configFieldMaxProcs = "max_procs"
+	configFieldLogging  = "logging"
+	configFieldHook     = "hook"
 )
 
 type Controller struct {
@@ -71,24 +68,6 @@ func SetupCoreNum(conf *confengine.Config) {
 type StorageConfig struct {
 	Type string `config:"type" mapstructure:"type"`
 	Dir  string `config:"dir" mapstructure:"dir"`
-}
-
-// SetupLabelStorage 初始化 Label Storage
-func SetupLabelStorage(conf *confengine.Config) {
-	var storConf StorageConfig
-	if err := conf.UnpackChild(configFieldLabelStorage, &storConf); err != nil {
-		logger.Warnf("unpack label storage config failed, may it lacks of fields: %s, then uses the default config", err)
-	}
-	labelstore.InitStorage(storConf.Dir, storConf.Type)
-}
-
-// SetupTraceStorage 初始化 Trace Storage
-func SetupTraceStorage(conf *confengine.Config) {
-	var storConf StorageConfig
-	if err := conf.UnpackChild(configFieldTraceStorage, &storConf); err != nil {
-		logger.Warnf("unpack trace storage config failed, may it lacks of fields: %s, then uses the default config", err)
-	}
-	tracestore.InitStorage(storConf.Dir, storConf.Type)
 }
 
 // SetupHook 初始化 Hook
@@ -133,8 +112,6 @@ func Setup(conf *confengine.Config) error {
 	if err := SetupLogger(conf); err != nil {
 		return err
 	}
-	SetupLabelStorage(conf)
-	SetupTraceStorage(conf)
 	SetupHook(conf)
 	return nil
 }
@@ -501,24 +478,24 @@ loop:
 
 			start := time.Now()
 			rtype := task.Record().RecordType
+			token := task.Record().Token
 			for i := 0; i < task.StageCount(); i++ {
 				// 任务执行应该事务的 一旦中间某一环执行失败那就整体失败
 				stage := task.StageAt(i)
 				logger.Debugf("process original stage: %s, recordType: %s", stage, rtype)
 				derivedRecord, err := c.pipelineMgr.GetProcessor(stage).Process(task.Record())
-				if err == define.ErrSkipEmptyRecord {
-					token := task.Record().Token
+				if errors.Is(err, define.ErrSkipEmptyRecord) {
 					DefaultMetricMonitor.IncSkippedCounter(task.PipelineName(), rtype, token.GetDataID(rtype), stage, token.Original)
 					logger.Warnf("skip empty record '%s' at stage: %v, token: %+v, err: %v", rtype, stage, token, err)
 					goto loop
 				}
-				if err == define.ErrEndOfPipeline {
+				if errors.Is(err, define.ErrEndOfPipeline) {
 					goto loop
 				}
 
 				if err != nil {
 					logger.Errorf("failed to process task: %v", err)
-					DefaultMetricMonitor.IncDroppedCounter(task.PipelineName(), rtype, task.Record().Token.GetDataID(rtype), stage)
+					DefaultMetricMonitor.IncDroppedCounter(task.PipelineName(), rtype, token.GetDataID(rtype), stage)
 					goto loop
 				}
 
@@ -529,7 +506,6 @@ loop:
 				}
 			}
 
-			token := task.Record().Token
 			DefaultMetricMonitor.ObserveHandledDuration(start, task.PipelineName(), rtype, token.GetDataID(rtype))
 
 			t0 := time.Now()
@@ -564,30 +540,29 @@ loop:
 
 			start := time.Now()
 			rtype := task.Record().RecordType
+			token := task.Record().Token
 			for i := 0; i < task.StageCount(); i++ {
 				// 任务执行应该事务的 一旦中间某一环执行失败那就整体失败
 				// 无需再关注是否为 derived 类型
 				stage := task.StageAt(i)
 				logger.Debugf("process derived stage: %s, recordType: %+v", stage, rtype)
 				_, err := c.pipelineMgr.GetProcessor(stage).Process(task.Record())
-				if err == define.ErrSkipEmptyRecord {
-					token := task.Record().Token
+				if errors.Is(err, define.ErrSkipEmptyRecord) {
 					logger.Warnf("skip empty record '%s' at stage: %v, token: %+v, err: %v", rtype, stage, token, err)
 					DefaultMetricMonitor.IncSkippedCounter(task.PipelineName(), rtype, token.GetDataID(rtype), stage, token.Original)
 					goto loop
 				}
-				if err == define.ErrEndOfPipeline {
+				if errors.Is(err, define.ErrEndOfPipeline) {
 					goto loop
 				}
 
 				if err != nil {
 					logger.Errorf("failed to process task: %v", err)
-					DefaultMetricMonitor.IncDroppedCounter(task.PipelineName(), rtype, task.Record().Token.GetDataID(rtype), stage)
+					DefaultMetricMonitor.IncDroppedCounter(task.PipelineName(), rtype, token.GetDataID(rtype), stage)
 					goto loop
 				}
 			}
 
-			token := task.Record().Token
 			DefaultMetricMonitor.ObserveHandledDuration(start, task.PipelineName(), rtype, token.GetDataID(rtype))
 
 			t0 := time.Now()

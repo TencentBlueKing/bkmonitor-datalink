@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metacache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -117,6 +118,15 @@ func LoadConfigPath(path string) (*Config, error) {
 	if err != nil {
 		DefaultMetricMonitor.IncLoadConfigFailedCounter()
 		return nil, err
+	}
+
+	var token define.Token
+	if err := config.Unpack(&token); err != nil {
+		logger.Warnf("failed to parse config (%s), err: %v", path, err)
+	}
+	if token.Original != "" {
+		logger.Debugf("metacache set token: %+v", token)
+		metacache.Set(token.Original, token)
 	}
 
 	logger.Debugf("load config file '%v'", path)

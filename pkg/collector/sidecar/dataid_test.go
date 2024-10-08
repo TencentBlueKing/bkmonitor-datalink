@@ -119,7 +119,7 @@ var (
 
 func TestWatcher(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	w := Watcher{
+	w := dataIDWatcher{
 		ctx:     ctx,
 		cancel:  cancel,
 		dataids: make(map[string]IDSpec),

@@ -73,62 +73,61 @@ func (m *MetricProcessor) findSpanMetric(
 	flowMetricCount := make(map[string]int)
 	flowMetricRecordMapping := make(map[string]*storage.FlowMetricRecordStats)
 	for _, span := range fullTreeGraph.StandardSpans() {
-
-		// apm_service_with_apm_service_instance_relation
-		serviceInstanceRelationLabelKey := strings.Join(
-			[]string{
-				pair("__name__", storage.ApmServiceInstanceRelation),
-				pair("apm_service_name", span.GetFieldValue(core.ServiceNameField)),
-				pair("apm_application_name", m.appName),
-				pair("apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField)),
-			},
-			",",
-		)
-
-		if !slices.Contains(labels, serviceInstanceRelationLabelKey) {
-			labels = append(labels, serviceInstanceRelationLabelKey)
-			metricCount[storage.ApmServiceInstanceRelation]++
-		}
-
-		bcsClusterId := span.GetFieldValue(core.K8sBcsClusterId)
-		if bcsClusterId != "" {
-			podName := span.GetFieldValue(core.K8sPodName)
-			if podName == "" {
-				podName = span.GetFieldValue(core.NetHostnameField)
-			}
-			// apm_service_instance_with_pod_address_relation
-			servicePodRelationLabelKey := strings.Join(
+		if !span.IsFromHistory() {
+			// RELATION: apm_service_with_apm_service_instance_relation
+			serviceInstanceRelationLabelKey := strings.Join(
 				[]string{
-					pair("__name__", storage.ApmServicePodRelation),
+					pair("__name__", storage.ApmServiceInstanceRelation),
 					pair("apm_service_name", span.GetFieldValue(core.ServiceNameField)),
 					pair("apm_application_name", m.appName),
 					pair("apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField)),
-					pair("bcs_cluster_id", bcsClusterId),
-					pair("namespace", span.GetFieldValue(core.K8sNamespace)),
-					pair("pod", podName),
 				},
 				",",
 			)
-			if !slices.Contains(labels, servicePodRelationLabelKey) {
-				labels = append(labels, servicePodRelationLabelKey)
-				metricCount[storage.ApmServicePodRelation]++
+			if !slices.Contains(labels, serviceInstanceRelationLabelKey) {
+				labels = append(labels, serviceInstanceRelationLabelKey)
+				metricCount[storage.ApmServiceInstanceRelation]++
 			}
-		} else {
-			// apm_service_instance_with_system_relation
-			serviceSystemRelationLabelKey := strings.Join(
-				[]string{
-					pair("__name__", storage.ApmServiceSystemRelation),
-					pair("apm_service_name", span.GetFieldValue(core.ServiceNameField)),
-					pair("apm_application_name", m.appName),
-					pair("apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField)),
-					pair("bk_target_ip", span.GetFieldValue(core.NetHostIpField, core.HostIpField)),
-				},
-				",",
-			)
 
-			if !slices.Contains(labels, serviceSystemRelationLabelKey) {
-				labels = append(labels, serviceSystemRelationLabelKey)
-				metricCount[storage.ApmServiceSystemRelation]++
+			bcsClusterId := span.GetFieldValue(core.K8sBcsClusterId)
+			if bcsClusterId != "" {
+				podName := span.GetFieldValue(core.K8sPodName)
+				if podName == "" {
+					podName = span.GetFieldValue(core.NetHostnameField)
+				}
+				// RELATION: apm_service_instance_with_pod_address_relation
+				servicePodRelationLabelKey := strings.Join(
+					[]string{
+						pair("__name__", storage.ApmServicePodRelation),
+						pair("apm_service_name", span.GetFieldValue(core.ServiceNameField)),
+						pair("apm_application_name", m.appName),
+						pair("apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField)),
+						pair("bcs_cluster_id", bcsClusterId),
+						pair("namespace", span.GetFieldValue(core.K8sNamespace)),
+						pair("pod", podName),
+					},
+					",",
+				)
+				if !slices.Contains(labels, servicePodRelationLabelKey) {
+					labels = append(labels, servicePodRelationLabelKey)
+					metricCount[storage.ApmServicePodRelation]++
+				}
+			} else {
+				// RELATION: apm_service_instance_with_system_relation
+				serviceSystemRelationLabelKey := strings.Join(
+					[]string{
+						pair("__name__", storage.ApmServiceSystemRelation),
+						pair("apm_service_name", span.GetFieldValue(core.ServiceNameField)),
+						pair("apm_application_name", m.appName),
+						pair("apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField)),
+						pair("bk_target_ip", span.GetFieldValue(core.NetHostIpField, core.HostIpField)),
+					},
+					",",
+				)
+				if !slices.Contains(labels, serviceSystemRelationLabelKey) {
+					labels = append(labels, serviceSystemRelationLabelKey)
+					metricCount[storage.ApmServiceSystemRelation]++
+				}
 			}
 		}
 

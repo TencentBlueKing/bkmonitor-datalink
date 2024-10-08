@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -55,11 +54,6 @@ func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, s
 	}
 	params := make(map[string]string)
 	params["sql"] = sql
-
-	// body 增加 bkdata auth 信息
-	for k, v := range bkapi.GetBkDataAPI().GetDataAuth() {
-		params[k] = v
-	}
 
 	body, err := json.Marshal(params)
 	if err != nil {

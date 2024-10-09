@@ -688,7 +688,7 @@ func (i *Instance) QuerySeriesSet(
 
 	span.Set("query-storage-id", query.StorageID)
 	span.Set("query-cluster-name", query.ClusterName)
-	span.Set("query-tag-keys", fmt.Sprintf("%+v", query.TagsKey))
+	span.Set("query-tag-keys", query.TagsKey)
 
 	span.Set("query-protocol", i.protocol)
 	span.Set("query-rate-limit", int(i.readRateLimit))

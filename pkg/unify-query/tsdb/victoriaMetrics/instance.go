@@ -394,7 +394,7 @@ func (i *Instance) vmQuery(
 
 	queryCost := time.Since(startAnaylize)
 
-	span.Set("query-cost", queryCost.String())
+	span.Set("query-cost", queryCost)
 	span.Set("response-size", size)
 
 	metric.TsDBRequestSecond(
@@ -421,9 +421,9 @@ func (i *Instance) QueryRange(
 
 	vmExpand = metadata.GetExpand(ctx)
 
-	span.Set("query-start", start.String())
-	span.Set("query-end", end.String())
-	span.Set("query-step", step.String())
+	span.Set("query-start", start)
+	span.Set("query-end", end)
+	span.Set("query-step", step)
 	span.Set("query-promql", promqlStr)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
@@ -491,7 +491,7 @@ func (i *Instance) Query(
 	vmExpand = metadata.GetExpand(ctx)
 
 	span.Set("query-promql", promqlStr)
-	span.Set("query-end", end.String())
+	span.Set("query-end", end)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		return promql.Vector{}, nil
@@ -618,9 +618,9 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.maxConditionNum)
 	}
 
-	span.Set("query-matchers", fmt.Sprintf("%+v", matchers))
-	span.Set("query-start", start.String())
-	span.Set("query-end", end.String())
+	span.Set("query-matchers", matchers)
+	span.Set("query-start", start)
+	span.Set("query-end", end)
 
 	paramsQuery := &ParamsSeries{
 		InfluxCompatible: i.influxCompatible,
@@ -689,9 +689,9 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 	ves, _ := json.Marshal(vmExpand)
 	span.Set("vm-expand", string(ves))
 	span.Set("query-name", name)
-	span.Set("query-matchers", fmt.Sprintf("%+v", matchers))
-	span.Set("query-start", start.String())
-	span.Set("query-end", end.String())
+	span.Set("query-matchers", matchers)
+	span.Set("query-start", start)
+	span.Set("query-end", end)
 
 	referenceName := ""
 	for _, m := range matchers {

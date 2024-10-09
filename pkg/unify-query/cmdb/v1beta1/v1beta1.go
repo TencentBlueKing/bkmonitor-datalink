@@ -244,12 +244,12 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	span.Set("step", opt.Step.String())
 	span.Set("source", opt.Source)
 	span.Set("target", opt.Target)
-	span.Set("matcher", fmt.Sprintf("%v", opt.Matcher))
+	span.Set("matcher", opt.Matcher)
 	span.Set("target", opt.PathResource)
 
 	queryMatcher := opt.Matcher.Rename()
 
-	span.Set("query-matcher", fmt.Sprintf("%v", queryMatcher))
+	span.Set("query-matcher", queryMatcher)
 
 	if opt.Source == "" {
 		opt.Source, err = r.getResourceFromMatch(ctx, queryMatcher)
@@ -276,8 +276,8 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		return
 	}
 
-	span.Set("source", string(opt.Source))
-	span.Set("index-matcher", fmt.Sprintf("%v", matcher))
+	span.Set("source", opt.Source)
+	span.Set("index-matcher", matcher)
 
 	paths, err := r.getPaths(ctx, opt.Source, opt.Target, opt.PathResource)
 	if err != nil {

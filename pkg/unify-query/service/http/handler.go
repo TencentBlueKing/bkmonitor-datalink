@@ -150,7 +150,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 	defer span.End(&err)
 
 	span.Set("request-url", c.Request.URL.String())
-	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("request-header", c.Request.Header)
 
 	span.Set("query-source", user.Key)
 	span.Set("query-space-uid", user.SpaceUid)
@@ -217,7 +217,7 @@ func HandlerQueryRaw(c *gin.Context) {
 	}()
 
 	span.Set("request-url", c.Request.URL.String())
-	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("request-header", c.Request.Header)
 
 	span.Set("query-source", user.Key)
 	span.Set("query-space-uid", user.SpaceUid)
@@ -276,7 +276,7 @@ func HandlerQueryTs(c *gin.Context) {
 	defer span.End(&err)
 
 	span.Set("request-url", c.Request.URL.String())
-	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("request-header", c.Request.Header)
 
 	span.Set("query-source", user.Key)
 	span.Set("query-space-uid", user.SpaceUid)
@@ -339,7 +339,7 @@ func HandlerQueryPromQL(c *gin.Context) {
 	ctx, span := trace.NewSpan(ctx, "handler-query-promql")
 	defer span.End(&err)
 
-	span.Set("headers", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("headers", c.Request.Header)
 	span.Set("query-source", user.Key)
 	span.Set("query-space-uid", user.SpaceUid)
 
@@ -406,7 +406,7 @@ func HandlerQueryReference(c *gin.Context) {
 	defer span.End(&err)
 
 	span.Set("request-url", c.Request.URL.String())
-	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("request-header", c.Request.Header)
 
 	span.Set("query-source", user.Key)
 	span.Set("query-space-uid", user.SpaceUid)
@@ -463,7 +463,7 @@ func HandlerQueryTsClusterMetrics(c *gin.Context) {
 	defer span.End(&err)
 
 	span.Set("request-url", c.Request.URL.String())
-	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("request-header", c.Request.Header)
 	query := &structured.QueryTs{}
 	err = json.NewDecoder(c.Request.Body).Decode(query)
 	if err != nil {

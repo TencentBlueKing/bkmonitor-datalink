@@ -2547,3 +2547,55 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckDruidCheck(t *testing.T) {
+	testCases := map[string]struct {
+		promql   *structured.QueryPromQL
+		expected bool
+	}{
+		"test_1": {
+			promql: &structured.QueryPromQL{
+				PromQL: `sum by (bk_target_ip, bk_inst_id, bk_obj_id) (bkmonitor:system:cpu_summary:usage{bk_inst_id="123",bk_obj_id!="",bk_target_ip="127.0.0.1"})`,
+			},
+			expected: true,
+		},
+	}
+
+	spaceUID := "check_druid"
+
+	ctx := metadata.InitHashID(context.Background())
+	mock.SetRedisClient(ctx)
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		spaceUID: ir.Space{
+			"system.cpu_summary": &ir.SpaceResultTable{
+				TableId: "system.cpu_summary",
+			},
+		},
+	}, ir.ResultTableDetailInfo{
+		"system.cpu_summary": &ir.ResultTableDetail{
+			DB:          "system",
+			TableId:     "system.cpu_summary",
+			Measurement: "cpu_summary",
+			VmRt:        "100147_ieod_system_cpu_summary_raw",
+			Fields:      []string{"usage"},
+		},
+	}, nil, nil)
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			metadata.SetUser(ctx, "", spaceUID, "")
+			queryTs, err := promQLToStruct(ctx, c.promql)
+			if err != nil {
+				log.Fatalf(ctx, err.Error())
+			}
+
+			ref, err := queryTs.ToQueryReference(ctx)
+			if err != nil {
+				log.Fatalf(ctx, err.Error())
+			}
+
+			actual := ref.CheckDruidCheck(ctx)
+			assert.Equal(t, c.expected, actual)
+		})
+	}
+}

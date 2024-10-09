@@ -488,9 +488,9 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 	}
 
 	span.Set("promql", promQL.String())
-	span.Set("start", start.String())
-	span.Set("end", end.String())
-	span.Set("step", step.String())
+	span.Set("start", start)
+	span.Set("end", end)
+	span.Set("step", step)
 
 	tables := promql.NewTables()
 	seriesNum := 0

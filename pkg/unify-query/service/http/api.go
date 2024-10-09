@@ -132,10 +132,10 @@ func HandlerLabelValues(c *gin.Context) {
 	matches := c.QueryArray("match[]")
 
 	span.Set("request-url", c.Request.URL.String())
-	span.Set("request-info-type", string(key))
-	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("request-info-type", key)
+	span.Set("request-header", c.Request.Header)
 	span.Set("request-label-name", labelName)
-	span.Set("request-match[]", fmt.Sprintf("%+v", matches))
+	span.Set("request-match[]", matches)
 
 	for _, m := range matches {
 		match, err := parser.ParseMetricSelector(m)
@@ -165,7 +165,7 @@ func HandlerLabelValues(c *gin.Context) {
 		params.Conditions.ConditionList = append(params.Conditions.ConditionList, structured.ConditionAnd)
 	}
 
-	span.Set("params", fmt.Sprintf("%+v", params))
+	span.Set("params", params)
 
 	data, err = queryInfo(ctx, key, params)
 	if err != nil {
@@ -194,9 +194,9 @@ func handlerInfo(c *gin.Context, key infos.InfoType) {
 
 	paramsStr, _ := json.Marshal(params)
 	span.Set("request-url", c.Request.URL.String())
-	span.Set("request-info-type", string(key))
-	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
-	span.Set("request-data", string(paramsStr))
+	span.Set("request-info-type", key)
+	span.Set("request-header", c.Request.Header)
+	span.Set("request-data", paramsStr)
 
 	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
 
@@ -219,7 +219,7 @@ func queryInfo(ctx context.Context, key infos.InfoType, params *infos.Params) (i
 	ctx, span := trace.NewSpan(ctx, "query-info")
 	defer span.End(&err)
 
-	span.Set("request-info-type", string(key))
+	span.Set("request-info-type", key)
 
 	q, err := newInfoQuerier(ctx, params)
 	if err != nil {
@@ -349,7 +349,7 @@ func newInfoQuerier(ctx context.Context, params *infos.Params) (storage.Querier,
 	defer span.End(&err)
 
 	paramsStr, _ := json.Marshal(params)
-	span.Set("query-body", string(paramsStr))
+	span.Set("query-body", paramsStr)
 
 	query := &structured.Query{
 		DataSource:    params.DataSource,

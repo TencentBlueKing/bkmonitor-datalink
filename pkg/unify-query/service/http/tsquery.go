@@ -63,7 +63,7 @@ func HandleTSQueryRequest(c *gin.Context) {
 
 	span.Set("ts-request-data", string(queryStmt))
 	span.Set("ts-request-data-size", len(queryStmt))
-	span.Set("ts-request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("ts-request-header", c.Request.Header)
 
 	respData, err := handleTSQuery(ctx, string(queryStmt), false, bizIDs, spaceUid)
 	if err != nil {
@@ -99,7 +99,7 @@ func HandleTSExemplarRequest(c *gin.Context) {
 	span.Set("request-space-uid", spaceUid)
 	span.Set("request-biz-ids", bizIDs)
 
-	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", string(queryStmt))
 
 	respData, err := handleTSExemplarQuery(ctx, string(queryStmt), bizIDs, spaceUid)

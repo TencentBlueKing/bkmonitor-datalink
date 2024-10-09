@@ -94,7 +94,7 @@ func HandleTsQueryPromQLDataRequest(c *gin.Context) {
 
 	span.Set("request-space-uid", spaceUid)
 	span.Set("request-biz-ids", bizIDs)
-	span.Set("promql-request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("promql-request-header", c.Request.Header)
 	span.Set("promql-request-data", string(body))
 
 	respData, err := handlePromqlQuery(ctx, string(body), bizIDs, spaceUid)
@@ -229,7 +229,7 @@ func handlePromqlQuery(ctx context.Context, promqlData string, bizIDs []string, 
 			}
 		}
 
-		span.Set("query-info-is-count", fmt.Sprintf("%v", queryInfo.IsCount))
+		span.Set("query-info-is-count", queryInfo.IsCount)
 		span.Set("query-info-db", queryInfo.DB)
 		span.Set("query-info-measurement", queryInfo.Measurement)
 		span.Set("query-info-clusterID", queryInfo.ClusterID)

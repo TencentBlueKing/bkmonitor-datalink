@@ -700,9 +700,9 @@ func (i *Instance) QuerySeriesSet(
 		span.Set("query-max-size", i.maxSize)
 		span.Set("query-db", query.DB)
 		span.Set("query-measurement", query.Measurement)
-		span.Set("query-measurements", strings.Join(query.Measurements, ","))
+		span.Set("query-measurements", query.Measurements)
 		span.Set("query-field", query.Field)
-		span.Set("query-fields", strings.Join(query.Fields, ","))
+		span.Set("query-fields", query.Fields)
 	}()
 
 	qr, err := i.mergeTimeSeries(rets)

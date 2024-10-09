@@ -522,7 +522,7 @@ func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 		return
 	}
 
-	span.Set("info-request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("info-request-header", c.Request.Header)
 	span.Set("info-request-data", string(queryStmt))
 
 	// 如果header中有bkbizid，则以header中的值为最优先

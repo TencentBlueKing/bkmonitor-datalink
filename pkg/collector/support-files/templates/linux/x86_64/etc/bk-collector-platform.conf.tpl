@@ -111,6 +111,10 @@ processor:
       salt: "{{ token_checker_config.salt }}"
       decoded_key: "{{ token_checker_config.decoded_key }}"
       decoded_iv: "{{ token_checker_config.decoded_iv }}"
+      traces_dataid: {{ token_checker_config.trace_data_id | default(-1) }}
+      metrics_dataid: {{ token_checker_config.metric_data_id | default(-1) }}
+      logs_dataid: {{ token_checker_config.log_data_id | default(-1) }}
+      profiles_dataid: {{ token_checker_config.profile_data_id | default(-1) }}
 {%- endif %}
 
 {% if resource_filter_config is defined %}

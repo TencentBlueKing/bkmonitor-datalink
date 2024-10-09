@@ -69,8 +69,8 @@ func SchemaByResultTablePlugin(table *config.MetaResultTableConfig) etl.Containe
 }
 
 // GetSeparatorFieldByOption
-func GetSeparatorFieldByOption(table *config.MetaResultTableConfig) (etl.Field, error) {
-	helper := utils.NewMapHelper(table.Option)
+func GetSeparatorFieldByOption(option map[string]interface{}, table *config.MetaResultTableConfig) (etl.Field, error) {
+	helper := utils.NewMapHelper(option)
 	action, ok := helper.GetString(config.ResultTableOptSeparatorAction)
 	if !ok {
 		return nil, nil
@@ -108,16 +108,52 @@ func GetSeparatorFieldByOption(table *config.MetaResultTableConfig) (etl.Field, 
 	}
 }
 
-// PrepareByResultTablePlugin: 根据字段提取方法[json|regexp|delimiter]，解析上报的日志数据内容
+func GetSeparatorFieldByMultiOption(table *config.MetaResultTableConfig) ([]etl.Field, error) {
+	var fields []etl.Field
+	field, err := GetSeparatorFieldByOption(table.Option, table)
+	if err != nil {
+		return nil, err
+	}
+	fields = append(fields, field)
+
+	obj, ok := table.Option[config.ResultTableOptLogSeparatorConfigs]
+	if !ok {
+		return fields, nil
+	}
+
+	option, ok := obj.([]interface{})
+	if !ok {
+		return fields, nil
+	}
+
+	for _, item := range option {
+		opt, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		field, err := GetSeparatorFieldByOption(opt, table)
+		if err != nil {
+			continue
+		}
+		fields = append(fields, field)
+	}
+	return fields, nil
+}
+
+// PrepareByResultTablePlugin  根据字段提取方法[json|regexp|delimiter]，解析上报的日志数据内容
 func PrepareByResultTablePlugin(table *config.MetaResultTableConfig) etl.ContainerSchemaBuilderPlugin {
 	return func(builder *etl.ContainerSchemaBuilder) error {
 		fields := make([]etl.Field, 0)
-		field, err := GetSeparatorFieldByOption(table)
+		items, err := GetSeparatorFieldByMultiOption(table)
 		if err != nil {
 			return err
 		}
-		if field != nil {
-			fields = append(fields, field)
+
+		for i := 0; i < len(items); i++ {
+			field := items[i]
+			if field != nil {
+				fields = append(fields, field)
+			}
 		}
 
 		if len(fields) > 0 {

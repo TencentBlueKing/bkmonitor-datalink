@@ -7,48 +7,26 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package metacache
+package main
 
 import (
-	"sync"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"encoding/json"
+	"net/http"
 )
 
-type Cache struct {
-	mut   sync.RWMutex
-	cache map[string]define.Token
-}
-
-func New() *Cache {
-	return &Cache{
-		cache: make(map[string]define.Token),
+func main() {
+	data := []map[string]string{
+		{
+			"service.name":   "traces-demo",
+			"service.zone":   "gz",
+			"service.status": "prod",
+		},
 	}
-}
 
-func (c *Cache) Set(k string, v define.Token) {
-	c.mut.Lock()
-	defer c.mut.Unlock()
+	http.HandleFunc("/service_info", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := json.Marshal(data)
+		w.Write(b)
+	})
 
-	c.cache[k] = v
-}
-
-func (c *Cache) Get(k string) (define.Token, bool) {
-	c.mut.RLock()
-	defer c.mut.RUnlock()
-
-	v, ok := c.cache[k]
-	return v, ok
-}
-
-var Default = New()
-
-// Set 调用全局 cache 实例 Set 方法
-func Set(k string, v define.Token) {
-	Default.Set(k, v)
-}
-
-// Get 调用全局 cache 实例 Get 方法
-func Get(k string) (define.Token, bool) {
-	return Default.Get(k)
+	http.ListenAndServe(":8990", nil)
 }

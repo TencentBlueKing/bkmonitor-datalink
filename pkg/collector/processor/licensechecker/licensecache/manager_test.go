@@ -7,34 +7,44 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package licensestore
+package licensecache
 
 import (
-	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestLocalCacher(t *testing.T) {
-	cacher := newLocalCacher()
+func TestCacheManager(t *testing.T) {
+	t.Run("base", func(t *testing.T) {
+		ctr := NewManager()
+		defer ctr.Clean()
+		assert.Nil(t, ctr.Get("key1"))
 
-	const n = 10
-	for i := 0; i < n; i++ {
-		cacher.Set(strconv.Itoa(i))
-	}
-	for i := 0; i < n; i++ {
-		assert.True(t, cacher.Exist(strconv.Itoa(i)))
-	}
-	assert.False(t, cacher.Exist("10"))
+		cacher := ctr.GetOrCreate("key1")
+		assert.NotNil(t, cacher)
 
-	expected := make(map[string]struct{})
-	for i := 0; i < n; i++ {
-		expected[strconv.Itoa(i)] = struct{}{}
-	}
-	for _, item := range cacher.Items() {
-		_, ok := expected[item]
-		assert.True(t, ok)
-	}
-	assert.Equal(t, 10, cacher.Count())
+		cacher.Set("1")
+		assert.True(t, cacher.Exist("1"))
+	})
+
+	t.Run("Gc", func(t *testing.T) {
+		ctr := &Manager{
+			caches:     map[string]*Cache{},
+			stop:       make(chan struct{}),
+			gcInterval: time.Second,
+		}
+		go ctr.gc()
+		defer ctr.Clean()
+
+		cacher := ctr.GetOrCreate("key1")
+		cacher.Set("1")
+		ctr.GetOrCreate("key2")
+
+		time.Sleep(time.Millisecond * 1200)
+		assert.NotNil(t, ctr.Get("key1"))
+		assert.NotNil(t, ctr.GetOrCreate("key1"))
+		assert.Nil(t, ctr.Get("key2")) // gc
+	})
 }

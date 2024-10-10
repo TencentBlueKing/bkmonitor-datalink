@@ -19,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/dimscache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -34,6 +35,7 @@ func NewFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 
 func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*resourceFilter, error) {
 	configs := confengine.NewTierConfig()
+	caches := confengine.NewTierConfig()
 
 	c := &Config{}
 	if err := mapstructure.Decode(conf, c); err != nil {
@@ -41,6 +43,15 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 	}
 	c.Clean()
 	configs.SetGlobal(*c)
+
+	if c.FromCache.Cache.Validate() {
+		cache, err := dimscache.New(&c.FromCache.Cache)
+		if err != nil {
+			return nil, err
+		}
+		cache.Sync()
+		caches.SetGlobal(cache)
+	}
 
 	for _, custom := range customized {
 		cfg := &Config{}
@@ -50,17 +61,29 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 		}
 		cfg.Clean()
 		configs.Set(custom.Token, custom.Type, custom.ID, *cfg)
+
+		if cfg.FromCache.Cache.Validate() {
+			cache, err := dimscache.New(&cfg.FromCache.Cache)
+			if err != nil {
+				logger.Errorf("failed to create dimscache: %v", err)
+				continue
+			}
+			cache.Sync()
+			caches.Set(custom.Token, custom.Type, custom.ID, cache)
+		}
 	}
 
 	return &resourceFilter{
 		CommonProcessor: processor.NewCommonProcessor(conf, customized),
 		configs:         configs,
+		caches:          caches,
 	}, nil
 }
 
 type resourceFilter struct {
 	processor.CommonProcessor
 	configs *confengine.TierConfig // type: Config
+	caches  *confengine.TierConfig // type *dimscache.Cache
 }
 
 func (p *resourceFilter) Name() string {
@@ -84,6 +107,41 @@ func (p *resourceFilter) Reload(config map[string]interface{}, customized []proc
 
 	p.CommonProcessor = f.CommonProcessor
 	p.configs = f.configs
+
+	if len(f.caches.All()) <= 0 {
+		return
+	}
+
+	equal := processor.DiffMainConfig(p.MainConfig(), config)
+	if equal {
+		f.caches.GetGlobal().(*dimscache.Cache).Clean()
+	} else {
+		p.caches.GetGlobal().(*dimscache.Cache).Clean()
+		p.caches.SetGlobal(f.caches.GetGlobal())
+	}
+
+	diffRet := processor.DiffCustomizedConfig(p.SubConfigs(), customized)
+	for _, obj := range diffRet.Keep {
+		f.caches.Get(obj.Token, obj.Type, obj.ID).(*dimscache.Cache).Clean()
+	}
+
+	for _, obj := range diffRet.Updated {
+		p.caches.Get(obj.Token, obj.Type, obj.ID).(*dimscache.Cache).Clean()
+		newCache := f.caches.Get(obj.Token, obj.Type, obj.ID)
+		p.caches.Set(obj.Token, obj.Type, obj.ID, newCache)
+	}
+
+	for _, obj := range diffRet.Deleted {
+		p.caches.Get(obj.Token, obj.Type, obj.ID).(*dimscache.Cache).Clean()
+		p.caches.Del(obj.Token, obj.Type, obj.ID)
+	}
+
+}
+
+func (p *resourceFilter) Clean() {
+	for _, obj := range p.caches.All() {
+		obj.(*dimscache.Cache).Clean()
+	}
 }
 
 func (p *resourceFilter) Process(record *define.Record) (*define.Record, error) {
@@ -99,6 +157,10 @@ func (p *resourceFilter) Process(record *define.Record) (*define.Record, error) 
 	}
 	if len(config.Drop.Keys) > 0 {
 		p.dropAction(record, config)
+	}
+
+	if config.FromCache.Cache.Validate() {
+		p.fromCacheAction(record, config)
 	}
 	return nil, nil
 }
@@ -254,6 +316,32 @@ func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 				}
 				resourceLogs.Resource().Attributes().Remove(action.Source)
 				resourceLogs.Resource().Attributes().Upsert(action.Destination, v)
+			}
+		}
+	}
+}
+
+// fromCacheAction 从缓存中补充数据
+func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
+	token := record.Token.Original
+	cache := p.caches.GetByToken(token).(*dimscache.Cache)
+
+	switch record.RecordType {
+	case define.RecordTraces:
+		pdTraces := record.Data.(ptrace.Traces)
+		resourceSpansSlice := pdTraces.ResourceSpans()
+		for i := 0; i < resourceSpansSlice.Len(); i++ {
+			resourceSpans := resourceSpansSlice.At(i)
+			v, ok := resourceSpans.Resource().Attributes().Get(config.FromCache.Key)
+			if !ok {
+				continue
+			}
+			dims, ok := cache.Get(v.AsString())
+			if !ok {
+				continue
+			}
+			for name, value := range dims {
+				resourceSpans.Resource().Attributes().UpsertString(name, value)
 			}
 		}
 	}

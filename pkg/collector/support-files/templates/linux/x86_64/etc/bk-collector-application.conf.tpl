@@ -78,7 +78,6 @@ default:
           enabled: {{ traces_drop_sampler_config.enabled }}
 {%- endif %}
 
-
 {% if profiles_drop_sampler_config is defined %}
       # profiles_drop_sampler_config: drop sampler 配置
       # Sampler: profiles采样处理器（做直接丢弃处理）
@@ -87,7 +86,6 @@ default:
           type: "{{ profiles_drop_sampler_config.type }}"
           enabled: {{ profiles_drop_sampler_config.enabled }}
 {%- endif %}
-
 
 {% if db_slow_command_config is defined %}
       # db slow command config
@@ -101,8 +99,6 @@ default:
                 threshold: {{ rule.threshold }}ms
               {%- endfor %}
 {%- endif %}
-
-
 
 {% if sdk_config_scope is defined %}
       # sdk config scope
@@ -236,9 +232,7 @@ default:
 {%- if item.rule.regex is defined %}
                 regex: '{{ item.rule.regex }}'
 {%- endif %}
-
 {%- endfor %}
-
 {%- endif %}
 
 {% if service_configs is defined %}
@@ -260,7 +254,6 @@ service:
               destination: '{{ rule_config.destination }}'
               apdex_t: {{ rule_config.apdex_t }} # ms
             {%- endfor %}
-
 {%- endif %}
 
 {% if service_config.sampler_config is defined %}
@@ -270,14 +263,11 @@ service:
           type: '{{ service_config.sampler_config.type }}'
           sampling_percentage: {{ service_config.sampler_config.sampling_percentage }}
 {%- endif %}
-
 {%- endfor %}
-
 {%- endif %}
 
 {% if instance_configs is defined %}
 instance:
-
 {%- for instance_config in instance_configs %}
   - id: '{{ instance_config.id }}'
     processor:
@@ -295,7 +285,6 @@ instance:
               destination: '{{ rule_config.destination }}'
               apdex_t: {{ rule_config.apdex_t }} # ms
             {%- endfor %}
-
 {%- endif %}
 
 {% if instance_config.sampler_config is defined %}
@@ -305,7 +294,5 @@ instance:
           type: '{{ instance_config.sampler_config.type }}'
           sampling_percentage: {{ instance_config.sampler_config.sampling_percentage }}
 {%- endif %}
-
 {%- endfor %}
-
 {%- endif %}

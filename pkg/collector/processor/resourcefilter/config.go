@@ -11,30 +11,24 @@ package resourcefilter
 
 import (
 	"strings"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/dimscache"
 )
 
 type Config struct {
-	Drop     DropAction       `config:"drop" mapstructure:"drop"`
-	Assemble []AssembleAction `config:"assemble" mapstructure:"assemble"`
-	Replace  []ReplaceAction  `config:"replace" mapstructure:"replace"`
-	Add      []AddAction      `config:"add" mapstructure:"add"`
-}
-
-func (c *Config) cleanResourcePrefix(keys []string) []string {
-	const prefix = "resource."
-	var ret []string
-	for _, key := range keys {
-		if strings.HasPrefix(key, prefix) {
-			ret = append(ret, key[len(prefix):])
-		}
-	}
-	return ret
+	Drop      DropAction       `config:"drop" mapstructure:"drop"`
+	FromCache FromCacheAction  `config:"from_cache" mapstructure:"from_cache"`
+	Assemble  []AssembleAction `config:"assemble" mapstructure:"assemble"`
+	Replace   []ReplaceAction  `config:"replace" mapstructure:"replace"`
+	Add       []AddAction      `config:"add" mapstructure:"add"`
 }
 
 func (c *Config) Clean() {
-	c.Drop.Keys = c.cleanResourcePrefix(c.Drop.Keys)
+	c.Drop.Keys = cleanResourcesPrefix(c.Drop.Keys)
+	c.FromCache.Key = cleanResourcePrefix(c.FromCache.Key)
+
 	for i := 0; i < len(c.Assemble); i++ {
-		c.Assemble[i].Keys = c.cleanResourcePrefix(c.Assemble[i].Keys)
+		c.Assemble[i].Keys = cleanResourcesPrefix(c.Assemble[i].Keys)
 	}
 }
 
@@ -56,4 +50,28 @@ type AssembleAction struct {
 	Destination string   `config:"destination" mapstructure:"destination"`
 	Separator   string   `config:"separator" mapstructure:"separator"`
 	Keys        []string `config:"keys" mapstructure:"keys"`
+}
+
+type FromCacheAction struct {
+	Key   string           `config:"key" mapstructure:"key"`
+	Cache dimscache.Config `config:"cache" mapstructure:"cache"`
+}
+
+func cleanResourcesPrefix(keys []string) []string {
+	const prefix = "resource."
+	var ret []string
+	for _, key := range keys {
+		if strings.HasPrefix(key, prefix) {
+			ret = append(ret, key[len(prefix):])
+		}
+	}
+	return ret
+}
+
+func cleanResourcePrefix(key string) string {
+	const prefix = "resource."
+	if strings.HasPrefix(key, prefix) {
+		return key[len(prefix):]
+	}
+	return key
 }

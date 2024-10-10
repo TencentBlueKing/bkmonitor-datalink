@@ -189,6 +189,9 @@ func (w *DistributiveWindow) getSubWindowMetrics(subId int) (int, int) {
 	traceCount := 0
 	spanCount := 0
 
+	if subWindow == nil {
+		return traceCount, spanCount
+	}
 	subWindow.m.Range(func(key, value any) bool {
 		traceCount++
 		v := value.(CollectTrace)

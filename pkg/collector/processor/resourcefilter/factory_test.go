@@ -10,7 +10,12 @@
 package resourcefilter
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -405,4 +410,49 @@ processor:
 
 	attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
 	assertAddActionLabels(t, attrs)
+}
+
+func TestTracesFromCacheAction(t *testing.T) {
+	svr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := json.Marshal([]map[string]string{
+			{
+				"service.name":   "traces-demo",
+				"service.zone":   "gz",
+				"service.status": "prod",
+			},
+		})
+		w.Write(b)
+	}))
+
+	content := fmt.Sprintf(`
+processor:
+    - name: "resource_filter/from_cache"
+      config:
+        from_cache:
+          key: "resource.service.name"
+          cache:
+            key: "service.name"
+            url: %s
+            interval: "1m"
+            timeout: "1m"
+`, svr.URL)
+
+	factory := processor.MustCreateFactory(content, NewFactory)
+	time.Sleep(time.Second) // wait for syncing
+
+	g := makeTracesGenerator(1, "bool")
+	data := g.Generate()
+	data.ResourceSpans().At(0).Resource().Attributes().InsertString("service.name", "traces-demo")
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+
+	_, err := factory.Process(&record)
+	assert.NoError(t, err)
+
+	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+
+	testkits.AssertAttrsFoundStringVal(t, attrs, "service.zone", "gz")
+	testkits.AssertAttrsFoundStringVal(t, attrs, "service.status", "prod")
 }

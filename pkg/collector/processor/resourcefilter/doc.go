@@ -47,6 +47,17 @@ processor:
               - "resource.net.host.name"
               - "resource.net.host.ip"
               - "resource.net.host.port"
+
+    # FromCache Action
+    - name: "resource_filter/from_cache"
+      config:
+        from_cache:
+          key: "resource.service.name"
+          cache:
+            key: "service.name"
+            url: http://localhost:8080/service_info
+            interval: "1m"
+            timeout: "1m"
 */
 
 package resourcefilter

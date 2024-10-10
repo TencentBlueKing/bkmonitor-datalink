@@ -36,7 +36,6 @@ exporter:
 default:
   processor:
 {% if apdex_config is defined %}
-      # ApdexCalculator: 健康度状态计算器
       - name: '{{ apdex_config.name }}'
         config:
           calculator:
@@ -52,14 +51,12 @@ default:
 {%- endif %}
 
 {% if token_checker is defined %}
-      # token_checker 配置
       - name: "{{ token_checker.name }}"
         config:
           profiles_data_id: {{ token_checker.profiles_data_id }}
 {%- endif %}
 
 {% if license_config is defined %}
-      # license_config: license 配置
       - name: "{{ license_config.name }}"
         config:
           enabled: {{ license_config.enabled }}
@@ -70,27 +67,20 @@ default:
 {%- endif %}
 
 {% if traces_drop_sampler_config is defined %}
-      # traces_drop_sampler_config: drop sampler 配置
-      # Sampler: traces采样处理器（做直接丢弃处理）
       - name: "{{ traces_drop_sampler_config.name }}"
         config:
           type: "{{ traces_drop_sampler_config.type }}"
           enabled: {{ traces_drop_sampler_config.enabled }}
 {%- endif %}
 
-
 {% if profiles_drop_sampler_config is defined %}
-      # profiles_drop_sampler_config: drop sampler 配置
-      # Sampler: profiles采样处理器（做直接丢弃处理）
       - name: "{{ profiles_drop_sampler_config.name }}"
         config:
           type: "{{ profiles_drop_sampler_config.type }}"
           enabled: {{ profiles_drop_sampler_config.enabled }}
 {%- endif %}
 
-
 {% if db_slow_command_config is defined %}
-      # db slow command config
       - name: "{{ db_slow_command_config.name }}"
         config:
           slow_query:
@@ -101,8 +91,6 @@ default:
                 threshold: {{ rule.threshold }}ms
               {%- endfor %}
 {%- endif %}
-
-
 
 {% if sdk_config_scope is defined %}
       # sdk config scope
@@ -126,7 +114,6 @@ default:
 {%- endif %}
 
 {% if attribute_config is defined %}
-      # attribute_config: attribute 属性配置
       - name: "{{ attribute_config.name }}"
         config:
           cut:
@@ -140,7 +127,7 @@ default:
               keys:
                 {%- for key in config.get("keys", []) %}
                 - "{{ key }}"
-                {%- endfor%}
+                {%- endfor %}
             {%- endfor %}
           drop:
             {%- for config in attribute_config.drop %}
@@ -152,12 +139,11 @@ default:
               keys:
                 {%- for key in config.get("keys", []) %}
                 - "{{ key }}"
-                {%- endfor%}
+                {%- endfor %}
             {%- endfor %}
 {%- endif %}
 
 {% if sampler_config is defined %}
-      # Sampler: 采样处理器
       - name: '{{ sampler_config.name }}'
         config:
           type: '{{ sampler_config.type }}'
@@ -165,7 +151,6 @@ default:
 {%- endif %}
 
 {% if qps_config is defined %}
-      # Qps: Qps限流
       - name: '{{ qps_config.name }}'
         config:
           type: '{{ qps_config.type }}'
@@ -174,7 +159,6 @@ default:
 {%- endif %}
 
 {% if resource_filter_config is defined %}
-      # ResourceFilter: 资源过滤处理器
       - name: '{{ resource_filter_config.name }}'
         config:
           assemble:
@@ -194,7 +178,6 @@ default:
 {%- endif %}
 
 {% if custom_service_config is defined %}
-      # ServiceDiscover: 服务发现处理器
       - name: '{{ custom_service_config.name }}'
         config:
           rules:
@@ -236,9 +219,7 @@ default:
 {%- if item.rule.regex is defined %}
                 regex: '{{ item.rule.regex }}'
 {%- endif %}
-
 {%- endfor %}
-
 {%- endif %}
 
 {% if service_configs is defined %}
@@ -247,7 +228,6 @@ service:
   - id: '{{ service_config.unique_key }}'
     processor:
 {% if service_config.apdex_config is defined %}
-      # ApdexCalculator: 健康度状态计算器
       - name: '{{ service_config.apdex_config.name }}'
         config:
           calculator:
@@ -260,29 +240,23 @@ service:
               destination: '{{ rule_config.destination }}'
               apdex_t: {{ rule_config.apdex_t }} # ms
             {%- endfor %}
-
 {%- endif %}
 
 {% if service_config.sampler_config is defined %}
-      # Sampler: 采样处理器
       - name: '{{ service_config.sampler_config.name }}'
         config:
           type: '{{ service_config.sampler_config.type }}'
           sampling_percentage: {{ service_config.sampler_config.sampling_percentage }}
 {%- endif %}
-
 {%- endfor %}
-
 {%- endif %}
 
 {% if instance_configs is defined %}
 instance:
-
 {%- for instance_config in instance_configs %}
   - id: '{{ instance_config.id }}'
     processor:
 {% if instance_config.apdex_config is defined %}
-      # ApdexCalculator: 健康度状态计算器
       - name: '{{ instance_config.apdex_config.name }}'
         config:
           calculator:
@@ -295,17 +269,13 @@ instance:
               destination: '{{ rule_config.destination }}'
               apdex_t: {{ rule_config.apdex_t }} # ms
             {%- endfor %}
-
 {%- endif %}
 
 {% if instance_config.sampler_config is defined %}
-      # Sampler: 采样处理器
       - name: '{{ instance_config.sampler_config.name }}'
         config:
           type: '{{ instance_config.sampler_config.type }}'
           sampling_percentage: {{ instance_config.sampler_config.sampling_percentage }}
 {%- endif %}
-
 {%- endfor %}
-
 {%- endif %}

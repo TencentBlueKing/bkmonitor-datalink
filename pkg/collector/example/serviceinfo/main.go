@@ -7,34 +7,26 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package licensestore
+package main
 
 import (
-	"strconv"
-	"testing"
-
-	"github.com/stretchr/testify/assert"
+	"encoding/json"
+	"net/http"
 )
 
-func TestLocalCacher(t *testing.T) {
-	cacher := newLocalCacher()
+func main() {
+	data := []map[string]string{
+		{
+			"service.name":   "traces-demo",
+			"service.zone":   "gz",
+			"service.status": "prod",
+		},
+	}
 
-	const n = 10
-	for i := 0; i < n; i++ {
-		cacher.Set(strconv.Itoa(i))
-	}
-	for i := 0; i < n; i++ {
-		assert.True(t, cacher.Exist(strconv.Itoa(i)))
-	}
-	assert.False(t, cacher.Exist("10"))
+	http.HandleFunc("/service_info", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := json.Marshal(data)
+		w.Write(b)
+	})
 
-	expected := make(map[string]struct{})
-	for i := 0; i < n; i++ {
-		expected[strconv.Itoa(i)] = struct{}{}
-	}
-	for _, item := range cacher.Items() {
-		_, ok := expected[item]
-		assert.True(t, ok)
-	}
-	assert.Equal(t, 10, cacher.Count())
+	http.ListenAndServe(":8990", nil)
 }

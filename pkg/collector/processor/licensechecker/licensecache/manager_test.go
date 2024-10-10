@@ -18,33 +18,33 @@ import (
 
 func TestCacheManager(t *testing.T) {
 	t.Run("base", func(t *testing.T) {
-		ctr := NewManager()
-		defer ctr.Clean()
-		assert.Nil(t, ctr.Get("key1"))
+		mgr := NewManager()
+		defer mgr.Clean()
+		assert.Nil(t, mgr.Get("key1"))
 
-		cacher := ctr.GetOrCreate("key1")
-		assert.NotNil(t, cacher)
+		cache := mgr.GetOrCreate("key1")
+		assert.NotNil(t, cache)
 
-		cacher.Set("1")
-		assert.True(t, cacher.Exist("1"))
+		cache.Set("1")
+		assert.True(t, cache.Exist("1"))
 	})
 
 	t.Run("Gc", func(t *testing.T) {
-		ctr := &Manager{
+		mgr := &Manager{
 			caches:     map[string]*Cache{},
 			stop:       make(chan struct{}),
 			gcInterval: time.Second,
 		}
-		go ctr.gc()
-		defer ctr.Clean()
+		go mgr.gc()
+		defer mgr.Clean()
 
-		cacher := ctr.GetOrCreate("key1")
-		cacher.Set("1")
-		ctr.GetOrCreate("key2")
+		cache := mgr.GetOrCreate("key1")
+		cache.Set("1")
+		mgr.GetOrCreate("key2")
 
 		time.Sleep(time.Millisecond * 1200)
-		assert.NotNil(t, ctr.Get("key1"))
-		assert.NotNil(t, ctr.GetOrCreate("key1"))
-		assert.Nil(t, ctr.Get("key2")) // gc
+		assert.NotNil(t, mgr.Get("key1"))
+		assert.NotNil(t, mgr.GetOrCreate("key1"))
+		assert.Nil(t, mgr.Get("key2")) // gc
 	})
 }

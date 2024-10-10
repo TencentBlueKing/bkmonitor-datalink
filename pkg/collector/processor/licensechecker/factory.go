@@ -175,7 +175,6 @@ func (p *licenseChecker) processTraces(record *define.Record) (*define.Record, e
 		return nil, err
 	}
 
-	logger.Debugf("get or create new cacher, token=%v", token)
 	cacheMgr.GetOrCreate(token).Set(instance)
 	return nil, nil
 }

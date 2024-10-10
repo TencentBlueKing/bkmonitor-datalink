@@ -12,7 +12,7 @@ package resourcefilter
 import (
 	"strings"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/dimscache"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/resourcefilter/dimscache"
 )
 
 type Config struct {

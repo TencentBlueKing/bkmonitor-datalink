@@ -19,9 +19,9 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/dimscache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/resourcefilter/dimscache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -135,7 +135,6 @@ func (p *resourceFilter) Reload(config map[string]interface{}, customized []proc
 		p.caches.Get(obj.Token, obj.Type, obj.ID).(*dimscache.Cache).Clean()
 		p.caches.Del(obj.Token, obj.Type, obj.ID)
 	}
-
 }
 
 func (p *resourceFilter) Clean() {

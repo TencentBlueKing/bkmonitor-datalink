@@ -109,6 +109,7 @@ func (p *resourceFilter) Reload(config map[string]interface{}, customized []proc
 	p.configs = f.configs
 
 	if len(f.caches.All()) <= 0 {
+		p.Clean()
 		return
 	}
 

@@ -126,9 +126,11 @@ func NewSpacePusher() *SpacePusher {
 
 // GetSpaceTableIdDataId 获取空间下的结果表和数据源信息
 func (s *SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdList []string, excludeDataIdList []uint, options *optionx.Options) (map[string]uint, error) {
+	logger.Infof("GetSpaceTableIdDataId:space_type: %s, space_id: %s, table_id_list: %v, exclude_data_id_list: %v", spaceType, spaceId, tableIdList, excludeDataIdList)
 	if options == nil {
 		options = optionx.NewOptions(nil)
 	}
+	logger.Infof("GetSpaceTableIdDataId:options: %v", options)
 	options.SetDefault("includePlatformDataId", true)
 	db := mysql.GetDBSession().DB
 	if len(tableIdList) != 0 {
@@ -140,6 +142,7 @@ func (s *SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdLi
 				qs = qs.BkDataIdNotIn(excludeDataIdList...)
 			}
 			if err := qs.All(&tempList); err != nil {
+				logger.Errorf("GetSpaceTableIdDataId:query space [%s__%s] table [%v] data_id error, %v", spaceType, spaceId, tableIdList, err)
 				return nil, err
 			}
 			dsrtList = append(dsrtList, tempList...)
@@ -148,6 +151,7 @@ func (s *SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdLi
 		for _, dsrt := range dsrtList {
 			dataMap[dsrt.TableId] = dsrt.BkDataId
 		}
+		logger.Infof("GetSpaceTableIdDataId:space [%s__%s] table [%v] data_id: %v", spaceType, spaceId, tableIdList, dataMap)
 		return dataMap, nil
 	}
 	// 否则，查询空间下的所有数据源，再过滤对应的结果表
@@ -156,9 +160,11 @@ func (s *SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdLi
 
 	// 获取是否授权数据
 	if fromAuthorization, ok := options.GetBool("fromAuthorization"); ok {
+		logger.Infof("GetSpaceTableIdDataId:fromAuthorization: %v", fromAuthorization)
 		qs = qs.FromAuthorizationEq(fromAuthorization)
 	}
 	if err := qs.All(&spdsList); err != nil {
+		logger.Errorf("GetSpaceTableIdDataId:query space [%s__%s] data_id error, %v", spaceType, spaceId, err)
 		return nil, err
 	}
 	dataIdSet := mapset.NewSet()
@@ -180,16 +186,19 @@ func (s *SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdLi
 	}
 	dataIdList := slicex.UintSet2List(dataIdSet)
 	if len(dataIdList) == 0 {
+		logger.Infof("GetSpaceTableIdDataId:space [%s__%s] data_id [%v] is empty", spaceType, spaceId, dataIdList)
 		return map[string]uint{}, nil
 	}
 	dataMap := make(map[string]uint)
 	var dsrtList []resulttable.DataSourceResultTable
 	if err := resulttable.NewDataSourceResultTableQuerySet(db).BkDataIdIn(dataIdList...).All(&dsrtList); err != nil {
+		logger.Errorf("GetSpaceTableIdDataId:query space [%s__%s] data_id error, %v", spaceType, spaceId, err)
 		return nil, err
 	}
 	for _, dsrt := range dsrtList {
 		dataMap[dsrt.TableId] = dsrt.BkDataId
 	}
+	logger.Infof("GetSpaceTableIdDataId:space [%s__%s] data_id [%v] data_map [%v]", spaceType, spaceId, dataIdList, dataMap)
 	return dataMap, nil
 }
 
@@ -1391,6 +1400,7 @@ type DataIdDetail struct {
 }
 
 func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []string, defaultFilters []map[string]interface{}, options *optionx.Options) (map[string]map[string]interface{}, error) {
+	logger.Infof("composeData space_type [%s], space_id [%s], table_id_list [%s]", spaceType, spaceId, tableIdList)
 	if options == nil {
 		options = optionx.NewOptions(nil)
 	}
@@ -1503,6 +1513,7 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 			valueData[tid] = map[string]interface{}{"filters": filters}
 		}
 	}
+	logger.Debugf("space_type [%s], space_id [%s], table_id_list [%s], value_data [%+v]", spaceType, spaceId, tableIdList, valueData)
 	return valueData, nil
 }
 

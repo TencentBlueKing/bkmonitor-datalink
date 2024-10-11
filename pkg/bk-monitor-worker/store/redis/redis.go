@@ -171,6 +171,7 @@ func (r *Instance) Close() error {
 // HSetWithCompare 与redis中数据不同才更新
 func (r *Instance) HSetWithCompare(key, field, value string) error {
 	oldValue := r.HGet(key, field)
+	logger.Infof("[redis_diff] HashSet key [%s] field [%s] , new [%s]  old [%s]", key, field, value, oldValue)
 	if oldValue == value {
 		return nil
 	}
@@ -181,9 +182,10 @@ func (r *Instance) HSetWithCompare(key, field, value string) error {
 	metrics.RedisCount(key, "HSet")
 	err := r.Client.HSet(r.ctx, key, field, value).Err()
 	if err != nil {
-		logger.Debugf("hset field error, key: %s, field: %s, value: %s", key, field, value)
+		logger.Errorf("hset field error, key: %s, field: %s, value: %s", key, field, value)
 		return err
 	}
+	logger.Infof("[redis_diff] HashSet key [%s] field [%s] update success", key, field)
 	return nil
 }
 

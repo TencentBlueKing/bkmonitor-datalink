@@ -1083,8 +1083,10 @@ func (s *SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *
 	}
 	if len(values) != 0 {
 		client := redis.GetStorageRedisInstance()
+		logger.Infof("pushBkccSpaceTableIds:use redis client [%v],client.Client [%v]", client, client.Client)
 		redisKey := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		valuesStr, err := jsonx.MarshalString(values)
+		logger.Infof("pushBkccSpaceTableIds:push redis space_to_result_table, space_type [%s], space_id [%s] value [%v]", spaceType, spaceId, valuesStr)
 		if err != nil {
 			return errors.Wrapf(err, "pushBkccSpaceTableIds:push bkcc space [%s] marshal valued [%v] failed", redisKey, values)
 		}
@@ -1413,7 +1415,9 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 		ops.Set("fromAuthorization", need)
 	}
 	tableIdDataId, err := s.GetSpaceTableIdDataId(spaceType, spaceId, tableIdList, nil, ops)
+	logger.Infof("composeData: GetSpaceTableIdDataId success,space_type [%s], space_id [%s],tableIdDataId[%v]", spaceType, spaceId, tableIdDataId)
 	if err != nil {
+		logger.Errorf("composeData: GetSpaceTableIdDataId failed,space_type [%s], space_id [%s],err[%v]", spaceType, spaceId, err)
 		return nil, err
 	}
 	valueData := make(map[string]map[string]interface{})
@@ -1513,7 +1517,7 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 			valueData[tid] = map[string]interface{}{"filters": filters}
 		}
 	}
-	logger.Debugf("space_type [%s], space_id [%s], table_id_list [%s], value_data [%+v]", spaceType, spaceId, tableIdList, valueData)
+	logger.Infof("space_type [%s], space_id [%s], table_id_list [%s], value_data [%+v]", spaceType, spaceId, tableIdList, valueData)
 	return valueData, nil
 }
 

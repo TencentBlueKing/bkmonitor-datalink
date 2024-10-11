@@ -423,6 +423,7 @@ func TestTracesFromCacheAction(t *testing.T) {
 		})
 		w.Write(b)
 	}))
+	defer svr.Close()
 
 	content := fmt.Sprintf(`
 processor:

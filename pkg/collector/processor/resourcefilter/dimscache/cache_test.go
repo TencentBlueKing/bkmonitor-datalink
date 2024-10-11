@@ -34,6 +34,7 @@ func TestCache(t *testing.T) {
 		b, _ := json.Marshal(data)
 		w.Write(b)
 	}))
+	defer svr.Close()
 
 	c, err := New(&Config{
 		URL: svr.URL,

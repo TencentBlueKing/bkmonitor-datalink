@@ -39,7 +39,7 @@ const (
 
 func NewTokenDecoder(c Config) TokenDecoder {
 	if strings.Contains(c.Type, combinedDecoderSep) {
-		// 如果存在分割的多种 tokendeocer 串联
+		// 如果存在分割的多种 token decoder 串联并按序解析
 		return newCombinedTokenDecoder(c)
 	}
 
@@ -149,12 +149,12 @@ func (d fixedTokenDecoder) Skip() bool {
 func (d fixedTokenDecoder) Decode(s string) (define.Token, error) {
 	var empty define.Token
 	if d.token == empty {
-		return define.Token{}, errors.New("undefined fixed tokenDecoder")
+		return define.Token{}, errors.Errorf("invalid token (%s): undefined decoder", s)
 	}
 
 	// 要求一定是空字符串才通过
 	if d.mustEmptyToken && s != "" {
-		return define.Token{}, errors.New("fixed tokenDecoder required empty token string")
+		return define.Token{}, errors.Errorf("invalid token (%s): not empty token", s)
 	}
 
 	return d.token, nil
@@ -303,6 +303,10 @@ func (d *aes256TokenDecoder) decode(s string) (define.Token, error) {
 	block, err := aes.NewCipher(d.key)
 	if err != nil {
 		return token, err
+	}
+
+	if len(d.iv) != block.BlockSize() {
+		return token, errors.Wrapf(err, "want %d but got %d", len(d.iv), block.BlockSize())
 	}
 
 	enc = enc[aes.BlockSize:]

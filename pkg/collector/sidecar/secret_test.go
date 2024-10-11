@@ -16,9 +16,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/gzip"
 )
 
 func TestCreateOrUpdateFiles(t *testing.T) {
+	compress := func(s string) []byte {
+		v, _ := gzip.Compress([]byte(s))
+		return v
+	}
+
 	sm := &secretManager{
 		files:  make(map[string]map[string][]byte),
 		events: make(chan configFile, 1024),
@@ -31,26 +38,25 @@ func TestCreateOrUpdateFiles(t *testing.T) {
 		{
 			name: "secret1",
 			data: map[string][]byte{
-				"token1.conf": []byte("foo"),
-				"token2.conf": []byte("bar"),
+				"token1.conf": compress("foo"),
+			},
+		},
+		{
+			name: "secret3",
+			data: map[string][]byte{
+				"token1.json": compress("xyz"), // skip
 			},
 		},
 		{
 			name: "secret1",
 			data: map[string][]byte{
-				"token1.conf": []byte("foo"),
-			},
-		},
-		{
-			name: "secret1",
-			data: map[string][]byte{
-				"token1.conf": []byte("bar"),
+				"token1.conf": compress("bar"),
 			},
 		},
 		{
 			name: "secret2",
 			data: map[string][]byte{
-				"token3.conf": []byte("foz"),
+				"token3.conf": compress("foz"),
 			},
 		},
 		{
@@ -61,31 +67,22 @@ func TestCreateOrUpdateFiles(t *testing.T) {
 
 	expectedEvents := []configFile{
 		{
-			name:   "token1.conf",
+			name:   "secret1-token1.conf",
 			action: actionCreateOrUpdate,
 			data:   []byte("foo"),
 		},
 		{
-			name:   "token2.conf",
+			name:   "secret1-token1.conf",
 			action: actionCreateOrUpdate,
 			data:   []byte("bar"),
 		},
 		{
-			name:   "token2.conf",
-			action: actionDelete,
-		},
-		{
-			name:   "token1.conf",
-			action: actionCreateOrUpdate,
-			data:   []byte("bar"),
-		},
-		{
-			name:   "token3.conf",
+			name:   "secret2-token3.conf",
 			action: actionCreateOrUpdate,
 			data:   []byte("foz"),
 		},
 		{
-			name:   "token1.conf",
+			name:   "secret1-token1.conf",
 			action: actionDelete,
 		},
 	}

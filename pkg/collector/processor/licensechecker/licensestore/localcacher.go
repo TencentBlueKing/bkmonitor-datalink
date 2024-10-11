@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package licensecache
+package licensestore
 
 import (
 	"time"
@@ -19,18 +19,12 @@ const (
 	defaultExpiration = time.Second * 60 // 官方文档中 skywalking 心跳数据每 30 秒上报一次
 )
 
-const TypeLocalCacher = "localcahcer"
-
 type localCacher struct {
 	cache *cache.Cache
 }
 
 func newLocalCacher() Cacher {
 	return &localCacher{cache: cache.New(time.Minute*2, time.Minute)}
-}
-
-func (c *localCacher) Type() string {
-	return TypeLocalCacher
 }
 
 func (c *localCacher) Set(value string) {

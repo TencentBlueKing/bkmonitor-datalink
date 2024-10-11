@@ -1081,6 +1081,7 @@ func (s *SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *
 		return errors.Wrapf(errEs, "pushBkccSpaceTableIds:compose space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errMetric)
 
 	}
+	logger.Infof("pushBkccSpaceTableIds:push bkcc space table_id data , space_type [%s], space_id [%s],values[%v]", spaceType, spaceId, values)
 	if len(values) != 0 {
 		client := redis.GetStorageRedisInstance()
 		logger.Infof("pushBkccSpaceTableIds:use redis client [%v],client.Client [%v]", client, client.Client)
@@ -1095,7 +1096,9 @@ func (s *SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *
 		if !slicex.IsExistItem(cfg.SkipBypassTasks, "pushBkccSpaceTableIds:push_and_publish_space_router_info") {
 			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
 		}
+		logger.Infof("pushBkccSpaceTableIds:push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v]", key, redisKey, valuesStr)
 		if err := client.HSetWithCompare(key, redisKey, valuesStr); err != nil {
+			logger.Errorf("pushBkccSpaceTableIds:failed to push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v]", key, redisKey, valuesStr)
 			return errors.Wrapf(err, "pushBkccSpaceTableIds:push bkcc space [%s] value [%v] failed", redisKey, valuesStr)
 
 		}

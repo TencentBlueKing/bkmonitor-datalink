@@ -171,7 +171,7 @@ func (r *Instance) Close() error {
 // HSetWithCompare 与redis中数据不同才更新
 func (r *Instance) HSetWithCompare(key, field, value string) error {
 	oldValue := r.HGet(key, field)
-	logger.Infof("[redis_diff] HashSet key [%s] field [%s] , new [%s]  old [%s]", key, field, value, oldValue)
+	logger.Infof("[redis_diff] HashSet key [%s] field [%s]", key, field)
 	if oldValue == value {
 		return nil
 	}

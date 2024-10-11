@@ -11,6 +11,7 @@ package service
 
 import (
 	"fmt"
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"testing"
 	"time"
 
@@ -62,6 +63,16 @@ func TestSpacePusher_composeBcsSpaceClusterTableIds(t *testing.T) {
 	// 初始化测试数据库配置
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
+
+	key := cfg.SpaceToResultTableKey
+	SkipByPassTasks := cfg.SkipBypassTasks
+	println(SkipByPassTasks)
+	//SkipBypassTasks := ["refresh_datasource", "check_update_ts_metric", "push_and_publish_space_router_info", "refresh_kafka_topic_info", "refresh_bkcc_space_name"]
+	if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
+		key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
+	}
+
+	assert.Equal(t, "bkmonitorv3:spaces:space_to_result_table", key)
 
 	// 创建一个真实的SpaceResource数据
 	resourceId := "monitor"

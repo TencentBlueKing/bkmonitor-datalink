@@ -130,7 +130,6 @@ func (s *SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdLi
 	if options == nil {
 		options = optionx.NewOptions(nil)
 	}
-	logger.Infof("GetSpaceTableIdDataId:options: %v", options)
 	options.SetDefault("includePlatformDataId", true)
 	db := mysql.GetDBSession().DB
 	if len(tableIdList) != 0 {
@@ -151,7 +150,6 @@ func (s *SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdLi
 		for _, dsrt := range dsrtList {
 			dataMap[dsrt.TableId] = dsrt.BkDataId
 		}
-		logger.Infof("GetSpaceTableIdDataId:space [%s__%s] table [%v] data_id: %v", spaceType, spaceId, tableIdList, dataMap)
 		return dataMap, nil
 	}
 	// 否则，查询空间下的所有数据源，再过滤对应的结果表
@@ -186,7 +184,7 @@ func (s *SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdLi
 	}
 	dataIdList := slicex.UintSet2List(dataIdSet)
 	if len(dataIdList) == 0 {
-		logger.Infof("GetSpaceTableIdDataId:space [%s__%s] data_id [%v] is empty", spaceType, spaceId, dataIdList)
+		logger.Errorf("GetSpaceTableIdDataId:space [%s__%s] data_id [%v] is empty", spaceType, spaceId, dataIdList)
 		return map[string]uint{}, nil
 	}
 	dataMap := make(map[string]uint)
@@ -1081,19 +1079,16 @@ func (s *SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *
 		return errors.Wrapf(errEs, "pushBkccSpaceTableIds:compose space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errMetric)
 
 	}
-	logger.Infof("pushBkccSpaceTableIds:push bkcc space table_id data , space_type [%s], space_id [%s],values[%v]", spaceType, spaceId, values)
 	if len(values) != 0 {
 		client := redis.GetStorageRedisInstance()
-		logger.Infof("pushBkccSpaceTableIds:use redis client [%v],client.Client [%v]", client, client.Client)
 		redisKey := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		valuesStr, err := jsonx.MarshalString(values)
-		logger.Infof("pushBkccSpaceTableIds:push redis space_to_result_table, space_type [%s], space_id [%s] value [%v]", spaceType, spaceId, valuesStr)
 		if err != nil {
 			return errors.Wrapf(err, "pushBkccSpaceTableIds:push bkcc space [%s] marshal valued [%v] failed", redisKey, values)
 		}
 		// TODO: 待旁路没有问题，可以移除的逻辑
 		key := cfg.SpaceToResultTableKey
-		if !slicex.IsExistItem(cfg.SkipBypassTasks, "pushBkccSpaceTableIds:push_and_publish_space_router_info") {
+		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
 			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
 		}
 		logger.Infof("pushBkccSpaceTableIds:push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v]", key, redisKey, valuesStr)

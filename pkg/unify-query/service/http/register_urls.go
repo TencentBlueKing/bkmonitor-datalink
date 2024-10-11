@@ -11,156 +11,170 @@ package http
 
 import (
 	"context"
+	"net/http"
 	"path"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 )
 
-// registerTSQueryService: /query/ts
-func registerTSQueryService(g *gin.Engine) {
-	servicePath := viper.GetString(TSQueryHandlePathConfigPath)
-	g.POST(servicePath, HandlerQueryTs)
-	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
+type RegisterHandlers struct {
+	ctx context.Context
+	g   *gin.RouterGroup
 }
 
-// registerTSQueryPromQLService: /query/ts/promql
-func registerTSQueryPromQLService(g *gin.Engine) {
-	servicePath := viper.GetString(TSQueryPromQLHandlePathConfigPath)
-	g.POST(servicePath, HandlerQueryPromQL)
-	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
+func (r *RegisterHandlers) register(method, handlerPath string, handlerFunc ...gin.HandlerFunc) {
+	switch method {
+	case http.MethodGet:
+		r.g.GET(handlerPath, handlerFunc...)
+	case http.MethodPost:
+		r.g.POST(handlerPath, handlerFunc...)
+	case http.MethodHead:
+		r.g.HEAD(handlerPath, handlerFunc...)
+	default:
+		log.Errorf(r.ctx, "registerHandlers error type is error %s", method)
+		return
+	}
+
+	log.Infof(r.ctx, "registerHandlers => [%s] %s", method, handlerPath)
 }
 
-// registerTSQueryReferenceQueryService: /query/reference
-func registerTSQueryReferenceQueryService(g *gin.Engine) {
-	servicePath := viper.GetString(TSQueryReferenceQueryHandlePathConfigPath)
-	g.POST(servicePath, HandlerQueryReference)
-	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
+func getRegisterHandlers(ctx context.Context, g *gin.RouterGroup) *RegisterHandlers {
+	return &RegisterHandlers{
+		ctx: ctx,
+		g:   g,
+	}
 }
 
-// registerTSQueryRawQueryService: /query/reference
-func registerTSQueryRawQueryService(g *gin.Engine) {
-	servicePath := viper.GetString(TSQueryRawQueryHandlePathConfigPath)
-	g.POST(servicePath, HandlerQueryRaw)
-	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
+func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
+	var handlerPath string
+
+	registerHandler := getRegisterHandlers(ctx, g)
+
+	// register prometheus metrics
+	if viper.GetBool(EnablePrometheusConfigPath) {
+		handlerPath = viper.GetString(PrometheusPathConfigPath)
+		registerHandler.register(http.MethodPost, handlerPath, gin.WrapH(
+			promhttp.HandlerFor(
+				prometheus.DefaultGatherer,
+				promhttp.HandlerOpts{
+					EnableOpenMetrics: true,
+				},
+			),
+		))
+	}
+
+	// query/ts
+	handlerPath = viper.GetString(TSQueryHandlePathConfigPath)
+	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryTs)
+
+	// query/ts/promql
+	handlerPath = viper.GetString(TSQueryPromQLHandlePathConfigPath)
+	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryPromQL)
+
+	// query/reference
+	handlerPath = viper.GetString(TSQueryReferenceQueryHandlePathConfigPath)
+	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryReference)
+
+	// query/raw
+	handlerPath = viper.GetString(TSQueryRawQueryHandlePathConfigPath)
+	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryRaw)
+
+	// query/ts/exemplar
+	handlerPath = viper.GetString(TSQueryExemplarHandlePathConfigPath)
+	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryExemplar)
+
+	// query/ts/info
+	infoPath := viper.GetString(TSQueryInfoHandlePathConfigPath)
+
+	// query/ts/info/field_keys
+	handlerPath = path.Join(infoPath, string(infos.FieldKeys))
+	registerHandler.register(http.MethodPost, handlerPath, HandlerFieldKeys)
+
+	// query/ts/info/tag_keys
+	handlerPath = path.Join(infoPath, string(infos.TagKeys))
+	registerHandler.register(http.MethodPost, handlerPath, HandlerTagKeys)
+
+	// query/ts/info/tag_values
+	handlerPath = path.Join(infoPath, string(infos.TagValues))
+	registerHandler.register(http.MethodPost, handlerPath, HandlerTagValues)
+
+	// query/ts/info/series
+	handlerPath = path.Join(infoPath, string(infos.Series))
+	registerHandler.register(http.MethodPost, handlerPath, HandlerSeries)
+
+	// query/ts/info/time_series
+	handlerPath = path.Join(infoPath, string(infos.TimeSeries))
+	registerHandler.register(http.MethodPost, handlerPath, HandleTimeSeries)
+
+	// query/ts/info/time_series
+	handlerPath = viper.GetString(TSQueryLabelValuesPathConfigPath)
+	registerHandler.register(http.MethodGet, handlerPath, HandlerLabelValues)
+
+	// query/ts/cluster_metrics/
+	handlerPath = viper.GetString(TSQueryClusterMetricsPathConfigPath)
+	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryTsClusterMetrics)
+
+	// query/ts/cluster_metrics/
+	handlerPath = viper.GetString(ESHandlePathConfigPath)
+	registerHandler.register(http.MethodPost, handlerPath, HandleESQueryRequest)
 }
 
-// registerTSQueryExemplarService: /query/ts/exemplar
-func registerTSQueryExemplarService(g *gin.Engine) {
-	servicePath := viper.GetString(TSQueryExemplarHandlePathConfigPath)
-	//g.POST(servicePath, HandleTSExemplarRequest)
-	g.POST(servicePath, HandlerQueryExemplar)
-	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
-}
+func registerOtherHandlers(ctx context.Context, g *gin.RouterGroup) {
+	var handlerPath string
 
-// registerTSQueryStructToPromQLService: /query/ts/struct_to_promql
-func registerTSQueryStructToPromQLService(g *gin.Engine) {
-	servicePath := viper.GetString(TSQueryStructToPromQLHandlePathConfigPath)
-	g.POST(servicePath, HandlerStructToPromQL)
-	//g.POST(servicePath, HandleTsQueryStructToPromQLRequest)
-	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
-}
+	registerHandler := getRegisterHandlers(ctx, g)
 
-// registerTSQueryPromQLToStructService: /query/ts/promql_to_struct
-func registerTSQueryPromQLToStructService(g *gin.Engine) {
-	servicePath := viper.GetString(TSQueryPromQLToStructHandlePathConfigPath)
-	g.POST(servicePath, HandlerPromQLToStruct)
-	//g.POST(servicePath, HandleTsQueryPromQLToStructRequest)
-	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
-}
+	// query/ts/struct_to_promql
+	handlerPath = viper.GetString(TSQueryStructToPromQLHandlePathConfigPath)
+	registerHandler.register(http.MethodPost, handlerPath, HandlerStructToPromQL)
 
-// registerCheckService 注册 check 类型接口
-func registerCheckService(g *gin.Engine) {
-	queryTsPath := viper.GetString(CheckQueryTsConfigPath)
-	g.POST(queryTsPath, HandlerCheckQueryTs)
-	log.Infof(context.TODO(), "check service register in path->[%s]", queryTsPath)
+	// query/ts/promql_to_struct
+	handlerPath = viper.GetString(TSQueryPromQLToStructHandlePathConfigPath)
+	registerHandler.register(http.MethodPost, handlerPath, HandlerPromQLToStruct)
 
-	queryPromQLPath := viper.GetString(CheckQueryPromQLConfigPath)
-	g.POST(queryPromQLPath, HandlerCheckQueryPromQL)
-	log.Infof(context.TODO(), "check service register in path->[%s]", queryPromQLPath)
-}
+	// check/query/ts
+	handlerPath = viper.GetString(CheckQueryTsConfigPath)
+	registerHandler.register(http.MethodPost, handlerPath, HandlerCheckQueryTs)
 
-// registerTSQueryInfoService: /query/ts/info
-func registerTSQueryInfoService(g *gin.Engine) {
-	servicePath := viper.GetString(TSQueryInfoHandlePathConfigPath)
-	tagKeyPath := path.Join(servicePath, string(infos.TagKeys))
-	tagValuesPath := path.Join(servicePath, string(infos.TagValues))
-	fieldKeyPath := path.Join(servicePath, string(infos.FieldKeys))
-	seriesPath := path.Join(servicePath, string(infos.Series))
-	timeSeriesPath := path.Join(servicePath, string(infos.TimeSeries))
+	// check/query/ts/promql
+	handlerPath = viper.GetString(CheckQueryPromQLConfigPath)
+	registerHandler.register(http.MethodPost, handlerPath, HandlerCheckQueryPromQL)
 
-	g.POST(fieldKeyPath, HandlerFieldKeys)
-	g.POST(tagKeyPath, HandlerTagKeys)
-	g.POST(tagValuesPath, HandlerTagValues)
-	g.POST(seriesPath, HandlerSeries)
+	// print
+	handlerPath = viper.GetString(PrintHandlePathConfigPath)
+	registerHandler.register(http.MethodGet, handlerPath, HandlePrint)
 
-	//g.POST(tagKeyPath, HandleShowTagKeys)
-	//g.POST(tagValuesPath, HandleShowTagValues)
-	//g.POST(fieldKeyPath, HandleShowFieldKeys)
-	//g.POST(seriesPath, HandleShowSeries)
-	g.POST(timeSeriesPath, HandleTimeSeries)
+	// influxdb_print
+	handlerPath = viper.GetString(InfluxDBPrintHandlePathConfigPath)
+	registerHandler.register(http.MethodGet, handlerPath, HandleInfluxDBPrint)
 
-	log.Infof(context.TODO(), "ts service register in path->[%s][%s][%s]", tagKeyPath, tagValuesPath, fieldKeyPath)
-}
+	// ff
+	handlerPath = viper.GetString(FeatureFlagHandlePathConfigPath)
+	registerHandler.register(http.MethodGet, handlerPath, HandleFeatureFlag)
 
-// registerLabelValuesService: /query/ts/label/:label_name/values
-func registerLabelValuesService(g *gin.Engine) {
-	servicePath := viper.GetString(TSQueryLabelValuesPathConfigPath)
+	// space_print
+	handlerPath = viper.GetString(SpacePrintHandlePathConfigPath)
+	registerHandler.register(http.MethodGet, handlerPath, HandleSpacePrint)
 
-	g.GET(servicePath, HandlerLabelValues)
-	//g.GET(servicePath, HandleLabelValuesRequest)
+	// space_key_print
+	handlerPath = viper.GetString(SpaceKeyPrintHandlePathConfigPath)
+	registerHandler.register(http.MethodGet, handlerPath, HandleSpaceKeyPrint)
 
-	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
-}
+	// tsdb_print
+	handlerPath = viper.GetString(TsDBPrintHandlePathConfigPath)
+	registerHandler.register(http.MethodGet, handlerPath, HandleTsDBPrint)
 
-// registerHandlerQueryTsClusterMetrics /query/ts/cluster_metrics/
-func registerHandlerQueryTsClusterMetrics(g *gin.Engine) {
-	servicePath := viper.GetString(TSQueryClusterMetricsPathConfigPath)
-	g.POST(servicePath, HandlerQueryTsClusterMetrics)
-	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
-}
+	// HEAD
+	registerHandler.register(http.MethodHead, "", HandlerHealth)
 
-// registerPrint: /print
-func registerPrint(g *gin.Engine) {
-	servicePath := viper.GetString(PrintHandlePathConfigPath)
-	g.GET(servicePath, HandlePrint)
-	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
-}
-
-// registerInfluxDBPrint: /influxdb_print
-func registerInfluxDBPrint(g *gin.Engine) {
-	servicePath := viper.GetString(InfluxDBPrintHandlePathConfigPath)
-	g.GET(servicePath, HandleInfluxDBPrint)
-	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
-}
-
-// registerFeatureFlag: /ff
-func registerFeatureFlag(g *gin.Engine) {
-	servicePath := viper.GetString(FeatureFlagHandlePathConfigPath)
-	g.GET(servicePath, HandleFeatureFlag)
-	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
-}
-
-// registerSpacePrint: /space_print
-func registerSpacePrint(g *gin.Engine) {
-	servicePath := viper.GetString(SpacePrintHandlePathConfigPath)
-	g.GET(servicePath, HandleSpacePrint)
-	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
-}
-
-// registerSpaceKetPrint: /space_print
-func registerSpaceKeyPrint(g *gin.Engine) {
-	servicePath := viper.GetString(SpaceKeyPrintHandlePathConfigPath)
-	g.GET(servicePath, HandleSpaceKeyPrint)
-	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
-}
-
-// registerTsDBPrint: /space_print
-func registerTsDBPrint(g *gin.Engine) {
-	servicePath := viper.GetString(TsDBPrintHandlePathConfigPath)
-	g.GET(servicePath, HandleTsDBPrint)
-	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
+	// profile
+	if viper.GetBool(EnableProfileConfigPath) {
+		registerProfile(ctx, g)
+	}
 }

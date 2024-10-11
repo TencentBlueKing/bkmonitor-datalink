@@ -668,7 +668,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		err  error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query")
+	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-label-values")
 	defer span.End(&err)
 
 	if name == labels.MetricName {
@@ -710,6 +710,8 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		step = 60
 	}
 
+	span.Set("query-step", step)
+
 	paramsQueryRange := &ParamsQueryRange{
 		InfluxCompatible: i.influxCompatible,
 		APIType:          APIQueryRange,
@@ -740,6 +742,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		Expr:     vector,
 		Grouping: []string{name},
 	}
+
 	paramsQueryRange.APIParams.Query = expr.String()
 
 	sql, err := json.Marshal(paramsQueryRange)

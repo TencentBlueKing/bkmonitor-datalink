@@ -75,6 +75,7 @@ func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tabl
 	db := mysql.GetDBSession().DB
 	if spaceType != "" && spaceId != "" {
 		// 更新相关数据到 redis
+		// NOTE:这里统一根据Redis中的新老值是否存在差异决定是否需要Publish,isPublish参数不再生效
 		if err := pusher.PushSpaceTableIds(spaceType, spaceId, true); err != nil {
 			return err
 		}
@@ -158,7 +159,7 @@ func (s *SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdLi
 
 	// 获取是否授权数据
 	if fromAuthorization, ok := options.GetBool("fromAuthorization"); ok {
-		logger.Infof("GetSpaceTableIdDataId:fromAuthorization: %v", fromAuthorization)
+		logger.Infof("GetSpaceTableIdDataId:fromAuthorization: %v,space_type: %s, space_id: %s, table_id_list: %v, exclude_data_id_list: %v", fromAuthorization, spaceType, spaceId, tableIdList, excludeDataIdList)
 		qs = qs.FromAuthorizationEq(fromAuthorization)
 	}
 	if err := qs.All(&spdsList); err != nil {
@@ -202,7 +203,7 @@ func (s *SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdLi
 
 // PushDataLabelTableIds 推送 data_label 及对应的结果表
 func (s *SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, isPublish bool) error {
-	logger.Infof("start to push data_label table_id data, data_label_list [%v], table_id_list [%v]", dataLabelList, tableIdList)
+	logger.Infof("PushDataLabelTableIds：start to push data_label table_id data, data_label_list [%v], table_id_list [%v]", dataLabelList, tableIdList)
 
 	// 如果标签存在，则按照标签进行过滤
 	dlRtsMap := make(map[string][]string)
@@ -248,10 +249,13 @@ func (s *SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string,
 			if err != nil {
 				return err
 			}
-			if err := client.HSetWithCompare(key, dl, rtsStr); err != nil {
+			// NOTE:这里统一根据Redis中的新老值是否存在差异决定是否需要Publish
+			isNeedUpdate, err := client.HSetWithCompare(key, dl, rtsStr)
+			if err != nil {
+				logger.Errorf("PushDataLabelTableIds:push redis data_label_to_result_table error, %s", err)
 				return err
 			}
-			if isPublish {
+			if isNeedUpdate {
 				if err := client.Publish(cfg.DataLabelToResultTableChannel, dl); err != nil {
 					return err
 				}
@@ -419,13 +423,13 @@ func (s *SpacePusher) refineEsTableIds(tableIdList []string) ([]string, error) {
 
 // PushTableIdDetail 推送结果表的详细信息
 func (s *SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool, useByPass bool) error {
-	logger.Infof("start to push table_id detail data")
+	logger.Infof("PushTableIdDetail:start to push table_id detail data")
 	tableIdDetail, err := s.getTableInfoForInfluxdbAndVm(tableIdList)
 	if err != nil {
 		return err
 	}
 	if len(tableIdDetail) == 0 {
-		logger.Infof("not found table from influxdb or vm")
+		logger.Infof("PushTableIdDetail:not found table from influxdb or vm")
 		return nil
 	}
 	var tableIds []string
@@ -501,24 +505,30 @@ func (s *SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool, us
 			return err
 		}
 
-		if err := client.HSetWithCompare(rtDetailKey, tableId, detailStr); err != nil {
+		// NOTE:这里统一根据Redis中的新老值是否存在差异决定是否需要Publish
+		isNeedUpdate, err := client.HSetWithCompare(rtDetailKey, tableId, detailStr)
+
+		if err != nil {
+			logger.Errorf("PushTableIdDetail:push redis result_table_detail failed, table_id: %s, err: %s", tableId, err.Error())
 			return err
 		}
-		if isPublish {
+		if isNeedUpdate {
+			logger.Infof("PushTableIdDetail:table_id: %s need to push and publish,now try to do it", tableId)
 			if err := client.Publish(cfg.ResultTableDetailChannel, tableId); err != nil {
+				logger.Errorf("PushTableIdDetail:push redis result_table_detail failed, table_id: %s, err: %s", tableId, err.Error())
 				return err
 			}
 		}
 	}
 
-	logger.Info("push redis result_table_detail")
+	logger.Info("PushTableIdDetail:push redis result_table_detail")
 	return nil
 
 }
 
 // PushEsTableIdDetail compose the es table id detail
 func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) error {
-	logger.Infof("start to compose es table id detail data, table_id_list [%v]", tableIdList)
+	logger.Infof("PushEsTableIdDetail:start to compose es table id detail data, table_id_list [%v]", tableIdList)
 	db := mysql.GetDBSession().DB
 	// 获取数据
 	var esStorageList []storage.ESStorage
@@ -526,12 +536,12 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 	// 如果过滤结果表存在，则添加过来条件
 	if len(tableIdList) != 0 {
 		if err := esQuerySet.TableIDIn(tableIdList...).All(&esStorageList); err != nil {
-			logger.Errorf("compose es table id detail error, table_id: %v, error: %s", tableIdList, err)
+			logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %v, error: %s", tableIdList, err)
 			return err
 		}
 	} else {
 		if err := esQuerySet.All(&esStorageList); err != nil {
-			logger.Errorf("compose es table id detail error, %s", err)
+			logger.Errorf("PushEsTableIdDetail:compose es table id detail error, %s", err)
 			return err
 		}
 	}
@@ -566,22 +576,28 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 			indexSet := es.IndexSet
 			_tableId, detailStr, err := s.composeEsTableIdDetail(tableId, options, es.StorageClusterID, sourceType, indexSet)
 			if err != nil {
-				logger.Errorf("compose es table id detail error, table_id: %s, error: %s", tableId, err)
+				logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %s, error: %s", tableId, err)
 				return
 			}
 			// 推送数据
-			if err := client.HSetWithCompare(cfg.ResultTableDetailKey, _tableId, detailStr); err != nil {
+			// NOTE:这里统一根据Redis中的新老值是否存在差异决定是否需要Publish
+			isNeedUpdate, err := client.HSetWithCompare(cfg.ResultTableDetailKey, _tableId, detailStr)
+			if err != nil {
+				logger.Errorf("PushEsTableIdDetail:push es table id detail error, table_id: %s, error: %s", tableId, err)
 				return
 			}
 			// 发布通知
-			if isPublish {
+			if isNeedUpdate {
+				logger.Infof("PushEsTableIdDetail:table_id: %s need to push and publish,now try to do it", tableId)
 				if err := client.Publish(cfg.ResultTableDetailChannel, _tableId); err != nil {
 					logger.Errorf("publish es table id detail error, table_id: %s, error: %s", tableId, err)
 				}
+				logger.Infof("PushEsTableIdDetail:table_id: %s push and publish success", tableId)
 			}
 		}(es, options, wg, ch)
 	}
 	wg.Wait()
+	logger.Infof("PushEsTableIdDetail:push es table id detail success, table_id_list [%v]", tableIdList)
 	return nil
 }
 
@@ -998,25 +1014,36 @@ func (s *SpacePusher) getTableIdClusterId(tableIds []string) (map[string]string,
 
 // PushSpaceTableIds 推送空间及对应的结果表和过滤条件
 func (s *SpacePusher) PushSpaceTableIds(spaceType, spaceId string, isPublish bool) error {
+	isNeedUpdate := false
+	var err error
 	logger.Infof("PushSpaceTableIds:start to push space table_id data, space_type [%s], space_id [%s]", spaceType, spaceId)
+	// NOTE:这里统一根据Redis中的新老值是否存在差异决定是否需要Publish
 	if spaceType == models.SpaceTypeBKCC {
-		if err := s.pushBkccSpaceTableIds(spaceType, spaceId, nil); err != nil {
+		isNeedUpdate, err = s.pushBkccSpaceTableIds(spaceType, spaceId, nil)
+		logger.Infof("PushSpaceTableIds:push bkcc space table_id data success, space_type [%s], space_id [%s],is_need_update [%v]", spaceType, spaceId, isNeedUpdate)
+		if err != nil {
+			logger.Errorf("PushSpaceTableIds:push bkcc space table_id data failed, space_type [%s], space_id [%s], err: %v", spaceType, spaceId, err)
 			return err
 		}
 	} else if spaceType == models.SpaceTypeBKCI {
 		// 开启容器服务，则需要处理集群+业务+构建机+其它(在当前空间下创建的插件、自定义上报等)
-		if err := s.pushBkciSpaceTableIds(spaceType, spaceId); err != nil {
+		isNeedUpdate, err = s.pushBkciSpaceTableIds(spaceType, spaceId)
+		if err != nil {
+			logger.Errorf("PushSpaceTableIds:push bkci space table_id data failed, space_type [%s], space_id [%s], err: %v", spaceType, spaceId, err)
 			return err
 		}
 
 	} else if spaceType == models.SpaceTypeBKSAAS {
-		if err := s.pushBksaasSpaceTableIds(spaceType, spaceId, nil); err != nil {
+		isNeedUpdate, err = s.pushBksaasSpaceTableIds(spaceType, spaceId, nil)
+		if err != nil {
+			logger.Errorf("PushSpaceTableIds:push bkci space table_id data failed, space_type [%s], space_id [%s], err: %v", spaceType, spaceId, err)
 			return err
 		}
 
 	}
 	// 如果指定要更新，则通知
-	if isPublish {
+	if isNeedUpdate {
+		logger.Infof("PushSpaceTableIds:push space table_id data need to update, space_type [%s], space_id [%s]", spaceType, spaceId)
 		client := redis.GetStorageRedisInstance()
 		if err := client.Publish(cfg.SpaceToResultTableChannel, fmt.Sprintf("%s__%s", spaceType, spaceId)); err != nil {
 			return err
@@ -1038,7 +1065,7 @@ func (s *SpacePusher) composeValue(values *map[string]map[string]interface{}, co
 }
 
 // 推送 bkcc 类型空间数据
-func (s *SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *optionx.Options) error {
+func (s *SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *optionx.Options) (bool, error) {
 	if options == nil {
 		options = optionx.NewOptions(nil)
 	}
@@ -1076,7 +1103,7 @@ func (s *SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *
 
 	// 如果有异常，则直接返回
 	if errMetric != nil && errEs != nil && errRecordRule != nil {
-		return errors.Wrapf(errEs, "pushBkccSpaceTableIds:compose space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errMetric)
+		return false, errors.Wrapf(errEs, "pushBkccSpaceTableIds:compose space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errMetric)
 
 	}
 	if len(values) != 0 {
@@ -1084,7 +1111,7 @@ func (s *SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *
 		redisKey := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		valuesStr, err := jsonx.MarshalString(values)
 		if err != nil {
-			return errors.Wrapf(err, "pushBkccSpaceTableIds:push bkcc space [%s] marshal valued [%v] failed", redisKey, values)
+			return false, errors.Wrapf(err, "pushBkccSpaceTableIds:push bkcc space [%s] marshal valued [%v] failed", redisKey, values)
 		}
 		// TODO: 待旁路没有问题，可以移除的逻辑
 		key := cfg.SpaceToResultTableKey
@@ -1092,18 +1119,22 @@ func (s *SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *
 			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
 		}
 		logger.Infof("pushBkccSpaceTableIds:push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v]", key, redisKey, valuesStr)
-		if err := client.HSetWithCompare(key, redisKey, valuesStr); err != nil {
+
+		// NOTE:这里统一根据Redis中的新老值是否存在差异决定是否需要Publish
+		isNeedUpdate, err := client.HSetWithCompare(key, redisKey, valuesStr)
+		if err != nil {
 			logger.Errorf("pushBkccSpaceTableIds:failed to push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v]", key, redisKey, valuesStr)
-			return errors.Wrapf(err, "pushBkccSpaceTableIds:push bkcc space [%s] value [%v] failed", redisKey, valuesStr)
+			return false, errors.Wrapf(err, "pushBkccSpaceTableIds:push bkcc space [%s] value [%v] failed", redisKey, valuesStr)
 
 		}
+		return isNeedUpdate, nil
 	}
 	logger.Infof("pushBkccSpaceTableIds:push redis space_to_result_table, space_type [%s], space_id [%s] success", spaceType, spaceId)
-	return nil
+	return false, nil
 }
 
 // 推送 bcs 类型空间下的关联业务的数据
-func (s *SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) error {
+func (s *SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) (bool, error) {
 	logger.Infof("start to push biz of bcs space table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	values, err := s.composeBcsSpaceBizTableIds(spaceType, spaceId)
 	if err != nil {
@@ -1165,24 +1196,26 @@ func (s *SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) error {
 		redisKey := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		valuesStr, err := jsonx.MarshalString(values)
 		if err != nil {
-			return errors.Wrapf(err, "push bkci space [%s] marshal valued failed", redisKey)
+			return false, errors.Wrapf(err, "push bkci space [%s] marshal valued failed", redisKey)
 		}
 		// TODO: 待旁路没有问题，可以移除的逻辑
 		key := cfg.SpaceToResultTableKey
 		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
 			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
 		}
-		if err := client.HSetWithCompare(key, redisKey, valuesStr); err != nil {
-			return errors.Wrapf(err, "push bkci space [%s] value [%v] failed", redisKey, valuesStr)
-
+		isNeedUpdate, err := client.HSetWithCompare(key, redisKey, valuesStr)
+		if err != nil {
+			return false, errors.Wrapf(err, "push bkci space [%s] value [%v] failed", redisKey, valuesStr)
 		}
+		logger.Infof("push redis space_to_result_table, space_type [%s], space_id [%s] isNeedUpdate: %v", spaceType, spaceId, isNeedUpdate)
+		return isNeedUpdate, nil
 	}
 	logger.Infof("push redis space_to_result_table, space_type [%s], space_id [%s] success", spaceType, spaceId)
-	return nil
+	return false, nil
 }
 
 // 推送 bksaas 类型空间下的数据
-func (s *SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableIdList []string) error {
+func (s *SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableIdList []string) (bool, error) {
 	logger.Infof("start to push bksaas space table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	values, err := s.composeBksaasSpaceClusterTableIds(spaceType, spaceId, tableIdList)
 	if err != nil {
@@ -1222,20 +1255,23 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableId
 		redisKey := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		valuesStr, err := jsonx.MarshalString(values)
 		if err != nil {
-			return errors.Wrapf(err, "push bksaas space [%s] marshal valued [%v] failed", redisKey, values)
+			return false, errors.Wrapf(err, "push bksaas space [%s] marshal valued [%v] failed", redisKey, values)
 		}
 		// TODO: 待旁路没有问题，可以移除的逻辑
 		key := cfg.SpaceToResultTableKey
 		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
 			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
 		}
-		if err := client.HSetWithCompare(key, redisKey, valuesStr); err != nil {
-			return errors.Wrapf(err, "push bksaas space [%s] value [%v] failed", redisKey, valuesStr)
-
+		isNeedUpdate, err := client.HSetWithCompare(key, redisKey, valuesStr)
+		if err != nil {
+			logger.Errorf("push bksaas space [%s] value [%v] failed", redisKey, valuesStr)
+			return false, errors.Wrapf(err, "push bksaas space [%s] value [%v] failed", redisKey, valuesStr)
 		}
+		return isNeedUpdate, nil
+
 	}
 	logger.Infof("push redis space_to_result_table, space_type [%s], space_id [%s]", spaceType, spaceId)
-	return nil
+	return false, nil
 }
 
 // composeRecordRuleTableIds compose record rule table ids

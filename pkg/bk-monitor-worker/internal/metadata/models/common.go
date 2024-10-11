@@ -118,17 +118,18 @@ func ParseOptionValue(value interface{}) (string, string, error) {
 // PushToRedis 推送数据到 redis, just for influxdb
 func PushToRedis(ctx context.Context, key, field, value string, isPublish bool) {
 	client := redis.GetStorageRedisInstance()
-
+	logger.Infof("PushToRedis:push redis, key: %s, field: %s, isPublish: %v", key, field, isPublish)
 	redisKey := fmt.Sprintf("%s%s:%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath, key)
 	msgSuffix := fmt.Sprintf("key: %s, field: %s, value: %s", redisKey, field, value)
 
-	err := client.HSetWithCompare(redisKey, field, value)
+	isNeedUpdate, err := client.HSetWithCompare(redisKey, field, value)
+	logger.Infof("PushToRedis:push redis, key: %s, field: %s,isNeedUpdate: %v,try to push and publish", key, field, isNeedUpdate)
 	if err != nil {
 		logger.Errorf("push redis failed, %s, err: %v", msgSuffix, err)
 	} else {
 		logger.Infof("push redis successfully, %s", msgSuffix)
 	}
-	if isPublish {
+	if isNeedUpdate {
 		err := client.Publish(fmt.Sprintf("%s%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath), key)
 		if err != nil {
 			logger.Errorf("publish redis failed, channel: %s, msg: %s, %s", fmt.Sprintf("%s%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath), key, err)

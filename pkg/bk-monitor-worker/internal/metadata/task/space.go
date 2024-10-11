@@ -173,7 +173,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 				wg.Done()
 			}()
 			// 推送空间到结果表的路由
-			if err := pusher.PushSpaceTableIds(sp.SpaceTypeId, sp.SpaceId, false); err != nil {
+			if err := pusher.PushSpaceTableIds(sp.SpaceTypeId, sp.SpaceId, true); err != nil {
 				logger.Errorf("PushAndPublishSpaceRouterInfo task error, push space [%s__%s] to redis error, %s", sp.SpaceTypeId, sp.SpaceId, err)
 			} else {
 				logger.Infof("PushAndPublishSpaceRouterInfo task success, push space [%s__%s] to redis success", sp.SpaceTypeId, sp.SpaceId)

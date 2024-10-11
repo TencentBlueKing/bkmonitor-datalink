@@ -290,10 +290,7 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 
 	// es 需要使用自己的查询时间范围
 	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix()).SetIsReference(true)
-	err = metadata.SetQueryReference(ctx, queryRef)
-	if err != nil {
-		return nil, err
-	}
+	metadata.SetQueryReference(ctx, queryRef)
 
 	var lookBackDelta time.Duration
 	if query.LookBackDelta != "" {
@@ -455,11 +452,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 		// 非直查开启忽略时间聚合函数判断
 		promExprOpt.IgnoreTimeAggregationEnable = true
 
-		err = metadata.SetQueryReference(ctx, queryRef)
-
-		if err != nil {
-			return nil, err
-		}
+		metadata.SetQueryReference(ctx, queryRef)
 
 		span.Set("query-max-routing", QueryMaxRouting)
 		span.Set("singleflight-timeout", SingleflightTimeout.String())

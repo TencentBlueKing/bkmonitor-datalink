@@ -209,6 +209,10 @@ func handlerInfo(c *gin.Context, key infos.InfoType) {
 	resp.success(ctx, data)
 }
 
+func labelValues(ctx context.Context, name string, start, end time.Time, matchers ...*labels.Matcher) {
+
+}
+
 func queryInfo(ctx context.Context, key infos.InfoType, params *infos.Params) (interface{}, error) {
 	var (
 		warns []error

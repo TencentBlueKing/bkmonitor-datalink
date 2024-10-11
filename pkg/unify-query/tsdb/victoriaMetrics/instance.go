@@ -538,7 +538,7 @@ func (i *Instance) Query(
 	return i.vectorFormat(ctx, vmResp, span)
 }
 
-func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) labelValues(ctx context.Context, name string, matchers ...*labels.Matcher) ([]string, error) {
 	var (
 		vmExpand *metadata.VmExpand
 
@@ -546,7 +546,7 @@ func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.
 		err  error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-metric")
+	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-label-values")
 	defer span.End(&err)
 
 	vmExpand = metadata.GetExpand(ctx)
@@ -672,7 +672,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 	defer span.End(&err)
 
 	if name == labels.MetricName {
-		return i.metric(ctx, name, matchers...)
+		return i.labelValues(ctx, name, matchers...)
 	}
 
 	vmExpand = metadata.GetExpand(ctx)

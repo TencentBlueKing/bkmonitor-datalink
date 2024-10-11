@@ -395,10 +395,7 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	if err != nil {
 		return nil, err
 	}
-	err = metadata.SetQueryReference(ctx, queryReference)
-	if err != nil {
-		return nil, err
-	}
+	metadata.SetQueryReference(ctx, queryReference)
 
 	var instance tsdb.Instance
 	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)

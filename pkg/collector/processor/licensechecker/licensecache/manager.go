@@ -22,12 +22,12 @@ type Manager struct {
 }
 
 func NewManager() *Manager {
-	cc := &Manager{
+	mgr := &Manager{
 		caches: map[string]*Cache{},
 		stop:   make(chan struct{}),
 	}
-	go cc.gc()
-	return cc
+	go mgr.gc()
+	return mgr
 }
 
 func (mgr *Manager) Clean() {

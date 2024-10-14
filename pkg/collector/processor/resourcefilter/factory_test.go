@@ -431,6 +431,7 @@ processor:
       config:
         from_cache:
           key: "resource.service.name"
+          dimensions: ["service.zone", "service.status"]
           cache:
             key: "service.name"
             url: %s

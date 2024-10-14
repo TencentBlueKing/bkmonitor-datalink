@@ -340,8 +340,11 @@ func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 			if !ok {
 				continue
 			}
-			for name, value := range dims {
-				resourceSpans.Resource().Attributes().UpsertString(name, value)
+
+			for _, dim := range config.FromCache.Dimensions {
+				if lb, ok := dims[dim]; ok {
+					resourceSpans.Resource().Attributes().UpsertString(dim, lb)
+				}
 			}
 		}
 	}

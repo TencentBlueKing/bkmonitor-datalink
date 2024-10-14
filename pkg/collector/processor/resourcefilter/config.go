@@ -53,8 +53,9 @@ type AssembleAction struct {
 }
 
 type FromCacheAction struct {
-	Key   string           `config:"key" mapstructure:"key"`
-	Cache dimscache.Config `config:"cache" mapstructure:"cache"`
+	Key        string           `config:"key" mapstructure:"key"`
+	Dimensions []string         `config:"dimensions" mapstructure:"dimensions"`
+	Cache      dimscache.Config `config:"cache" mapstructure:"cache"`
 }
 
 func cleanResourcesPrefix(keys []string) []string {

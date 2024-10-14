@@ -205,11 +205,6 @@ bk-collector:
       config:
         calculator:
           type: "standard"
-        rules:
-          - kind: ""
-            metric_name: "bk_apm_duration"
-            destination: "apdex_type"
-            apdex_t: 20 # ms
 
     # AttributeFilter: 属性过滤处理器
     - name: "attribute_filter/as_string"

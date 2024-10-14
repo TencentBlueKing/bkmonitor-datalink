@@ -10,18 +10,147 @@
 package http
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
+
+type Writer struct {
+	h http.Header
+	b bytes.Buffer
+}
+
+func (w *Writer) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (w *Writer) Flush() {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (w *Writer) CloseNotify() <-chan bool {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (w *Writer) Status() int {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (w *Writer) Size() int {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (w *Writer) WriteString(s string) (int, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (w *Writer) Written() bool {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (w *Writer) WriteHeaderNow() {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (w *Writer) Pusher() http.Pusher {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (w *Writer) Header() http.Header {
+	return w.h
+}
+
+func (w *Writer) Write(b []byte) (int, error) {
+	w.b.Write(b)
+	return len(b), nil
+}
+
+func (w *Writer) WriteHeader(statusCode int) {
+	w.h = http.Header{
+		"code": []string{fmt.Sprintf("%d", statusCode)},
+	}
+}
+
+func (w *Writer) body() string {
+	return string(w.b.Bytes())
+}
+
+var _ http.ResponseWriter = (*Writer)(nil)
+
+func TestAPIHandler(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	testCases := map[string]struct {
+		handler  func(c *gin.Context)
+		method   string
+		url      string
+		body     io.Reader
+		params   gin.Params
+		expected string
+	}{
+		"test label values": {
+			handler: HandlerLabelValues,
+			method:  http.MethodGet,
+			url:     "query/ts/label/container/values?label=container&match%5B%5D=container_cpu_usage_seconds_total%7Bbcs_cluster_id%3D%22BCS-K8S-41161%22%2Cnamespace%3D%22perf-master-test-main%22%2C+container%21%3D%22POD%22%7D",
+			params: gin.Params{
+				{
+					Key:   "label_name",
+					Value: "container",
+				},
+			},
+			expected: `[]`,
+		},
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+			url := fmt.Sprintf("http://127.0.0.1/%s", c.url)
+			req, err := http.NewRequestWithContext(ctx, c.method, url, c.body)
+			if err != nil {
+				log.Fatalf(ctx, err.Error())
+				return
+			}
+
+			w := &Writer{}
+			ginC := &gin.Context{
+				Request: req,
+				Writer:  w,
+				Params:  c.params,
+			}
+			if c.handler != nil {
+				c.handler(ginC)
+				assert.Equal(t, c.expected, w.body())
+			}
+		})
+	}
+}
 
 func TestQueryInfo(t *testing.T) {
 	ctx := context.Background()

@@ -14,14 +14,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/panjf2000/ants/v2"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/interval/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
@@ -108,73 +111,82 @@ func HandlerSeries(c *gin.Context) {
 // @Router   /query/ts/label/{label_name}/values [get]
 func HandlerLabelValues(c *gin.Context) {
 	var (
-		key  = infos.TagValues
 		ctx  = c.Request.Context()
 		resp = &response{
 			c: c,
 		}
 
-		err  error
-		data interface{}
+		err error
 	)
 
 	ctx, span := trace.NewSpan(ctx, "label-values-handler")
 	defer span.End(&err)
 
 	labelName := c.Param("label_name")
-
-	params := &infos.Params{
-		Keys:  []string{labelName},
-		Start: c.Query("start"),
-		End:   c.Query("end"),
-	}
-
+	start := c.Query("start")
+	end := c.Query("end")
 	matches := c.QueryArray("match[]")
 
-	span.Set("request-url", c.Request.URL.String())
-	span.Set("request-info-type", key)
-	span.Set("request-header", c.Request.Header)
+	span.Set("request-start", start)
+	span.Set("request-end", end)
 	span.Set("request-label-name", labelName)
-	span.Set("request-match[]", matches)
+	span.Set("request-matches", matches)
 
-	for _, m := range matches {
-		match, err := parser.ParseMetricSelector(m)
-		if err != nil {
-			log.Errorf(ctx, err.Error())
-			resp.failed(ctx, err)
-			return
-		}
-		metric, fields, err := structured.LabelMatcherToConditions(match)
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", c.Request.Header)
 
-		if metric != "" {
-			route, err := structured.MakeRouteFromMetricName(metric)
-			if err != nil {
-				log.Errorf(ctx, err.Error())
-				resp.failed(ctx, err)
-				return
-			}
-
-			params.TableID = route.TableID()
-			params.Metric = route.MetricName()
-		}
-
-		params.Conditions.FieldList = append(params.Conditions.FieldList, fields...)
-	}
-
-	for i := 0; i < len(params.Conditions.FieldList)-1; i++ {
-		params.Conditions.ConditionList = append(params.Conditions.ConditionList, structured.ConditionAnd)
-	}
-
-	span.Set("params", params)
-
-	data, err = queryInfo(ctx, key, params)
+	p, err := ants.NewPool(QueryMaxRouting)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
 		return
 	}
+	defer p.Release()
 
-	resp.success(ctx, data)
+	resultCh := make(chan string)
+
+	go func() {
+		defer func() {
+			close(resultCh)
+		}()
+		var (
+			wg sync.WaitGroup
+		)
+		for _, match := range matches {
+			wg.Add(1)
+			_ = p.Submit(func() {
+				var (
+					queryErr error
+					matchers []*labels.Matcher
+				)
+				defer func() {
+					if queryErr != nil {
+						log.Errorf(ctx, "labelValuesHandler: "+queryErr.Error())
+					}
+					wg.Done()
+				}()
+				matchers, queryErr = parser.ParseMetricSelector(match)
+				if queryErr != nil {
+					return
+				}
+
+				route, newMatchers, queryErr := structured.MetricsToRouter(matchers...)
+				if queryErr != nil {
+					return
+				}
+
+				fmt.Println(route, newMatchers)
+
+			})
+		}
+		wg.Wait()
+	}()
+
+	result := set.New[string]()
+	for item := range resultCh {
+		result.Add(item)
+	}
+
+	resp.success(ctx, result.ToArray())
 }
 
 func handlerInfo(c *gin.Context, key infos.InfoType) {
@@ -207,10 +219,6 @@ func handlerInfo(c *gin.Context, key infos.InfoType) {
 	}
 
 	resp.success(ctx, data)
-}
-
-func labelValues(ctx context.Context, name string, start, end time.Time, matchers ...*labels.Matcher) {
-
 }
 
 func queryInfo(ctx context.Context, key infos.InfoType, params *infos.Params) (interface{}, error) {

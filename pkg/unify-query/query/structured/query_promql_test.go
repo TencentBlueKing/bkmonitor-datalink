@@ -118,6 +118,10 @@ func TestQueryPromQLExpr(t *testing.T) {
 			q: `avg by (tag1, tag2) (avg_over_time(bkmonitor:metric{tag!="abc"}[15s:15s]))`,
 			r: `avg by (tag1, tag2) (avg_over_time(bkmonitor:metric{tag!="abc"}[15s:15s]))`,
 		},
+		"sum with special": {
+			q: `avg by (__ext__bk_46__container) (avg_over_time(bkmonitor:metric__bk_46__container{tag__bk_46__container!="abc__bk_46__container"}[15s:15s]))`,
+			r: `avg by (__ext__bk_46__container) (avg_over_time(bkmonitor:metric__bk_46__container{tag__bk_46__container!="abc__bk_46__container"}[15s:15s]))`,
+		},
 	}
 
 	for n, c := range testCases {

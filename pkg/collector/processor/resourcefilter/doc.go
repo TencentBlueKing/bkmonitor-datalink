@@ -52,13 +52,20 @@ processor:
     - name: "resource_filter/from_cache"
       config:
         from_cache:
-          key: "resource.service.name"
-          dimensions: ["service.zone", "service.status"]
+          key: "resource.net.host.ip|resource.client.ip"
+          dimensions: ["k8s.namespace.name","k8s.pod.name","k8s.pod.ip","k8s.bcs.cluster.id"]
           cache:
-            key: "service.name"
-            url: http://localhost:8080/service_info
+            key: "k8s.pod.ip"
+            url: http://localhost:8080/pods
             interval: "1m"
             timeout: "1m"
+
+    # FromRecord Action
+    - name: "resource_filter/from_record"
+      config:
+        from_record:
+          - source: "request.client.ip"
+            destination: "resource.client.ip"
 */
 
 package resourcefilter

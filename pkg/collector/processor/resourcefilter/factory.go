@@ -158,6 +158,9 @@ func (p *resourceFilter) Process(record *define.Record) (*define.Record, error) 
 	if len(config.Drop.Keys) > 0 {
 		p.dropAction(record, config)
 	}
+	if len(config.FromRecord) > 0 {
+		p.fromRecordAction(record, config)
+	}
 
 	if config.FromCache.Cache.Validate() {
 		p.fromCacheAction(record, config)
@@ -325,14 +328,11 @@ func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 	token := record.Token.Original
 	cache := p.caches.GetByToken(token).(*dimscache.Cache)
+	keys := config.FromCache.CombineKeys()
 
-	switch record.RecordType {
-	case define.RecordTraces:
-		pdTraces := record.Data.(ptrace.Traces)
-		resourceSpansSlice := pdTraces.ResourceSpans()
-		for i := 0; i < resourceSpansSlice.Len(); i++ {
-			resourceSpans := resourceSpansSlice.At(i)
-			v, ok := resourceSpans.Resource().Attributes().Get(config.FromCache.Key)
+	handleTraces := func(resourceSpans ptrace.ResourceSpans) {
+		for _, key := range keys {
+			v, ok := resourceSpans.Resource().Attributes().Get(key)
 			if !ok {
 				continue
 			}
@@ -346,6 +346,37 @@ func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 					resourceSpans.Resource().Attributes().UpsertString(dim, lb)
 				}
 			}
+			return // 找到一次即可
+		}
+	}
+
+	switch record.RecordType {
+	case define.RecordTraces:
+		pdTraces := record.Data.(ptrace.Traces)
+		resourceSpansSlice := pdTraces.ResourceSpans()
+		for i := 0; i < resourceSpansSlice.Len(); i++ {
+			handleTraces(resourceSpansSlice.At(i))
+		}
+	}
+}
+
+// fromRecordAction 从 define.Record 中补充数据
+func (p *resourceFilter) fromRecordAction(record *define.Record, config Config) {
+	handleTraces := func(resourceSpans ptrace.ResourceSpans) {
+		for _, action := range config.FromRecord {
+			switch action.Source {
+			case "request.client.ip":
+				resourceSpans.Resource().Attributes().UpsertString(action.Destination, record.RequestClient.IP)
+			}
+		}
+	}
+
+	switch record.RecordType {
+	case define.RecordTraces:
+		pdTraces := record.Data.(ptrace.Traces)
+		resourceSpansSlice := pdTraces.ResourceSpans()
+		for i := 0; i < resourceSpansSlice.Len(); i++ {
+			handleTraces(resourceSpansSlice.At(i))
 		}
 	}
 }

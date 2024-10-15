@@ -412,13 +412,46 @@ processor:
 	assertAddActionLabels(t, attrs)
 }
 
+func TestTracesFromRecordAction(t *testing.T) {
+	content := `
+processor:
+    - name: "resource_filter/from_record"
+      config:
+        from_record:
+          - source: "request.client.ip"
+            destination: "resource.client.ip"
+`
+	factory := processor.MustCreateFactory(content, NewFactory)
+
+	g := makeTracesGenerator(1, "bool")
+	data := g.Generate()
+	record := define.Record{
+		RecordType:    define.RecordTraces,
+		Data:          data,
+		RequestClient: define.RequestClient{IP: "127.1.1.1"},
+	}
+
+	_, err := factory.Process(&record)
+	assert.NoError(t, err)
+
+	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+	testkits.AssertAttrsFoundStringVal(t, attrs, "client.ip", "127.1.1.1")
+}
+
 func TestTracesFromCacheAction(t *testing.T) {
 	svr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal([]map[string]string{
 			{
-				"service.name":   "traces-demo",
-				"service.zone":   "gz",
-				"service.status": "prod",
+				"k8s.pod.ip":         "127.1.0.1",
+				"k8s.pod.name":       "myapp1",
+				"k8s.namespace.name": "my-ns1",
+				"k8s.bcs.cluster.id": "K8S-BCS-00000",
+			},
+			{
+				"k8s.pod.ip":         "127.1.0.2",
+				"k8s.pod.name":       "myapp2",
+				"k8s.namespace.name": "my-ns2",
+				"k8s.bcs.cluster.id": "K8S-BCS-90000",
 			},
 		})
 		w.Write(b)
@@ -430,10 +463,10 @@ processor:
     - name: "resource_filter/from_cache"
       config:
         from_cache:
-          key: "resource.service.name"
-          dimensions: ["service.zone", "service.status"]
+          key: "resource.net.host.ip|resource.client.ip"
+          dimensions: ["k8s.namespace.name","k8s.pod.name","k8s.pod.ip","k8s.bcs.cluster.id"]
           cache:
-            key: "service.name"
+            key: "k8s.pod.ip"
             url: %s
             interval: "1m"
             timeout: "1m"
@@ -442,19 +475,42 @@ processor:
 	factory := processor.MustCreateFactory(content, NewFactory)
 	time.Sleep(time.Second) // wait for syncing
 
-	g := makeTracesGenerator(1, "bool")
-	data := g.Generate()
-	data.ResourceSpans().At(0).Resource().Attributes().InsertString("service.name", "traces-demo")
-	record := define.Record{
-		RecordType: define.RecordTraces,
-		Data:       data,
-	}
+	t.Run("net.host.ip", func(t *testing.T) {
+		g := makeTracesGenerator(1, "bool")
+		data := g.Generate()
+		data.ResourceSpans().At(0).Resource().Attributes().InsertString("net.host.ip", "127.1.0.1")
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+		}
 
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
 
-	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
 
-	testkits.AssertAttrsFoundStringVal(t, attrs, "service.zone", "gz")
-	testkits.AssertAttrsFoundStringVal(t, attrs, "service.status", "prod")
+		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.pod.ip", "127.1.0.1")
+		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.pod.name", "myapp1")
+		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.namespace.name", "my-ns1")
+		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.bcs.cluster.id", "K8S-BCS-00000")
+	})
+	t.Run("client.ip", func(t *testing.T) {
+		g := makeTracesGenerator(1, "bool")
+		data := g.Generate()
+		data.ResourceSpans().At(0).Resource().Attributes().InsertString("client.ip", "127.1.0.2")
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+		}
+
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+
+		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.pod.ip", "127.1.0.2")
+		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.pod.name", "myapp2")
+		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.namespace.name", "my-ns2")
+		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.bcs.cluster.id", "K8S-BCS-90000")
+	})
 }

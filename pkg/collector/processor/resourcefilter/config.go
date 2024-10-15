@@ -16,20 +16,28 @@ import (
 )
 
 type Config struct {
-	Drop      DropAction       `config:"drop" mapstructure:"drop"`
-	FromCache FromCacheAction  `config:"from_cache" mapstructure:"from_cache"`
-	Assemble  []AssembleAction `config:"assemble" mapstructure:"assemble"`
-	Replace   []ReplaceAction  `config:"replace" mapstructure:"replace"`
-	Add       []AddAction      `config:"add" mapstructure:"add"`
+	Drop       DropAction       `config:"drop" mapstructure:"drop"`
+	FromCache  FromCacheAction  `config:"from_cache" mapstructure:"from_cache"`
+	Assemble   []AssembleAction `config:"assemble" mapstructure:"assemble"`
+	Replace    []ReplaceAction  `config:"replace" mapstructure:"replace"`
+	Add        []AddAction      `config:"add" mapstructure:"add"`
+	FromRecord []FromRecord     `config:"from_record" mapstructure:"from_record"`
 }
 
 func (c *Config) Clean() {
 	c.Drop.Keys = cleanResourcesPrefix(c.Drop.Keys)
-	c.FromCache.Key = cleanResourcePrefix(c.FromCache.Key)
-
 	for i := 0; i < len(c.Assemble); i++ {
 		c.Assemble[i].Keys = cleanResourcesPrefix(c.Assemble[i].Keys)
 	}
+	for i := 0; i < len(c.FromRecord); i++ {
+		c.FromRecord[i].Destination = cleanResourcePrefix(c.FromRecord[i].Destination)
+	}
+
+	keys := strings.Split(c.FromCache.Key, "|")
+	for i := 0; i < len(keys); i++ {
+		keys[i] = cleanResourcePrefix(keys[i])
+	}
+	c.FromCache.keys = keys
 }
 
 type DropAction struct {
@@ -56,6 +64,17 @@ type FromCacheAction struct {
 	Key        string           `config:"key" mapstructure:"key"`
 	Dimensions []string         `config:"dimensions" mapstructure:"dimensions"`
 	Cache      dimscache.Config `config:"cache" mapstructure:"cache"`
+
+	keys []string
+}
+
+func (a FromCacheAction) CombineKeys() []string {
+	return a.keys
+}
+
+type FromRecord struct {
+	Source      string `config:"source" mapstructure:"source"`
+	Destination string `config:"destination" mapstructure:"destination"`
 }
 
 func cleanResourcesPrefix(keys []string) []string {

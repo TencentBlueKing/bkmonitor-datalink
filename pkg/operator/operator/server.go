@@ -460,12 +460,6 @@ func (c *Operator) WorkloadRoute(w http.ResponseWriter, _ *http.Request) {
 	writeResponse(w, c.objectsController.WorkloadsRelabelConfigs())
 }
 
-type podsResponse struct {
-	ClusterID string               `json:"bcs_cluster_id"`
-	BizID     string               `json:"bk_biz_id"`
-	Pods      []objectsref.PodInfo `json:"pods"`
-}
-
 func (c *Operator) PodsRoute(w http.ResponseWriter, _ *http.Request) {
 	pods := c.objectsController.AllPods()
 	info, err := c.dw.GetClusterInfo()
@@ -475,11 +469,23 @@ func (c *Operator) PodsRoute(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
-	writeResponse(w, podsResponse{
-		ClusterID: info.BcsClusterID,
-		BizID:     info.BizID,
-		Pods:      pods,
-	})
+	type podsResponse struct {
+		ClusterID string `json:"k8s.bcs.cluster.id"`
+		Name      string `json:"k8s.pod.name"`
+		Namespace string `json:"k8s.namespace.name"`
+		IP        string `json:"k8s.pod.ip"`
+	}
+
+	var ret []podsResponse
+	for _, pod := range pods {
+		ret = append(ret, podsResponse{
+			ClusterID: info.BcsClusterID,
+			Name:      pod.Name,
+			Namespace: pod.Namespace,
+			IP:        pod.IP,
+		})
+	}
+	writeResponse(w, ret)
 }
 
 func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {

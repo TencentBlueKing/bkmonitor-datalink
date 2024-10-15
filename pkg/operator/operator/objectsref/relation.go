@@ -175,9 +175,9 @@ type StatefulSetWorker struct {
 }
 
 type PodInfo struct {
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
-	IP        string `json:"ip"`
+	Name      string
+	Namespace string
+	IP        string
 }
 
 func (oc *ObjectsController) AllPods() []PodInfo {

@@ -72,7 +72,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 type resourceFilter struct {
 	processor.CommonProcessor
 	configs *confengine.TierConfig // type: Config
-	caches  *confengine.TierConfig // type *dimscache.Cache
+	caches  *confengine.TierConfig // type dimscache.Cache
 }
 
 func (p *resourceFilter) Name() string {

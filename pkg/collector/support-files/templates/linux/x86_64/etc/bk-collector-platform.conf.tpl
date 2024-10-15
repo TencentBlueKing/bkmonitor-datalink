@@ -131,6 +131,25 @@ processor:
           {%- endfor %}
 {%- endif %}
 
+{% if resource_fill_dimensions_config is defined %}
+  - name: "{{ resource_fill_dimensions_config.name }}"
+    config:
+      from_record:
+        {%- for from_record_config in  resource_fill_dimensions_config.from_record %}
+        - source: "{{ from_record_config.source }}"
+          destination: "{{ from_record_config.destination }}"
+        {%- endfor %}
+      from_cache:
+        key: "{{ resource_fill_dimensions_config.from_cache.key }}"
+        dimensions:
+          {%- for dimension_key in resource_fill_dimensions_config.from_cache.dimensions %}
+          - "{{ dimension_key }}"
+          {%- endfor %}
+        cache:
+          key: "{{ resource_fill_dimensions_config.from_cache.cache.key }}"
+          url: "{{ resource_fill_dimensions_config.from_cache.cache.url }}"
+{%- endif %}
+
 {% if metric_configs is defined %}
   # bk_apm_count
   {% if metric_configs.metric_bk_apm_count_config is defined %}

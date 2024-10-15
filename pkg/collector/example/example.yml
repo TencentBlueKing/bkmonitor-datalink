@@ -101,7 +101,7 @@ bk-collector:
     patterns:
       - "./example/fixtures/pingserver_sub*.yml"
 
-  # ============================== Pingserver ================================
+  # ================================ Cluster =================================
   cluster:
     disabled: false
     address: ":4316"
@@ -385,8 +385,7 @@ bk-collector:
             destination: "telemetry.bksdk.version"
 
     # ResourceFilter: 资源过滤处理器
-    # Assemble
-    - name: "resource_filter/assemble"
+    - name: "resource_filter/common"
       config:
         assemble:
           - destination: "bk.instance.id" # 转换后名称
@@ -400,6 +399,16 @@ bk-collector:
         drop:
           keys:
             - "resource.bk.data.token"
+        from_cache:
+#          key: "resource.service.name"
+#          cache:
+#            key: "service.name"
+#            url: "http://localhost:8990/service_info"
+#            interval: "1m"
+#            timeout: "1m"
+        from_record:
+          - source: "request.client.ip"
+            destination: "resource.client.ip"
 
     - name: "resource_filter/drop_token"
       config:
@@ -1016,7 +1025,7 @@ bk-collector:
         #- "license_checker/common"
         #- "forwarder/traces"
         #- "sampler/status_code"
-        - "resource_filter/assemble"
+        - "resource_filter/common"
         - "attribute_filter/common"
         - "db_filter/common"
         - "attribute_filter/app"

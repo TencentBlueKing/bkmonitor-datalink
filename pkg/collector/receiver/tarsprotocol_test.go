@@ -7,48 +7,27 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package metacache
+package receiver
 
 import (
-	"sync"
+	"context"
+	"os"
+	"testing"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/stretchr/testify/assert"
 )
 
-type Cache struct {
-	mut   sync.RWMutex
-	cache map[string]define.Token
-}
+func TestTarsProtocol(t *testing.T) {
+	b, err := os.ReadFile("../example/fixtures/tars.bytes")
+	assert.NoError(t, err)
 
-func New() *Cache {
-	return &Cache{
-		cache: make(map[string]define.Token),
-	}
-}
+	t.Run("Invoke", func(t *testing.T) {
+		p := NewTarsProtocol(nil, true)
+		p.Invoke(context.Background(), b)
+	})
 
-func (c *Cache) Set(k string, v define.Token) {
-	c.mut.Lock()
-	defer c.mut.Unlock()
-
-	c.cache[k] = v
-}
-
-func (c *Cache) Get(k string) (define.Token, bool) {
-	c.mut.RLock()
-	defer c.mut.RUnlock()
-
-	v, ok := c.cache[k]
-	return v, ok
-}
-
-var Default = New()
-
-// Set 调用全局 cache 实例 Set 方法
-func Set(k string, v define.Token) {
-	Default.Set(k, v)
-}
-
-// Get 调用全局 cache 实例 Get 方法
-func Get(k string) (define.Token, bool) {
-	return Default.Get(k)
+	t.Run("InvokeTimeout", func(t *testing.T) {
+		p := NewTarsProtocol(nil, true)
+		p.InvokeTimeout(b)
+	})
 }

@@ -1,7 +1,6 @@
 type: "platform"
 processor:
 {% if apdex_config is defined %}
-  # ApdexCalculator: 健康度状态计算器
   - name: "{{ apdex_config.name }}"
     config:
       calculator:
@@ -17,7 +16,6 @@ processor:
 {%- endif %}
 
 {% if license_config is defined %}
-  # license_config: license 配置
   - name: "{{ license_config.name }}"
     config:
       enabled: {{ license_config.enabled }}
@@ -28,7 +26,6 @@ processor:
 {%- endif %}
 
 {% if attribute_config is defined %}
-  # attribute_config: attribute 属性配置
   - name: "{{ attribute_config.name }}"
     config:
       as_int:
@@ -86,7 +83,6 @@ processor:
 {%- endif %}
 
 {% if sampler_config is defined %}
-  # Sampler: 采样处理器
   - name: "{{ sampler_config.name }}"
     config:
       type: "{{ sampler_config.type }}"
@@ -94,7 +90,6 @@ processor:
 {%- endif %}
 
 {% if qps_config is defined %}
-  # Qps: Qps限流
   - name: "{{ qps_config.name }}"
     config:
       type: "{{ qps_config.type }}"
@@ -103,7 +98,6 @@ processor:
 {%- endif %}
 
 {% if token_checker_config is defined %}
-  # TokenChecker: 权限校验处理器
   - name: "{{ token_checker_config.name }}"
     config:
       type: "{{ token_checker_config.type }}"
@@ -119,7 +113,6 @@ processor:
 {%- endif %}
 
 {% if resource_filter_config is defined %}
-  # ResourceFilter: 资源过滤处理器
   - name: "{{ resource_filter_config.name }}"
     config:
       assemble:
@@ -136,6 +129,25 @@ processor:
           {%- for drop_key in resource_filter_config.get("drop", {}).get("keys", []) %}
           - "{{ drop_key }}"
           {%- endfor %}
+{%- endif %}
+
+{% if resource_fill_dimensions_config is defined %}
+  - name: "{{ resource_fill_dimensions_config.name }}"
+    config:
+      from_record:
+        {%- for from_record_config in  resource_fill_dimensions_config.from_record %}
+        - source: "{{ from_record_config.source }}"
+          destination: "{{ from_record_config.destination }}"
+        {%- endfor %}
+      from_cache:
+        key: "{{ resource_fill_dimensions_config.from_cache.key }}"
+        dimensions:
+          {%- for dimension_key in resource_fill_dimensions_config.from_cache.dimensions %}
+          - "{{ dimension_key }}"
+          {%- endfor %}
+        cache:
+          key: "{{ resource_fill_dimensions_config.from_cache.cache.key }}"
+          url: "{{ resource_fill_dimensions_config.from_cache.cache.url }}"
 {%- endif %}
 
 {% if metric_configs is defined %}
@@ -299,5 +311,4 @@ processor:
             {%- endfor %}
         {%- endfor %}
   {%- endif %}
-
 {%- endif %}

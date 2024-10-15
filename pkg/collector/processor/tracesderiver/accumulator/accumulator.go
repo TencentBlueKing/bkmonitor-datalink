@@ -402,8 +402,6 @@ func (r *recorder) calc(kind string, k uint64, stat rStats) (rStats, []metricsbu
 		}
 	}
 
-	logger.Debugf("%s stats: %+v", kind, stat)
-
 	var metrics []metricsbuilder.Metric
 	unixNano := uint64(time.Now().UnixNano())
 

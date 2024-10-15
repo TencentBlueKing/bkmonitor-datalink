@@ -174,6 +174,24 @@ type StatefulSetWorker struct {
 	Index int
 }
 
+type PodInfo struct {
+	Name      string
+	Namespace string
+	IP        string
+}
+
+func (oc *ObjectsController) AllPods() []PodInfo {
+	var pods []PodInfo
+	for _, pod := range oc.podObjs.GetAll() {
+		pods = append(pods, PodInfo{
+			Name:      pod.ID.Name,
+			Namespace: pod.ID.Namespace,
+			IP:        pod.PodIP,
+		})
+	}
+	return pods
+}
+
 func (oc *ObjectsController) GetPods(s string) map[string]StatefulSetWorker {
 	regex, err := regexp.Compile(s)
 	if err != nil {

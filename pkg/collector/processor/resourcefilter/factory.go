@@ -44,14 +44,9 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 	c.Clean()
 	configs.SetGlobal(*c)
 
-	if c.FromCache.Cache.Validate() {
-		cache, err := dimscache.New(&c.FromCache.Cache)
-		if err != nil {
-			return nil, err
-		}
-		cache.Sync()
-		caches.SetGlobal(cache)
-	}
+	cache := dimscache.New(&c.FromCache.Cache)
+	cache.Sync()
+	caches.SetGlobal(cache)
 
 	for _, custom := range customized {
 		cfg := &Config{}
@@ -62,15 +57,9 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 		cfg.Clean()
 		configs.Set(custom.Token, custom.Type, custom.ID, *cfg)
 
-		if cfg.FromCache.Cache.Validate() {
-			cache, err := dimscache.New(&cfg.FromCache.Cache)
-			if err != nil {
-				logger.Errorf("failed to create dimscache: %v", err)
-				continue
-			}
-			cache.Sync()
-			caches.Set(custom.Token, custom.Type, custom.ID, cache)
-		}
+		customCache := dimscache.New(&cfg.FromCache.Cache)
+		customCache.Sync()
+		caches.Set(custom.Token, custom.Type, custom.ID, customCache)
 	}
 
 	return &resourceFilter{
@@ -115,32 +104,32 @@ func (p *resourceFilter) Reload(config map[string]interface{}, customized []proc
 
 	equal := processor.DiffMainConfig(p.MainConfig(), config)
 	if equal {
-		f.caches.GetGlobal().(*dimscache.Cache).Clean()
+		f.caches.GetGlobal().(dimscache.Cache).Clean()
 	} else {
-		p.caches.GetGlobal().(*dimscache.Cache).Clean()
+		p.caches.GetGlobal().(dimscache.Cache).Clean()
 		p.caches.SetGlobal(f.caches.GetGlobal())
 	}
 
 	diffRet := processor.DiffCustomizedConfig(p.SubConfigs(), customized)
 	for _, obj := range diffRet.Keep {
-		f.caches.Get(obj.Token, obj.Type, obj.ID).(*dimscache.Cache).Clean()
+		f.caches.Get(obj.Token, obj.Type, obj.ID).(dimscache.Cache).Clean()
 	}
 
 	for _, obj := range diffRet.Updated {
-		p.caches.Get(obj.Token, obj.Type, obj.ID).(*dimscache.Cache).Clean()
+		p.caches.Get(obj.Token, obj.Type, obj.ID).(dimscache.Cache).Clean()
 		newCache := f.caches.Get(obj.Token, obj.Type, obj.ID)
 		p.caches.Set(obj.Token, obj.Type, obj.ID, newCache)
 	}
 
 	for _, obj := range diffRet.Deleted {
-		p.caches.Get(obj.Token, obj.Type, obj.ID).(*dimscache.Cache).Clean()
+		p.caches.Get(obj.Token, obj.Type, obj.ID).(dimscache.Cache).Clean()
 		p.caches.Del(obj.Token, obj.Type, obj.ID)
 	}
 }
 
 func (p *resourceFilter) Clean() {
 	for _, obj := range p.caches.All() {
-		obj.(*dimscache.Cache).Clean()
+		obj.(dimscache.Cache).Clean()
 	}
 }
 
@@ -327,9 +316,9 @@ func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 // fromCacheAction 从缓存中补充数据
 func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 	token := record.Token.Original
-	cache := p.caches.GetByToken(token).(*dimscache.Cache)
-	keys := config.FromCache.CombineKeys()
+	cache := p.caches.GetByToken(token).(dimscache.Cache)
 
+	keys := config.FromCache.CombineKeys()
 	handleTraces := func(resourceSpans ptrace.ResourceSpans) {
 		for _, key := range keys {
 			v, ok := resourceSpans.Resource().Attributes().Get(key)
@@ -343,7 +332,7 @@ func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 
 			for _, dim := range config.FromCache.Dimensions {
 				if lb, ok := dims[dim]; ok {
-					resourceSpans.Resource().Attributes().UpsertString(dim, lb)
+					resourceSpans.Resource().Attributes().InsertString(dim, lb)
 				}
 			}
 			return // 找到一次即可
@@ -366,7 +355,7 @@ func (p *resourceFilter) fromRecordAction(record *define.Record, config Config) 
 		for _, action := range config.FromRecord {
 			switch action.Source {
 			case "request.client.ip":
-				resourceSpans.Resource().Attributes().UpsertString(action.Destination, record.RequestClient.IP)
+				resourceSpans.Resource().Attributes().InsertString(action.Destination, record.RequestClient.IP)
 			}
 		}
 	}

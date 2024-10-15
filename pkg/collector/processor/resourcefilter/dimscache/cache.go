@@ -11,7 +11,6 @@ package dimscache
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -43,7 +42,21 @@ func (c *Config) Validate() bool {
 	return true
 }
 
-type Cache struct {
+type Cache interface {
+	Sync()
+	Clean()
+	Get(k string) (map[string]string, bool)
+}
+
+type noneCache struct{}
+
+func (noneCache) Sync()  {}
+func (noneCache) Clean() {}
+func (noneCache) Get(_ string) (map[string]string, bool) {
+	return nil, false
+}
+
+type innerCache struct {
 	mut    sync.RWMutex
 	cache  map[string]map[string]string
 	conf   *Config
@@ -52,9 +65,9 @@ type Cache struct {
 	synced atomic.Bool
 }
 
-func New(conf *Config) (*Cache, error) {
+func New(conf *Config) Cache {
 	if conf == nil || !conf.Validate() {
-		return nil, fmt.Errorf("invalid config %#v", conf)
+		return noneCache{} // 如果配置不合法返回一个空实现
 	}
 
 	tr := &http.Transport{
@@ -62,7 +75,7 @@ func New(conf *Config) (*Cache, error) {
 		IdleConnTimeout: time.Minute * 5,
 	}
 
-	return &Cache{
+	return &innerCache{
 		cache: make(map[string]map[string]string),
 		conf:  conf,
 		done:  make(chan struct{}),
@@ -70,20 +83,20 @@ func New(conf *Config) (*Cache, error) {
 			Transport: tr,
 			Timeout:   conf.Timeout,
 		},
-	}, nil
+	}
 }
 
-func (c *Cache) loopSync() {
+func (c *innerCache) loopSync() {
 	ticker := time.NewTicker(c.conf.Interval)
 	defer ticker.Stop()
 
 	fn := func() {
 		start := time.Now()
 		if err := c.sync(); err != nil {
-			logger.Errorf("failed to sync (%s) cache: %v", c.conf.URL, err)
+			logger.Errorf("failed to sync (%s) innerCache: %v", c.conf.URL, err)
 			return
 		}
-		logger.Debugf("sync (%s) cache take %v", c.conf.URL, time.Since(start))
+		logger.Debugf("sync (%s) innerCache take %v", c.conf.URL, time.Since(start))
 	}
 
 	fn() // 启动即同步
@@ -99,17 +112,17 @@ func (c *Cache) loopSync() {
 	}
 }
 
-func (c *Cache) Clean() {
+func (c *innerCache) Clean() {
 	close(c.done)
 }
 
-func (c *Cache) Sync() {
+func (c *innerCache) Sync() {
 	if c.synced.CompareAndSwap(false, true) {
 		go c.loopSync()
 	}
 }
 
-func (c *Cache) Get(k string) (map[string]string, bool) {
+func (c *innerCache) Get(k string) (map[string]string, bool) {
 	c.mut.RLock()
 	defer c.mut.RUnlock()
 
@@ -117,7 +130,7 @@ func (c *Cache) Get(k string) (map[string]string, bool) {
 	return v, ok
 }
 
-func (c *Cache) sync() error {
+func (c *innerCache) sync() error {
 	req, err := http.NewRequest(http.MethodGet, c.conf.URL, &bytes.Buffer{})
 	if err != nil {
 		return err
@@ -139,7 +152,7 @@ func (c *Cache) sync() error {
 	if err := json.Unmarshal(buf.Bytes(), &dims); err != nil {
 		return err
 	}
-	logger.Debugf("cache (%s) load %d items", c.conf.URL, len(dims))
+	logger.Debugf("innerCache (%s) load %d items", c.conf.URL, len(dims))
 
 	newCache := make(map[string]map[string]string)
 	for i := 0; i < len(dims); i++ {

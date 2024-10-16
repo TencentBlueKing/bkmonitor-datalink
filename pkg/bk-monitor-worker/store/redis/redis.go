@@ -169,9 +169,9 @@ func (r *Instance) Close() error {
 }
 
 // HSetWithCompareAndPublish 与redis中数据不同才进行更新和推送操作
-func (r *Instance) HSetWithCompareAndPublish(key, field, value, channelName string) (bool, error) {
+func (r *Instance) HSetWithCompareAndPublish(key, field, value, channelName, channelKey string) (bool, error) {
 	//var isNeedUpdate bool
-	logger.Infof("HSetWithCompareAndPublish: try to operate [redis_diff] HashSet key [%s] field [%s],value [%s] channelName [%s]", key, field, value, channelName)
+	logger.Infof("HSetWithCompareAndPublish: try to operate [redis_diff] HashSet key [%s] field [%s],value [%s] channelName [%s],channelKey [%s]", key, field, value, channelName, channelKey)
 	oldValue := r.HGet(key, field)
 	if oldValue == value {
 		return false, nil
@@ -196,8 +196,8 @@ func (r *Instance) HSetWithCompareAndPublish(key, field, value, channelName stri
 	}
 
 	// 如果走到这里，说明当前value与Redis中的数据存在不同，需要进行推送操作
-	if err := r.Publish(channelName, value); err != nil {
-		logger.Errorf("HSetWithCompareAndPublish: publish redis failed, channel: %s, msg: %s, %s", channelName, value, err)
+	if err := r.Publish(channelName, channelKey); err != nil {
+		logger.Errorf("HSetWithCompareAndPublish: publish redis failed, channel: %s, key: %s, %s", channelName, channelKey, err)
 		return false, err
 	}
 

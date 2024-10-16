@@ -385,7 +385,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 		if len(monitorResources) > 0 {
 			monitorResourcesBytes, _ = json.MarshalIndent(monitorResources, "", "  ")
 		} else {
-			monitorResourcesBytes = []byte("- NotMatch: 未匹配到任何资源")
+			monitorResourcesBytes = []byte("\n[!] NotMatch: 未匹配到任何 monitor 资源\n")
 		}
 
 		var childConfigs []ConfigFileRecord
@@ -399,7 +399,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 		if len(childConfigs) > 0 {
 			childConfigsBytes, _ = json.MarshalIndent(childConfigs, "", "  ")
 		} else {
-			childConfigsBytes = []byte("- NotMatch: 未匹配到任何采集配置")
+			childConfigsBytes = []byte("\n[!] NotMatch: 未匹配到任何采集配置\n")
 		}
 
 		writef(formatMonitorResources, monitorKeyword, monitorResourcesBytes, childConfigsBytes)

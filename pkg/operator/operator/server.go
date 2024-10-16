@@ -380,7 +380,13 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 				monitorResources = append(monitorResources, mr)
 			}
 		}
-		monitorResourcesBytes, _ := json.MarshalIndent(monitorResources, "", "  ")
+
+		var monitorResourcesBytes []byte
+		if len(monitorResources) > 0 {
+			monitorResourcesBytes, _ = json.MarshalIndent(monitorResources, "", "  ")
+		} else {
+			monitorResourcesBytes = []byte("\n[!] NotMatch: 未匹配到任何 monitor 资源\n")
+		}
 
 		var childConfigs []ConfigFileRecord
 		for _, cf := range c.recorder.getActiveConfigFiles() {
@@ -388,7 +394,14 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 				childConfigs = append(childConfigs, cf)
 			}
 		}
-		childConfigsBytes, _ := json.MarshalIndent(childConfigs, "", "  ")
+
+		var childConfigsBytes []byte
+		if len(childConfigs) > 0 {
+			childConfigsBytes, _ = json.MarshalIndent(childConfigs, "", "  ")
+		} else {
+			childConfigsBytes = []byte("\n[!] NotMatch: 未匹配到任何采集配置")
+		}
+
 		writef(formatMonitorResources, monitorKeyword, monitorResourcesBytes, childConfigsBytes)
 	} else {
 		writef(formatMonitorResourceNoKeyword)

@@ -168,24 +168,40 @@ func (r *Instance) Close() error {
 	return nil
 }
 
-// HSetWithCompare 与redis中数据不同才更新
-func (r *Instance) HSetWithCompare(key, field, value string) (bool, error) {
+// HSetWithCompareAndPublish 与redis中数据不同才进行更新和推送操作
+func (r *Instance) HSetWithCompare(key, field, value, channelName string) (bool, error) {
+	//var isNeedUpdate bool
+	logger.Infof("HSetWithCompareAndPublish: try to operate [redis_diff] HashSet key [%s] field [%s],value [%s] channelName [%s]", key, field, value, channelName)
 	oldValue := r.HGet(key, field)
-	logger.Infof("[redis_diff] HashSet key [%s] field [%s]", key, field)
 	if oldValue == value {
 		return false, nil
 	}
 	if equal, _ := jsonx.CompareJson(oldValue, value); equal {
 		return false, nil
 	}
-	logger.Debugf("[redis_diff] HashSet key [%s] field [%s] need update, new [%s]  old [%s]", key, field, value, oldValue)
+	logger.Debugf("HSetWithCompareAndPublish: [redis_diff] HashSet key [%s] field [%s] need update, new [%s]  old [%s]", key, field, value, oldValue)
 	metrics.RedisCount(key, "HSet")
 	err := r.Client.HSet(r.ctx, key, field, value).Err()
 	if err != nil {
-		logger.Errorf("hset field error, key: %s, field: %s, value: %s", key, field, value)
+		logger.Errorf("HSetWithCompareAndPublish: hset field error, key: %s, field: %s, value: %s", key, field, value)
 		return false, err
 	}
-	logger.Infof("[redis_diff] HashSet key [%s] field [%s] update success", key, field)
+
+	logger.Infof("HSetWithCompareAndPublish: [redis_diff] HashSet key [%s] field [%s] channelName [%s] now try to publish", key, field, channelName)
+
+	if channelName == "" {
+		// 当channelName为空时，说明需要在外层进行Publish操作
+		logger.Infof("HSetWithCompareAndPublish: [redis_diff] HashSet key [%s] field [%s] channelName is empty, need to publish outside", key, field)
+		return true, nil
+	}
+
+	// 如果走到这里，说明当前value与Redis中的数据存在不同，需要进行推送操作
+	if err := r.Publish(channelName, value); err != nil {
+		logger.Errorf("HSetWithCompareAndPublish: publish redis failed, channel: %s, msg: %s, %s", channelName, value, err)
+		return false, err
+	}
+
+	logger.Infof("[redis_diff] HashSet key [%s] field [%s] channelName [%s] update and publish success", key, field, channelName)
 	return true, nil
 }
 

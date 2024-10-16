@@ -95,7 +95,7 @@ func RefreshInfluxdbClusterInfoConsulClusterConfig(ctx context.Context, objs *[]
 					return err
 				}
 				logger.Infof("consul path [%s] is refresh with value [%s] success", consulConfigPath, val)
-				models.PushToRedis(ctx, models.InfluxdbClusterInfoKey, clusterName, val, true)
+				models.PushToRedis(ctx, models.InfluxdbClusterInfoKey, clusterName, val)
 				return nil
 			}()
 

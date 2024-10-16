@@ -173,7 +173,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 				wg.Done()
 			}()
 			// 推送空间到结果表的路由
-			if err := pusher.PushSpaceTableIds(sp.SpaceTypeId, sp.SpaceId, true); err != nil {
+			if err := pusher.PushSpaceTableIds(sp.SpaceTypeId, sp.SpaceId); err != nil {
 				logger.Errorf("PushAndPublishSpaceRouterInfo task error, push space [%s__%s] to redis error, %s", sp.SpaceTypeId, sp.SpaceId, err)
 			} else {
 				logger.Infof("PushAndPublishSpaceRouterInfo task success, push space [%s__%s] to redis success", sp.SpaceTypeId, sp.SpaceId)
@@ -181,6 +181,8 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		}(sp, wg, ch)
 	}
 	wg.Wait()
+
+	// NOTE：这里是否还需要再进行统一推送？ 这里应该是导致UnifyQuery全量Sub/Pub的罪魁祸首
 	// 统一推送数据
 	client := redis.GetStorageRedisInstance()
 	spaceUidString, err := jsonx.Marshal(spaceUidList)

@@ -21,7 +21,7 @@ import (
 
 func TestAccessVMRecord_RefreshVmRouter(t *testing.T) {
 	pushRecord := make(map[string]string)
-	gomonkey.ApplyFunc(models.PushToRedis, func(ctx context.Context, key, field, value string, isPublish bool) {
+	gomonkey.ApplyFunc(models.PushToRedis, func(ctx context.Context, key, field, value string) {
 		pushRecord[key+"-"+field] = value
 	})
 	vm := AccessVMRecord{

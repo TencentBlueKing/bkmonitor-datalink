@@ -97,11 +97,6 @@ func (p *resourceFilter) Reload(config map[string]interface{}, customized []proc
 	p.CommonProcessor = f.CommonProcessor
 	p.configs = f.configs
 
-	if len(f.caches.All()) <= 0 {
-		p.Clean()
-		return
-	}
-
 	equal := processor.DiffMainConfig(p.MainConfig(), config)
 	if equal {
 		f.caches.GetGlobal().(dimscache.Cache).Clean()

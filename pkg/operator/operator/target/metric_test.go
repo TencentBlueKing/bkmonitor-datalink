@@ -10,6 +10,7 @@
 package target
 
 import (
+	"encoding/base64"
 	"testing"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -208,6 +209,7 @@ func TestMakeParams(t *testing.T) {
 	cases := []struct {
 		Input  map[string]string
 		Output string
+		Base64 string
 	}{
 		{
 			Input: map[string]string{
@@ -215,12 +217,14 @@ func TestMakeParams(t *testing.T) {
 				"key2": "value2",
 			},
 			Output: "key1=value1&key2=value2",
+			Base64: "a2V5MT12YWx1ZTEma2V5Mj12YWx1ZTI",
 		},
 		{
 			Input: map[string]string{
 				"key1": "value1",
 			},
 			Output: "key1=value1",
+			Base64: "a2V5MT12YWx1ZTE",
 		},
 		{
 			Input: map[string]string{
@@ -228,10 +232,15 @@ func TestMakeParams(t *testing.T) {
 				"key2": "value2",
 			},
 			Output: "key2=value2",
+			Base64: "a2V5Mj12YWx1ZTI",
 		},
 	}
 
 	for _, c := range cases {
-		assert.Equal(t, c.Output, makeParams(c.Input))
+		assert.Equal(t, c.Base64, makeParams(c.Input))
+
+		b, err := base64.RawURLEncoding.DecodeString(c.Base64)
+		assert.NoError(t, err)
+		assert.Equal(t, string(b), c.Output)
 	}
 }

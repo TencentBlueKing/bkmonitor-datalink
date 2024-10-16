@@ -9,7 +9,11 @@
 
 package objectsref
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestGetPodRelabelConfigs(t *testing.T) {
 	oc := ObjectsController{}
@@ -33,14 +37,24 @@ func TestGetPodRelabelConfigs(t *testing.T) {
 				"biz.zone":    "gz",
 			},
 			Annotations: map[string]string{
-				"env.service": `[{"id":"test-service2","foo":"bar"}]`,
+				"env.service": `[{"id":"test-service1","foo":"bar"}]`,
 				"env.target":  "stag",
 			},
 		},
 	}
 
-	ret := oc.getPodRelabelConfigs(pods, "", []string{"({[0]['id']})env.service", "env.target"}, []string{"biz.cluster", "biz.zone"})
-	for _, item := range ret {
-		t.Logf("Item: %#v", item)
+	expected := map[string]string{
+		"annotation_env_service": "test-service1",
 	}
+
+	var hint int
+	ret := oc.getPodRelabelConfigs(pods, "", []string{"({[0].id})env.service", "env.target"}, []string{"biz.cluster", "biz.zone"})
+	for _, item := range ret {
+		v, ok := expected[item.TargetLabel]
+		if ok {
+			hint++
+			assert.Equal(t, v, item.Replacement)
+		}
+	}
+	assert.Equal(t, 2, hint)
 }

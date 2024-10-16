@@ -10,10 +10,12 @@
 package operator
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/pprof"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -492,7 +494,21 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nodeName := vars["node"]
 
-	query := r.URL.Query()
+	unwindParams := func() url.Values {
+		query := r.URL.Query()
+		q, err := base64.RawURLEncoding.DecodeString(query.Get("q"))
+		if err != nil {
+			return make(url.Values)
+		}
+
+		u, err := url.Parse("http://localhost:8080/parse?" + string(q))
+		if err != nil {
+			return make(url.Values)
+		}
+		return u.Query()
+	}
+
+	query := unwindParams()
 	podName := query.Get("podName")
 	annotations := stringx.SplitTrim(query.Get("annotations"), ",")
 	labels := stringx.SplitTrim(query.Get("labels"), ",")

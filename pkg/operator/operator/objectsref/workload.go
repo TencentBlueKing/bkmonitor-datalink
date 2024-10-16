@@ -150,20 +150,21 @@ func (oc *ObjectsController) getPodRelabelConfigs(pods []Object, podName string,
 		}
 		template := s[left+1 : right]
 
+		// 出错原路返回
 		return func(input string) string {
 			var obj interface{}
 			err := json.Unmarshal([]byte(input), &obj)
 			if err != nil {
-				return s
+				return input
 			}
 			j := jsonpath.New("jsonpath")
 			j.AllowMissingKeys(false)
 			if err := j.Parse(template); err != nil {
-				return s
+				return input
 			}
 			buf := new(bytes.Buffer)
 			if err := j.Execute(buf, obj); err != nil {
-				return s
+				return input
 			}
 			return buf.String()
 		}
@@ -180,13 +181,17 @@ func (oc *ObjectsController) getPodRelabelConfigs(pods []Object, podName string,
 	var annotationsFunc []func(string) string
 	var labelsFunc []func(string) string
 
-	for i := 0; i < len(annotations); i++ {
-		annotationsFunc = append(annotationsFunc, parseFunc(annotations[i]))
-		annotations[i] = parseKey(annotations[i])
+	var decodedAnnotations []string
+	var decodedLabels []string
+
+	for _, annotation := range annotations {
+		annotationsFunc = append(annotationsFunc, parseFunc(annotation))
+		decodedAnnotations = append(decodedAnnotations, parseKey(annotation))
 	}
-	for i := 0; i < len(labels); i++ {
-		labelsFunc = append(labelsFunc, parseFunc(labels[i]))
-		labels[i] = parseKey(labels[i])
+
+	for _, label := range labels {
+		labelsFunc = append(labelsFunc, parseFunc(label))
+		decodedLabels = append(decodedLabels, parseKey(label))
 	}
 
 	for _, pod := range pods {
@@ -194,12 +199,12 @@ func (oc *ObjectsController) getPodRelabelConfigs(pods []Object, podName string,
 		// 2) 存在则需要精准匹配
 		if podName == "" || podName == pod.ID.Name {
 			extra := make(map[string]string)
-			for i, name := range annotations {
+			for i, name := range decodedAnnotations {
 				if v, ok := pod.Annotations[name]; ok {
 					extra["annotation_"+name] = annotationsFunc[i](v)
 				}
 			}
-			for i, name := range labels {
+			for i, name := range decodedLabels {
 				if v, ok := pod.Labels[name]; ok {
 					extra["label_"+name] = labelsFunc[i](v)
 				}

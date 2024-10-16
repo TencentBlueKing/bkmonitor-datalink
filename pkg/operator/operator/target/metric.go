@@ -11,6 +11,7 @@ package target
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"hash/fnv"
 	"math"
@@ -167,7 +168,7 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 	u := host + path
 	p := makeParams(params)
 	if len(p) > 0 {
-		u = u + "?" + p
+		u = u + "?q=" + p
 	}
 	return &yaml.MapItem{
 		Key:   "metric_relabel_remote",
@@ -188,7 +189,12 @@ func makeParams(params map[string]string) string {
 			buf.WriteString(fmt.Sprintf("%s=%s&", k, v))
 		}
 	}
-	return strings.TrimRight(buf.String(), "&")
+
+	s := strings.TrimRight(buf.String(), "&")
+	if s == "" {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString([]byte(s))
 }
 
 func fnvHash(b []byte) uint64 {

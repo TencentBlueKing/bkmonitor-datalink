@@ -140,6 +140,7 @@ func (i InfluxdbStorage) ConsulClusterConfig() (map[string]interface{}, error) {
 
 // PushRedisData 路由存储关系同步写入到 redis 里面
 func (i InfluxdbStorage) PushRedisData(ctx context.Context, isPublish bool) error {
+	logger.Infof("PushRedisData: push storage relation to redis, table_id->[%s],is_pubish->[%v]", i.TableID, isPublish)
 	// 通过 AccessVMRecord 获取结果表 ID
 	var vmTableId string
 	var vmRecord AccessVMRecord
@@ -180,7 +181,7 @@ func (i InfluxdbStorage) PushRedisData(ctx context.Context, isPublish bool) erro
 	if err != nil {
 		return err
 	}
-	models.PushToRedis(ctx, models.InfluxdbProxyStorageRouterKey, i.TableID, val, isPublish)
+	models.PushToRedis(ctx, models.InfluxdbProxyStorageRouterKey, i.TableID, val)
 	return nil
 }
 

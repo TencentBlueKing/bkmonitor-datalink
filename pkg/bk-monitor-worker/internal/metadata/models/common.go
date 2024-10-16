@@ -116,25 +116,19 @@ func ParseOptionValue(value interface{}) (string, string, error) {
 }
 
 // PushToRedis 推送数据到 redis, just for influxdb
-func PushToRedis(ctx context.Context, key, field, value string, isPublish bool) {
+func PushToRedis(ctx context.Context, key, field, value string) {
 	client := redis.GetStorageRedisInstance()
-
+	logger.Infof("PushToRedis: push redis, key->[%s], field->[%s]", key, field)
 	redisKey := fmt.Sprintf("%s%s:%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath, key)
 	msgSuffix := fmt.Sprintf("key: %s, field: %s, value: %s", redisKey, field, value)
-
-	err := client.HSetWithCompare(redisKey, field, value)
+	channelName := fmt.Sprintf("%s%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath)
+	logger.Infof("PushToRedis: start push redis, key->[%s], field->[%s],value->[%s],channel_name->[%s],channel_key->[%s]", redisKey, field, value, channelName, key)
+	isSuccess, err := client.HSetWithCompareAndPublish(redisKey, field, value, channelName, key)
+	logger.Infof("PushToRedis: push redis, key->[%s], field->[%s],isSuccess:->[%v]", key, field, isSuccess)
 	if err != nil {
-		logger.Errorf("push redis failed, %s, err: %v", msgSuffix, err)
+		logger.Errorf("PushToRedis: push redis failed, %s, err: %v", msgSuffix, err)
 	} else {
-		logger.Infof("push redis successfully, %s", msgSuffix)
-	}
-	if isPublish {
-		err := client.Publish(fmt.Sprintf("%s%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath), key)
-		if err != nil {
-			logger.Errorf("publish redis failed, channel: %s, msg: %s, %s", fmt.Sprintf("%s%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath), key, err)
-		} else {
-			logger.Infof("publish redis successfully, channel: %s, msg: %s", fmt.Sprintf("%s%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath), key)
-		}
+		logger.Infof("PushToRedis: push redis successfully, %s", msgSuffix)
 	}
 }
 

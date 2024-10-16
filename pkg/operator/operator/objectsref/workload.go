@@ -10,8 +10,12 @@
 package objectsref
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"unicode"
+
+	"k8s.io/client-go/util/jsonpath"
 )
 
 // RelabelConfig relabel 配置 遵循 prometheus 规则
@@ -137,19 +141,67 @@ func (oc *ObjectsController) getWorkloadRelabelConfigs(pods []Object, podName st
 func (oc *ObjectsController) getPodRelabelConfigs(pods []Object, podName string, annotations, labels []string) []RelabelConfig {
 	podInfoRefs := make(PodInfoRefs, 0)
 
+	parseFunc := func(s string) func(string) string {
+		left := strings.Index(s, "(")
+		right := strings.Index(s, ")")
+
+		if left < 0 || right < 0 || right < left || right-left == 1 {
+			return func(s string) string { return s }
+		}
+		template := s[left+1 : right]
+
+		return func(input string) string {
+			var obj interface{}
+			err := json.Unmarshal([]byte(input), &obj)
+			if err != nil {
+				return s
+			}
+			j := jsonpath.New("jsonpath")
+			j.AllowMissingKeys(false)
+			if err := j.Parse(template); err != nil {
+				return s
+			}
+			buf := new(bytes.Buffer)
+			if err := j.Execute(buf, obj); err != nil {
+				return s
+			}
+			return buf.String()
+		}
+	}
+
+	parseKey := func(s string) string {
+		idx := strings.Index(s, ")")
+		if idx > 0 {
+			return s[idx+1:]
+		}
+		return s
+	}
+
+	var annotationsFunc []func(string) string
+	var labelsFunc []func(string) string
+
+	for i := 0; i < len(annotations); i++ {
+		annotationsFunc = append(annotationsFunc, parseFunc(annotations[i]))
+		annotations[i] = parseKey(annotations[i])
+	}
+	for i := 0; i < len(labels); i++ {
+		labelsFunc = append(labelsFunc, parseFunc(labels[i]))
+		labels[i] = parseKey(labels[i])
+	}
+
 	for _, pod := range pods {
 		// 1) 没有 podname 则命中所有
 		// 2) 存在则需要精准匹配
 		if podName == "" || podName == pod.ID.Name {
 			extra := make(map[string]string)
-			for _, name := range annotations {
+			for i, name := range annotations {
 				if v, ok := pod.Annotations[name]; ok {
-					extra["annotation_"+name] = v
+					extra["annotation_"+name] = annotationsFunc[i](v)
 				}
 			}
-			for _, name := range labels {
+			for i, name := range labels {
 				if v, ok := pod.Labels[name]; ok {
-					extra["label_"+name] = v
+					extra["label_"+name] = labelsFunc[i](v)
 				}
 			}
 			// 按需补充维度

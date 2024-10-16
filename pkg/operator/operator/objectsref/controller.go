@@ -300,6 +300,10 @@ func (oc *ObjectsController) NodeNames() []string {
 	return oc.nodeObjs.Names()
 }
 
+func (oc *ObjectsController) NodeIPs() map[string]struct{} {
+	return oc.nodeObjs.IPs()
+}
+
 func (oc *ObjectsController) NodeCount() int {
 	return oc.nodeObjs.Count()
 }

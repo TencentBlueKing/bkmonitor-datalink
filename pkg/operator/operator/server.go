@@ -460,7 +460,7 @@ func (c *Operator) WorkloadRoute(w http.ResponseWriter, _ *http.Request) {
 	writeResponse(w, c.objectsController.WorkloadsRelabelConfigs())
 }
 
-func (c *Operator) PodsRoute(w http.ResponseWriter, _ *http.Request) {
+func (c *Operator) PodsRoute(w http.ResponseWriter, r *http.Request) {
 	pods := c.objectsController.AllPods()
 	info, err := c.dw.GetClusterInfo()
 	if err != nil {
@@ -476,14 +476,20 @@ func (c *Operator) PodsRoute(w http.ResponseWriter, _ *http.Request) {
 		IP        string `json:"k8s.pod.ip"`
 	}
 
+	nodes := c.objectsController.NodeIPs()
+	all := r.URL.Query().Get("all")
+
 	var ret []podsResponse
 	for _, pod := range pods {
-		ret = append(ret, podsResponse{
-			ClusterID: info.BcsClusterID,
-			Name:      pod.Name,
-			Namespace: pod.Namespace,
-			IP:        pod.IP,
-		})
+		_, ok := nodes[pod.IP]
+		if !ok || all == "true" {
+			ret = append(ret, podsResponse{
+				ClusterID: info.BcsClusterID,
+				Name:      pod.Name,
+				Namespace: pod.Namespace,
+				IP:        pod.IP,
+			})
+		}
 	}
 	writeResponse(w, ret)
 }
@@ -574,7 +580,7 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /cluster_info
 * GET /workload
 * GET /workload/node/{node}
-* GET /pods
+* GET /pods?all=true|false
 * GET /relation/metrics
 * GET /rule/metrics
 * GET /configs

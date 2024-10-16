@@ -829,7 +829,7 @@ func (b *Backend) query(flow uint64, urlParams *backend.QueryParams, header http
 	flowLog.Debugf("start query request")
 	resp, err := b.client.Do(request)
 	if err != nil {
-		flowLog.Errorf("Query db [%s] sql [%s] failed,error:%s", db, sql, err)
+		flowLog.Errorf("DirectQuery db [%s] sql [%s] failed,error:%s", db, sql, err)
 		// only notify read false if error cause by network error
 		// url error证明与实例的连通有问题
 		if _, ok := err.(*url.Error); ok {

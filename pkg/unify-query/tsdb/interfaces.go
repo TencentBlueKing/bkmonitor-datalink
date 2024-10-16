@@ -22,16 +22,19 @@ import (
 )
 
 type Instance interface {
-	Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string
 	QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error)
 	QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet
-	QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error)
-	Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error)
 	QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error)
 
-	LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error)
-	LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error)
-	Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet
+	QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error)
+	QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error)
+	QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet
 
-	GetInstanceType() string
+	Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string
+	DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error)
+	DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error)
+	DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error)
+	DirectLabelValues(ctx context.Context, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error)
+
+	InstanceType() string
 }

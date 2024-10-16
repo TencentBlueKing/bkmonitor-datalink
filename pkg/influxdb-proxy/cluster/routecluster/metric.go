@@ -17,7 +17,7 @@ import (
 
 // Metrics :
 type Metrics interface {
-	// Query Metric
+	// DirectQuery Metric
 	QueryFailedCountInc(db string, flowLog *logging.Entry)
 	QuerySuccessCountInc(db string, flowLog *logging.Entry)
 	QueryReceivedCountInc(db string, flowLog *logging.Entry)
@@ -38,7 +38,7 @@ type Metrics interface {
 	CreateDBSuccessCountInc(db string, flowLog *logging.Entry)
 	CreateDBReceivedCountInc(db string, flowLog *logging.Entry)
 
-	// Query Metric
+	// DirectQuery Metric
 	QueryBackendFailedCountInc(backend string, db string, tagKey string, flowLog *logging.Entry)
 	QueryBackendSuccessCountInc(backend string, db string, tagKey string, flowLog *logging.Entry)
 	QueryBackendSendCountInc(backend string, db string, tagKey string, flowLog *logging.Entry)

@@ -17,21 +17,32 @@ import (
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/spf13/viper"
 
-	offlineDataArchiveMetadata "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/offlineDataArchive"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 var (
-	mockInitOnce  sync.Once
-	mockRedisOnce sync.Once
+	mockInitOnce        sync.Once
+	mockRedisOnce       sync.Once
+	mockSpaceRouterOnce sync.Once
 
 	Path string
+)
+
+const (
+	SpaceUid            = "space_default"
+	Field               = "field"
+	ResultTableVM       = "result_table.vm"
+	ResultTableInfluxDB = "result_table.influxdb"
+	ResultTableEs       = "result_table.es"
+	ResultTableBkSQL    = "result_table.bk_sql"
 )
 
 func Init() {
@@ -47,8 +58,60 @@ func Init() {
 	})
 }
 
-func SetOfflineDataArchiveMetadata(m offlineDataArchiveMetadata.Metadata) {
-	offlineDataArchive.MockMetaData(m)
+func SpaceRouter(ctx context.Context) {
+	mockSpaceRouterOnce.Do(func() {
+		tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{Type: consul.VictoriaMetricsStorageType})
+		tsdb.SetStorage("2", &tsdb.Storage{Type: consul.InfluxDBStorageType})
+		tsdb.SetStorage("3", &tsdb.Storage{Type: consul.ElasticsearchStorageType})
+		tsdb.SetStorage("4", &tsdb.Storage{Type: consul.BkSqlStorageType})
+
+		SetSpaceTsDbMockData(ctx,
+			ir.SpaceInfo{
+				SpaceUid: ir.Space{
+					ResultTableVM: &ir.SpaceResultTable{
+						TableId: ResultTableVM,
+					},
+					ResultTableInfluxDB: &ir.SpaceResultTable{
+						TableId: ResultTableInfluxDB,
+					},
+					ResultTableEs: &ir.SpaceResultTable{
+						TableId: ResultTableEs,
+					},
+					ResultTableBkSQL: &ir.SpaceResultTable{
+						TableId: ResultTableBkSQL,
+					},
+				},
+			},
+			ir.ResultTableDetailInfo{
+				ResultTableVM: &ir.ResultTableDetail{
+					StorageId:       2,
+					TableId:         ResultTableVM,
+					VmRt:            "result_table_vm",
+					Fields:          []string{Field},
+					BcsClusterID:    "cls_1",
+					MeasurementType: redis.BkSplitMeasurement,
+				},
+				ResultTableInfluxDB: &ir.ResultTableDetail{
+					StorageId:       2,
+					TableId:         ResultTableInfluxDB,
+					Fields:          []string{Field},
+					BcsClusterID:    "cls_1",
+					MeasurementType: redis.BkSplitMeasurement,
+				},
+				ResultTableEs: &ir.ResultTableDetail{
+					StorageId: 3,
+					TableId:   ResultTableEs,
+					Fields:    []string{Field},
+				},
+				ResultTableBkSQL: &ir.ResultTableDetail{
+					StorageId: 4,
+					TableId:   ResultTableBkSQL,
+					Fields:    []string{Field},
+				},
+			}, nil,
+			nil,
+		)
+	})
 }
 
 func SetSpaceTsDbMockData(ctx context.Context, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo, fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
@@ -56,6 +119,24 @@ func SetSpaceTsDbMockData(ctx context.Context, spaceInfo ir.SpaceInfo, rtInfo ir
 	mockRedisOnce.Do(func() {
 		SetRedisClient(ctx)
 	})
+	err := featureFlag.MockFeatureFlag(ctx, `{
+	  	"must-vm-query": {
+	  		"variations": {
+	  			"true": true,
+	  			"false": false
+	  		},
+	  		"targeting": [{
+	  			"query": "tableID in [\"result_table.vm\"]",
+	  			"percentage": {
+	  				"true": 100,
+	  				"false":0 
+	  			}
+	  		}],
+	  		"defaultRule": {
+	  			"variation": "false"
+	  		}
+	  	}
+	  }`)
 
 	sr, err := influxdb.SetSpaceTsDbRouter(ctx, "mock", "mock", "", 100)
 	if err != nil {

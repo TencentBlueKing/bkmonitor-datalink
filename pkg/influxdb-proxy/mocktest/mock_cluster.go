@@ -91,7 +91,7 @@ func (mr *MockClusterMockRecorder) GetName() *gomock.Call {
 // Query mocks base method.
 func (m *MockCluster) Query(arg0 uint64, arg1 *cluster.QueryParams, arg2 http.Header) (*cluster.Response, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Query", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "DirectQuery", arg0, arg1, arg2)
 	ret0, _ := ret[0].(*cluster.Response)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
@@ -100,7 +100,7 @@ func (m *MockCluster) Query(arg0 uint64, arg1 *cluster.QueryParams, arg2 http.He
 // Query indicates an expected call of Query.
 func (mr *MockClusterMockRecorder) Query(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Query", reflect.TypeOf((*MockCluster)(nil).Query), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DirectQuery", reflect.TypeOf((*MockCluster)(nil).Query), arg0, arg1, arg2)
 }
 
 // QueryInfo mocks base method.

@@ -13,12 +13,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/prometheus/prometheus/promql/parser"
 	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
@@ -36,7 +36,7 @@ import (
 // @ID       info_field_keys
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    Bk-DirectQuery-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      infos.Params 		  			true   "json data"
@@ -52,7 +52,7 @@ func HandlerFieldKeys(c *gin.Context) {
 // @ID       info_tag_keys
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    Bk-DirectQuery-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      infos.Params 		  			true   "json data"
@@ -68,7 +68,7 @@ func HandlerTagKeys(c *gin.Context) {
 // @ID       info_tag_values
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    Bk-DirectQuery-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      infos.Params 		  			true   "json data"
@@ -84,7 +84,7 @@ func HandlerTagValues(c *gin.Context) {
 // @ID       info_series
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    Bk-DirectQuery-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      infos.Params 		  			true   "json data"
@@ -100,7 +100,7 @@ func HandlerSeries(c *gin.Context) {
 // @ID       info_label_values
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    Bk-DirectQuery-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      infos.Params 		  			true   "json data"
@@ -147,7 +147,11 @@ func HandlerLabelValues(c *gin.Context) {
 		return
 	}
 
-	query, err := promQLToStruct(ctx, &structured.QueryPromQL{PromQL: matches[0]})
+	query, err := promQLToStruct(ctx, &structured.QueryPromQL{
+		PromQL: matches[0],
+		Start:  start,
+		End:    end,
+	})
 	if err != nil {
 		return
 	}
@@ -161,12 +165,10 @@ func HandlerLabelValues(c *gin.Context) {
 		return
 	}
 
-	startTime, endTime, err := query.GetTime()
-	if err != nil {
-		return
-	}
+	// start 和 end 可以为空
+	startTime, endTime, _ := query.GetTime()
 
-	res, err := instance.LabelValues(ctx, nil, labelName, startTime, endTime, matcher...)
+	res, err := instance.DirectLabelValues(ctx, labelName, startTime, endTime, matcher...)
 	if err != nil {
 		return
 	}

@@ -292,7 +292,7 @@ func (x *Series) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use Series.ProtoReflect.Descriptor instead.
+// Deprecated: Use QuerySeries.ProtoReflect.Descriptor instead.
 func (*Series) Descriptor() ([]byte, []int) {
 	return file_types_v1_types_proto_rawDescGZIP(), []int{3}
 }
@@ -1141,7 +1141,7 @@ var file_types_v1_types_proto_goTypes = []interface{}{
 	(*LabelPair)(nil),               // 1: types.v1.LabelPair
 	(*ProfileType)(nil),             // 2: types.v1.ProfileType
 	(*Labels)(nil),                  // 3: types.v1.Labels
-	(*Series)(nil),                  // 4: types.v1.Series
+	(*Series)(nil),                  // 4: types.v1.QuerySeries
 	(*Point)(nil),                   // 5: types.v1.Point
 	(*LabelValuesRequest)(nil),      // 6: types.v1.LabelValuesRequest
 	(*LabelValuesResponse)(nil),     // 7: types.v1.LabelValuesResponse
@@ -1157,8 +1157,8 @@ var file_types_v1_types_proto_goTypes = []interface{}{
 }
 var file_types_v1_types_proto_depIdxs = []int32{
 	1,  // 0: types.v1.Labels.labels:type_name -> types.v1.LabelPair
-	1,  // 1: types.v1.Series.labels:type_name -> types.v1.LabelPair
-	5,  // 2: types.v1.Series.points:type_name -> types.v1.Point
+	1,  // 1: types.v1.QuerySeries.labels:type_name -> types.v1.LabelPair
+	5,  // 2: types.v1.QuerySeries.points:type_name -> types.v1.Point
 	11, // 3: types.v1.BlockInfo.compaction:type_name -> types.v1.BlockCompaction
 	1,  // 4: types.v1.BlockInfo.labels:type_name -> types.v1.LabelPair
 	13, // 5: types.v1.StackTraceSelector.call_site:type_name -> types.v1.Location

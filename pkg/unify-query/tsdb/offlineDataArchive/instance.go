@@ -196,11 +196,11 @@ func (i Instance) QuerySeriesSet(
 	)
 }
 
-func (i Instance) QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+func (i Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
 	panic("implement me")
 }
 
-func (i Instance) Query(ctx context.Context, promql string, end time.Time) (promql.Vector, error) {
+func (i Instance) DirectQuery(ctx context.Context, promql string, end time.Time) (promql.Vector, error) {
 	panic("implement me")
 }
 
@@ -208,18 +208,28 @@ func (i Instance) QueryExemplar(ctx context.Context, fields []string, query *met
 	panic("implement me")
 }
 
-func (i Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
 	panic("implement me")
 }
 
-func (i Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error) {
 	panic("implement me")
 }
 
-func (i Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
+func (i Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	panic("implement me")
 }
 
-func (i Instance) GetInstanceType() string {
+func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i Instance) InstanceType() string {
 	return consul.OfflineDataArchive
 }

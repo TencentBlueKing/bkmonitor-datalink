@@ -196,7 +196,7 @@ const docTemplate = `{
                         "type": "string",
                         "default": "username:goodman",
                         "description": "来源",
-                        "name": "Bk-Query-Source",
+                        "name": "Bk-DirectQuery-Source",
                         "in": "header"
                     },
                     {
@@ -258,7 +258,7 @@ const docTemplate = `{
                         "type": "string",
                         "default": "username:goodman",
                         "description": "来源",
-                        "name": "Bk-Query-Source",
+                        "name": "Bk-DirectQuery-Source",
                         "in": "header"
                     },
                     {
@@ -320,7 +320,7 @@ const docTemplate = `{
                         "type": "string",
                         "default": "username:goodman",
                         "description": "来源",
-                        "name": "Bk-Query-Source",
+                        "name": "Bk-DirectQuery-Source",
                         "in": "header"
                     },
                     {
@@ -382,7 +382,7 @@ const docTemplate = `{
                         "type": "string",
                         "default": "username:goodman",
                         "description": "来源",
-                        "name": "Bk-Query-Source",
+                        "name": "Bk-DirectQuery-Source",
                         "in": "header"
                     },
                     {
@@ -450,7 +450,7 @@ const docTemplate = `{
                         "type": "string",
                         "default": "username:goodman",
                         "description": "来源",
-                        "name": "Bk-Query-Source",
+                        "name": "Bk-DirectQuery-Source",
                         "in": "header"
                     },
                     {
@@ -515,7 +515,7 @@ const docTemplate = `{
                         "type": "string",
                         "default": "username:goodman",
                         "description": "来源",
-                        "name": "Bk-Query-Source",
+                        "name": "Bk-DirectQuery-Source",
                         "in": "header"
                     },
                     {
@@ -583,7 +583,7 @@ const docTemplate = `{
                         "type": "string",
                         "default": "username:goodman",
                         "description": "来源",
-                        "name": "Bk-Query-Source",
+                        "name": "Bk-DirectQuery-Source",
                         "in": "header"
                     },
                     {
@@ -645,7 +645,7 @@ const docTemplate = `{
                         "type": "string",
                         "default": "username:goodman",
                         "description": "来源",
-                        "name": "Bk-Query-Source",
+                        "name": "Bk-DirectQuery-Source",
                         "in": "header"
                     },
                     {
@@ -713,7 +713,7 @@ const docTemplate = `{
                         "type": "string",
                         "default": "username:goodman",
                         "description": "来源",
-                        "name": "Bk-Query-Source",
+                        "name": "Bk-DirectQuery-Source",
                         "in": "header"
                     },
                     {
@@ -768,7 +768,7 @@ const docTemplate = `{
                         "type": "string",
                         "default": "username:goodman",
                         "description": "来源",
-                        "name": "Bk-Query-Source",
+                        "name": "Bk-DirectQuery-Source",
                         "in": "header"
                     },
                     {
@@ -1215,7 +1215,7 @@ const docTemplate = `{
                 }
             }
         },
-        "structured.Query": {
+        "structured.DirectQuery": {
             "type": "object",
             "properties": {
                 "conditions": {
@@ -1397,7 +1397,7 @@ const docTemplate = `{
                     "description": "QueryList 查询实例",
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/structured.Query"
+                        "$ref": "#/definitions/structured.DirectQuery"
                     }
                 },
                 "space_uid": {

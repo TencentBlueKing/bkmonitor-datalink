@@ -2698,7 +2698,7 @@ func TestQueryTsToInstanceAndStmt(t *testing.T) {
 
 			assert.Equal(t, c.stmt, stmt)
 			if instance != nil {
-				assert.Equal(t, c.instanceType, instance.GetInstanceType())
+				assert.Equal(t, c.instanceType, instance.InstanceType())
 			}
 		})
 	}

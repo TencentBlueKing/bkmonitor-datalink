@@ -436,10 +436,10 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	var matrix pl.Matrix
 	var vector pl.Vector
 	if instant {
-		vector, err = instance.Query(ctx, statement, end)
+		vector, err = instance.DirectQuery(ctx, statement, end)
 		matrix = vectorToMatrix(vector)
 	} else {
-		matrix, err = instance.QueryRange(ctx, statement, start, end, step)
+		matrix, err = instance.DirectQueryRange(ctx, statement, start, end, step)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("instance query error: %s", err)

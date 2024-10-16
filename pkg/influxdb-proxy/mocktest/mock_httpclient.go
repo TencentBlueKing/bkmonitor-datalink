@@ -78,7 +78,7 @@ func (mr *InfluxClientMockRecorder) Ping(arg0 interface{}) *gomock.Call {
 // Query mocks base method.
 func (m *InfluxClient) Query(arg0 client.Query) (*client.Response, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Query", arg0)
+	ret := m.ctrl.Call(m, "DirectQuery", arg0)
 	ret0, _ := ret[0].(*client.Response)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
@@ -87,7 +87,7 @@ func (m *InfluxClient) Query(arg0 client.Query) (*client.Response, error) {
 // Query indicates an expected call of Query.
 func (mr *InfluxClientMockRecorder) Query(arg0 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Query", reflect.TypeOf((*InfluxClient)(nil).Query), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DirectQuery", reflect.TypeOf((*InfluxClient)(nil).Query), arg0)
 }
 
 // QueryAsChunk mocks base method.

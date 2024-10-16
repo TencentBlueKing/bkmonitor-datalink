@@ -739,7 +739,7 @@ func parseTags(buf []byte, dst Tags) Tags {
 		dst = Tags{}
 	}
 
-	// Series keys can contain escaped commas, therefore the number of commas
+	// QuerySeries keys can contain escaped commas, therefore the number of commas
 	// in a series key only gives an estimation of the upper bound on the number
 	// of tags.
 	var i int

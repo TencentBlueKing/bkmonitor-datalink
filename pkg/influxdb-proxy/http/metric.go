@@ -41,7 +41,7 @@ var (
 	)
 )
 
-// Query Metric
+// DirectQuery Metric
 func QueryFailedCountInc(db string, code string) error {
 	metric, err := httpRequest.GetMetricWithLabelValues("query", "fail", db, code, "influxql")
 	if err != nil {
@@ -69,7 +69,7 @@ func QueryReceivedCountInc(db string) error {
 	return nil
 }
 
-// Query Metric
+// DirectQuery Metric
 func RawQueryFailedCountInc(db string, code string) error {
 	metric, err := httpRequest.GetMetricWithLabelValues("query", "fail", db, code, "flux")
 	if err != nil {

@@ -306,9 +306,9 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	}, lookBackDelta)
 
 	if query.Instant {
-		res, err = instance.Query(ctx, query.MetricMerge, start)
+		res, err = instance.DirectQuery(ctx, query.MetricMerge, start)
 	} else {
-		res, err = instance.QueryRange(ctx, query.MetricMerge, start, end, time.Duration(step))
+		res, err = instance.DirectQueryRange(ctx, query.MetricMerge, start, end, time.Duration(step))
 	}
 	if err != nil {
 		return nil, err
@@ -357,12 +357,18 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 	var (
 		lookBackDelta time.Duration
 		promExprOpt   = &structured.PromExprOption{}
+
+		user = metadata.GetUser(ctx)
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-ts-to-instance")
 	defer func() {
 		span.End(&err)
 	}()
+
+	if user.SpaceUid != "" {
+		query.SpaceUid = user.SpaceUid
+	}
 
 	queryString, _ := json.Marshal(query)
 	span.Set("query-ts", queryString)
@@ -443,7 +449,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 		return
 	}
 
-	span.Set("storage-type", instance.GetInstanceType())
+	span.Set("storage-type", instance.InstanceType())
 	span.Set("stmt", stmt)
 	return
 }
@@ -479,12 +485,12 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 		return nil, err
 	}
 
-	span.Set("storage-type", instance.GetInstanceType())
+	span.Set("storage-type", instance.InstanceType())
 
 	if query.Instant {
-		res, err = instance.Query(ctx, stmt, end)
+		res, err = instance.DirectQuery(ctx, stmt, end)
 	} else {
-		res, err = instance.QueryRange(ctx, stmt, start, end, step)
+		res, err = instance.DirectQueryRange(ctx, stmt, start, end, step)
 	}
 	if err != nil {
 		return nil, err
@@ -649,9 +655,9 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	}
 	instance := redis.Instance{Ctx: ctx, Timeout: ClusterMetricQueryTimeout, ClusterMetricPrefix: ClusterMetricQueryPrefix}
 	if query.Instant {
-		res, err = instance.Query(ctx, "", end)
+		res, err = instance.DirectQuery(ctx, "", end)
 	} else {
-		res, err = instance.QueryRange(ctx, "", start, end, step)
+		res, err = instance.DirectQueryRange(ctx, "", start, end, step)
 	}
 	if err != nil {
 		return nil, err

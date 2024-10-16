@@ -328,7 +328,7 @@ func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, spa
 }
 
 // GetInstanceType 获取实例类型
-func (i *Instance) GetInstanceType() string {
+func (i *Instance) InstanceType() string {
 	return consul.VictoriaMetricsStorageType
 }
 
@@ -398,14 +398,14 @@ func (i *Instance) vmQuery(
 	span.Set("response-size", size)
 
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, user.Source, i.GetInstanceType(), i.url,
+		ctx, queryCost, user.SpaceUid, user.Source, i.InstanceType(), i.url,
 	)
-	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
+	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.InstanceType())
 	return nil
 }
 
 // QueryRange 查询范围数据
-func (i *Instance) QueryRange(
+func (i *Instance) DirectQueryRange(
 	ctx context.Context, promqlStr string,
 	start, end time.Time, step time.Duration,
 ) (promql.Matrix, error) {
@@ -474,7 +474,7 @@ func (i *Instance) QueryRange(
 }
 
 // Query instant 查询
-func (i *Instance) Query(
+func (i *Instance) DirectQuery(
 	ctx context.Context, promqlStr string,
 	end time.Time,
 ) (promql.Vector, error) {
@@ -594,7 +594,7 @@ func (i *Instance) labelValues(ctx context.Context, name string, matchers ...*la
 	return i.labelFormat(ctx, resp, span)
 }
 
-func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
 	var (
 		vmExpand *metadata.VmExpand
 
@@ -618,7 +618,6 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.maxConditionNum)
 	}
 
-	span.Set("query-matchers", matchers)
 	span.Set("query-start", start)
 	span.Set("query-end", end)
 
@@ -643,7 +642,7 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 	}
 
 	vector := &parser.VectorSelector{
-		LabelMatchers: matchers,
+		LabelMatchers: nil,
 	}
 	paramsQuery.APIParams.Match = vector.String()
 
@@ -660,7 +659,7 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 	return i.labelFormat(ctx, resp, span)
 }
 
-func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error) {
 	var (
 		vmExpand *metadata.VmExpand
 
@@ -672,7 +671,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 	defer span.End(&err)
 
 	if name == labels.MetricName {
-		return i.labelValues(ctx, name, matchers...)
+		return i.labelValues(ctx, name)
 	}
 
 	vmExpand = metadata.GetExpand(ctx)
@@ -689,19 +688,18 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 	ves, _ := json.Marshal(vmExpand)
 	span.Set("vm-expand", string(ves))
 	span.Set("query-name", name)
-	span.Set("query-matchers", matchers)
 	span.Set("query-start", start)
 	span.Set("query-end", end)
 
 	referenceName := ""
-	for _, m := range matchers {
-		if m.Name == labels.MetricName {
-			referenceName = m.Value
-		}
-	}
+	//for _, m := range matchers {
+	//	if m.Name == labels.MetricName {
+	//		referenceName = m.Value
+	//	}
+	//}
 
 	if referenceName == "" {
-		return nil, fmt.Errorf("reference name is empty: %v", matchers)
+		return nil, fmt.Errorf("reference name is empty: %v")
 	}
 
 	// 如果使用 end - start 作为 step，查询的时候会多查一个step的数据量，所以这里需要减少点数
@@ -734,9 +732,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		paramsQueryRange.ClusterName = vmExpand.ClusterName
 	}
 
-	vector := &parser.VectorSelector{
-		LabelMatchers: matchers,
-	}
+	vector := &parser.VectorSelector{}
 	expr := &parser.AggregateExpr{
 		Op:       parser.COUNT,
 		Expr:     vector,
@@ -777,10 +773,20 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 	return lbs, nil
 }
 
+func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
 	panic("implement me")
 }
 
-func (i *Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
+func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	return nil
 }

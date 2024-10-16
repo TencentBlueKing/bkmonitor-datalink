@@ -105,6 +105,7 @@ var _ http.ResponseWriter = (*Writer)(nil)
 func TestAPIHandler(t *testing.T) {
 	mock.Init()
 	ctx := metadata.InitHashID(context.Background())
+	mock.SpaceRouter(ctx)
 
 	testCases := map[string]struct {
 		handler  func(c *gin.Context)
@@ -114,10 +115,10 @@ func TestAPIHandler(t *testing.T) {
 		params   gin.Params
 		expected string
 	}{
-		"test label values": {
+		"test label values in vm": {
 			handler: HandlerLabelValues,
 			method:  http.MethodGet,
-			url:     "query/ts/label/container/values?label=container&match%5B%5D=container_cpu_usage_seconds_total%7Bbcs_cluster_id%3D%22BCS-K8S-41161%22%2Cnamespace%3D%22perf-master-test-main%22%2C+container%21%3D%22POD%22%7D",
+			url:     "query/ts/label/container/values?label=container&match%5B%5D=bkmonitor:result_table:vm:field%7Bbcs_cluster_id%3D%22cls_1%22%2Cnamespace%3D%22perf-master-test-main%22%2C+container%21%3D%22POD%22%7D",
 			params: gin.Params{
 				{
 					Key:   "label_name",
@@ -131,6 +132,7 @@ func TestAPIHandler(t *testing.T) {
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
+			metadata.SetUser(ctx, "", mock.SpaceUid, "")
 			url := fmt.Sprintf("http://127.0.0.1/%s", c.url)
 			req, err := http.NewRequestWithContext(ctx, c.method, url, c.body)
 			if err != nil {

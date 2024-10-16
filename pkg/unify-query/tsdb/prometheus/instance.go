@@ -54,7 +54,7 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 }
 
 // GetInstanceType 获取引擎类型
-func (i *Instance) GetInstanceType() string {
+func (i *Instance) InstanceType() string {
 	if i.instanceType != "" {
 		return i.instanceType
 	} else {
@@ -77,7 +77,7 @@ func (i *Instance) QuerySeriesSet(
 }
 
 // QueryRange 查询范围数据
-func (i *Instance) QueryRange(
+func (i *Instance) DirectQueryRange(
 	ctx context.Context, stmt string,
 	start, end time.Time, step time.Duration,
 ) (promql.Matrix, error) {
@@ -130,7 +130,7 @@ func (i *Instance) QueryRange(
 }
 
 // Query instant 查询
-func (i *Instance) Query(
+func (i *Instance) DirectQuery(
 	ctx context.Context, qs string,
 	end time.Time,
 ) (promql.Vector, error) {
@@ -176,18 +176,28 @@ func (i *Instance) Query(
 	return vector, nil
 }
 
+func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
 	return nil, nil
 }
 
-func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
 	return nil, nil
 }
 
-func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error) {
 	return nil, nil
 }
 
-func (i *Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
+func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	return nil
 }

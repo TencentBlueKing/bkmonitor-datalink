@@ -58,7 +58,7 @@ func (i instance) Check(ctx context.Context, promql string, start, end time.Time
 	panic("implement me")
 }
 
-func (i instance) LabelNames(ctx context.Context, query *metadata.Query, start time.Time, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
 	panic("implement me")
 }
 
@@ -66,11 +66,11 @@ func (i instance) QueryExemplar(ctx context.Context, fields []string, query *met
 	panic("implement me")
 }
 
-func (i instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start time.Time, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error) {
 	panic("implement me")
 }
 
-func (i instance) Series(ctx context.Context, query *metadata.Query, start time.Time, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
+func (i instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	panic("implement me")
 }
 
@@ -78,15 +78,15 @@ func (i instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, sta
 	return influxdb.StartStreamSeriesSet(ctx, i.name, i.opt)
 }
 
-func (i instance) QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+func (i instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
 	return nil, nil
 }
 
-func (i instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
+func (i instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
 	return nil, nil
 }
 
-func (i instance) GetInstanceType() string {
+func (i instance) InstanceType() string {
 	return "test"
 }
 
@@ -1334,7 +1334,7 @@ NaN @[360000]`,
 			ctx, cancel := context.WithTimeout(rootCtx, timeout)
 			defer cancel()
 
-			res, err := ins.QueryRange(ctx, c.q, c.start, c.end, c.step)
+			res, err := ins.DirectQueryRange(ctx, c.q, c.start, c.end, c.step)
 
 			a := res.String()
 			assert.Nil(t, err)

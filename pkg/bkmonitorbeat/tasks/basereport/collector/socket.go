@@ -97,7 +97,7 @@ type SocketStatusCount struct {
 	    __u8    idiag_family;       /* Family of addresses.
 	    __u8    idiag_src_len;
 	    __u8    idiag_dst_len;
-	    __u8    idiag_ext;      /* Query extended information
+	    __u8    idiag_ext;      /* DirectQuery extended information
 
 	    struct inet_diag_sockid id;
 

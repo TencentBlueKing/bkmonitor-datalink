@@ -146,7 +146,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			if index < len(queryList) {
 				query := queryList[index]
 
-				span.Set(fmt.Sprintf("query_%d_instance_type", i), query.instance.GetInstanceType())
+				span.Set(fmt.Sprintf("query_%d_instance_type", i), query.instance.InstanceType())
 				span.Set(fmt.Sprintf("query_%d_qry_source", i), query.qry.SourceType)
 				span.Set(fmt.Sprintf("query_%d_qry_db", i), query.qry.DB)
 				span.Set(fmt.Sprintf("query_%d_qry_vmrt", i), query.qry.VmRt)
@@ -266,7 +266,7 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 			return nil, nil, err
 		}
 
-		lbl, err := instance.LabelValues(ctx, nil, name, q.min, q.max, matchers...)
+		lbl, err := instance.QueryLabelValues(ctx, nil, name, q.min, q.max)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -276,7 +276,7 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 	} else {
 		queryList := q.getQueryList(referenceName)
 		for _, query := range queryList {
-			lbl, err := query.instance.LabelValues(ctx, query.qry, name, q.min, q.max, matchers...)
+			lbl, err := query.instance.QueryLabelValues(ctx, query.qry, name, q.min, q.max)
 			if err != nil {
 				log.Errorf(ctx, err.Error())
 				continue
@@ -333,7 +333,7 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 			return nil, nil, err
 		}
 
-		lbl, err := instance.LabelNames(ctx, nil, q.min, q.max, matchers...)
+		lbl, err := instance.QueryLabelNames(ctx, nil, q.min, q.max)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -343,7 +343,7 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 	} else {
 		queryList := q.getQueryList(referenceName)
 		for _, query := range queryList {
-			lbl, err := query.instance.LabelNames(ctx, query.qry, q.min, q.max, matchers...)
+			lbl, err := query.instance.QueryLabelNames(ctx, query.qry, q.min, q.max)
 			if err != nil {
 				return nil, nil, err
 			}

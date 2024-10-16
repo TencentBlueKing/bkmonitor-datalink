@@ -194,7 +194,7 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 				}
 
 				r.Step("instance id", qry.StorageID)
-				r.Step("instance type", instance.GetInstanceType())
+				r.Step("instance type", instance.InstanceType())
 				r.Step("query struct", qry)
 			}
 		}

@@ -73,7 +73,7 @@ func TestOptions(t *testing.T) {
 	instance := mockInstance(ctx, mockCurl)
 
 	q := "count(my_metric)"
-	_, _ = instance.QueryRange(ctx, q, start, end, step)
+	_, _ = instance.DirectQueryRange(ctx, q, start, end, step)
 
 	assert.Equal(t, mockCurl.Opts.Headers[metadata.SpaceUIDHeader], spaceUid)
 	assert.Equal(t, mockCurl.Opts.Headers[metadata.BkQuerySourceHeader], sourceKey)

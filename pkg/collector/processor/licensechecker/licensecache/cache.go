@@ -19,30 +19,24 @@ const (
 	defaultExpiration = time.Second * 60 // 官方文档中 skywalking 心跳数据每 30 秒上报一次
 )
 
-const TypeLocalCacher = "localcahcer"
-
-type localCacher struct {
+type Cache struct {
 	cache *cache.Cache
 }
 
-func newLocalCacher() Cacher {
-	return &localCacher{cache: cache.New(time.Minute*2, time.Minute)}
+func New() *Cache {
+	return &Cache{cache: cache.New(time.Minute*2, time.Minute)}
 }
 
-func (c *localCacher) Type() string {
-	return TypeLocalCacher
-}
-
-func (c *localCacher) Set(value string) {
+func (c *Cache) Set(value string) {
 	c.cache.Set(value, value, defaultExpiration)
 }
 
-func (c *localCacher) Exist(key string) bool {
+func (c *Cache) Exist(key string) bool {
 	_, ok := c.cache.Get(key)
 	return ok
 }
 
-func (c *localCacher) Items() []string {
+func (c *Cache) Items() []string {
 	items := c.cache.Items()
 	result := make([]string, 0, len(items))
 	for _, value := range items {
@@ -51,6 +45,6 @@ func (c *localCacher) Items() []string {
 	return result
 }
 
-func (c *localCacher) Count() int {
+func (c *Cache) Count() int {
 	return len(c.cache.Items())
 }

@@ -496,6 +496,8 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 			qry := &metadata.Query{
 				StorageType:    consul.BkSqlStorageType,
+				TableID:        string(tableID),
+				DataSource:     q.DataSource,
 				DB:             route.DB(),
 				Measurement:    route.Measurement(),
 				Field:          q.FieldName,
@@ -783,6 +785,7 @@ func (q *Query) BuildMetadataQuery(
 		query.StorageType = consul.ElasticsearchStorageType
 	}
 
+	query.DataSource = q.DataSource
 	query.TableID = tsDB.TableID
 	query.ClusterName = clusterName
 	query.TagsKey = tagKeys
@@ -804,7 +807,6 @@ func (q *Query) BuildMetadataQuery(
 	// 写入 ES 所需内容
 	query.QueryString = q.QueryString
 	query.Source = q.KeepColumns
-	query.DataSource = q.DataSource
 	query.AllConditions = make(metadata.AllConditions, len(allCondition))
 	for i, conditions := range allCondition {
 		conds := make([]metadata.ConditionField, len(conditions))
@@ -888,7 +890,6 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 					//    2. 因为多指标共用一个最大的计算周期，会增加较小计算周期的数据量，例如：sum(count_over_time(metric[1d]))  + sum(count_over_time(metric[1m]))，都会使用 1d 来计算；
 					// 这里选用方案一，使用 last_over_time 来扩展计算周期，如果因为增加 last_over_time 函数可能会引起的未知问题，需要考虑方案二；
 					q.TimeAggregation.Function = LastOT
-					q.AggregateMethodList = q.AggregateMethodList[1:]
 				}
 			}
 		}
@@ -980,8 +981,6 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		}
 	}
 
-	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
-
 	for idx := 0; idx < funcNums; idx++ {
 		if idx == timeIdx {
 			result, err = q.TimeAggregation.ToProm(result)
@@ -994,13 +993,6 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 				methodIdx -= 1
 			}
 			method := q.AggregateMethodList[methodIdx]
-
-			// 查询维度转换，不同的 datasource 比如说 bk_log，使用 . 作分隔符，在 promql 不支持，需要转换为 ___
-			for i, dim := range method.Dimensions {
-				if decodeFunc != nil {
-					method.Dimensions[i] = decodeFunc(dim)
-				}
-			}
 
 			if result, err = method.ToProm(result); err != nil {
 				log.Errorf(ctx, "failed to translate function for->[%s]", err)

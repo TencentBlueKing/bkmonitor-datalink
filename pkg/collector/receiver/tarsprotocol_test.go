@@ -7,33 +7,27 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package cleaner
+package receiver
 
 import (
-	"sync"
+	"context"
+	"os"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-type CleanFunc func() error
+func TestTarsProtocol(t *testing.T) {
+	b, err := os.ReadFile("../example/fixtures/tars.bytes")
+	assert.NoError(t, err)
 
-var (
-	mut        sync.Mutex
-	cleanFuncs = map[string]CleanFunc{}
-)
+	t.Run("Invoke", func(t *testing.T) {
+		p := NewTarsProtocol(nil, true)
+		p.Invoke(context.Background(), b)
+	})
 
-func Register(name string, fn CleanFunc) {
-	mut.Lock()
-	defer mut.Unlock()
-
-	cleanFuncs[name] = fn
-}
-
-func CleanFuncs() map[string]CleanFunc {
-	mut.Lock()
-	defer mut.Unlock()
-
-	ret := make(map[string]CleanFunc)
-	for name, fn := range cleanFuncs {
-		ret[name] = fn
-	}
-	return ret
+	t.Run("InvokeTimeout", func(t *testing.T) {
+		p := NewTarsProtocol(nil, true)
+		p.InvokeTimeout(b)
+	})
 }

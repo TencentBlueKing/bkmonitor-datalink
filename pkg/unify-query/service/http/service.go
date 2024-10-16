@@ -52,20 +52,20 @@ func (s *Service) Reload(ctx context.Context) {
 
 	// 先关闭当前的服务
 	if s.server != nil {
-		log.Warnf(context.TODO(), "http server is running, will stop it first, max waiting time->[%s].", WriteTimeout)
+		log.Warnf(ctx, "http server is running, will stop it first, max waiting time->[%s].", WriteTimeout)
 		tempCtx, cancelFunc := context.WithTimeout(ctx, WriteTimeout)
 		defer cancelFunc()
 		if err = s.server.Shutdown(tempCtx); err != nil {
-			log.Errorf(context.TODO(), "shutdown server with err->[%s]", err)
+			log.Errorf(ctx, "shutdown server with err->[%s]", err)
 		}
-		log.Warnf(context.TODO(), "http server shutdown done.")
+		log.Warnf(ctx, "http server shutdown done.")
 	}
 
 	if s.cancelFunc != nil {
 		s.cancelFunc()
 	}
 
-	log.Debugf(context.TODO(), "waiting for http service close")
+	log.Debugf(ctx, "waiting for http service close")
 	s.Wait()
 
 	gin.SetMode(gin.ReleaseMode)
@@ -99,14 +99,14 @@ func (s *Service) Reload(ctx context.Context) {
 	go func(server *gohttp.Server) {
 		defer s.wg.Done()
 		if err = server.ListenAndServe(); err != nil && err != gohttp.ErrServerClosed {
-			log.Panicf(context.TODO(), "failed to start server for->[%s]", err)
+			log.Panicf(ctx, "failed to start server for->[%s]", err)
 			return
 		}
-		log.Warnf(context.TODO(), "last http server is closed now")
+		log.Warnf(ctx, "last http server is closed now")
 	}(s.server)
 	// 更新上下文控制方法
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
-	log.Debugf(context.TODO(), "http service context update success.")
+	log.Debugf(ctx, "http service context update success.")
 	// 起一个goroutine去跟踪ctx，ctx关闭时server也关闭
 	s.wg.Add(1)
 	go func() {
@@ -114,10 +114,10 @@ func (s *Service) Reload(ctx context.Context) {
 		<-s.ctx.Done()
 		err = s.server.Close()
 		if err != nil {
-			log.Errorf(context.TODO(), "get error when closing http server:%s", err)
+			log.Errorf(ctx, "get error when closing http server:%s", err)
 		}
 	}()
-	log.Warnf(context.TODO(), "http service reloaded or start success.")
+	log.Infof(ctx, "http service reloaded or start success.")
 }
 
 // Wait
@@ -128,5 +128,5 @@ func (s *Service) Wait() {
 // Close
 func (s *Service) Close() {
 	s.cancelFunc()
-	log.Infof(context.TODO(), "http service context cancel func called.")
+	log.Infof(s.ctx, "http service context cancel func called.")
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/influxdata/influxdb/prometheus/remote"
+	"github.com/prometheus/prometheus/prompb"
 	"golang.org/x/time/rate"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
@@ -75,8 +76,9 @@ type Options struct {
 }
 
 type StreamSeriesSetOption struct {
-	Span    *trace.Span
-	Stream  remote.QueryTimeSeriesService_RawClient
-	Limiter *rate.Limiter
-	Timeout time.Duration
+	Span        *trace.Span
+	Stream      remote.QueryTimeSeriesService_RawClient
+	Limiter     *rate.Limiter
+	Timeout     time.Duration
+	MetricLabel *prompb.Label
 }

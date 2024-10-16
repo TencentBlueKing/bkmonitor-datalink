@@ -380,7 +380,13 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 				monitorResources = append(monitorResources, mr)
 			}
 		}
-		monitorResourcesBytes, _ := json.MarshalIndent(monitorResources, "", "  ")
+
+		var monitorResourcesBytes []byte
+		if len(monitorResources) > 0 {
+			monitorResourcesBytes, _ = json.MarshalIndent(monitorResources, "", "  ")
+		} else {
+			monitorResourcesBytes = []byte("\n[!] NotMatch: 未匹配到任何 monitor 资源\n")
+		}
 
 		var childConfigs []ConfigFileRecord
 		for _, cf := range c.recorder.getActiveConfigFiles() {
@@ -388,7 +394,14 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 				childConfigs = append(childConfigs, cf)
 			}
 		}
-		childConfigsBytes, _ := json.MarshalIndent(childConfigs, "", "  ")
+
+		var childConfigsBytes []byte
+		if len(childConfigs) > 0 {
+			childConfigsBytes, _ = json.MarshalIndent(childConfigs, "", "  ")
+		} else {
+			childConfigsBytes = []byte("\n[!] NotMatch: 未匹配到任何采集配置")
+		}
+
 		writef(formatMonitorResources, monitorKeyword, monitorResourcesBytes, childConfigsBytes)
 	} else {
 		writef(formatMonitorResourceNoKeyword)
@@ -458,6 +471,40 @@ func (c *Operator) VersionRoute(w http.ResponseWriter, _ *http.Request) {
 
 func (c *Operator) WorkloadRoute(w http.ResponseWriter, _ *http.Request) {
 	writeResponse(w, c.objectsController.WorkloadsRelabelConfigs())
+}
+
+func (c *Operator) PodsRoute(w http.ResponseWriter, r *http.Request) {
+	pods := c.objectsController.AllPods()
+	info, err := c.dw.GetClusterInfo()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(fmt.Sprintf(`{"msg": "no bcs_cluster_id found: %s"}`, err)))
+		return
+	}
+
+	type podsResponse struct {
+		ClusterID string `json:"k8s.bcs.cluster.id"`
+		Name      string `json:"k8s.pod.name"`
+		Namespace string `json:"k8s.namespace.name"`
+		IP        string `json:"k8s.pod.ip"`
+	}
+
+	nodes := c.objectsController.NodeIPs()
+	all := r.URL.Query().Get("all")
+
+	var ret []podsResponse
+	for _, pod := range pods {
+		_, ok := nodes[pod.IP]
+		if !ok || all == "true" {
+			ret = append(ret, podsResponse{
+				ClusterID: info.BcsClusterID,
+				Name:      pod.Name,
+				Namespace: pod.Namespace,
+				IP:        pod.IP,
+			})
+		}
+	}
+	writeResponse(w, ret)
 }
 
 func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
@@ -546,6 +593,7 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /cluster_info
 * GET /workload
 * GET /workload/node/{node}
+* GET /pods?all=true|false
 * GET /relation/metrics
 * GET /rule/metrics
 * GET /configs
@@ -591,6 +639,7 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/cluster_info", c.ClusterInfoRoute)
 	router.HandleFunc("/workload", c.WorkloadRoute)
 	router.HandleFunc("/workload/node/{node}", c.WorkloadNodeRoute)
+	router.HandleFunc("/pods", c.PodsRoute)
 	router.HandleFunc("/labeljoin", c.LabelJoinRoute)
 	router.HandleFunc("/relation/metrics", c.RelationMetricsRoute)
 	router.HandleFunc("/rule/metrics", c.RuleMetricsRoute)

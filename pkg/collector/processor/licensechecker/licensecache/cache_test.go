@@ -10,41 +10,31 @@
 package licensecache
 
 import (
+	"strconv"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestCacherController(t *testing.T) {
-	t.Run("base", func(t *testing.T) {
-		ctr := NewCacherController()
-		defer ctr.Clean()
-		assert.Nil(t, ctr.Get("key1"))
+func TestCache(t *testing.T) {
+	cache := New()
 
-		cacher := ctr.GetOrCreate("key1")
-		assert.NotNil(t, cacher)
+	const n = 10
+	for i := 0; i < n; i++ {
+		cache.Set(strconv.Itoa(i))
+	}
+	for i := 0; i < n; i++ {
+		assert.True(t, cache.Exist(strconv.Itoa(i)))
+	}
+	assert.False(t, cache.Exist("10"))
 
-		cacher.Set("1")
-		assert.True(t, cacher.Exist("1"))
-	})
-
-	t.Run("Gc", func(t *testing.T) {
-		ctr := &CacherController{
-			cached:     map[string]Cacher{},
-			stop:       make(chan struct{}),
-			gcInterval: time.Second,
-		}
-		go ctr.gc()
-		defer ctr.Clean()
-
-		cacher := ctr.GetOrCreate("key1")
-		cacher.Set("1")
-		ctr.GetOrCreate("key2")
-
-		time.Sleep(time.Millisecond * 1200)
-		assert.NotNil(t, ctr.Get("key1"))
-		assert.NotNil(t, ctr.GetOrCreate("key1"))
-		assert.Nil(t, ctr.Get("key2")) // gc
-	})
+	expected := make(map[string]struct{})
+	for i := 0; i < n; i++ {
+		expected[strconv.Itoa(i)] = struct{}{}
+	}
+	for _, item := range cache.Items() {
+		_, ok := expected[item]
+		assert.True(t, ok)
+	}
+	assert.Equal(t, 10, cache.Count())
 }

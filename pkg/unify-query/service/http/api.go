@@ -13,14 +13,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/prometheus/prometheus/promql/parser"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/panjf2000/ants/v2"
 	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
@@ -116,11 +114,20 @@ func HandlerLabelValues(c *gin.Context) {
 			c: c,
 		}
 
-		err error
+		result = set.New[string]()
+		err    error
 	)
 
 	ctx, span := trace.NewSpan(ctx, "label-values-handler")
-	defer span.End(&err)
+	defer func() {
+		if err != nil {
+			resp.failed(ctx, err)
+			return
+		}
+
+		resp.success(ctx, result.ToArray())
+		span.End(&err)
+	}()
 
 	labelName := c.Param("label_name")
 	start := c.Query("start")
@@ -135,58 +142,36 @@ func HandlerLabelValues(c *gin.Context) {
 	span.Set("request-url", c.Request.URL.String())
 	span.Set("request-header", c.Request.Header)
 
-	p, err := ants.NewPool(QueryMaxRouting)
-	if err != nil {
-		resp.failed(ctx, err)
+	if len(matches) != 1 {
+		err = fmt.Errorf("match[] 参数只支持 1 个, %+v", matches)
 		return
 	}
-	defer p.Release()
 
-	resultCh := make(chan string)
-
-	go func() {
-		defer func() {
-			close(resultCh)
-		}()
-		var (
-			wg sync.WaitGroup
-		)
-		for _, match := range matches {
-			wg.Add(1)
-			_ = p.Submit(func() {
-				var (
-					queryErr error
-					matchers []*labels.Matcher
-				)
-				defer func() {
-					if queryErr != nil {
-						log.Errorf(ctx, "labelValuesHandler: "+queryErr.Error())
-					}
-					wg.Done()
-				}()
-				matchers, queryErr = parser.ParseMetricSelector(match)
-				if queryErr != nil {
-					return
-				}
-
-				route, newMatchers, queryErr := structured.MetricsToRouter(matchers...)
-				if queryErr != nil {
-					return
-				}
-
-				fmt.Println(route, newMatchers)
-
-			})
-		}
-		wg.Wait()
-	}()
-
-	result := set.New[string]()
-	for item := range resultCh {
-		result.Add(item)
+	query, err := promQLToStruct(ctx, &structured.QueryPromQL{PromQL: matches[0]})
+	if err != nil {
+		return
+	}
+	instance, stmt, err := queryTsToInstanceAndStmt(ctx, query)
+	if err != nil {
+		return
 	}
 
-	resp.success(ctx, result.ToArray())
+	matcher, err := parser.ParseMetricSelector(stmt)
+	if err != nil {
+		return
+	}
+
+	startTime, endTime, err := query.GetTime()
+	if err != nil {
+		return
+	}
+
+	res, err := instance.LabelValues(ctx, nil, labelName, startTime, endTime, matcher...)
+	if err != nil {
+		return
+	}
+
+	resp.success(ctx, res)
 }
 
 func handlerInfo(c *gin.Context, key infos.InfoType) {

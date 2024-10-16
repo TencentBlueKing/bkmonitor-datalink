@@ -2599,3 +2599,107 @@ func TestCheckDruidCheck(t *testing.T) {
 		})
 	}
 }
+
+func TestQueryTsToInstanceAndStmt(t *testing.T) {
+	mock.Init()
+
+	spaceUid := "space"
+	ctx := metadata.InitHashID(context.Background())
+	mock.SetSpaceTsDbMockData(ctx,
+		ir.SpaceInfo{
+			spaceUid: ir.Space{
+				"result_table.vm": &ir.SpaceResultTable{
+					TableId: "result_table.vm",
+				},
+				"result_table.influxdb": &ir.SpaceResultTable{
+					TableId: "result_table.influxdb",
+				},
+			},
+		},
+		ir.ResultTableDetailInfo{
+			"result_table.vm": &ir.ResultTableDetail{
+				VmRt:   "vm_rt",
+				Fields: []string{"field"},
+			},
+			"result_table.influxdb": &ir.ResultTableDetail{
+				DB:          "result_table",
+				Measurement: "influxdb",
+				Fields:      []string{"field"},
+			},
+		},
+		nil, nil,
+	)
+
+	testCases := map[string]struct {
+		query        *structured.QueryTs
+		promql       string
+		stmt         string
+		instanceType string
+	}{
+		"test_matcher_with_vm": {
+			promql:       `datasource:result_table:vm:field{}`,
+			stmt:         `a`,
+			instanceType: consul.VictoriaMetricsStorageType,
+		},
+		"test_matcher_with_influxdb": {
+			promql:       `datasource:result_table:influxdb:field{}`,
+			stmt:         `a`,
+			instanceType: consul.PrometheusStorageType,
+		},
+		"test_group_with_vm": {
+			promql:       `sum(count_over_time(datasource:result_table:vm:field{}[1m]))`,
+			stmt:         `sum(count_over_time(a[1m] offset -59s999ms))`,
+			instanceType: consul.VictoriaMetricsStorageType,
+		},
+		"test_group_with_influxdb": {
+			promql:       `sum(count_over_time(datasource:result_table:influxdb:field{}[1m]))`,
+			stmt:         `sum(last_over_time(a[1m] offset -59s999ms))`,
+			instanceType: consul.PrometheusStorageType,
+		},
+	}
+
+	err := featureFlag.MockFeatureFlag(ctx, `{
+	  	"must-vm-query": {
+	  		"variations": {
+	  			"true": true,
+	  			"false": false
+	  		},
+	  		"targeting": [{
+	  			"query": "tableID in [\"result_table.vm\"]",
+	  			"percentage": {
+	  				"true": 100,
+	  				"false":0 
+	  			}
+	  		}],
+	  		"defaultRule": {
+	  			"variation": "false"
+	  		}
+	  	}
+	  }`)
+	if err != nil {
+		log.Fatalf(ctx, err.Error())
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			if c.promql != "" {
+				query, err := promQLToStruct(ctx, &structured.QueryPromQL{PromQL: c.promql})
+				if err != nil {
+					log.Fatalf(ctx, err.Error())
+				}
+				c.query = query
+			}
+			c.query.SpaceUid = spaceUid
+
+			instance, stmt, err := queryTsToInstanceAndStmt(metadata.InitHashID(ctx), c.query)
+			if err != nil {
+				log.Fatalf(ctx, err.Error())
+			}
+
+			assert.Equal(t, c.stmt, stmt)
+			if instance != nil {
+				assert.Equal(t, c.instanceType, instance.GetInstanceType())
+			}
+		})
+	}
+}

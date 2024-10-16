@@ -264,6 +264,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	bodyString := string(bodyJson)
 
 	span.Set("query-indexes", qo.indexes)
+	span.Set("query-body", bodyString)
 
 	log.Infof(ctx, "elasticsearch-query indexes: %s", qo.indexes)
 	log.Infof(ctx, "elasticsearch-query body: %s", bodyString)
@@ -315,12 +316,15 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 		rets <- ret
 	}()
 
+	metricLabel := qo.query.MetricLabels(ctx)
+
 	sr, err := i.esQuery(ctx, qo, fact)
 	if err != nil {
 		return
 	}
 
-	ret.TimeSeriesMap, err = fact.AggDataFormat(sr.Aggregations)
+	// 如果是非时间聚合计算，则无需进行指标名的拼接作用
+	ret.TimeSeriesMap, err = fact.AggDataFormat(sr.Aggregations, metricLabel)
 	if err != nil {
 		return
 	}
@@ -682,7 +686,7 @@ func (i *Instance) QuerySeriesSet(
 			WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.From, size).
 			WithMappings(mappings...).
 			WithOrders(query.Orders).
-			WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc())
+			WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
 
 		if len(query.Aggregates) > 0 {
 			i.queryWithAgg(ctx, qo, fact, rets)

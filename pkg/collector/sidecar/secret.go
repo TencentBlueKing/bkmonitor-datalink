@@ -26,6 +26,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/gzip"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -124,12 +125,17 @@ func (sm *secretManager) createOrUpdateFiles(secret *corev1.Secret) {
 	defer sm.mut.Unlock()
 
 	data := make(map[string][]byte)
-	for k, v := range secret.Data {
+	for filename, v := range secret.Data {
 		// 采集配置必须是 .conf 后缀文件
-		if !strings.HasSuffix(k, ".conf") {
+		if !strings.HasSuffix(filename, ".conf") {
 			continue
 		}
-		data[k] = v
+		uncompress, err := gzip.Uncompress(v)
+		if err != nil {
+			logger.Errorf("gzip uncompress file (%s) failed: %v", filename, err)
+			continue
+		}
+		data[secret.Name+"-"+filename] = uncompress
 	}
 
 	preFiles, ok := sm.files[secret.Name]

@@ -21,10 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/cleaner"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/hook"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labelstore"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tracestore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/wait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pingserver"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
@@ -38,11 +35,9 @@ import (
 )
 
 const (
-	configFieldMaxProcs     = "max_procs"
-	configFieldLogging      = "logging"
-	configFieldLabelStorage = "label_storage"
-	configFieldTraceStorage = "trace_storage"
-	configFieldHook         = "hook"
+	configFieldMaxProcs = "max_procs"
+	configFieldLogging  = "logging"
+	configFieldHook     = "hook"
 )
 
 type Controller struct {
@@ -72,24 +67,6 @@ func SetupCoreNum(conf *confengine.Config) {
 type StorageConfig struct {
 	Type string `config:"type" mapstructure:"type"`
 	Dir  string `config:"dir" mapstructure:"dir"`
-}
-
-// SetupLabelStorage 初始化 Label Storage
-func SetupLabelStorage(conf *confengine.Config) {
-	var storConf StorageConfig
-	if err := conf.UnpackChild(configFieldLabelStorage, &storConf); err != nil {
-		logger.Warnf("unpack label storage config failed, may it lacks of fields: %s, then uses the default config", err)
-	}
-	labelstore.InitStorage(storConf.Dir, storConf.Type)
-}
-
-// SetupTraceStorage 初始化 Trace Storage
-func SetupTraceStorage(conf *confengine.Config) {
-	var storConf StorageConfig
-	if err := conf.UnpackChild(configFieldTraceStorage, &storConf); err != nil {
-		logger.Warnf("unpack trace storage config failed, may it lacks of fields: %s, then uses the default config", err)
-	}
-	tracestore.InitStorage(storConf.Dir, storConf.Type)
 }
 
 // SetupHook 初始化 Hook
@@ -134,8 +111,6 @@ func Setup(conf *confengine.Config) error {
 	if err := SetupLogger(conf); err != nil {
 		return err
 	}
-	SetupLabelStorage(conf)
-	SetupTraceStorage(conf)
 	SetupHook(conf)
 	return nil
 }
@@ -371,13 +346,6 @@ func (c *Controller) Stop() error {
 
 	if c.clusterSvr != nil {
 		c.clusterSvr.Stop()
-	}
-
-	cleanFuncs := cleaner.CleanFuncs()
-	for name, fn := range cleanFuncs {
-		if err := fn(); err != nil {
-			logger.Errorf("failed to execute clean function, name=%s, err: %v", name, err)
-		}
 	}
 
 	c.cancel()

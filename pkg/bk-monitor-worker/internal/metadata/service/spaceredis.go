@@ -252,7 +252,7 @@ func (s *SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string,
 			}
 			// NOTE:这里统一根据Redis中的新老值是否存在差异决定是否需要Publish
 			logger.Infof("PushDataLabelTableIds: push redis data_label_to_result_table, key->[%s], data_label->[%s], result_table->[%s], channel_name->[%s]", key, dl, rtsStr, cfg.DataLabelToResultTableChannel)
-			isSuccess, err := client.HSetWithCompare(key, dl, rtsStr, cfg.DataLabelToResultTableChannel)
+			isSuccess, err := client.HSetWithCompareAndPublish(key, dl, rtsStr, cfg.DataLabelToResultTableChannel)
 			if err != nil {
 				logger.Errorf("PushDataLabelTableIds: push redis data_label_to_result_table error, dl->[%s], rts->[%s], error->[%s]", dl, rts, err)
 				return err
@@ -511,7 +511,7 @@ func (s *SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool, us
 		// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Publish操作
 		// NOTE:这里统一根据Redis中的新老值是否存在差异决定是否需要Publish
 		logger.Infof("PushTableIdDetail:push and publish redis result_table_detail, table_id: %s", tableId)
-		isSuccess, err := client.HSetWithCompare(rtDetailKey, tableId, detailStr, cfg.ResultTableDetailChannel)
+		isSuccess, err := client.HSetWithCompareAndPublish(rtDetailKey, tableId, detailStr, cfg.ResultTableDetailChannel)
 
 		if err != nil {
 			logger.Errorf("PushTableIdDetail:push and publish redis result_table_detail failed, table_id: %s, err: %s", tableId, err.Error())
@@ -580,7 +580,7 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 			}
 			// 推送数据
 			// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Publish操作
-			isSuccess, err := client.HSetWithCompare(cfg.ResultTableDetailKey, _tableId, detailStr, cfg.ResultTableDetailChannel)
+			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, _tableId, detailStr, cfg.ResultTableDetailChannel)
 			if err != nil {
 				logger.Errorf("PushEsTableIdDetail:push and publish es table id detail error, table_id->[%s], error->[%s]", tableId, err)
 				return
@@ -1115,7 +1115,7 @@ func (s *SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *
 		logger.Infof("pushBkccSpaceTableIds:push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v]", key, redisKey, valuesStr)
 
 		// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Set，路由空间比较特殊，需要在外层Publish，故此处channelName传空
-		isSuccess, err := client.HSetWithCompare(key, redisKey, valuesStr, "")
+		isSuccess, err := client.HSetWithCompareAndPublish(key, redisKey, valuesStr, "")
 		if err != nil {
 			logger.Errorf("pushBkccSpaceTableIds:failed to push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v]", key, redisKey, valuesStr)
 			return false, errors.Wrapf(err, "pushBkccSpaceTableIds:push bkcc space [%s] value [%v] failed", redisKey, valuesStr)
@@ -1198,7 +1198,7 @@ func (s *SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) (bool, er
 			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
 		}
 		// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Set，路由空间比较特殊，需要在外层Publish，故此处channelName传空
-		isSuccess, err := client.HSetWithCompare(key, redisKey, valuesStr, "")
+		isSuccess, err := client.HSetWithCompareAndPublish(key, redisKey, valuesStr, "")
 		if err != nil {
 			return false, errors.Wrapf(err, "push bkci space [%s] value [%v] failed", redisKey, valuesStr)
 		}
@@ -1258,7 +1258,7 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableId
 			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
 		}
 		// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Set，路由空间比较特殊，需要在外层Publish，故此处channelName传空
-		isSuccess, err := client.HSetWithCompare(key, redisKey, valuesStr, "")
+		isSuccess, err := client.HSetWithCompareAndPublish(key, redisKey, valuesStr, "")
 		if err != nil {
 			logger.Errorf("pushBksaasSpaceTableIds: push bksaas space [%s] value [%v] failed", redisKey, valuesStr)
 			return false, errors.Wrapf(err, "push bksaas space [%s] value [%v] failed", redisKey, valuesStr)

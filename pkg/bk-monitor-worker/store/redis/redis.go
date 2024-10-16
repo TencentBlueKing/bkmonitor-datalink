@@ -169,7 +169,7 @@ func (r *Instance) Close() error {
 }
 
 // HSetWithCompareAndPublish 与redis中数据不同才进行更新和推送操作
-func (r *Instance) HSetWithCompare(key, field, value, channelName string) (bool, error) {
+func (r *Instance) HSetWithCompareAndPublish(key, field, value, channelName string) (bool, error) {
 	//var isNeedUpdate bool
 	logger.Infof("HSetWithCompareAndPublish: try to operate [redis_diff] HashSet key [%s] field [%s],value [%s] channelName [%s]", key, field, value, channelName)
 	oldValue := r.HGet(key, field)

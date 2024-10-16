@@ -122,7 +122,7 @@ func PushToRedis(ctx context.Context, key, field, value string) {
 	redisKey := fmt.Sprintf("%s%s:%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath, key)
 	msgSuffix := fmt.Sprintf("key: %s, field: %s, value: %s", redisKey, field, value)
 
-	isSuccess, err := client.HSetWithCompare(redisKey, field, value, fmt.Sprintf("%s%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath))
+	isSuccess, err := client.HSetWithCompareAndPublish(redisKey, field, value, fmt.Sprintf("%s%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath))
 	logger.Infof("PushToRedis: push redis, key->[%s], field->[%s],isSuccess:->[%v]", key, field, isSuccess)
 	if err != nil {
 		logger.Errorf("PushToRedis: push redis failed, %s, err: %v", msgSuffix, err)

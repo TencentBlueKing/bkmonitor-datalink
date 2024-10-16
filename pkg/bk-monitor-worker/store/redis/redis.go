@@ -174,6 +174,7 @@ func (r *Instance) HSetWithCompareAndPublish(key, field, value, channelName, cha
 	logger.Infof("HSetWithCompareAndPublish: try to operate [redis_diff] HashSet key [%s] field [%s],value [%s] channelName [%s],channelKey [%s]", key, field, value, channelName, channelKey)
 	oldValue := r.HGet(key, field)
 	if oldValue == value {
+		logger.Infof("HSetWithCompareAndPublish: [redis_diff] HashSet key [%s] field [%s] not need update, new [%s]  old [%s]", key, field, value, oldValue)
 		return false, nil
 	}
 	if equal, _ := jsonx.CompareJson(oldValue, value); equal {
@@ -187,13 +188,7 @@ func (r *Instance) HSetWithCompareAndPublish(key, field, value, channelName, cha
 		return false, err
 	}
 
-	logger.Infof("HSetWithCompareAndPublish: [redis_diff] HashSet key [%s] field [%s] channelName [%s] now try to publish", key, field, channelName)
-
-	if channelName == "" {
-		// 当channelName为空时，说明需要在外层进行Publish操作
-		logger.Infof("HSetWithCompareAndPublish: [redis_diff] HashSet key [%s] field [%s] channelName is empty, need to publish outside", key, field)
-		return true, nil
-	}
+	logger.Infof("HSetWithCompareAndPublish: [redis_diff] HashSet key [%s] field [%s] channelName [%s] channelKey [%s] now try to publish", key, field, channelName, channelKey)
 
 	// 如果走到这里，说明当前value与Redis中的数据存在不同，需要进行推送操作
 	if err := r.Publish(channelName, channelKey); err != nil {
@@ -201,7 +196,7 @@ func (r *Instance) HSetWithCompareAndPublish(key, field, value, channelName, cha
 		return false, err
 	}
 
-	logger.Infof("[redis_diff] HashSet key [%s] field [%s] channelName [%s] update and publish success", key, field, channelName)
+	logger.Infof("[redis_diff] HashSet key [%s] field [%s] channelName [%s] channelKey [%s] update and publish success", key, field, channelName, channelKey)
 	return true, nil
 }
 

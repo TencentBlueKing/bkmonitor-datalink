@@ -399,7 +399,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 		if len(childConfigs) > 0 {
 			childConfigsBytes, _ = json.MarshalIndent(childConfigs, "", "  ")
 		} else {
-			childConfigsBytes = []byte("\n[!] NotMatch: 未匹配到任何采集配置\n")
+			childConfigsBytes = []byte("\n[!] NotMatch: 未匹配到任何采集配置")
 		}
 
 		writef(formatMonitorResources, monitorKeyword, monitorResourcesBytes, childConfigsBytes)

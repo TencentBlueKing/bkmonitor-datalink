@@ -291,9 +291,9 @@ func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
 	var query elastic.Query
 	switch fieldType {
 	case TimeFieldTypeInt:
-		query = elastic.NewRangeQuery(fieldName).Gte(f.start * unitRate).Lt(f.end * unitRate)
+		query = elastic.NewRangeQuery(fieldName).Gte(f.start * unitRate).Lte(f.end * unitRate)
 	case TimeFieldTypeTime:
-		query = elastic.NewRangeQuery(fieldName).Gte(f.start).Lt(f.end).Format(EpochSecond)
+		query = elastic.NewRangeQuery(fieldName).Gte(f.start).Lte(f.end).Format(EpochSecond)
 	default:
 		err = fmt.Errorf("time field type is error %s", fieldType)
 	}

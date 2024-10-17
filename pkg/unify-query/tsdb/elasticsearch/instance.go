@@ -263,6 +263,9 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	bodyJson, _ := json.Marshal(body)
 	bodyString := string(bodyJson)
 
+	span.Set("query-address", i.address)
+	span.Set("query-headers", i.headers)
+
 	span.Set("query-indexes", qo.indexes)
 	span.Set("query-body", bodyString)
 

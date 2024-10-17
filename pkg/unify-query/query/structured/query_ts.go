@@ -982,6 +982,8 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		}
 	}
 
+	encodeFunc := metadata.GetPromDataFormat(ctx).EncodeFunc()
+
 	for idx := 0; idx < funcNums; idx++ {
 		if idx == timeIdx {
 			result, err = q.TimeAggregation.ToProm(result)
@@ -994,6 +996,11 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 				methodIdx -= 1
 			}
 			method := q.AggregateMethodList[methodIdx]
+			if encodeFunc != nil {
+				for di, dv := range method.Dimensions {
+					method.Dimensions[di] = encodeFunc(dv)
+				}
+			}
 
 			if result, err = method.ToProm(result); err != nil {
 				log.Errorf(ctx, "failed to translate function for->[%s]", err)

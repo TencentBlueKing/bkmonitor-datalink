@@ -62,7 +62,9 @@ func (a *aggFormat) put() {
 }
 
 func (a *aggFormat) addLabel(name, value string) {
-	name = a.promDataFormat(name)
+	if a.promDataFormat != nil {
+		name = a.promDataFormat(name)
+	}
 
 	newLb := make(map[string]string)
 	for k, v := range a.item.labels {

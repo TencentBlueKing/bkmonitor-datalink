@@ -48,7 +48,10 @@ func (q *Query) MetricLabels(ctx context.Context) *prompb.Label {
 		return nil
 	}
 
-	var metrics []string
+	var (
+		metrics    []string
+		encodeFunc = GetPromDataFormat(ctx).EncodeFunc()
+	)
 	if q.DataSource != "" {
 		metrics = append(metrics, q.DataSource)
 	}
@@ -56,7 +59,11 @@ func (q *Query) MetricLabels(ctx context.Context) *prompb.Label {
 		metrics = append(metrics, n)
 	}
 	if q.Field != "" {
-		metrics = append(metrics, q.Field)
+		field := q.Field
+		if encodeFunc != nil {
+			field = encodeFunc(field)
+		}
+		metrics = append(metrics, field)
 	}
 	return &prompb.Label{
 		Name:  labels.MetricName,

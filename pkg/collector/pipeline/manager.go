@@ -384,6 +384,12 @@ func (mgr *Manager) Reload(conf *confengine.Config) error {
 		return errors.Wrap(err, "pipeline Manager reload error")
 	}
 
+	// 清理 Processor
+	for name, p := range newManager.processors {
+		logger.Infof("manager clean %s processor", name)
+		p.Clean()
+	}
+
 	// TODO(mando): 这里仅使用 newManager 的配置
 	// 实际上应该从更上层仅返回配置 这样可以进一步节省初始化开销（待优化）
 	for k, p := range newManager.processors {

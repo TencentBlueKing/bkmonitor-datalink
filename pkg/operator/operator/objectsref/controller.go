@@ -21,8 +21,9 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	batchv1beta1 "k8s.io/api/batch/v1beta1"
 	corev1 "k8s.io/api/core/v1"
+	extensionsv1beta1 "k8s.io/api/extensions/v1beta1"
 	networkingv1 "k8s.io/api/networking/v1"
-	networkingv1beta "k8s.io/api/networking/v1beta1"
+	networkingv1beta1 "k8s.io/api/networking/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -299,6 +300,10 @@ func (oc *ObjectsController) NodeNames() []string {
 	return oc.nodeObjs.Names()
 }
 
+func (oc *ObjectsController) NodeIPs() map[string]struct{} {
+	return oc.nodeObjs.IPs()
+}
+
 func (oc *ObjectsController) NodeCount() int {
 	return oc.nodeObjs.Count()
 }
@@ -493,19 +498,25 @@ func newEndpointsObjects(ctx context.Context, sharedInformer informers.SharedInf
 }
 
 func newIngressObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory, resources map[GVRK]struct{}) (*IngressMap, error) {
-	gvrk := GVRK{
+	if _, ok := resources[GVRK{
 		Group:    "networking.k8s.io",
 		Version:  "v1",
 		Resource: "ingresses",
 		Kind:     "Ingress",
-	}
-
-	_, ok := resources[gvrk]
-	if ok {
+	}]; ok {
 		return newIngressV1Objects(ctx, sharedInformer)
 	}
 
-	return newIngressV1BetaObjects(ctx, sharedInformer)
+	if _, ok := resources[GVRK{
+		Group:    "extensions",
+		Version:  "v1beta1",
+		Resource: "ingresses",
+		Kind:     "Ingress",
+	}]; ok {
+		return newIngressV1Beta1ExtensionsObjects(ctx, sharedInformer)
+	}
+
+	return newIngressV1Beta1Objects(ctx, sharedInformer)
 }
 
 func newIngressV1Objects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*IngressMap, error) {
@@ -579,15 +590,15 @@ func newIngressV1Objects(ctx context.Context, sharedInformer informers.SharedInf
 	return objs, nil
 }
 
-func newIngressV1BetaObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*IngressMap, error) {
+func newIngressV1Beta1Objects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*IngressMap, error) {
 	objs := NewIngressMap()
 
-	genericInformer, err := sharedInformer.ForResource(networkingv1beta.SchemeGroupVersion.WithResource(resourceIngresses))
+	genericInformer, err := sharedInformer.ForResource(networkingv1beta1.SchemeGroupVersion.WithResource(resourceIngresses))
 	if err != nil {
 		return nil, err
 	}
 
-	makeIngress := func(namespace, name string, rules []networkingv1beta.IngressRule) ingressEntity {
+	makeIngress := func(namespace, name string, rules []networkingv1beta1.IngressRule) ingressEntity {
 		set := make(map[string]struct{})
 		for _, rule := range rules {
 			if rule.HTTP == nil {
@@ -614,7 +625,7 @@ func newIngressV1BetaObjects(ctx context.Context, sharedInformer informers.Share
 	informer := genericInformer.Informer()
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			ingress, ok := obj.(*networkingv1beta.Ingress)
+			ingress, ok := obj.(*networkingv1beta1.Ingress)
 			if !ok {
 				logger.Errorf("excepted Ingress type, got %T", obj)
 				return
@@ -622,7 +633,7 @@ func newIngressV1BetaObjects(ctx context.Context, sharedInformer informers.Share
 			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
 		},
 		UpdateFunc: func(_, newObj interface{}) {
-			ingress, ok := newObj.(*networkingv1beta.Ingress)
+			ingress, ok := newObj.(*networkingv1beta1.Ingress)
 			if !ok {
 				logger.Errorf("excepted Ingress type, got %T", newObj)
 				return
@@ -630,7 +641,75 @@ func newIngressV1BetaObjects(ctx context.Context, sharedInformer informers.Share
 			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
 		},
 		DeleteFunc: func(obj interface{}) {
-			ingress, ok := obj.(*networkingv1beta.Ingress)
+			ingress, ok := obj.(*networkingv1beta1.Ingress)
+			if !ok {
+				logger.Errorf("excepted Ingress type, got %T", obj)
+				return
+			}
+			objs.Del(ingress.Namespace, ingress.Name)
+		},
+	})
+	go informer.Run(ctx.Done())
+
+	synced := k8sutils.WaitForNamedCacheSync(ctx, kindIngress, informer)
+	if !synced {
+		return nil, errors.New("failed to sync Ingress caches")
+	}
+	return objs, nil
+}
+
+func newIngressV1Beta1ExtensionsObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*IngressMap, error) {
+	objs := NewIngressMap()
+
+	genericInformer, err := sharedInformer.ForResource(extensionsv1beta1.SchemeGroupVersion.WithResource(resourceIngresses))
+	if err != nil {
+		return nil, err
+	}
+
+	makeIngress := func(namespace, name string, rules []extensionsv1beta1.IngressRule) ingressEntity {
+		set := make(map[string]struct{})
+		for _, rule := range rules {
+			if rule.HTTP == nil {
+				continue
+			}
+
+			for _, path := range rule.HTTP.Paths {
+				set[path.Backend.ServiceName] = struct{}{}
+			}
+		}
+
+		services := make([]string, 0, len(set))
+		for k := range set {
+			services = append(services, k)
+		}
+
+		return ingressEntity{
+			namespace: namespace,
+			name:      name,
+			services:  services,
+		}
+	}
+
+	informer := genericInformer.Informer()
+	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			ingress, ok := obj.(*extensionsv1beta1.Ingress)
+			if !ok {
+				logger.Errorf("excepted Ingress type, got %T", obj)
+				return
+			}
+			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
+		},
+		UpdateFunc: func(_, newObj interface{}) {
+			ingress, ok := newObj.(*extensionsv1beta1.Ingress)
+			if !ok {
+				logger.Errorf("excepted Ingress type, got %T", newObj)
+				return
+			}
+			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
+		},
+		DeleteFunc: func(obj interface{}) {
+			ingress, ok := obj.(*extensionsv1beta1.Ingress)
 			if !ok {
 				logger.Errorf("excepted Ingress type, got %T", obj)
 				return

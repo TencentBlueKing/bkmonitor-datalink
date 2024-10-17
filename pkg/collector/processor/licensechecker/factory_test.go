@@ -19,7 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/licensechecker/licensestore"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/licensechecker/licensecache"
 )
 
 func TestFactory(t *testing.T) {
@@ -140,14 +140,17 @@ func TestAgentNodeStatusProcess(t *testing.T) {
 		NumNodes:          1,
 		TolerableNumRatio: 1.0,
 	}
-	agentStatus, nodeStatus := checkAgentNodeStatus(config, "token_x1", "instance1")
+
+	cacheMgr := licensecache.NewManager()
+
+	agentStatus, nodeStatus := checkAgentNodeStatus(config, "token_x1", "instance1", cacheMgr)
 	assert.Equal(t, statusAgentNew, agentStatus)
 	assert.Equal(t, statusNodeAccess, nodeStatus)
 
-	cacher := licensestore.GetOrCreate("token_x1")
-	cacher.Set("instance1")
+	cache := cacheMgr.GetOrCreate("token_x1")
+	cache.Set("instance1")
 
-	agentStatus, nodeStatus = checkAgentNodeStatus(config, "token_x1", "instance2")
+	agentStatus, nodeStatus = checkAgentNodeStatus(config, "token_x1", "instance2", cacheMgr)
 	assert.Equal(t, statusAgentNew, agentStatus)
 	assert.Equal(t, statusNodeExcess, nodeStatus)
 }

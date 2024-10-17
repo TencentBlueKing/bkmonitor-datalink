@@ -7,34 +7,44 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package licensestore
+package licensecache
 
 import (
-	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestLocalCacher(t *testing.T) {
-	cacher := newLocalCacher()
+func TestCacheManager(t *testing.T) {
+	t.Run("base", func(t *testing.T) {
+		mgr := NewManager()
+		defer mgr.Clean()
+		assert.Nil(t, mgr.Get("key1"))
 
-	const n = 10
-	for i := 0; i < n; i++ {
-		cacher.Set(strconv.Itoa(i))
-	}
-	for i := 0; i < n; i++ {
-		assert.True(t, cacher.Exist(strconv.Itoa(i)))
-	}
-	assert.False(t, cacher.Exist("10"))
+		cache := mgr.GetOrCreate("key1")
+		assert.NotNil(t, cache)
 
-	expected := make(map[string]struct{})
-	for i := 0; i < n; i++ {
-		expected[strconv.Itoa(i)] = struct{}{}
-	}
-	for _, item := range cacher.Items() {
-		_, ok := expected[item]
-		assert.True(t, ok)
-	}
-	assert.Equal(t, 10, cacher.Count())
+		cache.Set("1")
+		assert.True(t, cache.Exist("1"))
+	})
+
+	t.Run("Gc", func(t *testing.T) {
+		mgr := &Manager{
+			caches:     map[string]*Cache{},
+			stop:       make(chan struct{}),
+			gcInterval: time.Second,
+		}
+		go mgr.gc()
+		defer mgr.Clean()
+
+		cache := mgr.GetOrCreate("key1")
+		cache.Set("1")
+		mgr.GetOrCreate("key2")
+
+		time.Sleep(time.Millisecond * 1200)
+		assert.NotNil(t, mgr.Get("key1"))
+		assert.NotNil(t, mgr.GetOrCreate("key1"))
+		assert.Nil(t, mgr.Get("key2")) // gc
+	})
 }

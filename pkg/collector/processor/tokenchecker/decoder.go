@@ -33,12 +33,10 @@ const (
 	decoderTypeProxy          = "proxy"
 	decoderTypeBeat           = "beat"
 	decoderTypeAes256WithMeta = "aes256WithMeta"
-
-	combinedDecoderSep = "|"
 )
 
 func NewTokenDecoder(c Config) TokenDecoder {
-	if strings.Contains(c.Type, combinedDecoderSep) {
+	if len(c.GetType()) > 1 {
 		// 如果存在分割的多种 token decoder 串联并按序解析
 		return newCombinedTokenDecoder(c)
 	}
@@ -81,8 +79,7 @@ type combinedTokenDecoder struct {
 
 func newCombinedTokenDecoder(c Config) combinedTokenDecoder {
 	var decoders []TokenDecoder
-	types := strings.Split(c.Type, combinedDecoderSep)
-	for _, typ := range types {
+	for _, typ := range c.GetType() {
 		newConfig := c
 		newConfig.Type = typ
 		decoders = append(decoders, newTokenDecoder(newConfig))

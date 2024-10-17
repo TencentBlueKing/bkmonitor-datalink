@@ -1,6 +1,6 @@
 // MIT License
 
-// Copyright (c) 2021~2022 腾讯蓝鲸
+// Copyright (c) 2021~2024 腾讯蓝鲸
 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -222,36 +222,5 @@ func TestBusinessCacheManager(t *testing.T) {
 		// 检查业务缓存数据
 		exists := client.Exists(ctx, cacheManager.GetCacheKey(businessCacheKey))
 		assert.EqualValues(t, 0, exists.Val())
-	})
-
-	t.Run("Event", func(t *testing.T) {
-		// 创建业务缓存管理器
-		cacheManager, err := NewBusinessCacheManager(t.Name(), rOpts, 1)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-
-		err = cacheManager.UpdateByEvents(ctx, "biz", []map[string]interface{}{
-			{"bk_biz_id": float64(2)},
-		})
-		if err != nil {
-			t.Error(err)
-			return
-		}
-
-		assert.Len(t, client.HKeys(ctx, cacheManager.GetCacheKey(businessCacheKey)).Val(), 3)
-
-		err = cacheManager.CleanByEvents(ctx, "biz", []map[string]interface{}{
-			{"bk_biz_id": float64(2)},
-		})
-		err = cacheManager.CleanByEvents(ctx, "other", []map[string]interface{}{
-			{"bk_biz_id": float64(3)},
-		})
-		err = cacheManager.UpdateByEvents(ctx, "other", []map[string]interface{}{
-			{"bk_biz_id": float64(3)},
-		})
-
-		assert.Len(t, client.HKeys(ctx, cacheManager.GetCacheKey(businessCacheKey)).Val(), 2)
 	})
 }

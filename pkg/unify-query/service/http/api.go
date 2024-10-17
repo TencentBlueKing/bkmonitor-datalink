@@ -13,15 +13,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/prometheus/prometheus/promql/parser"
 	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/interval/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
@@ -108,73 +109,69 @@ func HandlerSeries(c *gin.Context) {
 // @Router   /query/ts/label/{label_name}/values [get]
 func HandlerLabelValues(c *gin.Context) {
 	var (
-		key  = infos.TagValues
 		ctx  = c.Request.Context()
 		resp = &response{
 			c: c,
 		}
 
-		err  error
-		data interface{}
+		result = set.New[string]()
+		err    error
 	)
 
 	ctx, span := trace.NewSpan(ctx, "label-values-handler")
-	defer span.End(&err)
-
-	labelName := c.Param("label_name")
-
-	params := &infos.Params{
-		Keys:  []string{labelName},
-		Start: c.Query("start"),
-		End:   c.Query("end"),
-	}
-
-	matches := c.QueryArray("match[]")
-
-	span.Set("request-url", c.Request.URL.String())
-	span.Set("request-info-type", string(key))
-	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
-	span.Set("request-label-name", labelName)
-	span.Set("request-match[]", fmt.Sprintf("%+v", matches))
-
-	for _, m := range matches {
-		match, err := parser.ParseMetricSelector(m)
+	defer func() {
 		if err != nil {
-			log.Errorf(ctx, err.Error())
 			resp.failed(ctx, err)
 			return
 		}
-		metric, fields, err := structured.LabelMatcherToConditions(match)
 
-		if metric != "" {
-			route, err := structured.MakeRouteFromMetricName(metric)
-			if err != nil {
-				log.Errorf(ctx, err.Error())
-				resp.failed(ctx, err)
-				return
-			}
+		resp.success(ctx, result.ToArray())
+		span.End(&err)
+	}()
 
-			params.TableID = route.TableID()
-			params.Metric = route.MetricName()
-		}
+	labelName := c.Param("label_name")
+	start := c.Query("start")
+	end := c.Query("end")
+	matches := c.QueryArray("match[]")
 
-		params.Conditions.FieldList = append(params.Conditions.FieldList, fields...)
-	}
+	span.Set("request-start", start)
+	span.Set("request-end", end)
+	span.Set("request-label-name", labelName)
+	span.Set("request-matches", matches)
 
-	for i := 0; i < len(params.Conditions.FieldList)-1; i++ {
-		params.Conditions.ConditionList = append(params.Conditions.ConditionList, structured.ConditionAnd)
-	}
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", c.Request.Header)
 
-	span.Set("params", fmt.Sprintf("%+v", params))
-
-	data, err = queryInfo(ctx, key, params)
-	if err != nil {
-		log.Errorf(ctx, err.Error())
-		resp.failed(ctx, err)
+	if len(matches) != 1 {
+		err = fmt.Errorf("match[] 参数只支持 1 个, %+v", matches)
 		return
 	}
 
-	resp.success(ctx, data)
+	query, err := promQLToStruct(ctx, &structured.QueryPromQL{PromQL: matches[0]})
+	if err != nil {
+		return
+	}
+	instance, stmt, err := queryTsToInstanceAndStmt(ctx, query)
+	if err != nil {
+		return
+	}
+
+	matcher, err := parser.ParseMetricSelector(stmt)
+	if err != nil {
+		return
+	}
+
+	startTime, endTime, err := query.GetTime()
+	if err != nil {
+		return
+	}
+
+	res, err := instance.LabelValues(ctx, nil, labelName, startTime, endTime, matcher...)
+	if err != nil {
+		return
+	}
+
+	resp.success(ctx, res)
 }
 
 func handlerInfo(c *gin.Context, key infos.InfoType) {
@@ -194,9 +191,9 @@ func handlerInfo(c *gin.Context, key infos.InfoType) {
 
 	paramsStr, _ := json.Marshal(params)
 	span.Set("request-url", c.Request.URL.String())
-	span.Set("request-info-type", string(key))
-	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
-	span.Set("request-data", string(paramsStr))
+	span.Set("request-info-type", key)
+	span.Set("request-header", c.Request.Header)
+	span.Set("request-data", paramsStr)
 
 	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
 
@@ -219,7 +216,7 @@ func queryInfo(ctx context.Context, key infos.InfoType, params *infos.Params) (i
 	ctx, span := trace.NewSpan(ctx, "query-info")
 	defer span.End(&err)
 
-	span.Set("request-info-type", string(key))
+	span.Set("request-info-type", key)
 
 	q, err := newInfoQuerier(ctx, params)
 	if err != nil {
@@ -349,7 +346,7 @@ func newInfoQuerier(ctx context.Context, params *infos.Params) (storage.Querier,
 	defer span.End(&err)
 
 	paramsStr, _ := json.Marshal(params)
-	span.Set("query-body", string(paramsStr))
+	span.Set("query-body", paramsStr)
 
 	query := &structured.Query{
 		DataSource:    params.DataSource,

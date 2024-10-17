@@ -91,7 +91,7 @@ func (c *BasicClient) Query(
 
 	// chunk 模式下只支持json
 	req.Header.Set("accept", usingContentType)
-	span.Set("http-request", fmt.Sprintf("%v", req.Header))
+	span.Set("http-request", req.Header)
 
 	start := time.Now()
 	resp, err := client.Do(req)
@@ -116,7 +116,7 @@ func (c *BasicClient) Query(
 
 	var result *decoder.Response
 	result, err = c.decodeWithContentType(ctx, respContentType, resp)
-	span.Set("query-cost", time.Since(start).String())
+	span.Set("query-cost", time.Since(start))
 
 	return result, err
 }

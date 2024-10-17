@@ -394,7 +394,7 @@ func (i *Instance) vmQuery(
 
 	queryCost := time.Since(startAnaylize)
 
-	span.Set("query-cost", queryCost.String())
+	span.Set("query-cost", queryCost)
 	span.Set("response-size", size)
 
 	metric.TsDBRequestSecond(
@@ -421,9 +421,9 @@ func (i *Instance) QueryRange(
 
 	vmExpand = metadata.GetExpand(ctx)
 
-	span.Set("query-start", start.String())
-	span.Set("query-end", end.String())
-	span.Set("query-step", step.String())
+	span.Set("query-start", start)
+	span.Set("query-end", end)
+	span.Set("query-step", step)
 	span.Set("query-promql", promqlStr)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
@@ -491,7 +491,7 @@ func (i *Instance) Query(
 	vmExpand = metadata.GetExpand(ctx)
 
 	span.Set("query-promql", promqlStr)
-	span.Set("query-end", end.String())
+	span.Set("query-end", end)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		return promql.Vector{}, nil
@@ -538,7 +538,7 @@ func (i *Instance) Query(
 	return i.vectorFormat(ctx, vmResp, span)
 }
 
-func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) labelValues(ctx context.Context, name string, matchers ...*labels.Matcher) ([]string, error) {
 	var (
 		vmExpand *metadata.VmExpand
 
@@ -546,7 +546,7 @@ func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.
 		err  error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-metric")
+	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-label-values")
 	defer span.End(&err)
 
 	vmExpand = metadata.GetExpand(ctx)
@@ -618,9 +618,9 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.maxConditionNum)
 	}
 
-	span.Set("query-matchers", fmt.Sprintf("%+v", matchers))
-	span.Set("query-start", start.String())
-	span.Set("query-end", end.String())
+	span.Set("query-matchers", matchers)
+	span.Set("query-start", start)
+	span.Set("query-end", end)
 
 	paramsQuery := &ParamsSeries{
 		InfluxCompatible: i.influxCompatible,
@@ -668,11 +668,11 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		err  error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query")
+	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-label-values")
 	defer span.End(&err)
 
 	if name == labels.MetricName {
-		return i.metric(ctx, name, matchers...)
+		return i.labelValues(ctx, name, matchers...)
 	}
 
 	vmExpand = metadata.GetExpand(ctx)
@@ -689,9 +689,9 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 	ves, _ := json.Marshal(vmExpand)
 	span.Set("vm-expand", string(ves))
 	span.Set("query-name", name)
-	span.Set("query-matchers", fmt.Sprintf("%+v", matchers))
-	span.Set("query-start", start.String())
-	span.Set("query-end", end.String())
+	span.Set("query-matchers", matchers)
+	span.Set("query-start", start)
+	span.Set("query-end", end)
 
 	referenceName := ""
 	for _, m := range matchers {
@@ -709,6 +709,8 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 	if step < 60 {
 		step = 60
 	}
+
+	span.Set("query-step", step)
 
 	paramsQueryRange := &ParamsQueryRange{
 		InfluxCompatible: i.influxCompatible,
@@ -740,6 +742,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		Expr:     vector,
 		Grouping: []string{name},
 	}
+
 	paramsQueryRange.APIParams.Query = expr.String()
 
 	sql, err := json.Marshal(paramsQueryRange)

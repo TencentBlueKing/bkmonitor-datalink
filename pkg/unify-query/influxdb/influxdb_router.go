@@ -451,7 +451,7 @@ func GetTagRouter(ctx context.Context, tagsKey []string, condition string) (stri
 	}
 
 	span.Set("condition", condition)
-	span.Set("condition-tags", fmt.Sprintf("%+v", tags))
+	span.Set("condition-tags", tags)
 
 	// 判断是否有 tagKey
 	var buf bytes.Buffer

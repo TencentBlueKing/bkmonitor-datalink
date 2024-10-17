@@ -2547,3 +2547,159 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckDruidCheck(t *testing.T) {
+	testCases := map[string]struct {
+		promql   *structured.QueryPromQL
+		expected bool
+	}{
+		"test_1": {
+			promql: &structured.QueryPromQL{
+				PromQL: `sum by (bk_target_ip, bk_inst_id, bk_obj_id) (bkmonitor:system:cpu_summary:usage{bk_inst_id="123",bk_obj_id!="",bk_target_ip="127.0.0.1"})`,
+			},
+			expected: true,
+		},
+	}
+
+	spaceUID := "check_druid"
+
+	ctx := metadata.InitHashID(context.Background())
+	mock.SetRedisClient(ctx)
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		spaceUID: ir.Space{
+			"system.cpu_summary": &ir.SpaceResultTable{
+				TableId: "system.cpu_summary",
+			},
+		},
+	}, ir.ResultTableDetailInfo{
+		"system.cpu_summary": &ir.ResultTableDetail{
+			DB:          "system",
+			TableId:     "system.cpu_summary",
+			Measurement: "cpu_summary",
+			VmRt:        "100147_ieod_system_cpu_summary_raw",
+			Fields:      []string{"usage"},
+		},
+	}, nil, nil)
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			metadata.SetUser(ctx, "", spaceUID, "")
+			queryTs, err := promQLToStruct(ctx, c.promql)
+			if err != nil {
+				log.Fatalf(ctx, err.Error())
+			}
+
+			ref, err := queryTs.ToQueryReference(ctx)
+			if err != nil {
+				log.Fatalf(ctx, err.Error())
+			}
+
+			actual := ref.CheckDruidCheck(ctx)
+			assert.Equal(t, c.expected, actual)
+		})
+	}
+}
+
+func TestQueryTsToInstanceAndStmt(t *testing.T) {
+	mock.Init()
+
+	spaceUid := "space"
+	ctx := metadata.InitHashID(context.Background())
+	mock.SetSpaceTsDbMockData(ctx,
+		ir.SpaceInfo{
+			spaceUid: ir.Space{
+				"result_table.vm": &ir.SpaceResultTable{
+					TableId: "result_table.vm",
+				},
+				"result_table.influxdb": &ir.SpaceResultTable{
+					TableId: "result_table.influxdb",
+				},
+			},
+		},
+		ir.ResultTableDetailInfo{
+			"result_table.vm": &ir.ResultTableDetail{
+				VmRt:   "vm_rt",
+				Fields: []string{"field"},
+			},
+			"result_table.influxdb": &ir.ResultTableDetail{
+				DB:          "result_table",
+				Measurement: "influxdb",
+				Fields:      []string{"field"},
+			},
+		},
+		nil, nil,
+	)
+
+	testCases := map[string]struct {
+		query        *structured.QueryTs
+		promql       string
+		stmt         string
+		instanceType string
+	}{
+		"test_matcher_with_vm": {
+			promql:       `datasource:result_table:vm:field{}`,
+			stmt:         `a`,
+			instanceType: consul.VictoriaMetricsStorageType,
+		},
+		"test_matcher_with_influxdb": {
+			promql:       `datasource:result_table:influxdb:field{}`,
+			stmt:         `a`,
+			instanceType: consul.PrometheusStorageType,
+		},
+		"test_group_with_vm": {
+			promql:       `sum(count_over_time(datasource:result_table:vm:field{}[1m]))`,
+			stmt:         `sum(count_over_time(a[1m] offset -59s999ms))`,
+			instanceType: consul.VictoriaMetricsStorageType,
+		},
+		"test_group_with_influxdb": {
+			promql:       `sum(count_over_time(datasource:result_table:influxdb:field{}[1m]))`,
+			stmt:         `sum(last_over_time(a[1m] offset -59s999ms))`,
+			instanceType: consul.PrometheusStorageType,
+		},
+	}
+
+	err := featureFlag.MockFeatureFlag(ctx, `{
+	  	"must-vm-query": {
+	  		"variations": {
+	  			"true": true,
+	  			"false": false
+	  		},
+	  		"targeting": [{
+	  			"query": "tableID in [\"result_table.vm\"]",
+	  			"percentage": {
+	  				"true": 100,
+	  				"false":0 
+	  			}
+	  		}],
+	  		"defaultRule": {
+	  			"variation": "false"
+	  		}
+	  	}
+	  }`)
+	if err != nil {
+		log.Fatalf(ctx, err.Error())
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			if c.promql != "" {
+				query, err := promQLToStruct(ctx, &structured.QueryPromQL{PromQL: c.promql})
+				if err != nil {
+					log.Fatalf(ctx, err.Error())
+				}
+				c.query = query
+			}
+			c.query.SpaceUid = spaceUid
+
+			instance, stmt, err := queryTsToInstanceAndStmt(metadata.InitHashID(ctx), c.query)
+			if err != nil {
+				log.Fatalf(ctx, err.Error())
+			}
+
+			assert.Equal(t, c.stmt, stmt)
+			if instance != nil {
+				assert.Equal(t, c.instanceType, instance.GetInstanceType())
+			}
+		})
+	}
+}

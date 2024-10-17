@@ -21,15 +21,8 @@ import (
 )
 
 // registerProfile
-func registerProfile(g *gin.Engine) {
-
-	if !viper.GetBool(EnableProfileConfigPath) {
-		log.Infof(context.TODO(), "profile is not enable, nothing will do.")
-		return
-	}
-
+func registerProfile(ctx context.Context, g *gin.RouterGroup) {
 	path := viper.GetString(ProfilePathConfigPath)
-
 	g.GET(path, gin.WrapF(pprof.Index))
 	g.GET(path+"cmdline", gin.WrapF(pprof.Cmdline))
 	g.GET(path+"profile", gin.WrapF(pprof.Profile))
@@ -43,5 +36,5 @@ func registerProfile(g *gin.Engine) {
 		pprof.Handler("heap").ServeHTTP(writer, request)
 	}))
 
-	log.Infof(context.TODO(), "profile start server success.")
+	log.Infof(ctx, "profile start server success.")
 }

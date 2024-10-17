@@ -304,6 +304,10 @@ func HandlePrint(c *gin.Context) {
 	c.String(200, res)
 }
 
+func HandlerHealth(c *gin.Context) {
+	c.Status(200)
+}
+
 // HandleFeatureFlag  打印特性开关配置信息，refresh 不为空则强制刷新
 func HandleFeatureFlag(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -522,7 +526,7 @@ func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 		return
 	}
 
-	span.Set("info-request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("info-request-header", c.Request.Header)
 	span.Set("info-request-data", string(queryStmt))
 
 	// 如果header中有bkbizid，则以header中的值为最优先

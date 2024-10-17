@@ -66,7 +66,7 @@ func HandleLabelValuesRequest(c *gin.Context) {
 
 	span.Set("request-space-uid", spaceUid)
 	span.Set("request-biz-ids", bizIDs)
-	span.Set("info-request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("info-request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
 	log.Debugf(ctx, "recevice query info: %s, X-Bk-Scope-Biz-Id:%v ", paramsStr, bizIDs)

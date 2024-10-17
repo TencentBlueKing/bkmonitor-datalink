@@ -28,12 +28,14 @@ import (
 )
 
 var (
-	once sync.Once
+	mockInitOnce  sync.Once
+	mockRedisOnce sync.Once
+
 	Path string
 )
 
 func Init() {
-	once.Do(func() {
+	mockInitOnce.Do(func() {
 		if Path == "" {
 			Path = `../../dist/local/unify-query.yaml`
 		}
@@ -51,6 +53,10 @@ func SetOfflineDataArchiveMetadata(m offlineDataArchiveMetadata.Metadata) {
 
 func SetSpaceTsDbMockData(ctx context.Context, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo, fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
 	Init()
+	mockRedisOnce.Do(func() {
+		SetRedisClient(ctx)
+	})
+
 	sr, err := influxdb.SetSpaceTsDbRouter(ctx, "mock", "mock", "", 100)
 	if err != nil {
 		panic(err)
@@ -82,7 +88,6 @@ func SetSpaceTsDbMockData(ctx context.Context, spaceInfo ir.SpaceInfo, rtInfo ir
 }
 
 func SetRedisClient(ctx context.Context) {
-	Init()
 	host := viper.GetString("redis.host")
 	port := viper.GetInt("redis.port")
 	pwd := viper.GetString("redis.password")

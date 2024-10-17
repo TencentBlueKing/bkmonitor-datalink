@@ -71,40 +71,21 @@ func (s *Service) Reload(ctx context.Context) {
 	gin.SetMode(gin.ReleaseMode)
 	s.g = gin.New()
 
+	public := s.g.Group("/")
+	// 注册默认路由
 	// 注册中间件，注意中间件必须要在其他服务之前注册，否则中间件不生效
-	s.g.Use(
+	public.Use(
 		gin.Recovery(),
 		otelgin.Middleware(trace.ServiceName),
 		middleware.Timer(&middleware.Params{
 			SlowQueryThreshold: SlowQueryThreshold,
 		}),
 	)
-	log.Debugf(ctx, "middleware register done.")
+	registerDefaultHandlers(ctx, public)
+	api.RegisterRelation(ctx, public)
 
-	// 注册各个依赖服务
-	registerPrometheusService(s.g)
-	// ts查询底层依赖flux实现，所以没有自己的服务
-	registerTSQueryService(s.g)
-	registerTSQueryExemplarService(s.g)
-	registerTSQueryPromQLService(s.g)
-	registerTSQueryReferenceQueryService(s.g)
-	registerTSQueryRawQueryService(s.g)
-	registerTSQueryStructToPromQLService(s.g)
-	registerTSQueryPromQLToStructService(s.g)
-	registerHandlerQueryTsClusterMetrics(s.g)
-	registerLabelValuesService(s.g)
-	registerTSQueryInfoService(s.g)
-	registerESService(s.g)
-	registerProfile(s.g)
-	registerPrint(s.g)
-	registerInfluxDBPrint(s.g)
-	registerSpacePrint(s.g)
-	registerSpaceKeyPrint(s.g)
-	registerTsDBPrint(s.g)
-	registerFeatureFlag(s.g)
-	registerCheckService(s.g)
-
-	api.RegisterRelation(ctx, s.g)
+	private := s.g.Group("/")
+	registerOtherHandlers(ctx, private)
 
 	// 构造新的http服务
 	s.server = &gohttp.Server{

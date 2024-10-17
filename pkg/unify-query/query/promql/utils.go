@@ -316,7 +316,7 @@ func makeInfluxdbQuery(
 		return nil, err
 	}
 
-	span.Set("query-info-is-count", fmt.Sprintf("%v", queries.IsCount))
+	span.Set("query-info-is-count", queries.IsCount)
 
 	for i, query := range queries.QueryList {
 		var (
@@ -337,10 +337,10 @@ func makeInfluxdbQuery(
 		span.Set("query-info-filed", query.Field)
 
 		span.Set("prom-hints-func", hints.Func)
-		span.Set("prom-hints-start", fmt.Sprintf("%d", hints.Start))
-		span.Set("prom-hints-end", fmt.Sprintf("%d", hints.End))
-		span.Set("prom-hints-step", fmt.Sprintf("%d", hints.Step))
-		span.Set("prom-hints-range", fmt.Sprintf("%d", hints.Range))
+		span.Set("prom-hints-start", hints.Start)
+		span.Set("prom-hints-end", hints.End)
+		span.Set("prom-hints-step", hints.Step)
+		span.Set("prom-hints-range", hints.Range)
 		span.Set("prom-hints-grouping", hints.Grouping)
 
 		startStr := time.Unix(hints.Start/1e3, 0).String()

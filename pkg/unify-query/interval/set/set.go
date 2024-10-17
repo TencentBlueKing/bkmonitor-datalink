@@ -7,21 +7,41 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package api
+package set
 
-import (
-	"context"
+type Item interface {
+	comparable
+}
 
-	"github.com/gin-gonic/gin"
+type Set[T comparable] map[T]struct{}
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-)
+func New[T comparable](items ...T) Set[T] {
+	set := make(Set[T])
+	set.Add(items...)
+	return set
+}
 
-func RegisterRelation(ctx context.Context, g *gin.RouterGroup) {
+func (s Set[T]) Remove(items ...T) {
+	for _, item := range items {
+		delete(s, item)
+	}
+}
 
-	g.POST(RelationMultiResource, HandlerAPIRelationMultiResource)
-	g.POST(RelationMultiResourceRange, HandlerAPIRelationMultiResourceRange)
+func (s Set[T]) Add(items ...T) {
+	for _, item := range items {
+		s[item] = struct{}{}
+	}
+}
 
-	log.Infof(ctx, "RegisterRelation => [POST] %s", RelationMultiResource)
-	log.Infof(ctx, "RegisterRelation => [POST] %s", RelationMultiResourceRange)
+func (s Set[T]) Existed(item T) bool {
+	_, ok := s[item]
+	return ok
+}
+
+func (s Set[T]) ToArray() []T {
+	array := make([]T, 0, len(s))
+	for item := range s {
+		array = append(array, item)
+	}
+	return array
 }

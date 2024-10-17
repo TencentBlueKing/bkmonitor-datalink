@@ -18,9 +18,9 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 )
 
-func SetQueryReference(ctx context.Context, reference QueryReference) error {
+func SetQueryReference(ctx context.Context, reference QueryReference) {
 	md.set(ctx, QueryReferenceKey, reference)
-	return nil
+	return
 }
 
 func GetQueryReference(ctx context.Context) QueryReference {

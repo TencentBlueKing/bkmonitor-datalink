@@ -221,10 +221,10 @@ func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClus
 		}
 	}
 	span.Set("query-field", queryCM.MetricName)
-	span.Set("query-aggr-methods", fmt.Sprintf("%+v", qry.AggregateMethodList))
-	span.Set("query-conditions", fmt.Sprintf("%+v", queryCM.Conditions))
+	span.Set("query-aggr-methods", qry.AggregateMethodList)
+	span.Set("query-conditions", queryCM.Conditions)
 	span.Set("query-time-func", queryCM.TimeAggregation.Function)
-	span.Set("query-time-window", strconv.FormatInt(int64(queryCM.TimeAggregation.WindowDuration), 10))
+	span.Set("query-time-window", queryCM.TimeAggregation.WindowDuration)
 	return queryCM, nil
 }
 
@@ -508,7 +508,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			span.Set("query-storage-id", qry.StorageID)
 			span.Set("query-measurement", qry.Measurement)
 			span.Set("query-field", qry.Field)
-			span.Set("query-aggr-method-list", fmt.Sprintf("%+v", qry.Aggregates))
+			span.Set("query-aggr-method-list", qry.Aggregates)
 			span.Set("query-bk-sql-condition", qry.BkSqlCondition)
 
 			queryMetric.QueryList = []*metadata.Query{qry}
@@ -547,7 +547,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	span.Set("query-space-uid", spaceUid)
 	span.Set("query-table-id", string(tableID))
 	span.Set("query-metric", metricName)
-	span.Set("query-is-regexp", fmt.Sprintf("%v", q.IsRegexp))
+	span.Set("query-is-regexp", q.IsRegexp)
 	span.Set("tsdb-num", len(tsDBs))
 
 	for _, tsDB := range tsDBs {
@@ -608,17 +608,16 @@ func (q *Query) BuildMetadataQuery(
 	measurements = []string{measurement}
 
 	span.Set("tsdb-table-id", tsDB.TableID)
-	span.Set("tsdb-field-list", tsDB.Field)
 	span.Set("tsdb-measurement-type", tsDB.MeasurementType)
-	span.Set("tsdb-filters", fmt.Sprintf("%+v", tsDB.Filters))
+	span.Set("tsdb-filters", tsDB.Filters)
 	span.Set("tsdb-data-label", tsDB.DataLabel)
 	span.Set("tsdb-storage-id", storageID)
 	span.Set("tsdb-storage-name", storageName)
 	span.Set("tsdb-cluster-name", clusterName)
-	span.Set("tsdb-tag-keys", fmt.Sprintf("%+v", tagKeys))
+	span.Set("tsdb-tag-keys", tagKeys)
 	span.Set("tsdb-vm-rt", vmRt)
 	span.Set("tsdb-db", db)
-	span.Set("tsdb-measurements", fmt.Sprintf("%+v", measurements))
+	span.Set("tsdb-measurements", measurements)
 	span.Set("tsdb-time-field", tsDB.TimeField)
 	span.Set("tsdb-need-add-time", tsDB.NeedAddTime)
 	span.Set("tsdb-source-type", tsDB.SourceType)
@@ -678,7 +677,7 @@ func (q *Query) BuildMetadataQuery(
 		field, fields = metricName, expandMetricNames
 	}
 
-	span.Set("tsdb-fields", fmt.Sprintf("%+v", fields))
+	span.Set("tsdb-fields", fields)
 
 	filterConditions := make([][]ConditionField, 0)
 	satisfy, tKeys := judgeFilter(tsDB.Filters)
@@ -844,12 +843,12 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("query-measurements", query.Measurements)
 	span.Set("query-field", query.Field)
 	span.Set("query-fields", query.Fields)
-	span.Set("query-offset-info", fmt.Sprintf("%+v", query.OffsetInfo))
+	span.Set("query-offset-info", query.OffsetInfo)
 	span.Set("query-timezone", query.Timezone)
 	span.Set("query-condition", query.Condition)
 	span.Set("query-vm-condition", query.VmCondition)
 	span.Set("query-vm-condition-num", query.VmConditionNum)
-	span.Set("query-is-regexp", fmt.Sprintf("%v", q.IsRegexp))
+	span.Set("query-is-regexp", q.IsRegexp)
 
 	span.Set("query-storage-type", query.StorageType)
 	span.Set("query-storage-name", query.StorageName)

@@ -382,7 +382,13 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 				monitorResources = append(monitorResources, mr)
 			}
 		}
-		monitorResourcesBytes, _ := json.MarshalIndent(monitorResources, "", "  ")
+
+		var monitorResourcesBytes []byte
+		if len(monitorResources) > 0 {
+			monitorResourcesBytes, _ = json.MarshalIndent(monitorResources, "", "  ")
+		} else {
+			monitorResourcesBytes = []byte("\n[!] NotMatch: 未匹配到任何 monitor 资源\n")
+		}
 
 		var childConfigs []ConfigFileRecord
 		for _, cf := range c.recorder.getActiveConfigFiles() {
@@ -390,7 +396,14 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 				childConfigs = append(childConfigs, cf)
 			}
 		}
-		childConfigsBytes, _ := json.MarshalIndent(childConfigs, "", "  ")
+
+		var childConfigsBytes []byte
+		if len(childConfigs) > 0 {
+			childConfigsBytes, _ = json.MarshalIndent(childConfigs, "", "  ")
+		} else {
+			childConfigsBytes = []byte("\n[!] NotMatch: 未匹配到任何采集配置")
+		}
+
 		writef(formatMonitorResources, monitorKeyword, monitorResourcesBytes, childConfigsBytes)
 	} else {
 		writef(formatMonitorResourceNoKeyword)
@@ -462,7 +475,7 @@ func (c *Operator) WorkloadRoute(w http.ResponseWriter, _ *http.Request) {
 	writeResponse(w, c.objectsController.WorkloadsRelabelConfigs())
 }
 
-func (c *Operator) PodsRoute(w http.ResponseWriter, _ *http.Request) {
+func (c *Operator) PodsRoute(w http.ResponseWriter, r *http.Request) {
 	pods := c.objectsController.AllPods()
 	info, err := c.dw.GetClusterInfo()
 	if err != nil {
@@ -478,14 +491,20 @@ func (c *Operator) PodsRoute(w http.ResponseWriter, _ *http.Request) {
 		IP        string `json:"k8s.pod.ip"`
 	}
 
+	nodes := c.objectsController.NodeIPs()
+	all := r.URL.Query().Get("all")
+
 	var ret []podsResponse
 	for _, pod := range pods {
-		ret = append(ret, podsResponse{
-			ClusterID: info.BcsClusterID,
-			Name:      pod.Name,
-			Namespace: pod.Namespace,
-			IP:        pod.IP,
-		})
+		_, ok := nodes[pod.IP]
+		if !ok || all == "true" {
+			ret = append(ret, podsResponse{
+				ClusterID: info.BcsClusterID,
+				Name:      pod.Name,
+				Namespace: pod.Namespace,
+				IP:        pod.IP,
+			})
+		}
 	}
 	writeResponse(w, ret)
 }
@@ -590,7 +609,7 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /cluster_info
 * GET /workload
 * GET /workload/node/{node}
-* GET /pods
+* GET /pods?all=true|false
 * GET /relation/metrics
 * GET /rule/metrics
 * GET /configs

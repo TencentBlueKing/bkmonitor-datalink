@@ -221,10 +221,11 @@ func TestAes256WithMetaDecoder(t *testing.T) {
 
 func TestAes256WithMetaDecoderAndFixedBackup(t *testing.T) {
 	newConfig := func(mustEmptyToken bool) Config {
-		return Config{
+		c := &Config{
 			// aes256
-			Type:       "aes256WithMeta|fixed",
+			Type:       "aes256",
 			Salt:       "bk",
+			Version:    "v2",
 			DecodedIv:  "bkbkbkbkbkbkbkbk",
 			DecodedKey: "81be7fc6-5476-4934-9417-6d4d593728db",
 
@@ -235,6 +236,8 @@ func TestAes256WithMetaDecoderAndFixedBackup(t *testing.T) {
 			LogsDataId:     3003,
 			ProfilesDataId: 3004,
 		}
+		c.Clean()
+		return *c
 	}
 
 	cases := []struct {
@@ -282,7 +285,7 @@ func TestAes256WithMetaDecoderAndFixedBackup(t *testing.T) {
 
 		assert.Len(t, c.Decoder.decoders, 2)
 		assert.Equal(t, c.Token, token)
-		assert.Equal(t, "aes256WithMeta|fixed", c.Decoder.Type())
+		assert.Equal(t, "aes256", c.Decoder.Type())
 	}
 }
 

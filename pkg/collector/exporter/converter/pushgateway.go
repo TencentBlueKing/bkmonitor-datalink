@@ -19,7 +19,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 

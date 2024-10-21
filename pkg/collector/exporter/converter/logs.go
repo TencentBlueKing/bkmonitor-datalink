@@ -14,7 +14,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/plog"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 

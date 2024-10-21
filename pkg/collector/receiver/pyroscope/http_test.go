@@ -26,8 +26,8 @@ import (
 	"go.uber.org/atomic"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 	pushv1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/pyroscope/gen/proto/go/push/v1"
 	typesv1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/pyroscope/gen/proto/go/types/v1"

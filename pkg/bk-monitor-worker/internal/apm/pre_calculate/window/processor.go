@@ -89,22 +89,23 @@ type IndexResponse struct {
 }
 
 func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event) {
-	exist, err := p.proxy.Exist(storage.ExistRequest{Target: storage.BloomFilter, Key: event.TraceId})
-	if err != nil {
-		p.logger.Warnf(
-			"Attempt to retrieve traceMeta from Bloom-filter failed, "+
-				"this traceId: %s will be process as a new window. error: %s",
-			event.TraceId, err,
-		)
-		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.QueryBloomFilterFailed)
-	} else if exist {
-		existSpans := p.listSpanFromStorage(event)
-		p.revertToCollect(&event, existSpans)
-	}
 	graph := event.Graph
-	graph.RefreshEdges()
-
 	if p.config.infoReportEnabled {
+		exist, err := p.proxy.Exist(storage.ExistRequest{Target: storage.BloomFilter, Key: event.TraceId})
+		if err != nil {
+			p.logger.Warnf(
+				"Attempt to retrieve traceMeta from Bloom-filter failed, "+
+					"this traceId: %s will be process as a new window. error: %s",
+				event.TraceId, err,
+			)
+			metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.QueryBloomFilterFailed)
+		} else if exist {
+			existSpans := p.listSpanFromStorage(event)
+			p.revertToCollect(&event, existSpans)
+		}
+		graph = event.Graph
+		graph.RefreshEdges()
+		event.Graph = graph
 		p.ToTraceInfo(receiver, event)
 	}
 	if p.config.metricReportEnabled {

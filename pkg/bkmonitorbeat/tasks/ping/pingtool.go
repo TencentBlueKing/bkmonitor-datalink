@@ -235,55 +235,29 @@ var DoPing = func(ctx context.Context, resMap map[string]map[string]*Info, t *Ba
 		}
 	}
 
-	totalCount := 0
 	jobCtx, jobCancel := context.WithCancel(ctx)
+
+	recvQueue := make([]struct {
+		ip  string
+		rtt time.Duration
+	}, 0)
+
 	// 回调函数，当收到返回值时调用
 	p.OnRecv = func(addr *net.IPAddr, rtt time.Duration) {
 		// 根据ip反向找到key，这里这么写是因为回调函数只有ip
 		ipStr := addr.IP.String()
-		targets, ok := nameMapping[ipStr]
-		if !ok {
-			logger.Warnf("get unexpected ip:%s", addr.IP.String())
-			return
-		}
-
-		for target := range targets {
-			pingInfo, ok := resMap[target][ipStr]
-			if ok {
-				logger.Debugf("target:%s,received icmp package", target)
-				pingInfo.RecvCount++
-				// 取得毫秒级数据
-				rttMillSecond := rtt.Seconds() * 1000
-				// 每次都更新rtt最大值
-				if rttMillSecond > pingInfo.MaxRTT {
-					pingInfo.MaxRTT = rttMillSecond
-				}
-				// 第一次接收到包的时候，将其值设置为最小值
-				if pingInfo.RecvCount == 1 {
-					pingInfo.MinRTT = rttMillSecond
-				}
-				if pingInfo.MinRTT > rttMillSecond {
-					pingInfo.MinRTT = rttMillSecond
-				}
-				pingInfo.TotalRTT += rttMillSecond
-
-				resMap[target][ipStr] = pingInfo
-				// 计数
-				totalCount++
-				// 全部收到响应关闭
-				if totalCount == ipsCount {
-					jobCancel()
-					totalCount = 0
-				}
-			} else {
-				logger.Errorf("missing inited pingInfo,target:%s", target)
-			}
-		}
+		recvQueue = append(recvQueue, struct {
+			ip  string
+			rtt time.Duration
+		}{
+			ip:  ipStr,
+			rtt: rtt,
+		})
 	}
 
 	p.OnIdle = func() {
+		logger.Debugf("ping idle")
 		jobCancel()
-		totalCount = 0
 	}
 
 	p.Size = t.size
@@ -304,17 +278,71 @@ var DoPing = func(ctx context.Context, resMap map[string]map[string]*Info, t *Ba
 		}()
 		for i := 0; i < t.totalCount; i++ {
 			logger.Debugf("ping start,times:%d", i)
-			p.RunLoop()
+			err := p.Run()
+			if err != nil {
+				logger.Errorf("ping run failed,error:%v,times:%d", err, i)
+				return
+			}
 			select {
 			case <-jobCtx.Done():
+				logger.Debugf("jobCtx done,reason:%v", jobCtx.Err())
 				p.Stop()
 				jobCtx, jobCancel = context.WithCancel(ctx)
 			case <-ctx.Done():
+				logger.Infof("get ctx done,reason:%v", ctx.Err())
 				p.Stop()
 				return
 			}
 			<-p.Done()
 
+			// 处理收到的数据
+			totalCount := 0
+			for _, recv := range recvQueue {
+				ipStr := recv.ip
+				rtt := recv.rtt
+
+				targets, ok := nameMapping[ipStr]
+				if !ok {
+					logger.Warnf("get unexpected ip:%s", ipStr)
+					continue
+				}
+
+				for target := range targets {
+					pingInfo, ok := resMap[target][ipStr]
+					if ok {
+						pingInfo.RecvCount++
+						// 取得毫秒级数据
+						rttMillSecond := rtt.Seconds() * 1000
+						// 每次都更新rtt最大值
+						if rttMillSecond > pingInfo.MaxRTT {
+							pingInfo.MaxRTT = rttMillSecond
+						}
+						// 第一次接收到包的时候，将其值设置为最小值
+						if pingInfo.RecvCount == 1 {
+							pingInfo.MinRTT = rttMillSecond
+						}
+						if pingInfo.MinRTT > rttMillSecond {
+							pingInfo.MinRTT = rttMillSecond
+						}
+						pingInfo.TotalRTT += rttMillSecond
+
+						// 计数
+						totalCount++
+
+						// 更新map
+						resMap[target][ipStr] = pingInfo
+						logger.Debugf(
+							"received icmp package: target:%s,ip:%s,recvCount:%d,totalCount:%d,maxRTT:%f,minRTT:%f,totalRTT:%f,totalCount:%d",
+							target, ipStr, resMap[target][ipStr].RecvCount, resMap[target][ipStr].TotalCount, resMap[target][ipStr].MaxRTT, resMap[target][ipStr].MinRTT, resMap[target][ipStr].TotalRTT, totalCount,
+						)
+					} else {
+						logger.Errorf("missing inited pingInfo,target:%s", target)
+					}
+				}
+			}
+
+			// 清空接收队列
+			recvQueue = recvQueue[:0]
 		}
 	}()
 

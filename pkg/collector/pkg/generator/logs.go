@@ -16,7 +16,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/plog"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/random"
 )
 
 type LogsGenerator struct {

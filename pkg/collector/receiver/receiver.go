@@ -28,8 +28,8 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/grpcmiddleware"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/httpmiddleware"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/grpcmiddleware"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/httpmiddleware"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 

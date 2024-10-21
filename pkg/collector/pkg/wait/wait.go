@@ -13,7 +13,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/utils"
 )
 
 func Until(ctx context.Context, f func()) {

@@ -20,9 +20,9 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/foreach"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/generator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/random"
 )
 
 func TestSplitDifferentTracesIntoDifferentBatches(t *testing.T) {

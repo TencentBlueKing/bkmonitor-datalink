@@ -101,11 +101,6 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		} else {
 			// 兼容原逻辑，storageType 通过 storageMap 获取
 			stg, _ := tsdb.GetStorage(qry.StorageID)
-			if stg != nil {
-				span.Set("storage-info", stg)
-				qry.StorageType = stg.Type
-			}
-
 			if stg == nil {
 				err = fmt.Errorf("%s storage list is empty in %s", consul.ElasticsearchStorageType, qry.StorageID)
 				return nil

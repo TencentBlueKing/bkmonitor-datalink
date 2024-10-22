@@ -23,10 +23,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
 type Writer struct {
@@ -119,7 +119,7 @@ func TestAPIHandler(t *testing.T) {
 		infoParams *infos.Params
 		expected   string
 	}{
-		"test label values in vm": {
+		"test label values in vm 1": {
 			handler: HandlerLabelValues,
 			method:  http.MethodGet,
 			url:     fmt.Sprintf(`query/ts/label/container/values?label=container&match[]=container_cpu_usage_seconds_total{bcs_cluster_id="BCS-K8S-00000", namespace="kube-system"}&start=%d&end=%d&limit=2`, start.Unix(), end.Unix()),
@@ -131,7 +131,7 @@ func TestAPIHandler(t *testing.T) {
 			},
 			expected: `["POD","kube-proxy"]`,
 		},
-		"test label values in prometheus": {
+		"test label values in vm 2": {
 			handler: HandlerLabelValues,
 			method:  http.MethodGet,
 			url:     fmt.Sprintf(`query/ts/label/container/values?label=container&match[]=kube_pod_info{bcs_cluster_id="BCS-K8S-00000"}&start=%d&end=%d&limit=2`, start.Unix(), end.Unix()),
@@ -177,7 +177,7 @@ func TestAPIHandler(t *testing.T) {
 				Limit:   5,
 				Keys:    []string{"namespace", "bcs_cluster_id"},
 			},
-			expected: `{"values":{"bcs_cluster_id":["BCS-K8S-00000"],"namespace":["aiops-default","bkbase","bkmonitor-operator","blueking","flink-default","kube-system"]}}`,
+			expected: `{"values":{"bcs_cluster_id":["BCS-K8S-00000"],"namespace":["aiops-default","bkbase","bkmonitor-operator","blueking","kube-system"]}}`,
 		},
 		"test series in prometheus": {
 			handler: HandlerSeries,
@@ -201,12 +201,7 @@ func TestAPIHandler(t *testing.T) {
 			url := fmt.Sprintf("http://127.0.0.1/%s", c.url)
 			res, _ := json.Marshal(c.infoParams)
 			body := bytes.NewReader(res)
-			req, err := http.NewRequestWithContext(ctx, c.method, url, body)
-			if err != nil {
-				log.Fatalf(ctx, err.Error())
-				return
-			}
-
+			req, _ := http.NewRequestWithContext(ctx, c.method, url, body)
 			w := &Writer{}
 			ginC := &gin.Context{
 				Request: req,
@@ -217,6 +212,65 @@ func TestAPIHandler(t *testing.T) {
 				c.handler(ginC)
 				assert.Equal(t, c.expected, w.body())
 			}
+		})
+	}
+}
+
+func TestQueryHandler(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	mock.SpaceRouter(ctx)
+
+	end := time.Now()
+	start := end.Add(time.Hour * -1)
+
+	testCases := map[string]struct {
+		handler  func(c *gin.Context)
+		promql   string
+		expected string
+		step     string
+		instant  bool
+	}{
+		"test_query_vm_1": {
+			handler:  HandlerQueryPromQL,
+			promql:   `count(container_cpu_usage_seconds_total) by (bcs_cluster_id)`,
+			step:     "10m",
+			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bcs_cluster_id"],"group_values":["BCS-K8S-00000"],"values":[[1729602000000,2042],[1729602600000,2056],[1729603200000,1995],[1729603800000,2008],[1729604400000,1978],[1729605000000,2001],[1729605600000,2052]]}]}`,
+		},
+		"test_query_vm_2": {
+			handler:  HandlerQueryPromQL,
+			promql:   `sum(kube_pod_info) by (bcs_cluster_id)`,
+			step:     "30m",
+			instant:  true,
+			expected: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bcs_cluster_id"],"group_values":["BCS-K8S-00000"],"values":[[1729608144000,1172]]}]}`,
+		},
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+			metadata.SetUser(ctx, "", mock.SpaceUid, "")
+			queryPromQL := &structured.QueryPromQL{
+				PromQL:  c.promql,
+				Start:   fmt.Sprintf("%d", start.Unix()),
+				End:     fmt.Sprintf("%d", end.Unix()),
+				Step:    c.step,
+				Instant: c.instant,
+			}
+
+			res, _ := json.Marshal(queryPromQL)
+			body := bytes.NewReader(res)
+			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", body)
+			w := &Writer{}
+			ginC := &gin.Context{
+				Request: req,
+				Writer:  w,
+			}
+			if c.handler != nil {
+				c.handler(ginC)
+				assert.Equal(t, c.expected, w.body())
+			}
+
 		})
 	}
 }

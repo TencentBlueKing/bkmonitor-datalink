@@ -705,7 +705,7 @@ func (i *Instance) QuerySeriesSet(
 			if len(query.Aggregates) == 0 && i.protocol == influxdb.GRPC {
 				set = i.grpcStream(ctx, query.DB, query.RetentionPolicy, measurement, field, where, slimit, limit)
 			} else {
-				// 复制 CheckDirectQuery 对象，简化 field、measure 取值，传入查询方法
+				// 复制 ToVmExpand 对象，简化 field、measure 取值，传入查询方法
 				mq := &metadata.Query{
 					DataSource:      query.DataSource,
 					TableID:         query.TableID,

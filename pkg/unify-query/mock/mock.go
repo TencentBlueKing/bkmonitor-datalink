@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/spf13/viper"
@@ -23,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
@@ -55,6 +57,13 @@ func Init() {
 		log.InitTestLogger()
 
 		metadata.InitMetadata()
+
+		promql.NewEngine(&promql.Params{
+			Timeout:              2 * time.Hour,
+			MaxSamples:           500000,
+			LookbackDelta:        2 * time.Minute,
+			EnableNegativeOffset: true,
+		})
 	})
 }
 

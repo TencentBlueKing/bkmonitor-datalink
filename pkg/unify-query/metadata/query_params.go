@@ -11,7 +11,6 @@ package metadata
 
 import (
 	"context"
-	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -19,13 +18,13 @@ import (
 
 // QueryParams 查询信息
 type QueryParams struct {
-	ctx  context.Context
-	lock sync.RWMutex
+	ctx context.Context
 
 	Start int64
 	End   int64
 
 	StorageType *set.Set[string]
+
 	IsReference bool
 	IsSkipK8s   bool
 }
@@ -40,10 +39,12 @@ func (q *QueryParams) SetIsReference(isReference bool) *QueryParams {
 	return q
 }
 
+func (q *QueryParams) IsVmQuery() bool {
+	return q.StorageType.Existed(consul.VictoriaMetricsStorageType)
+}
+
 func (q *QueryParams) SetStorageType(ds string) *QueryParams {
-	q.lock.Lock()
 	q.StorageType.Add(ds)
-	q.lock.Unlock()
 	return q
 }
 
@@ -58,16 +59,6 @@ func (q *QueryParams) set() *QueryParams {
 		md.set(q.ctx, QueryParamsKey, q)
 	}
 	return q
-}
-
-// IsDirectQuery 判断是否是直查模式
-func (q *QueryParams) IsDirectQuery() bool {
-	q.lock.RLock()
-	defer q.lock.RUnlock()
-	if q.StorageType.Size() == 1 && q.StorageType.Existed(consul.VictoriaMetricsStorageType) {
-		return true
-	}
-	return false
 }
 
 // GetQueryParams 读取

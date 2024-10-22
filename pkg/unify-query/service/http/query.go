@@ -81,13 +81,12 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 		totalTables = influxdb.MergeTables(tableList, false)
 	}()
 
-	ref, err := query.ToQueryReference(ctx)
+	_, err = query.ToQueryReference(ctx)
 	if err != nil {
 		return nil, err
 	}
-	ok, _, err := ref.CheckDirectQuery(ctx)
 	// 如果查询 vm 的情况下则直接退出，因为 vm 不支持 Exemplar 数据
-	if ok {
+	if metadata.GetQueryParams(ctx).IsVmQuery() {
 		return resp, nil
 	}
 
@@ -405,13 +404,10 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 		return
 	}
 
-	// 判断是否是直查
-	ok, vmExpand, err := queryRef.CheckDirectQuery(ctx)
-	if err != nil {
-		return
-	}
+	if metadata.GetQueryParams(ctx).IsVmQuery() {
+		// 判断是否是直查
+		vmExpand := queryRef.ToVmExpand(ctx)
 
-	if ok {
 		if len(vmExpand.ResultTableList) == 0 {
 			return
 		}

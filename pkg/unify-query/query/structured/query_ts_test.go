@@ -823,23 +823,21 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			ref, err = tc.ts.ToQueryReference(ctx)
 			assert.Nil(t, err)
 			if err == nil {
-				ok, vmExpand, err = ref.CheckDirectQuery(ctx)
-				assert.Nil(t, err)
-				if err == nil {
-					assert.Equal(t, tc.ok, ok)
+				vmExpand = ref.ToVmExpand(ctx)
+				ok = md.GetQueryParams(ctx).IsVmQuery()
+				assert.Equal(t, tc.ok, ok)
 
-					if tc.expand != nil {
-						assert.Equal(t, tc.expand, vmExpand)
+				if tc.expand != nil {
+					assert.Equal(t, tc.expand, vmExpand)
+				}
+
+				if tc.promql != "" {
+					promExprOpt := &PromExprOption{
+						IgnoreTimeAggregationEnable: !ok,
 					}
 
-					if tc.promql != "" {
-						promExprOpt := &PromExprOption{
-							IgnoreTimeAggregationEnable: !ok,
-						}
-
-						promql, _ := tc.ts.ToPromExpr(ctx, promExprOpt)
-						assert.Equal(t, tc.promql, promql.String())
-					}
+					promql, _ := tc.ts.ToPromExpr(ctx, promExprOpt)
+					assert.Equal(t, tc.promql, promql.String())
 				}
 
 				for refName, v := range ref {

@@ -399,11 +399,8 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 
 	var instance tsdb.Instance
 
-	ok, vmExpand, err := queryReference.CheckDirectQuery(ctx)
-	if ok {
-		if err != nil {
-			return nil, err
-		}
+	if metadata.GetQueryParams(ctx).IsVmQuery() {
+		vmExpand := queryReference.ToVmExpand(ctx)
 
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{

@@ -20,7 +20,6 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 const (
@@ -317,18 +316,8 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 	return druidCheckStatus
 }
 
-// CheckDirectQuery 判断是否是直查，如果都是 vm 查询的情况下，则使用直查模式
-func (qRef QueryReference) CheckDirectQuery(ctx context.Context) (isDirectQuery bool, vmExpand *VmExpand, err error) {
-
-	ctx, span := trace.NewSpan(ctx, "query-reference-is-direct-query")
-	defer span.End(&err)
-
-	// 判断是否是直查
-	isDirectQuery = GetQueryParams(ctx).IsDirectQuery()
-	if !isDirectQuery {
-		return
-	}
-
+// ToVmExpand 判断是否是直查，如果都是 vm 查询的情况下，则使用直查模式
+func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
 	vmConditions := set.New[string]()
 	vmClusterNames := set.New[string]()
 	vmResultTable := set.New[string]()
@@ -361,8 +350,6 @@ func (qRef QueryReference) CheckDirectQuery(ctx context.Context) (isDirectQuery 
 		}
 	}
 
-	span.Set("vm_expand_cluster_name", fmt.Sprintf("%+v", vmClusterNames))
-
 	// 当所有的 vm 集群都一样的时候，才进行传递
 	if vmClusterNames.Size() == 1 {
 		vmExpand.ClusterName = vmClusterNames.First()
@@ -370,7 +357,6 @@ func (qRef QueryReference) CheckDirectQuery(ctx context.Context) (isDirectQuery 
 
 	vmExpand.ResultTableList = vmResultTable.ToArray()
 	sort.Strings(vmExpand.ResultTableList)
-	isDirectQuery = true
 
 	return
 }

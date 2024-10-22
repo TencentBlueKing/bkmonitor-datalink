@@ -11,14 +11,18 @@ package prometheus
 
 import (
 	"context"
+	"sync"
 	"time"
 
+	"github.com/panjf2000/ants/v2"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -34,16 +38,18 @@ type Instance struct {
 
 	queryStorage storage.Queryable
 
-	engine *promql.Engine
+	maxRouting int
+	engine     *promql.Engine
 }
 
 // NewInstance 初始化引擎
-func NewInstance(ctx context.Context, engine *promql.Engine, queryStorage storage.Queryable, lookBackDelta time.Duration) *Instance {
+func NewInstance(ctx context.Context, engine *promql.Engine, queryStorage storage.Queryable, lookBackDelta time.Duration, maxRouting int) *Instance {
 	return &Instance{
 		ctx:           ctx,
 		engine:        engine,
 		queryStorage:  queryStorage,
 		lookBackDelta: lookBackDelta,
+		maxRouting:    maxRouting,
 	}
 }
 
@@ -181,9 +187,53 @@ func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, m
 	panic("implement me")
 }
 
-func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
-	panic("implement me")
+func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) (list []string, err error) {
+	res := set.New[string]()
+
+	ctx, span := trace.NewSpan(ctx, "prometheus-direct-label-values")
+	defer span.End(&err)
+
+	span.Set("name", name)
+	span.Set("start", start)
+	span.Set("end", end)
+	span.Set("limit", limit)
+	span.Set("matchers", matchers)
+
+	metricName := function.MatcherToMetricName(matchers...)
+	if metricName == "" {
+		return
+	}
+
+	p, _ := ants.NewPool(i.maxRouting)
+	defer p.Release()
+
+	var wg sync.WaitGroup
+	queryReference := metadata.GetQueryReference(ctx)
+	if queryMetric, ok := queryReference[metricName]; ok {
+		for _, qry := range queryMetric.QueryList {
+			wg.Add(1)
+			qry.Size = limit
+			query := qry
+			_ = p.Submit(func() {
+				defer func() {
+					wg.Done()
+				}()
+				instance := GetTsDbInstance(ctx, query)
+				if instance != nil {
+					lbl, lvErr := instance.QueryLabelValues(ctx, query, name, start, end)
+					if lvErr == nil {
+						for _, l := range lbl {
+							res.Add(l)
+						}
+					}
+				}
+			})
+		}
+	}
+
+	wg.Wait()
+	list = res.ToArray()
+	return
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
@@ -198,6 +248,6 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	return nil, nil
 }
 
-func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
-	return nil
+func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
+	return nil, nil
 }

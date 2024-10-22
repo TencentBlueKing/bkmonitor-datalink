@@ -10,7 +10,7 @@
 package metadata
 
 const (
-	BkQuerySourceHeader = "Bk-DirectQuery-Source"
+	BkQuerySourceHeader = "Bk-Query-Source"
 	SpaceUIDHeader      = "X-Bk-Scope-Space-Uid"
 	SkipSpaceHeader     = "X-Bk-Scope-Skip-Space"
 

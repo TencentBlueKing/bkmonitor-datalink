@@ -26,7 +26,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "series_limiter_exceeded_total",
-			Help:      "QuerySeries limiter exceeded total",
+			Help:      "Series limiter exceeded total",
 		},
 		[]string{"record_type", "id"},
 	)
@@ -35,7 +35,7 @@ var (
 		prometheus.GaugeOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "series_limiter_count",
-			Help:      "QuerySeries limiter count",
+			Help:      "Series limiter count",
 		},
 		[]string{"record_type", "id"},
 	)
@@ -44,7 +44,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "series_limiter_added_total",
-			Help:      "QuerySeries limiter added total",
+			Help:      "Series limiter added total",
 		},
 		[]string{"record_type", "id"},
 	)

@@ -135,7 +135,7 @@ func makeInfluxdbQuery(
 	}
 	span.Set("start-str", info.Start.String())
 	span.Set("end-str", info.Stop.String())
-	span.Set("interval", info.Interval.String())
+	span.Set("internal", info.Interval.String())
 
 	for _, q := range query.QueryList {
 		var (

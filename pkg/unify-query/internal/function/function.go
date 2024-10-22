@@ -7,41 +7,18 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package set
+package function
 
-type Item interface {
-	comparable
-}
+import "github.com/prometheus/prometheus/model/labels"
 
-type Set[T comparable] map[T]struct{}
-
-func New[T comparable](items ...T) Set[T] {
-	set := make(Set[T])
-	set.Add(items...)
-	return set
-}
-
-func (s Set[T]) Remove(items ...T) {
-	for _, item := range items {
-		delete(s, item)
+func MatcherToMetricName(matchers ...*labels.Matcher) string {
+	for _, m := range matchers {
+		if m.Name == labels.MetricName {
+			if m.Type == labels.MatchEqual || m.Type == labels.MatchRegexp {
+				return m.Value
+			}
+		}
 	}
-}
 
-func (s Set[T]) Add(items ...T) {
-	for _, item := range items {
-		s[item] = struct{}{}
-	}
-}
-
-func (s Set[T]) Existed(item T) bool {
-	_, ok := s[item]
-	return ok
-}
-
-func (s Set[T]) ToArray() []T {
-	array := make([]T, 0, len(s))
-	for item := range s {
-		array = append(array, item)
-	}
-	return array
+	return ""
 }

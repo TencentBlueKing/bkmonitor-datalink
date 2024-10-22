@@ -28,13 +28,13 @@ type Instance interface {
 
 	QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error)
 	QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error)
-	QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet
+	QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error)
 
 	Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string
 	DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error)
 	DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error)
 	DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error)
-	DirectLabelValues(ctx context.Context, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error)
+	DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error)
 
 	InstanceType() string
 }

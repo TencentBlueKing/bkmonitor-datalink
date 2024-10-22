@@ -28,7 +28,7 @@ import (
 // @ID       transform_promql_to_struct
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-DirectQuery-Source   		header    string                          false  "来源" default(username:goodman)
+// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
 // @Param    data                  	body      structured.QueryPromQL  		  true   "json data"
 // @Success  200                   	{object}  structured.QueryTs
@@ -77,7 +77,7 @@ func HandlerPromQLToStruct(c *gin.Context) {
 // @ID       transform_struct_to_promql
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-DirectQuery-Source   		header    string                          false  "来源" default(username:goodman)
+// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
 // @Param    data                  	body      structured.QueryTs  			  true   "json data"
 // @Success  200                   	{object}  structured.QueryPromQL
@@ -127,7 +127,7 @@ func HandlerStructToPromQL(c *gin.Context) {
 // @ID       query_ts_exemplar
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-DirectQuery-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                   body      structured.QueryTs  			true   "json data"
@@ -189,7 +189,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 // @ID query_raw
 // @Produce json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-DirectQuery-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryTs  			true   "json data"
@@ -253,7 +253,7 @@ func HandlerQueryRaw(c *gin.Context) {
 // @ID       query_ts
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-DirectQuery-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryTs  			true   "json data"
@@ -312,7 +312,7 @@ func HandlerQueryTs(c *gin.Context) {
 // @ID       query_promql
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-DirectQuery-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryPromQL  		true   "json data"
@@ -379,7 +379,7 @@ func HandlerQueryPromQL(c *gin.Context) {
 // @ID       query_ts
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-DirectQuery-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryTs  			true   "json data"

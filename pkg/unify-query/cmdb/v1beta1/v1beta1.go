@@ -398,7 +398,8 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	metadata.SetQueryReference(ctx, queryReference)
 
 	var instance tsdb.Instance
-	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
+
+	ok, vmExpand, err := queryReference.CheckDirectQuery(ctx)
 	if ok {
 		if err != nil {
 			return nil, err
@@ -416,7 +417,7 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 		instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
 			QueryMaxRouting: QueryMaxRouting,
 			Timeout:         Timeout,
-		}, lookBackDelta)
+		}, lookBackDelta, QueryMaxRouting)
 	}
 
 	realPromQL, err := queryTs.ToPromQL(ctx)

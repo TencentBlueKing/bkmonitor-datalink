@@ -121,7 +121,6 @@ func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entiti
 			}
 		}
 		if bytes.Equal(rawV, v) {
-			log.Debugf(ctx, "No change and not to write, %s", k)
 			continue
 		}
 		if keyNotFound {

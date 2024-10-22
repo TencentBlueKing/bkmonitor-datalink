@@ -705,7 +705,7 @@ func (i *Instance) QuerySeriesSet(
 			if len(query.Aggregates) == 0 && i.protocol == influxdb.GRPC {
 				set = i.grpcStream(ctx, query.DB, query.RetentionPolicy, measurement, field, where, slimit, limit)
 			} else {
-				// 复制 DirectQuery 对象，简化 field、measure 取值，传入查询方法
+				// 复制 CheckDirectQuery 对象，简化 field、measure 取值，传入查询方法
 				mq := &metadata.Query{
 					DataSource:      query.DataSource,
 					TableID:         query.TableID,
@@ -1124,8 +1124,24 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	return lbs, err
 }
 
-func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
-	return nil
+func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) (series []map[string]string, err error) {
+	ss := i.QuerySeriesSet(ctx, query, start, end)
+
+	if ss.Err() != nil {
+		err = ss.Err()
+		return
+	}
+
+	series = make([]map[string]string, 0)
+	for ss.Next() {
+		seriesMap := make(map[string]string)
+		for _, lb := range ss.At().Labels() {
+			seriesMap[lb.Name] = lb.Value
+		}
+		series = append(series, seriesMap)
+	}
+
+	return series, nil
 }
 
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
@@ -1133,7 +1149,7 @@ func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, m
 	panic("implement me")
 }
 
-func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
 	//TODO implement me
 	panic("implement me")
 }

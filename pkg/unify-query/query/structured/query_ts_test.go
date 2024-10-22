@@ -363,7 +363,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 					"a": `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 					"b": `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
 				},
-				ConditionNum: 6,
 			},
 			ref: md.QueryReference{
 				"a": &md.QueryMetric{
@@ -407,7 +406,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				MetricFilterCondition: map[string]string{
 					"a": `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 				},
-				ConditionNum: 3,
 			},
 			ref: md.QueryReference{
 				"a": &md.QueryMetric{
@@ -540,7 +538,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 					"a": `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 					"b": `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
 				},
-				ConditionNum: 6,
 			},
 			ref: md.QueryReference{
 				"a": &md.QueryMetric{
@@ -826,7 +823,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			ref, err = tc.ts.ToQueryReference(ctx)
 			assert.Nil(t, err)
 			if err == nil {
-				ok, vmExpand, err = ref.CheckVmQuery(ctx)
+				ok, vmExpand, err = ref.CheckDirectQuery(ctx)
 				assert.Nil(t, err)
 				if err == nil {
 					assert.Equal(t, tc.ok, ok)

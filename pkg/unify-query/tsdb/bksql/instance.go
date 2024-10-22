@@ -124,7 +124,7 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string, span *trace.Span) (
 	}
 
 	span.Set("query-timeout", i.timeout.String())
-	span.Set("query-interval-time", i.intervalTime.String())
+	span.Set("query-internal-time", i.intervalTime.String())
 
 	if data, ok = res.Data.(*QuerySyncResultData); !ok {
 		return data, fmt.Errorf("queryAsyncResult type is error: %T", res.Data)
@@ -483,7 +483,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	return lbs, err
 }
 
-func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
+func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
 	//TODO implement me
 	panic("implement me")
 }
@@ -493,7 +493,7 @@ func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, m
 	panic("implement me")
 }
 
-func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
 	//TODO implement me
 	panic("implement me")
 }

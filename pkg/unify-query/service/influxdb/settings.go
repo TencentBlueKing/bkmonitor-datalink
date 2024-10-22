@@ -28,7 +28,7 @@ const (
 	ToleranceConfigPath = "influxdb.tolerance"
 
 	PrefixConfigPath         = "influxdb.router.prefix"
-	RouterIntervalConfigPath = "influxdb.router.interval"
+	RouterIntervalConfigPath = "influxdb.router.internal"
 
 	SpaceRouterPrefixConfigPath              = "influxdb.space_router_prefix"
 	SpaceRouterBboltPathConfigPath           = "influxdb.space_router_bbolt_path"

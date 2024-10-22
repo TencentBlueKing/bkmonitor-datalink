@@ -16,7 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
-// QueryAggreToDataframeMapping DirectQuery 结构体与 goDataframe 聚合方法映射关系
+// QueryAggreToDataframeMapping Query 结构体与 goDataframe 聚合方法映射关系
 var QueryAggreToDataframeMapping = map[string]dataframe.AggregationType{
 	// 序列聚合方法
 	structured.MaxAggName:    dataframe.Aggregation_MAX,
@@ -33,7 +33,7 @@ var QueryAggreToDataframeMapping = map[string]dataframe.AggregationType{
 	structured.AvgOT:   dataframe.Aggregation_MEAN,
 }
 
-// QueryConditionToDataframeComparator DirectQuery 结构体与 goDataframe 过滤条件映射关系
+// QueryConditionToDataframeComparator Query 结构体与 goDataframe 过滤条件映射关系
 var QueryConditionToDataframeComparator = map[string]series.Comparator{
 	structured.ConditionEqual: series.In,
 }

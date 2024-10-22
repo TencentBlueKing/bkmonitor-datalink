@@ -222,7 +222,7 @@ func (m *Manager) showDatabasesExecution(params *QueryParams, flowLog *logging.E
 		dbstr = dbstr + `["` + v + `"]`
 	}
 
-	return NewExecuteResult(`{"results":[{"QuerySeries":[{"name":"databases","columns":["name"],"values":[`+dbstr+`]}],"Messages":null}]}`, normalSucc, nil)
+	return NewExecuteResult(`{"results":[{"Series":[{"name":"databases","columns":["name"],"values":[`+dbstr+`]}],"Messages":null}]}`, normalSucc, nil)
 }
 
 // showDatabasesExecution 获取表名列表，通过consul获取

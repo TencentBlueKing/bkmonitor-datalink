@@ -167,9 +167,9 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix())
 
 	// 判断是否查询 vm
-	ok, vmExpand, err := qr.CheckVmQuery(ctx)
+	ok, vmExpand, err := qr.CheckDirectQuery(ctx)
 	if err != nil {
-		r.Error("qr.CheckVmQuery", err)
+		r.Error("qr.CheckDirectQuery", err)
 		return
 	}
 

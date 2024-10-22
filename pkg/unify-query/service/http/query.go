@@ -85,7 +85,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 	if err != nil {
 		return nil, err
 	}
-	ok, _, err := ref.CheckVmQuery(ctx)
+	ok, _, err := ref.CheckDirectQuery(ctx)
 	// 如果查询 vm 的情况下则直接退出，因为 vm 不支持 Exemplar 数据
 	if ok {
 		return resp, nil
@@ -303,7 +303,7 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	instance := prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
 		QueryMaxRouting: QueryMaxRouting,
 		Timeout:         SingleflightTimeout,
-	}, lookBackDelta)
+	}, lookBackDelta, QueryMaxRouting)
 
 	if query.Instant {
 		res, err = instance.DirectQuery(ctx, query.MetricMerge, start)
@@ -406,7 +406,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 	}
 
 	// 判断是否是直查
-	ok, vmExpand, err := queryRef.CheckVmQuery(ctx)
+	ok, vmExpand, err := queryRef.CheckDirectQuery(ctx)
 	if err != nil {
 		return
 	}
@@ -434,7 +434,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 		instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
 			QueryMaxRouting: QueryMaxRouting,
 			Timeout:         SingleflightTimeout,
-		}, lookBackDelta)
+		}, lookBackDelta, QueryMaxRouting)
 	}
 
 	expr, err := query.ToPromExpr(ctx, promExprOpt)

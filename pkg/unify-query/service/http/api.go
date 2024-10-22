@@ -14,16 +14,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/panjf2000/ants/v2"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
-	"github.com/prometheus/prometheus/storage"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/interval/set"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -36,7 +37,7 @@ import (
 // @ID       info_field_keys
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-DirectQuery-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      infos.Params 		  			true   "json data"
@@ -44,7 +45,67 @@ import (
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/field_keys [post]
 func HandlerFieldKeys(c *gin.Context) {
-	handlerInfo(c, infos.FieldKeys)
+	var (
+		ctx  = c.Request.Context()
+		resp = &response{
+			c: c,
+		}
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "handler-filed-keys")
+	defer span.End(&err)
+
+	params := &infos.Params{}
+	err = json.NewDecoder(c.Request.Body).Decode(params)
+	if err != nil {
+		return
+	}
+
+	paramsStr, _ := json.Marshal(params)
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", c.Request.Header)
+	span.Set("request-data", paramsStr)
+
+	queryRef, start, end, err := infoParamsToQueryTs(ctx, params)
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
+	p, _ := ants.NewPool(QueryMaxRouting)
+	defer p.Release()
+
+	var (
+		wg  sync.WaitGroup
+		lbl = set.New[string]()
+	)
+
+	for _, queryMetric := range queryRef {
+		for _, qry := range queryMetric.QueryList {
+			wg.Add(1)
+			qry := qry
+			_ = p.Submit(func() {
+				defer wg.Done()
+				instance := prometheus.GetTsDbInstance(ctx, qry)
+				if instance == nil {
+					return
+				}
+
+				res, err := instance.QueryLabelValues(ctx, qry, labels.MetricName, start, end)
+				if err != nil {
+					return
+				}
+				lbl.Add(res...)
+			})
+		}
+	}
+	wg.Wait()
+
+	data := lbl.ToArray()
+	sort.Strings(data)
+
+	resp.success(ctx, data)
 }
 
 // HandlerTagKeys
@@ -52,7 +113,7 @@ func HandlerFieldKeys(c *gin.Context) {
 // @ID       info_tag_keys
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-DirectQuery-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      infos.Params 		  			true   "json data"
@@ -60,7 +121,67 @@ func HandlerFieldKeys(c *gin.Context) {
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/tag_keys [post]
 func HandlerTagKeys(c *gin.Context) {
-	handlerInfo(c, infos.TagKeys)
+	var (
+		ctx  = c.Request.Context()
+		resp = &response{
+			c: c,
+		}
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "handler-tag-keys")
+	defer span.End(&err)
+
+	params := &infos.Params{}
+	err = json.NewDecoder(c.Request.Body).Decode(params)
+	if err != nil {
+		return
+	}
+
+	paramsStr, _ := json.Marshal(params)
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", c.Request.Header)
+	span.Set("request-data", paramsStr)
+
+	queryRef, start, end, err := infoParamsToQueryTs(ctx, params)
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
+	p, _ := ants.NewPool(QueryMaxRouting)
+	defer p.Release()
+
+	var (
+		wg  sync.WaitGroup
+		lbl = set.New[string]()
+	)
+
+	for _, queryMetric := range queryRef {
+		for _, qry := range queryMetric.QueryList {
+			wg.Add(1)
+			qry := qry
+			_ = p.Submit(func() {
+				defer wg.Done()
+				instance := prometheus.GetTsDbInstance(ctx, qry)
+				if instance == nil {
+					return
+				}
+
+				res, err := instance.QueryLabelNames(ctx, qry, start, end)
+				if err != nil {
+					return
+				}
+				lbl.Add(res...)
+			})
+		}
+	}
+	wg.Wait()
+
+	data := lbl.ToArray()
+	sort.Strings(data)
+
+	resp.success(ctx, data)
 }
 
 // HandlerTagValues
@@ -68,7 +189,7 @@ func HandlerTagKeys(c *gin.Context) {
 // @ID       info_tag_values
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-DirectQuery-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      infos.Params 		  			true   "json data"
@@ -76,7 +197,85 @@ func HandlerTagKeys(c *gin.Context) {
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/tag_values [post]
 func HandlerTagValues(c *gin.Context) {
-	handlerInfo(c, infos.TagValues)
+	var (
+		ctx  = c.Request.Context()
+		resp = &response{
+			c: c,
+		}
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "handler-tag-keys")
+	defer span.End(&err)
+
+	params := &infos.Params{}
+	err = json.NewDecoder(c.Request.Body).Decode(params)
+	if err != nil {
+		return
+	}
+
+	paramsStr, _ := json.Marshal(params)
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", c.Request.Header)
+	span.Set("request-data", paramsStr)
+
+	queryRef, start, end, err := infoParamsToQueryTs(ctx, params)
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
+	p, _ := ants.NewPool(QueryMaxRouting)
+	defer p.Release()
+
+	var (
+		wg   sync.WaitGroup
+		data = TagValuesData{
+			Values: make(map[string][]string),
+		}
+
+		lblMap sync.Map
+	)
+
+	for _, name := range params.Keys {
+		lbl, _ := lblMap.LoadOrStore(name, set.New[string]())
+		for _, queryMetric := range queryRef {
+			for _, qry := range queryMetric.QueryList {
+				wg.Add(1)
+				name := name
+				lbl := lbl
+				qry := qry
+
+				_ = p.Submit(func() {
+					defer wg.Done()
+					instance := prometheus.GetTsDbInstance(ctx, qry)
+					if instance == nil {
+						return
+					}
+
+					res, err := instance.QueryLabelValues(ctx, qry, name, start, end)
+					if err != nil {
+						return
+					}
+
+					lbl.(*set.Set[string]).Add(res...)
+				})
+			}
+		}
+	}
+	wg.Wait()
+
+	lblMap.Range(func(key, value any) bool {
+		name := key.(string)
+		lb := value.(*set.Set[string])
+
+		res := lb.ToArray()
+		sort.Strings(res)
+		data.Values[name] = res
+		return true
+	})
+
+	resp.success(ctx, data)
 }
 
 // HandlerSeries
@@ -84,7 +283,7 @@ func HandlerTagValues(c *gin.Context) {
 // @ID       info_series
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-DirectQuery-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      infos.Params 		  			true   "json data"
@@ -92,7 +291,118 @@ func HandlerTagValues(c *gin.Context) {
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/info/series [post]
 func HandlerSeries(c *gin.Context) {
-	handlerInfo(c, infos.Series)
+	var (
+		ctx  = c.Request.Context()
+		resp = &response{
+			c: c,
+		}
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "handler-tag-keys")
+	defer span.End(&err)
+
+	params := &infos.Params{}
+	err = json.NewDecoder(c.Request.Body).Decode(params)
+	if err != nil {
+		return
+	}
+
+	paramsStr, _ := json.Marshal(params)
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", c.Request.Header)
+	span.Set("request-data", paramsStr)
+
+	queryRef, start, end, err := infoParamsToQueryTs(ctx, params)
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
+	p, _ := ants.NewPool(QueryMaxRouting)
+	defer p.Release()
+
+	var (
+		wg   sync.WaitGroup
+		data = &SeriesData{
+			Measurement: "",
+			Keys:        make([]string, 0),
+			Series:      make([][]string, 0),
+		}
+
+		keySet    = set.New[string]()
+		seriesSet = set.New[string]()
+
+		paramsSet = set.New[string]()
+	)
+
+	for _, k := range params.Keys {
+		paramsSet.Add(k)
+	}
+
+	for _, queryMetric := range queryRef {
+		for _, qry := range queryMetric.QueryList {
+			wg.Add(1)
+			qry := qry
+			_ = p.Submit(func() {
+				defer wg.Done()
+
+				if params.Limit > 0 && len(data.Series) > params.Limit {
+					return
+				}
+
+				instance := prometheus.GetTsDbInstance(ctx, qry)
+				if instance == nil {
+					return
+				}
+
+				res, err := instance.QuerySeries(ctx, qry, start, end)
+				if err != nil {
+					return
+				}
+
+				for _, r := range res {
+					// 首先获取 series key，为了避免数据冲突，只获取一次
+					if keySet.Size() == 0 {
+						for k := range r {
+							if k == labels.MetricName {
+								data.Measurement = r[k]
+							}
+
+							if paramsSet.Size() == 0 || paramsSet.Existed(k) {
+								keySet.Add(k)
+							}
+						}
+
+						data.Keys = keySet.ToArray()
+						sort.Strings(data.Keys)
+					}
+
+					var (
+						series = make([]string, 0, len(data.Keys))
+						buf    = strings.Builder{}
+					)
+					for _, k := range data.Keys {
+						v, ok := r[k]
+						if !ok {
+							v = ""
+						}
+						series = append(series, v)
+						buf.WriteString(v)
+					}
+
+					if !seriesSet.Existed(buf.String()) {
+						seriesSet.Add(buf.String())
+						data.Series = append(data.Series, series)
+					}
+
+				}
+			})
+		}
+	}
+	wg.Wait()
+
+	resp.success(ctx, data)
 }
 
 // HandlerLabelValues
@@ -100,7 +410,7 @@ func HandlerSeries(c *gin.Context) {
 // @ID       info_label_values
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-DirectQuery-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      infos.Params 		  			true   "json data"
@@ -114,7 +424,7 @@ func HandlerLabelValues(c *gin.Context) {
 			c: c,
 		}
 
-		result = set.New[string]()
+		result []string
 		err    error
 	)
 
@@ -125,7 +435,6 @@ func HandlerLabelValues(c *gin.Context) {
 			return
 		}
 
-		resp.success(ctx, result.ToArray())
 		span.End(&err)
 	}()
 
@@ -133,6 +442,7 @@ func HandlerLabelValues(c *gin.Context) {
 	start := c.Query("start")
 	end := c.Query("end")
 	matches := c.QueryArray("match[]")
+	limit := c.Query("limit")
 
 	span.Set("request-start", start)
 	span.Set("request-end", end)
@@ -167,239 +477,43 @@ func HandlerLabelValues(c *gin.Context) {
 
 	// start 和 end 可以为空
 	startTime, endTime, _ := query.GetTime()
-
-	res, err := instance.DirectLabelValues(ctx, labelName, startTime, endTime, matcher...)
+	limitNum, _ := strconv.Atoi(limit)
+	result, err = instance.DirectLabelValues(ctx, labelName, startTime, endTime, limitNum, matcher...)
 	if err != nil {
 		return
 	}
 
-	resp.success(ctx, res)
+	resp.success(ctx, result)
+	return
 }
 
-func handlerInfo(c *gin.Context, key infos.InfoType) {
-	var (
-		ctx  = c.Request.Context()
-		resp = &response{
-			c: c,
-		}
-		err error
-	)
-
-	ctx, span := trace.NewSpan(ctx, "info-handler")
-	defer span.End(&err)
-
-	params := &infos.Params{}
-	json.NewDecoder(c.Request.Body).Decode(params)
-
-	paramsStr, _ := json.Marshal(params)
-	span.Set("request-url", c.Request.URL.String())
-	span.Set("request-info-type", key)
-	span.Set("request-header", c.Request.Header)
-	span.Set("request-data", paramsStr)
-
-	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
-
-	data, err := queryInfo(ctx, key, params)
-	if err != nil {
-		resp.failed(ctx, err)
-		return
-	}
-
-	resp.success(ctx, data)
-}
-
-func queryInfo(ctx context.Context, key infos.InfoType, params *infos.Params) (interface{}, error) {
-	var (
-		warns []error
-		data  interface{}
-		err   error
-	)
-
-	ctx, span := trace.NewSpan(ctx, "query-info")
-	defer span.End(&err)
-
-	span.Set("request-info-type", key)
-
-	q, err := newInfoQuerier(ctx, params)
-	if err != nil {
-		return nil, err
-	}
-
-	labelMatchers := make([]*labels.Matcher, 0, 1)
-	match, err := labels.NewMatcher(
-		labels.MatchEqual, labels.MetricName, prometheus.ReferenceName,
-	)
-	if err != nil {
-		return nil, err
-	}
-	labelMatchers = append(labelMatchers, match)
-
-	switch key {
-	case infos.FieldKeys:
-		data, warns, err = q.LabelValues(labels.MetricName, labelMatchers...)
-	case infos.TagKeys:
-		data, warns, err = q.LabelNames(labelMatchers...)
-	case infos.TagValues:
-		var (
-			lvs    []string
-			lvsMap = make(map[string][]string, len(params.Keys))
-		)
-		sort.Strings(params.Keys)
-		for _, k := range params.Keys {
-			if k != "" {
-				lvs, warns, err = q.LabelValues(k, labelMatchers...)
-				if err != nil || len(warns) > 0 {
-					continue
-				}
-				lvsMap[k] = lvs
-			}
-		}
-		data = TagValuesData{
-			Values: lvsMap,
-		}
-	case infos.Series:
-		start, err := params.StartTimeUnix()
-		if err != nil {
-			return nil, fmt.Errorf("start time error: %s", err.Error())
-		}
-		end, err := params.EndTimeUnix()
-		if err != nil {
-			return nil, fmt.Errorf("end time error: %s", err.Error())
-		}
-
-		hints := &storage.SelectHints{
-			Start: start * 1e3,
-			End:   end * 1e3,
-			Func:  "series", // There is no series function, this token is used for lookups that don't need samples.
-		}
-
-		set := q.Select(true, hints, labelMatchers...)
-		if set.Err() != nil {
-			return nil, set.Err()
-		}
-
-		keyExists := make(map[string]struct{}, 0)
-		dataExists := make(map[string]struct{}, 0)
-
-		paramsKeys := make(map[string]struct{}, len(params.Keys))
-		for _, k := range params.Keys {
-			paramsKeys[k] = struct{}{}
-		}
-
-		keys := make([]string, 0)
-		series := make([][]string, 0)
-
-		for set.Next() {
-			if len(keys) == 0 {
-				for _, lb := range set.At().Labels() {
-					if len(paramsKeys) > 0 {
-						if _, ok := paramsKeys[lb.Name]; ok {
-							keyExists[lb.Name] = struct{}{}
-							keys = append(keys, lb.Name)
-						}
-					} else if lb.Name != influxdb.BKTaskIndex {
-						keyExists[lb.Name] = struct{}{}
-						keys = append(keys, lb.Name)
-					}
-				}
-			}
-
-			values := make([]string, 0, len(keyExists))
-			buf := ""
-			for _, lb := range set.At().Labels() {
-				if _, ok := keyExists[lb.Name]; ok {
-					values = append(values, lb.Value)
-					buf = fmt.Sprintf("%s%s", buf, lb.Value)
-				}
-			}
-			if _, ok := dataExists[buf]; !ok {
-				series = append(series, values)
-				dataExists[buf] = struct{}{}
-			}
-		}
-
-		data = SeriesDataList{
-			{
-				Keys:   keys,
-				Series: series,
-			},
-		}
-	default:
-		err = fmt.Errorf("error info type %s", key)
-	}
-
-	if warns != nil {
-		err = fmt.Errorf("warns: %v", warns)
-	}
-	return data, err
-}
-
-func newInfoQuerier(ctx context.Context, params *infos.Params) (storage.Querier, error) {
+func infoParamsToQueryTs(ctx context.Context, params *infos.Params) (queryRef metadata.QueryReference, start, end time.Time, err error) {
 	var (
 		user = metadata.GetUser(ctx)
-
-		err error
-
-		start int64
-		end   int64
 	)
 
-	ctx, span := trace.NewSpan(ctx, "new-info-querier")
-	defer span.End(&err)
-
-	paramsStr, _ := json.Marshal(params)
-	span.Set("query-body", paramsStr)
-
-	query := &structured.Query{
-		DataSource:    params.DataSource,
-		TableID:       params.TableID,
-		FieldName:     params.Metric,
-		Conditions:    params.Conditions,
-		ReferenceName: prometheus.ReferenceName,
+	queryTs := &structured.QueryTs{
+		SpaceUid: user.SpaceUid,
+		QueryList: []*structured.Query{
+			{
+				DataSource:    params.DataSource,
+				TableID:       params.TableID,
+				FieldName:     params.Metric,
+				Conditions:    params.Conditions,
+				Limit:         params.Limit,
+				ReferenceName: prometheus.ReferenceName,
+			},
+		},
+		MetricMerge: prometheus.ReferenceName,
+		Start:       params.Start,
+		End:         params.End,
+		Timezone:    params.Timezone,
 	}
 
-	queryMetric, err := query.ToQueryMetric(ctx, user.SpaceUid)
+	start, end, err = queryTs.GetTime()
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		return
 	}
-
-	if params.Start != "" {
-		start, err = params.StartTimeUnix()
-		if err != nil {
-			err = fmt.Errorf("start time is error: %s", err.Error())
-			return nil, err
-		}
-	} else {
-		start = time.Now().Add(time.Hour * -1).Unix()
-	}
-
-	if params.End != "" {
-		end, err = params.EndTimeUnix()
-		if err != nil {
-			err = fmt.Errorf("end time is error: %s", err.Error())
-			return nil, err
-		}
-	} else {
-		end = time.Now().Unix()
-	}
-
-	if user.SpaceUid == "" {
-		err = fmt.Errorf("space uid is empty")
-		log.Errorf(ctx, err.Error())
-		return nil, err
-	}
-
-	// 写入查询缓存
-	metadata.GetQueryParams(ctx).SetTime(start, end)
-	metadata.SetQueryReference(ctx, map[string]*metadata.QueryMetric{
-		prometheus.ReferenceName: queryMetric,
-	})
-
-	storage := &prometheus.QueryRangeStorage{
-		QueryMaxRouting: QueryMaxRouting,
-		Timeout:         SingleflightTimeout,
-	}
-	q, err := storage.Querier(ctx, start, end)
-	return q, err
+	queryRef, err = queryTs.ToQueryReference(ctx)
+	return
 }

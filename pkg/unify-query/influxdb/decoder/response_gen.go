@@ -432,7 +432,7 @@ func (z *Result) DecodeMsg(dc *msgp.Reader) (err error) {
 			var zb0002 uint32
 			zb0002, err = dc.ReadArrayHeader()
 			if err != nil {
-				err = msgp.WrapError(err, "QuerySeries")
+				err = msgp.WrapError(err, "Series")
 				return
 			}
 			if cap(z.Series) >= int(zb0002) {
@@ -444,7 +444,7 @@ func (z *Result) DecodeMsg(dc *msgp.Reader) (err error) {
 				if dc.IsNil() {
 					err = dc.ReadNil()
 					if err != nil {
-						err = msgp.WrapError(err, "QuerySeries", za0001)
+						err = msgp.WrapError(err, "Series", za0001)
 						return
 					}
 					z.Series[za0001] = nil
@@ -454,7 +454,7 @@ func (z *Result) DecodeMsg(dc *msgp.Reader) (err error) {
 					}
 					err = z.Series[za0001].DecodeMsg(dc)
 					if err != nil {
-						err = msgp.WrapError(err, "QuerySeries", za0001)
+						err = msgp.WrapError(err, "Series", za0001)
 						return
 					}
 				}
@@ -562,7 +562,7 @@ func (z *Result) EncodeMsg(en *msgp.Writer) (err error) {
 	}
 	err = en.WriteArrayHeader(uint32(len(z.Series)))
 	if err != nil {
-		err = msgp.WrapError(err, "QuerySeries")
+		err = msgp.WrapError(err, "Series")
 		return
 	}
 	for za0001 := range z.Series {
@@ -574,7 +574,7 @@ func (z *Result) EncodeMsg(en *msgp.Writer) (err error) {
 		} else {
 			err = z.Series[za0001].EncodeMsg(en)
 			if err != nil {
-				err = msgp.WrapError(err, "QuerySeries", za0001)
+				err = msgp.WrapError(err, "Series", za0001)
 				return
 			}
 		}
@@ -658,7 +658,7 @@ func (z *Result) MarshalMsg(b []byte) (o []byte, err error) {
 		} else {
 			o, err = z.Series[za0001].MarshalMsg(o)
 			if err != nil {
-				err = msgp.WrapError(err, "QuerySeries", za0001)
+				err = msgp.WrapError(err, "Series", za0001)
 				return
 			}
 		}
@@ -716,7 +716,7 @@ func (z *Result) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			var zb0002 uint32
 			zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "QuerySeries")
+				err = msgp.WrapError(err, "Series")
 				return
 			}
 			if cap(z.Series) >= int(zb0002) {
@@ -737,7 +737,7 @@ func (z *Result) UnmarshalMsg(bts []byte) (o []byte, err error) {
 					}
 					bts, err = z.Series[za0001].UnmarshalMsg(bts)
 					if err != nil {
-						err = msgp.WrapError(err, "QuerySeries", za0001)
+						err = msgp.WrapError(err, "Series", za0001)
 						return
 					}
 				}

@@ -55,6 +55,8 @@ type Params struct {
 
 	Start string `json:"start_time"`
 	End   string `json:"end_time"`
+
+	Timezone string `json:"timezone,omitempty" example:"Asia/Shanghai"`
 }
 
 func (p *Params) StartTimeUnix() (int64, error) {

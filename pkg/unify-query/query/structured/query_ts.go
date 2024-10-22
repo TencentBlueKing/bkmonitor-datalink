@@ -31,6 +31,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
 type QueryTs struct {
@@ -147,27 +148,26 @@ func (q *QueryTs) GetTime() (time.Time, time.Time, error) {
 }
 
 func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference, error) {
-
 	queryReference := make(metadata.QueryReference)
-	for _, qry := range q.QueryList {
+	for _, query := range q.QueryList {
 		// 时间复用
-		qry.Timezone = q.Timezone
-		qry.Start = q.Start
-		qry.End = q.End
+		query.Timezone = q.Timezone
+		query.Start = q.Start
+		query.End = q.End
 
 		// 排序复用
-		qry.OrderBy = q.OrderBy
+		query.OrderBy = q.OrderBy
 
-		// 如果 qry.Step 不存在去外部统一的 step
-		if qry.Step == "" {
-			qry.Step = q.Step
+		// 如果 query.Step 不存在去外部统一的 step
+		if query.Step == "" {
+			query.Step = q.Step
 		}
 
-		queryMetric, err := qry.ToQueryMetric(ctx, q.SpaceUid)
+		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid)
 		if err != nil {
 			return nil, err
 		}
-		queryReference[qry.ReferenceName] = queryMetric
+		queryReference[query.ReferenceName] = queryMetric
 	}
 
 	return queryReference, nil
@@ -478,8 +478,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 	// 判断是否查询非路由 tsdb
 	if q.DataSource != "" {
-		metadata.GetQueryParams(ctx).SetDataSource(q.DataSource)
-
 		// 如果是 BkSql 查询无需获取 tsdb 路由关系
 		if q.DataSource == BkData {
 			allConditions, bkDataErr := q.Conditions.AnalysisConditions()
@@ -504,6 +502,8 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 				Aggregates:     aggregates,
 				BkSqlCondition: allConditions.BkSql(),
 			}
+
+			metadata.GetQueryParams(ctx).SetStorageType(qry.StorageType)
 
 			span.Set("query-storage-id", qry.StorageID)
 			span.Set("query-measurement", qry.Measurement)
@@ -551,14 +551,35 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	span.Set("tsdb-num", len(tsDBs))
 
 	for _, tsDB := range tsDBs {
-		query, err := q.BuildMetadataQuery(ctx, tsDB, queryConditions, queryLabelsMatcher)
+		query, buildErr := q.BuildMetadataQuery(ctx, tsDB, queryConditions, queryLabelsMatcher)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+
 		query.Size = q.Limit
 		query.From = q.From
 		query.Aggregates = aggregates
 
-		if err != nil {
-			return nil, err
+		// 针对 vmRt 不为空的情况，进行 vm 判定
+		if query.VmRt != "" {
+			isVmQuery := func() bool {
+				if metadata.GetMustVmQueryFeatureFlag(ctx, query.TableID) {
+					return true
+				}
+				if query.IsDruidQuery(ctx) {
+					return true
+				}
+
+				return false
+			}()
+
+			if isVmQuery {
+				query.StorageID = ""
+				query.StorageType = consul.VictoriaMetricsStorageType
+			}
 		}
+
+		metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 		queryMetric.QueryList = append(queryMetric.QueryList, query)
 	}
 
@@ -701,6 +722,7 @@ func (q *Query) BuildMetadataQuery(
 			}
 		}
 	}
+
 	if len(filterConditions) > 0 {
 		whereList.Append(
 			promql.AndOperator,
@@ -777,6 +799,18 @@ func (q *Query) BuildMetadataQuery(
 
 	// 判断 rt 是否是 bkdata 的数据源
 	query.StorageType = tsDB.StorageType
+	// 兼容原逻辑，storageType 通过 storageMap 获取
+	if query.StorageType == "" {
+		stg, _ := tsdb.GetStorage(storageID)
+		if stg != nil {
+			query.StorageType = stg.Type
+		}
+
+		if query.StorageType == "" {
+			err = fmt.Errorf("storage type is empty")
+			return nil, err
+		}
+	}
 
 	// 在 metadata 还没有补充 storageType 字段之前
 	// 使用 sourceType 来判断是否是 es 查询

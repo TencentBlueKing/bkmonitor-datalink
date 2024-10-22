@@ -46,6 +46,16 @@ type instance struct {
 	opt  *influxdb.StreamSeriesSetOption
 }
 
+func (i instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 var _ tsdb.Instance = (*instance)(nil)
 
 func (i instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
@@ -70,7 +80,7 @@ func (i instance) QueryLabelValues(ctx context.Context, query *metadata.Query, n
 	panic("implement me")
 }
 
-func (i instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
+func (i instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
 	panic("implement me")
 }
 
@@ -823,7 +833,7 @@ func TestQueryRange(t *testing.T) {
 	ins := NewInstance(rootCtx, engine, &QueryRangeStorage{
 		QueryMaxRouting: 100,
 		Timeout:         timeout,
-	}, 0)
+	}, 0, 100)
 
 	fakeData(rootCtx)
 	testCases := map[string]struct {

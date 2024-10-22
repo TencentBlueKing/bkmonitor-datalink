@@ -205,7 +205,6 @@ func TestBaseUsage(t *testing.T) {
 	// sql = "rate(reference_1{t1=\"g\"}[2m]) - rate(reference_1{t1=\"g\"}[2m])"
 	sql := "sum by(bk_target_ip, bk_target_cloud_id) (t1)"
 	r, err := QueryRange(ctx, sql, time.Unix(1665215829, 0), time.Unix(1665220090, 0), 5*time.Minute)
-	// r, err := DirectQuery(ctx, sql)
 	assert.Nil(t, err)
 	if err == nil {
 		res := r.String()

@@ -136,7 +136,7 @@ func (mr *ProxyBackendMockRecorder) Ping(arg0 interface{}) *gomock.Call {
 // Query mocks base method.
 func (m *ProxyBackend) Query(arg0 uint64, arg1 *backend.QueryParams, arg2 http.Header) (*backend.Response, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DirectQuery", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "Query", arg0, arg1, arg2)
 	ret0, _ := ret[0].(*backend.Response)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
@@ -145,7 +145,7 @@ func (m *ProxyBackend) Query(arg0 uint64, arg1 *backend.QueryParams, arg2 http.H
 // Query indicates an expected call of Query.
 func (mr *ProxyBackendMockRecorder) Query(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DirectQuery", reflect.TypeOf((*ProxyBackend)(nil).Query), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Query", reflect.TypeOf((*ProxyBackend)(nil).Query), arg0, arg1, arg2)
 }
 
 // RawQuery mocks base method.

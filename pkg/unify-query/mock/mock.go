@@ -86,16 +86,16 @@ func SpaceRouter(ctx context.Context) {
 				ResultTableVM: &ir.ResultTableDetail{
 					StorageId:       2,
 					TableId:         ResultTableVM,
-					VmRt:            "result_table_vm",
-					Fields:          []string{Field},
-					BcsClusterID:    "cls_1",
+					VmRt:            "2_bcs_prom_computation_result_table",
+					Fields:          []string{"container_cpu_usage_seconds_total", "kube_pod_info"},
+					BcsClusterID:    "BCS-K8S-00000",
 					MeasurementType: redis.BkSplitMeasurement,
 				},
 				ResultTableInfluxDB: &ir.ResultTableDetail{
 					StorageId:       2,
 					TableId:         ResultTableInfluxDB,
-					Fields:          []string{Field},
-					BcsClusterID:    "cls_1",
+					Fields:          []string{"kube_pod_info"},
+					BcsClusterID:    "BCS-K8S-00000",
 					MeasurementType: redis.BkSplitMeasurement,
 				},
 				ResultTableEs: &ir.ResultTableDetail{
@@ -126,7 +126,7 @@ func SetSpaceTsDbMockData(ctx context.Context, spaceInfo ir.SpaceInfo, rtInfo ir
 	  			"false": false
 	  		},
 	  		"targeting": [{
-	  			"query": "tableID in [\"result_table.vm\"]",
+	  			"query": "tableID in [\"result_table.vm\", \"result_table.k8s\"]",
 	  			"percentage": {
 	  				"true": 100,
 	  				"false":0 

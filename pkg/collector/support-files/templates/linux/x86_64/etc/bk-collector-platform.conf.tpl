@@ -101,6 +101,7 @@ processor:
   - name: "{{ token_checker_config.name }}"
     config:
       type: "{{ token_checker_config.type }}"
+      version: "{{ token_checker_config.version }}"
       resource_key: "{{ token_checker_config.resource_key }}"
       salt: "{{ token_checker_config.salt }}"
       decoded_key: "{{ token_checker_config.decoded_key }}"

@@ -266,8 +266,10 @@ func (f *FormatFactory) WithTransform(encode func(string) string, decode func(st
 func (f *FormatFactory) WithOrders(orders map[string]bool) *FormatFactory {
 	f.orders = make(metadata.Orders, len(orders))
 	for k, ok := range orders {
-		k1 := f.decode(k)
-		f.orders[k1] = ok
+		if f.decode != nil {
+			k = f.encode(k)
+		}
+		f.orders[k] = ok
 	}
 	return f
 }
@@ -289,9 +291,9 @@ func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
 	var query elastic.Query
 	switch fieldType {
 	case TimeFieldTypeInt:
-		query = elastic.NewRangeQuery(fieldName).Gte(f.start * unitRate).Lt(f.end * unitRate)
+		query = elastic.NewRangeQuery(fieldName).Gte(f.start * unitRate).Lte(f.end * unitRate)
 	case TimeFieldTypeTime:
-		query = elastic.NewRangeQuery(fieldName).Gte(f.start).Lt(f.end).Format(EpochSecond)
+		query = elastic.NewRangeQuery(fieldName).Gte(f.start).Lte(f.end).Format(EpochSecond)
 	default:
 		err = fmt.Errorf("time field type is error %s", fieldType)
 	}
@@ -307,8 +309,6 @@ func (f *FormatFactory) timeAgg(name string, window, timezone string) {
 }
 
 func (f *FormatFactory) termAgg(name string, isFirst bool) {
-	name = f.decode(name)
-
 	info := TermAgg{
 		Name: name,
 	}
@@ -595,6 +595,9 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 				if dim == labels.MetricName {
 					continue
 				}
+				if f.decode != nil {
+					dim = f.decode(dim)
+				}
 
 				f.termAgg(dim, idx == 0)
 				f.nestedAgg(dim)
@@ -661,7 +664,10 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 	for _, conditions := range allConditions {
 		andQuery := make([]elastic.Query, 0, len(conditions))
 		for _, con := range conditions {
-			key := f.decode(con.DimensionName)
+			key := con.DimensionName
+			if f.decode != nil {
+				key = f.decode(key)
+			}
 
 			// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
 			fieldType, ok := f.mapping[key]

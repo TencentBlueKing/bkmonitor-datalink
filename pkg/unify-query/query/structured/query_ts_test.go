@@ -778,6 +778,41 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			ok:     false,
 			promql: `topk(1, sum by (ip) (last_over_time(a[1m])))`,
 		},
+		"非 vm 聚合查询验证 - 4": {
+			source: "username:other",
+			ts: &QueryTs{
+				SpaceUid: "influxdb-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+						TimeAggregation: TimeAggregation{
+							Function: "sum_over_time",
+							Window:   "1m",
+						},
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"__ext.container"},
+							},
+							{
+								Method: "topk",
+								VArgsList: []interface{}{
+									1,
+								},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			ok:     false,
+			promql: `topk(1, sum by (__ext__bk_46__container) (last_over_time(a[1m])))`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var (

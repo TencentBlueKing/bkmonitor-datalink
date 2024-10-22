@@ -45,7 +45,7 @@ func TestQueryReference(t *testing.T) {
 
 			ctx = InitHashID(ctx)
 			vmExpand := ref.ToVmExpand(ctx)
-			ok := GetQueryParams(ctx).IsVmQuery()
+			ok := GetQueryParams(ctx).IsDirectQuery()
 
 			fmt.Println(ok)
 			fmt.Println(vmExpand)
@@ -728,7 +728,7 @@ func TestCheckVmQuery(t *testing.T) {
 			SetUser(ctx, tc.source, tc.spaceUid, "")
 
 			vmExpand := tc.ref.ToVmExpand(ctx)
-			ok := GetQueryParams(ctx).IsVmQuery()
+			ok := GetQueryParams(ctx).IsDirectQuery()
 			assert.Equal(t, tc.expected.ok, ok)
 			if tc.expected.vmConditions != nil {
 				assert.Equal(t, tc.expected.vmConditions, vmExpand.MetricFilterCondition)

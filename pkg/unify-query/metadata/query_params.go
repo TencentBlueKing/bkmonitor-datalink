@@ -39,7 +39,7 @@ func (q *QueryParams) SetIsReference(isReference bool) *QueryParams {
 	return q
 }
 
-func (q *QueryParams) IsVmQuery() bool {
+func (q *QueryParams) IsDirectQuery() bool {
 	return q.StorageType.Existed(consul.VictoriaMetricsStorageType)
 }
 

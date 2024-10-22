@@ -86,7 +86,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 		return nil, err
 	}
 	// 如果查询 vm 的情况下则直接退出，因为 vm 不支持 Exemplar 数据
-	if metadata.GetQueryParams(ctx).IsVmQuery() {
+	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		return resp, nil
 	}
 
@@ -404,7 +404,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 		return
 	}
 
-	if metadata.GetQueryParams(ctx).IsVmQuery() {
+	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		// 判断是否是直查
 		vmExpand := queryRef.ToVmExpand(ctx)
 

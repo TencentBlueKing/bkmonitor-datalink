@@ -176,7 +176,7 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 	r.Step("query promQL", promQL)
 
 	// vm query
-	if metadata.GetQueryParams(ctx).IsVmQuery() {
+	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		r.Step("query instance", consul.VictoriaMetricsStorageType)
 		r.Step("query vmExpand", vmExpand)
 	} else {

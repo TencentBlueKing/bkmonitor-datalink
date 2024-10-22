@@ -824,7 +824,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			assert.Nil(t, err)
 			if err == nil {
 				vmExpand = ref.ToVmExpand(ctx)
-				ok = md.GetQueryParams(ctx).IsVmQuery()
+				ok = md.GetQueryParams(ctx).IsDirectQuery()
 				assert.Equal(t, tc.ok, ok)
 
 				if tc.expand != nil {

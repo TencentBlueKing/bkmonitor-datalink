@@ -399,7 +399,7 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 
 	var instance tsdb.Instance
 
-	if metadata.GetQueryParams(ctx).IsVmQuery() {
+	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		vmExpand := queryReference.ToVmExpand(ctx)
 
 		metadata.SetExpand(ctx, vmExpand)

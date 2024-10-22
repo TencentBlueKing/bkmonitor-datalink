@@ -1,6 +1,6 @@
 // MIT License
 
-// Copyright (c) 2021~2022 腾讯蓝鲸
+// Copyright (c) 2021~2024 腾讯蓝鲸
 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -33,9 +33,9 @@ import (
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -75,14 +75,16 @@ func getCmdbApi() *cmdb.Client {
 type Manager interface {
 	// Type 缓存类型
 	Type() string
+	// GetCacheKey 获取缓存key
+	GetCacheKey(key string) string
 	// RefreshByBiz 按业务刷新缓存
 	RefreshByBiz(ctx context.Context, bizID int) error
 	// RefreshGlobal 刷新全局缓存
 	RefreshGlobal(ctx context.Context) error
-	// CleanByBiz 按业务清理缓存
-	CleanByBiz(ctx context.Context, bizID int) error
 	// CleanGlobal 清理全局缓存
 	CleanGlobal(ctx context.Context) error
+	// CleanPartial 清理部分缓存
+	CleanPartial(ctx context.Context, cacheKey string, cleanFields []string)
 	// Reset 重置
 	Reset()
 
@@ -90,11 +92,6 @@ type Manager interface {
 	useBiz() bool
 	// GetConcurrentLimit 并发限制
 	GetConcurrentLimit() int
-
-	// CleanByEvents 根据事件清理缓存
-	CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error
-	// UpdateByEvents 根据事件更新缓存
-	UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error
 }
 
 // BaseCacheManager 基础缓存管理器
@@ -124,20 +121,26 @@ func NewBaseCacheManager(prefix string, opt *redis.Options, concurrentLimit int)
 	}, nil
 }
 
+// Type 缓存类型
+func (c *BaseCacheManager) Type() string {
+	return "base"
+}
+
 // Reset 重置
 func (c *BaseCacheManager) Reset() {
-	for key := range c.updatedFieldSet {
-		c.updateFieldLocks[key].Lock()
-		c.updatedFieldSet[key] = make(map[string]struct{})
-		c.updateFieldLocks[key].Unlock()
+	for cacheKey := range c.updatedFieldSet {
+		c.updateFieldLocks[cacheKey].Lock()
+		c.updatedFieldSet[cacheKey] = make(map[string]struct{})
+		c.updateFieldLocks[cacheKey].Unlock()
 	}
 }
 
 // initUpdatedFieldSet 初始化更新字段集合，确保后续不存在并发问题
 func (c *BaseCacheManager) initUpdatedFieldSet(keys ...string) {
 	for _, key := range keys {
-		c.updatedFieldSet[c.GetCacheKey(key)] = make(map[string]struct{})
-		c.updateFieldLocks[c.GetCacheKey(key)] = &sync.Mutex{}
+		cacheKey := c.GetCacheKey(key)
+		c.updatedFieldSet[cacheKey] = make(map[string]struct{})
+		c.updateFieldLocks[cacheKey] = &sync.Mutex{}
 	}
 }
 
@@ -154,19 +157,20 @@ func (c *BaseCacheManager) GetCacheKey(key string) string {
 // UpdateHashMapCache 更新hashmap类型缓存
 func (c *BaseCacheManager) UpdateHashMapCache(ctx context.Context, key string, data map[string]string) error {
 	client := c.RedisClient
+	cacheKey := c.GetCacheKey(key)
 
 	// 初始化更新字段集合
-	updatedFieldSet, ok := c.updatedFieldSet[key]
+	updatedFieldSet, ok := c.updatedFieldSet[cacheKey]
 	if !ok {
 		return errors.Errorf("key %s not found in updatedFieldSet", key)
 	}
-	lock, _ := c.updateFieldLocks[key]
+	lock, _ := c.updateFieldLocks[cacheKey]
 
 	// 执行更新
 	pipeline := client.Pipeline()
 	lock.Lock()
 	for field, value := range data {
-		pipeline.HSet(ctx, key, field, value)
+		pipeline.HSet(ctx, cacheKey, field, value)
 		updatedFieldSet[field] = struct{}{}
 
 		if pipeline.Len() > 500 {
@@ -190,16 +194,17 @@ func (c *BaseCacheManager) UpdateHashMapCache(ctx context.Context, key string, d
 // DeleteMissingHashMapFields 删除hashmap类型缓存中不存在的字段
 func (c *BaseCacheManager) DeleteMissingHashMapFields(ctx context.Context, key string) error {
 	client := c.RedisClient
+	cacheKey := c.GetCacheKey(key)
 
 	// 获取已更新的字段，如果不存在则删除
-	updatedFieldSet, ok := c.updatedFieldSet[key]
+	updatedFieldSet, ok := c.updatedFieldSet[cacheKey]
 	if !ok || len(updatedFieldSet) == 0 {
-		client.Del(ctx, key)
+		client.Del(ctx, cacheKey)
 		return nil
 	}
 
 	// 获取已存在的字段
-	existsFields, err := client.HKeys(ctx, key).Result()
+	existsFields, err := client.HKeys(ctx, cacheKey).Result()
 	if err != nil {
 		return err
 	}
@@ -217,7 +222,7 @@ func (c *BaseCacheManager) DeleteMissingHashMapFields(ctx context.Context, key s
 	}
 
 	// 执行删除
-	client.HDel(ctx, key, needDeleteFields...)
+	client.HDel(ctx, cacheKey, needDeleteFields...)
 
 	return nil
 }
@@ -225,7 +230,7 @@ func (c *BaseCacheManager) DeleteMissingHashMapFields(ctx context.Context, key s
 // UpdateExpire 更新缓存过期时间
 func (c *BaseCacheManager) UpdateExpire(ctx context.Context, key string) error {
 	client := c.RedisClient
-	result := client.Expire(ctx, key, time.Duration(c.Expire)*time.Second)
+	result := client.Expire(ctx, c.GetCacheKey(key), c.Expire*time.Second)
 	if err := result.Err(); err != nil {
 		return errors.Wrap(err, "expire hashmap failed")
 	}
@@ -242,14 +247,30 @@ func (c *BaseCacheManager) RefreshGlobal(ctx context.Context) error {
 	return nil
 }
 
-// CleanByBiz 清理业务缓存
-func (c *BaseCacheManager) CleanByBiz(ctx context.Context, bizID int) error {
-	return nil
-}
-
 // CleanGlobal 清理全局缓存
 func (c *BaseCacheManager) CleanGlobal(ctx context.Context) error {
 	return nil
+}
+
+// CleanPartial 清理部分缓存
+func (c *BaseCacheManager) CleanPartial(ctx context.Context, key string, cleanFields []string) {
+	if len(cleanFields) == 0 {
+		return
+	}
+
+	cacheKey := c.GetCacheKey(key)
+	needCleanFields := make([]string, 0)
+	for _, field := range cleanFields {
+		if _, ok := c.updatedFieldSet[cacheKey][field]; !ok {
+			needCleanFields = append(needCleanFields, field)
+		}
+	}
+
+	logger.Info(fmt.Sprintf("clean partial cache, key: %s, expect clean fields: %v, actual clean fields: %v", key, cleanFields, needCleanFields))
+
+	if len(needCleanFields) != 0 {
+		c.RedisClient.HDel(ctx, cacheKey, needCleanFields...)
+	}
 }
 
 // UseBiz 是否按业务执行
@@ -280,81 +301,34 @@ func NewCacheManagerByType(opt *redis.Options, prefix string, cacheType string, 
 	return cacheManager, err
 }
 
-// RefreshAll 执行缓存管理器
-func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) error {
-	// 判断是否启用业务缓存刷新
-	if cacheManager.useBiz() {
-		// 获取业务列表
-		cmdbApi := getCmdbApi()
-		var result cmdb.SearchBusinessResp
-		_, err := cmdbApi.SearchBusiness().SetResult(&result).Request()
-		if err = api.HandleApiResultError(result.ApiCommonRespMeta, err, "search business failed"); err != nil {
-			return err
-		}
+// RefreshByBizIds 按业务列表刷新缓存，并清理指定的缓存
+func RefreshByBizIds(ctx context.Context, cacheManager Manager, bizIds []int, concurrentLimit int) error {
+	// 并发控制
+	wg := sync.WaitGroup{}
+	limitChan := make(chan struct{}, concurrentLimit)
 
-		// 并发控制
-		wg := sync.WaitGroup{}
-		limitChan := make(chan struct{}, concurrentLimit)
-
-		// 按业务刷新缓存
-		errChan := make(chan error, len(result.Data.Info))
-		for _, biz := range result.Data.Info {
-			limitChan <- struct{}{}
-			wg.Add(1)
-			go func(bizId int) {
-				defer func() {
-					wg.Done()
-					<-limitChan
-				}()
-				err := cacheManager.RefreshByBiz(ctx, bizId)
-				if err != nil {
-					errChan <- errors.Wrapf(err, "refresh %s cache by biz failed, biz: %d", cacheManager.Type(), bizId)
-				}
-			}(biz.BkBizId)
-		}
-
-		// 等待所有任务完成
-		wg.Wait()
-		close(errChan)
-		for err := range errChan {
-			return err
-		}
-
-		// 按业务清理缓存
-		errChan = make(chan error, len(result.Data.Info))
-		for _, biz := range result.Data.Info {
-			limitChan <- struct{}{}
-			wg.Add(1)
-			go func(bizId int) {
-				defer func() {
-					wg.Done()
-					<-limitChan
-				}()
-				err := cacheManager.CleanByBiz(ctx, bizId)
-				if err != nil {
-					errChan <- errors.Wrapf(err, "clean %s cache by biz failed, biz: %d", cacheManager.Type(), bizId)
-				}
-			}(biz.BkBizId)
-		}
-
-		// 等待所有任务完成
-		wg.Wait()
-		close(errChan)
-		for err := range errChan {
-			return err
-		}
+	// 按业务刷新缓存
+	errChan := make(chan error, len(bizIds))
+	for _, bizId := range bizIds {
+		limitChan <- struct{}{}
+		wg.Add(1)
+		go func(bizId int) {
+			defer func() {
+				wg.Done()
+				<-limitChan
+			}()
+			err := cacheManager.RefreshByBiz(ctx, bizId)
+			if err != nil {
+				errChan <- errors.Wrapf(err, "refresh %s cache by biz failed, biz: %d", cacheManager.Type(), bizId)
+			}
+		}(bizId)
 	}
 
-	// 刷新全局缓存
-	err := cacheManager.RefreshGlobal(ctx)
-	if err != nil {
-		return errors.Wrapf(err, "refresh global %s cache failed", cacheManager.Type())
-	}
-
-	// 清理全局缓存
-	err = cacheManager.CleanGlobal(ctx)
-	if err != nil {
-		return errors.Wrapf(err, "clean global %s cache failed", cacheManager.Type())
+	// 等待所有任务完成
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		return err
 	}
 
 	return nil

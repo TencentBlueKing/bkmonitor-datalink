@@ -91,8 +91,6 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	}
 
 	span.Set("req-http-method", method)
-
-	span.Set("req-http-method", method)
 	span.Set("req-http-path", opt.UrlPath)
 	span.Set("req-http-headers", opt.Headers)
 

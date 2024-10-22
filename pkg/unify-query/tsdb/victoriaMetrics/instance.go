@@ -367,11 +367,12 @@ func (i *Instance) vmQuery(
 	span.Set("query-username", user.Name)
 
 	span.Set("query-address", i.url)
+	span.Set("query-req-body", body)
 
 	headers := metadata.Headers(ctx, i.headers)
 
 	headersString, _ := json.Marshal(headers)
-	span.Set("query-headers", string(headersString))
+	span.Set("query-headers", headersString)
 
 	size, err := i.curl.Request(
 		ctx, curl.Post,

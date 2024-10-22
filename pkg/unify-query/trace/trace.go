@@ -70,6 +70,8 @@ func (s *Span) Set(key string, value any) {
 		attr = attribute.Float64(key, value.(float64))
 	case []float64:
 		attr = attribute.Float64Slice(key, value.([]float64))
+	case []byte:
+		attr = attribute.String(key, string(value.([]byte)))
 	case string:
 		attr = attribute.String(key, value.(string))
 	case []string:

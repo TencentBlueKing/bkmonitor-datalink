@@ -709,6 +709,7 @@ func (i *Instance) QuerySeriesSet(
 				mq := &metadata.Query{
 					DataSource:      query.DataSource,
 					TableID:         query.TableID,
+					MetricName:      query.MetricName,
 					RetentionPolicy: query.RetentionPolicy,
 					DB:              query.DB,
 					Measurement:     measurement,

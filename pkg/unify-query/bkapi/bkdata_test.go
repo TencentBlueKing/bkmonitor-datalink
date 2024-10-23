@@ -10,7 +10,6 @@
 package bkapi
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -20,15 +19,20 @@ import (
 )
 
 func TestGetDataAuth(t *testing.T) {
-	mock.Path = `../dist/local/unify-query.yaml`
 	mock.Init()
 
-	headers := GetBkDataAPI().Headers(nil)
-	fmt.Println(headers)
+	headers := GetBkDataAPI().Headers(map[string]string{
+		"Content-Type": "application/json",
+	})
+
+	assert.Equal(t, map[string]string{
+		"Content-Type":           "application/json",
+		"X-Bkapi-Authorization":  `{"bk_app_code":"bk_code","bk_app_secret":"bk_secret","bk_username":"admin"}`,
+		"X-Bkbase-Authorization": `{"bk_app_code":"bk_code","bk_username":"admin","bkdata_authentication_method":"token","bkdata_data_token":"123456"}`,
+	}, headers)
 }
 
 func TestGetDataUrl(t *testing.T) {
-	mock.Path = `../dist/local/unify-query.yaml`
 	mock.Init()
 
 	testCase := map[string]struct {
@@ -37,23 +41,25 @@ func TestGetDataUrl(t *testing.T) {
 	}{
 		"test-1": {
 			spaceUid: "default",
-			url:      `http://127.0.0.1/api/bk-base/prod/v3/queryengine/query_sync`,
+			url:      `http://127.0.0.1/bk_data/query_sync`,
 		},
 		"test-2": {
 			spaceUid: "bkcc__test",
-			url:      `http://127.0.0.1/api/bk-base/prod/v3/queryengine/test/query_sync`,
+			url:      `http://127.0.0.1/bk_data/test/query_sync`,
 		},
 		"test-3": {
 			spaceUid: "bkci__test",
-			url:      `http://127.0.0.1/api/bk-base/prod/v3/queryengine/test/query_sync`,
+			url:      `http://127.0.0.1/bk_data/query_sync`,
 		},
 	}
-
-	viper.Set(BkAPIAddressConfigPath, "http://127.0.0.1")
 
 	for name, c := range testCase {
 		t.Run(name, func(t *testing.T) {
 			url := GetBkDataAPI().QueryUrl(c.spaceUid)
+
+			clusterSpaceUid := viper.GetStringMapStringSlice(BkDataClusterSpaceUidConfigPath)
+			assert.Equal(t, []string{"bkcc__test"}, clusterSpaceUid["test"])
+
 			assert.Equal(t, c.url, url)
 		})
 	}

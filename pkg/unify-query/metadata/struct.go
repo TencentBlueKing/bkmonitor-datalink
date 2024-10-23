@@ -73,7 +73,8 @@ type Query struct {
 	ClusterName string
 	TagsKey     []string
 
-	TableID string
+	TableID    string
+	MetricName string
 
 	// vm 的 rt
 	VmRt string
@@ -328,10 +329,6 @@ func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
 	for referenceName, reference := range qRef {
 		if 0 < len(reference.QueryList) {
 			for _, query := range reference.QueryList {
-				// 该字段表示为是否查 VM
-				if !query.IsSingleMetric {
-					continue
-				}
 				if query.VmRt == "" {
 					continue
 				}

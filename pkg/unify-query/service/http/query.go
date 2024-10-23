@@ -381,6 +381,10 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 
 	// 判断是否打开对齐
 	for _, q := range query.QueryList {
+		// 补充默认 datasource
+		if q.DataSource == "" {
+			q.DataSource = structured.BkMonitor
+		}
 		q.IsReference = false
 		q.AlignInfluxdbResult = AlignInfluxdbResult
 	}
@@ -407,11 +411,6 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		// 判断是否是直查
 		vmExpand := queryRef.ToVmExpand(ctx)
-
-		if len(vmExpand.ResultTableList) == 0 {
-			return
-		}
-
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
 			// 兼容 storage 结构体，用于单元测试

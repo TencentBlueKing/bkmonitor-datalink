@@ -67,7 +67,7 @@ func HandlerFieldKeys(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	queryRef, start, end, err := infoParamsToQueryTs(ctx, params)
+	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -143,7 +143,7 @@ func HandlerTagKeys(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	queryRef, start, end, err := infoParamsToQueryTs(ctx, params)
+	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -219,7 +219,7 @@ func HandlerTagValues(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	queryRef, start, end, err := infoParamsToQueryTs(ctx, params)
+	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -313,7 +313,7 @@ func HandlerSeries(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	queryRef, start, end, err := infoParamsToQueryTs(ctx, params)
+	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -487,7 +487,7 @@ func HandlerLabelValues(c *gin.Context) {
 	return
 }
 
-func infoParamsToQueryTs(ctx context.Context, params *infos.Params) (queryRef metadata.QueryReference, start, end time.Time, err error) {
+func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (queryRef metadata.QueryReference, start, end time.Time, err error) {
 	var (
 		user = metadata.GetUser(ctx)
 	)
@@ -512,7 +512,9 @@ func infoParamsToQueryTs(ctx context.Context, params *infos.Params) (queryRef me
 
 	start, end, err = queryTs.GetTime()
 	if err != nil {
-		return
+		// 如果时间异常则使用最近 1h
+		end = time.Now()
+		start = end.Add(time.Hour * -1)
 	}
 	queryRef, err = queryTs.ToQueryReference(ctx)
 	return

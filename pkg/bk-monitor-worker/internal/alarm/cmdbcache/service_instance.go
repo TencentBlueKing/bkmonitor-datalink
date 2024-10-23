@@ -231,7 +231,7 @@ func (m *ServiceInstanceCacheManager) RefreshByBiz(ctx context.Context, bkBizId 
 // RefreshGlobal 刷新全局缓存
 func (m *ServiceInstanceCacheManager) RefreshGlobal(ctx context.Context) error {
 	// 刷新缓存过期时间
-	for _, key := range []string{serviceInstanceCacheKey, topoCacheKey} {
+	for _, key := range []string{serviceInstanceCacheKey, hostToServiceInstanceCacheKey} {
 		if err := m.RedisClient.Expire(ctx, m.GetCacheKey(key), m.Expire).Err(); err != nil {
 			logger.Error("set cache expire time failed, key: %s, err: %v", key, err)
 		}

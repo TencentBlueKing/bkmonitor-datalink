@@ -559,27 +559,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		query.Size = q.Limit
 		query.From = q.From
 		query.Aggregates = aggregates
-
-		// 针对 vmRt 不为空的情况，进行 vm 判定
-		if query.VmRt != "" {
-			isVmQuery := func() bool {
-				if metadata.GetMustVmQueryFeatureFlag(ctx, query.TableID) {
-					return true
-				}
-				if query.IsDruidQuery(ctx) {
-					return true
-				}
-
-				return false
-			}()
-
-			if isVmQuery {
-				query.StorageID = ""
-				query.StorageType = consul.VictoriaMetricsStorageType
-			}
-		}
-
-		metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 		queryMetric.QueryList = append(queryMetric.QueryList, query)
 	}
 
@@ -805,11 +784,6 @@ func (q *Query) BuildMetadataQuery(
 		if stg != nil {
 			query.StorageType = stg.Type
 		}
-
-		if query.StorageType == "" {
-			err = fmt.Errorf("storage type is empty")
-			return nil, err
-		}
 	}
 
 	// 在 metadata 还没有补充 storageType 字段之前
@@ -818,6 +792,25 @@ func (q *Query) BuildMetadataQuery(
 	if tsDB.SourceType == BkData {
 		query.StorageType = consul.ElasticsearchStorageType
 	}
+
+	// 针对 vmRt 不为空的情况，进行 vm 判定
+	if vmRt != "" {
+		isVmQuery := func() bool {
+			if metadata.GetMustVmQueryFeatureFlag(ctx, tsDB.TableID) {
+				return true
+			}
+			if query.IsDruidQuery(ctx) {
+				return true
+			}
+
+			return false
+		}()
+
+		if isVmQuery {
+			query.StorageType = consul.VictoriaMetricsStorageType
+		}
+	}
+	metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 
 	query.DataSource = q.DataSource
 	query.TableID = tsDB.TableID

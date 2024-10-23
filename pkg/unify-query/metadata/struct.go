@@ -319,7 +319,6 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 
 // ToVmExpand 判断是否是直查，如果都是 vm 查询的情况下，则使用直查模式
 func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
-	vmConditions := set.New[string]()
 	vmClusterNames := set.New[string]()
 	vmResultTable := set.New[string]()
 	vmExpand = &VmExpand{
@@ -328,8 +327,7 @@ func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
 
 	for referenceName, reference := range qRef {
 		if 0 < len(reference.QueryList) {
-			//vmConditions := set.New[string]()
-
+			vmConditions := set.New[string]()
 			for _, query := range reference.QueryList {
 				if query.VmRt == "" {
 					continue

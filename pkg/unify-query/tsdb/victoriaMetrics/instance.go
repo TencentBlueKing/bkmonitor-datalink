@@ -367,7 +367,6 @@ func (i *Instance) vmQuery(
 	span.Set("query-username", user.Name)
 
 	span.Set("query-address", i.url)
-	span.Set("query-req-body", body)
 
 	headers := metadata.Headers(ctx, i.headers)
 

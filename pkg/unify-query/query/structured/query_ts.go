@@ -867,6 +867,7 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("query-source-type", query.SourceType)
 	span.Set("query-table-id", query.TableID)
 	span.Set("query-db", query.DB)
+	span.Set("query-metric-name", query.MetricName)
 	span.Set("query-measurement", query.Measurement)
 	span.Set("query-measurements", query.Measurements)
 	span.Set("query-field", query.Field)

@@ -328,6 +328,8 @@ func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
 
 	for referenceName, reference := range qRef {
 		if 0 < len(reference.QueryList) {
+			//vmConditions := set.New[string]()
+
 			for _, query := range reference.QueryList {
 				if query.VmRt == "" {
 					continue

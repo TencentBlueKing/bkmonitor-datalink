@@ -533,15 +533,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 
 	if ok, factor, downSampleError := downsample.CheckDownSampleRange(step.String(), query.DownSampleRange); ok {
 		if downSampleError == nil {
-			var info *TimeInfo
-			if info, downSampleError = getTimeInfo(&structured.CombinedQueryParams{
-				Start: query.Start,
-				End:   query.End,
-				Step:  query.DownSampleRange,
-			}); downSampleError == nil {
-				log.Debugf(context.TODO(), "respData to down sample: %+v", info)
-				resp.Downsample(factor)
-			}
+			resp.Downsample(factor)
 		}
 	}
 

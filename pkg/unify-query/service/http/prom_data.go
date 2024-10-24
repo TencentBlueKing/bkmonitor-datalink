@@ -10,20 +10,11 @@
 package http
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"math"
-	"strconv"
-	"time"
-
-	"github.com/prometheus/common/model"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
 // 返回结构化数据
@@ -98,90 +89,4 @@ func (d *PromData) Downsample(factor float64) {
 		points := downsample.Downsample(table.GetPromPoints(), factor)
 		table.SetValuesByPoints(points)
 	}
-}
-
-// getTime
-func getTime(timestamp string) (time.Time, error) {
-	timeNum, err := strconv.Atoi(timestamp)
-	if err != nil {
-		return time.Time{}, errors.New("parse time failed")
-	}
-	return time.Unix(int64(timeNum), 0), nil
-}
-
-// HandleRawPromQuery
-func HandleRawPromQuery(ctx context.Context, stmt string, query *structured.CombinedQueryParams) (*PromData, error) {
-	info, err := getTimeInfo(query)
-	if err != nil {
-		return nil, err
-	}
-
-	// 调用模块查询结果
-	tables, err := promql.QueryRange(ctx, stmt, info.Start, info.Stop, info.Interval)
-	if err != nil {
-		log.Errorf(ctx, "query prom sql failed for->[%s]", err)
-		return nil, err
-	}
-	log.Debugf(context.TODO(), "query prom:%s success", stmt)
-
-	// 将结果进行格式转换
-	resp := NewPromData(query.ResultColumns)
-	err = resp.Fill(tables)
-
-	if err != nil {
-		log.Errorf(ctx, "fill prom result failed for->[%s]", err)
-		return nil, err
-	}
-	return resp, nil
-}
-
-// TimeInfo
-type TimeInfo struct {
-	Start    time.Time
-	Stop     time.Time
-	Interval time.Duration
-}
-
-// getTimeInfo
-func getTimeInfo(query *structured.CombinedQueryParams) (*TimeInfo, error) {
-	var start time.Time
-	var stop time.Time
-	var interval time.Duration
-	var dTmp model.Duration
-	var err error
-	info := new(TimeInfo)
-	if query.Start == "" {
-		return nil, errors.New("start time cannot be empty")
-	}
-	start, err = getTime(query.Start)
-
-	if err != nil {
-		return nil, err
-	}
-	if query.End == "" {
-		stop = time.Now()
-	} else {
-		stop, err = getTime(query.End)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if query.Step == "" {
-		interval = promql.GetDefaultStep()
-	} else {
-		dTmp, err = model.ParseDuration(query.Step)
-		interval = time.Duration(dTmp)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// start需要根据step对齐
-	start = time.Unix(int64(math.Floor(float64(start.Unix())/interval.Seconds())*interval.Seconds()), 0)
-
-	info.Start = start
-	info.Stop = stop
-	info.Interval = interval
-	return info, nil
 }

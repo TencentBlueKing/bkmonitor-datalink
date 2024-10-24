@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package mock
+package influxdb
 
 import (
 	"context"
@@ -19,7 +19,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
@@ -51,6 +50,7 @@ func SpaceRouter(ctx context.Context) {
 	}
 	influxdbFields := []string{
 		"kube_pod_info",
+		"kube_node_info",
 	}
 
 	mockSpaceRouterOnce.Do(func() {
@@ -107,13 +107,7 @@ func SpaceRouter(ctx context.Context) {
 			}, nil,
 			nil,
 		)
-
-		influxdb.GetTsDBRouter()
 	})
-}
-
-func influxDbRouter(ctx context.Context) {
-	influxdb.GetInfluxDBRouter()
 }
 
 func SetSpaceTsDbMockData(ctx context.Context, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo, fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
@@ -139,7 +133,7 @@ func SetSpaceTsDbMockData(ctx context.Context, spaceInfo ir.SpaceInfo, rtInfo ir
 	  	}
 	  }`)
 
-	sr, err := influxdb.SetSpaceTsDbRouter(ctx, "mock", "mock", "", 100)
+	sr, err := SetSpaceTsDbRouter(ctx, "mock", "mock", "", 100)
 	if err != nil {
 		panic(err)
 	}
@@ -179,4 +173,15 @@ func SetRedisClient(ctx context.Context) {
 		Password: pwd,
 	}
 	redis.SetInstance(ctx, "mock", options)
+}
+
+func MockRouterWithHostInfo(hostInfo ir.HostInfo) *Router {
+	i := GetInfluxDBRouter()
+	i.hostInfo = hostInfo
+	i.hostStatusInfo = make(ir.HostStatusInfo, len(hostInfo))
+	// 将hostInfo 里面的信息初始化到 hostStatusInfo 并且初始化 Read 状态为 true
+	for _, v := range hostInfo {
+		i.hostStatusInfo[v.DomainName] = &ir.HostStatus{Read: true}
+	}
+	return i
 }

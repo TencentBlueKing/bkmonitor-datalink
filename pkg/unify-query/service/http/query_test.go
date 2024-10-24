@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
@@ -72,8 +73,8 @@ func mockData(ctx context.Context, path, bucket string) *curl.MockCurl {
 	victoriaMetricsStorageId := int64(1)
 	influxdbStorageId := int64(2)
 
-	mock.SetRedisClient(ctx)
-	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+	influxdb.SetRedisClient(ctx)
+	influxdb.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
 		"bkcc__1068": ir.Space{
 			"table_id_1.metric": &ir.SpaceResultTable{
 				TableId: "table_id_1.metric",
@@ -142,7 +143,7 @@ func mockData(ctx context.Context, path, bucket string) *curl.MockCurl {
 		},
 	}, nil, nil)
 
-	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+	influxdb.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
 		consul.VictoriaMetricsStorageType: ir.Space{
 			"a.b_2": &ir.SpaceResultTable{
 				TableId: "a.b_2",
@@ -180,7 +181,7 @@ func mockData(ctx context.Context, path, bucket string) *curl.MockCurl {
 		},
 	}, nil, nil)
 
-	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+	influxdb.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
 		consul.InfluxDBStorageType: ir.Space{
 			"a.b": &ir.SpaceResultTable{
 				TableId: "a.b",
@@ -209,7 +210,7 @@ func mockData(ctx context.Context, path, bucket string) *curl.MockCurl {
 			Measurement:     "cpu_summary",
 		},
 	}, nil, nil)
-	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+	influxdb.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
 		"vm-query": ir.Space{
 			"table_id.__default__": &ir.SpaceResultTable{
 				TableId: "table_id.__default__",
@@ -271,7 +272,7 @@ func mockData(ctx context.Context, path, bucket string) *curl.MockCurl {
 			DataLabel:       "100147_bcs_prom_computation_result_table_25429",
 		},
 	}, nil, nil)
-	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+	influxdb.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
 		"bkcc__100147": ir.Space{"custom_report_aggate.base": &ir.SpaceResultTable{
 			TableId: "custom_report_aggate.base",
 		}}}, ir.ResultTableDetailInfo{"custom_report_aggate.base": &ir.ResultTableDetail{
@@ -399,7 +400,7 @@ func mockData(ctx context.Context, path, bucket string) *curl.MockCurl {
 		Instance: vmInst,
 	})
 
-	mock.SetRedisClient(context.TODO())
+	influxdb.SetRedisClient(context.TODO())
 	return mockCurl
 }
 
@@ -421,8 +422,8 @@ func TestQueryTsWithEs(t *testing.T) {
 	esTestStorageID := 999
 
 	mock.Init()
-	mock.SetRedisClient(ctx)
-	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+	influxdb.SetRedisClient(ctx)
+	influxdb.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
 		spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
 	}, ir.ResultTableDetailInfo{
 		tableID: &ir.ResultTableDetail{
@@ -561,8 +562,8 @@ func TestQueryReference(t *testing.T) {
 	esTestStorageID := 999
 
 	mock.Init()
-	mock.SetRedisClient(ctx)
-	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+	influxdb.SetRedisClient(ctx)
+	influxdb.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
 		spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
 	}, ir.ResultTableDetailInfo{
 		tableID: &ir.ResultTableDetail{
@@ -1109,7 +1110,7 @@ func TestQueryTs(t *testing.T) {
 
 func TestQueryRawWithInstance(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
-	mock.SetRedisClient(ctx)
+	influxdb.SetRedisClient(ctx)
 
 	spaceUid := "space_uid_mock"
 	tableID := "table_id.mock"
@@ -1144,7 +1145,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 	//resultTableDetail.Options.TimeField.Unit = elasticsearch.Microsecond
 	resultTableDetail.Options.NeedAddTime = true
 
-	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+	influxdb.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
 		spaceUid: ir.Space{
 			tableID: &ir.SpaceResultTable{TableId: tableID, Filters: make([]map[string]string, 0)},
 		},
@@ -1344,7 +1345,7 @@ func TestVmQueryParams(t *testing.T) {
 
 func TestStructAndPromQLConvert(t *testing.T) {
 	ctx := context.Background()
-	mock.SetRedisClient(ctx)
+	influxdb.SetRedisClient(ctx)
 
 	testCase := map[string]struct {
 		queryStruct bool
@@ -2404,7 +2405,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 func setupCluterMetricsData(ctx context.Context) {
 	var err error
 	log.InitTestLogger()
-	mock.SetRedisClient(ctx)
+	influxdb.SetRedisClient(ctx)
 	_, err = redis.HSet(
 		ctx, "bkmonitor:cluster_metrics_meta", "influxdb_shard_write_points_ok",
 		"{\"metric_name\":\"influxdb_shard_write_points_ok\",\"tags\":[\"bkm_cluster\",\"database\",\"engine\",\"hostname\",\"id\",\"index_type\",\"path\",\"retention_policy\",\"wal_path\"]}")
@@ -2423,7 +2424,7 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 	ctx := context.Background()
 	setupCluterMetricsData(ctx)
 	log.InitTestLogger()
-	mock.SetRedisClient(ctx)
+	influxdb.SetRedisClient(ctx)
 	testCases := map[string]struct {
 		query  string
 		result string
@@ -2548,64 +2549,12 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 	}
 }
 
-func TestCheckDruidCheck(t *testing.T) {
-	testCases := map[string]struct {
-		promql   *structured.QueryPromQL
-		expected bool
-	}{
-		"test_1": {
-			promql: &structured.QueryPromQL{
-				PromQL: `sum by (bk_target_ip, bk_inst_id, bk_obj_id) (bkmonitor:system:cpu_summary:usage{bk_inst_id="123",bk_obj_id!="",bk_target_ip="127.0.0.1"})`,
-			},
-			expected: true,
-		},
-	}
-
-	spaceUID := "check_druid"
-
-	ctx := metadata.InitHashID(context.Background())
-	mock.SetRedisClient(ctx)
-	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
-		spaceUID: ir.Space{
-			"system.cpu_summary": &ir.SpaceResultTable{
-				TableId: "system.cpu_summary",
-			},
-		},
-	}, ir.ResultTableDetailInfo{
-		"system.cpu_summary": &ir.ResultTableDetail{
-			DB:          "system",
-			TableId:     "system.cpu_summary",
-			Measurement: "cpu_summary",
-			VmRt:        "100147_ieod_system_cpu_summary_raw",
-			Fields:      []string{"usage"},
-		},
-	}, nil, nil)
-
-	for name, c := range testCases {
-		t.Run(name, func(t *testing.T) {
-			metadata.SetUser(ctx, "", spaceUID, "")
-			queryTs, err := promQLToStruct(ctx, c.promql)
-			if err != nil {
-				log.Fatalf(ctx, err.Error())
-			}
-
-			ref, err := queryTs.ToQueryReference(ctx)
-			if err != nil {
-				log.Fatalf(ctx, err.Error())
-			}
-
-			actual := ref.CheckDruidCheck(ctx)
-			assert.Equal(t, c.expected, actual)
-		})
-	}
-}
-
 func TestQueryTsToInstanceAndStmt(t *testing.T) {
 	mock.Init()
 
 	spaceUid := "space"
 	ctx := metadata.InitHashID(context.Background())
-	mock.SetSpaceTsDbMockData(ctx,
+	influxdb.SetSpaceTsDbMockData(ctx,
 		ir.SpaceInfo{
 			spaceUid: ir.Space{
 				"result_table.vm": &ir.SpaceResultTable{

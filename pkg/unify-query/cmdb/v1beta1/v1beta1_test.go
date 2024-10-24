@@ -21,6 +21,8 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
@@ -286,7 +288,7 @@ func TestModel_GetPath(t *testing.T) {
 func TestModel_GetResourceMatcher(t *testing.T) {
 	mock.Init()
 	ctx := metadata.InitHashID(context.Background())
-	mock.SpaceRouter(ctx)
+	influxdb.SpaceRouter(ctx)
 
 	testCases := map[string]struct {
 		source       cmdb.Resource
@@ -406,13 +408,61 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 	}
 
 	timestamp := int64(1693973987)
+	data := map[string][]mock.Series{
+		"1693973987(count by (bk_target_ip) (a))": {
+			{
+				Metric: map[string]string{
+					"bk_target_ip": "127.0.0.1",
+				},
+				Value: []any{
+					1693973987, "1",
+				},
+			},
+		},
+		"1693973987count by (bcs_cluster_id, namespace, pod) (b and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (a)))": {
+			{
+				Metric: map[string]string{
+					"bcs_cluster_id": "BCS-K8S-00000",
+					"namespace":      "bkmonitor-operator",
+					"pod":            "bkm-pod-1",
+				},
+				Value: []any{
+					1693973987, "1",
+				},
+			},
+			{
+				Metric: map[string]string{
+					"bcs_cluster_id": "BCS-K8S-00000",
+					"namespace":      "bkmonitor-operator",
+					"pod":            "bkm-pod-2",
+				},
+				Value: []any{
+					1693973987, "1",
+				},
+			},
+		},
+		"1693973987count by (bk_target_ip) (b and on (apm_application_name, apm_service_name, apm_service_instance_name) (count by (apm_application_name, apm_service_name, apm_service_instance_name) (a)))": {
+			{
+				Metric: map[string]string{
+					"bk_target_ip": "127.0.0.1",
+				},
+				Value: []any{
+					1693973987, "1",
+				},
+			},
+		},
+	}
+	mock.SetVmMockData(data)
+
 	for n, c := range testCases {
 		t.Run(n, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			metadata.SetUser(ctx, "", mock.SpaceUid, "skip")
-			source, matcher, _, rets, err := testModel.QueryResourceMatcher(ctx, "", mock.SpaceUid, timestamp, c.target, c.source, c.matcher, c.pathResource)
+			metadata.SetUser(ctx, "", influxdb.SpaceUid, "skip")
+			source, matcher, _, rets, err := testModel.QueryResourceMatcher(ctx, "", influxdb.SpaceUid, timestamp, c.target, c.source, c.matcher, c.pathResource)
 			assert.Nil(t, err)
-			if err == nil {
+			if err != nil {
+				log.Errorf(ctx, err.Error())
+			} else {
 				assert.Equal(t, c.expected.source, source)
 				assert.Equal(t, c.expected.sourceInfo, matcher)
 				assert.Equal(t, c.expected.targetList, rets)

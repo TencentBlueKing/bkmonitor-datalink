@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	headerutil "github.com/golang/gddo/httputil/header"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
@@ -273,26 +272,6 @@ func (d *InfoData) Fill(tables *influxdb.Tables) error {
 
 }
 
-// HandleShowTagKeys :
-func HandleShowTagKeys(c *gin.Context) {
-	handleTsQueryInfosRequest(infos.TagKeys, c)
-}
-
-// HandleShowTagValues :
-func HandleShowTagValues(c *gin.Context) {
-	handleTsQueryInfosRequest(infos.TagValues, c)
-}
-
-// HandleShowFieldKeys :
-func HandleShowFieldKeys(c *gin.Context) {
-	handleTsQueryInfosRequest(infos.FieldKeys, c)
-}
-
-// HandleShowSeries :
-func HandleShowSeries(c *gin.Context) {
-	handleTsQueryInfosRequest(infos.Series, c)
-}
-
 // HandleTimeSeries :
 func HandleTimeSeries(c *gin.Context) {
 	handleTsQueryInfosRequest(infos.TimeSeries, c)
@@ -510,8 +489,9 @@ func HandleTsDBPrint(c *gin.Context) {
 // HandleTsQueryInfosRequest 查询info数据接口
 func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 	var (
-		ctx = c.Request.Context()
-		err error
+		ctx  = c.Request.Context()
+		err  error
+		user = metadata.GetUser(ctx)
 	)
 
 	// 这里开始context就使用trace生成的了
@@ -530,22 +510,15 @@ func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 	span.Set("info-request-data", string(queryStmt))
 
 	// 如果header中有bkbizid，则以header中的值为最优先
-	bizIDs := headerutil.ParseList(c.Request.Header, BizHeader)
-	spaceUid := c.Request.Header.Get(SpaceUIDHeader)
+	spaceUid := user.SpaceUid
 
 	span.Set("request-space-uid", spaceUid)
-	span.Set("request-biz-ids", bizIDs)
 
-	log.Debugf(context.TODO(), "recevice query info: %s, X-Bk-Scope-Biz-Id:%v ", string(queryStmt), bizIDs)
 	params, err := infos.AnalysisQuery(string(queryStmt))
 	if err != nil {
 		log.Errorf(context.TODO(), "analysis info query failed for->[%s]", err)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
-	}
-
-	if len(bizIDs) > 0 {
-		structured.ReplaceOrAddCondition(&params.Conditions, structured.BizID, bizIDs)
 	}
 
 	result, err := infos.QueryAsync(ctx, infoType, params, spaceUid)

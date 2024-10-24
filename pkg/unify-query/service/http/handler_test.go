@@ -23,6 +23,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
@@ -105,7 +106,7 @@ var (
 func TestAPIHandler(t *testing.T) {
 	mock.Init()
 	ctx := metadata.InitHashID(context.Background())
-	mock.SpaceRouter(ctx)
+	influxdb.SpaceRouter(ctx)
 
 	end := time.Now()
 	start := end.Add(time.Hour * -1)
@@ -197,7 +198,7 @@ func TestAPIHandler(t *testing.T) {
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			metadata.SetUser(ctx, "", mock.SpaceUid, "")
+			metadata.SetUser(ctx, "", influxdb.SpaceUid, "")
 			url := fmt.Sprintf("http://127.0.0.1/%s", c.url)
 			res, _ := json.Marshal(c.infoParams)
 			body := bytes.NewReader(res)
@@ -219,7 +220,7 @@ func TestAPIHandler(t *testing.T) {
 func TestQueryHandler(t *testing.T) {
 	mock.Init()
 	ctx := metadata.InitHashID(context.Background())
-	mock.SpaceRouter(ctx)
+	influxdb.SpaceRouter(ctx)
 
 	end := time.Now()
 	start := end.Add(time.Hour * -1)
@@ -249,7 +250,7 @@ func TestQueryHandler(t *testing.T) {
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			metadata.SetUser(ctx, "", mock.SpaceUid, "")
+			metadata.SetUser(ctx, "", influxdb.SpaceUid, "")
 			queryPromQL := &structured.QueryPromQL{
 				PromQL:  c.promql,
 				Start:   fmt.Sprintf("%d", start.Unix()),

@@ -54,9 +54,20 @@ type Series struct {
 	Values []Value `json:"values,omitempty"`
 }
 
-type Data struct {
+type VmData struct {
 	Result     []Series `json:"result"`
 	ResultType string   `json:"resultType,omitempty"`
+}
+
+type Data struct {
+	List []VmList `json:"list,omitempty"`
+	SQL  string   `json:"sql"`
+}
+
+type VmList struct {
+	Data      VmData `json:"data,omitempty""`
+	IsPartial bool   `json:"isPartial,omitempty"`
+	Status    string `json:"status,omitempty"`
 }
 
 // VmResponse 查询返回结构体
@@ -64,44 +75,53 @@ type VmResponse struct {
 	Result  bool   `json:"result"`
 	Message string `json:"message"`
 	Code    string `json:"code"`
-	Data    struct {
-		ResultTableScanRange interface{} `json:"result_table_scan_range"`
-		Cluster              string      `json:"cluster"`
-		TotalRecords         int         `json:"totalRecords"`
-		Timetaken            float64     `json:"timetaken"`
-		List                 []struct {
-			Data      Data   `json:"data,omitempty""`
-			IsPartial bool   `json:"isPartial,omitempty"`
-			Status    string `json:"status,omitempty"`
-		} `json:"list,omitempty""`
-		BksqlCallElapsedTime int           `json:"bksql_call_elapsed_time"`
-		Device               string        `json:"device"`
-		ResultTableIds       []string      `json:"result_table_ids"`
-		SelectFieldsOrder    []interface{} `json:"select_fields_order"`
-		SQL                  string        `json:"sql"`
-	} `json:"data,omitempty"`
-	Errors struct {
+	Data    Data   `json:"data,omitempty"`
+	Errors  struct {
 		Error   string `json:"error"`
 		QueryId string `json:"query_id"`
 	} `json:"errors"`
 }
 
 var (
-	lock sync.RWMutex
-	data map[string]VmResponse
+	lock       sync.RWMutex
+	resultData = make(map[string]VmResponse)
 )
 
-func SetVmMockData(data map[string]VmResponse) {
+func SetVmMockData(data map[string][]Series) {
 	lock.Lock()
 	defer lock.Unlock()
 	for k, v := range data {
-		data[k] = v
+		if len(v) == 0 {
+			continue
+		}
+
+		rd := VmResponse{Result: true, Code: "00"}
+		ResultType := "vector"
+		if len(v[0].Values) > 0 {
+			ResultType = "matrix"
+		}
+		rd.Data.List = append(rd.Data.List, VmList{Data: VmData{Result: v, ResultType: ResultType}})
+		resultData[k] = rd
 	}
+}
+
+func mockHandler(ctx context.Context) {
+	httpmock.Activate()
+
+	mockVmHandler(ctx)
+	mockInfluxDBHandler(ctx)
+}
+
+func mockInfluxDBHandler(ctx context.Context) {
+	host1 := "http://127.0.0.1:6371"
+	host2 := "http://127.0.0.2:6371"
+
+	httpmock.RegisterResponder(http.MethodGet, host1+"/ping", httpmock.NewBytesResponder(http.StatusNoContent, nil))
+	httpmock.RegisterResponder(http.MethodGet, host2+"/ping", httpmock.NewBytesResponder(http.StatusBadGateway, nil))
 }
 
 func mockVmHandler(ctx context.Context) {
 	url := "http://127.0.0.1:12001/bk_data/query_sync"
-	httpmock.Activate()
 
 	httpmock.RegisterResponder(http.MethodPost, url, func(r *http.Request) (w *http.Response, err error) {
 		var (
@@ -126,7 +146,12 @@ func mockVmHandler(ctx context.Context) {
 
 		lock.RLock()
 		defer lock.RUnlock()
-		w, err = httpmock.NewJsonResponse(http.StatusOK, data[key])
+		d, ok := resultData[key]
+		if !ok {
+			err = fmt.Errorf(`mock data is empty in "%s"`, key)
+			return
+		}
+		w, err = httpmock.NewJsonResponse(http.StatusOK, d)
 		return
 	})
 

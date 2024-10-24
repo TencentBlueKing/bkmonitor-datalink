@@ -16,12 +16,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 )
 
 var (
@@ -40,13 +38,6 @@ func Init() {
 		log.InitTestLogger()
 		metadata.InitMetadata()
 		ctx := metadata.InitHashID(context.Background())
-		mockVmHandler(ctx)
-
-		promql.NewEngine(&promql.Params{
-			Timeout:              time.Minute,
-			MaxSamples:           5e5,
-			LookbackDelta:        5 * time.Minute,
-			EnableNegativeOffset: true,
-		})
+		mockHandler(ctx)
 	})
 }

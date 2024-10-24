@@ -12,7 +12,6 @@ package structured
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"testing"
 	"time"
 
@@ -27,42 +26,18 @@ import (
 )
 
 func TestQueryToMetric(t *testing.T) {
-	spaceUid := "test_two_stage"
-	db := "push_gateway_unify_query"
-	measurement := "group"
-	tableID := fmt.Sprintf("%s.%s", db, measurement)
-	field := "unify_query_request_handler_total"
-	field01 := "unify_query_request_handler01_total"
-	dataLabel := "unify_query"
+	spaceUid := influxdb.SpaceUid
+	db := "result_table"
+	measurement := "influxdb"
+	tableID := influxdb.ResultTableInfluxDB
+	field := "kube_pod_info"
+	field01 := "kube_node_info"
+	dataLabel := "influxdb"
 	storageID := "2"
-	clusterName := "demo"
+	clusterName := "default"
 
-	storageIdInt, _ := strconv.ParseInt(storageID, 10, 64)
-
-	ctx := context.Background()
-	mock.SetRedisClient(ctx)
-	mock.SetSpaceTsDbMockData(
-		ctx,
-		ir.SpaceInfo{
-			spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
-		},
-		ir.ResultTableDetailInfo{
-			tableID: &ir.ResultTableDetail{
-				Fields:          []string{field, field01},
-				MeasurementType: redis.BKTraditionalMeasurement,
-				DataLabel:       dataLabel,
-				StorageId:       storageIdInt,
-				ClusterName:     clusterName,
-				DB:              db,
-				Measurement:     measurement,
-				TableId:         tableID,
-			},
-		},
-		nil, nil,
-	)
-	router, _ := influxdb.GetSpaceTsDbRouter()
-	ret := router.Print(ctx, "query_ts_test", false)
-	fmt.Println(ret)
+	mock.Init()
+	ctx := md.InitHashID(context.Background())
 
 	var testCases = map[string]struct {
 		query  *Query
@@ -234,8 +209,8 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 }`,
 	)
 
-	mock.SetRedisClient(ctx)
-	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+	influxdb.SetRedisClient(ctx)
+	influxdb.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
 		"vm-query": ir.Space{
 			"system.cpu_detail": &ir.SpaceResultTable{
 				TableId: "system.cpu_detail",

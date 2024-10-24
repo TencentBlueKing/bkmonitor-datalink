@@ -13,10 +13,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/json"
 )
 
 func TestCache(t *testing.T) {
@@ -36,12 +37,14 @@ func TestCache(t *testing.T) {
 	}))
 	defer svr.Close()
 
-	c, err := New(&Config{
+	c := New(&Config{
 		URL: svr.URL,
 		Key: "key1",
 	})
-	assert.NoError(t, err)
-	assert.NoError(t, c.sync())
+	c.Sync()
+
+	// wait
+	time.Sleep(time.Second)
 
 	var v map[string]string
 	var ok bool

@@ -22,9 +22,9 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metricsbuilder"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/labels"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/metricsbuilder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/labelstore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/fasttime"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -401,8 +401,6 @@ func (r *recorder) calc(kind string, k uint64, stat rStats) (rStats, []metricsbu
 			})
 		}
 	}
-
-	logger.Debugf("%s stats: %+v", kind, stat)
 
 	var metrics []metricsbuilder.Metric
 	unixNano := uint64(time.Now().UnixNano())

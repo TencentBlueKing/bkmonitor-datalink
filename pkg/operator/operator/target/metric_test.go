@@ -126,7 +126,7 @@ func TestRemoteRelabelConfig(t *testing.T) {
 			},
 			Output: &yaml.MapItem{
 				Key:   "metric_relabel_remote",
-				Value: "http://:0/workload/node/worker1?podName=pod1",
+				Value: "http://:0/workload/node/worker1?q=cG9kTmFtZT1wb2Qx",
 			},
 		},
 		{
@@ -155,7 +155,7 @@ func TestRemoteRelabelConfig(t *testing.T) {
 			},
 			Output: &yaml.MapItem{
 				Key:   "metric_relabel_remote",
-				Value: "http://:0/workload/node/worker1?annotations=annotations1&kind=Pod&labels=label1&rules=labeljoin",
+				Value: "http://:0/workload/node/worker1?q=YW5ub3RhdGlvbnM9YW5ub3RhdGlvbnMxJmtpbmQ9UG9kJmxhYmVscz1sYWJlbDEmcnVsZXM9bGFiZWxqb2lu",
 			},
 		},
 		{
@@ -175,7 +175,7 @@ func TestRemoteRelabelConfig(t *testing.T) {
 			},
 			Output: &yaml.MapItem{
 				Key:   "metric_relabel_remote",
-				Value: "http://:0/workload/node/worker1?annotations=annotations1&kind=Pod&labels=label1&podName=pod1&rules=labeljoin",
+				Value: "http://:0/workload/node/worker1?q=YW5ub3RhdGlvbnM9YW5ub3RhdGlvbnMxJmtpbmQ9UG9kJmxhYmVscz1sYWJlbDEmcG9kTmFtZT1wb2QxJnJ1bGVzPWxhYmVsam9pbg",
 			},
 		},
 		{
@@ -192,7 +192,7 @@ func TestRemoteRelabelConfig(t *testing.T) {
 			},
 			Output: &yaml.MapItem{
 				Key:   "metric_relabel_remote",
-				Value: "http://:0/workload/node/worker1?annotations=annotations1&kind=Pod&labels=label1&rules=labeljoin",
+				Value: "http://:0/workload/node/worker1?q=YW5ub3RhdGlvbnM9YW5ub3RhdGlvbnMxJmtpbmQ9UG9kJmxhYmVscz1sYWJlbDEmcnVsZXM9bGFiZWxqb2lu",
 			},
 		},
 	}
@@ -201,37 +201,5 @@ func TestRemoteRelabelConfig(t *testing.T) {
 		t.Run(c.Name, func(t *testing.T) {
 			assert.Equal(t, c.Output, c.Input.RemoteRelabelConfig())
 		})
-	}
-}
-
-func TestMakeParams(t *testing.T) {
-	cases := []struct {
-		Input  map[string]string
-		Output string
-	}{
-		{
-			Input: map[string]string{
-				"key1": "value1",
-				"key2": "value2",
-			},
-			Output: "key1=value1&key2=value2",
-		},
-		{
-			Input: map[string]string{
-				"key1": "value1",
-			},
-			Output: "key1=value1",
-		},
-		{
-			Input: map[string]string{
-				"key1": "",
-				"key2": "value2",
-			},
-			Output: "key2=value2",
-		},
-	}
-
-	for _, c := range cases {
-		assert.Equal(t, c.Output, makeParams(c.Input))
 	}
 }

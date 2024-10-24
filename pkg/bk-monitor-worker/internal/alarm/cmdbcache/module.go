@@ -116,6 +116,11 @@ func (m *ModuleCacheManager) Type() string {
 
 // RefreshByBiz 刷新业务模块缓存
 func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
+	// 业务ID为1的是资源池，不需要刷新
+	if bizID == 1 {
+		return nil
+	}
+
 	// 请求模块信息
 	moduleList, err := getModuleListByBizID(ctx, bizID)
 	if err != nil {

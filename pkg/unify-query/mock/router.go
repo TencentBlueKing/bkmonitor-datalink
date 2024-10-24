@@ -46,6 +46,8 @@ func SpaceRouter(ctx context.Context) {
 		"node_with_system_relation",
 		"deployment_with_replicaset_relation",
 		"pod_with_replicaset_relation",
+		"apm_service_instance_with_pod_relation",
+		"apm_service_instance_with_system_relation",
 	}
 	influxdbFields := []string{
 		"kube_pod_info",

@@ -60,15 +60,17 @@ func (q *Query) MetricLabels(ctx context.Context) *prompb.Label {
 		metrics = append(metrics, n)
 	}
 	if q.MetricName != "" {
-		metricName := q.MetricName
-		if encodeFunc != nil {
-			metricName = encodeFunc(metricName)
-		}
-		metrics = append(metrics, metricName)
+		metrics = append(metrics, q.MetricName)
 	}
+
+	metricName := strings.Join(metrics, ":")
+	if encodeFunc != nil {
+		metricName = encodeFunc(metricName)
+	}
+
 	return &prompb.Label{
 		Name:  labels.MetricName,
-		Value: strings.Join(metrics, ":"),
+		Value: metricName,
 	}
 }
 

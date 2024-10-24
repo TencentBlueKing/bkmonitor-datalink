@@ -10,6 +10,7 @@
 package mock
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,6 +39,8 @@ func Init() {
 		config.InitConfig()
 		log.InitTestLogger()
 		metadata.InitMetadata()
+		ctx := metadata.InitHashID(context.Background())
+		mockVmHandler(ctx)
 
 		promql.NewEngine(&promql.Params{
 			Timeout:              time.Minute,

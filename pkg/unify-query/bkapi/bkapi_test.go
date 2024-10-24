@@ -24,7 +24,7 @@ func TestGetBkAPI(t *testing.T) {
 	assert.Equal(t, "bk_code", code)
 
 	url := GetBkAPI().Url("query")
-	assert.Equal(t, "http://127.0.0.1/query", url)
+	assert.Equal(t, "http://127.0.0.1:12001/query", url)
 
 	headers := GetBkAPI().Headers(map[string]string{
 		"Content-Type": "application/json",

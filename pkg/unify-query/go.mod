@@ -24,6 +24,7 @@ require (
 	github.com/influxdata/influxdb v1.10.0
 	github.com/influxdata/influxdb1-client v0.0.0-20200827194710-b269163b24ab
 	github.com/influxdata/influxql v1.1.1-0.20200828144457-65d3ef77d385
+	github.com/jarcoal/httpmock v1.3.1
 	github.com/likexian/gokit v0.24.7
 	github.com/magiconair/properties v1.8.7
 	github.com/mitchellh/go-homedir v1.1.0
@@ -41,7 +42,6 @@ require (
 	github.com/swaggo/swag v1.16.1
 	github.com/thomaspoignant/go-feature-flag v1.0.1
 	github.com/tinylib/msgp v1.1.6
-	github.com/zhuliquan/es-mapping v1.0.0
 	go.etcd.io/bbolt v1.3.3
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.32.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.42.0

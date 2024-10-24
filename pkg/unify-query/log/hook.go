@@ -113,6 +113,6 @@ func init() {
 // InitTestLogger 加载单元测试日志配置
 func InitTestLogger() {
 	// 加载配置
-	viper.Set(LevelConfigPath, "debug")
+	viper.Set(LevelConfigPath, "warn")
 	initLogConfig()
 }

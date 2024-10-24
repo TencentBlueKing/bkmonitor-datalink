@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -270,7 +271,9 @@ func TestModel_GetPath(t *testing.T) {
 					assert.Nil(t, err)
 					if err == nil {
 						sort.SliceStable(path, func(i, j int) bool {
-							return len(path[i]) < len(path[j])
+							listLength := len(path[i]) < len(path[j])
+							stringLength := len(strings.Join(path[i], "")) < len(strings.Join(path[j], ""))
+							return listLength || stringLength
 						})
 						assert.Equal(t, c.expected, path)
 					}

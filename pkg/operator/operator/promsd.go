@@ -108,6 +108,13 @@ func unmarshalPromSdConfigs(b []byte) ([]config.ScrapeConfig, error) {
 	return ret, nil
 }
 
+func castDuration(d model.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	return d.String()
+}
+
 func (c *Operator) createHttpSdDiscover(scrapeConfig config.ScrapeConfig, sdConfig *promhttpsd.SDConfig, index int) (discover.Discover, error) {
 	metricRelabelings := make([]yaml.MapSlice, 0)
 	if len(scrapeConfig.MetricRelabelConfigs) != 0 {
@@ -143,12 +150,6 @@ func (c *Operator) createHttpSdDiscover(scrapeConfig config.ScrapeConfig, sdConf
 		bearerTokenFile = auth.CredentialsFile
 	}
 
-	castDuration := func(d model.Duration) string {
-		if d <= 0 {
-			return ""
-		}
-		return d.String()
-	}
 	dis := httpd.New(c.ctx, c.objectsController.NodeNameExists, &httpd.Options{
 		CommonOptions: &discover.CommonOptions{
 			MonitorMeta:            monitorMeta,
@@ -169,7 +170,7 @@ func (c *Operator) createHttpSdDiscover(scrapeConfig config.ScrapeConfig, sdConf
 		SDConfig:         sdConfig,
 		HTTPClientConfig: httpClientConfig,
 	})
-	logger.Infof("create httpsd discover: %s", dis.Name())
+	logger.Infof("create http_sd discover: %s", dis.Name())
 
 	return dis, nil
 }
@@ -209,14 +210,12 @@ func (c *Operator) createKubernetesSdDiscover(scrapeConfig config.ScrapeConfig, 
 		bearerTokenFile = auth.CredentialsFile
 	}
 
-	castDuration := func(d model.Duration) string {
-		if d <= 0 {
-			return ""
-		}
-		return d.String()
+	var username, password string
+	basicAuth := scrapeConfig.HTTPClientConfig.BasicAuth
+	if basicAuth != nil {
+		username = basicAuth.Username
+		password = string(basicAuth.Password)
 	}
-
-	scrapeConfig.HTTPClientConfig.TLSConfig.CAFile
 
 	dis := kubernetesd.New(c.ctx, string(sdConfig.Role), c.objectsController.NodeNameExists, &kubernetesd.Options{
 		CommonOptions: &discover.CommonOptions{
@@ -235,12 +234,21 @@ func (c *Operator) createKubernetesSdDiscover(scrapeConfig config.ScrapeConfig, 
 			ExtraLabels:            specLabels,
 			MetricRelabelConfigs:   metricRelabelings,
 		},
-		KubeConfig:       configs.G().KubeConfig,
-		Namespaces:       sdConfig.NamespaceDiscovery.Names,
-		Client:           c.client,
+		KubeConfig: configs.G().KubeConfig,
+		Namespaces: sdConfig.NamespaceDiscovery.Names,
+		Client:     c.client,
+		BasicAuthRaw: kubernetesd.BasicAuthRaw{
+			Username: username,
+			Password: password,
+		},
+		TLSConfig: &promv1.TLSConfig{
+			CAFile:   scrapeConfig.HTTPClientConfig.TLSConfig.CAFile,
+			CertFile: scrapeConfig.HTTPClientConfig.TLSConfig.CertFile,
+			KeyFile:  scrapeConfig.HTTPClientConfig.TLSConfig.KeyFile,
+		},
 		UseEndpointSlice: useEndpointslice,
 	})
-	logger.Infof("create httpsd discover: %s", dis.Name())
+	logger.Infof("create kubernetes_sd discover: %s", dis.Name())
 
 	return dis, nil
 }
@@ -257,48 +265,20 @@ func (c *Operator) createPromScrapeConfigDiscovers() []discover.Discover {
 		scrapeConfig := scrapeConfigs[i]
 		for idx, rc := range scrapeConfig.ServiceDiscoveryConfigs {
 			switch obj := rc.(type) {
-			case *promhttpsd.SDConfig: // TODO(mando): 目前仅支持 httpsd
+			case *promhttpsd.SDConfig:
 				httpSdDiscover, err := c.createHttpSdDiscover(scrapeConfig, obj, idx)
 				if err != nil {
-					logger.Errorf("failed to create httpsd discover: %v", err)
+					logger.Errorf("failed to create http_sd discover: %v", err)
 					continue
 				}
 				discovers = append(discovers, httpSdDiscover)
 			case *promk8ssd.SDConfig:
-				//scrapeConfig.
-				dis := kubernetesd.New(c.ctx, string(obj.Role), c.objectsController.NodeNameExists, &kubernetesd.Options{
-					CommonOptions: &discover.CommonOptions{
-						MonitorMeta: monitorMeta,
-						//RelabelRule:            feature.RelabelRule(podMonitor.Annotations),
-						//RelabelIndex:           feature.RelabelIndex(podMonitor.Annotations),
-						//NormalizeMetricName:    feature.IfNormalizeMetricName(podMonitor.Annotations),
-						//AntiAffinity:           feature.IfAntiAffinity(podMonitor.Annotations),
-						//MatchSelector:          feature.MonitorMatchSelector(podMonitor.Annotations),
-						//DropSelector:           feature.MonitorDropSelector(podMonitor.Annotations),
-						//LabelJoinMatcher:       feature.LabelJoinMatcher(podMonitor.Annotations),
-						//ForwardLocalhost:       feature.IfForwardLocalhost(podMonitor.Annotations),
-						Name:                   monitorMeta.ID(),
-						DataID:                 dataID,
-						Relabels:               resultLabels,
-						Path:                   endpoint.Path,
-						Scheme:                 endpoint.Scheme,
-						Period:                 string(endpoint.Interval),
-						Timeout:                string(endpoint.ScrapeTimeout),
-						ProxyURL:               proxyURL,
-						ExtraLabels:            specLabels,
-						DisableCustomTimestamp: !ifHonorTimestamps(endpoint.HonorTimestamps),
-						System:                 systemResource,
-						UrlValues:              endpoint.Params,
-						MetricRelabelConfigs:   metricRelabelings,
-					},
-					Client:            c.client,
-					Namespaces:        namespaces,
-					KubeConfig:        configs.G().KubeConfig,
-					BasicAuth:         endpoint.BasicAuth.DeepCopy(),
-					BearerTokenSecret: endpoint.BearerTokenSecret.DeepCopy(),
-					TLSConfig:         &promv1.TLSConfig{SafeTLSConfig: safeTlsConfig},
-					UseEndpointSlice:  useEndpointslice,
-				})
+				kubernetesSd, err := c.createKubernetesSdDiscover(scrapeConfig, obj, idx)
+				if err != nil {
+					logger.Errorf("failed to create kubernetes_sd discover: %v", err)
+					continue
+				}
+				discovers = append(discovers, kubernetesSd)
 			}
 		}
 	}

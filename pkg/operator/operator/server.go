@@ -25,6 +25,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/httpx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
@@ -511,7 +512,7 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nodeName := vars["node"]
 
-	query := r.URL.Query()
+	query := httpx.UnwindParams(r.URL.Query().Get("q"))
 	podName := query.Get("podName")
 	annotations := stringx.SplitTrim(query.Get("annotations"), ",")
 	labels := stringx.SplitTrim(query.Get("labels"), ",")
@@ -533,7 +534,7 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Operator) LabelJoinRoute(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
+	query := httpx.UnwindParams(r.URL.Query().Get("q"))
 	kind := query.Get("kind")
 	annotations := stringx.SplitTrim(query.Get("annotations"), ",")
 	labels := stringx.SplitTrim(query.Get("labels"), ",")

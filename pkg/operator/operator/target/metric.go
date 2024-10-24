@@ -10,8 +10,6 @@
 package target
 
 import (
-	"bytes"
-	"encoding/base64"
 	"fmt"
 	"hash/fnv"
 	"math"
@@ -27,6 +25,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/httpx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 )
@@ -166,7 +165,7 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 	}
 
 	u := host + path
-	p := makeParams(params)
+	p := httpx.WindParams(params)
 	if len(p) > 0 {
 		u = u + "?q=" + p
 	}
@@ -174,27 +173,6 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 		Key:   "metric_relabel_remote",
 		Value: u,
 	}
-}
-
-func makeParams(params map[string]string) string {
-	buf := &bytes.Buffer{}
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		v := params[k]
-		if v != "" {
-			buf.WriteString(fmt.Sprintf("%s=%s&", k, v))
-		}
-	}
-
-	s := strings.TrimRight(buf.String(), "&")
-	if s == "" {
-		return ""
-	}
-	return base64.RawURLEncoding.EncodeToString([]byte(s))
 }
 
 func fnvHash(b []byte) uint64 {

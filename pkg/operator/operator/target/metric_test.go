@@ -10,7 +10,6 @@
 package target
 
 import (
-	"encoding/base64"
 	"testing"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -127,7 +126,7 @@ func TestRemoteRelabelConfig(t *testing.T) {
 			},
 			Output: &yaml.MapItem{
 				Key:   "metric_relabel_remote",
-				Value: "http://:0/workload/node/worker1?podName=pod1",
+				Value: "http://:0/workload/node/worker1?q=cG9kTmFtZT1wb2Qx",
 			},
 		},
 		{
@@ -156,7 +155,7 @@ func TestRemoteRelabelConfig(t *testing.T) {
 			},
 			Output: &yaml.MapItem{
 				Key:   "metric_relabel_remote",
-				Value: "http://:0/workload/node/worker1?annotations=annotations1&kind=Pod&labels=label1&rules=labeljoin",
+				Value: "http://:0/workload/node/worker1?q=YW5ub3RhdGlvbnM9YW5ub3RhdGlvbnMxJmtpbmQ9UG9kJmxhYmVscz1sYWJlbDEmcnVsZXM9bGFiZWxqb2lu",
 			},
 		},
 		{
@@ -176,7 +175,7 @@ func TestRemoteRelabelConfig(t *testing.T) {
 			},
 			Output: &yaml.MapItem{
 				Key:   "metric_relabel_remote",
-				Value: "http://:0/workload/node/worker1?annotations=annotations1&kind=Pod&labels=label1&podName=pod1&rules=labeljoin",
+				Value: "http://:0/workload/node/worker1?q=YW5ub3RhdGlvbnM9YW5ub3RhdGlvbnMxJmtpbmQ9UG9kJmxhYmVscz1sYWJlbDEmcG9kTmFtZT1wb2QxJnJ1bGVzPWxhYmVsam9pbg",
 			},
 		},
 		{
@@ -193,7 +192,7 @@ func TestRemoteRelabelConfig(t *testing.T) {
 			},
 			Output: &yaml.MapItem{
 				Key:   "metric_relabel_remote",
-				Value: "http://:0/workload/node/worker1?annotations=annotations1&kind=Pod&labels=label1&rules=labeljoin",
+				Value: "http://:0/workload/node/worker1?q=YW5ub3RhdGlvbnM9YW5ub3RhdGlvbnMxJmtpbmQ9UG9kJmxhYmVscz1sYWJlbDEmcnVsZXM9bGFiZWxqb2lu",
 			},
 		},
 	}
@@ -202,45 +201,5 @@ func TestRemoteRelabelConfig(t *testing.T) {
 		t.Run(c.Name, func(t *testing.T) {
 			assert.Equal(t, c.Output, c.Input.RemoteRelabelConfig())
 		})
-	}
-}
-
-func TestMakeParams(t *testing.T) {
-	cases := []struct {
-		Input  map[string]string
-		Output string
-		Base64 string
-	}{
-		{
-			Input: map[string]string{
-				"key1": "value1",
-				"key2": "value2",
-			},
-			Output: "key1=value1&key2=value2",
-			Base64: "a2V5MT12YWx1ZTEma2V5Mj12YWx1ZTI",
-		},
-		{
-			Input: map[string]string{
-				"key1": "value1",
-			},
-			Output: "key1=value1",
-			Base64: "a2V5MT12YWx1ZTE",
-		},
-		{
-			Input: map[string]string{
-				"key1": "",
-				"key2": "value2",
-			},
-			Output: "key2=value2",
-			Base64: "a2V5Mj12YWx1ZTI",
-		},
-	}
-
-	for _, c := range cases {
-		assert.Equal(t, c.Base64, makeParams(c.Input))
-
-		b, err := base64.RawURLEncoding.DecodeString(c.Base64)
-		assert.NoError(t, err)
-		assert.Equal(t, string(b), c.Output)
 	}
 }

@@ -291,6 +291,74 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	influxdb.MockSpaceRouter(ctx)
 
+	timestamp := int64(1693973987)
+	mock.Vm.Set(map[string]any{
+		"query:1693973987(count by (bk_target_ip) (a))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bk_target_ip": "127.0.0.1",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+			},
+		},
+		"query:1693973987count by (bcs_cluster_id, namespace, pod) (b and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (a)))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bcs_cluster_id": "BCS-K8S-00000",
+						"namespace":      "bkmonitor-operator",
+						"pod":            "bkm-pod-1",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+				{
+					Metric: map[string]string{
+						"bcs_cluster_id": "BCS-K8S-00000",
+						"namespace":      "bkmonitor-operator",
+						"pod":            "bkm-pod-2",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+			},
+		},
+		"query:1693973987count by (bk_target_ip) (b and on (apm_application_name, apm_service_name, apm_service_instance_name) (count by (apm_application_name, apm_service_name, apm_service_instance_name) (a)))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bk_target_ip": "127.0.0.1",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+			},
+		},
+		"query:1693973987count by (bk_target_ip) (b and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (a)))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bk_target_ip": "127.0.0.1",
+					},
+					Value: []any{
+						1693973987, 1,
+					},
+				},
+			},
+		},
+	})
+
 	testCases := map[string]struct {
 		source       cmdb.Resource
 		target       cmdb.Resource
@@ -407,76 +475,6 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 			},
 		},
 	}
-
-	timestamp := int64(1693973987)
-	data := map[string]any{
-		"1693973987(count by (bk_target_ip) (a))": victoriaMetrics.Data{
-			ResultType: victoriaMetrics.VectorType,
-			Result: []victoriaMetrics.Series{
-				{
-					Metric: map[string]string{
-						"bk_target_ip": "127.0.0.1",
-					},
-					Value: []any{
-						1693973987, "1",
-					},
-				},
-			},
-		},
-		"1693973987count by (bcs_cluster_id, namespace, pod) (b and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (a)))": victoriaMetrics.Data{
-			ResultType: victoriaMetrics.VectorType,
-			Result: []victoriaMetrics.Series{
-				{
-					Metric: map[string]string{
-						"bcs_cluster_id": "BCS-K8S-00000",
-						"namespace":      "bkmonitor-operator",
-						"pod":            "bkm-pod-1",
-					},
-					Value: []any{
-						1693973987, "1",
-					},
-				},
-				{
-					Metric: map[string]string{
-						"bcs_cluster_id": "BCS-K8S-00000",
-						"namespace":      "bkmonitor-operator",
-						"pod":            "bkm-pod-2",
-					},
-					Value: []any{
-						1693973987, "1",
-					},
-				},
-			},
-		},
-		"1693973987count by (bk_target_ip) (b and on (apm_application_name, apm_service_name, apm_service_instance_name) (count by (apm_application_name, apm_service_name, apm_service_instance_name) (a)))": victoriaMetrics.Data{
-			ResultType: victoriaMetrics.VectorType,
-			Result: []victoriaMetrics.Series{
-				{
-					Metric: map[string]string{
-						"bk_target_ip": "127.0.0.1",
-					},
-					Value: []any{
-						1693973987, "1",
-					},
-				},
-			},
-		},
-		"1693973987count by (bk_target_ip) (b and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (a)))": victoriaMetrics.Data{
-			ResultType: victoriaMetrics.VectorType,
-			Result: []victoriaMetrics.Series{
-				{
-					Metric: map[string]string{
-						"bk_target_ip": "127.0.0.1",
-					},
-					Value: []any{
-						1693973987, "1",
-					},
-				},
-			},
-		},
-	}
-
-	mock.Vm.Set(data)
 
 	for n, c := range testCases {
 		t.Run(n, func(t *testing.T) {

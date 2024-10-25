@@ -90,6 +90,20 @@ func MockSpaceRouter(ctx context.Context) {
 		tsdb.SetStorage("3", &tsdb.Storage{Type: consul.ElasticsearchStorageType})
 		tsdb.SetStorage("4", &tsdb.Storage{Type: consul.BkSqlStorageType})
 
+		r := GetInfluxDBRouter()
+		r.clusterInfo = ir.ClusterInfo{
+			"default": &ir.Cluster{
+				HostList: []string{"default"},
+			},
+		}
+		r.hostInfo = ir.HostInfo{
+			"default": &ir.Host{
+				DomainName: "127.0.0.1",
+				Port:       12302,
+				Protocol:   "http",
+			},
+		}
+
 		setSpaceTsDbMockData(ctx,
 			ir.SpaceInfo{
 				SpaceUid: ir.Space{
@@ -129,6 +143,9 @@ func MockSpaceRouter(ctx context.Context) {
 				"system.cpu_summary": &ir.ResultTableDetail{
 					StorageId:       2,
 					TableId:         "system.cpu_summary",
+					DB:              "system",
+					Measurement:     "cpu_summary",
+					ClusterName:     "default",
 					VmRt:            "",
 					Fields:          []string{"usage", "free"},
 					MeasurementType: redis.BKTraditionalMeasurement,

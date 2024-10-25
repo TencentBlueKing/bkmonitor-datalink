@@ -27,6 +27,7 @@ influxdb:
     period: 20s
     timeout: 5s
   target_address: http://127.0.0.1:8086
+  content_type: application/json
   timeout: 1m
   query_raw:
     type: http

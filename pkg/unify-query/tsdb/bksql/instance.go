@@ -269,83 +269,8 @@ func (i *Instance) formatData(ctx context.Context, start time.Time, query *metad
 func (i *Instance) table(query *metadata.Query) string {
 	table := fmt.Sprintf("`%s`", query.DB)
 	if query.Measurement != "" {
-		table += "." + query.Measurement
 	}
 	return table
-}
-
-// bkSql 构建查询语句
-func (i *Instance) bkSql(ctx context.Context, query *metadata.Query, start, end time.Time) (string, error) {
-	var (
-		selectList = make([]string, 0)
-		groupList  = make([]string, 0)
-		orderList  = make([]string, 0)
-
-		sqlBuilder strings.Builder
-		err        error
-	)
-
-	ctx, span := trace.NewSpan(ctx, "bksql-make-sqlBuilder")
-	defer span.End(&err)
-
-	maxLimit := i.maxLimit + i.tolerance
-	limit := query.Size
-	if limit == 0 || limit > maxLimit {
-		limit = maxLimit
-	}
-
-	if len(query.Aggregates) > 1 {
-		return "", fmt.Errorf("bksql 不支持多函数聚合查询, %+v", query.Aggregates)
-	}
-
-	if len(query.Aggregates) == 1 {
-		agg := query.Aggregates[0]
-		if len(agg.Dimensions) > 0 {
-			for _, dim := range agg.Dimensions {
-				newDim := dim
-				if newDim == labels.MetricName {
-					continue
-				}
-
-				if newDim != "*" {
-					newDim = fmt.Sprintf("`%s`", newDim)
-				}
-				groupList = append(groupList, newDim)
-				selectList = append(selectList, newDim)
-			}
-		}
-
-		selectList = append(selectList, fmt.Sprintf("%s(`%s`) AS `%s`", strings.ToUpper(agg.Name), query.Field, value))
-		if agg.Window > 0 && !agg.Without {
-			timeField := fmt.Sprintf("(`%s` - (`%s` %% %d))", dtEventTimeStamp, dtEventTimeStamp, agg.Window.Milliseconds())
-			groupList = append(groupList, timeField)
-			selectList = append(selectList, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
-			orderList = append(orderList, fmt.Sprintf("`%s` ASC", timeStamp))
-		}
-	} else {
-		selectList = append(selectList, "*")
-		selectList = append(selectList, fmt.Sprintf("`%s` AS `%s`", query.Field, value))
-		selectList = append(selectList, fmt.Sprintf("`%s` AS `%s`", dtEventTimeStamp, timeStamp))
-	}
-
-	sqlBuilder.WriteString("SELECT ")
-	sqlBuilder.WriteString(strings.Join(selectList, ", ") + " ")
-	sqlBuilder.WriteString("FROM " + i.table(query) + " ")
-	sqlBuilder.WriteString("WHERE " + fmt.Sprintf("`%s` >= %d AND `%s` < %d", dtEventTimeStamp, start.UnixMilli(), dtEventTimeStamp, end.UnixMilli()))
-	if query.BkSqlCondition != "" {
-		sqlBuilder.WriteString(" AND (" + query.BkSqlCondition + ")")
-	}
-	if len(groupList) > 0 {
-		sqlBuilder.WriteString(" GROUP BY " + strings.Join(groupList, ", "))
-	}
-	if len(orderList) > 0 {
-		sqlBuilder.WriteString(" ORDER BY " + strings.Join(orderList, ", "))
-	}
-	if limit > 0 {
-		sqlBuilder.WriteString(fmt.Sprintf(" LIMIT %d", limit))
-	}
-
-	return sqlBuilder.String(), nil
 }
 
 // QueryRawData 直接查询原始返回
@@ -372,7 +297,7 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 		}
 	}
 
-	sql, err := i.bkSql(ctx, query, start, end)
+	sql, err := NewQueryFactory(ctx, query).WithRangeTime(start, end).SQL()
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}

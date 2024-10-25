@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
@@ -412,22 +413,70 @@ func TestQueryReference(t *testing.T) {
 }
 
 func TestQueryTs(t *testing.T) {
-	ctx := metadata.InitHashID(context.Background())
 
+	ctx := metadata.InitHashID(context.Background())
 	mock.Init()
+	influxdb.MockSpaceRouter(ctx)
 	promql.MockEngine()
+
+	mock.InfluxDB.Set(map[string]any{
+		`SELECT mean("usage") AS _value, "time" AS _time FROM cpu_summary WHERE time > 1677081540000000000 and time < 1677085659999000000 AND (bk_biz_id='2') GROUP BY time(1m0s) LIMIT 100000005 SLIMIT 100005 TZ('UTC')`: &decoder.Response{
+			Results: []decoder.Result{
+				{
+					Series: []*decoder.Row{
+						{
+							Name: "",
+							Tags: map[string]string{},
+							Columns: []string{
+								influxdb.TimeColumnName,
+								influxdb.ResultColumnName,
+							},
+							Values: [][]any{
+								{
+									1677081600000000000, 30,
+								},
+								{
+									1677081660000000000, 21,
+								},
+								{
+									1677081720000000000, 1,
+								},
+								{
+									1677081780000000000, 7,
+								},
+								{
+									1677081840000000000, 4,
+								},
+								{
+									1677081900000000000, 2,
+								},
+								{
+									1677081960000000000, 100,
+								},
+								{
+									1677082020000000000, 94,
+								},
+								{
+									1677082080000000000, 34,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
 
 	testCases := map[string]struct {
 		query  string
 		result string
 	}{
 		"test query": {
-			query:  `{"space_uid":"influxdb","query_list":[{"data_source":"","table_id":"system.cpu_summary","field_name":"usage","field_list":null,"function":[{"method":"mean","without":false,"dimensions":[],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"avg_over_time","window":"60s","position":0,"vargs_list":null},"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":[],"group_values":[],"values":[[1677081600000,25.124152312094484],[1677081660000,20.724334166696504],[1677081720000,20.426171484280808],[1677081780000,20.327529103992745],[1677081840000,20.468538578157883],[1677081900000,20.25296970605787],[1677081960000,19.9283445874921],[1677082020000,19.612237758778733],[1677082080000,20.187296617920314],[1677082140000,20.916380134086413],[1677082200000,22.554908120339377],[1677082260000,20.253084390783837],[1677082320000,20.48536897192481],[1677082380000,20.090785116663426],[1677082440000,20.25654085898734],[1677082500000,21.041731249213385],[1677082560000,20.43003902957978],[1677082620000,20.038367095325594],[1677082680000,20.202399021312875],[1677082740000,21.37467097743847],[1677082800000,22.651718347719402],[1677082860000,20.301023323252785],[1677082920000,20.451627781431707],[1677082980000,19.891683255113772],[1677083040000,20.644901190626083],[1677083100000,20.37609141634239],[1677083160000,20.454340379883195],[1677083220000,19.570824461410087],[1677083280000,20.31326038669719],[1677083340000,21.53592697328099],[1677083400000,24.04803475336384],[1677083460000,20.730816789762073],[1677083520000,20.371870403348336],[1677083580000,19.82545696862311],[1677083640000,20.320976389889655],[1677083700000,20.567491437854738],[1677083760000,20.934958308411666],[1677083820000,19.90507015314242],[1677083880000,20.37676404541998],[1677083940000,20.668093391150975],[1677084000000,21.99879925023976],[1677084060000,20.23986108096937],[1677084120000,21.025451068689662],[1677084180000,24.664738068080318],[1677084240000,20.50489535135916],[1677084300000,21.43855141688965],[1677084360000,25.547292511592147],[1677084420000,20.22969132310118],[1677084480000,20.263914410308956],[1677084540000,21.046247079107264],[1677084600000,23.639822963990397],[1677084660000,21.84574206076609],[1677084720000,20.25510660626945],[1677084780000,20.17809699916729],[1677084840000,19.875349111182004],[1677084900000,20.215643757678873],[1677084960000,19.968096510353472],[1677085020000,19.8493275944543],[1677085080000,20.31881482976456],[1677085140000,21.344305007289915],[1677085200000,25.937044373952602],[1677085260000,20.421952975501853],[1677085320000,20.121773311320066],[1677085380000,19.74360429634455],[1677085440000,19.90800208328392],[1677085500000,20.48559522490759],[1677085560000,20.0645267193599]]}]}`,
+			query:  `{"query_list":[{"data_source":"","table_id":"system.cpu_summary","field_name":"usage","field_list":null,"function":[{"method":"mean","without":false,"dimensions":[],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"avg_over_time","window":"60s","position":0,"vargs_list":null},"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":[],"group_values":[],"values":[[1677081600000,30],[1677081660000,21],[1677081720000,1],[1677081780000,7],[1677081840000,4],[1677081900000,2],[1677081960000,100],[1677082020000,94],[1677082080000,34]]}]}`,
 		},
 		"test query by different metric dims": {
 			query: `{
-	"space_uid": "influxdb",
 	"query_list": [{
 		"data_source": "",
 		"table_id": "",
@@ -519,12 +568,11 @@ func TestQueryTs(t *testing.T) {
 			result: ``,
 		},
 		"test lost sample in increase": {
-			query:  `{"space_uid":"a_100147","query_list":[{"data_source":"bkmonitor","table_id":"custom_report_aggate.base","field_name":"bkmonitor_action_notice_api_call_count_total","field_list":null,"function":null,"time_aggregation":{"function":"increase","window":"5m0s","position":0,"vargs_list":null},"reference_name":"a","dimensions":null,"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"notice_way","value":["weixin"],"op":"eq"},{"field_name":"status","value":["failed"],"op":"eq"}],"condition_list":["and"]},"keep_columns":null}],"metric_merge":"a","result_columns":null,"start_time":"1692585000","end_time":"1692585600","step":"60s"}`,
+			query:  `{"query_list":[{"data_source":"bkmonitor","table_id":"custom_report_aggate.base","field_name":"bkmonitor_action_notice_api_call_count_total","field_list":null,"function":null,"time_aggregation":{"function":"increase","window":"5m0s","position":0,"vargs_list":null},"reference_name":"a","dimensions":null,"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"notice_way","value":["weixin"],"op":"eq"},{"field_name":"status","value":["failed"],"op":"eq"}],"condition_list":["and"]},"keep_columns":null}],"metric_merge":"a","result_columns":null,"start_time":"1692585000","end_time":"1692585600","step":"60s"}`,
 			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["job","notice_way","status","target"],"group_values":["SLI","weixin","failed","unknown"],"values":[[1692585000000,0],[1692585060000,0],[1692585120000,16629.322052596937],[1692585180000,18016.221027991163],[1692585240000,18878.885417156103],[1692585300000,19426.666666666664],[1692585360000,21085.29945653025],[1692585420000,0],[1692585480000,0],[1692585540000,0],[1692585600000,0]]}]}`,
 		},
 		"test query support fuzzy __name__": {
 			query: `{
-    "space_uid": "influxdb",
     "query_list": [
         {
             "data_source": "",
@@ -578,7 +626,6 @@ func TestQueryTs(t *testing.T) {
 		},
 		"test query support fuzzy __name__ with count": {
 			query: `{
-    "space_uid": "influxdb",
     "query_list": [
         {
             "data_source": "",
@@ -635,6 +682,7 @@ func TestQueryTs(t *testing.T) {
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
+			metadata.SetUser(ctx, "", influxdb.SpaceUid, "")
 
 			body := []byte(c.query)
 			query := &structured.QueryTs{}

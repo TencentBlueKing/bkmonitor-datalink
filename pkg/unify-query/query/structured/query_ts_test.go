@@ -204,7 +204,7 @@ func TestQueryToMetric(t *testing.T) {
 			metric, err := c.query.ToQueryMetric(ctx, influxdb.SpaceUid)
 			assert.Nil(t, err)
 			if err == nil {
-				assert.Equal(t, c.metric, metric)
+				assert.Equal(t, *c.metric, *metric)
 			}
 		})
 	}

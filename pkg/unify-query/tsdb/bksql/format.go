@@ -12,6 +12,7 @@ package bksql
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -61,6 +62,8 @@ type QueryFactory struct {
 	groups  []string
 
 	sql strings.Builder
+
+	timeField string
 }
 
 func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
@@ -70,6 +73,11 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 		selects: make([]string, 0),
 		groups:  make([]string, 0),
 	}
+	if query.TimeField.Name != "" {
+		f.timeField = query.TimeField.Name
+	} else {
+		f.timeField = dtEventTimeStamp
+	}
 	return f
 }
 
@@ -77,50 +85,62 @@ func (f *QueryFactory) write(s string) {
 	f.sql.WriteString(s + " ")
 }
 
-func (f *QueryFactory) WithRangeTime(start, end time.Time, step time.Duration) *QueryFactory {
+func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 	f.start = start
 	f.end = end
-	f.step = step
 	return f
 }
 
 func (f *QueryFactory) ParserQuery() (err error) {
 	if len(f.query.Aggregates) > 0 {
 		for _, agg := range f.query.Aggregates {
-			if agg.Window > 0 {
-				timeField := fmt.Sprintf("(`%s`- (`%s` %% %d))", dtEventTimeStamp, dtEventTimeStamp, agg.Window.Milliseconds())
-				f.groups = append(f.groups, timeField)
-				f.selects = append(f.selects, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
-			}
-
-			f.selects = append(f.selects, fmt.Sprintf("%s(`%s`) AS `%s`", agg.Name, f.query.Field, value))
 			for _, dim := range agg.Dimensions {
 				dim = fmt.Sprintf("`%s`", dim)
 				f.groups = append(f.groups, dim)
 				f.selects = append(f.selects, dim)
+			}
+			f.selects = append(f.selects, fmt.Sprintf("%s(`%s`) AS `%s`", strings.ToUpper(agg.Name), f.query.Field, value))
+			if agg.Window > 0 {
+				timeField := fmt.Sprintf("(`%s` - (`%s` %% %d))", f.timeField, f.timeField, agg.Window.Milliseconds())
+				f.groups = append(f.groups, timeField)
+				f.selects = append(f.selects, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
+				if f.query.Orders == nil {
+					f.query.Orders = make(metadata.Orders)
+				}
+				f.query.Orders[FieldTime] = true
 			}
 		}
 	}
 
 	if len(f.selects) == 0 {
 		f.selects = append(f.selects, "*")
+		f.selects = append(f.selects, fmt.Sprintf("`%s` AS `%s`", f.query.Field, value))
+		f.selects = append(f.selects, fmt.Sprintf("`%s` AS `%s`", f.timeField, timeStamp))
 	}
 
 	return
 }
 
-func (f *QueryFactory) SQL() string {
+func (f *QueryFactory) SQL() (sql string, err error) {
 	f.sql.Reset()
+	err = f.ParserQuery()
+	if err != nil {
+		return
+	}
 
 	f.write("SELECT")
 	f.write(strings.Join(f.selects, ", "))
 	f.write("FROM")
-	f.write(f.query.DB)
+	db := fmt.Sprintf("`%s`", f.query.DB)
+	if f.query.Measurement != "" {
+		db += "." + f.query.Measurement
+	}
+	f.write(db)
 	f.write("WHERE")
-	f.write(fmt.Sprintf("%s >= %d AND %s < %d", dtEventTimeStamp, f.start.UnixMilli(), dtEventTimeStamp, f.end.UnixMilli()))
+	f.write(fmt.Sprintf("`%s` >= %d AND `%s` < %d", f.timeField, f.start.UnixMilli(), f.timeField, f.end.UnixMilli()))
 	if f.query.BkSqlCondition != "" {
 		f.write("AND")
-		f.write(f.query.BkSqlCondition)
+		f.write("(" + f.query.BkSqlCondition + ")")
 	}
 	if len(f.groups) > 0 {
 		f.write("GROUP BY")
@@ -152,11 +172,13 @@ func (f *QueryFactory) SQL() string {
 		orders = append(orders, fmt.Sprintf("`%s` %s", orderField, ascName))
 	}
 	if len(orders) > 0 {
+		sort.Strings(orders)
 		f.write("ORDER BY")
 		f.write(strings.Join(orders, ", "))
 	}
 
-	return strings.Trim(f.sql.String(), " ")
+	sql = strings.Trim(f.sql.String(), " ")
+	return
 }
 
 func (f *QueryFactory) dims(dims []string, field string) []string {
@@ -222,7 +244,7 @@ func (f *QueryFactory) FormatData(keys []string, list []map[string]interface{}) 
 		case float64:
 			vt = int64(vtLong.(float64))
 		default:
-			return res, fmt.Errorf("%s type is error %T, %v", dtEventTimeStamp, vtLong, vtLong)
+			return res, fmt.Errorf("%s type is error %T, %v", f.timeField, vtLong, vtLong)
 		}
 
 		// 获取值

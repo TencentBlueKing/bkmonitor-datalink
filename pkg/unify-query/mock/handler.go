@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sync"
 
 	"github.com/jarcoal/httpmock"
@@ -29,20 +30,34 @@ type VmRequest struct {
 }
 
 type VmParams struct {
-	InfluxCompatible bool   `json:"influx_compatible"`
-	UseNativeOr      bool   `json:"use_native_or"`
-	ApiType          string `json:"api_type"`
-	ClusterName      string `json:"cluster_name"`
-	ApiParams        struct {
-		Query   string `json:"query"`
-		Start   int64  `json:"start"`
-		End     int64  `json:"end"`
-		Step    int64  `json:"step"`
-		Time    int    `json:"time"`
-		Timeout int    `json:"timeout"`
-	} `json:"api_params"`
+	InfluxCompatible      bool              `json:"influx_compatible"`
+	UseNativeOr           bool              `json:"use_native_or"`
+	ApiType               string            `json:"api_type"`
+	ClusterName           string            `json:"cluster_name"`
+	ApiParams             map[string]any    `json:"api_params"`
 	ResultTableList       []string          `json:"result_table_list"`
 	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
+}
+
+type QueryRangeParams struct {
+	Query string `json:"query"`
+	Start int64  `json:"start"`
+	End   int64  `json:"end"`
+	Step  int64  `json:"step"`
+}
+
+type QueryParams struct {
+	Query   string `json:"query"`
+	Time    int64  `json:"time"`
+	Timeout int64  `json:"timeout"`
+}
+
+type LabelValuesParams struct {
+	Label string `json:"label"`
+	Match string `json:"match[]"`
+	Start int64  `json:"start"`
+	End   int64  `json:"end"`
+	Limit int    `json:"limit"`
 }
 
 type Data struct {
@@ -69,8 +84,9 @@ type VmResponse struct {
 }
 
 var (
-	Vm    = &vmResultData{}
-	BkSQL = &bkSQLResultData{}
+	Vm       = &vmResultData{}
+	BkSQL    = &bkSQLResultData{}
+	InfluxDB = &influxdbResultData{}
 )
 
 type resultData struct {
@@ -120,16 +136,22 @@ type bkSQLResultData struct {
 	resultData
 }
 
+type influxdbResultData struct {
+	resultData
+}
+
 func mockHandler(ctx context.Context) {
 	httpmock.Activate()
 
+	mockBaseHandler(ctx)
 	mockVmHandler(ctx)
 	mockInfluxDBHandler(ctx)
-	mockBkSQL(ctx)
+	mockBkSQLHandler(ctx)
 }
 
 const (
 	BkSQLUrl = "http://127.0.0.1:92001"
+	BaseUrl  = "http://127.0.0.1:10205"
 )
 
 type BkSQLRequest struct {
@@ -140,7 +162,7 @@ type BkSQLRequest struct {
 	Sql                        string `json:"sql"`
 }
 
-func mockBkSQL(ctx context.Context) {
+func mockBkSQLHandler(ctx context.Context) {
 	httpmock.RegisterResponder(http.MethodPost, BkSQLUrl, func(r *http.Request) (w *http.Response, err error) {
 		var (
 			request BkSQLRequest
@@ -166,6 +188,22 @@ func mockInfluxDBHandler(ctx context.Context) {
 
 	httpmock.RegisterResponder(http.MethodGet, host1+"/ping", httpmock.NewBytesResponder(http.StatusNoContent, nil))
 	httpmock.RegisterResponder(http.MethodGet, host2+"/ping", httpmock.NewBytesResponder(http.StatusBadGateway, nil))
+
+	address := "http://127.0.0.1:12302"
+	httpmock.RegisterResponder(http.MethodGet, address+"/query", func(r *http.Request) (w *http.Response, err error) {
+		params, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			return
+		}
+		key := params.Get("q")
+		d, ok := InfluxDB.Get(key)
+		if !ok {
+			err = fmt.Errorf(`bksql mock data is empty in "%s"`, key)
+			return
+		}
+		w, err = httpmock.NewJsonResponse(http.StatusOK, d)
+		return
+	})
 }
 
 func mockVmHandler(ctx context.Context) {
@@ -186,12 +224,25 @@ func mockVmHandler(ctx context.Context) {
 			return
 		}
 
+		p := params.ApiParams
 		var key string
 		switch params.ApiType {
+		case "series":
+			fallthrough
+		case "labels":
+			key = fmt.Sprintf("%.f%.f%s", p["start"], p["end"], p["match[]"])
+		case "label_values":
+			key = fmt.Sprintf("%.f%.f%s%s", p["start"], p["end"], p["label"], p["match[]"])
+		case "query_range":
+			key = fmt.Sprintf("%.f%.f%.f%s", p["start"], p["end"], p["step"], p["query"])
 		case "query":
-			key = fmt.Sprintf("%d%s", params.ApiParams.Time, params.ApiParams.Query)
+			key = fmt.Sprintf("%.f%s", p["time"], p["query"])
+		default:
+			err = fmt.Errorf("api type %s is empty ", params.ApiType)
+			return
 		}
 
+		key = params.ApiType + ":" + key
 		d, ok := Vm.Get(key)
 		if !ok {
 			err = fmt.Errorf(`vm mock data is empty in "%s"`, key)
@@ -200,5 +251,7 @@ func mockVmHandler(ctx context.Context) {
 		w, err = httpmock.NewJsonResponse(http.StatusOK, d)
 		return
 	})
+}
 
+func mockBaseHandler(ctx context.Context) {
 }

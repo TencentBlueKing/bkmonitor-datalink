@@ -28,6 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 )
 
 type Writer struct {
@@ -108,10 +109,113 @@ func TestAPIHandler(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	influxdb.MockSpaceRouter(ctx)
 
-	end := time.Now()
-	start := end.Add(time.Hour * -1)
+	end := time.Unix(1729859485, 0)
+	start := time.Unix(1729863085, 0)
 
-	mock.Vm.Set(map[string][]mock.Series{})
+	mock.Vm.Set(map[string]any{
+		`label_values:17298630851729859485container{bcs_cluster_id="BCS-K8S-00000", namespace="kube-system", result_table_id="2_bcs_prom_computation_result_table", __name__="container_cpu_usage_seconds_total_value"}`: []string{
+			"POD",
+			"kube-proxy",
+		},
+		`label_values:17298630851729859485bcs_cluster_id{bcs_cluster_id="BCS-K8S-00000", result_table_id="2_bcs_prom_computation_result_table", __name__="kube_pod_info_value"}`: []string{
+			"BCS-K8S-00000",
+		},
+		`query_range:1729863085172985948560topk(2, count({result_table_id="2_bcs_prom_computation_result_table"}) by (__name__))`: victoriaMetrics.Data{
+			ResultType: victoriaMetrics.MatrixType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"__name__": "container_tasks_state_value",
+					},
+					Values: []victoriaMetrics.Value{
+						{
+							1693973987, "1",
+						},
+					},
+				},
+				{
+					Metric: map[string]string{
+						"__name__": "kube_resource_quota_value",
+					},
+					Values: []victoriaMetrics.Value{
+						{
+							1693973987, "1",
+						},
+					},
+				},
+			},
+		},
+		`labels:17298630851729859485{result_table_id="2_bcs_prom_computation_result_table", __name__="container_cpu_usage_seconds_total_value"}`: []string{
+			"__name__",
+			"namespace",
+		},
+		`query_range:1729863085172985948560topk(5, count({result_table_id="2_bcs_prom_computation_result_table", __name__="container_cpu_usage_seconds_total_value"}) by (bcs_cluster_id))`: victoriaMetrics.Data{
+			ResultType: victoriaMetrics.MatrixType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bcs_cluster_id": "BCS-K8S-00000",
+					},
+					Values: []victoriaMetrics.Value{
+						{
+							1693973987000, 1,
+						},
+					},
+				},
+			},
+		},
+		`query_range:1729863085172985948560topk(5, count({result_table_id="2_bcs_prom_computation_result_table", __name__="container_cpu_usage_seconds_total_value"}) by (namespace))`: victoriaMetrics.Data{
+			ResultType: victoriaMetrics.MatrixType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"namespace": "bkbase",
+					},
+					Values: []victoriaMetrics.Value{
+						{
+							1693973987, "1",
+						},
+					},
+				},
+				{
+					Metric: map[string]string{
+						"namespace": "kube-system",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+				{
+					Metric: map[string]string{
+						"namespace": "bkmonitor-operator",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+				{
+					Metric: map[string]string{
+						"namespace": "blueking",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+			},
+		},
+		`series:17298630851729859485{result_table_id="2_bcs_prom_computation_result_table", __name__="container_cpu_usage_seconds_total_value"}`: []map[string]string{
+			{
+				"__name__":       "container_cpu_usage_seconds_total_value",
+				"bcs_cluster_id": "BCS-K8S-00000",
+				"namespace":      "default",
+			},
+			{
+				"__name__":       "container_cpu_usage_seconds_total_value",
+				"bcs_cluster_id": "BCS-K8S-00000",
+				"namespace":      "bkbase",
+			},
+		},
+	})
 
 	testCases := map[string]struct {
 		handler func(c *gin.Context)
@@ -155,7 +259,7 @@ func TestAPIHandler(t *testing.T) {
 				End:     fmt.Sprintf("%d", end.Unix()),
 				Limit:   2,
 			},
-			expected: `["container_tasks_state_value","kube_resourcequota_value"]`,
+			expected: `["container_tasks_state_value","kube_resource_quota_value"]`,
 		},
 		"test tag keys in prometheus": {
 			handler: HandlerTagKeys,
@@ -180,7 +284,7 @@ func TestAPIHandler(t *testing.T) {
 				Limit:   5,
 				Keys:    []string{"namespace", "bcs_cluster_id"},
 			},
-			expected: `{"values":{"bcs_cluster_id":["BCS-K8S-00000"],"namespace":["aiops-default","bkbase","bkmonitor-operator","blueking","kube-system"]}}`,
+			expected: `{"values":{"bcs_cluster_id":["BCS-K8S-00000"],"namespace":["bkbase","bkmonitor-operator","blueking","kube-system"]}}`,
 		},
 		"test series in prometheus": {
 			handler: HandlerSeries,
@@ -193,7 +297,7 @@ func TestAPIHandler(t *testing.T) {
 				Limit:   1,
 				Keys:    []string{"bcs_cluster_id", "namespace"},
 			},
-			expected: `{"measurement":"container_cpu_usage_seconds_total_value","keys":["bcs_cluster_id","namespace"],"series":[["BCS-K8S-00000","aiops-default"]]}`,
+			expected: `{"measurement":"container_cpu_usage_seconds_total_value","keys":["bcs_cluster_id","namespace"],"series":[["BCS-K8S-00000","default"],["BCS-K8S-00000","bkbase"]]}`,
 		},
 	}
 
@@ -224,8 +328,57 @@ func TestQueryHandler(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	influxdb.MockSpaceRouter(ctx)
 
-	end := time.Now()
-	start := end.Add(time.Hour * -1)
+	end := time.Unix(0, 0)
+	start := time.Unix(1000, 0)
+
+	mock.Vm.Set(map[string]any{
+		`query_range:6000600count by (bcs_cluster_id) (a)`: victoriaMetrics.Data{
+			ResultType: victoriaMetrics.MatrixType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bcs_cluster_id": "BCS-K8S-00000",
+					},
+					Values: []victoriaMetrics.Value{
+						{
+							1729602000, "2042",
+						},
+						{
+							1729602600, "2056",
+						},
+						{
+							1729603200, "1995",
+						},
+						{
+							1729603800, "2008",
+						},
+						{
+							1729604400, "1978",
+						},
+						{
+							1729605000, "2001",
+						},
+						{
+							1729605600, "2052",
+						},
+					},
+				},
+			},
+		},
+		`query:0sum by (bcs_cluster_id) (a)`: victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bcs_cluster_id": "BCS-K8S-00000",
+					},
+					Value: victoriaMetrics.Value{
+						1729608144, "1172",
+					},
+				},
+			},
+		},
+	})
 
 	testCases := map[string]struct {
 		handler  func(c *gin.Context)
@@ -271,7 +424,8 @@ func TestQueryHandler(t *testing.T) {
 			}
 			if c.handler != nil {
 				c.handler(ginC)
-				assert.Equal(t, c.expected, w.body())
+				b := w.body()
+				assert.Equal(t, c.expected, b)
 			}
 
 		})

@@ -45,27 +45,13 @@ type VmParams struct {
 	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
 }
 
-type Metric map[string]string
-type Value []interface{}
-
-type Series struct {
-	Metric Metric  `json:"metric"`
-	Value  Value   `json:"value,omitempty"`
-	Values []Value `json:"values,omitempty"`
-}
-
-type VmData struct {
-	Result     []Series `json:"result"`
-	ResultType string   `json:"resultType,omitempty"`
-}
-
 type Data struct {
 	List []VmList `json:"list,omitempty"`
 	SQL  string   `json:"sql"`
 }
 
 type VmList struct {
-	Data      VmData `json:"data,omitempty""`
+	Data      any    `json:"data,omitempty"`
 	IsPartial bool   `json:"isPartial,omitempty"`
 	Status    string `json:"status,omitempty"`
 }
@@ -114,23 +100,18 @@ type vmResultData struct {
 	resultData
 }
 
-func (vr *vmResultData) Set(in map[string][]Series) {
+func (vr *vmResultData) Set(in map[string]any) {
 	vr.lock.Lock()
 	defer vr.lock.Unlock()
 	if vr.data == nil {
 		vr.data = make(map[string]any)
 	}
 	for k, v := range in {
-		if len(v) == 0 {
-			continue
+		rd := VmResponse{
+			Result: true,
+			Code:   "00",
 		}
-
-		rd := VmResponse{Result: true, Code: "00"}
-		ResultType := "vector"
-		if len(v[0].Values) > 0 {
-			ResultType = "matrix"
-		}
-		rd.Data.List = append(rd.Data.List, VmList{Data: VmData{Result: v, ResultType: ResultType}})
+		rd.Data.List = append(rd.Data.List, VmList{Data: v})
 		vr.data[k] = rd
 	}
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 )
 
 var (
@@ -408,50 +409,73 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 	}
 
 	timestamp := int64(1693973987)
-	data := map[string][]mock.Series{
-		"1693973987(count by (bk_target_ip) (a))": {
-			{
-				Metric: map[string]string{
-					"bk_target_ip": "127.0.0.1",
-				},
-				Value: []any{
-					1693973987, "1",
-				},
-			},
-		},
-		"1693973987count by (bcs_cluster_id, namespace, pod) (b and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (a)))": {
-			{
-				Metric: map[string]string{
-					"bcs_cluster_id": "BCS-K8S-00000",
-					"namespace":      "bkmonitor-operator",
-					"pod":            "bkm-pod-1",
-				},
-				Value: []any{
-					1693973987, "1",
-				},
-			},
-			{
-				Metric: map[string]string{
-					"bcs_cluster_id": "BCS-K8S-00000",
-					"namespace":      "bkmonitor-operator",
-					"pod":            "bkm-pod-2",
-				},
-				Value: []any{
-					1693973987, "1",
+	data := map[string]any{
+		"1693973987(count by (bk_target_ip) (a))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bk_target_ip": "127.0.0.1",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
 				},
 			},
 		},
-		"1693973987count by (bk_target_ip) (b and on (apm_application_name, apm_service_name, apm_service_instance_name) (count by (apm_application_name, apm_service_name, apm_service_instance_name) (a)))": {
-			{
-				Metric: map[string]string{
-					"bk_target_ip": "127.0.0.1",
+		"1693973987count by (bcs_cluster_id, namespace, pod) (b and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (a)))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bcs_cluster_id": "BCS-K8S-00000",
+						"namespace":      "bkmonitor-operator",
+						"pod":            "bkm-pod-1",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
 				},
-				Value: []any{
-					1693973987, "1",
+				{
+					Metric: map[string]string{
+						"bcs_cluster_id": "BCS-K8S-00000",
+						"namespace":      "bkmonitor-operator",
+						"pod":            "bkm-pod-2",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+			},
+		},
+		"1693973987count by (bk_target_ip) (b and on (apm_application_name, apm_service_name, apm_service_instance_name) (count by (apm_application_name, apm_service_name, apm_service_instance_name) (a)))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bk_target_ip": "127.0.0.1",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+			},
+		},
+		"1693973987count by (bk_target_ip) (b and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (a)))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bk_target_ip": "127.0.0.1",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
 				},
 			},
 		},
 	}
+
 	mock.Vm.Set(data)
 
 	for n, c := range testCases {

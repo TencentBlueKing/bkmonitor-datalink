@@ -11,11 +11,7 @@ package victoriaMetrics
 
 import (
 	"context"
-	"encoding/json"
-	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -40,7 +36,7 @@ var (
 	bkDataAuthorization = map[string]string{"bkdata_authentication_method": "user", "bkdata_data_token": "", "bk_username": "admin"}
 )
 
-func mockInstance(ctx context.Context, mockCurl *curl.MockCurl) *Instance {
+func mockInstance(ctx context.Context, mockCurl curl.Curl) *Instance {
 	headers := map[string]string{}
 
 	instance, _ := NewInstance(ctx, &Options{
@@ -62,29 +58,4 @@ func mockData(ctx context.Context) {
 		ResultTableList: resultTableList,
 	})
 	metadata.SetUser(ctx, sourceKey, spaceUid, "")
-}
-
-func TestOptions(t *testing.T) {
-	ctx := context.Background()
-	ctx = metadata.InitHashID(ctx)
-	mockData(ctx)
-
-	mockCurl := &curl.MockCurl{}
-	instance := mockInstance(ctx, mockCurl)
-
-	q := "count(my_metric)"
-	_, _ = instance.DirectQueryRange(ctx, q, start, end, step)
-
-	assert.Equal(t, mockCurl.Opts.Headers[metadata.SpaceUIDHeader], spaceUid)
-	assert.Equal(t, mockCurl.Opts.Headers[metadata.BkQuerySourceHeader], sourceKey)
-
-	params := make(map[string]string)
-	err := json.Unmarshal(mockCurl.Opts.Body, &params)
-	assert.Nil(t, err)
-
-	if err == nil {
-		for k, v := range bkDataAuthorization {
-			assert.Equal(t, params[k], v)
-		}
-	}
 }

@@ -79,8 +79,6 @@ type Query struct {
 	// vm 的 rt
 	VmRt string
 
-	IsSingleMetric bool
-
 	// 兼容 InfluxDB 结构体
 	RetentionPolicy string    // 存储 RP
 	DB              string    // 存储 DB
@@ -231,9 +229,7 @@ func ReplaceVmCondition(condition VmCondition, replaceLabels ReplaceLabels) VmCo
 func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
 	vmClusterNames := set.New[string]()
 	vmResultTable := set.New[string]()
-	vmExpand = &VmExpand{
-		MetricFilterCondition: make(map[string]string),
-	}
+	metricFilterCondition := make(map[string]string)
 
 	for referenceName, reference := range qRef {
 		if 0 < len(reference.QueryList) {
@@ -248,22 +244,29 @@ func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
 				vmClusterNames.Add(query.StorageName)
 			}
 
-			metricFilterCondition := ""
+			filterCondition := ""
 			if vmConditions.Size() > 0 {
-				metricFilterCondition = fmt.Sprintf(`%s`, strings.Join(vmConditions.ToArray(), ` or `))
+				filterCondition = fmt.Sprintf(`%s`, strings.Join(vmConditions.ToArray(), ` or `))
 			}
 
-			vmExpand.MetricFilterCondition[referenceName] = metricFilterCondition
+			metricFilterCondition[referenceName] = filterCondition
 		}
 	}
+
+	if vmResultTable.Size() == 0 {
+		return
+	}
+
+	vmExpand = &VmExpand{
+		MetricFilterCondition: metricFilterCondition,
+		ResultTableList:       vmResultTable.ToArray(),
+	}
+	sort.Strings(vmExpand.ResultTableList)
 
 	// 当所有的 vm 集群都一样的时候，才进行传递
 	if vmClusterNames.Size() == 1 {
 		vmExpand.ClusterName = vmClusterNames.First()
 	}
-
-	vmExpand.ResultTableList = vmResultTable.ToArray()
-	sort.Strings(vmExpand.ResultTableList)
 
 	return
 }

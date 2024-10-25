@@ -24,6 +24,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/offlineDataArchive"
@@ -161,6 +162,9 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		// 如果 query.Step 不存在去外部统一的 step
 		if query.Step == "" {
 			query.Step = q.Step
+		}
+		if q.SpaceUid == "" {
+			q.SpaceUid = metadata.GetUser(ctx).SpaceUid
 		}
 
 		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid)
@@ -392,7 +396,9 @@ func (q *Query) ToRouter() (*Route, error) {
 }
 
 func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
-	aggs = make(metadata.Aggregates, 0)
+	if len(q.AggregateMethodList) == 0 {
+		return
+	}
 
 	// 非时间聚合函数使用透传的方式
 	if q.IsReference {
@@ -470,8 +476,8 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		MetricName:    metricName,
 	}
 
-	// 判断是否需要使用聚合查询
-	aggregates, err := q.Aggregates()
+	var aggregates metadata.Aggregates
+	aggregates, err = q.Aggregates()
 	if err != nil {
 		return nil, err
 	}
@@ -559,6 +565,31 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		query.Size = q.Limit
 		query.From = q.From
 		query.Aggregates = aggregates
+
+		// 针对 vmRt 不为空的情况，进行 vm 判定
+		if query.VmRt != "" {
+			isVmQuery := func() bool {
+				dims := set.New[string]()
+				for _, a := range q.AggregateMethodList {
+					dims.Add(a.Dimensions...)
+				}
+
+				if query.CheckDruidQuery(ctx, dims) {
+					return true
+				}
+				if metadata.GetMustVmQueryFeatureFlag(ctx, tsDB.TableID) {
+					return true
+				}
+
+				return false
+			}()
+
+			if isVmQuery {
+				query.StorageType = consul.VictoriaMetricsStorageType
+			}
+		}
+
+		metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 		queryMetric.QueryList = append(queryMetric.QueryList, query)
 	}
 
@@ -605,7 +636,9 @@ func (q *Query) BuildMetadataQuery(
 	tagKeys := tsDB.TagsKey
 	vmRt := tsDB.VmRt
 	measurement = tsDB.Measurement
-	measurements = []string{measurement}
+	if measurement != "" {
+		measurements = []string{measurement}
+	}
 
 	span.Set("tsdb-table-id", tsDB.TableID)
 	span.Set("tsdb-measurement-type", tsDB.MeasurementType)
@@ -752,8 +785,6 @@ func (q *Query) BuildMetadataQuery(
 		query.IsHasOr = true
 	}
 
-	query.IsSingleMetric = tsDB.IsSplit()
-
 	// 通过过期时间判断是否读取归档模块
 	start, end, _, timezone, err := ToTime(q.Start, q.End, q.Step, q.Timezone)
 	if err != nil {
@@ -793,25 +824,6 @@ func (q *Query) BuildMetadataQuery(
 		query.StorageType = consul.ElasticsearchStorageType
 	}
 
-	// 针对 vmRt 不为空的情况，进行 vm 判定
-	if vmRt != "" {
-		isVmQuery := func() bool {
-			if metadata.GetMustVmQueryFeatureFlag(ctx, tsDB.TableID) {
-				return true
-			}
-			if query.IsDruidQuery(ctx) {
-				return true
-			}
-
-			return false
-		}()
-
-		if isVmQuery {
-			query.StorageType = consul.VictoriaMetricsStorageType
-		}
-	}
-	metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
-
 	query.DataSource = q.DataSource
 	query.TableID = tsDB.TableID
 	query.MetricName = metricName
@@ -835,33 +847,38 @@ func (q *Query) BuildMetadataQuery(
 	// 写入 ES 所需内容
 	query.QueryString = q.QueryString
 	query.Source = q.KeepColumns
-	query.AllConditions = make(metadata.AllConditions, len(allCondition))
-	for i, conditions := range allCondition {
-		conds := make([]metadata.ConditionField, len(conditions))
-		for j, c := range conditions {
-			conds[j] = metadata.ConditionField{
-				DimensionName: c.DimensionName,
-				Value:         c.Value,
-				Operator:      c.Operator,
+
+	if len(allCondition) > 0 {
+		query.AllConditions = make(metadata.AllConditions, len(allCondition))
+		for i, conditions := range allCondition {
+			conds := make([]metadata.ConditionField, len(conditions))
+			for j, c := range conditions {
+				conds[j] = metadata.ConditionField{
+					DimensionName: c.DimensionName,
+					Value:         c.Value,
+					Operator:      c.Operator,
+				}
 			}
+			query.AllConditions[i] = conds
 		}
-		query.AllConditions[i] = conds
 	}
 
-	query.Orders = make(metadata.Orders)
-	for _, o := range q.OrderBy {
-		if len(o) == 0 {
-			continue
-		}
+	if len(q.OrderBy) > 0 {
+		query.Orders = make(metadata.Orders)
+		for _, o := range q.OrderBy {
+			if len(o) == 0 {
+				continue
+			}
 
-		asc := true
-		name := o
+			asc := true
+			name := o
 
-		if strings.HasPrefix(o, "-") {
-			asc = false
-			name = name[1:]
+			if strings.HasPrefix(o, "-") {
+				asc = false
+				name = name[1:]
+			}
+			query.Orders[name] = asc
 		}
-		query.Orders[name] = asc
 	}
 
 	span.Set("query-source-type", query.SourceType)

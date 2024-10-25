@@ -74,27 +74,22 @@ func (q *Query) MetricLabels(ctx context.Context) *prompb.Label {
 	}
 }
 
-// IsDruidQuery 判断是否是 druid 查询
-func (q *Query) IsDruidQuery(ctx context.Context) bool {
-	dims := set.New[string]([]string{"bk_obj_id", "bk_inst_id"}...)
+// CheckDruidQuery 判断是否是 druid 查询
+func (q *Query) CheckDruidQuery(ctx context.Context, dims *set.Set[string]) bool {
+	checkDims := set.New[string]([]string{"bk_obj_id", "bk_inst_id"}...)
 
 	// 判断查询条件中是否有以上两个维度中的任意一个
 	isDruid := func() bool {
 		for _, conditions := range q.AllConditions {
 			for _, con := range conditions {
-				if dims.Existed(con.DimensionName) {
+				if checkDims.Existed(con.DimensionName) {
 					return true
 				}
 			}
 		}
 
-		// 判断聚合维度是否使用了以上两个维度中的任意一个
-		for _, aggregate := range q.Aggregates {
-			for _, dim := range aggregate.Dimensions {
-				if dims.Existed(dim) {
-					return true
-				}
-			}
+		if dims.Intersection(checkDims).Size() > 0 {
+			return true
 		}
 
 		return false
@@ -115,10 +110,6 @@ func (q *Query) IsDruidQuery(ctx context.Context) bool {
 				Source: oldVmRT,
 				Target: newVmRT,
 			}
-		}
-
-		if !q.IsSingleMetric {
-			q.IsSingleMetric = true
 		}
 
 		q.VmCondition = ReplaceVmCondition(q.VmCondition, replaceLabels)

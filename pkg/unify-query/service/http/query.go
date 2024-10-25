@@ -187,6 +187,9 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			close(dataCh)
 		}()
 
+		if queryTs.SpaceUid == "" {
+			queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUid
+		}
 		for _, ql := range queryTs.QueryList {
 			// 时间复用
 			ql.Timezone = queryTs.Timezone
@@ -200,6 +203,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			if ql.Step == "" {
 				ql.Step = queryTs.Step
 			}
+
 			qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
 			if qmErr != nil {
 				err = qmErr
@@ -356,18 +360,12 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 	var (
 		lookBackDelta time.Duration
 		promExprOpt   = &structured.PromExprOption{}
-
-		user = metadata.GetUser(ctx)
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-ts-to-instance")
 	defer func() {
 		span.End(&err)
 	}()
-
-	if user.SpaceUid != "" {
-		query.SpaceUid = user.SpaceUid
-	}
 
 	queryString, _ := json.Marshal(query)
 	span.Set("query-ts", queryString)
@@ -560,10 +558,6 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 }
 
 func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (*structured.QueryTs, error) {
-	var (
-		user = metadata.GetUser(ctx)
-	)
-
 	if queryPromQL == nil {
 		return nil, nil
 	}
@@ -572,11 +566,6 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (*
 	query, err := sp.QueryTs()
 	if err != nil {
 		return nil, err
-	}
-
-	// metadata 中的 spaceUid 是从 header 头信息中获取
-	if user.SpaceUid != "" {
-		query.SpaceUid = user.SpaceUid
 	}
 
 	query.Start = queryPromQL.Start

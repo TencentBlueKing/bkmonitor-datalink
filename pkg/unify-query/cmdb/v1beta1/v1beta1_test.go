@@ -288,7 +288,7 @@ func TestModel_GetPath(t *testing.T) {
 func TestModel_GetResourceMatcher(t *testing.T) {
 	mock.Init()
 	ctx := metadata.InitHashID(context.Background())
-	influxdb.SpaceRouter(ctx)
+	influxdb.MockSpaceRouter(ctx)
 
 	testCases := map[string]struct {
 		source       cmdb.Resource
@@ -452,7 +452,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 			},
 		},
 	}
-	mock.SetVmMockData(data)
+	mock.Vm.Set(data)
 
 	for n, c := range testCases {
 		t.Run(n, func(t *testing.T) {

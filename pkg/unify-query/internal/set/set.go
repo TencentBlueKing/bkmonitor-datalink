@@ -63,6 +63,21 @@ func (s *Set[T]) String() string {
 	return res.String()
 }
 
+func (s *Set[T]) Intersection(t *Set[T]) *Set[T] {
+	nt := New[T]()
+	if t == nil {
+		return nt
+	}
+
+	a := s.ToArray()
+	for _, i := range a {
+		if t.Existed(i) {
+			nt.Add(i)
+		}
+	}
+	return nt
+}
+
 func (s *Set[T]) Add(items ...T) {
 	s.lock.Lock()
 	defer s.lock.Unlock()

@@ -37,23 +37,51 @@ var (
 	mockSpaceRouterOnce sync.Once
 )
 
-func SpaceRouter(ctx context.Context) {
-	vmFiedls := []string{
-		"container_cpu_usage_seconds_total",
-		"kube_pod_info",
-		"node_with_pod_relation",
-		"node_with_system_relation",
-		"deployment_with_replicaset_relation",
-		"pod_with_replicaset_relation",
-		"apm_service_instance_with_pod_relation",
-		"apm_service_instance_with_system_relation",
-	}
-	influxdbFields := []string{
-		"kube_pod_info",
-		"kube_node_info",
-	}
-
+func MockSpaceRouter(ctx context.Context) {
 	mockSpaceRouterOnce.Do(func() {
+		_ = featureFlag.MockFeatureFlag(ctx, `{
+	  	"must-vm-query": {
+	  		"variations": {
+	  			"true": true,
+	  			"false": false
+	  		},
+	  		"targeting": [
+                {
+	  			    "query": "tableID in [\"result_table.vm\", \"result_table.k8s\"]",
+	  			    "percentage": {
+	  			    	"true": 100,
+	  				    "false":0 
+	  			    }
+	  		    },
+               {
+	  			    "query": "tableID in [\"system.cpu_detail\",\"system.disk\"]",
+	  			    "percentage": {
+	  			    	"true": 100,
+	  				    "false":0 
+	  			    }
+	  		   }
+            ],
+	  		"defaultRule": {
+	  			"variation": "false"
+	  		}
+	  	}
+	  }`)
+
+		vmFiedls := []string{
+			"container_cpu_usage_seconds_total",
+			"kube_pod_info",
+			"node_with_pod_relation",
+			"node_with_system_relation",
+			"deployment_with_replicaset_relation",
+			"pod_with_replicaset_relation",
+			"apm_service_instance_with_pod_relation",
+			"apm_service_instance_with_system_relation",
+		}
+		influxdbFields := []string{
+			"kube_pod_info",
+			"kube_node_info",
+		}
+
 		tsdb.SetStorage(
 			consul.VictoriaMetricsStorageType,
 			&tsdb.Storage{Type: consul.VictoriaMetricsStorageType},
@@ -62,9 +90,27 @@ func SpaceRouter(ctx context.Context) {
 		tsdb.SetStorage("3", &tsdb.Storage{Type: consul.ElasticsearchStorageType})
 		tsdb.SetStorage("4", &tsdb.Storage{Type: consul.BkSqlStorageType})
 
-		SetSpaceTsDbMockData(ctx,
+		setSpaceTsDbMockData(ctx,
 			ir.SpaceInfo{
 				SpaceUid: ir.Space{
+					"system.disk": &ir.SpaceResultTable{
+						TableId: "system.disk",
+						Filters: []map[string]string{
+							{"bk_biz_id": "2"},
+						},
+					},
+					"system.cpu_detail": &ir.SpaceResultTable{
+						TableId: "system.cpu_detail",
+						Filters: []map[string]string{
+							{"bk_biz_id": "2"},
+						},
+					},
+					"system.cpu_summary": &ir.SpaceResultTable{
+						TableId: "system.cpu_summary",
+						Filters: []map[string]string{
+							{"bk_biz_id": "2"},
+						},
+					},
 					ResultTableVM: &ir.SpaceResultTable{
 						TableId: ResultTableVM,
 					},
@@ -80,6 +126,27 @@ func SpaceRouter(ctx context.Context) {
 				},
 			},
 			ir.ResultTableDetailInfo{
+				"system.cpu_summary": &ir.ResultTableDetail{
+					StorageId:       2,
+					TableId:         "system.cpu_summary",
+					VmRt:            "",
+					Fields:          []string{"usage", "free"},
+					MeasurementType: redis.BKTraditionalMeasurement,
+				},
+				"system.cpu_detail": &ir.ResultTableDetail{
+					StorageId:       2,
+					TableId:         "system.cpu_detail",
+					VmRt:            "100147_ieod_system_cpu_detail_raw",
+					Fields:          []string{"usage", "free"},
+					MeasurementType: redis.BKTraditionalMeasurement,
+				},
+				"system.disk": &ir.ResultTableDetail{
+					StorageId:       2,
+					TableId:         "system.disk",
+					VmRt:            "100147_ieod_system_disk_raw",
+					Fields:          []string{"usage", "free"},
+					MeasurementType: redis.BKTraditionalMeasurement,
+				},
 				ResultTableVM: &ir.ResultTableDetail{
 					StorageId:       2,
 					TableId:         ResultTableVM,
@@ -93,6 +160,8 @@ func SpaceRouter(ctx context.Context) {
 					TableId:         ResultTableInfluxDB,
 					Fields:          influxdbFields,
 					BcsClusterID:    "BCS-K8S-00000",
+					DB:              "result_table",
+					Measurement:     "influxdb",
 					MeasurementType: redis.BkSplitMeasurement,
 					ClusterName:     "default",
 				},
@@ -105,33 +174,20 @@ func SpaceRouter(ctx context.Context) {
 					TableId:   ResultTableBkSQL,
 				},
 			}, nil,
-			nil,
+			ir.DataLabelToResultTable{
+				"influxdb": ir.ResultTableList{
+					"result_table.influxdb",
+					"result_table.vm",
+				},
+			},
 		)
 	})
 }
 
-func SetSpaceTsDbMockData(ctx context.Context, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo, fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
+func setSpaceTsDbMockData(ctx context.Context, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo, fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
 	mockRedisOnce.Do(func() {
-		SetRedisClient(ctx)
+		setRedisClient(ctx)
 	})
-	err := featureFlag.MockFeatureFlag(ctx, `{
-	  	"must-vm-query": {
-	  		"variations": {
-	  			"true": true,
-	  			"false": false
-	  		},
-	  		"targeting": [{
-	  			"query": "tableID in [\"result_table.vm\", \"result_table.k8s\"]",
-	  			"percentage": {
-	  				"true": 100,
-	  				"false":0 
-	  			}
-	  		}],
-	  		"defaultRule": {
-	  			"variation": "false"
-	  		}
-	  	}
-	  }`)
 
 	sr, err := SetSpaceTsDbRouter(ctx, "mock", "mock", "", 100)
 	if err != nil {
@@ -163,7 +219,7 @@ func SetSpaceTsDbMockData(ctx context.Context, spaceInfo ir.SpaceInfo, rtInfo ir
 	}
 }
 
-func SetRedisClient(ctx context.Context) {
+func setRedisClient(ctx context.Context) {
 	host := viper.GetString("redis.host")
 	port := viper.GetInt("redis.port")
 	pwd := viper.GetString("redis.password")

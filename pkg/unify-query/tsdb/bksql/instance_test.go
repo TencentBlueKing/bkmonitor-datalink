@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
@@ -28,19 +29,18 @@ func TestInstance_QueryRaw(t *testing.T) {
 	ctx := context.Background()
 	mock.Init()
 
-	ins, err := NewInstance(ctx, Options{
-		Address:   "localhost",
+	ins, err := NewInstance(ctx, &Options{
+		Address:   mock.BkSQLUrl,
 		Timeout:   time.Minute,
 		MaxLimit:  1e4,
 		Tolerance: 5,
+		Curl:      &curl.HttpCurl{Log: log.DefaultLogger},
 	})
 	if err != nil {
 		log.Fatalf(ctx, err.Error())
+		return
 	}
-	ins.client = mockClient()
-	if err != nil {
-		log.Fatalf(ctx, err.Error())
-	}
+
 	end := time.Now()
 	start := end.Add(time.Minute * -5)
 

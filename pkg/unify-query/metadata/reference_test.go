@@ -11,6 +11,8 @@ package metadata
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -112,6 +114,14 @@ func TestVmExpand(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx = InitHashID(ctx)
 			vmExpand := c.queryRef.ToVmExpand(ctx)
+
+			//
+			for k, v := range vmExpand.MetricFilterCondition {
+				or := " or "
+				arr := strings.Split(v, or)
+				sort.Strings(arr)
+				vmExpand.MetricFilterCondition[k] = strings.Join(arr, or)
+			}
 
 			assert.Equal(t, c.vmExpand, vmExpand)
 		})

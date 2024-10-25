@@ -83,14 +83,44 @@ type VmResponse struct {
 }
 
 var (
-	lock       sync.RWMutex
-	resultData = make(map[string]VmResponse)
+	Vm    = &vmResultData{}
+	BkSQL = &bkSQLResultData{}
 )
 
-func SetVmMockData(data map[string][]Series) {
-	lock.Lock()
-	defer lock.Unlock()
-	for k, v := range data {
+type resultData struct {
+	lock sync.RWMutex
+	data map[string]any
+}
+
+func (r *resultData) Set(in map[string]any) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	if r.data == nil {
+		r.data = make(map[string]any)
+	}
+	for k, v := range in {
+		r.data[k] = v
+	}
+}
+
+func (r *resultData) Get(k string) (any, bool) {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+	d, ok := r.data[k]
+	return d, ok
+}
+
+type vmResultData struct {
+	resultData
+}
+
+func (vr *vmResultData) Set(in map[string][]Series) {
+	vr.lock.Lock()
+	defer vr.lock.Unlock()
+	if vr.data == nil {
+		vr.data = make(map[string]any)
+	}
+	for k, v := range in {
 		if len(v) == 0 {
 			continue
 		}
@@ -101,8 +131,12 @@ func SetVmMockData(data map[string][]Series) {
 			ResultType = "matrix"
 		}
 		rd.Data.List = append(rd.Data.List, VmList{Data: VmData{Result: v, ResultType: ResultType}})
-		resultData[k] = rd
+		vr.data[k] = rd
 	}
+}
+
+type bkSQLResultData struct {
+	resultData
 }
 
 func mockHandler(ctx context.Context) {
@@ -110,6 +144,39 @@ func mockHandler(ctx context.Context) {
 
 	mockVmHandler(ctx)
 	mockInfluxDBHandler(ctx)
+	mockBkSQL(ctx)
+}
+
+const (
+	BkSQLUrl = "http://127.0.0.1:92001"
+)
+
+type BkSQLRequest struct {
+	BkAppCode                  string `json:"bk_app_code"`
+	BkUsername                 string `json:"bk_username"`
+	BkdataAuthenticationMethod string `json:"bkdata_authentication_method"`
+	BkdataDataToken            string `json:"bkdata_data_token"`
+	Sql                        string `json:"sql"`
+}
+
+func mockBkSQL(ctx context.Context) {
+	httpmock.RegisterResponder(http.MethodPost, BkSQLUrl, func(r *http.Request) (w *http.Response, err error) {
+		var (
+			request BkSQLRequest
+		)
+		err = json.NewDecoder(r.Body).Decode(&request)
+		if err != nil {
+			return
+		}
+
+		d, ok := BkSQL.Get(request.Sql)
+		if !ok {
+			err = fmt.Errorf(`bksql mock data is empty in "%s"`, request.Sql)
+			return
+		}
+		w, err = httpmock.NewJsonResponse(http.StatusOK, d)
+		return
+	})
 }
 
 func mockInfluxDBHandler(ctx context.Context) {
@@ -144,11 +211,9 @@ func mockVmHandler(ctx context.Context) {
 			key = fmt.Sprintf("%d%s", params.ApiParams.Time, params.ApiParams.Query)
 		}
 
-		lock.RLock()
-		defer lock.RUnlock()
-		d, ok := resultData[key]
+		d, ok := Vm.Get(key)
 		if !ok {
-			err = fmt.Errorf(`mock data is empty in "%s"`, key)
+			err = fmt.Errorf(`vm mock data is empty in "%s"`, key)
 			return
 		}
 		w, err = httpmock.NewJsonResponse(http.StatusOK, d)

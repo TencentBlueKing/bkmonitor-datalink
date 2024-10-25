@@ -106,10 +106,12 @@ var (
 func TestAPIHandler(t *testing.T) {
 	mock.Init()
 	ctx := metadata.InitHashID(context.Background())
-	influxdb.SpaceRouter(ctx)
+	influxdb.MockSpaceRouter(ctx)
 
 	end := time.Now()
 	start := end.Add(time.Hour * -1)
+
+	mock.Vm.Set(map[string][]mock.Series{})
 
 	testCases := map[string]struct {
 		handler func(c *gin.Context)
@@ -220,7 +222,7 @@ func TestAPIHandler(t *testing.T) {
 func TestQueryHandler(t *testing.T) {
 	mock.Init()
 	ctx := metadata.InitHashID(context.Background())
-	influxdb.SpaceRouter(ctx)
+	influxdb.MockSpaceRouter(ctx)
 
 	end := time.Now()
 	start := end.Add(time.Hour * -1)

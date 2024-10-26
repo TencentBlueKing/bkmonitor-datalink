@@ -79,15 +79,6 @@ func AnalysisQuery(stmt string) (*Params, error) {
 
 var defaultLimit int
 
-// SetDefaultLimit
-func SetDefaultLimit(limit int) {
-	if limit == 0 {
-		defaultLimit = 1e2
-		return
-	}
-	defaultLimit = limit
-}
-
 // getTime
 func getTime(timestamp string) (time.Time, error) {
 	timeNum, err := strconv.Atoi(timestamp)

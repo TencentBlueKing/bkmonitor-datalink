@@ -171,7 +171,7 @@ type BkSQLRequest struct {
 }
 
 func mockElasticSearchHandler(ctx context.Context) {
-	bkBaseUrl := "http://127.0.0.1:12001/bk_data/query_sync/es/es_index"
+	bkBaseUrl := "http://127.0.0.1:12001/bk_data/query_sync/es"
 
 	searchHandler := func(r *http.Request) (w *http.Response, err error) {
 		body, _ := io.ReadAll(r.Body)
@@ -187,10 +187,10 @@ func mockElasticSearchHandler(ctx context.Context) {
 
 	mappings := `{"es_index":{"mappings":{"properties":{"group":{"type":"keyword"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}}}}}}`
 	mappingResp := httpmock.NewStringResponder(http.StatusOK, mappings)
-	httpmock.RegisterResponder(http.MethodGet, bkBaseUrl+"/_mapping/", mappingResp)
-	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/_mapping/", mappingResp)
-	httpmock.RegisterResponder(http.MethodPost, bkBaseUrl+"/_search", searchHandler)
-	httpmock.RegisterResponder(http.MethodPost, EsUrl+"/_search", searchHandler)
+	httpmock.RegisterResponder(http.MethodGet, bkBaseUrl+"/es_index/_mapping/", mappingResp)
+	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/es_index/_mapping/", mappingResp)
+	httpmock.RegisterResponder(http.MethodPost, bkBaseUrl+"/es_index/_search", searchHandler)
+	httpmock.RegisterResponder(http.MethodPost, EsUrl+"/es_index/_search", searchHandler)
 }
 
 func mockBkSQLHandler(ctx context.Context) {

@@ -297,6 +297,9 @@ func (q *QueryTs) ToPromExpr(
 
 	// 获取指标查询的表达式
 	for _, query := range q.QueryList {
+		if query.Step == "" {
+			query.Step = q.Step
+		}
 		if expr, err = query.ToPromExpr(ctx, promExprOpt); err != nil {
 			return nil, err
 		}

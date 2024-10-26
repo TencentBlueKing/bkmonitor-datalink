@@ -19,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
@@ -29,6 +30,7 @@ const (
 	ResultTableVM       = "result_table.vm"
 	ResultTableInfluxDB = "result_table.influxdb"
 	ResultTableEs       = "result_table.es"
+	ResultTableBkBaseEs = "result_table.bk_base_es"
 	ResultTableBkSQL    = "result_table.bk_sql"
 )
 
@@ -87,7 +89,7 @@ func MockSpaceRouter(ctx context.Context) {
 			&tsdb.Storage{Type: consul.VictoriaMetricsStorageType},
 		)
 		tsdb.SetStorage("2", &tsdb.Storage{Type: consul.InfluxDBStorageType})
-		tsdb.SetStorage("3", &tsdb.Storage{Type: consul.ElasticsearchStorageType})
+		tsdb.SetStorage("3", &tsdb.Storage{Type: consul.ElasticsearchStorageType, Address: mock.EsUrl})
 		tsdb.SetStorage("4", &tsdb.Storage{Type: consul.BkSqlStorageType})
 
 		r := GetInfluxDBRouter()
@@ -136,6 +138,9 @@ func MockSpaceRouter(ctx context.Context) {
 					},
 					ResultTableBkSQL: &ir.SpaceResultTable{
 						TableId: ResultTableBkSQL,
+					},
+					ResultTableBkBaseEs: &ir.SpaceResultTable{
+						TableId: ResultTableBkBaseEs,
 					},
 				},
 			},
@@ -189,6 +194,10 @@ func MockSpaceRouter(ctx context.Context) {
 				ResultTableBkSQL: &ir.ResultTableDetail{
 					StorageId: 4,
 					TableId:   ResultTableBkSQL,
+				},
+				ResultTableBkBaseEs: &ir.ResultTableDetail{
+					SourceType: "bkdata",
+					DB:         "es_index",
 				},
 			}, nil,
 			ir.DataLabelToResultTable{

@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sync"
@@ -87,6 +88,7 @@ var (
 	Vm       = &vmResultData{}
 	BkSQL    = &bkSQLResultData{}
 	InfluxDB = &influxdbResultData{}
+	Es       = &elasticSearchResultData{}
 )
 
 type resultData struct {
@@ -140,6 +142,10 @@ type influxdbResultData struct {
 	resultData
 }
 
+type elasticSearchResultData struct {
+	resultData
+}
+
 func mockHandler(ctx context.Context) {
 	httpmock.Activate()
 
@@ -147,9 +153,11 @@ func mockHandler(ctx context.Context) {
 	mockVmHandler(ctx)
 	mockInfluxDBHandler(ctx)
 	mockBkSQLHandler(ctx)
+	mockElasticSearchHandler(ctx)
 }
 
 const (
+	EsUrl    = "http://127.0.0.1:93002"
 	BkSQLUrl = "http://127.0.0.1:92001"
 	BaseUrl  = "http://127.0.0.1:10205"
 )
@@ -160,6 +168,29 @@ type BkSQLRequest struct {
 	BkdataAuthenticationMethod string `json:"bkdata_authentication_method"`
 	BkdataDataToken            string `json:"bkdata_data_token"`
 	Sql                        string `json:"sql"`
+}
+
+func mockElasticSearchHandler(ctx context.Context) {
+	bkBaseUrl := "http://127.0.0.1:12001/bk_data/query_sync/es/es_index"
+
+	searchHandler := func(r *http.Request) (w *http.Response, err error) {
+		body, _ := io.ReadAll(r.Body)
+
+		d, ok := Es.Get(string(body))
+		if !ok {
+			err = fmt.Errorf(`es mock data is empty in "%s"`, body)
+			return
+		}
+		w = httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf("%s", d))
+		return
+	}
+
+	mappings := `{"es_index":{"mappings":{"properties":{"group":{"type":"keyword"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}}}}}}`
+	mappingResp := httpmock.NewStringResponder(http.StatusOK, mappings)
+	httpmock.RegisterResponder(http.MethodGet, bkBaseUrl+"/_mapping/", mappingResp)
+	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/_mapping/", mappingResp)
+	httpmock.RegisterResponder(http.MethodPost, bkBaseUrl+"/_search", searchHandler)
+	httpmock.RegisterResponder(http.MethodPost, EsUrl+"/_search", searchHandler)
 }
 
 func mockBkSQLHandler(ctx context.Context) {

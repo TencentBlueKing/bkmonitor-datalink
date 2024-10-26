@@ -465,6 +465,102 @@ func TestQueryTs(t *testing.T) {
 				},
 			},
 		},
+		`SELECT "usage" AS _value, *::tag, "time" AS _time FROM cpu_summary WHERE time > 1677081359999000000 and time < 1677085659999000000 AND ((notice_way='weixin' and status='failed') and bk_biz_id='2') LIMIT 100000005 SLIMIT 100005 TZ('UTC')`: &decoder.Response{
+			Results: []decoder.Result{
+				{
+					Series: []*decoder.Row{
+						{
+							Name: "",
+							Tags: map[string]string{
+								"job":        "SLI",
+								"notice_way": "weixin",
+								"status":     "failed",
+							},
+							Columns: []string{
+								influxdb.TimeColumnName,
+								influxdb.ResultColumnName,
+							},
+							Values: [][]any{
+								{
+									1677081600000000000, 30,
+								},
+								{
+									1677081660000000000, 21,
+								},
+								{
+									1677081720000000000, 1,
+								},
+								{
+									1677081780000000000, 7,
+								},
+								{
+									1677081840000000000, 4,
+								},
+								{
+									1677081900000000000, 2,
+								},
+								{
+									1677081960000000000, 100,
+								},
+								{
+									1677082020000000000, 94,
+								},
+								{
+									1677082080000000000, 34,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		`SELECT count("usage") AS _value, "time" AS _time FROM cpu_summary WHERE time > 1677081540000000000 and time < 1677085659999000000 AND (bk_biz_id='2') GROUP BY "status", time(1m0s) LIMIT 100000005 SLIMIT 100005 TZ('UTC')`: &decoder.Response{
+			Results: []decoder.Result{
+				{
+					Series: []*decoder.Row{
+						{
+							Name: "",
+							Tags: map[string]string{
+								"status": "failed",
+							},
+							Columns: []string{
+								influxdb.TimeColumnName,
+								influxdb.ResultColumnName,
+							},
+							Values: [][]any{
+								{
+									1677081600000000000, 30,
+								},
+								{
+									1677081660000000000, 21,
+								},
+								{
+									1677081720000000000, 1,
+								},
+								{
+									1677081780000000000, 7,
+								},
+								{
+									1677081840000000000, 4,
+								},
+								{
+									1677081900000000000, 2,
+								},
+								{
+									1677081960000000000, 100,
+								},
+								{
+									1677082020000000000, 94,
+								},
+								{
+									1677082080000000000, 34,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	})
 
 	testCases := map[string]struct {
@@ -475,207 +571,13 @@ func TestQueryTs(t *testing.T) {
 			query:  `{"query_list":[{"data_source":"","table_id":"system.cpu_summary","field_name":"usage","field_list":null,"function":[{"method":"mean","without":false,"dimensions":[],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"avg_over_time","window":"60s","position":0,"vargs_list":null},"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
 			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":[],"group_values":[],"values":[[1677081600000,30],[1677081660000,21],[1677081720000,1],[1677081780000,7],[1677081840000,4],[1677081900000,2],[1677081960000,100],[1677082020000,94],[1677082080000,34]]}]}`,
 		},
-		"test query by different metric dims": {
-			query: `{
-	"query_list": [{
-		"data_source": "",
-		"table_id": "",
-		"field_name": "bk_split_measurement",
-		"field_list": null,
-		"function": [{
-			"method": "max",
-			"without": false,
-			"dimensions": ["bcs_cluster_id", "node"],
-			"dimensions": ["bcs_cluster_id", "node", "pod_name"],
-			"position": 0,
-			"args_list": null,
-			"vargs_list": null
-		}],
-		"time_aggregation": {
-			"function": "",
-			"window": "",
-			"position": 0,
-			"vargs_list": null
-		},
-		"reference_name": "a",
-		"dimensions": null,
-		"limit": 0,
-		"timestamp": null,
-		"start_or_end": 0,
-		"vector_offset": 0,
-		"offset": "",
-		"offset_forward": false,
-		"slimit": 0,
-		"soffset": 0,
-		"conditions": {
-			"field_list": [{
-				"field_name": "pod_name",
-				"value": ["kube-apiserver"],
-				"op": "req"
-			}, {
-				"field_name": "bcs_cluster_id",
-				"value": ["test"],
-				"op": "eq"
-			}],
-			"condition_list": ["and", "and"]
-		},
-		"keep_columns": null
-	}, {
-		"data_source": "",
-		"table_id": "",
-		"field_name": "kube_node_status_capacity_cpu_cores",
-		"field_list": null,
-		"function": [{
-			"method": "mean",
-			"without": false,
-			"dimensions": ["bcs_cluster_id", "node"],
-			"position": 0,
-			"args_list": null,
-			"vargs_list": null
-		}],
-		"time_aggregation": {
-			"function": "",
-			"window": "",
-			"position": 0,
-			"vargs_list": null
-		},
-		"reference_name": "b",
-		"dimensions": null,
-		"limit": 0,
-		"timestamp": null,
-		"start_or_end": 0,
-		"vector_offset": 0,
-		"offset": "",
-		"offset_forward": false,
-		"slimit": 0,
-		"soffset": 0,
-		"conditions": {
-			"field_list": [{
-				"field_name": "bcs_cluster_id",
-				"value": ["test"],
-				"op": "eq"
-			}],
-			"condition_list": ["and"]
-		},
-		"keep_columns": null
-	}],
-	"metric_merge": "a/b",
-	"result_columns": null,
-	"start_time": "1682585834",
-	"end_time": "1682587634",
-	"step": "60s"
-}`,
-			result: ``,
-		},
 		"test lost sample in increase": {
-			query:  `{"query_list":[{"data_source":"bkmonitor","table_id":"custom_report_aggate.base","field_name":"bkmonitor_action_notice_api_call_count_total","field_list":null,"function":null,"time_aggregation":{"function":"increase","window":"5m0s","position":0,"vargs_list":null},"reference_name":"a","dimensions":null,"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"notice_way","value":["weixin"],"op":"eq"},{"field_name":"status","value":["failed"],"op":"eq"}],"condition_list":["and"]},"keep_columns":null}],"metric_merge":"a","result_columns":null,"start_time":"1692585000","end_time":"1692585600","step":"60s"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["job","notice_way","status","target"],"group_values":["SLI","weixin","failed","unknown"],"values":[[1692585000000,0],[1692585060000,0],[1692585120000,16629.322052596937],[1692585180000,18016.221027991163],[1692585240000,18878.885417156103],[1692585300000,19426.666666666664],[1692585360000,21085.29945653025],[1692585420000,0],[1692585480000,0],[1692585540000,0],[1692585600000,0]]}]}`,
-		},
-		"test query support fuzzy __name__": {
-			query: `{
-    "query_list": [
-        {
-            "data_source": "",
-            "table_id": "system.cpu_summary",
-            "field_name": ".*",
-			"is_regexp": true,
-            "field_list": null,
-            "function": [
-                {
-                    "method": "mean",
-                    "without": false,
-                    "dimensions": [],
-                    "position": 0,
-                    "args_list": null,
-                    "vargs_list": null
-                }
-            ],
-            "time_aggregation": {
-                "function": "avg_over_time",
-                "window": "60s",
-                "position": 0,
-                "vargs_list": null
-            },
-            "reference_name": "a",
-            "dimensions": [],
-            "limit": 0,
-            "timestamp": null,
-            "start_or_end": 0,
-            "vector_offset": 0,
-            "offset": "",
-            "offset_forward": false,
-            "slimit": 0,
-            "soffset": 0,
-            "conditions": {
-                "field_list": [],
-                "condition_list": []
-            },
-            "keep_columns": [
-                "_time",
-                "a"
-            ]
-        }
-    ],
-    "metric_merge": "a",
-    "result_columns": null,
-    "start_time": "1677081600",
-    "end_time": "1677085600",
-    "step": "60s"
-}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":[],"group_values":[],"values":[[1677081600000,25.124152312094484],[1677081660000,20.724334166696504],[1677081720000,20.426171484280808],[1677081780000,20.327529103992745],[1677081840000,20.468538578157883],[1677081900000,20.25296970605787],[1677081960000,19.9283445874921],[1677082020000,19.612237758778733],[1677082080000,20.187296617920314],[1677082140000,20.916380134086413],[1677082200000,22.554908120339377],[1677082260000,20.253084390783837],[1677082320000,20.48536897192481],[1677082380000,20.090785116663426],[1677082440000,20.25654085898734],[1677082500000,21.041731249213385],[1677082560000,20.43003902957978],[1677082620000,20.038367095325594],[1677082680000,20.202399021312875],[1677082740000,21.37467097743847],[1677082800000,22.651718347719402],[1677082860000,20.301023323252785],[1677082920000,20.451627781431707],[1677082980000,19.891683255113772],[1677083040000,20.644901190626083],[1677083100000,20.37609141634239],[1677083160000,20.454340379883195],[1677083220000,19.570824461410087],[1677083280000,20.31326038669719],[1677083340000,21.53592697328099],[1677083400000,24.04803475336384],[1677083460000,20.730816789762073],[1677083520000,20.371870403348336],[1677083580000,19.82545696862311],[1677083640000,20.320976389889655],[1677083700000,20.567491437854738],[1677083760000,20.934958308411666],[1677083820000,19.90507015314242],[1677083880000,20.37676404541998],[1677083940000,20.668093391150975],[1677084000000,21.99879925023976],[1677084060000,20.23986108096937],[1677084120000,21.025451068689662],[1677084180000,24.664738068080318],[1677084240000,20.50489535135916],[1677084300000,21.43855141688965],[1677084360000,25.547292511592147],[1677084420000,20.22969132310118],[1677084480000,20.263914410308956],[1677084540000,21.046247079107264],[1677084600000,23.639822963990397],[1677084660000,21.84574206076609],[1677084720000,20.25510660626945],[1677084780000,20.17809699916729],[1677084840000,19.875349111182004],[1677084900000,20.215643757678873],[1677084960000,19.968096510353472],[1677085020000,19.8493275944543],[1677085080000,20.31881482976456],[1677085140000,21.344305007289915],[1677085200000,25.937044373952602],[1677085260000,20.421952975501853],[1677085320000,20.121773311320066],[1677085380000,19.74360429634455],[1677085440000,19.90800208328392],[1677085500000,20.48559522490759],[1677085560000,20.0645267193599]]}]}`,
+			query:  `{"query_list":[{"data_source":"bkmonitor","table_id":"system.cpu_summary","field_name":"usage","field_list":null,"function":null,"time_aggregation":{"function":"increase","window":"5m0s","position":0,"vargs_list":null},"reference_name":"a","dimensions":null,"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"notice_way","value":["weixin"],"op":"eq"},{"field_name":"status","value":["failed"],"op":"eq"}],"condition_list":["and"]},"keep_columns":null}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["job","notice_way","status"],"group_values":["SLI","weixin","failed"],"values":[[1677081660000,52.499649999999995],[1677081720000,38.49981666666667],[1677081780000,46.66666666666667],[1677081840000,40],[1677081900000,16.25],[1677081960000,137.5],[1677082020000,247.5],[1677082080000,285],[1677082140000,263.6679222222223],[1677082200000,160.00106666666667],[1677082260000,51.00056666666667]]}]}`,
 		},
 		"test query support fuzzy __name__ with count": {
-			query: `{
-    "query_list": [
-        {
-            "data_source": "",
-            "table_id": "system.cpu_summary",
-            "field_name": ".*",
-			"is_regexp": true,
-            "field_list": null,
-            "function": [
-                {
-                    "method": "sum",
-                    "without": false,
-                    "dimensions": [],
-                    "position": 0,
-                    "args_list": null,
-                    "vargs_list": null
-                }
-            ],
-            "time_aggregation": {
-                "function": "count_over_time",
-                "window": "60s",
-                "position": 0,
-                "vargs_list": null
-            },
-            "reference_name": "a",
-            "dimensions": [],
-            "limit": 0,
-            "timestamp": null,
-            "start_or_end": 0,
-            "vector_offset": 0,
-            "offset": "",
-            "offset_forward": false,
-            "slimit": 0,
-            "soffset": 0,
-            "conditions": {
-                "field_list": [],
-                "condition_list": []
-            },
-            "keep_columns": [
-                "_time",
-                "a"
-            ]
-        }
-    ],
-    "metric_merge": "a",
-    "result_columns": null,
-    "start_time": "1677081600",
-    "end_time": "1677085600",
-    "step": "60s"
-}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":[],"group_values":[],"values":[[1677081600000,25],[1677081660000,20],[1677081720000,20],[1677081780000,20]]}]}`,
+			query:  `{"query_list":[{"data_source":"","table_id":"system.cpu_summary","field_name":".*","is_regexp":true,"field_list":null,"function":[{"method":"sum","without":false,"dimensions":["status"],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"count_over_time","window":"60s","position":0,"vargs_list":null},"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["status"],"group_values":["failed"],"values":[[1677081600000,30],[1677081660000,21],[1677081720000,1],[1677081780000,7],[1677081840000,4],[1677081900000,2],[1677081960000,100],[1677082020000,94],[1677082080000,34]]}]}`,
 		},
 	}
 
@@ -704,17 +606,25 @@ func TestQueryRawWithInstance(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 
 	spaceUid := influxdb.SpaceUid
-	tableID := influxdb.ResultTableEs
+	tableID := influxdb.ResultTableBkBaseEs
 
 	mock.Init()
+	influxdb.MockSpaceRouter(ctx)
 	promql.MockEngine()
 
 	start := "1723594000"
 	end := "1723595000"
 
+	mock.Es.Set(map[string]any{
+		`{"_source":{"includes":["__ext.container_id","dtEventTimeStamp"]},"from":1,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":10}`:       `{"took":301,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c726c895a380ba1a9df04ba4a977b29b","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"fa209967d4a8c5d21b3e4f67d2cd579e","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"dc888e9a3789976aa11483626fc61a4f","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c2dae031f095fa4b9deccf81964c7837","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8a916e558c71d4226f1d7f3279cf0fdd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"f6950fef394e813999d7316cdbf0de4d","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"328d487e284703b1d0bb8017dba46124","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"cb790ecb36bbaf02f6f0eb80ac2fd65c","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"bd8a8ef60e94ade63c55c8773170d458","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c8401bb4ec021b038cb374593b8adce3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}}]}}`,
+		`{"_source":{"includes":["__ext.io_kubernetes_pod","dtEventTimeStamp"]},"from":20,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":10}`: `{"took":468,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"e058129ae18bff87c95e83f24584e654","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c124dae69af9b86a7128ee4281820158","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c7f73abf7e865a4b4d7fc608387d01cf","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"39c3ec662881e44bf26d2a6bfc0e35c3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"58e03ce0b9754bf0657d49a5513adcb5","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"43a36f412886bf30b0746562513638d3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"218ceafd04f89b39cda7954e51f4a48a","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8d9abe9b782fe3a1272c93f0af6b39e1","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"0826407be7f04f19086774ed68eac8dd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"d56b4120194eb37f53410780da777d43","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}}]}}`,
+		`{"_source":{"includes":["__ext.container_id","dtEventTimeStamp"]},"from":1,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":1}`:        `{"took":17,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"4f3a5e9c167097c9658e88b2f32364b2","_score":0.0,"_source":{"dtEventTimeStamp":"1723594209000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}}]}}`,
+	})
+
 	tcs := map[string]struct {
 		queryTs  *structured.QueryTs
-		expected []map[string]any
+		total    int64
+		expected string
 	}{
 		"query_bk_base_es_with_raw": {
 			queryTs: &structured.QueryTs{
@@ -738,6 +648,8 @@ func TestQueryRawWithInstance(t *testing.T) {
 				Start: start,
 				End:   end,
 			},
+			total:    2e4,
+			expected: `[{"__doc_id":"c726c895a380ba1a9df04ba4a977b29b","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"fa209967d4a8c5d21b3e4f67d2cd579e","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"dc888e9a3789976aa11483626fc61a4f","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"c2dae031f095fa4b9deccf81964c7837","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"8a916e558c71d4226f1d7f3279cf0fdd","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"f6950fef394e813999d7316cdbf0de4d","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"328d487e284703b1d0bb8017dba46124","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"cb790ecb36bbaf02f6f0eb80ac2fd65c","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"bd8a8ef60e94ade63c55c8773170d458","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"c8401bb4ec021b038cb374593b8adce3","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"e058129ae18bff87c95e83f24584e654","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"c124dae69af9b86a7128ee4281820158","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"c7f73abf7e865a4b4d7fc608387d01cf","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"39c3ec662881e44bf26d2a6bfc0e35c3","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"58e03ce0b9754bf0657d49a5513adcb5","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"43a36f412886bf30b0746562513638d3","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"218ceafd04f89b39cda7954e51f4a48a","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"8d9abe9b782fe3a1272c93f0af6b39e1","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"0826407be7f04f19086774ed68eac8dd","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94","dtEventTimeStamp":"1723594224000"},{"__doc_id":"d56b4120194eb37f53410780da777d43","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94","dtEventTimeStamp":"1723594224000"}]`,
 		},
 		"query_bk_base_es_with_errors": {
 			queryTs: &structured.QueryTs{
@@ -754,6 +666,8 @@ func TestQueryRawWithInstance(t *testing.T) {
 				Start: start,
 				End:   end,
 			},
+			total:    1e4,
+			expected: `[{"__doc_id":"4f3a5e9c167097c9658e88b2f32364b2","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594209000"}]`,
 		},
 	}
 
@@ -763,10 +677,9 @@ func TestQueryRawWithInstance(t *testing.T) {
 			if err != nil {
 				panic(err.Error())
 			}
-			fmt.Printf("total: %d \nlength: %d \n", total, len(list))
-			for _, l := range list {
-				fmt.Printf("%v\n", l)
-			}
+			assert.Equal(t, c.total, total)
+			actual, _ := json.Marshal(list)
+			assert.Equal(t, c.expected, string(actual))
 		})
 	}
 }

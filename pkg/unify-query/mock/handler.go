@@ -208,7 +208,13 @@ func mockBkSQLHandler(ctx context.Context) {
 			err = fmt.Errorf(`bksql mock data is empty in "%s"`, request.Sql)
 			return
 		}
-		w, err = httpmock.NewJsonResponse(http.StatusOK, d)
+
+		switch t := d.(type) {
+		case string:
+			w = httpmock.NewStringResponse(http.StatusOK, t)
+		default:
+			w, err = httpmock.NewJsonResponse(http.StatusOK, d)
+		}
 		return
 	})
 }

@@ -146,14 +146,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 		f.write("GROUP BY")
 		f.write(strings.Join(f.groups, ", "))
 	}
-	if f.query.From > 0 {
-		f.write("OFFSET")
-		f.write(fmt.Sprintf("%d", f.query.From))
-	}
-	if f.query.Size > 0 {
-		f.write("LIMIT")
-		f.write(fmt.Sprintf("%d", f.query.Size))
-	}
+
 	orders := make([]string, 0)
 	for key, asc := range f.query.Orders {
 		var orderField string
@@ -175,6 +168,14 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 		sort.Strings(orders)
 		f.write("ORDER BY")
 		f.write(strings.Join(orders, ", "))
+	}
+	if f.query.From > 0 {
+		f.write("OFFSET")
+		f.write(fmt.Sprintf("%d", f.query.From))
+	}
+	if f.query.Size > 0 {
+		f.write("LIMIT")
+		f.write(fmt.Sprintf("%d", f.query.Size))
 	}
 
 	sql = strings.Trim(f.sql.String(), " ")

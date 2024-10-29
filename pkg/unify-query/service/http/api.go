@@ -424,8 +424,11 @@ func HandlerLabelValues(c *gin.Context) {
 			c: c,
 		}
 
-		result []string
-		err    error
+		data = TagValuesData{
+			Values: make(map[string][]string),
+		}
+
+		err error
 	)
 
 	ctx, span := trace.NewSpan(ctx, "label-values-handler")
@@ -483,14 +486,15 @@ func HandlerLabelValues(c *gin.Context) {
 	}
 
 	limitNum, _ := strconv.Atoi(limit)
-	result, err = instance.DirectLabelValues(ctx, labelName, startTime, endTime, limitNum, matcher...)
+	result, err := instance.DirectLabelValues(ctx, labelName, startTime, endTime, limitNum, matcher...)
 	if err != nil {
 		return
 	}
 
 	span.Set("result-num", len(result))
+	data.Values[labelName] = result
 
-	resp.success(ctx, result)
+	resp.success(ctx, data)
 	return
 }
 

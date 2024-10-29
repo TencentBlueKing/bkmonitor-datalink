@@ -45,6 +45,10 @@ func TestInstance_queryReference(t *testing.T) {
 	db := "es_index"
 	field := "dtEventTimeStamp"
 
+	mock.Es.Set(map[string]any{
+		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1717171200,"include_lower":true,"include_upper":true,"to":1722527999}}},{"query_string":{"analyze_wildcard":true,"query":"group: fans"}}]}},"size":5}`: `{"took":1,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"user":[{"last":"Smith","first":"John"},{"last":"White","first":"Alice"}],"group":"fans"}}]}}`,
+	})
+
 	for idx, c := range map[string]struct {
 		query *metadata.Query
 		start time.Time
@@ -57,29 +61,24 @@ func TestInstance_queryReference(t *testing.T) {
 		"nested query + query string 测试": {
 			query: &metadata.Query{
 				DB:    db,
-				Field: "fields.field_name",
+				Field: "group",
 				From:  0,
 				Size:  5,
 				Orders: metadata.Orders{
 					FieldTime: false,
 				},
 				StorageType: consul.ElasticsearchStorageType,
-				Source:      []string{"iterationIndex", "gseIndex"},
+				Source:      []string{"group", "user.first", "user.last"},
 				AllConditions: metadata.AllConditions{
 					{
 						{
-							DimensionName: "fields.field_name",
+							DimensionName: "user.first",
 							Operator:      "eq",
-							Value:         []string{"bk-dev-4"},
-						},
-						{
-							DimensionName: "iterationIndex",
-							Operator:      "eq",
-							Value:         []string{"0", "4"},
+							Value:         []string{"John"},
 						},
 					},
 				},
-				QueryString: "fields.field_name: bk-dev-3",
+				QueryString: "group: fans",
 			},
 			start: defaultStart,
 			end:   defaultEnd,

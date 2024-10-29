@@ -334,9 +334,9 @@ func (i *Instance) InstanceType() string {
 // nocache 判定
 // VictoriaMetrics may adjust the returned timestamps if the number of returned data points exceeds 50 - see the corresponding comment in the code for details.
 // This behaviour can be disabled by passing -search.disableCache command-line flag to VictoriaMetrics. Another option is to pass nocache=1 query arg to /api/v1/query_range.
-// 在一些场景下，如果 step 不能被 start 整除，会导致返回的数据跟我们的开始时间无法对其，所以需要增肌 no-cache=1 参数
+// 在一些场景下，如果 step 不能被 start 整除，会导致返回的数据跟我们的开始时间无法对其，所以需要增肌 no-cache=1 参数，避免性能消耗过大，只处理 1m 以上的
 func (i *Instance) noCache(ctx context.Context, start, step int64) int {
-	if start%step > 0 {
+	if start%step > 0 && step > 60 {
 		return 1
 	}
 	return 0

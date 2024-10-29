@@ -56,19 +56,6 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 
 	registerHandler := getRegisterHandlers(ctx, g)
 
-	// register prometheus metrics
-	if viper.GetBool(EnablePrometheusConfigPath) {
-		handlerPath = viper.GetString(PrometheusPathConfigPath)
-		registerHandler.register(http.MethodGet, handlerPath, gin.WrapH(
-			promhttp.HandlerFor(
-				prometheus.DefaultGatherer,
-				promhttp.HandlerOpts{
-					EnableOpenMetrics: true,
-				},
-			),
-		))
-	}
-
 	// query/ts
 	handlerPath = viper.GetString(TSQueryHandlePathConfigPath)
 	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryTs)
@@ -129,6 +116,19 @@ func registerOtherHandlers(ctx context.Context, g *gin.RouterGroup) {
 	var handlerPath string
 
 	registerHandler := getRegisterHandlers(ctx, g)
+
+	// register prometheus metrics
+	if viper.GetBool(EnablePrometheusConfigPath) {
+		handlerPath = viper.GetString(PrometheusPathConfigPath)
+		registerHandler.register(http.MethodGet, handlerPath, gin.WrapH(
+			promhttp.HandlerFor(
+				prometheus.DefaultGatherer,
+				promhttp.HandlerOpts{
+					EnableOpenMetrics: true,
+				},
+			),
+		))
+	}
 
 	// query/ts/struct_to_promql
 	handlerPath = viper.GetString(TSQueryStructToPromQLHandlePathConfigPath)

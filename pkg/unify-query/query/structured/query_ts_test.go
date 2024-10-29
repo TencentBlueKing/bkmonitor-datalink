@@ -186,7 +186,7 @@ func TestQueryToMetric(t *testing.T) {
 						Field:          promql.StaticField,
 						Fields:         []string{promql.StaticField},
 						Measurement:    "kube_.*",
-						Measurements:   []string{field, field1},
+						Measurements:   []string{field, field1, "kube_node_status_condition"},
 						Timezone:       "UTC",
 						VmCondition:    `__name__=~"kube_.*_value"`,
 						VmConditionNum: 1,

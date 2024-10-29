@@ -9,7 +9,14 @@
 
 package function
 
-import "github.com/prometheus/prometheus/model/labels"
+import (
+	"encoding/json"
+
+	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/prompb"
+	"github.com/prometheus/prometheus/storage"
+	"github.com/prometheus/prometheus/tsdb/chunkenc"
+)
 
 func MatcherToMetricName(matchers ...*labels.Matcher) string {
 	for _, m := range matchers {
@@ -21,4 +28,53 @@ func MatcherToMetricName(matchers ...*labels.Matcher) string {
 	}
 
 	return ""
+}
+
+type TimeSeriesList []prompb.TimeSeries
+
+func SeriesSetToTimeSeries(ss storage.SeriesSet) (timeSeries TimeSeriesList, err error) {
+	for ss.Next() {
+		series := ss.At()
+		lbs := series.Labels()
+		newLbs := make([]prompb.Label, 0, len(lbs))
+		for _, lb := range lbs {
+			newLbs = append(newLbs, prompb.Label{
+				Name:  lb.Name,
+				Value: lb.Value,
+			})
+		}
+
+		var newSamples []prompb.Sample
+		it := series.Iterator(nil)
+		for it.Next() == chunkenc.ValFloat {
+			ts, val := it.At()
+
+			newSamples = append(newSamples, prompb.Sample{
+				Value:     val,
+				Timestamp: ts,
+			})
+
+		}
+		if it.Err() != nil {
+			panic(it.Err())
+		}
+
+		timeSeries = append(timeSeries, prompb.TimeSeries{Labels: newLbs, Samples: newSamples})
+	}
+
+	if ws := ss.Warnings(); len(ws) > 0 {
+		panic(ws)
+	}
+
+	if ss.Err() != nil {
+		err = ss.Err()
+		return
+	}
+
+	return
+}
+
+func (t *TimeSeriesList) String() string {
+	s, _ := json.Marshal(t)
+	return string(s)
 }

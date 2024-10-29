@@ -11,16 +11,14 @@ package bksql
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
-	"github.com/prometheus/prometheus/prompb"
-	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
@@ -105,46 +103,11 @@ func TestInstance_QueryRaw(t *testing.T) {
 			}
 			ss := ins.QuerySeriesSet(ctx, c.query, start, end)
 
-			var timeSeries []prompb.TimeSeries
-			for ss.Next() {
-				series := ss.At()
-				lbs := series.Labels()
-				newLbs := make([]prompb.Label, 0, len(lbs))
-				for _, lb := range lbs {
-					newLbs = append(newLbs, prompb.Label{
-						Name:  lb.Name,
-						Value: lb.Value,
-					})
-				}
-
-				var newSamples []prompb.Sample
-				it := series.Iterator(nil)
-				for it.Next() == chunkenc.ValFloat {
-					ts, val := it.At()
-
-					newSamples = append(newSamples, prompb.Sample{
-						Value:     val,
-						Timestamp: ts,
-					})
-
-				}
-				if it.Err() != nil {
-					panic(it.Err())
-				}
-
-				timeSeries = append(timeSeries, prompb.TimeSeries{Labels: newLbs, Samples: newSamples})
+			timeSeries, err := function.SeriesSetToTimeSeries(ss)
+			if err != nil {
+				log.Fatalf(ctx, err.Error())
 			}
-
-			if ws := ss.Warnings(); len(ws) > 0 {
-				panic(ws)
-			}
-
-			if ss.Err() != nil {
-				log.Errorf(ctx, ss.Err().Error())
-			}
-
-			actual, _ := json.Marshal(timeSeries)
-			assert.Equal(t, c.expected, string(actual))
+			assert.Equal(t, c.expected, timeSeries.String())
 		})
 	}
 }

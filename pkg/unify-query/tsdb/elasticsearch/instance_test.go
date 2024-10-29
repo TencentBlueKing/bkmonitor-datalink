@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
@@ -314,41 +314,19 @@ func TestInstance_queryReference(t *testing.T) {
 		},
 	} {
 		t.Run(fmt.Sprintf("testing run: %s", idx), func(t *testing.T) {
-			var output strings.Builder
-
 			if len(c.query.Aggregates) > 0 {
 				ss := ins.QuerySeriesSet(ctx, c.query, c.start, c.end)
 				if err != nil {
 					log.Fatalf(ctx, err.Error())
-					return
 				}
 
-				for ss.Next() {
-					series := ss.At()
-					lbs := series.Labels()
-					it := series.Iterator(nil)
-					output.WriteString("series: " + lbs.String() + "\n")
-					for it.Next() == chunkenc.ValFloat {
-						ts, val := it.At()
-						tt := time.UnixMilli(ts)
-
-						output.WriteString("sample: " + fmt.Sprintf("%g %s\n", val, tt.Format("2006-01-02 15:04:05")) + "\n")
-					}
-					if it.Err() != nil {
-						panic(it.Err())
-					}
-				}
-
-				if ws := ss.Warnings(); len(ws) > 0 {
-					panic(ws)
-				}
-
-				if ss.Err() != nil {
-					log.Errorf(ctx, ss.Err().Error())
+				timeSeries, err := function.SeriesSetToTimeSeries(ss)
+				if err != nil {
+					log.Fatalf(ctx, err.Error())
 				}
 
 				fmt.Println("output:")
-				fmt.Println(output.String())
+				fmt.Println(timeSeries.String())
 			} else {
 				var (
 					wg   sync.WaitGroup

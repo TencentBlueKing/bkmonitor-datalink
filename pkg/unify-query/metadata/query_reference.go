@@ -59,9 +59,7 @@ func (q *Query) MetricLabels(ctx context.Context) *prompb.Label {
 	for _, n := range strings.Split(q.TableID, ".") {
 		metrics = append(metrics, n)
 	}
-	if q.MetricName != "" {
-		metrics = append(metrics, q.MetricName)
-	}
+	metrics = append(metrics, q.MetricName)
 
 	metricName := strings.Join(metrics, ":")
 	if encodeFunc != nil {

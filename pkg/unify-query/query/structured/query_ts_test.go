@@ -1086,6 +1086,11 @@ func TestTimeOffset(t *testing.T) {
 			tz:   "Asia/Shanghai",
 			step: time.Hour * 3,
 		},
+		"test align - 2": {
+			t:    1730082578, // 2024-10-28 10:29:38 +0800 ~ 2024-10-28 10:12:00 +0800
+			tz:   "Asia/Shanghai",
+			step: time.Minute * 18,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			mt := time.Unix(c.t, 0)

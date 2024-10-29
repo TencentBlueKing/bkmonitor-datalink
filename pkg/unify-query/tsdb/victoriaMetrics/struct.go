@@ -20,10 +20,11 @@ type ParamsQueryRange struct {
 	APIType          string `json:"api_type"`
 	ClusterName      string `json:"cluster_name"`
 	APIParams        struct {
-		Query string `json:"query"`
-		Start int64  `json:"start"`
-		End   int64  `json:"end"`
-		Step  int64  `json:"step"`
+		Query   string `json:"query"`
+		Start   int64  `json:"start"`
+		End     int64  `json:"end"`
+		Step    int64  `json:"step"`
+		NoCache int    `json:"nocache"`
 	} `json:"api_params"`
 	ResultTableList       []string          `json:"result_table_list"`
 	MetricFilterCondition map[string]string `json:"metric_filter_condition"`

@@ -331,6 +331,17 @@ func (i *Instance) InstanceType() string {
 	return consul.VictoriaMetricsStorageType
 }
 
+// nocache 判定
+// VictoriaMetrics may adjust the returned timestamps if the number of returned data points exceeds 50 - see the corresponding comment in the code for details.
+// This behaviour can be disabled by passing -search.disableCache command-line flag to VictoriaMetrics. Another option is to pass nocache=1 query arg to /api/v1/query_range.
+// 在一些场景下，如果 step 不能被 start 整除，会导致返回的数据跟我们的开始时间无法对其，所以需要增肌 no-cache=1 参数
+func (i *Instance) noCache(ctx context.Context, start, step int64) int {
+	if start%step > 0 {
+		return 1
+	}
+	return 0
+}
+
 // vmQuery
 func (i *Instance) vmQuery(
 	ctx context.Context, sql string, data interface{}, span *trace.Span,
@@ -415,9 +426,15 @@ func (i *Instance) DirectQueryRange(
 
 	vmExpand = metadata.GetExpand(ctx)
 
+	noCache := i.noCache(ctx, start.Unix(), int64(step.Seconds()))
+
 	span.Set("query-start", start)
+	span.Set("query-start-unix", start.Unix())
 	span.Set("query-end", end)
+	span.Set("query-end-unix", end.Unix())
 	span.Set("query-step", step)
+	span.Set("query-step-unix", step.Seconds())
+	span.Set("query-no-cache", noCache)
 	span.Set("query-promql", promqlStr)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
@@ -431,15 +448,17 @@ func (i *Instance) DirectQueryRange(
 		InfluxCompatible: i.influxCompatible,
 		APIType:          APIQueryRange,
 		APIParams: struct {
-			Query string `json:"query"`
-			Start int64  `json:"start"`
-			End   int64  `json:"end"`
-			Step  int64  `json:"step"`
+			Query   string `json:"query"`
+			Start   int64  `json:"start"`
+			End     int64  `json:"end"`
+			Step    int64  `json:"step"`
+			NoCache int    `json:"nocache"`
 		}{
-			Query: promqlStr,
-			Start: start.Unix(),
-			End:   end.Unix(),
-			Step:  int64(step.Seconds()),
+			Query:   promqlStr,
+			Start:   start.Unix(),
+			End:     end.Unix(),
+			Step:    int64(step.Seconds()),
+			NoCache: noCache,
 		},
 		UseNativeOr:           i.useNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
@@ -660,10 +679,11 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		InfluxCompatible: i.influxCompatible,
 		APIType:          APIQueryRange,
 		APIParams: struct {
-			Query string `json:"query"`
-			Start int64  `json:"start"`
-			End   int64  `json:"end"`
-			Step  int64  `json:"step"`
+			Query   string `json:"query"`
+			Start   int64  `json:"start"`
+			End     int64  `json:"end"`
+			Step    int64  `json:"step"`
+			NoCache int    `json:"nocache"`
 		}{
 			Query: queryString,
 			Start: start.Unix(),

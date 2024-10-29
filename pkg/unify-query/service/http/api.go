@@ -488,6 +488,8 @@ func HandlerLabelValues(c *gin.Context) {
 		return
 	}
 
+	span.Set("result-num", len(result))
+
 	resp.success(ctx, result)
 	return
 }

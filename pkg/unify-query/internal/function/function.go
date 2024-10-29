@@ -11,6 +11,7 @@ package function
 
 import (
 	"encoding/json"
+	"sort"
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
@@ -70,6 +71,10 @@ func SeriesSetToTimeSeries(ss storage.SeriesSet) (timeSeries TimeSeriesList, err
 		err = ss.Err()
 		return
 	}
+
+	sort.SliceStable(timeSeries, func(i, j int) bool {
+		return timeSeries[i].String() < timeSeries[j].String()
+	})
 
 	return
 }

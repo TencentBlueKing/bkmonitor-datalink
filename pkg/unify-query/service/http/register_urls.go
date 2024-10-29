@@ -59,7 +59,7 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 	// register prometheus metrics
 	if viper.GetBool(EnablePrometheusConfigPath) {
 		handlerPath = viper.GetString(PrometheusPathConfigPath)
-		registerHandler.register(http.MethodPost, handlerPath, gin.WrapH(
+		registerHandler.register(http.MethodGet, handlerPath, gin.WrapH(
 			promhttp.HandlerFor(
 				prometheus.DefaultGatherer,
 				promhttp.HandlerOpts{

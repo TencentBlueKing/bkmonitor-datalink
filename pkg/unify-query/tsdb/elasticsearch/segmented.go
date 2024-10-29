@@ -66,7 +66,7 @@ func newRangeSegment(opt *querySegmentOption) ([][2]int64, error) {
 
 	seg := intMathCeil(left, segmentNum)
 
-	// 根据聚合周期 interval 对齐分片数，因为进行了聚合操作，所以分片周期不能小于聚合周期，不然计算出来的时间不对
+	// 根据聚合周期 internal 对齐分片数，因为进行了聚合操作，所以分片周期不能小于聚合周期，不然计算出来的时间不对
 	if opt.interval > 0 {
 		intervalNum := intMathCeil(left, opt.interval)
 		seg = intMathCeil(intervalNum, segmentNum) * opt.interval

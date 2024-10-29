@@ -36,7 +36,7 @@ func TestInstance_MakeSQL(t *testing.T) {
 	}{
 		"test query without timezone": {
 			query:    &metadata.Query{},
-			expected: `SELECT "numSeries" AS _value, "time" AS _time, *::tag FROM "database" WHERE time > 1718175000000000000 and time < 1718175600000000000 LIMIT 10`,
+			expected: `SELECT "numSeries" AS _value, *::tag, "time" AS _time FROM "database" WHERE time > 1718175000000000000 and time < 1718175600000000000 LIMIT 10`,
 		},
 		"test query with offset": {
 			query: &metadata.Query{
@@ -45,13 +45,13 @@ func TestInstance_MakeSQL(t *testing.T) {
 					SLimit: 50,
 				},
 			},
-			expected: `SELECT "numSeries" AS _value, "time" AS _time, *::tag FROM "database" WHERE time > 1718175000000000000 and time < 1718175600000000000 LIMIT 10 SLIMIT 50`,
+			expected: `SELECT "numSeries" AS _value, *::tag, "time" AS _time FROM "database" WHERE time > 1718175000000000000 and time < 1718175600000000000 LIMIT 10 SLIMIT 50`,
 		},
 		"test query with timezone": {
 			query: &metadata.Query{
 				Timezone: "Asia/Shanghai",
 			},
-			expected: `SELECT "numSeries" AS _value, "time" AS _time, *::tag FROM "database" WHERE time > 1718175000000000000 and time < 1718175600000000000 LIMIT 10 TZ('Asia/Shanghai')`,
+			expected: `SELECT "numSeries" AS _value, *::tag, "time" AS _time FROM "database" WHERE time > 1718175000000000000 and time < 1718175600000000000 LIMIT 10 TZ('Asia/Shanghai')`,
 		},
 		"test query aggregation": {
 			query: &metadata.Query{

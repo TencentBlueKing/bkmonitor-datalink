@@ -18,7 +18,6 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/eventbus"
 )
 
@@ -114,9 +113,6 @@ func init() {
 // InitTestLogger 加载单元测试日志配置
 func InitTestLogger() {
 	// 加载配置
-	once.Do(func() {
-		viper.Set(LevelConfigPath, "debug")
-		config.InitConfig()
-		initLogConfig()
-	})
+	viper.Set(LevelConfigPath, "warn")
+	initLogConfig()
 }

@@ -12,7 +12,8 @@ package v1beta1
 import (
 	"context"
 	"fmt"
-	"sync"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,44 +21,20 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	tsdbInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
-	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 var (
-	once      sync.Once
-	testModel *model
+	testModel, _ = newModel(context.Background())
 )
 
-func init() {
-	var err error
-	once.Do(func() {
-		ctx := context.Background()
-		testModel, err = newModel(ctx)
-		if err != nil {
-			panic(err)
-		}
-	})
-
-	promql.NewEngine(&promql.Params{
-		Timeout:              2 * time.Hour,
-		MaxSamples:           500000,
-		LookbackDelta:        2 * time.Minute,
-		EnableNegativeOffset: true,
-	})
-}
-
 func TestModel_Resources(t *testing.T) {
-	ctx := context.Background()
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
 	resources, err := testModel.resources(ctx)
 
 	assert.Nil(t, err)
@@ -65,7 +42,8 @@ func TestModel_Resources(t *testing.T) {
 }
 
 func TestModel_GetResources(t *testing.T) {
-	ctx := context.Background()
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
 	index, err := testModel.getResourceIndex(ctx, "k8s_address")
 	assert.Nil(t, err)
 	assert.Equal(t, cmdb.Index{"bcs_cluster_id", "address"}, index)
@@ -75,8 +53,8 @@ func TestModel_GetResources(t *testing.T) {
 }
 
 func TestModel_GetPath(t *testing.T) {
-	ctx := context.Background()
-
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
 	testCases := map[string]struct {
 		target       cmdb.Resource
 		matcher      cmdb.Matcher
@@ -295,6 +273,11 @@ func TestModel_GetPath(t *testing.T) {
 				} else {
 					assert.Nil(t, err)
 					if err == nil {
+						sort.SliceStable(path, func(i, j int) bool {
+							listLength := len(path[i]) < len(path[j])
+							stringLength := len(strings.Join(path[i], "")) < len(strings.Join(path[j], ""))
+							return listLength || stringLength
+						})
 						assert.Equal(t, c.expected, path)
 					}
 				}
@@ -303,114 +286,80 @@ func TestModel_GetPath(t *testing.T) {
 	}
 }
 
-func mockData(ctx context.Context) *curl.MockCurl {
-	mockCurl := &curl.MockCurl{}
-	mockCurl.WithF(func(opt curl.Options) []byte {
-		res := map[string]string{
-			`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_system_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_system_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"]]}]}]}
-`,
-			`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_system_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+bk_target_ip%3D%27127.0.0.1%27++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_system_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"]]}]}]}
-`,
-			`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_pod_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_pod_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-1","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-2","bkmonitor-operator-operator"]]}]}]}
-`,
-			`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_pod_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+%28namespace%3D%27bkmonitor-operator%27+and+pod%3D%27bkm-pod-1%27%29%29++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_pod_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-1","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-2","bkmonitor-operator-operator"]]}]}]}
-`,
-			`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_system_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29+or+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29%29++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_system_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"]]}]}]}
-`,
-			`victoria_metric/api`: `{}`,
-		}
-		if v, ok := res[opt.UrlPath]; ok {
-			return []byte(v)
-		}
-
-		return nil
-	})
-
-	metadata.GetQueryRouter().MockSpaceUid(consul.VictoriaMetricsStorageType)
-
-	vmStorageIDInt := int64(1)
-	influxdbStorageID := "2"
-	influxdbStorageIDInt := int64(2)
-
-	vmInstance, err := victoriaMetrics.NewInstance(ctx, &victoriaMetrics.Options{
-		Curl:             mockCurl,
-		InfluxCompatible: true,
-		UseNativeOr:      true,
-	})
-	if err != nil {
-		log.Fatalf(ctx, err.Error())
-	}
-	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
-		Type:     consul.VictoriaMetricsStorageType,
-		Instance: vmInstance,
-	})
-
-	influxInstance, err := tsdbInfluxdb.NewInstance(
-		context.TODO(),
-		&tsdbInfluxdb.Options{
-			Host:      "127.0.0.1",
-			Port:      80,
-			Curl:      mockCurl,
-			ChunkSize: 10,
-			MaxSlimit: 1e8,
-			MaxLimit:  1e8,
-			Timeout:   time.Hour,
-		},
-	)
-	if err != nil {
-		log.Fatalf(ctx, err.Error())
-	}
-
-	tsdb.SetStorage(influxdbStorageID, &tsdb.Storage{
-		Type:     consul.InfluxDBStorageType,
-		Instance: influxInstance,
-	})
-	mock.SetRedisClient(ctx)
-	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
-		consul.InfluxDBStorageType: ir.Space{
-			"db.measurement": &ir.SpaceResultTable{
-				TableId: "db.measurement",
-				Filters: []map[string]string{},
-			},
-		},
-		consul.VictoriaMetricsStorageType: ir.Space{
-			"db_vm.measurement": &ir.SpaceResultTable{
-				TableId: "db_vm.measurement",
-				Filters: []map[string]string{},
-			},
-		},
-	}, ir.ResultTableDetailInfo{
-		"db.measurement": &ir.ResultTableDetail{
-			Fields:          []string{"node_with_system_relation", "node_with_pod_relation"},
-			MeasurementType: redis.BkSplitMeasurement,
-			DataLabel:       "datalabel",
-			StorageId:       influxdbStorageIDInt,
-			DB:              "2_bkmonitor_time_series_1572864",
-			Measurement:     "__default__",
-		},
-		"db_vm.measurement": &ir.ResultTableDetail{
-			Fields:          []string{"node_with_system_relation", "node_with_pod_relation"},
-			MeasurementType: redis.BkSplitMeasurement,
-			DataLabel:       "datalabel",
-			StorageId:       vmStorageIDInt,
-			DB:              "db_vm",
-			Measurement:     "__default__",
-			VmRt:            "2_bkmonitor_time_series_1572864_vm_rt",
-		},
-	}, ir.FieldToResultTable{
-		"node_with_system_relation": ir.ResultTableList{"db.measurement", "db_vm.measurement"},
-		"node_with_pod_relation":    ir.ResultTableList{"db.measurement", "db_vm.measurement"},
-	}, nil)
-	return mockCurl
-}
-
 func TestModel_GetResourceMatcher(t *testing.T) {
-	ctx := context.Background()
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
 
-	mockData(ctx)
+	timestamp := int64(1693973987)
+	mock.Vm.Set(map[string]any{
+		"query:1693973987(count by (bk_target_ip) (a))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bk_target_ip": "127.0.0.1",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+			},
+		},
+		"query:1693973987count by (bcs_cluster_id, namespace, pod) (b and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (a)))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bcs_cluster_id": "BCS-K8S-00000",
+						"namespace":      "bkmonitor-operator",
+						"pod":            "bkm-pod-1",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+				{
+					Metric: map[string]string{
+						"bcs_cluster_id": "BCS-K8S-00000",
+						"namespace":      "bkmonitor-operator",
+						"pod":            "bkm-pod-2",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+			},
+		},
+		"query:1693973987count by (bk_target_ip) (b and on (apm_application_name, apm_service_name, apm_service_instance_name) (count by (apm_application_name, apm_service_name, apm_service_instance_name) (a)))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bk_target_ip": "127.0.0.1",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+			},
+		},
+		"query:1693973987count by (bk_target_ip) (b and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (a)))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bk_target_ip": "127.0.0.1",
+					},
+					Value: []any{
+						1693973987, 1,
+					},
+				},
+			},
+		},
+	})
 
 	testCases := map[string]struct {
-		spaceUid     string
 		source       cmdb.Resource
 		target       cmdb.Resource
 		matcher      cmdb.Matcher
@@ -424,8 +373,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 		error error
 	}{
 		"vm node to system": {
-			spaceUid: consul.VictoriaMetricsStorageType,
-			target:   "system",
+			target: "system",
 			matcher: cmdb.Matcher{
 				"bcs_cluster_id": "BCS-K8S-00000",
 				"node":           "node-127-0-0-1",
@@ -449,8 +397,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 			},
 		},
 		"node to system": {
-			spaceUid: consul.InfluxDBStorageType,
-			target:   "system",
+			target: "system",
 			matcher: cmdb.Matcher{
 				"bcs_cluster_id": "BCS-K8S-00000",
 				"node":           "node-127-0-0-1",
@@ -474,8 +421,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 			},
 		},
 		"system to pod": {
-			spaceUid: consul.InfluxDBStorageType,
-			target:   "pod",
+			target: "pod",
 			matcher: cmdb.Matcher{
 				"bk_target_ip":   "127.0.0.1",
 				"bcs_cluster_id": "BCS-K8S-00000",
@@ -504,8 +450,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 			},
 		},
 		"pod_name to system": {
-			spaceUid: consul.InfluxDBStorageType,
-			target:   "system",
+			target: "system",
 			matcher: cmdb.Matcher{
 				"bcs_cluster_id": "BCS-K8S-00000",
 				"namespace":      "bkmonitor-operator",
@@ -531,13 +476,15 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 		},
 	}
 
-	timestamp := int64(1693973987)
 	for n, c := range testCases {
 		t.Run(n, func(t *testing.T) {
-			metadata.SetUser(ctx, c.spaceUid, c.spaceUid, "")
-			source, matcher, _, rets, err := testModel.QueryResourceMatcher(ctx, "", c.spaceUid, timestamp, c.target, c.source, c.matcher, c.pathResource)
+			ctx = metadata.InitHashID(ctx)
+			metadata.SetUser(ctx, "", influxdb.SpaceUid, "skip")
+			source, matcher, _, rets, err := testModel.QueryResourceMatcher(ctx, "", influxdb.SpaceUid, timestamp, c.target, c.source, c.matcher, c.pathResource)
 			assert.Nil(t, err)
-			if err == nil {
+			if err != nil {
+				log.Errorf(ctx, err.Error())
+			} else {
 				assert.Equal(t, c.expected.source, source)
 				assert.Equal(t, c.expected.sourceInfo, matcher)
 				assert.Equal(t, c.expected.targetList, rets)
@@ -547,6 +494,9 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 }
 
 func TestMakeQuery(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
 	type Case struct {
 		Name    string
 		Path    []string
@@ -606,15 +556,10 @@ func TestMakeQuery(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
-	mock.Init()
-
-	mode, _ := newModel(ctx)
-
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			queryTs, err := mode.makeQuery(ctx, "", c.Path, c.Matcher, c.step)
+			queryTs, err := testModel.makeQuery(ctx, "", c.Path, c.Matcher, c.step)
 			assert.NoError(t, err)
 			assert.NotNil(t, queryTs)
 

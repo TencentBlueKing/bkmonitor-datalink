@@ -15,7 +15,6 @@ import (
 	"io"
 
 	"github.com/gin-gonic/gin"
-	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -95,11 +94,4 @@ func HandleESQueryRequest(c *gin.Context) {
 
 	metric.APIRequestInc(ctx, servicePath, metric.StatusSuccess, user.SpaceUid, user.Source)
 	c.String(200, "%s", result)
-}
-
-// registerESService
-func registerESService(g *gin.Engine) {
-	servicePath := viper.GetString(ESHandlePathConfigPath)
-	g.POST(servicePath, HandleESQueryRequest)
-	log.Infof(context.TODO(), "es service register in path->[%s]", servicePath)
 }

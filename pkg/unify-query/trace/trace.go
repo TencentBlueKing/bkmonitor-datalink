@@ -12,6 +12,7 @@ package trace
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -51,7 +52,7 @@ func (s *Span) TraceID() string {
 }
 
 // Set attribute 打点
-func (s *Span) Set(key string, value interface{}) {
+func (s *Span) Set(key string, value any) {
 	if s.span == nil {
 		return
 	}
@@ -69,10 +70,21 @@ func (s *Span) Set(key string, value interface{}) {
 		attr = attribute.Float64(key, value.(float64))
 	case []float64:
 		attr = attribute.Float64Slice(key, value.([]float64))
+	case []byte:
+		attr = attribute.String(key, string(value.([]byte)))
 	case string:
 		attr = attribute.String(key, value.(string))
 	case []string:
 		attr = attribute.StringSlice(key, value.([]string))
+	case time.Time:
+		location, err := time.LoadLocation("Asia/Shanghai")
+		if err != nil {
+			return
+		}
+		t := value.(time.Time)
+		attr = attribute.String(key, t.In(location).Format("2006-01-02 15:04:05"))
+	case time.Duration:
+		attr = attribute.String(key, value.(time.Duration).String())
 	default:
 		attr = attribute.String(key, fmt.Sprintf("%+v", value))
 	}

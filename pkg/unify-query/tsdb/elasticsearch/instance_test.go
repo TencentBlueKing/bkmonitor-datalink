@@ -18,60 +18,31 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
 func TestInstance_queryReference(t *testing.T) {
+	mock.Init()
 	ctx := metadata.InitHashID(context.Background())
 
-	mock.Init()
-	address := viper.GetString("mock.es.address")
-	username := viper.GetString("mock.es.username")
-	password := viper.GetString("mock.es.password")
-	timeout := viper.GetDuration("mock.es.timeout")
-	maxSize := viper.GetInt("mock.es.max_size")
-	maxRouting := viper.GetInt("mock.es.max_routing")
-	sourceType := viper.GetString("mock.es.source_type")
-
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	metadata.GetQueryParams(ctx).SetDataSource(structured.BkLog)
-
-	if sourceType == structured.BkData {
-		address = bkapi.GetBkDataAPI().QueryUrlForES("")
-	}
-
 	ins, err := NewInstance(ctx, &InstanceOption{
-		Address:    address,
-		Username:   username,
-		Password:   password,
-		MaxRouting: maxRouting,
-		MaxSize:    maxSize,
+		Address: mock.EsUrl,
+		Timeout: 3 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
 		return
 	}
 
-	defaultEnd := time.Now()
-	defaultStart := defaultEnd.Add(time.Hour * -1)
+	defaultEnd := time.UnixMilli(1722527999000)
+	defaultStart := time.UnixMilli(1717171200000)
 
-	//db := "2_bklog_bk_unify_query_*_read"
-	//field := "gseIndex"
-
-	// bkdata db
-	defaultEnd = time.UnixMilli(1722527999000)
-	defaultStart = time.UnixMilli(1717171200000)
-
-	db := "39_bklog_bkaudit_plugin_20240723_66b8acde57_202407*"
+	db := "es_index"
 	field := "dtEventTimeStamp"
 
 	for idx, c := range map[string]struct {
@@ -85,14 +56,15 @@ func TestInstance_queryReference(t *testing.T) {
 	}{
 		"nested query + query string 测试": {
 			query: &metadata.Query{
-				DB:    "2_bklog_nested_field_test_*_read",
+				DB:    db,
 				Field: "fields.field_name",
 				From:  0,
 				Size:  5,
 				Orders: metadata.Orders{
 					FieldTime: false,
 				},
-				Source: []string{"iterationIndex", "gseIndex"},
+				StorageType: consul.ElasticsearchStorageType,
+				Source:      []string{"iterationIndex", "gseIndex"},
 				AllConditions: metadata.AllConditions{
 					{
 						{
@@ -114,13 +86,14 @@ func TestInstance_queryReference(t *testing.T) {
 		},
 		"nested aggregate + query 测试": {
 			query: &metadata.Query{
-				DB:    "2_bklog_nested_field_test_*_read",
+				DB:    db,
 				Field: "fields.field_name",
 				//From:  0,
 				//Size:  10,
 				Orders: metadata.Orders{
 					FieldTime: false,
 				},
+				StorageType: consul.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{
 					{
 						{
@@ -149,6 +122,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Orders: metadata.Orders{
 					FieldTime: false,
 				},
+				StorageType: consul.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{
 					{
 						{
@@ -176,6 +150,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Orders: metadata.Orders{
 					FieldTime: false,
 				},
+				StorageType: consul.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{
 					{
 						{
@@ -203,6 +178,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Orders: metadata.Orders{
 					FieldTime: false,
 				},
+				StorageType: consul.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{
 					{
 						{
@@ -218,10 +194,11 @@ func TestInstance_queryReference(t *testing.T) {
 		},
 		"获取 10条 原始数据": {
 			query: &metadata.Query{
-				DB:    db,
-				Field: field,
-				From:  0,
-				Size:  10,
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        10,
+				StorageType: consul.ElasticsearchStorageType,
 				TimeField: metadata.TimeField{
 					Name: "dtEventTimeStamp",
 					Type: TimeFieldTypeTime,
@@ -236,10 +213,11 @@ func TestInstance_queryReference(t *testing.T) {
 		},
 		"使用 promql 计算平均值 sum(count_over_time(field[1m]))": {
 			query: &metadata.Query{
-				DB:    db,
-				Field: field,
-				From:  0,
-				Size:  20,
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        20,
+				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Count,
@@ -256,10 +234,11 @@ func TestInstance_queryReference(t *testing.T) {
 		},
 		"使用非时间聚合统计数量": {
 			query: &metadata.Query{
-				DB:    db,
-				Field: field,
-				From:  0,
-				Size:  3,
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        3,
+				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Count,
@@ -271,10 +250,11 @@ func TestInstance_queryReference(t *testing.T) {
 		},
 		"获取 50 分位值": {
 			query: &metadata.Query{
-				DB:    db,
-				Field: field,
-				From:  0,
-				Size:  20,
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        20,
+				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Percentiles,
@@ -289,10 +269,11 @@ func TestInstance_queryReference(t *testing.T) {
 		},
 		"获取 50, 90 分支值，同时按 1分钟时间聚合": {
 			query: &metadata.Query{
-				DB:    db,
-				Field: field,
-				From:  0,
-				Size:  20,
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        20,
+				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Percentiles,
@@ -311,10 +292,11 @@ func TestInstance_queryReference(t *testing.T) {
 		},
 		"根据 field 字段聚合计算数量，同时根据值排序": {
 			query: &metadata.Query{
-				DB:    db,
-				Field: field,
-				From:  0,
-				Size:  10,
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        10,
+				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Count,
@@ -373,7 +355,7 @@ func TestInstance_queryReference(t *testing.T) {
 					size int64
 				)
 				dataCh := make(chan map[string]any)
-				wg.Add(2)
+				wg.Add(1)
 				go func() {
 					defer wg.Done()
 					i := 0
@@ -388,6 +370,7 @@ func TestInstance_queryReference(t *testing.T) {
 				}()
 
 				size, err = ins.QueryRawData(ctx, c.query, c.start, c.end, dataCh)
+				close(dataCh)
 				fmt.Printf("read data %d\n", size)
 
 				wg.Wait()
@@ -404,6 +387,7 @@ func TestInstance_getAlias(t *testing.T) {
 	metadata.InitMetadata()
 	ctx := metadata.InitHashID(context.Background())
 	inst, err := NewInstance(ctx, &InstanceOption{
+		Address: mock.EsUrl,
 		Timeout: time.Minute,
 	})
 	if err != nil {

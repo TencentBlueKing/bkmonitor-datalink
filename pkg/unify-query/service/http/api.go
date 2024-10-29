@@ -475,8 +475,13 @@ func HandlerLabelValues(c *gin.Context) {
 		return
 	}
 
-	// start 和 end 可以为空
-	startTime, endTime, _ := query.GetTime()
+	startTime, endTime, err := query.GetTime()
+	// start 和 end 如果为空，则默认给 1h
+	if err != nil {
+		endTime = time.Now()
+		startTime = endTime.Add(time.Hour * -1)
+	}
+
 	limitNum, _ := strconv.Atoi(limit)
 	result, err = instance.DirectLabelValues(ctx, labelName, startTime, endTime, limitNum, matcher...)
 	if err != nil {

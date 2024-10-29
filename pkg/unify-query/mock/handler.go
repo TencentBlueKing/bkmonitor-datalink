@@ -125,12 +125,19 @@ func (vr *vmResultData) Set(in map[string]any) {
 		vr.data = make(map[string]any)
 	}
 	for k, v := range in {
-		rd := VmResponse{
-			Result: true,
-			Code:   "00",
+		var data any
+		switch v.(type) {
+		case string:
+			data = v
+		default:
+			rd := VmResponse{
+				Result: true,
+				Code:   "00",
+			}
+			rd.Data.List = append(rd.Data.List, VmList{Data: v})
+			data = rd
 		}
-		rd.Data.List = append(rd.Data.List, VmList{Data: v})
-		vr.data[k] = rd
+		vr.data[k] = data
 	}
 }
 
@@ -149,7 +156,6 @@ type elasticSearchResultData struct {
 func mockHandler(ctx context.Context) {
 	httpmock.Activate()
 
-	mockBaseHandler(ctx)
 	mockVmHandler(ctx)
 	mockInfluxDBHandler(ctx)
 	mockBkSQLHandler(ctx)
@@ -159,7 +165,7 @@ func mockHandler(ctx context.Context) {
 const (
 	EsUrl    = "http://127.0.0.1:93002"
 	BkSQLUrl = "http://127.0.0.1:92001"
-	BaseUrl  = "http://127.0.0.1:10205"
+	VmUrl    = "http://127.0.0.1:12001/bk_data/query_sync"
 )
 
 type BkSQLRequest struct {
@@ -244,9 +250,7 @@ func mockInfluxDBHandler(ctx context.Context) {
 }
 
 func mockVmHandler(ctx context.Context) {
-	url := "http://127.0.0.1:12001/bk_data/query_sync"
-
-	httpmock.RegisterResponder(http.MethodPost, url, func(r *http.Request) (w *http.Response, err error) {
+	httpmock.RegisterResponder(http.MethodPost, VmUrl, func(r *http.Request) (w *http.Response, err error) {
 		var (
 			request VmRequest
 			params  VmParams
@@ -285,10 +289,13 @@ func mockVmHandler(ctx context.Context) {
 			err = fmt.Errorf(`vm mock data is empty in "%s"`, key)
 			return
 		}
-		w, err = httpmock.NewJsonResponse(http.StatusOK, d)
+
+		switch v := d.(type) {
+		case string:
+			w = httpmock.NewStringResponse(http.StatusOK, v)
+		default:
+			w, err = httpmock.NewJsonResponse(http.StatusOK, v)
+		}
 		return
 	})
-}
-
-func mockBaseHandler(ctx context.Context) {
 }

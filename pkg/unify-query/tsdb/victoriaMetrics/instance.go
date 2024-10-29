@@ -108,7 +108,7 @@ func (i *Instance) Check(ctx context.Context, q string, start, end time.Time, st
 		return output.String()
 	}
 
-	output.WriteString(fmt.Sprintf("promql: %s\n", q))
+	output.WriteString(fmt.Sprintf("match: %s\n", q))
 
 	output.WriteString(fmt.Sprintf("vm_expand: %+v", vmExpand))
 	return output.String()
@@ -435,7 +435,7 @@ func (i *Instance) DirectQueryRange(
 	span.Set("query-step", step)
 	span.Set("query-step-unix", step.Seconds())
 	span.Set("query-no-cache", noCache)
-	span.Set("query-promql", promqlStr)
+	span.Set("query-match", promqlStr)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		return promql.Matrix{}, nil
@@ -499,7 +499,7 @@ func (i *Instance) DirectQuery(
 
 	vmExpand = metadata.GetExpand(ctx)
 
-	span.Set("query-promql", promqlStr)
+	span.Set("query-match", promqlStr)
 	span.Set("query-end", end)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
@@ -777,6 +777,14 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 		},
 		ResultTableList: vmExpand.ResultTableList,
 	}
+
+	span.Set("query-label", name)
+	span.Set("query-match", match.String())
+	span.Set("query-limit", limit)
+	span.Set("query-rt-list", vmExpand.ResultTableList)
+	span.Set("query-start", start)
+	span.Set("query-end", end)
+	span.Set("query-cluster-name", vmExpand.ClusterName)
 
 	if start.Unix() > 0 {
 		paramsQuery.APIParams.Start = start.Unix()

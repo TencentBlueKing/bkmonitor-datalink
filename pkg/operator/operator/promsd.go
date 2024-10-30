@@ -266,13 +266,22 @@ func (c *Operator) createPromScrapeConfigDiscovers() []discover.Discover {
 		for idx, rc := range scrapeConfig.ServiceDiscoveryConfigs {
 			switch obj := rc.(type) {
 			case *promhttpsd.SDConfig:
+				if !configs.G().PromSDKinds.Allow(monitorKindHttpSd) {
+					continue
+				}
+
 				httpSdDiscover, err := c.createHttpSdDiscover(scrapeConfig, obj, idx)
 				if err != nil {
 					logger.Errorf("failed to create http_sd discover: %v", err)
 					continue
 				}
 				discovers = append(discovers, httpSdDiscover)
+
 			case *promk8ssd.SDConfig:
+				if !configs.G().PromSDKinds.Allow(monitorKindKubernetesSd) {
+					continue
+				}
+
 				kubernetesSd, err := c.createKubernetesSdDiscover(scrapeConfig, obj, idx)
 				if err != nil {
 					logger.Errorf("failed to create kubernetes_sd discover: %v", err)

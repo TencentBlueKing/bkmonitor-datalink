@@ -67,3 +67,25 @@ func TestConfig(t *testing.T) {
 	assert.Equal(t, float64(600), G().StatefulSetWorkerFactor)
 	assert.Equal(t, "60s", G().DefaultPeriod)
 }
+
+func TestPromSDKinds(t *testing.T) {
+	t.Run("specified", func(t *testing.T) {
+		kinds := PromSDKinds{"kubernetessd", "httpSD"}
+		assert.True(t, kinds.Allow("kubernetesSd"))
+		assert.True(t, kinds.Allow("kubernetessd"))
+		assert.True(t, kinds.Allow("httpsd"))
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		kinds := PromSDKinds{}
+		assert.False(t, kinds.Allow("kubernetesSd"))
+		assert.False(t, kinds.Allow("httpsd"))
+	})
+
+	t.Run("all", func(t *testing.T) {
+		kinds := PromSDKinds{"*"}
+		assert.True(t, kinds.Allow("kubernetesSd"))
+		assert.True(t, kinds.Allow("kubernetessd"))
+		assert.True(t, kinds.Allow("httpsd"))
+	})
+}

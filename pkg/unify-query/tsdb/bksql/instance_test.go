@@ -18,7 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
@@ -111,7 +110,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 			}
 			ss := ins.QuerySeriesSet(ctx, c.query, start, end)
 
-			timeSeries, err := function.SeriesSetToTimeSeries(ss)
+			timeSeries, err := mock.SeriesSetToTimeSeries(ss)
 			if err != nil {
 				log.Fatalf(ctx, err.Error())
 			}

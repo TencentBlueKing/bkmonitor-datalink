@@ -277,7 +277,7 @@ type Token struct {
 	Original       string `config:"token"`
 	BizId          int32  `config:"bk_biz_id"`
 	AppName        string `config:"bk_app_name"`
-	MetricsDataId  int32  `config:"metric_dataid"`
+	MetricsDataId  int32  `config:"metrics_dataid"`
 	TracesDataId   int32  `config:"traces_dataid"`
 	ProfilesDataId int32  `config:"profiles_dataid"`
 	LogsDataId     int32  `config:"logs_dataid"`

@@ -17,7 +17,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/eventbus"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 )
 
@@ -94,15 +93,12 @@ func LoadConfig() {
 	SingleflightTimeout = viper.GetDuration(SingleflightTimeoutConfigPath)
 	SlowQueryThreshold = viper.GetDuration(SlowQueryThresholdConfigPath)
 	DefaultQueryListLimit = viper.GetInt(DefaultQueryListLimitPath)
-	DefaultInfoLimit = viper.GetInt(InfoDefaultLimit)
-	TSQueryRawMAXLimit = viper.GetInt(TSQueryRawMAXLimitConfigPath)
 
 	QueryMaxRouting = viper.GetInt(QueryMaxRoutingConfigPath)
 
 	ClusterMetricQueryPrefix = viper.GetString(ClusterMetricQueryPrefixConfigPath)
 	ClusterMetricQueryTimeout = viper.GetDuration(ClusterMetricQueryTimeoutConfigPath)
 
-	infos.SetDefaultLimit(DefaultInfoLimit)
 	promql.SetSegmented(&promql.Segmented{
 		Enable:      viper.GetBool(SegmentedEnable),
 		MaxRoutines: viper.GetInt(SegmentedMaxRoutines),

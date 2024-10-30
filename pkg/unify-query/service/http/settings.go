@@ -86,12 +86,8 @@ var (
 	SlowQueryThreshold    time.Duration
 	DefaultQueryListLimit int
 
-	DefaultInfoLimit int
-
 	QueryMaxRouting int
 
 	ClusterMetricQueryPrefix  string
 	ClusterMetricQueryTimeout time.Duration
-
-	TSQueryRawMAXLimit int
 )

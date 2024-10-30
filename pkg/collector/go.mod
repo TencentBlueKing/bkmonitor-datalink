@@ -39,7 +39,6 @@ require (
 	github.com/rs/cors v1.8.2
 	github.com/spf13/cast v1.5.0
 	github.com/stretchr/testify v1.8.4
-	github.com/syndtr/goleveldb v1.0.0
 	github.com/tinylib/msgp v1.1.6
 	go.opentelemetry.io/collector/pdata v0.52.0
 	go.opentelemetry.io/collector/semconv v0.52.0

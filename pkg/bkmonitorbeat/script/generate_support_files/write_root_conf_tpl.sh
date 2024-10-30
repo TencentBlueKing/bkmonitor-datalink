@@ -22,11 +22,11 @@ output.bkpipe:
   endpoint: '{{ plugin_path.endpoint }}'
   # 地址分配方式，static：静态 dynamic：动态
   bk_addressing: {{ cmdb_instance.host.bk_addressing|default('static', true) }}
-{%- if nodeman is defined %}
-  hostip: {{ nodeman.host.inner_ip }}
-{%- else %}
-  hostip: {{ cmdb_instance.host.bk_host_innerip_v6 if cmdb_instance.host.bk_host_innerip_v6 and not cmdb_instance.host.bk_host_innerip else cmdb_instance.host.bk_host_innerip }}
-{%- endif %}
+#{%- if nodeman is defined %}
+#  hostip: {{ nodeman.host.inner_ip }}
+#{%- else %}
+#  hostip: {{ cmdb_instance.host.bk_host_innerip_v6 if cmdb_instance.host.bk_host_innerip_v6 and not cmdb_instance.host.bk_host_innerip else cmdb_instance.host.bk_host_innerip }}
+#{%- endif %}
   cloudid: {{ cmdb_instance.host.bk_cloud_id[0].id if cmdb_instance.host.bk_cloud_id is iterable and cmdb_instance.host.bk_cloud_id is not string else cmdb_instance.host.bk_cloud_id }}
   hostid: {{ cmdb_instance.host.bk_host_id }}
 

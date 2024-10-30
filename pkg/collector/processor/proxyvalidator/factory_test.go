@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 )
 

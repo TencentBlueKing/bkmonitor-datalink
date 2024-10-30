@@ -60,9 +60,5 @@ tasks: {% for task in tasks or get_hosts_by_node(config_hosts) %}
     response_format: {{ (task.response_format or response_format) | default("eq", true) }}
     # response为空时是否等待返回
     wait_empty_response: {{ (task.wait_empty_response or wait_empty_response or false) }}{% endfor %}
-    {% if labels %}labels:
-    {% for label in labels %}{% for key, value in label.items() %}{{"-" if loop.first else " "}} {{key}}: "{{ value }}"
-    {% endfor %}{% endfor %}
-    {% endif %}
 EOF
 }

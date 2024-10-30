@@ -81,13 +81,12 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 		totalTables = influxdb.MergeTables(tableList, false)
 	}()
 
-	ref, err := query.ToQueryReference(ctx)
+	_, err = query.ToQueryReference(ctx)
 	if err != nil {
 		return nil, err
 	}
-	ok, _, err := ref.CheckVmQuery(ctx)
 	// 如果查询 vm 的情况下则直接退出，因为 vm 不支持 Exemplar 数据
-	if ok {
+	if metadata.GetQueryParams(ctx).IsDirectQuery() {
 		return resp, nil
 	}
 
@@ -188,6 +187,9 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			close(dataCh)
 		}()
 
+		if queryTs.SpaceUid == "" {
+			queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUid
+		}
 		for _, ql := range queryTs.QueryList {
 			// 时间复用
 			ql.Timezone = queryTs.Timezone
@@ -201,6 +203,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			if ql.Step == "" {
 				ql.Step = queryTs.Step
 			}
+
 			qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
 			if qmErr != nil {
 				err = qmErr
@@ -290,10 +293,7 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 
 	// es 需要使用自己的查询时间范围
 	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix()).SetIsReference(true)
-	err = metadata.SetQueryReference(ctx, queryRef)
-	if err != nil {
-		return nil, err
-	}
+	metadata.SetQueryReference(ctx, queryRef)
 
 	var lookBackDelta time.Duration
 	if query.LookBackDelta != "" {
@@ -306,12 +306,12 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	instance := prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
 		QueryMaxRouting: QueryMaxRouting,
 		Timeout:         SingleflightTimeout,
-	}, lookBackDelta)
+	}, lookBackDelta, QueryMaxRouting)
 
 	if query.Instant {
-		res, err = instance.Query(ctx, query.MetricMerge, start)
+		res, err = instance.DirectQuery(ctx, query.MetricMerge, start)
 	} else {
-		res, err = instance.QueryRange(ctx, query.MetricMerge, start, end, time.Duration(step))
+		res, err = instance.DirectQueryRange(ctx, query.MetricMerge, start, end, time.Duration(step))
 	}
 	if err != nil {
 		return nil, err
@@ -355,21 +355,102 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	return resp, err
 }
 
-func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
+// queryTsToInstanceAndStmt query 结构体转换为 instance 以及 stmt
+func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (instance tsdb.Instance, stmt string, err error) {
+	var (
+		lookBackDelta time.Duration
+		promExprOpt   = &structured.PromExprOption{}
+	)
+
+	ctx, span := trace.NewSpan(ctx, "query-ts-to-instance")
+	defer func() {
+		span.End(&err)
+	}()
+
+	queryString, _ := json.Marshal(query)
+	span.Set("query-ts", queryString)
+
+	// 限制 queryList 是否过长
+	if DefaultQueryListLimit > 0 {
+		if len(query.QueryList) > DefaultQueryListLimit {
+			err = fmt.Errorf("the number of query lists cannot be greater than %d", DefaultQueryListLimit)
+		}
+	}
+
+	// 判断是否打开对齐
+	for _, q := range query.QueryList {
+		q.IsReference = false
+		q.AlignInfluxdbResult = AlignInfluxdbResult
+	}
+
+	// 判断是否指定 LookBackDelta
+	if query.LookBackDelta != "" {
+		lookBackDelta, err = time.ParseDuration(query.LookBackDelta)
+		if err != nil {
+			return
+		}
+	}
+
+	// 如果 step 为空，则补充默认 step
+	if query.Step == "" {
+		query.Step = promql.GetDefaultStep().String()
+	}
+
+	// 转换成 queryRef
+	queryRef, err := query.ToQueryReference(ctx)
+	if err != nil {
+		return
+	}
+
+	if metadata.GetQueryParams(ctx).IsDirectQuery() {
+		// 判断是否是直查
+		vmExpand := queryRef.ToVmExpand(ctx)
+		metadata.SetExpand(ctx, vmExpand)
+		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
+			// 兼容 storage 结构体，用于单元测试
+			StorageID:   consul.VictoriaMetricsStorageType,
+			StorageType: consul.VictoriaMetricsStorageType,
+		})
+	} else {
+		// 非直查开启忽略时间聚合函数判断
+		promExprOpt.IgnoreTimeAggregationEnable = true
+
+		metadata.SetQueryReference(ctx, queryRef)
+
+		span.Set("query-max-routing", QueryMaxRouting)
+		span.Set("singleflight-timeout", SingleflightTimeout.String())
+
+		instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
+			QueryMaxRouting: QueryMaxRouting,
+			Timeout:         SingleflightTimeout,
+		}, lookBackDelta, QueryMaxRouting)
+	}
+
+	expr, err := query.ToPromExpr(ctx, promExprOpt)
+	if err != nil {
+		return
+	}
+
+	stmt = expr.String()
+
+	if instance == nil {
+		err = fmt.Errorf("storage get error")
+		return
+	}
+
+	span.Set("storage-type", instance.InstanceType())
+	span.Set("stmt", stmt)
+	return
+}
+
+func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any, error) {
 	var (
 		err error
 
 		instance tsdb.Instance
-		ok       bool
+		stmt     string
 
-		res any
-
-		lookBackDelta time.Duration
-
-		promQL parser.Expr
-
-		promExprOpt = &structured.PromExprOption{}
-
+		res  any
 		resp = NewPromData(query.ResultColumns)
 	)
 
@@ -378,38 +459,6 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 		resp.Status = metadata.GetStatus(ctx)
 		span.End(&err)
 	}()
-
-	qStr, _ := json.Marshal(query)
-	span.Set("query-ts", string(qStr))
-
-	// 验证 queryList 限制长度
-	if DefaultQueryListLimit > 0 && len(query.QueryList) > DefaultQueryListLimit {
-		err = fmt.Errorf("the number of query lists cannot be greater than %d", DefaultQueryListLimit)
-		log.Errorf(ctx, err.Error())
-		return nil, err
-	}
-
-	// 是否打开对齐
-	for _, q := range query.QueryList {
-		q.IsReference = false
-		q.AlignInfluxdbResult = AlignInfluxdbResult
-	}
-
-	if query.LookBackDelta != "" {
-		lookBackDelta, err = time.ParseDuration(query.LookBackDelta)
-		if err != nil {
-			return nil, err
-		}
-	}
-	// 判断如果 step 为空，则补充默认 step
-	if query.Step == "" {
-		query.Step = promql.GetDefaultStep().String()
-	}
-
-	queryRef, err := query.ToQueryReference(ctx)
-	if err != nil {
-		return nil, err
-	}
 
 	start, end, step, timezone, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
 	if err != nil {
@@ -420,77 +469,26 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 	// 写入查询时间到全局缓存
 	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix())
 
-	// 判断是否是直查
-	ok, vmExpand, err := queryRef.CheckVmQuery(ctx)
-	if err != nil {
-		log.Errorf(ctx, fmt.Sprintf("check vm query: %s", err.Error()))
-	}
-	if ok {
-		if len(vmExpand.ResultTableList) == 0 {
-			return resp, nil
-		}
-
-		// 函数替换逻辑有问题、暂时屏蔽
-		// vm 跟 prom 的函数有差异，需要转换一下以完全适配 prometheus。
-		// https://docs.victoriametrics.com/metricsql/#delta
-		//promExprOpt.FunctionReplace = map[string]string{
-		//	"increase": "increase_prometheus",
-		//	"delta":    "delta_prometheus",
-		//	"changes":  "changes_prometheus",
-		//}
-		//if err != nil {
-		//	return nil, err
-		//}
-		metadata.SetExpand(ctx, vmExpand)
-		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
-			// 兼容 storage 结构体，用于单元测试
-			StorageID:   consul.VictoriaMetricsStorageType,
-			StorageType: consul.VictoriaMetricsStorageType,
-		})
-		if instance == nil {
-			err = fmt.Errorf("%s storage get error", consul.VictoriaMetricsStorageType)
-			return nil, err
-		}
-	} else {
-		// 非直查开启忽略时间聚合函数判断
-		promExprOpt.IgnoreTimeAggregationEnable = true
-
-		err = metadata.SetQueryReference(ctx, queryRef)
-
-		if err != nil {
-			return nil, err
-		}
-
-		span.Set("query-max-routing", QueryMaxRouting)
-		span.Set("singleflight-timeout", SingleflightTimeout.String())
-
-		instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
-			QueryMaxRouting: QueryMaxRouting,
-			Timeout:         SingleflightTimeout,
-		}, lookBackDelta)
-	}
-
-	// sum(count_over_time(a[1m])) => a
-	promQL, err = query.ToPromExpr(ctx, promExprOpt)
+	instance, stmt, err = queryTsToInstanceAndStmt(ctx, query)
 	if err != nil {
 		return nil, err
 	}
 
-	span.Set("storage-type", instance.GetInstanceType())
+	span.Set("storage-type", instance.InstanceType())
 
 	if query.Instant {
-		res, err = instance.Query(ctx, promQL.String(), end)
+		res, err = instance.DirectQuery(ctx, stmt, end)
 	} else {
-		res, err = instance.QueryRange(ctx, promQL.String(), start, end, step)
+		res, err = instance.DirectQueryRange(ctx, stmt, start, end, step)
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	span.Set("promql", promQL.String())
-	span.Set("start", start.String())
-	span.Set("end", end.String())
-	span.Set("step", step.String())
+	span.Set("stmt", stmt)
+	span.Set("start", start)
+	span.Set("end", end)
+	span.Set("step", step)
 
 	tables := promql.NewTables()
 	seriesNum := 0
@@ -527,21 +525,9 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 		return nil, err
 	}
 
-	var (
-		factor          float64
-		downSampleError error
-	)
-	if ok, factor, downSampleError = downsample.CheckDownSampleRange(query.Step, query.DownSampleRange); ok {
+	if ok, factor, downSampleError := downsample.CheckDownSampleRange(step.String(), query.DownSampleRange); ok {
 		if downSampleError == nil {
-			var info *TimeInfo
-			if info, downSampleError = getTimeInfo(&structured.CombinedQueryParams{
-				Start: query.Start,
-				End:   query.End,
-				Step:  query.DownSampleRange,
-			}); downSampleError == nil {
-				log.Debugf(context.TODO(), "respData to down sample: %+v", info)
-				resp.Downsample(factor)
-			}
+			resp.Downsample(factor)
 		}
 	}
 
@@ -568,10 +554,6 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 }
 
 func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (*structured.QueryTs, error) {
-	var (
-		user = metadata.GetUser(ctx)
-	)
-
 	if queryPromQL == nil {
 		return nil, nil
 	}
@@ -580,11 +562,6 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (*
 	query, err := sp.QueryTs()
 	if err != nil {
 		return nil, err
-	}
-
-	// metadata 中的 spaceUid 是从 header 头信息中获取
-	if user.SpaceUid != "" {
-		query.SpaceUid = user.SpaceUid
 	}
 
 	query.Start = queryPromQL.Start
@@ -650,9 +627,9 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	}
 	instance := redis.Instance{Ctx: ctx, Timeout: ClusterMetricQueryTimeout, ClusterMetricPrefix: ClusterMetricQueryPrefix}
 	if query.Instant {
-		res, err = instance.Query(ctx, "", end)
+		res, err = instance.DirectQuery(ctx, "", end)
 	} else {
-		res, err = instance.QueryRange(ctx, "", start, end, step)
+		res, err = instance.DirectQueryRange(ctx, "", start, end, step)
 	}
 	if err != nil {
 		return nil, err

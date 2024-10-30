@@ -12,6 +12,7 @@ package configs
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v2"
 	"k8s.io/client-go/rest"
@@ -73,6 +74,10 @@ type Kubelet struct {
 
 func (k Kubelet) String() string {
 	return fmt.Sprintf("%s/%s", k.Namespace, k.Name)
+}
+
+func (k Kubelet) Validate() bool {
+	return k.Namespace != "" && k.Name != ""
 }
 
 // HTTP http 服务配置
@@ -205,17 +210,37 @@ type Config struct {
 	// ServiceName operator 注册 service 名称
 	ServiceName string `yaml:"service_name"`
 
-	TLS     TLS          `yaml:"tls"`
-	HTTP    HTTP         `yaml:"http"`
-	Kubelet Kubelet      `yaml:"kubelet"`
-	Event   Event        `yaml:"event"`
-	Logger  Logger       `yaml:"logger"`
-	PromSli PromSli      `yaml:"sli"`
-	MetaEnv env.Metadata `yaml:"meta_env"`
+	TLS         TLS          `yaml:"tls"`
+	HTTP        HTTP         `yaml:"http"`
+	Kubelet     Kubelet      `yaml:"kubelet"`
+	Event       Event        `yaml:"event"`
+	Logger      Logger       `yaml:"logger"`
+	PromSli     PromSli      `yaml:"sli"`
+	MetaEnv     env.Metadata `yaml:"meta_env"`
+	PromSDKinds PromSDKinds  `yaml:"prom_sd_kinds"`
 
 	StatefulSetMatchRules      []StatefulSetMatchRule      `yaml:"statefulset_match_rules"`
 	MonitorBlacklistMatchRules []MonitorBlacklistMatchRule `yaml:"monitor_blacklist_match_rules"`
 	PromSDSecrets              []PromSDSecret              `yaml:"prom_sd_configs"`
+}
+
+type PromSDKinds []string
+
+func (psk PromSDKinds) Allow(s string) bool {
+	if len(psk) == 0 {
+		return false
+	}
+	if len(psk) == 1 && psk[0] == "*" {
+		return true
+	}
+
+	kinds := make(map[string]struct{})
+	for _, kind := range psk {
+		kinds[strings.ToLower(kind)] = struct{}{}
+	}
+
+	_, ok := kinds[strings.ToLower(s)]
+	return ok
 }
 
 func setupStatefulSetWorker(c *Config) {

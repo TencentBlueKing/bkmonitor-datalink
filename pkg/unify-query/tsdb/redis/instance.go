@@ -63,26 +63,36 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 	panic("implement me")
 }
 
-func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i *Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
+func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i *Instance) GetInstanceType() string {
+func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) InstanceType() string {
 	return consul.RedisStorageType
 }
 
-func (i *Instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
+func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
 	df, err := i.rawQuery(ctx, time.Time{}, end, time.Duration(0))
 	if err != nil {
 		return nil, err
@@ -90,7 +100,7 @@ func (i *Instance) Query(ctx context.Context, qs string, end time.Time) (promql.
 	return i.vectorFormat(ctx, *df)
 }
 
-func (i *Instance) QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
 	df, err := i.rawQuery(ctx, start, end, step)
 	if err != nil {
 		return nil, err
@@ -148,7 +158,7 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 	}
 	queryCost := time.Since(startAnaylize)
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, user.Source, i.GetInstanceType(), "",
+		ctx, queryCost, user.SpaceUid, user.Source, i.InstanceType(), "",
 	)
 
 	return &df, nil

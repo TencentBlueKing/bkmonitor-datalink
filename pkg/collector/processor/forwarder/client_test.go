@@ -20,7 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/cluster"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/generator"
 )
 
 func TestLocalClient(t *testing.T) {

@@ -34,7 +34,7 @@ import (
 	commonv3 "skywalking.apache.org/repo/goapi/collect/common/v3"
 	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/testkits"
 )
 
 func TestSetInternalSpanStatus(t *testing.T) {

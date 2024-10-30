@@ -14,9 +14,9 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/ratelimiter"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/ratelimiter/throttle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -31,19 +31,19 @@ func NewFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*rateLimiter, error) {
 	rateLimiters := confengine.NewTierConfig()
 
-	var c ratelimiter.Config
+	var c throttle.Config
 	if err := mapstructure.Decode(conf, &c); err != nil {
 		return nil, err
 	}
-	rateLimiters.SetGlobal(ratelimiter.New(c))
+	rateLimiters.SetGlobal(throttle.New(c))
 
 	for _, custom := range customized {
-		var cfg ratelimiter.Config
+		var cfg throttle.Config
 		if err := mapstructure.Decode(custom.Config.Config, &cfg); err != nil {
 			logger.Errorf("failed to decode config: %v", err)
 			continue
 		}
-		rateLimiters.Set(custom.Token, custom.Type, custom.ID, ratelimiter.New(cfg))
+		rateLimiters.Set(custom.Token, custom.Type, custom.ID, throttle.New(cfg))
 	}
 
 	return &rateLimiter{
@@ -82,7 +82,7 @@ func (p *rateLimiter) Reload(config map[string]interface{}, customized []process
 
 func (p *rateLimiter) Process(record *define.Record) (*define.Record, error) {
 	token := record.Token.Original
-	rl := p.rateLimiters.GetByToken(token).(ratelimiter.RateLimiter)
+	rl := p.rateLimiters.GetByToken(token).(throttle.RateLimiter)
 	logger.Debugf("ratelimiter: token [%s] max qps allowed: %f", token, rl.QPS())
 	if !rl.TryAccept() {
 		return nil, errors.Errorf("ratelimiter rejected the request, token [%s] max qps allowed: %f", token, rl.QPS())

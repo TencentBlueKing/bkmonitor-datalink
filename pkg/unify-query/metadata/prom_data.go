@@ -12,6 +12,8 @@ package metadata
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -22,11 +24,14 @@ type PromDataFormat struct {
 	lock sync.RWMutex
 
 	transformFormat string
-	transformMap    map[rune]struct{}
+}
+
+func (f *PromDataFormat) format(s string) string {
+	return fmt.Sprintf("__bk_%s__", s)
 }
 
 func (f *PromDataFormat) isAlphaNumericUnderscore(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == ':' || r == '_'
 }
 
 func (f *PromDataFormat) EncodeFunc() func(q string) string {
@@ -35,22 +40,15 @@ func (f *PromDataFormat) EncodeFunc() func(q string) string {
 			result       strings.Builder
 			invalidChars []rune
 		)
+		format := f.format(`%d`)
 		for _, r := range q {
 			if !f.isAlphaNumericUnderscore(r) {
 				invalidChars = append(invalidChars, r)
-				result.WriteString(fmt.Sprintf(f.transformFormat, r))
+				result.WriteString(fmt.Sprintf(format, r))
 			} else {
 				result.WriteRune(r)
 			}
 		}
-
-		f.lock.Lock()
-		for _, r := range invalidChars {
-			if _, ok := f.transformMap[r]; !ok {
-				f.transformMap[r] = struct{}{}
-			}
-		}
-		f.lock.Unlock()
 
 		return result.String()
 	}
@@ -58,11 +56,17 @@ func (f *PromDataFormat) EncodeFunc() func(q string) string {
 
 func (f *PromDataFormat) DecodeFunc() func(q string) string {
 	return func(q string) string {
-		f.lock.RLock()
-		defer f.lock.RUnlock()
-
-		for k := range f.transformMap {
-			q = strings.Replace(q, fmt.Sprintf(f.transformFormat, k), string(k), -1)
+		format := f.format(`([\d]+)`)
+		re := regexp.MustCompile(format)
+		matchList := re.FindAllStringSubmatch(q, -1)
+		for _, match := range matchList {
+			if len(match) == 2 {
+				num, err := strconv.Atoi(match[1])
+				if err != nil {
+					continue
+				}
+				q = strings.ReplaceAll(q, match[0], string(rune(num)))
+			}
 		}
 		return q
 	}
@@ -86,8 +90,6 @@ func GetPromDataFormat(ctx context.Context) *PromDataFormat {
 	}
 
 	return (&PromDataFormat{
-		ctx:             ctx,
-		transformFormat: "__bk_%d__",
-		transformMap:    make(map[rune]struct{}),
+		ctx: ctx,
 	}).set()
 }

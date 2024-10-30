@@ -22,7 +22,6 @@ import (
 func TestNewSqlFactory(t *testing.T) {
 	start := time.Unix(1717144141, 0)
 	end := time.Unix(1717147741, 0)
-	step := time.Minute
 
 	for name, c := range map[string]struct {
 		query    *metadata.Query
@@ -30,8 +29,8 @@ func TestNewSqlFactory(t *testing.T) {
 	}{
 		"sum-count_over_time-with-promql-1": {
 			query: &metadata.Query{
-				DB:          "100133_ieod_logsearch4_errorlog_p.doris",
-				Measurement: "100133_ieod_logsearch4_errorlog_p.doris",
+				DB:          "100133_ieod_logsearch4_errorlog_p",
+				Measurement: "doris",
 				Field:       "gseIndex",
 				Aggregates: metadata.Aggregates{
 					{
@@ -45,14 +44,14 @@ func TestNewSqlFactory(t *testing.T) {
 				BkSqlCondition: "gseIndex > 0",
 				From:           0,
 				Size:           0,
-				Orders:         metadata.Orders{"_time": true},
+				Orders:         metadata.Orders{"ip": true},
 			},
-			expected: "SELECT MAX((`dtEventTimeStamp`- (`dtEventTimeStamp` % 60000))) AS `_timestamp_`, count(`gseIndex`) AS `_value_`, `ip` FROM 100133_ieod_logsearch4_errorlog_p.doris WHERE dtEventTimeStamp >= 1717144141000 AND dtEventTimeStamp < 1717147741000 AND (gseIndex > 0) GROUP BY (`dtEventTimeStamp`- (`dtEventTimeStamp` % 60000)), `ip`",
+			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000))) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1717144141000 AND `dtEventTimeStamp` < 1717147741000 AND (gseIndex > 0) GROUP BY `ip`, (`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000)) ORDER BY `_timestamp_` ASC, `ip` ASC",
 		},
 		"sum-with-promql-1": {
 			query: &metadata.Query{
-				DB:          "100133_ieod_logsearch4_errorlog_p.doris",
-				Measurement: "100133_ieod_logsearch4_errorlog_p.doris",
+				DB:          "100133_ieod_logsearch4_errorlog_p",
+				Measurement: "doris",
 				Field:       "gseIndex",
 				Aggregates: metadata.Aggregates{
 					{
@@ -67,12 +66,12 @@ func TestNewSqlFactory(t *testing.T) {
 				Size:           10,
 				Orders:         nil,
 			},
-			expected: "SELECT * FROM 100133_ieod_logsearch4_errorlog_p.doris WHERE dtEventTimeStamp >= 1717144141000 AND dtEventTimeStamp < 1717147741000 AND gseIndex > 0 LIMIT 10",
+			expected: "SELECT `ip`, SUM(`gseIndex`) AS `_value_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1717144141000 AND `dtEventTimeStamp` < 1717147741000 AND (gseIndex > 0) GROUP BY `ip` LIMIT 10",
 		},
 		"count-without-promql-1": {
 			query: &metadata.Query{
-				DB:          "100133_ieod_logsearch4_errorlog_p.doris",
-				Measurement: "100133_ieod_logsearch4_errorlog_p.doris",
+				DB:          "100133_ieod_logsearch4_errorlog_p",
+				Measurement: "doris",
 				Field:       "gseIndex",
 				Aggregates: metadata.Aggregates{
 					{
@@ -85,19 +84,15 @@ func TestNewSqlFactory(t *testing.T) {
 				},
 				BkSqlCondition: "gseIndex > 0",
 			},
-			expected: "SELECT count(`gseIndex`) AS `_value_`, `ip` FROM 100133_ieod_logsearch4_errorlog_p.doris WHERE dtEventTimeStamp >= 1717144141000 AND dtEventTimeStamp < 1717147741000 AND gseIndex > 0 GROUP BY `ip`",
+			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000))) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1717144141000 AND `dtEventTimeStamp` < 1717147741000 AND (gseIndex > 0) GROUP BY `ip`, (`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000)) ORDER BY `_timestamp_` ASC",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
-			fact := NewQueryFactory(ctx, c.query).WithRangeTime(start, end, step)
-			err := fact.ParserQuery()
+			fact := NewQueryFactory(ctx, c.query).WithRangeTime(start, end)
+			sql, err := fact.SQL()
 			assert.Nil(t, err)
-			assert.Equal(t, c.expected, fact.SQL())
-
-			inst := &Instance{}
-			oldSql, _ := inst.bkSql(ctx, c.query, start, end)
-			assert.Equal(t, fact.SQL(), oldSql)
+			assert.Equal(t, c.expected, sql)
 		})
 	}
 }

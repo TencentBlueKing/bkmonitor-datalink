@@ -10,17 +10,10 @@
 package elasticsearch
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/magiconair/properties/assert"
 )
-
-func jsonEqual(t *testing.T, a, b interface{}) {
-	c, _ := json.Marshal(a)
-	d, _ := json.Marshal(b)
-	assert.Equal(t, string(c), string(d))
-}
 
 func TestSegmentedList(t *testing.T) {
 	var testCases = []struct {
@@ -32,35 +25,30 @@ func TestSegmentedList(t *testing.T) {
 			name: "test-1",
 			segmentOption: &querySegmentOption{
 				start:     0,
-				end:       1000,
+				end:       10000000,
 				interval:  300,
 				docCount:  1e5,
 				storeSize: MB,
 			},
 			list: [][2]int64{
-				{0, 300},
-				{300, 600},
-				{600, 1000},
+				{0, 3333600},
+				{3333600, 6667200},
+				{6667200, 10000000},
 			},
 		},
 		{
 			name: "test-2",
 			segmentOption: &querySegmentOption{
 				start:     0,
-				end:       1000,
+				end:       10000000,
 				interval:  60,
 				docCount:  1e5,
 				storeSize: MB,
 			},
 			list: [][2]int64{
-				{0, 120},
-				{120, 240},
-				{240, 360},
-				{360, 480},
-				{480, 600},
-				{600, 720},
-				{720, 840},
-				{840, 1000},
+				{0, 3333360},
+				{3333360, 6666720},
+				{6666720, 10000000},
 			},
 		},
 	}

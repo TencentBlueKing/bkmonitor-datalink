@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 )
 
@@ -242,7 +243,7 @@ func (c AllConditions) BkSql() string {
 	return strings.Join(conditionsString, fmt.Sprintf(" %s ", promql.OrOperator))
 }
 
-func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int) {
+func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.VmCondition, int) {
 	var (
 		defaultLabels = make([]string, 0)
 		and           = ", "
@@ -262,7 +263,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int
 	}
 
 	if len(c) == 0 {
-		return strings.Join(defaultLabels, and), len(defaultLabels)
+		return metadata.VmCondition(strings.Join(defaultLabels, and)), len(defaultLabels)
 	}
 
 	num := 0
@@ -285,7 +286,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int
 		vmLabels = append(vmLabels, strings.Join(lbl, and))
 	}
 
-	return strings.Join(vmLabels, or), num
+	return metadata.VmCondition(strings.Join(vmLabels, or)), num
 }
 
 // Compare 比较 AllConditions 中的条件 condition

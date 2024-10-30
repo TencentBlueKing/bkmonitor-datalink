@@ -25,8 +25,7 @@ task_id: {{ config.taskid }}
 port_dataid: {{ config.port_dataid }}
 {% if config.match_pattern %}match_pattern: {{ config.match_pattern }}{% endif %}
 {% if config.process_name %}process_name:  {{ config.process_name }}{% endif %}
-extract_pattern: ""
-{% if config.extract_pattern %}extract_pattern: {{ config.extract_pattern }}{% endif %}
+{% if config.extract_pattern %}extract_pattern: {{ config.extract_pattern }}{% else %}extract_pattern: ""{% endif %}
 {% if config.exclude_pattern %}exclude_pattern: {{ config.exclude_pattern }}{% endif %}
 {% if config.pid_path %}pid_path: {{ config.pid_path }}{% endif %}
 proc_metric: []

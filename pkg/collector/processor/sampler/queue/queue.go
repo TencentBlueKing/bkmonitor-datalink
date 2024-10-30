@@ -15,7 +15,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tracestore"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/sampler/tracestore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 

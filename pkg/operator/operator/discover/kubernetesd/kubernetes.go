@@ -48,6 +48,11 @@ const (
 	labelPodAddressTargetName = "__meta_kubernetes_pod_address_target_name"
 )
 
+type BasicAuthRaw struct {
+	Username string
+	Password string
+}
+
 type Options struct {
 	*discover.CommonOptions
 
@@ -55,6 +60,7 @@ type Options struct {
 	Namespaces        []string
 	Client            kubernetes.Interface
 	BasicAuth         *promv1.BasicAuth
+	BasicAuthRaw      BasicAuthRaw
 	TLSConfig         *promv1.TLSConfig
 	BearerTokenSecret *corev1.SecretKeySelector
 	UseEndpointSlice  bool
@@ -157,6 +163,16 @@ func (d *Discover) matchNodeName(lbs labels.Labels) string {
 }
 
 func (d *Discover) accessBasicAuth() (string, string, error) {
+	raw := d.opts.BasicAuthRaw
+	// 优先使用 raw 配置 当且仅当两者不为空时才生效
+	if raw.Username != "" && raw.Password != "" {
+		return raw.Username, raw.Password, nil
+	}
+
+	return d.accessBasicAuthFromSecret()
+}
+
+func (d *Discover) accessBasicAuthFromSecret() (string, string, error) {
 	auth := d.opts.BasicAuth
 	if auth == nil || auth.Username.String() == "" || auth.Password.String() == "" {
 		return "", "", nil

@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/json"
 )
 
 func TestNoneValidator(t *testing.T) {

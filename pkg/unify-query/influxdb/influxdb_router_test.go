@@ -11,14 +11,13 @@ package influxdb
 
 import (
 	"context"
-	"net/http"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
@@ -60,35 +59,12 @@ func TestGetTagRouter(t *testing.T) {
 	}
 }
 
-func MockRouterWithHostInfo(hostInfo influxdb.HostInfo) *Router {
-	ir := GetInfluxDBRouter()
-	ir.hostInfo = hostInfo
-	ir.hostStatusInfo = make(influxdb.HostStatusInfo, len(hostInfo))
-	// 将hostInfo 里面的信息初始化到 hostStatusInfo 并且初始化 Read 状态为 true
-	for _, v := range hostInfo {
-		ir.hostStatusInfo[v.DomainName] = &influxdb.HostStatus{Read: true}
-	}
-	return ir
-}
-
 func TestRouterPingInfluxdb(t *testing.T) {
-
-	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
-		if req.URL.Host == "127.0.0.1:6371" && strings.Contains(req.URL.Path, "/ping") {
-			return &http.Response{
-				StatusCode: http.StatusNoContent,
-			}, nil
-		}
-		return &http.Response{
-			StatusCode: http.StatusBadRequest,
-		}, nil
-	})
-
-	testCases := []struct {
+	testCases := map[string]struct {
 		HostInfo influxdb.HostInfo
 		Expected bool
 	}{
-		{
+		"test-1": {
 			HostInfo: map[string]*influxdb.Host{
 				"127.0.0.1": {
 					DomainName: "127.0.0.1",
@@ -97,7 +73,8 @@ func TestRouterPingInfluxdb(t *testing.T) {
 				},
 			},
 			Expected: true,
-		}, {
+		},
+		"test-2": {
 			HostInfo: map[string]*influxdb.Host{
 				"127.0.0.2": {
 					DomainName: "127.0.0.2",
@@ -109,11 +86,15 @@ func TestRouterPingInfluxdb(t *testing.T) {
 		},
 	}
 
-	for _, v := range testCases {
-		ir := MockRouterWithHostInfo(v.HostInfo)
-		ir.Ping(context.Background(), time.Second*1, 3)
-		for _, j := range ir.hostStatusInfo {
-			assert.Equal(t, v.Expected, j.Read)
-		}
+	mock.Init()
+	for name, v := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx := metadata.InitHashID(context.Background())
+			ir := MockRouterWithHostInfo(v.HostInfo)
+			ir.Ping(ctx, time.Second*1, 3)
+			for _, j := range ir.hostStatusInfo {
+				assert.Equal(t, v.Expected, j.Read)
+			}
+		})
 	}
 }

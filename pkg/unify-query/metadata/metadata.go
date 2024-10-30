@@ -13,8 +13,6 @@ import (
 	"context"
 
 	cache "github.com/patrickmn/go-cache"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 // metaData 元数据存储
@@ -26,7 +24,6 @@ type metaData struct {
 func (m *metaData) get(ctx context.Context, key string) (interface{}, bool) {
 	id := hashID(ctx)
 	k := id + "_" + key
-	log.Debugf(ctx, "metadata get %s", k)
 	return m.c.Get(k)
 }
 
@@ -34,6 +31,5 @@ func (m *metaData) get(ctx context.Context, key string) (interface{}, bool) {
 func (m *metaData) set(ctx context.Context, key string, value interface{}) {
 	id := hashID(ctx)
 	k := id + "_" + key
-	log.Debugf(ctx, "metadata set %s", k)
 	m.c.SetDefault(k, value)
 }

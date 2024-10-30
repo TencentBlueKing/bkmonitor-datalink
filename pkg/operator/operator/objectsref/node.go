@@ -52,6 +52,19 @@ func (n *NodeMap) Addrs() map[string]string {
 	return cloned
 }
 
+func (n *NodeMap) IPs() map[string]struct{} {
+	n.mut.Lock()
+	defer n.mut.Unlock()
+
+	ret := make(map[string]struct{})
+	for _, ips := range n.ips {
+		for _, ip := range ips {
+			ret[ip] = struct{}{}
+		}
+	}
+	return ret
+}
+
 func (n *NodeMap) NameExists(name string) (string, bool) {
 	n.mut.Lock()
 	defer n.mut.Unlock()

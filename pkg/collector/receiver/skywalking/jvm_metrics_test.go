@@ -16,7 +16,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/foreach"
 )
 
 func mockJvmMetrics() *agentv3.JVMMetric {

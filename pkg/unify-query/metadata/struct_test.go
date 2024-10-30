@@ -17,9 +17,9 @@ import (
 
 func TestReplaceVmCondition(t *testing.T) {
 	for name, c := range map[string]struct {
-		condition     string
+		condition     VmCondition
 		replaceLabels ReplaceLabels
-		expected      string
+		expected      VmCondition
 	}{
 		"test_1": {
 			condition: `tag_1="a"`,

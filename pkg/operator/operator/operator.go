@@ -42,6 +42,7 @@ const (
 	monitorKindServiceMonitor = "ServiceMonitor"
 	monitorKindPodMonitor     = "PodMonitor"
 	monitorKindHttpSd         = "HttpSd"
+	monitorKindKubernetesSd   = "KubernetesSd"
 )
 
 var (

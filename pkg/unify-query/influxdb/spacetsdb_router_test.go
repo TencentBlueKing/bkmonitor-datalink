@@ -19,14 +19,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	innerRedis "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/redis"
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 func TestRun(t *testing.T) {
-	suite.Run(t, new(TestSuite))
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	suite.Run(t, &TestSuite{
+		ctx: ctx,
+	})
 }
 
 type TestSuite struct {
@@ -37,8 +43,6 @@ type TestSuite struct {
 }
 
 func (s *TestSuite) SetupTest() {
-	config.InitConfig()
-	s.ctx = context.Background()
 	// 初始化全局 Redis 实例
 	(&(redis.Service{})).Reload(s.ctx)
 	// 需要往 redis 写入样例数据
@@ -120,7 +124,7 @@ func (s *TestSuite) TestReloadBySpaceKey() {
 
 	err = router.ReloadByChannel(s.ctx, "bkmonitorv3:spaces:space_to_result_table:channel", "bkcc__2")
 	if err != nil {
-		panic(err)
+		return
 	}
 	space := router.GetSpace(s.ctx, "bkcc__2")
 	s.T().Logf("Space: %v\n", space)

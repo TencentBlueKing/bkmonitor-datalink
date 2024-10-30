@@ -244,12 +244,12 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	span.Set("step", opt.Step.String())
 	span.Set("source", opt.Source)
 	span.Set("target", opt.Target)
-	span.Set("matcher", fmt.Sprintf("%v", opt.Matcher))
+	span.Set("matcher", opt.Matcher)
 	span.Set("target", opt.PathResource)
 
 	queryMatcher := opt.Matcher.Rename()
 
-	span.Set("query-matcher", fmt.Sprintf("%v", queryMatcher))
+	span.Set("query-matcher", queryMatcher)
 
 	if opt.Source == "" {
 		opt.Source, err = r.getResourceFromMatch(ctx, queryMatcher)
@@ -276,8 +276,8 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		return
 	}
 
-	span.Set("source", string(opt.Source))
-	span.Set("index-matcher", fmt.Sprintf("%v", matcher))
+	span.Set("source", opt.Source)
+	span.Set("index-matcher", matcher)
 
 	paths, err := r.getPaths(ctx, opt.Source, opt.Target, opt.PathResource)
 	if err != nil {
@@ -395,17 +395,12 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	if err != nil {
 		return nil, err
 	}
-	err = metadata.SetQueryReference(ctx, queryReference)
-	if err != nil {
-		return nil, err
-	}
+	metadata.SetQueryReference(ctx, queryReference)
 
 	var instance tsdb.Instance
-	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
-	if ok {
-		if err != nil {
-			return nil, err
-		}
+
+	if metadata.GetQueryParams(ctx).IsDirectQuery() {
+		vmExpand := queryReference.ToVmExpand(ctx)
 
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
@@ -419,7 +414,7 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 		instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
 			QueryMaxRouting: QueryMaxRouting,
 			Timeout:         Timeout,
-		}, lookBackDelta)
+		}, lookBackDelta, QueryMaxRouting)
 	}
 
 	realPromQL, err := queryTs.ToPromQL(ctx)
@@ -439,10 +434,10 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	var matrix pl.Matrix
 	var vector pl.Vector
 	if instant {
-		vector, err = instance.Query(ctx, statement, end)
+		vector, err = instance.DirectQuery(ctx, statement, end)
 		matrix = vectorToMatrix(vector)
 	} else {
-		matrix, err = instance.QueryRange(ctx, statement, start, end, step)
+		matrix, err = instance.DirectQueryRange(ctx, statement, start, end, step)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("instance query error: %s", err)

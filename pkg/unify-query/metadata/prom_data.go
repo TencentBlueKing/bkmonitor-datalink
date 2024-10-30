@@ -31,7 +31,7 @@ func (f *PromDataFormat) format(s string) string {
 }
 
 func (f *PromDataFormat) isAlphaNumericUnderscore(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == ':' || r == '_'
 }
 
 func (f *PromDataFormat) EncodeFunc() func(q string) string {

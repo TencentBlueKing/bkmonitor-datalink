@@ -28,6 +28,8 @@ func TestStorageMulti(t *testing.T) {
 		{
 			h: 1,
 			lbs: map[string]string{
+				"status_code":            "2",
+				"kind":                   "2",
 				"service.name":           "service-name-1",
 				"service.version":        "service-version-1",
 				"telemetry.sdk.name":     "telemetry-sdk-name-1",
@@ -38,6 +40,8 @@ func TestStorageMulti(t *testing.T) {
 		{
 			h: 2,
 			lbs: map[string]string{
+				"status_code":            "1",
+				"kind":                   "1",
 				"service.name":           "service-name-2",
 				"service.version":        "service-version-2",
 				"telemetry.sdk.name":     "telemetry-sdk-name-2",
@@ -65,7 +69,7 @@ func TestStorageMulti(t *testing.T) {
 
 	storage.Del(1)
 	assert.False(t, storage.Exist(1))
-	assert.Len(t, storage.keys, 5)
+	assert.Len(t, storage.keys, 7)
 
 	storage.Clean()
 	assert.Len(t, storage.keys, 0)

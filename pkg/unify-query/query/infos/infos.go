@@ -55,6 +55,8 @@ type Params struct {
 
 	Start string `json:"start_time"`
 	End   string `json:"end_time"`
+
+	Timezone string `json:"timezone,omitempty" example:"Asia/Shanghai"`
 }
 
 func (p *Params) StartTimeUnix() (int64, error) {
@@ -76,15 +78,6 @@ func AnalysisQuery(stmt string) (*Params, error) {
 }
 
 var defaultLimit int
-
-// SetDefaultLimit
-func SetDefaultLimit(limit int) {
-	if limit == 0 {
-		defaultLimit = 1e2
-		return
-	}
-	defaultLimit = limit
-}
 
 // getTime
 func getTime(timestamp string) (time.Time, error) {

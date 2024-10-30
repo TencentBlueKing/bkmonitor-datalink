@@ -166,13 +166,6 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 	// 写入查询缓存
 	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix())
 
-	// 判断是否查询 vm
-	ok, vmExpand, err := qr.CheckVmQuery(ctx)
-	if err != nil {
-		r.Error("qr.CheckVmQuery", err)
-		return
-	}
-
 	promQL, err := q.ToPromQL(ctx)
 	if err != nil {
 		r.Error("q.ToPromQL", err)
@@ -181,7 +174,10 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 	r.Step("query promQL", promQL)
 
 	// vm query
-	if ok {
+	if metadata.GetQueryParams(ctx).IsDirectQuery() {
+		// 判断是否查询 vm
+		vmExpand := qr.ToVmExpand(ctx)
+
 		r.Step("query instance", consul.VictoriaMetricsStorageType)
 		r.Step("query vmExpand", vmExpand)
 	} else {
@@ -194,7 +190,7 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 				}
 
 				r.Step("instance id", qry.StorageID)
-				r.Step("instance type", instance.GetInstanceType())
+				r.Step("instance type", instance.InstanceType())
 				r.Step("query struct", qry)
 			}
 		}

@@ -19,7 +19,7 @@ const (
 	ElasticsearchStorageType   = "elasticsearch"
 )
 
-var typeList = []string{InfluxDBStorageType, ElasticsearchStorageType, BkSqlStorageType}
+var typeList = []string{InfluxDBStorageType, ElasticsearchStorageType, BkSqlStorageType, VictoriaMetricsStorageType}
 
 // GetTsDBStorageInfo 获取 tsDB 存储实例
 func GetTsDBStorageInfo() (map[string]*Storage, error) {

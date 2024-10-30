@@ -20,12 +20,17 @@ type Storage struct {
 	mut sync.RWMutex
 
 	keys  []string
-	store map[uint64]map[string]uint8
+	store map[uint64][]valueIndex
+}
+
+type valueIndex struct {
+	Value string
+	Index uint8
 }
 
 func New() *Storage {
 	return &Storage{
-		store: make(map[uint64]map[string]uint8),
+		store: make(map[uint64][]valueIndex),
 	}
 }
 
@@ -56,25 +61,28 @@ func (s *Storage) SetIf(h uint64, labels map[string]string) {
 		return
 	}
 
-	kvs := make(map[string]uint8)
+	vis := make([]valueIndex, 0, len(labels))
 	for k, v := range labels {
-		kvs[v] = s.getKeyIndex(k)
+		vis = append(vis, valueIndex{
+			Value: v,
+			Index: s.getKeyIndex(k),
+		})
 	}
-	s.store[h] = kvs
+
+	s.store[h] = vis
 }
 
 func (s *Storage) Get(h uint64) (map[string]string, bool) {
 	s.mut.RLock()
 	defer s.mut.RUnlock()
 
-	kvs, ok := s.store[h]
+	vis, ok := s.store[h]
 	if !ok {
 		return nil, false
 	}
-
 	ret := make(map[string]string)
-	for k, v := range kvs {
-		ret[s.keys[v]] = k
+	for _, vi := range vis {
+		ret[s.keys[vi.Index]] = vi.Value
 	}
 	return ret, true
 }
@@ -99,5 +107,5 @@ func (s *Storage) Clean() {
 	defer s.mut.Unlock()
 
 	s.keys = nil
-	s.store = make(map[uint64]map[string]uint8)
+	s.store = make(map[uint64][]valueIndex)
 }

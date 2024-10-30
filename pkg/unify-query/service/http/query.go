@@ -379,10 +379,6 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 
 	// 判断是否打开对齐
 	for _, q := range query.QueryList {
-		// 补充默认 datasource
-		if q.DataSource == "" {
-			q.DataSource = structured.BkMonitor
-		}
 		q.IsReference = false
 		q.AlignInfluxdbResult = AlignInfluxdbResult
 	}

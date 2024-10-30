@@ -54,6 +54,7 @@ func TestQueryToMetric(t *testing.T) {
 			metric: &md.QueryMetric{
 				QueryList: md.QueryList{
 					&md.Query{
+						DataSource:     BkMonitor,
 						TableID:        tableID,
 						DB:             db,
 						Measurement:    field,
@@ -84,6 +85,7 @@ func TestQueryToMetric(t *testing.T) {
 			metric: &md.QueryMetric{
 				QueryList: md.QueryList{
 					{
+						DataSource:     BkMonitor,
 						TableID:        tableID,
 						DB:             db,
 						StorageType:    consul.InfluxDBStorageType,
@@ -99,6 +101,7 @@ func TestQueryToMetric(t *testing.T) {
 						VmConditionNum: 1,
 					},
 					{
+						DataSource:     BkMonitor,
 						StorageType:    consul.VictoriaMetricsStorageType,
 						StorageID:      "2",
 						TableID:        "result_table.vm",
@@ -130,6 +133,7 @@ func TestQueryToMetric(t *testing.T) {
 			metric: &md.QueryMetric{
 				QueryList: md.QueryList{
 					{
+						DataSource:     BkMonitor,
 						TableID:        tableID,
 						DB:             db,
 						StorageType:    consul.InfluxDBStorageType,
@@ -145,6 +149,7 @@ func TestQueryToMetric(t *testing.T) {
 						VmConditionNum: 1,
 					},
 					{
+						DataSource:     BkMonitor,
 						StorageType:    consul.VictoriaMetricsStorageType,
 						StorageID:      "2",
 						TableID:        "result_table.vm",
@@ -177,6 +182,7 @@ func TestQueryToMetric(t *testing.T) {
 			metric: &md.QueryMetric{
 				QueryList: md.QueryList{
 					{
+						DataSource:     BkMonitor,
 						TableID:        tableID,
 						DB:             db,
 						StorageType:    consul.InfluxDBStorageType,
@@ -186,7 +192,7 @@ func TestQueryToMetric(t *testing.T) {
 						Field:          promql.StaticField,
 						Fields:         []string{promql.StaticField},
 						Measurement:    "kube_.*",
-						Measurements:   []string{field, field1},
+						Measurements:   []string{field, field1, "kube_node_status_condition"},
 						Timezone:       "UTC",
 						VmCondition:    `__name__=~"kube_.*_value"`,
 						VmConditionNum: 1,
@@ -254,6 +260,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				"a": &md.QueryMetric{
 					QueryList: md.QueryList{
 						{
+							DataSource:     BkMonitor,
 							Condition:      "bk_biz_id='2'",
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
@@ -282,6 +289,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				"b": &md.QueryMetric{
 					QueryList: md.QueryList{
 						{
+							DataSource:     BkMonitor,
 							Condition:      "bk_biz_id='2'",
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
@@ -338,6 +346,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				"a": &md.QueryMetric{
 					QueryList: md.QueryList{
 						{
+							DataSource:     BkMonitor,
 							Condition:      "bk_biz_id='2'",
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
@@ -369,6 +378,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				"b": &md.QueryMetric{
 					QueryList: md.QueryList{
 						{
+							DataSource:     BkMonitor,
 							Condition:      "bk_biz_id='2'",
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
@@ -412,6 +422,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				"b": &md.QueryMetric{
 					QueryList: md.QueryList{
 						{
+							DataSource:     BkMonitor,
 							Condition:      "bk_biz_id='2'",
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
@@ -472,6 +483,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				"b": &md.QueryMetric{
 					QueryList: md.QueryList{
 						{
+							DataSource:     BkMonitor,
 							Condition:      "bk_obj_id!='0' and bk_biz_id='2'",
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
@@ -539,6 +551,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				"b": &md.QueryMetric{
 					QueryList: md.QueryList{
 						{
+							DataSource:     BkMonitor,
 							Condition:      "bk_biz_id='2'",
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
@@ -603,6 +616,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				"a": &md.QueryMetric{
 					QueryList: md.QueryList{
 						{
+							DataSource:     BkMonitor,
 							Condition:      "bk_biz_id='2'",
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
@@ -674,6 +688,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				"a": &md.QueryMetric{
 					QueryList: md.QueryList{
 						{
+							DataSource:     BkMonitor,
 							Condition:      "bk_biz_id='2'",
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
@@ -705,6 +720,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			ts: &QueryTs{
 				QueryList: []*Query{
 					{
+						DataSource:    BkMonitor,
 						TableID:       "system.cpu_detail",
 						FieldName:     "usage",
 						ReferenceName: "a",
@@ -743,6 +759,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				"a": &md.QueryMetric{
 					QueryList: md.QueryList{
 						{
+							DataSource:     BkMonitor,
 							Condition:      "bk_biz_id='2'",
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
@@ -781,6 +798,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			ts: &QueryTs{
 				QueryList: []*Query{
 					{
+						DataSource:    BkMonitor,
 						TableID:       "system.cpu_summary",
 						FieldName:     "usage",
 						ReferenceName: "a",
@@ -807,6 +825,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				"a": &md.QueryMetric{
 					QueryList: md.QueryList{
 						{
+							DataSource:     BkMonitor,
 							Condition:      "bk_biz_id='2'",
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
@@ -875,6 +894,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				"a": &md.QueryMetric{
 					QueryList: md.QueryList{
 						{
+							DataSource:     BkMonitor,
 							Condition:      "bk_biz_id='2'",
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
@@ -909,6 +929,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			ts: &QueryTs{
 				QueryList: []*Query{
 					{
+						DataSource:    BkMonitor,
 						TableID:       "system.cpu_summary",
 						FieldName:     "usage",
 						ReferenceName: "a",
@@ -941,6 +962,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				"a": &md.QueryMetric{
 					QueryList: md.QueryList{
 						{
+							DataSource:     BkMonitor,
 							Condition:      "bk_biz_id='2'",
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
@@ -980,7 +1002,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 		},
 		"es 聚合查询验证 - 4": {
 			ts: &QueryTs{
-
 				QueryList: []*Query{
 					{
 						DataSource:    BkLog,

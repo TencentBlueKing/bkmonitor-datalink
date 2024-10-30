@@ -195,9 +195,11 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 			case Percentiles:
 				if percentMetric, ok := data.Percentiles(info.Name); ok && percentMetric != nil {
 					for k, v := range percentMetric.Values {
-						a.addLabel("le", k)
-						a.item.value = v
-						a.reset()
+						if !strings.Contains(k, "_as_string") {
+							a.addLabel("le", k)
+							a.item.value = v
+							a.reset()
+						}
 					}
 				}
 			default:

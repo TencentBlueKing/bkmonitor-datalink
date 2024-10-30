@@ -709,21 +709,16 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		return nil, err
 	}
 
-	lbsMap := make(map[string]struct{}, 0)
+	lbsMap := set.New[string]()
 	for _, s := range series {
 		for _, l := range s.Metric {
 			if l.Name == name {
-				lbsMap[l.Value] = struct{}{}
+				lbsMap.Add(l.Value)
 			}
 		}
 	}
 
-	lbs := make([]string, 0, len(lbsMap))
-	for k := range lbsMap {
-		lbs = append(lbs, k)
-	}
-
-	return lbs, nil
+	return lbsMap.ToArray(), nil
 }
 
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {

@@ -52,10 +52,6 @@ type QueryAsyncData struct {
 }
 
 type QuerySyncResultData struct {
-	ResultTableScanRange struct {
-		BcsLolRestriction struct {
-		} `json:"132_bcs_lol_restriction"`
-	} `json:"result_table_scan_range"`
 	Cluster            string `json:"cluster"`
 	TraceId            string `json:"trace_id"`
 	TotalRecords       int    `json:"totalRecords"`

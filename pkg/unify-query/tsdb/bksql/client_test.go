@@ -12,11 +12,9 @@ package bksql
 import (
 	"context"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
@@ -26,46 +24,70 @@ import (
 )
 
 var (
-	address string
-	code    string
-	token   string
-	secret  string
-
 	client *Client
-
-	once sync.Once
 )
 
-func mockClient() *Client {
-	once.Do(func() {
-		address = viper.GetString("mock.bk_sql.address")
-		code = viper.GetString("mock.bk_sql.code")
-		secret = viper.GetString("mock.bk_sql.secret")
-		token = viper.GetString("mock.bk_sql.token")
+func MockClient() *Client {
+	if client == nil {
+		client = (&Client{}).WithUrl(mock.BkSQLUrl).WithCurl(&curl.HttpCurl{Log: log.DefaultLogger})
+	}
 
-		client = &Client{
-			url:  address,
-			curl: &curl.HttpCurl{Log: log.DefaultLogger},
-		}
-	})
 	return client
 }
 
 func TestClient_QuerySync(t *testing.T) {
-	ctx := context.Background()
-
 	mock.Init()
-	mockClient()
+	ctx := metadata.InitHashID(context.Background())
 
-	ctx = metadata.InitHashID(ctx)
+	start := time.UnixMilli(1729838623416)
+	end := time.UnixMilli(1729838923416)
 
-	end := time.Now()
-	start := end.Add(time.Minute * -5)
+	mock.BkSQL.Set(map[string]any{
+		`SELECT * FROM restriction_table WHERE dtEventTimeStamp >= 1729838623416 AND dtEventTimeStamp < 1729838923416 LIMIT 5`: &Result{
+			Result: true,
+			Code:   StatusOK,
+			Data: &QuerySyncResultData{
+				TotalRecords: 5,
+				SelectFieldsOrder: []string{
+					"dtEventTimeStamp",
+					"value",
+					"metric_type",
+				},
+				List: []map[string]any{
+					{
+						"dtEventTimeStamp": 1726732280000,
+						"value":            2.0,
+						"metric_type":      "hermes-server",
+					},
+					{
+						"dtEventTimeStamp": 1726732280000,
+						"value":            0.02,
+						"metric_type":      "hermes-server",
+					},
+					{
+						"dtEventTimeStamp": 1726732280000,
+						"value":            1072.0,
+						"metric_type":      "hermes",
+					},
+					{
+						"dtEventTimeStamp": 1726732280000,
+						"value":            0.4575,
+						"metric_type":      "hermes",
+					},
+					{
+						"dtEventTimeStamp": 1726732280000,
+						"value":            2.147483648e9,
+						"metric_type":      "hermes",
+					},
+				},
+			},
+		},
+	})
 
-	res := client.QuerySync(
+	res := MockClient().QuerySync(
 		ctx,
 		fmt.Sprintf(
-			`SELECT * FROM 132_hander_opmon_avg WHERE dtEventTimeStamp >= %d AND dtEventTimeStamp < %d LIMIT 10`,
+			`SELECT * FROM restriction_table WHERE dtEventTimeStamp >= %d AND dtEventTimeStamp < %d LIMIT 5`,
 			start.UnixMilli(),
 			end.UnixMilli(),
 		),
@@ -75,9 +97,9 @@ func TestClient_QuerySync(t *testing.T) {
 	assert.Equal(t, StatusOK, res.Code)
 	d, ok := res.Data.(*QuerySyncResultData)
 	assert.True(t, ok)
+	assert.Equal(t, d.TotalRecords, 5)
 
 	if d != nil {
 		assert.NotEmpty(t, d.List)
-		log.Infof(ctx, "%+v", d)
 	}
 }

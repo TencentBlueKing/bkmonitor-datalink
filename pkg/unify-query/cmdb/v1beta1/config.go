@@ -26,15 +26,6 @@ var configData = &Config{
 				"node",
 			},
 		},
-		//{
-		//	Name: "container",
-		//	Index: cmdb.Index{
-		//		"bcs_cluster_id",
-		//		"namespace",
-		//		"pod",
-		//		"container",
-		//	},
-		//},
 		{
 			Name: "pod",
 			Index: cmdb.Index{

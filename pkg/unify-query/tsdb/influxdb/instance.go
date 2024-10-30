@@ -102,7 +102,7 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 }
 
 // GetInstanceType 获取引擎类型
-func (i *Instance) GetInstanceType() string {
+func (i *Instance) InstanceType() string {
 	return consul.InfluxDBStorageType
 }
 
@@ -202,7 +202,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 		},
 		res,
 	)
-	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
+	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.InstanceType())
 
 	return res, nil
 }
@@ -505,9 +505,9 @@ func (i *Instance) query(
 	span.Set("query-cost", queryCost.String())
 
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, user.Source, fmt.Sprintf("%s_http", i.GetInstanceType()), i.host,
+		ctx, queryCost, user.SpaceUid, user.Source, fmt.Sprintf("%s_http", i.InstanceType()), i.host,
 	)
-	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
+	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.InstanceType())
 
 	series := make([]*decoder.Row, 0)
 	for _, r := range res.Results {
@@ -679,7 +679,7 @@ func (i *Instance) QuerySeriesSet(
 
 	span.Set("query-storage-id", query.StorageID)
 	span.Set("query-cluster-name", query.ClusterName)
-	span.Set("query-tag-keys", fmt.Sprintf("%+v", query.TagsKey))
+	span.Set("query-tag-keys", query.TagsKey)
 
 	span.Set("query-protocol", i.protocol)
 	span.Set("query-rate-limit", int(i.readRateLimit))
@@ -705,10 +705,11 @@ func (i *Instance) QuerySeriesSet(
 			if len(query.Aggregates) == 0 && i.protocol == influxdb.GRPC {
 				set = i.grpcStream(ctx, query.DB, query.RetentionPolicy, measurement, field, where, slimit, limit)
 			} else {
-				// 复制 Query 对象，简化 field、measure 取值，传入查询方法
+				// 复制 ToVmExpand 对象，简化 field、measure 取值，传入查询方法
 				mq := &metadata.Query{
 					DataSource:      query.DataSource,
 					TableID:         query.TableID,
+					MetricName:      query.MetricName,
 					RetentionPolicy: query.RetentionPolicy,
 					DB:              query.DB,
 					Measurement:     measurement,
@@ -739,7 +740,7 @@ func (i *Instance) QuerySeriesSet(
 }
 
 // QueryRange 查询范围数据
-func (i *Instance) QueryRange(
+func (i *Instance) DirectQueryRange(
 	ctx context.Context, promql string,
 	start, end time.Time, step time.Duration,
 ) (promPromql.Matrix, error) {
@@ -747,14 +748,14 @@ func (i *Instance) QueryRange(
 }
 
 // Query instant 查询
-func (i *Instance) Query(
+func (i *Instance) DirectQuery(
 	ctx context.Context, promql string,
 	end time.Time,
 ) (promql.Vector, error) {
 	return nil, nil
 }
 
-func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
 	var (
 		err    error
 		cancel context.CancelFunc
@@ -839,7 +840,7 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 			},
 			res,
 		)
-		metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
+		metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.InstanceType())
 
 		span.Set("query-cost", time.Since(startAnaylize).String())
 
@@ -950,7 +951,7 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 		},
 		res,
 	)
-	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
+	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.InstanceType())
 
 	span.Set("query-cost", time.Since(startAnaylize).String())
 
@@ -990,7 +991,7 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 	return lbs, err
 }
 
-func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error) {
 	var (
 		err    error
 		cancel context.CancelFunc
@@ -1092,7 +1093,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 			},
 			res,
 		)
-		metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
+		metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.InstanceType())
 
 		span.Set("query-cost", time.Since(startAnaylize).String())
 		span.Set("response-size", size)
@@ -1124,6 +1125,32 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 	return lbs, err
 }
 
-func (i *Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
-	return nil
+func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) (series []map[string]string, err error) {
+	ss := i.QuerySeriesSet(ctx, query, start, end)
+
+	if ss.Err() != nil {
+		err = ss.Err()
+		return
+	}
+
+	series = make([]map[string]string, 0)
+	for ss.Next() {
+		seriesMap := make(map[string]string)
+		for _, lb := range ss.At().Labels() {
+			seriesMap[lb.Name] = lb.Value
+		}
+		series = append(series, seriesMap)
+	}
+
+	return series, nil
+}
+
+func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
 }

@@ -9,7 +9,9 @@
 
 package function
 
-import "github.com/prometheus/prometheus/model/labels"
+import (
+	"github.com/prometheus/prometheus/model/labels"
+)
 
 func MatcherToMetricName(matchers ...*labels.Matcher) string {
 	for _, m := range matchers {

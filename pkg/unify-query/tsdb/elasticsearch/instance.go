@@ -576,7 +576,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		return 0, err
 	}
 
-	if query.Size > i.maxSize {
+	if i.maxSize > 0 && query.Size > i.maxSize {
 		query.Size = i.maxSize
 	}
 

@@ -236,7 +236,7 @@ func TestAPIHandler(t *testing.T) {
 					Value: "container",
 				},
 			},
-			expected: `["POD","kube-proxy"]`,
+			expected: `{"values":{"container":["POD","kube-proxy"]}}`,
 		},
 		"test label values in vm 2": {
 			handler: HandlerLabelValues,
@@ -248,7 +248,7 @@ func TestAPIHandler(t *testing.T) {
 					Value: "bcs_cluster_id",
 				},
 			},
-			expected: `["BCS-K8S-00000"]`,
+			expected: `{"values":{"bcs_cluster_id":["BCS-K8S-00000"]}}`,
 		},
 		"test field keys in prometheus": {
 			handler: HandlerFieldKeys,

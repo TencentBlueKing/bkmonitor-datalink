@@ -82,6 +82,7 @@ func MockSpaceRouter(ctx context.Context) {
 		influxdbFields := []string{
 			"kube_pod_info",
 			"kube_node_info",
+			"kube_node_status_condition",
 		}
 
 		tsdb.SetStorage(

@@ -485,44 +485,47 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		return nil, err
 	}
 
-	// 判断是否查询非路由 tsdb
-	if q.DataSource != "" {
-		// 如果是 BkSql 查询无需获取 tsdb 路由关系
-		if q.DataSource == BkData {
-			allConditions, bkDataErr := q.Conditions.AnalysisConditions()
-			if bkDataErr != nil {
-				err = bkDataErr
-				return nil, bkDataErr
-			}
+	// 如果 DataSource 为空，则自动补充
+	if q.DataSource == "" {
+		q.DataSource = BkMonitor
+	}
 
-			route, bkDataErr := MakeRouteFromTableID(q.TableID)
-			if bkDataErr != nil {
-				err = bkDataErr
-				return nil, bkDataErr
-			}
-
-			qry := &metadata.Query{
-				StorageType:    consul.BkSqlStorageType,
-				TableID:        string(tableID),
-				DataSource:     q.DataSource,
-				DB:             route.DB(),
-				Measurement:    route.Measurement(),
-				Field:          q.FieldName,
-				Aggregates:     aggregates,
-				BkSqlCondition: allConditions.BkSql(),
-			}
-
-			metadata.GetQueryParams(ctx).SetStorageType(qry.StorageType)
-
-			span.Set("query-storage-id", qry.StorageID)
-			span.Set("query-measurement", qry.Measurement)
-			span.Set("query-field", qry.Field)
-			span.Set("query-aggr-method-list", qry.Aggregates)
-			span.Set("query-bk-sql-condition", qry.BkSqlCondition)
-
-			queryMetric.QueryList = []*metadata.Query{qry}
-			return queryMetric, nil
+	// 如果是 BkSql 查询无需获取 tsdb 路由关系
+	if q.DataSource == BkData {
+		allConditions, bkDataErr := q.Conditions.AnalysisConditions()
+		if bkDataErr != nil {
+			err = bkDataErr
+			return nil, bkDataErr
 		}
+
+		route, bkDataErr := MakeRouteFromTableID(q.TableID)
+		if bkDataErr != nil {
+			err = bkDataErr
+			return nil, bkDataErr
+		}
+
+		qry := &metadata.Query{
+			StorageType:    consul.BkSqlStorageType,
+			TableID:        string(tableID),
+			DataSource:     q.DataSource,
+			DB:             route.DB(),
+			Measurement:    route.Measurement(),
+			Field:          q.FieldName,
+			MetricName:     metricName,
+			Aggregates:     aggregates,
+			BkSqlCondition: allConditions.BkSql(),
+		}
+
+		metadata.GetQueryParams(ctx).SetStorageType(qry.StorageType)
+
+		span.Set("query-storage-id", qry.StorageID)
+		span.Set("query-measurement", qry.Measurement)
+		span.Set("query-field", qry.Field)
+		span.Set("query-aggr-method-list", qry.Aggregates)
+		span.Set("query-bk-sql-condition", qry.BkSqlCondition)
+
+		queryMetric.QueryList = []*metadata.Query{qry}
+		return queryMetric, nil
 	}
 
 	isSkipField := false

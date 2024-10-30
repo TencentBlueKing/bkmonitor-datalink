@@ -73,6 +73,7 @@ type Query struct {
 	ClusterName string
 	TagsKey     []string
 
+	DataSource string
 	TableID    string
 	MetricName string
 
@@ -111,7 +112,6 @@ type Query struct {
 
 	// Es 查询扩展
 	QueryString   string
-	DataSource    string
 	AllConditions AllConditions
 	Source        []string
 	From          int

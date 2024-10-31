@@ -33,76 +33,55 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logx"
 )
 
-func contentTypeMappings(s string) string {
-	if s == "protobuf" {
-		return "application/vnd.kubernetes.protobuf"
-	}
-	return "application/json"
-}
+const (
+	contentTypeProtobuf = "application/vnd.kubernetes.protobuf"
+)
 
-type Option func(c *rest.Config)
-
-func WithContentType(s string) Option {
-	return func(c *rest.Config) {
-		c.ContentConfig.ContentType = contentTypeMappings(s)
-	}
-}
-
-func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig, opts ...Option) (kubernetes.Interface, error) {
+func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig) (kubernetes.Interface, error) {
 	cfg, err := k8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
-	for _, opt := range opts {
-		opt(cfg)
-	}
+	cfg.ContentType = contentTypeProtobuf
 	return kubernetes.NewForConfig(cfg)
 }
 
-func NewK8SClientInsecure(opts ...Option) (kubernetes.Interface, error) {
+func NewK8SClientInsecure() (kubernetes.Interface, error) {
 	cfg, err := k8sutil.NewClusterConfig("", true, nil)
 	if err != nil {
 		return nil, err
 	}
-	for _, opt := range opts {
-		opt(cfg)
-	}
+	cfg.ContentType = contentTypeProtobuf
 	return kubernetes.NewForConfig(cfg)
 }
 
 // NewPromClient 操作 ServiceMonitor/PodMonitor/Probe CRD
-func NewPromClient(host string, tlsConfig *rest.TLSClientConfig, opts ...Option) (promversioned.Interface, error) {
+func NewPromClient(host string, tlsConfig *rest.TLSClientConfig) (promversioned.Interface, error) {
 	cfg, err := k8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
-	for _, opt := range opts {
-		opt(cfg)
-	}
+	cfg.ContentType = contentTypeProtobuf
 	return promversioned.NewForConfig(cfg)
 }
 
 // NewBKClient 操作 DataID CRD
-func NewBKClient(host string, tlsConfig *rest.TLSClientConfig, opts ...Option) (bkversioned.Interface, error) {
+func NewBKClient(host string, tlsConfig *rest.TLSClientConfig) (bkversioned.Interface, error) {
 	cfg, err := k8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
-	for _, opt := range opts {
-		opt(cfg)
-	}
+	cfg.ContentType = contentTypeProtobuf
 	return bkversioned.NewForConfig(cfg)
 }
 
 // NewTkexClient 操作 GameStatefulSet/GameDeployment CRD
-func NewTkexClient(host string, tlsConfig *rest.TLSClientConfig, opts ...Option) (tkexversiond.Interface, error) {
+func NewTkexClient(host string, tlsConfig *rest.TLSClientConfig) (tkexversiond.Interface, error) {
 	cfg, err := k8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
-	for _, opt := range opts {
-		opt(cfg)
-	}
+	cfg.ContentType = contentTypeProtobuf
 	return tkexversiond.NewForConfig(cfg)
 }
 

@@ -101,29 +101,23 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		return nil, err
 	}
 
-	var opts []k8sutils.Option
-	kubeOpts := configs.G().KubeOptions
-	if kubeOpts.ContentType != "" {
-		opts = append(opts, k8sutils.WithContentType(kubeOpts.ContentType))
-	}
 	apiHost := configs.G().APIServerHost
-
-	operator.client, err = k8sutils.NewK8SClient(apiHost, configs.G().GetTLS(), opts...)
+	operator.client, err = k8sutils.NewK8SClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.promclient, err = k8sutils.NewPromClient(apiHost, configs.G().GetTLS(), opts...)
+	operator.promclient, err = k8sutils.NewPromClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.bkclient, err = k8sutils.NewBKClient(apiHost, configs.G().GetTLS(), opts...)
+	operator.bkclient, err = k8sutils.NewBKClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.tkexclient, err = k8sutils.NewTkexClient(apiHost, configs.G().GetTLS(), opts...)
+	operator.tkexclient, err = k8sutils.NewTkexClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}

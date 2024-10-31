@@ -52,4 +52,5 @@ func (s *UDPConfiSuite) TestConfigClean() {
 	s.Equal("raw", taskConf.RequestFormat)
 	s.Equal("", taskConf.Response)
 	s.Equal("startswith", taskConf.ResponseFormat)
+	s.Equal(false, taskConf.CustomReport)
 }

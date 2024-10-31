@@ -10,6 +10,7 @@
 package tasks
 
 import (
+	"fmt"
 	"strconv"
 	"time"
 
@@ -409,4 +410,180 @@ func NewMetricEvent(task define.TaskConfig) *MetricEvent {
 		Labels: labels,
 		BizID:  task.GetBizID(),
 	}
+}
+
+// CustomEvent 自定义消息事件
+type CustomEvent struct {
+	Type            string
+	Data            common.MapStr
+	ignoreCmdbLevel bool
+	Labels          []map[string]string
+}
+
+// NewCustomEvent 创建自定义事件
+func NewCustomEvent(t string, data common.MapStr, ignoreCmdbLevel bool, labels []map[string]string) *CustomEvent {
+	return &CustomEvent{
+		Type:            t,
+		Data:            data,
+		ignoreCmdbLevel: ignoreCmdbLevel,
+		Labels:          labels,
+	}
+}
+
+// NewCustomEventBySimpleEvent 通过SimpleEvent创建自定义事件
+func NewCustomEventBySimpleEvent(e *SimpleEvent) *CustomEvent {
+	ts := e.StartAt.Unix()
+	// 补充节点信息
+	info, _ := gse.GetAgentInfo()
+
+	// 维度取值
+	dimensions := map[string]string{
+		"bk_biz_id":   strconv.Itoa(int(e.BizID)),
+		"target_host": e.TargetHost,
+		"target_port": strconv.Itoa(e.TargetPort),
+		"task_id":     strconv.Itoa(int(e.TaskID)),
+		"task_type":   e.TaskType,
+		"status":      strconv.Itoa(int(e.Status)),
+		"resolved_ip": e.ResolvedIP,
+		"error_code":  strconv.Itoa(e.ErrorCode.Code()),
+		"node_id":     fmt.Sprintf("%d:%s", info.Cloudid, info.IP),
+		"ip":          info.IP,
+		"bk_cloud_id": strconv.Itoa(int(info.Cloudid)),
+		"bk_agent_id": info.BKAgentID,
+	}
+
+	data := common.MapStr{
+		"dataid": e.DataID,
+		"data": []map[string]interface{}{
+			{
+				"target":    fmt.Sprintf("%s:%d", e.TargetHost, e.TargetPort),
+				"dimension": dimensions,
+				"metrics": map[string]interface{}{
+					"available":     e.Available,
+					"task_duration": int(e.TaskDuration().Milliseconds()),
+				},
+				"timestamp": ts * 1000,
+			},
+		},
+		"time":      ts,
+		"timestamp": ts,
+	}
+
+	return NewCustomEvent(e.GetType(), data, e.IgnoreCMDBLevel(), e.Labels)
+}
+
+// NewCustomEventByPingEvent 通过PingEvent创建自定义事件
+func NewCustomEventByPingEvent(e *PingEvent) *CustomEvent {
+	ts := e.Time.Unix()
+
+	// 触发维度补充
+	e.AsMapStr()
+
+	// 维度取值
+	dimensions := map[string]string{}
+	for k, v := range e.Dimensions {
+		dimensions[k] = v
+	}
+
+	// 补充节点信息
+	info, _ := gse.GetAgentInfo()
+	dimensions["node_id"] = fmt.Sprintf("%d:%s", info.Cloudid, info.IP)
+	dimensions["ip"] = info.IP
+	dimensions["bk_cloud_id"] = strconv.Itoa(int(info.Cloudid))
+	dimensions["bk_agent_id"] = info.BKAgentID
+
+	// 指标取值
+	metrics := map[string]interface{}{}
+	for k, v := range e.Metrics {
+		metrics[k] = v
+	}
+
+	data := common.MapStr{
+		"dataid": e.DataID,
+		"data": []map[string]interface{}{
+			{
+				"target":    dimensions["target"],
+				"dimension": dimensions,
+				"metrics":   metrics,
+				"timestamp": ts * 1000,
+			},
+		},
+		"time":      ts,
+		"timestamp": ts,
+	}
+
+	return NewCustomEvent(e.GetType(), data, e.IgnoreCMDBLevel(), e.Labels)
+}
+
+// GetType 获取事件类型
+func (e *CustomEvent) GetType() string {
+	return e.Type
+}
+
+// deepCopyMap 深拷贝嵌套 map
+func deepCopyMap(src map[string]interface{}) map[string]interface{} {
+	dst := make(map[string]interface{})
+	for k, v := range src {
+		switch obj := v.(type) {
+		case map[string]string:
+			newValue := make(map[string]string)
+			for kk, vv := range obj {
+				newValue[kk] = vv
+			}
+			dst[k] = newValue
+		case map[string]interface{}:
+			newValue := make(map[string]interface{})
+			for kk, vv := range obj {
+				newValue[kk] = vv
+			}
+			dst[k] = newValue
+		default:
+			dst[k] = v
+		}
+	}
+	return dst
+}
+
+// AsMapStr 转换为mapstr
+func (e *CustomEvent) AsMapStr() common.MapStr {
+	// 如果没有labels，直接返回data
+	if len(e.Labels) == 0 {
+		return e.Data
+	}
+
+	// 数据断言
+	data, ok := e.Data["data"].([]map[string]interface{})
+	if !ok {
+		e.Data["data"] = []map[string]interface{}{}
+		return e.Data
+	}
+
+	// 将 data 和 labels 进行组合
+	var records []map[string]interface{}
+	for _, record := range data {
+		for _, labels := range e.Labels {
+			// 深拷贝
+			newRecord := deepCopyMap(record)
+
+			// 将labels注入到dimensions中
+			dimensions, ok := newRecord["dimension"].(map[string]string)
+			if !ok {
+				dimensions = make(map[string]string)
+				newRecord["dimension"] = dimensions
+			}
+			for k, v := range labels {
+				dimensions[k] = v
+			}
+
+			records = append(records, newRecord)
+		}
+	}
+	e.Data["data"] = records
+
+	return e.Data
+}
+
+// IgnoreCMDBLevel 是否忽略CMDB层级
+func (e *CustomEvent) IgnoreCMDBLevel() bool {
+	return e.ignoreCmdbLevel
 }

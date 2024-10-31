@@ -136,6 +136,10 @@ type PromSliScrape struct {
 	Alerting  map[string]interface{} `yaml:"alerting"`
 }
 
+type KubeOptions struct {
+	ContentType string `yaml:"content_type"`
+}
+
 // Config Operator 进程主配置
 type Config struct {
 	// BkEnv 环境配置信息
@@ -218,6 +222,7 @@ type Config struct {
 	PromSli     PromSli      `yaml:"sli"`
 	MetaEnv     env.Metadata `yaml:"meta_env"`
 	PromSDKinds PromSDKinds  `yaml:"prom_sd_kinds"`
+	KubeOptions KubeOptions  `yaml:"kube_options"`
 
 	StatefulSetMatchRules      []StatefulSetMatchRule      `yaml:"statefulset_match_rules"`
 	MonitorBlacklistMatchRules []MonitorBlacklistMatchRule `yaml:"monitor_blacklist_match_rules"`

@@ -26,4 +26,5 @@ project:
     - sliwebhook
     - influxdbproxy
     - influxdb
+    - libgse
   reviewers: [ ]

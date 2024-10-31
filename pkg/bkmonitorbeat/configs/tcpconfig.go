@@ -23,6 +23,7 @@ type TCPTaskConfig struct {
 	NetTaskParam     `config:"_,inline"`
 	SimpleMatchParam `config:"_,inline"`
 	SimpleTaskParam  `config:"_,inline"`
+	CustomReport     bool `config:"custom_report"`
 }
 
 // InitIdent :

@@ -87,6 +87,7 @@ type HTTPTaskConfig struct {
 	Proxy              string                `config:"proxy"`
 	InsecureSkipVerify bool                  `config:"insecure_skip_verify"`
 	Steps              []*HTTPTaskStepConfig `config:"steps"`
+	CustomReport       bool                  `config:"custom_report"`
 }
 
 // InitIdent :

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
@@ -50,7 +51,8 @@ var (
 )
 
 type QueryFactory struct {
-	ctx context.Context
+	ctx  context.Context
+	lock sync.RWMutex
 
 	query *metadata.Query
 
@@ -60,6 +62,7 @@ type QueryFactory struct {
 
 	selects []string
 	groups  []string
+	orders  metadata.Orders
 
 	sql strings.Builder
 
@@ -72,7 +75,14 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 		query:   query,
 		selects: make([]string, 0),
 		groups:  make([]string, 0),
+		orders:  make(metadata.Orders),
 	}
+	if query.Orders != nil {
+		for k, v := range query.Orders {
+			f.orders[k] = v
+		}
+	}
+
 	if query.TimeField.Name != "" {
 		f.timeField = query.TimeField.Name
 	} else {
@@ -92,6 +102,9 @@ func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 }
 
 func (f *QueryFactory) ParserQuery() (err error) {
+	f.lock.Lock()
+	defer f.lock.Unlock()
+
 	if len(f.query.Aggregates) > 0 {
 		for _, agg := range f.query.Aggregates {
 			for _, dim := range agg.Dimensions {
@@ -104,10 +117,7 @@ func (f *QueryFactory) ParserQuery() (err error) {
 				timeField := fmt.Sprintf("(`%s` - (`%s` %% %d))", f.timeField, f.timeField, agg.Window.Milliseconds())
 				f.groups = append(f.groups, timeField)
 				f.selects = append(f.selects, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
-				if f.query.Orders == nil {
-					f.query.Orders = make(metadata.Orders)
-				}
-				f.query.Orders[FieldTime] = true
+				f.orders[FieldTime] = true
 			}
 		}
 	}
@@ -127,6 +137,9 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	if err != nil {
 		return
 	}
+
+	f.lock.RLock()
+	defer f.lock.RUnlock()
 
 	f.write("SELECT")
 	f.write(strings.Join(f.selects, ", "))
@@ -148,7 +161,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	}
 
 	orders := make([]string, 0)
-	for key, asc := range f.query.Orders {
+	for key, asc := range f.orders {
 		var orderField string
 		switch key {
 		case FieldValue:

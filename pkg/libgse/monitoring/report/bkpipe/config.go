@@ -37,9 +37,10 @@ var defaultConfig = config{
 }
 
 type ExtraLabel struct {
-	Type    string            `config:"type"`
-	Source  string            `config:"source"`
-	Mapping map[string]string `config:"mapping"`
+	Type     string `config:"type"`
+	Name     string `config:"name"`
+	Source   string `config:"source"`
+	ValueRef string `config:"value_ref"`
 }
 
 func (el ExtraLabel) Load() map[string]string {
@@ -54,11 +55,10 @@ func (el ExtraLabel) Load() map[string]string {
 
 func (el ExtraLabel) loadFormEnv() map[string]string {
 	env := os.Getenv(el.Source)
-	v, ok := el.Mapping[el.Source]
-	if ok {
-		return map[string]string{v: env}
+	if env == "" {
+		return nil
 	}
-	return nil
+	return map[string]string{el.Name: env}
 }
 
 func (el ExtraLabel) loadFromFile() map[string]string {
@@ -80,13 +80,11 @@ func (el ExtraLabel) loadFromFile() map[string]string {
 		labels[strings.TrimSpace(parts[0])] = v
 	}
 
-	ret := make(map[string]string)
 	for k, v := range labels {
-		newK, ok := el.Mapping[k]
-		if ok {
-			ret[newK] = v
+		if k == el.ValueRef {
+			return map[string]string{el.Name: v}
 		}
 	}
 
-	return ret
+	return nil
 }

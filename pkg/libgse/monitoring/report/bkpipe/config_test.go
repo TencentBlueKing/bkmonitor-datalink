@@ -32,14 +32,15 @@ cluster_id=test_cluster1
 	cfg := config{
 		ExtraLabels: []ExtraLabel{
 			{
-				Type:    "file",
-				Source:  f.Name(),
-				Mapping: map[string]string{"cluster_id": "bcs_cluster_id"},
+				Type:     "file",
+				Source:   f.Name(),
+				Name:     "bcs_cluster_id",
+				ValueRef: "cluster_id",
 			},
 			{
-				Type:    "env",
-				Source:  "PODIP",
-				Mapping: map[string]string{"PODIP": "pod_ip"},
+				Type:   "env",
+				Source: "PODIP",
+				Name:   "pod_ip",
 			},
 		},
 	}

@@ -101,7 +101,7 @@ type Event struct {
 
 func setupEvent(c *Config) {
 	if c.Event.MaxSpan == "" {
-		c.Event.MaxSpan = "2h" // 默认事件最大时间跨度为 2h
+		c.Event.MaxSpan = "3m" // 默认事件最大时间跨度为 3m 即保证能够大于两个上报周期即可
 	}
 	if c.Event.Interval == "" {
 		c.Event.Interval = "60s" // 默认事件上报周期为 60s

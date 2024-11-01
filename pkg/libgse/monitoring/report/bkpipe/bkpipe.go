@@ -137,6 +137,7 @@ type reporter struct {
 	beatVersion  string
 	bkCloudId    int
 	ip           string
+	extraLabels  map[string]string
 }
 
 func init() {
@@ -153,6 +154,13 @@ func makeReporter(beat beat.Info, settings report.Settings, cfg *common.Config) 
 		}
 	}
 
+	extraLabels := make(map[string]string)
+	for _, el := range config.ExtraLabels {
+		for k, v := range el.Load() {
+			extraLabels[k] = v
+		}
+	}
+
 	reporter := &reporter{
 		done:         make(chan struct{}),
 		bkBizID:      config.BkBizID,
@@ -164,6 +172,7 @@ func makeReporter(beat beat.Info, settings report.Settings, cfg *common.Config) 
 		registry:     monitoring.Default,
 		beatName:     beat.Beat,
 		beatVersion:  beat.Version,
+		extraLabels:  extraLabels,
 	}
 
 	reporter.wg.Add(1)
@@ -242,6 +251,12 @@ func (r *reporter) sendMetrics(s monitoring.FlatSnapshot) {
 
 			if r.k8sNodeName != "" {
 				dimension["k8s_node_name"] = r.k8sNodeName
+			}
+
+			for k, v := range r.extraLabels {
+				if d := dimension[k]; d == "" {
+					dimension[k] = v
+				}
 			}
 
 			data[key] = append(data[key], common.MapStr{

@@ -33,11 +33,16 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logx"
 )
 
+const (
+	contentTypeProtobuf = "application/vnd.kubernetes.protobuf"
+)
+
 func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig) (kubernetes.Interface, error) {
 	cfg, err := k8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
+	cfg.ContentType = contentTypeProtobuf
 	return kubernetes.NewForConfig(cfg)
 }
 
@@ -46,6 +51,7 @@ func NewK8SClientInsecure() (kubernetes.Interface, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.ContentType = contentTypeProtobuf
 	return kubernetes.NewForConfig(cfg)
 }
 
@@ -55,6 +61,7 @@ func NewPromClient(host string, tlsConfig *rest.TLSClientConfig) (promversioned.
 	if err != nil {
 		return nil, err
 	}
+	cfg.ContentType = contentTypeProtobuf
 	return promversioned.NewForConfig(cfg)
 }
 
@@ -64,6 +71,7 @@ func NewBKClient(host string, tlsConfig *rest.TLSClientConfig) (bkversioned.Inte
 	if err != nil {
 		return nil, err
 	}
+	cfg.ContentType = contentTypeProtobuf
 	return bkversioned.NewForConfig(cfg)
 }
 
@@ -73,6 +81,7 @@ func NewTkexClient(host string, tlsConfig *rest.TLSClientConfig) (tkexversiond.I
 	if err != nil {
 		return nil, err
 	}
+	cfg.ContentType = contentTypeProtobuf
 	return tkexversiond.NewForConfig(cfg)
 }
 

@@ -7,4 +7,20 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package structured_test
+package function
+
+import (
+	"github.com/prometheus/prometheus/model/labels"
+)
+
+func MatcherToMetricName(matchers ...*labels.Matcher) string {
+	for _, m := range matchers {
+		if m.Name == labels.MetricName {
+			if m.Type == labels.MatchEqual || m.Type == labels.MatchRegexp {
+				return m.Value
+			}
+		}
+	}
+
+	return ""
+}

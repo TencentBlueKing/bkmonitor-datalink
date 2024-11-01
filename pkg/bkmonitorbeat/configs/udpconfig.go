@@ -30,6 +30,7 @@ type UDPTaskConfig struct {
 	SimpleTaskParam   `config:"_,inline"`
 	Times             int  `config:"times" validate:"min=1"`
 	WaitEmptyResponse bool `config:"wait_empty_response"`
+	CustomReport      bool `config:"custom_report"`
 }
 
 // InitIdent :

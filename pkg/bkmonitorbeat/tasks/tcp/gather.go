@@ -147,7 +147,12 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		if h.Errno != define.CodeOK {
 			event := g.newEvent(taskConf, h.Host)
 			event.Fail(h.Errno)
-			e <- event
+			// 如果需要使用自定义上报，则将事件转换为自定义事件
+			if taskConf.CustomReport {
+				e <- tasks.NewCustomEventBySimpleEvent(event)
+			} else {
+				e <- event
+			}
 		} else {
 			resultMap[h.Host] = h.Ips
 		}
@@ -172,7 +177,13 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 				defer func() {
 					wg.Done()
 					g.GetSemaphore().Release(1)
-					e <- event
+
+					// 如果需要使用自定义上报，则将事件转换为自定义事件
+					if taskConf.CustomReport {
+						e <- tasks.NewCustomEventBySimpleEvent(event)
+					} else {
+						e <- event
+					}
 				}()
 				// 检查单个目标
 				code := g.checkTargetHost(ctx, taskConf, host, event)

@@ -7,40 +7,31 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package curl
+package bkapi
 
 import (
-	"context"
-	"encoding/json"
-	"io"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
-type MockCurl struct {
-	f    func(opt Options) []byte
-	Opts Options
-}
+func TestGetBkAPI(t *testing.T) {
+	mock.Init()
 
-var _ Curl = &MockCurl{}
+	code := GetBkAPI().GetCode()
+	assert.Equal(t, "bk_code", code)
 
-func (c *MockCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reader, resp any) (int, error)) {
-	return
-}
+	url := GetBkAPI().Url("query")
+	assert.Equal(t, "http://127.0.0.1:12001/query", url)
 
-func (c *MockCurl) WithF(f func(opt Options) []byte) {
-	c.f = f
-}
+	headers := GetBkAPI().Headers(map[string]string{
+		"Content-Type": "application/json",
+	})
 
-func (c *MockCurl) Request(ctx context.Context, method string, opt Options, res interface{}) (int, error) {
-	c.Opts = opt
-
-	var out []byte
-	if c.f != nil {
-		out = c.f(opt)
-	}
-
-	if len(out) > 0 {
-		err := json.Unmarshal(out, res)
-		return len(out), err
-	}
-	return 0, nil
+	assert.Equal(t, map[string]string{
+		"Content-Type":          "application/json",
+		"X-Bkapi-Authorization": `{"bk_app_code":"bk_code","bk_app_secret":"bk_secret","bk_username":"admin"}`,
+	}, headers)
 }

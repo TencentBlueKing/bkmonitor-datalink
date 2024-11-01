@@ -553,7 +553,10 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			name = info.Name
 		case TermAgg:
 			curName := info.Name
-			curAgg := elastic.NewTermsAggregation().Field(info.Name).Size(f.size)
+			curAgg := elastic.NewTermsAggregation().Field(info.Name)
+			if f.size > 0 {
+				curAgg = curAgg.Size(f.size)
+			}
 			for key, asc := range info.Order {
 				curAgg = curAgg.Order(key, asc)
 			}

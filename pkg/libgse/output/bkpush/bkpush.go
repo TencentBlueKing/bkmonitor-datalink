@@ -22,7 +22,9 @@ import (
 	"github.com/elastic/beats/libbeat/publisher"
 	"github.com/spf13/cast"
 
+	gseinfo "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/gse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/logp"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/monitoring/report/bkpipe"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 )
 
@@ -120,11 +122,27 @@ func New(cfg *common.Config) (*Output, error) {
 		go o.loopHandle()
 	}
 
+	bkpipe.InitSender(o, gseinfo.AgentInfo{}) // TODO(mando): 兼容 bkpipe 自定义指标上报 ┓(=´∀`=)┏
 	return o, nil
 }
 
 func (o *Output) Close() error {
 	close(o.stop)
+	return nil
+}
+
+func (o *Output) Report(dataid int32, data common.MapStr) error {
+	r := &Record{
+		DataID: dataid,
+		Data:   data,
+	}
+
+	select {
+	case o.ch <- r:
+	case <-o.stop:
+		return nil
+	}
+
 	return nil
 }
 

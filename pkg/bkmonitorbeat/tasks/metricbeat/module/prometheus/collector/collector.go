@@ -109,7 +109,7 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 		return nil, err
 	}
 
-	duration := time.Second * 3
+	duration := time.Second * 10
 	if config.MetricRelabelRemoteTimeout != "" {
 		d, err := time.ParseDuration(config.MetricRelabelRemoteTimeout)
 		if err != nil {

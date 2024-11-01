@@ -20,6 +20,9 @@ tasks: {% for task in tasks %}
     period: {{ task.period }}
     # 检测超时（connect+read总共时间）
     timeout: {{ task.timeout | default('3s', true) }}
+    {%- if custom_report == "true" %}
+    # 是否自定义上报
+    custom_report: {{ custom_report | default("false", true) }}{% endif %}
     max_rtt: {{ task.max_rtt }}
     total_num: {{ task.total_num }}
     ping_size: {{ task.size }}
@@ -35,8 +38,22 @@ tasks: {% for task in tasks %}
     {% if instance[output_field] -%}
     - target: {{ instance[output_field] }}
       target_type: ip
-    {% endif %}{% endfor %}{% endfor %}{% endif %}{% endfor %}
-    {% if labels %}labels:
-    {% for label in labels %}{% for key, value in label.items() %}{{"-" if loop.first else " "}} {{key}}: "{{ value }}"
-    {% endfor %}{% endfor %}
+    {% endif %}{% endfor %}{% endfor %}{% endif %}
+    {%- if custom_report == "true" %}
+    {%- if task.labels %}
+    labels:
+    {%- for key, value in task.labels.items() %}
+    {{"-" if loop.first else " "}} {{ key }}: "{{ value }}"
+    {% endfor %}
     {% endif %}
+    {%- else %}
+    {%- if labels %}
+    labels:
+    {%- for label in labels %}
+    {%- for key, value in label.items() %}
+    {{"-" if loop.first else " "}} {{key}}: "{{ value }}"
+    {%- endfor %}
+    {% endfor %}
+    {% endif %}
+    {%- endif %}
+{%- endfor -%}

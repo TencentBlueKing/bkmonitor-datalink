@@ -17,6 +17,27 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 )
 
+const (
+	bkDatabaseLabelName    = "bk_database"    // argus/prom 存储, db 名对应的 label 名称
+	bkMeasurementLabelName = "bk_measurement" // argus/prom 存储, 表名对应的 label 名称
+
+	BkMonitorAlisa = "bk_monitor"
+	BkMonitor      = "bkmonitor"
+	Custom         = "custom"
+	BkData         = "bkdata"
+	BkLog          = "bklog"
+	BkApm          = "bkapm"
+)
+
+var dataSourceMap = map[string]struct{}{
+	BkMonitorAlisa: {},
+	BkMonitor:      {},
+	Custom:         {},
+	BkData:         {},
+	BkLog:          {},
+	BkApm:          {},
+}
+
 type TableID string
 
 // Split 按照格式解析 TableID

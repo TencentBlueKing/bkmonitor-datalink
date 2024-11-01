@@ -170,6 +170,12 @@ func (r *Instance) Close() error {
 
 // HSetWithCompareAndPublish 与redis中数据不同才进行更新和推送操作
 func (r *Instance) HSetWithCompareAndPublish(key, field, value, channelName, channelKey string) (bool, error) {
+	// 参数非空校验
+	if key == "" || field == "" || value == "" || channelName == "" || channelKey == "" {
+		logger.Errorf("HSetWithCompareAndPublish: key or field or value or channelName or channelKey is empty")
+		return false, fmt.Errorf("key or field or value or channelName or channelKey is empty")
+	}
+
 	//var isNeedUpdate bool
 	logger.Infof("HSetWithCompareAndPublish: try to operate [redis_diff] HashSet key [%s] field [%s],value [%s] channelName [%s],channelKey [%s]", key, field, value, channelName, channelKey)
 	oldValue := r.HGet(key, field)

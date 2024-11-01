@@ -254,7 +254,7 @@ func (r *reporter) sendMetrics(s monitoring.FlatSnapshot) {
 			}
 
 			for k, v := range r.extraLabels {
-				if d := dimension[k]; d == "" {
+				if _, ok := dimension[k]; !ok {
 					dimension[k] = v
 				}
 			}
@@ -282,6 +282,7 @@ func (r *reporter) sendMetrics(s monitoring.FlatSnapshot) {
 				"timestamp": time.Now().UnixNano(),
 			}
 			event["data_id"] = dataID
+			event["dataid"] = dataID
 			event["data"] = metricList
 
 			// 如果有配置对应的任务ID，则发送采集事件

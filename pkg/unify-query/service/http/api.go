@@ -205,7 +205,7 @@ func HandlerTagValues(c *gin.Context) {
 		err error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "handler-tag-keys")
+	ctx, span := trace.NewSpan(ctx, "handler-tag-values")
 	defer span.End(&err)
 
 	params := &infos.Params{}

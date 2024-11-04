@@ -390,8 +390,9 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 		return nil, err
 	}
 
-	metadata.GetQueryParams(ctx).SetIsSkipK8s(true)
+	metadata.GetQueryParams(ctx).SetTime(startTs, endTs).SetIsSkipK8s(true)
 	queryReference, err := queryTs.ToQueryReference(ctx)
+
 	if err != nil {
 		return nil, err
 	}

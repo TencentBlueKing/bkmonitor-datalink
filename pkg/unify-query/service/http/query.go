@@ -468,7 +468,6 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 
 	// 写入查询时间到全局缓存
 	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix())
-
 	instance, stmt, err = queryTsToInstanceAndStmt(ctx, query)
 	if err != nil {
 		return nil, err

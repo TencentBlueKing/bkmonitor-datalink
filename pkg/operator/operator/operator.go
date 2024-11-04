@@ -101,22 +101,23 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		return nil, err
 	}
 
-	operator.client, err = k8sutils.NewK8SClient(configs.G().APIServerHost, configs.G().GetTLS())
+	apiHost := configs.G().APIServerHost
+	operator.client, err = k8sutils.NewK8SClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.promclient, err = k8sutils.NewPromClient(configs.G().APIServerHost, configs.G().GetTLS())
+	operator.promclient, err = k8sutils.NewPromClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.bkclient, err = k8sutils.NewBKClient(configs.G().APIServerHost, configs.G().GetTLS())
+	operator.bkclient, err = k8sutils.NewBKClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.tkexclient, err = k8sutils.NewTkexClient(configs.G().APIServerHost, configs.G().GetTLS())
+	operator.tkexclient, err = k8sutils.NewTkexClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}

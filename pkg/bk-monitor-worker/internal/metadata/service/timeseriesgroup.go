@@ -57,7 +57,7 @@ func NewTimeSeriesGroupSvc(obj *customreport.TimeSeriesGroup) TimeSeriesGroupSvc
 
 // UpdateTimeSeriesMetrics 从远端存储中同步TS的指标和维度对应关系
 func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, queryFromBkData bool) (bool, error) {
-	logger.Infof("UpdateTimeSeriesMetrics stated, vm_rt: %s, query_from_bkdata: %v", vmRt, queryFromBkData)
+	logger.Infof("UpdateTimeSeriesMetrics started, vm_rt: %s, query_from_bkdata: %v", vmRt, queryFromBkData)
 	// 如果在白名单中，则通过计算平台获取指标数据
 	if queryFromBkData {
 		// 获取 vm rt及metric
@@ -113,7 +113,7 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 		}]
 	*/
 	// 获取要处理的指标和维度的标识
-	logger.Infof("GetRedisData stated, expired_time: %d,TimeSeriesGroupID: %v,TimeSeriesGroupName: %v", expiredTime, s.TimeSeriesGroupID, s.TimeSeriesGroupName)
+	logger.Infof("GetRedisData started, expired_time: %d,TimeSeriesGroupID: %v,TimeSeriesGroupName: %v", expiredTime, s.TimeSeriesGroupID, s.TimeSeriesGroupName)
 	metricKey := fmt.Sprintf("%s%d", cfg.MetadataMetricDimensionMetricKeyPrefix, s.BkDataID)
 	metricDimensionsKey := fmt.Sprintf("%s%d", cfg.MetadataMetricDimensionKeyPrefix, s.BkDataID)
 	fetchStep := cfg.MetadataMetricDimensionMaxMetricFetchStep

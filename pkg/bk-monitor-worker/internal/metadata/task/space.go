@@ -15,14 +15,11 @@ import (
 
 	"github.com/pkg/errors"
 
-	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -138,8 +135,9 @@ func RefreshBkciSpaceName(ctx context.Context, t *t.Task) error {
 	return nil
 }
 
-// PushAndPublishSpaceRouterTask 推送并发布空间路由信息
+// PushAndPublishSpaceRouterInfo 推送并发布空间路由信息
 func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
+
 	defer func() {
 		if err := recover(); err != nil {
 			logger.Errorf("PushAndPublishSpaceRouterInfo Runtime panic caught: %v", err)
@@ -173,7 +171,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 				wg.Done()
 			}()
 			// 推送空间到结果表的路由
-			if err := pusher.PushSpaceTableIds(sp.SpaceTypeId, sp.SpaceId, false); err != nil {
+			if err := pusher.PushSpaceTableIds(sp.SpaceTypeId, sp.SpaceId); err != nil {
 				logger.Errorf("PushAndPublishSpaceRouterInfo task error, push space [%s__%s] to redis error, %s", sp.SpaceTypeId, sp.SpaceId, err)
 			} else {
 				logger.Infof("PushAndPublishSpaceRouterInfo task success, push space [%s__%s] to redis success", sp.SpaceTypeId, sp.SpaceId)
@@ -181,14 +179,6 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		}(sp, wg, ch)
 	}
 	wg.Wait()
-	// 统一推送数据
-	client := redis.GetStorageRedisInstance()
-	spaceUidString, err := jsonx.Marshal(spaceUidList)
-	if err == nil {
-		if err := client.Publish(cfg.SpaceToResultTableChannel, spaceUidString); err != nil {
-			logger.Errorf("PushAndPublishSpaceRouterInfo task error, publish space to table_id error: %s", err)
-		}
-	}
 
 	// 推送结果表别名路由
 	if err := pusher.PushDataLabelTableIds(nil, nil, true); err != nil {
@@ -207,7 +197,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		tableIdList = append(tableIdList, rt.TableId)
 	}
 
-	// 推送结果表详情路由
+	// TODO：兼容新版结果表路由方法，重构入参
 	if err := pusher.PushTableIdDetail(tableIdList, true, true); err != nil {
 		logger.Errorf("PushAndPublishSpaceRouterInfo task error, push table detail error: %s")
 	}

@@ -47,6 +47,7 @@ type PingTaskConfig struct {
 	BatchSize    int       `config:"batch_size"`
 	TotalNum     int       `config:"total_num"`
 	PingSize     int       `config:"ping_size"`
+	CustomReport bool      `config:"custom_report"`
 }
 
 // InitIdent :

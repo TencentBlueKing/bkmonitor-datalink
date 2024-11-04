@@ -468,6 +468,14 @@ func HandlerLabelValues(c *gin.Context) {
 	if err != nil {
 		return
 	}
+
+	startTime, endTime, err := query.GetTime()
+	// start 和 end 如果为空，则默认给 1h
+	if err != nil {
+		endTime = time.Now()
+		startTime = endTime.Add(time.Hour * -1)
+	}
+	metadata.GetQueryParams(ctx).SetTime(startTime.Unix(), endTime.Unix())
 	instance, stmt, err := queryTsToInstanceAndStmt(ctx, query)
 	if err != nil {
 		return
@@ -476,13 +484,6 @@ func HandlerLabelValues(c *gin.Context) {
 	matcher, err := parser.ParseMetricSelector(stmt)
 	if err != nil {
 		return
-	}
-
-	startTime, endTime, err := query.GetTime()
-	// start 和 end 如果为空，则默认给 1h
-	if err != nil {
-		endTime = time.Now()
-		startTime = endTime.Add(time.Hour * -1)
 	}
 
 	limitNum, _ := strconv.Atoi(limit)

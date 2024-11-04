@@ -527,6 +527,9 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 		end = time.Now()
 		start = end.Add(time.Hour * -1)
 	}
+
+	// 写入查询时间到全局缓存
+	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix())
 	queryRef, err = queryTs.ToQueryReference(ctx)
 	return
 }

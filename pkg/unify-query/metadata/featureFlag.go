@@ -42,13 +42,15 @@ func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 	// 根据查询时间范围判断是否满足当前时间配置
 	vmDataTime := featureFlag.IntVariation(ctx, ffUser, "range-vm-query", 0)
 
-	span.Set("vm-data-time", vmDataTime)
-
 	if vmDataTime > 0 {
 		queryParams := GetQueryParams(ctx)
 		status = int64(vmDataTime) < queryParams.Start
+
+		span.Set("vm-data-time", vmDataTime)
+		span.Set("query-params-start", queryParams.Start)
 	}
 
+	span.Set("ff-status", status)
 	return status
 }
 

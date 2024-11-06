@@ -38,7 +38,7 @@ HEADER_FILE="./hack/boilerplate.go.txt"
 # --output-base    because this script should also be able to run inside the vendor dir of
 #                  k8s.io/kubernetes. The output-base is needed for the generators to output into the vendor dir
 #                  instead of the $GOPATH directly. For normal projects this can be dropped.
-bash -x ${CODE_GENERATOR_FILE} \
+bash ${CODE_GENERATOR_FILE} \
   "${TYPES}" \
   "${OUTPUT_PKG}" \
   "${APIS_PKG}" \

@@ -97,9 +97,10 @@ func TestPingerParseTarget(t *testing.T) {
 func TestPingerSend(t *testing.T) {
 	pinger := NewPinger(time.Millisecond*100, false)
 
+	ip := "127.0.0.1"
 	targets := []*PingerTarget{
 		{
-			Target:       "127.0.0.1",
+			Target:       ip,
 			TargetType:   "ip",
 			DomainIpType: 0,
 			DnsCheckMode: "all",
@@ -123,7 +124,7 @@ func TestPingerSend(t *testing.T) {
 	assert.False(t, pinger.haveIPv6)
 	assert.Nil(t, pinger.conn6)
 
-	instance := pinger.instances["127.0.0.1"]
+	instance := pinger.instances[ip]
 
 	err = pinger.send(instance)
 	if err != nil {
@@ -160,11 +161,12 @@ func TestPingerSend(t *testing.T) {
 func TestPingerPing(t *testing.T) {
 	pinger := NewPinger(time.Millisecond*100, false)
 
+	ip := "www.baidu.com"
 	targets := []*PingerTarget{
 		{
-			Target:       "127.0.0.1",
-			TargetType:   "ip",
-			DomainIpType: 0,
+			Target:       ip,
+			TargetType:   "domain",
+			DomainIpType: 4,
 			DnsCheckMode: "all",
 			MaxRtt:       time.Second,
 			Times:        3,
@@ -179,17 +181,21 @@ func TestPingerPing(t *testing.T) {
 	}
 
 	target := targets[0]
-	for _, rtt := range target.GetResult()["127.0.0.1"] {
-		assert.Greater(t, rtt, time.Duration(0))
+	for ipStr, result := range target.GetResult() {
+		t.Logf("ip: %s result: %v", ipStr, result)
+		for _, rtt := range result {
+			assert.Greater(t, rtt, time.Duration(0))
+		}
 	}
 }
 
 func TestPingerTimeout(t *testing.T) {
 	pinger := NewPinger(time.Millisecond*100, false)
 
+	ip := "127.0.0.1"
 	targets := []*PingerTarget{
 		{
-			Target:       "127.0.0.1",
+			Target:       ip,
 			TargetType:   "ip",
 			DomainIpType: 0,
 			DnsCheckMode: "all",
@@ -210,7 +216,7 @@ func TestPingerTimeout(t *testing.T) {
 		t.Fatalf("listen error: %v", err)
 	}
 
-	instance := pinger.instances["127.0.0.1"]
+	instance := pinger.instances[ip]
 
 	for _, result := range instance.results {
 		result.SendTime = time.Now().Add(-110 * time.Millisecond)

@@ -29,7 +29,7 @@ set -o pipefail
 OUTPUT_DIR="client"
 APIS_DIR="apis"
 GROUP_VERSIONS="crd:v1beta1 bk.tencent.com:v1alpha1"
-TYPES="deepcopy"
+TYPES="deepcopy,client,informer,lister"
 
 # generate the code with:
 # --output-base    because this script should also be able to run inside the vendor dir of

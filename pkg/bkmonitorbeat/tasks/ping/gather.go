@@ -45,6 +45,17 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		return
 	}
 
+	// 发送间隔
+	if taskConf.SendInterval == "" {
+		taskConf.SendInterval = "1ms"
+	}
+	sendInterval, err := time.ParseDuration(taskConf.SendInterval)
+	if err != nil {
+		logger.Errorf("parse send interval failed, error:%s", err)
+		tasks.SendFailEvent(taskConf.GetDataID(), e)
+		return
+	}
+
 	if len(taskConf.Targets) == 0 {
 		// 目标为空则直接返回空
 		logger.Debugf("icmp targetList is empty")
@@ -68,7 +79,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 
 	// 启动ping任务
-	pinger := NewPinger(time.Millisecond, false)
+	pinger := NewPinger(sendInterval, !taskConf.NotPrivileged)
 	err = pinger.Ping(subCtx, targets)
 	if err != nil {
 		logger.Errorf("ping failed, error:%v", err)
@@ -86,7 +97,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 			// 丢包率及时延统计
 			lossCount, avgRtt, maxRtt, minRtt := 0, 0.0, 0.0, 0.0
 			for _, rtt := range rttList {
-				rtt := float64(rtt)
+				rtt := rtt.Seconds() * 1000
 
 				if rtt <= 0 {
 					lossCount++

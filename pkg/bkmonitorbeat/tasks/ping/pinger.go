@@ -148,7 +148,7 @@ type Pinger struct {
 	// 发送间隔
 	sendInterval time.Duration
 
-	// 特权模式
+	// 是否特权模式，默认的ping需要root权限
 	privileged bool
 
 	// 发送队列
@@ -171,9 +171,6 @@ func NewPinger(sendInterval time.Duration, privileged bool) *Pinger {
 
 		sendInterval: sendInterval,
 		privileged:   privileged,
-
-		sendQueue:  make(chan *pingerInstance, 1000),
-		replyQueue: make(chan *pingerPacket, 1000),
 
 		targetToIP: make(map[string][]string),
 		instances:  make(map[string]*pingerInstance),
@@ -593,21 +590,23 @@ func (p *Pinger) handleResponse(packet *pingerPacket) error {
 	case ipv4.ICMPTypeEchoReply, ipv6.ICMPTypeEchoReply:
 		echoReply, ok = msg.Body.(*icmp.Echo)
 		if !ok {
-			return errors.New("invalid ICMP Echo Reply message")
+			return errors.Errorf("invalid ICMP Echo Reply message, ip: %s, invalid body", instance.ip.String())
 		}
 	default:
 		return nil
 	}
 
+	logger.Debugf("receive icmp echo reply, ip: %s, seq: %d, id: %d", instance.ip.String(), echoReply.Seq, echoReply.ID)
+
 	// 判断seq是否合法
 	index := echoReply.Seq
 	if index >= instance.times {
-		return errors.Errorf("invalid ICMP Echo Reply message, seq out of range, seq:%d", index)
+		return errors.Errorf("invalid ICMP Echo Reply message, ip: %s, seq out of range, seq:%d", instance.ip.String(), index)
 	}
 
 	// 判断id是否合法
 	if echoReply.ID != p.id {
-		return errors.Errorf("invalid ICMP Echo Reply message, id not match, id:%d", echoReply.ID)
+		return errors.Errorf("invalid ICMP Echo Reply message, ip: %s, id not match, id:%d, expect:%d", instance.ip.String(), echoReply.ID, p.id)
 	}
 
 	// 加写锁
@@ -695,5 +694,13 @@ func (p *Pinger) parseTarget(targets []*PingerTarget) error {
 			}
 		}
 	}
+
+	// 初始化发送和接收队列
+	queueLength := len(p.instances)
+	if queueLength < 100 {
+		queueLength = 100
+	}
+	p.sendQueue = make(chan *pingerInstance, queueLength)
+	p.replyQueue = make(chan *pingerPacket, queueLength)
 	return nil
 }

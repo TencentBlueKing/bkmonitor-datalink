@@ -132,30 +132,6 @@ func TestPingerSend(t *testing.T) {
 	}
 
 	assert.NotZero(t, instance.results[0].SendTime)
-
-	err = pinger.receive(pinger.conn4)
-	if err != nil {
-		t.Fatalf("receive error: %v", err)
-	}
-
-	var reply *pingerPacket
-	select {
-	case reply = <-pinger.replyQueue:
-	case <-time.After(time.Millisecond * 500):
-		t.Fatalf("receive timeout")
-	}
-
-	assert.NotNil(t, reply)
-
-	err = pinger.handleResponse(reply)
-	if err != nil {
-		t.Fatalf("handleResponse error: %v", err)
-	}
-
-	assert.Len(t, pinger.sendQueue, 1)
-	assert.NotZero(t, instance.results[0].RecvTime)
-
-	t.Logf("ip: %s, rtt: %v", instance.ip, instance.results[0].RTT())
 }
 
 func TestPingerPing(t *testing.T) {

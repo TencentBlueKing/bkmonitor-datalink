@@ -16,14 +16,14 @@ import (
 	sync "sync"
 	time "time"
 
+	versioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
+	bktencentcom "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions/bk.tencent.com"
+	crd "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions/crd"
+	internalinterfaces "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions/internalinterfaces"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions/crd"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions/internalinterfaces"
 )
 
 // SharedInformerOption defines the functional option type for SharedInformerFactory.
@@ -166,7 +166,12 @@ type SharedInformerFactory interface {
 	ForResource(resource schema.GroupVersionResource) (GenericInformer, error)
 	WaitForCacheSync(stopCh <-chan struct{}) map[reflect.Type]bool
 
+	Bk() bktencentcom.Interface
 	Monitoring() crd.Interface
+}
+
+func (f *sharedInformerFactory) Bk() bktencentcom.Interface {
+	return bktencentcom.New(f, f.namespace, f.tweakListOptions)
 }
 
 func (f *sharedInformerFactory) Monitoring() crd.Interface {

@@ -56,6 +56,6 @@ image: build
 	cd dockerfile/operator && docker build -t ${MIRRORS}/bkmonitor-operator:$(VERSION) . && docker push ${MIRRORS}/bkmonitor-operator:$(VERSION) && rm bkmonitor-operator
 	cd dockerfile/reloader && docker build -t ${MIRRORS}/bkmonitorbeat-reloader:$(VERSION) . && docker push ${MIRRORS}/bkmonitorbeat-reloader:$(VERSION) && rm bkmonitorbeat-reloader
 
-.PHONY: update-codegen
+.PHONY: codegen
 update-codegen:
 	chmod +x ./hack/update-codegen.sh && bash ./hack/update-codegen.sh

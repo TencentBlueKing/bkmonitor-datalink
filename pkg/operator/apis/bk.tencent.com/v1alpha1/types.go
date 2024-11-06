@@ -109,10 +109,8 @@ type BkLogConfigStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 }
 
-//+kubebuilder:object:root=true
-//+kubebuilder:subresource:status
-
-// BkLogConfig is the Schema for the bklogconfigs API
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 type BkLogConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -121,9 +119,7 @@ type BkLogConfig struct {
 	Status BkLogConfigStatus `json:"status,omitempty"`
 }
 
-//+kubebuilder:object:root=true
-
-// BkLogConfigList contains a list of BkLogConfig
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 type BkLogConfigList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

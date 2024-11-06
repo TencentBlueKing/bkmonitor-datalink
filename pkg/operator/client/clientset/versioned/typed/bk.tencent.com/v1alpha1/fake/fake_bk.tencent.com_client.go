@@ -12,22 +12,22 @@
 package fake
 
 import (
-	v1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/crd/v1beta1"
+	v1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/bk.tencent.com/v1alpha1"
 	rest "k8s.io/client-go/rest"
 	testing "k8s.io/client-go/testing"
 )
 
-type FakeMonitoringV1beta1 struct {
+type FakeBkV1alpha1 struct {
 	*testing.Fake
 }
 
-func (c *FakeMonitoringV1beta1) DataIDs(namespace string) v1beta1.DataIDInterface {
-	return &FakeDataIDs{c, namespace}
+func (c *FakeBkV1alpha1) BkLogConfigs(namespace string) v1alpha1.BkLogConfigInterface {
+	return &FakeBkLogConfigs{c, namespace}
 }
 
 // RESTClient returns a RESTClient that is used to communicate
 // with API server by this client implementation.
-func (c *FakeMonitoringV1beta1) RESTClient() rest.Interface {
+func (c *FakeBkV1alpha1) RESTClient() rest.Interface {
 	var ret *rest.RESTClient
 	return ret
 }

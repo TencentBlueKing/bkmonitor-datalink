@@ -12,7 +12,7 @@
 package v1beta1
 
 import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions/internalinterfaces"
+	internalinterfaces "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions/internalinterfaces"
 )
 
 // Interface provides access to all the informers in this group version.

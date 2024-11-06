@@ -29,13 +29,14 @@ set -o pipefail
 OUTPUT_DIR="client"
 APIS_DIR="apis"
 GROUP_VERSIONS="crd:v1beta1 bk.tencent.com:v1alpha1"
+TYPES="deepcopy"
 
 # generate the code with:
 # --output-base    because this script should also be able to run inside the vendor dir of
 #                  k8s.io/kubernetes. The output-base is needed for the generators to output into the vendor dir
 #                  instead of the $GOPATH directly. For normal projects this can be dropped.
 ${CODE_GENERATOR_FILE} \
-  "deepcopy,client,informer,lister" \
+  "${TYPES}" \
   "${OUTPUT_DIR}" \
   "${APIS_DIR}" \
   "${GROUP_VERSIONS}" \

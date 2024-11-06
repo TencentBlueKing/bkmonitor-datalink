@@ -75,14 +75,18 @@ func (r *recorder) loopCleanup() {
 		select {
 		case <-ticker.C:
 			r.mut.Lock()
+			var deleted int
+			total := len(r.set)
 			now := time.Now().Unix()
 			// 避免内存无限增长
 			for k, v := range r.set {
 				if now-v.GetLastTime() >= int64(r.eventSpan.Seconds()) {
 					delete(r.set, k)
+					deleted++
 				}
 			}
 			r.mut.Unlock()
+			define.RecordLogf("kubeevent cache, total=%d, delete=%d", total, deleted)
 		case <-r.ctx.Done():
 			return
 		}

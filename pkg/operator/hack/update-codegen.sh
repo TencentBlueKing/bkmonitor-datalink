@@ -14,22 +14,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+CODE_GENERATOR_FILE="./vendor/k8s.io/code-generator/generate-groups.sh"
+
+if [ ! -f "${CODE_GENERATOR_FILE}" ]; then
+  go mod vendor
+fi
+
+chmod +x ${CODE_GENERATOR_FILE}
+
 set -o errexit
 set -o nounset
 set -o pipefail
 
-SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
-SCRIPT_ROOT="${SCRIPT_DIR}/.."
-CODEGEN_PKG="${CODEGEN_PKG:-"${SCRIPT_ROOT}/../../../../kubernetes/code-generator"}"
+OUTPUT_DIR="client"
+APIS_DIR="apis"
+GROUP_VERSIONS="bk.tencent.com:v1alpha1 crd:v1beta1"
 
-source "${CODEGEN_PKG}/kube_codegen.sh"
-
-THIS_PKG="github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator"
-
-kube::codegen::gen_client \
-    --with-watch \
-    --with-applyconfig \
-    --output-dir "${SCRIPT_ROOT}/client" \
-    --output-pkg "${THIS_PKG}/apis" \
-    --boilerplate "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
-    "${SCRIPT_ROOT}/apis"
+# generate the code with:
+# --output-base    because this script should also be able to run inside the vendor dir of
+#                  k8s.io/kubernetes. The output-base is needed for the generators to output into the vendor dir
+#                  instead of the $GOPATH directly. For normal projects this can be dropped.
+${CODE_GENERATOR_FILE} \
+  "deepcopy,client,informer,lister" \
+  "${OUTPUT_DIR}" \
+  "${APIS_DIR}" \
+  "${GROUP_VERSIONS}" \
+  --go-header-file ./hack/boilerplate.go.txt \
+  --output-base ./

@@ -9,6 +9,6 @@
 
 // +k8s:deepcopy-gen=package
 // +k8s:defaulter-gen=TypeMeta
-// +groupName=monitoring.bk.tencent.com
+// +groupName=bk.tencent.com
 
 package v1alpha1

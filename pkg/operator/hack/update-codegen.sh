@@ -28,7 +28,7 @@ set -o pipefail
 
 OUTPUT_DIR="client"
 APIS_DIR="apis"
-GROUP_VERSIONS="bk.tencent.com:v1alpha1 crd:v1beta1"
+GROUP_VERSIONS="crd:v1beta1 bk.tencent.com:v1alpha1"
 
 # generate the code with:
 # --output-base    because this script should also be able to run inside the vendor dir of

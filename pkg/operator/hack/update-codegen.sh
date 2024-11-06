@@ -26,19 +26,22 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-OUTPUT_DIR="client"
-APIS_DIR="apis"
-GROUP_VERSIONS="crd:v1beta1 bk.tencent.com:v1alpha1"
+ROOT_DIR="../../../../../"
+MODULE="github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator"
 TYPES="deepcopy,client,informer,lister"
+OUTPUT_DIR=${MODULE}"/client"
+APIS_DIR=${MODULE}"/apis"
+GROUP_VERSIONS="crd:v1beta1 bk.tencent.com:v1alpha1"
+HEADER_FILE="./hack/boilerplate.go.txt"
 
 # generate the code with:
 # --output-base    because this script should also be able to run inside the vendor dir of
 #                  k8s.io/kubernetes. The output-base is needed for the generators to output into the vendor dir
 #                  instead of the $GOPATH directly. For normal projects this can be dropped.
-${CODE_GENERATOR_FILE} \
+bash -x ${CODE_GENERATOR_FILE} \
   "${TYPES}" \
   "${OUTPUT_DIR}" \
   "${APIS_DIR}" \
   "${GROUP_VERSIONS}" \
-  --go-header-file ./hack/boilerplate.go.txt \
-  --output-base ./
+  --go-header-file ${HEADER_FILE} \
+  --output-base ${ROOT_DIR}

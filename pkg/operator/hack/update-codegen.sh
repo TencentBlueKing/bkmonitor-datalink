@@ -26,21 +26,10 @@ source "${CODEGEN_PKG}/kube_codegen.sh"
 
 THIS_PKG="github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator"
 
-kube::codegen::gen_helpers \
-    --boilerplate "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
-    "${SCRIPT_ROOT}"
-
-if [[ -n "${API_KNOWN_VIOLATIONS_DIR:-}" ]]; then
-    report_filename="${API_KNOWN_VIOLATIONS_DIR}/codegen_violation_exceptions.list"
-    if [[ "${UPDATE_API_KNOWN_VIOLATIONS:-}" == "true" ]]; then
-        update_report="--update-report"
-    fi
-fi
-
 kube::codegen::gen_client \
     --with-watch \
     --with-applyconfig \
-    --output-dir "${SCRIPT_ROOT}/dataid" \
-    --output-pkg "${THIS_PKG}/dataid" \
+    --output-dir "${SCRIPT_ROOT}/client" \
+    --output-pkg "${THIS_PKG}/apis" \
     --boilerplate "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \
-    "${SCRIPT_ROOT}/dataid/apis"
+    "${SCRIPT_ROOT}/apis"

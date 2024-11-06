@@ -29,8 +29,8 @@ set -o pipefail
 ROOT_DIR="../../../../../"
 MODULE="github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator"
 TYPES="deepcopy,client,informer,lister"
-OUTPUT_DIR=${MODULE}"/client"
-APIS_DIR=${MODULE}"/apis"
+OUTPUT_PKG=${MODULE}"/client"
+APIS_PKG=${MODULE}"/apis"
 GROUP_VERSIONS="crd:v1beta1 bk.tencent.com:v1alpha1"
 HEADER_FILE="./hack/boilerplate.go.txt"
 
@@ -40,8 +40,8 @@ HEADER_FILE="./hack/boilerplate.go.txt"
 #                  instead of the $GOPATH directly. For normal projects this can be dropped.
 bash -x ${CODE_GENERATOR_FILE} \
   "${TYPES}" \
-  "${OUTPUT_DIR}" \
-  "${APIS_DIR}" \
+  "${OUTPUT_PKG}" \
+  "${APIS_PKG}" \
   "${GROUP_VERSIONS}" \
   --go-header-file ${HEADER_FILE} \
   --output-base ${ROOT_DIR}

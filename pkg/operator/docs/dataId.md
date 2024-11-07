@@ -27,7 +27,7 @@ resourcequotas                    quota        v1                               
 secrets                                        v1                                          true         Secret                           create,delete,deletecollection,get,list,patch,update,watch
 serviceaccounts                   sa           v1                                          true         ServiceAccount                   create,delete,deletecollection,get,list,patch,update,watch
 services                          svc          v1                                          true         Service                          create,delete,get,list,patch,update,watch                    all
-dataids                           bkd          monitoring.bk.tencent.com/v1beta1           false        DataID                           delete,deletecollection,get,list,patch,create,update,watch
+dataids                           bkd          monitoring.logging/v1beta1           false        DataID                           delete,deletecollection,get,list,patch,create,update,watch
 ...
 ```
 
@@ -51,7 +51,7 @@ k8smetricdataid      399d
 ```shell
 # 这里使用 `custommetricdataid` 这个 dataid 来举例子，具体看看 dataid 详细信息。
 $ kubectl get dataids custommetricdataid -oyaml
-apiVersion: monitoring.bk.tencent.com/v1beta1
+apiVersion: monitoring.logging/v1beta1
 kind: DataID
 metadata:
   creationTimestamp: "2023-07-19T10:40:03Z"
@@ -62,7 +62,7 @@ metadata:
     usage: metric
   name: custommetricdataid
   resourceVersion: "5719372880"
-  selfLink: /apis/monitoring.bk.tencent.com/v1beta1/dataids/custommetricdataid
+  selfLink: /apis/monitoring.logging/v1beta1/dataids/custommetricdataid
   uid: 2f2f4b12-e63f-49d8-83e2-dd0d79f9fa16
 spec:
   dataID: 1572865

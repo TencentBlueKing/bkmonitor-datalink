@@ -57,5 +57,5 @@ image: build
 	cd dockerfile/reloader && docker build -t ${MIRRORS}/bkmonitorbeat-reloader:$(VERSION) . && docker push ${MIRRORS}/bkmonitorbeat-reloader:$(VERSION) && rm bkmonitorbeat-reloader
 
 .PHONY: codegen
-update-codegen:
+codegen:
 	chmod +x ./hack/update-codegen.sh && bash ./hack/update-codegen.sh

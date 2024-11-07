@@ -14,8 +14,8 @@ package externalversions
 import (
 	"fmt"
 
-	v1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/bk.tencent.com/v1alpha1"
-	v1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/crd/v1beta1"
+	v1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
+	v1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"
 )
@@ -46,11 +46,11 @@ func (f *genericInformer) Lister() cache.GenericLister {
 // TODO extend this to unknown resources with a client pool
 func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource) (GenericInformer, error) {
 	switch resource {
-	// Group=bk.tencent.com, Version=v1alpha1
+	// Group=logging, Version=v1alpha1
 	case v1alpha1.SchemeGroupVersion.WithResource("bklogconfigs"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Bk().V1alpha1().BkLogConfigs().Informer()}, nil
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Logging().V1alpha1().BkLogConfigs().Informer()}, nil
 
-		// Group=monitoring.bk.tencent.com, Version=v1beta1
+		// Group=monitoring.logging, Version=v1beta1
 	case v1beta1.SchemeGroupVersion.WithResource("dataids"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Monitoring().V1beta1().DataIDs().Informer()}, nil
 

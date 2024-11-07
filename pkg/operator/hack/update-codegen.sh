@@ -26,7 +26,7 @@ MODULE="github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator"
 TYPES="deepcopy,client,informer,lister"
 OUTPUT_PKG=${MODULE}"/client"
 APIS_PKG=${MODULE}"/apis"
-GROUP_VERSIONS="crd:v1beta1 bk.tencent.com:v1alpha1"
+GROUP_VERSIONS="monitoring:v1beta1 logging:v1alpha1"
 HEADER_FILE="./hack/boilerplate.go.txt"
 
 # generate the code with:

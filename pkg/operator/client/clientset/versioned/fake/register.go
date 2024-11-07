@@ -12,8 +12,8 @@
 package fake
 
 import (
-	bkv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/bk.tencent.com/v1alpha1"
-	monitoringv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/crd/v1beta1"
+	loggingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
+	monitoringv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -25,7 +25,7 @@ var scheme = runtime.NewScheme()
 var codecs = serializer.NewCodecFactory(scheme)
 
 var localSchemeBuilder = runtime.SchemeBuilder{
-	bkv1alpha1.AddToScheme,
+	loggingv1alpha1.AddToScheme,
 	monitoringv1beta1.AddToScheme,
 }
 

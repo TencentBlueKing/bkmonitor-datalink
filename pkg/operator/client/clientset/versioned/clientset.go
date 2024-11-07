@@ -15,8 +15,8 @@ import (
 	"fmt"
 	"net/http"
 
-	bkv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/bk.tencent.com/v1alpha1"
-	monitoringv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/crd/v1beta1"
+	loggingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/logging/v1alpha1"
+	monitoringv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/monitoring/v1beta1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"
@@ -24,7 +24,7 @@ import (
 
 type Interface interface {
 	Discovery() discovery.DiscoveryInterface
-	BkV1alpha1() bkv1alpha1.BkV1alpha1Interface
+	LoggingV1alpha1() loggingv1alpha1.LoggingV1alpha1Interface
 	MonitoringV1beta1() monitoringv1beta1.MonitoringV1beta1Interface
 }
 
@@ -32,13 +32,13 @@ type Interface interface {
 // version included in a Clientset.
 type Clientset struct {
 	*discovery.DiscoveryClient
-	bkV1alpha1        *bkv1alpha1.BkV1alpha1Client
+	loggingV1alpha1   *loggingv1alpha1.LoggingV1alpha1Client
 	monitoringV1beta1 *monitoringv1beta1.MonitoringV1beta1Client
 }
 
-// BkV1alpha1 retrieves the BkV1alpha1Client
-func (c *Clientset) BkV1alpha1() bkv1alpha1.BkV1alpha1Interface {
-	return c.bkV1alpha1
+// LoggingV1alpha1 retrieves the LoggingV1alpha1Client
+func (c *Clientset) LoggingV1alpha1() loggingv1alpha1.LoggingV1alpha1Interface {
+	return c.loggingV1alpha1
 }
 
 // MonitoringV1beta1 retrieves the MonitoringV1beta1Client
@@ -90,7 +90,7 @@ func NewForConfigAndClient(c *rest.Config, httpClient *http.Client) (*Clientset,
 
 	var cs Clientset
 	var err error
-	cs.bkV1alpha1, err = bkv1alpha1.NewForConfigAndClient(&configShallowCopy, httpClient)
+	cs.loggingV1alpha1, err = loggingv1alpha1.NewForConfigAndClient(&configShallowCopy, httpClient)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func NewForConfigOrDie(c *rest.Config) *Clientset {
 // New creates a new Clientset for the given RESTClient.
 func New(c rest.Interface) *Clientset {
 	var cs Clientset
-	cs.bkV1alpha1 = bkv1alpha1.New(c)
+	cs.loggingV1alpha1 = loggingv1alpha1.New(c)
 	cs.monitoringV1beta1 = monitoringv1beta1.New(c)
 
 	cs.DiscoveryClient = discovery.NewDiscoveryClient(c)

@@ -68,9 +68,6 @@ type BkLogConfigSpec struct {
 	IsBcsConfig bool `json:"isBcsConfig,omitempty"`
 
 	// extra config options, will be rendered into sub config file directly
-	// +kubebuilder:validation:Type=object
-	// +kubebuilder:validation:Schemaless
-	// +kubebuilder:pruning:PreserveUnknownFields
 	ExtOptions map[string]runtime.RawExtension `json:"extOptions,omitempty"`
 }
 

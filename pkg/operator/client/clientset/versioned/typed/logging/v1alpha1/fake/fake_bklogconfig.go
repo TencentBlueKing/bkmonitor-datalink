@@ -25,13 +25,13 @@ import (
 
 // FakeBkLogConfigs implements BkLogConfigInterface
 type FakeBkLogConfigs struct {
-	Fake *FakeLoggingV1alpha1
+	Fake *FakeBkV1alpha1
 	ns   string
 }
 
-var bklogconfigsResource = schema.GroupVersionResource{Group: "logging", Version: "v1alpha1", Resource: "bklogconfigs"}
+var bklogconfigsResource = schema.GroupVersionResource{Group: "bk.tencent.com", Version: "v1alpha1", Resource: "bklogconfigs"}
 
-var bklogconfigsKind = schema.GroupVersionKind{Group: "logging", Version: "v1alpha1", Kind: "BkLogConfig"}
+var bklogconfigsKind = schema.GroupVersionKind{Group: "bk.tencent.com", Version: "v1alpha1", Kind: "BkLogConfig"}
 
 // Get takes name of the bkLogConfig, and returns the corresponding bkLogConfig object, and an error if there is any.
 func (c *FakeBkLogConfigs) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.BkLogConfig, err error) {

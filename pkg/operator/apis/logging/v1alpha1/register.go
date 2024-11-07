@@ -15,7 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-var SchemeGroupVersion = schema.GroupVersion{Group: "logging", Version: Version}
+var SchemeGroupVersion = schema.GroupVersion{Group: "bk.tencent.com", Version: Version}
 
 var (
 	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)

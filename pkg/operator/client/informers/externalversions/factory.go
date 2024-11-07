@@ -166,11 +166,11 @@ type SharedInformerFactory interface {
 	ForResource(resource schema.GroupVersionResource) (GenericInformer, error)
 	WaitForCacheSync(stopCh <-chan struct{}) map[reflect.Type]bool
 
-	Logging() logging.Interface
+	Bk() logging.Interface
 	Monitoring() monitoring.Interface
 }
 
-func (f *sharedInformerFactory) Logging() logging.Interface {
+func (f *sharedInformerFactory) Bk() logging.Interface {
 	return logging.New(f, f.namespace, f.tweakListOptions)
 }
 

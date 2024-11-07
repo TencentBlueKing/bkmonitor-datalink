@@ -24,7 +24,7 @@ type MonitoringV1beta1Interface interface {
 	DataIDsGetter
 }
 
-// MonitoringV1beta1Client is used to interact with features provided by the monitoring.logging group.
+// MonitoringV1beta1Client is used to interact with features provided by the monitoring.bk.tencent.com group.
 type MonitoringV1beta1Client struct {
 	restClient rest.Interface
 }

@@ -50,7 +50,7 @@ type bkLogConfigs struct {
 }
 
 // newBkLogConfigs returns a BkLogConfigs
-func newBkLogConfigs(c *LoggingV1alpha1Client, namespace string) *bkLogConfigs {
+func newBkLogConfigs(c *BkV1alpha1Client, namespace string) *bkLogConfigs {
 	return &bkLogConfigs{
 		client: c.RESTClient(),
 		ns:     namespace,

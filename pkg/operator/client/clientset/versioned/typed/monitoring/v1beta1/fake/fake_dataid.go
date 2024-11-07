@@ -29,9 +29,9 @@ type FakeDataIDs struct {
 	ns   string
 }
 
-var dataidsResource = schema.GroupVersionResource{Group: "monitoring.logging", Version: "v1beta1", Resource: "dataids"}
+var dataidsResource = schema.GroupVersionResource{Group: "monitoring.bk.tencent.com", Version: "v1beta1", Resource: "dataids"}
 
-var dataidsKind = schema.GroupVersionKind{Group: "monitoring.logging", Version: "v1beta1", Kind: "DataID"}
+var dataidsKind = schema.GroupVersionKind{Group: "monitoring.bk.tencent.com", Version: "v1beta1", Kind: "DataID"}
 
 // Get takes name of the dataID, and returns the corresponding dataID object, and an error if there is any.
 func (c *FakeDataIDs) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1beta1.DataID, err error) {

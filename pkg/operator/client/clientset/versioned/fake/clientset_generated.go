@@ -13,8 +13,8 @@ package fake
 
 import (
 	clientset "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
-	loggingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/logging/v1alpha1"
-	fakeloggingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/logging/v1alpha1/fake"
+	bkv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/logging/v1alpha1"
+	fakebkv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/logging/v1alpha1/fake"
 	monitoringv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/monitoring/v1beta1"
 	fakemonitoringv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/typed/monitoring/v1beta1/fake"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -74,9 +74,9 @@ var (
 	_ testing.FakeClient  = &Clientset{}
 )
 
-// LoggingV1alpha1 retrieves the LoggingV1alpha1Client
-func (c *Clientset) LoggingV1alpha1() loggingv1alpha1.LoggingV1alpha1Interface {
-	return &fakeloggingv1alpha1.FakeLoggingV1alpha1{Fake: &c.Fake}
+// BkV1alpha1 retrieves the BkV1alpha1Client
+func (c *Clientset) BkV1alpha1() bkv1alpha1.BkV1alpha1Interface {
+	return &fakebkv1alpha1.FakeBkV1alpha1{Fake: &c.Fake}
 }
 
 // MonitoringV1beta1 retrieves the MonitoringV1beta1Client

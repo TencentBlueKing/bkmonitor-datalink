@@ -62,6 +62,7 @@ const (
 type PingerTarget struct {
 	Target       string
 	TargetType   string            // 目标类型, domain or addr
+	Labels       map[string]string // 标签
 	DnsCheckMode configs.CheckMode // 域名检测模式，检测所有dns ip还是取第一个, all or single
 	DomainIpType configs.IPType    // 域名检测类型， 0: addr, 4: ipv4, 6: ipv6
 	MaxRtt       time.Duration     // 最大rtt，超过该值则认为超时

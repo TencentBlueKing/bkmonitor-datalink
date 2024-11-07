@@ -22,8 +22,9 @@ const (
 
 // Target ping目标信息
 type Target struct {
-	Target     string `config:"target"`
-	TargetType string `config:"target_type"`
+	Target     string            `config:"target"`
+	TargetType string            `config:"target_type"`
+	Labels     map[string]string `config:"labels"`
 }
 
 // GetTarget :

@@ -68,6 +68,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		targets = append(targets, &PingerTarget{
 			Target:     target.GetTarget(),
 			TargetType: target.GetTargetType(),
+			Labels:     target.Labels,
 
 			DnsCheckMode: taskConf.DNSCheckMode,
 			DomainIpType: taskConf.TargetIPType,
@@ -138,6 +139,15 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 				"bk_biz_id":   strconv.Itoa(int(taskConf.GetBizID())),
 				"resolved_ip": resolvedIP,
 			}
+
+			// 将target的labels合并到event的dimensions中
+			for k, v := range target.Labels {
+				// 如果event中没有该key，则添加
+				if _, ok := event.Dimensions[k]; !ok {
+					event.Dimensions[k] = v
+				}
+			}
+
 			event.Metrics = map[string]interface{}{
 				"available":     available,
 				"loss_percent":  lossPercent,

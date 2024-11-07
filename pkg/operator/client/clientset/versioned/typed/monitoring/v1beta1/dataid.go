@@ -15,13 +15,12 @@ import (
 	"context"
 	"time"
 
+	v1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
+	scheme "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/scheme"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"
 	rest "k8s.io/client-go/rest"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/crd/v1beta1"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/scheme"
 )
 
 // DataIDsGetter has a method to return a DataIDInterface.

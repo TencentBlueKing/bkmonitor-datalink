@@ -85,7 +85,6 @@ func (r *recorder) loopHandle() {
 				cloned.Count = cnt
 				r.out <- toEventMapStr(*cloned, r.externalLabels)
 			}
-			define.RecordLogf("cached events count=%d", len(r.set))
 			r.mut.Unlock()
 
 		case <-r.ctx.Done():

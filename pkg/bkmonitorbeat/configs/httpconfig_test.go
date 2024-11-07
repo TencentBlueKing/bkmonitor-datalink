@@ -33,7 +33,7 @@ func (s *HTTPConfiSuite) TestConfigClean() {
 	metaConf := configs.NewHTTPTaskMetaConfig(configs.NewConfig())
 	taskConf := configs.NewHTTPTaskConfig()
 	stepConf := new(configs.HTTPTaskStepConfig)
-	stepConf.URL = "logging"
+	stepConf.URL = "bk.tencent.com"
 	taskConf.Steps = append(taskConf.Steps, stepConf)
 	metaConf.Tasks = append(metaConf.Tasks, taskConf)
 

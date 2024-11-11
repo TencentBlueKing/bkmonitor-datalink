@@ -211,6 +211,7 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 					}
 				}
 
+				podRelationStatus := false
 				for _, container := range pod.Containers {
 					if !e.Obj.Spec.AllContainer {
 						if !e.MatchContainerName(container) {
@@ -226,6 +227,19 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 					}
 					relationBytes(w, relationMetric{
 						Name:   relationContainerWithDataSource,
+						Labels: labels,
+					})
+					podRelationStatus = true
+				}
+
+				if podRelationStatus {
+					labels := []relationLabel{
+						{Name: "data_source", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
+						{Name: "namespace", Value: pod.ID.Namespace},
+						{Name: "pod", Value: pod.ID.Name},
+					}
+					relationBytes(w, relationMetric{
+						Name:   relationDataSourceWithPod,
 						Labels: labels,
 					})
 				}

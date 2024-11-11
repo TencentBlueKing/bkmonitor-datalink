@@ -10,6 +10,7 @@
 package objectsref
 
 import (
+	"fmt"
 	"io"
 	"regexp"
 	"strconv"
@@ -31,6 +32,10 @@ const (
 	relationK8sAddressService    = "k8s_address_with_service_relation"
 	relationDomainService        = "domain_with_service_relation"
 	relationIngressService       = "ingress_with_service_relation"
+
+	relationContainerWithDataSource = "container_with_data_source_relation"
+	relationDataSourceWithPod       = "data_source_with_pod_relation"
+	relationDataSourceWithNode      = "data_source_with_node_relation"
 )
 
 type relationMetric struct {
@@ -167,6 +172,89 @@ func (oc *ObjectsController) GetReplicasetRelations(w io.Writer) {
 			})
 		}
 	}
+}
+
+func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
+	oc.bkLogConfigObjs.RangeBkLogConfig(func(e *bkLogConfigEntity) {
+		if e == nil {
+			return
+		}
+
+		switch e.Obj.Spec.LogConfigType {
+		case StdLogConfig:
+			fallthrough
+		case ContainerLogConfig:
+			if oc.podObjs == nil {
+				return
+			}
+
+			for _, pod := range oc.podObjs.GetAll() {
+				if !e.MatchNamespace(pod.ID.Namespace) {
+					continue
+				}
+
+				if !e.Obj.Spec.AllContainer {
+					if !e.MatchLabel(pod.Labels) {
+						continue
+					}
+
+					if !e.MatchAnnotation(pod.Annotations) {
+						continue
+					}
+
+					if !e.MatchWorkloadType(pod.Labels, pod.Annotations, pod.OwnerRefs) {
+						continue
+					}
+
+					if !e.MatchWorkloadName(pod.Labels, pod.Annotations, pod.OwnerRefs) {
+						continue
+					}
+				}
+
+				for _, container := range pod.Containers {
+					if !e.Obj.Spec.AllContainer {
+						if !e.MatchContainerName(container) {
+							continue
+						}
+					}
+
+					labels := []relationLabel{
+						{Name: "data_source", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
+						{Name: "namespace", Value: pod.ID.Namespace},
+						{Name: "pod", Value: pod.ID.Name},
+						{Name: "container", Value: container},
+					}
+					relationBytes(w, relationMetric{
+						Name:   relationContainerWithDataSource,
+						Labels: labels,
+					})
+				}
+			}
+		case NodeLogConfig:
+			if oc.nodeObjs == nil {
+				return
+			}
+
+			for _, node := range oc.nodeObjs.GetAll() {
+				if !e.MatchLabel(node.GetLabels()) {
+					continue
+				}
+
+				if !e.MatchAnnotation(node.GetAnnotations()) {
+					continue
+				}
+
+				labels := []relationLabel{
+					{Name: "data_source", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
+					{Name: "node", Value: node.Name},
+				}
+				relationBytes(w, relationMetric{
+					Name:   relationDataSourceWithNode,
+					Labels: labels,
+				})
+			}
+		}
+	})
 }
 
 type StatefulSetWorker struct {

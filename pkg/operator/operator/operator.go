@@ -205,7 +205,7 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		operator.promsliController = promsli.NewController(operator.ctx, operator.client, useEndpointslice)
 	}
 
-	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.tkexclient)
+	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.bkclient, operator.tkexclient)
 	if err != nil {
 		return nil, errors.Wrap(err, "create objectsController failed")
 	}

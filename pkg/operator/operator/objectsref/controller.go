@@ -29,6 +29,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
+	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -193,6 +194,8 @@ const (
 	// extend workload
 	resourceGameStatefulSets = "gamestatefulsets"
 	resourceGameDeployments  = "gamedeployments"
+
+	// logging
 )
 
 // ObjectsController 负责获取并更新 workload 资源的元信息
@@ -215,9 +218,11 @@ type ObjectsController struct {
 	serviceObjs         *ServiceMap
 	endpointsObjs       *EndpointsMap
 	ingressObjs         *IngressMap
+
+	bkLogConfigObjs *BkLogConfigMap
 }
 
-func NewController(ctx context.Context, client kubernetes.Interface, tkexClient tkexversiond.Interface) (*ObjectsController, error) {
+func NewController(ctx context.Context, client kubernetes.Interface, bkClient bkversioned.Interface, tkexClient tkexversiond.Interface) (*ObjectsController, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	controller := &ObjectsController{
 		client: client,
@@ -290,6 +295,11 @@ func NewController(ctx context.Context, client kubernetes.Interface, tkexClient 
 	}
 	controller.gameStatefulSetObjs = tkexObjs.gamestatefulset
 	controller.gameDeploymentsObjs = tkexObjs.gamedeployment
+
+	controller.bkLogConfigObjs, err = NewObjectsMap(ctx, bkClient)
+	if err != nil {
+		return nil, err
+	}
 
 	go controller.recordMetrics()
 

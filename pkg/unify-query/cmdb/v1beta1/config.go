@@ -20,6 +20,12 @@ var configData = &Config{
 			},
 		},
 		{
+			Name: "data_source",
+			Index: cmdb.Index{
+				"bk_data_id",
+			},
+		},
+		{
 			Name: "node",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
@@ -158,6 +164,16 @@ var configData = &Config{
 		{
 			Resources: []cmdb.Resource{
 				"pod", "service",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"data_source", "pod",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"data_source", "node",
 			},
 		},
 		{

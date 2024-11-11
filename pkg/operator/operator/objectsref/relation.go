@@ -225,7 +225,7 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 				// 只需要上报到 pod 层级就够了
 				if podRelationStatus {
 					labels := []relationLabel{
-						{Name: "data_source", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
+						{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
 						{Name: "namespace", Value: pod.ID.Namespace},
 						{Name: "pod", Value: pod.ID.Name},
 					}
@@ -250,7 +250,7 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 				}
 
 				labels := []relationLabel{
-					{Name: "data_source", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
+					{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
 					{Name: "node", Value: node.Name},
 				}
 				relationBytes(w, relationMetric{

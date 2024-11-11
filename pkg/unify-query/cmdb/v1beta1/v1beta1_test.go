@@ -267,6 +267,15 @@ func TestModel_GetPath(t *testing.T) {
 				{"data_source", "node", "pod", "apm_service_instance", "system"},
 			},
 		},
+		"pod to node": {
+			target: "node",
+			matcher: cmdb.Matcher{
+				"pod": "pod-1",
+			},
+			source:       "pod",
+			indexMatcher: cmdb.Matcher{},
+			expected:     [][]string{},
+		},
 	}
 
 	for n, c := range testCases {

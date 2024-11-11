@@ -287,15 +287,17 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 
 	span.Set("paths", paths)
 
+	var errs []error
 	for _, path := range paths {
-		ts, err = r.doRequest(ctx, opt.LookBackDelta, opt.SpaceUid, opt.StartTs, opt.EndTs, opt.Step, path, matcher, opt.Instant)
-		if err != nil {
-			err = errors.WithMessagef(err, "path [%v] do request error", path)
+		reqTs, reqErr := r.doRequest(ctx, opt.LookBackDelta, opt.SpaceUid, opt.StartTs, opt.EndTs, opt.Step, path, matcher, opt.Instant)
+		if reqErr != nil {
+			errs = append(errs, fmt.Errorf("path [%v] do request error: %s", path, reqErr))
 			continue
 		}
 
-		if len(ts) > 0 {
+		if len(reqTs) > 0 {
 			hitPath = path
+			ts = reqTs
 			span.Set("hit_path", hitPath)
 			break
 		}
@@ -303,6 +305,9 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 
 	// 查询不到数据无需返回异常
 	if len(ts) == 0 {
+		for _, e := range errs {
+			err = errors.WithMessage(err, e.Error())
+		}
 		return
 	}
 

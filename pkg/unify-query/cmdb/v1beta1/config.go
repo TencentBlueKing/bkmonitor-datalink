@@ -127,8 +127,8 @@ var configData = &Config{
 		{
 			Name: "bk_log_config",
 			Index: cmdb.Index{
-				"namespace",
-				"bk_log_config",
+				"bk_log_config_namespace",
+				"bk_log_config_name",
 			},
 		},
 	},

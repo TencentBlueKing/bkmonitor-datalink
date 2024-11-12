@@ -183,8 +183,8 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 
 		labels := []relationLabel{
 			{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
-			{Name: "namespace", Value: e.Obj.Namespace},
-			{Name: "bk_log_config", Value: e.Obj.Name},
+			{Name: "bk_log_config_namespace", Value: e.Obj.Namespace},
+			{Name: "bk_log_config_name", Value: e.Obj.Name},
 		}
 		relationBytes(w, relationMetric{
 			Name:   relationBkLogConfigWithDataSource,

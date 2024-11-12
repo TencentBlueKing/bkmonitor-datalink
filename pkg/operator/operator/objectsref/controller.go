@@ -373,6 +373,7 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
 		pod, ok := obj.(*corev1.Pod)
 		if !ok {
+			logger.Errorf("excepted Pod type, got %T", obj)
 			return obj, nil // 原路返回
 		}
 		newObj := &corev1.Pod{}

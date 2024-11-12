@@ -124,6 +124,13 @@ var configData = &Config{
 				"apm_service_instance_name",
 			},
 		},
+		{
+			Name: "bk_log_config",
+			Index: cmdb.Index{
+				"namespace",
+				"bk_log_config",
+			},
+		},
 	},
 	Relation: []RelationConf{
 		{
@@ -204,6 +211,11 @@ var configData = &Config{
 		{
 			Resources: []cmdb.Resource{
 				"apm_service", "apm_service_instance",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"bk_log_config", "data_source",
 			},
 		},
 	},

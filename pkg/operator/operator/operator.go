@@ -24,6 +24,7 @@ import (
 	prominformers "github.com/prometheus-operator/prometheus-operator/pkg/informers"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/tools/cache"
 
 	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
@@ -60,6 +61,7 @@ type Operator struct {
 	buildInfo BuildInfo
 
 	client     kubernetes.Interface
+	mdClient   metadata.Interface
 	promclient promversioned.Interface
 	bkclient   bkversioned.Interface
 	tkexclient tkexversiond.Interface
@@ -103,6 +105,11 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 
 	apiHost := configs.G().APIServerHost
 	operator.client, err = k8sutils.NewK8SClient(apiHost, configs.G().GetTLS())
+	if err != nil {
+		return nil, err
+	}
+
+	operator.mdClient, err = k8sutils.NewMetadataClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +212,7 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		operator.promsliController = promsli.NewController(operator.ctx, operator.client, useEndpointslice)
 	}
 
-	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.tkexclient)
+	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.mdClient, operator.tkexclient)
 	if err != nil {
 		return nil, errors.Wrap(err, "create objectsController failed")
 	}

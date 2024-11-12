@@ -25,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	clientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/retry"
@@ -44,6 +45,15 @@ func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig) (kubernetes.Inte
 	}
 	cfg.ContentType = contentTypeProtobuf
 	return kubernetes.NewForConfig(cfg)
+}
+
+func NewMetadataClient(host string, tlsConfig *rest.TLSClientConfig) (metadata.Interface, error) {
+	cfg, err := k8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ContentType = contentTypeProtobuf
+	return metadata.NewForConfig(cfg)
 }
 
 func NewK8SClientInsecure() (kubernetes.Interface, error) {

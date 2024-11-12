@@ -27,6 +27,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
+	"k8s.io/client-go/metadata/metadatainformer"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
@@ -195,6 +197,22 @@ const (
 	resourceGameDeployments  = "gamedeployments"
 )
 
+func partialObjectMetadataStrip(obj interface{}) (interface{}, error) {
+	partialMeta, ok := obj.(*metav1.PartialObjectMetadata)
+	if !ok {
+		// Don't do anything if the cast isn't successful.
+		// The object might be of type "cache.DeletedFinalStateUnknown".
+		return obj, nil
+	}
+
+	partialMeta.Annotations = nil
+	partialMeta.Labels = nil
+	partialMeta.ManagedFields = nil
+	partialMeta.Finalizers = nil
+
+	return partialMeta, nil
+}
+
 // ObjectsController 负责获取并更新 workload 资源的元信息
 type ObjectsController struct {
 	ctx    context.Context
@@ -217,7 +235,7 @@ type ObjectsController struct {
 	ingressObjs         *IngressMap
 }
 
-func NewController(ctx context.Context, client kubernetes.Interface, tkexClient tkexversiond.Interface) (*ObjectsController, error) {
+func NewController(ctx context.Context, client kubernetes.Interface, mClient metadata.Interface, tkexClient tkexversiond.Interface) (*ObjectsController, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	controller := &ObjectsController{
 		client: client,
@@ -234,27 +252,29 @@ func NewController(ctx context.Context, client kubernetes.Interface, tkexClient 
 		return nil, err
 	}
 
-	controller.replicaSetObjs, err = newReplicaSetObjects(ctx, sharedInformer)
+	metaSharedInformer := metadatainformer.NewFilteredSharedInformerFactory(mClient, define.ReSyncPeriod, metav1.NamespaceAll, nil)
+
+	controller.replicaSetObjs, err = newReplicaSetObjects(ctx, metaSharedInformer)
 	if err != nil {
 		return nil, err
 	}
 
-	controller.deploymentObjs, err = newDeploymentObjects(ctx, sharedInformer)
+	controller.deploymentObjs, err = newDeploymentObjects(ctx, metaSharedInformer)
 	if err != nil {
 		return nil, err
 	}
 
-	controller.daemonSetObjs, err = newDaemenSetObjects(ctx, sharedInformer)
+	controller.daemonSetObjs, err = newDaemenSetObjects(ctx, metaSharedInformer)
 	if err != nil {
 		return nil, err
 	}
 
-	controller.statefulSetObjs, err = newStatefulSetObjects(ctx, sharedInformer)
+	controller.statefulSetObjs, err = newStatefulSetObjects(ctx, metaSharedInformer)
 	if err != nil {
 		return nil, err
 	}
 
-	controller.jobObjs, err = newJobObjects(ctx, sharedInformer)
+	controller.jobObjs, err = newJobObjects(ctx, metaSharedInformer)
 	if err != nil {
 		return nil, err
 	}
@@ -726,14 +746,15 @@ func newIngressV1Beta1ExtensionsObjects(ctx context.Context, sharedInformer info
 	return objs, nil
 }
 
-func newReplicaSetObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*Objects, error) {
-	genericInformer, err := sharedInformer.ForResource(appsv1.SchemeGroupVersion.WithResource(resourceReplicaSets))
-	if err != nil {
-		return nil, err
-	}
+func newReplicaSetObjects(ctx context.Context, sharedInformer metadatainformer.SharedInformerFactory) (*Objects, error) {
+	genericInformer := sharedInformer.ForResource(appsv1.SchemeGroupVersion.WithResource(resourceReplicaSets))
 	objs := NewObjects(kindReplicaSet)
 
 	informer := genericInformer.Informer()
+	if err := informer.SetTransform(partialObjectMetadataStrip); err != nil {
+		return nil, err
+	}
+
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			replicaSet, ok := obj.(*appsv1.ReplicaSet)
@@ -784,14 +805,15 @@ func newReplicaSetObjects(ctx context.Context, sharedInformer informers.SharedIn
 	return objs, nil
 }
 
-func newDeploymentObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*Objects, error) {
-	genericInformer, err := sharedInformer.ForResource(appsv1.SchemeGroupVersion.WithResource(resourceDeployments))
-	if err != nil {
-		return nil, err
-	}
+func newDeploymentObjects(ctx context.Context, sharedInformer metadatainformer.SharedInformerFactory) (*Objects, error) {
+	genericInformer := sharedInformer.ForResource(appsv1.SchemeGroupVersion.WithResource(resourceDeployments))
 	objs := NewObjects(kindDeployment)
 
 	informer := genericInformer.Informer()
+	if err := informer.SetTransform(partialObjectMetadataStrip); err != nil {
+		return nil, err
+	}
+
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			deployment, ok := obj.(*appsv1.Deployment)
@@ -842,14 +864,15 @@ func newDeploymentObjects(ctx context.Context, sharedInformer informers.SharedIn
 	return objs, nil
 }
 
-func newDaemenSetObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*Objects, error) {
-	genericInformer, err := sharedInformer.ForResource(appsv1.SchemeGroupVersion.WithResource(resourceDaemonSets))
-	if err != nil {
-		return nil, err
-	}
+func newDaemenSetObjects(ctx context.Context, sharedInformer metadatainformer.SharedInformerFactory) (*Objects, error) {
+	genericInformer := sharedInformer.ForResource(appsv1.SchemeGroupVersion.WithResource(resourceDaemonSets))
 	objs := NewObjects(kindDaemonSet)
 
 	informer := genericInformer.Informer()
+	if err := informer.SetTransform(partialObjectMetadataStrip); err != nil {
+		return nil, err
+	}
+
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			daemonSet, ok := obj.(*appsv1.DaemonSet)
@@ -900,14 +923,15 @@ func newDaemenSetObjects(ctx context.Context, sharedInformer informers.SharedInf
 	return objs, nil
 }
 
-func newStatefulSetObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*Objects, error) {
-	genericInformer, err := sharedInformer.ForResource(appsv1.SchemeGroupVersion.WithResource(resourceStatefulSets))
-	if err != nil {
-		return nil, err
-	}
+func newStatefulSetObjects(ctx context.Context, sharedInformer metadatainformer.SharedInformerFactory) (*Objects, error) {
+	genericInformer := sharedInformer.ForResource(appsv1.SchemeGroupVersion.WithResource(resourceStatefulSets))
 	objs := NewObjects(kindStatefulSet)
 
 	informer := genericInformer.Informer()
+	if err := informer.SetTransform(partialObjectMetadataStrip); err != nil {
+		return nil, err
+	}
+
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			statefulSet, ok := obj.(*appsv1.StatefulSet)
@@ -958,14 +982,15 @@ func newStatefulSetObjects(ctx context.Context, sharedInformer informers.SharedI
 	return objs, nil
 }
 
-func newJobObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*Objects, error) {
-	genericInformer, err := sharedInformer.ForResource(batchv1.SchemeGroupVersion.WithResource(resourceJobs))
-	if err != nil {
-		return nil, err
-	}
+func newJobObjects(ctx context.Context, sharedInformer metadatainformer.SharedInformerFactory) (*Objects, error) {
+	genericInformer := sharedInformer.ForResource(batchv1.SchemeGroupVersion.WithResource(resourceJobs))
 	objs := NewObjects(kindJob)
 
 	informer := genericInformer.Informer()
+	if err := informer.SetTransform(partialObjectMetadataStrip); err != nil {
+		return nil, err
+	}
+
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			job, ok := obj.(*batchv1.Job)

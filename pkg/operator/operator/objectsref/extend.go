@@ -96,9 +96,9 @@ func newTkexObjects(ctx context.Context, sharedInformer metadatainformer.SharedI
 
 func newGameStatefulObjects(ctx context.Context, sharedInformer metadatainformer.SharedInformerFactory) (*Objects, error) {
 	genericInformer := sharedInformer.ForResource(schema.GroupVersionResource{
-		Group:    GameDeploymentGVRK.Group,
-		Version:  GameDeploymentGVRK.Version,
-		Resource: GameDeploymentGVRK.Resource,
+		Group:    GameStatefulSetGVRK.Group,
+		Version:  GameStatefulSetGVRK.Version,
+		Resource: GameStatefulSetGVRK.Resource,
 	})
 	objs := NewObjects(kindGameStatefulSet)
 
@@ -159,9 +159,9 @@ func newGameStatefulObjects(ctx context.Context, sharedInformer metadatainformer
 
 func newGameDeploymentObjects(ctx context.Context, sharedInformer metadatainformer.SharedInformerFactory) (*Objects, error) {
 	genericInformer := sharedInformer.ForResource(schema.GroupVersionResource{
-		Group:    GameStatefulSetGVRK.Group,
-		Version:  GameStatefulSetGVRK.Version,
-		Resource: GameStatefulSetGVRK.Resource,
+		Group:    GameDeploymentGVRK.Group,
+		Version:  GameDeploymentGVRK.Version,
+		Resource: GameDeploymentGVRK.Resource,
 	})
 	objs := NewObjects(kindGameDeployment)
 

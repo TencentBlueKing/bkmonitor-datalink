@@ -473,46 +473,50 @@ func NewCustomEventBySimpleEvent(e *SimpleEvent) *CustomEvent {
 }
 
 // NewCustomEventByPingEvent 通过PingEvent创建自定义事件
-func NewCustomEventByPingEvent(e *PingEvent) *CustomEvent {
-	ts := e.Time.Unix()
+func NewCustomEventByPingEvent(events ...*PingEvent) *CustomEvent {
+	var data []map[string]interface{}
+	for _, e := range events {
+		ts := e.Time.Unix()
 
-	// 触发维度补充
-	e.AsMapStr()
+		// 触发维度补充
+		e.AsMapStr()
 
-	// 维度取值
-	dimensions := map[string]string{}
-	for k, v := range e.Dimensions {
-		dimensions[k] = v
+		// 维度取值
+		dimensions := map[string]string{}
+		for k, v := range e.Dimensions {
+			dimensions[k] = v
+		}
+
+		// 补充节点信息
+		info, _ := gse.GetAgentInfo()
+		dimensions["node_id"] = fmt.Sprintf("%d:%s", info.Cloudid, info.IP)
+		dimensions["ip"] = info.IP
+		dimensions["bk_cloud_id"] = strconv.Itoa(int(info.Cloudid))
+		dimensions["bk_agent_id"] = info.BKAgentID
+
+		// 指标取值
+		metrics := map[string]interface{}{}
+		for k, v := range e.Metrics {
+			metrics[k] = v
+		}
+
+		data = append(data, map[string]interface{}{
+			"target":    dimensions["target"],
+			"dimension": dimensions,
+			"metrics":   metrics,
+			"timestamp": ts * 1000,
+		})
 	}
 
-	// 补充节点信息
-	info, _ := gse.GetAgentInfo()
-	dimensions["node_id"] = fmt.Sprintf("%d:%s", info.Cloudid, info.IP)
-	dimensions["ip"] = info.IP
-	dimensions["bk_cloud_id"] = strconv.Itoa(int(info.Cloudid))
-	dimensions["bk_agent_id"] = info.BKAgentID
-
-	// 指标取值
-	metrics := map[string]interface{}{}
-	for k, v := range e.Metrics {
-		metrics[k] = v
+	event := events[0]
+	customEvent := common.MapStr{
+		"dataid":    event.DataID,
+		"data":      data,
+		"time":      event.Time.Unix(),
+		"timestamp": event.Time.Unix(),
 	}
 
-	data := common.MapStr{
-		"dataid": e.DataID,
-		"data": []map[string]interface{}{
-			{
-				"target":    dimensions["target"],
-				"dimension": dimensions,
-				"metrics":   metrics,
-				"timestamp": ts * 1000,
-			},
-		},
-		"time":      ts,
-		"timestamp": ts,
-	}
-
-	return NewCustomEvent(e.GetType(), data, e.IgnoreCMDBLevel(), e.Labels)
+	return NewCustomEvent(event.GetType(), customEvent, event.IgnoreCMDBLevel(), event.Labels)
 }
 
 // GetType 获取事件类型

@@ -90,6 +90,8 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	// 数据处理
 	resultCount := 0
 	config := g.GetConfig().(*configs.PingTaskConfig)
+
+	pingEvents := make([]*tasks.PingEvent, 0)
 	for _, target := range targets {
 		for ip, rttList := range target.GetResult() {
 			// 计数
@@ -159,11 +161,24 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 			// 如果需要使用自定义上报，则将事件转换为自定义事件
 			if config.CustomReport {
-				e <- tasks.NewCustomEventByPingEvent(event)
+				pingEvents = append(pingEvents, event)
+
+				// 为了避免上报数据条数过多，将数据分批上报
+				if len(pingEvents) >= 512 {
+					e <- tasks.NewCustomEventByPingEvent(pingEvents...)
+
+					// 清空数据
+					pingEvents = make([]*tasks.PingEvent, 0)
+				}
 			} else {
 				e <- event
 			}
 		}
+	}
+
+	// 如果有剩余数据，则上报
+	if len(pingEvents) > 0 {
+		e <- tasks.NewCustomEventByPingEvent(pingEvents...)
 	}
 
 	// 任务结束

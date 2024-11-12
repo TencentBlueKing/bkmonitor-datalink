@@ -33,9 +33,10 @@ const (
 	relationDomainService        = "domain_with_service_relation"
 	relationIngressService       = "ingress_with_service_relation"
 
-	relationContainerWithDataSource = "container_with_data_source_relation"
-	relationDataSourceWithPod       = "data_source_with_pod_relation"
-	relationDataSourceWithNode      = "data_source_with_node_relation"
+	relationContainerWithDataSource   = "container_with_data_source_relation"
+	relationDataSourceWithPod         = "data_source_with_pod_relation"
+	relationDataSourceWithNode        = "data_source_with_node_relation"
+	relationBkLogConfigWithDataSource = "bk_log_config_with_data_source_relation"
 )
 
 type relationMetric struct {
@@ -179,6 +180,16 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 		if e == nil {
 			return
 		}
+
+		labels := []relationLabel{
+			{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
+			{Name: "namespace", Value: e.Obj.Namespace},
+			{Name: "bk_log_config", Value: e.Obj.Name},
+		}
+		relationBytes(w, relationMetric{
+			Name:   relationBkLogConfigWithDataSource,
+			Labels: labels,
+		})
 
 		switch e.Obj.Spec.LogConfigType {
 		case StdLogConfig:

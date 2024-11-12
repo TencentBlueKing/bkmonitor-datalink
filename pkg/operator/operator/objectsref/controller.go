@@ -370,6 +370,27 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 	objs := NewObjects(kindPod)
 
 	informer := genericInformer.Informer()
+	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+		pod, ok := obj.(*corev1.Pod)
+		if !ok {
+			return obj, nil // 原路返回
+		}
+		newObj := &corev1.Pod{}
+		newObj.Name = pod.Name
+		newObj.Namespace = pod.Namespace
+		newObj.OwnerReferences = pod.OwnerReferences
+		newObj.Spec.NodeName = pod.Spec.NodeName
+		newObj.Labels = pod.Labels
+		newObj.Annotations = pod.Annotations
+		newObj.Status.PodIP = pod.Status.PodIP
+		newObj.Spec.Containers = pod.Spec.Containers
+
+		return newObj, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			pod, ok := obj.(*corev1.Pod)

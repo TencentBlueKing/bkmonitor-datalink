@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	tkexversiond "github.com/Tencent/bk-bcs/bcs-scenarios/kourse/pkg/client/clientset/versioned"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	batchv1beta1 "k8s.io/api/batch/v1beta1"
@@ -235,7 +234,7 @@ type ObjectsController struct {
 	ingressObjs         *IngressMap
 }
 
-func NewController(ctx context.Context, client kubernetes.Interface, mClient metadata.Interface, tkexClient tkexversiond.Interface) (*ObjectsController, error) {
+func NewController(ctx context.Context, client kubernetes.Interface, mClient metadata.Interface) (*ObjectsController, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	controller := &ObjectsController{
 		client: client,
@@ -306,7 +305,7 @@ func NewController(ctx context.Context, client kubernetes.Interface, mClient met
 	}
 
 	// Extend/Workload
-	tkexObjs, err := newTkexObjects(ctx, tkexClient, resources)
+	tkexObjs, err := newTkexObjects(ctx, metaSharedInformer, resources)
 	if err != nil {
 		return nil, err
 	}

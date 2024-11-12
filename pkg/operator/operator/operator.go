@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	tkexversiond "github.com/Tencent/bk-bcs/bcs-scenarios/kourse/pkg/client/clientset/versioned"
 	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -64,7 +63,6 @@ type Operator struct {
 	mdClient   metadata.Interface
 	promclient promversioned.Interface
 	bkclient   bkversioned.Interface
-	tkexclient tkexversiond.Interface
 	srv        *http.Server
 
 	serviceMonitorInformer *prominformers.ForResource
@@ -120,11 +118,6 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	}
 
 	operator.bkclient, err = k8sutils.NewBKClient(apiHost, configs.G().GetTLS())
-	if err != nil {
-		return nil, err
-	}
-
-	operator.tkexclient, err = k8sutils.NewTkexClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +205,7 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		operator.promsliController = promsli.NewController(operator.ctx, operator.client, useEndpointslice)
 	}
 
-	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.mdClient, operator.tkexclient)
+	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.mdClient)
 	if err != nil {
 		return nil, errors.Wrap(err, "create objectsController failed")
 	}

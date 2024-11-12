@@ -13,15 +13,12 @@ import (
 	"context"
 	"errors"
 
-	tkexv1alpha1 "github.com/Tencent/bk-bcs/bcs-scenarios/kourse/pkg/apis/tkex/v1alpha1"
-	tkexversiond "github.com/Tencent/bk-bcs/bcs-scenarios/kourse/pkg/client/clientset/versioned"
-	tkexinformers "github.com/Tencent/bk-bcs/bcs-scenarios/kourse/pkg/client/informers/externalversions"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/metadata/metadatainformer"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -75,14 +72,12 @@ type tkexObjects struct {
 	gamedeployment  *Objects
 }
 
-func newTkexObjects(ctx context.Context, client tkexversiond.Interface, resources map[GVRK]struct{}) (*tkexObjects, error) {
-	sharedInformer := tkexinformers.NewSharedInformerFactoryWithOptions(client, define.ReSyncPeriod, tkexinformers.WithNamespace(metav1.NamespaceAll))
-
+func newTkexObjects(ctx context.Context, sharedInformer metadatainformer.SharedInformerFactory, resources map[GVRK]struct{}) (*tkexObjects, error) {
 	var err error
 	tkexObjs := &tkexObjects{}
 
 	if _, ok := resources[GameStatefulSetGVRK]; ok {
-		logger.Infof("found extend workload: %+v", GameStatefulSetGVRK)
+		logger.Infof("found extend workload: %#v", GameStatefulSetGVRK)
 		tkexObjs.gamestatefulset, err = newGameStatefulObjects(ctx, sharedInformer)
 		if err != nil {
 			return tkexObjs, err
@@ -90,7 +85,7 @@ func newTkexObjects(ctx context.Context, client tkexversiond.Interface, resource
 	}
 
 	if _, ok := resources[GameDeploymentGVRK]; ok {
-		logger.Infof("found extend workload: %+v", GameDeploymentGVRK)
+		logger.Infof("found extend workload: %#v", GameDeploymentGVRK)
 		tkexObjs.gamedeployment, err = newGameDeploymentObjects(ctx, sharedInformer)
 		if err != nil {
 			return tkexObjs, err
@@ -99,19 +94,24 @@ func newTkexObjects(ctx context.Context, client tkexversiond.Interface, resource
 	return tkexObjs, nil
 }
 
-func newGameStatefulObjects(ctx context.Context, sharedInformer tkexinformers.SharedInformerFactory) (*Objects, error) {
-	genericInformer, err := sharedInformer.ForResource(tkexv1alpha1.SchemeGroupVersion.WithResource(resourceGameStatefulSets))
-	if err != nil {
-		return nil, err
-	}
+func newGameStatefulObjects(ctx context.Context, sharedInformer metadatainformer.SharedInformerFactory) (*Objects, error) {
+	genericInformer := sharedInformer.ForResource(schema.GroupVersionResource{
+		Group:    GameDeploymentGVRK.Group,
+		Version:  GameDeploymentGVRK.Version,
+		Resource: GameDeploymentGVRK.Resource,
+	})
 	objs := NewObjects(kindGameStatefulSet)
 
 	informer := genericInformer.Informer()
+	if err := informer.SetTransform(partialObjectMetadataStrip); err != nil {
+		return nil, err
+	}
+
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			gamestatefulset, ok := obj.(*tkexv1alpha1.GameStatefulSet)
+			gamestatefulset, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
-				logger.Errorf("excepted GameStatefulSet type, got %T", obj)
+				logger.Errorf("excepted GameStatefulSet/PartialObjectMetadata type, got %T", obj)
 				return
 			}
 			objs.Set(Object{
@@ -123,9 +123,9 @@ func newGameStatefulObjects(ctx context.Context, sharedInformer tkexinformers.Sh
 			})
 		},
 		UpdateFunc: func(_, newObj interface{}) {
-			gamestatefulset, ok := newObj.(*tkexv1alpha1.GameStatefulSet)
+			gamestatefulset, ok := newObj.(*metav1.PartialObjectMetadata)
 			if !ok {
-				logger.Errorf("excepted GameStatefulSet type, got %T", newObj)
+				logger.Errorf("excepted GameStatefulSet/PartialObjectMetadata type, got %T", newObj)
 				return
 			}
 			objs.Set(Object{
@@ -137,9 +137,9 @@ func newGameStatefulObjects(ctx context.Context, sharedInformer tkexinformers.Sh
 			})
 		},
 		DeleteFunc: func(obj interface{}) {
-			gamestatefulset, ok := obj.(*tkexv1alpha1.GameStatefulSet)
+			gamestatefulset, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
-				logger.Errorf("excepted GameStatefulSet type, got %T", obj)
+				logger.Errorf("excepted GameStatefulSet/PartialObjectMetadata type, got %T", obj)
 				return
 			}
 			objs.Del(ObjectID{
@@ -157,19 +157,24 @@ func newGameStatefulObjects(ctx context.Context, sharedInformer tkexinformers.Sh
 	return objs, nil
 }
 
-func newGameDeploymentObjects(ctx context.Context, sharedInformer tkexinformers.SharedInformerFactory) (*Objects, error) {
-	genericInformer, err := sharedInformer.ForResource(tkexv1alpha1.SchemeGroupVersion.WithResource(resourceGameDeployments))
-	if err != nil {
-		return nil, err
-	}
+func newGameDeploymentObjects(ctx context.Context, sharedInformer metadatainformer.SharedInformerFactory) (*Objects, error) {
+	genericInformer := sharedInformer.ForResource(schema.GroupVersionResource{
+		Group:    GameStatefulSetGVRK.Group,
+		Version:  GameStatefulSetGVRK.Version,
+		Resource: GameStatefulSetGVRK.Resource,
+	})
 	objs := NewObjects(kindGameDeployment)
 
 	informer := genericInformer.Informer()
+	if err := informer.SetTransform(partialObjectMetadataStrip); err != nil {
+		return nil, err
+	}
+
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			gamedeployment, ok := obj.(*tkexv1alpha1.GameDeployment)
+			gamedeployment, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
-				logger.Errorf("excepted GameDeployment type, got %T", obj)
+				logger.Errorf("excepted GameDeployment/PartialObjectMetadata type, got %T", obj)
 				return
 			}
 			objs.Set(Object{
@@ -181,9 +186,9 @@ func newGameDeploymentObjects(ctx context.Context, sharedInformer tkexinformers.
 			})
 		},
 		UpdateFunc: func(_, newObj interface{}) {
-			gamedeployment, ok := newObj.(*tkexv1alpha1.GameDeployment)
+			gamedeployment, ok := newObj.(*metav1.PartialObjectMetadata)
 			if !ok {
-				logger.Errorf("excepted GameDeployment type, got %T", newObj)
+				logger.Errorf("excepted GameDeployment/PartialObjectMetadata type, got %T", newObj)
 				return
 			}
 			objs.Set(Object{
@@ -195,9 +200,9 @@ func newGameDeploymentObjects(ctx context.Context, sharedInformer tkexinformers.
 			})
 		},
 		DeleteFunc: func(obj interface{}) {
-			gamedeployment, ok := obj.(*tkexv1alpha1.GameDeployment)
+			gamedeployment, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
-				logger.Errorf("excepted GameDeployment type, got %T", obj)
+				logger.Errorf("excepted GameDeployment/PartialObjectMetadata type, got %T", obj)
 				return
 			}
 			objs.Del(ObjectID{

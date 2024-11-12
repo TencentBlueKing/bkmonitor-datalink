@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"strings"
 
-	tkexversiond "github.com/Tencent/bk-bcs/bcs-scenarios/kourse/pkg/client/clientset/versioned"
 	promversioned "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
 	"github.com/prometheus-operator/prometheus-operator/pkg/k8sutil"
 	"github.com/prometheus-operator/prometheus-operator/pkg/operator"
@@ -83,16 +82,6 @@ func NewBKClient(host string, tlsConfig *rest.TLSClientConfig) (bkversioned.Inte
 	}
 	cfg.ContentType = contentTypeProtobuf
 	return bkversioned.NewForConfig(cfg)
-}
-
-// NewTkexClient 操作 GameStatefulSet/GameDeployment CRD
-func NewTkexClient(host string, tlsConfig *rest.TLSClientConfig) (tkexversiond.Interface, error) {
-	cfg, err := k8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
-	if err != nil {
-		return nil, err
-	}
-	cfg.ContentType = contentTypeProtobuf
-	return tkexversiond.NewForConfig(cfg)
 }
 
 func WaitForNamedCacheSync(ctx context.Context, controllerName string, inf cache.SharedIndexInformer) bool {

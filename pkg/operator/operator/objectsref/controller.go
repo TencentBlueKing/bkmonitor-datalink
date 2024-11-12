@@ -246,14 +246,35 @@ func NewController(ctx context.Context, client kubernetes.Interface, mClient met
 	var err error
 	resources := listServerPreferredResources(client.Discovery())
 
+	// Standard/SharedInformer
 	sharedInformer := informers.NewSharedInformerFactoryWithOptions(client, define.ReSyncPeriod, informers.WithNamespace(metav1.NamespaceAll))
 	controller.podObjs, err = newPodObjects(ctx, sharedInformer)
 	if err != nil {
 		return nil, err
 	}
 
-	metaSharedInformer := metadatainformer.NewFilteredSharedInformerFactory(mClient, define.ReSyncPeriod, metav1.NamespaceAll, nil)
+	controller.nodeObjs, err = newNodeObjects(ctx, sharedInformer)
+	if err != nil {
+		return nil, err
+	}
 
+	controller.serviceObjs, err = newServiceObjects(ctx, sharedInformer)
+	if err != nil {
+		return nil, err
+	}
+
+	controller.endpointsObjs, err = newEndpointsObjects(ctx, sharedInformer)
+	if err != nil {
+		return nil, err
+	}
+
+	controller.ingressObjs, err = newIngressObjects(ctx, sharedInformer, resources)
+	if err != nil {
+		return nil, err
+	}
+
+	// Metadata/SharedInformer
+	metaSharedInformer := metadatainformer.NewFilteredSharedInformerFactory(mClient, define.ReSyncPeriod, metav1.NamespaceAll, nil)
 	controller.replicaSetObjs, err = newReplicaSetObjects(ctx, metaSharedInformer)
 	if err != nil {
 		return nil, err
@@ -284,26 +305,7 @@ func NewController(ctx context.Context, client kubernetes.Interface, mClient met
 		return nil, err
 	}
 
-	controller.nodeObjs, err = newNodeObjects(ctx, sharedInformer)
-	if err != nil {
-		return nil, err
-	}
-
-	controller.serviceObjs, err = newServiceObjects(ctx, sharedInformer)
-	if err != nil {
-		return nil, err
-	}
-
-	controller.endpointsObjs, err = newEndpointsObjects(ctx, sharedInformer)
-	if err != nil {
-		return nil, err
-	}
-
-	controller.ingressObjs, err = newIngressObjects(ctx, sharedInformer, resources)
-	if err != nil {
-		return nil, err
-	}
-
+	// Extend/Workload
 	tkexObjs, err := newTkexObjects(ctx, tkexClient, resources)
 	if err != nil {
 		return nil, err

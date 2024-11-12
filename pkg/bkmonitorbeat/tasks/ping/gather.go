@@ -47,7 +47,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 	// 发送间隔
 	if taskConf.SendInterval == "" {
-		taskConf.SendInterval = "1ms"
+		taskConf.SendInterval = "500us"
 	}
 	sendInterval, err := time.ParseDuration(taskConf.SendInterval)
 	if err != nil {

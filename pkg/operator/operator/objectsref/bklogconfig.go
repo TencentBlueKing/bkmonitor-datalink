@@ -60,7 +60,7 @@ func (e *bkLogConfigEntity) UUID() string {
 		return ""
 	}
 
-	return fmt.Sprintf("%s/%s/%s", e.Obj.Kind, e.Obj.Namespace, e.Obj.Name)
+	return fmt.Sprintf("%s/%s", e.Obj.Namespace, e.Obj.Name)
 }
 
 func (e *bkLogConfigEntity) isVCluster(matcherLabel map[string]string) bool {
@@ -249,7 +249,7 @@ func (o *BkLogConfigMap) deleteEntity(e *bkLogConfigEntity) {
 	defer o.lock.Unlock()
 	delete(o.entitiesMap, e.UUID())
 
-	logger.Infof("[%s] delete %s", kindBkLogConfig, e.UUID())
+	logger.Infof("[%s] delete %s, length: %d", kindBkLogConfig, e.UUID(), len(o.entitiesMap))
 }
 
 func (o *BkLogConfigMap) setEntity(e *bkLogConfigEntity) {
@@ -257,7 +257,7 @@ func (o *BkLogConfigMap) setEntity(e *bkLogConfigEntity) {
 	defer o.lock.Unlock()
 	o.entitiesMap[e.UUID()] = e
 
-	logger.Infof("[%s] set %s", kindBkLogConfig, e.UUID())
+	logger.Infof("[%s] set %s, length: %d", kindBkLogConfig, e.UUID(), len(o.entitiesMap))
 }
 
 func (o *BkLogConfigMap) addFunc(obj any) {

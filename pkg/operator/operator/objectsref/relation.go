@@ -11,6 +11,7 @@ package objectsref
 
 import (
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"io"
 	"regexp"
 	"strconv"
@@ -180,6 +181,8 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 		if e == nil {
 			return
 		}
+
+		logger.Info("[%s] get metrics in %s", kindBkLogConfig, e.UUID())
 
 		labels := []relationLabel{
 			{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},

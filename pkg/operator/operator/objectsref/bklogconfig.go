@@ -249,7 +249,7 @@ func (o *BkLogConfigMap) deleteEntity(e *bkLogConfigEntity) {
 	defer o.lock.Unlock()
 	delete(o.entitiesMap, e.UUID())
 
-	logger.Infof("delete bklogconfig %s", e.UUID())
+	logger.Infof("[%s] delete %s", kindBkLogConfig, e.UUID())
 }
 
 func (o *BkLogConfigMap) setEntity(e *bkLogConfigEntity) {
@@ -257,13 +257,13 @@ func (o *BkLogConfigMap) setEntity(e *bkLogConfigEntity) {
 	defer o.lock.Unlock()
 	o.entitiesMap[e.UUID()] = e
 
-	logger.Infof("set bklogconfig %s", e.UUID())
+	logger.Infof("[%s] set %s", kindBkLogConfig, e.UUID())
 }
 
 func (o *BkLogConfigMap) addFunc(obj any) {
 	bkLogConfig := newBkLogConfigEntity(obj)
 
-	logger.Infof("addFunc with bklogconfig %s", bkLogConfig.UUID())
+	logger.Infof("[%s] addFunc with %s", kindBkLogConfig, bkLogConfig.UUID())
 
 	env := feature.BkEnv(bkLogConfig.Obj.Labels)
 	if env != configs.G().BkEnv {
@@ -281,7 +281,7 @@ func (o *BkLogConfigMap) updateFunc(_, obj any) {
 func (o *BkLogConfigMap) deleteFunc(obj any) {
 	bkLogConfig := newBkLogConfigEntity(obj)
 
-	logger.Infof("deleteFunc with bklogconfig %s", bkLogConfig.UUID())
+	logger.Infof("[%s] deleteFunc with %s", kindBkLogConfig, bkLogConfig.UUID())
 
 	env := feature.BkEnv(bkLogConfig.Obj.Labels)
 	if env != configs.G().BkEnv {
@@ -319,10 +319,11 @@ func NewObjectsMap(ctx context.Context, client bkversioned.Interface) (*BkLogCon
 		},
 	)
 	go informer.Run(ctx.Done())
+	logger.Infof("[%s] informer start", kindBkLogConfig)
 
 	synced := k8sutils.WaitForNamedCacheSync(ctx, kindBkLogConfig, informer)
 	if !synced {
-		return nil, fmt.Errorf("failed to sync %s caches", kindBkLogConfig)
+		return nil, fmt.Errorf("[%s] failed to sync caches", kindBkLogConfig)
 	}
 
 	return objsMap, nil

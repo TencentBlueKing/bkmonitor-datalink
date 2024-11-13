@@ -287,6 +287,7 @@ func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, re
 		Kind:     kindBkLogConfig,
 	}
 	if _, ok := resources[gvrk]; !ok {
+		logger.Infof("no resource %#v found", gvrk)
 		return objsMap, nil
 	}
 

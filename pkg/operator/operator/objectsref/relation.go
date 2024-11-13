@@ -176,10 +176,6 @@ func (oc *ObjectsController) GetReplicasetRelations(w io.Writer) {
 }
 
 func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
-	if oc.bkLogConfigObjs == nil {
-		return
-	}
-
 	oc.bkLogConfigObjs.RangeBkLogConfig(func(e *bkLogConfigEntity) {
 		labels := []relationLabel{
 			{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},

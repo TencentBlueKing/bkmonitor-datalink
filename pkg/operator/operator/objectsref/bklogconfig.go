@@ -48,15 +48,23 @@ type bkLogConfigEntity struct {
 	Obj *loggingv1alpha1.BkLogConfig
 }
 
-func newBkLogConfigEntity(obj any) (*bkLogConfigEntity, error) {
+func newBkLogConfigEntity(obj any) *bkLogConfigEntity {
 	bkLogConfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
 	if !ok {
-		return nil, fmt.Errorf("unexpected Service type, got %T", obj)
+		logger.Errorf("expected %s type, got %T", kindBkLogConfig, obj)
+		return nil
+	}
+
+	// check bk env
+	env := feature.BkEnv(bkLogConfig.Labels)
+	if env != configs.G().BkEnv {
+		logger.Warnf("[%s] want bkenv '%s', but got '%s'", kindBkLogConfig, configs.G().BkEnv, env)
+		return nil
 	}
 
 	return &bkLogConfigEntity{
 		Obj: bkLogConfig,
-	}, nil
+	}
 }
 
 func (e *bkLogConfigEntity) UUID() string {
@@ -276,73 +284,54 @@ func NewObjectsMap(ctx context.Context, client bkversioned.Interface, resources 
 		entitiesMap: make(map[string]*bkLogConfigEntity),
 	}
 
-	qvrk := GVRK{
+	gvrk := GVRK{
 		Group:    groupBkLogConfig,
 		Version:  versionBkLogConfig,
 		Resource: resourceBkLogConfigs,
 		Kind:     kindBkLogConfig,
 	}
 
-	if _, ok := resources[qvrk]; ok {
-		factory := bkinformers.NewSharedInformerFactory(client, define.ReSyncPeriod)
-		informer := factory.Bk().V1alpha1().BkLogConfigs().Informer()
+	if _, ok := resources[gvrk]; ok {
+		return objsMap, nil
+	}
 
-		informer.AddEventHandler(
-			cache.ResourceEventHandlerFuncs{
-				AddFunc: func(obj interface{}) {
-					bkLogConfig, err := newBkLogConfigEntity(obj)
-					if err != nil {
-						logger.Errorf("[%s] AddFunc error %s with %v", kindBkLogConfig, err, obj)
-						return
-					}
+	factory := bkinformers.NewSharedInformerFactory(client, define.ReSyncPeriod)
+	informer := factory.Bk().V1alpha1().BkLogConfigs().Informer()
 
-					env := feature.BkEnv(bkLogConfig.Obj.Labels)
-					if env != configs.G().BkEnv {
-						logger.Warnf("[%s] want bkenv '%s', but got '%s'", kindBkLogConfig, configs.G().BkEnv, env)
-						return
-					}
+	informer.AddEventHandler(
+		cache.ResourceEventHandlerFuncs{
+			AddFunc: func(obj interface{}) {
+				bkLogConfig := newBkLogConfigEntity(obj)
+				if bkLogConfig == nil {
+					return
+				}
 
-					objsMap.setEntity(bkLogConfig)
-				},
-				UpdateFunc: func(_, newObj interface{}) {
-					bkLogConfig, err := newBkLogConfigEntity(newObj)
-					if err != nil {
-						logger.Errorf("[%s] UpdateFunc error %s with %v", kindBkLogConfig, err, newObj)
-						return
-					}
-
-					env := feature.BkEnv(bkLogConfig.Obj.Labels)
-					if env != configs.G().BkEnv {
-						logger.Warnf("[%s] want bkenv '%s', but got '%s'", kindBkLogConfig, configs.G().BkEnv, env)
-						return
-					}
-
-					objsMap.setEntity(bkLogConfig)
-				},
-				DeleteFunc: func(obj interface{}) {
-					bkLogConfig, err := newBkLogConfigEntity(obj)
-					if err != nil {
-						logger.Errorf("[%s] DeleteFunc error %s with %v", kindBkLogConfig, err, obj)
-						return
-					}
-
-					env := feature.BkEnv(bkLogConfig.Obj.Labels)
-					if env != configs.G().BkEnv {
-						logger.Warnf("[%s] want bkenv '%s', but got '%s'", kindBkLogConfig, configs.G().BkEnv, env)
-						return
-					}
-
-					objsMap.deleteEntity(bkLogConfig)
-				},
+				objsMap.setEntity(bkLogConfig)
 			},
-		)
-		go informer.Run(ctx.Done())
-		logger.Infof("[%s] informer start", kindBkLogConfig)
+			UpdateFunc: func(_, newObj interface{}) {
+				bkLogConfig := newBkLogConfigEntity(newObj)
+				if bkLogConfig == nil {
+					return
+				}
 
-		synced := k8sutils.WaitForNamedCacheSync(ctx, kindBkLogConfig, informer)
-		if !synced {
-			return nil, fmt.Errorf("[%s] failed to sync caches", kindBkLogConfig)
-		}
+				objsMap.setEntity(bkLogConfig)
+			},
+			DeleteFunc: func(obj interface{}) {
+				bkLogConfig := newBkLogConfigEntity(obj)
+				if bkLogConfig == nil {
+					return
+				}
+
+				objsMap.deleteEntity(bkLogConfig)
+			},
+		},
+	)
+	go informer.Run(ctx.Done())
+	logger.Infof("[%s] informer start", kindBkLogConfig)
+
+	synced := k8sutils.WaitForNamedCacheSync(ctx, kindBkLogConfig, informer)
+	if !synced {
+		return nil, fmt.Errorf("[%s] failed to sync caches", kindBkLogConfig)
 	}
 
 	return objsMap, nil

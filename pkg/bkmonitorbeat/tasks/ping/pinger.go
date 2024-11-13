@@ -152,8 +152,6 @@ type Pinger struct {
 	// 是否特权模式，默认的ping需要root权限
 	privileged bool
 
-	// 首次发送队列
-	firstSendQueue chan *pingerInstance
 	// 发送队列
 	sendQueue chan *pingerInstance
 	// 处理队列
@@ -221,23 +219,8 @@ func (p *Pinger) Ping(ctx context.Context, targets []*PingerTarget) error {
 				case <-ctx.Done():
 					continue
 				case instance := <-p.sendQueue:
-					// 发送icmp包
-					if err := p.send(instance); err != nil {
-						logger.Errorf("send icmp packet failed, error:%v", err)
-					}
-				case instance := <-p.firstSendQueue:
-				priority:
-					// 优先发送sendQueue中的任务
-					for {
-						select {
-						case instance := <-p.sendQueue:
-							// 发送icmp包
-							if err := p.send(instance); err != nil {
-								logger.Errorf("send icmp packet failed, error:%v", err)
-							}
-						default:
-							break priority
-						}
+					if instance == nil {
+						continue
 					}
 
 					// 发送icmp包
@@ -253,6 +236,11 @@ func (p *Pinger) Ping(ctx context.Context, targets []*PingerTarget) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+
+		// 推送第一次发送
+		for _, instance := range p.instances {
+			p.sendQueue <- instance
+		}
 
 		// 超时检查，每100ms进行一次检查
 		ticker := time.NewTicker(timeoutCheckInterval)
@@ -713,14 +701,7 @@ func (p *Pinger) parseTarget(targets []*PingerTarget) error {
 	if queueLength < 100 {
 		queueLength = 100
 	}
-	p.firstSendQueue = make(chan *pingerInstance, queueLength)
 	p.sendQueue = make(chan *pingerInstance, queueLength)
 	p.replyQueue = make(chan *pingerPacket, queueLength)
-
-	// 初始化发送队列
-	for _, instance := range p.instances {
-		p.firstSendQueue <- instance
-	}
-
 	return nil
 }

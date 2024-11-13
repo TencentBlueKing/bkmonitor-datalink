@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/cache"
@@ -36,14 +37,6 @@ const (
 	logConfigTypeNode      = "node_log_config"
 )
 
-const (
-	kindBkLogConfig    = "BkLogConfig"
-	groupBkLogConfig   = "bk.tencent.com"
-	versionBkLogConfig = "v1alpha1"
-
-	resourceBkLogConfigs = "bklogconfigs"
-)
-
 type bkLogConfigEntity struct {
 	Obj *loggingv1alpha1.BkLogConfig
 }
@@ -51,14 +44,14 @@ type bkLogConfigEntity struct {
 func newBkLogConfigEntity(obj any) *bkLogConfigEntity {
 	bkLogConfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
 	if !ok {
-		logger.Errorf("expected %s type, got %T", kindBkLogConfig, obj)
+		logger.Errorf("expected BkLogConfig type, got %T", obj)
 		return nil
 	}
 
 	// check bk env
 	env := feature.BkEnv(bkLogConfig.Labels)
 	if env != configs.G().BkEnv {
-		logger.Warnf("[%s] want bkenv '%s', but got '%s'", kindBkLogConfig, configs.G().BkEnv, env)
+		logger.Warnf("want BkLogConfig bkenv '%s', but got '%s'", configs.G().BkEnv, env)
 		return nil
 	}
 
@@ -111,7 +104,6 @@ func (e *bkLogConfigEntity) MatchWorkloadName(matcherLabels, matcherAnnotations 
 	}
 
 	var names []string
-
 	if e.isVCluster(matcherLabels) {
 		name := e.getValues(matcherAnnotations, configs.G().VCluster.WorkloadNameAnnotationKey, "")
 		kind := e.getValues(matcherAnnotations, configs.G().VCluster.WorkloadTypeAnnotationKey, "")
@@ -134,12 +126,11 @@ func (e *bkLogConfigEntity) MatchWorkloadName(matcherLabels, matcherAnnotations 
 }
 
 func (e *bkLogConfigEntity) MatchWorkloadType(matcherLabels, matcherAnnotations map[string]string, ownerRefs []OwnerRef) bool {
-	var kinds []string
-
 	if e.Obj.Spec.WorkloadType == "" {
 		return true
 	}
 
+	var kinds []string
 	if e.isVCluster(matcherLabels) {
 		kinds = append(kinds, e.getValues(matcherAnnotations, configs.G().VCluster.WorkloadTypeAnnotationKey, ""))
 	} else {
@@ -252,20 +243,20 @@ type BkLogConfigMap struct {
 	entitiesMap map[string]*bkLogConfigEntity
 }
 
-func (o *BkLogConfigMap) deleteEntity(e *bkLogConfigEntity) {
+func (o *BkLogConfigMap) Del(e *bkLogConfigEntity) {
 	o.lock.Lock()
 	defer o.lock.Unlock()
-	delete(o.entitiesMap, e.UUID())
 
-	logger.Infof("[%s] delete %s, length: %d", kindBkLogConfig, e.UUID(), len(o.entitiesMap))
+	logger.Infof("delete BkLogConfig object (%s)", e.UUID())
+	delete(o.entitiesMap, e.UUID())
 }
 
-func (o *BkLogConfigMap) setEntity(e *bkLogConfigEntity) {
+func (o *BkLogConfigMap) Set(e *bkLogConfigEntity) {
 	o.lock.Lock()
 	defer o.lock.Unlock()
-	o.entitiesMap[e.UUID()] = e
 
-	logger.Infof("[%s] set %s, length: %d", kindBkLogConfig, e.UUID(), len(o.entitiesMap))
+	logger.Infof("set BkLogConfig object (%s)", e.UUID())
+	o.entitiesMap[e.UUID()] = e
 }
 
 func (o *BkLogConfigMap) RangeBkLogConfig(visitFunc func(e *bkLogConfigEntity)) {
@@ -279,10 +270,15 @@ func (o *BkLogConfigMap) RangeBkLogConfig(visitFunc func(e *bkLogConfigEntity)) 
 	}
 }
 
-func NewObjectsMap(ctx context.Context, client bkversioned.Interface, resources map[GVRK]struct{}) (*BkLogConfigMap, error) {
+func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, resources map[GVRK]struct{}) (*BkLogConfigMap, error) {
 	objsMap := &BkLogConfigMap{
 		entitiesMap: make(map[string]*bkLogConfigEntity),
 	}
+
+	const (
+		groupBkLogConfig   = "bk.tencent.com"
+		versionBkLogConfig = "v1alpha1"
+	)
 
 	gvrk := GVRK{
 		Group:    groupBkLogConfig,
@@ -290,7 +286,6 @@ func NewObjectsMap(ctx context.Context, client bkversioned.Interface, resources 
 		Resource: resourceBkLogConfigs,
 		Kind:     kindBkLogConfig,
 	}
-
 	if _, ok := resources[gvrk]; !ok {
 		return objsMap, nil
 	}
@@ -306,7 +301,7 @@ func NewObjectsMap(ctx context.Context, client bkversioned.Interface, resources 
 					return
 				}
 
-				objsMap.setEntity(bkLogConfig)
+				objsMap.Set(bkLogConfig)
 			},
 			UpdateFunc: func(_, newObj interface{}) {
 				bkLogConfig := newBkLogConfigEntity(newObj)
@@ -314,7 +309,7 @@ func NewObjectsMap(ctx context.Context, client bkversioned.Interface, resources 
 					return
 				}
 
-				objsMap.setEntity(bkLogConfig)
+				objsMap.Set(bkLogConfig)
 			},
 			DeleteFunc: func(obj interface{}) {
 				bkLogConfig := newBkLogConfigEntity(obj)
@@ -322,16 +317,15 @@ func NewObjectsMap(ctx context.Context, client bkversioned.Interface, resources 
 					return
 				}
 
-				objsMap.deleteEntity(bkLogConfig)
+				objsMap.Del(bkLogConfig)
 			},
 		},
 	)
 	go informer.Run(ctx.Done())
-	logger.Infof("[%s] informer start", kindBkLogConfig)
 
 	synced := k8sutils.WaitForNamedCacheSync(ctx, kindBkLogConfig, informer)
 	if !synced {
-		return nil, fmt.Errorf("[%s] failed to sync caches", kindBkLogConfig)
+		return nil, errors.New("failed to sync BkLogConfig caches")
 	}
 
 	return objsMap, nil

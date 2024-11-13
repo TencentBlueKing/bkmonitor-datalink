@@ -115,7 +115,7 @@ container_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-no
 	assert.Equal(t, expected, buf.String())
 }
 
-func TestObjectsController_GetDataSourceRelations(t *testing.T) {
+func TestGetDataSourceRelations(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -330,21 +330,19 @@ data_source_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify
 
 			var bkLogConfig *loggingv1alpha1.BkLogConfig
 			err := json.Unmarshal([]byte(c.bkLogConfig), &bkLogConfig)
-			if assert.NoError(t, err) {
-				objectsController.bkLogConfigObjs = &BkLogConfigMap{
-					entitiesMap: map[string]*bkLogConfigEntity{
-						name: {
-							Obj: bkLogConfig,
-						},
+			assert.NoError(t, err)
+
+			objectsController.bkLogConfigObjs = &BkLogConfigMap{
+				entitiesMap: map[string]*bkLogConfigEntity{
+					name: {
+						Obj: bkLogConfig,
 					},
-				}
-
-				buf := &bytes.Buffer{}
-				objectsController.GetDataSourceRelations(buf)
-
-				assert.Equal(t, c.expected, buf.String())
+				},
 			}
+
+			buf := &bytes.Buffer{}
+			objectsController.GetDataSourceRelations(buf)
+			assert.Equal(t, c.expected, buf.String())
 		})
 	}
-
 }

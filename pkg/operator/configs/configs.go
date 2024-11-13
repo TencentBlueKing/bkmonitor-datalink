@@ -132,6 +132,18 @@ type PromSliScrape struct {
 	Alerting  map[string]interface{} `yaml:"alerting"`
 }
 
+// VCluster 配置，bklogconfig 使用中
+type VCluster struct {
+	PodNameAnnotationKey      string `yaml:"pod_name_annotation_key"`
+	PodUidAnnotationKey       string `yaml:"pod_uid_annotation_key"`
+	PodNamespaceAnnotationKey string `yaml:"pod_namespace_annotation_key"`
+	WorkloadNameAnnotationKey string `yaml:"workload_name_annotation_key"`
+	WorkloadTypeAnnotationKey string `yaml:"workload_type_annotation_key"`
+	LabelsAnnotationKey       string `yaml:"labels_annotation_key"`
+	LabelKey                  string `yaml:"label_key"`
+	ManagedAnnotationKey      string `yaml:"managed_annotation_key"`
+}
+
 // Config Operator 进程主配置
 type Config struct {
 	// BkEnv 环境配置信息
@@ -218,6 +230,8 @@ type Config struct {
 	StatefulSetMatchRules      []StatefulSetMatchRule      `yaml:"statefulset_match_rules"`
 	MonitorBlacklistMatchRules []MonitorBlacklistMatchRule `yaml:"monitor_blacklist_match_rules"`
 	PromSDSecrets              []PromSDSecret              `yaml:"prom_sd_configs"`
+
+	VCluster VCluster `yaml:"vcluster"`
 }
 
 type PromSDKinds []string
@@ -254,6 +268,33 @@ func setupStatefulSetWorker(c *Config) {
 	}
 }
 
+func setupVCluster(c *Config) {
+	if c.VCluster.PodNameAnnotationKey == "" {
+		c.VCluster.PodNameAnnotationKey = "vcluster.loft.sh/name"
+	}
+	if c.VCluster.PodUidAnnotationKey == "" {
+		c.VCluster.PodUidAnnotationKey = "vcluster.loft.sh/uid"
+	}
+	if c.VCluster.PodNamespaceAnnotationKey == "" {
+		c.VCluster.PodNamespaceAnnotationKey = "vcluster.loft.sh/namespace"
+	}
+	if c.VCluster.WorkloadNameAnnotationKey == "" {
+		c.VCluster.WorkloadNameAnnotationKey = "vcluster.loft.sh/owner-set-name"
+	}
+	if c.VCluster.WorkloadTypeAnnotationKey == "" {
+		c.VCluster.WorkloadTypeAnnotationKey = "vcluster.loft.sh/owner-set-kind"
+	}
+	if c.VCluster.LabelsAnnotationKey == "" {
+		c.VCluster.LabelsAnnotationKey = "vcluster.loft.sh/labels"
+	}
+	if c.VCluster.LabelKey == "" {
+		c.VCluster.LabelKey = "vcluster.loft.sh/managed-by"
+	}
+	if c.VCluster.ManagedAnnotationKey == "" {
+		c.VCluster.ManagedAnnotationKey = "vcluster.loft.sh/managed-annotations"
+	}
+}
+
 // GetTLS 转换 tls 配置为 restclinet tls
 func (c *Config) GetTLS() *rest.TLSClientConfig {
 	return &rest.TLSClientConfig{
@@ -271,6 +312,7 @@ func (c *Config) setup() {
 		setupEvent,
 		setupHTTP,
 		setupStatefulSetWorker,
+		setupVCluster,
 	}
 
 	for _, fn := range funcs {

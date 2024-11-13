@@ -17,7 +17,6 @@ import (
 	v1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	labels "k8s.io/apimachinery/pkg/labels"
-	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"
 	testing "k8s.io/client-go/testing"
@@ -29,9 +28,9 @@ type FakeBkLogConfigs struct {
 	ns   string
 }
 
-var bklogconfigsResource = schema.GroupVersionResource{Group: "bk.tencent.com", Version: "v1alpha1", Resource: "bklogconfigs"}
+var bklogconfigsResource = v1alpha1.SchemeGroupVersion.WithResource("bklogconfigs")
 
-var bklogconfigsKind = schema.GroupVersionKind{Group: "bk.tencent.com", Version: "v1alpha1", Kind: "BkLogConfig"}
+var bklogconfigsKind = v1alpha1.SchemeGroupVersion.WithKind("BkLogConfig")
 
 // Get takes name of the bkLogConfig, and returns the corresponding bkLogConfig object, and an error if there is any.
 func (c *FakeBkLogConfigs) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.BkLogConfig, err error) {

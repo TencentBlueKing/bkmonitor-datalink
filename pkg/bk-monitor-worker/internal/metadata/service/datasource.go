@@ -542,10 +542,26 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 			return nil
 		}
 	}
+
+	// 获取Consul句柄
 	consulClient, err := consul.GetInstance()
+	// 获取对应的modifyIndex
+	modifyIndex, oldValueBytes, err := consulClient.Get(d.ConsulPath())
+	logger.Infof("RefreshConsulConfig:data_id [%d] now try to write with modifyIndex->[%d]", d.BkDataId, modifyIndex)
+
+	if err != nil {
+		logger.Errorf("RefreshConsulConfig:data_id [%d] can not get old value from [%s] because of [%v], skip", d.BkDataId, d.ConsulConfigPath(), err)
+		return err
+	}
+
+	if oldValueBytes == nil {
+		modifyIndex = uint64(0)
+	}
+
 	if err != nil {
 		return err
 	}
+
 	val, err := d.ToJson(true, true)
 	if err != nil {
 		return errors.Wrap(err, "RefreshConsulConfig:datasource to_json failed")
@@ -554,7 +570,7 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	err = hashconsul.Put(consulClient, d.ConsulConfigPath(), valStr)
+	err = hashconsul.Put(consulClient, d.ConsulConfigPath(), valStr, modifyIndex)
 	if err != nil {
 		logger.Errorf("RefreshConsulConfig:data_id [%v] put [%s] to [%s] failed, %v", d.BkDataId, valStr, d.ConsulConfigPath(), err)
 		return err

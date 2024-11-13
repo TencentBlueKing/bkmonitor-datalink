@@ -11,11 +11,9 @@ package consul
 
 import (
 	"context"
-	"sync"
-	"time"
-
 	"github.com/hashicorp/consul/api"
 	"github.com/pkg/errors"
+	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
@@ -81,8 +79,8 @@ func (c *Instance) Open() error {
 }
 
 // Put put a key-val
-func (c *Instance) Put(key, val string, expiration time.Duration) error {
-	kvPair := &api.KVPair{Key: key, Value: store.String2byte(val)}
+func (c *Instance) Put(key, val string, modifyIndex uint64) error {
+	kvPair := &api.KVPair{Key: key, Value: store.String2byte(val), ModifyIndex: modifyIndex}
 	metrics.ConsulPutCount(key)
 	_, err := c.APIClient.KV().Put(kvPair, nil)
 	if err != nil {
@@ -93,19 +91,19 @@ func (c *Instance) Put(key, val string, expiration time.Duration) error {
 }
 
 // Get get val by key
-func (c *Instance) Get(key string) ([]byte, error) {
+func (c *Instance) Get(key string) (uint64, []byte, error) {
 	var err error
 	kvPair, _, err := c.APIClient.KV().Get(key, nil)
 	if err != nil {
 		logger.Errorf("get consul key: %s error, %v", key, err)
-		return nil, err
+		return uint64(0), nil, err
 	}
 	if kvPair == nil {
 		// Key not exist
-		return nil, nil
+		return uint64(0), nil, nil
 	}
 
-	return kvPair.Value, nil
+	return kvPair.ModifyIndex, kvPair.Value, nil
 }
 
 // Delete delete a key

@@ -18,7 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-func Put(c *consul.Instance, key, val string) error {
+func Put(c *consul.Instance, key, val string, modifyIndex uint64) error {
 	// 将中文转化为unicode
 	var unicodeVal string
 	for _, runeValue := range val {
@@ -30,20 +30,31 @@ func Put(c *consul.Instance, key, val string) error {
 	}
 	val = unicodeVal
 
-	oldValueBytes, err := c.Get(key)
+	// 需要获取ModifyIndex
+	currentIndex, oldValueBytes, err := c.Get(key)
+	if currentIndex != modifyIndex {
+		logger.Errorf("ModifyIndex->[%d] is different with CurrentIndex->[%d], skip", modifyIndex, currentIndex)
+		return nil
+	}
+
+	// 如果oldValueBytes为空的话，将ModifyIndex置为0
+	if oldValueBytes == nil {
+		modifyIndex = uint64(0)
+	}
+
 	if err != nil {
 		logger.Infof("can not get old value from [%s] because of [%v], will refresh consul", key, err)
-		return c.Put(key, val, 0)
+		return c.Put(key, val, modifyIndex)
 	}
 	oldValue := string(oldValueBytes)
 	equal, err := jsonx.CompareJson(oldValue, val)
 	if err != nil {
 		logger.Infof("can not compare new value [%s] and old value [%s], will refresh consul", key, err)
-		return c.Put(key, val, 0)
+		return c.Put(key, val, modifyIndex)
 	}
 	if !equal {
 		logger.Infof("new value [%s] is different from [%s] on consul, will updated it", val, oldValue)
-		return c.Put(key, val, 0)
+		return c.Put(key, val, modifyIndex)
 	}
 	logger.Debugf("new value [%s] is same with [%s] on consul, skip it", val, oldValue)
 	return nil

@@ -230,8 +230,9 @@ func TestObjectsController_GetDataSourceRelations(t *testing.T) {
         "namespace": "blueking"
     }
 }`,
-			expected: `container_with_data_source_relation{data_source="100001",namespace="blueking",pod="unify-query-01",container="unify-query"} 1
-container_with_data_source_relation{data_source="100001",namespace="blueking",pod="unify-query-02",container="unify-query"} 1
+			expected: `bk_log_config_with_data_source_relation{bk_data_id="100001",bk_log_config_namespace="blueking",bk_log_config_name="bkmonitor-unify-query-container-log"} 1
+data_source_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-01"} 1
+data_source_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-02"} 1
 `,
 		},
 		"std_log_config_2": {
@@ -266,7 +267,8 @@ container_with_data_source_relation{data_source="100001",namespace="blueking",po
         "namespace": "default"
     }
 }`,
-			expected: `container_with_data_source_relation{data_source="100001",namespace="default",pod="unify-query-03",container="unify-query"} 1
+			expected: `bk_log_config_with_data_source_relation{bk_data_id="100001",bk_log_config_namespace="blueking",bk_log_config_name="bkmonitor-unify-query-container-log"} 1
+data_source_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-query-03"} 1
 `,
 		},
 		"std_log_config_3": {
@@ -304,9 +306,10 @@ container_with_data_source_relation{data_source="100001",namespace="blueking",po
         }
     }
 }`,
-			expected: `container_with_data_source_relation{data_source="100001",namespace="blueking",pod="unify-query-02",container="unify-query"} 1
-container_with_data_source_relation{data_source="100001",namespace="blueking",pod="unify-query-01",container="unify-query"} 1
-container_with_data_source_relation{data_source="100001",namespace="default",pod="unify-query-03",container="unify-query"} 1
+			expected: `bk_log_config_with_data_source_relation{bk_data_id="100001",bk_log_config_namespace="blueking",bk_log_config_name="bkmonitor-unify-query-container-log"} 1
+data_source_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-01"} 1
+data_source_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-02"} 1
+data_source_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-query-03"} 1
 `,
 		},
 	}

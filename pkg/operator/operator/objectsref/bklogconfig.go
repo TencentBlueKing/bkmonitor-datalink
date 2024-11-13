@@ -263,8 +263,6 @@ func (o *BkLogConfigMap) setEntity(e *bkLogConfigEntity) {
 func (o *BkLogConfigMap) addFunc(obj any) {
 	bkLogConfig := newBkLogConfigEntity(obj)
 
-	logger.Infof("[%s] addFunc with %s", kindBkLogConfig, bkLogConfig.UUID())
-
 	env := feature.BkEnv(bkLogConfig.Obj.Labels)
 	if env != configs.G().BkEnv {
 		logger.Warnf("want bkenv '%s', but got '%s'", configs.G().BkEnv, env)
@@ -280,8 +278,6 @@ func (o *BkLogConfigMap) updateFunc(_, obj any) {
 
 func (o *BkLogConfigMap) deleteFunc(obj any) {
 	bkLogConfig := newBkLogConfigEntity(obj)
-
-	logger.Infof("[%s] deleteFunc with %s", kindBkLogConfig, bkLogConfig.UUID())
 
 	env := feature.BkEnv(bkLogConfig.Obj.Labels)
 	if env != configs.G().BkEnv {

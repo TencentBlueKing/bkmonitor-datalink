@@ -20,7 +20,7 @@ var configData = &Config{
 			},
 		},
 		{
-			Name: "data_source",
+			Name: "datasource",
 			Index: cmdb.Index{
 				"bk_data_id",
 			},
@@ -125,10 +125,10 @@ var configData = &Config{
 			},
 		},
 		{
-			Name: "bk_log_config",
+			Name: "bklogconfig",
 			Index: cmdb.Index{
-				"bk_log_config_namespace",
-				"bk_log_config_name",
+				"bklogconfig_namespace",
+				"bklogconfig_name",
 			},
 		},
 	},
@@ -175,12 +175,12 @@ var configData = &Config{
 		},
 		{
 			Resources: []cmdb.Resource{
-				"data_source", "pod",
+				"datasource", "pod",
 			},
 		},
 		{
 			Resources: []cmdb.Resource{
-				"data_source", "node",
+				"datasource", "node",
 			},
 		},
 		{
@@ -215,7 +215,7 @@ var configData = &Config{
 		},
 		{
 			Resources: []cmdb.Resource{
-				"bk_log_config", "data_source",
+				"bklogconfig", "datasource",
 			},
 		},
 	},

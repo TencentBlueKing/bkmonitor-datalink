@@ -230,9 +230,9 @@ func TestGetDataSourceRelations(t *testing.T) {
         "namespace": "blueking"
     }
 }`,
-			expected: `bk_log_config_with_data_source_relation{bk_data_id="100001",bk_log_config_namespace="blueking",bk_log_config_name="bkmonitor-unify-query-container-log"} 1
-data_source_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-01"} 1
-data_source_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-02"} 1
+			expected: `bklogconfig_with_datasource_relation{bk_data_id="100001",bklogconfig_namespace="blueking",bklogconfig_name="bkmonitor-unify-query-container-log"} 1
+datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-01"} 1
+datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-02"} 1
 `,
 		},
 		"std_log_config_2": {
@@ -267,8 +267,8 @@ data_source_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unif
         "namespace": "default"
     }
 }`,
-			expected: `bk_log_config_with_data_source_relation{bk_data_id="100001",bk_log_config_namespace="blueking",bk_log_config_name="bkmonitor-unify-query-container-log"} 1
-data_source_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-query-03"} 1
+			expected: `bklogconfig_with_datasource_relation{bk_data_id="100001",bklogconfig_namespace="blueking",bklogconfig_name="bkmonitor-unify-query-container-log"} 1
+datasource_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-query-03"} 1
 `,
 		},
 		"std_log_config_3": {
@@ -306,10 +306,10 @@ data_source_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify
         }
     }
 }`,
-			expected: `bk_log_config_with_data_source_relation{bk_data_id="100001",bk_log_config_namespace="blueking",bk_log_config_name="bkmonitor-unify-query-container-log"} 1
-data_source_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-01"} 1
-data_source_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-02"} 1
-data_source_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-query-03"} 1
+			expected: `bklogconfig_with_datasource_relation{bk_data_id="100001",bklogconfig_namespace="blueking",bklogconfig_name="bkmonitor-unify-query-container-log"} 1
+datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-01"} 1
+datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-02"} 1
+datasource_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-query-03"} 1
 `,
 		},
 	}

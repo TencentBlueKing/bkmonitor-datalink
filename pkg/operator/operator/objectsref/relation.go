@@ -240,6 +240,7 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 					})
 				}
 			}
+
 		case logConfigTypeNode:
 			if oc.nodeObjs == nil {
 				return

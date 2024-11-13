@@ -175,6 +175,7 @@ const (
 	kindCronJob         = "CronJob"
 	kindGameStatefulSet = "GameStatefulSet"
 	kindGameDeployment  = "GameDeployment"
+	kindBkLogConfig     = "BkLogConfig"
 )
 
 const (
@@ -195,6 +196,9 @@ const (
 	// extend workload
 	resourceGameStatefulSets = "gamestatefulsets"
 	resourceGameDeployments  = "gamedeployments"
+
+	// logging
+	resourceBkLogConfigs = "bklogconfigs"
 )
 
 func partialObjectMetadataStrip(obj interface{}) (interface{}, error) {
@@ -233,8 +237,7 @@ type ObjectsController struct {
 	serviceObjs         *ServiceMap
 	endpointsObjs       *EndpointsMap
 	ingressObjs         *IngressMap
-
-	bkLogConfigObjs *BkLogConfigMap
+	bkLogConfigObjs     *BkLogConfigMap
 }
 
 func NewController(ctx context.Context, client kubernetes.Interface, mClient metadata.Interface, bkClient bkversioned.Interface) (*ObjectsController, error) {
@@ -315,7 +318,7 @@ func NewController(ctx context.Context, client kubernetes.Interface, mClient met
 	controller.gameStatefulSetObjs = tkexObjs.gamestatefulset
 	controller.gameDeploymentsObjs = tkexObjs.gamedeployment
 
-	controller.bkLogConfigObjs, err = NewObjectsMap(ctx, bkClient, resources)
+	controller.bkLogConfigObjs, err = newBklogConfigObjects(ctx, bkClient, resources)
 	if err != nil {
 		return nil, err
 	}

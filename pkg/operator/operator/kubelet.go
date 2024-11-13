@@ -175,13 +175,13 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "synchronizing kubelet service object failed")
 	}
-	logger.Infof("sync kubelet service %s", cfg)
+	logger.Debugf("sync kubelet service %s", cfg)
 
 	err = k8sutils.CreateOrUpdateEndpoints(ctx, c.client.CoreV1().Endpoints(cfg.Namespace), eps)
 	if err != nil {
 		return errors.Wrap(err, "synchronizing kubelet endpoints object failed")
 	}
-	logger.Infof("sync kubelet endpoints %s, address count (%d)", cfg, len(addresses))
+	logger.Debugf("sync kubelet endpoints %s, address count (%d)", cfg, len(addresses))
 
 	return nil
 }

@@ -182,7 +182,7 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 		tx.Commit()
 	}
 	// 触发consul刷新
-	err = NewDataSourceSvc(&ds).RefreshOuterConfig(context.Background())
+	err = NewDataSourceSvc(&ds).RefreshOuterConfig(context.Background(), uint64(0))
 	if err != nil {
 		return nil, err
 	}
@@ -528,7 +528,7 @@ func (d DataSourceSvc) GseRouteConfig() (*bkgse.GSERoute, error) {
 }
 
 // RefreshConsulConfig 更新consul配置，告知ETL等其他依赖模块配置有所更新
-func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
+func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context, modifyIndex uint64) error {
 	logger.Infof("RefreshConsulConfig:data_id [%d] started to refresh consul config", d.BkDataId)
 	// 如果数据源没有启用，则不用刷新 consul 配置
 	if !d.CanRefreshConfig() {
@@ -545,22 +545,6 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 
 	// 获取Consul句柄
 	consulClient, err := consul.GetInstance()
-	// 获取对应的modifyIndex
-	modifyIndex, oldValueBytes, err := consulClient.Get(d.ConsulPath())
-	logger.Infof("RefreshConsulConfig:data_id [%d] now try to write with modifyIndex->[%d]", d.BkDataId, modifyIndex)
-
-	if err != nil {
-		logger.Errorf("RefreshConsulConfig:data_id [%d] can not get old value from [%s] because of [%v], skip", d.BkDataId, d.ConsulConfigPath(), err)
-		return err
-	}
-
-	if oldValueBytes == nil {
-		modifyIndex = uint64(0)
-	}
-
-	if err != nil {
-		return err
-	}
 
 	val, err := d.ToJson(true, true)
 	if err != nil {
@@ -579,7 +563,7 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 	return nil
 }
 
-func (d DataSourceSvc) RefreshOuterConfig(ctx context.Context) error {
+func (d DataSourceSvc) RefreshOuterConfig(ctx context.Context, modifyIndex uint64) error {
 	if !d.IsEnable {
 		logger.Infof("data_id [%d] is not enable, nothing will refresh to outer systems.", d.BkDataId)
 		return nil
@@ -591,7 +575,7 @@ func (d DataSourceSvc) RefreshOuterConfig(ctx context.Context) error {
 		logger.Errorf("data_id [%d] refresh gse config failed, %v", d.BkDataId, err)
 	}
 
-	err = d.RefreshConsulConfig(ctx)
+	err = d.RefreshConsulConfig(ctx, modifyIndex)
 	if err != nil {
 		logger.Errorf("data_id [%d] refresh consul config failed, %v", d.BkDataId, err)
 	}

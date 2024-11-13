@@ -20,7 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 )
 
-func CodeMetrics(dataID int32, taskConfig define.TaskConfig, receive, report int64) *tasks.GatherUpEvent {
+func CodeMetrics(dataID int32, taskConfig define.TaskConfig, receive, report, cleaned int64) *tasks.GatherUpEvent {
 	dims := common.MapStr{
 		"task_id":         strconv.Itoa(int(taskConfig.GetTaskID())),
 		"bk_collect_type": taskConfig.GetType(),
@@ -41,6 +41,7 @@ func CodeMetrics(dataID int32, taskConfig define.TaskConfig, receive, report int
 		Metrics: common.MapStr{
 			define.NameKubeEventReceiveEvents: float64(receive),
 			define.NameKubeEventReportEvents:  float64(report),
+			define.NameKubeEventCleanedEvents: float64(cleaned),
 		},
 	}
 

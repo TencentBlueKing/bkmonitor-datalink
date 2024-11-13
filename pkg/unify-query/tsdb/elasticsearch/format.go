@@ -703,6 +703,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 						case structured.ConditionEqual, structured.ConditionNotEqual:
 							query = elastic.NewMatchPhraseQuery(key, value)
 						case structured.ConditionContains, structured.ConditionNotContains:
+							value = fmt.Sprintf("*%s*", value)
 							query = elastic.NewWildcardQuery(key, value)
 						case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
 							query = elastic.NewRegexpQuery(key, value)

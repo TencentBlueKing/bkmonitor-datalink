@@ -94,15 +94,11 @@ func setupHTTP(c *Config) {
 
 // Event kubernetes 事件采集配置
 type Event struct {
-	MaxSpan   string   `yaml:"max_span"`   // 事件最大允许时间跨度
 	Interval  string   `yaml:"interval"`   // 事件上报周期
 	TailFiles []string `yaml:"tail_files"` // 事件监听路径
 }
 
 func setupEvent(c *Config) {
-	if c.Event.MaxSpan == "" {
-		c.Event.MaxSpan = "3m" // 默认事件最大时间跨度为 3m 即保证能够大于两个上报周期即可
-	}
 	if c.Event.Interval == "" {
 		c.Event.Interval = "60s" // 默认事件上报周期为 60s
 	}

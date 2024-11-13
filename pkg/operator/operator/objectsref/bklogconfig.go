@@ -20,7 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/cache"
 
-	loggingV1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
+	loggingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
 	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	bkinformers "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
@@ -31,9 +31,9 @@ import (
 )
 
 const (
-	StdLogConfig       = "std_log_config"
-	ContainerLogConfig = "container_log_config"
-	NodeLogConfig      = "node_log_config"
+	logConfigTypeStd       = "std_log_config"
+	logConfigTypeContainer = "container_log_config"
+	logConfigTypeNode      = "node_log_config"
 )
 
 const (
@@ -45,17 +45,18 @@ const (
 )
 
 type bkLogConfigEntity struct {
-	Obj *loggingV1alpha1.BkLogConfig
+	Obj *loggingv1alpha1.BkLogConfig
 }
 
-func newBkLogConfigEntity(obj any) *bkLogConfigEntity {
-	bkLogConfig, ok := obj.(*loggingV1alpha1.BkLogConfig)
+func newBkLogConfigEntity(obj any) (*bkLogConfigEntity, error) {
+	bkLogConfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
 	if !ok {
-		logger.Errorf("unexpected BkLogConfig type, got %T", obj)
+		return nil, fmt.Errorf("unexpected Service type, got %T", obj)
 	}
+
 	return &bkLogConfigEntity{
 		Obj: bkLogConfig,
-	}
+	}, nil
 }
 
 func (e *bkLogConfigEntity) UUID() string {
@@ -208,7 +209,7 @@ func (e *bkLogConfigEntity) MatchNamespace(namespace string) bool {
 	}
 
 	if len(e.Obj.Spec.NamespaceSelector.ExcludeNames) != 0 {
-		// 全部不匹配true，否则为false
+		// 全部不匹配 true，否则为 false
 		for _, ns := range e.Obj.Spec.NamespaceSelector.ExcludeNames {
 			if ns == namespace {
 				return false
@@ -216,7 +217,7 @@ func (e *bkLogConfigEntity) MatchNamespace(namespace string) bool {
 		}
 		return true
 	} else if len(e.Obj.Spec.NamespaceSelector.MatchNames) != 0 {
-		// 优先使用NamespaceSelector配置，列表中任意一个满足即可
+		// 优先使用 NamespaceSelector 配置，列表中任意一个满足即可
 		// 有一个匹配上则为true，否则直接false
 		for _, ns := range e.Obj.Spec.NamespaceSelector.MatchNames {
 			if ns == namespace {
@@ -225,7 +226,7 @@ func (e *bkLogConfigEntity) MatchNamespace(namespace string) bool {
 		}
 		return false
 	} else {
-		// 其次，使用Namespace配置，直接名字匹配
+		// 其次，使用 Namespace 配置，直接名字匹配
 		if e.Obj.Spec.Namespace != "" {
 			if e.Obj.Spec.Namespace != namespace {
 				return false
@@ -244,10 +245,6 @@ type BkLogConfigMap struct {
 }
 
 func (o *BkLogConfigMap) deleteEntity(e *bkLogConfigEntity) {
-	if e == nil {
-		return
-	}
-
 	o.lock.Lock()
 	defer o.lock.Unlock()
 	delete(o.entitiesMap, e.UUID())
@@ -263,34 +260,6 @@ func (o *BkLogConfigMap) setEntity(e *bkLogConfigEntity) {
 	logger.Infof("[%s] set %s, length: %d", kindBkLogConfig, e.UUID(), len(o.entitiesMap))
 }
 
-func (o *BkLogConfigMap) addFunc(obj any) {
-	bkLogConfig := newBkLogConfigEntity(obj)
-
-	env := feature.BkEnv(bkLogConfig.Obj.Labels)
-	if env != configs.G().BkEnv {
-		logger.Warnf("want bkenv '%s', but got '%s'", configs.G().BkEnv, env)
-		return
-	}
-
-	o.setEntity(bkLogConfig)
-}
-
-func (o *BkLogConfigMap) updateFunc(_, obj any) {
-	o.addFunc(obj)
-}
-
-func (o *BkLogConfigMap) deleteFunc(obj any) {
-	bkLogConfig := newBkLogConfigEntity(obj)
-
-	env := feature.BkEnv(bkLogConfig.Obj.Labels)
-	if env != configs.G().BkEnv {
-		logger.Warnf("want bkenv '%s', but got '%s'", configs.G().BkEnv, env)
-		return
-	}
-
-	o.deleteEntity(bkLogConfig)
-}
-
 func (o *BkLogConfigMap) RangeBkLogConfig(visitFunc func(e *bkLogConfigEntity)) {
 	o.lock.RLock()
 	defer o.lock.RUnlock()
@@ -300,7 +269,6 @@ func (o *BkLogConfigMap) RangeBkLogConfig(visitFunc func(e *bkLogConfigEntity)) 
 			visitFunc(e)
 		}
 	}
-	return
 }
 
 func NewObjectsMap(ctx context.Context, client bkversioned.Interface, resources map[GVRK]struct{}) (*BkLogConfigMap, error) {
@@ -321,9 +289,51 @@ func NewObjectsMap(ctx context.Context, client bkversioned.Interface, resources 
 
 		informer.AddEventHandler(
 			cache.ResourceEventHandlerFuncs{
-				AddFunc:    objsMap.addFunc,
-				UpdateFunc: objsMap.updateFunc,
-				DeleteFunc: objsMap.deleteFunc,
+				AddFunc: func(obj interface{}) {
+					bkLogConfig, err := newBkLogConfigEntity(obj)
+					if err != nil {
+						logger.Errorf("[%s] AddFunc error %s with %v", kindBkLogConfig, err, obj)
+						return
+					}
+
+					env := feature.BkEnv(bkLogConfig.Obj.Labels)
+					if env != configs.G().BkEnv {
+						logger.Warnf("[%s] want bkenv '%s', but got '%s'", kindBkLogConfig, configs.G().BkEnv, env)
+						return
+					}
+
+					objsMap.setEntity(bkLogConfig)
+				},
+				UpdateFunc: func(_, newObj interface{}) {
+					bkLogConfig, err := newBkLogConfigEntity(newObj)
+					if err != nil {
+						logger.Errorf("[%s] UpdateFunc error %s with %v", kindBkLogConfig, err, newObj)
+						return
+					}
+
+					env := feature.BkEnv(bkLogConfig.Obj.Labels)
+					if env != configs.G().BkEnv {
+						logger.Warnf("[%s] want bkenv '%s', but got '%s'", kindBkLogConfig, configs.G().BkEnv, env)
+						return
+					}
+
+					objsMap.setEntity(bkLogConfig)
+				},
+				DeleteFunc: func(obj interface{}) {
+					bkLogConfig, err := newBkLogConfigEntity(obj)
+					if err != nil {
+						logger.Errorf("[%s] DeleteFunc error %s with %v", kindBkLogConfig, err, obj)
+						return
+					}
+
+					env := feature.BkEnv(bkLogConfig.Obj.Labels)
+					if env != configs.G().BkEnv {
+						logger.Warnf("[%s] want bkenv '%s', but got '%s'", kindBkLogConfig, configs.G().BkEnv, env)
+						return
+					}
+
+					objsMap.deleteEntity(bkLogConfig)
+				},
 			},
 		)
 		go informer.Run(ctx.Done())

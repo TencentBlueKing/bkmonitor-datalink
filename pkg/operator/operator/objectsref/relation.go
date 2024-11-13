@@ -177,10 +177,6 @@ func (oc *ObjectsController) GetReplicasetRelations(w io.Writer) {
 
 func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 	oc.bkLogConfigObjs.RangeBkLogConfig(func(e *bkLogConfigEntity) {
-		if e == nil {
-			return
-		}
-
 		labels := []relationLabel{
 			{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
 			{Name: "bk_log_config_namespace", Value: e.Obj.Namespace},
@@ -192,9 +188,7 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 		})
 
 		switch e.Obj.Spec.LogConfigType {
-		case StdLogConfig:
-			fallthrough
-		case ContainerLogConfig:
+		case logConfigTypeStd, logConfigTypeContainer:
 			if oc.podObjs == nil {
 				return
 			}
@@ -246,7 +240,7 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 					})
 				}
 			}
-		case NodeLogConfig:
+		case logConfigTypeNode:
 			if oc.nodeObjs == nil {
 				return
 			}

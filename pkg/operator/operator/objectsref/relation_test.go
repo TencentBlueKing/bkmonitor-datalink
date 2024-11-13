@@ -19,7 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	loggingV1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
+	loggingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
 )
 
 func TestMetricsToPrometheusFormat(t *testing.T) {
@@ -325,11 +325,9 @@ container_with_data_source_relation{data_source="100001",namespace="default",pod
 				},
 			}
 
-			var bkLogConfig *loggingV1alpha1.BkLogConfig
+			var bkLogConfig *loggingv1alpha1.BkLogConfig
 			err := json.Unmarshal([]byte(c.bkLogConfig), &bkLogConfig)
-			if err != nil {
-				assert.Nil(t, err)
-			} else {
+			if assert.NoError(t, err) {
 				objectsController.bkLogConfigObjs = &BkLogConfigMap{
 					entitiesMap: map[string]*bkLogConfigEntity{
 						name: {

@@ -50,6 +50,13 @@ var NewKafkaProducerConfig = func(conf define.Configuration) (*sarama.Config, er
 
 	c.Producer.Retry.Max = conf.GetInt(ConfKafkaProducerRetryMax)
 	c.Producer.Retry.Backoff = conf.GetDuration(ConfKafkaProducerRetryBackoff)
+
+	version, err := sarama.ParseKafkaVersion(conf.GetString(ConfKafkaVersion))
+	if err != nil {
+		return nil, err
+	}
+	c.Version = version
+
 	return c, c.Validate()
 }
 

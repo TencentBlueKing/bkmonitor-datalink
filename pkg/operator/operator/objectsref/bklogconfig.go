@@ -291,7 +291,7 @@ func NewObjectsMap(ctx context.Context, client bkversioned.Interface, resources 
 		Kind:     kindBkLogConfig,
 	}
 
-	if _, ok := resources[gvrk]; ok {
+	if _, ok := resources[gvrk]; !ok {
 		return objsMap, nil
 	}
 

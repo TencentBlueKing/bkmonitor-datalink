@@ -80,12 +80,12 @@ func (e *bkLogConfigEntity) getValues(matcherLabel map[string]string, key string
 	return defaultValue
 }
 
-func (e *bkLogConfigEntity) ToLowerEq(a, b string) bool {
+func (e *bkLogConfigEntity) toLowerEq(a, b string) bool {
 	return strings.ToLower(a) == strings.ToLower(b)
 }
 
 func (e *bkLogConfigEntity) getWorkloadName(name string, kind string) string {
-	if e.ToLowerEq(kind, kindReplicaSet) {
+	if e.toLowerEq(kind, kindReplicaSet) {
 		index := strings.LastIndex(name, "-")
 		return name[:index]
 	}
@@ -118,7 +118,7 @@ func (e *bkLogConfigEntity) MatchWorkloadName(matcherLabels, matcherAnnotations 
 		if r.MatchString(name) {
 			return true
 		}
-		if e.ToLowerEq(name, e.Obj.Spec.WorkloadName) {
+		if e.toLowerEq(name, e.Obj.Spec.WorkloadName) {
 			return true
 		}
 	}
@@ -141,12 +141,12 @@ func (e *bkLogConfigEntity) MatchWorkloadType(matcherLabels, matcherAnnotations 
 	}
 
 	for _, kind := range kinds {
-		if e.ToLowerEq(kind, kindReplicaSet) {
-			if e.ToLowerEq(e.Obj.Spec.WorkloadType, kindDeployment) {
+		if e.toLowerEq(kind, kindReplicaSet) {
+			if e.toLowerEq(e.Obj.Spec.WorkloadType, kindDeployment) {
 				return true
 			}
 		}
-		if e.ToLowerEq(e.Obj.Spec.WorkloadType, kind) {
+		if e.toLowerEq(e.Obj.Spec.WorkloadType, kind) {
 			return true
 		}
 	}

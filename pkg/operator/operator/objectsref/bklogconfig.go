@@ -248,12 +248,16 @@ func (o *BkLogConfigMap) deleteEntity(e *bkLogConfigEntity) {
 	o.lock.Lock()
 	defer o.lock.Unlock()
 	delete(o.entitiesMap, e.UUID())
+
+	logger.Infof("delete bklogconfig %s", e.UUID())
 }
 
 func (o *BkLogConfigMap) setEntity(e *bkLogConfigEntity) {
 	o.lock.Lock()
 	defer o.lock.Unlock()
 	o.entitiesMap[e.UUID()] = e
+
+	logger.Infof("set bklogconfig %s", e.UUID())
 }
 
 func (o *BkLogConfigMap) addFunc(obj any) {

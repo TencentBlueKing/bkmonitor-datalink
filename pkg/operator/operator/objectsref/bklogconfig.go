@@ -37,7 +37,10 @@ const (
 )
 
 const (
-	kindBkLogConfig      = "BkLogConfig"
+	kindBkLogConfig    = "BkLogConfig"
+	groupBkLogConfig   = "bk.tencent.com"
+	versionBkLogConfig = "v1alpha1"
+
 	resourceBkLogConfigs = "bklogconfigs"
 )
 
@@ -300,26 +303,36 @@ func (o *BkLogConfigMap) RangeBkLogConfig(visitFunc func(e *bkLogConfigEntity)) 
 	return
 }
 
-func NewObjectsMap(ctx context.Context, client bkversioned.Interface) (*BkLogConfigMap, error) {
-	factory := bkinformers.NewSharedInformerFactory(client, define.ReSyncPeriod)
-	informer := factory.Bk().V1alpha1().BkLogConfigs().Informer()
-
+func NewObjectsMap(ctx context.Context, client bkversioned.Interface, resources map[GVRK]struct{}) (*BkLogConfigMap, error) {
 	objsMap := &BkLogConfigMap{
 		entitiesMap: make(map[string]*bkLogConfigEntity),
 	}
-	informer.AddEventHandler(
-		cache.ResourceEventHandlerFuncs{
-			AddFunc:    objsMap.addFunc,
-			UpdateFunc: objsMap.updateFunc,
-			DeleteFunc: objsMap.deleteFunc,
-		},
-	)
-	go informer.Run(ctx.Done())
-	logger.Infof("[%s] informer start", kindBkLogConfig)
 
-	synced := k8sutils.WaitForNamedCacheSync(ctx, kindBkLogConfig, informer)
-	if !synced {
-		return nil, fmt.Errorf("[%s] failed to sync caches", kindBkLogConfig)
+	qvrk := GVRK{
+		Group:    groupBkLogConfig,
+		Version:  versionBkLogConfig,
+		Resource: resourceBkLogConfigs,
+		Kind:     kindBkLogConfig,
+	}
+
+	if _, ok := resources[qvrk]; ok {
+		factory := bkinformers.NewSharedInformerFactory(client, define.ReSyncPeriod)
+		informer := factory.Bk().V1alpha1().BkLogConfigs().Informer()
+
+		informer.AddEventHandler(
+			cache.ResourceEventHandlerFuncs{
+				AddFunc:    objsMap.addFunc,
+				UpdateFunc: objsMap.updateFunc,
+				DeleteFunc: objsMap.deleteFunc,
+			},
+		)
+		go informer.Run(ctx.Done())
+		logger.Infof("[%s] informer start", kindBkLogConfig)
+
+		synced := k8sutils.WaitForNamedCacheSync(ctx, kindBkLogConfig, informer)
+		if !synced {
+			return nil, fmt.Errorf("[%s] failed to sync caches", kindBkLogConfig)
+		}
 	}
 
 	return objsMap, nil

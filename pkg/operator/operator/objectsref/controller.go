@@ -296,7 +296,7 @@ func NewController(ctx context.Context, client kubernetes.Interface, bkClient bk
 	controller.gameStatefulSetObjs = tkexObjs.gamestatefulset
 	controller.gameDeploymentsObjs = tkexObjs.gamedeployment
 
-	controller.bkLogConfigObjs, err = NewObjectsMap(ctx, bkClient)
+	controller.bkLogConfigObjs, err = NewObjectsMap(ctx, bkClient, resources)
 	if err != nil {
 		return nil, err
 	}

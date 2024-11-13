@@ -182,7 +182,7 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 		tx.Commit()
 	}
 	// 触发consul刷新
-	err = NewDataSourceSvc(&ds).RefreshOuterConfig(context.Background(), uint64(0))
+	err = NewDataSourceSvc(&ds).RefreshOuterConfig(context.Background(), uint64(0), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -528,7 +528,7 @@ func (d DataSourceSvc) GseRouteConfig() (*bkgse.GSERoute, error) {
 }
 
 // RefreshConsulConfig 更新consul配置，告知ETL等其他依赖模块配置有所更新
-func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context, modifyIndex uint64) error {
+func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context, modifyIndex uint64, oldValueBytes []byte) error {
 	logger.Infof("RefreshConsulConfig:data_id [%d] started to refresh consul config", d.BkDataId)
 	// 如果数据源没有启用，则不用刷新 consul 配置
 	if !d.CanRefreshConfig() {
@@ -545,6 +545,10 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context, modifyIndex uint
 
 	// 获取Consul句柄
 	consulClient, err := consul.GetInstance()
+	if err != nil {
+		logger.Errorf("RefreshConsulConfig:data_id [%d] get consul client failed, %v", d.BkDataId, err)
+		return err
+	}
 
 	val, err := d.ToJson(true, true)
 	if err != nil {
@@ -554,7 +558,7 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context, modifyIndex uint
 	if err != nil {
 		return err
 	}
-	err = hashconsul.Put(consulClient, d.ConsulConfigPath(), valStr, modifyIndex)
+	err = hashconsul.PutWithDiff(consulClient, d.ConsulConfigPath(), valStr, modifyIndex, oldValueBytes)
 	if err != nil {
 		logger.Errorf("RefreshConsulConfig:data_id [%v] put [%s] to [%s] failed, %v", d.BkDataId, valStr, d.ConsulConfigPath(), err)
 		return err
@@ -563,7 +567,7 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context, modifyIndex uint
 	return nil
 }
 
-func (d DataSourceSvc) RefreshOuterConfig(ctx context.Context, modifyIndex uint64) error {
+func (d DataSourceSvc) RefreshOuterConfig(ctx context.Context, modifyIndex uint64, oldValueBytes []byte) error {
 	if !d.IsEnable {
 		logger.Infof("data_id [%d] is not enable, nothing will refresh to outer systems.", d.BkDataId)
 		return nil
@@ -575,7 +579,7 @@ func (d DataSourceSvc) RefreshOuterConfig(ctx context.Context, modifyIndex uint6
 		logger.Errorf("data_id [%d] refresh gse config failed, %v", d.BkDataId, err)
 	}
 
-	err = d.RefreshConsulConfig(ctx, modifyIndex)
+	err = d.RefreshConsulConfig(ctx, modifyIndex, oldValueBytes)
 	if err != nil {
 		logger.Errorf("data_id [%d] refresh consul config failed, %v", d.BkDataId, err)
 	}

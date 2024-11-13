@@ -145,8 +145,10 @@ func comparePathData(bypassPathList *[]string) {
 }
 
 func output(srcPath string, bypassPath string) (bool, error) {
-	srcData, _ := srcConsulClient.Get(srcPath)
-	bypassData, _ := bypassConsulClient.Get(bypassPath)
+
+	modifyIndex, srcData, _ := srcConsulClient.Get(srcPath)
+	modifyIndex, bypassData, _ := bypassConsulClient.Get(bypassPath)
+	fmt.Printf("modifyIndex->[%d]\n", modifyIndex)
 	srcDataJson := string(srcData)
 	bypassDataJson := string(bypassData)
 	// 优先判断字符串匹配，如果可以，则进行

@@ -137,7 +137,7 @@ func (i InfluxdbTagInfo) AddConsulInfo(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	err = hashconsul.Put(consulClient, i.ConsulConfigPath(), val)
+	err = hashconsul.PutWithDiff(consulClient, i.ConsulConfigPath(), val, uint64(0), nil)
 	if err != nil {
 		return err
 	}
@@ -150,7 +150,9 @@ func (i InfluxdbTagInfo) GetConsulInfo(ctx context.Context) (*TagItemInfo, error
 	if err != nil {
 		return nil, err
 	}
-	dataBytes, err := consulClient.Get(i.ConsulConfigPath())
+	var modifyIndex uint64
+	modifyIndex, dataBytes, err := consulClient.Get(i.ConsulConfigPath())
+	logger.Info("GetConsulInfo modifyIndex:%v", modifyIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +183,7 @@ func (i InfluxdbTagInfo) ModifyConsulInfo(ctx context.Context, oldInfo TagItemIn
 	if err != nil {
 		return err
 	}
-	err = hashconsul.Put(consulClient, i.ConsulConfigPath(), val)
+	err = hashconsul.PutWithDiff(consulClient, i.ConsulConfigPath(), val, uint64(0), nil)
 
 	models.PushToRedis(ctx, models.InfluxdbTagInfoKey, i.RedisField(), val)
 	return nil

@@ -12,7 +12,6 @@ package task
 import (
 	"context"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	consulSvc "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
@@ -266,30 +266,29 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 			}()
 			dsSvc := service.NewDataSourceSvc(&ds)
 			consulClient, err := consul.GetInstance()
-			var modifyIndex uint64
+			var modifyIndex = uint64(0)
 			if err != nil {
-				logger.Errorf("data_id [%v] failed to get consul client, %v,will set modifyIndex as 0", dsSvc.BkDataId, err)
-				modifyIndex = uint64(0)
+				logger.Errorf("data_id [%v] failed to get consul client, %v,skip", dsSvc.BkDataId, err)
+				return
 			}
 
 			currentIndex, oldValueBytes, err := consulClient.Get(dsSvc.ConsulPath())
 			if err != nil {
 				logger.Errorf("data_id [%v] failed to get old value from [%v], %v, will set modifyIndex as 0", dsSvc.BkDataId, dsSvc.ConsulConfigPath(), err)
-				modifyIndex = uint64(0)
+				return
 			}
 			if oldValueBytes == nil {
 				logger.Infof("data_id [%v] consul path [%v] not found, will set modifyIndex as 0", dsSvc.BkDataId, dsSvc.ConsulConfigPath())
-				modifyIndex = uint64(0)
+				return
 			}
 			modifyIndex = currentIndex
 
 			logger.Infof("data_id [%v] try to refresh consul config, modifyIndex: %v", dsSvc.BkDataId, modifyIndex)
 
-			if err := dsSvc.RefreshOuterConfig(ctx, modifyIndex); err != nil {
+			if err := dsSvc.RefreshOuterConfig(ctx, modifyIndex, oldValueBytes); err != nil {
 				logger.Errorf("data_id [%v] failed to refresh outer config, %v", dsSvc.BkDataId, err)
-			} else {
-				logger.Infof("data_id [%v] refresh all outer success", dsSvc.BkDataId)
 			}
+			logger.Infof("data_id [%v] refresh all outer success", dsSvc.BkDataId)
 		}(dataSource, wg, ch)
 
 	}

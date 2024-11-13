@@ -32,7 +32,7 @@ import (
 func TestResultTableSvc_CreateResultTable(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	gomonkey.ApplyPrivateMethod(InfluxdbStorageSvc{}, "syncDb", func(_ InfluxdbStorageSvc) error { return nil })
-	gomonkey.ApplyFunc(hashconsul.Put, func(c *consul.Instance, key, val string) error { return nil })
+	gomonkey.ApplyFunc(hashconsul.PutWithDiff, func(c *consul.Instance, key, val string) error { return nil })
 	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
 		var data string
 		if strings.Contains(req.URL.Path, "v1/kv") {

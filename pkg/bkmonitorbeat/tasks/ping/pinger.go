@@ -180,6 +180,8 @@ func NewPinger(sendInterval time.Duration, privileged bool) *Pinger {
 
 // Ping : ping探测
 func (p *Pinger) Ping(ctx context.Context, targets []*PingerTarget) error {
+	logger.Infof("start ping, id: %d , target count:%d", p.id, len(targets))
+
 	// 解析目标
 	if err := p.parseTarget(targets); err != nil {
 		return err
@@ -206,27 +208,24 @@ func (p *Pinger) Ping(ctx context.Context, targets []*PingerTarget) error {
 	go func() {
 		defer wg.Done()
 
-		ticker := time.NewTicker(p.sendInterval)
-		defer ticker.Stop()
-
+		startTime := time.Now().Add(-p.sendInterval)
 		for {
 			select {
 			case <-ctx.Done():
 				logger.Info("ping done: send worker exit")
 				return
-			case <-ticker.C:
-				select {
-				case <-ctx.Done():
-					continue
-				case instance := <-p.sendQueue:
-					if instance == nil {
-						continue
-					}
+			case instance := <-p.sendQueue:
+				// 发送间隔控制，不能使用 ticker，因为 ticker 在时间很小的情况下存在性能问题
+				now := time.Now()
+				elapse := now.Sub(startTime)
+				if elapse < p.sendInterval {
+					time.Sleep(p.sendInterval - elapse)
+				}
+				startTime = now
 
-					// 发送icmp包
-					if err := p.send(instance); err != nil {
-						logger.Errorf("send icmp packet failed, error:%v", err)
-					}
+				// 发送icmp包
+				if err := p.send(instance); err != nil {
+					logger.Errorf("send icmp packet failed, error:%v", err)
 				}
 			}
 		}
@@ -596,8 +595,6 @@ func (p *Pinger) handleResponse(packet *pingerPacket) error {
 	default:
 		return nil
 	}
-
-	logger.Debugf("receive icmp echo reply, ip: %s, seq: %d, id: %d", instance.ip.String(), echoReply.Seq, echoReply.ID)
 
 	// 判断seq是否合法
 	index := echoReply.Seq

@@ -238,27 +238,34 @@ type BkLogConfigMap struct {
 	entitiesMap map[string]*bkLogConfigEntity
 }
 
-func (o *BkLogConfigMap) Del(e *bkLogConfigEntity) {
-	o.lock.Lock()
-	defer o.lock.Unlock()
+func (m *BkLogConfigMap) Count() int {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	return len(m.entitiesMap)
+}
+
+func (m *BkLogConfigMap) Del(e *bkLogConfigEntity) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
 
 	logger.Infof("delete BkLogConfig object (%s)", e.UUID())
-	delete(o.entitiesMap, e.UUID())
+	delete(m.entitiesMap, e.UUID())
 }
 
-func (o *BkLogConfigMap) Set(e *bkLogConfigEntity) {
-	o.lock.Lock()
-	defer o.lock.Unlock()
+func (m *BkLogConfigMap) Set(e *bkLogConfigEntity) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
 
 	logger.Infof("update BkLogConfig object (%s)", e.UUID())
-	o.entitiesMap[e.UUID()] = e
+	m.entitiesMap[e.UUID()] = e
 }
 
-func (o *BkLogConfigMap) RangeBkLogConfig(visitFunc func(e *bkLogConfigEntity)) {
-	o.lock.RLock()
-	defer o.lock.RUnlock()
+func (m *BkLogConfigMap) RangeBkLogConfig(visitFunc func(e *bkLogConfigEntity)) {
+	m.lock.RLock()
+	defer m.lock.RUnlock()
 
-	for _, e := range o.entitiesMap {
+	for _, e := range m.entitiesMap {
 		if visitFunc != nil {
 			visitFunc(e)
 		}
@@ -270,14 +277,9 @@ func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, re
 		entitiesMap: make(map[string]*bkLogConfigEntity),
 	}
 
-	const (
-		groupBkLogConfig   = "bk.tencent.com"
-		versionBkLogConfig = "v1alpha1"
-	)
-
 	gvrk := GVRK{
-		Group:    groupBkLogConfig,
-		Version:  versionBkLogConfig,
+		Group:    "bk.tencent.com",
+		Version:  "v1alpha1",
 		Resource: resourceBkLogConfigs,
 		Kind:     kindBkLogConfig,
 	}
@@ -337,6 +339,7 @@ func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, re
 			},
 		},
 	)
+
 	go informer.Run(ctx.Done())
 
 	synced := k8sutils.WaitForNamedCacheSync(ctx, kindBkLogConfig, informer)

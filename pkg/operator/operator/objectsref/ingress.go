@@ -32,6 +32,13 @@ func NewIngressMap() *IngressMap {
 	}
 }
 
+func (m *IngressMap) Count() int {
+	m.mut.Lock()
+	defer m.mut.Unlock()
+
+	return len(m.ingresses)
+}
+
 func (m *IngressMap) Set(ingress ingressEntity) {
 	m.mut.Lock()
 	defer m.mut.Unlock()

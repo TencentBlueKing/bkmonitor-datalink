@@ -367,6 +367,10 @@ func (oc *ObjectsController) recordMetrics() {
 					stats[kind] += count
 				}
 			}
+			stats[kindService] = oc.serviceObjs.Count()
+			stats[kindIngress] = oc.ingressObjs.Count()
+			stats[kindEndpoints] = oc.endpointsObjs.Count()
+			stats[kindBkLogConfig] = oc.bkLogConfigObjs.Count()
 			setWorkloadCount(stats)
 		}
 	}
@@ -472,6 +476,23 @@ func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInfor
 	}
 
 	informer := genericInformer.Informer()
+	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+		service, ok := obj.(*corev1.Service)
+		if !ok {
+			logger.Errorf("excepted Service type, got %T", obj)
+			return obj, nil
+		}
+
+		service.Annotations = nil
+		service.Labels = nil
+		service.ManagedFields = nil
+		service.Finalizers = nil
+		return service, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			service, ok := obj.(*corev1.Service)
@@ -516,6 +537,23 @@ func newEndpointsObjects(ctx context.Context, sharedInformer informers.SharedInf
 	}
 
 	informer := genericInformer.Informer()
+	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+		endpoints, ok := obj.(*corev1.Endpoints)
+		if !ok {
+			logger.Errorf("excepted Endpoints type, got %T", obj)
+			return obj, nil
+		}
+
+		endpoints.Annotations = nil
+		endpoints.Labels = nil
+		endpoints.ManagedFields = nil
+		endpoints.Finalizers = nil
+		return endpoints, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			endpoints, ok := obj.(*corev1.Endpoints)
@@ -609,6 +647,23 @@ func newIngressV1Objects(ctx context.Context, sharedInformer informers.SharedInf
 	}
 
 	informer := genericInformer.Informer()
+	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+		ingress, ok := obj.(*networkingv1.Ingress)
+		if !ok {
+			logger.Errorf("excepted Ingress type, got %T", obj)
+			return obj, nil
+		}
+
+		ingress.Annotations = nil
+		ingress.Labels = nil
+		ingress.ManagedFields = nil
+		ingress.Finalizers = nil
+		return ingress, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			ingress, ok := obj.(*networkingv1.Ingress)
@@ -677,6 +732,23 @@ func newIngressV1Beta1Objects(ctx context.Context, sharedInformer informers.Shar
 	}
 
 	informer := genericInformer.Informer()
+	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+		ingress, ok := obj.(*networkingv1beta1.Ingress)
+		if !ok {
+			logger.Errorf("excepted Ingress type, got %T", obj)
+			return obj, nil
+		}
+
+		ingress.Annotations = nil
+		ingress.Labels = nil
+		ingress.ManagedFields = nil
+		ingress.Finalizers = nil
+		return ingress, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			ingress, ok := obj.(*networkingv1beta1.Ingress)
@@ -745,6 +817,23 @@ func newIngressV1Beta1ExtensionsObjects(ctx context.Context, sharedInformer info
 	}
 
 	informer := genericInformer.Informer()
+	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+		ingress, ok := obj.(*extensionsv1beta1.Ingress)
+		if !ok {
+			logger.Errorf("excepted Ingress type, got %T", obj)
+			return obj, nil
+		}
+
+		ingress.Annotations = nil
+		ingress.Labels = nil
+		ingress.ManagedFields = nil
+		ingress.Finalizers = nil
+		return ingress, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			ingress, ok := obj.(*extensionsv1beta1.Ingress)

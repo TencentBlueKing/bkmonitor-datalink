@@ -64,7 +64,7 @@ func (c *Operator) cleanupDeprecatedService(ctx context.Context) {
 		return
 	}
 
-	logger.Infof("list kubelet servcie %s, count (%d)", cfg, len(obj.Items))
+	logger.Debugf("list kubelet servcie %s, count (%d)", cfg, len(obj.Items))
 	for _, svc := range obj.Items {
 		if svc.Namespace == cfg.Namespace && svc.Name == cfg.Name {
 			continue

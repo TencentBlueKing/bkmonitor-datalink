@@ -139,7 +139,7 @@ func RefreshRouterVersion(ctx context.Context, path string) error {
 		return err
 	}
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	err = client.Put(path, timestamp, 0)
+	err = client.Put(path, timestamp, uint64(0), 0)
 	if err != nil {
 		return err
 	}

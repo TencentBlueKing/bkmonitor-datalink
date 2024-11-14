@@ -155,7 +155,7 @@ func (d *BaseDiscover) PreStart() {
 
 	d.ctx, d.cancel = context.WithCancel(d.parentCtx)
 	d.childConfigGroups = make(map[string]map[uint64]*ChildConfig)
-	d.cache = newHashCache(d.opts.Name, time.Minute*10)
+	d.cache = newHashCache(d.opts.Name, time.Minute*5)
 	logger.Infof("starting discover %s", d.Name())
 }
 

@@ -371,6 +371,7 @@ func (oc *ObjectsController) recordMetrics() {
 			stats[kindIngress] = oc.ingressObjs.Count()
 			stats[kindEndpoints] = oc.endpointsObjs.Count()
 			stats[kindBkLogConfig] = oc.bkLogConfigObjs.Count()
+			stats[kindNode] = oc.nodeObjs.Count()
 			SetWorkloadCount(stats)
 		}
 	}

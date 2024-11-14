@@ -14,8 +14,8 @@ import (
 
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/serieslimiter"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/serieslimiter"
 )
 
 const (

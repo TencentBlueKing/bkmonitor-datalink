@@ -77,14 +77,14 @@ func (i *Instance) query(
 	span.Set("query-db", db)
 	span.Set("query-sql", sql)
 	span.Set("query-content-type", contentType)
-	span.Set("query-chunked", fmt.Sprintf("%+v", chunked))
+	span.Set("query-chunked", chunked)
 
 	start := time.Now()
 	resp, err := i.cli.Query(ctx, db, sql, precision, contentType, chunked)
 
 	// 即使超时也需要打点
 	left := time.Since(start)
-	span.Set("query-cost", left.String())
+	span.Set("query-cost", left)
 
 	if err != nil {
 		return nil, err
@@ -131,7 +131,7 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 	span.Set("query-db", db)
 	span.Set("query-metric-name", metricName)
 	span.Set("query-sql", stmt)
-	span.Set("query-cost", startAnaylize.Sub(startQuery).String())
+	span.Set("query-cost", startAnaylize.Sub(startQuery))
 
 	log.Debugf(ctx,
 		fmt.Sprintf("influxdb query:[%s][%s], query cost:%s", db, stmt, startAnaylize.Sub(startQuery)),
@@ -164,7 +164,7 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 	span.Set("series-num", seriesNum)
 	span.Set("points-num", pointsNum)
 
-	span.Set("analyzer-cost", time.Since(startAnaylize).String())
+	span.Set("analyzer-cost", time.Since(startAnaylize))
 
 	log.Debugf(ctx,
 		"influxdb query:[%s][%s], result anaylize cost:%s", db, stmt, time.Since(startAnaylize),
@@ -268,7 +268,7 @@ func (i *Instance) Query(
 	span.Set("query-db", db)
 	span.Set("query-metricName", metricName)
 	span.Set("query-sql", stmt)
-	span.Set("expand-tag", fmt.Sprintf("%v", expandTag))
+	span.Set("expand-tag", expandTag)
 
 	stmt = i.setLimitAndSLimit(stmt, limit, slimit)
 	resp, err = i.query(ctx, db, stmt, precision, "", true)
@@ -279,7 +279,7 @@ func (i *Instance) Query(
 
 	startAnaylize = time.Now()
 
-	span.Set("query-cost", startAnaylize.Sub(startQuery).String())
+	span.Set("query-cost", startAnaylize.Sub(startQuery))
 	log.Debugf(ctx, "influxdb query:%s, query cost:%s", stmt, startAnaylize.Sub(startQuery))
 	if resp == nil {
 		log.Warnf(ctx, "query:%s get nil response", stmt)
@@ -339,7 +339,7 @@ func (i *Instance) Query(
 		log.Warnf(ctx, message)
 	}
 
-	span.Set("analyzer_cost", time.Since(startAnaylize).String())
+	span.Set("analyzer_cost", time.Since(startAnaylize))
 
 	log.Debugf(ctx, fmt.Sprintf(
 		"influxdb query:%s, result anaylize cost:%s, result num: %d, series num: %d, point num: %d",

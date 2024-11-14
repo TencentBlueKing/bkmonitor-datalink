@@ -111,7 +111,7 @@ func (i InfluxdbHostInfo) RefreshConsulClusterConfig(ctx context.Context) error 
 		logger.Errorf("host: [%s] refresh consul config failed, %v", i.HostName, err)
 		return err
 	}
-	models.PushToRedis(ctx, models.InfluxdbHostInfoKey, i.HostName, configStr, true)
+	models.PushToRedis(ctx, models.InfluxdbHostInfoKey, i.HostName, configStr)
 	return nil
 }
 

@@ -130,6 +130,13 @@ func StartStreamSeriesSet(
 			for {
 				r, err := s.stream.Recv()
 				if r != nil {
+					if opt.MetricLabel != nil {
+						r.Labels = append(r.Labels, &remote.LabelPair{
+							Name:  opt.MetricLabel.Name,
+							Value: opt.MetricLabel.Value,
+						})
+					}
+
 					if s.limiter != nil {
 						s.limiter.WaitN(ctx, len(r.Samples))
 					}

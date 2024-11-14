@@ -30,7 +30,6 @@ type recorder struct {
 	set             map[string]*k8sEvent
 	mut             sync.Mutex
 	interval        time.Duration
-	eventSpan       time.Duration
 	started         int64
 	dataID          int32
 	upMetricsDataID int32
@@ -39,6 +38,7 @@ type recorder struct {
 
 	received atomic.Int64
 	sent     atomic.Int64
+	cleaned  atomic.Int64
 }
 
 func newRecorder(ctx context.Context, conf *configs.KubeEventConfig) *recorder {
@@ -46,14 +46,10 @@ func newRecorder(ctx context.Context, conf *configs.KubeEventConfig) *recorder {
 	if conf.Interval.Seconds() > 0 {
 		interval = conf.Interval
 	}
-	eventSpan := time.Hour * 2
-	if conf.EventSpan.Seconds() > 0 {
-		eventSpan = conf.EventSpan
-	}
+
 	r := &recorder{
 		ctx:             ctx,
 		interval:        interval,
-		eventSpan:       eventSpan,
 		dataID:          conf.DataID,
 		upMetricsDataID: conf.UpMetricsDataID,
 		externalLabels:  conf.GetLabels(),
@@ -62,34 +58,11 @@ func newRecorder(ctx context.Context, conf *configs.KubeEventConfig) *recorder {
 		out:             make(chan common.MapStr, 1),
 	}
 
-	go r.loopSent()
-	go r.loopCleanup()
+	go r.loopHandle()
 	return r
 }
 
-func (r *recorder) loopCleanup() {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			r.mut.Lock()
-			now := time.Now().Unix()
-			// 避免内存无限增长
-			for k, v := range r.set {
-				if now-v.GetLastTime() >= int64(r.eventSpan.Seconds()) {
-					delete(r.set, k)
-				}
-			}
-			r.mut.Unlock()
-		case <-r.ctx.Done():
-			return
-		}
-	}
-}
-
-func (r *recorder) loopSent() {
+func (r *recorder) loopHandle() {
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
 
@@ -97,17 +70,16 @@ func (r *recorder) loopSent() {
 		select {
 		case <-ticker.C:
 			r.mut.Lock()
-			for _, v := range r.set {
+			for key, v := range r.set {
 				// 状态重置 清算 window
 				cloned := v.Clone()
 				v.windowL = v.windowR
 				cnt := cloned.windowR - cloned.windowL
 
-				// 表示这段时间内没有产生事件
+				// 表示这段时间内没有产生事件 则缓存需要清除
 				if cnt <= 0 {
-					if cnt < 0 {
-						logger.Errorf("get negative counter, event: %+v", cloned)
-					}
+					delete(r.set, key)
+					r.cleaned.Add(1)
 					continue
 				}
 				cloned.Count = cnt
@@ -215,7 +187,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 			}
 
 		case <-reportTicker.C:
-			e <- CodeMetrics(g.store.upMetricsDataID, g.TaskConfig, g.store.received.Load(), g.store.sent.Load())
+			e <- CodeMetrics(g.store.upMetricsDataID, g.TaskConfig, g.store.received.Load(), g.store.sent.Load(), g.store.cleaned.Load())
 
 		case <-g.ctx.Done():
 			return

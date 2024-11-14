@@ -55,7 +55,7 @@ func GetMetricValue(metricType io_prometheus_client.MetricType, metric *io_prome
 }
 
 // CollectAndReportMetrics 采集&上报ES集群指标
-func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
+func CollectAndReportMetrics(c storage.ClusterInfo) error {
 	logger.Infof("CollectAndReportMetrics:start to collect es cluster metrics, es cluster name [%s].", c.ClusterName)
 	// 从custom option中获取集群业务id
 	var bkBizID float64
@@ -120,6 +120,8 @@ func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 		close(*indicesCollector.ClusterLabelUpdates())
 		close(*shardsCollector.ClusterLabelUpdates())
 	}()
+
+	timestamp := time.Now().UnixMilli()
 
 	for metricType, esCollector := range esCollectors {
 		start := time.Now()
@@ -202,7 +204,7 @@ func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 		}
 
 		customReportUrl := u.String()
-		_ = func() error {
+		err = func() error {
 			req, _ := http.NewRequest("POST", customReportUrl, bytes.NewBuffer(jsonData))
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := httpClient.Do(req)
@@ -213,6 +215,11 @@ func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 
 			return nil
 		}()
+
+		if err != nil {
+			logger.Infof("CollectAndReportMetrics:report es %s metrics failed [%s], err: %v", metricType, c.ClusterName, err)
+			continue
+		}
 
 		elapsed := time.Since(start)
 		logger.Infof("CollectAndReportMetrics:report es %s metrics success [%s], task execution time：%s", metricType, c.ClusterName, elapsed)
@@ -232,7 +239,6 @@ var httpClient = &http.Client{
 
 type CollectESTaskParams struct {
 	ClusterInfo storage.ClusterInfo `json:"cluster_info"`
-	Timestamp   int64               `json:"timestamp"`
 }
 
 var targetBizRe = regexp.MustCompile(`v2(_space)?_(\d+)_`)
@@ -241,7 +247,6 @@ var rtRe = regexp.MustCompile(`^v2_(.*)_.*?_.*$`)
 
 func ReportESClusterMetrics(ctx context.Context, currentTask *t.Task) error {
 	logger.Infof("start report es cluster metrics task.")
-	timestamp := time.Now().Truncate(time.Minute).UnixMilli()
 	// 1. 从metadata db中获取所有ES类型集群信息
 	dbSession := mysql.GetDBSession()
 	var esClusterInfoList []storage.ClusterInfo
@@ -289,7 +294,7 @@ func ReportESClusterMetrics(ctx context.Context, currentTask *t.Task) error {
 				wg.Done()
 			}()
 			// 3. 采集并上报集群指标
-			payload, err := jsonx.Marshal(CollectESTaskParams{ClusterInfo: c, Timestamp: timestamp})
+			payload, err := jsonx.Marshal(CollectESTaskParams{ClusterInfo: c})
 			if _, err = client.Enqueue(&t.Task{
 				Kind:    "async:collect_es_task",
 				Payload: payload,

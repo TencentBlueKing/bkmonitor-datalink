@@ -20,7 +20,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/utils"
 )
 
 type metricsEvent struct {
@@ -57,9 +57,13 @@ func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 		scopeMetricsSlice := resourceMetrics.ScopeMetrics()
 		events := make([]define.Event, 0)
 		for j := 0; j < scopeMetricsSlice.Len(); j++ {
-			metrics := scopeMetricsSlice.At(j).Metrics()
+			scopeMetric := scopeMetricsSlice.At(j)
+			dimensions := pcommon.NewMap()
+			rsAttrs.CopyTo(dimensions)
+			dimensions.InsertString("scope_name", scopeMetric.Scope().Name())
+			metrics := scopeMetric.Metrics()
 			for k := 0; k < metrics.Len(); k++ {
-				for _, dp := range c.Extract(dataId, metrics.At(k), rsAttrs) {
+				for _, dp := range c.Extract(dataId, metrics.At(k), dimensions) {
 					events = append(events, c.ToEvent(record.Token, dataId, dp))
 				}
 			}

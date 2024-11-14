@@ -11,6 +11,9 @@ package operator
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -22,13 +25,68 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+var kubeletServiceLabels = WrapLabels{
+	"k8s-app":                      "kubelet",
+	"app.kubernetes.io/name":       "kubelet",
+	"app.kubernetes.io/managed-by": "bkmonitor-operator",
+}
+
+type WrapLabels map[string]string
+
+func (lbs WrapLabels) Labels() map[string]string {
+	dst := make(map[string]string)
+	for k, v := range lbs {
+		dst[k] = v
+	}
+	return dst
+}
+
+func (lbs WrapLabels) Matcher() string {
+	var ret []string
+	for k, v := range lbs {
+		ret = append(ret, fmt.Sprintf("%s=%s", k, v))
+	}
+	sort.Strings(ret)
+	return strings.Join(ret, ",")
+}
+
+func (c *Operator) cleanupDeprecatedService(ctx context.Context) {
+	cfg := configs.G().Kubelet
+	if !cfg.Validate() {
+		logger.Errorf("invalid kubelet config %s", cfg)
+		return
+	}
+
+	client := c.client.CoreV1().Services(cfg.Namespace)
+	obj, err := client.List(ctx, metav1.ListOptions{LabelSelector: kubeletServiceLabels.Matcher()})
+	if err != nil {
+		logger.Errorf("failed to list services (%s), err: %v", cfg, err)
+		return
+	}
+
+	logger.Debugf("list kubelet servcie %s, count (%d)", cfg, len(obj.Items))
+	for _, svc := range obj.Items {
+		if svc.Namespace == cfg.Namespace && svc.Name == cfg.Name {
+			continue
+		}
+
+		// 清理弃用 service 避免数据重复采集
+		err := client.Delete(ctx, svc.Name, metav1.DeleteOptions{})
+		if err != nil {
+			logger.Errorf("failed to delete service %s/%s, err: %v", svc.Namespace, svc.Name, err)
+			continue
+		}
+		logger.Infof("cleanup deprecated service %s/%s", svc.Namespace, svc.Name)
+	}
+}
+
 // reconcileNodeEndpoints 周期刷新 kubelet 的 service 和 endpoints
 func (c *Operator) reconcileNodeEndpoints(ctx context.Context) {
 	c.wg.Add(1)
 	defer c.wg.Done()
 
 	if err := c.syncNodeEndpoints(ctx); err != nil {
-		logger.Errorf("syncing nodes into Endpoints object failed, error: %s", err)
+		logger.Errorf("syncing nodes into Endpoints object failed: %s", err)
 	}
 
 	ticker := time.NewTicker(3 * time.Minute)
@@ -41,21 +99,20 @@ func (c *Operator) reconcileNodeEndpoints(ctx context.Context) {
 
 		case <-ticker.C:
 			if err := c.syncNodeEndpoints(ctx); err != nil {
-				logger.Errorf("refresh kubelet endpoints failed, error: %s", err)
+				logger.Errorf("refresh kubelet endpoints failed: %s", err)
 			}
 		}
 	}
 }
 
 func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
+	c.cleanupDeprecatedService(ctx) // 先清理弃用 service
+
+	cfg := configs.G().Kubelet
 	eps := &corev1.Endpoints{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: configs.G().Kubelet.Name,
-			Labels: map[string]string{
-				"k8s-app":                      "kubelet",
-				"app.kubernetes.io/name":       "kubelet",
-				"app.kubernetes.io/managed-by": "bkmonitor-operator",
-			},
+			Name:   cfg.Name,
+			Labels: kubeletServiceLabels.Labels(),
 		},
 		Subsets: []corev1.EndpointSubset{
 			{
@@ -91,12 +148,8 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 	eps.Subsets[0].Addresses = addresses
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: configs.G().Kubelet.Name,
-			Labels: map[string]string{
-				"k8s-app":                      "kubelet",
-				"app.kubernetes.io/name":       "kubelet",
-				"app.kubernetes.io/managed-by": "bkmonitor-operator",
-			},
+			Name:   cfg.Name,
+			Labels: kubeletServiceLabels.Labels(),
 		},
 		Spec: corev1.ServiceSpec{
 			Type:      corev1.ServiceTypeClusterIP,
@@ -118,17 +171,17 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 		},
 	}
 
-	err = k8sutils.CreateOrUpdateService(ctx, c.client.CoreV1().Services(configs.G().Kubelet.Namespace), svc)
+	err = k8sutils.CreateOrUpdateService(ctx, c.client.CoreV1().Services(cfg.Namespace), svc)
 	if err != nil {
 		return errors.Wrap(err, "synchronizing kubelet service object failed")
 	}
-	logger.Infof("sync kubelet service %s", configs.G().Kubelet)
+	logger.Debugf("sync kubelet service %s", cfg)
 
-	err = k8sutils.CreateOrUpdateEndpoints(ctx, c.client.CoreV1().Endpoints(configs.G().Kubelet.Namespace), eps)
+	err = k8sutils.CreateOrUpdateEndpoints(ctx, c.client.CoreV1().Endpoints(cfg.Namespace), eps)
 	if err != nil {
 		return errors.Wrap(err, "synchronizing kubelet endpoints object failed")
 	}
-	logger.Infof("sync kubelet endpoints %s, address count (%d)", configs.G().Kubelet, len(addresses))
+	logger.Debugf("sync kubelet endpoints %s, address count (%d)", cfg, len(addresses))
 
 	return nil
 }

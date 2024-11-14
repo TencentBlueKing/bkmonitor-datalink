@@ -22,7 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/cluster"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/cluster/pb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/batchspliter"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/forwarder/batchspliter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 

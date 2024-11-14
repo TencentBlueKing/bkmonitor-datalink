@@ -13,18 +13,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
-	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -106,7 +108,7 @@ func (i *Instance) Check(ctx context.Context, q string, start, end time.Time, st
 		return output.String()
 	}
 
-	output.WriteString(fmt.Sprintf("promql: %s\n", q))
+	output.WriteString(fmt.Sprintf("match: %s\n", q))
 
 	output.WriteString(fmt.Sprintf("vm_expand: %+v", vmExpand))
 	return output.String()
@@ -119,8 +121,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 // QuerySeriesSet 给 PromEngine 提供查询接口
 func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
-	//TODO implement me
-	panic("implement me")
+	return storage.EmptySeriesSet()
 }
 
 func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Vector, error) {
@@ -288,18 +289,16 @@ func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse,
 	span.Set(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords)
 	span.Set(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds)
 
-	lbsMap := make(map[string]struct{}, 0)
+	lbsMap := set.New[string]()
 	for _, d := range resp.Data.List {
 		for _, v := range d.Data {
-			lbsMap[v] = struct{}{}
+			lbsMap.Add(v)
 		}
 	}
-	lbs := make([]string, 0, len(lbsMap))
-	for k := range lbsMap {
-		lbs = append(lbs, k)
-	}
 
-	return lbs, nil
+	lbl := lbsMap.ToArray()
+	sort.Strings(lbl)
+	return lbl, nil
 }
 
 func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, span *trace.Span) ([]map[string]string, error) {
@@ -328,8 +327,19 @@ func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, spa
 }
 
 // GetInstanceType 获取实例类型
-func (i *Instance) GetInstanceType() string {
+func (i *Instance) InstanceType() string {
 	return consul.VictoriaMetricsStorageType
+}
+
+// nocache 判定
+// VictoriaMetrics may adjust the returned timestamps if the number of returned data points exceeds 50 - see the corresponding comment in the code for details.
+// This behaviour can be disabled by passing -search.disableCache command-line flag to VictoriaMetrics. Another option is to pass nocache=1 query arg to /api/v1/query_range.
+// 在一些场景下，如果 step 不能被 start 整除，会导致返回的数据跟我们的开始时间无法对其，所以需要增肌 no-cache=1 参数，避免性能消耗过大，只处理 1m 以上的
+func (i *Instance) noCache(ctx context.Context, start, step int64) int {
+	if start%step > 0 && step > 60 {
+		return 1
+	}
+	return 0
 }
 
 // vmQuery
@@ -372,12 +382,7 @@ func (i *Instance) vmQuery(
 	headers := metadata.Headers(ctx, i.headers)
 
 	headersString, _ := json.Marshal(headers)
-	span.Set("query-headers", string(headersString))
-
-	log.Infof(ctx,
-		"victoria metrics query: %s, headers: %s, body: %s",
-		i.url, headersString, body,
-	)
+	span.Set("query-headers", headersString)
 
 	size, err := i.curl.Request(
 		ctx, curl.Post,
@@ -394,18 +399,18 @@ func (i *Instance) vmQuery(
 
 	queryCost := time.Since(startAnaylize)
 
-	span.Set("query-cost", queryCost.String())
+	span.Set("query-cost", queryCost)
 	span.Set("response-size", size)
 
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, user.Source, i.GetInstanceType(), i.url,
+		ctx, queryCost, user.SpaceUid, user.Source, i.InstanceType(), i.url,
 	)
-	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
+	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.InstanceType())
 	return nil
 }
 
 // QueryRange 查询范围数据
-func (i *Instance) QueryRange(
+func (i *Instance) DirectQueryRange(
 	ctx context.Context, promqlStr string,
 	start, end time.Time, step time.Duration,
 ) (promql.Matrix, error) {
@@ -421,10 +426,16 @@ func (i *Instance) QueryRange(
 
 	vmExpand = metadata.GetExpand(ctx)
 
-	span.Set("query-start", start.String())
-	span.Set("query-end", end.String())
-	span.Set("query-step", step.String())
-	span.Set("query-promql", promqlStr)
+	noCache := i.noCache(ctx, start.Unix(), int64(step.Seconds()))
+
+	span.Set("query-start", start)
+	span.Set("query-start-unix", start.Unix())
+	span.Set("query-end", end)
+	span.Set("query-end-unix", end.Unix())
+	span.Set("query-step", step)
+	span.Set("query-step-unix", step.Seconds())
+	span.Set("query-no-cache", noCache)
+	span.Set("query-match", promqlStr)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		return promql.Matrix{}, nil
@@ -433,23 +444,21 @@ func (i *Instance) QueryRange(
 	ves, _ := json.Marshal(vmExpand)
 	log.Infof(ctx, "vm-expand: %s", ves)
 
-	if i.maxConditionNum > 0 && vmExpand.ConditionNum > i.maxConditionNum {
-		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.maxConditionNum)
-	}
-
 	paramsQueryRange := &ParamsQueryRange{
 		InfluxCompatible: i.influxCompatible,
 		APIType:          APIQueryRange,
 		APIParams: struct {
-			Query string `json:"query"`
-			Start int64  `json:"start"`
-			End   int64  `json:"end"`
-			Step  int64  `json:"step"`
+			Query   string `json:"query"`
+			Start   int64  `json:"start"`
+			End     int64  `json:"end"`
+			Step    int64  `json:"step"`
+			NoCache int    `json:"nocache"`
 		}{
-			Query: promqlStr,
-			Start: start.Unix(),
-			End:   end.Unix(),
-			Step:  int64(step.Seconds()),
+			Query:   promqlStr,
+			Start:   start.Unix(),
+			End:     end.Unix(),
+			Step:    int64(step.Seconds()),
+			NoCache: noCache,
 		},
 		UseNativeOr:           i.useNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
@@ -474,7 +483,7 @@ func (i *Instance) QueryRange(
 }
 
 // Query instant 查询
-func (i *Instance) Query(
+func (i *Instance) DirectQuery(
 	ctx context.Context, promqlStr string,
 	end time.Time,
 ) (promql.Vector, error) {
@@ -490,8 +499,8 @@ func (i *Instance) Query(
 
 	vmExpand = metadata.GetExpand(ctx)
 
-	span.Set("query-promql", promqlStr)
-	span.Set("query-end", end.String())
+	span.Set("query-match", promqlStr)
+	span.Set("query-end", end)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		return promql.Vector{}, nil
@@ -499,10 +508,6 @@ func (i *Instance) Query(
 
 	ves, _ := json.Marshal(vmExpand)
 	span.Set("vm-expand", string(ves))
-
-	if i.maxConditionNum > 0 && vmExpand.ConditionNum > i.maxConditionNum {
-		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.maxConditionNum)
-	}
 
 	paramsQuery := &ParamsQuery{
 		InfluxCompatible: i.influxCompatible,
@@ -538,66 +543,57 @@ func (i *Instance) Query(
 	return i.vectorFormat(ctx, vmResp, span)
 }
 
-func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) (series []map[string]string, err error) {
 	var (
-		vmExpand *metadata.VmExpand
-
-		resp = &VmLableValuesResponse{}
-		err  error
+		resp = &VmSeriesResponse{}
 	)
 
-	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-metric")
+	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-query-series")
 	defer span.End(&err)
 
-	vmExpand = metadata.GetExpand(ctx)
+	span.Set("query-info", query)
+	span.Set("query-start", start)
+	span.Set("query-end", end)
 
-	span.Set("query-name", name)
-
-	if vmExpand == nil {
-		return nil, nil
+	if query.VmRt == "" {
+		return
 	}
 
-	if i.maxConditionNum > 0 && vmExpand.ConditionNum > i.maxConditionNum {
-		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.maxConditionNum)
-	}
-
-	ves, _ := json.Marshal(vmExpand)
-	span.Set("vm-expand", string(ves))
-
-	paramsQuery := &ParamsLabelValues{
+	paramsQuery := &ParamsSeries{
 		InfluxCompatible: i.influxCompatible,
-		APIType:          APILabelValues,
+		APIType:          APISeries,
 		APIParams: struct {
-			Label string `json:"label"`
+			Match string `json:"match[]"`
+			Start int64  `json:"start"`
+			End   int64  `json:"end"`
+			Limit int    `json:"limit"`
 		}{
-			Label: name,
+			Match: query.VmCondition.ToMatch(),
+			Start: start.Unix(),
+			End:   end.Unix(),
+			Limit: query.Size,
 		},
-		UseNativeOr:           i.useNativeOr,
-		MetricFilterCondition: vmExpand.MetricFilterCondition,
-		ResultTableList:       vmExpand.ResultTableList,
-	}
-
-	if vmExpand.ClusterName != "" {
-		paramsQuery.ClusterName = vmExpand.ClusterName
+		UseNativeOr:     i.useNativeOr,
+		ResultTableList: []string{query.VmRt},
+		ClusterName:     query.StorageName,
 	}
 
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	err = i.vmQuery(ctx, string(sql), resp, span)
 	if err != nil {
-		return nil, err
+		return
 	}
 
-	return i.labelFormat(ctx, resp, span)
+	series, err = i.seriesFormat(ctx, resp, span)
+	return
 }
 
-func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
 	var (
-		vmExpand *metadata.VmExpand
-
 		resp = &VmLableValuesResponse{}
 		err  error
 	)
@@ -605,22 +601,13 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query")
 	defer span.End(&err)
 
-	vmExpand = metadata.GetExpand(ctx)
+	span.Set("query-info", query)
+	span.Set("query-start", start)
+	span.Set("query-end", end)
 
-	if vmExpand == nil {
+	if query.VmRt == "" {
 		return nil, nil
 	}
-
-	ves, _ := json.Marshal(vmExpand)
-	span.Set("vm-expand", string(ves))
-
-	if i.maxConditionNum > 0 && vmExpand.ConditionNum > i.maxConditionNum {
-		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.maxConditionNum)
-	}
-
-	span.Set("query-matchers", fmt.Sprintf("%+v", matchers))
-	span.Set("query-start", start.String())
-	span.Set("query-end", end.String())
 
 	paramsQuery := &ParamsSeries{
 		InfluxCompatible: i.influxCompatible,
@@ -629,23 +616,16 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 			Match string `json:"match[]"`
 			Start int64  `json:"start"`
 			End   int64  `json:"end"`
+			Limit int    `json:"limit"`
 		}{
+			Match: query.VmCondition.ToMatch(),
 			Start: start.Unix(),
 			End:   end.Unix(),
+			Limit: query.Size,
 		},
-		UseNativeOr:           i.useNativeOr,
-		MetricFilterCondition: vmExpand.MetricFilterCondition,
-		ResultTableList:       vmExpand.ResultTableList,
+		ResultTableList: []string{query.VmRt},
+		ClusterName:     query.StorageName,
 	}
-
-	if vmExpand.ClusterName != "" {
-		paramsQuery.ClusterName = vmExpand.ClusterName
-	}
-
-	vector := &parser.VectorSelector{
-		LabelMatchers: matchers,
-	}
-	paramsQuery.APIParams.Match = vector.String()
 
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
@@ -660,48 +640,21 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 	return i.labelFormat(ctx, resp, span)
 }
 
-func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) (res []string, err error) {
 	var (
-		vmExpand *metadata.VmExpand
-
 		resp = &VmResponse{}
-		err  error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query")
+	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-label-values")
 	defer span.End(&err)
 
-	if name == labels.MetricName {
-		return i.metric(ctx, name, matchers...)
-	}
-
-	vmExpand = metadata.GetExpand(ctx)
-
-	// 检查 vmExpand 以及 vmExpand.ResultTableGroup 不能为空
-	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
-		return nil, nil
-	}
-
-	if i.maxConditionNum > 0 && vmExpand.ConditionNum > i.maxConditionNum {
-		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.maxConditionNum)
-	}
-
-	ves, _ := json.Marshal(vmExpand)
-	span.Set("vm-expand", string(ves))
+	span.Set("query-info", query)
 	span.Set("query-name", name)
-	span.Set("query-matchers", fmt.Sprintf("%+v", matchers))
-	span.Set("query-start", start.String())
-	span.Set("query-end", end.String())
+	span.Set("query-start", start)
+	span.Set("query-end", end)
 
-	referenceName := ""
-	for _, m := range matchers {
-		if m.Name == labels.MetricName {
-			referenceName = m.Value
-		}
-	}
-
-	if referenceName == "" {
-		return nil, fmt.Errorf("reference name is empty: %v", matchers)
+	if query.VmRt == "" {
+		return nil, nil
 	}
 
 	// 如果使用 end - start 作为 step，查询的时候会多查一个step的数据量，所以这里需要减少点数
@@ -710,37 +663,36 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		step = 60
 	}
 
+	span.Set("query-step", step)
+
+	queryString := query.VmCondition.ToMatch()
+	queryString = fmt.Sprintf(`count(%s) by (%s)`, queryString, name)
+	if query.Size > 0 {
+		queryString = fmt.Sprintf(`topk(%d, %s)`, query.Size, queryString)
+	}
+	log.Infof(ctx, "query: %s", queryString)
+	log.Infof(ctx, "start: %s", start.String())
+	log.Infof(ctx, "end: %s", end.String())
+	log.Infof(ctx, "step: %d", step)
+
 	paramsQueryRange := &ParamsQueryRange{
 		InfluxCompatible: i.influxCompatible,
 		APIType:          APIQueryRange,
 		APIParams: struct {
-			Query string `json:"query"`
-			Start int64  `json:"start"`
-			End   int64  `json:"end"`
-			Step  int64  `json:"step"`
+			Query   string `json:"query"`
+			Start   int64  `json:"start"`
+			End     int64  `json:"end"`
+			Step    int64  `json:"step"`
+			NoCache int    `json:"nocache"`
 		}{
+			Query: queryString,
 			Start: start.Unix(),
 			End:   end.Unix(),
 			Step:  step,
 		},
-		UseNativeOr:           i.useNativeOr,
-		MetricFilterCondition: vmExpand.MetricFilterCondition,
-		ResultTableList:       vmExpand.ResultTableList,
+		ResultTableList: []string{query.VmRt},
+		ClusterName:     query.StorageName,
 	}
-
-	if vmExpand.ClusterName != "" {
-		paramsQueryRange.ClusterName = vmExpand.ClusterName
-	}
-
-	vector := &parser.VectorSelector{
-		LabelMatchers: matchers,
-	}
-	expr := &parser.AggregateExpr{
-		Op:       parser.COUNT,
-		Expr:     vector,
-		Grouping: []string{name},
-	}
-	paramsQueryRange.APIParams.Query = expr.String()
 
 	sql, err := json.Marshal(paramsQueryRange)
 	if err != nil {
@@ -757,27 +709,102 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		return nil, err
 	}
 
-	lbsMap := make(map[string]struct{}, 0)
+	lbsMap := set.New[string]()
 	for _, s := range series {
 		for _, l := range s.Metric {
 			if l.Name == name {
-				lbsMap[l.Value] = struct{}{}
+				lbsMap.Add(l.Value)
 			}
 		}
 	}
 
-	lbs := make([]string, 0, len(lbsMap))
-	for k := range lbsMap {
-		lbs = append(lbs, k)
+	return lbsMap.ToArray(), nil
+}
+
+func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) (list []string, err error) {
+	var (
+		vmExpand *metadata.VmExpand
+		resp     = &VmLableValuesResponse{}
+	)
+
+	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-direct-label-values")
+	defer span.End(&err)
+
+	vmExpand = metadata.GetExpand(ctx)
+	if vmExpand == nil {
+		return
 	}
 
-	return lbs, nil
+	metricName := function.MatcherToMetricName(matchers...)
+	if metricName == "" {
+		return
+	}
+
+	var match strings.Builder
+	if filter, ok := vmExpand.MetricFilterCondition[metricName]; ok {
+		match.WriteString("{")
+		match.WriteString(filter)
+		match.WriteString("}")
+	}
+
+	if match.Len() == 0 {
+		return
+	}
+
+	paramsQuery := &ParamsLabelValues{
+		InfluxCompatible: i.influxCompatible,
+		APIType:          APILabelValues,
+		APIParams: struct {
+			Label string `json:"label"`
+			Match string `json:"match[]"`
+			Start int64  `json:"start"`
+			End   int64  `json:"end"`
+			Limit int    `json:"limit"`
+		}{
+			Label: name,
+			Match: match.String(),
+			Limit: limit,
+		},
+		ResultTableList: vmExpand.ResultTableList,
+	}
+
+	span.Set("query-label", name)
+	span.Set("query-match", match.String())
+	span.Set("query-limit", limit)
+	span.Set("query-rt-list", vmExpand.ResultTableList)
+	span.Set("query-start", start)
+	span.Set("query-end", end)
+	span.Set("query-cluster-name", vmExpand.ClusterName)
+
+	if start.Unix() > 0 {
+		paramsQuery.APIParams.Start = start.Unix()
+	}
+	if end.Unix() > 0 {
+		paramsQuery.APIParams.End = end.Unix()
+	}
+
+	if vmExpand.ClusterName != "" {
+		paramsQuery.ClusterName = vmExpand.ClusterName
+	}
+
+	sql, err := json.Marshal(paramsQuery)
+	if err != nil {
+		return
+	}
+
+	err = i.vmQuery(ctx, string(sql), resp, span)
+	if err != nil {
+		return
+	}
+
+	return i.labelFormat(ctx, resp, span)
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
 	panic("implement me")
-}
-
-func (i *Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
-	return nil
 }

@@ -29,7 +29,7 @@ tidy:
 
 .PHONY: test
 test:
-	go test -timeout 1m -parallel 8  ./...
+	go test -cover -timeout 1m -parallel 8  ./...
 
 .PHONY: swag
 swag:

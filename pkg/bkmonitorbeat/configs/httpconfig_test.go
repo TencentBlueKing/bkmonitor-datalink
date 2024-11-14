@@ -49,6 +49,7 @@ func (s *HTTPConfiSuite) TestConfigClean() {
 	s.Equal(taskConf.Timeout, taskConf.AvailableDuration)
 	s.Equal("", taskConf.Proxy)
 	s.Equal(false, taskConf.InsecureSkipVerify)
+	s.Equal(false, taskConf.CustomReport)
 
 	s.Equal("http://bk.tencent.com", stepConf.URL)
 	s.Equal("GET", stepConf.Method)

@@ -17,11 +17,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
-func RegisterRelation(ctx context.Context, g *gin.Engine) {
+func RegisterRelation(ctx context.Context, g *gin.RouterGroup) {
 
 	g.POST(RelationMultiResource, HandlerAPIRelationMultiResource)
 	g.POST(RelationMultiResourceRange, HandlerAPIRelationMultiResourceRange)
 
-	log.Infof(ctx, "api service register in path(query) -> [%s]", RelationMultiResource)
-	log.Infof(ctx, "api service register in path(query_range) -> [%s]", RelationMultiResourceRange)
+	log.Infof(ctx, "RegisterRelation => [POST] %s", RelationMultiResource)
+	log.Infof(ctx, "RegisterRelation => [POST] %s", RelationMultiResourceRange)
 }

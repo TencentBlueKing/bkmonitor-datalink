@@ -10,14 +10,10 @@
 package promql
 
 import (
-	"context"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	prom "github.com/prometheus/prometheus/promql"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 // Params
@@ -72,84 +68,4 @@ func GetDefaultStep() time.Duration {
 		return time.Minute
 	}
 	return defaultStep
-}
-
-// Query
-func Query(ctx context.Context, q string, now time.Time) (*Tables, error) {
-
-	querier := &InfluxDBStorage{}
-	opt := &prom.QueryOpts{}
-	query, err := GlobalEngine.NewInstantQuery(querier, opt, q, now)
-	if err != nil {
-		return nil, err
-	}
-	result := query.Exec(ctx)
-
-	vector, err := result.Vector()
-	if err != nil {
-		return nil, err
-	}
-
-	tables := NewTables()
-	for index, sample := range vector {
-		tables.Add(NewTableWithSample(index, sample, nil))
-	}
-
-	return tables, nil
-}
-
-// QueryRange
-func QueryRange(ctx context.Context, q string, start, end time.Time, interval time.Duration) (*Tables, error) {
-	var (
-		duration time.Duration
-		err      error
-	)
-
-	ctx, span := trace.NewSpan(ctx, "promql-query-range")
-	defer span.End(&err)
-
-	startQuery := time.Now()
-
-	querier := &InfluxDBStorage{}
-	// influxdb会包括最后一个点 [start, end], 而promql是 [start, end)后面是开区间，这里保持对齐，故意-1ns
-
-	endTime := end.Add(-1 * time.Millisecond)
-
-	opt := &prom.QueryOpts{}
-	query, err := GlobalEngine.NewRangeQuery(querier, opt, q, start, endTime, interval)
-	if err != nil {
-		return nil, err
-	}
-	result := query.Exec(ctx)
-
-	// 计算查询时间
-	startAnaylize := time.Now()
-	duration = startAnaylize.Sub(startQuery)
-	log.Debugf(ctx, "prom range query:%s, query cost:%s", q, duration)
-
-	err = result.Err
-	if result.Err != nil {
-		log.Errorf(ctx, "query: %s, start: %s, end: %s, interval: %s get error:%s", q, start.String(), end.String(), interval.String(), err)
-		return nil, err
-	}
-	for _, err = range result.Warnings {
-		log.Errorf(ctx, "query:%s get warning:%s", q, err)
-		return nil, err
-	}
-
-	matrix, err := result.Matrix()
-	if err != nil {
-		return nil, err
-	}
-
-	tables := NewTables()
-	for index, series := range matrix {
-		tables.Add(NewTable(index, series, nil))
-	}
-
-	// 计算分析时间
-	duration = time.Since(startAnaylize)
-	log.Debugf(ctx, "prom range query:%s, anaylize cost:%s", q, time.Since(startAnaylize))
-
-	return tables, nil
 }

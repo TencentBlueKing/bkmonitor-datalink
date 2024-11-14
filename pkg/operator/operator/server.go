@@ -25,6 +25,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/httpx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
@@ -211,9 +212,9 @@ const (
 - Description: monitor name 黑名单匹配规则，此规则优先级最高
 %s
 `
-	formatWorkload = `
-[√] check workload
-- Description: 集群各类型工作负载数量
+	formatResource = `
+[√] check resource
+- Description: 集群各类型资源数量
 %s
 `
 	formatMonitorEndpoint = `
@@ -266,7 +267,7 @@ const (
 // 检查 dryrun 标识是否打开
 // 检查监测命名空间是否符合预期
 // 检查黑名单匹配规则
-// 检查集群负载情况
+// 检查集群资源情况
 // 检查采集指标数据量
 // 检查处理 secrets 是否有问题
 // 检查给定关键字监测资源
@@ -330,11 +331,10 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	b, _ = json.MarshalIndent(blacklist, "", "  ")
 	writef(formatCheckMonitorBlacklist, string(b))
 
-	// 检查集群工作负载数量
-	workloadInfo := objectsref.GetWorkloadCount()
-	workloadInfo["Node"] = objectsref.GetClusterNodeCount() // 顺便补充 node 数量
-	b, _ = json.MarshalIndent(workloadInfo, "", "  ")
-	writef(formatWorkload, string(b))
+	// 检查集群资源数量
+	resourceInfo := objectsref.GetResourceCount()
+	b, _ = json.MarshalIndent(resourceInfo, "", "  ")
+	writef(formatResource, string(b))
 
 	// 检查 Endpoint 数量
 	endpoints := c.recorder.getActiveEndpoints()
@@ -380,7 +380,13 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 				monitorResources = append(monitorResources, mr)
 			}
 		}
-		monitorResourcesBytes, _ := json.MarshalIndent(monitorResources, "", "  ")
+
+		var monitorResourcesBytes []byte
+		if len(monitorResources) > 0 {
+			monitorResourcesBytes, _ = json.MarshalIndent(monitorResources, "", "  ")
+		} else {
+			monitorResourcesBytes = []byte("\n[!] NotMatch: 未匹配到任何 monitor 资源\n")
+		}
 
 		var childConfigs []ConfigFileRecord
 		for _, cf := range c.recorder.getActiveConfigFiles() {
@@ -388,7 +394,14 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 				childConfigs = append(childConfigs, cf)
 			}
 		}
-		childConfigsBytes, _ := json.MarshalIndent(childConfigs, "", "  ")
+
+		var childConfigsBytes []byte
+		if len(childConfigs) > 0 {
+			childConfigsBytes, _ = json.MarshalIndent(childConfigs, "", "  ")
+		} else {
+			childConfigsBytes = []byte("\n[!] NotMatch: 未匹配到任何采集配置")
+		}
+
 		writef(formatMonitorResources, monitorKeyword, monitorResourcesBytes, childConfigsBytes)
 	} else {
 		writef(formatMonitorResourceNoKeyword)
@@ -460,11 +473,45 @@ func (c *Operator) WorkloadRoute(w http.ResponseWriter, _ *http.Request) {
 	writeResponse(w, c.objectsController.WorkloadsRelabelConfigs())
 }
 
+func (c *Operator) PodsRoute(w http.ResponseWriter, r *http.Request) {
+	pods := c.objectsController.AllPods()
+	info, err := c.dw.GetClusterInfo()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(fmt.Sprintf(`{"msg": "no bcs_cluster_id found: %s"}`, err)))
+		return
+	}
+
+	type podsResponse struct {
+		ClusterID string `json:"k8s.bcs.cluster.id"`
+		Name      string `json:"k8s.pod.name"`
+		Namespace string `json:"k8s.namespace.name"`
+		IP        string `json:"k8s.pod.ip"`
+	}
+
+	nodes := c.objectsController.NodeIPs()
+	all := r.URL.Query().Get("all")
+
+	var ret []podsResponse
+	for _, pod := range pods {
+		_, ok := nodes[pod.IP]
+		if !ok || all == "true" {
+			ret = append(ret, podsResponse{
+				ClusterID: info.BcsClusterID,
+				Name:      pod.Name,
+				Namespace: pod.Namespace,
+				IP:        pod.IP,
+			})
+		}
+	}
+	writeResponse(w, ret)
+}
+
 func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nodeName := vars["node"]
 
-	query := r.URL.Query()
+	query := httpx.UnwindParams(r.URL.Query().Get("q"))
 	podName := query.Get("podName")
 	annotations := stringx.SplitTrim(query.Get("annotations"), ",")
 	labels := stringx.SplitTrim(query.Get("labels"), ",")
@@ -486,7 +533,7 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Operator) LabelJoinRoute(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
+	query := httpx.UnwindParams(r.URL.Query().Get("q"))
 	kind := query.Get("kind")
 	annotations := stringx.SplitTrim(query.Get("annotations"), ",")
 	labels := stringx.SplitTrim(query.Get("labels"), ",")
@@ -507,6 +554,7 @@ func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) 
 	c.objectsController.GetServiceRelations(buf)
 	c.objectsController.GetPodRelations(buf)
 	c.objectsController.GetReplicasetRelations(buf)
+	c.objectsController.GetDataSourceRelations(buf)
 
 	w.Write(buf.Bytes())
 }
@@ -546,6 +594,7 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /cluster_info
 * GET /workload
 * GET /workload/node/{node}
+* GET /pods?all=true|false
 * GET /relation/metrics
 * GET /rule/metrics
 * GET /configs
@@ -591,6 +640,7 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/cluster_info", c.ClusterInfoRoute)
 	router.HandleFunc("/workload", c.WorkloadRoute)
 	router.HandleFunc("/workload/node/{node}", c.WorkloadNodeRoute)
+	router.HandleFunc("/pods", c.PodsRoute)
 	router.HandleFunc("/labeljoin", c.LabelJoinRoute)
 	router.HandleFunc("/relation/metrics", c.RelationMetricsRoute)
 	router.HandleFunc("/rule/metrics", c.RuleMetricsRoute)

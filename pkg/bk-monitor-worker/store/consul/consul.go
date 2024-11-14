@@ -97,6 +97,7 @@ func (c *Instance) Put(key, val string, modifyIndex uint64, expiration time.Dura
 // Get val by key
 func (c *Instance) Get(key string) (uint64, []byte, error) {
 	var err error
+	logger.Infof("Get: use consul client->[%v]", c.Client)
 	kvPair, _, err := c.APIClient.KV().Get(key, nil)
 	logger.Infof("Get: get consul key: %s, kvPair: %v", key, kvPair)
 	if err != nil {

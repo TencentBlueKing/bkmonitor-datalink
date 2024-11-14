@@ -34,6 +34,17 @@ func NewNodeMap() *NodeMap {
 	}
 }
 
+func (n *NodeMap) GetAll() []*corev1.Node {
+	n.mut.Lock()
+	defer n.mut.Unlock()
+
+	ret := make([]*corev1.Node, 0, len(n.nodes))
+	for _, node := range n.nodes {
+		ret = append(ret, node)
+	}
+	return ret
+}
+
 func (n *NodeMap) Count() int {
 	n.mut.Lock()
 	defer n.mut.Unlock()

@@ -3,7 +3,11 @@ module github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator
 go 1.21
 
 require (
+	github.com/blang/semver/v4 v4.0.0
+	github.com/cespare/xxhash/v2 v2.2.0
 	github.com/elastic/beats v7.1.1+incompatible
+	github.com/ghodss/yaml v1.0.0
+	github.com/go-kit/log v0.2.1
 	github.com/gorilla/mux v1.8.0
 	github.com/goware/urlx v0.3.1
 	github.com/kylelemons/godebug v1.1.0
@@ -17,27 +21,21 @@ require (
 	github.com/prometheus/prometheus v1.99.0
 	github.com/spf13/cobra v1.4.0
 	github.com/stretchr/testify v1.8.4
+	github.com/valyala/bytebufferpool v1.0.0
 	go.uber.org/automaxprocs v1.5.2
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.27.3
 	k8s.io/apimachinery v0.27.3
 	k8s.io/client-go v0.27.3
+	k8s.io/code-generator v0.27.3
 )
 
 require (
-	github.com/Tencent/bk-bcs/bcs-scenarios/kourse v0.0.0-20220914032224-06b1bd3358bc
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v0.0.0-00010101000000-000000000000
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
-	github.com/blang/semver/v4 v4.0.0
-	github.com/cespare/xxhash/v2 v2.2.0
-	github.com/ghodss/yaml v1.0.0
-	github.com/go-kit/log v0.2.1
-	github.com/valyala/bytebufferpool v1.0.0
 )
 
 require (
-	cloud.google.com/go/compute v1.22.0 // indirect
-	cloud.google.com/go/compute/metadata v0.2.3 // indirect
 	github.com/PuerkitoBio/purell v1.1.1 // indirect
 	github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578 // indirect
 	github.com/Shopify/sarama v1.27.1 // indirect
@@ -150,6 +148,7 @@ require (
 	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/crypto v0.23.0 // indirect
 	golang.org/x/exp v0.0.0-20221031165847-c99f073a8326 // indirect
+	golang.org/x/mod v0.17.0 // indirect
 	golang.org/x/net v0.25.0 // indirect
 	golang.org/x/oauth2 v0.10.0 // indirect
 	golang.org/x/sync v0.7.0 // indirect
@@ -173,9 +172,9 @@ require (
 	howett.net/plist v0.0.0-20181124034731-591f970eefbb // indirect
 	k8s.io/apiextensions-apiserver v0.25.0 // indirect
 	k8s.io/component-base v0.25.0 // indirect
+	k8s.io/gengo v0.0.0-20220902162205-c0856e24416d // indirect
 	k8s.io/klog/v2 v2.100.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20230525220651-2546d827e515 // indirect
-	k8s.io/kubernetes v0.0.0-00010101000000-000000000000 // indirect
 	k8s.io/utils v0.0.0-20230711102312-30195339c3c7 // indirect
 	sigs.k8s.io/controller-runtime v0.12.3 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
@@ -189,29 +188,4 @@ replace (
 	github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.17-bk+incompatible
 	// A replace directive is needed for github.com/prometheus/prometheus to ensure running against the latest version of prometheus.
 	github.com/prometheus/prometheus => github.com/prometheus/prometheus v0.40.0
-	k8s.io/api => k8s.io/api v0.25.0
-	k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.25.0
-	k8s.io/apimachinery => k8s.io/apimachinery v0.25.0
-	k8s.io/apiserver => k8s.io/apiserver v0.25.0
-	k8s.io/cli-runtime => k8s.io/cli-runtime v0.25.0
-	k8s.io/client-go => k8s.io/client-go v0.25.0
-	k8s.io/cloud-provider => k8s.io/cloud-provider v0.25.0
-	k8s.io/cluster-bootstrap => k8s.io/cluster-bootstrap v0.25.0
-	k8s.io/code-generator => k8s.io/code-generator v0.25.0
-	k8s.io/component-base => k8s.io/component-base v0.25.0
-	k8s.io/component-helpers => k8s.io/component-helpers v0.25.0
-	k8s.io/controller-manager => k8s.io/controller-manager v0.25.0
-	k8s.io/cri-api => k8s.io/cri-api v0.25.0
-	k8s.io/csi-translation-lib => k8s.io/csi-translation-lib v0.25.0
-	k8s.io/kube-aggregator => k8s.io/kube-aggregator v0.25.0
-	k8s.io/kube-controller-manager => k8s.io/kube-controller-manager v0.25.0
-	k8s.io/kube-proxy => k8s.io/kube-proxy v0.25.0
-	k8s.io/kube-scheduler => k8s.io/kube-scheduler v0.25.0
-	k8s.io/kubectl => k8s.io/kubectl v0.25.0
-	k8s.io/kubelet => k8s.io/kubelet v0.25.0
-	k8s.io/kubernetes => k8s.io/kubernetes v1.20.0
-	k8s.io/legacy-cloud-providers => k8s.io/legacy-cloud-providers v0.25.0
-	k8s.io/metrics => k8s.io/metrics v0.25.0
-	k8s.io/mount-utils => k8s.io/mount-utils v0.25.0
-	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.25.0
 )

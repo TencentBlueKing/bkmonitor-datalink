@@ -13,13 +13,19 @@ import (
 	"context"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 // GetMustVmQueryFeatureFlag 判断该 TableID 是否强行指定为单指标单表
 func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 	var (
 		user = GetUser(ctx)
+		err  error
+		span *trace.Span
 	)
+
+	ctx, span = trace.NewSpan(ctx, "check-must-query-feature-flag")
+	defer span.End(&err)
 
 	// 特性开关只有指定空间才启用 vm 查询
 	ffUser := featureFlag.FFUser(user.HashID, map[string]interface{}{
@@ -29,6 +35,8 @@ func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 		"tableID":  tableID,
 	})
 
+	span.Set("ff-user-custom", ffUser.GetCustom())
+
 	status := featureFlag.BoolVariation(ctx, ffUser, "must-vm-query", false)
 
 	// 根据查询时间范围判断是否满足当前时间配置
@@ -37,8 +45,12 @@ func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 	if vmDataTime > 0 {
 		queryParams := GetQueryParams(ctx)
 		status = int64(vmDataTime) < queryParams.Start
+
+		span.Set("vm-data-time", vmDataTime)
+		span.Set("query-params-start", queryParams.Start)
 	}
 
+	span.Set("ff-status", status)
 	return status
 }
 

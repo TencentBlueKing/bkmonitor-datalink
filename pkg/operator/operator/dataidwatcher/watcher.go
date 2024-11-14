@@ -18,7 +18,7 @@ import (
 
 	"k8s.io/client-go/tools/cache"
 
-	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/crd/v1beta1"
+	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
 	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	bkinformers "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/action"
@@ -320,7 +320,7 @@ func (w *dataIDWatcher) Stop() {
 func (w *dataIDWatcher) handleDataIDAdd(obj interface{}) {
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
-		logger.Errorf("unexpected DataID type, got %T", obj)
+		logger.Errorf("expected DataID type, got %T", obj)
 		return
 	}
 	env := feature.BkEnv(dataID.Labels)
@@ -336,7 +336,7 @@ func (w *dataIDWatcher) handleDataIDAdd(obj interface{}) {
 func (w *dataIDWatcher) handleDataIDDelete(obj interface{}) {
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
-		logger.Errorf("unexpected DataID type, got %T", obj)
+		logger.Errorf("expected DataID type, got %T", obj)
 		return
 	}
 	env := feature.BkEnv(dataID.Labels)
@@ -352,12 +352,12 @@ func (w *dataIDWatcher) handleDataIDDelete(obj interface{}) {
 func (w *dataIDWatcher) handleDataIDUpdate(oldObj interface{}, newObj interface{}) {
 	old, ok := oldObj.(*bkv1beta1.DataID)
 	if !ok {
-		logger.Errorf("unexpected DataID type, got %T", oldObj)
+		logger.Errorf("expected DataID type, got %T", oldObj)
 		return
 	}
 	cur, ok := newObj.(*bkv1beta1.DataID)
 	if !ok {
-		logger.Errorf("unexpected DataID type got %T", newObj)
+		logger.Errorf("expected DataID type got %T", newObj)
 		return
 	}
 

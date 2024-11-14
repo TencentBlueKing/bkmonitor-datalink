@@ -555,6 +555,7 @@ func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) 
 	c.objectsController.GetServiceRelations(buf)
 	c.objectsController.GetPodRelations(buf)
 	c.objectsController.GetReplicasetRelations(buf)
+	c.objectsController.GetDataSourceRelations(buf)
 
 	w.Write(buf.Bytes())
 }

@@ -10,7 +10,7 @@ require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
 	github.com/apache/thrift v0.16.0
 	github.com/buraksezer/consistent v0.10.0
-	github.com/bytedance/sonic v1.11.2
+	github.com/bytedance/sonic v1.12.3
 	github.com/cespare/xxhash/v2 v2.2.0
 	github.com/elastic/beats v7.1.1+incompatible
 	github.com/elastic/go-ucfg v0.7.0
@@ -58,17 +58,17 @@ require (
 
 require (
 	github.com/Shopify/sarama v1.32.0 // indirect
-	github.com/Tencent/bk-bcs/bcs-scenarios/kourse v0.0.0-20220914032224-06b1bd3358bc // indirect
 	github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da // indirect
 	github.com/alecthomas/units v0.0.0-20211218093645-b94a6e3cc137 // indirect
 	github.com/armon/go-metrics v0.3.10 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/boltdb/bolt v1.3.1 // indirect
+	github.com/bytedance/sonic/loader v0.2.0 // indirect
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/census-instrumentation/opencensus-proto v0.4.1 // indirect
-	github.com/chenzhuoyu/base64x v0.0.0-20230717121745-296ad89f973d // indirect
-	github.com/chenzhuoyu/iasm v0.9.0 // indirect
+	github.com/cloudwego/base64x v0.1.4 // indirect
+	github.com/cloudwego/iasm v0.2.0 // indirect
 	github.com/containerd/cgroups v1.0.3 // indirect
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
@@ -183,7 +183,6 @@ require (
 	k8s.io/component-base v0.25.0 // indirect
 	k8s.io/klog/v2 v2.100.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20230525220651-2546d827e515 // indirect
-	k8s.io/kubernetes v0.0.0-00010101000000-000000000000 // indirect
 	k8s.io/utils v0.0.0-20230711102312-30195339c3c7 // indirect
 	sigs.k8s.io/controller-runtime v0.12.3 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
@@ -191,40 +190,11 @@ require (
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
 
-replace github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.15-bk+incompatible
-
-replace github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils => ../utils
-
-replace github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse => ../libgse
-
-replace github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator => ../operator
-
 replace (
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse => ../libgse
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator => ../operator
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils => ../utils
+	github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.15-bk+incompatible
 	// A replace directive is needed for github.com/prometheus/prometheus to ensure running against the latest version of prometheus.
 	github.com/prometheus/prometheus => github.com/prometheus/prometheus v0.38.0
-	k8s.io/api => k8s.io/api v0.25.0
-	k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.25.0
-	k8s.io/apimachinery => k8s.io/apimachinery v0.25.0
-	k8s.io/apiserver => k8s.io/apiserver v0.25.0
-	k8s.io/cli-runtime => k8s.io/cli-runtime v0.25.0
-	k8s.io/client-go => k8s.io/client-go v0.25.0
-	k8s.io/cloud-provider => k8s.io/cloud-provider v0.25.0
-	k8s.io/cluster-bootstrap => k8s.io/cluster-bootstrap v0.25.0
-	k8s.io/code-generator => k8s.io/code-generator v0.25.0
-	k8s.io/component-base => k8s.io/component-base v0.25.0
-	k8s.io/component-helpers => k8s.io/component-helpers v0.25.0
-	k8s.io/controller-manager => k8s.io/controller-manager v0.25.0
-	k8s.io/cri-api => k8s.io/cri-api v0.25.0
-	k8s.io/csi-translation-lib => k8s.io/csi-translation-lib v0.25.0
-	k8s.io/kube-aggregator => k8s.io/kube-aggregator v0.25.0
-	k8s.io/kube-controller-manager => k8s.io/kube-controller-manager v0.25.0
-	k8s.io/kube-proxy => k8s.io/kube-proxy v0.25.0
-	k8s.io/kube-scheduler => k8s.io/kube-scheduler v0.25.0
-	k8s.io/kubectl => k8s.io/kubectl v0.25.0
-	k8s.io/kubelet => k8s.io/kubelet v0.25.0
-	k8s.io/kubernetes => k8s.io/kubernetes v1.20.0
-	k8s.io/legacy-cloud-providers => k8s.io/legacy-cloud-providers v0.25.0
-	k8s.io/metrics => k8s.io/metrics v0.25.0
-	k8s.io/mount-utils => k8s.io/mount-utils v0.25.0
-	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.25.0
 )

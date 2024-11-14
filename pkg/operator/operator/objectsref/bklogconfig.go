@@ -288,54 +288,55 @@ func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, re
 	factory := bkinformers.NewSharedInformerFactory(client, define.ReSyncPeriod)
 	informer := factory.Bk().V1alpha1().BkLogConfigs().Informer()
 
-	informer.AddEventHandler(
-		cache.ResourceEventHandlerFuncs{
-			AddFunc: func(obj interface{}) {
-				bklogconfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
-				if !ok {
-					logger.Errorf("expected BkLogConfig type, got %T", obj)
-					return
-				}
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			bklogconfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
+			if !ok {
+				logger.Errorf("expected BkLogConfig type, got %T", obj)
+				return
+			}
 
-				entity := newBkLogConfigEntity(bklogconfig)
-				if entity != nil {
-					objsMap.Set(entity)
-				}
-			},
-			UpdateFunc: func(oldObj, newObj interface{}) {
-				old, ok := oldObj.(*loggingv1alpha1.BkLogConfig)
-				if !ok {
-					logger.Errorf("expected BkLogConfig type, got %T", oldObj)
-					return
-				}
-				cur, ok := newObj.(*loggingv1alpha1.BkLogConfig)
-				if !ok {
-					logger.Errorf("expected BkLogConfig type, got %T", newObj)
-					return
-				}
-				if old.ResourceVersion == cur.ResourceVersion {
-					return
-				}
-
-				entity := newBkLogConfigEntity(cur)
-				if entity != nil {
-					objsMap.Set(entity)
-				}
-			},
-			DeleteFunc: func(obj interface{}) {
-				bklogconfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
-				if !ok {
-					logger.Errorf("expected BkLogConfig type, got %T", obj)
-					return
-				}
-
-				entity := newBkLogConfigEntity(bklogconfig)
-				if entity != nil {
-					objsMap.Del(entity)
-				}
-			},
+			entity := newBkLogConfigEntity(bklogconfig)
+			if entity != nil {
+				objsMap.Set(entity)
+			}
 		},
-	)
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			old, ok := oldObj.(*loggingv1alpha1.BkLogConfig)
+			if !ok {
+				logger.Errorf("expected BkLogConfig type, got %T", oldObj)
+				return
+			}
+			cur, ok := newObj.(*loggingv1alpha1.BkLogConfig)
+			if !ok {
+				logger.Errorf("expected BkLogConfig type, got %T", newObj)
+				return
+			}
+			if old.ResourceVersion == cur.ResourceVersion {
+				return
+			}
+
+			entity := newBkLogConfigEntity(cur)
+			if entity != nil {
+				objsMap.Set(entity)
+			}
+		},
+		DeleteFunc: func(obj interface{}) {
+			bklogconfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
+			if !ok {
+				logger.Errorf("expected BkLogConfig type, got %T", obj)
+				return
+			}
+
+			entity := newBkLogConfigEntity(bklogconfig)
+			if entity != nil {
+				objsMap.Del(entity)
+			}
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	go informer.Run(ctx.Done())
 

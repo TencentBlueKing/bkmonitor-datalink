@@ -271,7 +271,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 				return
 			}
 
-			oldIndex, oldValueBytes, err := consulClient.Get(dsSvc.ConsulPath())
+			oldIndex, oldValueBytes, err := consulClient.Get(dsSvc.ConsulConfigPath())
 			if err != nil {
 				logger.Errorf("RefreshDatasource: data_id [%v] failed to get old value from [%v], %v, will set modifyIndex as 0", dsSvc.BkDataId, dsSvc.ConsulConfigPath(), err)
 				return

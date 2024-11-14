@@ -38,6 +38,13 @@ func NewServiceMap() *ServiceMap {
 	}
 }
 
+func (m *ServiceMap) Count() int {
+	m.mut.Lock()
+	defer m.mut.Unlock()
+
+	return len(m.services)
+}
+
 func (m *ServiceMap) Set(service *corev1.Service) {
 	m.mut.Lock()
 	defer m.mut.Unlock()

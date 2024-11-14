@@ -64,21 +64,13 @@ var (
 		[]string{"name"},
 	)
 
-	workloadCount = promauto.NewGaugeVec(
+	resourceCount = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitorNamespace,
-			Name:      "workload_count",
-			Help:      "workload count",
+			Name:      "resource_count",
+			Help:      "resource count",
 		},
 		[]string{"resource"},
-	)
-
-	nodeCount = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "node_count",
-			Help:      "node count",
-		},
 	)
 
 	sharedDiscoveryCount = promauto.NewGauge(
@@ -199,12 +191,8 @@ func (m *metricMonitor) SetMonitorEndpointCount(name string, n int) {
 	monitorEndpointCount.WithLabelValues(name).Set(float64(n))
 }
 
-func (m *metricMonitor) SetWorkloadCount(resource string, n int) {
-	workloadCount.WithLabelValues(resource).Set(float64(n))
-}
-
-func (m *metricMonitor) SetNodeCount(n int) {
-	nodeCount.Set(float64(n))
+func (m *metricMonitor) SetResourceCount(resource string, n int) {
+	resourceCount.WithLabelValues(resource).Set(float64(n))
 }
 
 func (m *metricMonitor) SetSharedDiscoveryCount(n int) {

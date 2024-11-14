@@ -223,13 +223,13 @@ func (c *Controller) GeneratePromRuleContent() map[string]string {
 
 		content, err := promyaml.Marshal(rule.Spec)
 		if err != nil {
-			logger.Errorf("marshal prometheus rule '%s' failed, err: %v", id, err)
+			logger.Errorf("marshal prometheus rule '%s' failed: %v", id, err)
 			continue
 		}
 		_, errs := rulefmt.Parse(content)
 		if len(errs) > 0 {
 			for _, err = range errs {
-				logger.Errorf("parse prometheus rule '%s' failed, err: %v", id, err)
+				logger.Errorf("parse prometheus rule '%s' failed: %v", id, err)
 			}
 			continue
 		}

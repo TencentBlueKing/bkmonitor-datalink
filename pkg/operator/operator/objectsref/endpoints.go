@@ -34,6 +34,13 @@ func NewEndpointsMap() *EndpointsMap {
 	}
 }
 
+func (m *EndpointsMap) Count() int {
+	m.mut.Lock()
+	defer m.mut.Unlock()
+
+	return len(m.endpoints)
+}
+
 func (m *EndpointsMap) Set(endpoints *corev1.Endpoints) {
 	m.mut.Lock()
 	defer m.mut.Unlock()

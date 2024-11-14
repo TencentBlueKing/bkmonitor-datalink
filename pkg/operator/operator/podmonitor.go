@@ -44,7 +44,7 @@ func (c *Operator) handlePodMonitorAdd(obj interface{}) {
 	discovers := c.createPodMonitorDiscovers(podMonitor)
 	for _, dis := range discovers {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
-			logger.Errorf("add or update podMonitor discover %s failed, err: %s", dis, err)
+			logger.Errorf("add or update podMonitor discover %s failed: %s", dis, err)
 		}
 	}
 }
@@ -80,7 +80,7 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 	}
 	for _, dis := range c.createPodMonitorDiscovers(cur) {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
-			logger.Errorf("add or update podMonitor discover %s failed, err: %s", dis, err)
+			logger.Errorf("add or update podMonitor discover %s failed: %s", dis, err)
 		}
 	}
 }

@@ -86,7 +86,7 @@ func (c *Operator) reconcileNodeEndpoints(ctx context.Context) {
 	defer c.wg.Done()
 
 	if err := c.syncNodeEndpoints(ctx); err != nil {
-		logger.Errorf("syncing nodes into Endpoints object failed, error: %s", err)
+		logger.Errorf("syncing nodes into Endpoints object failed: %s", err)
 	}
 
 	ticker := time.NewTicker(3 * time.Minute)
@@ -99,7 +99,7 @@ func (c *Operator) reconcileNodeEndpoints(ctx context.Context) {
 
 		case <-ticker.C:
 			if err := c.syncNodeEndpoints(ctx); err != nil {
-				logger.Errorf("refresh kubelet endpoints failed, error: %s", err)
+				logger.Errorf("refresh kubelet endpoints failed: %s", err)
 			}
 		}
 	}

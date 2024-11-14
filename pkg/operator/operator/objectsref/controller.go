@@ -371,7 +371,7 @@ func (oc *ObjectsController) recordMetrics() {
 			stats[kindIngress] = oc.ingressObjs.Count()
 			stats[kindEndpoints] = oc.endpointsObjs.Count()
 			stats[kindBkLogConfig] = oc.bkLogConfigObjs.Count()
-			setWorkloadCount(stats)
+			SetWorkloadCount(stats)
 		}
 	}
 }
@@ -1313,9 +1313,8 @@ func newNodeObjects(ctx context.Context, sharedInformer informers.SharedInformer
 				logger.Errorf("excepted Node type, got %T", obj)
 				return
 			}
-			incClusterNodeCount()
 			if err := objs.Set(node); err != nil {
-				logger.Errorf("failed to set node obj, err: %v", err)
+				logger.Errorf("failed to set node obj: %v", err)
 			}
 		},
 		UpdateFunc: func(_, newObj interface{}) {
@@ -1325,7 +1324,7 @@ func newNodeObjects(ctx context.Context, sharedInformer informers.SharedInformer
 				return
 			}
 			if err := objs.Set(node); err != nil {
-				logger.Errorf("failed to set node obj, err: %v", err)
+				logger.Errorf("failed to set node obj: %v", err)
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
@@ -1334,7 +1333,6 @@ func newNodeObjects(ctx context.Context, sharedInformer informers.SharedInformer
 				logger.Errorf("excepted Node type, got %T", obj)
 				return
 			}
-			decClusterNodeCount()
 			objs.Del(node.Name)
 		},
 	})

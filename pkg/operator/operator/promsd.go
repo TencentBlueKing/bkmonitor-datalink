@@ -302,7 +302,7 @@ func (c *Operator) loopHandlePromSdConfigs() {
 		discovers := c.createPromScrapeConfigDiscovers()
 		for _, dis := range discovers {
 			if err := c.addOrUpdateDiscover(dis); err != nil {
-				logger.Errorf("add or update prom scrapeConfigs discover %s failed, err: %s", dis, err)
+				logger.Errorf("add or update prom scrapeConfigs discover %s failed: %s", dis, err)
 			}
 		}
 	}

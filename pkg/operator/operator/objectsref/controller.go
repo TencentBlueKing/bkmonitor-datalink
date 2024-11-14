@@ -20,9 +20,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	batchv1beta1 "k8s.io/api/batch/v1beta1"
 	corev1 "k8s.io/api/core/v1"
-	extensionsv1beta1 "k8s.io/api/extensions/v1beta1"
-	networkingv1 "k8s.io/api/networking/v1"
-	networkingv1beta1 "k8s.io/api/networking/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -407,7 +404,7 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 		return nil, err
 	}
 
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			pod, ok := obj.(*corev1.Pod)
 			if !ok {
@@ -459,413 +456,15 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 			})
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+
 	go informer.Run(ctx.Done())
 
 	synced := k8sutils.WaitForNamedCacheSync(ctx, kindPod, informer)
 	if !synced {
 		return nil, errors.New("failed to sync Pod caches")
-	}
-	return objs, nil
-}
-
-func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*ServiceMap, error) {
-	objs := NewServiceMap()
-
-	genericInformer, err := sharedInformer.ForResource(corev1.SchemeGroupVersion.WithResource(resourceServices))
-	if err != nil {
-		return nil, err
-	}
-
-	informer := genericInformer.Informer()
-	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
-		service, ok := obj.(*corev1.Service)
-		if !ok {
-			logger.Errorf("excepted Service type, got %T", obj)
-			return obj, nil
-		}
-
-		service.Annotations = nil
-		service.Labels = nil
-		service.ManagedFields = nil
-		service.Finalizers = nil
-		return service, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			service, ok := obj.(*corev1.Service)
-			if !ok {
-				logger.Errorf("excepted Service type, got %T", obj)
-				return
-			}
-			objs.Set(service)
-		},
-		UpdateFunc: func(_, newObj interface{}) {
-			service, ok := newObj.(*corev1.Service)
-			if !ok {
-				logger.Errorf("excepted Service type, got %T", newObj)
-				return
-			}
-			objs.Set(service)
-		},
-		DeleteFunc: func(obj interface{}) {
-			service, ok := obj.(*corev1.Service)
-			if !ok {
-				logger.Errorf("excepted Service type, got %T", obj)
-				return
-			}
-			objs.Del(service)
-		},
-	})
-	go informer.Run(ctx.Done())
-
-	synced := k8sutils.WaitForNamedCacheSync(ctx, kindService, informer)
-	if !synced {
-		return nil, errors.New("failed to sync Service caches")
-	}
-	return objs, nil
-}
-
-func newEndpointsObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*EndpointsMap, error) {
-	objs := NewEndpointsMap()
-
-	genericInformer, err := sharedInformer.ForResource(corev1.SchemeGroupVersion.WithResource(resourceEndpoints))
-	if err != nil {
-		return nil, err
-	}
-
-	informer := genericInformer.Informer()
-	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
-		endpoints, ok := obj.(*corev1.Endpoints)
-		if !ok {
-			logger.Errorf("excepted Endpoints type, got %T", obj)
-			return obj, nil
-		}
-
-		endpoints.Annotations = nil
-		endpoints.Labels = nil
-		endpoints.ManagedFields = nil
-		endpoints.Finalizers = nil
-		return endpoints, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			endpoints, ok := obj.(*corev1.Endpoints)
-			if !ok {
-				logger.Errorf("excepted Endpoints type, got %T", obj)
-				return
-			}
-			objs.Set(endpoints)
-		},
-		UpdateFunc: func(_, newObj interface{}) {
-			endpoints, ok := newObj.(*corev1.Endpoints)
-			if !ok {
-				logger.Errorf("excepted Endpoints type, got %T", newObj)
-				return
-			}
-			objs.Set(endpoints)
-		},
-		DeleteFunc: func(obj interface{}) {
-			endpoints, ok := obj.(*corev1.Endpoints)
-			if !ok {
-				logger.Errorf("excepted Endpoints type, got %T", obj)
-				return
-			}
-			objs.Del(endpoints)
-		},
-	})
-	go informer.Run(ctx.Done())
-
-	synced := k8sutils.WaitForNamedCacheSync(ctx, kindEndpoints, informer)
-	if !synced {
-		return nil, errors.New("failed to sync Endpoints caches")
-	}
-	return objs, nil
-}
-
-func newIngressObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory, resources map[GVRK]struct{}) (*IngressMap, error) {
-	if _, ok := resources[GVRK{
-		Group:    "networking.k8s.io",
-		Version:  "v1",
-		Resource: "ingresses",
-		Kind:     "Ingress",
-	}]; ok {
-		return newIngressV1Objects(ctx, sharedInformer)
-	}
-
-	if _, ok := resources[GVRK{
-		Group:    "extensions",
-		Version:  "v1beta1",
-		Resource: "ingresses",
-		Kind:     "Ingress",
-	}]; ok {
-		return newIngressV1Beta1ExtensionsObjects(ctx, sharedInformer)
-	}
-
-	return newIngressV1Beta1Objects(ctx, sharedInformer)
-}
-
-func newIngressV1Objects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*IngressMap, error) {
-	objs := NewIngressMap()
-
-	genericInformer, err := sharedInformer.ForResource(networkingv1.SchemeGroupVersion.WithResource(resourceIngresses))
-	if err != nil {
-		return nil, err
-	}
-
-	makeIngress := func(namespace, name string, rules []networkingv1.IngressRule) ingressEntity {
-		set := make(map[string]struct{})
-		for _, rule := range rules {
-			if rule.HTTP == nil {
-				continue
-			}
-
-			for _, path := range rule.HTTP.Paths {
-				svc := path.Backend.Service
-				if svc != nil {
-					set[svc.Name] = struct{}{}
-				}
-			}
-		}
-
-		services := make([]string, 0, len(set))
-		for k := range set {
-			services = append(services, k)
-		}
-
-		return ingressEntity{
-			namespace: namespace,
-			name:      name,
-			services:  services,
-		}
-	}
-
-	informer := genericInformer.Informer()
-	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
-		ingress, ok := obj.(*networkingv1.Ingress)
-		if !ok {
-			logger.Errorf("excepted Ingress type, got %T", obj)
-			return obj, nil
-		}
-
-		ingress.Annotations = nil
-		ingress.Labels = nil
-		ingress.ManagedFields = nil
-		ingress.Finalizers = nil
-		return ingress, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			ingress, ok := obj.(*networkingv1.Ingress)
-			if !ok {
-				logger.Errorf("excepted Ingress type, got %T", obj)
-				return
-			}
-			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
-		},
-		UpdateFunc: func(_, newObj interface{}) {
-			ingress, ok := newObj.(*networkingv1.Ingress)
-			if !ok {
-				logger.Errorf("excepted Ingress type, got %T", newObj)
-				return
-			}
-			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
-		},
-		DeleteFunc: func(obj interface{}) {
-			ingress, ok := obj.(*networkingv1.Ingress)
-			if !ok {
-				logger.Errorf("excepted Ingress type, got %T", obj)
-				return
-			}
-			objs.Del(ingress.Namespace, ingress.Name)
-		},
-	})
-	go informer.Run(ctx.Done())
-
-	synced := k8sutils.WaitForNamedCacheSync(ctx, kindIngress, informer)
-	if !synced {
-		return nil, errors.New("failed to sync Ingress caches")
-	}
-	return objs, nil
-}
-
-func newIngressV1Beta1Objects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*IngressMap, error) {
-	objs := NewIngressMap()
-
-	genericInformer, err := sharedInformer.ForResource(networkingv1beta1.SchemeGroupVersion.WithResource(resourceIngresses))
-	if err != nil {
-		return nil, err
-	}
-
-	makeIngress := func(namespace, name string, rules []networkingv1beta1.IngressRule) ingressEntity {
-		set := make(map[string]struct{})
-		for _, rule := range rules {
-			if rule.HTTP == nil {
-				continue
-			}
-
-			for _, path := range rule.HTTP.Paths {
-				set[path.Backend.ServiceName] = struct{}{}
-			}
-		}
-
-		services := make([]string, 0, len(set))
-		for k := range set {
-			services = append(services, k)
-		}
-
-		return ingressEntity{
-			namespace: namespace,
-			name:      name,
-			services:  services,
-		}
-	}
-
-	informer := genericInformer.Informer()
-	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
-		ingress, ok := obj.(*networkingv1beta1.Ingress)
-		if !ok {
-			logger.Errorf("excepted Ingress type, got %T", obj)
-			return obj, nil
-		}
-
-		ingress.Annotations = nil
-		ingress.Labels = nil
-		ingress.ManagedFields = nil
-		ingress.Finalizers = nil
-		return ingress, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			ingress, ok := obj.(*networkingv1beta1.Ingress)
-			if !ok {
-				logger.Errorf("excepted Ingress type, got %T", obj)
-				return
-			}
-			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
-		},
-		UpdateFunc: func(_, newObj interface{}) {
-			ingress, ok := newObj.(*networkingv1beta1.Ingress)
-			if !ok {
-				logger.Errorf("excepted Ingress type, got %T", newObj)
-				return
-			}
-			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
-		},
-		DeleteFunc: func(obj interface{}) {
-			ingress, ok := obj.(*networkingv1beta1.Ingress)
-			if !ok {
-				logger.Errorf("excepted Ingress type, got %T", obj)
-				return
-			}
-			objs.Del(ingress.Namespace, ingress.Name)
-		},
-	})
-	go informer.Run(ctx.Done())
-
-	synced := k8sutils.WaitForNamedCacheSync(ctx, kindIngress, informer)
-	if !synced {
-		return nil, errors.New("failed to sync Ingress caches")
-	}
-	return objs, nil
-}
-
-func newIngressV1Beta1ExtensionsObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*IngressMap, error) {
-	objs := NewIngressMap()
-
-	genericInformer, err := sharedInformer.ForResource(extensionsv1beta1.SchemeGroupVersion.WithResource(resourceIngresses))
-	if err != nil {
-		return nil, err
-	}
-
-	makeIngress := func(namespace, name string, rules []extensionsv1beta1.IngressRule) ingressEntity {
-		set := make(map[string]struct{})
-		for _, rule := range rules {
-			if rule.HTTP == nil {
-				continue
-			}
-
-			for _, path := range rule.HTTP.Paths {
-				set[path.Backend.ServiceName] = struct{}{}
-			}
-		}
-
-		services := make([]string, 0, len(set))
-		for k := range set {
-			services = append(services, k)
-		}
-
-		return ingressEntity{
-			namespace: namespace,
-			name:      name,
-			services:  services,
-		}
-	}
-
-	informer := genericInformer.Informer()
-	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
-		ingress, ok := obj.(*extensionsv1beta1.Ingress)
-		if !ok {
-			logger.Errorf("excepted Ingress type, got %T", obj)
-			return obj, nil
-		}
-
-		ingress.Annotations = nil
-		ingress.Labels = nil
-		ingress.ManagedFields = nil
-		ingress.Finalizers = nil
-		return ingress, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			ingress, ok := obj.(*extensionsv1beta1.Ingress)
-			if !ok {
-				logger.Errorf("excepted Ingress type, got %T", obj)
-				return
-			}
-			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
-		},
-		UpdateFunc: func(_, newObj interface{}) {
-			ingress, ok := newObj.(*extensionsv1beta1.Ingress)
-			if !ok {
-				logger.Errorf("excepted Ingress type, got %T", newObj)
-				return
-			}
-			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
-		},
-		DeleteFunc: func(obj interface{}) {
-			ingress, ok := obj.(*extensionsv1beta1.Ingress)
-			if !ok {
-				logger.Errorf("excepted Ingress type, got %T", obj)
-				return
-			}
-			objs.Del(ingress.Namespace, ingress.Name)
-		},
-	})
-	go informer.Run(ctx.Done())
-
-	synced := k8sutils.WaitForNamedCacheSync(ctx, kindIngress, informer)
-	if !synced {
-		return nil, errors.New("failed to sync Ingress caches")
 	}
 	return objs, nil
 }
@@ -879,7 +478,7 @@ func newReplicaSetObjects(ctx context.Context, sharedInformer metadatainformer.S
 		return nil, err
 	}
 
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			replicaSet, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
@@ -920,6 +519,10 @@ func newReplicaSetObjects(ctx context.Context, sharedInformer metadatainformer.S
 			})
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+
 	go informer.Run(ctx.Done())
 
 	synced := k8sutils.WaitForNamedCacheSync(ctx, kindReplicaSet, informer)
@@ -938,7 +541,7 @@ func newDeploymentObjects(ctx context.Context, sharedInformer metadatainformer.S
 		return nil, err
 	}
 
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			deployment, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
@@ -979,6 +582,10 @@ func newDeploymentObjects(ctx context.Context, sharedInformer metadatainformer.S
 			})
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+
 	go informer.Run(ctx.Done())
 
 	synced := k8sutils.WaitForNamedCacheSync(ctx, kindDeployment, informer)
@@ -997,7 +604,7 @@ func newDaemenSetObjects(ctx context.Context, sharedInformer metadatainformer.Sh
 		return nil, err
 	}
 
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			daemonSet, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
@@ -1038,6 +645,10 @@ func newDaemenSetObjects(ctx context.Context, sharedInformer metadatainformer.Sh
 			})
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+
 	go informer.Run(ctx.Done())
 
 	synced := k8sutils.WaitForNamedCacheSync(ctx, kindDaemonSet, informer)
@@ -1056,7 +667,7 @@ func newStatefulSetObjects(ctx context.Context, sharedInformer metadatainformer.
 		return nil, err
 	}
 
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			statefulSet, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
@@ -1097,6 +708,10 @@ func newStatefulSetObjects(ctx context.Context, sharedInformer metadatainformer.
 			})
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+
 	go informer.Run(ctx.Done())
 
 	synced := k8sutils.WaitForNamedCacheSync(ctx, kindStatefulSet, informer)
@@ -1115,7 +730,7 @@ func newJobObjects(ctx context.Context, sharedInformer metadatainformer.SharedIn
 		return nil, err
 	}
 
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			job, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
@@ -1156,6 +771,10 @@ func newJobObjects(ctx context.Context, sharedInformer metadatainformer.SharedIn
 			})
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+
 	go informer.Run(ctx.Done())
 
 	synced := k8sutils.WaitForNamedCacheSync(ctx, kindJob, informer)
@@ -1190,7 +809,7 @@ func newCronJobV1BetaObjects(ctx context.Context, sharedInformer metadatainforme
 		return nil, err
 	}
 
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			cronJob, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
@@ -1231,6 +850,10 @@ func newCronJobV1BetaObjects(ctx context.Context, sharedInformer metadatainforme
 			})
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+
 	go informer.Run(ctx.Done())
 
 	synced := k8sutils.WaitForNamedCacheSync(ctx, kindCronJob, informer)
@@ -1249,7 +872,7 @@ func newCronJobV1Objects(ctx context.Context, sharedInformer metadatainformer.Sh
 		return nil, err
 	}
 
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			cronJob, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
@@ -1290,58 +913,15 @@ func newCronJobV1Objects(ctx context.Context, sharedInformer metadatainformer.Sh
 			})
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+
 	go informer.Run(ctx.Done())
 
 	synced := k8sutils.WaitForNamedCacheSync(ctx, kindCronJob, informer)
 	if !synced {
 		return nil, errors.New("failed to sync CronJob caches")
-	}
-	return objs, nil
-}
-
-func newNodeObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*NodeMap, error) {
-	genericInformer, err := sharedInformer.ForResource(corev1.SchemeGroupVersion.WithResource(resourceNodes))
-	if err != nil {
-		return nil, err
-	}
-	objs := NewNodeMap()
-
-	informer := genericInformer.Informer()
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			node, ok := obj.(*corev1.Node)
-			if !ok {
-				logger.Errorf("excepted Node type, got %T", obj)
-				return
-			}
-			if err := objs.Set(node); err != nil {
-				logger.Errorf("failed to set node obj: %v", err)
-			}
-		},
-		UpdateFunc: func(_, newObj interface{}) {
-			node, ok := newObj.(*corev1.Node)
-			if !ok {
-				logger.Errorf("excepted Node type, got %T", newObj)
-				return
-			}
-			if err := objs.Set(node); err != nil {
-				logger.Errorf("failed to set node obj: %v", err)
-			}
-		},
-		DeleteFunc: func(obj interface{}) {
-			node, ok := obj.(*corev1.Node)
-			if !ok {
-				logger.Errorf("excepted Node type, got %T", obj)
-				return
-			}
-			objs.Del(node.Name)
-		},
-	})
-	go informer.Run(ctx.Done())
-
-	synced := k8sutils.WaitForNamedCacheSync(ctx, kindNode, informer)
-	if !synced {
-		return nil, errors.New("failed to sync Node caches")
 	}
 	return objs, nil
 }

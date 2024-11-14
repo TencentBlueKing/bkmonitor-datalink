@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -76,12 +77,8 @@ func (e *bkLogConfigEntity) getValues(matcherLabel map[string]string, key string
 	return defaultValue
 }
 
-func (e *bkLogConfigEntity) toLowerEq(a, b string) bool {
-	return strings.ToLower(a) == strings.ToLower(b)
-}
-
 func (e *bkLogConfigEntity) getWorkloadName(name string, kind string) string {
-	if e.toLowerEq(kind, kindReplicaSet) {
+	if stringx.LowerEq(kind, kindReplicaSet) {
 		index := strings.LastIndex(name, "-")
 		return name[:index]
 	}
@@ -113,7 +110,7 @@ func (e *bkLogConfigEntity) MatchWorkloadName(matcherLabels, matcherAnnotations 
 		if r.MatchString(name) {
 			return true
 		}
-		if e.toLowerEq(name, e.Obj.Spec.WorkloadName) {
+		if stringx.LowerEq(name, e.Obj.Spec.WorkloadName) {
 			return true
 		}
 	}
@@ -135,12 +132,12 @@ func (e *bkLogConfigEntity) MatchWorkloadType(matcherLabels, matcherAnnotations 
 	}
 
 	for _, kind := range kinds {
-		if e.toLowerEq(kind, kindReplicaSet) {
-			if e.toLowerEq(e.Obj.Spec.WorkloadType, kindDeployment) {
+		if stringx.LowerEq(kind, kindReplicaSet) {
+			if stringx.LowerEq(e.Obj.Spec.WorkloadType, kindDeployment) {
 				return true
 			}
 		}
-		if e.toLowerEq(e.Obj.Spec.WorkloadType, kind) {
+		if stringx.LowerEq(e.Obj.Spec.WorkloadType, kind) {
 			return true
 		}
 	}
@@ -212,7 +209,7 @@ func (e *bkLogConfigEntity) MatchNamespace(namespace string) bool {
 		return true
 	} else if len(e.Obj.Spec.NamespaceSelector.MatchNames) != 0 {
 		// 优先使用 NamespaceSelector 配置，列表中任意一个满足即可
-		// 有一个匹配上则为true，否则直接false
+		// 有一个匹配上则为 true，否则直接 false
 		for _, ns := range e.Obj.Spec.NamespaceSelector.MatchNames {
 			if ns == namespace {
 				return true
@@ -227,7 +224,7 @@ func (e *bkLogConfigEntity) MatchNamespace(namespace string) bool {
 			}
 			return true
 		}
-		// 未配置则返回true
+		// 未配置则返回 true
 		return true
 	}
 }
@@ -291,54 +288,55 @@ func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, re
 	factory := bkinformers.NewSharedInformerFactory(client, define.ReSyncPeriod)
 	informer := factory.Bk().V1alpha1().BkLogConfigs().Informer()
 
-	informer.AddEventHandler(
-		cache.ResourceEventHandlerFuncs{
-			AddFunc: func(obj interface{}) {
-				bklogconfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
-				if !ok {
-					logger.Errorf("expected BkLogConfig type, got %T", obj)
-					return
-				}
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			bklogconfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
+			if !ok {
+				logger.Errorf("expected BkLogConfig type, got %T", obj)
+				return
+			}
 
-				entity := newBkLogConfigEntity(bklogconfig)
-				if entity != nil {
-					objsMap.Set(entity)
-				}
-			},
-			UpdateFunc: func(oldObj, newObj interface{}) {
-				old, ok := oldObj.(*loggingv1alpha1.BkLogConfig)
-				if !ok {
-					logger.Errorf("expected BkLogConfig type, got %T", oldObj)
-					return
-				}
-				cur, ok := newObj.(*loggingv1alpha1.BkLogConfig)
-				if !ok {
-					logger.Errorf("expected BkLogConfig type, got %T", newObj)
-					return
-				}
-				if old.ResourceVersion == cur.ResourceVersion {
-					return
-				}
-
-				entity := newBkLogConfigEntity(cur)
-				if entity != nil {
-					objsMap.Set(entity)
-				}
-			},
-			DeleteFunc: func(obj interface{}) {
-				bklogconfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
-				if !ok {
-					logger.Errorf("expected BkLogConfig type, got %T", obj)
-					return
-				}
-
-				entity := newBkLogConfigEntity(bklogconfig)
-				if entity != nil {
-					objsMap.Del(entity)
-				}
-			},
+			entity := newBkLogConfigEntity(bklogconfig)
+			if entity != nil {
+				objsMap.Set(entity)
+			}
 		},
-	)
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			old, ok := oldObj.(*loggingv1alpha1.BkLogConfig)
+			if !ok {
+				logger.Errorf("expected BkLogConfig type, got %T", oldObj)
+				return
+			}
+			cur, ok := newObj.(*loggingv1alpha1.BkLogConfig)
+			if !ok {
+				logger.Errorf("expected BkLogConfig type, got %T", newObj)
+				return
+			}
+			if old.ResourceVersion == cur.ResourceVersion {
+				return
+			}
+
+			entity := newBkLogConfigEntity(cur)
+			if entity != nil {
+				objsMap.Set(entity)
+			}
+		},
+		DeleteFunc: func(obj interface{}) {
+			bklogconfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
+			if !ok {
+				logger.Errorf("expected BkLogConfig type, got %T", obj)
+				return
+			}
+
+			entity := newBkLogConfigEntity(bklogconfig)
+			if entity != nil {
+				objsMap.Del(entity)
+			}
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	go informer.Run(ctx.Done())
 

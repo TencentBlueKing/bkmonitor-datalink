@@ -48,7 +48,7 @@ func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
 	discovers := c.createServiceMonitorDiscovers(serviceMonitor)
 	for _, dis := range discovers {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
-			logger.Errorf("add or update serviceMonitor discover %s failed, err: %s", dis, err)
+			logger.Errorf("add or update serviceMonitor discover %s failed: %s", dis, err)
 		}
 	}
 }
@@ -88,7 +88,7 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 	}
 	for _, dis := range c.createServiceMonitorDiscovers(cur) {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
-			logger.Errorf("add or update serviceMonitor discover %s failed, err: %s", dis, err)
+			logger.Errorf("add or update serviceMonitor discover %s failed: %s", dis, err)
 		}
 	}
 }

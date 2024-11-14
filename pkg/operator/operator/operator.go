@@ -245,7 +245,7 @@ func (c *Operator) reloadAllDiscovers() {
 
 		dis.SetDataID(newDataID)
 		if err := dis.Reload(); err != nil {
-			logger.Errorf("discover %s reload failed, err: %s", name, err)
+			logger.Errorf("discover %s reload failed: %s", name, err)
 		}
 	}
 }
@@ -264,8 +264,7 @@ func (c *Operator) recordMetrics() {
 			c.mm.SetAppBuildInfo(c.buildInfo)
 			c.updateNodeConfigMetrics()
 			c.updateMonitorEndpointMetrics()
-			c.updateWorkloadMetrics()
-			c.updateNodeMetrics()
+			c.updateResourceMetrics()
 			c.updateSharedDiscoveryMetrics()
 
 		case <-c.ctx.Done():
@@ -298,16 +297,11 @@ func (c *Operator) updateMonitorEndpointMetrics() {
 	}
 }
 
-func (c *Operator) updateWorkloadMetrics() {
-	workloads := objectsref.GetWorkloadCount()
-	for resource, count := range workloads {
-		c.mm.SetWorkloadCount(resource, count)
+func (c *Operator) updateResourceMetrics() {
+	resources := objectsref.GetResourceCount()
+	for resource, count := range resources {
+		c.mm.SetResourceCount(resource, count)
 	}
-}
-
-func (c *Operator) updateNodeMetrics() {
-	nodes := objectsref.GetClusterNodeCount()
-	c.mm.SetNodeCount(nodes)
 }
 
 func (c *Operator) Run() error {

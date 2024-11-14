@@ -146,7 +146,7 @@ func (sd *SharedDiscovery) start() {
 				if !ok {
 					// 第一次记录且没有 targets 则跳过
 					if tg == nil || len(tg.Targets) == 0 {
-						logger.Infof("sharedDiscovery %s skip tg source '%s'", sd.uk, tg.Source)
+						logger.Debugf("sharedDiscovery %s skip tg source '%s'", sd.uk, tg.Source)
 						continue
 					}
 				}

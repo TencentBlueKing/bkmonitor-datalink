@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -41,23 +42,18 @@ type bkLogConfigEntity struct {
 	Obj *loggingv1alpha1.BkLogConfig
 }
 
-func newBkLogConfigEntity(obj any) *bkLogConfigEntity {
-	bkLogConfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
-	if !ok {
-		logger.Errorf("expected BkLogConfig type, got %T", obj)
-		return nil
+func newBkLogConfigEntity(obj *loggingv1alpha1.BkLogConfig) *bkLogConfigEntity {
+	entity := &bkLogConfigEntity{
+		Obj: obj,
 	}
 
 	// check bk env
-	env := feature.BkEnv(bkLogConfig.Labels)
-	if env != configs.G().BkEnv {
-		logger.Warnf("want BkLogConfig bkenv '%s', but got '%s'", configs.G().BkEnv, env)
+	env := feature.BkEnv(obj.Labels)
+	if env != configs.G().LogBkEnv {
+		logger.Warnf("want bkenv '%s', but got '%s', object (%s)", configs.G().LogBkEnv, env, entity.UUID())
 		return nil
 	}
-
-	return &bkLogConfigEntity{
-		Obj: bkLogConfig,
-	}
+	return entity
 }
 
 func (e *bkLogConfigEntity) UUID() string {
@@ -81,12 +77,8 @@ func (e *bkLogConfigEntity) getValues(matcherLabel map[string]string, key string
 	return defaultValue
 }
 
-func (e *bkLogConfigEntity) toLowerEq(a, b string) bool {
-	return strings.ToLower(a) == strings.ToLower(b)
-}
-
 func (e *bkLogConfigEntity) getWorkloadName(name string, kind string) string {
-	if e.toLowerEq(kind, kindReplicaSet) {
+	if stringx.LowerEq(kind, kindReplicaSet) {
 		index := strings.LastIndex(name, "-")
 		return name[:index]
 	}
@@ -118,7 +110,7 @@ func (e *bkLogConfigEntity) MatchWorkloadName(matcherLabels, matcherAnnotations 
 		if r.MatchString(name) {
 			return true
 		}
-		if e.toLowerEq(name, e.Obj.Spec.WorkloadName) {
+		if stringx.LowerEq(name, e.Obj.Spec.WorkloadName) {
 			return true
 		}
 	}
@@ -140,12 +132,12 @@ func (e *bkLogConfigEntity) MatchWorkloadType(matcherLabels, matcherAnnotations 
 	}
 
 	for _, kind := range kinds {
-		if e.toLowerEq(kind, kindReplicaSet) {
-			if e.toLowerEq(e.Obj.Spec.WorkloadType, kindDeployment) {
+		if stringx.LowerEq(kind, kindReplicaSet) {
+			if stringx.LowerEq(e.Obj.Spec.WorkloadType, kindDeployment) {
 				return true
 			}
 		}
-		if e.toLowerEq(e.Obj.Spec.WorkloadType, kind) {
+		if stringx.LowerEq(e.Obj.Spec.WorkloadType, kind) {
 			return true
 		}
 	}
@@ -217,7 +209,7 @@ func (e *bkLogConfigEntity) MatchNamespace(namespace string) bool {
 		return true
 	} else if len(e.Obj.Spec.NamespaceSelector.MatchNames) != 0 {
 		// 优先使用 NamespaceSelector 配置，列表中任意一个满足即可
-		// 有一个匹配上则为true，否则直接false
+		// 有一个匹配上则为 true，否则直接 false
 		for _, ns := range e.Obj.Spec.NamespaceSelector.MatchNames {
 			if ns == namespace {
 				return true
@@ -232,7 +224,7 @@ func (e *bkLogConfigEntity) MatchNamespace(namespace string) bool {
 			}
 			return true
 		}
-		// 未配置则返回true
+		// 未配置则返回 true
 		return true
 	}
 }
@@ -243,27 +235,34 @@ type BkLogConfigMap struct {
 	entitiesMap map[string]*bkLogConfigEntity
 }
 
-func (o *BkLogConfigMap) Del(e *bkLogConfigEntity) {
-	o.lock.Lock()
-	defer o.lock.Unlock()
+func (m *BkLogConfigMap) Count() int {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	return len(m.entitiesMap)
+}
+
+func (m *BkLogConfigMap) Del(e *bkLogConfigEntity) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
 
 	logger.Infof("delete BkLogConfig object (%s)", e.UUID())
-	delete(o.entitiesMap, e.UUID())
+	delete(m.entitiesMap, e.UUID())
 }
 
-func (o *BkLogConfigMap) Set(e *bkLogConfigEntity) {
-	o.lock.Lock()
-	defer o.lock.Unlock()
+func (m *BkLogConfigMap) Set(e *bkLogConfigEntity) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
 
-	logger.Infof("set BkLogConfig object (%s)", e.UUID())
-	o.entitiesMap[e.UUID()] = e
+	logger.Infof("update BkLogConfig object (%s)", e.UUID())
+	m.entitiesMap[e.UUID()] = e
 }
 
-func (o *BkLogConfigMap) RangeBkLogConfig(visitFunc func(e *bkLogConfigEntity)) {
-	o.lock.RLock()
-	defer o.lock.RUnlock()
+func (m *BkLogConfigMap) RangeBkLogConfig(visitFunc func(e *bkLogConfigEntity)) {
+	m.lock.RLock()
+	defer m.lock.RUnlock()
 
-	for _, e := range o.entitiesMap {
+	for _, e := range m.entitiesMap {
 		if visitFunc != nil {
 			visitFunc(e)
 		}
@@ -275,14 +274,9 @@ func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, re
 		entitiesMap: make(map[string]*bkLogConfigEntity),
 	}
 
-	const (
-		groupBkLogConfig   = "bk.tencent.com"
-		versionBkLogConfig = "v1alpha1"
-	)
-
 	gvrk := GVRK{
-		Group:    groupBkLogConfig,
-		Version:  versionBkLogConfig,
+		Group:    "bk.tencent.com",
+		Version:  "v1alpha1",
 		Resource: resourceBkLogConfigs,
 		Kind:     kindBkLogConfig,
 	}
@@ -294,34 +288,56 @@ func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, re
 	factory := bkinformers.NewSharedInformerFactory(client, define.ReSyncPeriod)
 	informer := factory.Bk().V1alpha1().BkLogConfigs().Informer()
 
-	informer.AddEventHandler(
-		cache.ResourceEventHandlerFuncs{
-			AddFunc: func(obj interface{}) {
-				bkLogConfig := newBkLogConfigEntity(obj)
-				if bkLogConfig == nil {
-					return
-				}
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			bklogconfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
+			if !ok {
+				logger.Errorf("expected BkLogConfig type, got %T", obj)
+				return
+			}
 
-				objsMap.Set(bkLogConfig)
-			},
-			UpdateFunc: func(_, newObj interface{}) {
-				bkLogConfig := newBkLogConfigEntity(newObj)
-				if bkLogConfig == nil {
-					return
-				}
-
-				objsMap.Set(bkLogConfig)
-			},
-			DeleteFunc: func(obj interface{}) {
-				bkLogConfig := newBkLogConfigEntity(obj)
-				if bkLogConfig == nil {
-					return
-				}
-
-				objsMap.Del(bkLogConfig)
-			},
+			entity := newBkLogConfigEntity(bklogconfig)
+			if entity != nil {
+				objsMap.Set(entity)
+			}
 		},
-	)
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			old, ok := oldObj.(*loggingv1alpha1.BkLogConfig)
+			if !ok {
+				logger.Errorf("expected BkLogConfig type, got %T", oldObj)
+				return
+			}
+			cur, ok := newObj.(*loggingv1alpha1.BkLogConfig)
+			if !ok {
+				logger.Errorf("expected BkLogConfig type, got %T", newObj)
+				return
+			}
+			if old.ResourceVersion == cur.ResourceVersion {
+				return
+			}
+
+			entity := newBkLogConfigEntity(cur)
+			if entity != nil {
+				objsMap.Set(entity)
+			}
+		},
+		DeleteFunc: func(obj interface{}) {
+			bklogconfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
+			if !ok {
+				logger.Errorf("expected BkLogConfig type, got %T", obj)
+				return
+			}
+
+			entity := newBkLogConfigEntity(bklogconfig)
+			if entity != nil {
+				objsMap.Del(entity)
+			}
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	go informer.Run(ctx.Done())
 
 	synced := k8sutils.WaitForNamedCacheSync(ctx, kindBkLogConfig, informer)

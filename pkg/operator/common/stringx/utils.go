@@ -22,3 +22,7 @@ func SplitTrim(s, sep string) []string {
 	}
 	return ret
 }
+
+func LowerEq(a, b string) bool {
+	return strings.ToLower(a) == strings.ToLower(b)
+}

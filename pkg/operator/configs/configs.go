@@ -149,6 +149,9 @@ type Config struct {
 	// BkEnv 环境配置信息
 	BkEnv string `yaml:"bk_env"`
 
+	// LogBkEnv bklogconfig 环境配置信息
+	LogBkEnv string `yaml:"log_bk_env"`
+
 	// DryRun 是否使用 dryrun 模式 该模式只匹配 不执行真实的调度逻辑
 	DryRun bool `yaml:"dry_run"`
 

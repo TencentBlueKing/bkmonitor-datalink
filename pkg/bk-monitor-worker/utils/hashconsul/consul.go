@@ -13,12 +13,16 @@ import (
 	"fmt"
 	"unicode/utf8"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-func PutWithDiff(c *consul.Instance, key, val string, modifyIndex uint64, oldValueBytes []byte) error {
+// ConsulClient 定义了 PutCas 函数需要的 Consul 客户端接口
+type ConsulClient interface {
+	Put(key, val string, modifyIndex uint64) error
+}
+
+func PutCas(c ConsulClient, key, val string, modifyIndex uint64, oldValueBytes []byte) error {
 	// 将中文转化为unicode
 	var unicodeVal string
 	for _, runeValue := range val {

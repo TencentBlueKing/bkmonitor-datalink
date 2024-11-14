@@ -266,13 +266,12 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 			}()
 			dsSvc := service.NewDataSourceSvc(&ds)
 			consulClient, err := consul.GetInstance()
-			var modifyIndex = uint64(0)
 			if err != nil {
 				logger.Errorf("data_id [%v] failed to get consul client, %v,skip", dsSvc.BkDataId, err)
 				return
 			}
 
-			currentIndex, oldValueBytes, err := consulClient.Get(dsSvc.ConsulPath())
+			oldIndex, oldValueBytes, err := consulClient.Get(dsSvc.ConsulPath())
 			if err != nil {
 				logger.Errorf("data_id [%v] failed to get old value from [%v], %v, will set modifyIndex as 0", dsSvc.BkDataId, dsSvc.ConsulConfigPath(), err)
 				return
@@ -281,12 +280,13 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 				logger.Infof("data_id [%v] consul path [%v] not found, will set modifyIndex as 0", dsSvc.BkDataId, dsSvc.ConsulConfigPath())
 				return
 			}
-			modifyIndex = currentIndex
+			modifyIndex := oldIndex
 
 			logger.Infof("data_id [%v] try to refresh consul config, modifyIndex: %v", dsSvc.BkDataId, modifyIndex)
 
 			if err := dsSvc.RefreshOuterConfig(ctx, modifyIndex, oldValueBytes); err != nil {
 				logger.Errorf("data_id [%v] failed to refresh outer config, %v", dsSvc.BkDataId, err)
+				return
 			}
 			logger.Infof("data_id [%v] refresh all outer success", dsSvc.BkDataId)
 		}(dataSource, wg, ch)

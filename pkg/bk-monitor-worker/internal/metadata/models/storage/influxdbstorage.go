@@ -199,7 +199,7 @@ func (i InfluxdbStorage) RefreshConsulClusterConfig(ctx context.Context, isPubli
 	if err != nil {
 		return err
 	}
-	err = hashconsul.PutWithDiff(consulClient, i.ConsulConfigPath(), val, uint64(0), nil)
+	err = hashconsul.PutCas(consulClient, i.ConsulConfigPath(), val, uint64(0), nil)
 	if err != nil {
 		logger.Errorf("put consul path [%s] value [%s] err, %v", i.ConsulConfigPath(), val, err)
 		return err

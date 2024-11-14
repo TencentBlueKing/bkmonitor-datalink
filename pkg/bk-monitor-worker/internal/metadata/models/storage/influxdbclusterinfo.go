@@ -89,7 +89,7 @@ func RefreshInfluxdbClusterInfoConsulClusterConfig(ctx context.Context, objs *[]
 				if err != nil {
 					return err
 				}
-				err = hashconsul.PutWithDiff(consulClient, consulConfigPath, val, uint64(0), nil)
+				err = hashconsul.PutCas(consulClient, consulConfigPath, val, uint64(0), nil)
 				if err != nil {
 					logger.Errorf("consul path [%s] refresh with value [%s] failed, %v", consulConfigPath, val, err)
 					return err

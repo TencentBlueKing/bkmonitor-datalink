@@ -558,7 +558,7 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context, modifyIndex uint
 	if err != nil {
 		return err
 	}
-	err = hashconsul.PutWithDiff(consulClient, d.ConsulConfigPath(), valStr, modifyIndex, oldValueBytes)
+	err = hashconsul.PutCas(consulClient, d.ConsulConfigPath(), valStr, modifyIndex, oldValueBytes)
 	if err != nil {
 		logger.Errorf("RefreshConsulConfig:data_id [%v] put [%s] to [%s] failed, %v", d.BkDataId, valStr, d.ConsulConfigPath(), err)
 		return err

@@ -382,7 +382,7 @@ func TestBcsClusterInfoSvc_RegisterCluster(t *testing.T) {
 		return nil
 	})
 	defer patch.Reset()
-	gomonkey.ApplyFunc(hashconsul.PutWithDiff, func(c *consul.Instance, key, val string) error { return nil })
+	gomonkey.ApplyFunc(hashconsul.PutCas, func(c *consul.Instance, key, val string) error { return nil })
 	cluster, err := NewBcsClusterInfoSvc(nil).RegisterCluster(bkBizId, clusterID, projectId, "test")
 	assert.NoError(t, err)
 	dataIdList := []uint{cluster.K8sMetricDataID, cluster.CustomMetricDataID, cluster.K8sEventDataID}

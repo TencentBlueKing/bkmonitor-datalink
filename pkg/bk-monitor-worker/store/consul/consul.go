@@ -12,6 +12,7 @@ package consul
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/hashicorp/consul/api"
 	"github.com/pkg/errors"
@@ -80,7 +81,7 @@ func (c *Instance) Open() error {
 }
 
 // Put put a key-val
-func (c *Instance) Put(key, val string, modifyIndex uint64) error {
+func (c *Instance) Put(key, val string, modifyIndex uint64, expiration time.Duration) error {
 	kvPair := &api.KVPair{Key: key, Value: store.String2byte(val), ModifyIndex: modifyIndex}
 	metrics.ConsulPutCount(key)
 	_, err := c.APIClient.KV().Put(kvPair, nil)

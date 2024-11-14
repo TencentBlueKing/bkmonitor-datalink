@@ -11,6 +11,7 @@ package hashconsul
 
 import (
 	"fmt"
+	"time"
 	"unicode/utf8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -19,7 +20,7 @@ import (
 
 // ConsulClient 定义了 PutCas 函数需要的 Consul 客户端接口
 type ConsulClient interface {
-	Put(key, val string, modifyIndex uint64) error
+	Put(key, val string, modifyIndex uint64, expiration time.Duration) error
 }
 
 func PutCas(c ConsulClient, key, val string, modifyIndex uint64, oldValueBytes []byte) error {
@@ -38,11 +39,11 @@ func PutCas(c ConsulClient, key, val string, modifyIndex uint64, oldValueBytes [
 	equal, err := jsonx.CompareJson(oldValue, val)
 	if err != nil {
 		logger.Infof("can not compare new value [%s] and old value [%s], will refresh consul", key, err)
-		return c.Put(key, val, modifyIndex)
+		return c.Put(key, val, modifyIndex, 0)
 	}
 	if !equal {
 		logger.Infof("new value [%s] is different from [%s] on consul, will updated it", val, oldValue)
-		return c.Put(key, val, modifyIndex)
+		return c.Put(key, val, modifyIndex, 0)
 	}
 	logger.Debugf("new value [%s] is same with [%s] on consul, skip it", val, oldValue)
 	return nil

@@ -11,6 +11,7 @@ package hashconsul_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -25,7 +26,7 @@ type MockConsulClient struct {
 }
 
 // Put 模拟 Consul 的 Put 方法，当 ModifyIndex 与预期不符时返回错误
-func (m *MockConsulClient) Put(key, val string, modifyIndex uint64) error {
+func (m *MockConsulClient) Put(key, val string, modifyIndex uint64, expiration time.Duration) error {
 	m.putCalled = true
 	if modifyIndex != m.expectedModifyIndex {
 		return errors.New("modify index mismatch")

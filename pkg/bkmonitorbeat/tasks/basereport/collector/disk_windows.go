@@ -20,6 +20,29 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+func ToDiskStats(stats disk.IOCountersStat) DiskStats {
+	return DiskStats{
+		ReadCount:        stats.ReadCount,
+		MergedReadCount:  stats.MergedReadCount,
+		WriteCount:       stats.WriteCount,
+		MergedWriteCount: stats.MergedWriteCount,
+		ReadBytes:        stats.ReadBytes,
+		WriteBytes:       stats.WriteBytes,
+		ReadTime:         stats.ReadTime,
+		WriteTime:        stats.WriteTime,
+		IopsInProgress:   stats.IopsInProgress,
+		IoTime:           stats.ReadTime + stats.WriteTime,
+		WeightedIO:       stats.WeightedIO,
+		Name:             stats.Name,
+		SerialNumber:     stats.SerialNumber,
+		Label:            stats.Label,
+		MajorNum:         stats.Major,
+		MinorNum:         stats.Minor,
+		ReadSectors:      stats.ReadBytes / SectorSize,
+		WriteSectors:     stats.WriteBytes / SectorSize,
+	}
+}
+
 // FilterDiskIoStats 过滤磁盘io信息
 func FilterDiskIoStats(diskStats map[string]DiskStats, config configs.DiskConfig) map[string]DiskStats {
 	resultDiskStats := make(map[string]DiskStats)

@@ -53,29 +53,6 @@ type DiskStats struct {
 	Svctm            float64 `json:"svctm"`
 }
 
-func ToDiskStats(stats disk.IOCountersStat) DiskStats {
-	return DiskStats{
-		ReadCount:        stats.ReadCount,
-		MergedReadCount:  stats.MergedReadCount,
-		WriteCount:       stats.WriteCount,
-		MergedWriteCount: stats.MergedWriteCount,
-		ReadBytes:        stats.ReadBytes,
-		WriteBytes:       stats.WriteBytes,
-		ReadTime:         stats.ReadTime,
-		WriteTime:        stats.WriteTime,
-		IopsInProgress:   stats.IopsInProgress,
-		IoTime:           stats.IoTime,
-		WeightedIO:       stats.WeightedIO,
-		Name:             stats.Name,
-		SerialNumber:     stats.SerialNumber,
-		Label:            stats.Label,
-		MajorNum:         stats.Major,
-		MinorNum:         stats.Minor,
-		ReadSectors:      stats.ReadBytes / SectorSize,
-		WriteSectors:     stats.WriteBytes / SectorSize,
-	}
-}
-
 func IOCounters(names ...string) (map[string]DiskStats, error) {
 	stats, err := disk.IOCountersWithContext(context.Background(), names...)
 	if err != nil {

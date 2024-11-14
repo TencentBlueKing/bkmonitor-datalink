@@ -11,9 +11,10 @@ package consul
 
 import (
 	"context"
+	"sync"
+
 	"github.com/hashicorp/consul/api"
 	"github.com/pkg/errors"
-	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"

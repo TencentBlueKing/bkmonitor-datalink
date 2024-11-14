@@ -48,8 +48,8 @@ func newBkLogConfigEntity(obj *loggingv1alpha1.BkLogConfig) *bkLogConfigEntity {
 
 	// check bk env
 	env := feature.BkEnv(obj.Labels)
-	if env != configs.G().BkEnv {
-		logger.Warnf("want bkenv '%s', but got '%s', object (%s)", configs.G().BkEnv, env, entity.UUID())
+	if env != configs.G().LogBkEnv {
+		logger.Warnf("want bkenv '%s', but got '%s', object (%s)", configs.G().LogBkEnv, env, entity.UUID())
 		return nil
 	}
 	return entity

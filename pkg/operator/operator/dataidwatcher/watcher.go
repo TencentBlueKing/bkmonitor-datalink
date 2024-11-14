@@ -26,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -140,7 +141,7 @@ func (w *dataIDWatcher) matchDataID(meta define.MonitorMeta, systemResource bool
 	for _, dataID := range dataIDs {
 		resource := dataID.Spec.MonitorResource
 		if resource.Name == "" && resource.NameSpace != "" {
-			if strings.ToLower(resource.Kind) == strings.ToLower(meta.Kind) && resource.MatchSplitNamespace(meta.Namespace) {
+			if stringx.LowerEq(resource.Kind, meta.Kind) && resource.MatchSplitNamespace(meta.Namespace) {
 				return dataID, nil
 			}
 		}

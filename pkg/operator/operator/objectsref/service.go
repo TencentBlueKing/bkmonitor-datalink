@@ -10,9 +10,16 @@
 package objectsref
 
 import (
+	"context"
 	"sync"
 
+	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/tools/cache"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type serviceEntity struct {
@@ -106,4 +113,69 @@ func matchLabels(subset, set map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*ServiceMap, error) {
+	objs := NewServiceMap()
+
+	genericInformer, err := sharedInformer.ForResource(corev1.SchemeGroupVersion.WithResource(resourceServices))
+	if err != nil {
+		return nil, err
+	}
+
+	informer := genericInformer.Informer()
+	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+		service, ok := obj.(*corev1.Service)
+		if !ok {
+			logger.Errorf("excepted Service type, got %T", obj)
+			return obj, nil
+		}
+
+		service.Annotations = nil
+		service.Labels = nil
+		service.ManagedFields = nil
+		service.Finalizers = nil
+		return service, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			service, ok := obj.(*corev1.Service)
+			if !ok {
+				logger.Errorf("excepted Service type, got %T", obj)
+				return
+			}
+			objs.Set(service)
+		},
+		UpdateFunc: func(_, newObj interface{}) {
+			service, ok := newObj.(*corev1.Service)
+			if !ok {
+				logger.Errorf("excepted Service type, got %T", newObj)
+				return
+			}
+			objs.Set(service)
+		},
+		DeleteFunc: func(obj interface{}) {
+			service, ok := obj.(*corev1.Service)
+			if !ok {
+				logger.Errorf("excepted Service type, got %T", obj)
+				return
+			}
+			objs.Del(service)
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	go informer.Run(ctx.Done())
+
+	synced := k8sutils.WaitForNamedCacheSync(ctx, kindService, informer)
+	if !synced {
+		return nil, errors.New("failed to sync Service caches")
+	}
+	return objs, nil
 }

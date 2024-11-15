@@ -30,6 +30,7 @@ import (
 	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -164,6 +165,7 @@ const (
 	kindService         = "Service"
 	kindEndpoints       = "Endpoints"
 	kindIngress         = "Ingress"
+	kindSecret          = "Secret"
 	kindDeployment      = "Deployment"
 	kindReplicaSet      = "ReplicaSet"
 	kindStatefulSet     = "StatefulSet"
@@ -181,6 +183,7 @@ const (
 	resourceServices  = "services"
 	resourceEndpoints = "endpoints"
 	resourceIngresses = "ingresses"
+	resourceSecrets   = "secrets"
 
 	// builtin workload
 	resourceReplicaSets  = "replicasets"
@@ -230,6 +233,7 @@ type ObjectsController struct {
 	cronJobObjs         *Objects
 	gameStatefulSetObjs *Objects
 	gameDeploymentsObjs *Objects
+	secretObjs          *Objects
 	nodeObjs            *NodeMap
 	serviceObjs         *ServiceMap
 	endpointsObjs       *EndpointsMap
@@ -307,6 +311,13 @@ func NewController(ctx context.Context, client kubernetes.Interface, mClient met
 		return nil, err
 	}
 
+	// configs.G().MonitorNamespace SharedInformer
+	monitorSharedInformer := metadatainformer.NewFilteredSharedInformerFactory(mClient, define.ReSyncPeriod, configs.G().MonitorNamespace, nil)
+	controller.secretObjs, err = newSecretObjects(ctx, monitorSharedInformer)
+	if err != nil {
+		return nil, err
+	}
+
 	// Extend/Workload
 	tkexObjs, err := newTkexObjects(ctx, metaSharedInformer, resources)
 	if err != nil {
@@ -339,6 +350,10 @@ func (oc *ObjectsController) NodeCount() int {
 
 func (oc *ObjectsController) NodeNameExists(s string) (string, bool) {
 	return oc.nodeObjs.NameExists(s)
+}
+
+func (oc *ObjectsController) SecretObjs() []Object {
+	return oc.secretObjs.GetAll()
 }
 
 func (oc *ObjectsController) Stop() {
@@ -465,6 +480,67 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 	synced := k8sutils.WaitForNamedCacheSync(ctx, kindPod, informer)
 	if !synced {
 		return nil, errors.New("failed to sync Pod caches")
+	}
+	return objs, nil
+}
+
+func newSecretObjects(ctx context.Context, sharedInformer metadatainformer.SharedInformerFactory) (*Objects, error) {
+	genericInformer := sharedInformer.ForResource(appsv1.SchemeGroupVersion.WithResource(resourceSecrets))
+	objs := NewObjects(kindSecret)
+
+	informer := genericInformer.Informer()
+	if err := informer.SetTransform(partialObjectMetadataStrip); err != nil {
+		return nil, err
+	}
+
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			secret, ok := obj.(*metav1.PartialObjectMetadata)
+			if !ok {
+				logger.Errorf("excepted Secret/PartialObjectMetadata type, got %T", obj)
+				return
+			}
+			objs.Set(Object{
+				ID: ObjectID{
+					Name:      secret.Name,
+					Namespace: secret.Namespace,
+				},
+			})
+		},
+		UpdateFunc: func(_, newObj interface{}) {
+			secret, ok := newObj.(*metav1.PartialObjectMetadata)
+			if !ok {
+				logger.Errorf("excepted Secret/PartialObjectMetadata type, got %T", newObj)
+				return
+			}
+			objs.Set(Object{
+				ID: ObjectID{
+					Name:      secret.Name,
+					Namespace: secret.Namespace,
+				},
+			})
+		},
+		DeleteFunc: func(obj interface{}) {
+			secret, ok := obj.(*metav1.PartialObjectMetadata)
+			if !ok {
+				logger.Errorf("excepted Secret/PartialObjectMetadata type, got %T", obj)
+				return
+			}
+			objs.Del(ObjectID{
+				Name:      secret.Name,
+				Namespace: secret.Namespace,
+			})
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	go informer.Run(ctx.Done())
+
+	synced := k8sutils.WaitForNamedCacheSync(ctx, kindSecret, informer)
+	if !synced {
+		return nil, errors.New("failed to sync Secret caches")
 	}
 	return objs, nil
 }

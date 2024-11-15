@@ -71,7 +71,7 @@ const (
 	ClusterMetricQueryPrefixConfigPath  = "http.cluster_metric.prefix"
 	ClusterMetricQueryTimeoutConfigPath = "http.cluster_metric.timeout"
 
-	JwtPublicKeyConfigPath = "http.jwt.public_key"
+	JwtPublicKeyConfigPath = "jwt.public_key"
 )
 
 var (

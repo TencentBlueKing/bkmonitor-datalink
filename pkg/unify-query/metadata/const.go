@@ -21,6 +21,7 @@ const (
 	QueryParamsKey        = "query_params"
 	QueryReferenceKey     = "query_reference"
 	QueryClusterMetricKey = "query_cluster_metric"
+	JwtPayLoadKey         = "jwt_payload"
 
 	PromDataFormatKey = "prom_data_format"
 

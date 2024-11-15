@@ -70,6 +70,8 @@ const (
 	// 集群指标查询配置
 	ClusterMetricQueryPrefixConfigPath  = "http.cluster_metric.prefix"
 	ClusterMetricQueryTimeoutConfigPath = "http.cluster_metric.timeout"
+
+	JwtPublicKeyConfigPath = "http.jwt.public_key"
 )
 
 var (
@@ -90,4 +92,6 @@ var (
 
 	ClusterMetricQueryPrefix  string
 	ClusterMetricQueryTimeout time.Duration
+
+	JwtPublicKey string
 )

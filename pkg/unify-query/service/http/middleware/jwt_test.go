@@ -10,66 +10,151 @@
 package middleware
 
 import (
-	"fmt"
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
+// generateToken 生成 bk token
+func generateToken(data map[string]any, privateKey []byte) (string, error) {
+	//设置token有效时间
+	nowTime := time.Now().Add(-1 * time.Hour)
+	expireTime := nowTime.Add(3 * time.Hour)
+
+	claims := jwt.MapClaims{
+		"exp": expireTime.Unix(),
+		"nbf": nowTime.Unix(),
+	}
+	for k, v := range data {
+		claims[k] = v
+	}
+
+	tokenClaims := jwt.NewWithClaims(jwt.SigningMethodRS512, claims)
+	//该方法内部生成签名字符串，再用于获取完整、已签名的token
+
+	priKey, err := jwt.ParseRSAPrivateKeyFromPEM(privateKey)
+	if err != nil {
+		return "", err
+	}
+
+	token, err := tokenClaims.SignedString(priKey)
+	return token, err
+}
+
 func handler(c *gin.Context) {
+	ctx := c.Request.Context()
+	jwtPayLoad := metadata.GetJwtPayLoad(ctx)
+
+	c.JSON(http.StatusOK, jwtPayLoad)
+	return
+}
+
+func mockRSAKey() (string, string, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return "", "", err
+	}
+
 	var (
-		err       error
-		bkAppCode string
+		privateBuffer bytes.Buffer
+		publicBuffer  bytes.Buffer
 	)
 
-	bkapi.GetBkAPI().GetCode()
-
-	if code, ok := c.Get("bk_app_code"); !ok {
-		err = fmt.Errorf("bk_app_code is empty")
-	} else {
-		if bkAppCode, ok = code.(string); !ok {
-			err = fmt.Errorf("bk_app_code is not string %v", code)
-		}
-	}
-
+	err = pem.Encode(&privateBuffer, &pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-		return
+		return "", "", err
 	}
 
-	c.JSON(http.StatusOK, bkAppCode)
-	return
+	b, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		return "", "", err
+	}
+	err = pem.Encode(&publicBuffer, &pem.Block{
+		Type:  "RSA PUBLIC KEY",
+		Bytes: b,
+	})
+	if err != nil {
+		return "", "", err
+	}
+
+	return publicBuffer.String(), privateBuffer.String(), nil
 }
 
 func TestJwtAuthMiddleware(t *testing.T) {
 	r := gin.Default()
-	r.Use(JwtAuthMiddleware())
+
+	testPublicKey, testPrivateKey, err := mockRSAKey()
+	assert.NoError(t, err)
+
+	r.Use(JwtAuthMiddleware(testPublicKey))
 
 	url := "/protected"
 
 	r.GET(url, handler)
 
+	userName := "tim"
+	appCode := "test-code-1"
+
+	expected := `{"app.app_code":"test-code-1","app.tenant_id":"mo_0904","user.username":"tim"}`
+
+	jwtPayLoad := map[string]any{
+		ClaimsAppKey: map[string]any{
+			"verified":  true,
+			"app_code":  appCode,
+			"tenant_id": "mo_0904",
+		},
+		ClaimsUserKey: map[string]any{
+			"verified": true,
+			"username": userName,
+		},
+	}
+
 	// 解析 jwt
-	s := `eyJ0eXAiOiJKV1QiLCJraWQiOiJiay11bmlmeS1xdWVyeSIsImFsZyI6IlJTNTEyIiwiaXNzIjoiQVBJR1ciLCJpYXQiOjE3MjczNTYxMTB9.eyJhcHAiOnsidmFsaWRfZXJyb3JfbWVzc2FnZSI6IiIsInZlcnNpb24iOjEsInZlcmlmaWVkIjp0cnVlLCJhcHBfY29kZSI6ImJrX2xvZ19zZWFyY2gifSwiaXNzIjoiQVBJR1ciLCJleHAiOjE3MjczNTc2MTAsInVzZXIiOnsidmFsaWRfZXJyb3JfbWVzc2FnZSI6IiIsInVzZXJuYW1lIjoic2hhbWNsZXJlbiIsInZlcmlmaWVkIjp0cnVlLCJ2ZXJzaW9uIjoxfSwibmJmIjoxNzI3MzU1ODEwfQ.QCuBUmrLM-bqBrEMd8PsEGnKCQjGLL2wy2z4s6wSWv1XFmYjtFw2d_X5BV_xmYXYQP2DFpXTkff124CqFFJNbmkuiGOWbie68tyJdVpqoo3ej1fscWJ__dZ5lOl2W_0lHrKZLi8vqKKujtIPEkfqAwdl7t4-8SQsw6_gQ2cBSXT8jP6ewBWE3aNN_JsgIkLn0OqV4shy34PVmshIS6mUE19y_d4VlSOqOwXD0Hjg-hqGH2JJRjooTdkJd3NUf3ZfRyeliSf4HgTawxNuXRU2XTr_73kKqAGBOiNzvzSwdTYC61bitHX4ZVST1CzOA8QnUpfyTX_nI7SH8RX30WCNUw`
-	reqWithToken, _ := http.NewRequest(http.MethodGet, url, nil)
+	s, err := generateToken(jwtPayLoad, []byte(testPrivateKey))
+	assert.NoError(t, err)
+
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	reqWithToken, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	reqWithToken.Header.Set(JwtHeaderKey, s)
 
 	wWithToken := httptest.NewRecorder()
 	r.ServeHTTP(wWithToken, reqWithToken)
 	assert.Equal(t, http.StatusOK, wWithToken.Code)
 
-	bkAppCode, _ := io.ReadAll(wWithToken.Body)
-	assert.Equal(t, "bkmonitorv3", string(bkAppCode))
+	var payLoadByte []byte
+	payLoadByte, _ = io.ReadAll(wWithToken.Body)
+	assert.Equal(t, expected, string(payLoadByte))
+
+	payLoad := metadata.GetJwtPayLoad(ctx)
+	assert.Equal(t, appCode, payLoad.AppCode())
+	assert.Equal(t, userName, payLoad.UserName())
 
 	// 测试不传 jwtHeader 的请求，直接返回正常
+	ctx = metadata.InitHashID(ctx)
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	payLoadByte, _ = io.ReadAll(wWithToken.Body)
+	assert.Equal(t, ``, string(payLoadByte))
+
 }

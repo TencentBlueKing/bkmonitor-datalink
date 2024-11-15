@@ -66,8 +66,8 @@ func getIPs() []string {
 	return localIPs
 }
 
-// Timer 进行请求处理时间记录
-func Timer(p *Params) gin.HandlerFunc {
+// MetaData 初始化所有原数据
+func MetaData(p *Params) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var (
 			start     = time.Now()
@@ -75,14 +75,15 @@ func Timer(p *Params) gin.HandlerFunc {
 			source    = c.Request.Header.Get(metadata.BkQuerySourceHeader)
 			spaceUid  = c.Request.Header.Get(metadata.SpaceUIDHeader)
 			skipSpace = c.Request.Header.Get(metadata.SkipSpaceHeader)
-			ctx       = c.Request.Context()
-			err       error
+
+			ctx = c.Request.Context()
+			err error
 		)
 
 		ctx = metadata.InitHashID(ctx)
 		c.Request = c.Request.WithContext(ctx)
 
-		ctx, span := trace.NewSpan(ctx, "http-api")
+		ctx, span := trace.NewSpan(ctx, "http-api-metadata")
 
 		// 把用户名注入到 metadata 中
 		metadata.SetUser(ctx, source, spaceUid, skipSpace)

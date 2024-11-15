@@ -72,3 +72,7 @@ func (i *BkAPI) Url(path string) string {
 	}
 	return url
 }
+
+func (i *BkAPI) PublicKey() {
+
+}

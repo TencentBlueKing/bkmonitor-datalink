@@ -105,9 +105,7 @@ func newPingerInstance(ip net.IP, ipType string, maxRtt time.Duration, times int
 		maxRtt:  maxRtt,
 		times:   times,
 		size:    size,
-		index:   0,
 		results: results,
-		lock:    sync.Mutex{},
 	}
 }
 
@@ -189,7 +187,7 @@ func (p *Pinger) Ping(ctx context.Context, targets []*PingerTarget) error {
 
 	// 没有有效ip则直接返回
 	if !p.haveIPv4 && !p.haveIPv6 {
-		logger.Warnf("no valid addr to ping")
+		logger.Errorf("no valid addr to ping")
 		return nil
 	}
 
@@ -243,6 +241,8 @@ func (p *Pinger) Ping(ctx context.Context, targets []*PingerTarget) error {
 
 		// 超时检查，每100ms进行一次检查
 		ticker := time.NewTicker(timeoutCheckInterval)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -458,7 +458,7 @@ func (p *Pinger) send(instance *pingerInstance) error {
 	result := instance.results[instance.index]
 
 	// 发送icmp包，防止缓冲区满
-	for range []int{0, 1} {
+	for i := 0; i < 2; i++ {
 		result.SendTime = time.Now()
 		if _, err = conn.WriteTo(msg, addr); err != nil {
 			var netErr *net.OpError
@@ -590,7 +590,7 @@ func (p *Pinger) handleResponse(packet *pingerPacket) error {
 	case ipv4.ICMPTypeEchoReply, ipv6.ICMPTypeEchoReply:
 		echoReply, ok = msg.Body.(*icmp.Echo)
 		if !ok {
-			return errors.Errorf("invalid ICMP Echo Reply message, ip: %s, invalid body", instance.ip.String())
+			return errors.Errorf("invalid ICMP Echo Reply message, ip: %s, invalid body, type: %T", instance.ip, msg.Body)
 		}
 	default:
 		return nil
@@ -599,12 +599,12 @@ func (p *Pinger) handleResponse(packet *pingerPacket) error {
 	// 判断seq是否合法
 	index := echoReply.Seq
 	if index >= instance.times {
-		return errors.Errorf("invalid ICMP Echo Reply message, ip: %s, seq out of range, seq:%d", instance.ip.String(), index)
+		return nil
 	}
 
 	// 判断id是否合法
 	if echoReply.ID != p.id {
-		return errors.Errorf("invalid ICMP Echo Reply message, ip: %s, id not match, id:%d, expect:%d", instance.ip.String(), echoReply.ID, p.id)
+		return nil
 	}
 
 	// 加写锁
@@ -662,6 +662,7 @@ func (p *Pinger) parseTarget(targets []*PingerTarget) error {
 			ips, err = tasks.LookupIP(context.Background(), target.DomainIpType, target.Target)
 			if err != nil {
 				logger.Errorf("lookup domain ip failed, domain:%s, error:%v", target.Target, err)
+				continue
 			}
 			// 如果是单个模式，只取第一个ip
 			if target.DnsCheckMode == configs.CheckModeSingle {
@@ -695,9 +696,6 @@ func (p *Pinger) parseTarget(targets []*PingerTarget) error {
 
 	// 初始化发送和接收队列
 	queueLength := len(p.instances)
-	if queueLength < 100 {
-		queueLength = 100
-	}
 	p.sendQueue = make(chan *pingerInstance, queueLength)
 	p.replyQueue = make(chan *pingerPacket, queueLength)
 	return nil

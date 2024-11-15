@@ -186,6 +186,9 @@ func TestPingerTimeout(t *testing.T) {
 		t.Fatalf("parseTarget error: %v", err)
 	}
 
+	// 预留足够的长度防止阻塞
+	pinger.sendQueue = make(chan *pingerInstance, 3)
+
 	err = pinger.listen()
 	defer pinger.close()
 	if err != nil {
@@ -204,4 +207,6 @@ func TestPingerTimeout(t *testing.T) {
 		assert.True(t, result.Timeout)
 		assert.Equal(t, index == len(instance.results)-1, allFinished)
 	}
+
+	assert.Len(t, pinger.sendQueue, 2)
 }

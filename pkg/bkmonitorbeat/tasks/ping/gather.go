@@ -85,6 +85,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	if err != nil {
 		logger.Errorf("ping failed, error:%v", err)
 		tasks.SendFailEvent(taskConf.GetDataID(), e)
+		return
 	}
 
 	// 数据处理
@@ -98,15 +99,15 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 			resultCount++
 
 			// 丢包率及时延统计
-			lossCount, avgRtt, maxRtt, minRtt := 0, 0.0, 0.0, 0.0
+			lossCount, rttTotal, maxRtt, minRtt := 0, 0.0, 0.0, 0.0
 			for _, rtt := range rttList {
 				rtt := rtt.Seconds() * 1000
 
 				if rtt <= 0 {
 					lossCount++
 				} else {
-					avgRtt += rtt
-					if rtt > maxRtt || maxRtt == 0 {
+					rttTotal += rtt
+					if rtt > maxRtt {
 						maxRtt = rtt
 					}
 					if rtt < minRtt || minRtt == 0 {
@@ -120,8 +121,9 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 			available := 1 - lossPercent
 
 			// 计算平均时延
-			if avgRtt > 0 {
-				avgRtt = avgRtt / float64(len(rttList)-lossCount)
+			var avgRtt float64
+			if rttTotal > 0 {
+				avgRtt = rttTotal / float64(len(rttList)-lossCount)
 			}
 
 			// 解析域名时，resolved_ip为解析后的ip
@@ -182,7 +184,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 
 	// 任务结束
-	logger.Infof("ping task get %v result", resultCount)
+	logger.Infof("ping task(%d) get %v result", taskConf.TaskID, resultCount)
 }
 
 // New :

@@ -485,7 +485,7 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 }
 
 func newSecretObjects(ctx context.Context, sharedInformer metadatainformer.SharedInformerFactory) (*Objects, error) {
-	genericInformer := sharedInformer.ForResource(appsv1.SchemeGroupVersion.WithResource(resourceSecrets))
+	genericInformer := sharedInformer.ForResource(corev1.SchemeGroupVersion.WithResource(resourceSecrets))
 	objs := NewObjects(kindSecret)
 
 	informer := genericInformer.Informer()

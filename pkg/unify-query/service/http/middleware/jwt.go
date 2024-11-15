@@ -74,9 +74,9 @@ func parseBKJWTToken(tokenString string, publicKey []byte) (jwt.MapClaims, error
 	return claims, nil
 }
 
-func parseData(verifiedMap map[string]any, key string, data map[string]string) (err error) {
+func parseData(verifiedMap map[string]any, key string, data map[string]any) (err error) {
 	if data == nil {
-		data = make(map[string]string)
+		data = make(map[string]any)
 	}
 
 	for k, v := range verifiedMap {
@@ -91,13 +91,8 @@ func parseData(verifiedMap map[string]any, key string, data map[string]string) (
 				}
 			}
 		} else {
-			if d, ok := v.(string); !ok {
-				err = fmt.Errorf("%s %s, %T", k, errFormat, v)
-				return
-			} else {
-				k = fmt.Sprintf("%s.%s", key, k)
-				data[k] = d
-			}
+			k = fmt.Sprintf("%s.%s", key, k)
+			data[k] = v
 		}
 	}
 	return
@@ -120,10 +115,12 @@ func JwtAuthMiddleware(publicKey string) gin.HandlerFunc {
 
 				metric.JWTRequestInc(ctx, c.ClientIP(), c.Request.URL.Path, payLoad.AppCode(), payLoad.UserName(), metric.StatusFailed)
 
-				c.JSONP(http.StatusUnauthorized, gin.H{"error": err.Error()})
+				c.JSONP(http.StatusUnauthorized, gin.H{
+					"trace_id": span.TraceID(),
+					"error":    err.Error(),
+				})
 				c.Abort()
 			} else {
-
 				metric.JWTRequestInc(ctx, c.ClientIP(), c.Request.URL.Path, payLoad.AppCode(), payLoad.UserName(), metric.StatusSuccess)
 
 				c.Next()

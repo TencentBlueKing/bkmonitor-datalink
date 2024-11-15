@@ -19,7 +19,7 @@ const (
 )
 
 // JwtPayLoad jwt payload 结构体
-type JwtPayLoad map[string]string
+type JwtPayLoad map[string]any
 
 // SetJwtPayLoad 写入
 func SetJwtPayLoad(ctx context.Context, payLoad JwtPayLoad) {
@@ -43,14 +43,18 @@ func GetJwtPayLoad(ctx context.Context) JwtPayLoad {
 
 func (j JwtPayLoad) AppCode() string {
 	if v, ok := j[AppCodeKey]; ok {
-		return v
+		if vs, ok := v.(string); ok {
+			return vs
+		}
 	}
 	return ""
 }
 
 func (j JwtPayLoad) UserName() string {
 	if v, ok := j[UserNameKey]; ok {
-		return v
+		if vs, ok := v.(string); ok {
+			return vs
+		}
 	}
 	return ""
 }

@@ -25,7 +25,8 @@ import (
 
 // ErrResponse
 type ErrResponse struct {
-	Err string `json:"error"`
+	TraceID string `json:"trace_id,omitempty"`
+	Err     string `json:"error"`
 }
 
 // ESRequest
@@ -66,7 +67,7 @@ func HandleESQueryRequest(c *gin.Context) {
 	if err != nil {
 		log.Errorf(context.TODO(), "read es request body failed for->[%s]", err)
 		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUid, user.Source)
-		c.JSON(400, ErrResponse{err.Error()})
+		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
 	var req *ESRequest
@@ -74,7 +75,7 @@ func HandleESQueryRequest(c *gin.Context) {
 	if err != nil {
 		log.Errorf(context.TODO(), "anaylize es request body failed for->[%s]", err)
 		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUid, user.Source)
-		c.JSON(400, ErrResponse{err.Error()})
+		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
 	params := &es.Params{
@@ -88,7 +89,7 @@ func HandleESQueryRequest(c *gin.Context) {
 	if err != nil {
 		log.Errorf(context.TODO(), "query es failed for->[%s]", err)
 		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUid, user.Source)
-		c.JSON(400, ErrResponse{err.Error()})
+		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
 

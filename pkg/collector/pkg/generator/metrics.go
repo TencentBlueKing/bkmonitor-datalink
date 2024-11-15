@@ -19,6 +19,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/random"
 )
 
+const ScopeName = "generator"
+
 type MetricsGenerator struct {
 	opts define.MetricsOptions
 
@@ -47,7 +49,10 @@ func (g *MetricsGenerator) Generate() pmetric.Metrics {
 
 	now := time.Now()
 	for i := 0; i < g.opts.GaugeCount; i++ {
-		metric := rs.ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
+		scopeMetrics := rs.ScopeMetrics().AppendEmpty()
+		scopeMetrics.Scope().SetName(ScopeName)
+		metric := scopeMetrics.Metrics().AppendEmpty()
+
 		metric.SetName(random.String(12))
 		if g.opts.MetricName != "" {
 			metric.SetName(g.opts.MetricName)
@@ -66,7 +71,10 @@ func (g *MetricsGenerator) Generate() pmetric.Metrics {
 	}
 
 	for i := 0; i < g.opts.CounterCount; i++ {
-		metric := rs.ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
+		scopeMetrics := rs.ScopeMetrics().AppendEmpty()
+		scopeMetrics.Scope().SetName(ScopeName)
+		metric := scopeMetrics.Metrics().AppendEmpty()
+
 		metric.SetName(random.String(12))
 		if g.opts.MetricName != "" {
 			metric.SetName(g.opts.MetricName)
@@ -85,7 +93,10 @@ func (g *MetricsGenerator) Generate() pmetric.Metrics {
 	}
 
 	for i := 0; i < g.opts.HistogramCount; i++ {
-		metric := rs.ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
+		scopeMetrics := rs.ScopeMetrics().AppendEmpty()
+		scopeMetrics.Scope().SetName(ScopeName)
+		metric := scopeMetrics.Metrics().AppendEmpty()
+
 		metric.SetName(random.String(12))
 		if g.opts.MetricName != "" {
 			metric.SetName(g.opts.MetricName)
@@ -101,7 +112,10 @@ func (g *MetricsGenerator) Generate() pmetric.Metrics {
 	}
 
 	for i := 0; i < g.opts.SummaryCount; i++ {
-		metric := rs.ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
+		scopeMetrics := rs.ScopeMetrics().AppendEmpty()
+		scopeMetrics.Scope().SetName(ScopeName)
+		metric := scopeMetrics.Metrics().AppendEmpty()
+
 		metric.SetName(random.String(12))
 		if g.opts.MetricName != "" {
 			metric.SetName(g.opts.MetricName)

@@ -109,7 +109,7 @@ var (
 			Name:      "jwt_request_total",
 			Help:      "unify-query jwt request",
 		},
-		[]string{"client_ip", "api", "jwt_app_code", "jwt_app_user_name"},
+		[]string{"client_ip", "api", "jwt_app_code", "jwt_app_user_name", "status"},
 	)
 )
 

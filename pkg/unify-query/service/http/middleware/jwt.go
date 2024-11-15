@@ -114,15 +114,18 @@ func JwtAuthMiddleware(publicKey string) gin.HandlerFunc {
 			span.End(&err)
 
 			payLoad := metadata.GetJwtPayLoad(ctx)
-			metric.JWTRequestInc(ctx, c.ClientIP(), c.Request.URL.Path, payLoad.AppCode(), payLoad.UserName())
-
 			if err != nil {
 				err = fmt.Errorf("unauthorized %s", err)
 				log.Errorf(ctx, err.Error())
 
+				metric.JWTRequestInc(ctx, c.ClientIP(), c.Request.URL.Path, payLoad.AppCode(), payLoad.UserName(), metric.StatusFailed)
+
 				c.JSONP(http.StatusUnauthorized, gin.H{"error": err.Error()})
 				c.Abort()
 			} else {
+
+				metric.JWTRequestInc(ctx, c.ClientIP(), c.Request.URL.Path, payLoad.AppCode(), payLoad.UserName(), metric.StatusSuccess)
+
 				c.Next()
 			}
 		}()

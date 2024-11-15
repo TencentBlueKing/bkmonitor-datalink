@@ -11,7 +11,6 @@ package middleware
 
 import (
 	"fmt"
-	"net"
 	"sync"
 	"time"
 
@@ -33,48 +32,16 @@ var (
 	localIPs []string
 )
 
-// get instance ip single pass
-func getIPs() []string {
-	once.Do(func() {
-		interfaces, _ := net.Interfaces()
-		for _, i := range interfaces {
-			adders, err := i.Addrs()
-			if err != nil {
-				continue
-			}
-
-			for _, addr := range adders {
-				var ip net.IP
-				switch v := addr.(type) {
-				case *net.IPNet:
-					ip = v.IP
-				case *net.IPAddr:
-					ip = v.IP
-				}
-
-				if ip == nil || ip.IsLoopback() {
-					continue
-				}
-				ip = ip.To4()
-				if ip == nil {
-					continue
-				}
-				localIPs = append(localIPs, ip.String())
-			}
-		}
-	})
-	return localIPs
-}
-
 // MetaData 初始化所有原数据
 func MetaData(p *Params) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var (
 			start     = time.Now()
-			ips       = getIPs()
 			source    = c.Request.Header.Get(metadata.BkQuerySourceHeader)
 			spaceUid  = c.Request.Header.Get(metadata.SpaceUIDHeader)
 			skipSpace = c.Request.Header.Get(metadata.SkipSpaceHeader)
+
+			ip, hostName = metadata.GetLocalHost()
 
 			ctx = c.Request.Context()
 			err error
@@ -93,7 +60,8 @@ func MetaData(p *Params) gin.HandlerFunc {
 		if span != nil {
 			defer func() {
 
-				span.Set("local-ips", ips)
+				span.Set("local-ip", ip)
+				span.Set("local-host-name", hostName)
 
 				sub := time.Since(start)
 				metric.APIRequestSecond(ctx, sub, c.Request.URL.Path, spaceUid)

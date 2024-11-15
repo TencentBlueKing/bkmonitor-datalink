@@ -102,7 +102,21 @@ var (
 		},
 		[]string{"space_uid"},
 	)
+
+	jwtRequestTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "jwt_request_total",
+			Help:      "unify-query jwt request",
+		},
+		[]string{"client_ip", "api", "jwt_app_code", "jwt_app_user_name"},
+	)
 )
+
+func JWTRequestInc(ctx context.Context, params ...string) {
+	metric, _ := jwtRequestTotal.GetMetricWithLabelValues(params...)
+	counterInc(ctx, metric)
+}
 
 func APIRequestInc(ctx context.Context, params ...string) {
 	metric, _ := apiRequestTotal.GetMetricWithLabelValues(params...)
@@ -202,5 +216,6 @@ func init() {
 	prometheus.MustRegister(
 		apiRequestTotal, apiRequestSecondHistogram, resultTableInfo,
 		tsDBRequestSecondHistogram, vmQuerySpaceUidInfo, tsDBRequestBytesHistogram,
+		jwtRequestTotal,
 	)
 }

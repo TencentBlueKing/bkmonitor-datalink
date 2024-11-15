@@ -33,7 +33,7 @@ import (
 func generateToken(data map[string]any, privateKey []byte) (string, error) {
 	//设置token有效时间
 	nowTime := time.Now().Add(-1 * time.Hour)
-	expireTime := nowTime.Add(3 * time.Hour)
+	expireTime := nowTime.Add(2 * time.Hour)
 
 	claims := jwt.MapClaims{
 		"exp": expireTime.Unix(),

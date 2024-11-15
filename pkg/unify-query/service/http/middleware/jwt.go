@@ -17,7 +17,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -30,9 +32,13 @@ const (
 )
 
 var (
-	errUnauthorized = "jwt auth token is unauthorized"
-	errFormat       = "format is error"
-	errVerified     = "verified is error"
+	errUnauthorized = errors.New("jwt auth token is unauthorized")
+	errExpired      = errors.New("jwt auth: token is expired")
+	errNBFInvalid   = errors.New("jwt auth: token nbf validation failed")
+	errIATInvalid   = errors.New("jwt auth: token iat validation failed")
+
+	errFormat   = errors.New("format is error")
+	errVerified = errors.New("verified is error")
 )
 
 func parseBKJWTToken(tokenString string, publicKey []byte) (jwt.MapClaims, error) {
@@ -49,13 +55,20 @@ func parseBKJWTToken(tokenString string, publicKey []byte) (jwt.MapClaims, error
 	if err != nil {
 		var verr *jwt.ValidationError
 		if errors.As(err, &verr) {
-			return nil, verr.Inner
+			switch {
+			case verr.Errors&jwt.ValidationErrorExpired > 0:
+				return nil, errExpired
+			case verr.Errors&jwt.ValidationErrorIssuedAt > 0:
+				return nil, errIATInvalid
+			case verr.Errors&jwt.ValidationErrorNotValidYet > 0:
+				return nil, errNBFInvalid
+			}
 		}
 		return nil, err
 	}
 
 	if !token.Valid {
-		return nil, errors.New(errUnauthorized)
+		return nil, errUnauthorized
 	}
 
 	return claims, nil
@@ -100,8 +113,14 @@ func JwtAuthMiddleware(publicKey string) gin.HandlerFunc {
 		defer func() {
 			span.End(&err)
 
+			payLoad := metadata.GetJwtPayLoad(ctx)
+			metric.JWTRequestInc(ctx, c.ClientIP(), c.Request.URL.Path, payLoad.AppCode(), payLoad.UserName())
+
 			if err != nil {
-				c.JSONP(http.StatusUnauthorized, gin.H{"error": "Unauthorized: " + err.Error()})
+				err = fmt.Errorf("unauthorized %s", err)
+				log.Errorf(ctx, err.Error())
+
+				c.JSONP(http.StatusUnauthorized, gin.H{"error": err.Error()})
 				c.Abort()
 			} else {
 				c.Next()
@@ -113,14 +132,18 @@ func JwtAuthMiddleware(publicKey string) gin.HandlerFunc {
 		span.Set("jwt-public-key", publicKey)
 		span.Set("jwt-token", tokenString)
 
-		// 如果未配置 publicKey，则不启用 jwt 校验
-		if publicKey == "" {
+		// 如果未配置 publicKey 以及未找到 jwtToken，则不启用 jwt 校验
+		if publicKey == "" || tokenString == "" {
 			return
 		}
 
 		claims, err := parseBKJWTToken(tokenString, []byte(publicKey))
-		if err == nil {
-			err = claims.Valid()
+		if err != nil {
+			return
+		}
+		err = claims.Valid()
+		if err != nil {
+			return
 		}
 
 		span.Set("jwt-claims", claims)

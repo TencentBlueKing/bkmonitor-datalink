@@ -526,14 +526,16 @@ func (p *Pinger) receive(conn *icmp.PacketConn) error {
 func (p *Pinger) checkTimeout() bool {
 	now := time.Now()
 
+	// 全部的实例是否都已经完成，如果完成则返回true，后续可以退出整个ping任务
 	allFinished := true
+
 	for _, instance := range p.instances {
 		func() {
 			// 加读锁
 			instance.lock.Lock()
 			defer instance.lock.Unlock()
 
-			// 如果实例已经完成全部检查则跳过
+			// 如果该实例已经完成全部检查则跳过
 			if instance.isFinished {
 				return
 			}
@@ -541,6 +543,7 @@ func (p *Pinger) checkTimeout() bool {
 			// 超时检查
 			result := instance.results[instance.index]
 			if !result.IsSent() || result.IsFinished() || now.Sub(result.SendTime) < instance.maxRtt {
+				// 当前的处理结果没有超时，但是也没有完成全部的发送，标记未完成，提前退出跳过后续超时处理流程
 				allFinished = false
 				return
 			}
@@ -550,6 +553,7 @@ func (p *Pinger) checkTimeout() bool {
 
 			// 如果发送次数小于需要发送的次数，则再次发送，否则标记完成
 			if instance.index < instance.times-1 {
+				// 没有完成全部的发送，标记未完成
 				allFinished = false
 
 				// 再次发送

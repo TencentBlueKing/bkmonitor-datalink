@@ -212,9 +212,9 @@ const (
 - Description: monitor name 黑名单匹配规则，此规则优先级最高
 %s
 `
-	formatWorkload = `
-[√] check workload
-- Description: 集群各类型工作负载数量
+	formatResource = `
+[√] check resource
+- Description: 集群各类型资源数量
 %s
 `
 	formatMonitorEndpoint = `
@@ -267,7 +267,7 @@ const (
 // 检查 dryrun 标识是否打开
 // 检查监测命名空间是否符合预期
 // 检查黑名单匹配规则
-// 检查集群负载情况
+// 检查集群资源情况
 // 检查采集指标数据量
 // 检查处理 secrets 是否有问题
 // 检查给定关键字监测资源
@@ -331,11 +331,10 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	b, _ = json.MarshalIndent(blacklist, "", "  ")
 	writef(formatCheckMonitorBlacklist, string(b))
 
-	// 检查集群工作负载数量
-	workloadInfo := objectsref.GetWorkloadCount()
-	workloadInfo["Node"] = objectsref.GetClusterNodeCount() // 顺便补充 node 数量
-	b, _ = json.MarshalIndent(workloadInfo, "", "  ")
-	writef(formatWorkload, string(b))
+	// 检查集群资源数量
+	resourceInfo := objectsref.GetResourceCount()
+	b, _ = json.MarshalIndent(resourceInfo, "", "  ")
+	writef(formatResource, string(b))
 
 	// 检查 Endpoint 数量
 	endpoints := c.recorder.getActiveEndpoints()
@@ -555,6 +554,7 @@ func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) 
 	c.objectsController.GetServiceRelations(buf)
 	c.objectsController.GetPodRelations(buf)
 	c.objectsController.GetReplicasetRelations(buf)
+	c.objectsController.GetDataSourceRelations(buf)
 
 	w.Write(buf.Bytes())
 }

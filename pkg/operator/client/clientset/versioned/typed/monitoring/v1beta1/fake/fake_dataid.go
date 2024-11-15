@@ -14,14 +14,12 @@ package fake
 import (
 	"context"
 
+	v1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	labels "k8s.io/apimachinery/pkg/labels"
-	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"
 	testing "k8s.io/client-go/testing"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/crd/v1beta1"
 )
 
 // FakeDataIDs implements DataIDInterface
@@ -30,9 +28,9 @@ type FakeDataIDs struct {
 	ns   string
 }
 
-var dataidsResource = schema.GroupVersionResource{Group: "monitoring.bk.tencent.com", Version: "v1beta1", Resource: "dataids"}
+var dataidsResource = v1beta1.SchemeGroupVersion.WithResource("dataids")
 
-var dataidsKind = schema.GroupVersionKind{Group: "monitoring.bk.tencent.com", Version: "v1beta1", Kind: "DataID"}
+var dataidsKind = v1beta1.SchemeGroupVersion.WithKind("DataID")
 
 // Get takes name of the dataID, and returns the corresponding dataID object, and an error if there is any.
 func (c *FakeDataIDs) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1beta1.DataID, err error) {
@@ -99,7 +97,7 @@ func (c *FakeDataIDs) Update(ctx context.Context, dataID *v1beta1.DataID, opts v
 // Delete takes name of the dataID and deletes it. Returns an error if one occurs.
 func (c *FakeDataIDs) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	_, err := c.Fake.
-		Invokes(testing.NewDeleteAction(dataidsResource, c.ns, name), &v1beta1.DataID{})
+		Invokes(testing.NewDeleteActionWithOptions(dataidsResource, c.ns, name, opts), &v1beta1.DataID{})
 
 	return err
 }

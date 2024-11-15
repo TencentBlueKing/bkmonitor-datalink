@@ -183,7 +183,7 @@ func (i InfluxdbTagInfo) ModifyConsulInfo(ctx context.Context, oldInfo TagItemIn
 	}
 	err = hashconsul.Put(consulClient, i.ConsulConfigPath(), val)
 
-	models.PushToRedis(ctx, models.InfluxdbTagInfoKey, i.RedisField(), val, true)
+	models.PushToRedis(ctx, models.InfluxdbTagInfoKey, i.RedisField(), val)
 	return nil
 }
 

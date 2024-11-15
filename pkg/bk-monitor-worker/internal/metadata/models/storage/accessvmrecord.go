@@ -72,7 +72,7 @@ func (a AccessVMRecord) RefreshVmRouter(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	models.PushToRedis(ctx, models.QueryVmStorageRouterKey, a.ResultTableId, val, false)
+	models.PushToRedis(ctx, models.QueryVmStorageRouterKey, a.ResultTableId, val)
 	return nil
 }
 

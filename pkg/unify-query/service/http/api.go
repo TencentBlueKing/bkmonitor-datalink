@@ -205,7 +205,7 @@ func HandlerTagValues(c *gin.Context) {
 		err error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "handler-tag-keys")
+	ctx, span := trace.NewSpan(ctx, "handler-tag-values")
 	defer span.End(&err)
 
 	params := &infos.Params{}
@@ -299,7 +299,7 @@ func HandlerSeries(c *gin.Context) {
 		err error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "handler-tag-keys")
+	ctx, span := trace.NewSpan(ctx, "handler-series")
 	defer span.End(&err)
 
 	params := &infos.Params{}
@@ -468,6 +468,14 @@ func HandlerLabelValues(c *gin.Context) {
 	if err != nil {
 		return
 	}
+
+	startTime, endTime, err := query.GetTime()
+	// start 和 end 如果为空，则默认给 1h
+	if err != nil {
+		endTime = time.Now()
+		startTime = endTime.Add(time.Hour * -1)
+	}
+	metadata.GetQueryParams(ctx).SetTime(startTime.Unix(), endTime.Unix())
 	instance, stmt, err := queryTsToInstanceAndStmt(ctx, query)
 	if err != nil {
 		return
@@ -476,13 +484,6 @@ func HandlerLabelValues(c *gin.Context) {
 	matcher, err := parser.ParseMetricSelector(stmt)
 	if err != nil {
 		return
-	}
-
-	startTime, endTime, err := query.GetTime()
-	// start 和 end 如果为空，则默认给 1h
-	if err != nil {
-		endTime = time.Now()
-		startTime = endTime.Add(time.Hour * -1)
 	}
 
 	limitNum, _ := strconv.Atoi(limit)
@@ -527,6 +528,9 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 		end = time.Now()
 		start = end.Add(time.Hour * -1)
 	}
+
+	// 写入查询时间到全局缓存
+	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix())
 	queryRef, err = queryTs.ToQueryReference(ctx)
 	return
 }

@@ -26,6 +26,7 @@ const (
 
 	NameKubeEventReceiveEvents = "bkm_kubeevent_receive_events"
 	NameKubeEventReportEvents  = "bkm_kubeevent_report_events"
+	NameKubeEventCleanedEvents = "bkm_kubeevent_cleaned_events"
 )
 
 type NamedCode struct {

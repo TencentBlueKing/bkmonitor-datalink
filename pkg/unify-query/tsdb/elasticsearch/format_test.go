@@ -90,7 +90,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"bool":{"should":[{"wildcard":{"key":{"value":"val-1"}}},{"wildcard":{"key":{"value":"val-2"}}}]}},{"bool":{"should":[{"wildcard":{"key":{"value":"val-3"}}},{"wildcard":{"key":{"value":"val-4"}}}]}}]}},{"bool":{"must":[{"bool":{"must_not":[{"match_phrase":{"key":{"query":"val-1"}}},{"match_phrase":{"key":{"query":"val-2"}}}]}},{"range":{"key":{"from":"9","include_lower":true,"include_upper":true,"to":null}}}]}}]}}}`,
+			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"bool":{"should":[{"wildcard":{"key":{"value":"*val-1*"}}},{"wildcard":{"key":{"value":"*val-2*"}}}]}},{"bool":{"should":[{"wildcard":{"key":{"value":"*val-3*"}}},{"wildcard":{"key":{"value":"*val-4*"}}}]}}]}},{"bool":{"must":[{"bool":{"must_not":[{"match_phrase":{"key":{"query":"val-1"}}},{"match_phrase":{"key":{"query":"val-2"}}}]}},{"range":{"key":{"from":"9","include_lower":true,"include_upper":true,"to":null}}}]}}]}}}`,
 		},
 		"query 5": {
 			conditions: metadata.AllConditions{
@@ -129,7 +129,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"nested":{"path":"nested","query":{"bool":{"must":[{"bool":{"should":[{"wildcard":{"nested.key":{"value":"val-1"}}},{"wildcard":{"nested.key":{"value":"val-2"}}}]}},{"match_phrase":{"nested.key":{"query":"val-3"}}}]}}}}}`,
+			expected: `{"query":{"nested":{"path":"nested","query":{"bool":{"must":[{"bool":{"should":[{"wildcard":{"nested.key":{"value":"*val-1*"}}},{"wildcard":{"nested.key":{"value":"*val-2*"}}}]}},{"match_phrase":{"nested.key":{"query":"val-3"}}}]}}}}}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -36,7 +36,6 @@ func (t *EventTarget) YamlBytes() ([]byte, error) {
 	cfg = append(cfg, yaml.MapItem{Key: "dataid", Value: t.DataID})
 	cfg = append(cfg, yaml.MapItem{Key: "upmetrics_dataid", Value: t.UpMetricsDataID})
 	cfg = append(cfg, yaml.MapItem{Key: "interval", Value: configs.G().Event.Interval})
-	cfg = append(cfg, yaml.MapItem{Key: "event_span", Value: configs.G().Event.MaxSpan})
 	cfg = append(cfg, yaml.MapItem{Key: "tail_files", Value: configs.G().Event.TailFiles})
 	cfg = append(cfg, yaml.MapItem{Key: "labels", Value: []yaml.MapSlice{sortMap(t.Labels)}})
 	return yaml.Marshal(cfg)

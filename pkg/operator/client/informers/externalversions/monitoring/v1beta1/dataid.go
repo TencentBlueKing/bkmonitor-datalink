@@ -15,15 +15,14 @@ import (
 	"context"
 	time "time"
 
+	monitoringv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
+	versioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
+	internalinterfaces "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions/internalinterfaces"
+	v1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/listers/monitoring/v1beta1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
 	cache "k8s.io/client-go/tools/cache"
-
-	crdv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/crd/v1beta1"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions/internalinterfaces"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/listers/crd/v1beta1"
 )
 
 // DataIDInformer provides access to a shared informer and lister for
@@ -65,7 +64,7 @@ func NewFilteredDataIDInformer(client versioned.Interface, namespace string, res
 				return client.MonitoringV1beta1().DataIDs(namespace).Watch(context.TODO(), options)
 			},
 		},
-		&crdv1beta1.DataID{},
+		&monitoringv1beta1.DataID{},
 		resyncPeriod,
 		indexers,
 	)
@@ -76,7 +75,7 @@ func (f *dataIDInformer) defaultInformer(client versioned.Interface, resyncPerio
 }
 
 func (f *dataIDInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&crdv1beta1.DataID{}, f.defaultInformer)
+	return f.factory.InformerFor(&monitoringv1beta1.DataID{}, f.defaultInformer)
 }
 
 func (f *dataIDInformer) Lister() v1beta1.DataIDLister {

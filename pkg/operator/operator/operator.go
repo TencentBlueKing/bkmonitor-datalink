@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	tkexversiond "github.com/Tencent/bk-bcs/bcs-scenarios/kourse/pkg/client/clientset/versioned"
 	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -24,6 +23,7 @@ import (
 	prominformers "github.com/prometheus-operator/prometheus-operator/pkg/informers"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/tools/cache"
 
 	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
@@ -60,9 +60,9 @@ type Operator struct {
 	buildInfo BuildInfo
 
 	client     kubernetes.Interface
+	mdClient   metadata.Interface
 	promclient promversioned.Interface
 	bkclient   bkversioned.Interface
-	tkexclient tkexversiond.Interface
 	srv        *http.Server
 
 	serviceMonitorInformer *prominformers.ForResource
@@ -101,22 +101,23 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		return nil, err
 	}
 
-	operator.client, err = k8sutils.NewK8SClient(configs.G().APIServerHost, configs.G().GetTLS())
+	apiHost := configs.G().APIServerHost
+	operator.client, err = k8sutils.NewK8SClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.promclient, err = k8sutils.NewPromClient(configs.G().APIServerHost, configs.G().GetTLS())
+	operator.mdClient, err = k8sutils.NewMetadataClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.bkclient, err = k8sutils.NewBKClient(configs.G().APIServerHost, configs.G().GetTLS())
+	operator.promclient, err = k8sutils.NewPromClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.tkexclient, err = k8sutils.NewTkexClient(configs.G().APIServerHost, configs.G().GetTLS())
+	operator.bkclient, err = k8sutils.NewBKClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +205,7 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		operator.promsliController = promsli.NewController(operator.ctx, operator.client, useEndpointslice)
 	}
 
-	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.tkexclient)
+	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.mdClient, operator.bkclient)
 	if err != nil {
 		return nil, errors.Wrap(err, "create objectsController failed")
 	}
@@ -244,7 +245,7 @@ func (c *Operator) reloadAllDiscovers() {
 
 		dis.SetDataID(newDataID)
 		if err := dis.Reload(); err != nil {
-			logger.Errorf("discover %s reload failed, err: %s", name, err)
+			logger.Errorf("discover %s reload failed: %s", name, err)
 		}
 	}
 }
@@ -263,8 +264,7 @@ func (c *Operator) recordMetrics() {
 			c.mm.SetAppBuildInfo(c.buildInfo)
 			c.updateNodeConfigMetrics()
 			c.updateMonitorEndpointMetrics()
-			c.updateWorkloadMetrics()
-			c.updateNodeMetrics()
+			c.updateResourceMetrics()
 			c.updateSharedDiscoveryMetrics()
 
 		case <-c.ctx.Done():
@@ -297,16 +297,11 @@ func (c *Operator) updateMonitorEndpointMetrics() {
 	}
 }
 
-func (c *Operator) updateWorkloadMetrics() {
-	workloads := objectsref.GetWorkloadCount()
-	for resource, count := range workloads {
-		c.mm.SetWorkloadCount(resource, count)
+func (c *Operator) updateResourceMetrics() {
+	resources := objectsref.GetResourceCount()
+	for resource, count := range resources {
+		c.mm.SetResourceCount(resource, count)
 	}
-}
-
-func (c *Operator) updateNodeMetrics() {
-	nodes := objectsref.GetClusterNodeCount()
-	c.mm.SetNodeCount(nodes)
 }
 
 func (c *Operator) Run() error {

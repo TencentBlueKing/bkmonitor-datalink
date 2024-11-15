@@ -112,7 +112,7 @@ func TestJwtAuthMiddleware(t *testing.T) {
 	userName := "tim"
 	appCode := "test-code-1"
 
-	expected := `{"app.app_code":"test-code-1","app.tenant_id":"mo_0904","user.username":"tim"}`
+	expected := `{"app.app_code":"test-code-1","app.tenant_id":"mo_0904","app.verified":true,"user.username":"tim","user.verified":true}`
 
 	jwtPayLoad := map[string]any{
 		ClaimsAppKey: map[string]any{

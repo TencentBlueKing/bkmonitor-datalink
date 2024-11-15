@@ -36,9 +36,6 @@ var (
 	errExpired      = errors.New("jwt auth: token is expired")
 	errNBFInvalid   = errors.New("jwt auth: token nbf validation failed")
 	errIATInvalid   = errors.New("jwt auth: token iat validation failed")
-
-	errFormat   = errors.New("format is error")
-	errVerified = errors.New("verified is error")
 )
 
 func parseBKJWTToken(tokenString string, publicKey []byte) (jwt.MapClaims, error) {
@@ -74,24 +71,23 @@ func parseBKJWTToken(tokenString string, publicKey []byte) (jwt.MapClaims, error
 	return claims, nil
 }
 
-func parseData(verifiedMap map[string]any, key string, data map[string]any) (err error) {
+func parseData(verifiedMap map[string]any, key string, data map[string]any) {
 	if data == nil {
 		data = make(map[string]any)
 	}
 
 	for k, v := range verifiedMap {
-		if k == VerifiedKey {
-			if verified, ok := v.(bool); !ok {
-				err = fmt.Errorf("%s %s, %T", k, errFormat, v)
-				return
-			} else {
-				if !verified {
-					err = fmt.Errorf("%s, %v", errVerified, v)
-					return
-				}
+		if k != ClaimsAppKey && k != ClaimsUserKey && key == "" {
+			continue
+		}
+
+		switch mv := v.(type) {
+		case map[string]any:
+			parseData(mv, k, data)
+		default:
+			if key != "" {
+				k = fmt.Sprintf("%s.%s", key, k)
 			}
-		} else {
-			k = fmt.Sprintf("%s.%s", key, k)
 			data[k] = v
 		}
 	}
@@ -149,17 +145,7 @@ func JwtAuthMiddleware(publicKey string) gin.HandlerFunc {
 		span.Set("jwt-claims", claims)
 
 		jwtPayLoad := make(metadata.JwtPayLoad)
-		for k, v := range claims {
-			switch k {
-			case ClaimsAppKey, ClaimsUserKey:
-				if d, ok := v.(map[string]any); ok {
-					err = parseData(d, k, jwtPayLoad)
-					if err != nil {
-						return
-					}
-				}
-			}
-		}
+		parseData(claims, "", jwtPayLoad)
 		span.Set("jwt-payload", jwtPayLoad)
 
 		metadata.SetJwtPayLoad(ctx, jwtPayLoad)

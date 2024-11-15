@@ -356,6 +356,10 @@ func (oc *ObjectsController) SecretObjs() []Object {
 	return oc.secretObjs.GetAll()
 }
 
+func (oc *ObjectsController) NodeObjs() []*corev1.Node {
+	return oc.nodeObjs.GetAll()
+}
+
 func (oc *ObjectsController) Stop() {
 	oc.cancel()
 }
@@ -489,10 +493,6 @@ func newSecretObjects(ctx context.Context, sharedInformer metadatainformer.Share
 	objs := NewObjects(kindSecret)
 
 	informer := genericInformer.Informer()
-	if err := informer.SetTransform(partialObjectMetadataStrip); err != nil {
-		return nil, err
-	}
-
 	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			secret, ok := obj.(*metav1.PartialObjectMetadata)
@@ -505,6 +505,7 @@ func newSecretObjects(ctx context.Context, sharedInformer metadatainformer.Share
 					Name:      secret.Name,
 					Namespace: secret.Namespace,
 				},
+				Labels: secret.Labels,
 			})
 		},
 		UpdateFunc: func(_, newObj interface{}) {
@@ -518,6 +519,7 @@ func newSecretObjects(ctx context.Context, sharedInformer metadatainformer.Share
 					Name:      secret.Name,
 					Namespace: secret.Namespace,
 				},
+				Labels: secret.Labels,
 			})
 		},
 		DeleteFunc: func(obj interface{}) {

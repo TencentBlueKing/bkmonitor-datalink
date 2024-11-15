@@ -536,24 +536,23 @@ func (c *Operator) collectChildConfigs() ([]*discover.ChildConfig, []*discover.C
 
 func (c *Operator) cleanupInvalidSecrets() {
 	secretClient := c.client.CoreV1().Secrets(configs.G().MonitorNamespace)
-	secrets, err := secretClient.List(c.ctx, metav1.ListOptions{
-		LabelSelector: "createdBy=bkmonitor-operator",
-	})
-	if err != nil {
-		logger.Errorf("failed to list secrets, err: %v", err)
-		return
-	}
+	secrets := c.objectsController.SecretObjs()
 
 	// 清理不合法的 secrets
-	for _, secret := range secrets.Items {
+	for _, secret := range secrets {
+		// 只处理 operator 创建的 secrets
+		if secret.Labels["createdBy"] != "bkmonitor-operator" {
+			continue
+		}
+
 		if _, ok := secret.Labels[tasks.LabelTaskType]; !ok {
-			if err := secretClient.Delete(c.ctx, secret.Name, metav1.DeleteOptions{}); err != nil {
-				c.mm.IncHandledSecretFailedCounter(secret.Name, action.Delete, err)
-				logger.Errorf("failed to delete secret %s, err: %v", secret.Name, err)
+			if err := secretClient.Delete(c.ctx, secret.ID.Name, metav1.DeleteOptions{}); err != nil {
+				c.mm.IncHandledSecretFailedCounter(secret.ID.Name, action.Delete, err)
+				logger.Errorf("failed to delete secret %s, err: %v", secret.ID.Name, err)
 				continue
 			}
-			c.mm.IncHandledSecretSuccessCounter(secret.Name, action.Delete)
-			logger.Infof("remove invalid secret %s", secret.Name)
+			c.mm.IncHandledSecretSuccessCounter(secret.ID.Name, action.Delete)
+			logger.Infof("remove invalid secret %s", secret.ID.Name)
 		}
 	}
 }

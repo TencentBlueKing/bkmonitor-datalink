@@ -72,10 +72,6 @@ func parseBKJWTToken(tokenString string, publicKey []byte) (jwt.MapClaims, error
 }
 
 func parseData(verifiedMap map[string]any, key string, data map[string]any) {
-	if data == nil {
-		data = make(map[string]any)
-	}
-
 	for k, v := range verifiedMap {
 		if k != ClaimsAppKey && k != ClaimsUserKey && key == "" {
 			continue

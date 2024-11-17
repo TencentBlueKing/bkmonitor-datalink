@@ -173,6 +173,7 @@ func (sd *SharedDiscovery) start() {
 			var total int
 			for source, tg := range sd.store {
 				// 超过 10 分钟未更新且已经没有目标的对象需要删除
+				// 确保 basediscovery 已经处理了删除事件
 				if now-tg.updatedAt > 600 {
 					if tg.tg == nil || len(tg.tg.Targets) == 0 {
 						delete(sd.store, source)

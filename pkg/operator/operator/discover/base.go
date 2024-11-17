@@ -574,6 +574,12 @@ func (d *BaseDiscover) notify(source string, childConfigs []*ChildConfig) {
 	d.childConfigMut.Lock()
 	defer d.childConfigMut.Unlock()
 
+	// 如果新的 source/childconfigs 为空且之前的缓存也为空 那就无需对比处理了
+	if len(childConfigs) == 0 && len(d.childConfigGroups[source]) == 0 {
+		logger.Debugf("%s skip handle notify", d.Name())
+		return
+	}
+
 	if _, ok := d.childConfigGroups[source]; !ok {
 		d.childConfigGroups[source] = make(map[uint64]*ChildConfig)
 	}

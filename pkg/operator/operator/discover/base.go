@@ -622,7 +622,7 @@ func (d *BaseDiscover) notify(source string, childConfigs []*ChildConfig) {
 	// 删除事件 即后续 source 可能不会再有任何事件了
 	if len(d.childConfigGroups[source]) == 0 {
 		delete(d.childConfigGroups, source)
-		logger.Debugf("delete source (%s), cause no childconfigs", source)
+		logger.Infof("delete source (%s), cause no childconfigs", source)
 	}
 }
 

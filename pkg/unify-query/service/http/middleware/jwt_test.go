@@ -59,6 +59,12 @@ func handler(c *gin.Context) {
 	ctx := c.Request.Context()
 	jwtPayLoad := metadata.GetJwtPayLoad(ctx)
 
+	for k := range jwtPayLoad {
+		if k == ClaimsExp || k == ClaimsNbf {
+			delete(jwtPayLoad, k)
+		}
+	}
+
 	c.JSON(http.StatusOK, jwtPayLoad)
 	return
 }

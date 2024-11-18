@@ -28,7 +28,8 @@ const (
 	ClaimsAppKey  = "app"
 	ClaimsUserKey = "user"
 
-	VerifiedKey = "verified"
+	ClaimsExp = "exp"
+	ClaimsNbf = "nbf"
 )
 
 var (
@@ -73,17 +74,14 @@ func parseBKJWTToken(tokenString string, publicKey []byte) (jwt.MapClaims, error
 
 func parseData(verifiedMap map[string]any, key string, data map[string]any) {
 	for k, v := range verifiedMap {
-		if k != ClaimsAppKey && k != ClaimsUserKey && key == "" {
-			continue
+		if key != "" {
+			k = fmt.Sprintf("%s.%s", key, k)
 		}
 
 		switch mv := v.(type) {
 		case map[string]any:
 			parseData(mv, k, data)
 		default:
-			if key != "" {
-				k = fmt.Sprintf("%s.%s", key, k)
-			}
 			data[k] = v
 		}
 	}
@@ -124,7 +122,7 @@ func JwtAuthMiddleware(publicKey string) gin.HandlerFunc {
 		span.Set("jwt-public-key", publicKey)
 		span.Set("jwt-token", tokenString)
 
-		// 如果未配置 publicKey 以及未找到 jwtToken，则不启用 jwt 校验
+		// 如果未配置 publicKey 以及未传 jwtToken（兼容非 apigw 调用逻辑），则不启用 jwt 校验
 		if publicKey == "" || tokenString == "" {
 			return
 		}

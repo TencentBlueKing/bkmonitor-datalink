@@ -219,7 +219,7 @@ const (
 `
 	formatMonitorEndpoint = `
 [√] check endpoint
-- Description: operator 监听 monitor endpoints 数量，共 %d 个
+- Description: operator 匹配 %d 个 monitor，共有 %d 个 endpoints
 %s
 `
 	formatScrapeStats = `
@@ -343,7 +343,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	for _, v := range endpoints {
 		total += v
 	}
-	writef(formatMonitorEndpoint, total, string(b))
+	writef(formatMonitorEndpoint, len(endpoints), total, string(b))
 
 	// 检查采集指标数据量
 	onScrape := r.URL.Query().Get("scrape")

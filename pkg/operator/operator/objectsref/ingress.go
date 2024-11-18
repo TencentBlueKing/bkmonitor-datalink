@@ -70,7 +70,7 @@ func (m *IngressMap) Del(namespace, name string) {
 	}
 }
 
-func (m *IngressMap) rangeIngress(namespace string, visitFunc func(name string, ingress ingressEntity)) {
+func (m *IngressMap) Range(namespace string, visitFunc func(name string, ingress ingressEntity)) {
 	m.mut.Lock()
 	defer m.mut.Unlock()
 

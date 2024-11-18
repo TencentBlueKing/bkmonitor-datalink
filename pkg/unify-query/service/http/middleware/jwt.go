@@ -94,6 +94,13 @@ func JwtAuthMiddleware(publicKey string) gin.HandlerFunc {
 			ctx = c.Request.Context()
 			err error
 		)
+
+		// 通过特性开关判断是否开启验证
+		ffStatus := metadata.GetJwtAuthFeatureFlag(ctx)
+		if !ffStatus {
+			return
+		}
+
 		ctx, span := trace.NewSpan(ctx, "jwt-auth")
 		defer func() {
 			span.End(&err)

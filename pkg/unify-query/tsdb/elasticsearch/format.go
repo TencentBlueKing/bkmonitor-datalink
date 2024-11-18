@@ -634,7 +634,7 @@ func (f *FormatFactory) Order() map[string]bool {
 	return order
 }
 
-func (f *FormatFactory) getQuery(key string, qs []elastic.Query) (q elastic.Query) {
+func (f *FormatFactory) getQuery(key string, qs ...elastic.Query) (q elastic.Query) {
 	if len(qs) == 0 {
 		return q
 	}
@@ -672,92 +672,99 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 				key = f.decode(key)
 			}
 
-			// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
-			fieldType, ok := f.mapping[key]
-			isExistsQuery := true
-			if ok {
-				if fieldType == Text || fieldType == KeyWord {
-					isExistsQuery = false
-				}
-			}
-
-			queries := make([]elastic.Query, 0)
-			for _, value := range con.Value {
-				var query elastic.Query
-				if con.DimensionName != "" {
-					// 如果是字符串类型，则需要使用 match_phrase 进行非空判断
-					if value == "" && isExistsQuery {
-						query = elastic.NewExistsQuery(key)
-						switch con.Operator {
-						case structured.ConditionEqual, structured.Contains:
-							query = f.getQuery(MustNot, []elastic.Query{query})
-						case structured.ConditionNotEqual, structured.Ncontains:
-							query = f.getQuery(Must, []elastic.Query{query})
-						default:
-							return nil, fmt.Errorf("operator is not support with empty, %+v", con)
-						}
-						continue
-					} else {
-						// 非空才进行验证
-						switch con.Operator {
-						case structured.ConditionEqual, structured.ConditionNotEqual:
-							query = elastic.NewMatchPhraseQuery(key, value)
-						case structured.ConditionContains, structured.ConditionNotContains:
-							value = fmt.Sprintf("*%s*", value)
-							query = elastic.NewWildcardQuery(key, value)
-						case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
-							query = elastic.NewRegexpQuery(key, value)
-						case structured.ConditionGt:
-							query = elastic.NewRangeQuery(key).Gt(value)
-						case structured.ConditionGte:
-							query = elastic.NewRangeQuery(key).Gte(value)
-						case structured.ConditionLt:
-							query = elastic.NewRangeQuery(key).Lt(value)
-						case structured.ConditionLte:
-							query = elastic.NewRangeQuery(key).Lte(value)
-						default:
-							return nil, fmt.Errorf("operator is not support, %+v", con)
-						}
-					}
-				} else {
-					query = elastic.NewQueryStringQuery(value)
-				}
-
-				if query != nil {
-					queries = append(queries, query)
-				}
-			}
-
-			// 非空才进行验证
-			var q elastic.Query
 			switch con.Operator {
-			case structured.ConditionEqual, structured.ConditionContains, structured.ConditionRegEqual:
-				q = f.getQuery(Should, queries)
-			case structured.ConditionNotEqual, structured.ConditionNotContains, structured.ConditionNotRegEqual:
-				q = f.getQuery(MustNot, queries)
-			case structured.ConditionGt, structured.ConditionGte, structured.ConditionLt, structured.ConditionLte:
-				q = f.getQuery(Must, queries)
+			case structured.ConditionExisted:
+				andQuery = append(andQuery, elastic.NewExistsQuery(key))
+			case structured.ConditionNotExisted:
+				andQuery = append(andQuery, f.getQuery(MustNot, elastic.NewExistsQuery(key)))
 			default:
-				return nil, fmt.Errorf("operator is not support, %+v", con)
-			}
+				// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
+				fieldType, ok := f.mapping[key]
+				isExistsQuery := true
+				if ok {
+					if fieldType == Text || fieldType == KeyWord {
+						isExistsQuery = false
+					}
+				}
 
-			nf := f.NestedField(con.DimensionName)
-			if nf != "" {
-				nestedFields[nf] = struct{}{}
-			}
+				queries := make([]elastic.Query, 0)
+				for _, value := range con.Value {
+					var query elastic.Query
+					if con.DimensionName != "" {
+						// 如果是字符串类型，则需要使用 match_phrase 进行非空判断
+						if value == "" && isExistsQuery {
+							query = elastic.NewExistsQuery(key)
+							switch con.Operator {
+							case structured.ConditionEqual, structured.Contains:
+								query = f.getQuery(MustNot, query)
+							case structured.ConditionNotEqual, structured.Ncontains:
+								query = f.getQuery(Must, query)
+							default:
+								return nil, fmt.Errorf("operator is not support with empty, %+v", con)
+							}
+							continue
+						} else {
+							// 非空才进行验证
+							switch con.Operator {
+							case structured.ConditionEqual, structured.ConditionNotEqual:
+								query = elastic.NewMatchPhraseQuery(key, value)
+							case structured.ConditionContains, structured.ConditionNotContains:
+								value = fmt.Sprintf("*%s*", value)
+								query = elastic.NewWildcardQuery(key, value)
+							case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
+								query = elastic.NewRegexpQuery(key, value)
+							case structured.ConditionGt:
+								query = elastic.NewRangeQuery(key).Gt(value)
+							case structured.ConditionGte:
+								query = elastic.NewRangeQuery(key).Gte(value)
+							case structured.ConditionLt:
+								query = elastic.NewRangeQuery(key).Lt(value)
+							case structured.ConditionLte:
+								query = elastic.NewRangeQuery(key).Lte(value)
+							default:
+								return nil, fmt.Errorf("operator is not support, %+v", con)
+							}
+						}
+					} else {
+						query = elastic.NewQueryStringQuery(value)
+					}
 
-			if q != nil {
-				andQuery = append(andQuery, q)
+					if query != nil {
+						queries = append(queries, query)
+					}
+				}
+
+				// 非空才进行验证
+				var q elastic.Query
+				switch con.Operator {
+				case structured.ConditionEqual, structured.ConditionContains, structured.ConditionRegEqual:
+					q = f.getQuery(Should, queries...)
+				case structured.ConditionNotEqual, structured.ConditionNotContains, structured.ConditionNotRegEqual:
+					q = f.getQuery(MustNot, queries...)
+				case structured.ConditionGt, structured.ConditionGte, structured.ConditionLt, structured.ConditionLte:
+					q = f.getQuery(Must, queries...)
+				default:
+					return nil, fmt.Errorf("operator is not support, %+v", con)
+				}
+
+				nf := f.NestedField(con.DimensionName)
+				if nf != "" {
+					nestedFields[nf] = struct{}{}
+				}
+
+				if q != nil {
+					andQuery = append(andQuery, q)
+				}
 			}
 		}
 
-		aq := f.getQuery(Must, andQuery)
+		aq := f.getQuery(Must, andQuery...)
 		if aq != nil {
 			orQuery = append(orQuery, aq)
 		}
 	}
 
-	oq := f.getQuery(Should, orQuery)
+	oq := f.getQuery(Should, orQuery...)
 	if oq != nil {
 		bootQueries = append(bootQueries, oq)
 	}

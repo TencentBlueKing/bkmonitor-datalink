@@ -127,9 +127,13 @@ func TestFormatFactory_Query(t *testing.T) {
 						Value:         []string{"val-3"},
 						Operator:      structured.ConditionEqual,
 					},
+					{
+						DimensionName: "nested.key",
+						Operator:      structured.ConditionExisted,
+					},
 				},
 			},
-			expected: `{"query":{"nested":{"path":"nested","query":{"bool":{"must":[{"bool":{"should":[{"wildcard":{"nested.key":{"value":"*val-1*"}}},{"wildcard":{"nested.key":{"value":"*val-2*"}}}]}},{"match_phrase":{"nested.key":{"query":"val-3"}}}]}}}}}`,
+			expected: `{"query":{"nested":{"path":"nested","query":{"bool":{"must":[{"bool":{"should":[{"wildcard":{"nested.key":{"value":"*val-1*"}}},{"wildcard":{"nested.key":{"value":"*val-2*"}}}]}},{"match_phrase":{"nested.key":{"query":"val-3"}}},{"exists":{"field":"nested.key"}}]}}}}}`,
 		},
 		"existed and not existed query": {
 			conditions: metadata.AllConditions{

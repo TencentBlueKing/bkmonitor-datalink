@@ -511,6 +511,7 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 				DataSource:    params.DataSource,
 				TableID:       params.TableID,
 				FieldName:     params.Metric,
+				IsRegexp:      params.IsRegexp,
 				Conditions:    params.Conditions,
 				Limit:         params.Limit,
 				ReferenceName: prometheus.ReferenceName,

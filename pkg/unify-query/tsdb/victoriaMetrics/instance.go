@@ -337,10 +337,11 @@ func (i *Instance) InstanceType() string {
 // 在一些场景下，如果 step 不能被 start 整除，会导致返回的数据跟我们的开始时间无法对其，所以需要增肌 no-cache=1 参数，避免性能消耗过大，只处理 1m 以上的
 // no-cache 在数据上报有抖动的情况下（system.cpu_detail），会造成多次查询不一致的情况，需要移除，统一使用 no-cache=1， 性能损耗持续观察
 func (i *Instance) noCache(ctx context.Context, start, step int64) int {
+	return 1
 	//if start%step > 0 && step > 60 {
 	//	return 1
 	//}
-	return 0
+	//return 0
 }
 
 // vmQuery

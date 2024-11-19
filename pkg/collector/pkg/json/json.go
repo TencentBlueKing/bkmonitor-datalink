@@ -10,6 +10,8 @@
 package json
 
 import (
+	"io"
+
 	"github.com/bytedance/sonic"
 )
 
@@ -25,4 +27,8 @@ func Marshal(v interface{}) ([]byte, error) {
 
 func Unmarshal(data []byte, v interface{}) error {
 	return sonicAPI.Unmarshal(data, v)
+}
+
+func NewEncoder(w io.Writer) sonic.Encoder {
+	return sonicAPI.NewEncoder(w)
 }

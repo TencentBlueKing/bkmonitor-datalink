@@ -380,7 +380,8 @@ func (d *BaseDiscover) loopHandleTargetGroup() {
 
 		case <-ticker.C:
 			counter++
-			tgList, updatedAt := shareddiscovery.FetchTargetGroups(d.UK())
+			// 避免 skip 情况下多申请不必要的内存
+			updatedAt := shareddiscovery.FetchTargetGroupsUpdatedAt(d.UK())
 			logger.Debugf("%s updated at: %v", d.Name(), time.Unix(updatedAt, 0))
 			if time.Now().Unix()-updatedAt > duration*2 && counter%resync != 0 && d.fetched {
 				logger.Debugf("%s found nothing changed, skip targetgourps handled", d.Name())
@@ -388,6 +389,8 @@ func (d *BaseDiscover) loopHandleTargetGroup() {
 			}
 			d.fetched = true
 
+			// 真正需要变更时才 fetch targetgroups
+			tgList := shareddiscovery.FetchTargetGroups(d.UK())
 			for _, tg := range tgList {
 				if tg == nil {
 					continue
@@ -571,6 +574,12 @@ func (d *BaseDiscover) notify(source string, childConfigs []*ChildConfig) {
 	d.childConfigMut.Lock()
 	defer d.childConfigMut.Unlock()
 
+	// 如果新的 source/childconfigs 为空且之前的缓存也为空 那就无需对比处理了
+	if len(childConfigs) == 0 && len(d.childConfigGroups[source]) == 0 {
+		logger.Debugf("%s skip handle notify", d.Name())
+		return
+	}
+
 	if _, ok := d.childConfigGroups[source]; !ok {
 		d.childConfigGroups[source] = make(map[uint64]*ChildConfig)
 	}
@@ -608,6 +617,12 @@ func (d *BaseDiscover) notify(source string, childConfigs []*ChildConfig) {
 	if changed {
 		logger.Infof("%s found targetgroup.source changed", source)
 		Publish()
+	}
+
+	// 删除事件 即后续 source 可能不会再有任何事件了
+	if len(d.childConfigGroups[source]) == 0 {
+		delete(d.childConfigGroups, source)
+		logger.Infof("delete source (%s), cause no childconfigs", source)
 	}
 }
 

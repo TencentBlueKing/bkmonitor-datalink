@@ -268,19 +268,11 @@ func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildCon
 		}
 	}
 
-	onSuccess := true
-	secretClient := c.client.CoreV1().Secrets(configs.G().MonitorNamespace)
-
-	secrets, err := secretClient.List(c.ctx, metav1.ListOptions{})
-	if err != nil {
-		logger.Errorf("failed to list secret, error: %v", err)
-		onSuccess = false
-	}
-
 	// 记录已经存在的 secrets
 	existSecrets := make(map[string]struct{})
-	for _, secret := range secrets.Items {
-		existSecrets[secret.Name] = struct{}{}
+	secrets := c.objectsController.SecretObjs()
+	for _, secret := range secrets {
+		existSecrets[secret.ID.Name] = struct{}{}
 	}
 	logger.Infof("list %d secrets from %s namespace", len(existSecrets), configs.G().MonitorNamespace)
 
@@ -289,7 +281,7 @@ func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildCon
 	// 如果 node 已经没有采集配置了 则需要删除
 	for _, node := range noConfigNodes {
 		secretName := tasks.GetDaemonSetTaskSecretName(node)
-		if _, ok := existSecrets[secretName]; !ok && onSuccess {
+		if _, ok := existSecrets[secretName]; !ok {
 			continue
 		}
 		dropSecrets[secretName] = struct{}{}
@@ -313,6 +305,7 @@ func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildCon
 		}
 	}
 
+	secretClient := c.client.CoreV1().Secrets(configs.G().MonitorNamespace)
 	for secretName := range dropSecrets {
 		Slowdown()
 		logger.Infof("remove secret %s", secretName)
@@ -543,24 +536,23 @@ func (c *Operator) collectChildConfigs() ([]*discover.ChildConfig, []*discover.C
 
 func (c *Operator) cleanupInvalidSecrets() {
 	secretClient := c.client.CoreV1().Secrets(configs.G().MonitorNamespace)
-	secrets, err := secretClient.List(c.ctx, metav1.ListOptions{
-		LabelSelector: "createdBy=bkmonitor-operator",
-	})
-	if err != nil {
-		logger.Errorf("failed to list secrets, err: %v", err)
-		return
-	}
+	secrets := c.objectsController.SecretObjs()
 
 	// 清理不合法的 secrets
-	for _, secret := range secrets.Items {
+	for _, secret := range secrets {
+		// 只处理 operator 创建的 secrets
+		if secret.Labels["createdBy"] != "bkmonitor-operator" {
+			continue
+		}
+
 		if _, ok := secret.Labels[tasks.LabelTaskType]; !ok {
-			if err := secretClient.Delete(c.ctx, secret.Name, metav1.DeleteOptions{}); err != nil {
-				c.mm.IncHandledSecretFailedCounter(secret.Name, action.Delete, err)
-				logger.Errorf("failed to delete secret %s, err: %v", secret.Name, err)
+			if err := secretClient.Delete(c.ctx, secret.ID.Name, metav1.DeleteOptions{}); err != nil {
+				c.mm.IncHandledSecretFailedCounter(secret.ID.Name, action.Delete, err)
+				logger.Errorf("failed to delete secret %s, err: %v", secret.ID.Name, err)
 				continue
 			}
-			c.mm.IncHandledSecretSuccessCounter(secret.Name, action.Delete)
-			logger.Infof("remove invalid secret %s", secret.Name)
+			c.mm.IncHandledSecretSuccessCounter(secret.ID.Name, action.Delete)
+			logger.Infof("remove invalid secret %s", secret.ID.Name)
 		}
 	}
 }

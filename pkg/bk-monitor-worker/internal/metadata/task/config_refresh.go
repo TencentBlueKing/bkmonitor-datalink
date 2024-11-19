@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	consulSvc "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
@@ -182,21 +183,21 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {
-			logger.Errorf("RefreshDatasource Runtime panic caught: %v", err)
+			logger.Errorf("RefreshDatasource: Runtime panic caught: %v", err)
 		}
 	}()
 
-	logger.Infof("start to refresh data source, start_time: %s", time.Now().Truncate(time.Second))
+	logger.Infof("RefreshDatasource: start to refresh data source, start_time: %s", time.Now().Truncate(time.Second))
 
 	db := mysql.GetDBSession().DB
 	// 过滤满足条件的记录
 	var dataSourceRtList []resulttable.DataSourceResultTable
 	if err := resulttable.NewDataSourceResultTableQuerySet(db).Select("bk_data_id", "table_id").All(&dataSourceRtList); err != nil {
-		logger.Errorf("query datasourceresulttable record error, %v", err)
+		logger.Errorf("RefreshDatasource: query datasourceresulttable record error, %v", err)
 		return err
 	}
 	if len(dataSourceRtList) == 0 {
-		logger.Infof("no data source need update, skip")
+		logger.Infof("RefreshDatasource: no data source need update, skip")
 		return nil
 	}
 
@@ -212,7 +213,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	for _, chunkRts := range slicex.ChunkSlice(rtList, 0) {
 		var tempList []resulttable.ResultTable
 		if err := resulttable.NewResultTableQuerySet(db).IsDeletedEq(false).IsEnableEq(true).TableIdIn(chunkRts...).Select("table_id").All(&tempList); err != nil {
-			logger.Errorf("query enabled result table error, %v", err)
+			logger.Errorf("RefreshDatasource: query enabled result table error, %v", err)
 			continue
 		}
 		// 组装数据
@@ -225,7 +226,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	}
 	// 如果可用的结果表为空，则忽略
 	if len(enabledRtList) == 0 {
-		logger.Warn("not found enabled result by result_table, skip")
+		logger.Warn("RefreshDatasource: not found enabled result by result_table, skip")
 		return nil
 	}
 	// 过滤到可用的数据源
@@ -244,12 +245,12 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	// data id 数量可控，先不拆分；仅刷新未迁移到计算平台的数据源 ID 及通过 gse 创建的数据源 ID
 	if err := resulttable.NewDataSourceQuerySet(db).CreatedFromEq(common.DataIdFromBkGse).IsEnableEq(true).
 		BkDataIdIn(dataIdList...).OrderDescByLastModifyTime().All(&dataSourceList); err != nil {
-		logger.Errorf("query datasource record error, %v", err)
+		logger.Errorf("RefreshDatasource: query datasource record error, %v", err)
 		return err
 	}
 
 	if len(dataSourceList) == 0 {
-		logger.Infof("no datasource need update")
+		logger.Infof("RefreshDatasource: no datasource need update")
 		return nil
 	}
 
@@ -264,17 +265,35 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 				wg.Done()
 			}()
 			dsSvc := service.NewDataSourceSvc(&ds)
-			if err := dsSvc.RefreshOuterConfig(ctx); err != nil {
-				logger.Errorf("data_id [%v] failed to refresh outer config, %v", dsSvc.BkDataId, err)
-			} else {
-				logger.Infof("data_id [%v] refresh all outer success", dsSvc.BkDataId)
+			consulClient, err := consul.GetInstance()
+			if err != nil {
+				logger.Errorf("RefreshDatasource: data_id [%v] failed to get consul client, %v,skip", dsSvc.BkDataId, err)
+				return
 			}
+
+			oldIndex, oldValueBytes, err := consulClient.Get(dsSvc.ConsulConfigPath())
+			if err != nil {
+				logger.Errorf("RefreshDatasource: data_id [%v] failed to get old value from [%v], %v, will set modifyIndex as 0", dsSvc.BkDataId, dsSvc.ConsulConfigPath(), err)
+				return
+			}
+			if oldValueBytes == nil {
+				logger.Infof("RefreshDatasource: data_id [%v] consul path [%v] not found, will set modifyIndex as 0", dsSvc.BkDataId, dsSvc.ConsulConfigPath())
+			}
+			modifyIndex := oldIndex
+
+			logger.Infof("RefreshDatasource: data_id [%v] try to refresh consul config, modifyIndex: %v", dsSvc.BkDataId, modifyIndex)
+
+			if err := dsSvc.RefreshOuterConfig(ctx, modifyIndex, oldValueBytes); err != nil {
+				logger.Errorf("RefreshDatasource: data_id [%v] failed to refresh outer config, %v", dsSvc.BkDataId, err)
+				return
+			}
+			logger.Infof("RefreshDatasource: data_id [%v] refresh all outer success", dsSvc.BkDataId)
 		}(dataSource, wg, ch)
 
 	}
 	wg.Wait()
 
-	logger.Infof("refresh data source end, end_time: %s", time.Now().Truncate(time.Second))
+	logger.Infof("RefreshDatasource: refresh data source end, end_time: %s", time.Now().Truncate(time.Second))
 	return nil
 }
 

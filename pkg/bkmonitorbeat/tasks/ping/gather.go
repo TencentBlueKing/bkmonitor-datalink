@@ -12,7 +12,6 @@ package ping
 import (
 	"context"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
@@ -24,80 +23,6 @@ import (
 // Gather :
 type Gather struct {
 	tasks.BaseTask
-}
-
-// InitTargets 初始化targets
-var InitTargets = func(targets []*configs.Target) []Target {
-	targetList := make([]Target, len(targets))
-	for index, target := range targets {
-		targetList[index] = target
-	}
-	return targetList
-}
-
-// analyzeResult 处理结果发送
-func (g *Gather) analyzeResult(resMap map[string]map[string]*Info, dataID int32, outChan chan<- define.Event) {
-	// 遍历结果，组装event并发送
-	recvCountMap := make(map[string]int)
-	for _, vMap := range resMap {
-		for ipStr, v := range vMap {
-			// 内部逻辑通过 ipStr 为空，将异常信息透传出来
-			if ipStr == "" {
-				logger.Errorf("fail to gather ping result, ip=%v", v.Name)
-				continue
-			}
-
-			config := g.GetConfig().(*configs.PingTaskConfig)
-			event := tasks.NewPingEvent(config)
-			now := time.Now()
-			// 计算丢包率
-			var lossPercent float64
-			if v.RecvCount > v.TotalCount {
-				lossPercent = 0
-			} else {
-				lossPercent = float64(v.TotalCount-v.RecvCount) / float64(v.TotalCount)
-			}
-			event.Time = now
-			event.DataID = dataID
-			var resolvedIP string
-			if v.Type == "domain" {
-				resolvedIP = ipStr
-			}
-			dimensions := map[string]string{
-				"target":      v.Name, // 实际ping的目标地址
-				"target_type": v.Type, // 目标类型
-				"error_code":  "0",
-				"bk_biz_id":   strconv.Itoa(int(g.TaskConfig.GetBizID())),
-				"resolved_ip": resolvedIP,
-			}
-
-			// available 和 task_duration是兼容其他拨测的格式
-			metrics := map[string]interface{}{
-				"available":    1 - lossPercent,
-				"loss_percent": lossPercent,
-				"max_rtt":      v.MaxRTT, // 最大时延
-				"min_rtt":      v.MinRTT,
-			}
-			if v.RecvCount != 0 {
-				avgRtt := v.TotalRTT / float64(v.RecvCount)
-				metrics["avg_rtt"] = avgRtt
-				metrics["task_duration"] = avgRtt
-				recvCountMap[v.Type] += v.RecvCount
-			} else {
-				metrics["avg_rtt"] = 0
-				metrics["task_duration"] = 0
-			}
-			event.Dimensions = dimensions
-			event.Metrics = metrics
-
-			// 如果需要使用自定义上报，则将事件转换为自定义事件
-			if config.CustomReport {
-				outChan <- tasks.NewCustomEventByPingEvent(event)
-			} else {
-				outChan <- event
-			}
-		}
-	}
 }
 
 // Run :
@@ -113,51 +38,153 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	defer cancel()
 
 	// 生成初始化参数
-	totalNum := taskConf.TotalNum
-	maxRTT := taskConf.MaxRTT
-	batchSize := taskConf.BatchSize
-	targetList := InitTargets(taskConf.Targets)
-	pingSize := taskConf.PingSize
-	ipType := taskConf.TargetIPType
-	dnsCheckMode := taskConf.DNSCheckMode
+	maxRTT, err := time.ParseDuration(taskConf.MaxRTT)
+	if err != nil {
+		logger.Errorf("parse max rtt failed, error:%s", err)
+		tasks.SendFailEvent(taskConf.GetDataID(), e)
+		return
+	}
 
-	if len(targetList) == 0 {
+	// 发送间隔
+	if taskConf.SendInterval == "" {
+		taskConf.SendInterval = "500us"
+	}
+	sendInterval, err := time.ParseDuration(taskConf.SendInterval)
+	if err != nil {
+		logger.Errorf("parse send interval failed, error:%s", err)
+		tasks.SendFailEvent(taskConf.GetDataID(), e)
+		return
+	}
+
+	if len(taskConf.Targets) == 0 {
 		// 目标为空则直接返回空
 		logger.Debugf("icmp targetList is empty")
 		return
 	}
 
-	// 获取ping工具
-	tool, err := NewBatchPingTool(subCtx, targetList, totalNum, maxRTT, pingSize, batchSize, ipType, dnsCheckMode, g.GetSemaphore())
+	// ping目标准备
+	var targets []*PingerTarget
+	for _, target := range taskConf.Targets {
+		targets = append(targets, &PingerTarget{
+			Target:     target.GetTarget(),
+			TargetType: target.GetTargetType(),
+			Labels:     target.Labels,
+
+			DnsCheckMode: taskConf.DNSCheckMode,
+			DomainIpType: taskConf.TargetIPType,
+
+			MaxRtt: maxRTT,
+			Times:  taskConf.TotalNum,
+			Size:   taskConf.PingSize,
+		})
+	}
+
+	// 启动ping任务
+	pinger := NewPinger(sendInterval, !taskConf.NotPrivileged)
+	err = pinger.Ping(subCtx, targets)
 	if err != nil {
-		logger.Errorf("new ping tool failed, error:%s", err)
+		logger.Errorf("ping failed, error:%v", err)
 		tasks.SendFailEvent(taskConf.GetDataID(), e)
 		return
 	}
 
-	// 记录结果数
+	// 数据处理
 	resultCount := 0
+	config := g.GetConfig().(*configs.PingTaskConfig)
 
-	// doFunc提供一个回调函数给pingTool，提供处理ping结果的能力
-	doFunc := func(resMap map[string]map[string]*Info, wg *sync.WaitGroup) {
-		defer func() {
-			wg.Done()
-			g.GetSemaphore().Release(1)
-		}()
-		// 结果计数叠加
-		resultCount = resultCount + len(resMap)
-		g.analyzeResult(resMap, taskConf.DataID, e)
+	pingEvents := make([]*tasks.PingEvent, 0)
+	for _, target := range targets {
+		for ip, rttList := range target.GetResult() {
+			// 计数
+			resultCount++
+
+			// 丢包率及时延统计
+			lossCount, rttTotal, maxRtt, minRtt := 0, 0.0, 0.0, 0.0
+			for _, rtt := range rttList {
+				rtt := rtt.Seconds() * 1000
+
+				if rtt <= 0 {
+					lossCount++
+				} else {
+					rttTotal += rtt
+					if rtt > maxRtt {
+						maxRtt = rtt
+					}
+					if rtt < minRtt || minRtt == 0 {
+						minRtt = rtt
+					}
+				}
+			}
+
+			// 丢包率及可用率
+			lossPercent := float64(lossCount) / float64(len(rttList))
+			available := 1 - lossPercent
+
+			// 计算平均时延
+			var avgRtt float64
+			if rttTotal > 0 {
+				avgRtt = rttTotal / float64(len(rttList)-lossCount)
+			}
+
+			// 解析域名时，resolved_ip为解析后的ip
+			resolvedIP := ""
+			if target.TargetType == "domain" {
+				resolvedIP = ip
+			}
+
+			// 生成事件
+			event := tasks.NewPingEvent(config)
+			event.Time = time.Now()
+			event.DataID = taskConf.GetDataID()
+			event.Dimensions = map[string]string{
+				"target":      target.Target,
+				"target_type": target.TargetType,
+				"error_code":  "0",
+				"bk_biz_id":   strconv.Itoa(int(taskConf.GetBizID())),
+				"resolved_ip": resolvedIP,
+			}
+
+			// 将target的labels合并到event的dimensions中
+			for k, v := range target.Labels {
+				// 如果event中没有该key，则添加
+				if _, ok := event.Dimensions[k]; !ok {
+					event.Dimensions[k] = v
+				}
+			}
+
+			event.Metrics = map[string]interface{}{
+				"available":     available,
+				"loss_percent":  lossPercent,
+				"max_rtt":       maxRtt,
+				"min_rtt":       minRtt,
+				"avg_rtt":       avgRtt,
+				"task_duration": avgRtt,
+			}
+
+			// 如果需要使用自定义上报，则将事件转换为自定义事件
+			if config.CustomReport {
+				pingEvents = append(pingEvents, event)
+
+				// 为了避免上报数据条数过多，将数据分批上报
+				if len(pingEvents) >= 512 {
+					e <- tasks.NewCustomEventByPingEvent(pingEvents...)
+
+					// 清空数据
+					pingEvents = make([]*tasks.PingEvent, 0)
+				}
+			} else {
+				e <- event
+			}
+		}
 	}
 
-	// 启动ping操作
-	err = tool.Ping(doFunc)
-	if err != nil {
-		logger.Errorf("ping failed, error:%v", err)
-		tasks.SendFailEvent(taskConf.GetDataID(), e)
+	// 如果有剩余数据，则上报
+	if len(pingEvents) > 0 {
+		e <- tasks.NewCustomEventByPingEvent(pingEvents...)
 	}
 
 	// 任务结束
-	logger.Infof("ping task get %v result", resultCount)
+	logger.Infof("ping task(%d) get %v result", taskConf.TaskID, resultCount)
 }
 
 // New :

@@ -616,7 +616,7 @@ func (p *Pinger) handleResponse(packet *pingerPacket) error {
 	defer instance.lock.Unlock()
 
 	result := instance.results[index]
-	if result.IsFinished() {
+	if result.IsFinished() || !result.IsSent() {
 		return nil
 	}
 

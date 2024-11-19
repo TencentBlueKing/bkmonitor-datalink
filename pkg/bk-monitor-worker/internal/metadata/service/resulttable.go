@@ -381,7 +381,7 @@ func (r ResultTableSvc) RefreshEtlConfig() error {
 	if err := resulttable.NewDataSourceQuerySet(db).BkDataIdEq(dsrt.BkDataId).One(&ds); err != nil {
 		return err
 	}
-	if err := NewDataSourceSvc(&ds).RefreshConsulConfig(context.TODO()); err != nil {
+	if err := NewDataSourceSvc(&ds).RefreshConsulConfig(context.TODO(), 0, nil); err != nil {
 		return err
 	}
 	logger.Infof("RefreshEtlConfig:table_id [%s] refresh etl config success", r.TableId)

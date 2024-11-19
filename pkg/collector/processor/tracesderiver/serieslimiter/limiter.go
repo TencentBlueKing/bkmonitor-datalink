@@ -18,7 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/labels"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
 )
 
 var (

@@ -13,7 +13,7 @@ import (
 	"net/http"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/semaphore"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/semaphore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 

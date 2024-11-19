@@ -68,7 +68,7 @@ func (m *MockStore) Get(key string) (uint64, []byte, error) {
 	ret := m.ctrl.Call(m, "Get", key)
 	ret0, _ := ret[0].([]byte)
 	ret1, _ := ret[1].(error)
-	return uint64(0),ret0, ret1
+	return 0,ret0, ret1
 }
 
 // Get indicates an expected call of Get.

@@ -182,7 +182,7 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 		tx.Commit()
 	}
 	// 触发consul刷新
-	err = NewDataSourceSvc(&ds).RefreshOuterConfig(context.Background(), uint64(0), nil)
+	err = NewDataSourceSvc(&ds).RefreshOuterConfig(context.Background(), 0, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -100,12 +100,12 @@ func (c *Instance) Get(key string) (uint64, []byte, error) {
 	kvPair, _, err := c.APIClient.KV().Get(key, nil)
 	if err != nil {
 		logger.Errorf("Get: get consul key: %s error, %v", key, err)
-		return uint64(0), nil, err
+		return 0, nil, err
 	}
 	if kvPair == nil {
 		// Key not exist
 		logger.Infof("Get: key: %s not exist from consul", key)
-		return uint64(0), nil, nil
+		return 0, nil, nil
 	}
 
 	return kvPair.ModifyIndex, kvPair.Value, nil

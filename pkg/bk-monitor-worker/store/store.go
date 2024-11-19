@@ -29,7 +29,7 @@ func (*DummyStore) Put(key, val string, modifyIndex uint64, expiration time.Dura
 	return nil
 }
 
-func (*DummyStore) Get(key string) (uint64, []byte, error) { return uint64(0), nil, nil }
+func (*DummyStore) Get(key string) (uint64, []byte, error) { return 0, nil, nil }
 
 func (*DummyStore) Delete(key string) error { return nil }
 

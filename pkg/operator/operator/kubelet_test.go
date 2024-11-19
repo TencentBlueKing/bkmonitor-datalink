@@ -22,24 +22,22 @@ import (
 func TestGetNodeAddresses(t *testing.T) {
 	cases := []struct {
 		name              string
-		nodes             *corev1.NodeList
+		nodes             []*corev1.Node
 		expectedAddresses []string
 		expectedErrors    int
 	}{
 		{
 			name: "simple",
-			nodes: &corev1.NodeList{
-				Items: []corev1.Node{
-					{
-						ObjectMeta: metav1.ObjectMeta{
-							Name: "node-0",
-						},
-						Status: corev1.NodeStatus{
-							Addresses: []corev1.NodeAddress{
-								{
-									Address: "127.0.0.1",
-									Type:    corev1.NodeInternalIP,
-								},
+			nodes: []*corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "node-0",
+					},
+					Status: corev1.NodeStatus{
+						Addresses: []corev1.NodeAddress{
+							{
+								Address: "127.0.0.1",
+								Type:    corev1.NodeInternalIP,
 							},
 						},
 					},
@@ -50,31 +48,29 @@ func TestGetNodeAddresses(t *testing.T) {
 		},
 		{
 			name: "missing ip on one node",
-			nodes: &corev1.NodeList{
-				Items: []corev1.Node{
-					{
-						ObjectMeta: metav1.ObjectMeta{
-							Name: "node-0",
-						},
-						Status: corev1.NodeStatus{
-							Addresses: []corev1.NodeAddress{
-								{
-									Address: "node-0",
-									Type:    corev1.NodeHostName,
-								},
+			nodes: []*corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "node-0",
+					},
+					Status: corev1.NodeStatus{
+						Addresses: []corev1.NodeAddress{
+							{
+								Address: "node-0",
+								Type:    corev1.NodeHostName,
 							},
 						},
 					},
-					{
-						ObjectMeta: metav1.ObjectMeta{
-							Name: "node-1",
-						},
-						Status: corev1.NodeStatus{
-							Addresses: []corev1.NodeAddress{
-								{
-									Address: "127.0.0.1",
-									Type:    corev1.NodeInternalIP,
-								},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "node-1",
+					},
+					Status: corev1.NodeStatus{
+						Addresses: []corev1.NodeAddress{
+							{
+								Address: "127.0.0.1",
+								Type:    corev1.NodeInternalIP,
 							},
 						},
 					},

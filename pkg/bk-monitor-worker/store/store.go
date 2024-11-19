@@ -14,20 +14,22 @@ import (
 )
 
 type Store interface {
-	Open() error                                         // 创建一个连接
-	Put(key, val string, expiration time.Duration) error // 写入数据
-	Get(key string) ([]byte, error)                      // 通过 key 获取数据
-	Delete(key string) error                             // 删除 key
-	Close() error                                        // 关闭连接
+	Open() error                                                             // 创建一个连接
+	Put(key, val string, modifyIndex uint64, expiration time.Duration) error // 写入数据
+	Get(key string) (uint64, []byte, error)                                  // 通过 key 获取数据
+	Delete(key string) error                                                 // 删除 key
+	Close() error                                                            // 关闭连接
 }
 
 type DummyStore struct{}
 
 func (*DummyStore) Open() error { return nil }
 
-func (*DummyStore) Put(key, val string, expiration time.Duration) error { return nil }
+func (*DummyStore) Put(key, val string, modifyIndex uint64, expiration time.Duration) error {
+	return nil
+}
 
-func (*DummyStore) Get(key string) ([]byte, error) { return nil, nil }
+func (*DummyStore) Get(key string) (uint64, []byte, error) { return 0, nil, nil }
 
 func (*DummyStore) Delete(key string) error { return nil }
 

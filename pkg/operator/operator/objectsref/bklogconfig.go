@@ -70,13 +70,6 @@ func (e *bkLogConfigEntity) isVCluster(matcherLabel map[string]string) bool {
 	return ok
 }
 
-func (e *bkLogConfigEntity) getValues(matcherLabel map[string]string, key string, defaultValue string) string {
-	if v, ok := matcherLabel[key]; ok {
-		return v
-	}
-	return defaultValue
-}
-
 func (e *bkLogConfigEntity) getWorkloadName(name string, kind string) string {
 	if stringx.LowerEq(kind, kindReplicaSet) {
 		index := strings.LastIndex(name, "-")
@@ -85,7 +78,11 @@ func (e *bkLogConfigEntity) getWorkloadName(name string, kind string) string {
 	return name
 }
 
-func (e *bkLogConfigEntity) MatchWorkloadName(matcherLabels, matcherAnnotations map[string]string, ownerRefs []OwnerRef) bool {
+func (e *bkLogConfigEntity) MatchWorkload(labels, annotations map[string]string, ownerRefs []OwnerRef) bool {
+	return e.matchWorkloadType(labels, annotations, ownerRefs) && e.matchWorkloadType(labels, annotations, ownerRefs)
+}
+
+func (e *bkLogConfigEntity) matchWorkloadName(labels, annotations map[string]string, ownerRefs []OwnerRef) bool {
 	if e.Obj.Spec.WorkloadName == "" {
 		return true
 	}
@@ -96,9 +93,9 @@ func (e *bkLogConfigEntity) MatchWorkloadName(matcherLabels, matcherAnnotations 
 	}
 
 	var names []string
-	if e.isVCluster(matcherLabels) {
-		name := e.getValues(matcherAnnotations, configs.G().VCluster.WorkloadNameAnnotationKey, "")
-		kind := e.getValues(matcherAnnotations, configs.G().VCluster.WorkloadTypeAnnotationKey, "")
+	if e.isVCluster(labels) {
+		name := annotations[configs.G().VCluster.WorkloadNameAnnotationKey]
+		kind := annotations[configs.G().VCluster.WorkloadTypeAnnotationKey]
 		names = append(names, e.getWorkloadName(name, kind))
 	} else {
 		for _, ownerReference := range ownerRefs {
@@ -117,14 +114,14 @@ func (e *bkLogConfigEntity) MatchWorkloadName(matcherLabels, matcherAnnotations 
 	return false
 }
 
-func (e *bkLogConfigEntity) MatchWorkloadType(matcherLabels, matcherAnnotations map[string]string, ownerRefs []OwnerRef) bool {
+func (e *bkLogConfigEntity) matchWorkloadType(labels, annotations map[string]string, ownerRefs []OwnerRef) bool {
 	if e.Obj.Spec.WorkloadType == "" {
 		return true
 	}
 
 	var kinds []string
-	if e.isVCluster(matcherLabels) {
-		kinds = append(kinds, e.getValues(matcherAnnotations, configs.G().VCluster.WorkloadTypeAnnotationKey, ""))
+	if e.isVCluster(labels) {
+		kinds = append(kinds, annotations[configs.G().VCluster.WorkloadTypeAnnotationKey])
 	} else {
 		for _, ownerReference := range ownerRefs {
 			kinds = append(kinds, ownerReference.Kind)
@@ -258,7 +255,7 @@ func (m *BkLogConfigMap) Set(e *bkLogConfigEntity) {
 	m.entitiesMap[e.UUID()] = e
 }
 
-func (m *BkLogConfigMap) RangeBkLogConfig(visitFunc func(e *bkLogConfigEntity)) {
+func (m *BkLogConfigMap) Range(visitFunc func(e *bkLogConfigEntity)) {
 	m.lock.RLock()
 	defer m.lock.RUnlock()
 

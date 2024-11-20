@@ -21,8 +21,8 @@ import (
 	"go.uber.org/atomic"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 

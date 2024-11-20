@@ -16,8 +16,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/prettyprint"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/random"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
 )
 
 func TestStorageMulti(t *testing.T) {

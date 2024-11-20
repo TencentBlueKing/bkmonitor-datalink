@@ -20,10 +20,10 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/prettyprint"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/tokenparser"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )

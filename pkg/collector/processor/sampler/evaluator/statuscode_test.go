@@ -18,8 +18,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/random"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/testkits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 )
 
 func TestStatusCodeEvaluatorPost(t *testing.T) {

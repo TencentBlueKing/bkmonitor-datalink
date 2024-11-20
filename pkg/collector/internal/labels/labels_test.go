@@ -14,7 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/random"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
 )
 
 func TestFromMap(t *testing.T) {

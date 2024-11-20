@@ -19,10 +19,10 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/foreach"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/generator"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/mapstructure"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/testkits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 )
 

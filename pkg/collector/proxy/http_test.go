@@ -21,8 +21,8 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/testkits"
 )
 
 func TestV2Push(t *testing.T) {

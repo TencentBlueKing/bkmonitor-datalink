@@ -17,6 +17,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -27,17 +29,43 @@ const (
 	JwtHeaderKey  = "X-Bkapi-Jwt"
 	ClaimsAppKey  = "app"
 	ClaimsUserKey = "user"
+)
 
-	ClaimsExp = "exp"
-	ClaimsNbf = "nbf"
+const (
+	AppCodeKey  = "app.app_code"
+	UserNameKey = "user.username"
+
+	AuthAll = "*"
 )
 
 var (
-	errUnauthorized = errors.New("jwt auth token is unauthorized")
-	errExpired      = errors.New("jwt auth: token is expired")
-	errNBFInvalid   = errors.New("jwt auth: token nbf validation failed")
-	errIATInvalid   = errors.New("jwt auth: token iat validation failed")
+	errUnauthorized    = errors.New("token is unauthorized")
+	errExpired         = errors.New("token is expired")
+	errNBFInvalid      = errors.New("token nbf validation failed")
+	errIATInvalid      = errors.New("token iat validation failed")
+	errAppUnauthorized = errors.New("bk_app_code is unauthorized in this space_uid")
+	errSpaceUidEmpty   = errors.New("space_uid is empty")
 )
+
+type JwtPayLoad map[string]any
+
+func (j JwtPayLoad) AppCode() string {
+	if v, ok := j[AppCodeKey]; ok {
+		if vs, ok := v.(string); ok {
+			return vs
+		}
+	}
+	return ""
+}
+
+func (j JwtPayLoad) UserName() string {
+	if v, ok := j[UserNameKey]; ok {
+		if vs, ok := v.(string); ok {
+			return vs
+		}
+	}
+	return ""
+}
 
 func parseBKJWTToken(tokenString string, publicKey []byte) (jwt.MapClaims, error) {
 	keyFunc := func(token *jwt.Token) (interface{}, error) {
@@ -88,11 +116,17 @@ func parseData(verifiedMap map[string]any, key string, data map[string]any) {
 	return
 }
 
-func JwtAuthMiddleware(publicKey string) gin.HandlerFunc {
+func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var (
-			ctx = c.Request.Context()
-			err error
+			ctx  = c.Request.Context()
+			user = metadata.GetUser(ctx)
+			err  error
+
+			payLoad = make(JwtPayLoad)
+
+			appCode  string
+			spaceUID = user.SpaceUid
 		)
 
 		// 通过特性开关判断是否开启验证
@@ -105,20 +139,24 @@ func JwtAuthMiddleware(publicKey string) gin.HandlerFunc {
 		defer func() {
 			span.End(&err)
 
-			payLoad := metadata.GetJwtPayLoad(ctx)
 			if err != nil {
-				err = fmt.Errorf("unauthorized %s", err)
+				err = fmt.Errorf("jwt auth unauthorized: %s", err)
 				log.Errorf(ctx, err.Error())
 
-				metric.JWTRequestInc(ctx, c.ClientIP(), c.Request.URL.Path, payLoad.AppCode(), payLoad.UserName(), metric.StatusFailed)
+				metric.JWTRequestInc(ctx, c.ClientIP(), c.Request.URL.Path, payLoad.AppCode(), payLoad.UserName(), user.SpaceUid, metric.StatusFailed)
 
-				c.JSONP(http.StatusUnauthorized, gin.H{
-					"trace_id": span.TraceID(),
-					"error":    err.Error(),
-				})
+				res := gin.H{
+					"error": err.Error(),
+				}
+
+				if span.TraceID() != "" {
+					res["trace_id"] = span.TraceID()
+				}
+
+				c.JSON(http.StatusUnauthorized, res)
 				c.Abort()
 			} else {
-				metric.JWTRequestInc(ctx, c.ClientIP(), c.Request.URL.Path, payLoad.AppCode(), payLoad.UserName(), metric.StatusSuccess)
+				metric.JWTRequestInc(ctx, c.ClientIP(), c.Request.URL.Path, payLoad.AppCode(), payLoad.UserName(), user.SpaceUid, metric.StatusSuccess)
 
 				c.Next()
 			}
@@ -129,8 +167,8 @@ func JwtAuthMiddleware(publicKey string) gin.HandlerFunc {
 		span.Set("jwt-public-key", publicKey)
 		span.Set("jwt-token", tokenString)
 
-		// 如果未配置 publicKey 以及未传 jwtToken（兼容非 apigw 调用逻辑），则不启用 jwt 校验
-		if publicKey == "" || tokenString == "" {
+		// 如果未传 jwtToken（兼容非 apigw 调用逻辑），则不启用 jwt 校验
+		if tokenString == "" {
 			return
 		}
 
@@ -145,10 +183,47 @@ func JwtAuthMiddleware(publicKey string) gin.HandlerFunc {
 
 		span.Set("jwt-claims", claims)
 
-		jwtPayLoad := make(metadata.JwtPayLoad)
-		parseData(claims, "", jwtPayLoad)
-		span.Set("jwt-payload", jwtPayLoad)
+		parseData(claims, "", payLoad)
+		span.Set("jwt-payload", payLoad)
 
-		metadata.SetJwtPayLoad(ctx, jwtPayLoad)
+		if user.SpaceUid == "" {
+			err = errSpaceUidEmpty
+			return
+		}
+
+		appCode = payLoad.AppCode()
+
+		span.Set("bk_app_code", appCode)
+		span.Set("space_uid", spaceUID)
+
+		router, err := influxdb.GetSpaceTsDbRouter()
+		if err != nil {
+			return
+		}
+
+		// 获取默认配置
+		defaultSpaceUIDList := defaultAppCodeSpaces[appCode]
+		spaceUIDs := set.New[string](defaultSpaceUIDList...)
+		span.Set("default_space_uid_list", defaultSpaceUIDList)
+
+		// 获取路由空间配置
+		bkAppCodeSpaceUIDList := router.GetSpaceUIDList(ctx, appCode)
+		if bkAppCodeSpaceUIDList != nil {
+			spaceUIDs.Add(*bkAppCodeSpaceUIDList...)
+			span.Set("bk_app_code_space_uid_list", bkAppCodeSpaceUIDList)
+		}
+
+		// 拼接后的最终有权限的空间列表
+		span.Set("space_uid_set", spaceUIDs.String())
+
+		// 如果配置了全局查询则，通过校验
+		if spaceUIDs.Existed(AuthAll) {
+			return
+		}
+
+		if !spaceUIDs.Existed(spaceUID) {
+			err = errAppUnauthorized
+			return
+		}
 	}
 }

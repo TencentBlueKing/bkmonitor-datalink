@@ -80,7 +80,7 @@ func (s *Service) Reload(ctx context.Context) {
 		middleware.MetaData(&middleware.Params{
 			SlowQueryThreshold: SlowQueryThreshold,
 		}),
-		middleware.JwtAuthMiddleware(JwtPublicKey),
+		middleware.JwtAuthMiddleware(JwtPublicKey, JwtBkAppCodeSpaces),
 	)
 	registerDefaultHandlers(ctx, public)
 	api.RegisterRelation(ctx, public)

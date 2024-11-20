@@ -11,7 +11,6 @@ package middleware
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,11 +25,6 @@ import (
 type Params struct {
 	SlowQueryThreshold time.Duration
 }
-
-var (
-	once     sync.Once
-	localIPs []string
-)
 
 // MetaData 初始化所有原数据
 func MetaData(p *Params) gin.HandlerFunc {
@@ -67,14 +61,17 @@ func MetaData(p *Params) gin.HandlerFunc {
 				metric.APIRequestSecond(ctx, sub, c.Request.URL.Path, spaceUid)
 
 				// 记录慢查询
-				if p.SlowQueryThreshold > 0 && sub.Milliseconds() > p.SlowQueryThreshold.Milliseconds() {
-					log.Warnf(ctx,
-						fmt.Sprintf(
-							"slow query log request: %s, duration: %s",
-							c.Request.URL.Path, sub.String(),
-						),
-					)
+				if p != nil {
+					if p.SlowQueryThreshold > 0 && sub.Milliseconds() > p.SlowQueryThreshold.Milliseconds() {
+						log.Warnf(ctx,
+							fmt.Sprintf(
+								"slow query log request: %s, duration: %s",
+								c.Request.URL.Path, sub.String(),
+							),
+						)
+					}
 				}
+
 				span.Set("http-api-query-cost", int(sub.Milliseconds()))
 
 				status := metadata.GetStatus(ctx)

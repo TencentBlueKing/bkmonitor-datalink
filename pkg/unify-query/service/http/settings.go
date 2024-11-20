@@ -71,7 +71,8 @@ const (
 	ClusterMetricQueryPrefixConfigPath  = "http.cluster_metric.prefix"
 	ClusterMetricQueryTimeoutConfigPath = "http.cluster_metric.timeout"
 
-	JwtPublicKeyConfigPath = "jwt.public_key"
+	JwtPublicKeyConfigPath       = "jwt.public_key"
+	JwtBkAppCodeSpacesConfigPath = "jwt.bk_app_code_spaces"
 )
 
 var (
@@ -93,5 +94,6 @@ var (
 	ClusterMetricQueryPrefix  string
 	ClusterMetricQueryTimeout time.Duration
 
-	JwtPublicKey string
+	JwtPublicKey       string
+	JwtBkAppCodeSpaces map[string][]string
 )

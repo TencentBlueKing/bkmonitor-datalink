@@ -100,6 +100,7 @@ func LoadConfig() {
 	ClusterMetricQueryTimeout = viper.GetDuration(ClusterMetricQueryTimeoutConfigPath)
 
 	JwtPublicKey = viper.GetString(JwtPublicKeyConfigPath)
+	JwtBkAppCodeSpaces = viper.GetStringMapStringSlice(JwtBkAppCodeSpacesConfigPath)
 
 	promql.SetSegmented(&promql.Segmented{
 		Enable:      viper.GetBool(SegmentedEnable),

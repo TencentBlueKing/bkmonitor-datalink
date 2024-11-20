@@ -26,6 +26,7 @@ import (
 	"github.com/golang-jwt/jwt"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
@@ -56,17 +57,7 @@ func generateToken(data map[string]any, privateKey []byte) (string, error) {
 }
 
 func handler(c *gin.Context) {
-	ctx := c.Request.Context()
-	jwtPayLoad := metadata.GetJwtPayLoad(ctx)
-
-	for k := range jwtPayLoad {
-		if k == ClaimsExp || k == ClaimsNbf {
-			delete(jwtPayLoad, k)
-		}
-	}
-
-	c.JSON(http.StatusOK, jwtPayLoad)
-	return
+	c.Status(http.StatusOK)
 }
 
 func mockRSAKey() (string, string, error) {
@@ -104,63 +95,92 @@ func mockRSAKey() (string, string, error) {
 }
 
 func TestJwtAuthMiddleware(t *testing.T) {
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
 	r := gin.Default()
 
 	testPublicKey, testPrivateKey, err := mockRSAKey()
 	assert.NoError(t, err)
 
-	r.Use(JwtAuthMiddleware(testPublicKey))
+	r.Use(MetaData(nil), JwtAuthMiddleware(testPublicKey, map[string][]string{"my_code": {"my_space_uid"}}))
 
 	url := "/protected"
-
 	r.GET(url, handler)
 
-	userName := "tim"
-	appCode := "test-code-1"
+	testCases := map[string]struct {
+		appCode  string
+		spaceUID string
+		tenantID string
+		userName string
 
-	expected := `{"app.app_code":"test-code-1","app.tenant_id":"mo_0904","app.verified":true,"user.username":"tim","user.verified":true}`
-
-	jwtPayLoad := map[string]any{
-		ClaimsAppKey: map[string]any{
-			"verified":  true,
-			"app_code":  appCode,
-			"tenant_id": "mo_0904",
+		status   int
+		expected string
+	}{
+		"默认 appcode 可以访问所有空间": {
+			appCode:  influxdb.BkAppCode,
+			spaceUID: "test_1",
+			status:   http.StatusOK,
 		},
-		ClaimsUserKey: map[string]any{
-			"verified": true,
-			"username": userName,
+		"空间如果为空": {
+			appCode:  "my_code",
+			status:   http.StatusUnauthorized,
+			expected: `{"error":"jwt auth unauthorized: space_uid is empty"}`,
+		},
+		"访问无权限的空间授权": {
+			appCode:  "my_code",
+			spaceUID: "other_space_uid",
+			status:   http.StatusUnauthorized,
+			expected: `{"error":"jwt auth unauthorized: bk_app_code is unauthorized in this space_uid"}`,
+		},
+		"访问有权限的空间授权": {
+			appCode:  "my_code",
+			spaceUID: "my_space_uid",
+			status:   http.StatusOK,
+		},
+		"没有传 token": {
+			spaceUID: "other_space_uid",
+			status:   http.StatusOK,
 		},
 	}
 
-	// 解析 jwt
-	s, err := generateToken(jwtPayLoad, []byte(testPrivateKey))
-	assert.NoError(t, err)
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
 
-	metadata.InitMetadata()
-	ctx := metadata.InitHashID(context.Background())
-	reqWithToken, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	reqWithToken.Header.Set(JwtHeaderKey, s)
+			jwtPayLoad := map[string]any{
+				ClaimsAppKey: map[string]any{
+					"verified":  true,
+					"app_code":  c.appCode,
+					"tenant_id": c.tenantID,
+				},
+				ClaimsUserKey: map[string]any{
+					"verified": true,
+					"username": c.userName,
+				},
+			}
 
-	wWithToken := httptest.NewRecorder()
-	r.ServeHTTP(wWithToken, reqWithToken)
-	assert.Equal(t, http.StatusOK, wWithToken.Code)
+			// 解析 jwt
+			reqWithToken, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 
-	var payLoadByte []byte
-	payLoadByte, _ = io.ReadAll(wWithToken.Body)
-	assert.Equal(t, expected, string(payLoadByte))
+			if c.spaceUID != "" {
+				reqWithToken.Header.Set(metadata.SpaceUIDHeader, c.spaceUID)
+			}
 
-	payLoad := metadata.GetJwtPayLoad(ctx)
-	assert.Equal(t, appCode, payLoad.AppCode())
-	assert.Equal(t, userName, payLoad.UserName())
+			if c.appCode != "" {
+				s, err := generateToken(jwtPayLoad, []byte(testPrivateKey))
+				assert.NoError(t, err)
 
-	// 测试不传 jwtHeader 的请求，直接返回正常
-	ctx = metadata.InitHashID(ctx)
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	r.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
+				reqWithToken.Header.Set(JwtHeaderKey, s)
+			}
 
-	payLoadByte, _ = io.ReadAll(wWithToken.Body)
-	assert.Equal(t, ``, string(payLoadByte))
+			wWithToken := httptest.NewRecorder()
+			r.ServeHTTP(wWithToken, reqWithToken)
+			assert.Equal(t, c.status, wWithToken.Code)
 
+			res, _ := io.ReadAll(wWithToken.Body)
+			assert.Equal(t, c.expected, string(res))
+		})
+	}
 }

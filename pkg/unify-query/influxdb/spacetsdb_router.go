@@ -276,6 +276,12 @@ func (r *SpaceTsDbRouter) ReloadByChannel(ctx context.Context, channelKey string
 		channelKey = channelKey[len(r.routerPrefix)+1:]
 	}
 	switch channelKey {
+	case influxdb.BkAppSpaceChannelKey:
+		spaceUidList, err := r.router.GetBkAppSpace(ctx, hashKey)
+		if err != nil {
+			return err
+		}
+		err = r.Add(ctx, influxdb.BkAppSpaceKey, hashKey, &spaceUidList)
 	case influxdb.SpaceToResultTableChannelKey:
 		space, err := r.router.GetSpace(ctx, hashKey)
 		if err != nil {
@@ -391,6 +397,16 @@ func (r *SpaceTsDbRouter) Stop() error {
 		}
 	}
 	r.hasInit = false
+	return nil
+}
+
+// GetSpaceUIDList 获取 bkAppCode 下的空间信息
+func (r *SpaceTsDbRouter) GetSpaceUIDList(ctx context.Context, bkAppCode string) *influxdb.SpaceUIDList {
+	genericRet := r.Get(ctx, influxdb.BkAppSpaceKey, bkAppCode, true, true)
+	if genericRet != nil {
+		return genericRet.(*influxdb.SpaceUIDList)
+
+	}
 	return nil
 }
 

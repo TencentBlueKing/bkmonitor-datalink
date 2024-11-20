@@ -401,6 +401,7 @@ func HandleSpaceKeyPrint(c *gin.Context) {
 	if refresh {
 		res += fmt.Sprintf("Refresh %s + %s\n", typeKey, hashKey)
 		refreshMapping := map[string]string{
+			routerInfluxdb.BkAppSpaceKey:             routerInfluxdb.BkAppSpaceChannelKey,
 			routerInfluxdb.SpaceToResultTableKey:     routerInfluxdb.SpaceToResultTableChannelKey,
 			routerInfluxdb.FieldToResultTableKey:     routerInfluxdb.FieldToResultTableChannelKey,
 			routerInfluxdb.DataLabelToResultTableKey: routerInfluxdb.DataLabelToResultTableChannelKey,

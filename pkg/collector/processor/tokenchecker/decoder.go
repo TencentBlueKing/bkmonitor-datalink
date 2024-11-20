@@ -22,8 +22,8 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/metacache"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/tokenparser"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metacache"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 

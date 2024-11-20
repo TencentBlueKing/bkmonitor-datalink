@@ -69,7 +69,7 @@ func (c *hashCache) gc() {
 			}
 			c.mut.Unlock()
 			if total > 0 {
-				logger.Infof("%s cache remove %d items", c.name, total)
+				logger.Infof("%s hashCache remove %d items", c.name, total)
 			}
 
 		case <-c.done:
@@ -78,7 +78,7 @@ func (c *hashCache) gc() {
 	}
 }
 
-func (c *hashCache) Check(namespace string, tlset, tglbs model.LabelSet) bool {
+func (c *hashCache) Check(namespace string, tlset, tglbs model.LabelSet) (uint64, bool) {
 	h := c.hash(namespace, tlset, tglbs)
 
 	c.mut.Lock()
@@ -88,12 +88,10 @@ func (c *hashCache) Check(namespace string, tlset, tglbs model.LabelSet) bool {
 	if ok {
 		c.cache[h] = fasttime.UnixTimestamp()
 	}
-	return ok
+	return h, ok
 }
 
-func (c *hashCache) Set(namespace string, tlset, tglbs model.LabelSet) {
-	h := c.hash(namespace, tlset, tglbs)
-
+func (c *hashCache) Set(h uint64) {
 	c.mut.Lock()
 	defer c.mut.Unlock()
 

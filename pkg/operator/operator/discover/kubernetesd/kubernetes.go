@@ -90,6 +90,7 @@ func New(ctx context.Context, role string, checkFn define.CheckFunc, opts *Optio
 		AccessBearerToken: d.accessBearerToken,
 		AccessTlsConfig:   d.accessTLSConfig,
 		MatchNodeName:     d.matchNodeName,
+		IsStabled:         d.isStabled,
 	})
 	return d
 }
@@ -160,6 +161,13 @@ func (d *Discover) matchNodeName(lbs labels.Labels) string {
 		return target // 仅当为 nodetype 时返回 target
 	}
 	return ""
+}
+
+func (d *Discover) isStabled() bool {
+	if d.opts.BasicAuth != nil || d.opts.BearerTokenSecret != nil || d.opts.TLSConfig != nil {
+		return false
+	}
+	return true
 }
 
 func (d *Discover) accessBasicAuth() (string, string, error) {

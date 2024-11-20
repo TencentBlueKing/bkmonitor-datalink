@@ -43,10 +43,22 @@ import (
 
 // Helper 一系列执行函数 由 discover 自行实现
 type Helper struct {
-	AccessBasicAuth   func() (string, string, error)
+	// AccessBasicAuth 获取 BasicAuth 权限配置
+	AccessBasicAuth func() (string, string, error)
+
+	// AccessBearerToken 获取 BearerToken 权限配置
 	AccessBearerToken func() (string, error)
-	AccessTlsConfig   func() (*tlscommon.Config, error)
-	MatchNodeName     func(labels.Labels) string
+
+	// AccessTlsConfig 获取 TLS 权限配置
+	AccessTlsConfig func() (*tlscommon.Config, error)
+
+	// MatchNodeName 用于匹配采集配置 nodename
+	MatchNodeName func(labels.Labels) string
+
+	// IsStabled 判断在 discover 生命周期内 对于相同的输入 target labels 是否会产生相同的输出
+	// 比如部分 ServiceMonitor/PodMonitor 配置了 AuthSecret 那就需要每次都去跟 apiserver 通信获取
+	// 当 stabled 时，可以使用 *ChildConfig 缓存加速计算
+	IsStabled func() bool
 }
 
 // CommonOptions baseDiscover 通用的 Options
@@ -87,8 +99,10 @@ type BaseDiscover struct {
 	mm            *shareddiscovery.MetricMonitor
 	checkNodeFunc define.CheckFunc
 	fetched       bool
-	cache         *hashCache
 	helper        Helper
+
+	hc *hashCache
+	cc *childConfigCache
 
 	// 任务配置文件信息 通过 source 进行分组 使用 hash 进行唯一校验
 	childConfigMut    sync.RWMutex
@@ -155,7 +169,8 @@ func (d *BaseDiscover) PreStart() {
 
 	d.ctx, d.cancel = context.WithCancel(d.parentCtx)
 	d.childConfigGroups = make(map[string]map[uint64]*ChildConfig)
-	d.cache = newHashCache(d.opts.Name, time.Minute*10)
+	d.hc = newHashCache(d.opts.Name, time.Minute*10)
+	d.cc = newChildConfigCache(d.opts.Name, time.Minute*10)
 	logger.Infof("starting discover %s", d.Name())
 }
 
@@ -174,7 +189,8 @@ func (d *BaseDiscover) Stop() {
 
 	d.wg.Wait()
 	d.mm.IncStoppedCounter()
-	d.cache.Clean()
+	d.hc.Clean()
+	d.cc.Clean()
 	logger.Infof("shutting discover %s", d.Name())
 }
 
@@ -453,6 +469,26 @@ func matchSelector(labels []labels.Label, selector map[string]string) bool {
 	return count == len(selector)
 }
 
+func (d *BaseDiscover) handleTargetWithCache(h uint64, namespace string, tlset, tglbs model.LabelSet) (*ChildConfig, error) {
+	if d.helper.IsStabled != nil && !d.helper.IsStabled() {
+		return d.handleTarget(namespace, tlset, tglbs)
+	}
+
+	v, ok := d.cc.Get(h)
+	if ok {
+		d.mm.IncCreatedChildConfigCachedCounter("childconfig")
+		return v, nil
+	}
+
+	childConfig, err := d.handleTarget(namespace, tlset, tglbs)
+	if err != nil {
+		return nil, err
+	}
+
+	d.cc.Set(h, childConfig) // 当且仅当创建成功时才缓存
+	return childConfig, nil
+}
+
 func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSet) (*ChildConfig, error) {
 	lbls := labelspool.Get()
 	defer labelspool.Put(lbls)
@@ -545,20 +581,20 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 	childConfigs := make([]*ChildConfig, 0)
 
 	for _, tlset := range targetGroup.Targets {
-		skipped := d.cache.Check(namespace, tlset, targetGroup.Labels)
+		h, skipped := d.hc.Check(namespace, tlset, targetGroup.Labels)
 		if skipped {
-			d.mm.IncCreatedChildConfigCachedCounter()
+			d.mm.IncCreatedChildConfigCachedCounter("hash")
 			continue
 		}
 
-		childConfig, err := d.handleTarget(namespace, tlset, targetGroup.Labels)
+		childConfig, err := d.handleTargetWithCache(h, namespace, tlset, targetGroup.Labels)
 		if err != nil {
 			logger.Errorf("%s handle target failed: %v", d.Name(), err)
 			d.mm.IncCreatedChildConfigFailedCounter()
 			continue
 		}
 		if childConfig == nil {
-			d.cache.Set(namespace, tlset, targetGroup.Labels)
+			d.hc.Set(h)
 			continue
 		}
 

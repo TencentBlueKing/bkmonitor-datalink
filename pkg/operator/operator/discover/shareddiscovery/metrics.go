@@ -59,7 +59,7 @@ var (
 			Name:      "discover_created_config_cached_total",
 			Help:      "discover created child config cached total",
 		},
-		[]string{"name"},
+		[]string{"name", "cache"},
 	)
 
 	discoverHandledTgTotal = promauto.NewCounterVec(
@@ -123,8 +123,8 @@ func (m *MetricMonitor) IncCreatedChildConfigFailedCounter() {
 	discoverCreatedChildConfigFailedTotal.WithLabelValues(m.name).Inc()
 }
 
-func (m *MetricMonitor) IncCreatedChildConfigCachedCounter() {
-	discoverCreatedChildConfigCachedTotal.WithLabelValues(m.name).Inc()
+func (m *MetricMonitor) IncCreatedChildConfigCachedCounter(cache string) {
+	discoverCreatedChildConfigCachedTotal.WithLabelValues(m.name, cache).Inc()
 }
 
 func (m *MetricMonitor) IncHandledTgCounter() {

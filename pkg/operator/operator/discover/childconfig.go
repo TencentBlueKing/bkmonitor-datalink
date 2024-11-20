@@ -12,8 +12,12 @@ package discover
 import (
 	"fmt"
 	"hash/fnv"
+	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/fasttime"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // ChildConfig 子任务配置文件信息
@@ -41,4 +45,82 @@ func (c ChildConfig) Hash() uint64 {
 	h.Write(c.Data)
 	h.Write([]byte(c.Mask))
 	return h.Sum64()
+}
+
+type childConfigWithTime struct {
+	config  *ChildConfig
+	updated int64
+}
+
+type childConfigCache struct {
+	name    string
+	mut     sync.RWMutex
+	cache   map[uint64]*childConfigWithTime
+	expired time.Duration
+	done    chan struct{}
+}
+
+func newChildConfigCache(name string, expired time.Duration) *childConfigCache {
+	c := &childConfigCache{
+		name:    name,
+		cache:   make(map[uint64]*childConfigWithTime),
+		expired: expired,
+		done:    make(chan struct{}),
+	}
+
+	go c.gc()
+	return c
+}
+
+func (c *childConfigCache) Get(h uint64) (*ChildConfig, bool) {
+	c.mut.RLock()
+	defer c.mut.RUnlock()
+
+	v, ok := c.cache[h]
+	if ok {
+		c.cache[h].updated = fasttime.UnixTimestamp()
+	}
+	return v.config, ok
+}
+
+func (c *childConfigCache) Set(h uint64, config *ChildConfig) {
+	c.mut.Lock()
+	defer c.mut.Unlock()
+
+	c.cache[h] = &childConfigWithTime{
+		config:  config,
+		updated: fasttime.UnixTimestamp(),
+	}
+}
+
+func (c *childConfigCache) Clean() {
+	close(c.done)
+}
+
+func (c *childConfigCache) gc() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			now := time.Now().Unix()
+			secs := int64(c.expired.Seconds())
+			var total int
+			c.mut.Lock()
+			for k, v := range c.cache {
+				if now-v.updated > secs {
+					delete(c.cache, k)
+					total++
+				}
+			}
+			c.mut.Unlock()
+			if total > 0 {
+				logger.Infof("%s childConfigCache remove %d items", c.name, total)
+			}
+
+		case <-c.done:
+			return
+		}
+	}
 }

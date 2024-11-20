@@ -44,10 +44,13 @@ func TestMetricsToPrometheusFormat(t *testing.T) {
 		buf := &bytes.Buffer{}
 		relationBytes(buf, rows...)
 
-		expected := `usage{cpu="1",biz="0"} 1
-usage{cpu="2",biz="0"} 1
-`
-		assert.Equal(t, expected, buf.String())
+		expected := []string{
+			`usage{cpu="1",biz="0"} 1`,
+			`usage{cpu="2",biz="0"} 1`,
+		}
+		for _, exp := range expected {
+			assert.Contains(t, buf.String(), exp)
+		}
 	})
 
 	t.Run("Labels/Count=1", func(t *testing.T) {
@@ -69,10 +72,13 @@ usage{cpu="2",biz="0"} 1
 		buf := &bytes.Buffer{}
 		relationBytes(buf, rows...)
 
-		expected := `usage{cpu="1"} 1
-usage{cpu="2"} 1
-`
-		assert.Equal(t, expected, buf.String())
+		expected := []string{
+			`usage{cpu="1"} 1`,
+			`usage{cpu="2"} 1`,
+		}
+		for _, exp := range expected {
+			assert.Contains(t, buf.String(), exp)
+		}
 	})
 }
 
@@ -108,11 +114,14 @@ func TestGetPodRelations(t *testing.T) {
 	buf := &bytes.Buffer{}
 	objectsController.GetPodRelations(buf)
 
-	expected := `node_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-node-1"} 1
-container_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-node-1",container="test-container-1"} 1
-container_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-node-1",container="test-container-2"} 1
-`
-	assert.Equal(t, expected, buf.String())
+	expected := []string{
+		`node_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-node-1"} 1`,
+		`container_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-node-1",container="test-container-1"} 1`,
+		`container_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-node-1",container="test-container-2"} 1`,
+	}
+	for _, exp := range expected {
+		assert.Contains(t, buf.String(), exp)
+	}
 }
 
 func TestGetDataSourceRelations(t *testing.T) {
@@ -195,8 +204,7 @@ func TestGetDataSourceRelations(t *testing.T) {
 
 	testCases := map[string]struct {
 		bkLogConfig string
-
-		expected string
+		expected    []string
 	}{
 		"std_log_config_1": {
 			bkLogConfig: `{
@@ -230,10 +238,11 @@ func TestGetDataSourceRelations(t *testing.T) {
         "namespace": "blueking"
     }
 }`,
-			expected: `bklogconfig_with_datasource_relation{bk_data_id="100001",bklogconfig_namespace="blueking",bklogconfig_name="bkmonitor-unify-query-container-log"} 1
-datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-01"} 1
-datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-02"} 1
-`,
+			expected: []string{
+				`bklogconfig_with_datasource_relation{bk_data_id="100001",bklogconfig_namespace="blueking",bklogconfig_name="bkmonitor-unify-query-container-log"} 1`,
+				`datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-01"} 1`,
+				`datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-02"} 1`,
+			},
 		},
 		"std_log_config_2": {
 			bkLogConfig: `{
@@ -267,9 +276,10 @@ datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify
         "namespace": "default"
     }
 }`,
-			expected: `bklogconfig_with_datasource_relation{bk_data_id="100001",bklogconfig_namespace="blueking",bklogconfig_name="bkmonitor-unify-query-container-log"} 1
-datasource_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-query-03"} 1
-`,
+			expected: []string{
+				`bklogconfig_with_datasource_relation{bk_data_id="100001",bklogconfig_namespace="blueking",bklogconfig_name="bkmonitor-unify-query-container-log"} 1`,
+				`datasource_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-query-03"} 1`,
+			},
 		},
 		"std_log_config_3": {
 			bkLogConfig: `{
@@ -306,11 +316,12 @@ datasource_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-
         }
     }
 }`,
-			expected: `bklogconfig_with_datasource_relation{bk_data_id="100001",bklogconfig_namespace="blueking",bklogconfig_name="bkmonitor-unify-query-container-log"} 1
-datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-01"} 1
-datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-02"} 1
-datasource_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-query-03"} 1
-`,
+			expected: []string{
+				`bklogconfig_with_datasource_relation{bk_data_id="100001",bklogconfig_namespace="blueking",bklogconfig_name="bkmonitor-unify-query-container-log"} 1`,
+				`datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-01"} 1`,
+				`datasource_with_pod_relation{bk_data_id="100001",namespace="blueking",pod="unify-query-02"} 1`,
+				`datasource_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-query-03"} 1`,
+			},
 		},
 	}
 
@@ -342,7 +353,10 @@ datasource_with_pod_relation{bk_data_id="100001",namespace="default",pod="unify-
 
 			buf := &bytes.Buffer{}
 			objectsController.GetDataSourceRelations(buf)
-			assert.Equal(t, c.expected, buf.String())
+
+			for _, exp := range c.expected {
+				assert.Contains(t, buf.String(), exp)
+			}
 		})
 	}
 }

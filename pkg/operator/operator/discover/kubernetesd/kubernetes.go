@@ -164,7 +164,20 @@ func (d *Discover) matchNodeName(lbs labels.Labels) string {
 }
 
 func (d *Discover) isStabled() bool {
-	if d.opts.BasicAuth != nil || d.opts.BearerTokenSecret != nil || d.opts.TLSConfig != nil {
+	// 以下情况则表示需要跟 apiserver 通信获取
+	// 1) BasicAuth
+	basicAuth := d.opts.BasicAuth
+	basic := basicAuth != nil && basicAuth.Username.String() != "" && basicAuth.Password.String() != ""
+
+	// 2) BearerToken
+	bearerToken := d.opts.BearerTokenSecret
+	bearer := bearerToken != nil && bearerToken.Name != "" && bearerToken.Key != ""
+
+	// 30 TlsConfig
+	tlsConfig := d.opts.TLSConfig
+	tls := tlsConfig != nil && tlsConfig.CA.Secret != nil && tlsConfig.Cert.Secret != nil && tlsConfig.KeySecret != nil
+
+	if basic || bearer || tls {
 		return false
 	}
 	return true

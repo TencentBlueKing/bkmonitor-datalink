@@ -79,8 +79,9 @@ func (c *childConfigCache) Get(h uint64) (*ChildConfig, bool) {
 	v, ok := c.cache[h]
 	if ok {
 		c.cache[h].updated = fasttime.UnixTimestamp()
+		return v.config, true
 	}
-	return v.config, ok
+	return nil, false
 }
 
 func (c *childConfigCache) Set(h uint64, config *ChildConfig) {

@@ -54,7 +54,7 @@ type childConfigWithTime struct {
 
 type childConfigCache struct {
 	name    string
-	mut     sync.RWMutex
+	mut     sync.Mutex
 	cache   map[uint64]*childConfigWithTime
 	expired time.Duration
 	done    chan struct{}
@@ -73,8 +73,8 @@ func newChildConfigCache(name string, expired time.Duration) *childConfigCache {
 }
 
 func (c *childConfigCache) Get(h uint64) (*ChildConfig, bool) {
-	c.mut.RLock()
-	defer c.mut.RUnlock()
+	c.mut.Lock()
+	defer c.mut.Unlock()
 
 	v, ok := c.cache[h]
 	if ok {

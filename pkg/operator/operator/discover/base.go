@@ -472,11 +472,9 @@ func matchSelector(labels []labels.Label, selector map[string]string) bool {
 func (d *BaseDiscover) handleTargetWithCache(h uint64, namespace string, tlset, tglbs model.LabelSet) (*ChildConfig, error) {
 	// 如果 discover 是 `非稳定` 则不能使用缓存 保证数据的准确性
 	if d.helper.IsStabled != nil && !d.helper.IsStabled() {
-		logger.Infof("%s IsStabled=false", d.Name())
 		return d.handleTarget(namespace, tlset, tglbs)
 	}
 
-	logger.Infof("%s IsStabled=true", d.Name())
 	v, ok := d.cc.Get(h)
 	if ok {
 		d.mm.IncCreatedChildConfigCachedCounter("childconfig")

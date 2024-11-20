@@ -173,7 +173,7 @@ func (d *Discover) isStabled() bool {
 	bearerToken := d.opts.BearerTokenSecret
 	bearer := bearerToken != nil && bearerToken.Name != "" && bearerToken.Key != ""
 
-	// 30 TlsConfig
+	// 3) TlsConfig
 	tlsConfig := d.opts.TLSConfig
 	tls := tlsConfig != nil && tlsConfig.CA.Secret != nil && tlsConfig.Cert.Secret != nil && tlsConfig.KeySecret != nil
 

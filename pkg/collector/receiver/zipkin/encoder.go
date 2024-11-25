@@ -15,6 +15,11 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
+type Encoder interface {
+	Type() string
+	UnmarshalTraces(buf []byte) (ptrace.Traces, error)
+}
+
 func newThriftV1Encoder() thriftV1Encoder {
 	return thriftV1Encoder{tracesEncoder: zipkinv1.NewThriftTracesUnmarshaler()}
 }

@@ -12,13 +12,13 @@ package receiver
 import (
 	"net/http"
 	"net/http/pprof"
-	"runtime/debug"
 	"sort"
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/pprofsnapshot"
@@ -40,11 +40,9 @@ func init() {
 		beat.ReloadChan <- true
 		w.Write([]byte(`{"status": "success"}`))
 	})
-
-	// debug 专用
-	registerAdminHttpPostRoute(adminSource, "/-/freemem", func(w http.ResponseWriter, r *http.Request) {
-		debug.FreeOSMemory()
-		w.Write([]byte(`{"status": "success"}`))
+	registerAdminHttpGetRoute(adminSource, "/-/routes", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := json.Marshal(RecvHttpRoutes())
+		w.Write(b)
 	})
 
 	const pprofSource = "pprof"

@@ -529,6 +529,12 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 补充 container 维度信息（兼容 windows 系统）
+	containerFlag := query.Get("container_info")
+	if containerFlag == "true" {
+		cfgs = append(cfgs, c.objectsController.ContainersRelabelConfigs(nodeName)...)
+	}
+
 	writeResponse(w, cfgs)
 }
 

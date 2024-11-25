@@ -33,6 +33,7 @@ import (
 const (
 	relabelV1RuleWorkload  = "v1/workload"
 	relabelV2RuleWorkload  = "v2/workload"
+	relabelV3RuleWorkload  = "v3/workload"
 	relabelV1RuleNode      = "v1/node"
 	relabelV1RuleLabelJoin = "v1/labeljoin"
 )
@@ -143,6 +144,14 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 					path = fmt.Sprintf("/workload/node/%s", t.NodeName)
 				}
 				params["podName"] = podName
+			}
+
+		case relabelV3RuleWorkload:
+			if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
+				continue
+			}
+			if len(path) == 0 {
+				path = fmt.Sprintf("/workload/node/%s?container_info=true", t.NodeName)
 			}
 
 		case relabelV1RuleLabelJoin:

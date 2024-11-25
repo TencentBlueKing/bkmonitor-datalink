@@ -48,7 +48,7 @@ func newSvc(code define.StatusCode, msg string, err error) (HttpService, *atomic
 func TestHttpRequest(t *testing.T) {
 	t.Run("invalid body", func(t *testing.T) {
 		buf := bytes.NewBufferString("{-}")
-		req := httptest.NewRequest(http.MethodPut, localV2SpansURL, buf)
+		req := httptest.NewRequest(http.MethodPost, localV2SpansURL, buf)
 
 		svc, n := newSvc(define.StatusCodeOK, "", nil)
 		rw := httptest.NewRecorder()
@@ -59,7 +59,7 @@ func TestHttpRequest(t *testing.T) {
 
 	t.Run("read failed", func(t *testing.T) {
 		buf := testkits.NewBrokenReader()
-		req := httptest.NewRequest(http.MethodPut, localV2SpansURL, buf)
+		req := httptest.NewRequest(http.MethodPost, localV2SpansURL, buf)
 
 		svc, n := newSvc(define.StatusCodeOK, "", nil)
 		rw := httptest.NewRecorder()

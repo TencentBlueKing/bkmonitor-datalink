@@ -58,7 +58,7 @@ type HttpService struct {
 
 var httpSvc HttpService
 
-var acceptedThriftFormats = map[string]Encoder{
+var acceptedFormats = map[string]Encoder{
 	"application/json":       newJsonV2Encoder(),
 	"application/x-protobuf": newPbV2Encoder(),
 }
@@ -117,7 +117,7 @@ func decodeHTTPBody(bs []byte, ctype string) (ptrace.Traces, int, error) {
 		return ptrace.Traces{}, http.StatusBadRequest, err
 	}
 
-	encoder, ok := acceptedThriftFormats[contentType]
+	encoder, ok := acceptedFormats[contentType]
 	if !ok {
 		return ptrace.Traces{}, http.StatusBadRequest, errors.Errorf("unsupported content type: %v", contentType)
 	}

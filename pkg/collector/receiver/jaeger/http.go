@@ -61,9 +61,9 @@ type HttpService struct {
 
 var httpSvc HttpService
 
-var acceptedThriftFormats = map[string]struct{}{
-	"application/x-thrift":                 {},
-	"application/vnd.apache.thrift.binary": {},
+var acceptedFormats = map[string]Encoder{
+	"application/x-thrift":                 newThriftV1Encoder(),
+	"application/vnd.apache.thrift.binary": newThriftV1Encoder(),
 }
 
 func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
@@ -118,11 +118,12 @@ func decodeThriftHTTPBody(bs []byte, ctype string) (ptrace.Traces, int, error) {
 		return ptrace.Traces{}, http.StatusBadRequest, err
 	}
 
-	if _, ok := acceptedThriftFormats[contentType]; !ok {
+	encoder, ok := acceptedFormats[contentType]
+	if !ok {
 		return ptrace.Traces{}, http.StatusBadRequest, errors.Errorf("unsupported content type: %v", contentType)
 	}
 
-	traces, err := newThriftV1Encoder().UnmarshalTraces(bs)
+	traces, err := encoder.UnmarshalTraces(bs)
 	if err != nil {
 		return ptrace.Traces{}, http.StatusBadRequest, errors.Wrap(err, "unmarshal request body failed")
 	}

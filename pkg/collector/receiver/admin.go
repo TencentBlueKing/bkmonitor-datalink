@@ -41,7 +41,10 @@ func init() {
 		w.Write([]byte(`{"status": "success"}`))
 	})
 	registerAdminHttpGetRoute(adminSource, "/-/routes", func(w http.ResponseWriter, r *http.Request) {
-		b, _ := json.Marshal(RecvHttpRoutes())
+		var routes []define.RouteInfo
+		routes = append(routes, RecvHttpRoutes()...)
+		routes = append(routes, AdminHttpRoutes()...)
+		b, _ := json.Marshal(routes)
 		w.Write(b)
 	})
 

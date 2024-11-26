@@ -111,7 +111,7 @@ func (cr ContainerInfoRefs) AsRelabelConfigs() []RelabelConfig {
 			SourceLabels: []string{"container_id"},
 			Separator:    ";",
 			Regex:        ref.ContainerID,
-			TargetLabel:  "pod",
+			TargetLabel:  "pod_name",
 			Replacement:  ref.RefPodName,
 			Action:       "replace",
 		})
@@ -127,7 +127,7 @@ func (cr ContainerInfoRefs) AsRelabelConfigs() []RelabelConfig {
 			SourceLabels: []string{"container_id"},
 			Separator:    ";",
 			Regex:        ref.ContainerID,
-			TargetLabel:  "container",
+			TargetLabel:  "container_name",
 			Replacement:  ref.ContainerName,
 			Action:       "replace",
 		})

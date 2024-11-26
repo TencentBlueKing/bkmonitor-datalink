@@ -1005,6 +1005,51 @@ func (s *SpacePusher) getTableIdClusterId(tableIds []string) (map[string]string,
 	return tableIdClusterIdMap, nil
 }
 
+// PushBkAppToSpace  推送 bk_app_code 对应的 space 关联
+func (s *SpacePusher) PushBkAppToSpace() (err error) {
+	var (
+		appSpaces space.BkAppSpaces
+	)
+
+	defer func() {
+		if err != nil {
+			logger.Errorf("PushBkAppToSpace error: %s", err.Error())
+		}
+		logger.Infof("PushBkAppToSpace success")
+	}()
+
+	db := mysql.GetDBSession().DB
+	if db == nil {
+		return
+	}
+
+	res := db.Where("enable = ?", 1).Find(&appSpaces)
+	if res.Error != nil {
+		err = res.Error
+		return
+	}
+
+	client := redis.GetStorageRedisInstance()
+	key := cfg.BkAppToSpaceKey
+	if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
+		key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
+	}
+
+	for field, value := range appSpaces.HashData() {
+		valueStr, jsonErr := jsonx.MarshalString(value)
+		if err != nil {
+			logger.Errorf("%+v jsonMarshalString error %s", value, jsonErr)
+			continue
+		}
+		_, err = client.HSetWithCompareAndPublish(key, field, valueStr, cfg.BkAppToSpaceChannelKey, field)
+		if err != nil {
+			return
+		}
+	}
+
+	return
+}
+
 // PushSpaceTableIds 推送空间及对应的结果表和过滤条件
 func (s *SpacePusher) PushSpaceTableIds(spaceType, spaceId string) error {
 	// NOTE:该操作比较特殊，Publish操作需要在这里进行而不能直接在HSetWithCompareAndPublish中进行

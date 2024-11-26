@@ -27,3 +27,14 @@ type BkAppSpace struct {
 func (BkAppSpace) TableName() string {
 	return "metadata_bkappspace"
 }
+
+type BkAppSpaces []BkAppSpace
+
+func (s BkAppSpaces) HashData() map[string][]string {
+	res := make(map[string][]string)
+	for _, appSpace := range s {
+		res[appSpace.BkAppCode] = append(res[appSpace.BkAppCode], appSpace.SpaceUID)
+	}
+
+	return res
+}

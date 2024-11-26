@@ -35,14 +35,14 @@ const (
 	FieldToResultTableChannelKey     = "field_to_result_table:channel"
 	ResultTableDetailChannelKey      = "result_table_detail:channel"
 
-	BkAppSpaceKey        = "bk_app_space"
-	BkAppSpaceChannelKey = "bk_app_space:channel"
+	BkAppToSpaceKey        = "bk_app_to_space"
+	BkAppToSpaceChannelKey = "bk_app_to_space:channel"
 )
 
 var (
 	AllKey           = []string{ClusterInfoKey, HostInfoKey, TagInfoKey}
-	SpaceAllKey      = []string{SpaceToResultTableKey, DataLabelToResultTableKey, ResultTableDetailKey, BkAppSpaceKey}
-	SpaceChannelKeys = []string{SpaceToResultTableChannelKey, DataLabelToResultTableChannelKey, ResultTableDetailChannelKey, BkAppSpaceChannelKey}
+	SpaceAllKey      = []string{SpaceToResultTableKey, DataLabelToResultTableKey, ResultTableDetailKey, BkAppToSpaceKey}
+	SpaceChannelKeys = []string{SpaceToResultTableChannelKey, DataLabelToResultTableChannelKey, ResultTableDetailChannelKey, BkAppToSpaceChannelKey}
 )
 
 type Router interface {
@@ -304,7 +304,7 @@ func (r *router) SetHostStatusRead(ctx context.Context, hostName string, readSta
 
 func (r *router) GetBkAppSpace(ctx context.Context, bkApp string) (SpaceUIDList, error) {
 	var value SpaceUIDList
-	err := GetGenericHashKeyResult(r, ctx, BkAppSpaceKey, bkApp, &value)
+	err := GetGenericHashKeyResult(r, ctx, BkAppToSpaceKey, bkApp, &value)
 	if err != nil {
 		return nil, err
 	}
@@ -404,7 +404,7 @@ func GetGenericHashKeyResult(r *router, ctx context.Context, coreKey string, fie
 
 func NewGenericValue(typeKey string) (stoVal GenericValue, err error) {
 	switch typeKey {
-	case BkAppSpaceKey:
+	case BkAppToSpaceKey:
 		stoVal = &SpaceUIDList{}
 	case FieldToResultTableKey:
 		stoVal = &ResultTableList{}

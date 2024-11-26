@@ -238,7 +238,7 @@ func setSpaceTsDbMockData(ctx context.Context, bkAppSpace ir.BkAppSpace, spaceIn
 		panic(err)
 	}
 	for bkApp, spaceUidList := range bkAppSpace {
-		err = sr.Add(ctx, ir.BkAppSpaceKey, bkApp, spaceUidList)
+		err = sr.Add(ctx, ir.BkAppToSpaceKey, bkApp, spaceUidList)
 		if err != nil {
 			panic(err)
 		}

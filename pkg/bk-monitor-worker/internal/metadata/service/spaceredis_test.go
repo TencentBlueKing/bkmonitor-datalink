@@ -18,6 +18,7 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/stretchr/testify/assert"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
@@ -827,4 +828,48 @@ func TestComposeEsTableIdOptions(t *testing.T) {
 	// 获取不存在的rt数据
 	data = spacePusher.composeEsTableIdOptions([]string{"not_exist"})
 	assert.Equal(t, 0, len(data))
+}
+
+func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
+	mocker.InitTestDBConfig("../../../dist/bmw.yaml")
+
+	db := mysql.GetDBSession().DB
+	data := space.BkAppSpaces{
+		{
+			BkAppCode: "bk_test",
+			SpaceUID:  "*",
+			Enable:    1,
+		},
+		{
+			BkAppCode: "bk_demo",
+			SpaceUID:  "test",
+			Enable:    0,
+		},
+		{
+			BkAppCode: "bk_demo",
+			SpaceUID:  "bkcc__test",
+			Enable:    1,
+		},
+		{
+			BkAppCode: "bk_demo",
+			SpaceUID:  "bkcc__demo",
+			Enable:    1,
+		},
+	}
+
+	for _, d := range data {
+		db.Delete(d, "bk_app_code = ? AND space_uid = ?", d.BkAppCode, d.SpaceUID)
+		err := db.Create(d).Error
+		assert.NoError(t, err)
+	}
+
+	pusher := NewSpacePusher()
+	err := pusher.PushBkAppToSpace()
+	assert.NoError(t, err)
+
+	client := redis.GetStorageRedisInstance()
+	actual := client.HGetAll(cfg.BkAppToSpaceKey)
+
+	assert.Equal(t, ``, actual)
+
 }

@@ -1,8 +1,6 @@
 module github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker
 
-go 1.22.0
-
-toolchain go1.22.6
+go 1.21
 
 require (
 	github.com/RedisBloom/redisbloom-go v1.0.0
@@ -62,7 +60,7 @@ require (
 	go.uber.org/automaxprocs v1.5.3
 	go.uber.org/zap v1.24.0
 	golang.org/x/exp v0.0.0-20240119083558-1b970713d09a
-	golang.org/x/sync v0.9.0
+	golang.org/x/sync v0.7.0
 	golang.org/x/time v0.5.0
 	google.golang.org/protobuf v1.34.0
 	gopkg.in/yaml.v2 v2.4.0
@@ -126,7 +124,6 @@ require (
 	github.com/imdario/mergo v0.3.16 // indirect
 	github.com/jcmturner/gofork v1.7.6 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
-	github.com/jirfag/go-queryset v0.0.0-20191112125430-36aee76bfd77 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.17.7 // indirect
@@ -165,15 +162,14 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/arch v0.8.0 // indirect
-	golang.org/x/crypto v0.29.0 // indirect
+	golang.org/x/crypto v0.24.0 // indirect
 	golang.org/x/image v0.11.0 // indirect
-	golang.org/x/mod v0.22.0 // indirect
-	golang.org/x/net v0.31.0 // indirect
+	golang.org/x/net v0.26.0 // indirect
 	golang.org/x/oauth2 v0.18.0 // indirect
-	golang.org/x/sys v0.27.0 // indirect
-	golang.org/x/term v0.26.0 // indirect
-	golang.org/x/text v0.20.0 // indirect
-	golang.org/x/tools v0.27.0 // indirect
+	golang.org/x/sys v0.21.0 // indirect
+	golang.org/x/term v0.21.0 // indirect
+	golang.org/x/text v0.16.0 // indirect
+	golang.org/x/tools v0.22.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	gopkg.in/h2non/gentleman.v2 v2.0.5 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect

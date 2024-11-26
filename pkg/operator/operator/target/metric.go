@@ -151,8 +151,9 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 				continue
 			}
 			if len(path) == 0 {
-				path = fmt.Sprintf("/workload/node/%s?container_info=true", t.NodeName)
+				path = fmt.Sprintf("/workload/node/%s", t.NodeName)
 			}
+			params["container_info"] = "true"
 
 		case relabelV1RuleLabelJoin:
 			if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {

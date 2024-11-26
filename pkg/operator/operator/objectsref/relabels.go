@@ -283,6 +283,9 @@ func (oc *ObjectsController) getContainerRelabelConfigs(nodeName string) []Relab
 	pods := oc.podObjs.GetByNodeName(nodeName)
 	for _, pod := range pods {
 		for _, container := range pod.Containers {
+			if container.ID == "" {
+				continue
+			}
 			containerRefs = append(containerRefs, ContainerInfoRef{
 				ContainerID:     container.ID,
 				ContainerName:   container.Name,

@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	maxRequestBytes = 1024 * 1024 * 200 // 200MB
+	maxRequestBytes = 1024 * 1024 * 50 // 50MB
 )
 
 func init() {

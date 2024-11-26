@@ -83,7 +83,7 @@ func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 		_ = req.Body.Close()
 	}()
 
-	traces, httpCode, err := decodeThriftHTTPBody(buf.Bytes(), req.Header.Get("Content-Type"))
+	traces, httpCode, err := decodeHTTPBody(buf.Bytes(), req.Header.Get("Content-Type"))
 	if err != nil {
 		logger.Warnf("failed to parse jaeger exported content, ip=%v, err: %v", ip, err)
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordTraces)
@@ -112,7 +112,7 @@ func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordTraces, buf.Len(), start)
 }
 
-func decodeThriftHTTPBody(bs []byte, ctype string) (ptrace.Traces, int, error) {
+func decodeHTTPBody(bs []byte, ctype string) (ptrace.Traces, int, error) {
 	contentType, _, err := mime.ParseMediaType(ctype)
 	if err != nil {
 		return ptrace.Traces{}, http.StatusBadRequest, err

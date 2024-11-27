@@ -18,7 +18,7 @@ import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/inte
 type BkAppSpace struct {
 	BkAppCode string `gorm:"column:bk_app_code;not null;uniqueIndex:idx_app_space,priority:1;"` // 定义字段类型和索引
 	SpaceUID  string `gorm:"column:space_uid;not null;uniqueIndex:idx_app_space,priority:2;"`   // 定义字段类型和索引
-	Enable    uint8  `gorm:"column:enable;default:1;"`
+	IsEnable  bool   `gorm:"column:is_enable;default:true;"`
 
 	models.BaseModel
 }
@@ -33,7 +33,13 @@ type BkAppSpaces []BkAppSpace
 func (s BkAppSpaces) HashData() map[string][]string {
 	res := make(map[string][]string)
 	for _, appSpace := range s {
-		res[appSpace.BkAppCode] = append(res[appSpace.BkAppCode], appSpace.SpaceUID)
+		if _, ok := res[appSpace.BkAppCode]; !ok {
+			res[appSpace.BkAppCode] = make([]string, 0)
+		}
+
+		if appSpace.IsEnable {
+			res[appSpace.BkAppCode] = append(res[appSpace.BkAppCode], appSpace.SpaceUID)
+		}
 	}
 
 	return res

@@ -1023,7 +1023,7 @@ func (s *SpacePusher) PushBkAppToSpace() (err error) {
 		return
 	}
 
-	res := db.Where("enable = ?", 1).Find(&appSpaces)
+	res := db.Find(&appSpaces)
 	if res.Error != nil {
 		err = res.Error
 		return

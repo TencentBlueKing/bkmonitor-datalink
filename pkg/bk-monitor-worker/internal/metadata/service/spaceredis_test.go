@@ -789,9 +789,13 @@ func TestClearRtDetail(t *testing.T) {
 }
 
 func TestComposeEsTableIdOptions(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	mocker.InitTestDBConfig("../../../dist/bmw.yaml")
+	//mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	// 初始数据
 	db := mysql.GetDBSession().DB
+
+	db.AutoMigrate(&resulttable.ResultTableOption{}, &resulttable.ResultTable{})
+
 	// 创建rt
 	rt1, rt2, rt3 := "demo.test1", "demo.test2", "demo.test3"
 	rtObj1 := resulttable.ResultTable{TableId: rt1, IsDeleted: false, IsEnable: true}
@@ -836,40 +840,57 @@ func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
 	db := mysql.GetDBSession().DB
 	data := space.BkAppSpaces{
 		{
-			BkAppCode: "bk_test",
+			BkAppCode: "default_app_code",
 			SpaceUID:  "*",
-			Enable:    1,
+			IsEnable:  true,
 		},
 		{
-			BkAppCode: "bk_demo",
-			SpaceUID:  "test",
-			Enable:    0,
+			BkAppCode: "other_code",
+			SpaceUID:  "my_space_uid",
+			IsEnable:  true,
 		},
 		{
-			BkAppCode: "bk_demo",
-			SpaceUID:  "bkcc__test",
-			Enable:    1,
+			BkAppCode: "my_code",
+			SpaceUID:  "other_space_uid",
+			IsEnable:  true,
 		},
 		{
-			BkAppCode: "bk_demo",
-			SpaceUID:  "bkcc__demo",
-			Enable:    1,
+			BkAppCode: "my_code",
+			SpaceUID:  "my_space_uid",
+			IsEnable:  true,
 		},
 	}
 
+	n := time.Now()
+
+	db.AutoMigrate(space.BkAppSpace{})
+	db.Delete(space.BkAppSpace{})
+
 	for _, d := range data {
-		db.Delete(d, "bk_app_code = ? AND space_uid = ?", d.BkAppCode, d.SpaceUID)
+		d.CreateTime = n
+		d.UpdateTime = n
 		err := db.Create(d).Error
+
 		assert.NoError(t, err)
 	}
 
-	pusher := NewSpacePusher()
-	err := pusher.PushBkAppToSpace()
+	err := db.Model(space.BkAppSpace{}).Where("bk_app_code = ?", "other_code").Updates(map[string]bool{"is_enable": false}).Error
 	assert.NoError(t, err)
 
 	client := redis.GetStorageRedisInstance()
+	_ = client.Delete(cfg.BkAppToSpaceKey)
+
+	pusher := NewSpacePusher()
+	err = pusher.PushBkAppToSpace()
+	assert.NoError(t, err)
+
 	actual := client.HGetAll(cfg.BkAppToSpaceKey)
 
-	assert.Equal(t, ``, actual)
+	expected := map[string]string{
+		"my_code":          `["other_space_uid","my_space_uid"]`,
+		"default_app_code": `["*"]`,
+		"other_code":       `[]`,
+	}
 
+	assert.Equal(t, expected, actual)
 }

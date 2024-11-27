@@ -236,7 +236,7 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 			logger.Debugf("daemonset secret %s add file %s", secret.Name, config.FileName)
 		}
 
-		logger.Infof("daemonset secret %s contains %d files, size (%dB)", secret.Name, len(secret.Data), bytesTotal)
+		logger.Infof("daemonset secret %s contains %d files, size=%dB", secret.Name, len(secret.Data), bytesTotal)
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
 			c.mm.IncHandledSecretFailedCounter(secret.Name, action.CreateOrUpdate, err)
@@ -409,7 +409,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		}
 
 		groups[mod] = append(groups[mod], config)
-		logger.Infof("worker match antiaffinity rules, host=%s, worker%d(%s)", h, mod, indexWorkers[mod])
+		logger.Infof("worker match antiaffinity rules, host=%s, worker%d (%s)", h, mod, indexWorkers[mod])
 
 		c.recorder.updateConfigNode(config.FileName, fmt.Sprintf("worker%d", mod))
 		if _, ok := currTasksCache[mod]; !ok {
@@ -449,7 +449,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		for _, config := range cfgs {
 			compressed, err := gzip.Compress(config.Data)
 			if err != nil {
-				logger.Errorf("failed to compress config content, addr=%s, err: %v", config.Address, err)
+				logger.Errorf("failed to compress config content, addr=%s: %v", config.Address, err)
 				continue
 			}
 
@@ -458,7 +458,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 			logger.Debugf("statefulset secret %s add file %s", secret.Name, config.FileName)
 		}
 
-		logger.Infof("statefulset secret %s contains %d files, size (%dB)", secret.Name, len(secret.Data), bytesTotal)
+		logger.Infof("statefulset secret %s contains %d files, size=%dB", secret.Name, len(secret.Data), bytesTotal)
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
 			c.mm.IncHandledSecretFailedCounter(secret.Name, action.CreateOrUpdate, err)

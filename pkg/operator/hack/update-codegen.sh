@@ -9,6 +9,7 @@
 # an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+# $go mod vendor
 CODE_GENERATOR_FILE="./vendor/k8s.io/code-generator/generate-groups.sh"
 
 if [ ! -f "${CODE_GENERATOR_FILE}" ]; then

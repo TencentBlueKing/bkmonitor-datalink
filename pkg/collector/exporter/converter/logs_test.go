@@ -18,8 +18,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/plog"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/generator"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/testkits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 )
 
 func makeLogsGenerator(count, length int) *generator.LogsGenerator {
@@ -85,6 +85,31 @@ func TestLogsTime(t *testing.T) {
 		log.SetObservedTimestamp(ts)
 		assertLogsTime(t, data)
 	})
+}
+
+func TestLogsEscapeHTML(t *testing.T) {
+	g := makeLogsGenerator(1, 20)
+	data := g.Generate()
+
+	const body = "<html>&<tag>"
+
+	first := testkits.FirstLogRecord(data)
+	first.Body().SetStringVal(body)
+
+	record := define.Record{
+		RecordType: define.RecordLogs,
+		Data:       data,
+	}
+
+	gather := func(evts ...define.Event) {
+		for i := 0; i < len(evts); i++ {
+			evt := evts[i]
+			assert.Equal(t, define.RecordLogs, evt.RecordType())
+			assert.Contains(t, evt.Data()["data"], body)
+		}
+	}
+
+	NewCommonConverter().Convert(&record, gather)
 }
 
 func BenchmarkLogsConvert_10x1KB_LogRecords(b *testing.B) {

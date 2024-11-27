@@ -106,7 +106,7 @@ func (i InfluxdbHostInfo) RefreshConsulClusterConfig(ctx context.Context) error 
 		return err
 	}
 	// 更新consul信息
-	err = hashconsul.Put(consulClient, i.ConsulConfigPath(), configStr)
+	err = hashconsul.PutCas(consulClient, i.ConsulConfigPath(), configStr, 0, nil)
 	if err != nil {
 		logger.Errorf("host: [%s] refresh consul config failed, %v", i.HostName, err)
 		return err

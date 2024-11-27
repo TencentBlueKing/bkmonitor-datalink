@@ -38,7 +38,7 @@ func TestModel_Resources(t *testing.T) {
 	resources, err := testModel.resources(ctx)
 
 	assert.Nil(t, err)
-	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "deamonset", "deployment", "domain", "ingress", "job", "k8s_address", "node", "pod", "replicaset", "service", "statefulset", "system"}, resources)
+	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "bklogconfig", "datasource", "deamonset", "deployment", "domain", "ingress", "job", "k8s_address", "node", "pod", "replicaset", "service", "statefulset", "system"}, resources)
 }
 
 func TestModel_GetResources(t *testing.T) {
@@ -78,6 +78,7 @@ func TestModel_GetPath(t *testing.T) {
 			expected: [][]string{
 				{"apm_service", "apm_service_instance", "system"},
 				{"apm_service", "apm_service_instance", "pod", "node", "system"},
+				{"apm_service", "apm_service_instance", "pod", "datasource", "node", "system"},
 			},
 		},
 		"apm_service to system through wrong service": {
@@ -106,6 +107,7 @@ func TestModel_GetPath(t *testing.T) {
 			expected: [][]string{
 				{"apm_service", "apm_service_instance", "pod"},
 				{"apm_service", "apm_service_instance", "system", "node", "pod"},
+				{"apm_service", "apm_service_instance", "system", "node", "datasource", "pod"},
 			},
 		},
 		"apm_service to system through node and pod": {
@@ -192,6 +194,7 @@ func TestModel_GetPath(t *testing.T) {
 			allMatch: true,
 			expected: [][]string{
 				{"pod", "node", "system"},
+				{"pod", "datasource", "node", "system"},
 				{"pod", "apm_service_instance", "system"},
 			},
 		},
@@ -227,6 +230,7 @@ func TestModel_GetPath(t *testing.T) {
 			expected: [][]string{
 				{"node", "system"},
 				{"node", "pod", "apm_service_instance", "system"},
+				{"node", "datasource", "pod", "apm_service_instance", "system"},
 			},
 		},
 		"node to system not all match": {
@@ -243,6 +247,39 @@ func TestModel_GetPath(t *testing.T) {
 			expected: [][]string{
 				{"node", "system"},
 				{"node", "pod", "apm_service_instance", "system"},
+				{"node", "datasource", "pod", "apm_service_instance", "system"},
+			},
+		},
+		"datasource to system all match": {
+			target: "system",
+			matcher: cmdb.Matcher{
+				"bk_data_id": "1000001",
+			},
+			source: "datasource",
+			indexMatcher: cmdb.Matcher{
+				"bk_data_id": "1000001",
+			},
+			allMatch: true,
+			expected: [][]string{
+				{"datasource", "node", "system"},
+				{"datasource", "pod", "node", "system"},
+				{"datasource", "pod", "apm_service_instance", "system"},
+				{"datasource", "node", "pod", "apm_service_instance", "system"},
+			},
+		},
+		"pod to node": {
+			target: "node",
+			matcher: cmdb.Matcher{
+				"pod": "pod-1",
+			},
+			source: "pod",
+			indexMatcher: cmdb.Matcher{
+				"pod": "pod-1",
+			},
+			expected: [][]string{
+				{"pod", "node"},
+				{"pod", "datasource", "node"},
+				{"pod", "apm_service_instance", "system", "node"},
 			},
 		},
 	}

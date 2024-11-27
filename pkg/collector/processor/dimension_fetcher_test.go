@@ -18,8 +18,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/foreach"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/generator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 )
 
 func TestDimensionFetcher(t *testing.T) {

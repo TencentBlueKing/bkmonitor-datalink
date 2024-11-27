@@ -26,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -140,7 +141,7 @@ func (w *dataIDWatcher) matchDataID(meta define.MonitorMeta, systemResource bool
 	for _, dataID := range dataIDs {
 		resource := dataID.Spec.MonitorResource
 		if resource.Name == "" && resource.NameSpace != "" {
-			if strings.ToLower(resource.Kind) == strings.ToLower(meta.Kind) && resource.MatchSplitNamespace(meta.Namespace) {
+			if stringx.LowerEq(resource.Kind, meta.Kind) && resource.MatchSplitNamespace(meta.Namespace) {
 				return dataID, nil
 			}
 		}
@@ -320,7 +321,7 @@ func (w *dataIDWatcher) Stop() {
 func (w *dataIDWatcher) handleDataIDAdd(obj interface{}) {
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
-		logger.Errorf("unexpected DataID type, got %T", obj)
+		logger.Errorf("expected DataID type, got %T", obj)
 		return
 	}
 	env := feature.BkEnv(dataID.Labels)
@@ -336,7 +337,7 @@ func (w *dataIDWatcher) handleDataIDAdd(obj interface{}) {
 func (w *dataIDWatcher) handleDataIDDelete(obj interface{}) {
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
-		logger.Errorf("unexpected DataID type, got %T", obj)
+		logger.Errorf("expected DataID type, got %T", obj)
 		return
 	}
 	env := feature.BkEnv(dataID.Labels)
@@ -352,12 +353,12 @@ func (w *dataIDWatcher) handleDataIDDelete(obj interface{}) {
 func (w *dataIDWatcher) handleDataIDUpdate(oldObj interface{}, newObj interface{}) {
 	old, ok := oldObj.(*bkv1beta1.DataID)
 	if !ok {
-		logger.Errorf("unexpected DataID type, got %T", oldObj)
+		logger.Errorf("expected DataID type, got %T", oldObj)
 		return
 	}
 	cur, ok := newObj.(*bkv1beta1.DataID)
 	if !ok {
-		logger.Errorf("unexpected DataID type got %T", newObj)
+		logger.Errorf("expected DataID type got %T", newObj)
 		return
 	}
 

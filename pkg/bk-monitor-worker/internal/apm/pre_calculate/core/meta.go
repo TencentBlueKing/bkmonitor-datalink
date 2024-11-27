@@ -134,7 +134,7 @@ func (c *MetadataCenter) AddDataId(dataId string) error {
 
 func (c *MetadataCenter) fillInfo(dataId string, info *DataIdInfo) error {
 	key := fmt.Sprintf("%s/apm/data_id/%s", config.StorageConsulPathPrefix, dataId)
-	bytesData, err := c.Consul.Get(key)
+	_, bytesData, err := c.Consul.Get(key)
 	if err != nil {
 		return fmt.Errorf("failed to get key: %s from Consul. error: %s", key, err)
 	}

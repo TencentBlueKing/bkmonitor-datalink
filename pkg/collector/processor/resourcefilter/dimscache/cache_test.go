@@ -17,7 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
 )
 
 func TestCache(t *testing.T) {

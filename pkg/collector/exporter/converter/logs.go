@@ -10,11 +10,13 @@
 package converter
 
 import (
+	"bytes"
+
 	"github.com/elastic/beats/libbeat/common"
 	"go.opentelemetry.io/collector/pdata/plog"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -86,13 +88,16 @@ func (c logsConverter) Extract(ip string, logRecord plog.LogRecord, rsAttrs comm
 		"severity_text":   logRecord.SeverityText(),
 		"resource":        rsAttrs,
 	}
-	content, err := json.Marshal(m)
-	if err != nil {
+
+	buf := &bytes.Buffer{}
+	enc := json.NewEncoder(buf)
+	enc.SetEscapeHTML(false) // Note: 兼容 HTML 转义逻辑
+	if err := enc.Encode(m); err != nil {
 		return nil, err
 	}
 
 	return common.MapStr{
-		"data":   string(content),
+		"data":   buf.String(),
 		"source": ip,
 	}, nil
 }

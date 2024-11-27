@@ -13,7 +13,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/metricsbuilder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metricsbuilder"
 )
 
 const (

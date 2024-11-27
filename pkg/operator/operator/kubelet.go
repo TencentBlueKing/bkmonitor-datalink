@@ -64,7 +64,7 @@ func (c *Operator) cleanupDeprecatedService(ctx context.Context) {
 		return
 	}
 
-	logger.Infof("list kubelet servcie %s, count (%d)", cfg, len(obj.Items))
+	logger.Debugf("list kubelet servcie %s, count (%d)", cfg, len(obj.Items))
 	for _, svc := range obj.Items {
 		if svc.Namespace == cfg.Namespace && svc.Name == cfg.Name {
 			continue
@@ -86,7 +86,7 @@ func (c *Operator) reconcileNodeEndpoints(ctx context.Context) {
 	defer c.wg.Done()
 
 	if err := c.syncNodeEndpoints(ctx); err != nil {
-		logger.Errorf("syncing nodes into Endpoints object failed, error: %s", err)
+		logger.Errorf("syncing nodes into Endpoints object failed: %s", err)
 	}
 
 	ticker := time.NewTicker(3 * time.Minute)
@@ -99,7 +99,7 @@ func (c *Operator) reconcileNodeEndpoints(ctx context.Context) {
 
 		case <-ticker.C:
 			if err := c.syncNodeEndpoints(ctx); err != nil {
-				logger.Errorf("refresh kubelet endpoints failed, error: %s", err)
+				logger.Errorf("refresh kubelet endpoints failed: %s", err)
 			}
 		}
 	}
@@ -134,11 +134,8 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 		},
 	}
 
-	nodes, err := c.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return errors.Wrap(err, "listing nodes failed")
-	}
-	logger.Debugf("Nodes retrieved from the Kubernetes API, num_nodes:%d", len(nodes.Items))
+	nodes := c.objectsController.NodeObjs()
+	logger.Debugf("nodes retrieved from the Kubernetes API, num_nodes: %d", len(nodes))
 
 	addresses, errs := getNodeAddresses(nodes)
 	for _, err := range errs {
@@ -171,38 +168,39 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 		},
 	}
 
-	err = k8sutils.CreateOrUpdateService(ctx, c.client.CoreV1().Services(cfg.Namespace), svc)
+	err := k8sutils.CreateOrUpdateService(ctx, c.client.CoreV1().Services(cfg.Namespace), svc)
 	if err != nil {
 		return errors.Wrap(err, "synchronizing kubelet service object failed")
 	}
-	logger.Infof("sync kubelet service %s", cfg)
+	logger.Debugf("sync kubelet service %s", cfg)
 
 	err = k8sutils.CreateOrUpdateEndpoints(ctx, c.client.CoreV1().Endpoints(cfg.Namespace), eps)
 	if err != nil {
 		return errors.Wrap(err, "synchronizing kubelet endpoints object failed")
 	}
-	logger.Infof("sync kubelet endpoints %s, address count (%d)", cfg, len(addresses))
+	logger.Debugf("sync kubelet endpoints %s, address count (%d)", cfg, len(addresses))
 
 	return nil
 }
 
-func getNodeAddresses(nodes *corev1.NodeList) ([]corev1.EndpointAddress, []error) {
+func getNodeAddresses(nodes []*corev1.Node) ([]corev1.EndpointAddress, []error) {
 	addresses := make([]corev1.EndpointAddress, 0)
 	errs := make([]error, 0)
 
-	for _, n := range nodes.Items {
-		address, _, err := k8sutils.GetNodeAddress(n)
+	for i := 0; i < len(nodes); i++ {
+		node := nodes[i]
+		address, _, err := k8sutils.GetNodeAddress(*node)
 		if err != nil {
-			errs = append(errs, errors.Wrapf(err, "failed to determine hostname for node (%s)", n.Name))
+			errs = append(errs, errors.Wrapf(err, "failed to determine hostname for node (%s)", node.Name))
 			continue
 		}
 		addresses = append(addresses, corev1.EndpointAddress{
 			IP: address,
 			TargetRef: &corev1.ObjectReference{
 				Kind:       "Node",
-				Name:       n.Name,
-				UID:        n.UID,
-				APIVersion: n.APIVersion,
+				Name:       node.Name,
+				UID:        node.UID,
+				APIVersion: node.APIVersion,
 			},
 		})
 	}

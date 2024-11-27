@@ -49,13 +49,14 @@ func TestPingGatherRun(t *testing.T) {
 		},
 	}
 	taskConf.TotalNum = 1
-	taskConf.MaxRTT = "3s"
+	taskConf.MaxRTT = "500ms"
 	taskConf.BatchSize = 0
 	taskConf.Targets = targetList
 	taskConf.PingSize = 56
 	taskConf.TargetIPType = configs.IPAuto
 	taskConf.DNSCheckMode = configs.CheckModeAll
 	taskConf.Timeout = 3 * time.Second
+	taskConf.NotPrivileged = true
 
 	gather := New(globalConf, taskConf)
 

@@ -140,7 +140,7 @@ func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]strin
 			span.End(&err)
 
 			if err != nil {
-				err = fmt.Errorf("jwt auth unauthorized: %s", err)
+				err = fmt.Errorf("jwt auth unauthorized: %s, app_code: %s, space_uid: %s", err, appCode, spaceUID)
 				log.Errorf(ctx, err.Error())
 
 				metric.JWTRequestInc(ctx, c.ClientIP(), c.Request.URL.Path, payLoad.AppCode(), payLoad.UserName(), user.SpaceUid, metric.StatusFailed)
@@ -186,14 +186,14 @@ func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]strin
 		parseData(claims, "", payLoad)
 		span.Set("jwt-payload", payLoad)
 
+		appCode = payLoad.AppCode()
+		span.Set("bk_app_code", appCode)
+
 		if user.SpaceUid == "" {
 			err = errSpaceUidEmpty
 			return
 		}
 
-		appCode = payLoad.AppCode()
-
-		span.Set("bk_app_code", appCode)
 		span.Set("space_uid", spaceUID)
 
 		router, err := influxdb.GetSpaceTsDbRouter()
@@ -208,10 +208,15 @@ func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]strin
 
 		// 获取路由空间配置
 		bkAppCodeSpaceUIDList := router.GetSpaceUIDList(ctx, appCode)
-		if bkAppCodeSpaceUIDList != nil {
-			spaceUIDs.Add(*bkAppCodeSpaceUIDList...)
-			span.Set("bk_app_code_space_uid_list", bkAppCodeSpaceUIDList)
+
+		// 没有配置空间路由，则无权限
+		if bkAppCodeSpaceUIDList == nil {
+			err = errAppUnauthorized
+			return
 		}
+
+		spaceUIDs.Add(*bkAppCodeSpaceUIDList...)
+		span.Set("bk_app_code_space_uid_list", bkAppCodeSpaceUIDList)
 
 		// 拼接后的最终有权限的空间列表
 		span.Set("space_uid_set", spaceUIDs.String())

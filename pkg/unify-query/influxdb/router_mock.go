@@ -121,8 +121,11 @@ func MockSpaceRouter(ctx context.Context) {
 
 		setSpaceTsDbMockData(ctx,
 			ir.BkAppSpace{
-				BkAppCode: &ir.SpaceUIDList{
+				BkAppCode: {
 					"*",
+				},
+				"my_code": {
+					"my_space_uid",
 				},
 			},
 			ir.SpaceInfo{

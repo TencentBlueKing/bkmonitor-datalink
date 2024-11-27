@@ -13,7 +13,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/pkg/errors"
 	"github.com/prometheus-operator/prometheus-operator/pkg/informers"
 	appsv1 "k8s.io/api/apps/v1"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"

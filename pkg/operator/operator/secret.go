@@ -236,7 +236,7 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 			logger.Debugf("daemonset secret %s add file %s", secret.Name, config.FileName)
 		}
 
-		logger.Infof("daemonset secret %s contains %d files", secret.Name, len(secret.Data))
+		logger.Infof("daemonset secret %s contains %d files, size (%dB)", secret.Name, len(secret.Data), bytesTotal)
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
 			c.mm.IncHandledSecretFailedCounter(secret.Name, action.CreateOrUpdate, err)
@@ -458,7 +458,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 			logger.Debugf("statefulset secret %s add file %s", secret.Name, config.FileName)
 		}
 
-		logger.Infof("statefulset secret %s contains %d files", secret.Name, len(secret.Data))
+		logger.Infof("statefulset secret %s contains %d files, size (%dB)", secret.Name, len(secret.Data), bytesTotal)
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
 			c.mm.IncHandledSecretFailedCounter(secret.Name, action.CreateOrUpdate, err)

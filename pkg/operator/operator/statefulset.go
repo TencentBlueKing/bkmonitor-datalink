@@ -13,6 +13,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/pkg/errors"
 	"github.com/prometheus-operator/prometheus-operator/pkg/informers"
 	appsv1 "k8s.io/api/apps/v1"
@@ -22,7 +23,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -186,28 +186,49 @@ func (c *Operator) reconcileStatefulSetWorker(configCount int) {
 		return
 	}
 
-	if c.statefulSetWorker != n {
-		c.statefulSetWorkerScaled = time.Now()
-		scale, err := c.client.AppsV1().StatefulSets(configs.G().MonitorNamespace).GetScale(c.ctx, statefulSetWorkerName, metav1.GetOptions{})
-		if err != nil {
-			logger.Errorf("failed to get statefulset worker scale, err: %v", err)
-			c.mm.IncScaledStatefulSetFailedCounter()
-			return
-		}
-		sc := *scale
-		sc.Spec.Replicas = int32(n)
+	// 期待的 workers 没有变化 不做任何处理
+	if c.statefulSetWorker == n {
+		return
+	}
 
-		_, err = c.client.AppsV1().StatefulSets(configs.G().MonitorNamespace).UpdateScale(c.ctx, statefulSetWorkerName, &sc, metav1.UpdateOptions{})
-		if err != nil {
-			logger.Errorf("failed to scale statefulset worker replicas from %d to %d, err: %v", c.statefulSetWorker, n, err)
-			c.mm.IncScaledStatefulSetFailedCounter()
-			return
-		}
-		logger.Infof("scale statefulset worker replicas from %d to %d", c.statefulSetWorker, n)
-		c.mm.IncScaledStatefulSetSuccessCounter()
+	statefulsetClient := c.client.AppsV1().StatefulSets(configs.G().MonitorNamespace)
+	c.statefulSetWorkerScaled = time.Now()
+	scale, err := statefulsetClient.GetScale(c.ctx, statefulSetWorkerName, metav1.GetOptions{})
+	if err != nil {
+		logger.Errorf("failed to get statefulset worker scale: %v", err)
+		c.mm.IncScaledStatefulSetFailedCounter()
+		return
+	}
+	sc := *scale
+	sc.Spec.Replicas = int32(n)
 
-		// 等待一个采集任务调度周期（尽力）确保 replicas 变更已经被 watch 到
+	_, err = statefulsetClient.UpdateScale(c.ctx, statefulSetWorkerName, &sc, metav1.UpdateOptions{})
+	if err != nil {
+		logger.Errorf("failed to scale statefulset worker replicas from %d to %d: %v", c.statefulSetWorker, n, err)
+		c.mm.IncScaledStatefulSetFailedCounter()
+		return
+	}
+	logger.Infof("scale statefulset worker replicas from %d to %d", c.statefulSetWorker, n)
+	c.mm.IncScaledStatefulSetSuccessCounter()
+
+	// 尽力确保 statefulset worker 已经扩容完成再进行任务调度
+	// 避免影响到原有的数据采集（但此操作会卡住 operator 的调度流程）
+	start := time.Now()
+	const maxRetry = 12 // 1min
+	for i := 0; i < maxRetry; i++ {
 		time.Sleep(notifier.WaitPeriod)
+		statefulset, err := statefulsetClient.Get(c.ctx, statefulSetWorkerName, metav1.GetOptions{})
+		if err != nil {
+			logger.Errorf("failed to get statefulset worker: %v", err)
+			return
+		}
+
+		// 扩容完成
+		if int(statefulset.Status.ReadyReplicas) == n {
+			logger.Infof("scacle statefulset worker finished, take %s", time.Since(start))
+			return
+		}
+		logger.Infof("waiting for statefulset operation, retry=%d", i)
 	}
 }
 

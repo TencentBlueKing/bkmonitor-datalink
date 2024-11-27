@@ -187,7 +187,7 @@ bk-collector:
       remotewrite:
         enabled: true
       zipkin:
-        enabled: false
+        enabled: true
       skywalking:
         enabled: false
       pyroscope:

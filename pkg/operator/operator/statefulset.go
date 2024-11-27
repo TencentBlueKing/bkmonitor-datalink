@@ -228,7 +228,7 @@ func (c *Operator) reconcileStatefulSetWorker(configCount int) {
 			logger.Infof("scacle statefulset worker finished, take %s", time.Since(start))
 			return
 		}
-		logger.Infof("waiting for statefulset operation, retry=%d", i)
+		logger.Infof("waiting for statefulset operation, round: %d", i)
 	}
 }
 

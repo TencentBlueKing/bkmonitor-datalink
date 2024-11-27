@@ -460,6 +460,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 
 		logger.Infof("statefulset secret %s contains %d files, size=%dB", secret.Name, len(secret.Data), bytesTotal)
 
+		t0 := time.Now()
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
 			c.mm.IncHandledSecretFailedCounter(secret.Name, action.CreateOrUpdate, err)
 			logger.Errorf("failed to create or update secret: %v", err)
@@ -467,7 +468,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 			continue
 		}
 		c.mm.IncHandledSecretSuccessCounter(secret.Name, action.CreateOrUpdate)
-		logger.Infof("create or update statefulset secret %s", secret.Name)
+		logger.Infof("create or update statefulset secret %s, take: %s", secret.Name, time.Since(t0))
 	}
 	c.statefulSetTaskCache = currTasksCache
 }

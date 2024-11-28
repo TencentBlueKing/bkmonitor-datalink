@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package jaeger
+package zipkin
 
 import (
 	"bytes"
@@ -16,13 +16,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jaegertracing/jaeger/proto-gen/api_v2"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/collector/pdata/ptrace"
-	"google.golang.org/grpc"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
@@ -30,27 +29,25 @@ import (
 )
 
 const (
-	routeJaegerTraces = "/jaeger/v1/traces"
+	routeV2Spans = "/api/v2/spans"
 )
 
 func init() {
-	receiver.RegisterReadyFunc(define.SourceJaeger, Ready)
+	receiver.RegisterReadyFunc(define.SourceZipkin, Ready)
 }
 
+var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourceZipkin)
+
 func Ready(config receiver.ComponentConfig) {
-	if !config.Jaeger.Enabled {
+	if !config.Zipkin.Enabled {
 		return
 	}
-	receiver.RegisterRecvHttpRoute(define.SourceJaeger, []receiver.RouteWithFunc{
+	receiver.RegisterRecvHttpRoute(define.SourceZipkin, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
-			RelativePath: routeJaegerTraces,
-			HandlerFunc:  httpSvc.JaegerTraces,
+			RelativePath: routeV2Spans,
+			HandlerFunc:  httpSvc.V2Spans,
 		},
-	})
-
-	receiver.RegisterRecvGrpcRoute(func(s *grpc.Server) {
-		api_v2.RegisterCollectorServiceServer(s, GrpcService{})
 	})
 }
 
@@ -62,11 +59,11 @@ type HttpService struct {
 var httpSvc HttpService
 
 var acceptedFormats = map[string]Encoder{
-	"application/x-thrift":                 newThriftV1Encoder(),
-	"application/vnd.apache.thrift.binary": newThriftV1Encoder(),
+	"application/json":       newJsonV2Encoder(),
+	"application/x-protobuf": newPbV2Encoder(),
 }
 
-func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
+func (s HttpService) V2Spans(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 
@@ -76,7 +73,7 @@ func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordTraces)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusInternalServerError, nil)
-		logger.Errorf("failed to read jaeger body: %v", err)
+		logger.Errorf("failed to read zipkin body: %v", err)
 		return
 	}
 	defer func() {
@@ -85,17 +82,19 @@ func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 
 	traces, httpCode, err := decodeHTTPBody(buf.Bytes(), req.Header.Get("Content-Type"))
 	if err != nil {
-		logger.Warnf("failed to parse jaeger exported content, ip=%v, err: %v", ip, err)
+		logger.Warnf("failed to parse zipkin exported content, ip=%v, err: %v", ip, err)
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordTraces)
 		receiver.WriteErrResponse(w, define.ContentTypeJson, httpCode, err)
 		return
 	}
 
+	token := tokenparser.FromHttpRequest(req)
 	r := &define.Record{
 		RequestType:   define.RequestHttp,
 		RequestClient: define.RequestClient{IP: ip},
 		RecordType:    define.RecordTraces,
 		Data:          traces,
+		Token:         define.Token{Original: token},
 	}
 	prettyprint.Traces(traces)
 

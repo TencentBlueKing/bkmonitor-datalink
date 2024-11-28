@@ -13,6 +13,7 @@ help:
 	@echo "Make Targets: "
 	@echo " mod: Download and tidy dependencies"
 	@echo " lint: Lint Go code"
+	@echo " encode: Encode template file in base64 format"
 	@echo " test: Run unit tests"
 	@echo " build: Build release package"
 	@echo " dev: Run and test program locally"
@@ -27,6 +28,10 @@ lint: mod
 .PHONY: test
 test:
 	./control.sh test
+
+.PHONY: encode
+encode:
+	./control.sh encode
 
 .PHONY: build
 build:

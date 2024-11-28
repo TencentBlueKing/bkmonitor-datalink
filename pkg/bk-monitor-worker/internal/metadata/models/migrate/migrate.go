@@ -17,13 +17,15 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
 
-var (
-	once sync.Once
-)
+var once sync.Once
 
-func AutoMigrate(ctx context.Context) {
+func Migrate(_ context.Context, tables ...interface{}) {
+	myDb := mysql.GetDBSession().DB
+	myDb.AutoMigrate(tables...)
+}
+
+func AutoMigrateAllTables(ctx context.Context) {
 	once.Do(func() {
-		db := mysql.GetDBSession().DB
-		db.AutoMigrate(&space.BkAppSpace{})
+		Migrate(ctx, &space.BkAppSpace{})
 	})
 }

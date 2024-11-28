@@ -167,7 +167,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	p, _ := ants.NewPool(goroutineCount)
 	defer p.Release()
 
-	migrate.AutoMigrate(ctx)
+	migrate.AutoMigrateAllTables(ctx)
 
 	// 处理 bk_app_to_space 关联路由
 	wg.Add(1)

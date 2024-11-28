@@ -10,6 +10,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/migrate"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
@@ -794,7 +796,7 @@ func TestComposeEsTableIdOptions(t *testing.T) {
 	// 初始数据
 	db := mysql.GetDBSession().DB
 
-	db.AutoMigrate(&resulttable.ResultTableOption{}, &resulttable.ResultTable{})
+	migrate.Migrate(context.TODO(), &resulttable.ResultTableOption{}, &resulttable.ResultTable{})
 
 	// 创建rt
 	rt1, rt2, rt3 := "demo.test1", "demo.test2", "demo.test3"
@@ -863,7 +865,8 @@ func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
 
 	n := time.Now()
 
-	db.AutoMigrate(space.BkAppSpace{})
+	migrate.Migrate(context.TODO(), &space.BkAppSpace{})
+
 	db.Delete(space.BkAppSpace{})
 
 	for _, d := range data {

@@ -209,12 +209,6 @@ func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]strin
 		// 获取路由空间配置
 		bkAppCodeSpaceUIDList := router.GetSpaceUIDList(ctx, appCode)
 
-		// 没有配置空间路由，则无权限
-		if bkAppCodeSpaceUIDList == nil {
-			err = errAppUnauthorized
-			return
-		}
-
 		spaceUIDs.Add(*bkAppCodeSpaceUIDList...)
 		span.Set("bk_app_code_space_uid_list", bkAppCodeSpaceUIDList)
 

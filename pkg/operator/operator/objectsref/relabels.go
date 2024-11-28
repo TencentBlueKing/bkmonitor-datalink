@@ -16,6 +16,8 @@ import (
 	"unicode"
 
 	"k8s.io/client-go/util/jsonpath"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // RelabelConfig relabel 配置 遵循 prometheus 规则
@@ -104,8 +106,8 @@ type ContainerInfoRef struct {
 type ContainerInfoRefs []ContainerInfoRef
 
 func (cr ContainerInfoRefs) AsRelabelConfigs() []RelabelConfig {
+	logger.Infof("pod.cr: %#v", cr)
 	configs := make([]RelabelConfig, 0)
-
 	for _, ref := range cr {
 		configs = append(configs, RelabelConfig{
 			SourceLabels: []string{"container_id"},
@@ -156,6 +158,7 @@ func (cr ContainerInfoRefs) AsRelabelConfigs() []RelabelConfig {
 			Action:       "replace",
 		})
 	}
+	logger.Infof("pod.json.marshal: %#v", configs)
 	return configs
 }
 

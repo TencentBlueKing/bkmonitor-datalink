@@ -118,7 +118,8 @@ func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tabl
 }
 
 type SpacePusher struct {
-	mut sync.Mutex
+	mut  sync.Mutex
+	once sync.Once
 }
 
 func NewSpacePusher() *SpacePusher {

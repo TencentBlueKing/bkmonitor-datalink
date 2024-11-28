@@ -77,10 +77,22 @@ function sidecar() {
       -o ${dist}/sidecar ./cmd/sidecar
 }
 
+function encode() {
+  local base_dir="./support-files/templates/linux/x86_64/etc"
+
+  tpls=("bk-collector-application.conf.tpl" "bk-collector-platform.conf.tpl")
+  # shellcheck disable=SC2068
+  for tpl in ${tpls[@]}
+    do echo 'File:' $tpl && cat ${base_dir}/${tpl} | base64 && echo ''
+  done
+}
+
 if [ "$1" == "package" ]; then
   package $2 $3 $4 $5 $6
 elif [ "$1" == "sidecar" ]; then
   sidecar $2 $3
 elif [ "$1" == "test" ]; then
   unittest
+elif [ "$1" == "encode" ]; then
+  encode
 fi

@@ -1024,12 +1024,14 @@ func toRefs(refs []metav1.OwnerReference) []OwnerRef {
 
 func toContainerKey(pod *corev1.Pod) []ContainerKey {
 	var containers []ContainerKey
+	logger.Infof("pod.nmaespace(%s); pod.name(%s); pod.nodename(%s)", pod.Name, pod.Namespace, pod.Spec.NodeName)
 	for _, sc := range pod.Status.ContainerStatuses {
 		containers = append(containers, ContainerKey{
 			Name:  sc.Name,
 			ID:    sc.ContainerID,
 			Image: sc.ImageID,
 		})
+		logger.Infof("pod.ContainerStatuses: %#v", pod.Status.ContainerStatuses)
 	}
 	return containers
 }

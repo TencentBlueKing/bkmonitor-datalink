@@ -56,9 +56,13 @@ func (e *Error) Error() string {
 	if e.Code != Unspecified {
 		b.WriteString(e.Code.String())
 	}
+	if e.Op != "" {
+		b.WriteString(" Op: ")
+		b.WriteString(string(e.Op))
+	}
 	if e.Err != nil {
 		if b.Len() > 0 {
-			b.WriteString(": ")
+			b.WriteString(" : ")
 		}
 		b.WriteString(e.Err.Error())
 	}

@@ -119,6 +119,14 @@ func (cr ContainerInfoRefs) AsRelabelConfigs() []RelabelConfig {
 			SourceLabels: []string{"container_id"},
 			Separator:    ";",
 			Regex:        ref.ContainerID,
+			TargetLabel:  "pod", // 兼容仪表盘和告警策略
+			Replacement:  ref.RefPodName,
+			Action:       "replace",
+		})
+		configs = append(configs, RelabelConfig{
+			SourceLabels: []string{"container_id"},
+			Separator:    ";",
+			Regex:        ref.ContainerID,
 			TargetLabel:  "namespace",
 			Replacement:  ref.RefPodNamespace,
 			Action:       "replace",
@@ -128,6 +136,14 @@ func (cr ContainerInfoRefs) AsRelabelConfigs() []RelabelConfig {
 			Separator:    ";",
 			Regex:        ref.ContainerID,
 			TargetLabel:  "container_name",
+			Replacement:  ref.ContainerName,
+			Action:       "replace",
+		})
+		configs = append(configs, RelabelConfig{
+			SourceLabels: []string{"container_id"},
+			Separator:    ";",
+			Regex:        ref.ContainerID,
+			TargetLabel:  "container", // 兼容仪表盘和告警策略
 			Replacement:  ref.ContainerName,
 			Action:       "replace",
 		})

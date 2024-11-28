@@ -22,6 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	bmwHttp "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/http"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/migrate"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/daemon"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/periodic"
@@ -46,6 +47,9 @@ func startController(cmd *cobra.Command, args []string) {
 	config.InitConfig()
 	// 初始化日志
 	log.InitLogger()
+
+	// 执行公共的 migration 部分，放到调度器这里，避免多次执行
+	migrate.AutoMigrateAllTables(context.Background())
 
 	r := bmwHttp.NewProfHttpService()
 

@@ -259,7 +259,7 @@ func (r *RDB) EnqueueUnique(ctx context.Context, msg *task.TaskMessage, ttl time
 		return errors.E(op, errors.AlreadyExists, errors.ErrDuplicateTask)
 	}
 	if n == 0 {
-		return errors.E(op, errors.AlreadyExists, errors.ErrTaskIdConflict)
+		return errors.E(op, errors.AlreadyExists, errors.ErrTaskIdConflict, fmt.Errorf("%+v", keys), fmt.Errorf("%+v", argv))
 	}
 	return nil
 }

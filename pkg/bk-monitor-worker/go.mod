@@ -3,7 +3,6 @@ module github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker
 go 1.21
 
 require (
-	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/RedisBloom/redisbloom-go v1.0.0
 	github.com/Shopify/sarama v1.27.1
 	github.com/TencentBlueKing/bk-apigateway-sdks v0.1.16
@@ -67,8 +66,6 @@ require (
 	google.golang.org/protobuf v1.34.0
 	gopkg.in/yaml.v2 v2.4.0
 	gopkg.in/yaml.v3 v3.0.1
-	gorm.io/driver/mysql v1.5.7
-	gorm.io/gorm v1.25.12
 	k8s.io/apimachinery v0.29.2
 	k8s.io/client-go v0.29.2
 )

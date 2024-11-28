@@ -17,7 +17,7 @@ import (
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/migrate"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
@@ -167,7 +167,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	p, _ := ants.NewPool(goroutineCount)
 	defer p.Release()
 
-	models.AutoMigrate(ctx)
+	migrate.AutoMigrate(ctx)
 
 	// 处理 bk_app_to_space 关联路由
 	wg.Add(1)

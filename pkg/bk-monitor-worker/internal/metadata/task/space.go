@@ -175,7 +175,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			logger.Errorf("%s error %s", name, err)
 			return
 		}
-		logger.Errorf("%s success", name)
+		logger.Infof("%s success", name)
 	})
 
 	// 循环每个空间处理 space_to_result_table 空间路由数据
@@ -190,7 +190,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 				return
 			}
 
-			logger.Errorf("%s success", name)
+			logger.Infof("%s success", name)
 		})
 	}
 
@@ -203,7 +203,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			logger.Errorf("%s error %s", name, err)
 			return
 		}
-		logger.Errorf("%s success", name)
+		logger.Infof("%s success", name)
 	})
 
 	// 处理 result_table_detail 路由
@@ -227,7 +227,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			logger.Errorf("%s error %s", name, err)
 			return
 		}
-		logger.Errorf("%s success", name)
+		logger.Infof("%s success", name)
 	})
 
 	wg.Wait()

@@ -79,6 +79,8 @@
         components:
           jaeger:
             enabled: true
+          zipkin:
+            enabled: true
           otlp:
             enabled: true
           pushgateway:

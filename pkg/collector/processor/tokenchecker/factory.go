@@ -171,10 +171,6 @@ func tokenFromAttrs(attrs pcommon.Map, keys []string) string {
 func decodeToken(decoder TokenDecoder, src ...string) (define.Token, error) {
 	var errs []error
 	for _, s := range src {
-		if len(s) <= 0 {
-			continue
-		}
-
 		token, err := decoder.Decode(s)
 		if err != nil {
 			errs = append(errs, err)

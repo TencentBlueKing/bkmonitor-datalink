@@ -207,7 +207,7 @@ bk-collector:
           type: "standard"
 
     # AttributeFilter: 属性过滤处理器
-    - name: "attribute_filter/as_string"
+    - name: "attribute_filter/common"
       config:
         as_string:
           keys:
@@ -323,8 +323,8 @@ bk-collector:
         - "rate_limiter/token_bucket"
         - "sampler/drop_traces"
         - "resource_filter/instance_id"
-        - "attribute_filter/as_string"
         - "db_filter/common"
+        - "attribute_filter/common"
         - "attribute_filter/app"
         - "service_discover/common"
         - "apdex_calculator/standard"

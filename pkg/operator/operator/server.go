@@ -512,11 +512,18 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 	nodeName := vars["node"]
 
 	query := httpx.UnwindParams(r.URL.Query().Get("q"))
+	var cfgs []objectsref.RelabelConfig
+
+	// 补充 container 维度信息（兼容 windows 系统）
+	containerFlag := query.Get("container_info")
+	if containerFlag == "true" {
+		cfgs = append(cfgs, c.objectsController.ContainersRelabelConfigs(nodeName)...)
+	}
+
+	// 补充 workload 维度信息
 	podName := query.Get("podName")
 	annotations := stringx.SplitTrim(query.Get("annotations"), ",")
 	labels := stringx.SplitTrim(query.Get("labels"), ",")
-
-	var cfgs []objectsref.RelabelConfig
 	cfgs = append(cfgs, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName, annotations, labels)...)
 
 	// kind/rules 是为了让 workload 同时能够支持其他 labeljoin 等其他规则
@@ -527,12 +534,6 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 		case "Pod":
 			cfgs = append(cfgs, c.objectsController.PodsRelabelConfigs(annotations, labels)...)
 		}
-	}
-
-	// 补充 container 维度信息（兼容 windows 系统）
-	containerFlag := query.Get("container_info")
-	if containerFlag == "true" {
-		cfgs = append(cfgs, c.objectsController.ContainersRelabelConfigs(nodeName)...)
 	}
 
 	writeResponse(w, cfgs)

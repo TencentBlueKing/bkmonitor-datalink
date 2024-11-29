@@ -1310,19 +1310,39 @@ func (s *SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (map[string]m
 // ComposeEsBkciTableIds 组装关联的BKCI类型的ES结果表
 func (s *SpacePusher) ComposeEsBkciTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
 	logger.Infof("start to push es table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
-	bizId, err := s.getBizIdBySpace(spaceType, spaceId)
+	var bizIdsList []int
+	relatedSpaces, err := s.GetRelatedSpaces(spaceType, spaceId, models.SpaceTypeBKCI)
 	if err != nil {
+		logger.Errorf("ComposeEsBkciTableIds, get related bkci spaces failed, err: %s", err)
 		return nil, err
+	}
+
+	logger.Infof("ComposeEsBkciTableIds,space_type->[%s],space_id->[%s],has related bkci spaces->[%v]", spaceType, spaceId, relatedSpaces)
+	for _, bkciSpaceId := range relatedSpaces {
+		bizId, err := s.getBizIdBySpace(models.SpaceTypeBKCI, bkciSpaceId)
+		if err != nil {
+			logger.Errorf("ComposeEsBkciTableIds, get biz_id by space [%s] failed, err: %s", bkciSpaceId, err)
+			return nil, err
+		}
+		bizIdsList = append(bizIdsList, bizId)
 	}
 	db := mysql.GetDBSession().DB
 	var rtList []resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).BkBizIdEq(bizId).DefaultStorageEq(models.StorageTypeES).IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
+	if err := resulttable.NewResultTableQuerySet(db).
+		Select(resulttable.ResultTableDBSchema.TableId).
+		BkBizIdIn(bizIdsList...).
+		DefaultStorageEq(models.StorageTypeES).
+		IsDeletedEq(false).
+		IsEnableEq(true).
+		All(&rtList); err != nil {
 		return nil, err
 	}
+
 	dataValues := make(map[string]map[string]interface{})
 	for _, rt := range rtList {
 		dataValues[rt.TableId] = map[string]interface{}{"filters": []interface{}{}}
 	}
+	logger.Infof("composeEsBkciTableIds success, space_type [%s], space_id [%s], data_values->[%v]", spaceType, spaceId, dataValues)
 	return dataValues, nil
 }
 

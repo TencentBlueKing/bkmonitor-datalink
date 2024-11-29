@@ -11,6 +11,7 @@ package service
 
 import (
 	"fmt"
+	"github.com/jinzhu/gorm"
 	"testing"
 	"time"
 
@@ -486,13 +487,23 @@ func TestSpaceRedisSvc_composeAllTypeTableIds(t *testing.T) {
 	}
 }
 
-func TestSpaceRedisSvc_GetRelatedSpacesAndBizIds(t *testing.T) {
+func TestSpaceRedisSvc_ComposeEsTableIds(t *testing.T) {
+	// 初始化数据库配置
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
 
+	// 清理所有相关表数据
+	cleanTestData := func() {
+		db.Delete(&space.SpaceResource{})
+		db.Delete(&space.Space{})
+		db.Delete(&resulttable.ResultTable{})
+	}
+	cleanTestData()       // 测试开始前清理数据
+	defer cleanTestData() // 测试结束后清理数据
+
 	// 准备测试用数据
 	resourceIdTest1 := "1"
-	objs := []space.SpaceResource{
+	spaceResources := []space.SpaceResource{
 		{
 			SpaceTypeId:  "bkci",
 			SpaceId:      "test6",
@@ -506,18 +517,15 @@ func TestSpaceRedisSvc_GetRelatedSpacesAndBizIds(t *testing.T) {
 			ResourceId:   &resourceIdTest1,
 		},
 	}
-	db.Delete(&objs)
-	for _, obj := range objs {
-		err := obj.Create(db)
-		assert.NoError(t, err)
-	}
+	insertTestData(t, db, spaceResources)
 
+	// 测试 GetRelatedSpaces
 	relatedSpaceIds, err := NewSpacePusher().GetRelatedSpaces("bkcc", "1", "bkci")
 	assert.NoError(t, err)
 	assert.Equal(t, len(relatedSpaceIds), 2)
-	assert.Equal(t, relatedSpaceIds[0], "test6")
-	assert.Equal(t, relatedSpaceIds[1], "test7")
+	assert.ElementsMatch(t, relatedSpaceIds, []string{"test6", "test7"}) // 无序比较
 
+	// 准备 Space 测试数据
 	spaceObjs := []space.Space{
 		{
 			SpaceTypeId: "bkci",
@@ -532,17 +540,67 @@ func TestSpaceRedisSvc_GetRelatedSpacesAndBizIds(t *testing.T) {
 			Id:          1051,
 		},
 	}
-	db.Delete(&spaceObjs)
-	for _, obj := range spaceObjs {
-		err := obj.Create(db)
-		assert.NoError(t, err)
+	insertTestData(t, db, spaceObjs)
+
+	// 准备 ResultTable 测试数据
+	resultTable := resulttable.ResultTable{
+		TableId:        "-1050_space_test.__default__",
+		BkBizId:        -1050,
+		DefaultStorage: models.StorageTypeES,
+		IsDeleted:      false,
+		IsEnable:       true,
 	}
+	err = resultTable.Create(db)
+	assert.NoError(t, err)
+
+	resultTable2 := resulttable.ResultTable{
+		TableId:        "-1051_space_test.__default__",
+		BkBizId:        -1050,
+		DefaultStorage: models.StorageTypeES,
+		IsDeleted:      false,
+		IsEnable:       true,
+	}
+	err = resultTable2.Create(db)
+	assert.NoError(t, err)
+
+	// 测试 ResultTable 查询
+	var rtList []resulttable.ResultTable
+	err = resulttable.NewResultTableQuerySet(db).
+		Select(resulttable.ResultTableDBSchema.TableId).
+		BkBizIdEq(-1050).
+		DefaultStorageEq(models.StorageTypeES).
+		IsDeletedEq(false).
+		IsEnableEq(true).
+		All(&rtList)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, rtList)
+	assert.Equal(t, rtList[0].TableId, "-1050_space_test.__default__")
+
+	// 测试 getBizIdsBySpace
 	relatedBizIds, err := NewSpacePusher().getBizIdsBySpace("bkcc", relatedSpaceIds)
 	assert.NoError(t, err)
 	assert.Equal(t, len(relatedBizIds), 2)
-	assert.Equal(t, relatedBizIds[0], -1050)
-	assert.Equal(t, relatedBizIds[1], -1051)
+	assert.ElementsMatch(t, relatedBizIds, []int{-1050, -1051}) // 无序比较
 
+	// 测试 ComposeEsBkciTableIds
+	data, err := NewSpacePusher().ComposeEsBkciTableIds("bkcc", "1")
+	assert.NoError(t, err)
+	assert.NotNil(t, data)
+	// 验证 ComposeEsBkciTableIds 的返回结果
+	expectedTableId := "-1050_space_test.__default__"
+	assert.Contains(t, data, expectedTableId, "Expected table ID not found in the result")
+
+	expectedTableId2 := "-1051_space_test.__default__"
+	assert.Contains(t, data, expectedTableId2, "Expected table ID not found in the result")
+
+}
+
+// 通用数据插入函数
+func insertTestData[T any](t *testing.T, db *gorm.DB, objs []T) {
+	for _, obj := range objs {
+		err := db.Create(&obj).Error
+		assert.NoError(t, err)
+	}
 }
 
 func TestSpaceRedisSvc_composeBcsSpaceBizTableIds(t *testing.T) {

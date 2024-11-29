@@ -16,8 +16,6 @@ import (
 	"unicode"
 
 	"k8s.io/client-go/util/jsonpath"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // RelabelConfig relabel 配置 遵循 prometheus 规则
@@ -106,28 +104,24 @@ type ContainerInfoRef struct {
 type ContainerInfoRefs []ContainerInfoRef
 
 func (cr ContainerInfoRefs) AsRelabelConfigs() []RelabelConfig {
-	logger.Infof("pod.cr: %#v", cr)
 	configs := make([]RelabelConfig, 0)
 	for _, ref := range cr {
 		configs = append(configs, RelabelConfig{
 			SourceLabels: []string{"container_id"},
-			Separator:    ";",
 			Regex:        ref.ContainerID,
 			TargetLabel:  "pod_name",
 			Replacement:  ref.RefPodName,
 			Action:       "replace",
 		})
+		//configs = append(configs, RelabelConfig{
+		//	SourceLabels: []string{"container_id"},
+		//	Regex:        ref.ContainerID,
+		//	TargetLabel:  "pod", // 兼容仪表盘和告警策略
+		//	Replacement:  ref.RefPodName,
+		//	Action:       "replace",
+		//})
 		configs = append(configs, RelabelConfig{
 			SourceLabels: []string{"container_id"},
-			Separator:    ";",
-			Regex:        ref.ContainerID,
-			TargetLabel:  "pod", // 兼容仪表盘和告警策略
-			Replacement:  ref.RefPodName,
-			Action:       "replace",
-		})
-		configs = append(configs, RelabelConfig{
-			SourceLabels: []string{"container_id"},
-			Separator:    ";",
 			Regex:        ref.ContainerID,
 			TargetLabel:  "namespace",
 			Replacement:  ref.RefPodNamespace,
@@ -135,30 +129,26 @@ func (cr ContainerInfoRefs) AsRelabelConfigs() []RelabelConfig {
 		})
 		configs = append(configs, RelabelConfig{
 			SourceLabels: []string{"container_id"},
-			Separator:    ";",
 			Regex:        ref.ContainerID,
 			TargetLabel:  "container_name",
 			Replacement:  ref.ContainerName,
 			Action:       "replace",
 		})
+		//configs = append(configs, RelabelConfig{
+		//	SourceLabels: []string{"container_id"},
+		//	Regex:        ref.ContainerID,
+		//	TargetLabel:  "container", // 兼容仪表盘和告警策略
+		//	Replacement:  ref.ContainerName,
+		//	Action:       "replace",
+		//})
 		configs = append(configs, RelabelConfig{
 			SourceLabels: []string{"container_id"},
-			Separator:    ";",
-			Regex:        ref.ContainerID,
-			TargetLabel:  "container", // 兼容仪表盘和告警策略
-			Replacement:  ref.ContainerName,
-			Action:       "replace",
-		})
-		configs = append(configs, RelabelConfig{
-			SourceLabels: []string{"container_id"},
-			Separator:    ";",
 			Regex:        ref.ContainerID,
 			TargetLabel:  "image",
 			Replacement:  ref.ContainerImage,
 			Action:       "replace",
 		})
 	}
-	logger.Infof("pod.json.marshal: %#v", configs)
 	return configs
 }
 

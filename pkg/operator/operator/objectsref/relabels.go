@@ -149,6 +149,17 @@ func (cr ContainerInfoRefs) AsRelabelConfigs() []RelabelConfig {
 			Action:       "replace",
 		})
 	}
+
+	// 丢弃没有 container_name 的指标
+	configs = append(configs, RelabelConfig{
+		SourceLabels: []string{"container_name"},
+		Action:       "drop",
+	})
+	// 丢弃 container_id 维度
+	configs = append(configs, RelabelConfig{
+		Regex:  "container_id",
+		Action: "labeldrop",
+	})
 	return configs
 }
 

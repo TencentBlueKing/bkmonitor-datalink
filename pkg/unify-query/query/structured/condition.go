@@ -80,9 +80,9 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 	for index, field := range c.FieldList {
 		// 不允许值为空，此时可能引起拼接失败
 		if len(field.Value) == 0 {
-			log.Warnf(context.TODO(), "missing value in condition:%s", field.DimensionName)
-			return nil, errors.Wrap(ErrMissingValue, field.DimensionName)
+			return nil, nil
 		}
+
 		// 第一组的只需要增加即可
 		if index == 0 {
 			log.Debugf(context.TODO(), "first element->[%s] will add to row buffer", field.String())

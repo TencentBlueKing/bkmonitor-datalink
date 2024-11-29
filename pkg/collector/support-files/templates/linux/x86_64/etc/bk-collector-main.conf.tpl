@@ -213,6 +213,9 @@ bk-collector:
           keys:
             - "attributes.db.name"
 
+    # ResourceFilter: 维度补充
+    - name: "resource_filter/fill_dimensions"
+
     # ResourceFilter: 资源过滤处理器
     - name: "resource_filter/instance_id"
       config:
@@ -322,6 +325,7 @@ bk-collector:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
         - "sampler/drop_traces"
+        - "resource_filter/fill_dimensions"
         - "resource_filter/instance_id"
         - "db_filter/common"
         - "attribute_filter/common"

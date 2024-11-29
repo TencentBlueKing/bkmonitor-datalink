@@ -1311,6 +1311,7 @@ func (s *SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (map[string]m
 func (s *SpacePusher) ComposeEsBkciTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
 	logger.Infof("start to push es table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	var bizIdsList []int
+	// 获取关联的BKCI类型的空间ID列表
 	relatedSpaces, err := s.GetRelatedSpaces(spaceType, spaceId, models.SpaceTypeBKCI)
 	if err != nil {
 		logger.Errorf("ComposeEsBkciTableIds, get related bkci spaces failed, err: %s", err)
@@ -1319,6 +1320,7 @@ func (s *SpacePusher) ComposeEsBkciTableIds(spaceType, spaceId string) (map[stri
 
 	logger.Infof("ComposeEsBkciTableIds,space_type->[%s],space_id->[%s],has related bkci spaces->[%v]", spaceType, spaceId, relatedSpaces)
 	for _, bkciSpaceId := range relatedSpaces {
+		// 获取该BKCI空间对应的业务ID（负数）
 		bizId, err := s.getBizIdBySpace(models.SpaceTypeBKCI, bkciSpaceId)
 		if err != nil {
 			logger.Errorf("ComposeEsBkciTableIds, get biz_id by space [%s] failed, err: %s", bkciSpaceId, err)
@@ -1328,6 +1330,7 @@ func (s *SpacePusher) ComposeEsBkciTableIds(spaceType, spaceId string) (map[stri
 	}
 	db := mysql.GetDBSession().DB
 	var rtList []resulttable.ResultTable
+	// 查询DB中符合条件的结果表
 	if err := resulttable.NewResultTableQuerySet(db).
 		Select(resulttable.ResultTableDBSchema.TableId).
 		BkBizIdIn(bizIdsList...).

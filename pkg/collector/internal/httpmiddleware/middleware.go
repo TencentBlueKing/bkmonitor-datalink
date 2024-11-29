@@ -11,16 +11,25 @@ package httpmiddleware
 
 import (
 	"net/http"
+	"strings"
 )
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
-var middlewares = map[string]MiddlewareFunc{}
+var middlewares = map[string]func(string) MiddlewareFunc{}
 
-func Register(name string, f MiddlewareFunc) {
+func Register(name string, f func(opt string) MiddlewareFunc) {
 	middlewares[name] = f
 }
 
 func Get(name string) MiddlewareFunc {
-	return middlewares[name]
+	if name == "" {
+		return nil
+	}
+
+	nameOpts := strings.Split(name, ";")
+	if len(nameOpts) == 1 {
+		return middlewares[nameOpts[0]]("")
+	}
+	return middlewares[nameOpts[0]](nameOpts[1])
 }

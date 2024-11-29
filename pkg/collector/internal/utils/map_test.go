@@ -114,3 +114,53 @@ func BenchmarkMergeReplaceWithoutCache(b *testing.B) {
 		}
 	})
 }
+
+func TestAnyMap(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected map[string]int
+	}{
+		{
+			input: `foo=1,bar=2`,
+			expected: map[string]int{
+				"foo": 1,
+				"bar": 2,
+			},
+		},
+		{
+			input: `foo=1, bar=2`,
+			expected: map[string]int{
+				"foo": 1,
+				"bar": 2,
+			},
+		},
+		{
+			input: `foo = 1, bar = 2`,
+			expected: map[string]int{
+				"foo": 1,
+				"bar": 2,
+			},
+		},
+		{
+			input: `foo=1`,
+			expected: map[string]int{
+				"foo": 1,
+			},
+		},
+		{
+			input: `foo=1,`,
+			expected: map[string]int{
+				"foo": 1,
+			},
+		},
+	}
+
+	for _, c := range cases {
+		om := NewOptMap(c.input)
+		for k, v := range c.expected {
+			i, ok := om.GetInt(k)
+			assert.True(t, ok)
+			assert.Equal(t, v, i)
+		}
+	}
+}

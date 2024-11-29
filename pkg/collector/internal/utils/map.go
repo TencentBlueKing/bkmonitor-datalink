@@ -11,7 +11,9 @@ package utils
 
 import (
 	"strings"
+	"sync"
 
+	"github.com/spf13/cast"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 )
 
@@ -93,4 +95,46 @@ func MergeReplaceAttributeMaps(attrs ...pcommon.Map) map[string]string {
 		})
 	}
 	return dst
+}
+
+type OptMap struct {
+	mut sync.Mutex
+	m   map[string]interface{}
+}
+
+func NewOptMap(s string) *OptMap {
+	m := make(map[string]interface{})
+	pairs := strings.Split(s, ",")
+	for _, pair := range pairs {
+		kv := strings.Split(strings.TrimSpace(pair), "=")
+		if len(kv) != 2 {
+			continue
+		}
+		m[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+	}
+	return &OptMap{m: m}
+}
+
+func (om *OptMap) GetInt(k string) (int, bool) {
+	om.mut.Lock()
+	defer om.mut.Unlock()
+
+	v, ok := om.m[k]
+	if !ok {
+		return 0, false
+	}
+
+	i, err := cast.ToIntE(v)
+	if err != nil {
+		return 0, false
+	}
+	return i, true
+}
+
+func (om *OptMap) GetIntDefault(k string, defaultVal int) int {
+	i, ok := om.GetInt(k)
+	if ok {
+		return i
+	}
+	return defaultVal
 }

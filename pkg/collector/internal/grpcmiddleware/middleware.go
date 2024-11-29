@@ -10,15 +10,25 @@
 package grpcmiddleware
 
 import (
+	"strings"
+
 	"google.golang.org/grpc"
 )
 
-var middlewares = map[string]grpc.ServerOption{}
+var middlewares = map[string]func(string) grpc.ServerOption{}
 
-func Register(name string, f grpc.ServerOption) {
+func Register(name string, f func(opt string) grpc.ServerOption) {
 	middlewares[name] = f
 }
 
 func Get(name string) grpc.ServerOption {
-	return middlewares[name]
+	if name == "" {
+		return nil
+	}
+
+	nameOpts := strings.Split(name, ";")
+	if len(nameOpts) == 1 {
+		return middlewares[nameOpts[0]]("")
+	}
+	return middlewares[nameOpts[0]](nameOpts[1])
 }

@@ -25,10 +25,6 @@ func Concurrency() int {
 	return coreNums * 2
 }
 
-func RequestsAllowed() int {
-	return coreNums * 256
-}
-
 func SetCoreNum(n int) {
 	if n <= 0 {
 		return

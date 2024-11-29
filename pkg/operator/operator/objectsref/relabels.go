@@ -113,13 +113,13 @@ func (cr ContainerInfoRefs) AsRelabelConfigs() []RelabelConfig {
 			Replacement:  ref.RefPodName,
 			Action:       "replace",
 		})
-		//configs = append(configs, RelabelConfig{
-		//	SourceLabels: []string{"container_id"},
-		//	Regex:        ref.ContainerID,
-		//	TargetLabel:  "pod", // 兼容仪表盘和告警策略
-		//	Replacement:  ref.RefPodName,
-		//	Action:       "replace",
-		//})
+		configs = append(configs, RelabelConfig{
+			SourceLabels: []string{"container_id"},
+			Regex:        ref.ContainerID,
+			TargetLabel:  "pod", // 兼容仪表盘和告警策略
+			Replacement:  ref.RefPodName,
+			Action:       "replace",
+		})
 		configs = append(configs, RelabelConfig{
 			SourceLabels: []string{"container_id"},
 			Regex:        ref.ContainerID,
@@ -134,13 +134,13 @@ func (cr ContainerInfoRefs) AsRelabelConfigs() []RelabelConfig {
 			Replacement:  ref.ContainerName,
 			Action:       "replace",
 		})
-		//configs = append(configs, RelabelConfig{
-		//	SourceLabels: []string{"container_id"},
-		//	Regex:        ref.ContainerID,
-		//	TargetLabel:  "container", // 兼容仪表盘和告警策略
-		//	Replacement:  ref.ContainerName,
-		//	Action:       "replace",
-		//})
+		configs = append(configs, RelabelConfig{
+			SourceLabels: []string{"container_id"},
+			Regex:        ref.ContainerID,
+			TargetLabel:  "container", // 兼容仪表盘和告警策略
+			Replacement:  ref.ContainerName,
+			Action:       "replace",
+		})
 		configs = append(configs, RelabelConfig{
 			SourceLabels: []string{"container_id"},
 			Regex:        ref.ContainerID,

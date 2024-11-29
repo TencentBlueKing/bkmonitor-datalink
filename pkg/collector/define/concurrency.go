@@ -25,6 +25,10 @@ func Concurrency() int {
 	return coreNums * 2
 }
 
+func CoreNum() int {
+	return coreNums
+}
+
 func SetCoreNum(n int) {
 	if n <= 0 {
 		return

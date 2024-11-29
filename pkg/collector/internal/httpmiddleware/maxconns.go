@@ -33,7 +33,7 @@ func MaxConns(opt string) MiddlewareFunc {
 	logger.Infof("maxconns middleware opts: %s(%d)", optMaxConnectionsRatio, n)
 
 	return func(next http.Handler) http.Handler {
-		sem := semaphore.New(define.RequestHttp.S(), n)
+		sem := semaphore.New(define.RequestHttp.S(), define.CoreNum()*n)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			got := sem.AcquireWithTimeout(define.AcquireTimeout)
 			if !got {

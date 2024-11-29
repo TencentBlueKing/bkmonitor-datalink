@@ -92,7 +92,7 @@ bk-collector:
       port: 10205
       middlewares:
         - "logging"
-        - "maxconns"
+        - "maxconns;maxConnectionsRatio=256"
 
   # ============================== Pingserver ================================
   pingserver:

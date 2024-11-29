@@ -97,6 +97,18 @@ func MergeReplaceAttributeMaps(attrs ...pcommon.Map) map[string]string {
 	return dst
 }
 
+func NameOpts(s string) (string, string) {
+	if s == "" {
+		return "", ""
+	}
+
+	nameOpts := strings.Split(s, ";")
+	if len(nameOpts) == 1 {
+		return nameOpts[0], ""
+	}
+	return nameOpts[0], nameOpts[1]
+}
+
 type OptMap struct {
 	mut sync.Mutex
 	m   map[string]interface{}

@@ -11,7 +11,8 @@ package httpmiddleware
 
 import (
 	"net/http"
-	"strings"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 )
 
 type MiddlewareFunc func(http.Handler) http.Handler
@@ -22,14 +23,12 @@ func Register(name string, f func(opt string) MiddlewareFunc) {
 	middlewares[name] = f
 }
 
-func Get(name string) MiddlewareFunc {
-	if name == "" {
+func Get(nameOpts string) MiddlewareFunc {
+	name, opts := utils.NameOpts(nameOpts)
+	f, ok := middlewares[name]
+	if !ok {
 		return nil
 	}
 
-	nameOpts := strings.Split(name, ";")
-	if len(nameOpts) == 1 {
-		return middlewares[nameOpts[0]]("")
-	}
-	return middlewares[nameOpts[0]](nameOpts[1])
+	return f(opts)
 }

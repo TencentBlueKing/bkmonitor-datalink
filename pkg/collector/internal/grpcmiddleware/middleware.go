@@ -10,9 +10,9 @@
 package grpcmiddleware
 
 import (
-	"strings"
-
 	"google.golang.org/grpc"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 )
 
 var middlewares = map[string]func(string) grpc.ServerOption{}
@@ -21,14 +21,11 @@ func Register(name string, f func(opt string) grpc.ServerOption) {
 	middlewares[name] = f
 }
 
-func Get(name string) grpc.ServerOption {
-	if name == "" {
+func Get(nameOpts string) grpc.ServerOption {
+	name, opts := utils.NameOpts(nameOpts)
+	f, ok := middlewares[name]
+	if !ok {
 		return nil
 	}
-
-	nameOpts := strings.Split(name, ";")
-	if len(nameOpts) == 1 {
-		return middlewares[nameOpts[0]]("")
-	}
-	return middlewares[nameOpts[0]](nameOpts[1])
+	return f(opts)
 }

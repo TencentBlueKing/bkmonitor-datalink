@@ -164,3 +164,36 @@ func TestAnyMap(t *testing.T) {
 		}
 	}
 }
+
+func TestNameOpts(t *testing.T) {
+	cases := []struct {
+		nameOpts string
+		name     string
+		opts     string
+	}{
+		{
+			nameOpts: "foo1",
+			name:     "foo1",
+		},
+		{
+			nameOpts: "foo1;",
+			name:     "foo1",
+		},
+		{
+			nameOpts: "foo1;k1=v1",
+			name:     "foo1",
+			opts:     "k1=v1",
+		},
+		{
+			nameOpts: "foo1;k1=v1,k2=v2",
+			name:     "foo1",
+			opts:     "k1=v1,k2=v2",
+		},
+	}
+
+	for _, c := range cases {
+		name, opts := NameOpts(c.nameOpts)
+		assert.Equal(t, c.name, name)
+		assert.Equal(t, c.opts, opts)
+	}
+}

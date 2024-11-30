@@ -1897,6 +1897,314 @@ func TestStructAndPromQLConvert(t *testing.T) {
 				MetricMerge: "a",
 			},
 		},
+		"promql with match - 1": {
+			queryStruct: false,
+			promql: &structured.QueryPromQL{
+				PromQL: `sum by (pod_name, bcs_cluster_id, namespace,instance) (rate(container_cpu_usage_seconds_total{namespace="ns-1"}[2m])) / on(bcs_cluster_id, namespace, pod_name) group_left() sum (sum_over_time(kube_pod_container_resource_limits_cpu_cores{namespace="ns-1"}[1m])) by (pod_name, bcs_cluster_id,namespace)`,
+				Match:  `{pod_name="pod", bcs_cluster_id!="cls-1", namespace="ns-1", instance="ins-1"}`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "container_cpu_usage_seconds_total",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "rate",
+							Window:    "2m0s",
+							NodeIndex: 2,
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method:     "sum",
+								Dimensions: []string{"pod_name", "bcs_cluster_id", "namespace", "instance"},
+							},
+						},
+						ReferenceName: "a",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ns-1"},
+								},
+								{
+									DimensionName: "pod_name",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"pod"},
+								},
+								{
+									DimensionName: "bcs_cluster_id",
+									Operator:      structured.ConditionNotEqual,
+									Value:         []string{"cls-1"},
+								},
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ns-1"},
+								},
+								{
+									DimensionName: "instance",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ins-1"},
+								},
+							},
+							ConditionList: []string{"and", "and", "and", "and"},
+						},
+					},
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "kube_pod_container_resource_limits_cpu_cores",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "sum_over_time",
+							Window:    "1m0s",
+							NodeIndex: 2,
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method:     "sum",
+								Dimensions: []string{"pod_name", "bcs_cluster_id", "namespace"},
+							},
+						},
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ns-1"},
+								},
+								{
+									DimensionName: "pod_name",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"pod"},
+								},
+								{
+									DimensionName: "bcs_cluster_id",
+									Operator:      structured.ConditionNotEqual,
+									Value:         []string{"cls-1"},
+								},
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ns-1"},
+								},
+								{
+									DimensionName: "instance",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ins-1"},
+								},
+							},
+							ConditionList: []string{"and", "and", "and", "and"},
+						},
+						ReferenceName: "b",
+					},
+				},
+				MetricMerge: `a / on(bcs_cluster_id, namespace, pod_name) group_left() b`,
+			},
+		},
+		"promql with match and verify - 1": {
+			queryStruct: false,
+			promql: &structured.QueryPromQL{
+				PromQL:             `sum by (pod_name, bcs_cluster_id, namespace,instance) (rate(container_cpu_usage_seconds_total{namespace="ns-1"}[2m])) / on(bcs_cluster_id, namespace, pod_name) group_left() sum (sum_over_time(kube_pod_container_resource_limits_cpu_cores{namespace="ns-1"}[1m])) by (pod_name, bcs_cluster_id,namespace)`,
+				Match:              `{pod_name="pod", bcs_cluster_id!="cls-1", namespace="ns-1", instance="ins-1"}`,
+				IsVerifyDimensions: true,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "container_cpu_usage_seconds_total",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "rate",
+							Window:    "2m0s",
+							NodeIndex: 2,
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method:     "sum",
+								Dimensions: []string{"pod_name", "bcs_cluster_id", "namespace", "instance"},
+							},
+						},
+						ReferenceName: "a",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ns-1"},
+								},
+								{
+									DimensionName: "pod_name",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"pod"},
+								},
+								{
+									DimensionName: "bcs_cluster_id",
+									Operator:      structured.ConditionNotEqual,
+									Value:         []string{"cls-1"},
+								},
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ns-1"},
+								},
+								{
+									DimensionName: "instance",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ins-1"},
+								},
+							},
+							ConditionList: []string{"and", "and", "and", "and"},
+						},
+					},
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "kube_pod_container_resource_limits_cpu_cores",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "sum_over_time",
+							Window:    "1m0s",
+							NodeIndex: 2,
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method:     "sum",
+								Dimensions: []string{"pod_name", "bcs_cluster_id", "namespace"},
+							},
+						},
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ns-1"},
+								},
+								{
+									DimensionName: "pod_name",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"pod"},
+								},
+								{
+									DimensionName: "bcs_cluster_id",
+									Operator:      structured.ConditionNotEqual,
+									Value:         []string{"cls-1"},
+								},
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ns-1"},
+								},
+							},
+							ConditionList: []string{"and", "and", "and"},
+						},
+						ReferenceName: "b",
+					},
+				},
+				MetricMerge: `a / on(bcs_cluster_id, namespace, pod_name) group_left() b`,
+			},
+		},
+		"promql with match and verify - 2": {
+			queryStruct: false,
+			promql: &structured.QueryPromQL{
+				PromQL:             `sum by (pod_name) (rate(container_cpu_usage_seconds_total{namespace="ns-1"}[2m])) / on(bcs_cluster_id, namespace, pod_name) group_left() kube_pod_container_resource_limits_cpu_cores{namespace="ns-1"} or sum by (bcs_cluster_id, namespace, pod_name, instance) (rate(container_cpu_usage_seconds_total{namespace="ns-1"}[1m]))`,
+				Match:              `{pod_name="pod", bcs_cluster_id!="cls-1", namespace="ns-1", instance="ins-1"}`,
+				IsVerifyDimensions: true,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "container_cpu_usage_seconds_total",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "rate",
+							Window:    "2m0s",
+							NodeIndex: 2,
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method:     "sum",
+								Dimensions: []string{"pod_name"},
+							},
+						},
+						ReferenceName: "a",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ns-1"},
+								},
+								{
+									DimensionName: "pod_name",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"pod"},
+								},
+							},
+							ConditionList: []string{"and"},
+						},
+					},
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "kube_pod_container_resource_limits_cpu_cores",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ns-1"},
+								},
+							},
+						},
+						ReferenceName: "b",
+					},
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "container_cpu_usage_seconds_total",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "rate",
+							Window:    "1m0s",
+							NodeIndex: 2,
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method:     "sum",
+								Dimensions: []string{"bcs_cluster_id", "namespace", "pod_name", "instance"},
+							},
+						},
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ns-1"},
+								},
+								{
+									DimensionName: "pod_name",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"pod"},
+								},
+								{
+									DimensionName: "bcs_cluster_id",
+									Operator:      structured.ConditionNotEqual,
+									Value:         []string{"cls-1"},
+								},
+								{
+									DimensionName: "namespace",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ns-1"},
+								},
+								{
+									DimensionName: "instance",
+									Operator:      structured.ConditionEqual,
+									Value:         []string{"ins-1"},
+								},
+							},
+							ConditionList: []string{"and", "and", "and", "and"},
+						},
+						ReferenceName: "c",
+					},
+				},
+				MetricMerge: `a / on(bcs_cluster_id, namespace, pod_name) group_left() b or c`,
+			},
+		},
 	}
 
 	for n, c := range testCase {

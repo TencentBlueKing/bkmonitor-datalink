@@ -207,11 +207,14 @@ bk-collector:
           type: "standard"
 
     # AttributeFilter: 属性过滤处理器
-    - name: "attribute_filter/as_string"
+    - name: "attribute_filter/common"
       config:
         as_string:
           keys:
             - "attributes.db.name"
+
+    # ResourceFilter: 维度补充
+    - name: "resource_filter/fill_dimensions"
 
     # ResourceFilter: 资源过滤处理器
     - name: "resource_filter/instance_id"
@@ -322,9 +325,10 @@ bk-collector:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
         - "sampler/drop_traces"
+        - "resource_filter/fill_dimensions"
         - "resource_filter/instance_id"
-        - "attribute_filter/as_string"
         - "db_filter/common"
+        - "attribute_filter/common"
         - "attribute_filter/app"
         - "service_discover/common"
         - "apdex_calculator/standard"

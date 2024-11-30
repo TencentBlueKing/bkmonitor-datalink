@@ -149,6 +149,8 @@ processor:
         cache:
           key: "{{ resource_fill_dimensions_config.from_cache.cache.key }}"
           url: "{{ resource_fill_dimensions_config.from_cache.cache.url }}"
+          timeout: "{{ resource_fill_dimensions_config.from_cache.cache.timeout }}"
+          interval: "{{ resource_fill_dimensions_config.from_cache.cache.interval }}"
 {%- endif %}
 
 {% if metric_configs is defined %}

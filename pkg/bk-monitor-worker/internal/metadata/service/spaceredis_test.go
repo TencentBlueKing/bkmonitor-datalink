@@ -11,12 +11,12 @@ package service
 
 import (
 	"fmt"
-	"github.com/jinzhu/gorm"
 	"testing"
 	"time"
 
 	"github.com/agiledragon/gomonkey/v2"
 	mapset "github.com/deckarep/golang-set/v2"
+	"github.com/jinzhu/gorm"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"

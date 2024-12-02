@@ -27,10 +27,10 @@ config_templates:
           properties:
             http_max_bytes:
               title: http_max_bytes
-              type: number
+              type: string
             grpc_max_bytes:
               title: grpc_max_bytes
-              type: number
+              type: string
 
   - plugin_version: "*"
     name: bk-collector-platform.conf

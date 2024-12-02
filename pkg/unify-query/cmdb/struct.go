@@ -63,7 +63,8 @@ type RelationMultiResourceResponseData struct {
 
 // RelationMultiResourceResponse 请求返回
 type RelationMultiResourceResponse struct {
-	Data []RelationMultiResourceResponseData `json:"data"`
+	TraceID string                              `json:"trace_id,omitempty"`
+	Data    []RelationMultiResourceResponseData `json:"data"`
 }
 
 // RelationMultiResourceRangeRequest 请求参数
@@ -93,5 +94,6 @@ type RelationMultiResourceRangeResponseData struct {
 
 // RelationMultiResourceRangeResponse 请求返回
 type RelationMultiResourceRangeResponse struct {
-	Data []RelationMultiResourceRangeResponseData `json:"data"`
+	TraceID string                                   `json:"trace_id,omitempty"`
+	Data    []RelationMultiResourceRangeResponseData `json:"data"`
 }

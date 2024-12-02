@@ -37,7 +37,7 @@ type VmParams struct {
 	ClusterName           string            `json:"cluster_name"`
 	ApiParams             map[string]any    `json:"api_params"`
 	ResultTableList       []string          `json:"result_table_list"`
-	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
+	MetricFilterCondition map[string]string `json:"metric_filter_condition,omitempty"`
 }
 
 type QueryRangeParams struct {

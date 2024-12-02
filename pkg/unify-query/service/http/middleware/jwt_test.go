@@ -126,7 +126,7 @@ func TestJwtAuthMiddleware(t *testing.T) {
 		"空间如果为空": {
 			appCode:  "my_code",
 			status:   http.StatusUnauthorized,
-			expected: `{"error":"jwt auth unauthorized: space_uid is empty, app_code: my_code, space_uid: "}`,
+			expected: `{"error":"jwt auth unauthorized: bk_app_code is unauthorized in this space_uid, app_code: my_code, space_uid: "}`,
 		},
 		"访问无权限的空间授权 - 1": {
 			appCode:  "my_code",

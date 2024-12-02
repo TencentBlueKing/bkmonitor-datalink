@@ -47,6 +47,15 @@ var (
 )
 
 var (
+	bkDataApiRequestTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "bk_data_api_request_total",
+			Help:      "unify-query bk_data api request",
+		},
+		[]string{"space_uid", "table_id"},
+	)
+
 	apiRequestTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "unify_query",
@@ -112,6 +121,11 @@ var (
 		[]string{"client_ip", "api", "jwt_app_code", "jwt_app_user_name", "space_uid", "status"},
 	)
 )
+
+func BkDataRequestInc(ctx context.Context, params ...string) {
+	metric, _ := bkDataApiRequestTotal.GetMetricWithLabelValues(params...)
+	counterInc(ctx, metric)
+}
 
 func JWTRequestInc(ctx context.Context, params ...string) {
 	metric, _ := jwtRequestTotal.GetMetricWithLabelValues(params...)
@@ -216,6 +230,6 @@ func init() {
 	prometheus.MustRegister(
 		apiRequestTotal, apiRequestSecondHistogram, resultTableInfo,
 		tsDBRequestSecondHistogram, vmQuerySpaceUidInfo, tsDBRequestBytesHistogram,
-		jwtRequestTotal,
+		jwtRequestTotal, bkDataApiRequestTotal,
 	)
 }

@@ -203,6 +203,40 @@ func TestQueryToMetric(t *testing.T) {
 				IsCount:       false,
 			},
 		},
+		"test bk data match table id": {
+			query: &Query{
+				DataSource:    BkData,
+				TableID:       "2_table_id",
+				FieldName:     "kube_.*",
+				ReferenceName: "a",
+			},
+			metric: &md.QueryMetric{
+				QueryList: md.QueryList{
+					{
+						DataSource:  BkData,
+						TableID:     "2_table_id",
+						StorageType: consul.BkSqlStorageType,
+						DB:          "2_table_id",
+						MetricName:  "kube_.*",
+						Field:       "kube_.*",
+					},
+				},
+				ReferenceName: "a",
+				MetricName:    "kube_.*",
+			},
+		},
+		"test bk data not match table id": {
+			query: &Query{
+				DataSource:    BkData,
+				TableID:       "3_table_id",
+				FieldName:     "kube_.*",
+				ReferenceName: "a",
+			},
+			metric: &md.QueryMetric{
+				ReferenceName: "a",
+				MetricName:    "kube_.*",
+			},
+		},
 	}
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {

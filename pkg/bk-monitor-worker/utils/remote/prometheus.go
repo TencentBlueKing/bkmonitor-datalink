@@ -123,16 +123,11 @@ func NewPrometheusWriterClient(token, url string, headers map[string]string) *Pr
 	} else {
 		h[tokenKey] = h["x-bk-token"]
 	}
-	isValid := false
-	if v, _ := h[tokenKey]; v != "" {
-		isValid = true
-	}
 
 	return &PrometheusWriter{
 		url:     url,
 		headers: h,
 		client:  client,
-		isValid: isValid,
 		logger:  monitorLogger.With(zap.String("name", "prometheus")),
 	}
 }

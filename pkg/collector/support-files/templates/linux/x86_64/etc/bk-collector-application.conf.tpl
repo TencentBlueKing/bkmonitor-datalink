@@ -116,6 +116,20 @@ default:
 {% if attribute_config is defined %}
       - name: "{{ attribute_config.name }}"
         config:
+          {%- if attribute_config.as_string is defined %}
+          as_string:
+            keys:
+              {%- for key in attribute_config.as_string %}
+              - "{{ key }}"
+              {%- endfor %}
+          {%- endif %}
+          {%- if attribute_config.as_int is defined %}
+          as_int:
+            keys:
+              {%- for key in attribute_config.as_int %}
+              - "{{ key }}"
+              {%- endfor %}
+          {%- endif %}
           cut:
             {%- for config in attribute_config.cut %}
             - predicate_key: "{{ config.predicate_key }}"

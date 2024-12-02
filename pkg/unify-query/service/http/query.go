@@ -22,12 +22,14 @@ import (
 	"github.com/panjf2000/ants/v2"
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
@@ -554,15 +556,19 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 	}, nil
 }
 
-func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (*structured.QueryTs, error) {
+func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (query *structured.QueryTs, err error) {
+	var (
+		matchers []*labels.Matcher
+	)
+
 	if queryPromQL == nil {
-		return nil, nil
+		return
 	}
 
 	sp := structured.NewQueryPromQLExpr(queryPromQL.PromQL)
-	query, err := sp.QueryTs()
+	query, err = sp.QueryTs()
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	query.Start = queryPromQL.Start
@@ -584,26 +590,49 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (*
 		}
 	}
 
-	if queryPromQL.Match != "" {
-		matchers, err := parser.ParseMetricSelector(queryPromQL.Match)
-		if err != nil {
-			return nil, err
+	if queryPromQL.Match == "" {
+		return
+	}
+
+	matchers, err = parser.ParseMetricSelector(queryPromQL.Match)
+	if err != nil {
+		return
+	}
+
+	if len(matchers) == 0 {
+		return
+	}
+
+	for _, q := range query.QueryList {
+		var verifyDimensions = func(key string) bool {
+			return true
 		}
 
-		if len(matchers) > 0 {
-			for _, m := range matchers {
-				for _, q := range query.QueryList {
-					q.Conditions.Append(structured.ConditionField{
-						DimensionName: m.Name,
-						Value:         []string{m.Value},
-						Operator:      structured.PromOperatorToConditions(m.Type),
-					}, structured.ConditionAnd)
-				}
+		if queryPromQL.IsVerifyDimensions {
+			dimSet := set.New[string]()
+			for _, a := range q.AggregateMethodList {
+				dimSet.Add(a.Dimensions...)
 			}
+
+			verifyDimensions = func(key string) bool {
+				return dimSet.Existed(key)
+			}
+		}
+
+		for _, m := range matchers {
+			if !verifyDimensions(m.Name) {
+				continue
+			}
+
+			q.Conditions.Append(structured.ConditionField{
+				DimensionName: m.Name,
+				Value:         []string{m.Value},
+				Operator:      structured.PromOperatorToConditions(m.Type),
+			}, structured.ConditionAnd)
 		}
 	}
 
-	return query, nil
+	return
 }
 
 func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (interface{}, error) {

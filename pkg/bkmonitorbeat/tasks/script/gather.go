@@ -58,7 +58,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	command := ShellWordPreProcess(taskConf.Command)
 
 	t0 := time.Now()
-	out, err := ExecCmdLine(cmdCtx, command, taskConf.UserEnvs)
+	out, err := ExecCmdLine(cmdCtx, command, taskConf.UserEnvs, taskConf.Username)
 	if err != nil {
 		logger.Errorf("execute command (%s) failed, out=(%s), err: %v", command, out, err)
 		if errors.Is(err, utils.ErrScriptTimeout) {

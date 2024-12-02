@@ -1086,7 +1086,7 @@ func (s *SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *
 	// 追加关联的BKCI相关的ES结果表
 	esBkciValues, errEsBkci := s.ComposeEsBkciTableIds(spaceType, spaceId)
 	if errEsBkci != nil {
-		logger.Errorf("pushBkccSpaceTableIds:compose es bkci space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errEsBkci)
+		logger.Warnf("pushBkccSpaceTableIds:compose es bkci space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errEsBkci)
 	}
 	logger.Infof("pushBkccSpaceTableIds:compose es bkci space table_id data successfully, space_type [%s], space_id [%s],data->[%v]", spaceType, spaceId, esBkciValues)
 	s.composeValue(&values, &esBkciValues)

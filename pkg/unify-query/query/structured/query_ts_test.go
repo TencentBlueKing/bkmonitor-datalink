@@ -39,8 +39,9 @@ func TestQueryToMetric(t *testing.T) {
 	influxdb.MockSpaceRouter(ctx)
 
 	var testCases = map[string]struct {
-		query  *Query
-		metric *md.QueryMetric
+		spaceUID string
+		query    *Query
+		metric   *md.QueryMetric
 	}{
 		"test table id query": {
 			query: &Query{
@@ -237,11 +238,29 @@ func TestQueryToMetric(t *testing.T) {
 				MetricName:    "kube_.*",
 			},
 		},
+		"test bk data not match table id - 1": {
+			spaceUID: "bkci__2",
+			query: &Query{
+				DataSource:    BkData,
+				TableID:       "2_table_id",
+				FieldName:     "kube_.*",
+				ReferenceName: "a",
+			},
+			metric: &md.QueryMetric{
+				ReferenceName: "a",
+				MetricName:    "kube_.*",
+			},
+		},
 	}
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
 			ctx = md.InitHashID(ctx)
-			metric, err := c.query.ToQueryMetric(ctx, influxdb.SpaceUid)
+			spaceUID := c.spaceUID
+			if spaceUID == "" {
+				spaceUID = influxdb.SpaceUid
+			}
+
+			metric, err := c.query.ToQueryMetric(ctx, spaceUID)
 			assert.Nil(t, err)
 			if err == nil {
 				assert.Equal(t, *c.metric, *metric)

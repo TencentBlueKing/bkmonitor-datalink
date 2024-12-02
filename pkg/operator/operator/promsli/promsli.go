@@ -33,10 +33,10 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/eplabels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/gzip"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/gzip"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -223,13 +223,13 @@ func (c *Controller) GeneratePromRuleContent() map[string]string {
 
 		content, err := promyaml.Marshal(rule.Spec)
 		if err != nil {
-			logger.Errorf("marshal prometheus rule '%s' failed, err: %v", id, err)
+			logger.Errorf("marshal prometheus rule '%s' failed: %v", id, err)
 			continue
 		}
 		_, errs := rulefmt.Parse(content)
 		if len(errs) > 0 {
 			for _, err = range errs {
-				logger.Errorf("parse prometheus rule '%s' failed, err: %v", id, err)
+				logger.Errorf("parse prometheus rule '%s' failed: %v", id, err)
 			}
 			continue
 		}

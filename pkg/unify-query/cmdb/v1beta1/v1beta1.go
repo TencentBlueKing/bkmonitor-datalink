@@ -244,12 +244,12 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	span.Set("step", opt.Step.String())
 	span.Set("source", opt.Source)
 	span.Set("target", opt.Target)
-	span.Set("matcher", fmt.Sprintf("%v", opt.Matcher))
+	span.Set("matcher", opt.Matcher)
 	span.Set("target", opt.PathResource)
 
 	queryMatcher := opt.Matcher.Rename()
 
-	span.Set("query-matcher", fmt.Sprintf("%v", queryMatcher))
+	span.Set("query-matcher", queryMatcher)
 
 	if opt.Source == "" {
 		opt.Source, err = r.getResourceFromMatch(ctx, queryMatcher)
@@ -276,8 +276,8 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		return
 	}
 
-	span.Set("source", string(opt.Source))
-	span.Set("index-matcher", fmt.Sprintf("%v", matcher))
+	span.Set("source", opt.Source)
+	span.Set("index-matcher", matcher)
 
 	paths, err := r.getPaths(ctx, opt.Source, opt.Target, opt.PathResource)
 	if err != nil {
@@ -287,15 +287,17 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 
 	span.Set("paths", paths)
 
+	var errorMessage []string
 	for _, path := range paths {
-		ts, err = r.doRequest(ctx, opt.LookBackDelta, opt.SpaceUid, opt.StartTs, opt.EndTs, opt.Step, path, matcher, opt.Instant)
-		if err != nil {
-			err = errors.WithMessagef(err, "path [%v] do request error", path)
+		reqTs, reqErr := r.doRequest(ctx, opt.LookBackDelta, opt.SpaceUid, opt.StartTs, opt.EndTs, opt.Step, path, matcher, opt.Instant)
+		if reqErr != nil {
+			errorMessage = append(errorMessage, fmt.Sprintf("path [%v] do request error: %s", path, reqErr))
 			continue
 		}
 
-		if len(ts) > 0 {
+		if len(reqTs) > 0 {
 			hitPath = path
+			ts = reqTs
 			span.Set("hit_path", hitPath)
 			break
 		}
@@ -303,7 +305,9 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 
 	// 查询不到数据无需返回异常
 	if len(ts) == 0 {
-		return
+		if len(errorMessage) > 0 {
+			err = errors.New(strings.Join(errorMessage, "\n"))
+		}
 	}
 
 	return
@@ -390,22 +394,18 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 		return nil, err
 	}
 
-	metadata.GetQueryParams(ctx).SetIsSkipK8s(true)
+	metadata.GetQueryParams(ctx).SetTime(startTs, endTs).SetIsSkipK8s(true)
 	queryReference, err := queryTs.ToQueryReference(ctx)
+
 	if err != nil {
 		return nil, err
 	}
-	err = metadata.SetQueryReference(ctx, queryReference)
-	if err != nil {
-		return nil, err
-	}
+	metadata.SetQueryReference(ctx, queryReference)
 
 	var instance tsdb.Instance
-	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
-	if ok {
-		if err != nil {
-			return nil, err
-		}
+
+	if metadata.GetQueryParams(ctx).IsDirectQuery() {
+		vmExpand := queryReference.ToVmExpand(ctx)
 
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
@@ -419,7 +419,7 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 		instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
 			QueryMaxRouting: QueryMaxRouting,
 			Timeout:         Timeout,
-		}, lookBackDelta)
+		}, lookBackDelta, QueryMaxRouting)
 	}
 
 	realPromQL, err := queryTs.ToPromQL(ctx)
@@ -439,10 +439,10 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	var matrix pl.Matrix
 	var vector pl.Vector
 	if instant {
-		vector, err = instance.Query(ctx, statement, end)
+		vector, err = instance.DirectQuery(ctx, statement, end)
 		matrix = vectorToMatrix(vector)
 	} else {
-		matrix, err = instance.QueryRange(ctx, statement, start, end, step)
+		matrix, err = instance.DirectQueryRange(ctx, statement, start, end, step)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("instance query error: %s", err)

@@ -52,6 +52,18 @@ func TestReceiver(t *testing.T) {
       # default: ""
       endpoint: "localhost:0"
 
+    # Tars Server Config
+    tars_server:
+      # 是否启动 Tars 服务
+      # default: false
+      enabled: false
+      # 传输协议，目前支持 tcp
+      # default: ""
+      transport: "tcp"
+      # 服务监听端点
+      # default: ""
+      endpoint: ":4319"
+
     components:
       jaeger:
         enabled: true

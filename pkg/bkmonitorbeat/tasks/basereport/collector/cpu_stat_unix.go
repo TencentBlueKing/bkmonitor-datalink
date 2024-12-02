@@ -178,19 +178,3 @@ func getDMIDecodeCPUInfo() (model string, mhz float64) {
 	}
 	return
 }
-
-func calcTimeState(t1, t2 cpu.TimesStat) cpu.TimesStat {
-	return cpu.TimesStat{
-		CPU:       t2.CPU,
-		User:      t2.User - t1.User,
-		System:    t2.System - t1.System,
-		Idle:      t2.Idle - t1.Idle,
-		Nice:      t2.Nice - t1.Nice,
-		Iowait:    t2.Iowait - t1.Iowait,
-		Irq:       t2.Irq - t1.Irq,
-		Softirq:   t2.Softirq - t1.Softirq,
-		Steal:     t2.Steal - t1.Steal,
-		Guest:     t2.Guest - t1.Guest,
-		GuestNice: t2.GuestNice - t1.GuestNice,
-	}
-}

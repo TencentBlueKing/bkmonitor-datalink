@@ -16,6 +16,11 @@ import (
 	"strconv"
 )
 
+// setProcessExecByUsername does not work on windows.
+func setProcessExecByUsername(cmd *exec.Cmd, username string) error {
+	return nil
+}
+
 func setProcessGroupID(cmd *exec.Cmd) {
 }
 

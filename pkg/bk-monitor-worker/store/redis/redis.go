@@ -168,23 +168,42 @@ func (r *Instance) Close() error {
 	return nil
 }
 
-// HSetWithCompare 与redis中数据不同才更新
-func (r *Instance) HSetWithCompare(key, field, value string) error {
+// HSetWithCompareAndPublish 与redis中数据不同才进行更新和推送操作
+func (r *Instance) HSetWithCompareAndPublish(key, field, value, channelName, channelKey string) (bool, error) {
+	// 参数非空校验
+	if key == "" || field == "" || value == "" || channelName == "" || channelKey == "" {
+		logger.Errorf("HSetWithCompareAndPublish: key or field or value or channelName or channelKey is empty")
+		return false, fmt.Errorf("key or field or value or channelName or channelKey is empty")
+	}
+
+	//var isNeedUpdate bool
+	logger.Infof("HSetWithCompareAndPublish: try to operate [redis_diff] HashSet key [%s] field [%s],value [%s] channelName [%s],channelKey [%s]", key, field, value, channelName, channelKey)
 	oldValue := r.HGet(key, field)
 	if oldValue == value {
-		return nil
+		logger.Infof("HSetWithCompareAndPublish: [redis_diff] HashSet key [%s] field [%s] not need update, new [%s]  old [%s]", key, field, value, oldValue)
+		return false, nil
 	}
 	if equal, _ := jsonx.CompareJson(oldValue, value); equal {
-		return nil
+		return false, nil
 	}
-	logger.Debugf("[redis_diff] HashSet key [%s] field [%s] need update, new [%s]  old [%s]", key, field, value, oldValue)
+	logger.Debugf("HSetWithCompareAndPublish: [redis_diff] HashSet key [%s] field [%s] need update, new [%s]  old [%s]", key, field, value, oldValue)
 	metrics.RedisCount(key, "HSet")
 	err := r.Client.HSet(r.ctx, key, field, value).Err()
 	if err != nil {
-		logger.Debugf("hset field error, key: %s, field: %s, value: %s", key, field, value)
-		return err
+		logger.Errorf("HSetWithCompareAndPublish: hset field error, key: %s, field: %s, value: %s", key, field, value)
+		return false, err
 	}
-	return nil
+
+	logger.Infof("HSetWithCompareAndPublish: [redis_diff] HashSet key [%s] field [%s] channelName [%s] channelKey [%s] now try to publish", key, field, channelName, channelKey)
+
+	// 如果走到这里，说明当前value与Redis中的数据存在不同，需要进行推送操作
+	if err := r.Publish(channelName, channelKey); err != nil {
+		logger.Errorf("HSetWithCompareAndPublish: publish redis failed, channel: %s, key: %s, %s", channelName, channelKey, err)
+		return false, err
+	}
+
+	logger.Infof("[redis_diff] HashSet key [%s] field [%s] channelName [%s] channelKey [%s] update and publish success", key, field, channelName, channelKey)
+	return true, nil
 }
 
 // HSet 原生 hset 方法

@@ -11,14 +11,21 @@ package grpcmiddleware
 
 import (
 	"google.golang.org/grpc"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 )
 
-var middlewares = map[string]grpc.ServerOption{}
+var middlewares = map[string]func(string) grpc.ServerOption{}
 
-func Register(name string, f grpc.ServerOption) {
+func Register(name string, f func(opt string) grpc.ServerOption) {
 	middlewares[name] = f
 }
 
-func Get(name string) grpc.ServerOption {
-	return middlewares[name]
+func Get(nameOpts string) grpc.ServerOption {
+	name, opts := utils.NameOpts(nameOpts)
+	f, ok := middlewares[name]
+	if !ok {
+		return nil
+	}
+	return f(opts)
 }

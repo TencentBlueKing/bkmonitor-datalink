@@ -10,13 +10,17 @@
 package objectsref
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/tools/cache"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type NodeMap struct {
@@ -32,6 +36,17 @@ func NewNodeMap() *NodeMap {
 		ips:         map[string][]string{},
 		priorityIPs: map[string]string{},
 	}
+}
+
+func (n *NodeMap) GetAll() []*corev1.Node {
+	n.mut.Lock()
+	defer n.mut.Unlock()
+
+	ret := make([]*corev1.Node, 0, len(n.nodes))
+	for _, node := range n.nodes {
+		ret = append(ret, node)
+	}
+	return ret
 }
 
 func (n *NodeMap) Count() int {
@@ -50,6 +65,19 @@ func (n *NodeMap) Addrs() map[string]string {
 		cloned[k] = v
 	}
 	return cloned
+}
+
+func (n *NodeMap) IPs() map[string]struct{} {
+	n.mut.Lock()
+	defer n.mut.Unlock()
+
+	ret := make(map[string]struct{})
+	for _, ips := range n.ips {
+		for _, ip := range ips {
+			ret[ip] = struct{}{}
+		}
+	}
+	return ret
 }
 
 func (n *NodeMap) NameExists(name string) (string, bool) {
@@ -113,4 +141,55 @@ func (n *NodeMap) Del(nodeName string) {
 
 	delete(n.nodes, nodeName)
 	delete(n.ips, nodeName)
+}
+
+func newNodeObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*NodeMap, error) {
+	genericInformer, err := sharedInformer.ForResource(corev1.SchemeGroupVersion.WithResource(resourceNodes))
+	if err != nil {
+		return nil, err
+	}
+	objs := NewNodeMap()
+
+	informer := genericInformer.Informer()
+	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			node, ok := obj.(*corev1.Node)
+			if !ok {
+				logger.Errorf("excepted Node type, got %T", obj)
+				return
+			}
+			if err := objs.Set(node); err != nil {
+				logger.Errorf("failed to set node obj: %v", err)
+			}
+		},
+		UpdateFunc: func(_, newObj interface{}) {
+			node, ok := newObj.(*corev1.Node)
+			if !ok {
+				logger.Errorf("excepted Node type, got %T", newObj)
+				return
+			}
+			if err := objs.Set(node); err != nil {
+				logger.Errorf("failed to set node obj: %v", err)
+			}
+		},
+		DeleteFunc: func(obj interface{}) {
+			node, ok := obj.(*corev1.Node)
+			if !ok {
+				logger.Errorf("excepted Node type, got %T", obj)
+				return
+			}
+			objs.Del(node.Name)
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	go informer.Run(ctx.Done())
+
+	synced := k8sutils.WaitForNamedCacheSync(ctx, kindNode, informer)
+	if !synced {
+		return nil, errors.New("failed to sync Node caches")
+	}
+	return objs, nil
 }

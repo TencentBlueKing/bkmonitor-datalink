@@ -10,16 +10,20 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/agiledragon/gomonkey/v2"
 	mapset "github.com/deckarep/golang-set/v2"
+	"github.com/jinzhu/gorm"
 	"github.com/stretchr/testify/assert"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/migrate"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
@@ -486,6 +490,122 @@ func TestSpaceRedisSvc_composeAllTypeTableIds(t *testing.T) {
 	}
 }
 
+func TestSpaceRedisSvc_ComposeEsTableIds(t *testing.T) {
+	// 初始化数据库配置
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 清理所有相关表数据
+	cleanTestData := func() {
+		db.Delete(&space.SpaceResource{})
+		db.Delete(&space.Space{})
+		db.Delete(&resulttable.ResultTable{})
+	}
+	cleanTestData()       // 测试开始前清理数据
+	defer cleanTestData() // 测试结束后清理数据
+
+	// 准备测试用数据
+	resourceIdTest1 := "1"
+	spaceResources := []space.SpaceResource{
+		{
+			SpaceTypeId:  "bkci",
+			SpaceId:      "test6",
+			ResourceType: "bkcc",
+			ResourceId:   &resourceIdTest1,
+		},
+		{
+			SpaceTypeId:  "bkci",
+			SpaceId:      "test7",
+			ResourceType: "bkcc",
+			ResourceId:   &resourceIdTest1,
+		},
+	}
+	insertTestData(t, db, spaceResources)
+
+	// 测试 GetRelatedSpaces
+	relatedSpaceIds, err := NewSpacePusher().GetRelatedSpaces("bkcc", "1", "bkci")
+	assert.NoError(t, err)
+	assert.Equal(t, len(relatedSpaceIds), 2)
+	assert.ElementsMatch(t, relatedSpaceIds, []string{"test6", "test7"}) // 无序比较
+
+	// 准备 Space 测试数据
+	spaceObjs := []space.Space{
+		{
+			SpaceTypeId: "bkci",
+			SpaceId:     "test6",
+			SpaceName:   "testSpace6",
+			Id:          1050,
+		},
+		{
+			SpaceTypeId: "bkci",
+			SpaceId:     "test7",
+			SpaceName:   "testSpace7",
+			Id:          1051,
+		},
+	}
+	insertTestData(t, db, spaceObjs)
+
+	// 准备 ResultTable 测试数据
+	resultTable := resulttable.ResultTable{
+		TableId:        "-1050_space_test.__default__",
+		BkBizId:        -1050,
+		DefaultStorage: models.StorageTypeES,
+		IsDeleted:      false,
+		IsEnable:       true,
+	}
+	err = resultTable.Create(db)
+	assert.NoError(t, err)
+
+	resultTable2 := resulttable.ResultTable{
+		TableId:        "-1051_space_test.__default__",
+		BkBizId:        -1050,
+		DefaultStorage: models.StorageTypeES,
+		IsDeleted:      false,
+		IsEnable:       true,
+	}
+	err = resultTable2.Create(db)
+	assert.NoError(t, err)
+
+	// 测试 ResultTable 查询
+	var rtList []resulttable.ResultTable
+	err = resulttable.NewResultTableQuerySet(db).
+		Select(resulttable.ResultTableDBSchema.TableId).
+		BkBizIdEq(-1050).
+		DefaultStorageEq(models.StorageTypeES).
+		IsDeletedEq(false).
+		IsEnableEq(true).
+		All(&rtList)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, rtList)
+	assert.Equal(t, rtList[0].TableId, "-1050_space_test.__default__")
+
+	// 测试 getBizIdsBySpace
+	relatedBizIds, err := NewSpacePusher().getBizIdsBySpace("bkcc", relatedSpaceIds)
+	assert.NoError(t, err)
+	assert.Equal(t, len(relatedBizIds), 2)
+	assert.ElementsMatch(t, relatedBizIds, []int{-1050, -1051}) // 无序比较
+
+	// 测试 ComposeEsBkciTableIds
+	data, err := NewSpacePusher().ComposeEsBkciTableIds("bkcc", "1")
+	assert.NoError(t, err)
+	assert.NotNil(t, data)
+	// 验证 ComposeEsBkciTableIds 的返回结果
+	expectedTableId := "-1050_space_test.__default__"
+	assert.Contains(t, data, expectedTableId, "Expected table ID not found in the result")
+
+	expectedTableId2 := "-1051_space_test.__default__"
+	assert.Contains(t, data, expectedTableId2, "Expected table ID not found in the result")
+
+}
+
+// 通用数据插入函数
+func insertTestData[T any](t *testing.T, db *gorm.DB, objs []T) {
+	for _, obj := range objs {
+		err := db.Create(&obj).Error
+		assert.NoError(t, err)
+	}
+}
+
 func TestSpaceRedisSvc_composeBcsSpaceBizTableIds(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
@@ -729,9 +849,13 @@ func TestClearRtDetail(t *testing.T) {
 }
 
 func TestComposeEsTableIdOptions(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	mocker.InitTestDBConfig("../../../dist/bmw.yaml")
+	//mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	// 初始数据
 	db := mysql.GetDBSession().DB
+
+	migrate.Migrate(context.TODO(), &resulttable.ResultTableOption{}, &resulttable.ResultTable{})
+
 	// 创建rt
 	rt1, rt2, rt3 := "demo.test1", "demo.test2", "demo.test3"
 	rtObj1 := resulttable.ResultTable{TableId: rt1, IsDeleted: false, IsEnable: true}
@@ -768,4 +892,66 @@ func TestComposeEsTableIdOptions(t *testing.T) {
 	// 获取不存在的rt数据
 	data = spacePusher.composeEsTableIdOptions([]string{"not_exist"})
 	assert.Equal(t, 0, len(data))
+}
+
+func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
+	mocker.InitTestDBConfig("../../../dist/bmw.yaml")
+
+	db := mysql.GetDBSession().DB
+	data := space.BkAppSpaces{
+		{
+			BkAppCode: "default_app_code",
+			SpaceUID:  "*",
+			IsEnable:  true,
+		},
+		{
+			BkAppCode: "other_code",
+			SpaceUID:  "my_space_uid",
+			IsEnable:  true,
+		},
+		{
+			BkAppCode: "my_code",
+			SpaceUID:  "other_space_uid",
+			IsEnable:  true,
+		},
+		{
+			BkAppCode: "my_code",
+			SpaceUID:  "my_space_uid",
+			IsEnable:  true,
+		},
+	}
+
+	n := time.Now()
+
+	migrate.Migrate(context.TODO(), &space.BkAppSpace{})
+
+	db.Delete(space.BkAppSpace{})
+
+	for _, d := range data {
+		d.CreateTime = n
+		d.UpdateTime = n
+		err := db.Create(d).Error
+
+		assert.NoError(t, err)
+	}
+
+	err := db.Model(space.BkAppSpace{}).Where("bk_app_code = ?", "other_code").Updates(map[string]bool{"is_enable": false}).Error
+	assert.NoError(t, err)
+
+	client := redis.GetStorageRedisInstance()
+	_ = client.Delete(cfg.BkAppToSpaceKey)
+
+	pusher := NewSpacePusher()
+	err = pusher.PushBkAppToSpace()
+	assert.NoError(t, err)
+
+	actual := client.HGetAll(cfg.BkAppToSpaceKey)
+
+	expected := map[string]string{
+		"my_code":          `["other_space_uid","my_space_uid"]`,
+		"default_app_code": `["*"]`,
+		"other_code":       `[]`,
+	}
+
+	assert.Equal(t, expected, actual)
 }

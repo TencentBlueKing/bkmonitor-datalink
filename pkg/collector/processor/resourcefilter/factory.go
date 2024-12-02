@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/resourcefilter/dimscache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -34,6 +35,7 @@ func NewFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 
 func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*resourceFilter, error) {
 	configs := confengine.NewTierConfig()
+	caches := confengine.NewTierConfig()
 
 	c := &Config{}
 	if err := mapstructure.Decode(conf, c); err != nil {
@@ -41,6 +43,10 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 	}
 	c.Clean()
 	configs.SetGlobal(*c)
+
+	cache := dimscache.New(&c.FromCache.Cache)
+	cache.Sync()
+	caches.SetGlobal(cache)
 
 	for _, custom := range customized {
 		cfg := &Config{}
@@ -50,17 +56,23 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 		}
 		cfg.Clean()
 		configs.Set(custom.Token, custom.Type, custom.ID, *cfg)
+
+		customCache := dimscache.New(&cfg.FromCache.Cache)
+		customCache.Sync()
+		caches.Set(custom.Token, custom.Type, custom.ID, customCache)
 	}
 
 	return &resourceFilter{
 		CommonProcessor: processor.NewCommonProcessor(conf, customized),
 		configs:         configs,
+		caches:          caches,
 	}, nil
 }
 
 type resourceFilter struct {
 	processor.CommonProcessor
 	configs *confengine.TierConfig // type: Config
+	caches  *confengine.TierConfig // type dimscache.Cache
 }
 
 func (p *resourceFilter) Name() string {
@@ -82,8 +94,38 @@ func (p *resourceFilter) Reload(config map[string]interface{}, customized []proc
 		return
 	}
 
+	equal := processor.DiffMainConfig(p.MainConfig(), config)
+	if equal {
+		f.caches.GetGlobal().(dimscache.Cache).Clean()
+	} else {
+		p.caches.GetGlobal().(dimscache.Cache).Clean()
+		p.caches.SetGlobal(f.caches.GetGlobal())
+	}
+
+	diffRet := processor.DiffCustomizedConfig(p.SubConfigs(), customized)
+	for _, obj := range diffRet.Keep {
+		f.caches.Get(obj.Token, obj.Type, obj.ID).(dimscache.Cache).Clean()
+	}
+
+	for _, obj := range diffRet.Updated {
+		p.caches.Get(obj.Token, obj.Type, obj.ID).(dimscache.Cache).Clean()
+		newCache := f.caches.Get(obj.Token, obj.Type, obj.ID)
+		p.caches.Set(obj.Token, obj.Type, obj.ID, newCache)
+	}
+
+	for _, obj := range diffRet.Deleted {
+		p.caches.Get(obj.Token, obj.Type, obj.ID).(dimscache.Cache).Clean()
+		p.caches.Del(obj.Token, obj.Type, obj.ID)
+	}
+
 	p.CommonProcessor = f.CommonProcessor
 	p.configs = f.configs
+}
+
+func (p *resourceFilter) Clean() {
+	for _, obj := range p.caches.All() {
+		obj.(dimscache.Cache).Clean()
+	}
 }
 
 func (p *resourceFilter) Process(record *define.Record) (*define.Record, error) {
@@ -99,6 +141,13 @@ func (p *resourceFilter) Process(record *define.Record) (*define.Record, error) 
 	}
 	if len(config.Drop.Keys) > 0 {
 		p.dropAction(record, config)
+	}
+	if len(config.FromRecord) > 0 {
+		p.fromRecordAction(record, config)
+	}
+
+	if config.FromCache.Cache.Validate() {
+		p.fromCacheAction(record, config)
 	}
 	return nil, nil
 }
@@ -255,6 +304,63 @@ func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 				resourceLogs.Resource().Attributes().Remove(action.Source)
 				resourceLogs.Resource().Attributes().Upsert(action.Destination, v)
 			}
+		}
+	}
+}
+
+// fromCacheAction 从缓存中补充数据
+func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
+	token := record.Token.Original
+	cache := p.caches.GetByToken(token).(dimscache.Cache)
+
+	keys := config.FromCache.CombineKeys()
+	handleTraces := func(resourceSpans ptrace.ResourceSpans) {
+		for _, key := range keys {
+			v, ok := resourceSpans.Resource().Attributes().Get(key)
+			if !ok {
+				continue
+			}
+			dims, ok := cache.Get(v.AsString())
+			if !ok {
+				continue
+			}
+
+			for _, dim := range config.FromCache.Dimensions {
+				if lb, ok := dims[dim]; ok {
+					resourceSpans.Resource().Attributes().InsertString(dim, lb)
+				}
+			}
+			return // 找到一次即可
+		}
+	}
+
+	switch record.RecordType {
+	case define.RecordTraces:
+		pdTraces := record.Data.(ptrace.Traces)
+		resourceSpansSlice := pdTraces.ResourceSpans()
+		for i := 0; i < resourceSpansSlice.Len(); i++ {
+			handleTraces(resourceSpansSlice.At(i))
+		}
+	}
+}
+
+// fromRecordAction 从 define.Record 中补充数据
+func (p *resourceFilter) fromRecordAction(record *define.Record, config Config) {
+	handleTraces := func(resourceSpans ptrace.ResourceSpans) {
+		for _, action := range config.FromRecord {
+			switch action.Source {
+			case "request.client.ip":
+				resourceSpans.Resource().Attributes().InsertString(action.Destination, record.RequestClient.IP)
+			}
+		}
+	}
+
+	switch record.RecordType {
+	case define.RecordTraces:
+		pdTraces := record.Data.(ptrace.Traces)
+		resourceSpansSlice := pdTraces.ResourceSpans()
+		for i := 0; i < resourceSpansSlice.Len(); i++ {
+			handleTraces(resourceSpansSlice.At(i))
 		}
 	}
 }

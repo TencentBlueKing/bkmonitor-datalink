@@ -57,7 +57,10 @@ func (e EsStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	clusterConsulConfig := NewClusterInfoSvc(clusterInfo).ConsulConfig()
+	clusterConsulConfig, err := NewClusterInfoSvc(clusterInfo).ConsulConfig()
+	if err != nil {
+		return nil, err
+	}
 	// es的consul配置
 	var indexSettingsMap map[string]interface{}
 	var mappingSettingMap map[string]interface{}

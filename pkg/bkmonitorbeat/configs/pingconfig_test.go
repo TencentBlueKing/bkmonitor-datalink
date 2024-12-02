@@ -47,4 +47,5 @@ func (s *PingConfiSuite) TestConfigClean() {
 
 	s.Equal(define.DefaultPeriod, taskConf.Period)
 	s.Equal(define.DefaultTimeout, taskConf.Timeout)
+	s.Equal(false, taskConf.CustomReport)
 }

@@ -69,7 +69,6 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool) []*query.TsDBV2 {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
-		log.Debugf(s.ctx, "skip rt(%s), rt detail is empty", tableID)
 		return nil
 	}
 
@@ -80,13 +79,11 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 
 		// 容器下只能查单指标单表
 		if !isSplitMeasurement {
-			log.Debugf(s.ctx, "skip rt(%s), measurement type (%s) is not split", tableID, rtDetail.MeasurementType)
 			return nil
 		}
 
 		allConditions, err := conditions.AnalysisConditions()
 		if err != nil {
-			log.Errorf(s.ctx, "unable to get AllConditions, error: %s", err)
 			return nil
 		}
 
@@ -94,19 +91,16 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		// 如果 allConditions 中存在 clusterId 的筛选条件并且比对不成功的情况下，直接返回 nil，出现错误的情况也直接返回 nil
 		compareResult, err := allConditions.Compare(ClusterID, rtDetail.BcsClusterID)
 		if err != nil {
-			log.Errorf(s.ctx, "allCondition Compare error: %s", err)
 			return nil
 		}
 
 		if !compareResult {
-			log.Debugf(s.ctx, "skip rt(%s), clusterID: %s, allConditions: %+v", tableID, rtDetail.BcsClusterID, allConditions)
 			return nil
 		}
 
 		if isK8sFeatureFlag {
 			// 如果是只查询 k8s 的 rt，则需要判断 bcsClusterID 字段不为空
 			if rtDetail.BcsClusterID == "" {
-				log.Debugf(s.ctx, "skip rt(%s), clusterID is empty", tableID)
 				return nil
 			}
 		}
@@ -154,6 +148,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		SourceType:  rtDetail.SourceType,
 		StorageType: rtDetail.StorageType,
 	}
+
 	// 字段为空时，需要返回结果表的信息，表示无需过滤字段过滤
 	// bklog 或者 bkapm 则不判断 field 是否存在
 	if isSkipField {

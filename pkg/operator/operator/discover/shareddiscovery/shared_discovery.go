@@ -74,8 +74,8 @@ type tgWithTime struct {
 	updatedAt int64
 }
 
-// FetchTargetGroups 获取缓存 targetgroups 以及最新更新时间
-func FetchTargetGroups(uk string) ([]*targetgroup.Group, int64) {
+// FetchTargetGroups 获取缓存 targetgroups
+func FetchTargetGroups(uk string) []*targetgroup.Group {
 	sharedDiscoveryLock.Lock()
 	defer sharedDiscoveryLock.Unlock()
 
@@ -83,7 +83,19 @@ func FetchTargetGroups(uk string) ([]*targetgroup.Group, int64) {
 		return d.fetch()
 	}
 
-	return nil, 0
+	return nil
+}
+
+// FetchTargetGroupsUpdatedAt 获取缓存最新更新时间
+func FetchTargetGroupsUpdatedAt(uk string) int64 {
+	sharedDiscoveryLock.Lock()
+	defer sharedDiscoveryLock.Unlock()
+
+	if d, ok := sharedDiscoveryMap[uk]; ok {
+		return d.fetchUpdatedAt()
+	}
+
+	return 0
 }
 
 // Register 注册 shared discovery
@@ -146,7 +158,7 @@ func (sd *SharedDiscovery) start() {
 				if !ok {
 					// 第一次记录且没有 targets 则跳过
 					if tg == nil || len(tg.Targets) == 0 {
-						logger.Infof("sharedDiscovery %s skip tg source '%s'", sd.uk, tg.Source)
+						logger.Debugf("sharedDiscovery %s skip tg source '%s'", sd.uk, tg.Source)
 						continue
 					}
 				}
@@ -161,6 +173,7 @@ func (sd *SharedDiscovery) start() {
 			var total int
 			for source, tg := range sd.store {
 				// 超过 10 分钟未更新且已经没有目标的对象需要删除
+				// 确保 basediscovery 已经处理了删除事件
 				if now-tg.updatedAt > 600 {
 					if tg.tg == nil || len(tg.tg.Targets) == 0 {
 						delete(sd.store, source)
@@ -178,17 +191,26 @@ func (sd *SharedDiscovery) start() {
 	}
 }
 
-func (sd *SharedDiscovery) fetch() ([]*targetgroup.Group, int64) {
+func (sd *SharedDiscovery) fetch() []*targetgroup.Group {
+	sd.mut.RLock()
+	defer sd.mut.RUnlock()
+
+	ret := make([]*targetgroup.Group, 0, len(sd.store))
+	for _, v := range sd.store {
+		ret = append(ret, v.tg)
+	}
+	return ret
+}
+
+func (sd *SharedDiscovery) fetchUpdatedAt() int64 {
 	sd.mut.RLock()
 	defer sd.mut.RUnlock()
 
 	var maxTs int64 = math.MinInt64
-	ret := make([]*targetgroup.Group, 0, 2)
 	for _, v := range sd.store {
 		if maxTs < v.updatedAt {
 			maxTs = v.updatedAt
 		}
-		ret = append(ret, v.tg)
 	}
-	return ret, maxTs
+	return maxTs
 }

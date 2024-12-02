@@ -27,6 +27,7 @@ processor:
       token: "xxxxxxx"
       dataid: 1001
 
+  # ase256 校验规则
   - name: "token_checker/aes256"
     config:
       type: "aes256"
@@ -34,6 +35,31 @@ processor:
       salt: "bk" # 加盐解密标识
       decoded_iv: "bkbkbkbkbkbkbkbk"
       decoded_key: "81be7fc6-5476-4934-9417-6d4d593728db"
+
+  # aes256+子配置 dataid 校验规则
+  - name: "token_checker/aes256WithMeta"
+    config:
+      type: "aes256WithMeta"
+      resource_key: "bk.data.token"
+      salt: "bk" # 加盐解密标识
+      decoded_iv: "bkbkbkbkbkbkbkbk"
+      decoded_key: "81be7fc6-5476-4934-9417-6d4d593728db"
+
+  # aes256+子配置 dataid 校验规则
+  - name: "token_checker/combine"
+    config:
+      type: "aes256WithMeta|fixed"
+      # aes256 配置
+      resource_key: "bk.data.token"
+      salt: "bk" # 加盐解密标识
+      decoded_iv: "bkbkbkbkbkbkbkbk"
+      decoded_key: "81be7fc6-5476-4934-9417-6d4d593728db"
+      # fixed 配置
+      fixed_token: foobar
+      traces_dataid: 1000
+      metrics_dataid: 1001
+      logs_dataid: 1002
+      profiles_dataid: 1002
 */
 
 package tokenchecker

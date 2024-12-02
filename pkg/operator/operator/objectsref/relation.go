@@ -10,6 +10,7 @@
 package objectsref
 
 import (
+	"fmt"
 	"io"
 	"regexp"
 	"strconv"
@@ -31,6 +32,11 @@ const (
 	relationK8sAddressService    = "k8s_address_with_service_relation"
 	relationDomainService        = "domain_with_service_relation"
 	relationIngressService       = "ingress_with_service_relation"
+
+	relationContainerWithDataSource   = "container_with_datasource_relation"
+	relationDataSourceWithPod         = "datasource_with_pod_relation"
+	relationDataSourceWithNode        = "datasource_with_node_relation"
+	relationBkLogConfigWithDataSource = "bklogconfig_with_datasource_relation"
 )
 
 type relationMetric struct {
@@ -86,7 +92,7 @@ func (oc *ObjectsController) GetServiceRelations(w io.Writer) {
 				})
 			}
 
-			oc.ingressObjs.rangeIngress(namespace, func(name string, ingress ingressEntity) {
+			oc.ingressObjs.Range(namespace, func(name string, ingress ingressEntity) {
 				for _, s := range ingress.services {
 					if s != svc.name {
 						continue
@@ -169,9 +175,107 @@ func (oc *ObjectsController) GetReplicasetRelations(w io.Writer) {
 	}
 }
 
+func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
+	pods := oc.podObjs.GetAll()
+	nodes := oc.nodeObjs.GetAll()
+
+	oc.bkLogConfigObjs.Range(func(e *bkLogConfigEntity) {
+		relationBytes(w, relationMetric{
+			Name: relationBkLogConfigWithDataSource,
+			Labels: []relationLabel{
+				{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
+				{Name: "bklogconfig_namespace", Value: e.Obj.Namespace},
+				{Name: "bklogconfig_name", Value: e.Obj.Name},
+			},
+		})
+
+		switch e.Obj.Spec.LogConfigType {
+		case logConfigTypeStd, logConfigTypeContainer:
+			for _, pod := range pods {
+				if !e.MatchNamespace(pod.ID.Namespace) {
+					continue
+				}
+
+				if !e.Obj.Spec.AllContainer {
+					if !e.MatchLabel(pod.Labels) {
+						continue
+					}
+
+					if !e.MatchAnnotation(pod.Annotations) {
+						continue
+					}
+
+					if !e.MatchWorkload(pod.Labels, pod.Annotations, pod.OwnerRefs) {
+						continue
+					}
+				}
+
+				podRelationStatus := false
+				for _, container := range pod.Containers {
+					if !e.Obj.Spec.AllContainer {
+						if !e.MatchContainerName(container.Name) {
+							continue
+						}
+					}
+					podRelationStatus = true
+				}
+
+				// 只需要上报到 pod 层级就够了
+				if podRelationStatus {
+					relationBytes(w, relationMetric{
+						Name: relationDataSourceWithPod,
+						Labels: []relationLabel{
+							{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
+							{Name: "namespace", Value: pod.ID.Namespace},
+							{Name: "pod", Value: pod.ID.Name},
+						},
+					})
+				}
+			}
+
+		case logConfigTypeNode:
+			for _, node := range nodes {
+				if !e.MatchLabel(node.GetLabels()) {
+					continue
+				}
+
+				if !e.MatchAnnotation(node.GetAnnotations()) {
+					continue
+				}
+
+				relationBytes(w, relationMetric{
+					Name: relationDataSourceWithNode,
+					Labels: []relationLabel{
+						{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
+						{Name: "node", Value: node.Name},
+					},
+				})
+			}
+		}
+	})
+}
+
 type StatefulSetWorker struct {
 	PodIP string
 	Index int
+}
+
+type PodInfo struct {
+	Name      string
+	Namespace string
+	IP        string
+}
+
+func (oc *ObjectsController) AllPods() []PodInfo {
+	var pods []PodInfo
+	for _, pod := range oc.podObjs.GetAll() {
+		pods = append(pods, PodInfo{
+			Name:      pod.ID.Name,
+			Namespace: pod.ID.Namespace,
+			IP:        pod.PodIP,
+		})
+	}
+	return pods
 }
 
 func (oc *ObjectsController) GetPods(s string) map[string]StatefulSetWorker {
@@ -231,7 +335,7 @@ func (oc *ObjectsController) GetPodRelations(w io.Writer) {
 					{Name: "namespace", Value: pod.ID.Namespace},
 					{Name: "pod", Value: pod.ID.Name},
 					{Name: "node", Value: pod.NodeName},
-					{Name: "container", Value: container},
+					{Name: "container", Value: container.Name},
 				},
 			})
 		}

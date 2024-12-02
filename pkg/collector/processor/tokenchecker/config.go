@@ -20,10 +20,12 @@ type Config struct {
 
 	// type: aes256
 	Salt       string `config:"salt" mapstructure:"salt"`
+	Version    string `config:"version" mapstructure:"version"`
 	DecodedKey string `config:"decoded_key" mapstructure:"decoded_key"`
 	DecodedIv  string `config:"decoded_iv" mapstructure:"decoded_iv"`
 
 	// type: fixed
+	MustEmptyToken bool   `config:"must_empty_token" mapstructure:"must_empty_token"`
 	FixedToken     string `config:"fixed_token" mapstructure:"fixed_token"`
 	TracesDataId   int32  `config:"traces_dataid" mapstructure:"traces_dataid"`
 	MetricsDataId  int32  `config:"metrics_dataid" mapstructure:"metrics_dataid"`
@@ -43,4 +45,12 @@ func (c *Config) Clean() {
 		keys = append(keys, strings.TrimSpace(key))
 	}
 	c.resourceKeys = keys
+}
+
+func (c *Config) GetType() []string {
+	// 版本转换处理
+	if c.Type == decoderTypeAes256 && c.Version == "v2" {
+		return []string{decoderTypeAes256WithMeta, decoderTypeFixed}
+	}
+	return []string{c.Type}
 }

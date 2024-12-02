@@ -30,7 +30,7 @@ import (
 	"github.com/prometheus/prometheus/model/relabel"
 	"gopkg.in/yaml.v2"
 
-	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/crd/v1beta1"
+	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/labelspool"
@@ -354,10 +354,22 @@ func (d *BaseDiscover) LoopHandle() {
 func (d *BaseDiscover) loopHandleTargetGroup() {
 	defer Publish()
 
-	const duration = 10
 	const resync = 100 // 避免事件丢失
 
-	ticker := time.NewTicker(time.Second * duration)
+	// 保证在调度周期内至少能够同步一次即可
+	duration := configs.G().DispatchInterval / 2
+	if duration < 5 {
+		duration = 5
+	}
+
+	// 打散执行时刻 尽量减少内存抖动
+	delay := time.Now().Nanosecond() % int(duration)
+	if delay > 0 {
+		time.Sleep(time.Second * time.Duration(delay))
+	}
+	logger.Infof("%s fetch interval (%ds), delay (%ds) and ready to sync targets", d.Name(), duration, delay)
+
+	ticker := time.NewTicker(time.Second * time.Duration(duration))
 	defer ticker.Stop()
 
 	counter := 0
@@ -368,7 +380,8 @@ func (d *BaseDiscover) loopHandleTargetGroup() {
 
 		case <-ticker.C:
 			counter++
-			tgList, updatedAt := shareddiscovery.FetchTargetGroups(d.UK())
+			// 避免 skip 情况下多申请不必要的内存
+			updatedAt := shareddiscovery.FetchTargetGroupsUpdatedAt(d.UK())
 			logger.Debugf("%s updated at: %v", d.Name(), time.Unix(updatedAt, 0))
 			if time.Now().Unix()-updatedAt > duration*2 && counter%resync != 0 && d.fetched {
 				logger.Debugf("%s found nothing changed, skip targetgourps handled", d.Name())
@@ -376,6 +389,8 @@ func (d *BaseDiscover) loopHandleTargetGroup() {
 			}
 			d.fetched = true
 
+			// 真正需要变更时才 fetch targetgroups
+			tgList := shareddiscovery.FetchTargetGroups(d.UK())
 			for _, tg := range tgList {
 				if tg == nil {
 					continue
@@ -559,6 +574,12 @@ func (d *BaseDiscover) notify(source string, childConfigs []*ChildConfig) {
 	d.childConfigMut.Lock()
 	defer d.childConfigMut.Unlock()
 
+	// 如果新的 source/childconfigs 为空且之前的缓存也为空 那就无需对比处理了
+	if len(childConfigs) == 0 && len(d.childConfigGroups[source]) == 0 {
+		logger.Debugf("%s skip handle notify", d.Name())
+		return
+	}
+
 	if _, ok := d.childConfigGroups[source]; !ok {
 		d.childConfigGroups[source] = make(map[uint64]*ChildConfig)
 	}
@@ -597,6 +618,12 @@ func (d *BaseDiscover) notify(source string, childConfigs []*ChildConfig) {
 		logger.Infof("%s found targetgroup.source changed", source)
 		Publish()
 	}
+
+	// 删除事件 即后续 source 可能不会再有任何事件了
+	if len(d.childConfigGroups[source]) == 0 {
+		delete(d.childConfigGroups, source)
+		logger.Infof("delete source (%s), cause no childconfigs", source)
+	}
 }
 
 // populateLabels builds a label set from the given label set and scrape configuration.
@@ -617,7 +644,7 @@ func (d *BaseDiscover) populateLabels(lset labels.Labels) (res, orig labels.Labe
 		}
 	}
 
-	preRelabelLabels := lb.Labels()
+	preRelabelLabels := lb.Labels(nil)
 	lset = relabel.Process(preRelabelLabels, d.opts.Relabels...)
 
 	// Check if the target was dropped.
@@ -674,7 +701,7 @@ func (d *BaseDiscover) populateLabels(lset labels.Labels) (res, orig labels.Labe
 		lb.Set(model.InstanceLabel, addr)
 	}
 
-	res = lb.Labels()
+	res = lb.Labels(nil)
 	for _, l := range res {
 		// Check label values are valid, drop the target if not.
 		if !model.LabelValue(l.Value).IsValid() {

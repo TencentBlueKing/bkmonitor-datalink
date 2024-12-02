@@ -11,14 +11,19 @@ package hashconsul
 
 import (
 	"fmt"
+	"time"
 	"unicode/utf8"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-func Put(c *consul.Instance, key, val string) error {
+// ConsulClient 定义了 PutCas 函数需要的 Consul 客户端接口
+type ConsulClient interface {
+	Put(key, val string, modifyIndex uint64, expiration time.Duration) error
+}
+
+func PutCas(c ConsulClient, key, val string, modifyIndex uint64, oldValueBytes []byte) error {
 	// 将中文转化为unicode
 	var unicodeVal string
 	for _, runeValue := range val {
@@ -30,20 +35,15 @@ func Put(c *consul.Instance, key, val string) error {
 	}
 	val = unicodeVal
 
-	oldValueBytes, err := c.Get(key)
-	if err != nil {
-		logger.Infof("can not get old value from [%s] because of [%v], will refresh consul", key, err)
-		return c.Put(key, val, 0)
-	}
 	oldValue := string(oldValueBytes)
 	equal, err := jsonx.CompareJson(oldValue, val)
 	if err != nil {
 		logger.Infof("can not compare new value [%s] and old value [%s], will refresh consul", key, err)
-		return c.Put(key, val, 0)
+		return c.Put(key, val, modifyIndex, 0)
 	}
 	if !equal {
 		logger.Infof("new value [%s] is different from [%s] on consul, will updated it", val, oldValue)
-		return c.Put(key, val, 0)
+		return c.Put(key, val, modifyIndex, 0)
 	}
 	logger.Debugf("new value [%s] is same with [%s] on consul, skip it", val, oldValue)
 	return nil

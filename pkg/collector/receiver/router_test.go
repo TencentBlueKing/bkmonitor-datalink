@@ -62,8 +62,8 @@ func TestRoute(t *testing.T) {
 			path:   "/-/logger",
 		},
 		{
-			method: http.MethodPost,
-			path:   "/-/freemem",
+			method: http.MethodGet,
+			path:   "/-/routes",
 		},
 	}
 
@@ -79,6 +79,7 @@ func TestRoute(t *testing.T) {
 			resp, err = http.Post(url, "", bytes.NewBufferString(""))
 		}
 		assert.NoError(t, err)
+		assert.NotNil(t, resp)
 		assert.Equal(t, 200, resp.StatusCode)
 	}
 

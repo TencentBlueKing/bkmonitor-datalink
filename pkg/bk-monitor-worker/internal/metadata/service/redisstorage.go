@@ -42,7 +42,11 @@ func (a RedisStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	clusterConsulConfig := NewClusterInfoSvc(clusterInfo).ConsulConfig()
+	clusterConsulConfig, err := NewClusterInfoSvc(clusterInfo).ConsulConfig()
+	if err != nil {
+		return nil, err
+	}
+
 	// redis的consul配置
 	consulConfig := &StorageConsulConfig{
 		ClusterInfoConsulConfig: clusterConsulConfig,

@@ -270,7 +270,7 @@ func CollectESTask(ctx context.Context, t *task.Task) error {
 		return errors.Wrapf(err, "parse params for collectAndReportMetricsParams with [%s] error", t.Payload)
 	}
 	c := params.ClusterInfo
-	err := es.CollectAndReportMetrics(c, params.Timestamp)
+	err := es.CollectAndReportMetrics(c)
 	if err != nil {
 		logger.Errorf("es_cluster_info: [%v] name [%s] try to collect and report metrics failed, %v", c.ClusterID, c.ClusterName, err)
 	} else {

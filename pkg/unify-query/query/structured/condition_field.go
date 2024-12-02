@@ -27,6 +27,9 @@ const (
 	ConditionNotRegEqual = "nreq"
 	ConditionContains    = "contains"
 	ConditionNotContains = "ncontains"
+
+	ConditionExisted    = "existed"
+	ConditionNotExisted = "nexisted"
 )
 
 const (
@@ -103,7 +106,6 @@ func (c *ConditionField) ToPromOperator() labels.MatchType {
 	case ConditionNotRegEqual:
 		return labels.MatchNotRegexp
 	default:
-		log.Errorf(context.TODO(), "failed to translate op->[%s] to prom op.Will return default op", c.Operator)
 		return labels.MatchEqual
 	}
 }

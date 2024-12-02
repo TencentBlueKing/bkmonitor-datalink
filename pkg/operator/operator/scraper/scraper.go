@@ -13,6 +13,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -176,7 +177,6 @@ func New(data []byte) (*Scraper, error) {
 	}
 
 	var dialer, tlsDialer transport.Dialer
-
 	dialer = transport.NetDialer(config.Timeout)
 	tlsDialer, err = transport.TLSDialer(dialer, tlsConfig, config.Timeout)
 	if err != nil {
@@ -198,6 +198,10 @@ func New(data []byte) (*Scraper, error) {
 			return nil, errors.Wrap(err, "parse proxy url failed")
 		}
 		trp.Proxy = http.ProxyURL(parsed)
+	}
+
+	if tlsConfig != nil && tlsConfig.Verification == transport.VerifyNone {
+		trp.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 
 	return &Scraper{

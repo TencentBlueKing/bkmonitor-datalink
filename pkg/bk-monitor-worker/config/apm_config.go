@@ -54,6 +54,8 @@ var (
 	EnabledTraceInfoCache int
 	// EnabledTraceMetricsReport enabled report metric
 	EnabledTraceMetricsReport bool
+	// EnabledTraceInfoReport enabled report info
+	EnabledTraceInfoReport bool
 	// TraceEsQueryRate To prevent too many es queries caused by bloom-filter,
 	// each dataId needs to set a threshold for the maximum number of requests in a minute. default is 20
 	TraceEsQueryRate int
@@ -144,7 +146,8 @@ func initApmVariables() {
 	DistributiveWindowSubWindowMappingMaxSpanCount = GetValue("taskConfig.apmPreCalculate.window.distributive.mappingMaxSpanCount", 100000)
 
 	EnabledTraceInfoCache = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceInfoCache", 0)
-	EnabledTraceMetricsReport = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceMetricsReport", false)
+	EnabledTraceMetricsReport = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceMetricsReport", true)
+	EnabledTraceInfoReport = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceInfoReport", true)
 
 	TraceEsQueryRate = GetValue("taskConfig.apmPreCalculate.processor.traceEsQueryRate", 20)
 	StorageSaveRequestBufferSize = GetValue("taskConfig.apmPreCalculate.storage.saveRequestBufferSize", 1000)

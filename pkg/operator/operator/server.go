@@ -25,6 +25,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/httpx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
@@ -94,7 +95,7 @@ func (c *Operator) CheckScrapeRoute(w http.ResponseWriter, r *http.Request) {
 	worker := r.URL.Query().Get("workers")
 	i, _ := strconv.Atoi(worker)
 
-	writeResponse(w, c.scrapeAll(r.Context(), i))
+	writeResponse(w, c.scrapeAllStats(r.Context(), i))
 }
 
 // CheckScrapeNamespaceMonitorRoute 根据命名空间查看拉取指标信息
@@ -111,9 +112,18 @@ func (c *Operator) CheckScrapeNamespaceMonitorRoute(w http.ResponseWriter, r *ht
 		return
 	}
 
-	worker := r.URL.Query().Get("workers")
-	i, _ := strconv.Atoi(worker)
-	ch := c.scrapeForce(r.Context(), namespace, monitor, i)
+	worker, _ := strconv.Atoi(r.URL.Query().Get("workers"))
+	topn, _ := strconv.Atoi(r.URL.Query().Get("topn"))
+
+	analyze := r.URL.Query().Get("analyze") // 分析指标
+	if analyze == "true" {
+		ret := c.scrapeAnalyze(r.Context(), namespace, monitor, worker, topn)
+		b, _ := json.Marshal(ret)
+		w.Write(b)
+		return
+	}
+
+	ch := c.scrapeLines(r.Context(), namespace, monitor, worker)
 	const batch = 1000
 	n := 0
 	for line := range ch {
@@ -202,19 +212,19 @@ const (
 - Description: monitor name 黑名单匹配规则，此规则优先级最高
 %s
 `
-	formatWorkload = `
-[√] check workload
-- Description: 集群各类型工作负载数量
+	formatResource = `
+[√] check resource
+- Description: 集群各类型资源数量
 %s
 `
 	formatMonitorEndpoint = `
 [√] check endpoint
-- Description: operator 监听 monitor endpoints 数量，共 %d 个
+- Description: operator 匹配 %d 个 monitor，共有 %d 个 endpoints
 %s
 `
 	formatScrapeStats = `
 [√] check scrape stats
-- Description: 总共发现 %d 个 monitor 资源，抓取数据行数为 %d，采集共出现 %d 次错误，更新时间 %s
+- Description: 总共发现 %d 个 monitor 资源，抓取数据行数为 %d，采集共出现 %d 次错误
 - Suggestion: 错误可能由 forwardLocal 导致（可忽略），可过滤 'scrape error' 关键字查看详细错误信息。
 * 部分指标会有黑白名单机制，此抓取数据不做任何过滤。
 * TOP%d 数据量如下，详细情况可访问 /check/scrape 路由。%s
@@ -257,7 +267,7 @@ const (
 // 检查 dryrun 标识是否打开
 // 检查监测命名空间是否符合预期
 // 检查黑名单匹配规则
-// 检查集群负载情况
+// 检查集群资源情况
 // 检查采集指标数据量
 // 检查处理 secrets 是否有问题
 // 检查给定关键字监测资源
@@ -321,11 +331,10 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	b, _ = json.MarshalIndent(blacklist, "", "  ")
 	writef(formatCheckMonitorBlacklist, string(b))
 
-	// 检查集群工作负载数量
-	workloadInfo := objectsref.GetWorkloadCount()
-	workloadInfo["Node"] = objectsref.GetClusterNodeCount() // 顺便补充 node 数量
-	b, _ = json.MarshalIndent(workloadInfo, "", "  ")
-	writef(formatWorkload, string(b))
+	// 检查集群资源数量
+	resourceInfo := objectsref.GetResourceCount()
+	b, _ = json.MarshalIndent(resourceInfo, "", "  ")
+	writef(formatResource, string(b))
 
 	// 检查 Endpoint 数量
 	endpoints := c.recorder.getActiveEndpoints()
@@ -334,14 +343,14 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	for _, v := range endpoints {
 		total += v
 	}
-	writef(formatMonitorEndpoint, total, string(b))
+	writef(formatMonitorEndpoint, len(endpoints), total, string(b))
 
 	// 检查采集指标数据量
 	onScrape := r.URL.Query().Get("scrape")
 	worker := r.URL.Query().Get("workers")
 	i, _ := strconv.Atoi(worker)
 	if onScrape == "true" {
-		stats := c.scrapeAll(r.Context(), i)
+		stats := c.scrapeAllStats(r.Context(), i)
 		n = 5
 		if n > stats.MonitorCount {
 			n = stats.MonitorCount
@@ -352,8 +361,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 		if stats.LinesTotal > 3000000 {
 			warning = "数据行数已超过 300w 警戒线，请重点关注数据库负载！"
 		}
-		scrapeUpdated := c.scrapeUpdated.Format(time.RFC3339)
-		writef(formatScrapeStats, stats.MonitorCount, stats.LinesTotal, stats.ErrorsTotal, scrapeUpdated, n, warning, string(b))
+		writef(formatScrapeStats, stats.MonitorCount, stats.LinesTotal, stats.ErrorsTotal, n, warning, string(b))
 	}
 
 	// 检查处理 secrets 是否有问题
@@ -372,7 +380,13 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 				monitorResources = append(monitorResources, mr)
 			}
 		}
-		monitorResourcesBytes, _ := json.MarshalIndent(monitorResources, "", "  ")
+
+		var monitorResourcesBytes []byte
+		if len(monitorResources) > 0 {
+			monitorResourcesBytes, _ = json.MarshalIndent(monitorResources, "", "  ")
+		} else {
+			monitorResourcesBytes = []byte("\n[!] NotMatch: 未匹配到任何 monitor 资源\n")
+		}
 
 		var childConfigs []ConfigFileRecord
 		for _, cf := range c.recorder.getActiveConfigFiles() {
@@ -380,7 +394,14 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 				childConfigs = append(childConfigs, cf)
 			}
 		}
-		childConfigsBytes, _ := json.MarshalIndent(childConfigs, "", "  ")
+
+		var childConfigsBytes []byte
+		if len(childConfigs) > 0 {
+			childConfigsBytes, _ = json.MarshalIndent(childConfigs, "", "  ")
+		} else {
+			childConfigsBytes = []byte("\n[!] NotMatch: 未匹配到任何采集配置")
+		}
+
 		writef(formatMonitorResources, monitorKeyword, monitorResourcesBytes, childConfigsBytes)
 	} else {
 		writef(formatMonitorResourceNoKeyword)
@@ -452,16 +473,57 @@ func (c *Operator) WorkloadRoute(w http.ResponseWriter, _ *http.Request) {
 	writeResponse(w, c.objectsController.WorkloadsRelabelConfigs())
 }
 
+func (c *Operator) PodsRoute(w http.ResponseWriter, r *http.Request) {
+	pods := c.objectsController.AllPods()
+	info, err := c.dw.GetClusterInfo()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(fmt.Sprintf(`{"msg": "no bcs_cluster_id found: %s"}`, err)))
+		return
+	}
+
+	type podsResponse struct {
+		ClusterID string `json:"k8s.bcs.cluster.id"`
+		Name      string `json:"k8s.pod.name"`
+		Namespace string `json:"k8s.namespace.name"`
+		IP        string `json:"k8s.pod.ip"`
+	}
+
+	nodes := c.objectsController.NodeIPs()
+	all := r.URL.Query().Get("all")
+
+	var ret []podsResponse
+	for _, pod := range pods {
+		_, ok := nodes[pod.IP]
+		if !ok || all == "true" {
+			ret = append(ret, podsResponse{
+				ClusterID: info.BcsClusterID,
+				Name:      pod.Name,
+				Namespace: pod.Namespace,
+				IP:        pod.IP,
+			})
+		}
+	}
+	writeResponse(w, ret)
+}
+
 func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nodeName := vars["node"]
 
-	query := r.URL.Query()
+	query := httpx.UnwindParams(r.URL.Query().Get("q"))
+	var cfgs []objectsref.RelabelConfig
+
+	// 补充 container 维度信息（兼容 windows 系统）
+	containerFlag := query.Get("container_info")
+	if containerFlag == "true" {
+		cfgs = append(cfgs, c.objectsController.ContainersRelabelConfigs(nodeName)...)
+	}
+
+	// 补充 workload 维度信息
 	podName := query.Get("podName")
 	annotations := stringx.SplitTrim(query.Get("annotations"), ",")
 	labels := stringx.SplitTrim(query.Get("labels"), ",")
-
-	var cfgs []objectsref.RelabelConfig
 	cfgs = append(cfgs, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName, annotations, labels)...)
 
 	// kind/rules 是为了让 workload 同时能够支持其他 labeljoin 等其他规则
@@ -478,7 +540,7 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Operator) LabelJoinRoute(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
+	query := httpx.UnwindParams(r.URL.Query().Get("q"))
 	kind := query.Get("kind")
 	annotations := stringx.SplitTrim(query.Get("annotations"), ",")
 	labels := stringx.SplitTrim(query.Get("labels"), ",")
@@ -499,6 +561,7 @@ func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) 
 	c.objectsController.GetServiceRelations(buf)
 	c.objectsController.GetPodRelations(buf)
 	c.objectsController.GetReplicasetRelations(buf)
+	c.objectsController.GetDataSourceRelations(buf)
 
 	w.Write(buf.Bytes())
 }
@@ -538,6 +601,7 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /cluster_info
 * GET /workload
 * GET /workload/node/{node}
+* GET /pods?all=true|false
 * GET /relation/metrics
 * GET /rule/metrics
 * GET /configs
@@ -547,8 +611,8 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /check?monitor=${monitor}&scrape=true|false&workers=N
 * GET /check/dataid
 * GET /check/scrape?workers=N
-* GET /check/scrape/{namespace}?workers=N
-* GET /check/scrape/{namespace}/{monitor}?workers=N
+* GET /check/scrape/{namespace}?workers=N&analyze=true|false&topn=M
+* GET /check/scrape/{namespace}/{monitor}?workers=N&analyze=true|false&topn=M
 * GET /check/namespace
 * GET /check/monitor_blacklist
 * GET /check/active_discover
@@ -583,6 +647,7 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/cluster_info", c.ClusterInfoRoute)
 	router.HandleFunc("/workload", c.WorkloadRoute)
 	router.HandleFunc("/workload/node/{node}", c.WorkloadNodeRoute)
+	router.HandleFunc("/pods", c.PodsRoute)
 	router.HandleFunc("/labeljoin", c.LabelJoinRoute)
 	router.HandleFunc("/relation/metrics", c.RelationMetricsRoute)
 	router.HandleFunc("/rule/metrics", c.RuleMetricsRoute)

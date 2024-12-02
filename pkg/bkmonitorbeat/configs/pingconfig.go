@@ -22,8 +22,9 @@ const (
 
 // Target ping目标信息
 type Target struct {
-	Target     string `config:"target"`
-	TargetType string `config:"target_type"`
+	Target     string            `config:"target"`
+	TargetType string            `config:"target_type"`
+	Labels     map[string]string `config:"labels"`
 }
 
 // GetTarget :
@@ -41,12 +42,15 @@ type PingTaskConfig struct {
 	BaseTaskParam `config:"_,inline"`
 	TargetIPType  IPType `config:"target_ip_type"`
 	// 域名检测模式
-	DNSCheckMode CheckMode `config:"dns_check_mode"`
-	Targets      []*Target `config:"targets"`
-	MaxRTT       string    `config:"max_rtt"`
-	BatchSize    int       `config:"batch_size"`
-	TotalNum     int       `config:"total_num"`
-	PingSize     int       `config:"ping_size"`
+	DNSCheckMode  CheckMode `config:"dns_check_mode"`
+	Targets       []*Target `config:"targets"`
+	MaxRTT        string    `config:"max_rtt"`
+	BatchSize     int       `config:"batch_size"`
+	TotalNum      int       `config:"total_num"`
+	PingSize      int       `config:"ping_size"`
+	CustomReport  bool      `config:"custom_report"`
+	SendInterval  string    `config:"send_interval"`
+	NotPrivileged bool      `config:"not_privileged"`
 }
 
 // InitIdent :

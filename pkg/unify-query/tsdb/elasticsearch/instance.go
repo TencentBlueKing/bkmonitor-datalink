@@ -33,7 +33,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/pool"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
@@ -55,9 +54,6 @@ type Instance struct {
 
 	timeout time.Duration
 	maxSize int
-
-	toEs   func(string) string
-	toProm func(string) string
 }
 
 type InstanceOption struct {
@@ -98,9 +94,6 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 		headers:     opt.Headers,
 		healthCheck: opt.HealthCheck,
 		timeout:     opt.Timeout,
-
-		toEs:   structured.QueryRawFormat(ctx),
-		toProm: structured.PromQueryFormat(ctx),
 	}
 
 	if opt.Address == "" {
@@ -270,7 +263,11 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	bodyJson, _ := json.Marshal(body)
 	bodyString := string(bodyJson)
 
+	span.Set("query-address", i.address)
+	span.Set("query-headers", i.headers)
+
 	span.Set("query-indexes", qo.indexes)
+	span.Set("query-body", bodyString)
 
 	log.Infof(ctx, "elasticsearch-query indexes: %s", qo.indexes)
 	log.Infof(ctx, "elasticsearch-query body: %s", bodyString)
@@ -290,8 +287,10 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			msg strings.Builder
 		)
 		if errors.As(err, &e) {
-			for _, rc := range e.Details.RootCause {
-				msg.WriteString(fmt.Sprintf("%s: %s, ", rc.Index, rc.Reason))
+			if e.Details != nil {
+				for _, rc := range e.Details.RootCause {
+					msg.WriteString(fmt.Sprintf("%s: %s, ", rc.Index, rc.Reason))
+				}
 			}
 			return nil, errors.New(msg.String())
 		} else {
@@ -320,12 +319,15 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 		rets <- ret
 	}()
 
+	metricLabel := qo.query.MetricLabels(ctx)
+
 	sr, err := i.esQuery(ctx, qo, fact)
 	if err != nil {
 		return
 	}
 
-	ret.TimeSeriesMap, err = fact.AggDataFormat(sr.Aggregations)
+	// 如果是非时间聚合计算，则无需进行指标名的拼接作用
+	ret.TimeSeriesMap, err = fact.AggDataFormat(sr.Aggregations, metricLabel)
 	if err != nil {
 		return
 	}
@@ -574,7 +576,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		return 0, err
 	}
 
-	if query.Size > i.maxSize {
+	if i.maxSize > 0 && query.Size > i.maxSize {
 		query.Size = i.maxSize
 	}
 
@@ -625,19 +627,25 @@ func (i *Instance) QuerySeriesSet(
 		err error
 	)
 
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("es query error: %s", r)
-		}
-	}()
-
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-reference")
 	defer span.End(&err)
+
+	if len(query.Aggregates) == 0 {
+		err = fmt.Errorf("聚合函数不能为空以及聚合周期跟 Step 必须一样")
+		return storage.ErrSeriesSet(err)
+	}
 
 	rets := make(chan *TimeSeriesResult, 1)
 
 	go func() {
 		defer func() {
+			// es 查询有很多结构体无法判断的，会导致 panic
+			if r := recover(); r != nil {
+				rets <- &TimeSeriesResult{
+					Error: fmt.Errorf("es query error: %s", r),
+				}
+			}
+
 			close(rets)
 		}()
 
@@ -681,7 +689,7 @@ func (i *Instance) QuerySeriesSet(
 			WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.From, size).
 			WithMappings(mappings...).
 			WithOrders(query.Orders).
-			WithTransform(i.toEs, i.toProm)
+			WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
 
 		if len(query.Aggregates) > 0 {
 			i.queryWithAgg(ctx, qo, fact, rets)
@@ -699,9 +707,9 @@ func (i *Instance) QuerySeriesSet(
 		span.Set("query-max-size", i.maxSize)
 		span.Set("query-db", query.DB)
 		span.Set("query-measurement", query.Measurement)
-		span.Set("query-measurements", strings.Join(query.Measurements, ","))
+		span.Set("query-measurements", query.Measurements)
 		span.Set("query-field", query.Field)
-		span.Set("query-fields", strings.Join(query.Fields, ","))
+		span.Set("query-fields", query.Fields)
 	}()
 
 	qr, err := i.mergeTimeSeries(rets)
@@ -709,7 +717,7 @@ func (i *Instance) QuerySeriesSet(
 		return storage.ErrSeriesSet(err)
 	}
 
-	if len(qr.Timeseries) == 0 {
+	if qr == nil || len(qr.Timeseries) == 0 {
 		return storage.EmptySeriesSet()
 	}
 
@@ -717,12 +725,12 @@ func (i *Instance) QuerySeriesSet(
 }
 
 // QueryRange 使用 es 直接查询引擎
-func (i *Instance) QueryRange(ctx context.Context, referenceName string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+func (i *Instance) DirectQueryRange(ctx context.Context, referenceName string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i *Instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
+func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
 	//TODO implement me
 	panic("implement me")
 }
@@ -732,21 +740,31 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 	panic("implement me")
 }
 
-func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i *Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
+func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i *Instance) GetInstanceType() string {
+func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) InstanceType() string {
 	return consul.ElasticsearchStorageType
 }

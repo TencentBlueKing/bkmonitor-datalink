@@ -10,9 +10,16 @@
 package objectsref
 
 import (
+	"context"
 	"sync"
 
+	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/tools/cache"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type endpointsEntity struct {
@@ -32,6 +39,13 @@ func NewEndpointsMap() *EndpointsMap {
 	return &EndpointsMap{
 		endpoints: map[string]endpointsEntities{},
 	}
+}
+
+func (m *EndpointsMap) Count() int {
+	m.mut.Lock()
+	defer m.mut.Unlock()
+
+	return len(m.endpoints)
 }
 
 func (m *EndpointsMap) Set(endpoints *corev1.Endpoints) {
@@ -84,4 +98,69 @@ func (m *EndpointsMap) getEndpoints(namespace, name string) (endpointsEntity, bo
 
 	v, ok := eps[name]
 	return v, ok
+}
+
+func newEndpointsObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*EndpointsMap, error) {
+	objs := NewEndpointsMap()
+
+	genericInformer, err := sharedInformer.ForResource(corev1.SchemeGroupVersion.WithResource(resourceEndpoints))
+	if err != nil {
+		return nil, err
+	}
+
+	informer := genericInformer.Informer()
+	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+		endpoints, ok := obj.(*corev1.Endpoints)
+		if !ok {
+			logger.Errorf("excepted Endpoints type, got %T", obj)
+			return obj, nil
+		}
+
+		endpoints.Annotations = nil
+		endpoints.Labels = nil
+		endpoints.ManagedFields = nil
+		endpoints.Finalizers = nil
+		return endpoints, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			endpoints, ok := obj.(*corev1.Endpoints)
+			if !ok {
+				logger.Errorf("excepted Endpoints type, got %T", obj)
+				return
+			}
+			objs.Set(endpoints)
+		},
+		UpdateFunc: func(_, newObj interface{}) {
+			endpoints, ok := newObj.(*corev1.Endpoints)
+			if !ok {
+				logger.Errorf("excepted Endpoints type, got %T", newObj)
+				return
+			}
+			objs.Set(endpoints)
+		},
+		DeleteFunc: func(obj interface{}) {
+			endpoints, ok := obj.(*corev1.Endpoints)
+			if !ok {
+				logger.Errorf("excepted Endpoints type, got %T", obj)
+				return
+			}
+			objs.Del(endpoints)
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	go informer.Run(ctx.Done())
+
+	synced := k8sutils.WaitForNamedCacheSync(ctx, kindEndpoints, informer)
+	if !synced {
+		return nil, errors.New("failed to sync Endpoints caches")
+	}
+	return objs, nil
 }

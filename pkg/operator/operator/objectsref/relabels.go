@@ -31,10 +31,10 @@ type RelabelConfig struct {
 
 // WorkloadRef 是 Pod 与 Workload 的关联关系
 type WorkloadRef struct {
-	Name      string   `json:"name"`
-	Namespace string   `json:"namespace"`
-	Ref       OwnerRef `json:"ownerRef"`
-	NodeName  string   `json:"nodeName"`
+	Name      string
+	Namespace string
+	Ref       OwnerRef
+	NodeName  string
 }
 
 type WorkloadRefs []WorkloadRef
@@ -92,6 +92,77 @@ func (pr PodInfoRefs) AsRelabelConfigs() []RelabelConfig {
 	return configs
 }
 
+// ContainerInfoRef 是 Container 额外补充维度
+type ContainerInfoRef struct {
+	ContainerID     string
+	ContainerName   string
+	ContainerImage  string
+	RefPodName      string
+	RefPodNamespace string
+}
+
+type ContainerInfoRefs []ContainerInfoRef
+
+func (cr ContainerInfoRefs) AsRelabelConfigs() []RelabelConfig {
+	configs := make([]RelabelConfig, 0)
+	for _, ref := range cr {
+		configs = append(configs, RelabelConfig{
+			SourceLabels: []string{"container_id"},
+			Regex:        ref.ContainerID,
+			TargetLabel:  "pod_name",
+			Replacement:  ref.RefPodName,
+			Action:       "replace",
+		})
+		configs = append(configs, RelabelConfig{
+			SourceLabels: []string{"container_id"},
+			Regex:        ref.ContainerID,
+			TargetLabel:  "pod", // 兼容仪表盘和告警策略
+			Replacement:  ref.RefPodName,
+			Action:       "replace",
+		})
+		configs = append(configs, RelabelConfig{
+			SourceLabels: []string{"container_id"},
+			Regex:        ref.ContainerID,
+			TargetLabel:  "namespace",
+			Replacement:  ref.RefPodNamespace,
+			Action:       "replace",
+		})
+		configs = append(configs, RelabelConfig{
+			SourceLabels: []string{"container_id"},
+			Regex:        ref.ContainerID,
+			TargetLabel:  "container_name",
+			Replacement:  ref.ContainerName,
+			Action:       "replace",
+		})
+		configs = append(configs, RelabelConfig{
+			SourceLabels: []string{"container_id"},
+			Regex:        ref.ContainerID,
+			TargetLabel:  "container", // 兼容仪表盘和告警策略
+			Replacement:  ref.ContainerName,
+			Action:       "replace",
+		})
+		configs = append(configs, RelabelConfig{
+			SourceLabels: []string{"container_id"},
+			Regex:        ref.ContainerID,
+			TargetLabel:  "image",
+			Replacement:  ref.ContainerImage,
+			Action:       "replace",
+		})
+	}
+
+	// 丢弃没有 container_name 的指标
+	configs = append(configs, RelabelConfig{
+		SourceLabels: []string{"container_name"},
+		Action:       "drop",
+	})
+	// 丢弃 container_id 维度
+	configs = append(configs, RelabelConfig{
+		Regex:  "container_id",
+		Action: "labeldrop",
+	})
+	return configs
+}
+
 // WorkloadsRelabelConfigs 返回所有 workload relabel 配置
 func (oc *ObjectsController) WorkloadsRelabelConfigs() []RelabelConfig {
 	pods := oc.podObjs.GetAll()
@@ -106,13 +177,6 @@ func (oc *ObjectsController) WorkloadsRelabelConfigsByPodName(nodeName, podName 
 	configs = append(configs, oc.getWorkloadRelabelConfigs(pods, podName)...)
 	configs = append(configs, oc.getPodRelabelConfigs(pods, podName, annotations, labels)...)
 	return configs
-}
-
-// PodsRelabelConfigs 获取 Pods Relabels 规则
-func (oc *ObjectsController) PodsRelabelConfigs(annotations, labels []string) []RelabelConfig {
-	pods := oc.podObjs.GetAll()
-	// TODO(mando): 暂不支持指定 podname
-	return oc.getPodRelabelConfigs(pods, "", annotations, labels)
 }
 
 func (oc *ObjectsController) getWorkloadRelabelConfigs(pods []Object, podName string) []RelabelConfig {
@@ -136,6 +200,13 @@ func (oc *ObjectsController) getWorkloadRelabelConfigs(pods []Object, podName st
 		}
 	}
 	return workloadRefs.AsRelabelConfigs()
+}
+
+// PodsRelabelConfigs 获取 Pods Relabels 规则
+func (oc *ObjectsController) PodsRelabelConfigs(annotations, labels []string) []RelabelConfig {
+	pods := oc.podObjs.GetAll()
+	// TODO(mando): 暂不支持指定 podname
+	return oc.getPodRelabelConfigs(pods, "", annotations, labels)
 }
 
 func (oc *ObjectsController) getPodRelabelConfigs(pods []Object, podName string, annotations, labels []string) []RelabelConfig {
@@ -220,6 +291,31 @@ func (oc *ObjectsController) getPodRelabelConfigs(pods []Object, podName string,
 		}
 	}
 	return podInfoRefs.AsRelabelConfigs()
+}
+
+// ContainersRelabelConfigs 获取 Containers Relabels 规则
+func (oc *ObjectsController) ContainersRelabelConfigs(nodeName string) []RelabelConfig {
+	return oc.getContainerRelabelConfigs(nodeName)
+}
+
+func (oc *ObjectsController) getContainerRelabelConfigs(nodeName string) []RelabelConfig {
+	containerRefs := make(ContainerInfoRefs, 0)
+	pods := oc.podObjs.GetByNodeName(nodeName)
+	for _, pod := range pods {
+		for _, container := range pod.Containers {
+			if container.ID == "" {
+				continue
+			}
+			containerRefs = append(containerRefs, ContainerInfoRef{
+				ContainerID:     container.ID,
+				ContainerName:   container.Name,
+				ContainerImage:  container.Image,
+				RefPodName:      pod.ID.Name,
+				RefPodNamespace: pod.ID.Namespace,
+			})
+		}
+	}
+	return containerRefs.AsRelabelConfigs()
 }
 
 func (oc *ObjectsController) objsMap() map[string]*Objects {

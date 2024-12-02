@@ -41,13 +41,19 @@ tasks: {% for task in tasks %}
     {%- if custom_report == "true" %}
     # 是否自定义上报
     custom_report: {{ custom_report | default("false", true) }}{% endif %}
+    {%- if send_interval %}
+    # 发送间隔配置
+    send_interval: {{ send_interval }}{% endif %}
     max_rtt: {{ task.max_rtt }}
     total_num: {{ task.total_num }}
     ping_size: {{ task.size }}
    {% if task.node_list %}{% set instances = get_hosts_by_node(task.node_list) %}{% endif %}
     targets: {% for host in task.target_host_list %}
     - target: {{ host.target}}
-      target_type: {{ host.target_type | default("ip", true)}}{% endfor %}
+      target_type: {{ host.target_type | default("ip", true)}}
+      {%- if host.labels %}
+      labels:{% for k, v in host.labels.items()%}
+        {{ k }}: {{ v }}{% endfor %}{% endif %}{% endfor %}
    {% for host in task.target_hosts or get_hosts_by_node(config_hosts) %}
     - target: {{ host.ip}}
       target_type: {{ host.target_type | default('ip', true)}}{% endfor %}

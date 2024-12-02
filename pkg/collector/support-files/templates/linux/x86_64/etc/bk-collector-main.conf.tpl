@@ -112,7 +112,7 @@ bk-collector:
       retry_listen: true
       middlewares:
         - "logging"
-        - "maxconns"
+        - "maxconns;maxConnectionsRatio=256"
 
 
   # ============================== Pingserver ================================
@@ -137,8 +137,12 @@ bk-collector:
         - "logging"
         - "cors"
         - "content_decompressor"
-        - "maxconns"
-        - "maxbytes"
+        - "maxconns;maxConnectionsRatio=256"
+{%- if extra_vars is defined and extra_vars.http_max_bytes is defined and extra_vars.http_max_bytes != "" %}
+        - "maxbytes;maxRequestBytes={{ extra_vars.http_max_bytes }}"
+{%- else %}
+        - "maxbytes;maxRequestBytes=209715200"
+{%- endif %}
 
     # Admin Server Config
     admin_server:
@@ -163,7 +167,11 @@ bk-collector:
       # default: ""
       endpoint: ":4317"
       middlewares:
-        - "maxbytes"
+{%- if extra_vars is defined and extra_vars.grpc_max_bytes is defined and extra_vars.grpc_max_bytes != "" %}
+        - "maxbytes;maxRequestBytes={{ extra_vars.grpc_max_bytes }}"
+{%- else %}
+        - "maxbytes;maxRequestBytes=8388608"
+{%- endif %}
 
     # Tars Server Config
     tars_server:
@@ -187,7 +195,7 @@ bk-collector:
       remotewrite:
         enabled: true
       zipkin:
-        enabled: false
+        enabled: true
       skywalking:
         enabled: false
       pyroscope:
@@ -207,11 +215,14 @@ bk-collector:
           type: "standard"
 
     # AttributeFilter: 属性过滤处理器
-    - name: "attribute_filter/as_string"
+    - name: "attribute_filter/common"
       config:
         as_string:
           keys:
             - "attributes.db.name"
+
+    # ResourceFilter: 维度补充
+    - name: "resource_filter/fill_dimensions"
 
     # ResourceFilter: 资源过滤处理器
     - name: "resource_filter/instance_id"
@@ -322,9 +333,10 @@ bk-collector:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
         - "sampler/drop_traces"
+        - "resource_filter/fill_dimensions"
         - "resource_filter/instance_id"
-        - "attribute_filter/as_string"
         - "db_filter/common"
+        - "attribute_filter/common"
         - "attribute_filter/app"
         - "service_discover/common"
         - "apdex_calculator/standard"

@@ -16,7 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/random"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
 )
 
 func TestLimiterExceeded(t *testing.T) {

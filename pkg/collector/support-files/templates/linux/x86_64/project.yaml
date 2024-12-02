@@ -17,6 +17,20 @@ config_templates:
     format: yaml
     is_main_config: 1
     source_path: etc/bk-collector-main.conf.tpl
+    variables:
+      type: object
+      title: variables
+      properties:
+        extra_vars:
+          title: extra_vars
+          type: object
+          properties:
+            http_max_bytes:
+              title: http_max_bytes
+              type: string
+            grpc_max_bytes:
+              title: grpc_max_bytes
+              type: string
 
   - plugin_version: "*"
     name: bk-collector-platform.conf

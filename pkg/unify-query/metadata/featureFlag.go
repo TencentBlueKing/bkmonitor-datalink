@@ -16,6 +16,52 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
+func GetBkDataTableIDCheck(ctx context.Context) bool {
+	var (
+		user = GetUser(ctx)
+		err  error
+		span *trace.Span
+	)
+
+	ctx, span = trace.NewSpan(ctx, "get-bk-data-table-id-auth-feature-flag")
+	defer span.End(&err)
+
+	u := featureFlag.FFUser(user.HashID, map[string]interface{}{
+		"name":     user.Name,
+		"source":   user.Source,
+		"spaceUid": user.SpaceUid,
+	})
+
+	span.Set("ff-user-custom", u.GetCustom())
+	status := featureFlag.BoolVariation(ctx, u, "bk-data-table-id-auth", false)
+	span.Set("ff-status", status)
+
+	return status
+}
+
+func GetJwtAuthFeatureFlag(ctx context.Context) bool {
+	var (
+		user = GetUser(ctx)
+		err  error
+		span *trace.Span
+	)
+
+	ctx, span = trace.NewSpan(ctx, "get-jwt-auth-feature-flag")
+	defer span.End(&err)
+
+	u := featureFlag.FFUser(user.HashID, map[string]interface{}{
+		"name":     user.Name,
+		"source":   user.Source,
+		"spaceUid": user.SpaceUid,
+	})
+
+	span.Set("ff-user-custom", u.GetCustom())
+	status := featureFlag.BoolVariation(ctx, u, "jwt-auth", false)
+	span.Set("ff-status", status)
+
+	return status
+}
+
 // GetMustVmQueryFeatureFlag 判断该 TableID 是否强行指定为单指标单表
 func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 	var (

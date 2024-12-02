@@ -11,42 +11,27 @@ package objectsref
 
 import (
 	"sync"
-	"sync/atomic"
 )
 
 var (
-	workloadMapMut sync.Mutex
-	workloadMap    map[string]int
+	resourceMapMut sync.Mutex
+	resourceMap    map[string]int
 )
 
-func GetWorkloadCount() map[string]int {
-	workloadMapMut.Lock()
-	defer workloadMapMut.Unlock()
+func GetResourceCount() map[string]int {
+	resourceMapMut.Lock()
+	defer resourceMapMut.Unlock()
 
 	counts := make(map[string]int)
-	for k, v := range workloadMap {
+	for k, v := range resourceMap {
 		counts[k] = v
 	}
 	return counts
 }
 
-func setWorkloadCount(counts map[string]int) {
-	workloadMapMut.Lock()
-	defer workloadMapMut.Unlock()
+func SetWorkloadCount(counts map[string]int) {
+	resourceMapMut.Lock()
+	defer resourceMapMut.Unlock()
 
-	workloadMap = counts
-}
-
-var clusterNode atomic.Int64
-
-func GetClusterNodeCount() int {
-	return int(clusterNode.Load())
-}
-
-func incClusterNodeCount() {
-	clusterNode.Add(1)
-}
-
-func decClusterNodeCount() {
-	clusterNode.Add(-1)
+	resourceMap = counts
 }

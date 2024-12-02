@@ -230,11 +230,6 @@ var LookupIP = func(ctx context.Context, t configs.IPType, domain string) ([]net
 	default:
 		network = "ip"
 	}
-	// 判断addr是否为有效的ipv4 ipv6 或者域名
-	ret := utils.CheckIpOrDomainValid(domain)
-	if ret == utils.Domain {
-		network = "ip"
-	}
 	ips, err := net.DefaultResolver.LookupIP(ctx, network, domain)
 	if err != nil {
 		return nil, err

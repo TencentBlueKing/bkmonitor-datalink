@@ -107,6 +107,7 @@ processor:
       decoded_key: "{{ token_checker_config.decoded_key }}"
       decoded_iv: "{{ token_checker_config.decoded_iv }}"
       must_empty_token: {{ token_checker_config.must_empty_token | default("true") }}
+      fixed_token: "{{ token_checker_config.fixed_token }}"
       traces_dataid: {{ token_checker_config.trace_data_id | default(0) }}
       metrics_dataid: {{ token_checker_config.metric_data_id | default(0) }}
       logs_dataid: {{ token_checker_config.log_data_id | default(0) }}
@@ -149,6 +150,8 @@ processor:
         cache:
           key: "{{ resource_fill_dimensions_config.from_cache.cache.key }}"
           url: "{{ resource_fill_dimensions_config.from_cache.cache.url }}"
+          timeout: "{{ resource_fill_dimensions_config.from_cache.cache.timeout }}"
+          interval: "{{ resource_fill_dimensions_config.from_cache.cache.interval }}"
 {%- endif %}
 
 {% if metric_configs is defined %}

@@ -17,8 +17,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/generator"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/testkits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 )
 
 func TestConvertGaugeMetrics(t *testing.T) {
@@ -37,8 +37,9 @@ func TestConvertGaugeMetrics(t *testing.T) {
 		},
 		"target": define.Identity(),
 		"dimension": map[string]string{
-			"a1": "v1",
-			"r1": "v1",
+			"scope_name": generator.ScopeName,
+			"a1":         "v1",
+			"r1":         "v1",
 		},
 		"timestamp": int64(0),
 	}
@@ -119,8 +120,9 @@ func TestConvertHistogramMetrics(t *testing.T) {
 			},
 			"target": define.Identity(),
 			"dimension": map[string]string{
-				"a1": "v1",
-				"r1": "v1",
+				"scope_name": generator.ScopeName,
+				"a1":         "v1",
+				"r1":         "v1",
 			},
 			"timestamp": int64(0),
 		},
@@ -130,8 +132,9 @@ func TestConvertHistogramMetrics(t *testing.T) {
 			},
 			"target": define.Identity(),
 			"dimension": map[string]string{
-				"a1": "v1",
-				"r1": "v1",
+				"scope_name": generator.ScopeName,
+				"a1":         "v1",
+				"r1":         "v1",
 			},
 			"timestamp": int64(0),
 		},
@@ -141,9 +144,10 @@ func TestConvertHistogramMetrics(t *testing.T) {
 			},
 			"target": define.Identity(),
 			"dimension": map[string]string{
-				"a1": "v1",
-				"r1": "v1",
-				"le": "1",
+				"scope_name": generator.ScopeName,
+				"a1":         "v1",
+				"r1":         "v1",
+				"le":         "1",
 			},
 			"timestamp": int64(0),
 		},
@@ -153,9 +157,10 @@ func TestConvertHistogramMetrics(t *testing.T) {
 			},
 			"target": define.Identity(),
 			"dimension": map[string]string{
-				"a1": "v1",
-				"r1": "v1",
-				"le": "2",
+				"scope_name": generator.ScopeName,
+				"a1":         "v1",
+				"r1":         "v1",
+				"le":         "2",
 			},
 			"timestamp": int64(0),
 		},
@@ -165,9 +170,10 @@ func TestConvertHistogramMetrics(t *testing.T) {
 			},
 			"target": define.Identity(),
 			"dimension": map[string]string{
-				"a1": "v1",
-				"r1": "v1",
-				"le": "3",
+				"scope_name": generator.ScopeName,
+				"a1":         "v1",
+				"r1":         "v1",
+				"le":         "3",
 			},
 			"timestamp": int64(0),
 		},
@@ -177,9 +183,10 @@ func TestConvertHistogramMetrics(t *testing.T) {
 			},
 			"target": define.Identity(),
 			"dimension": map[string]string{
-				"a1": "v1",
-				"r1": "v1",
-				"le": "+Inf",
+				"scope_name": generator.ScopeName,
+				"a1":         "v1",
+				"r1":         "v1",
+				"le":         "+Inf",
 			},
 			"timestamp": int64(0),
 		},
@@ -223,8 +230,9 @@ func TestConvertSummaryMetrics(t *testing.T) {
 		},
 		"target": define.Identity(),
 		"dimension": map[string]string{
-			"a1": "v1",
-			"r1": "v1",
+			"scope_name": generator.ScopeName,
+			"a1":         "v1",
+			"r1":         "v1",
 		},
 		"timestamp": int64(0),
 	}, event.Data())
@@ -247,8 +255,9 @@ func TestConvertSumMetrics(t *testing.T) {
 		},
 		"target": define.Identity(),
 		"dimension": map[string]string{
-			"a1": "v1",
-			"r1": "v1",
+			"scope_name": generator.ScopeName,
+			"a1":         "v1",
+			"r1":         "v1",
 		},
 		"timestamp": int64(0),
 	}

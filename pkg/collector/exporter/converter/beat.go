@@ -13,7 +13,7 @@ import (
 	"github.com/elastic/beats/libbeat/common"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pkg/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
 )
 
 type beatEvent struct {

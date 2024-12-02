@@ -92,7 +92,7 @@ func (oc *ObjectsController) GetServiceRelations(w io.Writer) {
 				})
 			}
 
-			oc.ingressObjs.rangeIngress(namespace, func(name string, ingress ingressEntity) {
+			oc.ingressObjs.Range(namespace, func(name string, ingress ingressEntity) {
 				for _, s := range ingress.services {
 					if s != svc.name {
 						continue
@@ -176,24 +176,22 @@ func (oc *ObjectsController) GetReplicasetRelations(w io.Writer) {
 }
 
 func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
-	oc.bkLogConfigObjs.RangeBkLogConfig(func(e *bkLogConfigEntity) {
-		labels := []relationLabel{
-			{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
-			{Name: "bklogconfig_namespace", Value: e.Obj.Namespace},
-			{Name: "bklogconfig_name", Value: e.Obj.Name},
-		}
+	pods := oc.podObjs.GetAll()
+	nodes := oc.nodeObjs.GetAll()
+
+	oc.bkLogConfigObjs.Range(func(e *bkLogConfigEntity) {
 		relationBytes(w, relationMetric{
-			Name:   relationBkLogConfigWithDataSource,
-			Labels: labels,
+			Name: relationBkLogConfigWithDataSource,
+			Labels: []relationLabel{
+				{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
+				{Name: "bklogconfig_namespace", Value: e.Obj.Namespace},
+				{Name: "bklogconfig_name", Value: e.Obj.Name},
+			},
 		})
 
 		switch e.Obj.Spec.LogConfigType {
 		case logConfigTypeStd, logConfigTypeContainer:
-			if oc.podObjs == nil {
-				return
-			}
-
-			for _, pod := range oc.podObjs.GetAll() {
+			for _, pod := range pods {
 				if !e.MatchNamespace(pod.ID.Namespace) {
 					continue
 				}
@@ -207,11 +205,7 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 						continue
 					}
 
-					if !e.MatchWorkloadType(pod.Labels, pod.Annotations, pod.OwnerRefs) {
-						continue
-					}
-
-					if !e.MatchWorkloadName(pod.Labels, pod.Annotations, pod.OwnerRefs) {
+					if !e.MatchWorkload(pod.Labels, pod.Annotations, pod.OwnerRefs) {
 						continue
 					}
 				}
@@ -219,34 +213,28 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 				podRelationStatus := false
 				for _, container := range pod.Containers {
 					if !e.Obj.Spec.AllContainer {
-						if !e.MatchContainerName(container) {
+						if !e.MatchContainerName(container.Name) {
 							continue
 						}
 					}
-
 					podRelationStatus = true
 				}
 
 				// 只需要上报到 pod 层级就够了
 				if podRelationStatus {
-					labels := []relationLabel{
-						{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
-						{Name: "namespace", Value: pod.ID.Namespace},
-						{Name: "pod", Value: pod.ID.Name},
-					}
 					relationBytes(w, relationMetric{
-						Name:   relationDataSourceWithPod,
-						Labels: labels,
+						Name: relationDataSourceWithPod,
+						Labels: []relationLabel{
+							{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
+							{Name: "namespace", Value: pod.ID.Namespace},
+							{Name: "pod", Value: pod.ID.Name},
+						},
 					})
 				}
 			}
 
 		case logConfigTypeNode:
-			if oc.nodeObjs == nil {
-				return
-			}
-
-			for _, node := range oc.nodeObjs.GetAll() {
+			for _, node := range nodes {
 				if !e.MatchLabel(node.GetLabels()) {
 					continue
 				}
@@ -255,13 +243,12 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 					continue
 				}
 
-				labels := []relationLabel{
-					{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
-					{Name: "node", Value: node.Name},
-				}
 				relationBytes(w, relationMetric{
-					Name:   relationDataSourceWithNode,
-					Labels: labels,
+					Name: relationDataSourceWithNode,
+					Labels: []relationLabel{
+						{Name: "bk_data_id", Value: fmt.Sprintf("%d", e.Obj.Spec.DataId)},
+						{Name: "node", Value: node.Name},
+					},
 				})
 			}
 		}
@@ -348,7 +335,7 @@ func (oc *ObjectsController) GetPodRelations(w io.Writer) {
 					{Name: "namespace", Value: pod.ID.Namespace},
 					{Name: "pod", Value: pod.ID.Name},
 					{Name: "node", Value: pod.NodeName},
-					{Name: "container", Value: container},
+					{Name: "container", Value: container.Name},
 				},
 			})
 		}

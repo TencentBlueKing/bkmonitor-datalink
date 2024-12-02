@@ -149,6 +149,12 @@ func TestAPIHandler(t *testing.T) {
 			"__name__",
 			"namespace",
 		},
+		`labels:17298630851729859485{result_table_id="2_bcs_prom_computation_result_table", __name__=~"container_.*_value"}`: []string{
+			"__name__",
+			"bcs_cluster_id",
+			"namespace",
+			"pod",
+		},
 		`query_range:1729863085172985948560topk(5, count({result_table_id="2_bcs_prom_computation_result_table", __name__="container_cpu_usage_seconds_total_value"}) by (bcs_cluster_id))`: victoriaMetrics.Data{
 			ResultType: victoriaMetrics.MatrixType,
 			Result: []victoriaMetrics.Series{
@@ -160,6 +166,60 @@ func TestAPIHandler(t *testing.T) {
 						{
 							1693973987000, 1,
 						},
+					},
+				},
+			},
+		},
+		`query_range:1729863085172985948560topk(5, count({result_table_id="2_bcs_prom_computation_result_table", __name__=~"container_.*_value"}) by (bcs_cluster_id))`: victoriaMetrics.Data{
+			ResultType: victoriaMetrics.MatrixType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bcs_cluster_id": "BCS-K8S-00000",
+					},
+					Values: []victoriaMetrics.Value{
+						{
+							1693973987000, 1,
+						},
+					},
+				},
+			},
+		},
+		`query_range:1729863085172985948560topk(5, count({result_table_id="2_bcs_prom_computation_result_table", __name__=~"container_.*_value"}) by (namespace))`: victoriaMetrics.Data{
+			ResultType: victoriaMetrics.MatrixType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"namespace": "bkbase",
+					},
+					Values: []victoriaMetrics.Value{
+						{
+							1693973987, "1",
+						},
+					},
+				},
+				{
+					Metric: map[string]string{
+						"namespace": "kube-system",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+				{
+					Metric: map[string]string{
+						"namespace": "bkmonitor-operator",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+				{
+					Metric: map[string]string{
+						"namespace": "blueking",
+					},
+					Value: []any{
+						1693973987, "1",
 					},
 				},
 			},
@@ -273,6 +333,19 @@ func TestAPIHandler(t *testing.T) {
 			},
 			expected: `["__name__","namespace"]`,
 		},
+		"test tag keys in prometheus with regex": {
+			handler: HandlerTagKeys,
+			method:  http.MethodPost,
+			infoParams: &infos.Params{
+				TableID:  "result_table.vm",
+				Start:    fmt.Sprintf("%d", start.Unix()),
+				End:      fmt.Sprintf("%d", end.Unix()),
+				Metric:   "container_.*",
+				IsRegexp: true,
+				Limit:    2,
+			},
+			expected: `["__name__","bcs_cluster_id","namespace","pod"]`,
+		},
 		"test tag values in prometheus": {
 			handler: HandlerTagValues,
 			method:  http.MethodPost,
@@ -283,6 +356,20 @@ func TestAPIHandler(t *testing.T) {
 				Metric:  "container_cpu_usage_seconds_total",
 				Limit:   5,
 				Keys:    []string{"namespace", "bcs_cluster_id"},
+			},
+			expected: `{"values":{"bcs_cluster_id":["BCS-K8S-00000"],"namespace":["bkbase","bkmonitor-operator","blueking","kube-system"]}}`,
+		},
+		"test tag values in prometheus with regex": {
+			handler: HandlerTagValues,
+			method:  http.MethodPost,
+			infoParams: &infos.Params{
+				TableID:  "result_table.vm",
+				Start:    fmt.Sprintf("%d", start.Unix()),
+				End:      fmt.Sprintf("%d", end.Unix()),
+				IsRegexp: true,
+				Metric:   "container_.*",
+				Limit:    5,
+				Keys:     []string{"namespace", "bcs_cluster_id"},
 			},
 			expected: `{"values":{"bcs_cluster_id":["BCS-K8S-00000"],"namespace":["bkbase","bkmonitor-operator","blueking","kube-system"]}}`,
 		},

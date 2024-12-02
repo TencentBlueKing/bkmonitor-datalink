@@ -10,12 +10,12 @@
 package middleware
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -71,7 +71,7 @@ func parseBKJWTToken(tokenString string, publicKey []byte) (jwt.MapClaims, error
 	keyFunc := func(token *jwt.Token) (interface{}, error) {
 		pubKey, err := jwt.ParseRSAPublicKeyFromPEM(publicKey)
 		if err != nil {
-			return pubKey, fmt.Errorf("jwt parse fail, err=%w", err)
+			return pubKey, errors.Wrap(err, "jwt parse fail")
 		}
 		return pubKey, nil
 	}
@@ -129,12 +129,6 @@ func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]strin
 			spaceUID = user.SpaceUid
 		)
 
-		// 通过特性开关判断是否开启验证
-		ffStatus := metadata.GetJwtAuthFeatureFlag(ctx)
-		if !ffStatus {
-			return
-		}
-
 		ctx, span := trace.NewSpan(ctx, "jwt-auth")
 		defer func() {
 			span.End(&err)
@@ -145,10 +139,16 @@ func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]strin
 
 				metric.JWTRequestInc(ctx, c.ClientIP(), c.Request.URL.Path, payLoad.AppCode(), payLoad.UserName(), user.SpaceUid, metric.StatusFailed)
 
+				// 通过特性开关判断是否开启验证，如果未开启验证则不进行 504 校验，但是错误指标还正常处理
+				ffStatus := metadata.GetJwtAuthFeatureFlag(ctx)
+				if !ffStatus {
+					c.Next()
+					return
+				}
+
 				res := gin.H{
 					"error": err.Error(),
 				}
-
 				if span.TraceID() != "" {
 					res["trace_id"] = span.TraceID()
 				}
@@ -188,11 +188,6 @@ func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]strin
 
 		appCode = payLoad.AppCode()
 		span.Set("bk_app_code", appCode)
-
-		if user.SpaceUid == "" {
-			err = errSpaceUidEmpty
-			return
-		}
 
 		span.Set("space_uid", spaceUID)
 

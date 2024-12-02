@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/pkg/errors"
@@ -163,6 +164,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	pusher := service.NewSpacePusher()
 	// 存放结果表数据
 
+	t0 := time.Now()
 	p, _ := ants.NewPool(goroutineCount)
 	defer p.Release()
 
@@ -170,12 +172,13 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	wg.Add(1)
 	_ = p.Submit(func() {
 		defer wg.Done()
+		t1 := time.Now()
 		name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo bk_app_to_space")
 		if err = pusher.PushBkAppToSpace(); err != nil {
 			logger.Errorf("%s error %s", name, err)
 			return
 		}
-		logger.Infof("%s success", name)
+		logger.Infof("%s success, cost: %s", name, time.Since(t1))
 	})
 
 	// 循环每个空间处理 space_to_result_table 空间路由数据
@@ -184,13 +187,13 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		sp := sp
 		_ = p.Submit(func() {
 			defer wg.Done()
+			t1 := time.Now()
 			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo space_to_result_table [%s] ", sp.SpaceUid())
 			if err = pusher.PushSpaceTableIds(sp.SpaceTypeId, sp.SpaceId); err != nil {
 				logger.Errorf("%s error %s", name, err)
 				return
 			}
-
-			logger.Infof("%s success", name)
+			logger.Infof("%s success, cost: %s", name, time.Since(t1))
 		})
 	}
 
@@ -198,18 +201,20 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	wg.Add(1)
 	_ = p.Submit(func() {
 		defer wg.Done()
+		t1 := time.Now()
 		name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo data_label_to_result_table")
 		if err = pusher.PushDataLabelTableIds(nil, nil, true); err != nil {
 			logger.Errorf("%s error %s", name, err)
 			return
 		}
-		logger.Infof("%s success", name)
+		logger.Infof("%s success, cost: %s", name, time.Since(t1))
 	})
 
 	// 处理 result_table_detail 路由
 	wg.Add(1)
 	_ = p.Submit(func() {
 		defer wg.Done()
+		t1 := time.Now()
 
 		name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo result_table_detail")
 		var tableIdList []string
@@ -227,11 +232,11 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			logger.Errorf("%s error %s", name, err)
 			return
 		}
-		logger.Infof("%s success", name)
+		logger.Infof("%s success, cost: %s", name, time.Since(t1))
 	})
 
 	wg.Wait()
-	logger.Infof("push and publish space router successfully")
+	logger.Infof("push and publish space router successfully, cost: %s", time.Since(t0))
 	return nil
 }
 

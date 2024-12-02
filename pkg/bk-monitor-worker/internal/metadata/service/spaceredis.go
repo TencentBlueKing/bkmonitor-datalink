@@ -1015,7 +1015,9 @@ func (s *SpacePusher) PushBkAppToSpace() (err error) {
 	defer func() {
 		if err != nil {
 			logger.Errorf("PushBkAppToSpace error: %s", err.Error())
+			return
 		}
+
 		logger.Infof("PushBkAppToSpace success")
 	}()
 

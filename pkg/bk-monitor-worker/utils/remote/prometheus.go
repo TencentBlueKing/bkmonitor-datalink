@@ -55,13 +55,12 @@ type PrometheusWriter struct {
 	headers map[string]string
 
 	client       *http.Client
-	isValid      bool
 	logger       monitorLogger.Logger
 	responseHook func(bool)
 }
 
 func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, writeReq prompb.WriteRequest) error {
-	if !p.isValid || len(writeReq.Timeseries) == 0 {
+	if len(writeReq.Timeseries) == 0 {
 		return nil
 	}
 
@@ -86,6 +85,10 @@ func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, writeRe
 	// 支持使用不同的 token
 	if token != "" {
 		req.Header.Set(tokenKey, token)
+	}
+
+	if req.Header.Get(tokenKey) == "" {
+		return nil
 	}
 
 	resp, err := p.client.Do(req)
@@ -123,16 +126,11 @@ func NewPrometheusWriterClient(token, url string, headers map[string]string) *Pr
 	} else {
 		h[tokenKey] = h["x-bk-token"]
 	}
-	isValid := false
-	if v, _ := h[tokenKey]; v != "" {
-		isValid = true
-	}
 
 	return &PrometheusWriter{
 		url:     url,
 		headers: h,
 		client:  client,
-		isValid: isValid,
 		logger:  monitorLogger.With(zap.String("name", "prometheus")),
 	}
 }

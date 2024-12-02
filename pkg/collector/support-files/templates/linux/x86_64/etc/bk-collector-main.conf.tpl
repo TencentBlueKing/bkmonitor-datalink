@@ -138,7 +138,7 @@ bk-collector:
         - "cors"
         - "content_decompressor"
         - "maxconns;maxConnectionsRatio=256"
-{%- if extra_vars is defined and extra_vars.http_max_bytes is defined %}
+{%- if extra_vars is defined and extra_vars.http_max_bytes is defined and extra_vars.http_max_bytes != "" %}
         - "maxbytes;maxRequestBytes={{ extra_vars.http_max_bytes }}"
 {%- else %}
         - "maxbytes;maxRequestBytes=209715200"
@@ -167,7 +167,7 @@ bk-collector:
       # default: ""
       endpoint: ":4317"
       middlewares:
-{%- if extra_vars is defined and extra_vars.grpc_max_bytes is defined %}
+{%- if extra_vars is defined and extra_vars.grpc_max_bytes is defined and extra_vars.grpc_max_bytes != "" %}
         - "maxbytes;maxRequestBytes={{ extra_vars.grpc_max_bytes }}"
 {%- else %}
         - "maxbytes;maxRequestBytes=8388608"

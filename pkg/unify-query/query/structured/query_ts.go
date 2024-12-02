@@ -503,12 +503,16 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		metric.BkDataRequestInc(ctx, spaceUid, string(tableID))
 		// 特性开关是否，打开 bkdata tableid 校验
 		if metadata.GetBkDataTableIDCheck(ctx) {
-			bkBizID := strings.Split(spaceUid, "__")
-			if len(bkBizID) != 2 {
+			space := strings.Split(spaceUid, "__")
+			if len(space) != 2 {
+				return queryMetric, nil
+			}
+			// 只允许业务下查询
+			if space[0] != "bkcc" {
 				return queryMetric, nil
 			}
 
-			if !strings.HasPrefix(string(tableID), bkBizID[1]+"_") {
+			if !strings.HasPrefix(string(tableID), space[1]+"_") {
 				return queryMetric, nil
 			}
 		}

@@ -29,6 +29,7 @@ type ScriptTaskConfig struct {
 	Command       string            `config:"command"`
 	TimestampUnit string            `config:"timestamp_unit"`
 	UserEnvs      map[string]string `config:"user_env"`
+	Username      string            `config:"username"`
 	TimeOffset    time.Duration     `config:"time_offset"`
 }
 

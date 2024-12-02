@@ -26,6 +26,7 @@ import (
 )
 
 const (
+	BkAppCode           = "default_app_code"
 	SpaceUid            = "space_default"
 	ResultTableVM       = "result_table.vm"
 	ResultTableInfluxDB = "result_table.influxdb"
@@ -42,6 +43,17 @@ var (
 func MockSpaceRouter(ctx context.Context) {
 	mockSpaceRouterOnce.Do(func() {
 		_ = featureFlag.MockFeatureFlag(ctx, `{
+		"jwt-auth": {
+	  		"variations": {
+	  			"true": true,
+	  			"false": false
+	  		},
+	  		"targeting": [
+			],
+			"defaultRule": {
+	  			"variation": "true"
+	  		}
+		},
 	  	"must-vm-query": {
 	  		"variations": {
 	  			"true": true,
@@ -108,6 +120,14 @@ func MockSpaceRouter(ctx context.Context) {
 		}
 
 		setSpaceTsDbMockData(ctx,
+			ir.BkAppSpace{
+				BkAppCode: {
+					"*",
+				},
+				"my_code": {
+					"my_space_uid",
+				},
+			},
 			ir.SpaceInfo{
 				SpaceUid: ir.Space{
 					"system.disk": &ir.SpaceResultTable{
@@ -211,7 +231,7 @@ func MockSpaceRouter(ctx context.Context) {
 	})
 }
 
-func setSpaceTsDbMockData(ctx context.Context, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo, fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
+func setSpaceTsDbMockData(ctx context.Context, bkAppSpace ir.BkAppSpace, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo, fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
 	mockRedisOnce.Do(func() {
 		setRedisClient(ctx)
 	})
@@ -219,6 +239,12 @@ func setSpaceTsDbMockData(ctx context.Context, spaceInfo ir.SpaceInfo, rtInfo ir
 	sr, err := SetSpaceTsDbRouter(ctx, "mock", "mock", "", 100)
 	if err != nil {
 		panic(err)
+	}
+	for bkApp, spaceUidList := range bkAppSpace {
+		err = sr.Add(ctx, ir.BkAppToSpaceKey, bkApp, spaceUidList)
+		if err != nil {
+			panic(err)
+		}
 	}
 	for sid, space := range spaceInfo {
 		err = sr.Add(ctx, ir.SpaceToResultTableKey, sid, &space)

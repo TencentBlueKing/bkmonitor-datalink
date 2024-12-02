@@ -34,12 +34,15 @@ const (
 	DataLabelToResultTableChannelKey = "data_label_to_result_table:channel"
 	FieldToResultTableChannelKey     = "field_to_result_table:channel"
 	ResultTableDetailChannelKey      = "result_table_detail:channel"
+
+	BkAppToSpaceKey        = "bk_app_to_space"
+	BkAppToSpaceChannelKey = "bk_app_to_space:channel"
 )
 
 var (
 	AllKey           = []string{ClusterInfoKey, HostInfoKey, TagInfoKey}
-	SpaceAllKey      = []string{SpaceToResultTableKey, DataLabelToResultTableKey, ResultTableDetailKey}
-	SpaceChannelKeys = []string{SpaceToResultTableChannelKey, DataLabelToResultTableChannelKey, ResultTableDetailChannelKey}
+	SpaceAllKey      = []string{SpaceToResultTableKey, DataLabelToResultTableKey, ResultTableDetailKey, BkAppToSpaceKey}
+	SpaceChannelKeys = []string{SpaceToResultTableChannelKey, DataLabelToResultTableChannelKey, ResultTableDetailChannelKey, BkAppToSpaceChannelKey}
 )
 
 type Router interface {
@@ -55,6 +58,7 @@ type Router interface {
 	GetQueryRouterInfo(ctx context.Context) (QueryRouterInfo, error)
 	SubHostStatus(ctx context.Context) <-chan *goRedis.Message
 	SetHostStatusRead(ctx context.Context, hostName string, readStatus bool) error
+	GetBkAppSpace(ctx context.Context, bkApp string) (SpaceUIDList, error)
 	GetSpace(ctx context.Context, spaceId string) (Space, error)
 	GetFieldToResultTableDetail(ctx context.Context, field string) (ResultTableList, error)
 	GetResultTableDetail(ctx context.Context, tableId string) (*ResultTableDetail, error)
@@ -298,6 +302,15 @@ func (r *router) SetHostStatusRead(ctx context.Context, hostName string, readSta
 	return nil
 }
 
+func (r *router) GetBkAppSpace(ctx context.Context, bkApp string) (SpaceUIDList, error) {
+	var value SpaceUIDList
+	err := GetGenericHashKeyResult(r, ctx, BkAppToSpaceKey, bkApp, &value)
+	if err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
 func (r *router) GetSpace(ctx context.Context, spaceId string) (Space, error) {
 	value := Space{}
 	err := GetGenericHashKeyResult(r, ctx, SpaceToResultTableKey, spaceId, &value)
@@ -391,6 +404,8 @@ func GetGenericHashKeyResult(r *router, ctx context.Context, coreKey string, fie
 
 func NewGenericValue(typeKey string) (stoVal GenericValue, err error) {
 	switch typeKey {
+	case BkAppToSpaceKey:
+		stoVal = &SpaceUIDList{}
 	case FieldToResultTableKey:
 		stoVal = &ResultTableList{}
 	case SpaceToResultTableKey:

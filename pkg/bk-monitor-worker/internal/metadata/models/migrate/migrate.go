@@ -7,31 +7,25 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//go:build windows
-
-package utils
+package migrate
 
 import (
-	"os/exec"
-	"strconv"
+	"context"
+	"sync"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
 
-// setProcessExecByUsername does not work on windows.
-func setProcessExecByUsername(cmd *exec.Cmd, username string) error {
-	return nil
+var once sync.Once
+
+func Migrate(_ context.Context, tables ...interface{}) {
+	myDb := mysql.GetDBSession().DB
+	myDb.AutoMigrate(tables...)
 }
 
-func setProcessGroupID(cmd *exec.Cmd) {
-}
-
-func processGroupKill(cmd *exec.Cmd) error {
-	if cmd.Process.Pid != 0 {
-		kill := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid))
-		err := kill.Run()
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
+func AutoMigrateAllTables(ctx context.Context) {
+	once.Do(func() {
+		Migrate(ctx, &space.BkAppSpace{})
+	})
 }

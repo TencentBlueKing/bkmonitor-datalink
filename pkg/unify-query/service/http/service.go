@@ -77,9 +77,10 @@ func (s *Service) Reload(ctx context.Context) {
 	public.Use(
 		gin.Recovery(),
 		otelgin.Middleware(trace.ServiceName),
-		middleware.Timer(&middleware.Params{
+		middleware.MetaData(&middleware.Params{
 			SlowQueryThreshold: SlowQueryThreshold,
 		}),
+		middleware.JwtAuthMiddleware(JwtPublicKey, JwtBkAppCodeSpaces),
 	)
 	registerDefaultHandlers(ctx, public)
 	api.RegisterRelation(ctx, public)

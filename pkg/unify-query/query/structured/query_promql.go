@@ -31,6 +31,8 @@ type QueryPromQL struct {
 	Limit               int      `json:"limit,omitempty"`
 	Slimit              int      `json:"slimit,omitempty"`
 	Match               string   `json:"match,omitempty"`
+	IsVerifyDimensions  bool     `json:"is_verify_dimensions,omitempty"`
+
 	// DownSampleRange 降采样：大于Step才能生效，可以为空
 	DownSampleRange string `json:"down_sample_range,omitempty" example:"5m"`
 	// Timezone 时区

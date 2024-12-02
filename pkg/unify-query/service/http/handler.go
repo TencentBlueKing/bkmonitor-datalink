@@ -237,6 +237,7 @@ func HandlerQueryRaw(c *gin.Context) {
 	queryStr, _ := json.Marshal(queryTs)
 	span.Set("query-body", string(queryStr))
 
+	listData.TraceID = span.TraceID()
 	listData.Total, listData.List, err = queryRawWithInstance(ctx, queryTs)
 	if err != nil {
 		listData.Status = &metadata.Status{

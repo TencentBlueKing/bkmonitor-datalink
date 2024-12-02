@@ -24,6 +24,30 @@ type DataLabelToResultTable map[string]ResultTableList
 type ResultTableDetailInfo map[string]*ResultTableDetail
 
 //go:generate msgp -tests=false
+type BkAppSpace map[string]*SpaceUIDList
+
+type SpaceUIDList []string
+
+func (z *SpaceUIDList) Marshal(b []byte) (o []byte, err error) {
+	return z.MarshalMsg(b)
+}
+
+func (z *SpaceUIDList) Unmarshal(bts []byte) (o []byte, err error) {
+	return z.UnmarshalMsg(bts)
+}
+
+func (z *SpaceUIDList) Print() string {
+	return fmt.Sprintf("%+v", *z)
+}
+
+func (z *SpaceUIDList) Length() int {
+	return len(*z)
+}
+
+func (z *SpaceUIDList) Fill(key string) {
+}
+
+//go:generate msgp -tests=false
 type Space map[string]*SpaceResultTable
 
 //go:generate msgp -tests=false

@@ -86,6 +86,10 @@ var (
 	SpaceToResultTableChannel string
 	// BuildInResultTableDetailKey 空间关联内置上报rt详情
 	BuildInResultTableDetailKey string
+	// BkAppToSpaceKey redis 中 bkApp 的 key
+	BkAppToSpaceKey string
+	// BkAppToSpaceChannelKey bkAppCode 关联 space 的 channel
+	BkAppToSpaceChannelKey string
 
 	// BkdataDefaultBizId 接入计算平台使用的业务 ID
 	BkdataDefaultBizId int
@@ -167,6 +171,8 @@ func initMetadataVariables() {
 	SpaceToResultTableKey = GetValue("taskConfig.metadata.space.spaceToResultTableKey", fmt.Sprintf("%s:space_to_result_table", SpaceRedisKey))
 	SpaceToResultTableChannel = GetValue("taskConfig.metadata.space.spaceToResultTableChannel", fmt.Sprintf("%s:space_to_result_table:channel", SpaceRedisKey))
 	BuildInResultTableDetailKey = GetValue("taskConfig.metadata.space.buildInResultTableDetailKey", fmt.Sprintf("%s:built_in_result_table_detail", SpaceRedisKey))
+	BkAppToSpaceKey = GetValue("taskConfig.metadata.space.bkAppSpace", fmt.Sprintf("%s:bk_app_to_space", SpaceRedisKey))
+	BkAppToSpaceChannelKey = GetValue("taskConfig.metadata.space.bkAppSpaceChannel", fmt.Sprintf("%s:bk_app_to_space:channel", SpaceRedisKey))
 
 	BkdataDefaultBizId = GetValue("taskConfig.metadata.bkdata.defaultBizId", 0)
 	BkdataProjectId = GetValue("taskConfig.metadata.bkdata.projectId", 1)

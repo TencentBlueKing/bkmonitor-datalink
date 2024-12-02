@@ -22,6 +22,7 @@ type PromData struct {
 	dimensions map[string]bool
 	Tables     []*TablesItem    `json:"series"`
 	Status     *metadata.Status `json:"status,omitempty"`
+	TraceID    string           `json:"trace_id,omitempty"`
 }
 
 // NewPromData

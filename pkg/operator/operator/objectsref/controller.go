@@ -40,6 +40,12 @@ type OwnerRef struct {
 	Name string `json:"name"`
 }
 
+type ContainerKey struct {
+	Name  string
+	ID    string
+	Image string
+}
+
 // Object 代表 workload 对象
 type Object struct {
 	ID        ObjectID
@@ -54,7 +60,7 @@ type Object struct {
 	Annotations map[string]string
 
 	// Containers
-	Containers []string
+	Containers []ContainerKey
 }
 
 // ObjectID 代表 workload 对象标识
@@ -415,6 +421,7 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 		newObj.Labels = pod.Labels
 		newObj.Annotations = pod.Annotations
 		newObj.Status.PodIP = pod.Status.PodIP
+		newObj.Status.ContainerStatuses = pod.Status.ContainerStatuses
 		newObj.Spec.Containers = pod.Spec.Containers
 
 		return newObj, nil
@@ -441,7 +448,7 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 				Labels:      pod.Labels,
 				Annotations: pod.Annotations,
 				PodIP:       pod.Status.PodIP,
-				Containers:  toContainers(pod.Spec.Containers),
+				Containers:  toContainerKey(pod),
 			})
 		},
 		UpdateFunc: func(_, newObj interface{}) {
@@ -460,7 +467,7 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 				Labels:      pod.Labels,
 				Annotations: pod.Annotations,
 				PodIP:       pod.Status.PodIP,
-				Containers:  toContainers(pod.Spec.Containers),
+				Containers:  toContainerKey(pod),
 			})
 		},
 		DeleteFunc: func(obj interface{}) {
@@ -1015,10 +1022,14 @@ func toRefs(refs []metav1.OwnerReference) []OwnerRef {
 	return ret
 }
 
-func toContainers(specContainers []corev1.Container) []string {
-	containers := make([]string, 0, len(specContainers))
-	for _, sc := range specContainers {
-		containers = append(containers, sc.Name)
+func toContainerKey(pod *corev1.Pod) []ContainerKey {
+	var containers []ContainerKey
+	for _, sc := range pod.Status.ContainerStatuses {
+		containers = append(containers, ContainerKey{
+			Name:  sc.Name,
+			ID:    sc.ContainerID,
+			Image: sc.ImageID,
+		})
 	}
 	return containers
 }

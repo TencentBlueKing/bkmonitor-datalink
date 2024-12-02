@@ -48,7 +48,12 @@ func (s *Span) TraceID() string {
 		return ""
 	}
 
-	return s.span.SpanContext().TraceID().String()
+	traceID := s.span.SpanContext().TraceID()
+	if !traceID.IsValid() {
+		return ""
+	}
+
+	return traceID.String()
 }
 
 // Set attribute 打点

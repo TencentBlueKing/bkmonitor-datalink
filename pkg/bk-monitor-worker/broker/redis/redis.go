@@ -256,10 +256,10 @@ func (r *RDB) EnqueueUnique(ctx context.Context, msg *task.TaskMessage, ttl time
 		return err
 	}
 	if n == -1 {
-		return errors.E(op, errors.AlreadyExists, errors.ErrDuplicateTask)
+		return errors.E(op, errors.AlreadyExists, errors.ErrDuplicateTask, msg.UniqueKey)
 	}
 	if n == 0 {
-		return errors.E(op, errors.AlreadyExists, errors.ErrTaskIdConflict)
+		return errors.E(op, errors.AlreadyExists, errors.ErrTaskIdConflict, msg.UniqueKey)
 	}
 	return nil
 }

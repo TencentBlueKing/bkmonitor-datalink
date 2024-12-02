@@ -213,7 +213,7 @@ func (oc *ObjectsController) GetDataSourceRelations(w io.Writer) {
 				podRelationStatus := false
 				for _, container := range pod.Containers {
 					if !e.Obj.Spec.AllContainer {
-						if !e.MatchContainerName(container) {
+						if !e.MatchContainerName(container.Name) {
 							continue
 						}
 					}
@@ -335,7 +335,7 @@ func (oc *ObjectsController) GetPodRelations(w io.Writer) {
 					{Name: "namespace", Value: pod.ID.Namespace},
 					{Name: "pod", Value: pod.ID.Name},
 					{Name: "node", Value: pod.NodeName},
-					{Name: "container", Value: container},
+					{Name: "container", Value: container.Name},
 				},
 			})
 		}

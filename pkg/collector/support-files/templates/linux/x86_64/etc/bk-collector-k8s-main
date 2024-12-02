@@ -55,8 +55,8 @@
             - "logging"
             - "cors"
             - "content_decompressor"
-            - "maxconns"
-            - "maxbytes"
+            - "maxconns;maxConnectionsRatio=256"
+            - "maxbytes;maxRequestBytes=209715200"
 
         admin_server:
           enabled: true
@@ -69,7 +69,7 @@
           transport: "tcp"
           endpoint: ":4317"
           middlewares:
-            - "maxbytes"
+            - "maxbytes;maxRequestBytes=8388608"
 
         tars_server:
           enabled: true

@@ -114,3 +114,86 @@ func BenchmarkMergeReplaceWithoutCache(b *testing.B) {
 		}
 	})
 }
+
+func TestAnyMap(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected map[string]int
+	}{
+		{
+			input: `foo=1,bar=2`,
+			expected: map[string]int{
+				"foo": 1,
+				"bar": 2,
+			},
+		},
+		{
+			input: `foo=1, bar=2`,
+			expected: map[string]int{
+				"foo": 1,
+				"bar": 2,
+			},
+		},
+		{
+			input: `foo = 1, bar = 2`,
+			expected: map[string]int{
+				"foo": 1,
+				"bar": 2,
+			},
+		},
+		{
+			input: `foo=1`,
+			expected: map[string]int{
+				"foo": 1,
+			},
+		},
+		{
+			input: `foo=1,`,
+			expected: map[string]int{
+				"foo": 1,
+			},
+		},
+	}
+
+	for _, c := range cases {
+		om := NewOptMap(c.input)
+		for k, v := range c.expected {
+			i, ok := om.GetInt(k)
+			assert.True(t, ok)
+			assert.Equal(t, v, i)
+		}
+	}
+}
+
+func TestNameOpts(t *testing.T) {
+	cases := []struct {
+		nameOpts string
+		name     string
+		opts     string
+	}{
+		{
+			nameOpts: "foo1",
+			name:     "foo1",
+		},
+		{
+			nameOpts: "foo1;",
+			name:     "foo1",
+		},
+		{
+			nameOpts: "foo1;k1=v1",
+			name:     "foo1",
+			opts:     "k1=v1",
+		},
+		{
+			nameOpts: "foo1;k1=v1,k2=v2",
+			name:     "foo1",
+			opts:     "k1=v1,k2=v2",
+		},
+	}
+
+	for _, c := range cases {
+		name, opts := NameOpts(c.nameOpts)
+		assert.Equal(t, c.name, name)
+		assert.Equal(t, c.opts, opts)
+	}
+}

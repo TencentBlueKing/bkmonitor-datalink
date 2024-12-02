@@ -19,11 +19,13 @@ func init() {
 	Register("logging", Logging)
 }
 
-func Logging(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		uri := r.RequestURI
-		method := r.Method
-		logger.Debugf("http request: method=%s, uri=%v, remoteAddr=%v", method, uri, r.RemoteAddr)
-		next.ServeHTTP(w, r)
-	})
+func Logging(_ string) MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			uri := r.RequestURI
+			method := r.Method
+			logger.Debugf("http request: method=%s, uri=%v, remoteAddr=%v", method, uri, r.RemoteAddr)
+			next.ServeHTTP(w, r)
+		})
+	}
 }

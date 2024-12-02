@@ -112,7 +112,7 @@ bk-collector:
       retry_listen: true
       middlewares:
         - "logging"
-        - "maxconns"
+        - "maxconns;maxConnectionsRatio=256"
 
 
   # ============================== Pingserver ================================
@@ -137,8 +137,12 @@ bk-collector:
         - "logging"
         - "cors"
         - "content_decompressor"
-        - "maxconns"
-        - "maxbytes"
+        - "maxconns;maxConnectionsRatio=256"
+{%- if extra_vars is defined and extra_vars.http_max_bytes is defined and extra_vars.http_max_bytes != "" %}
+        - "maxbytes;maxRequestBytes={{ extra_vars.http_max_bytes }}"
+{%- else %}
+        - "maxbytes;maxRequestBytes=209715200"
+{%- endif %}
 
     # Admin Server Config
     admin_server:
@@ -163,7 +167,11 @@ bk-collector:
       # default: ""
       endpoint: ":4317"
       middlewares:
-        - "maxbytes"
+{%- if extra_vars is defined and extra_vars.grpc_max_bytes is defined and extra_vars.grpc_max_bytes != "" %}
+        - "maxbytes;maxRequestBytes={{ extra_vars.grpc_max_bytes }}"
+{%- else %}
+        - "maxbytes;maxRequestBytes=8388608"
+{%- endif %}
 
     # Tars Server Config
     tars_server:

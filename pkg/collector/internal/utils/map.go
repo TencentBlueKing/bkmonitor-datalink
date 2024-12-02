@@ -12,6 +12,7 @@ package utils
 import (
 	"strings"
 
+	"github.com/spf13/cast"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 )
 
@@ -93,4 +94,54 @@ func MergeReplaceAttributeMaps(attrs ...pcommon.Map) map[string]string {
 		})
 	}
 	return dst
+}
+
+func NameOpts(s string) (string, string) {
+	if s == "" {
+		return "", ""
+	}
+
+	nameOpts := strings.Split(s, ";")
+	if len(nameOpts) == 1 {
+		return nameOpts[0], ""
+	}
+	return nameOpts[0], nameOpts[1]
+}
+
+type OptMap struct {
+	m map[string]interface{} // 不会有并发读写
+}
+
+func NewOptMap(s string) *OptMap {
+	m := make(map[string]interface{})
+	pairs := strings.Split(s, ",")
+	for _, pair := range pairs {
+		kv := strings.Split(strings.TrimSpace(pair), "=")
+		if len(kv) != 2 {
+			continue
+		}
+		m[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+	}
+	return &OptMap{m: m}
+}
+
+func (om *OptMap) GetInt(k string) (int, bool) {
+	v, ok := om.m[k]
+	if !ok {
+		return 0, false
+	}
+
+	i, err := cast.ToIntE(v)
+	if err != nil {
+		return 0, false
+	}
+	return i, true
+}
+
+func (om *OptMap) GetIntDefault(k string, defaultVal int) int {
+	i, ok := om.GetInt(k)
+	if ok {
+		return i
+	}
+	return defaultVal
 }

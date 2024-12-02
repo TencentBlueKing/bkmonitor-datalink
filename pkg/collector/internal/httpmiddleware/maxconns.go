@@ -14,25 +14,37 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/semaphore"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+)
+
+const (
+	defaultMaxConnectionsRatio = 256
+	optMaxConnectionsRatio     = "maxConnectionsRatio"
 )
 
 func init() {
 	Register("maxconns", MaxConns)
 }
 
-func MaxConns(next http.Handler) http.Handler {
-	sem := semaphore.New(define.RequestHttp.S(), define.RequestsAllowed())
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got := sem.AcquireWithTimeout(define.AcquireTimeout)
-		if !got {
-			logger.Warnf("%s: failed to get semaphore, ip=%v", sem, r.RemoteAddr)
-			w.WriteHeader(http.StatusTooManyRequests)
-			return
-		}
-		defer sem.Release()
+func MaxConns(opt string) MiddlewareFunc {
+	om := utils.NewOptMap(opt)
+	n := om.GetIntDefault(optMaxConnectionsRatio, defaultMaxConnectionsRatio)
+	logger.Infof("maxconns middleware opts: %s(%d)", optMaxConnectionsRatio, n)
 
-		logger.Debugf("maxconns semaphore count: %d", sem.Count())
-		next.ServeHTTP(w, r)
-	})
+	return func(next http.Handler) http.Handler {
+		sem := semaphore.New(define.RequestHttp.S(), define.CoreNum()*n)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got := sem.AcquireWithTimeout(define.AcquireTimeout)
+			if !got {
+				logger.Warnf("%s: failed to get semaphore, ip=%v", sem, r.RemoteAddr)
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			defer sem.Release()
+
+			logger.Debugf("maxconns semaphore count: %d", sem.Count())
+			next.ServeHTTP(w, r)
+		})
+	}
 }

@@ -11,7 +11,6 @@ package utils
 
 import (
 	"strings"
-	"sync"
 
 	"github.com/spf13/cast"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -110,8 +109,7 @@ func NameOpts(s string) (string, string) {
 }
 
 type OptMap struct {
-	mut sync.Mutex
-	m   map[string]interface{}
+	m map[string]interface{} // 不会有并发读写
 }
 
 func NewOptMap(s string) *OptMap {
@@ -128,9 +126,6 @@ func NewOptMap(s string) *OptMap {
 }
 
 func (om *OptMap) GetInt(k string) (int, bool) {
-	om.mut.Lock()
-	defer om.mut.Unlock()
-
 	v, ok := om.m[k]
 	if !ok {
 		return 0, false

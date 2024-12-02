@@ -138,7 +138,11 @@ bk-collector:
         - "cors"
         - "content_decompressor"
         - "maxconns;maxConnectionsRatio=256"
+{%- if extra_vars is defined and extra_vars.http_max_bytes is defined %}
+        - "maxbytes;maxRequestBytes={{ extra_vars.http_max_bytes }}"
+{%- else %}
         - "maxbytes;maxRequestBytes=209715200"
+{%- endif %}
 
     # Admin Server Config
     admin_server:
@@ -163,7 +167,11 @@ bk-collector:
       # default: ""
       endpoint: ":4317"
       middlewares:
+{%- if extra_vars is defined and extra_vars.grpc_max_bytes is defined %}
+        - "maxbytes;maxRequestBytes={{ extra_vars.grpc_max_bytes }}"
+{%- else %}
         - "maxbytes;maxRequestBytes=8388608"
+{%- endif %}
 
     # Tars Server Config
     tars_server:

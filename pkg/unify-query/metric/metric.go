@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -47,7 +48,16 @@ var (
 )
 
 var (
-	apiRequestTotal = prometheus.NewCounterVec(
+	bkDataApiRequestTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "bk_data_api_request_total",
+			Help:      "unify-query bk_data api request",
+		},
+		[]string{"space_uid", "table_id"},
+	)
+
+	apiRequestTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "unify_query",
 			Name:      "api_request_total",
@@ -56,7 +66,7 @@ var (
 		[]string{"api", "status", "space_uid", "source_type"},
 	)
 
-	apiRequestSecondHistogram = prometheus.NewHistogramVec(
+	apiRequestSecondHistogram = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "unify_query",
 			Name:      "api_request_second",
@@ -66,7 +76,7 @@ var (
 		[]string{"api", "space_uid"},
 	)
 
-	resultTableInfo = prometheus.NewGaugeVec(
+	resultTableInfo = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "unify_query",
 			Name:      "result_table_info",
@@ -74,7 +84,7 @@ var (
 		[]string{"rt_table_id", "rt_data_id", "rt_measurement_type", "vm_table_id", "bcs_cluster_id"},
 	)
 
-	tsDBRequestBytesHistogram = prometheus.NewHistogramVec(
+	tsDBRequestBytesHistogram = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "unify_query",
 			Name:      "tsdb_request_bytes",
@@ -84,7 +94,7 @@ var (
 		[]string{"space_uid", "source_type", "tsdb_type"},
 	)
 
-	tsDBRequestSecondHistogram = prometheus.NewHistogramVec(
+	tsDBRequestSecondHistogram = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "unify_query",
 			Name:      "tsdb_request_seconds",
@@ -94,7 +104,7 @@ var (
 		[]string{"space_uid", "source_type", "tsdb_type", "url"},
 	)
 
-	vmQuerySpaceUidInfo = prometheus.NewGaugeVec(
+	vmQuerySpaceUidInfo = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "unify_query",
 			Name:      "vm_query_info",
@@ -103,7 +113,7 @@ var (
 		[]string{"space_uid"},
 	)
 
-	jwtRequestTotal = prometheus.NewCounterVec(
+	jwtRequestTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "unify_query",
 			Name:      "jwt_request_total",
@@ -112,6 +122,11 @@ var (
 		[]string{"client_ip", "api", "jwt_app_code", "jwt_app_user_name", "space_uid", "status"},
 	)
 )
+
+func BkDataRequestInc(ctx context.Context, params ...string) {
+	metric, _ := bkDataApiRequestTotal.GetMetricWithLabelValues(params...)
+	counterInc(ctx, metric)
+}
 
 func JWTRequestInc(ctx context.Context, params ...string) {
 	metric, _ := jwtRequestTotal.GetMetricWithLabelValues(params...)
@@ -209,13 +224,4 @@ func observe(
 		metric.Observe(value)
 	}
 
-}
-
-// init
-func init() {
-	prometheus.MustRegister(
-		apiRequestTotal, apiRequestSecondHistogram, resultTableInfo,
-		tsDBRequestSecondHistogram, vmQuerySpaceUidInfo, tsDBRequestBytesHistogram,
-		jwtRequestTotal,
-	)
 }

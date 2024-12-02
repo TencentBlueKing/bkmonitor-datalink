@@ -13,9 +13,9 @@ import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/inte
 
 //go:generate goqueryset -in bkappspace.go -out qs_bkappspace_gen.go
 
-// BkAppSpace bkappspace model
+// BkAppSpaceRecord bkappspacerecord model
 // gen:qs
-type BkAppSpace struct {
+type BkAppSpaceRecord struct {
 	BkAppCode string `gorm:"column:bk_app_code;not null;uniqueIndex:idx_app_space,priority:1;"` // 定义字段类型和索引
 	SpaceUID  string `gorm:"column:space_uid;not null;uniqueIndex:idx_app_space,priority:2;"`   // 定义字段类型和索引
 	IsEnable  bool   `gorm:"column:is_enable;default:true;"`
@@ -24,11 +24,11 @@ type BkAppSpace struct {
 }
 
 // TableName table alias name
-func (BkAppSpace) TableName() string {
-	return "metadata_bkappspace"
+func (BkAppSpaceRecord) TableName() string {
+	return "metadata_bkappspacerecord"
 }
 
-type BkAppSpaces []BkAppSpace
+type BkAppSpaces []BkAppSpaceRecord
 
 func (s BkAppSpaces) HashData() map[string][]string {
 	res := make(map[string][]string)

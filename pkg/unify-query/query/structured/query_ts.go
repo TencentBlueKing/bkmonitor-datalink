@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/offlineDataArchive"
 	queryMod "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
@@ -496,6 +497,24 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		if bkDataErr != nil {
 			err = bkDataErr
 			return nil, bkDataErr
+		}
+
+		// 增加 bkdata tableid 校验，只有业务开头的才有权限，防止越权
+		metric.BkDataRequestInc(ctx, spaceUid, string(tableID))
+		// 特性开关是否，打开 bkdata tableid 校验
+		if metadata.GetBkDataTableIDCheck(ctx) {
+			space := strings.Split(spaceUid, "__")
+			if len(space) != 2 {
+				return queryMetric, nil
+			}
+			// 只允许业务下查询
+			if space[0] != "bkcc" {
+				return queryMetric, nil
+			}
+
+			if !strings.HasPrefix(string(tableID), space[1]+"_") {
+				return queryMetric, nil
+			}
 		}
 
 		route, bkDataErr := MakeRouteFromTableID(q.TableID)

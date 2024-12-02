@@ -27,7 +27,7 @@ import (
 
 const (
 	BkAppCode           = "default_app_code"
-	SpaceUid            = "space_default"
+	SpaceUid            = "bkcc__2"
 	ResultTableVM       = "result_table.vm"
 	ResultTableInfluxDB = "result_table.influxdb"
 	ResultTableEs       = "result_table.es"
@@ -43,6 +43,17 @@ var (
 func MockSpaceRouter(ctx context.Context) {
 	mockSpaceRouterOnce.Do(func() {
 		_ = featureFlag.MockFeatureFlag(ctx, `{
+		"bk-data-table-id-auth": {
+	  		"variations": {
+	  			"true": true,
+	  			"false": false
+	  		},
+	  		"targeting": [
+			],
+			"defaultRule": {
+	  			"variation": "true"
+	  		}
+		},
 		"jwt-auth": {
 	  		"variations": {
 	  			"true": true,

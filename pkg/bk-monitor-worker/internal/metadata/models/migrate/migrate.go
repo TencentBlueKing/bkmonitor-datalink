@@ -11,21 +11,11 @@ package migrate
 
 import (
 	"context"
-	"sync"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
-
-var once sync.Once
 
 func Migrate(_ context.Context, tables ...interface{}) {
 	myDb := mysql.GetDBSession().DB
 	myDb.AutoMigrate(tables...)
-}
-
-func AutoMigrateAllTables(ctx context.Context) {
-	once.Do(func() {
-		Migrate(ctx, &space.BkAppSpace{})
-	})
 }

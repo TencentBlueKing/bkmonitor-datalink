@@ -20,13 +20,22 @@ tasks: {% for task in tasks %}
     period: {{ task.period }}
     # 检测超时（connect+read总共时间）
     timeout: {{ task.timeout | default('3s', true) }}
+    {%- if custom_report == "true" %}
+    # 是否自定义上报
+    custom_report: {{ custom_report | default("false", true) }}{% endif %}
+    {%- if send_interval %}
+    # 发送间隔配置
+    send_interval: {{ send_interval }}{% endif %}
     max_rtt: {{ task.max_rtt }}
     total_num: {{ task.total_num }}
     ping_size: {{ task.size }}
    {% if task.node_list %}{% set instances = get_hosts_by_node(task.node_list) %}{% endif %}
     targets: {% for host in task.target_host_list %}
     - target: {{ host.target}}
-      target_type: {{ host.target_type | default("ip", true)}}{% endfor %}
+      target_type: {{ host.target_type | default("ip", true)}}
+      {%- if host.labels %}
+      labels:{% for k, v in host.labels.items()%}
+        {{ k }}: {{ v }}{% endfor %}{% endif %}{% endfor %}
    {% for host in task.target_hosts or get_hosts_by_node(config_hosts) %}
     - target: {{ host.ip}}
       target_type: {{ host.target_type | default('ip', true)}}{% endfor %}
@@ -35,8 +44,22 @@ tasks: {% for task in tasks %}
     {% if instance[output_field] -%}
     - target: {{ instance[output_field] }}
       target_type: ip
-    {% endif %}{% endfor %}{% endfor %}{% endif %}{% endfor %}
-    {% if labels %}labels:
-    {% for label in labels %}{% for key, value in label.items() %}{{"-" if loop.first else " "}} {{key}}: "{{ value }}"
-    {% endfor %}{% endfor %}
+    {% endif %}{% endfor %}{% endfor %}{% endif %}
+    {%- if custom_report == "true" %}
+    {%- if task.labels %}
+    labels:
+    {%- for key, value in task.labels.items() %}
+    {{"-" if loop.first else " "}} {{ key }}: "{{ value }}"
+    {% endfor %}
     {% endif %}
+    {%- else %}
+    {%- if labels %}
+    labels:
+    {%- for label in labels %}
+    {%- for key, value in label.items() %}
+    {{"-" if loop.first else " "}} {{key}}: "{{ value }}"
+    {%- endfor %}
+    {% endfor %}
+    {% endif %}
+    {%- endif %}
+{%- endfor -%}

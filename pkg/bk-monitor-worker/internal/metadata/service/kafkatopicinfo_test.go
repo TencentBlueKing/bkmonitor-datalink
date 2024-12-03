@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/IBM/sarama"
+	"github.com/Shopify/sarama"
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 

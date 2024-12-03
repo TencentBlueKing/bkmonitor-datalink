@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -170,10 +171,6 @@ func tokenFromAttrs(attrs pcommon.Map, keys []string) string {
 func decodeToken(decoder TokenDecoder, src ...string) (define.Token, error) {
 	var errs []error
 	for _, s := range src {
-		if len(s) <= 0 {
-			continue
-		}
-
 		token, err := decoder.Decode(s)
 		if err != nil {
 			errs = append(errs, err)
@@ -293,7 +290,7 @@ func (p *tokenChecker) processLogs(decoder TokenDecoder, config Config, record *
 
 func (p *tokenChecker) processProxy(decoder TokenDecoder, record *define.Record) error {
 	var err error
-	record.Token, err = decoder.Decode(define.WrapProxyToken(record.Token))
+	record.Token, err = decoder.Decode(tokenparser.WrapProxyToken(record.Token))
 	return err
 }
 

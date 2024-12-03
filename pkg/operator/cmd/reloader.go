@@ -17,9 +17,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/filewatcher"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/reloader"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/reloader/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -28,36 +29,36 @@ var reloaderCmd = &cobra.Command{
 	Short: "Start app as reloader mode",
 	Long:  "Reloader watches configs then send signal to worker",
 	Run: func(cmd *cobra.Command, args []string) {
-		waitUntil, err := filewatcher.AddPath(config.CustomConfigFilePath)
+		waitUntil, err := filewatcher.AddPath(define.ConfigFilePath)
 		if err != nil {
-			logger.Fatalf("watch config file '%s' failed: %s", config.CustomConfigFilePath, err)
+			logger.Fatalf("watch config file %s failed: %s", define.ConfigFilePath, err)
 		}
 		defer filewatcher.Stop()
 
-		logger.Infof("waiting file '%s' to be updated", config.CustomConfigFilePath)
+		logger.Infof("loading config %s", define.ConfigFilePath)
 		<-waitUntil
-		logger.Info("reloader is ready to worker")
+		logger.Infof("loaded config %s finished", define.ConfigFilePath)
 
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-		if err = config.InitConfig(); err != nil {
-			logger.Fatalf("failed to load config: %v", err)
+		if err = configs.Load(define.ConfigFilePath); err != nil {
+			logger.Fatalf("failed to load config %s: %s", define.ConfigFilePath, err)
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
-		rdr, err := reloader.NewReloader(ctx)
+		mgr, err := reloader.New(ctx)
 		if err != nil {
-			logger.Fatalf("crate reloader failed, error: %s", err)
+			logger.Fatalf("crate reloader failed: %s", err)
 		}
 
-		if err = rdr.Run(); err != nil {
-			logger.Fatalf("run reloader failed, error: %s", err)
+		if err = mgr.Run(); err != nil {
+			logger.Fatalf("run reloader failed: %s", err)
 		}
 
 		<-sigChan
 		cancel()
-		rdr.Stop()
+		mgr.Stop()
 	},
 }
 

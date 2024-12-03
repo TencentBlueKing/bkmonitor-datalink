@@ -189,6 +189,9 @@ func (w *DistributiveWindow) getSubWindowMetrics(subId int) (int, int) {
 	traceCount := 0
 	spanCount := 0
 
+	if subWindow == nil {
+		return traceCount, spanCount
+	}
 	subWindow.m.Range(func(key, value any) bool {
 		traceCount++
 		v := value.(CollectTrace)
@@ -222,6 +225,7 @@ loop:
 				subWindow.processor = Processor{}
 			}
 			w.subWindows = make(map[int]*distributiveSubWindow)
+
 			break loop
 		}
 	}
@@ -333,6 +337,8 @@ func (d *distributiveSubWindow) detectNotify() {
 				continue
 			}
 			trace := v.(CollectTrace)
+			// gc
+			trace.Runtime = nil
 			d.eventChan <- Event{CollectTrace: trace, ReleaseCount: int64(trace.Graph.Length())}
 		}
 	}
@@ -356,7 +362,7 @@ loop:
 
 func (d *distributiveSubWindow) add(span StandardSpan) {
 	if err := d.sem.Acquire(d.ctx, 1); err != nil {
-		logger.Errorf("DataId: %s subWindow[%d] acquire semphore failed, error: %s, skip span", d.dataId, d.id, err)
+		d.logger.Errorf("DataId: %s subWindow[%d] acquire semphore failed, error: %s, skip span", d.dataId, d.id, err)
 		return
 	}
 

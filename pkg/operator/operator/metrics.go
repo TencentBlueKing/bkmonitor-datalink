@@ -10,6 +10,7 @@
 package operator
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -19,6 +20,15 @@ import (
 )
 
 var (
+	clusterVersion = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: define.MonitorNamespace,
+			Name:      "cluster_version",
+			Help:      "kubernetes server version",
+		},
+		[]string{"version"},
+	)
+
 	appUptime = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
@@ -54,21 +64,13 @@ var (
 		[]string{"name"},
 	)
 
-	workloadCount = promauto.NewGaugeVec(
+	resourceCount = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitorNamespace,
-			Name:      "workload_count",
-			Help:      "workload count",
+			Name:      "resource_count",
+			Help:      "resource count",
 		},
 		[]string{"resource"},
-	)
-
-	nodeCount = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "node_count",
-			Help:      "node count",
-		},
 	)
 
 	sharedDiscoveryCount = promauto.NewGauge(
@@ -169,9 +171,8 @@ func newMetricMonitor() *metricMonitor {
 }
 
 type metricMonitor struct {
-	handledSecretFailed      int       // 记录 secrets 处理失败次数
-	handledSecretFailedTime  time.Time // 记录 secrets 处理失败时间
-	handledSecretSuccessTime time.Time // 记录 secrets 处理成功时间
+	secretFailedCounter int    // 记录 secrets 处理失败次数
+	secretLastError     string // 记录 secrets 处理 error
 }
 
 func (m *metricMonitor) UpdateUptime(n int) {
@@ -190,12 +191,8 @@ func (m *metricMonitor) SetMonitorEndpointCount(name string, n int) {
 	monitorEndpointCount.WithLabelValues(name).Set(float64(n))
 }
 
-func (m *metricMonitor) SetWorkloadCount(resource string, n int) {
-	workloadCount.WithLabelValues(resource).Set(float64(n))
-}
-
-func (m *metricMonitor) SetNodeCount(n int) {
-	nodeCount.Set(float64(n))
+func (m *metricMonitor) SetResourceCount(resource string, n int) {
+	resourceCount.WithLabelValues(resource).Set(float64(n))
 }
 
 func (m *metricMonitor) SetSharedDiscoveryCount(n int) {
@@ -207,13 +204,12 @@ func (m *metricMonitor) SetDiscoverCount(n int) {
 }
 
 func (m *metricMonitor) IncHandledSecretSuccessCounter(name, action string) {
-	m.handledSecretSuccessTime = time.Now()
 	handledSecretSuccessTotal.WithLabelValues(name, action).Inc()
 }
 
-func (m *metricMonitor) IncHandledSecretFailedCounter(name, action string) {
-	m.handledSecretFailed++
-	m.handledSecretFailedTime = time.Now()
+func (m *metricMonitor) IncHandledSecretFailedCounter(name, action string, err error) {
+	m.secretFailedCounter++
+	m.secretLastError = fmt.Sprintf("%s\t%s", time.Now().Format(time.RFC3339), err)
 	handledSecretFailedTotal.WithLabelValues(name, action).Inc()
 }
 
@@ -239,4 +235,8 @@ func (m *metricMonitor) IncScaledStatefulSetSuccessCounter() {
 
 func (m *metricMonitor) SetStatefulSetWorkerCount(count int) {
 	statefulSetWorkerCount.Set(float64(count))
+}
+
+func (m *metricMonitor) SetKubernetesVersion(v string) {
+	clusterVersion.WithLabelValues(v).Set(1)
 }

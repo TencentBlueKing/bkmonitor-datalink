@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
 
 package collector
 
@@ -17,7 +16,7 @@ import (
 )
 
 func Test_ProtoCountersUnix(t *testing.T) {
-	var protocols = []string{"udp", "tcp", "ip"}
+	protocols := []string{"udp", "tcp", "ip"}
 	data, err := ProtoCounters(protocols)
 	if err != nil {
 		t.Fatal(err)

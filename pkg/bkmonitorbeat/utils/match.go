@@ -34,7 +34,7 @@ const (
 // WildcardToRegex :
 func WildcardToRegex(pattern string) string {
 	pattern = regexp.QuoteMeta(pattern)
-	var replacements = map[string]string{
+	replacements := map[string]string{
 		`\?`: `.{1}`,
 		`\*`: `.*`,
 	}

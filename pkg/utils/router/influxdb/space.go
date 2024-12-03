@@ -24,6 +24,30 @@ type DataLabelToResultTable map[string]ResultTableList
 type ResultTableDetailInfo map[string]*ResultTableDetail
 
 //go:generate msgp -tests=false
+type BkAppSpace map[string]*SpaceUIDList
+
+type SpaceUIDList []string
+
+func (z *SpaceUIDList) Marshal(b []byte) (o []byte, err error) {
+	return z.MarshalMsg(b)
+}
+
+func (z *SpaceUIDList) Unmarshal(bts []byte) (o []byte, err error) {
+	return z.UnmarshalMsg(bts)
+}
+
+func (z *SpaceUIDList) Print() string {
+	return fmt.Sprintf("%+v", *z)
+}
+
+func (z *SpaceUIDList) Length() int {
+	return len(*z)
+}
+
+func (z *SpaceUIDList) Fill(key string) {
+}
+
+//go:generate msgp -tests=false
 type Space map[string]*SpaceResultTable
 
 //go:generate msgp -tests=false
@@ -41,6 +65,7 @@ type ResultTableList []string
 type ResultTableDetail struct {
 	StorageId       int64    `json:"storage_id"`
 	StorageName     string   `json:"storage_name"`
+	StorageType     string   `json:"storage_type"`
 	ClusterName     string   `json:"cluster_name"`
 	DB              string   `json:"db"`
 	TableId         string   `json:"table_id"`
@@ -52,12 +77,16 @@ type ResultTableDetail struct {
 	DataLabel       string   `json:"data_label"`
 	TagsKey         []string `json:"tags_key"`
 	DataId          int64    `json:"bk_data_id"`
+	SourceType      string   `json:"source_type"`
 	Options         struct {
+		// 自定义时间聚合字段
 		TimeField struct {
 			Name string `json:"name"`
 			Type string `json:"type"`
 			Unit string `json:"unit"`
 		} `json:"time_field"`
+		// db 是否拼接时间格式
+		NeedAddTime bool `json:"need_add_time"`
 	} `json:"options"`
 }
 

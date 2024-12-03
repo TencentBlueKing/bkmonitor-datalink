@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/ratelimiter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/ratelimiter/throttle"
 )
 
 func TestFactory(t *testing.T) {
@@ -53,8 +53,8 @@ processor:
 	assert.NoError(t, err)
 	assert.Equal(t, mainConf, factory.MainConfig())
 
-	assert.Equal(t, float32(5), factory.rateLimiters.GetGlobal().(ratelimiter.RateLimiter).QPS())
-	assert.Equal(t, float32(10), factory.rateLimiters.GetByToken("token1").(ratelimiter.RateLimiter).QPS())
+	assert.Equal(t, float32(5), factory.rateLimiters.GetGlobal().(throttle.RateLimiter).QPS())
+	assert.Equal(t, float32(10), factory.rateLimiters.GetByToken("token1").(throttle.RateLimiter).QPS())
 
 	assert.Equal(t, define.ProcessorRateLimiter, factory.Name())
 	assert.False(t, factory.IsDerived())

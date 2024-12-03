@@ -41,3 +41,12 @@ type Beater interface {
 }
 
 var GlobalWatcher host.Watcher
+
+type LogConfig struct {
+	Stdout  bool   `config:"stdout"`
+	Level   string `config:"level"`
+	Path    string `config:"path"`
+	MaxSize int    `config:"maxsize"`
+	MaxAge  int    `config:"maxage"`
+	Backups int    `config:"backups"`
+}

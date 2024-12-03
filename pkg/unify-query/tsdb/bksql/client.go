@@ -15,48 +15,50 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 type Client struct {
-	Address string
+	url     string
+	headers map[string]string
 
-	BkdataAuthenticationMethod string
-	BkUsername                 string
-	BkAppCode                  string
-
-	// 不传这个值，bk-sql 会自动筛选
-	PreferStorage string
-
-	BkdataDataToken string
-	BkAppSecret     string
-
-	ContentType string
-
-	Log *log.Logger
-
-	Timeout time.Duration
-	Curl    curl.Curl
+	curl curl.Curl
 }
 
-func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result, span *trace.Span) error {
+func (c *Client) WithCurl(cc curl.Curl) *Client {
+	c.curl = cc
+	return c
+}
+
+func (c *Client) WithUrl(url string) *Client {
+	c.url = url
+	return c
+}
+
+func (c *Client) WithHeader(headers map[string]string) *Client {
+	c.headers = headers
+	return c
+}
+
+func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, span *trace.Span) error {
+	if sql == "" {
+		return fmt.Errorf("query sql is empty")
+	}
+
 	if method == "" {
 		method = curl.Post
 	}
-	params := &Params{
-		BkdataAuthenticationMethod: c.BkdataAuthenticationMethod,
-		BkAppCode:                  c.BkAppCode,
-		PreferStorage:              c.PreferStorage,
-		BkdataDataToken:            c.BkdataDataToken,
-	}
+	params := make(map[string]string)
+	params["sql"] = sql
 
-	if sql != "" {
-		params.SQL = sql
+	// body 增加 bkdata auth 信息
+	for k, v := range bkapi.GetBkDataAPI().GetDataAuth() {
+		params[k] = v
 	}
 
 	body, err := json.Marshal(params)
@@ -64,19 +66,13 @@ func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result,
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
-	defer cancel()
-
 	startAnaylize := time.Now()
-	size, err := c.Curl.Request(
+	size, err := c.curl.Request(
 		ctx, method,
 		curl.Options{
-			UrlPath: url,
+			UrlPath: c.url,
 			Body:    body,
-			Headers: map[string]string{
-				ContentType:   c.ContentType,
-				Authorization: c.authorization(),
-			},
+			Headers: metadata.Headers(ctx, c.headers),
 		},
 		res,
 	)
@@ -88,72 +84,25 @@ func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result,
 	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, consul.BkSqlStorageType)
 
 	queryCost := time.Since(startAnaylize)
-	span.Set("query-cost", queryCost.String())
+	if span != nil {
+		span.Set("query-cost", queryCost.String())
+	}
 
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, consul.BkSqlStorageType,
+		ctx, queryCost, user.SpaceUid, user.Source, consul.BkSqlStorageType, c.url,
 	)
 	return nil
-}
-
-func (c *Client) authorization() string {
-	auth := fmt.Sprintf(
-		`{"bk_username": "%s", "bk_app_code": "%s", "bk_app_secret": "%s"}`,
-		c.BkUsername,
-		c.BkAppCode,
-		c.BkAppSecret,
-	)
-	return auth
 }
 
 func (c *Client) QuerySync(ctx context.Context, sql string, span *trace.Span) *Result {
 	data := &QuerySyncResultData{}
 	res := c.response(data)
 
-	url := fmt.Sprintf("%s/%s", c.Address, QuerySync)
-	err := c.curl(ctx, curl.Post, url, sql, res, span)
+	err := c.curlGet(ctx, curl.Post, sql, res, span)
 	if err != nil {
 		return c.failed(ctx, err)
 	}
 
-	return res
-}
-
-func (c *Client) QueryAsync(ctx context.Context, sql string, span *trace.Span) *Result {
-	data := &QueryAsyncData{}
-	res := c.response(data)
-
-	url := fmt.Sprintf("%s/%s", c.Address, QueryAsync)
-	err := c.curl(ctx, curl.Post, url, sql, res, span)
-	if err != nil {
-		return c.failed(ctx, err)
-	}
-
-	return res
-}
-
-func (c *Client) QueryAsyncResult(ctx context.Context, queryID string, span *trace.Span) *Result {
-	data := &QueryAsyncResultData{}
-	res := c.response(data)
-
-	url := fmt.Sprintf("%s/%s/result/%s", c.Address, QueryAsync, queryID)
-	err := c.curl(ctx, curl.Get, url, "", res, span)
-	if err != nil {
-		return c.failed(ctx, err)
-	}
-
-	return res
-}
-
-func (c *Client) QueryAsyncState(ctx context.Context, queryID string, span *trace.Span) *Result {
-	data := &QueryAsyncStateData{}
-	res := c.response(data)
-
-	url := fmt.Sprintf("%s/%s/state/%s", c.Address, QueryAsync, queryID)
-	err := c.curl(ctx, curl.Get, url, "", res, span)
-	if err != nil {
-		return c.failed(ctx, err)
-	}
 	return res
 }
 
@@ -162,7 +111,6 @@ func (c *Client) response(data interface{}) *Result {
 }
 
 func (c *Client) failed(ctx context.Context, err error) *Result {
-	c.Log.Errorf(ctx, err.Error())
 	return &Result{
 		Result:  false,
 		Message: err.Error(),

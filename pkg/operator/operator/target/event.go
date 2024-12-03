@@ -11,12 +11,15 @@ package target
 
 import (
 	"gopkg.in/yaml.v2"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 )
 
 // EventTarget 事件采集配置
 type EventTarget struct {
-	DataID int
-	Labels map[string]string
+	DataID          int
+	UpMetricsDataID int
+	Labels          map[string]string
 }
 
 func (t *EventTarget) FileName() string {
@@ -31,9 +34,9 @@ func (t *EventTarget) YamlBytes() ([]byte, error) {
 	cfg = append(cfg, yaml.MapItem{Key: "version", Value: "1"})
 	cfg = append(cfg, yaml.MapItem{Key: "task_id", Value: 1})
 	cfg = append(cfg, yaml.MapItem{Key: "dataid", Value: t.DataID})
-	cfg = append(cfg, yaml.MapItem{Key: "interval", Value: ConfEventScrapeInterval})
-	cfg = append(cfg, yaml.MapItem{Key: "event_span", Value: ConfEventMaxSpan})
-	cfg = append(cfg, yaml.MapItem{Key: "tail_files", Value: ConfEventScrapeFiles})
+	cfg = append(cfg, yaml.MapItem{Key: "upmetrics_dataid", Value: t.UpMetricsDataID})
+	cfg = append(cfg, yaml.MapItem{Key: "interval", Value: configs.G().Event.Interval})
+	cfg = append(cfg, yaml.MapItem{Key: "tail_files", Value: configs.G().Event.TailFiles})
 	cfg = append(cfg, yaml.MapItem{Key: "labels", Value: []yaml.MapSlice{sortMap(t.Labels)}})
 	return yaml.Marshal(cfg)
 }

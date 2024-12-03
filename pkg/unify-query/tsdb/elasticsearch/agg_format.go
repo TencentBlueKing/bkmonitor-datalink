@@ -39,8 +39,9 @@ type aggFormat struct {
 
 	aggInfoList aggInfoList
 
-	toEs   func(k string) string
-	toProm func(k string) string
+	promDataFormat func(k string) string
+
+	timeFormat func(i int64) int64
 
 	dims  []string
 	item  item
@@ -61,7 +62,9 @@ func (a *aggFormat) put() {
 }
 
 func (a *aggFormat) addLabel(name, value string) {
-	name = a.toProm(name)
+	if a.promDataFormat != nil {
+		name = a.promDataFormat(name)
+	}
 
 	newLb := make(map[string]string)
 	for k, v := range a.item.labels {
@@ -132,7 +135,13 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 					}
 
 					// 时间和值也是不同层级，需要暂存在 a.sample 里
-					a.item.timestamp = int64(bucket.Key)
+					timestamp := int64(bucket.Key)
+					if a.timeFormat != nil {
+						a.item.timestamp = a.timeFormat(timestamp)
+					} else {
+						a.item.timestamp = timestamp
+					}
+
 					if err := a.ts(idx, bucket.Aggregations); err != nil {
 						return err
 					}
@@ -186,9 +195,11 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 			case Percentiles:
 				if percentMetric, ok := data.Percentiles(info.Name); ok && percentMetric != nil {
 					for k, v := range percentMetric.Values {
-						a.addLabel("le", k)
-						a.item.value = v
-						a.reset()
+						if !strings.Contains(k, "_as_string") {
+							a.addLabel("le", k)
+							a.item.value = v
+							a.reset()
+						}
 					}
 				}
 			default:

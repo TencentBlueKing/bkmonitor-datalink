@@ -18,7 +18,7 @@ const (
 	OtlpTypeConfigPath = "trace.otlp.type"
 
 	ServiceNameConfigPath = "trace.service_name"
-	DataIDConfigPath      = "trace.dataid"
+	EnableConfigPath      = "trace.enable"
 )
 
 var (
@@ -31,5 +31,5 @@ var (
 	labels map[string]string
 
 	ServiceName string
-	DataID      int64
+	Enable      bool
 )

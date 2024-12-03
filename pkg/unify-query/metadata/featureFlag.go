@@ -11,34 +11,79 @@ package metadata
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
+func GetBkDataTableIDCheck(ctx context.Context) bool {
+	var (
+		user = GetUser(ctx)
+		err  error
+		span *trace.Span
+	)
+
+	ctx, span = trace.NewSpan(ctx, "get-bk-data-table-id-auth-feature-flag")
+	defer span.End(&err)
+
+	u := featureFlag.FFUser(user.HashID, map[string]interface{}{
+		"name":     user.Name,
+		"source":   user.Source,
+		"spaceUid": user.SpaceUid,
+	})
+
+	span.Set("ff-user-custom", u.GetCustom())
+	status := featureFlag.BoolVariation(ctx, u, "bk-data-table-id-auth", false)
+	span.Set("ff-status", status)
+
+	return status
+}
+
+func GetJwtAuthFeatureFlag(ctx context.Context) bool {
+	var (
+		user = GetUser(ctx)
+		err  error
+		span *trace.Span
+	)
+
+	ctx, span = trace.NewSpan(ctx, "get-jwt-auth-feature-flag")
+	defer span.End(&err)
+
+	u := featureFlag.FFUser(user.HashID, map[string]interface{}{
+		"name":     user.Name,
+		"source":   user.Source,
+		"spaceUid": user.SpaceUid,
+	})
+
+	span.Set("ff-user-custom", u.GetCustom())
+	status := featureFlag.BoolVariation(ctx, u, "jwt-auth", false)
+	span.Set("ff-status", status)
+
+	return status
+}
+
 // GetMustVmQueryFeatureFlag 判断该 TableID 是否强行指定为单指标单表
 func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 	var (
-		err  error
 		user = GetUser(ctx)
+		err  error
+		span *trace.Span
 	)
 
-	ctx, span := trace.NewSpan(ctx, "check-must-vm-query-feature-flag")
+	ctx, span = trace.NewSpan(ctx, "check-must-query-feature-flag")
 	defer span.End(&err)
 
-	span.Set("table-id", tableID)
-
 	// 特性开关只有指定空间才启用 vm 查询
-	ffUser := featureFlag.FFUser(span.TraceID(), map[string]interface{}{
+	ffUser := featureFlag.FFUser(user.HashID, map[string]interface{}{
 		"name":     user.Name,
 		"source":   user.Source,
 		"spaceUid": user.SpaceUid,
 		"tableID":  tableID,
 	})
 
+	span.Set("ff-user-custom", ffUser.GetCustom())
+
 	status := featureFlag.BoolVariation(ctx, ffUser, "must-vm-query", false)
-	span.Set("must-vm-query-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status))
 
 	// 根据查询时间范围判断是否满足当前时间配置
 	vmDataTime := featureFlag.IntVariation(ctx, ffUser, "range-vm-query", 0)
@@ -46,59 +91,48 @@ func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 	if vmDataTime > 0 {
 		queryParams := GetQueryParams(ctx)
 		status = int64(vmDataTime) < queryParams.Start
+
 		span.Set("vm-data-time", vmDataTime)
-		span.Set("range-vm-query-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status))
+		span.Set("query-params-start", queryParams.Start)
 	}
 
+	span.Set("ff-status", status)
 	return status
 }
 
 func GetVMQueryFeatureFlag(ctx context.Context) bool {
 	var (
-		err  error
 		user = GetUser(ctx)
 	)
 
-	ctx, span := trace.NewSpan(ctx, "check-vm-query-feature-flag")
-	defer span.End(&err)
-
 	// 增加配置的特性开关
 	if GetQueryRouter().CheckVmQuery(ctx, user.SpaceUid) {
-		span.Set("vm-query-space-uid", "true")
 		return true
 	}
 
 	// 特性开关只有指定空间才启用 vm 查询
-	ffUser := featureFlag.FFUser(span.TraceID(), map[string]interface{}{
+	ffUser := featureFlag.FFUser(user.HashID, map[string]interface{}{
 		"name":     user.Name,
 		"source":   user.Source,
 		"spaceUid": user.SpaceUid,
 	})
 
 	status := featureFlag.BoolVariation(ctx, ffUser, "vm-query", false)
-	span.Set("vm-query-feature-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status))
-
 	return status
 }
 
 func GetIsK8sFeatureFlag(ctx context.Context) bool {
 	var (
-		err  error
 		user = GetUser(ctx)
 	)
 
-	ctx, span := trace.NewSpan(ctx, "check-is-k8s-feature-flag")
-	defer span.End(&err)
-
 	// 特性开关只有指定空间才启用 vm 查询
-	ffUser := featureFlag.FFUser(span.TraceID(), map[string]interface{}{
+	ffUser := featureFlag.FFUser(user.HashID, map[string]interface{}{
 		"name":     user.Name,
 		"source":   user.Source,
 		"spaceUid": user.SpaceUid,
 	})
 
 	status := featureFlag.BoolVariation(ctx, ffUser, "is-k8s", false)
-	span.Set("is-k8s", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status))
-
 	return status
 }

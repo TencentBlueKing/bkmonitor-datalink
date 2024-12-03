@@ -30,7 +30,10 @@ func TestAESDecrypt(t *testing.T) {
 	}
 	c := NewAESCipher("81be7fc6-5476-4934-9417-6d4d593728db", AESPrefix, nil)
 	for encrypetd, plain := range encryptedAndPlainMap {
-		assert.Equal(t, plain, c.AESDecrypt(encrypetd))
+		pwd, err := c.AESDecrypt(encrypetd)
+		fmt.Printf("err:-> %v\n", err)
+		assert.Nil(t, err)
+		assert.Equal(t, plain, pwd)
 	}
 
 }
@@ -41,7 +44,8 @@ func TestAESEncrypt(t *testing.T) {
 		pwdSize := rand.IntnRange(0, 20)
 		pwd := rand.String(pwdSize)
 		encrypted := c.AESEncrypt(pwd)
-		decrypted := c.AESDecrypt(encrypted)
+		decrypted, err := c.AESDecrypt(encrypted)
+		assert.Nil(t, err)
 		fmt.Println(pwd, decrypted, encrypted)
 		assert.Equal(t, pwd, decrypted)
 	}

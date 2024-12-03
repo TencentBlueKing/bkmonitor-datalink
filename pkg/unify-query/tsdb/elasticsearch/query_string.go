@@ -20,28 +20,65 @@ type QueryString struct {
 	q     string
 	query elastic.Query
 
-	nestedField func(string) string
+	checkNestedField func(string) string
+
+	nestedFields map[string]struct{}
 }
 
 // NewQueryString 解析 es query string，该逻辑暂时不使用，直接透传 query string 到 es 代替
-func NewQueryString(q string, nestedField func(string) string) *QueryString {
+func NewQueryString(q string, checkNestedField func(string) string) *QueryString {
 	return &QueryString{
-		q:           q,
-		query:       elastic.NewBoolQuery(),
-		nestedField: nestedField,
+		q:                q,
+		query:            elastic.NewBoolQuery(),
+		checkNestedField: checkNestedField,
+		nestedFields:     make(map[string]struct{}),
 	}
 }
 
+func (s *QueryString) NestedFields() map[string]struct{} {
+	return s.nestedFields
+}
+
+func (s *QueryString) queryString(str string) elastic.Query {
+	return elastic.NewQueryStringQuery(str).AnalyzeWildcard(true)
+}
+
 func (s *QueryString) Parser() (elastic.Query, error) {
-	if s.q == "" {
-		return s.query, nil
-	}
-	ast, err := parser.Parse(s.q)
-	if err != nil {
-		return s.query, err
+	if s.q == "" || s.q == "*" {
+		return nil, nil
 	}
 
-	return s.walk(ast)
+	// 解析失败，或者没有 nested 字段，则使用透传的方式查询
+	qs := s.queryString(s.q)
+
+	ast, err := parser.Parse(s.q)
+	if err != nil {
+		return qs, nil
+	}
+
+	conditionQuery, err := s.walk(ast)
+	if err != nil {
+		return qs, nil
+	}
+
+	// 如果 nestedFields 不存在则直接使用 queryString 透传
+	if len(s.nestedFields) == 0 {
+		return qs, nil
+	}
+
+	for nestedKey := range s.nestedFields {
+		conditionQuery = elastic.NewNestedQuery(nestedKey, conditionQuery)
+	}
+
+	return conditionQuery, nil
+}
+
+func (s *QueryString) check(field string) {
+	if key := s.checkNestedField(field); key != "" {
+		if _, ok := s.nestedFields[key]; !ok {
+			s.nestedFields[key] = struct{}{}
+		}
+	}
 }
 
 func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
@@ -80,11 +117,9 @@ func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
 	case *parser.MatchCondition:
 		if c.Field != "" {
 			leftQ = elastic.NewMatchPhraseQuery(c.Field, c.Value)
-			if key := s.nestedField(c.Field); key != "" {
-				leftQ = elastic.NewNestedQuery(key, leftQ)
-			}
+			s.check(c.Field)
 		} else {
-			leftQ = elastic.NewQueryStringQuery(c.Value)
+			leftQ = s.queryString(fmt.Sprintf(`"%s"`, c.Value))
 		}
 	case *parser.NumberRangeCondition:
 		q := elastic.NewRangeQuery(c.Field)
@@ -98,18 +133,14 @@ func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
 		} else {
 			q.Lt(*c.End)
 		}
-		if key := s.nestedField(c.Field); key != "" {
-			leftQ = elastic.NewNestedQuery(key, q)
-		}
+		s.check(c.Field)
 		leftQ = q
 	case *parser.WildcardCondition:
 		if c.Field != "" {
 			leftQ = elastic.NewWildcardQuery(c.Field, c.Value)
-			if key := s.nestedField(c.Field); key != "" {
-				leftQ = elastic.NewNestedQuery(key, leftQ)
-			}
+			s.check(c.Field)
 		} else {
-			leftQ = elastic.NewQueryStringQuery(c.Value)
+			leftQ = s.queryString(c.Value)
 		}
 	default:
 		err = fmt.Errorf("condition type is not match %T", condition)

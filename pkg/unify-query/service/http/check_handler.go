@@ -166,35 +166,31 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 	// 写入查询缓存
 	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix())
 
-	// 判断是否查询 vm
-	ok, vmExpand, err := qr.CheckVmQuery(ctx)
+	promQL, err := q.ToPromQL(ctx)
 	if err != nil {
-		r.Error("qr.CheckVmQuery", err)
+		r.Error("q.ToPromQL", err)
 		return
 	}
-
-	promQL, err := q.ToPromExpr(ctx, nil)
-	if err != nil {
-		r.Error("q.ToPromExpr", err)
-		return
-	}
-	r.Step("query promQL", promQL.String())
+	r.Step("query promQL", promQL)
 
 	// vm query
-	if ok {
+	if metadata.GetQueryParams(ctx).IsDirectQuery() {
+		// 判断是否查询 vm
+		vmExpand := qr.ToVmExpand(ctx)
+
 		r.Step("query instance", consul.VictoriaMetricsStorageType)
 		r.Step("query vmExpand", vmExpand)
 	} else {
 		for _, qm := range qr {
 			for _, qry := range qm.QueryList {
-				instance := prometheus.GetInstance(ctx, qry)
+				instance := prometheus.GetTsDbInstance(ctx, qry)
 				if instance == nil {
 					r.Error("prometheus.GetInstance", fmt.Errorf("instance is null, with storageID %s", qry.StorageID))
 					continue
 				}
 
 				r.Step("instance id", qry.StorageID)
-				r.Step("instance type", instance.GetInstanceType())
+				r.Step("instance type", instance.InstanceType())
 				r.Step("query struct", qry)
 			}
 		}

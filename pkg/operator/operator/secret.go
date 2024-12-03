@@ -20,13 +20,16 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/compressor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/action"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/target"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/gzip"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -39,7 +42,7 @@ var (
 )
 
 func Slowdown() {
-	time.Sleep(time.Millisecond * 20)
+	time.Sleep(time.Millisecond * 25) // 避免高频操作
 }
 
 func EqualMap(a, b map[string]struct{}) bool {
@@ -57,9 +60,9 @@ func EqualMap(a, b map[string]struct{}) bool {
 func (c *Operator) checkStatefulSetMatchRules(childConfig *discover.ChildConfig) bool {
 	meta := childConfig.Meta
 	var matched bool
-	for _, rule := range ConfStatefulSetMatchRules {
+	for _, rule := range configs.G().StatefulSetMatchRules {
 		// Kind/Namespace 为必选项
-		if strings.ToLower(rule.Kind) == strings.ToLower(meta.Kind) && rule.Namespace == meta.Namespace {
+		if stringx.LowerEq(rule.Kind, meta.Kind) && rule.Namespace == meta.Namespace {
 			// 1) 如果 rule 中 name 为空表示命中所有的 resource
 			// 2) 如果 rule 中 name 不为空则要求精准匹配
 			if rule.Name == "" || rule.Name == meta.Name {
@@ -76,7 +79,7 @@ func (c *Operator) createOrUpdateChildSecret(statefulset, daemonset []*discover.
 	c.createOrUpdateEventTaskSecrets()
 
 	// 不启用 daemonset worker 则将所有的任务都分配到 statefulset worker
-	if !ConfEnableDaemonSetWorker {
+	if !configs.G().EnableDaemonSetWorker {
 		merged := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 		merged = append(merged, statefulset...)
 		merged = append(merged, daemonset...)
@@ -87,7 +90,7 @@ func (c *Operator) createOrUpdateChildSecret(statefulset, daemonset []*discover.
 	}
 
 	// 启用 StatefulSet Match Rules
-	if len(ConfStatefulSetMatchRules) > 0 {
+	if len(configs.G().StatefulSetMatchRules) > 0 {
 		tmpStatefulset := make([]*discover.ChildConfig, 0)
 		tmpStatefulset = append(tmpStatefulset, statefulset...)
 
@@ -125,11 +128,20 @@ func (c *Operator) createOrUpdateEventTaskSecrets() {
 		logger.Errorf("no event dataid found, err: %s", err)
 		return
 	}
-	secretClient := c.client.CoreV1().Secrets(ConfMonitorNamespace)
+
+	// kubeevent 任务的自监控使用 custommetrics dataid
+	upMetricsDataID, err := c.dw.MatchMetricDataID(define.MonitorMeta{}, false)
+	if err != nil {
+		logger.Errorf("no upmetrics dataid found, err: %s", err)
+		return
+	}
+
+	secretClient := c.client.CoreV1().Secrets(configs.G().MonitorNamespace)
 
 	eventTarget := &target.EventTarget{
-		DataID: dataID.Spec.DataID,
-		Labels: dataID.Spec.Labels,
+		DataID:          dataID.Spec.DataID,
+		Labels:          dataID.Spec.Labels,
+		UpMetricsDataID: upMetricsDataID.Spec.DataID,
 	}
 
 	b, err := eventTarget.YamlBytes()
@@ -146,7 +158,7 @@ func (c *Operator) createOrUpdateEventTaskSecrets() {
 	c.eventTaskCache = string(b)
 
 	secret := newSecret(secretName, tasks.TaskTypeEvent)
-	compressed, err := compressor.Compress(b)
+	compressed, err := gzip.Compress(b)
 	if err != nil {
 		logger.Errorf("failed to compress config content, err: %v", err)
 		return
@@ -156,12 +168,12 @@ func (c *Operator) createOrUpdateEventTaskSecrets() {
 	logger.Infof("event secret %s add file %s", secret.Name, eventTarget.FileName())
 
 	if err = k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
-		c.mm.IncHandledSecretFailedCounter(secret.Name, define.ActionCreateOrUpdate)
+		c.mm.IncHandledSecretFailedCounter(secret.Name, action.CreateOrUpdate, err)
 		logger.Errorf("failed to create or update event secret %s, err: %v", secret.Name, err)
 		return
 	}
 
-	c.mm.IncHandledSecretSuccessCounter(secret.Name, define.ActionCreateOrUpdate)
+	c.mm.IncHandledSecretSuccessCounter(secret.Name, action.CreateOrUpdate)
 	logger.Infof("create or update event secret %s", secret.Name)
 }
 
@@ -183,7 +195,7 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 		nodeMap[cfg.Node] = []*discover.ChildConfig{cfg}
 	}
 
-	maxSecretsAllowed := int(float64(c.objectsController.NodeCount()) * ConfMaxNodeSecretRatio)
+	maxSecretsAllowed := int(float64(c.objectsController.NodeCount()) * configs.G().NodeSecretRatio)
 	count := 0
 
 	if daemonsetAlarmer.Alarm() {
@@ -191,9 +203,8 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 		logger.Info("daemonset worker resynced")
 	}
 
-	secretClient := c.client.CoreV1().Secrets(ConfMonitorNamespace)
-	for node, configs := range nodeMap {
-		Slowdown()
+	secretClient := c.client.CoreV1().Secrets(configs.G().MonitorNamespace)
+	for node, cfgs := range nodeMap {
 		secretName := tasks.GetDaemonSetTaskSecretName(node)
 		cache := c.daemonSetTaskCache[node]
 		if len(cache) > 0 && EqualMap(currTasksCache[node], cache) {
@@ -209,10 +220,12 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 			continue
 		}
 
+		Slowdown()
+
 		bytesTotal := 0
 		secret := newSecret(secretName, tasks.TaskTypeDaemonSet)
-		for _, config := range configs {
-			compressed, err := compressor.Compress(config.Data)
+		for _, config := range cfgs {
+			compressed, err := gzip.Compress(config.Data)
 			if err != nil {
 				logger.Errorf("failed to compress config content, addr=%s, err: %v", config.Address, err)
 				continue
@@ -223,15 +236,15 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 			logger.Debugf("daemonset secret %s add file %s", secret.Name, config.FileName)
 		}
 
-		logger.Infof("daemonset secret %s contains %d files", secret.Name, len(secret.Data))
+		logger.Infof("daemonset secret %s contains %d files, size=%dB", secret.Name, len(secret.Data), bytesTotal)
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
-			c.mm.IncHandledSecretFailedCounter(secret.Name, define.ActionCreateOrUpdate)
+			c.mm.IncHandledSecretFailedCounter(secret.Name, action.CreateOrUpdate, err)
 			delete(currTasksCache, node)
 			logger.Errorf("failed to create or update secret: %v", err)
 			continue
 		}
-		c.mm.IncHandledSecretSuccessCounter(secret.Name, define.ActionCreateOrUpdate)
+		c.mm.IncHandledSecretSuccessCounter(secret.Name, action.CreateOrUpdate)
 		logger.Infof("create or update daemonset secret %s", secret.Name)
 	}
 	c.daemonSetTaskCache = currTasksCache
@@ -255,28 +268,20 @@ func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildCon
 		}
 	}
 
-	onSuccess := true
-	secretClient := c.client.CoreV1().Secrets(ConfMonitorNamespace)
-
-	secrets, err := secretClient.List(c.ctx, metav1.ListOptions{})
-	if err != nil {
-		logger.Errorf("failed to list secret, error: %v", err)
-		onSuccess = false
-	}
-
 	// 记录已经存在的 secrets
 	existSecrets := make(map[string]struct{})
-	for _, secret := range secrets.Items {
-		existSecrets[secret.Name] = struct{}{}
+	secrets := c.objectsController.SecretObjs()
+	for _, secret := range secrets {
+		existSecrets[secret.ID.Name] = struct{}{}
 	}
-	logger.Infof("list %d secrets from %s namespace", len(existSecrets), ConfMonitorNamespace)
+	logger.Infof("list %d secrets from %s namespace", len(existSecrets), configs.G().MonitorNamespace)
 
 	dropSecrets := make(map[string]struct{})
 
 	// 如果 node 已经没有采集配置了 则需要删除
 	for _, node := range noConfigNodes {
 		secretName := tasks.GetDaemonSetTaskSecretName(node)
-		if _, ok := existSecrets[secretName]; !ok && onSuccess {
+		if _, ok := existSecrets[secretName]; !ok {
 			continue
 		}
 		dropSecrets[secretName] = struct{}{}
@@ -285,7 +290,7 @@ func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildCon
 	// 如果 node 已经不存在了 也需要删除采集配置
 	for secret := range existSecrets {
 		// 只处理 daemonset secrets
-		if !strings.HasPrefix(secret, tasks.DaemonSetTaskSecretPrefix) {
+		if !strings.HasPrefix(secret, tasks.PrefixDaemonSetTaskSecret) {
 			continue
 		}
 
@@ -300,26 +305,32 @@ func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildCon
 		}
 	}
 
+	secretClient := c.client.CoreV1().Secrets(configs.G().MonitorNamespace)
 	for secretName := range dropSecrets {
-		Slowdown() // 避免高频操作
+		Slowdown()
 		logger.Infof("remove secret %s", secretName)
 		if err := secretClient.Delete(c.ctx, secretName, metav1.DeleteOptions{}); err != nil {
 			if !errors.IsNotFound(err) {
-				c.mm.IncHandledSecretFailedCounter(secretName, define.ActionDelete)
+				c.mm.IncHandledSecretFailedCounter(secretName, action.Delete, err)
 				logger.Errorf("failed to delete secret %s, err: %s", secretName, err)
 			}
 			continue
 		}
-		c.mm.IncHandledSecretSuccessCounter(secretName, define.ActionDelete)
+		c.mm.IncHandledSecretSuccessCounter(secretName, action.Delete)
 	}
 }
+
+const (
+	dispatchTypeHash       = "hash"
+	dispatchTypeRoundrobin = "roundrobin"
+)
 
 // createOrUpdateStatefulSetTaskSecrets 创建 statefulset sercets
 // statefulset 为 external 类型的采集 指定 statefulset worker 进行采集 任务采用 hash 分配
 func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover.ChildConfig) {
 	n := c.statefulSetWorker
 	if n <= 0 {
-		if ConfEnableStatefulSetWorker {
+		if configs.G().EnableStatefulSetWorker {
 			logger.Warn("no available statefulset worker found")
 		}
 		return
@@ -340,12 +351,12 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		return h
 	}
 
-	workers := c.objectsController.GetPods(ConfStatefulSetWorkerRegex)
+	workers := c.objectsController.GetPods(configs.G().StatefulSetWorkerRegex)
 	indexWorkers := make(map[int]string)
 	for ip, w := range workers {
 		indexWorkers[w.Index] = ip
 	}
-	logger.Infof("found statefulset workers(%s): %+v", ConfStatefulSetWorkerRegex, workers)
+	logger.Infof("found statefulset workers(%s): %+v", configs.G().StatefulSetWorkerRegex, workers)
 
 	antiNodeConfigs := make([]*discover.ChildConfig, 0)
 
@@ -353,7 +364,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 	groups := make([][]*discover.ChildConfig, n)
 	for idx, config := range childConfigs {
 		var mod int
-		if ConfStatefulSetDispatchType == dispatchTypeRoundrobin {
+		if configs.G().StatefulSetDispatchType == dispatchTypeRoundrobin {
 			mod = idx % n // 轮训算法
 		} else {
 			mod = int(config.Hash() % uint64(n)) // 默认为 hash 分配
@@ -398,7 +409,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		}
 
 		groups[mod] = append(groups[mod], config)
-		logger.Infof("worker match antiaffinity rules, host=%s, worker%d(%s)", h, mod, indexWorkers[mod])
+		logger.Infof("worker match antiaffinity rules, host=%s, worker%d (%s)", h, mod, indexWorkers[mod])
 
 		c.recorder.updateConfigNode(config.FileName, fmt.Sprintf("worker%d", mod))
 		if _, ok := currTasksCache[mod]; !ok {
@@ -407,7 +418,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		currTasksCache[mod][config.FileName] = struct{}{}
 	}
 
-	maxSecretsAllowed := int(float64(c.objectsController.NodeCount()) * ConfMaxNodeSecretRatio)
+	maxSecretsAllowed := int(float64(c.objectsController.NodeCount()) * configs.G().NodeSecretRatio)
 	count := 0
 
 	if statefulsetAlarmer.Alarm() {
@@ -415,9 +426,9 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		logger.Info("statefulset worker resynced")
 	}
 
-	secretClient := c.client.CoreV1().Secrets(ConfMonitorNamespace)
-	for idx, configs := range groups {
-		Slowdown()
+	secretClient := c.client.CoreV1().Secrets(configs.G().MonitorNamespace)
+	for idx, cfgs := range groups {
+		t0 := time.Now()
 		secretName := tasks.GetStatefulSetTaskSecretName(idx)
 		cache := c.statefulSetTaskCache[idx]
 		if len(cache) > 0 && EqualMap(currTasksCache[idx], cache) {
@@ -432,12 +443,14 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 			continue
 		}
 
+		Slowdown()
+
 		bytesTotal := 0
 		secret := newSecret(tasks.GetStatefulSetTaskSecretName(idx), tasks.TaskTypeStatefulSet)
-		for _, config := range configs {
-			compressed, err := compressor.Compress(config.Data)
+		for _, config := range cfgs {
+			compressed, err := gzip.Compress(config.Data)
 			if err != nil {
-				logger.Errorf("failed to compress config content, addr=%s, err: %v", config.Address, err)
+				logger.Errorf("failed to compress config content, addr=%s: %v", config.Address, err)
 				continue
 			}
 
@@ -446,16 +459,16 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 			logger.Debugf("statefulset secret %s add file %s", secret.Name, config.FileName)
 		}
 
-		logger.Infof("statefulset secret %s contains %d files", secret.Name, len(secret.Data))
+		logger.Infof("statefulset secret %s contains %d files, size=%dB", secret.Name, len(secret.Data), bytesTotal)
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
-			c.mm.IncHandledSecretFailedCounter(secret.Name, define.ActionCreateOrUpdate)
+			c.mm.IncHandledSecretFailedCounter(secret.Name, action.CreateOrUpdate, err)
 			logger.Errorf("failed to create or update secret: %v", err)
 			delete(currTasksCache, idx)
 			continue
 		}
-		c.mm.IncHandledSecretSuccessCounter(secret.Name, define.ActionCreateOrUpdate)
-		logger.Infof("create or update statefulset secret %s", secret.Name)
+		c.mm.IncHandledSecretSuccessCounter(secret.Name, action.CreateOrUpdate)
+		logger.Infof("create or update statefulset secret %s, take: %s", secret.Name, time.Since(t0))
 	}
 	c.statefulSetTaskCache = currTasksCache
 }
@@ -464,7 +477,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 func (c *Operator) cleanupStatefulSetChildSecret() {
 	n := c.statefulSetWorker
 	if n <= 0 {
-		if ConfEnableStatefulSetWorker {
+		if configs.G().EnableStatefulSetWorker {
 			logger.Warn("no available statefulset worker found")
 		}
 		return
@@ -482,7 +495,7 @@ func (c *Operator) cleanupStatefulSetChildSecret() {
 	}
 	c.statefulSetSecretMut.Unlock()
 
-	secretClient := c.client.CoreV1().Secrets(ConfMonitorNamespace)
+	secretClient := c.client.CoreV1().Secrets(configs.G().MonitorNamespace)
 	// 如果最新状态中存在 但下一轮的状态中不存在的话 则删除 secrets
 	for prev := range prevState {
 		if !nextState[prev] {
@@ -490,12 +503,12 @@ func (c *Operator) cleanupStatefulSetChildSecret() {
 			logger.Infof("remove secret %s", prev)
 			if err := secretClient.Delete(c.ctx, prev, metav1.DeleteOptions{}); err != nil {
 				if !errors.IsNotFound(err) {
-					c.mm.IncHandledSecretFailedCounter(prev, define.ActionDelete)
+					c.mm.IncHandledSecretFailedCounter(prev, action.Delete, err)
 					logger.Errorf("failed to delete secret %s, err: %s", prev, err)
 				}
 				continue
 			}
-			c.mm.IncHandledSecretSuccessCounter(prev, define.ActionDelete)
+			c.mm.IncHandledSecretSuccessCounter(prev, action.Delete)
 		}
 	}
 }
@@ -508,10 +521,10 @@ func (c *Operator) collectChildConfigs() ([]*discover.ChildConfig, []*discover.C
 	var records []ConfigFileRecord
 	for _, dis := range c.discovers {
 		for _, cfg := range dis.StatefulSetChildConfigs() {
-			records = append(records, NewConfigFileRecord(dis, cfg))
+			records = append(records, newConfigFileRecord(dis, cfg))
 		}
 		for _, cfg := range dis.DaemonSetChildConfigs() {
-			records = append(records, NewConfigFileRecord(dis, cfg))
+			records = append(records, newConfigFileRecord(dis, cfg))
 		}
 
 		statefulset = append(statefulset, dis.StatefulSetChildConfigs()...)
@@ -522,8 +535,31 @@ func (c *Operator) collectChildConfigs() ([]*discover.ChildConfig, []*discover.C
 	return statefulset, daemonset
 }
 
+func (c *Operator) cleanupInvalidSecrets() {
+	secretClient := c.client.CoreV1().Secrets(configs.G().MonitorNamespace)
+	secrets := c.objectsController.SecretObjs()
+
+	// 清理不合法的 secrets
+	for _, secret := range secrets {
+		// 只处理 operator 创建的 secrets
+		if secret.Labels["createdBy"] != "bkmonitor-operator" {
+			continue
+		}
+
+		if _, ok := secret.Labels[tasks.LabelTaskType]; !ok {
+			if err := secretClient.Delete(c.ctx, secret.ID.Name, metav1.DeleteOptions{}); err != nil {
+				c.mm.IncHandledSecretFailedCounter(secret.ID.Name, action.Delete, err)
+				logger.Errorf("failed to delete secret %s, err: %v", secret.ID.Name, err)
+				continue
+			}
+			c.mm.IncHandledSecretSuccessCounter(secret.ID.Name, action.Delete)
+			logger.Infof("remove invalid secret %s", secret.ID.Name)
+		}
+	}
+}
+
 func (c *Operator) dispatchTasks() {
-	if ConfDryRun {
+	if configs.G().DryRun {
 		logger.Info("dryrun mode, skip dispatch")
 		return
 	}
@@ -536,7 +572,7 @@ func newSecret(name string, taskType string) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: ConfMonitorNamespace,
+			Namespace: configs.G().MonitorNamespace,
 			Labels: map[string]string{
 				"createdBy":         "bkmonitor-operator",
 				tasks.LabelTaskType: taskType,

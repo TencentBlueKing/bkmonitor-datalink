@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Knetic/govaluate"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
@@ -30,6 +31,8 @@ type QueryPromQL struct {
 	Limit               int      `json:"limit,omitempty"`
 	Slimit              int      `json:"slimit,omitempty"`
 	Match               string   `json:"match,omitempty"`
+	IsVerifyDimensions  bool     `json:"is_verify_dimensions,omitempty"`
+
 	// DownSampleRange 降采样：大于Step才能生效，可以为空
 	DownSampleRange string `json:"down_sample_range,omitempty" example:"5m"`
 	// Timezone 时区
@@ -38,6 +41,36 @@ type QueryPromQL struct {
 	LookBackDelta string `json:"look_back_delta"`
 	// 瞬时数据
 	Instant bool `json:"instant"`
+}
+
+// refMgr
+type refMgr struct {
+	count int
+	char  string
+}
+
+// Next
+func (rm *refMgr) Next() string {
+	// 讲道理不会出现这种情况 26 个不同指标求算术表达式 ???
+	if rm.count >= 26 {
+		s := fmt.Sprintf("z%d", rm.count-26)
+		rm.count++
+		return s
+	}
+
+	s := rm.char[rm.count]
+	rm.count++
+
+	return string(s)
+}
+
+// vecGroup
+type vecGroup struct {
+	ID       string
+	Name     string
+	Nodes    []parser.Node
+	StartPos int
+	EndPos   int
 }
 
 // queryPromQLExpr
@@ -432,4 +465,52 @@ func vectorQuery(
 	query.VectorOffset = e.Offset
 
 	return query, nil
+}
+
+// convertOp
+func convertOp(op labels.MatchType) string {
+	switch op {
+	case labels.MatchEqual:
+		return ConditionEqual
+	case labels.MatchNotEqual:
+		return ConditionNotEqual
+	case labels.MatchRegexp:
+		return ConditionRegEqual
+	case labels.MatchNotRegexp:
+		return ConditionNotRegEqual
+	default:
+		return ""
+	}
+}
+
+// convertMethod
+func convertMethod(t parser.ItemType) string {
+	switch t {
+	case parser.COUNT:
+		return CountAggName
+	case parser.MAX:
+		return MaxAggName
+	case parser.MIN:
+		return MinAggName
+	case parser.AVG:
+		return MeanAggName
+	case parser.SUM:
+		return SumAggName
+	case parser.BOTTOMK:
+		return BottomKAggName
+	case parser.TOPK:
+		return TopkAggName
+	case parser.QUANTILE:
+		return QuantileAggName
+	case parser.GROUP:
+		return GroupAggName
+	case parser.STDDEV:
+		return StddevAggName
+	case parser.STDVAR:
+		return StdvarAggName
+	case parser.COUNT_VALUES:
+		return CountValuesAggName
+	}
+
+	return ""
 }

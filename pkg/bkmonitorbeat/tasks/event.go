@@ -10,6 +10,7 @@
 package tasks
 
 import (
+	"fmt"
 	"strconv"
 	"time"
 
@@ -28,7 +29,7 @@ type Event struct {
 	TaskType          string
 	Available         float64
 	Status            int32
-	ErrorCode         define.BeatErrorCode
+	ErrorCode         define.NamedCode
 	StartAt           time.Time
 	EndAt             time.Time
 	AvailableDuration time.Duration
@@ -39,14 +40,14 @@ type Event struct {
 func (e *Event) IgnoreCMDBLevel() bool { return false }
 
 // Fail :
-func (e *Event) Fail(code define.BeatErrorCode) {
+func (e *Event) Fail(code define.NamedCode) {
 	e.Status = define.GatherStatusError
 	e.ErrorCode = code
 	e.EndAt = time.Now()
 	e.Available = 0
 }
 
-func (e *Event) FailWithTime(code define.BeatErrorCode, start, end time.Time) {
+func (e *Event) FailWithTime(code define.NamedCode, start, end time.Time) {
 	e.Status = define.GatherStatusError
 	e.ErrorCode = code
 	e.Available = 0
@@ -57,14 +58,14 @@ func (e *Event) FailWithTime(code define.BeatErrorCode, start, end time.Time) {
 // Success :
 func (e *Event) Success() {
 	e.Status = define.GatherStatusOK
-	e.ErrorCode = define.BeatErrCodeOK
+	e.ErrorCode = define.CodeOK
 	e.EndAt = time.Now()
 	e.Available = 1
 }
 
 func (e *Event) SuccessWithTime(start, end time.Time) {
 	e.Status = define.GatherStatusOK
-	e.ErrorCode = define.BeatErrCodeOK
+	e.ErrorCode = define.CodeOK
 	e.Available = 1
 	e.StartAt = start
 	e.EndAt = end
@@ -77,7 +78,7 @@ func (e *Event) SuccessOrTimeout() {
 	}
 	if e.AvailableDuration > time.Nanosecond && e.TaskDuration() > e.AvailableDuration {
 		logger.Debugf("fail because task duration exceed")
-		e.Fail(define.BeatErrCodeTimeout)
+		e.Fail(define.CodeTimeout)
 	} else {
 		e.Success()
 	}
@@ -97,7 +98,7 @@ func (e *Event) AsMapStr() common.MapStr {
 		"timestamp":     e.StartAt.Unix(),
 		"task_type":     e.TaskType,
 		"status":        e.Status,
-		"error_code":    e.ErrorCode,
+		"error_code":    e.ErrorCode.Code(),
 		"available":     e.Available,
 		"task_duration": int(e.TaskDuration().Milliseconds()),
 	}
@@ -125,7 +126,7 @@ func NewEvent(task define.Task) *Event {
 		TaskID:            task.GetTaskID(),
 		TaskType:          taskConf.GetType(),
 		Status:            define.GatherStatusUnknown,
-		ErrorCode:         define.BeatErrCodeUnknown,
+		ErrorCode:         define.CodeUnknown,
 		Labels:            taskConf.GetLabels(),
 	}
 }
@@ -235,7 +236,7 @@ func (e *StandardEvent) AsMapStr() common.MapStr {
 
 // NewStandardEvent :
 func NewStandardEvent(task define.TaskConfig) *StandardEvent {
-	var labels = task.GetLabels()
+	labels := task.GetLabels()
 	return &StandardEvent{
 		Labels: labels,
 		BizID:  task.GetBizID(),
@@ -404,81 +405,189 @@ func (e *MetricEvent) GetType() string {
 
 // NewMetricEvent :
 func NewMetricEvent(task define.TaskConfig) *MetricEvent {
-	var labels = task.GetLabels()
+	labels := task.GetLabels()
 	return &MetricEvent{
 		Labels: labels,
 		BizID:  task.GetBizID(),
 	}
 }
 
-// GatherUpEvent :
-type GatherUpEvent struct {
-	DataID     int32
-	Time       time.Time
-	Metrics    common.MapStr
-	Dimensions common.MapStr
+// CustomEvent 自定义消息事件
+type CustomEvent struct {
+	Type            string
+	Data            common.MapStr
+	ignoreCmdbLevel bool
+	Labels          []map[string]string
 }
 
-func (e *GatherUpEvent) IgnoreCMDBLevel() bool { return true }
-
-func (e *GatherUpEvent) GetType() string {
-	return define.ModuleStatus
-}
-
-// AsMapStr :
-func (e *GatherUpEvent) AsMapStr() common.MapStr {
-	mapStr := common.MapStr{}
-	mapStr["dataid"] = e.DataID
-	mapStr["data"] = []common.MapStr{
-		{"metrics": e.Metrics, "dimension": e.Dimensions, "timestamp": e.Time.UnixMilli()},
+// NewCustomEvent 创建自定义事件
+func NewCustomEvent(t string, data common.MapStr, ignoreCmdbLevel bool, labels []map[string]string) *CustomEvent {
+	return &CustomEvent{
+		Type:            t,
+		Data:            data,
+		ignoreCmdbLevel: ignoreCmdbLevel,
+		Labels:          labels,
 	}
-	return mapStr
 }
 
-func NewGatherUpEvent(task define.Task, upCode define.BeatErrorCode) *GatherUpEvent {
-	return NewGatherUpEventWithDims(task, upCode, nil)
-}
+// NewCustomEventBySimpleEvent 通过SimpleEvent创建自定义事件
+func NewCustomEventBySimpleEvent(e *SimpleEvent) *CustomEvent {
+	ts := e.StartAt.Unix()
+	// 补充节点信息
+	info, _ := gse.GetAgentInfo()
 
-func NewGatherUpEventWithDims(task define.Task, upCode define.BeatErrorCode, customDims common.MapStr) *GatherUpEvent {
-	return NewGatherUpEventWithConfig(task.GetConfig(), task.GetGlobalConfig(), upCode, customDims)
-}
-
-func NewGatherUpEventWithConfig(taskConfig define.TaskConfig, globalConfig define.Config, upCode define.BeatErrorCode,
-	customDims common.MapStr) *GatherUpEvent {
-	name, ok := define.BeatErrorCodeNameMap[upCode]
-	if !ok {
-		name = "NotKnownErrorCode"
+	// 维度取值
+	dimensions := map[string]string{
+		"bk_biz_id":   strconv.Itoa(int(e.BizID)),
+		"target_host": e.TargetHost,
+		"target_port": strconv.Itoa(e.TargetPort),
+		"task_id":     strconv.Itoa(int(e.TaskID)),
+		"task_type":   e.TaskType,
+		"status":      strconv.Itoa(int(e.Status)),
+		"resolved_ip": e.ResolvedIP,
+		"error_code":  strconv.Itoa(e.ErrorCode.Code()),
+		"node_id":     fmt.Sprintf("%d:%s", info.Cloudid, info.IP),
+		"ip":          info.IP,
+		"bk_cloud_id": strconv.Itoa(int(info.Cloudid)),
+		"bk_agent_id": info.BKAgentID,
 	}
-	dims := common.MapStr{
-		"task_id":                          strconv.Itoa(int(taskConfig.GetTaskID())),
-		"bk_collect_type":                  taskConfig.GetType(),
-		"bk_biz_id":                        strconv.Itoa(int(taskConfig.GetBizID())),
-		"bk_collect_config_id":             "",
-		"bk_target_cloud_id":               "",
-		"bk_target_host_id":                "",
-		"bk_target_ip":                     "",
-		define.BeaterUpMetricCodeLabel:     strconv.Itoa(int(upCode)),
-		define.BeaterUpMetricCodeNameLabel: name,
+
+	data := common.MapStr{
+		"dataid": e.DataID,
+		"data": []map[string]interface{}{
+			{
+				"target":    fmt.Sprintf("%s:%d", e.TargetHost, e.TargetPort),
+				"dimension": dimensions,
+				"metrics": map[string]interface{}{
+					"available":     e.Available,
+					"task_duration": int(e.TaskDuration().Milliseconds()),
+				},
+				"timestamp": ts * 1000,
+			},
+		},
+		"time":      ts,
+		"timestamp": ts,
 	}
-	// 从配置文件中获取维度字段
-	for _, labels := range taskConfig.GetLabels() {
-		for k, v := range labels {
-			if _, ok := dims[k]; ok {
-				dims[k] = v
+
+	return NewCustomEvent(e.GetType(), data, e.IgnoreCMDBLevel(), e.Labels)
+}
+
+// NewCustomEventByPingEvent 通过PingEvent创建自定义事件
+func NewCustomEventByPingEvent(events ...*PingEvent) *CustomEvent {
+	var data []map[string]interface{}
+	for _, e := range events {
+		ts := e.Time.Unix()
+
+		// 触发维度补充
+		e.AsMapStr()
+
+		// 维度取值
+		dimensions := map[string]string{}
+		for k, v := range e.Dimensions {
+			dimensions[k] = v
+		}
+
+		// 补充节点信息
+		info, _ := gse.GetAgentInfo()
+		dimensions["node_id"] = fmt.Sprintf("%d:%s", info.Cloudid, info.IP)
+		dimensions["ip"] = info.IP
+		dimensions["bk_cloud_id"] = strconv.Itoa(int(info.Cloudid))
+		dimensions["bk_agent_id"] = info.BKAgentID
+
+		// 指标取值
+		metrics := map[string]interface{}{}
+		for k, v := range e.Metrics {
+			metrics[k] = v
+		}
+
+		data = append(data, map[string]interface{}{
+			"target":    dimensions["target"],
+			"dimension": dimensions,
+			"metrics":   metrics,
+			"timestamp": ts * 1000,
+		})
+	}
+
+	event := events[0]
+	customEvent := common.MapStr{
+		"dataid":    event.DataID,
+		"data":      data,
+		"time":      event.Time.Unix(),
+		"timestamp": event.Time.Unix(),
+	}
+
+	return NewCustomEvent(event.GetType(), customEvent, event.IgnoreCMDBLevel(), event.Labels)
+}
+
+// GetType 获取事件类型
+func (e *CustomEvent) GetType() string {
+	return e.Type
+}
+
+// deepCopyMap 深拷贝嵌套 map
+func deepCopyMap(src map[string]interface{}) map[string]interface{} {
+	dst := make(map[string]interface{})
+	for k, v := range src {
+		switch obj := v.(type) {
+		case map[string]string:
+			newValue := make(map[string]string)
+			for kk, vv := range obj {
+				newValue[kk] = vv
 			}
+			dst[k] = newValue
+		case map[string]interface{}:
+			newValue := make(map[string]interface{})
+			for kk, vv := range obj {
+				newValue[kk] = vv
+			}
+			dst[k] = newValue
+		default:
+			dst[k] = v
 		}
 	}
-	// 主动传入自定义维度值覆盖默认值
-	for k, v := range customDims {
-		if _, ok := customDims[k]; ok {
-			dims[k] = v
+	return dst
+}
+
+// AsMapStr 转换为mapstr
+func (e *CustomEvent) AsMapStr() common.MapStr {
+	// 如果没有labels，直接返回data
+	if len(e.Labels) == 0 {
+		return e.Data
+	}
+
+	// 数据断言
+	data, ok := e.Data["data"].([]map[string]interface{})
+	if !ok {
+		e.Data["data"] = []map[string]interface{}{}
+		return e.Data
+	}
+
+	// 将 data 和 labels 进行组合
+	var records []map[string]interface{}
+	for _, record := range data {
+		for _, labels := range e.Labels {
+			// 深拷贝
+			newRecord := deepCopyMap(record)
+
+			// 将labels注入到dimensions中
+			dimensions, ok := newRecord["dimension"].(map[string]string)
+			if !ok {
+				dimensions = make(map[string]string)
+				newRecord["dimension"] = dimensions
+			}
+			for k, v := range labels {
+				dimensions[k] = v
+			}
+
+			records = append(records, newRecord)
 		}
 	}
-	ev := &GatherUpEvent{
-		DataID:     globalConfig.GetGatherUpDataID(),
-		Time:       time.Now(),
-		Dimensions: dims,
-		Metrics:    common.MapStr{define.BeaterUpMetric: 1},
-	}
-	return ev
+	e.Data["data"] = records
+
+	return e.Data
+}
+
+// IgnoreCMDBLevel 是否忽略CMDB层级
+func (e *CustomEvent) IgnoreCMDBLevel() bool {
+	return e.ignoreCmdbLevel
 }

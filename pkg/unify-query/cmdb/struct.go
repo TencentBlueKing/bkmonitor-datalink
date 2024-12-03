@@ -41,10 +41,12 @@ type Paths []Path
 // RelationMultiResourceRequest 请求参数
 type RelationMultiResourceRequest struct {
 	QueryList []struct {
-		Timestamp     int64    `json:"timestamp"`
-		TargetType    Resource `json:"target_type"`
-		SourceInfo    Matcher  `json:"source_info"`
-		LookBackDelta string   `json:"look_back_delta"`
+		Timestamp     int64      `json:"timestamp"`
+		SourceType    Resource   `json:"source_type"`
+		TargetType    Resource   `json:"target_type"`
+		SourceInfo    Matcher    `json:"source_info"`
+		PathResource  []Resource `json:"path_resource"`
+		LookBackDelta string     `json:"look_back_delta"`
 	} `json:"query_list"`
 }
 
@@ -55,23 +57,27 @@ type RelationMultiResourceResponseData struct {
 	SourceInfo Matcher  `json:"source_info,omitempty"`
 	TargetType Resource `json:"target_type,omitempty"`
 	TargetList Matchers `json:"target_list,omitempty"`
+	Path       []string `json:"path,omitempty"`
 	Message    string   `json:"message,omitempty"`
 }
 
 // RelationMultiResourceResponse 请求返回
 type RelationMultiResourceResponse struct {
-	Data []RelationMultiResourceResponseData `json:"data"`
+	TraceID string                              `json:"trace_id,omitempty"`
+	Data    []RelationMultiResourceResponseData `json:"data"`
 }
 
 // RelationMultiResourceRangeRequest 请求参数
 type RelationMultiResourceRangeRequest struct {
 	QueryList []struct {
-		StartTs       int64    `json:"start_time"`
-		EndTs         int64    `json:"end_time"`
-		Step          string   `json:"step"`
-		TargetType    Resource `json:"target_type"`
-		SourceInfo    Matcher  `json:"source_info"`
-		LookBackDelta string   `json:"look_back_delta"`
+		StartTs       int64      `json:"start_time"`
+		EndTs         int64      `json:"end_time"`
+		Step          string     `json:"step"`
+		SourceType    Resource   `json:"source_type"`
+		TargetType    Resource   `json:"target_type"`
+		SourceInfo    Matcher    `json:"source_info"`
+		PathResource  []Resource `json:"path_resource"`
+		LookBackDelta string     `json:"look_back_delta"`
 	} `json:"query_list"`
 }
 
@@ -82,10 +88,12 @@ type RelationMultiResourceRangeResponseData struct {
 	SourceInfo Matcher                 `json:"source_info,omitempty"`
 	TargetType Resource                `json:"target_type,omitempty"`
 	TargetList []MatchersWithTimestamp `json:"target_list,omitempty"`
+	Path       []string                `json:"path,omitempty"`
 	Message    string                  `json:"message,omitempty"`
 }
 
 // RelationMultiResourceRangeResponse 请求返回
 type RelationMultiResourceRangeResponse struct {
-	Data []RelationMultiResourceRangeResponseData `json:"data"`
+	TraceID string                                   `json:"trace_id,omitempty"`
+	Data    []RelationMultiResourceRangeResponseData `json:"data"`
 }

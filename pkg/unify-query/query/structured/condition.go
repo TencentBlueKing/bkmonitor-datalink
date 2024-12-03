@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 )
 
@@ -79,9 +80,9 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 	for index, field := range c.FieldList {
 		// 不允许值为空，此时可能引起拼接失败
 		if len(field.Value) == 0 {
-			log.Warnf(context.TODO(), "missing value in condition:%s", field.DimensionName)
-			return nil, errors.Wrap(ErrMissingValue, field.DimensionName)
+			return nil, nil
 		}
+
 		// 第一组的只需要增加即可
 		if index == 0 {
 			log.Debugf(context.TODO(), "first element->[%s] will add to row buffer", field.String())
@@ -242,7 +243,7 @@ func (c AllConditions) BkSql() string {
 	return strings.Join(conditionsString, fmt.Sprintf(" %s ", promql.OrOperator))
 }
 
-func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int) {
+func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.VmCondition, int) {
 	var (
 		defaultLabels = make([]string, 0)
 		and           = ", "
@@ -262,7 +263,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int
 	}
 
 	if len(c) == 0 {
-		return strings.Join(defaultLabels, and), len(defaultLabels)
+		return metadata.VmCondition(strings.Join(defaultLabels, and)), len(defaultLabels)
 	}
 
 	num := 0
@@ -285,61 +286,82 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int
 		vmLabels = append(vmLabels, strings.Join(lbl, and))
 	}
 
-	return strings.Join(vmLabels, or), num
+	return metadata.VmCondition(strings.Join(vmLabels, or)), num
 }
 
 // Compare 比较 AllConditions 中的条件 condition
 // 当存在 condition 的维度名与 key 相等，则进行比较操作, 一经出现不满足条件则直接返回 false
 // 当所有的 condition 维度都不与 key 相等 也会放行
 func (c AllConditions) Compare(key, value string) (bool, error) {
+	// 当没有任何条件的时候则默认返回 true
+	if len(c) == 0 {
+		return true, nil
+	}
+
+	// 循环 or 条件，只要任意一个 and 条件满足，则可以跳出该循环，否则继续判断
 	for _, cond := range c {
-		for _, field := range cond {
-			// 判断字段的维度名是否符合
-			if field.DimensionName != key {
-				continue
-			}
-			switch field.Operator {
-			case ConditionEqual, ConditionContains:
-				// 当出现 value 不属于 field.Value 列表的时候可以判定为 compare 失败
-				if !containElement(field.Value, value) {
-					return false, nil
+		// 循环 and 条件，只要任意一个不满足则跳出该循环认为不满足，所有条件验证之后，则认为满足该判断
+		andCheck, err := func() (bool, error) {
+			for _, field := range cond {
+				// 只针对传入的维度进行判断，例如：bcs_cluster_id
+				if field.DimensionName != key {
+					continue
 				}
-			case ConditionNotEqual, ConditionNotContains:
-				// 当出现 value 属于 field.Value 列表的时候可以判定为 compare 失败
-				if containElement(field.Value, value) {
-					return false, nil
-				}
-			case ConditionRegEqual:
-				for _, val := range field.Value {
-					reExp, err := regexp.Compile(val)
-					// 编译正则表达式失败的情况下直接返回 false 以及错误信息
-					if err != nil {
-						return false, err
-					}
-					matched := reExp.Match([]byte(value))
-					// 如果出现匹配不上的情况，可以判定 compare 失败
-					if matched {
-						return true, nil
-					}
-				}
-				return false, nil
-			case ConditionNotRegEqual:
-				for _, val := range field.Value {
-					reExp, err := regexp.Compile(val)
-					// 编译正则表达式失败的情况下直接返回 false 以及错误信息
-					if err != nil {
-						return false, err
-					}
-					matched := reExp.Match([]byte(value))
-					// 如果出现正则匹配上的情况，视为 compare 失败
-					if matched {
+
+				switch field.Operator {
+				case ConditionEqual, ConditionContains:
+					// 等号判断：当出现 value 不属于 field.Value 列表的时候可以判定为 compare 失败
+					if !containElement(field.Value, value) {
 						return false, nil
 					}
+				case ConditionNotEqual, ConditionNotContains:
+					// 不等于判断：当出现 value 属于 field.Value 列表的时候可以判定为 compare 失败
+					if containElement(field.Value, value) {
+						return false, nil
+					}
+				case ConditionRegEqual:
+					// 正则判断：
+					for _, val := range field.Value {
+						reExp, err := regexp.Compile(val)
+						// 编译正则表达式失败的情况下直接返回 false 以及错误信息
+						if err != nil {
+							return false, err
+						}
+						matched := reExp.Match([]byte(value))
+						// 如果出现匹配不上的情况，可以判定 compare 失败
+						if !matched {
+							return false, nil
+						}
+					}
+					// 反正则判断:
+				case ConditionNotRegEqual:
+					for _, val := range field.Value {
+						reExp, err := regexp.Compile(val)
+						// 编译正则表达式失败的情况下直接返回 false 以及错误信息
+						if err != nil {
+							return false, err
+						}
+						matched := reExp.Match([]byte(value))
+						// 如果出现正则匹配上的情况，视为 compare 失败
+						if matched {
+							return false, nil
+						}
+					}
 				}
 			}
+
+			return true, nil
+		}()
+
+		if err != nil {
+			return false, err
+		}
+
+		if andCheck {
+			return true, nil
 		}
 	}
-	return true, nil
+	return false, nil
 }
 
 // ConvertToPromBuffer

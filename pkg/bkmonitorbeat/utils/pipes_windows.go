@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build windows
-// +build windows
 
 package utils
 
@@ -16,6 +15,11 @@ import (
 	"os/exec"
 	"strconv"
 )
+
+// setProcessExecByUsername does not work on windows.
+func setProcessExecByUsername(cmd *exec.Cmd, username string) error {
+	return nil
+}
 
 func setProcessGroupID(cmd *exec.Cmd) {
 }

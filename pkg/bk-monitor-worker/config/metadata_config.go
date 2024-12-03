@@ -84,6 +84,12 @@ var (
 	SpaceToResultTableKey string
 	// SpaceToResultTableChannel 空间关联的结果表channel
 	SpaceToResultTableChannel string
+	// BuildInResultTableDetailKey 空间关联内置上报rt详情
+	BuildInResultTableDetailKey string
+	// BkAppToSpaceKey redis 中 bkApp 的 key
+	BkAppToSpaceKey string
+	// BkAppToSpaceChannelKey bkAppCode 关联 space 的 channel
+	BkAppToSpaceChannelKey string
 
 	// BkdataDefaultBizId 接入计算平台使用的业务 ID
 	BkdataDefaultBizId int
@@ -121,6 +127,11 @@ var (
 	SkipInfluxdbTableIds []string
 	// 是否可以删除 consul 路径
 	CanDeleteConsulPath bool
+
+	// SloPushGatewayToken slo数据上报Token
+	SloPushGatewayToken string
+	// SloPushGatewayEndpoint slo数据上报端点
+	SloPushGatewayEndpoint string
 )
 
 func initMetadataVariables() {
@@ -159,6 +170,9 @@ func initMetadataVariables() {
 	ResultTableDetailChannel = GetValue("taskConfig.metadata.space.resultTableDetailChannel", fmt.Sprintf("%s:result_table_detail:channel", SpaceRedisKey))
 	SpaceToResultTableKey = GetValue("taskConfig.metadata.space.spaceToResultTableKey", fmt.Sprintf("%s:space_to_result_table", SpaceRedisKey))
 	SpaceToResultTableChannel = GetValue("taskConfig.metadata.space.spaceToResultTableChannel", fmt.Sprintf("%s:space_to_result_table:channel", SpaceRedisKey))
+	BuildInResultTableDetailKey = GetValue("taskConfig.metadata.space.buildInResultTableDetailKey", fmt.Sprintf("%s:built_in_result_table_detail", SpaceRedisKey))
+	BkAppToSpaceKey = GetValue("taskConfig.metadata.space.bkAppSpace", fmt.Sprintf("%s:bk_app_to_space", SpaceRedisKey))
+	BkAppToSpaceChannelKey = GetValue("taskConfig.metadata.space.bkAppSpaceChannel", fmt.Sprintf("%s:bk_app_to_space:channel", SpaceRedisKey))
 
 	BkdataDefaultBizId = GetValue("taskConfig.metadata.bkdata.defaultBizId", 0)
 	BkdataProjectId = GetValue("taskConfig.metadata.bkdata.projectId", 1)
@@ -178,4 +192,7 @@ func initMetadataVariables() {
 	BkdataIsAllowAllCmdbLevel = GetValue("taskConfig.metadata.bkdata.isAllowAllCmdbLevel", false)
 	SkipInfluxdbTableIds = GetValue("taskConfig.metadata.global.skipInfluxdbTableIds", []string{})
 	CanDeleteConsulPath = GetValue("taskConfig.metadata.global.CanDeleteConsulPath", false)
+
+	SloPushGatewayToken = GetValue("taskConfig.metadata.slo.sloPushGatewayToken", "")
+	SloPushGatewayEndpoint = GetValue("taskConfig.metadata.slo.sloPushGatewayEndpoint", "")
 }

@@ -113,7 +113,7 @@ func StartStreamSeriesSet(
 
 				user := metadata.GetUser(ctx)
 				metric.TsDBRequestSecond(
-					ctx, sub, user.SpaceUid, fmt.Sprintf("%s_grpc", consul.InfluxDBStorageType),
+					ctx, sub, user.SpaceUid, user.Source, fmt.Sprintf("%s_grpc", consul.InfluxDBStorageType), name,
 				)
 
 				span.End(&err)
@@ -130,6 +130,13 @@ func StartStreamSeriesSet(
 			for {
 				r, err := s.stream.Recv()
 				if r != nil {
+					if opt.MetricLabel != nil {
+						r.Labels = append(r.Labels, &remote.LabelPair{
+							Name:  opt.MetricLabel.Name,
+							Value: opt.MetricLabel.Value,
+						})
+					}
+
 					if s.limiter != nil {
 						s.limiter.WaitN(ctx, len(r.Samples))
 					}

@@ -23,6 +23,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
+func TestReady(t *testing.T) {
+	assert.NotPanics(t, func() {
+		Ready(receiver.ComponentConfig{})
+	})
+}
+
 func TestPropertyImpl(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		var r *define.Record
@@ -39,10 +45,6 @@ func TestPropertyImpl(t *testing.T) {
 				ModuleName:   "TestApp.HelloGo",
 				Ip:           "127.0.0.1",
 				PropertyName: "Add",
-				SetName:      "",
-				SetArea:      "",
-				SetID:        "",
-				SContainer:   "",
 				IPropertyVer: 2,
 			}: {VInfo: []propertyf.StatPropInfo{
 				{Value: "440", Policy: "Sum"},
@@ -69,6 +71,7 @@ func TestPropertyImpl(t *testing.T) {
 			assert.NoErrorf(t, err, "failed to Marshal prop head, err=%v", err)
 			expected := `{"moduleName":"TestApp.HelloGo","ip":"127.0.0.1","propertyName":"Add","setName":"","setArea":"","setID":"","sContainer":"","iPropertyVer":2}`
 			assert.JSONEq(t, expected, string(b))
+
 			b, err = json.Marshal(body)
 			assert.NoErrorf(t, err, "failed to Marshal prop body, err=%v", err)
 			expected = `{"vInfo":[{"policy":"Sum","value":"440"},{"policy":"Avg","value":"73.333"},{"policy":"Max","value":"94"},{"policy":"Min","value":"33"},{"policy":"Count","value":"6"},{"policy":"Distr","value":"0|0,50|1,100|5"}]}`
@@ -95,11 +98,6 @@ func TestStatImpl(t *testing.T) {
 				InterfaceName: "Add",
 				MasterIp:      "127.0.0.1",
 				SlaveIp:       "127.0.0.1",
-				SlavePort:     0,
-				ReturnValue:   0,
-				SlaveSetName:  "",
-				SlaveSetArea:  "",
-				SlaveSetID:    "",
 				TarsVersion:   "1.4.5",
 			}: {
 				Count:         6,

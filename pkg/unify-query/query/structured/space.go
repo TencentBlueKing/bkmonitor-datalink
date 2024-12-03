@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
@@ -48,6 +49,8 @@ func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) 
 	// 只有未跳过空间的时候进行异常判定
 	if !opt.IsSkipSpace {
 		if space == nil {
+			metric.SpaceRouterNotExistInc(ctx, opt.SpaceUid, "", "", metadata.SpaceIsNotExists)
+
 			msg := fmt.Sprintf("spaceUid: %s is not exists", opt.SpaceUid)
 			metadata.SetStatus(ctx, metadata.SpaceIsNotExists, msg)
 			log.Warnf(ctx, msg)
@@ -66,7 +69,6 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool) []*query.TsDBV2 {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
-		log.Debugf(s.ctx, "skip rt(%s), rt detail is empty", tableID)
 		return nil
 	}
 
@@ -77,13 +79,11 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 
 		// 容器下只能查单指标单表
 		if !isSplitMeasurement {
-			log.Debugf(s.ctx, "skip rt(%s), measurement type (%s) is not split", tableID, rtDetail.MeasurementType)
 			return nil
 		}
 
 		allConditions, err := conditions.AnalysisConditions()
 		if err != nil {
-			log.Errorf(s.ctx, "unable to get AllConditions, error: %s", err)
 			return nil
 		}
 
@@ -91,19 +91,16 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		// 如果 allConditions 中存在 clusterId 的筛选条件并且比对不成功的情况下，直接返回 nil，出现错误的情况也直接返回 nil
 		compareResult, err := allConditions.Compare(ClusterID, rtDetail.BcsClusterID)
 		if err != nil {
-			log.Errorf(s.ctx, "allCondition Compare error: %s", err)
 			return nil
 		}
 
 		if !compareResult {
-			log.Debugf(s.ctx, "skip rt(%s), clusterID: %s, allConditions: %+v", tableID, rtDetail.BcsClusterID, allConditions)
 			return nil
 		}
 
 		if isK8sFeatureFlag {
 			// 如果是只查询 k8s 的 rt，则需要判断 bcsClusterID 字段不为空
 			if rtDetail.BcsClusterID == "" {
-				log.Debugf(s.ctx, "skip rt(%s), clusterID is empty", tableID)
 				return nil
 			}
 		}
@@ -147,7 +144,11 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 			Type: rtDetail.Options.TimeField.Type,
 			Unit: rtDetail.Options.TimeField.Unit,
 		},
+		NeedAddTime: rtDetail.Options.NeedAddTime,
+		SourceType:  rtDetail.SourceType,
+		StorageType: rtDetail.StorageType,
 	}
+
 	// 字段为空时，需要返回结果表的信息，表示无需过滤字段过滤
 	// bklog 或者 bkapm 则不判断 field 是否存在
 	if isSkipField {
@@ -232,6 +233,8 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	var routerMessage string
 	defer func() {
 		if routerMessage != "" {
+			metric.SpaceRouterNotExistInc(s.ctx, opt.SpaceUid, string(opt.TableID), opt.FieldName, metadata.SpaceTableIDFieldIsNotExists)
+
 			metadata.SetStatus(s.ctx, metadata.SpaceTableIDFieldIsNotExists, routerMessage)
 			log.Warnf(s.ctx, routerMessage)
 		}
@@ -278,7 +281,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 		}
 	} else {
 		// 如果不指定 tableID 或者 dataLabel，则检索跟字段相关的 RT，且只获取容器指标的 TsDB
-		isK8s = true
+		isK8s = !opt.IsSkipK8s
 		tableIDs = s.GetSpaceRtIDs()
 
 		if len(tableIDs) == 0 {
@@ -314,6 +317,7 @@ type TsDBOption struct {
 	SpaceUid    string
 	IsSkipSpace bool
 	IsSkipField bool
+	IsSkipK8s   bool
 
 	TableID   TableID
 	FieldName string

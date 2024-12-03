@@ -14,12 +14,13 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
+	"gopkg.in/yaml.v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 )
 
 func TestMetricsTarget(t *testing.T) {
-	ConfBuiltinLabels = []string{"job"}
 	target := MetricTarget{
 		Meta: define.MonitorMeta{
 			Name:      "monitor-name",
@@ -52,8 +53,8 @@ func TestMetricsTarget(t *testing.T) {
 name: http://localhost:8080/metrics
 version: "1"
 dataid: 12345
-max_timeout: ""
-min_period: ""
+max_timeout: 100s
+min_period: 3s
 tasks:
 - task_id: 715974526
   bk_biz_id: 2
@@ -63,7 +64,6 @@ tasks:
   labels:
   - label1: value1
     label2: value2
-    bk_job: my-job
     job: my-job
     bk_endpoint_url: http://localhost:8080/metrics
     bk_endpoint_index: "0"
@@ -87,4 +87,119 @@ tasks:
     bearer_file: /path/to/token
 `
 	assert.Equal(t, expected, string(b))
+}
+
+func TestRemoteRelabelConfig(t *testing.T) {
+	cases := []struct {
+		Name   string
+		Input  *MetricTarget
+		Output *yaml.MapItem
+	}{
+		{
+			Name: "NoRules",
+			Input: &MetricTarget{
+				NodeName:     "worker1",
+				RelabelIndex: "0",
+				RelabelRule:  "",
+			},
+			Output: nil,
+		},
+		{
+			Name: "v1/workload",
+			Input: &MetricTarget{
+				NodeName:     "worker1",
+				RelabelIndex: "0",
+				RelabelRule:  "v1/workload",
+			},
+			Output: &yaml.MapItem{
+				Key:   "metric_relabel_remote",
+				Value: "http://:0/workload/node/worker1",
+			},
+		},
+		{
+			Name: "v2/workload",
+			Input: &MetricTarget{
+				NodeName:     "worker1",
+				RelabelIndex: "0",
+				RelabelRule:  "v2/workload",
+				Labels:       labels.Labels{{Name: "pod_name", Value: "pod1"}},
+			},
+			Output: &yaml.MapItem{
+				Key:   "metric_relabel_remote",
+				Value: "http://:0/workload/node/worker1?q=cG9kTmFtZT1wb2Qx",
+			},
+		},
+		{
+			Name: "v2/workload,labeljoin",
+			Input: &MetricTarget{
+				NodeName:     "worker1",
+				RelabelIndex: "0",
+				RelabelRule:  "v2/workload,v1/labeljoin",
+			},
+			Output: &yaml.MapItem{
+				Key:   "metric_relabel_remote",
+				Value: "http://:0/labeljoin",
+			},
+		},
+		{
+			Name: "v1/workload,v1/labeljoin",
+			Input: &MetricTarget{
+				NodeName:     "worker1",
+				RelabelIndex: "0",
+				RelabelRule:  "v1/workload,v1/labeljoin",
+				LabelJoinMatcher: &feature.LabelJoinMatcherSpec{
+					Kind:        "Pod",
+					Annotations: []string{"annotations1"},
+					Labels:      []string{"label1"},
+				},
+			},
+			Output: &yaml.MapItem{
+				Key:   "metric_relabel_remote",
+				Value: "http://:0/workload/node/worker1?q=YW5ub3RhdGlvbnM9YW5ub3RhdGlvbnMxJmtpbmQ9UG9kJmxhYmVscz1sYWJlbDEmcnVsZXM9bGFiZWxqb2lu",
+			},
+		},
+		{
+			Name: "v2/workload,v1/labeljoin",
+			Input: &MetricTarget{
+				NodeName:     "worker1",
+				RelabelIndex: "0",
+				RelabelRule:  "v2/workload,v1/labeljoin",
+				LabelJoinMatcher: &feature.LabelJoinMatcherSpec{
+					Kind:        "Pod",
+					Annotations: []string{"annotations1"},
+					Labels:      []string{"label1"},
+				},
+				Labels: labels.Labels{
+					{Name: "pod_name", Value: "pod1"},
+				},
+			},
+			Output: &yaml.MapItem{
+				Key:   "metric_relabel_remote",
+				Value: "http://:0/workload/node/worker1?q=YW5ub3RhdGlvbnM9YW5ub3RhdGlvbnMxJmtpbmQ9UG9kJmxhYmVscz1sYWJlbDEmcG9kTmFtZT1wb2QxJnJ1bGVzPWxhYmVsam9pbg",
+			},
+		},
+		{
+			Name: "v1/workload,v1/labeljoin",
+			Input: &MetricTarget{
+				NodeName:     "worker1",
+				RelabelIndex: "0",
+				RelabelRule:  "v1/workload,v1/labeljoin",
+				LabelJoinMatcher: &feature.LabelJoinMatcherSpec{
+					Kind:        "Pod",
+					Annotations: []string{"annotations1"},
+					Labels:      []string{"label1"},
+				},
+			},
+			Output: &yaml.MapItem{
+				Key:   "metric_relabel_remote",
+				Value: "http://:0/workload/node/worker1?q=YW5ub3RhdGlvbnM9YW5ub3RhdGlvbnMxJmtpbmQ9UG9kJmxhYmVscz1sYWJlbDEmcnVsZXM9bGFiZWxqb2lu",
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			assert.Equal(t, c.Output, c.Input.RemoteRelabelConfig())
+		})
+	}
 }

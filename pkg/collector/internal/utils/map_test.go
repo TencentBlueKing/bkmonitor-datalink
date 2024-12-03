@@ -84,3 +84,116 @@ func TestMergeReplaceAttributeMaps(t *testing.T) {
 		"ccc_x": "333",
 	}, m3))
 }
+
+func BenchmarkMergeReplaceCache(b *testing.B) {
+	m := pcommon.NewMap()
+	m.InsertString("telemetry.sdk.name", "telemetry_sdk_name")
+	m.InsertString("telemetry.sdk.version", "telemetry_sdk_version")
+	m.InsertString("telemetry.sdk.language", "telemetry_sdk_language")
+	m.InsertString("foo.bar.key.value", "foo.bar.key.value")
+
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			MergeReplaceAttributeMaps(m)
+		}
+	})
+}
+
+func BenchmarkMergeReplaceWithoutCache(b *testing.B) {
+	m := pcommon.NewMap()
+	m.InsertString("telemetry.sdk.namex", "telemetry_sdk_name")
+	m.InsertString("telemetry.sdk.versionx", "telemetry_sdk_version")
+	m.InsertString("telemetry.sdk.languagex", "telemetry_sdk_language")
+	m.InsertString("foo.bar.key.value", "foo.bar.key.value")
+
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			MergeReplaceAttributeMaps(m)
+		}
+	})
+}
+
+func TestAnyMap(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected map[string]int
+	}{
+		{
+			input: `foo=1,bar=2`,
+			expected: map[string]int{
+				"foo": 1,
+				"bar": 2,
+			},
+		},
+		{
+			input: `foo=1, bar=2`,
+			expected: map[string]int{
+				"foo": 1,
+				"bar": 2,
+			},
+		},
+		{
+			input: `foo = 1, bar = 2`,
+			expected: map[string]int{
+				"foo": 1,
+				"bar": 2,
+			},
+		},
+		{
+			input: `foo=1`,
+			expected: map[string]int{
+				"foo": 1,
+			},
+		},
+		{
+			input: `foo=1,`,
+			expected: map[string]int{
+				"foo": 1,
+			},
+		},
+	}
+
+	for _, c := range cases {
+		om := NewOptMap(c.input)
+		for k, v := range c.expected {
+			i, ok := om.GetInt(k)
+			assert.True(t, ok)
+			assert.Equal(t, v, i)
+		}
+	}
+}
+
+func TestNameOpts(t *testing.T) {
+	cases := []struct {
+		nameOpts string
+		name     string
+		opts     string
+	}{
+		{
+			nameOpts: "foo1",
+			name:     "foo1",
+		},
+		{
+			nameOpts: "foo1;",
+			name:     "foo1",
+		},
+		{
+			nameOpts: "foo1;k1=v1",
+			name:     "foo1",
+			opts:     "k1=v1",
+		},
+		{
+			nameOpts: "foo1;k1=v1,k2=v2",
+			name:     "foo1",
+			opts:     "k1=v1,k2=v2",
+		},
+	}
+
+	for _, c := range cases {
+		name, opts := NameOpts(c.nameOpts)
+		assert.Equal(t, c.name, name)
+		assert.Equal(t, c.opts, opts)
+	}
+}

@@ -37,11 +37,9 @@ func newGather() *Gather {
 	taskConf := configs.NewScriptTaskConfig()
 	err := globalConf.Clean()
 	if err != nil {
-
 	}
 	err = taskConf.Clean()
 	if err != nil {
-
 	}
 	taskConf.TimeOffset = time.Hour * 24 * 365 * 10
 

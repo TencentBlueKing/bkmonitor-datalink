@@ -11,6 +11,7 @@ package operator
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
@@ -22,7 +23,7 @@ type Recorder struct {
 	activeConfigFile map[string]ConfigFileRecord
 }
 
-func NewRecorder() *Recorder {
+func newRecorder() *Recorder {
 	return &Recorder{activeConfigFile: make(map[string]ConfigFileRecord)}
 }
 
@@ -52,7 +53,7 @@ type MonitorLocationRecord struct {
 	DataID  int    `json:"dataid"`
 }
 
-func NewConfigFileRecord(dis discover.Discover, cfg *discover.ChildConfig) ConfigFileRecord {
+func newConfigFileRecord(dis discover.Discover, cfg *discover.ChildConfig) ConfigFileRecord {
 	return ConfigFileRecord{
 		Service:  dis.MonitorMeta().ID(),
 		Meta:     dis.MonitorMeta(),
@@ -95,6 +96,10 @@ func (r *Recorder) getActiveConfigFiles() []ConfigFileRecord {
 	for _, cfg := range r.activeConfigFile {
 		cfgs = append(cfgs, cfg)
 	}
+
+	sort.Slice(cfgs, func(i, j int) bool {
+		return cfgs[i].Meta.ID() < cfgs[j].Meta.ID()
+	})
 	return cfgs
 }
 

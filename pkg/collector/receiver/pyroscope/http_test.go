@@ -11,19 +11,26 @@ package pyroscope
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"runtime/pprof"
 	"testing"
 
+	"connectrpc.com/connect"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
+	pushv1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/pyroscope/gen/proto/go/push/v1"
+	typesv1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/pyroscope/gen/proto/go/types/v1"
 )
 
 const (
@@ -45,6 +52,78 @@ func newSvc(code define.StatusCode, msg string, err error) (HttpService, *atomic
 		}},
 	}
 	return svc, n
+}
+
+func collectTestProfileBytes(t *testing.T) []byte {
+	t.Helper()
+
+	buf := bytes.NewBuffer(nil)
+	require.NoError(t, pprof.WriteHeapProfile(buf))
+	return buf.Bytes()
+}
+
+func TestPusherServiceHandler(t *testing.T) {
+	const (
+		DefaultToken        = "valid token"
+		DefaultInvalidToken = "invalid token"
+	)
+
+	newTestSvc := func() (HttpService, *atomic.Int64) {
+		n := atomic.NewInt64(0)
+		svc := HttpService{
+			receiver.Publisher{Func: func(record *define.Record) { n.Inc() }},
+			pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+				if record.Token.Original != DefaultToken {
+					return define.StatusCodeUnauthorized, define.ProcessorTokenChecker, fmt.Errorf("invalid profile token")
+				}
+				return define.StatusCodeOK, "", nil
+			}},
+		}
+		return svc, n
+	}
+
+	newTestReq := func() *connect.Request[pushv1.PushRequest] {
+		return connect.NewRequest(&pushv1.PushRequest{
+			Series: []*pushv1.RawProfileSeries{
+				{
+					Labels: []*typesv1.LabelPair{
+						{Name: labelNameServiceName, Value: "serviceName"},
+						{Name: "env", Value: "test"},
+					},
+					Samples: []*pushv1.RawSample{
+						{
+							RawProfile: collectTestProfileBytes(t),
+						},
+					},
+				},
+			},
+		})
+	}
+
+	t.Run("test no token", func(t *testing.T) {
+		svc, _ := newTestSvc()
+		testReq := newTestReq()
+		_, err := svc.Push(context.Background(), testReq)
+		assert.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	})
+
+	t.Run("test invalid token", func(t *testing.T) {
+		svc, _ := newTestSvc()
+		testReq := newTestReq()
+		testReq.Header().Set(define.KeyToken, DefaultInvalidToken)
+		_, err := svc.Push(context.Background(), testReq)
+		assert.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	})
+
+	t.Run("test success", func(t *testing.T) {
+		svc, n := newTestSvc()
+		testReq := newTestReq()
+		testReq.Header().Set(define.KeyToken, DefaultToken)
+		resp, err := svc.Push(context.Background(), testReq)
+		assert.NotNil(t, resp)
+		assert.Nil(t, err)
+		assert.Equal(t, int64(1), n.Load())
+	})
 }
 
 func TestHttpRequest(t *testing.T) {
@@ -161,11 +240,11 @@ func TestParseForm(t *testing.T) {
 	})
 }
 
-func TestGetAppNameAndTags(t *testing.T) {
+func TestParseAppNameAndTags(t *testing.T) {
 	t.Run("valid data", func(t *testing.T) {
 		url := localURL + "?name=profiling-test%7Bcustom1%3D123456%2CserviceName%3Dmy-profiling-proj%7D&units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr"
 		req := httptest.NewRequest(http.MethodPost, url, &bytes.Buffer{})
-		appName, tags := getAppNameAndTags(req)
+		appName, tags := parseAppNameAndTags(req)
 		assert.Equal(t, "profiling-test", appName)
 		assert.Equal(t, map[string]string{"custom1": "123456", "serviceName": "my-profiling-proj"}, tags)
 	})
@@ -173,7 +252,7 @@ func TestGetAppNameAndTags(t *testing.T) {
 	t.Run("empty tags", func(t *testing.T) {
 		url := localURL + "?name=profiling-test%7B%7D&units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr"
 		req := httptest.NewRequest(http.MethodPost, url, &bytes.Buffer{})
-		appName, tags := getAppNameAndTags(req)
+		appName, tags := parseAppNameAndTags(req)
 		assert.Equal(t, "profiling-test", appName)
 		assert.Empty(t, tags)
 	})
@@ -181,7 +260,7 @@ func TestGetAppNameAndTags(t *testing.T) {
 	t.Run("empty tags and empty app", func(t *testing.T) {
 		url := localURL + "?units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr"
 		req := httptest.NewRequest(http.MethodPost, url, &bytes.Buffer{})
-		appName, tags := getAppNameAndTags(req)
+		appName, tags := parseAppNameAndTags(req)
 		assert.Empty(t, appName)
 		assert.Empty(t, tags)
 	})
@@ -189,7 +268,7 @@ func TestGetAppNameAndTags(t *testing.T) {
 	t.Run("invalid tags", func(t *testing.T) {
 		url := localURL + "?name=profiling-test%7B%7D%7D%7D&units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr"
 		req := httptest.NewRequest(http.MethodPost, url, &bytes.Buffer{})
-		appName, tags := getAppNameAndTags(req)
+		appName, tags := parseAppNameAndTags(req)
 		assert.Equal(t, "profiling-test", appName)
 		assert.Empty(t, tags)
 	})

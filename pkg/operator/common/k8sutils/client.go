@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"strings"
 
-	tkexversiond "github.com/Tencent/bk-bcs/bcs-scenarios/kourse/pkg/client/clientset/versioned"
 	promversioned "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
 	"github.com/prometheus-operator/prometheus-operator/pkg/k8sutil"
 	"github.com/prometheus-operator/prometheus-operator/pkg/operator"
@@ -25,12 +24,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	clientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/retry"
 
 	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logconf"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logx"
+)
+
+const (
+	contentTypeProtobuf = "application/vnd.kubernetes.protobuf"
 )
 
 func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig) (kubernetes.Interface, error) {
@@ -38,7 +42,17 @@ func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig) (kubernetes.Inte
 	if err != nil {
 		return nil, err
 	}
+	cfg.ContentType = contentTypeProtobuf
 	return kubernetes.NewForConfig(cfg)
+}
+
+func NewMetadataClient(host string, tlsConfig *rest.TLSClientConfig) (metadata.Interface, error) {
+	cfg, err := k8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ContentType = contentTypeProtobuf
+	return metadata.NewForConfig(cfg)
 }
 
 func NewK8SClientInsecure() (kubernetes.Interface, error) {
@@ -46,6 +60,7 @@ func NewK8SClientInsecure() (kubernetes.Interface, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.ContentType = contentTypeProtobuf
 	return kubernetes.NewForConfig(cfg)
 }
 
@@ -55,6 +70,7 @@ func NewPromClient(host string, tlsConfig *rest.TLSClientConfig) (promversioned.
 	if err != nil {
 		return nil, err
 	}
+	cfg.ContentType = contentTypeProtobuf
 	return promversioned.NewForConfig(cfg)
 }
 
@@ -64,20 +80,12 @@ func NewBKClient(host string, tlsConfig *rest.TLSClientConfig) (bkversioned.Inte
 	if err != nil {
 		return nil, err
 	}
+	cfg.ContentType = contentTypeProtobuf
 	return bkversioned.NewForConfig(cfg)
 }
 
-// NewTkexClient 操作 GameStatefulSet/GameDeployment CRD
-func NewTkexClient(host string, tlsConfig *rest.TLSClientConfig) (tkexversiond.Interface, error) {
-	cfg, err := k8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
-	if err != nil {
-		return nil, err
-	}
-	return tkexversiond.NewForConfig(cfg)
-}
-
 func WaitForNamedCacheSync(ctx context.Context, controllerName string, inf cache.SharedIndexInformer) bool {
-	return operator.WaitForNamedCacheSync(ctx, controllerName, new(logconf.Logger), inf)
+	return operator.WaitForNamedCacheSync(ctx, controllerName, logx.New(controllerName), inf)
 }
 
 func CreateOrUpdateSecret(ctx context.Context, secretClient clientv1.SecretInterface, desired *corev1.Secret) error {

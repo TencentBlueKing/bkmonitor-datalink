@@ -22,6 +22,7 @@ type User struct {
 	Role      string
 	SpaceUid  string
 	SkipSpace string
+	HashID    string
 }
 
 // SetUser
@@ -31,6 +32,7 @@ func SetUser(ctx context.Context, key, spaceUid, skipSpace string) {
 			Key:       key,
 			SpaceUid:  spaceUid,
 			SkipSpace: skipSpace,
+			HashID:    hashID(ctx),
 		}
 		arr := strings.Split(key, ":")
 		if len(arr) > 0 {

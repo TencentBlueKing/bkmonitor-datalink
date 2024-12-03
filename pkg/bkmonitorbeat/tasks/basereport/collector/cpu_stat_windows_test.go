@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build windows
-// +build windows
 
 package collector
 
@@ -35,11 +34,17 @@ var DefaultBasereportConfigWin = configs.BasereportConfig{
 
 func TestGetCPUStatUsageWin(t *testing.T) {
 	report := &CpuReport{}
-	err := getCPUStatUsage(report)
+	for i := 0; i <= 4; i++ {
+		err := getCPUStatUsage(report)
+		t.Log(report.TotalStat.Idle)
+		t.Log(report.TotalStat.System)
+		t.Log(report.TotalStat.User)
+		assert.NoError(t, err)
+		assert.NotNil(t, report.Stat)
+		assert.NotNil(t, report.Usage)
+		time.Sleep(1 * time.Second)
+	}
 
-	assert.NoError(t, err)
-	assert.NotNil(t, report.Stat)
-	assert.NotNil(t, report.Usage)
 }
 
 func TestQueryCpuInfoWin(t *testing.T) {

@@ -10,201 +10,94 @@
 package sidecar
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
-	"text/template"
 	"time"
 
 	"github.com/pkg/errors"
 	"k8s.io/client-go/rest"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-type Config struct {
-	ConfigPath    string    `yaml:"config_path"`
-	PidPath       string    `yaml:"pid_path"`
-	Kubconfig     string    `yaml:"kubeconfig"`
-	ApiServerHost string    `yaml:"apiserver_host"`
-	Tls           TlsConfig `yaml:"tls"`
-}
-
-type TlsConfig struct {
-	Insecure bool   `yaml:"insecure"`
-	CertFile string `yaml:"cert_file"`
-	KeyFile  string `yaml:"key_file"`
-	CAFile   string `yaml:"ca_file"`
-}
-
 type Sidecar struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	watcher *Watcher
-	config  *Config
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	config *Config
+	sm     *secretManager
 }
 
 func New(ctx context.Context, config *Config) (*Sidecar, error) {
 	if config == nil {
 		return nil, errors.New("nil config")
 	}
+	logger.Infof("sidecar configs: %+v", config)
 
-	if err := os.Setenv("KUBECONFIG", config.Kubconfig); err != nil {
+	if err := os.Setenv("KUBECONFIG", config.KubConfig); err != nil {
 		return nil, err
 	}
 
 	tlsConf := &rest.TLSClientConfig{
-		Insecure: config.Tls.Insecure,
-		CertFile: config.Tls.CertFile,
-		KeyFile:  config.Tls.KeyFile,
-		CAFile:   config.Tls.CAFile,
+		Insecure: config.TLS.Insecure,
+		CertFile: config.TLS.CertFile,
+		KeyFile:  config.TLS.KeyFile,
+		CAFile:   config.TLS.CAFile,
 	}
-	client, err := k8sutils.NewBKClient(config.ApiServerHost, tlsConf)
+
+	client, err := k8sutils.NewK8SClient(config.ApiServerHost, tlsConf)
 	if err != nil {
 		return nil, err
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
 	return &Sidecar{
-		ctx:     ctx,
-		cancel:  cancel,
-		watcher: newWatcher(ctx, client),
-		config:  config,
+		ctx:    ctx,
+		cancel: cancel,
+		sm:     newSecretManager(ctx, config.Secret, client),
+		config: config,
 	}, nil
 }
 
-const privilegedFile = "privileged.conf"
-
-const templatePrivileged = `
-type: "privileged"
-processor:
-  - name: "token_checker/fixed"
-    config:
-      type: "fixed"
-      fixed_token: {{ .Token }}
-      traces_dataid: {{ .TracesDataID }}
-      metrics_dataid: {{ .MetricsDataID }}
-      logs_dataid: {{ .LogsDataID }}
-      profiles_dataid: {{ .ProfilesDataID }}
-      biz_id: {{ .BizID }}
-      app_name: {{ .AppName }}
-`
-
-type privilegedConfig struct {
-	Token          string
-	TracesDataID   int
-	MetricsDataID  int
-	LogsDataID     int
-	ProfilesDataID int
-	BizID          int32
-	AppName        string
-}
-
 func (s *Sidecar) Start() error {
-	if err := s.watcher.Start(); err != nil {
+	if err := s.sm.Start(); err != nil {
 		return err
 	}
 
-	ticker := time.NewTicker(time.Second * 5)
-	defer ticker.Stop()
+	smTimer := time.NewTimer(time.Hour)
+	smTimer.Stop()
 
 	for {
 		select {
 		case <-s.ctx.Done():
 			return nil
 
-		case <-ticker.C:
-			err := s.updatePrivilegedConfigFile()
+		case cf := <-s.sm.Watch():
+			err := s.handleChildConfigFiles(cf)
 			if err != nil {
-				logger.Errorf("failed to update privileged config: %v", err)
+				logger.Errorf("%s child config (%s) failed: %v", cf.action, cf.name, err)
+			}
+			smTimer.Reset(time.Second * 5)
+
+		case <-smTimer.C: // 信号收敛
+			if err := s.sendReloadSignal(); err != nil {
+				logger.Errorf("child config changed, but reload failed: %v", err)
 			}
 		}
 	}
 }
 
 func (s *Sidecar) Stop() {
-	s.cancel()
+	s.sm.Stop()
 }
 
-func (s *Sidecar) getPrivilegedConfig() privilegedConfig {
-	ids := s.watcher.DataIDs()
-
-	var config privilegedConfig
-	for _, id := range ids {
-		if id.Token != "" {
-			config.Token = id.Token
-		}
-
-		if id.BizID != 0 {
-			config.BizID = id.BizID
-		}
-
-		if id.AppName != "" {
-			config.AppName = id.AppName
-		}
-		switch id.Type {
-		case define.RecordTraces.S():
-			config.TracesDataID = id.DataID
-		case define.RecordMetrics.S():
-			config.MetricsDataID = id.DataID
-		case define.RecordLogs.S():
-			config.LogsDataID = id.DataID
-		case define.RecordProfiles.S():
-			config.ProfilesDataID = id.DataID
-		}
-	}
-	return config
-}
-
-func (s *Sidecar) updatePrivilegedConfigFile() error {
-	path := filepath.Join(s.config.ConfigPath, privilegedFile)
-	currConfig := s.getPrivilegedConfig()
-
-	// 如果 dataid 被删除则且配置文件存在需要把配置文件删除
-	var empty privilegedConfig
-	if currConfig == empty {
-		if utils.PathExist(path) {
-			logger.Infof("remove privileged config file (%s)", path)
-			return os.Remove(path)
-		}
-		return nil
-	}
-
-	// 生成新配置文件内容
-	tmpl, err := template.New("Privileged").Parse(templatePrivileged)
-	if err != nil {
-		return err
-	}
-	buf := &bytes.Buffer{}
-	if err := tmpl.Execute(buf, currConfig); err != nil {
-		return err
-	}
-
-	// 判断是否需要更新配置文件
-	b, _ := os.ReadFile(path)
-	if bytes.Equal(b, buf.Bytes()) {
-		return nil
-	}
-
-	logger.Infof("create or update privileged config file (%s)", path)
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(buf.Bytes())
-	if err != nil {
-		return err
-	}
-
-	// 最后一步通知 collector reload
-	return s.sendReloadSignal()
+func (s *Sidecar) realPath(p string) string {
+	return filepath.Join(s.config.ConfigPath, p)
 }
 
 func (s *Sidecar) sendReloadSignal() error {
@@ -224,7 +117,7 @@ func (s *Sidecar) sendReloadSignal() error {
 	}
 
 	if err = process.Signal(syscall.SIGUSR1); err != nil {
-		return errors.Wrap(err, "publish signal failed")
+		return errors.Wrap(err, "send reload signal failed")
 	}
 	logger.Infof("reload finished, pid=%d", pid)
 	return nil

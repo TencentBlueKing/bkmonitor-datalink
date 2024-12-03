@@ -38,7 +38,13 @@ type TsDBV2 struct {
 	MetricName        string   `json:"metric_name"`
 	ExpandMetricNames []string `json:"expand_metric_names"`
 	// timeField
-	TimeField metadata.TimeField
+	TimeField metadata.TimeField `json:"time_field"`
+	// NeedAddTime
+	NeedAddTime bool `json:"need_add_time"`
+
+	// SourceType 数据来源
+	SourceType  string `json:"source_type"`
+	StorageType string `json:"storage_type"`
 }
 
 func (z *TsDBV2) IsSplit() bool {

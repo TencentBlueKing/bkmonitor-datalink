@@ -30,6 +30,7 @@ type MetricOption func(options *MetricOptions)
 type MetricOptions struct {
 	enabledProfile bool
 	profileAddress string
+	profileToken   string
 	profileAppIdx  string
 
 	reportInterval time.Duration
@@ -52,6 +53,13 @@ func ProfileAddress(h string) MetricOption {
 	}
 }
 
+// ProfileToken profile report token
+func ProfileToken(t string) MetricOption {
+	return func(options *MetricOptions) {
+		options.profileToken = t
+	}
+}
+
 // ProfileAppIdx app name of profile
 func ProfileAppIdx(h string) MetricOption {
 	return func(options *MetricOptions) {
@@ -60,7 +68,6 @@ func ProfileAppIdx(h string) MetricOption {
 			return
 		}
 		defaultV := "apm_precalculate"
-		logger.Infof("profile appIdx is not specified, %s is used as the default", defaultV)
 		options.profileAppIdx = defaultV
 	}
 }
@@ -82,12 +89,12 @@ func (r *ProfileCollector) StartReport() {
 }
 
 func (r *ProfileCollector) startProfiling(dataId, appIdx string) {
-
-	n := fmt.Sprintf("apm_precalculate-%s", appIdx)
+	appName := fmt.Sprintf("apm_precalculate-%s", appIdx)
 	profiler, err := pyroscope.Start(pyroscope.Config{
-		ApplicationName: n,
+		ApplicationName: appName,
 		ServerAddress:   r.config.profileAddress,
 		Logger:          apmLogger,
+		AuthToken:       r.config.profileToken,
 		Tags:            map[string]string{"dataId": dataId},
 		ProfileTypes: []pyroscope.ProfileType{
 			// these profile types are enabled by default:
@@ -110,7 +117,7 @@ func (r *ProfileCollector) startProfiling(dataId, appIdx string) {
 		apmLogger.Errorf("Start pyroscope failed, profile data not be reported, error: %s", err)
 		return
 	}
-	apmLogger.Infof("Start profiling at %s(name: %s)", r.config.profileAddress, n)
+	apmLogger.Infof("Start profiling at %s(name: %s)", r.config.profileAddress, appName)
 
 	for {
 		select {

@@ -18,9 +18,9 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/licensecache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/licensechecker/licensecache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -54,12 +54,14 @@ func NewFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 
 func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*licenseChecker, error) {
 	configs := confengine.NewTierConfig()
+	cacheMgrs := confengine.NewTierConfig()
 
 	var c Config
 	if err := mapstructure.Decode(conf, &c); err != nil {
 		return nil, err
 	}
 	configs.SetGlobal(c)
+	cacheMgrs.SetGlobal(licensecache.NewManager())
 
 	for _, custom := range customized {
 		var cfg Config
@@ -68,17 +70,20 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 			continue
 		}
 		configs.Set(custom.Token, custom.Type, custom.ID, cfg)
+		cacheMgrs.Set(custom.Token, custom.Type, custom.ID, licensecache.NewManager())
 	}
 
 	return &licenseChecker{
 		CommonProcessor: processor.NewCommonProcessor(conf, customized),
 		configs:         configs,
+		cacheMgrs:       cacheMgrs,
 	}, nil
 }
 
 type licenseChecker struct {
 	processor.CommonProcessor
-	configs *confengine.TierConfig // type: Config
+	configs   *confengine.TierConfig // type: Config
+	cacheMgrs *confengine.TierConfig // type: *licensecache.Manager
 }
 
 func (p *licenseChecker) Name() string {
@@ -100,8 +105,38 @@ func (p *licenseChecker) Reload(config map[string]interface{}, customized []proc
 		return
 	}
 
+	equal := processor.DiffMainConfig(p.MainConfig(), config)
+	if equal {
+		f.cacheMgrs.GetGlobal().(*licensecache.Manager).Clean()
+	} else {
+		p.cacheMgrs.GetGlobal().(*licensecache.Manager).Clean()
+		p.cacheMgrs.SetGlobal(f.cacheMgrs.GetGlobal())
+	}
+
+	diffRet := processor.DiffCustomizedConfig(p.SubConfigs(), customized)
+	for _, obj := range diffRet.Keep {
+		f.cacheMgrs.Get(obj.Token, obj.Type, obj.ID).(*licensecache.Manager).Clean()
+	}
+
+	for _, obj := range diffRet.Updated {
+		p.cacheMgrs.Get(obj.Token, obj.Type, obj.ID).(*licensecache.Manager).Clean()
+		newCacheMgr := f.cacheMgrs.Get(obj.Token, obj.Type, obj.ID)
+		p.cacheMgrs.Set(obj.Token, obj.Type, obj.ID, newCacheMgr)
+	}
+
+	for _, obj := range diffRet.Deleted {
+		p.cacheMgrs.Get(obj.Token, obj.Type, obj.ID).(*licensecache.Manager).Clean()
+		p.cacheMgrs.Del(obj.Token, obj.Type, obj.ID)
+	}
+
 	p.CommonProcessor = f.CommonProcessor
 	p.configs = f.configs
+}
+
+func (p *licenseChecker) Clean() {
+	for _, obj := range p.cacheMgrs.All() {
+		obj.(*licensecache.Manager).Clean()
+	}
 }
 
 func (p *licenseChecker) Process(record *define.Record) (*define.Record, error) {
@@ -120,6 +155,7 @@ func (p *licenseChecker) processTraces(record *define.Record) (*define.Record, e
 
 	token := record.Token.Original
 	conf := p.configs.GetByToken(token).(Config)
+	cacheMgr := p.cacheMgrs.GetByToken(token).(*licensecache.Manager)
 
 	// 如果是关闭 license 校验的情况下 直接放行
 	if !conf.Enabled {
@@ -134,14 +170,12 @@ func (p *licenseChecker) processTraces(record *define.Record) (*define.Record, e
 	}
 
 	instance := val.AsString()
-	pass, err := processLicenseStatus(checkStatus(conf, token, instance))
+	pass, err := processLicenseStatus(checkStatus(conf, token, instance, cacheMgr))
 	if !pass {
 		return nil, err
 	}
 
-	logger.Debugf("get or create new cacher, token=%v", token)
-	cacher := licensecache.GetOrCreateCacher(token)
-	cacher.Set(instance)
+	cacheMgr.GetOrCreate(token).Set(instance)
 	return nil, nil
 }
 
@@ -151,8 +185,8 @@ type statusInfo struct {
 	license Status
 }
 
-func checkStatus(conf Config, token, instance string) statusInfo {
-	agentStatus, nodeStatus := checkAgentNodeStatus(conf, token, instance)
+func checkStatus(conf Config, token, instance string, cacheMgr *licensecache.Manager) statusInfo {
+	agentStatus, nodeStatus := checkAgentNodeStatus(conf, token, instance, cacheMgr)
 	licenseStatus := checkLicenseStatus(conf)
 	return statusInfo{
 		agent:   agentStatus,
@@ -174,14 +208,14 @@ func checkLicenseStatus(conf Config) Status {
 	return statusLicenseExpire
 }
 
-func checkAgentNodeStatus(conf Config, token, instance string) (Status, Status) {
+func checkAgentNodeStatus(conf Config, token, instance string, cacheMgr *licensecache.Manager) (Status, Status) {
 	agentStatus := statusAgentOld
 	agentNodeNum := 0
 
-	cacher := licensecache.GetCacher(token)
-	if cacher != nil {
-		agentNodeNum = cacher.Count()
-		if !cacher.Exist(instance) {
+	cache := cacheMgr.Get(token)
+	if cache != nil {
+		agentNodeNum = cache.Count()
+		if !cache.Exist(instance) {
 			agentStatus = statusAgentNew
 		}
 	} else {

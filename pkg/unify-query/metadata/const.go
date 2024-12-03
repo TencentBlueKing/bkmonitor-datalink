@@ -21,6 +21,9 @@ const (
 	QueryParamsKey        = "query_params"
 	QueryReferenceKey     = "query_reference"
 	QueryClusterMetricKey = "query_cluster_metric"
+	JwtPayLoadKey         = "jwt_payload"
+
+	PromDataFormatKey = "prom_data_format"
 
 	ExceedsMaximumLimit  = "EXCEEDS_MAXIMUM_LIMIT"
 	ExceedsMaximumSlimit = "EXCEEDS_MAXIMUM_SLIMIT"
@@ -28,4 +31,6 @@ const (
 	SpaceIsNotExists             = "SPACE_IS_NOT_EXISTS"
 	SpaceTableIDFieldIsNotExists = "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"
 	TableIDProxyISNotExists      = "TABLE_ID_PROXY_IS_NOT_EXISTS"
+
+	QueryRawError = "QUERY_RAW_ERROR"
 )

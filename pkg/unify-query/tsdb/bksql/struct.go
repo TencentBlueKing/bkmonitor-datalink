@@ -10,11 +10,7 @@
 package bksql
 
 const (
-	QueryAsync = "query_async"
-	QuerySync  = "query_sync"
-
-	BkUserName = "admin"
-	TSpider    = "tspider"
+	TSpider = "tspider"
 
 	StatusOK     = "00"
 	StatusFailed = "-1"
@@ -27,11 +23,8 @@ const (
 )
 
 type Params struct {
-	SQL                        string `json:"sql"`
-	BkdataAuthenticationMethod string `json:"bkdata_authentication_method"`
-	BkAppCode                  string `json:"bk_app_code"`
-	PreferStorage              string `json:"prefer_storage"`
-	BkdataDataToken            string `json:"bkdata_data_token"`
+	SQL           string `json:"sql"`
+	PreferStorage string `json:"prefer_storage"`
 }
 
 type Result struct {
@@ -59,10 +52,6 @@ type QueryAsyncData struct {
 }
 
 type QuerySyncResultData struct {
-	ResultTableScanRange struct {
-		BcsLolRestriction struct {
-		} `json:"132_bcs_lol_restriction"`
-	} `json:"result_table_scan_range"`
 	Cluster            string `json:"cluster"`
 	TraceId            string `json:"trace_id"`
 	TotalRecords       int    `json:"totalRecords"`

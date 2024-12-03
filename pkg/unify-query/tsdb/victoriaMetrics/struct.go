@@ -14,27 +14,20 @@ import (
 	"strconv"
 )
 
-type Params struct {
-	SQL                        string `json:"sql"`
-	BkdataAuthenticationMethod string `json:"bkdata_authentication_method"`
-	BkAppCode                  string `json:"bk_app_code"`
-	PreferStorage              string `json:"prefer_storage"`
-	BkdataDataToken            string `json:"bkdata_data_token"`
-}
-
 type ParamsQueryRange struct {
 	InfluxCompatible bool   `json:"influx_compatible"`
 	UseNativeOr      bool   `json:"use_native_or"`
 	APIType          string `json:"api_type"`
 	ClusterName      string `json:"cluster_name"`
 	APIParams        struct {
-		Query string `json:"query"`
-		Start int64  `json:"start"`
-		End   int64  `json:"end"`
-		Step  int64  `json:"step"`
+		Query   string `json:"query"`
+		Start   int64  `json:"start"`
+		End     int64  `json:"end"`
+		Step    int64  `json:"step"`
+		NoCache int    `json:"nocache"`
 	} `json:"api_params"`
-	ResultTableList       []string          `json:"result_table_list"`
-	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
+	ResultTableList       []string          `json:"result_table_list,omitempty"`
+	MetricFilterCondition map[string]string `json:"metric_filter_condition,omitempty"`
 }
 
 type ParamsQuery struct {
@@ -47,8 +40,8 @@ type ParamsQuery struct {
 		Time    int64  `json:"time"`
 		Timeout int64  `json:"timeout"`
 	} `json:"api_params"`
-	ResultTableList       []string          `json:"result_table_list"`
-	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
+	ResultTableList       []string          `json:"result_table_list,omitempty"`
+	MetricFilterCondition map[string]string `json:"metric_filter_condition,omitempty"`
 }
 
 type ParamsSeries struct {
@@ -60,9 +53,10 @@ type ParamsSeries struct {
 		Match string `json:"match[]"`
 		Start int64  `json:"start"`
 		End   int64  `json:"end"`
+		Limit int    `json:"limit"`
 	} `json:"api_params"`
-	ResultTableList       []string          `json:"result_table_list"`
-	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
+	ResultTableList       []string          `json:"result_table_list,omitempty"`
+	MetricFilterCondition map[string]string `json:"metric_filter_condition,omitempty"`
 }
 
 type ParamsLabelName struct {
@@ -75,8 +69,8 @@ type ParamsLabelName struct {
 		Start int64  `json:"start"`
 		End   int64  `json:"end"`
 	} `json:"api_params"`
-	ResultTableList       []string          `json:"result_table_list"`
-	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
+	ResultTableList       []string          `json:"result_table_list,omitempty"`
+	MetricFilterCondition map[string]string `json:"metric_filter_condition,omitempty"`
 }
 
 type ParamsLabelValues struct {
@@ -86,9 +80,12 @@ type ParamsLabelValues struct {
 	ClusterName      string `json:"cluster_name"`
 	APIParams        struct {
 		Label string `json:"label"`
+		Match string `json:"match[]"`
+		Start int64  `json:"start"`
+		End   int64  `json:"end"`
+		Limit int    `json:"limit"`
 	} `json:"api_params"`
-	ResultTableList       []string          `json:"result_table_list"`
-	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
+	ResultTableList []string `json:"result_table_list,omitempty"`
 }
 
 type Metric map[string]string

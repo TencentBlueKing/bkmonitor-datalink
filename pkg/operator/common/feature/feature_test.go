@@ -46,3 +46,28 @@ func TestParseSelector(t *testing.T) {
 		assert.Equal(t, c.output, parseSelector(c.input))
 	}
 }
+
+func TestParseLabelJoinMatcher(t *testing.T) {
+	cases := []struct {
+		input       string
+		annotations []string
+		labels      []string
+	}{
+		{
+			input:       "Pod://annotation:biz.service,annotation:biz.set,label:zone.key1,label:zone.key2",
+			annotations: []string{"biz.service", "biz.set"},
+			labels:      []string{"zone.key1", "zone.key2"},
+		},
+		{
+			input:       "Pod:// annotation: biz.service, annotation: biz.set, label: zone.key1, label: zone.key2",
+			annotations: []string{"biz.service", "biz.set"},
+			labels:      []string{"zone.key1", "zone.key2"},
+		},
+	}
+
+	for _, c := range cases {
+		matcher := parseLabelJoinMatcher(c.input)
+		assert.Equal(t, c.annotations, matcher.Annotations)
+		assert.Equal(t, c.labels, matcher.Labels)
+	}
+}

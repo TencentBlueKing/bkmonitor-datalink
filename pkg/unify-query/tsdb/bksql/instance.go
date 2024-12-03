@@ -22,24 +22,29 @@ import (
 	"github.com/prometheus/prometheus/storage/remote"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
 type Instance struct {
-	Ctx context.Context
+	ctx context.Context
 
-	Timeout      time.Duration
-	IntervalTime time.Duration
+	querySyncUrl  string
+	queryAsyncUrl string
 
-	Limit     int
-	Tolerance int
+	headers map[string]string
 
-	Client *Client
+	timeout      time.Duration
+	intervalTime time.Duration
+
+	maxLimit  int
+	tolerance int
+
+	client *Client
 }
 
 func (i *Instance) QueryReference(ctx context.Context, query *metadata.Query, start int64, end int64) (*prompb.QueryResult, error) {
@@ -48,6 +53,35 @@ func (i *Instance) QueryReference(ctx context.Context, query *metadata.Query, st
 }
 
 var _ tsdb.Instance = (*Instance)(nil)
+
+type Options struct {
+	Address string
+	Headers map[string]string
+
+	Timeout   time.Duration
+	MaxLimit  int
+	Tolerance int
+
+	Curl curl.Curl
+}
+
+func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
+	if opt.Address == "" {
+		return nil, fmt.Errorf("address is empty")
+	}
+	instance := &Instance{
+		ctx:       ctx,
+		timeout:   opt.Timeout,
+		maxLimit:  opt.MaxLimit,
+		tolerance: opt.Tolerance,
+		client:    (&Client{}).WithUrl(opt.Address).WithHeader(opt.Headers).WithCurl(opt.Curl),
+	}
+	return instance, nil
+}
+
+func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
+	return ""
+}
 
 func (i *Instance) checkResult(res *Result) error {
 	if !res.Result {
@@ -77,112 +111,26 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string, span *trace.Span) (
 		err error
 	)
 
-	log.Infof(ctx, "%s: %s", i.GetInstanceType(), sql)
+	log.Infof(ctx, "%s: %s", i.InstanceType(), sql)
 	span.Set("query-sql", sql)
 
-	ctx, cancel := context.WithTimeout(ctx, i.Timeout)
+	ctx, cancel := context.WithTimeout(ctx, i.timeout)
 	defer cancel()
 
 	// 发起异步查询
-	res := i.Client.QuerySync(ctx, sql, span)
+	res := i.client.QuerySync(ctx, sql, span)
 	if err = i.checkResult(res); err != nil {
 		return data, err
 	}
 
-	span.Set("query-timeout", i.Timeout.String())
-	span.Set("query-interval-time", i.IntervalTime.String())
+	span.Set("query-timeout", i.timeout.String())
+	span.Set("query-internal-time", i.intervalTime.String())
 
 	if data, ok = res.Data.(*QuerySyncResultData); !ok {
 		return data, fmt.Errorf("queryAsyncResult type is error: %T", res.Data)
 	}
 
 	return data, nil
-}
-
-func (i *Instance) queryAsync(ctx context.Context, sql string, span *trace.Span) (*QueryAsyncResultData, error) {
-	var (
-		data       *QueryAsyncData
-		stateData  *QueryAsyncStateData
-		resultData *QueryAsyncResultData
-
-		startAnaylize time.Time
-
-		ok  bool
-		err error
-	)
-
-	log.Infof(ctx, "%s: %s", i.GetInstanceType(), sql)
-	span.Set("query-sql", sql)
-
-	ctx, cancel := context.WithTimeout(ctx, i.Timeout)
-	defer cancel()
-
-	user := metadata.GetUser(ctx)
-	startAnaylize = time.Now()
-
-	// 发起异步查询
-	res := i.Client.QueryAsync(ctx, sql, span)
-	if err = i.checkResult(res); err != nil {
-		return resultData, err
-	}
-
-	queryCost := time.Since(startAnaylize)
-	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
-	)
-
-	if data, ok = res.Data.(*QueryAsyncData); !ok {
-		return resultData, fmt.Errorf("queryAsyncData type is error: %T", res.Data)
-	}
-
-	if data == nil || data.QueryId == "" {
-		return resultData, fmt.Errorf("queryAsyncData queryID is emtpy: %+v", data)
-	}
-
-	span.Set("query-timeout", i.Timeout.String())
-	span.Set("query-interval-time", i.IntervalTime.String())
-	span.Set("data-query-id", data.QueryId)
-
-	err = func() error {
-		for {
-			select {
-			case <-ctx.Done():
-				return fmt.Errorf("queryAsyncState %s timeout %s", data.QueryId, i.Timeout.String())
-			default:
-				stateRes := i.Client.QueryAsyncState(ctx, data.QueryId, span)
-				if err = i.checkResult(res); err != nil {
-					return err
-				}
-				if stateData, ok = stateRes.Data.(*QueryAsyncStateData); !ok {
-					return fmt.Errorf("queryAsyncState type is error: %T", res.Data)
-				}
-				switch stateData.State {
-				case RUNNING:
-					time.Sleep(i.IntervalTime)
-					continue
-				case FINISHED:
-					return nil
-				default:
-					return fmt.Errorf("queryAsyncState error %+v", stateData)
-				}
-			}
-		}
-	}()
-
-	if err != nil {
-		return resultData, err
-	}
-
-	resultRes := i.Client.QueryAsyncResult(ctx, data.QueryId, span)
-	if err = i.checkResult(res); err != nil {
-		return resultData, err
-	}
-
-	if resultData, ok = resultRes.Data.(*QueryAsyncResultData); !ok {
-		return resultData, fmt.Errorf("queryAsyncResult type is error: %T", res.Data)
-	}
-
-	return resultData, nil
 }
 
 func (i *Instance) dims(dims []string, field string) []string {
@@ -202,7 +150,7 @@ func (i *Instance) dims(dims []string, field string) []string {
 	return dimensions
 }
 
-func (i *Instance) formatData(start time.Time, field string, keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
+func (i *Instance) formatData(ctx context.Context, start time.Time, query *metadata.Query, keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
 	res := &prompb.QueryResult{}
 
 	if len(list) == 0 {
@@ -214,7 +162,10 @@ func (i *Instance) formatData(start time.Time, field string, keys []string, list
 	}
 
 	// 获取该指标的维度 key
-	dimensions := i.dims(keys, field)
+	dimensions := i.dims(keys, query.Field)
+
+	// 获取 metricLabel
+	metricLabel := query.MetricLabels(ctx)
 
 	tsMap := make(map[string]*prompb.TimeSeries, 0)
 	for _, d := range list {
@@ -267,8 +218,7 @@ func (i *Instance) formatData(start time.Time, field string, keys []string, list
 			return res, fmt.Errorf("%s type is error %T, %v", value, vvDouble, vvDouble)
 		}
 
-		var buf strings.Builder
-		lbl := make([]prompb.Label, 0, len(dimensions))
+		lbl := make([]prompb.Label, 0)
 		// 获取维度信息
 		for _, dimName := range dimensions {
 			val, err := getValue(dimName, d)
@@ -276,11 +226,20 @@ func (i *Instance) formatData(start time.Time, field string, keys []string, list
 				return res, fmt.Errorf("dimensions %+v %s", dimensions, err.Error())
 			}
 
-			buf.WriteString(fmt.Sprintf("%s:%s,", dimName, val))
 			lbl = append(lbl, prompb.Label{
 				Name:  dimName,
 				Value: val,
 			})
+		}
+
+		// 如果是非时间聚合计算，则无需进行指标名的拼接作用
+		if metricLabel != nil {
+			lbl = append(lbl, *metricLabel)
+		}
+
+		var buf strings.Builder
+		for _, l := range lbl {
+			buf.WriteString(l.String())
 		}
 
 		// 同一个 series 进行合并分组
@@ -310,129 +269,16 @@ func (i *Instance) formatData(start time.Time, field string, keys []string, list
 func (i *Instance) table(query *metadata.Query) string {
 	table := fmt.Sprintf("`%s`", query.DB)
 	if query.Measurement != "" {
-		table += "." + query.Measurement
 	}
 	return table
 }
 
-// bkSql 构建查询语句
-func (i *Instance) bkSql(ctx context.Context, query *metadata.Query, start, end time.Time) (string, error) {
-	var (
-		selectList = make([]string, 0)
-		groupList  = make([]string, 0)
-		orderList  = make([]string, 0)
-
-		sqlBuilder strings.Builder
-		err        error
-	)
-
-	ctx, span := trace.NewSpan(ctx, "bksql-make-sqlBuilder")
-	defer span.End(&err)
-
-	maxLimit := i.Limit + i.Tolerance
-	limit := query.Size
-	if limit == 0 || limit > maxLimit {
-		limit = maxLimit
-	}
-
-	if len(query.Aggregates) > 1 {
-		return "", fmt.Errorf("bksql 不支持多函数聚合查询, %+v", query.Aggregates)
-	}
-
-	if len(query.Aggregates) == 1 {
-		agg := query.Aggregates[0]
-		if len(agg.Dimensions) > 0 {
-			for _, dim := range agg.Dimensions {
-				newDim := dim
-				if newDim != "*" {
-					newDim = fmt.Sprintf("`%s`", newDim)
-				}
-				groupList = append(groupList, newDim)
-				selectList = append(selectList, newDim)
-			}
-		}
-
-		selectList = append(selectList, fmt.Sprintf("%s(`%s`) AS `%s`", strings.ToUpper(agg.Name), query.Field, value))
-		if agg.Window > 0 && !agg.Without {
-			timeField := fmt.Sprintf("(`%s` - (`%s` %% %d))", dtEventTimeStamp, dtEventTimeStamp, agg.Window.Milliseconds())
-			groupList = append(groupList, timeField)
-			selectList = append(selectList, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
-			orderList = append(orderList, fmt.Sprintf("`%s` ASC", timeStamp))
-		}
-	} else {
-		selectList = append(selectList, "*")
-		selectList = append(selectList, fmt.Sprintf("`%s` AS `%s`", query.Field, value))
-		selectList = append(selectList, fmt.Sprintf("`%s` AS `%s`", dtEventTimeStamp, timeStamp))
-	}
-
-	sqlBuilder.WriteString("SELECT ")
-	sqlBuilder.WriteString(strings.Join(selectList, ", ") + " ")
-	sqlBuilder.WriteString("FROM " + i.table(query) + " ")
-	sqlBuilder.WriteString("WHERE " + fmt.Sprintf("`%s` >= %d AND `%s` < %d", dtEventTimeStamp, start.UnixMilli(), dtEventTimeStamp, end.UnixMilli()))
-	if query.BkSqlCondition != "" {
-		sqlBuilder.WriteString(" AND (" + query.BkSqlCondition + ")")
-	}
-	if len(groupList) > 0 {
-		sqlBuilder.WriteString(" GROUP BY " + strings.Join(groupList, ", "))
-	}
-	if len(orderList) > 0 {
-		sqlBuilder.WriteString(" ORDER BY " + strings.Join(orderList, ", "))
-	}
-	if limit > 0 {
-		sqlBuilder.WriteString(fmt.Sprintf(" LIMIT %d", limit))
-	}
-
-	return sqlBuilder.String(), nil
+// QueryRawData 直接查询原始返回
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
+	return 0, nil
 }
 
-func (i *Instance) query(
-	ctx context.Context,
-	query *metadata.Query,
-	start time.Time,
-	end time.Time,
-	step time.Duration,
-) (*prompb.QueryResult, error) {
-	var (
-		err error
-	)
-
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("es query error: %s", r)
-		}
-	}()
-
-	ctx, span := trace.NewSpan(ctx, "bk-sql-query")
-	defer span.End(&err)
-
-	if i.Client == nil {
-		return nil, fmt.Errorf("es client is nil")
-	}
-
-	if i.Limit > 0 {
-		maxLimit := i.Limit + i.Tolerance
-		// 如果不传 size，则取最大的限制值
-		if query.Size == 0 || query.Size > i.Limit {
-			query.Size = maxLimit
-		}
-	}
-
-	fact := NewQueryFactory(ctx, query).WithRangeTime(start, end, step)
-	err = fact.ParserQuery()
-	if err != nil {
-		return nil, fmt.Errorf("sql parser error: %v", err)
-	}
-
-	data, err := i.sqlQuery(ctx, fact.SQL(), span)
-	if err != nil {
-		return nil, err
-	}
-
-	qr, err := i.formatData(start, query.Field, data.SelectFieldsOrder, data.List)
-	return qr, err
-}
-
-func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
+func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	var (
 		err error
 	)
@@ -443,15 +289,17 @@ func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, e
 		return storage.ErrSeriesSet(fmt.Errorf("range time is error, start: %s, end: %s ", start, end))
 	}
 
-	if i.Limit > 0 {
-		maxLimit := i.Limit + i.Tolerance
+	if i.maxLimit > 0 {
+		maxLimit := i.maxLimit + i.tolerance
 		// 如果不传 size，则取最大的限制值
-		if query.Size == 0 || query.Size > i.Limit {
+		if query.Size == 0 || query.Size > i.maxLimit {
 			query.Size = maxLimit
 		}
 	}
 
-	sql, err := i.bkSql(ctx, query, start, end)
+	queryFactory := NewQueryFactory(ctx, query).WithRangeTime(start, end)
+
+	sql, err := queryFactory.SQL()
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
@@ -468,11 +316,11 @@ func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, e
 	span.Set("data-total-records", data.TotalRecords)
 	log.Infof(ctx, "total records: %d", data.TotalRecords)
 
-	if i.Limit > 0 && data.TotalRecords > i.Limit {
-		return storage.ErrSeriesSet(fmt.Errorf("记录数(%d)超过限制(%d)", data.TotalRecords, i.Limit))
+	if i.maxLimit > 0 && data.TotalRecords > i.maxLimit {
+		return storage.ErrSeriesSet(fmt.Errorf("记录数(%d)超过限制(%d)", data.TotalRecords, i.maxLimit))
 	}
 
-	qr, err := i.formatData(start, query.Field, data.SelectFieldsOrder, data.List)
+	qr, err := i.formatData(ctx, start, query, data.SelectFieldsOrder, data.List)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
@@ -480,12 +328,12 @@ func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, e
 	return remote.FromQueryResult(true, qr)
 }
 
-func (i *Instance) QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i *Instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
+func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
 	//TODO implement me
 	panic("implement me")
 }
@@ -495,7 +343,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 	panic("implement me")
 }
 
-func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
 	var (
 		err error
 	)
@@ -518,7 +366,7 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 	return lbs, err
 }
 
-func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error) {
 	var (
 		err error
 
@@ -562,12 +410,22 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 	return lbs, err
 }
 
-func (i *Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
+func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i *Instance) GetInstanceType() string {
+func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) InstanceType() string {
 	return consul.BkSqlStorageType
 }
 

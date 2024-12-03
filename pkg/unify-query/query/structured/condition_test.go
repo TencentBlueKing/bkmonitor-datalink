@@ -19,16 +19,18 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 // TestConditionListFieldAnalysis
 func TestConditionListFieldAnalysis(t *testing.T) {
-	log.InitTestLogger()
+	mock.Init()
 
 	var testCases = []struct {
 		condition Conditions
 		result    []int
-		vm        string
+		vm        metadata.VmCondition
 		sql       string
 		err       error
 	}{
@@ -64,7 +66,7 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				ConditionList: []string{"and"},
 			},
 			result: []int{2},
-			sql:    `(test1 = 'abc' and test1 != 'abc')`,
+			sql:    "(`test1` = 'abc' and `test1` != 'abc')",
 			vm:     `test1="abc", test1!="abc", result_table_id="table_id"`,
 		},
 		// 简单的or拼接
@@ -82,7 +84,7 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				ConditionList: []string{"or"},
 			},
 			result: []int{1, 1},
-			sql:    `test1 REGEXP 'abc' or (test1 NOT REGEXP 'b' and test1 NOT REGEXP 'c' and test1 NOT REGEXP 'd')`,
+			sql:    "`test1` REGEXP 'abc' or (`test1` NOT REGEXP 'b' and `test1` NOT REGEXP 'c' and `test1` NOT REGEXP 'd')",
 			vm:     `test1=~"abc", result_table_id="table_id" or test1!~"b|c|d", result_table_id="table_id"`,
 		},
 		// and和or混合
@@ -104,8 +106,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				ConditionList: []string{"and", "or"},
 			},
 			result: []int{2, 1},
+			sql:    "(`test1` = 'abc' and (`test1` = 'abc' or `test1` = 'bcd')) or (`test1` = 'abc' or `test1` = 'ggg')",
 			vm:     `test1="abc", test1=~"^(abc|bcd)$", result_table_id="table_id" or test1=~"^(abc|ggg)$", result_table_id="table_id"`,
-			sql:    `(test1 = 'abc' and (test1 = 'abc' or test1 = 'bcd')) or (test1 = 'abc' or test1 = 'ggg')`,
 		},
 		// and和or混合
 		{
@@ -126,8 +128,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				ConditionList: []string{"or", "and"},
 			},
 			result: []int{1, 2},
+			sql:    "`test1` = 'abc' or (`test1` = 'abc' and `test1` = 'abc')",
 			vm:     `test1="abc", result_table_id="table_id" or test1="abc", test1="abc", result_table_id="table_id"`,
-			sql:    `test1 = 'abc' or (test1 = 'abc' and test1 = 'abc')`,
 		},
 		{
 			condition: Conditions{
@@ -161,8 +163,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				ConditionList: []string{"and", "and", "and", "and"},
 			},
 			result: []int{5},
+			sql:    "(`job` = 'kube-state-metrics' and `namespace` != '' and `pod_name` != '' and (`bcs_cluster_id` REGEXP 'BCS-K8S-40822' or `bcs_cluster_id` REGEXP 'BCS-K8S-40839' or `bcs_cluster_id` REGEXP 'BCS-K8S-40840' or `bcs_cluster_id` REGEXP 'BCS-K8S-40989' or `bcs_cluster_id` REGEXP 'BCS-K8S-41105' or `bcs_cluster_id` REGEXP 'BCS-K8S-41106') and `container` != 'fluentd')",
 			vm:     `job="kube-state-metrics", namespace!="", pod_name!="", bcs_cluster_id=~"BCS-K8S-40822|BCS-K8S-40839|BCS-K8S-40840|BCS-K8S-40989|BCS-K8S-41105|BCS-K8S-41106", container!="fluentd", result_table_id="table_id"`,
-			sql:    `(job = 'kube-state-metrics' and namespace != '' and pod_name != '' and (bcs_cluster_id REGEXP 'BCS-K8S-40822' or bcs_cluster_id REGEXP 'BCS-K8S-40839' or bcs_cluster_id REGEXP 'BCS-K8S-40840' or bcs_cluster_id REGEXP 'BCS-K8S-40989' or bcs_cluster_id REGEXP 'BCS-K8S-41105' or bcs_cluster_id REGEXP 'BCS-K8S-41106') and container != 'fluentd')`,
 		},
 		{
 			condition: Conditions{
@@ -175,8 +177,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				},
 			},
 			result: []int{1},
+			sql:    "`p1` = '{\"moduleType\":3}'",
 			vm:     `p1="{\"moduleType\":3}", result_table_id="table_id"`,
-			sql:    `p1 = '{"moduleType":3}'`,
 		},
 	}
 
@@ -202,6 +204,227 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 
 		})
 	}
+}
+
+func TestConditionCompare(t *testing.T) {
+	testCases := map[string]struct {
+		condition Conditions
+		expected  bool
+	}{
+		"cluster two or not reg one": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionNotRegEqual,
+						Value:         []string{`k8s`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-2`},
+					},
+				},
+				ConditionList: []string{"or"},
+			},
+			expected: false,
+		},
+		"cluster two or not reg": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionNotRegEqual,
+						Value:         []string{`k8s`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-1`},
+					},
+				},
+				ConditionList: []string{"or"},
+			},
+			expected: true,
+		},
+		"cluster one contains": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-2`},
+					},
+				},
+			},
+			expected: false,
+		},
+		"cluster two or not contains": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionNotContains,
+						Value:         []string{`k8s-1`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-2`},
+					},
+				},
+				ConditionList: []string{"or"},
+			},
+			expected: false,
+		},
+		"cluster two or req": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionRegEqual,
+						Value:         []string{`k8s`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-2`},
+					},
+				},
+				ConditionList: []string{"or"},
+			},
+			expected: true,
+		},
+		"cluster two or contains": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-1`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-2`},
+					},
+				},
+				ConditionList: []string{"or"},
+			},
+			expected: true,
+		},
+		"cluster two and contains": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-1`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-2`},
+					},
+				},
+				ConditionList: []string{"and"},
+			},
+			expected: false,
+		},
+		"cluster two or contains multi values": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-1`, `k8s-2`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-3`},
+					},
+				},
+				ConditionList: []string{"or"},
+			},
+			expected: true,
+		},
+		"cluster three or contains multi values": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-1`, `k8s-2`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-3`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-1`},
+					},
+				},
+				ConditionList: []string{"and", "or"},
+			},
+			expected: true,
+		},
+		"cluster and ns two or contains multi values": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-1`, `k8s-2`},
+					},
+					{
+						DimensionName: "namespace",
+						Operator:      ConditionContains,
+						Value:         []string{`ns-1`},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-3`},
+					},
+					{
+						DimensionName: "namespace",
+						Operator:      ConditionContains,
+						Value:         []string{`ns-2`},
+					},
+				},
+				ConditionList: []string{"and", "or", "and"},
+			},
+			expected: true,
+		},
+		"cluster with empty": {
+			condition: Conditions{},
+			expected:  true,
+		},
+		"cluster with nil": {
+			expected: true,
+		},
+	}
+
+	checkCluster := "k8s-1"
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			allConditions, err := c.condition.AnalysisConditions()
+			if err != nil {
+				panic(err)
+			}
+			res, err := allConditions.Compare(ClusterID, checkCluster)
+			if err != nil {
+				panic(err)
+			}
+			assert.Equal(t, c.expected, res)
+		})
+	}
+
 }
 
 // TestConditionFieldOperatorToProm
@@ -523,7 +746,7 @@ func TestConditionField_LabelMatcherConvert(t *testing.T) {
 func TestAllConditions_VMString(t *testing.T) {
 	for i, c := range []struct {
 		allConditions AllConditions
-		vmCondition   string
+		vmCondition   metadata.VmCondition
 		isRegex       bool
 		metric        string
 		rt            string

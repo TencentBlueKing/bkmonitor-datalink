@@ -32,71 +32,55 @@ func TestQsToDsl(t *testing.T) {
 	}{
 		{
 			q:        `log: "ERROR MSG"`,
-			expected: `{"match_phrase":{"log":{"query":"ERROR MSG"}}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"query":"log: \"ERROR MSG\""}}`,
 		},
 		{
 			q:        `quick brown fox`,
-			expected: `{"bool":{"must":[{"query_string":{"query":"quick"}},{"bool":{"must":[{"query_string":{"query":"brown"}},{"query_string":{"query":"fox"}}]}}]}}`,
-		},
-		{
-			q:        `quick AND brown`,
-			expected: `{"bool":{"must":[{"query_string":{"query":"quick"}},{"query_string":{"query":"brown"}}]}}`,
-		},
-		{
-			q:        `age:[18 TO 30]`,
-			expected: `{"range":{"age":{"from":"18","include_lower":true,"include_upper":true,"to":"30"}}}`,
-		},
-		{
-			q:        `qu?ck br*wn`,
-			expected: `{"bool":{"must":[{"query_string":{"query":"qu?ck"}},{"query_string":{"query":"br*wn"}}]}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"query":"quick brown fox"}}`,
 		},
 		{
 			q:        `word.key: qu?ck`,
-			expected: `{"wildcard":{"word.key":{"value":"qu?ck"}}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"query":"word.key: qu?ck"}}`,
 		},
 		{
-			q:        `quick OR brown AND fox`,
-			expected: `{"bool":{"should":[{"query_string":{"query":"quick"}},{"bool":{"must":[{"query_string":{"query":"brown"}},{"query_string":{"query":"fox"}}]}}]}}`,
+			q:        "\"message queue conflict\"",
+			expected: `{"query_string":{"analyze_wildcard":true,"query":"\"message queue conflict\""}}`,
 		},
 		{
-			q:        `(key: quick OR key: brown) AND demo: fox`,
-			expected: `{"bool":{"must":[{"bool":{"should":[{"match_phrase":{"key":{"query":"quick"}}},{"match_phrase":{"key":{"query":"brown"}}}]}},{"match_phrase":{"demo":{"query":"fox"}}}]}}`,
+			q:        "\"message queue conflict\"",
+			expected: `{"query_string":{"analyze_wildcard":true,"query":"\"message queue conflict\""}}`,
 		},
 		{
-			q:        `nested.key:quick`,
-			expected: `{"nested":{"path":"nested","query":{"match_phrase":{"nested.key":{"query":"quick"}}}}}`,
+			q:        `nested.key: test AND demo`,
+			expected: `{"nested":{"path":"nested.key","query":{"bool":{"must":[{"match_phrase":{"nested.key":{"query":"test"}}},{"query_string":{"analyze_wildcard":true,"query":"\"demo\""}}]}}}}`,
 		},
 		{
-			q:        `title:quick`,
-			expected: `{"match_phrase":{"title":{"query":"quick"}}}`,
+			q:        `sync_spaces AND -keyword AND -BKLOGAPI`,
+			expected: `{"query_string":{"analyze_wildcard":true,"query":"sync_spaces AND -keyword AND -BKLOGAPI"}}`,
 		},
 		{
-			q:        `log: /data/bkee/bknodeman/nodeman/apps/backend/subscription/tasks.py`,
-			expected: `{"match_phrase":{"log":{"query":"/data/bkee/bknodeman/nodeman/apps/backend/subscription/tasks.py"}}}`,
+			q: `*`,
 		},
 		{
-			q:        `"1642903" AND NOT "get_proc_status_v2" AND NOT "list_service_instance_detail" AND NOT "list_hosts_without_biz"`,
-			expected: `{"bool":{"must":[{"query_string":{"query":"1642903"}},{"bool":{"must":[{"bool":{"must_not":{"query_string":{"query":"get_proc_status_v2"}}}},{"bool":{"must":[{"bool":{"must_not":{"query_string":{"query":"list_service_instance_detail"}}}},{"bool":{"must_not":{"query_string":{"query":"list_hosts_without_biz"}}}}]}}]}}]}}`,
-		},
-		{
-			q:   `"1642903" AND OR NOT "get_proc_status_v2"`,
-			err: fmt.Errorf("syntax error: unexpected tOR"),
+			q: ``,
 		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			qs := NewQueryString(c.q, func(s string) string {
 				if s == "nested.key" {
-					return "nested"
+					return s
 				}
 				return ""
 			})
 			query, err := qs.Parser()
 			if err == nil {
-				body, _ := query.Source()
-				bodyJson, _ := json.Marshal(body)
-				bodyString := string(bodyJson)
-				assert.Equal(t, c.expected, bodyString)
+				if query != nil {
+					body, _ := query.Source()
+					bodyJson, _ := json.Marshal(body)
+					bodyString := string(bodyJson)
+					assert.Equal(t, c.expected, bodyString)
+				}
 			} else {
 				assert.Equal(t, c.err, err)
 			}

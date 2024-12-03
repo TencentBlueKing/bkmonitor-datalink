@@ -16,6 +16,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
@@ -58,7 +59,7 @@ func (s HttpService) Write(w http.ResponseWriter, req *http.Request) {
 
 	start := time.Now()
 
-	token := define.TokenFromHttpRequest(req)
+	token := tokenparser.FromHttpRequest(req)
 	r := &define.Record{
 		RecordType:    define.RecordRemoteWrite,
 		RequestType:   define.RequestHttp,

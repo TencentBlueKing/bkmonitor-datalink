@@ -10,14 +10,19 @@
 package operator
 
 import (
+	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/scraper"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+)
+
+const (
+	defaultConcurrency = 16
 )
 
 type scrapeStats struct {
@@ -34,11 +39,68 @@ type scrapeStat struct {
 	Errors      int    `json:"errors"`
 }
 
+type scrapeAnalyze struct {
+	Metric string `json:"metric"`
+	Count  int    `json:"count"`
+	Sample string `json:"sample"`
+}
+
 func (s scrapeStat) ID() string {
 	return fmt.Sprintf("%s/%s", s.Namespace, s.MonitorName)
 }
 
-func (c *Operator) scrapeForce(namespace, monitor string) chan string {
+func parseMetricName(s string) string {
+	i := strings.Index(s, "{")
+	if i > 0 {
+		return strings.TrimSpace(s[:i])
+	}
+
+	parts := strings.Fields(s)
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		return strings.TrimSpace(part)
+	}
+	return ""
+}
+
+func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor string, workers int, topn int) []scrapeAnalyze {
+	ch := c.scrapeLines(ctx, namespace, monitor, workers)
+
+	stats := make(map[string]int)
+	sample := make(map[string]string)
+	for line := range ch {
+		s := parseMetricName(line)
+		if s != "" {
+			stats[s]++
+			sample[s] = line
+		}
+	}
+
+	ret := make([]scrapeAnalyze, 0, len(stats))
+	for k, v := range stats {
+		ret = append(ret, scrapeAnalyze{
+			Metric: k,
+			Count:  v,
+			Sample: sample[k],
+		})
+	}
+
+	sort.Slice(ret, func(i, j int) bool {
+		return ret[i].Count > ret[j].Count
+	})
+
+	if topn > 0 {
+		if len(ret) > topn {
+			return ret[:topn]
+		}
+	}
+
+	return ret
+}
+
+func (c *Operator) scrapeLines(ctx context.Context, namespace, monitor string, workers int) chan string {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -53,25 +115,35 @@ func (c *Operator) scrapeForce(namespace, monitor string) chan string {
 		}
 	}
 
-	out := make(chan string, 8)
+	out := make(chan string, defaultConcurrency)
 	if len(cfgs) == 0 {
-		out <- "warning: no monitor targets found"
+		out <- fmt.Sprintf("warning: no monitor targets found, namespace=%s, monitor=%s", namespace, monitor)
 		close(out)
 		return out
 	}
 
+	if workers <= 0 {
+		workers = defaultConcurrency
+	}
+	sem := make(chan struct{}, workers)
+	logger.Infof("scrape task: namespace=%s, monitor=%s, workers=%d", namespace, monitor, workers)
+
 	wg := sync.WaitGroup{}
+	wg.Add(len(cfgs))
 	for _, cfg := range cfgs {
-		wg.Add(1)
 		go func(cfg *discover.ChildConfig) {
-			defer wg.Done()
+			sem <- struct{}{}
+			defer func() {
+				wg.Done()
+				<-sem
+			}()
 			client, err := scraper.New(cfg.Data)
 			if err != nil {
 				logger.Warnf("failed to crate scraper http client: %v", err)
 				return
 			}
 
-			for text := range client.StringCh() {
+			for text := range client.StringCh(ctx) {
 				out <- text
 			}
 		}(cfg)
@@ -85,7 +157,7 @@ func (c *Operator) scrapeForce(namespace, monitor string) chan string {
 	return out
 }
 
-func (c *Operator) scrapeAll() *scrapeStats {
+func (c *Operator) scrapeAllStats(ctx context.Context, workers int) *scrapeStats {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -106,17 +178,26 @@ func (c *Operator) scrapeAll() *scrapeStats {
 		stop <- struct{}{}
 	}()
 
+	if workers <= 0 {
+		workers = defaultConcurrency
+	}
+	sem := make(chan struct{}, workers)
+
 	wg := sync.WaitGroup{}
 	for _, cfg := range childConfigs {
 		wg.Add(1)
 		go func(cfg *discover.ChildConfig) {
-			defer wg.Done()
+			sem <- struct{}{}
+			defer func() {
+				wg.Done()
+				<-sem
+			}()
 			client, err := scraper.New(cfg.Data)
 			if err != nil {
 				logger.Warnf("failed to crate scraper http client: %v", err)
 				return
 			}
-			lines, errs := client.Lines()
+			lines, errs := client.Lines(ctx)
 			for _, err := range errs {
 				logger.Warnf("failed to scrape target, namespace=%s, monitor=%s, err: %v", cfg.Meta.Namespace, cfg.Meta.Name, err)
 			}
@@ -152,7 +233,6 @@ func (c *Operator) scrapeAll() *scrapeStats {
 		ErrorsTotal:  errorsTotal,
 		Stats:        stats,
 	}
-	c.scrapeUpdated = time.Now()
 
 	return ret
 }

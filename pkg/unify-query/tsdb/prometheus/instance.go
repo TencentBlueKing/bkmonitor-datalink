@@ -11,14 +11,18 @@ package prometheus
 
 import (
 	"context"
+	"sync"
 	"time"
 
+	"github.com/panjf2000/ants/v2"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -34,23 +38,29 @@ type Instance struct {
 
 	queryStorage storage.Queryable
 
-	engine *promql.Engine
+	maxRouting int
+	engine     *promql.Engine
 }
 
 // NewInstance 初始化引擎
-func NewInstance(ctx context.Context, engine *promql.Engine, queryStorage storage.Queryable, lookBackDelta time.Duration) *Instance {
+func NewInstance(ctx context.Context, engine *promql.Engine, queryStorage storage.Queryable, lookBackDelta time.Duration, maxRouting int) *Instance {
 	return &Instance{
 		ctx:           ctx,
 		engine:        engine,
 		queryStorage:  queryStorage,
 		lookBackDelta: lookBackDelta,
+		maxRouting:    maxRouting,
 	}
 }
 
 var _ tsdb.Instance = (*Instance)(nil)
 
+func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
+	return ""
+}
+
 // GetInstanceType 获取引擎类型
-func (i *Instance) GetInstanceType() string {
+func (i *Instance) InstanceType() string {
 	if i.instanceType != "" {
 		return i.instanceType
 	} else {
@@ -58,8 +68,13 @@ func (i *Instance) GetInstanceType() string {
 	}
 }
 
-// QueryRaw 查询原始数据
-func (i *Instance) QueryRaw(
+// QueryRawData 直接查询原始返回
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
+	return 0, nil
+}
+
+// QuerySeriesSet 给 PromEngine 提供查询接口
+func (i *Instance) QuerySeriesSet(
 	ctx context.Context,
 	query *metadata.Query,
 	start, end time.Time,
@@ -68,7 +83,7 @@ func (i *Instance) QueryRaw(
 }
 
 // QueryRange 查询范围数据
-func (i *Instance) QueryRange(
+func (i *Instance) DirectQueryRange(
 	ctx context.Context, stmt string,
 	start, end time.Time, step time.Duration,
 ) (promql.Matrix, error) {
@@ -121,7 +136,7 @@ func (i *Instance) QueryRange(
 }
 
 // Query instant 查询
-func (i *Instance) Query(
+func (i *Instance) DirectQuery(
 	ctx context.Context, qs string,
 	end time.Time,
 ) (promql.Vector, error) {
@@ -167,18 +182,72 @@ func (i *Instance) Query(
 	return vector, nil
 }
 
+func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) (list []string, err error) {
+	res := set.New[string]()
+
+	ctx, span := trace.NewSpan(ctx, "prometheus-direct-label-values")
+	defer span.End(&err)
+
+	span.Set("name", name)
+	span.Set("start", start)
+	span.Set("end", end)
+	span.Set("limit", limit)
+	span.Set("matchers", matchers)
+
+	metricName := function.MatcherToMetricName(matchers...)
+	if metricName == "" {
+		return
+	}
+
+	p, _ := ants.NewPool(i.maxRouting)
+	defer p.Release()
+
+	var wg sync.WaitGroup
+	queryReference := metadata.GetQueryReference(ctx)
+	if queryMetric, ok := queryReference[metricName]; ok {
+		for _, qry := range queryMetric.QueryList {
+			wg.Add(1)
+			qry.Size = limit
+			query := qry
+			_ = p.Submit(func() {
+				defer func() {
+					wg.Done()
+				}()
+				instance := GetTsDbInstance(ctx, query)
+				if instance != nil {
+					lbl, lvErr := instance.QueryLabelValues(ctx, query, name, start, end)
+					if lvErr == nil {
+						for _, l := range lbl {
+							res.Add(l)
+						}
+					}
+				}
+			})
+		}
+	}
+
+	wg.Wait()
+	list = res.ToArray()
+	return
+}
+
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
 	return nil, nil
 }
 
-func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
 	return nil, nil
 }
 
-func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error) {
 	return nil, nil
 }
 
-func (i *Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
-	return nil
+func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
+	return nil, nil
 }

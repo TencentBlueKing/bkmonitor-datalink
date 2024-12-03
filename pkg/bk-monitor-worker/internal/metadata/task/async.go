@@ -37,19 +37,20 @@ type CreateEsStorageIndexParams struct {
 
 // CreateEsStorageIndex 异步创建es索引
 func CreateEsStorageIndex(ctx context.Context, t *task.Task) error {
+	logger.Infof("CreateEsStorageIndex:start to create es index")
 	var params CreateEsStorageIndexParams
 	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
-		return errors.Wrapf(err, "parse params for CreateEsStorageIndexParams with [%s] error", t.Payload)
+		return errors.Wrapf(err, "CreateEsStorageIndex:parse params for CreateEsStorageIndexParams with [%s] error", t.Payload)
 	}
 	if params.TableId == "" {
-		return errors.New("params table_id can not be empty")
+		return errors.New("CreateEsStorageIndex:params table_id can not be empty")
 	}
-	logger.Infof("table_id: %s start to create es index", params.TableId)
+	logger.Infof("CreateEsStorageIndex:table_id: %s start to create es index", params.TableId)
 	db := mysql.GetDBSession().DB
 	var esStorage storage.ESStorage
 	if err := storage.NewESStorageQuerySet(db).TableIDEq(params.TableId).One(&esStorage); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
-			logger.Infof("query ESStorage by table_id [%s] not exist", params.TableId)
+			logger.Infof("CreateEsStorageIndex:query ESStorage by table_id [%s] not exist", params.TableId)
 			return nil
 		}
 		return err
@@ -72,15 +73,15 @@ func CreateEsStorageIndex(ctx context.Context, t *task.Task) error {
 	var rt resulttable.ResultTable
 	if err := resulttable.NewResultTableQuerySet(db).TableIdEq(params.TableId).One(&rt); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
-			logger.Errorf("query ResultTable by table_id [%s] not exist ", params.TableId)
+			logger.Errorf("CreateEsStorageIndex:query ResultTable by table_id [%s] not exist ", params.TableId)
 		}
 		return err
 	}
 	if err := service.NewResultTableSvc(&rt).RefreshEtlConfig(); err != nil {
-		return errors.Wrapf(err, "refresh etl config for table_id [%s] failed", params.TableId)
+		return errors.Wrapf(err, "CreateEsStorageIndex:refresh etl config for table_id [%s] failed", params.TableId)
 	}
 
-	logger.Infof("table_id [%s] create es index finished", params.TableId)
+	logger.Infof("CreateEsStorageIndex:table_id [%s] create es index finished", params.TableId)
 	return nil
 }
 
@@ -269,7 +270,7 @@ func CollectESTask(ctx context.Context, t *task.Task) error {
 		return errors.Wrapf(err, "parse params for collectAndReportMetricsParams with [%s] error", t.Payload)
 	}
 	c := params.ClusterInfo
-	err := es.CollectAndReportMetrics(c, params.Timestamp)
+	err := es.CollectAndReportMetrics(c)
 	if err != nil {
 		logger.Errorf("es_cluster_info: [%v] name [%s] try to collect and report metrics failed, %v", c.ClusterID, c.ClusterName, err)
 	} else {

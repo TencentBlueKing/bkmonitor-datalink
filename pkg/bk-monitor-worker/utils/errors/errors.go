@@ -56,9 +56,13 @@ func (e *Error) Error() string {
 	if e.Code != Unspecified {
 		b.WriteString(e.Code.String())
 	}
+	if e.Op != "" {
+		b.WriteString(" Op: ")
+		b.WriteString(string(e.Op))
+	}
 	if e.Err != nil {
 		if b.Len() > 0 {
-			b.WriteString(": ")
+			b.WriteString(" : ")
 		}
 		b.WriteString(e.Err.Error())
 	}
@@ -130,6 +134,7 @@ func E(args ...interface{}) error {
 		panic("call to errors.E with no arguments")
 	}
 	e := &Error{}
+	var errs []error
 	for _, arg := range args {
 		switch arg := arg.(type) {
 		case Op:
@@ -137,15 +142,17 @@ func E(args ...interface{}) error {
 		case Code:
 			e.Code = arg
 		case error:
-			e.Err = arg
+			errs = append(errs, arg)
 		case string:
-			e.Err = errors.New(arg)
+			errs = append(errs, errors.New(arg))
 		default:
 			_, file, line, _ := runtime.Caller(1)
 			logger.Errorf("errors.E: bad call from %s:%d: %v", file, line, args)
 			return fmt.Errorf("unknown type %T, value %v in error call", arg, arg)
 		}
 	}
+	e.Err = errors.Join(errs...)
+
 	return e
 }
 

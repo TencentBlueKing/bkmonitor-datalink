@@ -70,6 +70,9 @@ const (
 	// 集群指标查询配置
 	ClusterMetricQueryPrefixConfigPath  = "http.cluster_metric.prefix"
 	ClusterMetricQueryTimeoutConfigPath = "http.cluster_metric.timeout"
+
+	JwtPublicKeyConfigPath       = "jwt.public_key"
+	JwtBkAppCodeSpacesConfigPath = "jwt.bk_app_code_spaces"
 )
 
 var (
@@ -86,12 +89,11 @@ var (
 	SlowQueryThreshold    time.Duration
 	DefaultQueryListLimit int
 
-	DefaultInfoLimit int
-
 	QueryMaxRouting int
 
 	ClusterMetricQueryPrefix  string
 	ClusterMetricQueryTimeout time.Duration
 
-	TSQueryRawMAXLimit int
+	JwtPublicKey       string
+	JwtBkAppCodeSpaces map[string][]string
 )

@@ -129,7 +129,8 @@ func aes256TokenChecker() tokenChecker {
 
 func skipTokenChecker() tokenChecker {
 	config := Config{
-		Type: "fixed",
+		Type:    "fixed",
+		AppName: "skip",
 	}
 
 	decoders := confengine.NewTierConfig()
@@ -158,7 +159,7 @@ func TestTracesAes256Token(t *testing.T) {
 
 		_, err := checker.Process(&record)
 		assert.Error(t, err)
-		assert.True(t, strings.Contains(err.Error(), "illegal base64 data at input byte 64"))
+		assert.True(t, strings.Contains(err.Error(), "invalid prefix-enc len: 0"))
 	})
 
 	t.Run("No Token", func(t *testing.T) {
@@ -289,7 +290,7 @@ func TestMetricsAes256Token(t *testing.T) {
 
 		_, err := checker.Process(&record)
 		assert.Error(t, err)
-		assert.True(t, strings.Contains(err.Error(), "illegal base64 data at input byte 64"))
+		assert.True(t, strings.Contains(err.Error(), "invalid prefix-enc len: 0"))
 	})
 
 	t.Run("No Token", func(t *testing.T) {
@@ -420,7 +421,7 @@ func TestLogsAes256Token(t *testing.T) {
 
 		_, err := checker.Process(&record)
 		assert.Error(t, err)
-		assert.True(t, strings.Contains(err.Error(), "illegal base64 data at input byte 64"))
+		assert.True(t, strings.Contains(err.Error(), "invalid prefix-enc len: 0"))
 	})
 
 	t.Run("No Token", func(t *testing.T) {

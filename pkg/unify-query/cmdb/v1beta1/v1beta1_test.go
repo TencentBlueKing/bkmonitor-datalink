@@ -11,63 +11,40 @@ package v1beta1
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"sync"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/prometheus/prometheus/model/labels"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	tsdbInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
-	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 var (
-	once      sync.Once
-	testModel *model
+	testModel, _ = newModel(context.Background())
 )
 
-func init() {
-	var err error
-	once.Do(func() {
-		ctx := context.Background()
-		testModel, err = newModel(ctx)
-		if err != nil {
-			panic(err)
-		}
-	})
-
-	promql.NewEngine(&promql.Params{
-		Timeout:              2 * time.Hour,
-		MaxSamples:           500000,
-		LookbackDelta:        2 * time.Minute,
-		EnableNegativeOffset: true,
-	})
-}
-
 func TestModel_Resources(t *testing.T) {
-	ctx := context.Background()
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
 	resources, err := testModel.resources(ctx)
 
 	assert.Nil(t, err)
-	assert.Equal(t, []cmdb.Resource{"address", "container", "deamonset", "deployment", "domain", "ingress", "job", "node", "pod", "replicaset", "service", "statefulset", "system"}, resources)
+	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "bklogconfig", "datasource", "deamonset", "deployment", "domain", "ingress", "job", "k8s_address", "node", "pod", "replicaset", "service", "statefulset", "system"}, resources)
 }
 
 func TestModel_GetResources(t *testing.T) {
-	ctx := context.Background()
-	index, err := testModel.getResourceIndex(ctx, "address")
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	index, err := testModel.getResourceIndex(ctx, "k8s_address")
 	assert.Nil(t, err)
 	assert.Equal(t, cmdb.Index{"bcs_cluster_id", "address"}, index)
 
@@ -75,17 +52,130 @@ func TestModel_GetResources(t *testing.T) {
 	assert.Equal(t, fmt.Errorf("resource is empty clb"), err)
 }
 
-func TestModel_GetPaths(t *testing.T) {
-	ctx := context.Background()
-
+func TestModel_GetPath(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
 	testCases := map[string]struct {
 		target       cmdb.Resource
 		matcher      cmdb.Matcher
 		source       cmdb.Resource
 		indexMatcher cmdb.Matcher
-		expected     string
+		pathResource []cmdb.Resource
+		expected     [][]string
+		allMatch     bool
 		error        error
 	}{
+		"apm_service to system": {
+			target: "system",
+			matcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			source: "apm_service",
+			indexMatcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			allMatch: false,
+			expected: [][]string{
+				{"apm_service", "apm_service_instance", "system"},
+				{"apm_service", "apm_service_instance", "pod", "node", "system"},
+				{"apm_service", "apm_service_instance", "pod", "datasource", "node", "system"},
+			},
+		},
+		"apm_service to system through wrong service": {
+			target: "system",
+			matcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			pathResource: []cmdb.Resource{"service"},
+			source:       "apm_service",
+			indexMatcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			allMatch: false,
+			error:    errors.New("empty paths with apm_service => system through [service]"),
+		},
+		"apm_service to pod": {
+			target: "pod",
+			matcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			source: "apm_service",
+			indexMatcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			allMatch: false,
+			expected: [][]string{
+				{"apm_service", "apm_service_instance", "pod"},
+				{"apm_service", "apm_service_instance", "system", "node", "pod"},
+				{"apm_service", "apm_service_instance", "system", "node", "datasource", "pod"},
+			},
+		},
+		"apm_service to system through node and pod": {
+			target: "system",
+			matcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			source: "apm_service",
+			indexMatcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			pathResource: []cmdb.Resource{
+				"node", "pod",
+			},
+			allMatch: false,
+			error:    errors.New("empty paths with apm_service => system through [node pod]"),
+		},
+		"apm_service_instance to system through empty": {
+			target: "system",
+			matcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			source: "apm_service_instance",
+			indexMatcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			pathResource: []cmdb.Resource{
+				"",
+			},
+			allMatch: false,
+			expected: [][]string{
+				{"apm_service_instance", "system"},
+			},
+		},
+		"apm_service to system through empty": {
+			target: "system",
+			matcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			source: "apm_service",
+			indexMatcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			pathResource: []cmdb.Resource{
+				"apm_service_instance", "system",
+			},
+			allMatch: false,
+			expected: [][]string{
+				{"apm_service", "apm_service_instance", "system"},
+			},
+		},
+		"apm_service to system through pod and node": {
+			target: "system",
+			matcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			source: "apm_service",
+			indexMatcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			pathResource: []cmdb.Resource{
+				"pod", "node",
+			},
+			allMatch: false,
+			expected: [][]string{
+				{"apm_service", "apm_service_instance", "pod", "node", "system"},
+			},
+		},
 		"container to system": {
 			target: "system",
 			matcher: cmdb.Matcher{
@@ -95,14 +185,18 @@ func TestModel_GetPaths(t *testing.T) {
 				"container":      "container-1",
 				"test":           "1",
 			},
-			source: "container",
 			indexMatcher: cmdb.Matcher{
 				"bcs_cluster_id": "cls",
 				"namespace":      "ns-1",
 				"pod":            "pod-1",
-				"container":      "container-1",
 			},
-			expected: `[[{"V":["container","pod"]},{"V":["pod","node"]},{"V":["node","system"]}]]`,
+			source:   "pod",
+			allMatch: true,
+			expected: [][]string{
+				{"pod", "node", "system"},
+				{"pod", "datasource", "node", "system"},
+				{"pod", "apm_service_instance", "system"},
+			},
 		},
 		"no target resource": {
 			target: "multi_cluster",
@@ -117,7 +211,8 @@ func TestModel_GetPaths(t *testing.T) {
 				"namespace":      "ns-1",
 				"pod":            "pod-1",
 			},
-			error: fmt.Errorf("pod => multi_cluster error: target vertex not reachable from source"),
+			allMatch: true,
+			error:    fmt.Errorf("empty paths with pod => multi_cluster through []"),
 		},
 		"node to system": {
 			target: "system",
@@ -131,146 +226,191 @@ func TestModel_GetPaths(t *testing.T) {
 				"bcs_cluster_id": "cls",
 				"node":           "node-1",
 			},
-			expected: `[[{"V":["node","system"]}]]`,
+			allMatch: true,
+			expected: [][]string{
+				{"node", "system"},
+				{"node", "pod", "apm_service_instance", "system"},
+				{"node", "datasource", "pod", "apm_service_instance", "system"},
+			},
+		},
+		"node to system not all match": {
+			target: "system",
+			matcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+				"demo":           "1",
+			},
+			source: "node",
+			indexMatcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+			},
+			allMatch: false,
+			expected: [][]string{
+				{"node", "system"},
+				{"node", "pod", "apm_service_instance", "system"},
+				{"node", "datasource", "pod", "apm_service_instance", "system"},
+			},
+		},
+		"datasource to system all match": {
+			target: "system",
+			matcher: cmdb.Matcher{
+				"bk_data_id": "1000001",
+			},
+			source: "datasource",
+			indexMatcher: cmdb.Matcher{
+				"bk_data_id": "1000001",
+			},
+			allMatch: true,
+			expected: [][]string{
+				{"datasource", "node", "system"},
+				{"datasource", "pod", "node", "system"},
+				{"datasource", "pod", "apm_service_instance", "system"},
+				{"datasource", "node", "pod", "apm_service_instance", "system"},
+			},
+		},
+		"pod to node": {
+			target: "node",
+			matcher: cmdb.Matcher{
+				"pod": "pod-1",
+			},
+			source: "pod",
+			indexMatcher: cmdb.Matcher{
+				"pod": "pod-1",
+			},
+			expected: [][]string{
+				{"pod", "node"},
+				{"pod", "datasource", "node"},
+				{"pod", "apm_service_instance", "system", "node"},
+			},
 		},
 	}
 
 	for n, c := range testCases {
 		t.Run(n, func(t *testing.T) {
-			source, indexMatcher, err := testModel.getResourceFromMatch(ctx, c.matcher)
+			var (
+				source cmdb.Resource
+				err    error
+			)
+			if c.source == "" {
+				source, err = testModel.getResourceFromMatch(ctx, c.matcher)
+				assert.Nil(t, err)
+			} else {
+				source = c.source
+			}
+
+			indexMatcher, allMatch, err := testModel.getIndexMatcher(ctx, source, c.matcher)
 			assert.Nil(t, err)
 			if err == nil {
+				assert.Equal(t, c.allMatch, allMatch)
 				assert.Equal(t, c.source, source)
 				assert.Equal(t, c.indexMatcher, indexMatcher)
-				paths, err := testModel.getPaths(ctx, source, c.target, c.matcher)
+
+				path, err := testModel.getPaths(ctx, source, c.target, c.pathResource)
 				if c.error != nil {
-					assert.Equal(t, c.error, err)
+					assert.Equal(t, c.error.Error(), err.Error())
 				} else {
 					assert.Nil(t, err)
 					if err == nil {
-						actual, _ := json.Marshal(paths)
-						assert.Equal(t, c.expected, string(actual))
+						sort.SliceStable(path, func(i, j int) bool {
+							listLength := len(path[i]) < len(path[j])
+							stringLength := len(strings.Join(path[i], "")) < len(strings.Join(path[j], ""))
+							return listLength || stringLength
+						})
+						assert.Equal(t, c.expected, path)
 					}
 				}
 			}
-
 		})
 	}
 }
 
-func mockData(ctx context.Context) *curl.TestCurl {
-	mockCurl := curl.NewMockCurl(map[string]string{
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_system_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_system_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"]]}]}]}
-`,
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_system_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+bk_target_ip%3D%27127.0.0.1%27++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_system_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"]]}]}]}
-`,
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_pod_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_pod_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-1","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-2","bkmonitor-operator-operator"]]}]}]}
-`,
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_pod_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+%28namespace%3D%27bkmonitor-operator%27+and+pod%3D%27bkm-pod-1%27%29%29++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_pod_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-1","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-2","bkmonitor-operator-operator"]]}]}]}
-`,
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_system_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29+or+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29%29++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_system_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"]]}]}]}
-`,
-		`victoria_metric/api`: `{}`,
-	}, nil)
-
-	metadata.GetQueryRouter().MockSpaceUid(consul.VictoriaMetricsStorageType)
-
-	vmStorageIDInt := int64(1)
-	influxdbStorageID := "2"
-	influxdbStorageIDInt := int64(2)
-
-	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
-		Type: consul.VictoriaMetricsStorageType,
-		Instance: &victoriaMetrics.Instance{
-			Ctx:                  ctx,
-			Address:              "victoria_metric",
-			UriPath:              "api",
-			Curl:                 mockCurl,
-			InfluxCompatible:     true,
-			AuthenticationMethod: "token",
-		},
-	})
-	tsdb.SetStorage(influxdbStorageID, &tsdb.Storage{
-		Type: consul.InfluxDBStorageType,
-		Instance: tsdbInfluxdb.NewInstance(
-			context.TODO(),
-			tsdbInfluxdb.Options{
-				Host:      "127.0.0.1",
-				Port:      80,
-				Curl:      mockCurl,
-				ChunkSize: 10,
-				MaxSlimit: 1e8,
-				MaxLimit:  1e8,
-				Timeout:   time.Hour,
-			},
-		),
-	})
-	mock.SetRedisClient(ctx, "test_model")
-	mock.SetSpaceTsDbMockData(
-		ctx, "v1beat1_test", "v1beat1_test",
-		ir.SpaceInfo{
-			consul.InfluxDBStorageType: ir.Space{
-				"db.measurement": &ir.SpaceResultTable{
-					TableId: "db.measurement",
-					Filters: []map[string]string{},
-				},
-			},
-			consul.VictoriaMetricsStorageType: ir.Space{
-				"db_vm.measurement": &ir.SpaceResultTable{
-					TableId: "db_vm.measurement",
-					Filters: []map[string]string{},
-				},
-			},
-		},
-		ir.ResultTableDetailInfo{
-			"db.measurement": &ir.ResultTableDetail{
-				Fields:          []string{"node_with_system_relation", "node_with_pod_relation"},
-				MeasurementType: redis.BkSplitMeasurement,
-				DataLabel:       "datalabel",
-				StorageId:       influxdbStorageIDInt,
-				DB:              "2_bkmonitor_time_series_1572864",
-				Measurement:     "__default__",
-			},
-			"db_vm.measurement": &ir.ResultTableDetail{
-				Fields:          []string{"node_with_system_relation", "node_with_pod_relation"},
-				MeasurementType: redis.BkSplitMeasurement,
-				DataLabel:       "datalabel",
-				StorageId:       vmStorageIDInt,
-				DB:              "db_vm",
-				Measurement:     "__default__",
-				VmRt:            "2_bkmonitor_time_series_1572864_vm_rt",
-			},
-		},
-		ir.FieldToResultTable{
-			"node_with_system_relation": ir.ResultTableList{"db.measurement", "db_vm.measurement"},
-			"node_with_pod_relation":    ir.ResultTableList{"db.measurement", "db_vm.measurement"},
-		},
-		nil,
-	)
-	return mockCurl
-}
-
 func TestModel_GetResourceMatcher(t *testing.T) {
-	ctx := context.Background()
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
 
-	mockData(ctx)
+	timestamp := int64(1693973987)
+	mock.Vm.Set(map[string]any{
+		"query:1693973987(count by (bk_target_ip) (a))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bk_target_ip": "127.0.0.1",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+			},
+		},
+		"query:1693973987count by (bcs_cluster_id, namespace, pod) (b and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (a)))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bcs_cluster_id": "BCS-K8S-00000",
+						"namespace":      "bkmonitor-operator",
+						"pod":            "bkm-pod-1",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+				{
+					Metric: map[string]string{
+						"bcs_cluster_id": "BCS-K8S-00000",
+						"namespace":      "bkmonitor-operator",
+						"pod":            "bkm-pod-2",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+			},
+		},
+		"query:1693973987count by (bk_target_ip) (b and on (apm_application_name, apm_service_name, apm_service_instance_name) (count by (apm_application_name, apm_service_name, apm_service_instance_name) (a)))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bk_target_ip": "127.0.0.1",
+					},
+					Value: []any{
+						1693973987, "1",
+					},
+				},
+			},
+		},
+		"query:1693973987count by (bk_target_ip) (b and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (a)))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.VectorType,
+			Result: []victoriaMetrics.Series{
+				{
+					Metric: map[string]string{
+						"bk_target_ip": "127.0.0.1",
+					},
+					Value: []any{
+						1693973987, 1,
+					},
+				},
+			},
+		},
+	})
 
 	testCases := map[string]struct {
-		spaceUid string
-		target   cmdb.Resource
-		matcher  cmdb.Matcher
+		source       cmdb.Resource
+		target       cmdb.Resource
+		matcher      cmdb.Matcher
+		pathResource []cmdb.Resource
 
 		expected struct {
 			source     cmdb.Resource
 			sourceInfo cmdb.Matcher
-
 			targetList cmdb.Matchers
 		}
 		error error
 	}{
 		"vm node to system": {
-			spaceUid: consul.VictoriaMetricsStorageType,
-			target:   "system",
+			target: "system",
 			matcher: cmdb.Matcher{
 				"bcs_cluster_id": "BCS-K8S-00000",
 				"node":           "node-127-0-0-1",
@@ -294,8 +434,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 			},
 		},
 		"node to system": {
-			spaceUid: consul.InfluxDBStorageType,
-			target:   "system",
+			target: "system",
 			matcher: cmdb.Matcher{
 				"bcs_cluster_id": "BCS-K8S-00000",
 				"node":           "node-127-0-0-1",
@@ -319,8 +458,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 			},
 		},
 		"system to pod": {
-			spaceUid: consul.InfluxDBStorageType,
-			target:   "pod",
+			target: "pod",
 			matcher: cmdb.Matcher{
 				"bk_target_ip":   "127.0.0.1",
 				"bcs_cluster_id": "BCS-K8S-00000",
@@ -349,8 +487,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 			},
 		},
 		"pod_name to system": {
-			spaceUid: consul.InfluxDBStorageType,
-			target:   "system",
+			target: "system",
 			matcher: cmdb.Matcher{
 				"bcs_cluster_id": "BCS-K8S-00000",
 				"namespace":      "bkmonitor-operator",
@@ -376,133 +513,99 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 		},
 	}
 
-	timestamp := int64(1693973987)
 	for n, c := range testCases {
 		t.Run(n, func(t *testing.T) {
-			metadata.SetUser(ctx, c.spaceUid, c.spaceUid, "")
-			source, indexMatcher, matchers, err := testModel.QueryResourceMatcher(ctx, "", c.spaceUid, timestamp, c.target, c.matcher)
+			ctx = metadata.InitHashID(ctx)
+			metadata.SetUser(ctx, "", influxdb.SpaceUid, "skip")
+			source, matcher, _, rets, err := testModel.QueryResourceMatcher(ctx, "", influxdb.SpaceUid, timestamp, c.target, c.source, c.matcher, c.pathResource)
 			assert.Nil(t, err)
-			if err == nil {
+			if err != nil {
+				log.Errorf(ctx, err.Error())
+			} else {
 				assert.Equal(t, c.expected.source, source)
-				assert.Equal(t, c.expected.sourceInfo, indexMatcher)
-				assert.Equal(t, c.expected.targetList, matchers)
+				assert.Equal(t, c.expected.sourceInfo, matcher)
+				assert.Equal(t, c.expected.targetList, rets)
 			}
 		})
 	}
 }
 
 func TestMakeQuery(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
 	type Case struct {
 		Name    string
-		Path    cmdb.Path
-		Matcher cmdb.Matcher
+		Path    []string
+		Matcher map[string]string
 		promQL  string
+		step    time.Duration
 	}
 
 	cases := []Case{
 		{
-			Name: "level1",
-			Path: cmdb.Path{
-				{V: []cmdb.Resource{"pod", "node"}},
-			},
+			Name: "level1 and 1m",
+			Path: []string{"pod", "node"},
 			Matcher: map[string]string{
 				"pod":            "pod1",
 				"namespace":      "ns1",
 				"bcs_cluster_id": "cluster1",
 			},
-			promQL: `(count by (bcs_cluster_id, node) (node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",pod="pod1"}))`,
+			step:   time.Minute,
+			promQL: `(count by (bcs_cluster_id, node) (count_over_time(bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"}[1m])))`,
+		},
+		{
+			Name: "level1",
+			Path: []string{"pod", "node"},
+			Matcher: map[string]string{
+				"pod":            "pod1",
+				"namespace":      "ns1",
+				"bcs_cluster_id": "cluster1",
+			},
+			promQL: `(count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"}))`,
 		},
 		{
 			Name: "level2",
-			Path: cmdb.Path{
-				{V: []cmdb.Resource{"pod", "node"}},
-				{V: []cmdb.Resource{"node", "system"}},
-			},
+			Path: []string{"pod", "node", "system"},
 			Matcher: map[string]string{
 				"pod":            "pod1",
 				"namespace":      "ns1",
 				"bcs_cluster_id": "cluster1",
 			},
-			promQL: `count by (bk_target_ip) (node_with_system_relation and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",pod="pod1"})))`,
-		},
-		{
-			Name: "level3_container",
-			Path: cmdb.Path{
-				{V: []cmdb.Resource{"container", "pod"}},
-				{V: []cmdb.Resource{"pod", "replicaset"}},
-				{V: []cmdb.Resource{"replicaset", "deployment"}},
-			},
-			Matcher: map[string]string{
-				"bcs_cluster_id": "cluster1",
-				"namespace":      "ns1",
-				"pod":            "pod1",
-				"container":      "container1",
-			},
-			promQL: `count by (bcs_cluster_id, namespace, deployment) (deployment_with_replicaset_relation{bcs_cluster_id="cluster1",namespace="ns1"} and on (bcs_cluster_id, namespace, replicaset) count by (bcs_cluster_id, namespace, replicaset) (pod_with_replicaset_relation{bcs_cluster_id="cluster1",namespace="ns1"} and on (bcs_cluster_id, namespace, pod) (count by (bcs_cluster_id, namespace, pod) (container_with_pod_relation{bcs_cluster_id="cluster1",container="container1",namespace="ns1",pod="pod1"}))))`,
+			promQL: `count by (bk_target_ip) (bkmonitor:node_with_system_relation{bcs_cluster_id="cluster1",bk_target_ip!="",node!=""} and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"})))`,
 		},
 		{
 			Name: "level3",
-			Path: cmdb.Path{
-				{V: []cmdb.Resource{"node", "pod"}},
-				{V: []cmdb.Resource{"pod", "replicaset"}},
-				{V: []cmdb.Resource{"replicaset", "deployment"}},
-			},
+			Path: []string{"node", "pod", "replicaset", "deployment"},
 			Matcher: map[string]string{
 				"node":           "node1",
 				"bcs_cluster_id": "cluster1",
 			},
-			promQL: `count by (bcs_cluster_id, namespace, deployment) (deployment_with_replicaset_relation{bcs_cluster_id="cluster1"} and on (bcs_cluster_id, namespace, replicaset) count by (bcs_cluster_id, namespace, replicaset) (pod_with_replicaset_relation{bcs_cluster_id="cluster1"} and on (bcs_cluster_id, namespace, pod) (count by (bcs_cluster_id, namespace, pod) (node_with_pod_relation{bcs_cluster_id="cluster1",node="node1"}))))`,
+			promQL: `count by (bcs_cluster_id, namespace, deployment) (bkmonitor:deployment_with_replicaset_relation{bcs_cluster_id="cluster1",deployment!="",namespace!="",replicaset!=""} and on (bcs_cluster_id, namespace, replicaset) count by (bcs_cluster_id, namespace, replicaset) (bkmonitor:pod_with_replicaset_relation{bcs_cluster_id="cluster1",namespace!="",pod!="",replicaset!=""} and on (bcs_cluster_id, namespace, pod) (count by (bcs_cluster_id, namespace, pod) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace!="",node="node1",pod!=""}))))`,
 		},
 		{
 			Name: "level4",
-			Path: cmdb.Path{
-				{V: []cmdb.Resource{"system", "node"}},
-				{V: []cmdb.Resource{"node", "pod"}},
-				{V: []cmdb.Resource{"pod", "replicaset"}},
-				{V: []cmdb.Resource{"replicaset", "deployment"}},
-			},
+			Path: []string{"system", "node", "pod", "replicaset", "deployment"},
 			Matcher: map[string]string{
 				"bk_target_ip": "127.0.0.1",
 			},
-			promQL: `count by (bcs_cluster_id, namespace, deployment) (deployment_with_replicaset_relation and on (bcs_cluster_id, namespace, replicaset) count by (bcs_cluster_id, namespace, replicaset) (pod_with_replicaset_relation and on (bcs_cluster_id, namespace, pod) count by (bcs_cluster_id, namespace, pod) (node_with_pod_relation and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (node_with_system_relation{bk_target_ip="127.0.0.1"})))))`,
+			promQL: `count by (bcs_cluster_id, namespace, deployment) (bkmonitor:deployment_with_replicaset_relation{bcs_cluster_id!="",deployment!="",namespace!="",replicaset!=""} and on (bcs_cluster_id, namespace, replicaset) count by (bcs_cluster_id, namespace, replicaset) (bkmonitor:pod_with_replicaset_relation{bcs_cluster_id!="",namespace!="",pod!="",replicaset!=""} and on (bcs_cluster_id, namespace, pod) count by (bcs_cluster_id, namespace, pod) (bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node!="",pod!=""} and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (bkmonitor:node_with_system_relation{bcs_cluster_id!="",bk_target_ip="127.0.0.1",node!=""})))))`,
 		},
 	}
-
-	ctx := context.Background()
-	mock.Init()
-
-	mode, _ := newModel(ctx)
 
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			queryTs, err := mode.makeQuery(ctx, "", c.Path, c.Matcher)
+			queryTs, err := testModel.makeQuery(ctx, "", c.Path, c.Matcher, c.step)
 			assert.NoError(t, err)
 			assert.NotNil(t, queryTs)
 
 			if queryTs != nil {
-				referenceNameMetric := make(map[string]string, len(queryTs.QueryList))
-				referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(queryTs.QueryList))
-
-				for _, q := range queryTs.QueryList {
-					referenceNameMetric[q.ReferenceName] = q.FieldName
-					matchers := make([]*labels.Matcher, 0, len(q.Conditions.FieldList))
-					for _, f := range q.Conditions.FieldList {
-						matcher, _ := labels.NewMatcher(labels.MatchEqual, f.DimensionName, f.Value[0])
-						matchers = append(matchers, matcher)
-					}
-					referenceNameLabelMatcher[q.ReferenceName] = matchers
+				promQLString, promQLErr := queryTs.ToPromQL(ctx)
+				assert.Nil(t, promQLErr)
+				if promQLErr == nil {
+					assert.Equal(t, c.promQL, promQLString)
 				}
-
-				promExprOpt := &structured.PromExprOption{
-					ReferenceNameMetric:       referenceNameMetric,
-					ReferenceNameLabelMatcher: referenceNameLabelMatcher,
-				}
-
-				promQL, err := queryTs.ToPromExpr(ctx, promExprOpt)
-				assert.Nil(t, err)
-
-				assert.Equal(t, c.promQL, promQL.String())
 			}
 		})
 	}

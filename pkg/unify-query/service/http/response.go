@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 type response struct {
@@ -30,8 +31,11 @@ func (r *response) failed(ctx context.Context, err error) {
 	log.Errorf(ctx, err.Error())
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUid, user.Source)
+
+	_, span := trace.NewSpan(ctx, "response-failed")
 	r.c.JSON(http.StatusBadRequest, ErrResponse{
-		Err: err.Error(),
+		TraceID: span.TraceID(),
+		Err:     err.Error(),
 	})
 }
 
@@ -40,4 +44,12 @@ func (r *response) success(ctx context.Context, data interface{}) {
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUid, user.Source)
 	r.c.JSON(http.StatusOK, data)
+}
+
+// ListData 数据返回格式
+type ListData struct {
+	Total   int64            `json:"total,omitempty"`
+	List    []map[string]any `json:"list" json:"list,omitempty"`
+	TraceID string           `json:"trace_id,omitempty"`
+	Status  *metadata.Status `json:"status,omitempty" json:"status,omitempty"`
 }

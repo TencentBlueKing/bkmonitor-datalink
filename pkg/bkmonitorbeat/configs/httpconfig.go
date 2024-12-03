@@ -34,6 +34,17 @@ type HTTPTaskStepConfig struct {
 	ResponseCodeList []int             `config:"response_code_list"`
 }
 
+func (c *HTTPTaskStepConfig) URLs() []string {
+	if c == nil {
+		return nil
+	}
+
+	if len(c.URLList) > 0 {
+		return c.URLList
+	}
+	return []string{c.URL}
+}
+
 // Clean :
 func (c *HTTPTaskStepConfig) Clean() error {
 	err := c.SimpleMatchParam.CleanParams()
@@ -76,6 +87,7 @@ type HTTPTaskConfig struct {
 	Proxy              string                `config:"proxy"`
 	InsecureSkipVerify bool                  `config:"insecure_skip_verify"`
 	Steps              []*HTTPTaskStepConfig `config:"steps"`
+	CustomReport       bool                  `config:"custom_report"`
 }
 
 // InitIdent :

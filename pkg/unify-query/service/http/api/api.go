@@ -18,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta1"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -64,13 +65,14 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 	}
 
 	data := new(cmdb.RelationMultiResourceResponse)
+	data.TraceID = span.TraceID()
 	data.Data = make([]cmdb.RelationMultiResourceResponseData, 0, len(request.QueryList))
 	for _, qry := range request.QueryList {
 		d := cmdb.RelationMultiResourceResponseData{
 			Code: http.StatusOK,
 		}
 
-		d.SourceType, d.SourceInfo, d.TargetList, err = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUid, qry.Timestamp, qry.TargetType, qry.SourceInfo)
+		d.SourceType, d.SourceInfo, d.Path, d.TargetList, err = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUid, qry.Timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.PathResource)
 		if err != nil {
 			d.Message = err.Error()
 			d.Code = http.StatusBadRequest
@@ -123,6 +125,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 	}
 
 	data := new(cmdb.RelationMultiResourceRangeResponse)
+	data.TraceID = span.TraceID()
 	data.Data = make([]cmdb.RelationMultiResourceRangeResponseData, 0, len(request.QueryList))
 	for _, qry := range request.QueryList {
 		d := cmdb.RelationMultiResourceRangeResponseData{
@@ -141,8 +144,10 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 			continue
 		}
 
-		d.SourceType, d.SourceInfo, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUid, step, qry.StartTs, qry.EndTs, qry.TargetType, qry.SourceInfo)
+		d.SourceType, d.SourceInfo, d.Path, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUid, step, qry.StartTs, qry.EndTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.PathResource)
 		if err != nil {
+			log.Errorf(ctx, err.Error())
+
 			d.Message = err.Error()
 			d.Code = http.StatusBadRequest
 		}

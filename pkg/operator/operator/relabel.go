@@ -19,6 +19,8 @@ import (
 	"github.com/prometheus/prometheus/model/relabel"
 	"gopkg.in/yaml.v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/eplabels"
 )
 
 func sanitizeLabelName(name string) string {
@@ -26,7 +28,7 @@ func sanitizeLabelName(name string) string {
 	return regex.ReplaceAllString(name, "_")
 }
 
-func convertYamlRelabels(relabels []yaml.MapSlice) ([]*relabel.Config, error) {
+func yamlToRelabels(relabels []yaml.MapSlice) ([]*relabel.Config, error) {
 	var confs []*relabel.Config
 	data, err := yaml.Marshal(relabels)
 	if err != nil {
@@ -61,7 +63,7 @@ func enforceNamespaceLabel(relabelings []yaml.MapSlice, namespace, enforcedNames
 	})
 }
 
-func generateRelabelConfig(c *promv1.RelabelConfig) yaml.MapSlice {
+func generatePromv1RelabelConfig(c *promv1.RelabelConfig) yaml.MapSlice {
 	relabeling := yaml.MapSlice{}
 
 	if len(c.SourceLabels) > 0 {
@@ -78,6 +80,40 @@ func generateRelabelConfig(c *promv1.RelabelConfig) yaml.MapSlice {
 
 	if c.Regex != "" {
 		relabeling = append(relabeling, yaml.MapItem{Key: "regex", Value: c.Regex})
+	}
+
+	if c.Modulus != uint64(0) {
+		relabeling = append(relabeling, yaml.MapItem{Key: "modulus", Value: c.Modulus})
+	}
+
+	if c.Replacement != "" {
+		relabeling = append(relabeling, yaml.MapItem{Key: "replacement", Value: c.Replacement})
+	}
+
+	if c.Action != "" {
+		relabeling = append(relabeling, yaml.MapItem{Key: "action", Value: c.Action})
+	}
+
+	return relabeling
+}
+
+func generatePromRelabelConfig(c *relabel.Config) yaml.MapSlice {
+	relabeling := yaml.MapSlice{}
+
+	if len(c.SourceLabels) > 0 {
+		relabeling = append(relabeling, yaml.MapItem{Key: "source_labels", Value: c.SourceLabels})
+	}
+
+	if c.Separator != "" {
+		relabeling = append(relabeling, yaml.MapItem{Key: "separator", Value: c.Separator})
+	}
+
+	if c.TargetLabel != "" {
+		relabeling = append(relabeling, yaml.MapItem{Key: "target_label", Value: c.TargetLabel})
+	}
+
+	if c.Regex.String() != "" {
+		relabeling = append(relabeling, yaml.MapItem{Key: "regex", Value: c.Regex.String()})
 	}
 
 	if c.Modulus != uint64(0) {
@@ -149,7 +185,7 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 	if ep.Port != "" {
 		relabelings = append(relabelings, yaml.MapSlice{
 			{Key: "action", Value: "keep"},
-			{Key: "source_labels", Value: []string{"__meta_kubernetes_endpoint_port_name"}},
+			{Key: "source_labels", Value: []string{eplabels.EndpointPortName(useEndpointslice)}},
 			{Key: "regex", Value: ep.Port},
 		})
 	} else if ep.TargetPort != nil {
@@ -171,14 +207,14 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 	// Relabel namespace and pod and service labels into proper labels.
 	relabelings = append(relabelings, []yaml.MapSlice{
 		{ // Relabel node labels for pre v2.3 meta labels
-			{Key: "source_labels", Value: []string{"__meta_kubernetes_endpoint_address_target_kind", "__meta_kubernetes_endpoint_address_target_name"}},
+			{Key: "source_labels", Value: []string{eplabels.EndpointAddressTargetKind(useEndpointslice), eplabels.EndpointAddressTargetName(useEndpointslice)}},
 			{Key: "separator", Value: ";"},
 			{Key: "regex", Value: "Node;(.*)"},
 			{Key: "replacement", Value: "${1}"},
 			{Key: "target_label", Value: "node"},
 		},
 		{ // Relabel pod labels for >=v2.3 meta labels
-			{Key: "source_labels", Value: []string{"__meta_kubernetes_endpoint_address_target_kind", "__meta_kubernetes_endpoint_address_target_name"}},
+			{Key: "source_labels", Value: []string{eplabels.EndpointAddressTargetKind(useEndpointslice), eplabels.EndpointAddressTargetName(useEndpointslice)}},
 			{Key: "separator", Value: ";"},
 			{Key: "regex", Value: "Pod;(.*)"},
 			{Key: "replacement", Value: "${1}"},
@@ -255,7 +291,7 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 
 	if ep.RelabelConfigs != nil {
 		for _, c := range ep.RelabelConfigs {
-			relabelings = append(relabelings, generateRelabelConfig(c))
+			relabelings = append(relabelings, generatePromv1RelabelConfig(c))
 		}
 	}
 	// Because of security risks, whenever enforcedNamespaceLabel is set, we want to append it to the
@@ -397,7 +433,7 @@ func getPodMonitorRelabels(m *promv1.PodMonitor, ep *promv1.PodMetricsEndpoint) 
 
 	if ep.RelabelConfigs != nil {
 		for _, c := range ep.RelabelConfigs {
-			relabelings = append(relabelings, generateRelabelConfig(c))
+			relabelings = append(relabelings, generatePromv1RelabelConfig(c))
 		}
 	}
 	// Because of security risks, whenever enforcedNamespaceLabel is set, we want to append it to the

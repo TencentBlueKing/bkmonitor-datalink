@@ -46,7 +46,7 @@ const (
 	TCP_CLOSE_WAIT
 	TCP_LAST_ACK
 	TCP_LISTEN  // 0x0A
-	TCP_CLOSING //now a valid state
+	TCP_CLOSING // now a valid state
 	TCP_MAX_STATES
 )
 

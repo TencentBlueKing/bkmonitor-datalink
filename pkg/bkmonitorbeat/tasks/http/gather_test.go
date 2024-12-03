@@ -89,17 +89,17 @@ func (s *GatherSuite) TestGatherRun() {
 	cases := []struct {
 		code         int
 		responseCode int
-		errorCode    define.BeatErrorCode
+		errorCode    define.NamedCode
 		expect       string
 		err          error
 	}{
-		{200, 200, define.BeatErrCodeOK, "", nil},
-		{200, 200, define.BeatErrCodeResponseMatchError, "x", nil},
-		{400, 400, define.BeatErrCodeResponseCodeError, "", nil},
-		{500, 0, define.BeatErrCodeResponseError, "", &url.Error{
+		{200, 200, define.CodeOK, "", nil},
+		{200, 200, define.CodeResponseNotMatch, "x", nil},
+		{400, 400, define.CodeResponseNotMatch, "", nil},
+		{500, 0, define.CodeResponseFailed, "", &url.Error{
 			Op: "parse", URL: "", Err: errors.New("test"),
 		}},
-		{200, 0, define.BeatErrCodeResponseTimeoutError, "", &url.Error{
+		{200, 0, define.CodeRequestTimeout, "", &url.Error{
 			Op: "parse", URL: "", Err: &timeoutTestError{timeout: true},
 		}},
 	}
@@ -135,7 +135,7 @@ func (s *GatherSuite) TestGatherRun() {
 		event := ev.AsMapStr()
 
 		s.Equal(c.responseCode, event["response_code"])
-		s.Equal(c.errorCode, event["error_code"])
+		s.Equal(c.errorCode.Code(), event["error_code"])
 	}
 }
 
@@ -239,9 +239,8 @@ func (s *GatherSuite) TestUpdateEventByResponse() {
 	for _, tt := range tests {
 		s.T().Run(tt.name, func(t *testing.T) {
 			g := New(tt.fields.globalConfig, tt.fields.taskConfig).(*Gather)
-			if err := g.UpdateEventByResponse(tt.args.event, tt.args.response); err != nil {
-				t.Errorf("UpdateEventByResponse() error = %v", err)
-			}
+			g.UpdateEventByResponse(tt.args.event, tt.args.response)
+
 			s.Equalf(tt.want.mediaType, tt.args.event.MediaType, "UpdateEventByResponse() MediaType = %v, want %v", tt.args.event.MediaType, tt.want.mediaType)
 			s.Equalf(tt.want.charset, tt.args.event.Charset, "UpdateEventByResponse() Charset = %v, want %v", tt.args.event.Charset, tt.want.charset)
 		})

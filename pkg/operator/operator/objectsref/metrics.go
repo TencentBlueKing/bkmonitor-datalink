@@ -11,76 +11,27 @@ package objectsref
 
 import (
 	"sync"
-	"time"
-
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 )
-
-var clusterVersion = promauto.NewGaugeVec(
-	prometheus.GaugeOpts{
-		Namespace: define.MonitorNamespace,
-		Name:      "cluster_version",
-		Help:      "kubernetes server version",
-	},
-	[]string{"version"},
-)
-
-type namespaceKind struct {
-	namespace string
-	kind      string
-}
 
 var (
-	nsUpdated     time.Time
-	nkWorkloadMut sync.Mutex
-	nkWorkload    = map[namespaceKind]int{}
+	resourceMapMut sync.Mutex
+	resourceMap    map[string]int
 )
 
-func GetWorkloadInfo() (map[string]int, time.Time) {
-	ret := make(map[string]int)
-	nkWorkloadMut.Lock()
-	for k, v := range nkWorkload {
-		ret[k.kind] += v
+func GetResourceCount() map[string]int {
+	resourceMapMut.Lock()
+	defer resourceMapMut.Unlock()
+
+	counts := make(map[string]int)
+	for k, v := range resourceMap {
+		counts[k] = v
 	}
-	nkWorkloadMut.Unlock()
-	return ret, nsUpdated
+	return counts
 }
 
-type metricMonitor struct{}
+func SetWorkloadCount(counts map[string]int) {
+	resourceMapMut.Lock()
+	defer resourceMapMut.Unlock()
 
-func newMetricMonitor() *metricMonitor {
-	return &metricMonitor{}
-}
-
-func (mm *metricMonitor) SetWorkloadCount(v int, namespace, kind string) {
-	nkWorkloadMut.Lock()
-	nsUpdated = time.Now()
-	nkWorkload[namespaceKind{namespace: namespace, kind: kind}] = v
-	nkWorkloadMut.Unlock()
-}
-
-var (
-	clusterNode          int
-	clusterNodeUpdatedAt time.Time
-)
-
-func GetClusterNodeInfo() (int, time.Time) {
-	return clusterNode, clusterNodeUpdatedAt
-}
-
-func incClusterNodeCount() {
-	clusterNode++
-	clusterNodeUpdatedAt = time.Now()
-}
-
-func decClusterNodeCount() {
-	clusterNode--
-	clusterNodeUpdatedAt = time.Now()
-}
-
-func setClusterVersion(v string) {
-	clusterVersion.WithLabelValues(v).Set(1)
+	resourceMap = counts
 }

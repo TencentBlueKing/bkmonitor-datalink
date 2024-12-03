@@ -26,6 +26,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
@@ -109,6 +110,7 @@ var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourcePushGatewa
 func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, jobBase64Encoded bool) {
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr)
+	contentLength := utils.GetContentLength(req.Header)
 
 	start := time.Now()
 	vars := extractVars(req)
@@ -175,7 +177,7 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 		return
 	}
 
-	token := define.TokenFromHttpRequest(req)
+	token := tokenparser.FromHttpRequest(req)
 	r := &define.Record{
 		RecordType:    define.RecordPushGateway,
 		RequestType:   define.RequestHttp,
@@ -205,8 +207,7 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 		})
 	}
 
-	// 无法统计 bodysize 因此置 0
-	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordPushGateway, 0, start)
+	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordPushGateway, contentLength, start)
 	receiver.WriteResponse(w, define.ContentTypeJson, http.StatusOK, []byte(`{"status": "success"}`))
 }
 

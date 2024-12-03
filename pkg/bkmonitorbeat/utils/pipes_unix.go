@@ -8,14 +8,49 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
 
 package utils
 
 import (
 	"os/exec"
+	"os/user"
+	"strconv"
 	"syscall"
 )
+
+func lookupUser(username string) (int, int, error) {
+	u, err := user.Lookup(username)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	gid, err := strconv.Atoi(u.Gid)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return uid, gid, nil
+}
+
+// setProcessExecByUsername 当提供的用户名不正确时,不做任何操作
+func setProcessExecByUsername(cmd *exec.Cmd, username string) error {
+	uid, gid, err := lookupUser(username)
+	if err != nil {
+		return err
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Credential: &syscall.Credential{
+			Uid: uint32(uid),
+			Gid: uint32(gid),
+		},
+	}
+	return nil
+}
 
 func setProcessGroupID(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

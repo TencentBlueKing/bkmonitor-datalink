@@ -61,9 +61,9 @@ type HttpService struct {
 
 var httpSvc HttpService
 
-var acceptedThriftFormats = map[string]struct{}{
-	"application/x-thrift":                 {},
-	"application/vnd.apache.thrift.binary": {},
+var acceptedFormats = map[string]Encoder{
+	"application/x-thrift":                 newThriftV1Encoder(),
+	"application/vnd.apache.thrift.binary": newThriftV1Encoder(),
 }
 
 func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
@@ -83,7 +83,7 @@ func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 		_ = req.Body.Close()
 	}()
 
-	traces, httpCode, err := decodeThriftHTTPBody(buf.Bytes(), req.Header.Get("Content-Type"))
+	traces, httpCode, err := decodeHTTPBody(buf.Bytes(), req.Header.Get("Content-Type"))
 	if err != nil {
 		logger.Warnf("failed to parse jaeger exported content, ip=%v, err: %v", ip, err)
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordTraces)
@@ -112,17 +112,18 @@ func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordTraces, buf.Len(), start)
 }
 
-func decodeThriftHTTPBody(bs []byte, ctype string) (ptrace.Traces, int, error) {
+func decodeHTTPBody(bs []byte, ctype string) (ptrace.Traces, int, error) {
 	contentType, _, err := mime.ParseMediaType(ctype)
 	if err != nil {
 		return ptrace.Traces{}, http.StatusBadRequest, err
 	}
 
-	if _, ok := acceptedThriftFormats[contentType]; !ok {
+	encoder, ok := acceptedFormats[contentType]
+	if !ok {
 		return ptrace.Traces{}, http.StatusBadRequest, errors.Errorf("unsupported content type: %v", contentType)
 	}
 
-	traces, err := newThriftV1Encoder().UnmarshalTraces(bs)
+	traces, err := encoder.UnmarshalTraces(bs)
 	if err != nil {
 		return ptrace.Traces{}, http.StatusBadRequest, errors.Wrap(err, "unmarshal request body failed")
 	}

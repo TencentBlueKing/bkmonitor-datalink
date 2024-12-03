@@ -27,6 +27,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	boom "github.com/tylertreat/BoomFilters"
 	"github.com/wcharczuk/go-chart/v2"
+
+	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // TestExists test bloom-filter
@@ -182,16 +184,16 @@ func exportChart(x, y []float64, duration time.Duration, title string) {
 
 	file, err := os.Create("output.png")
 	if err != nil {
-		logger.Fatal(err)
+		monitorLogger.Fatal(err)
 	}
 	_, err = io.Copy(file, buffer)
 	if err != nil {
-		logger.Fatal(err)
+		monitorLogger.Fatal(err)
 	}
 }
 
 func startBenchmark(count, magnitude int, title string, options BloomOptions) {
-	bloomFilter, _ := newLayersCapDecreaseBloomClient(context.TODO(), options)
+	bloomFilter, _ := newLayersCapDecreaseBloomClient("", context.TODO(), options)
 	xValues, yValues, duration := readAndWrite(bloomFilter, count, magnitude)
 	exportChart(xValues, yValues, duration, title)
 }

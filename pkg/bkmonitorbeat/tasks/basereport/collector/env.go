@@ -28,7 +28,7 @@ type EnvReport struct {
 }
 
 func GetEnvInfo(config configs.BasereportConfig) (*EnvReport, error) {
-	var report = EnvReport{
+	report := EnvReport{
 		Contab: make([]toolkit.Crontab, 0),
 	}
 	var err, lastErr error

@@ -7,11 +7,13 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
+//go:build windows
+
 package collector
 
 import (
 	"context"
-	"strings"
+	"fmt"
 	"sync"
 	"time"
 
@@ -29,6 +31,21 @@ var updateLock sync.RWMutex
 
 var minPeriod = 1 * time.Minute
 
+type lastTimeSlice struct {
+	sync.Mutex
+	lastCPUTimes    []cpu.TimesStat
+	lastPerCPUTimes []cpu.TimesStat
+}
+
+var lastCPUTimeSlice lastTimeSlice
+
+func init() {
+	lastCPUTimeSlice.Lock()
+	lastCPUTimeSlice.lastCPUTimes, _ = cpu.Times(false)
+	lastCPUTimeSlice.lastPerCPUTimes, _ = cpu.Times(true)
+	lastCPUTimeSlice.Unlock()
+}
+
 func getCPUStatUsage(report *CpuReport) error {
 	// per stat
 	perStat, err := cpu.Times(true)
@@ -36,32 +53,53 @@ func getCPUStatUsage(report *CpuReport) error {
 		logger.Error("get CPU Stat fail")
 		return err
 	}
+	// 比较两次获取的时间片的内容的长度,如果不对等直接退出
+	lastCPUTimeSlice.Lock()
+	defer lastCPUTimeSlice.Unlock()
+	// 判断lastPerCPUTimes长度，增加重写避免init方法失效的情况
+	if len(lastCPUTimeSlice.lastPerCPUTimes) <= 0 || len(perStat) != len(lastCPUTimeSlice.lastPerCPUTimes) {
+		lastCPUTimeSlice.lastPerCPUTimes, err = cpu.Times(true)
+		if err != nil {
+			return err
+		}
+	}
 
+	l1, l2 := len(perStat), len(lastCPUTimeSlice.lastPerCPUTimes)
+	if l1 != l2 {
+		err = fmt.Errorf("received two CPU counts %d != %d", l1, l2)
+		return err
+	}
+
+	for index, value := range perStat {
+		item := lastCPUTimeSlice.lastPerCPUTimes[index]
+		tmp := calcTimeState(item, value)
+		report.Stat = append(report.Stat, tmp)
+	}
 	// total stat
 	totalstat, err := cpu.Times(false)
 	if err != nil {
 		logger.Error("get CPU Total Stat fail")
 		return err
 	}
-	report.TotalStat = totalstat[0]
-
+	// 判断lastCPUTimes的长度，增加重写避免init方法失效的情况
+	if len(lastCPUTimeSlice.lastCPUTimes) <= 0 {
+		lastCPUTimeSlice.lastCPUTimes, err = cpu.Times(false)
+		if err != nil {
+			return err
+		}
+	}
+	cpuTimeStat := totalstat[0]
+	lastCpuTimeStat := lastCPUTimeSlice.lastCPUTimes[0]
+	report.TotalStat = calcTimeState(lastCpuTimeStat, cpuTimeStat)
+	// 将此次获取的timeState重新写入公共变量
+	lastCPUTimeSlice.lastCPUTimes = totalstat
+	lastCPUTimeSlice.lastPerCPUTimes = perStat
 	perUsage, err := cpu.Percent(0, true)
 	if err != nil {
 		logger.Error("get CPU Percent fail")
 		return err
 	}
-	for _, stat := range perStat {
-		if strings.Contains(stat.CPU, "_Total") {
-			// pass "_Total" filed
-			continue
-		} else {
-			// TODO : gopsutil implement has bug
-			// windows TimesStat has only User, System, Idle, Irq
-			//perUsage := 100 - stat.Idle
-			//report.Usage = append(report.Usage, perUsage)
-			report.Stat = append(report.Stat, stat)
-		}
-	}
+
 	report.Usage = perUsage
 	// get total cpu percent
 	total, err := cpu.Percent(0, false)

@@ -24,6 +24,10 @@ const (
 	PipelineConfigDimensionGroupName = "group_info"
 )
 
+const (
+	LogCleanFailedFlag = "__parse_failure"
+)
+
 // RT 类型
 const (
 	// ResultTableSchemaTypeFree :
@@ -147,6 +151,8 @@ const (
 	ResultTableOptLogSeparatedFields = "separator_field_list"
 	// ResultTableOptLogSeparatorRegexp : 日志正则提取清洗专用，提取字段
 	ResultTableOptLogSeparatorRegexp = "separator_regexp"
+
+	ResultTableOptLogSeparatorConfigs = "separator_configs"
 
 	// 事件类
 	// 结果是否可以使用新的自定义维度

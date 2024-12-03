@@ -65,11 +65,16 @@ func (i *InfluxdbHostInfo) BeforeCreate(tx *gorm.DB) error {
 
 // GetConsulConfig 生成consul配置信息
 func (i InfluxdbHostInfo) GetConsulConfig() map[string]interface{} {
+	pwd, err := cipher.GetDBAESCipher().AESDecrypt(i.Password)
+	if err != nil {
+		logger.Error("GetConsulConfig:get influxdb host info password error", err)
+		return nil
+	}
 	return map[string]interface{}{
 		"domain_name":       i.DomainName,
 		"port":              i.Port,
 		"username":          i.Username,
-		"password":          cipher.GetDBAESCipher().AESDecrypt(i.Password),
+		"password":          pwd,
 		"status":            i.Status,
 		"backup_rate_limit": i.BackupRateLimit,
 		"grpc_port":         i.GrpcPort,
@@ -101,12 +106,12 @@ func (i InfluxdbHostInfo) RefreshConsulClusterConfig(ctx context.Context) error 
 		return err
 	}
 	// 更新consul信息
-	err = hashconsul.Put(consulClient, i.ConsulConfigPath(), configStr)
+	err = hashconsul.PutCas(consulClient, i.ConsulConfigPath(), configStr, 0, nil)
 	if err != nil {
 		logger.Errorf("host: [%s] refresh consul config failed, %v", i.HostName, err)
 		return err
 	}
-	models.PushToRedis(ctx, models.InfluxdbHostInfoKey, i.HostName, configStr, true)
+	models.PushToRedis(ctx, models.InfluxdbHostInfoKey, i.HostName, configStr)
 	return nil
 }
 

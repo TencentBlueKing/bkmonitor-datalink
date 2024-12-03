@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/notifier"
@@ -24,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -41,13 +44,13 @@ type Builder interface {
 }
 
 type PreCalculateProcessor interface {
+	PreCalculateProcessorStandLone
+
 	Start(stopParentContext context.Context, errorReceiveChan chan<- error, payload []byte)
 	GetTaskDimension(payload []byte) string
 	Run(errorChan chan<- error)
 
 	StartByDataId(ctx context.Context, startInfo StartInfo, errorReceiveChan chan<- error, config ...PrecalculateOption)
-
-	WatchConnections(filePath string)
 }
 
 var (
@@ -57,7 +60,7 @@ var (
 
 type StartInfo struct {
 	DataId string `json:"data_id"`
-	Qps    int    `json:"qps"`
+	Qps    *int   `json:"qps"`
 }
 
 type Precalculate struct {
@@ -198,9 +201,9 @@ loop:
 					ctx: runInstanceCtx, startInfo: startInfo, config: p.defaultConfig, errorReceiveChan: errorReceiveChan,
 				}
 			} else {
-				// config overwrite
+				// config merge
 				signal = readySignal{
-					ctx: runInstanceCtx, startInfo: startInfo, config: config[0], errorReceiveChan: errorReceiveChan,
+					ctx: runInstanceCtx, startInfo: startInfo, config: p.MergeConfig(p.defaultConfig, config[0]), errorReceiveChan: errorReceiveChan,
 				}
 			}
 			p.readySignalChan <- signal
@@ -213,6 +216,28 @@ loop:
 	}
 
 	apmLogger.Infof("[StartByDataId] done - DataId: %s Qps: %d", startInfo.DataId, startInfo.Qps)
+}
+
+func (p *Precalculate) MergeConfig(defaultConfig, customConfig PrecalculateOption) PrecalculateOption {
+	if len(customConfig.distributiveWindowConfig) != 0 {
+		defaultConfig.distributiveWindowConfig = append(defaultConfig.distributiveWindowConfig, customConfig.distributiveWindowConfig...)
+	}
+	if len(customConfig.runtimeConfig) != 0 {
+		defaultConfig.runtimeConfig = append(defaultConfig.runtimeConfig, customConfig.runtimeConfig...)
+	}
+	if len(customConfig.notifierConfig) != 0 {
+		defaultConfig.notifierConfig = append(defaultConfig.notifierConfig, customConfig.notifierConfig...)
+	}
+	if len(customConfig.processorConfig) != 0 {
+		defaultConfig.processorConfig = append(defaultConfig.processorConfig, customConfig.processorConfig...)
+	}
+	if len(customConfig.storageConfig) != 0 {
+		defaultConfig.storageConfig = append(defaultConfig.storageConfig, customConfig.storageConfig...)
+	}
+	if len(customConfig.profileReportConfig) != 0 {
+		defaultConfig.profileReportConfig = append(defaultConfig.profileReportConfig, customConfig.profileReportConfig...)
+	}
+	return defaultConfig
 }
 
 func (p *Precalculate) Run(runSuccess chan<- error) {
@@ -257,7 +282,7 @@ func (p *Precalculate) launch(
 	runInstance.startWindowHandler(messageChan, saveReqChan)
 	runInstance.startProfileReport()
 	go runInstance.startRecordSemaphoreAcquired()
-
+	go runInstance.watchConsulConfigUpdate(errorReceiveChan)
 	apmLogger.Infof("dataId: %s launch successfully", startInfo.DataId)
 }
 
@@ -278,6 +303,13 @@ type RunInstance struct {
 func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 	kafkaConfig := core.GetMetadataCenter().GetKafkaConfig(p.startInfo.DataId)
 	groupId := "go-apm-pre-calculate-consumer-group"
+	var qps int
+	if p.startInfo.Qps == nil {
+		qps = config.NotifierMessageQps
+	} else {
+		qps = *p.startInfo.Qps
+	}
+
 	n, err := notifier.NewNotifier(
 		notifier.KafkaNotifier,
 		p.startInfo.DataId,
@@ -288,7 +320,7 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 			notifier.KafkaUsername(kafkaConfig.Username),
 			notifier.KafkaPassword(kafkaConfig.Password),
 			notifier.KafkaTopic(kafkaConfig.Topic),
-			notifier.Qps(p.startInfo.Qps),
+			notifier.Qps(qps),
 		}, p.config.notifierConfig...,
 		)...,
 	)
@@ -303,7 +335,7 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 
 func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpan, saveReqChan chan<- storage.SaveRequest) {
 
-	processor := window.NewProcessor(p.startInfo.DataId, p.proxy, p.config.processorConfig...)
+	processor := window.NewProcessor(p.ctx, p.startInfo.DataId, p.proxy, p.config.processorConfig...)
 
 	operation := window.Operation{
 		Operator: window.NewDistributiveWindow(
@@ -340,9 +372,8 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 				storage.EsIndexName(saveEsConfig.IndexName),
 			),
 			storage.PrometheusWriterConfig(
-				storage.PrometheusWriterEnabled(config.PromRemoteWriteEnabled),
-				storage.PrometheusWriterUrl(config.PromRemoteWriteUrl),
-				storage.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
+				remote.PrometheusWriterUrl(config.PromRemoteWriteUrl),
+				remote.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
 			),
 		}, p.config.storageConfig...,
 		)...,
@@ -395,4 +426,26 @@ func (p *RunInstance) startRecordSemaphoreAcquired() {
 			return
 		}
 	}
+}
+
+// watchConsulConfigUpdate if the config of dataId in consul is updated, will be reload daemon task.
+func (p *RunInstance) watchConsulConfigUpdate(errorReceiveChan chan<- error) {
+	ticker := time.NewTicker(10 * time.Minute)
+
+	for {
+		select {
+		case <-ticker.C:
+			isUpdated, diff := core.GetMetadataCenter().CheckUpdate(p.startInfo.DataId)
+			if isUpdated {
+				apmLogger.Infof("[ConsulConfigWatcher] dataId: %s config updated(diff: %s), will be reload!", p.startInfo.DataId, diff)
+				errorReceiveChan <- errors.New("reload for config update")
+				return
+			}
+		case <-p.ctx.Done():
+			apmLogger.Infof("[ConsulConfigWatcher] dataId: %s consul config update checker exit", p.startInfo.DataId)
+			ticker.Stop()
+			return
+		}
+	}
+
 }

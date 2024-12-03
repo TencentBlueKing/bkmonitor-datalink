@@ -9,3 +9,26 @@ processor:
       salt: "bk" # 加盐解密标识
       decoded_iv: "bkbkbkbkbkbkbkbk"
       decoded_key: "81be7fc6-5476-4934-9417-6d4d593728db"
+
+
+  - name: "resource_filter/common"
+    config:
+      assemble:
+        - destination: "bk.instance.id" # 转换后名称
+          separator: ":"
+          keys:
+            - "resource.telemetry.sdk.language"
+            - "resource.service.name"
+            - "resource.net.host.name"
+            - "resource.net.host.ip"
+            - "resource.net.host.port"
+      drop:
+        keys:
+          - "resource.bk.data.token"
+#      from_cache:
+#          key: "resource.service.name"
+#          cache:
+#            key: "service.name"
+#            url: "http://localhost:8990/service_info"
+#            interval: "1m"
+#            timeout: "1m"

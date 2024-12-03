@@ -9,7 +9,9 @@
 
 package feature
 
-import "strings"
+import (
+	"strings"
+)
 
 const (
 	// labels features
@@ -26,6 +28,8 @@ const (
 	keyRelabelIndex         = "relabelIndex"
 	keyMonitorMatchSelector = "monitorMatchSelector"
 	keyMonitorDropSelector  = "monitorDropSelector"
+	keyLabelJoinMatcher     = "labelJoinMatcher"
+	keySliMonitor           = "sliMonitor"
 )
 
 func isMapKeyExists(m map[string]string, key string) bool {
@@ -48,6 +52,47 @@ func parseSelector(s string) map[string]string {
 		selector[kv[0]] = kv[1]
 	}
 	return selector
+}
+
+type LabelJoinMatcherSpec struct {
+	Kind        string
+	Annotations []string
+	Labels      []string
+}
+
+// parseLabelJoinMatcher 解析 labeljoin 规则
+// Kind://[label:custom_label|annotation:custom_annotation,...]
+func parseLabelJoinMatcher(s string) *LabelJoinMatcherSpec {
+	const (
+		annotationPrefix = "annotation:"
+		labelPrefix      = "label:"
+	)
+
+	switch {
+	case strings.HasPrefix(s, "Pod://"): // TODO(mando): 目前仅支持 Pod
+		s = s[len("Pod://"):]
+	default:
+		return nil
+	}
+
+	var annotations []string
+	var labels []string
+	parts := strings.Split(s, ",")
+	for _, part := range parts {
+		k := strings.TrimSpace(part)
+		switch {
+		case strings.HasPrefix(k, annotationPrefix):
+			annotations = append(annotations, strings.TrimSpace(k[len(annotationPrefix):]))
+		case strings.HasPrefix(k, labelPrefix):
+			labels = append(labels, strings.TrimSpace(k[len(labelPrefix):]))
+		}
+	}
+
+	return &LabelJoinMatcherSpec{
+		Kind:        "Pod",
+		Annotations: annotations,
+		Labels:      labels,
+	}
 }
 
 // IfCommonResource 检查 DataID 是否为 common 类型
@@ -97,4 +142,12 @@ func MonitorMatchSelector(m map[string]string) map[string]string {
 
 func MonitorDropSelector(m map[string]string) map[string]string {
 	return parseSelector(m[keyMonitorDropSelector])
+}
+
+func LabelJoinMatcher(m map[string]string) *LabelJoinMatcherSpec {
+	return parseLabelJoinMatcher(m[keyLabelJoinMatcher])
+}
+
+func SliMonitor(m map[string]string) string {
+	return m[keySliMonitor]
 }

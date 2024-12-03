@@ -18,13 +18,16 @@ import (
 
 	"k8s.io/client-go/tools/cache"
 
-	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/crd/v1beta1"
+	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
 	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	bkinformers "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/action"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -37,10 +40,7 @@ const (
 	usageMetric = "metric"
 )
 
-var (
-	bus               = notifier.NewDefaultRateBus()
-	ErrDataIDNotFound = errors.New("dataid not found")
-)
+var bus = notifier.NewDefaultRateBus()
 
 // Publish 发布信号
 func Publish() {
@@ -134,14 +134,14 @@ func (w *dataIDWatcher) matchDataID(meta define.MonitorMeta, systemResource bool
 		if dataID, ok := dataIDs[defaultSystemDataIDKey]; ok {
 			return dataID, nil
 		}
-		return nil, ErrDataIDNotFound
+		return nil, errors.New("system dataid not found")
 	}
 
 	// 3) 自定义匹配（namespace 匹配）要求 name 为空且 namespace 不为空
 	for _, dataID := range dataIDs {
 		resource := dataID.Spec.MonitorResource
 		if resource.Name == "" && resource.NameSpace != "" {
-			if strings.ToLower(resource.Kind) == strings.ToLower(meta.Kind) && resource.MatchSplitNamespace(meta.Namespace) {
+			if stringx.LowerEq(resource.Kind, meta.Kind) && resource.MatchSplitNamespace(meta.Namespace) {
 				return dataID, nil
 			}
 		}
@@ -152,7 +152,7 @@ func (w *dataIDWatcher) matchDataID(meta define.MonitorMeta, systemResource bool
 		return dataID, nil
 	}
 
-	return nil, ErrDataIDNotFound
+	return nil, errors.New("common dataid not found")
 }
 
 func (w *dataIDWatcher) MatchMetricDataID(meta define.MonitorMeta, systemResource bool) (*bkv1beta1.DataID, error) {
@@ -169,14 +169,14 @@ func (w *dataIDWatcher) GetClusterInfo() (*define.ClusterInfo, error) {
 	clusterID := dataID.Spec.Labels["bcs_cluster_id"]
 	// 集群 id 不能为空
 	if clusterID == "" {
-		return nil, errors.New("unknown bcs_cluster_id")
+		return nil, errors.New("bcs_cluster_id not found")
 	}
 	info.BcsClusterID = clusterID
 
 	bizID := dataID.Spec.Labels["bk_biz_id"]
 	// 业务 id 不能为空
 	if bizID == "" {
-		return nil, errors.New("unknown bk_biz_id")
+		return nil, errors.New("bk_biz_id not found")
 	}
 	info.BizID = bizID
 
@@ -257,8 +257,7 @@ func (w *dataIDWatcher) deleteDataID(dataID *bkv1beta1.DataID) {
 		return
 	}
 
-	logger.Infof("delete DataID, name=%v, id=%v, labels=%v", dataID.Name, dataID.Spec.DataID, dataID.Labels)
-	Publish()
+	Publish() // 发布信号
 }
 
 func (w *dataIDWatcher) deleteMetricDataID(dataID *bkv1beta1.DataID) {
@@ -322,60 +321,60 @@ func (w *dataIDWatcher) Stop() {
 func (w *dataIDWatcher) handleDataIDAdd(obj interface{}) {
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
-		logger.Errorf("unexpected DataID type, got %T", obj)
+		logger.Errorf("expected DataID type, got %T", obj)
 		return
 	}
 	env := feature.BkEnv(dataID.Labels)
-	if env != ConfBkEnv {
-		logger.Warnf("want bkenv '%s', but got '%s'", ConfBkEnv, env)
+	if env != configs.G().BkEnv {
+		logger.Warnf("want bkenv '%s', but got '%s'", configs.G().BkEnv, env)
 		return
 	}
 
-	w.mm.IncHandledCounter(define.ActionAdd)
+	w.mm.IncHandledCounter(action.Add)
 	w.updateDataID(dataID)
 }
 
 func (w *dataIDWatcher) handleDataIDDelete(obj interface{}) {
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
-		logger.Errorf("unexpected DataID type, got %T", obj)
+		logger.Errorf("expected DataID type, got %T", obj)
 		return
 	}
 	env := feature.BkEnv(dataID.Labels)
-	if env != ConfBkEnv {
-		logger.Warnf("want bkenv '%s', but got '%s'", ConfBkEnv, env)
+	if env != configs.G().BkEnv {
+		logger.Warnf("want bkenv '%s', but got '%s'", configs.G().BkEnv, env)
 		return
 	}
 
-	w.mm.IncHandledCounter(define.ActionDelete)
+	w.mm.IncHandledCounter(action.Delete)
 	w.deleteDataID(dataID)
 }
 
 func (w *dataIDWatcher) handleDataIDUpdate(oldObj interface{}, newObj interface{}) {
 	old, ok := oldObj.(*bkv1beta1.DataID)
 	if !ok {
-		logger.Errorf("unexpected DataID type, got %T", oldObj)
+		logger.Errorf("expected DataID type, got %T", oldObj)
 		return
 	}
 	cur, ok := newObj.(*bkv1beta1.DataID)
 	if !ok {
-		logger.Errorf("unexpected DataID type got %T", newObj)
+		logger.Errorf("expected DataID type got %T", newObj)
 		return
 	}
 
 	if old.ResourceVersion == cur.ResourceVersion {
-		w.mm.IncHandledCounter(define.ActionSkip)
+		w.mm.IncHandledCounter(action.Skip)
 		return
 	}
 
-	w.mm.IncHandledCounter(define.ActionUpdate)
+	w.mm.IncHandledCounter(action.Update)
 	// 删除旧 dataid
-	if feature.BkEnv(old.Labels) == ConfBkEnv {
+	if feature.BkEnv(old.Labels) == configs.G().BkEnv {
 		w.deleteDataID(old)
 		logger.Infof("delete DataID, name=%v, id=%v, labels=%v", old.Name, old.Spec.DataID, old.Labels)
 	}
 	// 添加新 dataid
-	if feature.BkEnv(cur.Labels) == ConfBkEnv {
+	if feature.BkEnv(cur.Labels) == configs.G().BkEnv {
 		w.updateDataID(cur)
 		logger.Infof("update DataID, name=%v, id=%v, labels=%v", cur.Name, cur.Spec.DataID, cur.Labels)
 	}

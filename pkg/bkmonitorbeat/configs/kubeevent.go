@@ -22,9 +22,9 @@ const (
 type KubeEventConfig struct {
 	BaseTaskParam `config:"_,inline"`
 
-	EventSpan time.Duration `config:"event_span"`
-	Interval  time.Duration `config:"interval"`
-	TailFiles []string      `config:"tail_files"`
+	Interval        time.Duration `config:"interval"`
+	TailFiles       []string      `config:"tail_files"`
+	UpMetricsDataID int32         `config:"upmetrics_dataid"` // 自监控 dataid
 }
 
 func (c *KubeEventConfig) GetTaskConfigList() []define.TaskConfig {

@@ -31,7 +31,7 @@ func PathExist(path string) bool {
 // GeneratorHashKey
 func GeneratorHashKey(names []string) string {
 	const keySepatator = "||"
-	var hash = sha1.New()
+	hash := sha1.New()
 
 	var key bytes.Buffer
 	for _, name := range names {

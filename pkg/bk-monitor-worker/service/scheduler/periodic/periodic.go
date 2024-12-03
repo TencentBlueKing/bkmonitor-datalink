@@ -64,6 +64,8 @@ func getPeriodicTasks() map[string]PeriodicTask {
 	ClearDeprecatedRedisKey := "periodic:metadata:clear_deprecated_redis_key"
 	CleanDataIdConsulPath := "periodic:metadata:clean_data_id_consul_path"
 
+	SloPush := "periodic:metadata:slo_push"
+
 	return map[string]PeriodicTask{
 		refreshTsMetric: {
 			Cron:    "*/5 * * * *",
@@ -175,6 +177,10 @@ func getPeriodicTasks() map[string]PeriodicTask {
 		CleanDataIdConsulPath: {
 			Cron:    "0 2 * * *", // 每天凌晨2点执行
 			Handler: metadataTask.CleanDataIdConsulPath,
+		},
+		SloPush: {
+			Cron:    "*/5 * * * *",
+			Handler: metadataTask.SloPush,
 		},
 	}
 }

@@ -32,11 +32,12 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // CmdbResourceType cmdb监听资源类型
@@ -50,6 +51,7 @@ const (
 	CmdbResourceTypeModule           CmdbResourceType = "module"
 	CmdbResourceTypeMainlineInstance CmdbResourceType = "mainline_instance"
 	CmdbResourceTypeProcess          CmdbResourceType = "process"
+	CmdbResourceTypeDynamicGroup     CmdbResourceType = "dynamic_group"
 )
 
 // CmdbResourceTypeFields cmdb资源类型对应的监听字段
@@ -358,6 +360,27 @@ func (h *CmdbEventHandler) ifRunRefreshAll(ctx context.Context, cacheType string
 
 // Handle 处理cmdb资源变更事件
 func (h *CmdbEventHandler) Handle(ctx context.Context) {
+	// 如果超过全量刷新间隔时间，执行全量刷新
+	if h.ifRunRefreshAll(ctx, h.cacheManager.Type()) {
+		// 全量刷新
+		err := RefreshAll(ctx, h.cacheManager, h.cacheManager.GetConcurrentLimit())
+		if err != nil {
+			logger.Errorf("refresh all cache failed: %v", err)
+		}
+
+		logger.Infof("refresh all cmdb resource(%s) cache", h.cacheManager.Type())
+
+		// 记录全量刷新时间
+		lastUpdateTimeKey := fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, h.cacheManager.Type())
+		_, err = h.redisClient.Set(ctx, lastUpdateTimeKey, strconv.FormatInt(time.Now().Unix(), 10), 24*time.Hour).Result()
+		if err != nil {
+			logger.Errorf("set last update time error: %v", err)
+		}
+
+		return
+	}
+
+	// 处理资源变更事件
 	for _, resourceType := range h.resourceTypes {
 		// 获取资源变更事件
 		events, err := h.getBkEvents(ctx, resourceType)
@@ -370,26 +393,6 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 
 		// 重置
 		h.cacheManager.Reset()
-
-		// 如果超过全量刷新间隔时间，执行全量刷新
-		if h.ifRunRefreshAll(ctx, h.cacheManager.Type()) {
-			// 全量刷新
-			err := RefreshAll(ctx, h.cacheManager, h.cacheManager.GetConcurrentLimit())
-			if err != nil {
-				logger.Errorf("refresh all cache failed: %v", err)
-			}
-
-			logger.Infof("refresh all cmdb resource(%s) cache", h.cacheManager.Type())
-
-			// 记录全量刷新时间
-			lastUpdateTimeKey := fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, h.cacheManager.Type())
-			_, err = h.redisClient.Set(ctx, lastUpdateTimeKey, strconv.FormatInt(time.Now().Unix(), 10), 24*time.Hour).Result()
-			if err != nil {
-				logger.Errorf("set last update time error: %v", err)
-			}
-
-			return
-		}
 
 		// 无事件
 		if len(events) == 0 {
@@ -435,6 +438,7 @@ var cmdbEventHandlerResourceTypeMap = map[string][]CmdbResourceType{
 	"module":           {CmdbResourceTypeModule},
 	"set":              {CmdbResourceTypeSet},
 	"service_instance": {CmdbResourceTypeProcess},
+	"dynamic_group":    {CmdbResourceTypeDynamicGroup},
 }
 
 // RefreshTaskParams cmdb缓存刷新任务参数
@@ -500,6 +504,40 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// 推送自定义上报数据
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// 启动指标上报
+		reporter, err := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
+		if err != nil {
+			logger.Errorf("[cmdb_relation] new space reporter: %v", err)
+			return
+		}
+		defer func() {
+			err = reporter.Close(ctx)
+		}()
+		spaceReport := GetRelationMetricsBuilder().WithSpaceReport(reporter)
+
+		for {
+			ticker := time.NewTicker(time.Minute)
+
+			// 事件处理间隔时间
+			select {
+			case <-cancelCtx.Done():
+				GetRelationMetricsBuilder().ClearAllMetrics()
+				ticker.Stop()
+				return
+			case <-ticker.C:
+				// 上报指标
+				logger.Infof("[cmdb_relation] space report push all")
+				if err = spaceReport.PushAll(cancelCtx, time.Now()); err != nil {
+					logger.Errorf("[cmdb_relation] relation metrics builder push all error: %v", err.Error())
+				}
+			}
+		}
+	}()
+
 	for _, cacheType := range cacheTypes {
 		wg.Add(1)
 		cacheType := cacheType
@@ -515,13 +553,13 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 			// 创建资源变更事件处理器
 			handler, err := NewCmdbEventHandler(params.Prefix, &params.Redis, cacheType, fullRefreshInterval, bizConcurrent)
 			if err != nil {
-				logger.Errorf("new cmdb event handler failed: %v", err)
+				logger.Errorf("[cmdb_relation] new cmdb event handler failed: %v", err)
 				cancel()
 				return
 			}
 
-			logger.Infof("start handle cmdb resource(%s) event", cacheType)
-			defer logger.Infof("end handle cmdb resource(%s) event", cacheType)
+			logger.Infof("[cmdb_relation] start handle cmdb resource(%s) event", cacheType)
+			defer logger.Infof("[cmdb_relation] end handle cmdb resource(%s) event", cacheType)
 
 			for {
 				tn := time.Now()

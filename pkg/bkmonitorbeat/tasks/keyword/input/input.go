@@ -25,9 +25,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-var CounterRead = uint64(0)          // 计数器，读的行数
-var CounterLastOpenFile atomic.Value // 最后一次打开的文件
-var ScanTickerDuration = 5 * time.Second
+var (
+	CounterRead         = uint64(0)  // 计数器，读的行数
+	CounterLastOpenFile atomic.Value // 最后一次打开的文件
+	ScanTickerDuration  = 5 * time.Second
+)
 
 const (
 	FilePositionHead = int64(0)

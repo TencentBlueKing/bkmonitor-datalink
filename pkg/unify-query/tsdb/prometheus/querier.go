@@ -20,15 +20,9 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
-	tsDBInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
 )
 
 const (
@@ -86,7 +80,7 @@ func (q *Querier) getQueryList(referenceName string) []*Query {
 	if queryMetric, ok := queries[referenceName]; ok {
 		queryList = make([]*Query, 0, len(queryMetric.QueryList))
 		for _, qry := range queryMetric.QueryList {
-			instance := GetInstance(ctx, qry)
+			instance := GetTsDbInstance(ctx, qry)
 			if instance != nil {
 				queryList = append(queryList, &Query{
 					instance: instance,
@@ -151,7 +145,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			if index < len(queryList) {
 				query := queryList[index]
 
-				span.Set(fmt.Sprintf("query_%d_instance_type", i), query.instance.GetInstanceType())
+				span.Set(fmt.Sprintf("query_%d_instance_type", i), query.instance.InstanceType())
 				span.Set(fmt.Sprintf("query_%d_qry_source", i), query.qry.SourceType)
 				span.Set(fmt.Sprintf("query_%d_qry_db", i), query.qry.DB)
 				span.Set(fmt.Sprintf("query_%d_qry_vmrt", i), query.qry.VmRt)
@@ -181,7 +175,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				startTime := time.UnixMilli(start)
 				endTime := time.UnixMilli(end)
 
-				setCh <- query.instance.QueryRaw(ctx, query.qry, startTime, endTime)
+				setCh <- query.instance.QuerySeriesSet(ctx, query.qry, startTime, endTime)
 				return
 
 			} else {
@@ -253,42 +247,15 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 		}
 	}
 
-	queryReference := metadata.GetQueryReference(q.ctx)
-	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
-
-	if ok {
+	queryList := q.getQueryList(referenceName)
+	for _, query := range queryList {
+		lbl, err := query.instance.QueryLabelValues(ctx, query.qry, name, q.min, q.max)
 		if err != nil {
-			return nil, nil, err
-		}
-
-		metadata.SetExpand(ctx, vmExpand)
-		instance := GetInstance(ctx, &metadata.Query{
-			StorageID: consul.VictoriaMetricsStorageType,
-		})
-		if instance == nil {
-			err = fmt.Errorf("%s storage get error", consul.VictoriaMetricsStorageType)
 			log.Errorf(ctx, err.Error())
-			return nil, nil, err
+			continue
 		}
-
-		lbl, err := instance.LabelValues(ctx, nil, name, q.min, q.max, matchers...)
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, lb := range lbl {
-			labelMap[lb] = struct{}{}
-		}
-	} else {
-		queryList := q.getQueryList(referenceName)
-		for _, query := range queryList {
-			lbl, err := query.instance.LabelValues(ctx, query.qry, name, q.min, q.max, matchers...)
-			if err != nil {
-				log.Errorf(ctx, err.Error())
-				continue
-			}
-			for _, l := range lbl {
-				labelMap[l] = struct{}{}
-			}
+		for _, l := range lbl {
+			labelMap[l] = struct{}{}
 		}
 	}
 
@@ -320,41 +287,14 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 		}
 	}
 
-	queryReference := metadata.GetQueryReference(q.ctx)
-	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
-
-	if ok {
-		if err != nil {
-			return nil, nil, err
-		}
-
-		metadata.SetExpand(ctx, vmExpand)
-		instance := GetInstance(ctx, &metadata.Query{
-			StorageID: consul.VictoriaMetricsStorageType,
-		})
-		if instance == nil {
-			err = fmt.Errorf("%s storage get error", consul.VictoriaMetricsStorageType)
-			log.Errorf(ctx, err.Error())
-			return nil, nil, err
-		}
-
-		lbl, err := instance.LabelNames(ctx, nil, q.min, q.max, matchers...)
+	queryList := q.getQueryList(referenceName)
+	for _, query := range queryList {
+		lbl, err := query.instance.QueryLabelNames(ctx, query.qry, q.min, q.max)
 		if err != nil {
 			return nil, nil, err
 		}
 		for _, lb := range lbl {
 			labelMap[lb] = struct{}{}
-		}
-	} else {
-		queryList := q.getQueryList(referenceName)
-		for _, query := range queryList {
-			lbl, err := query.instance.LabelNames(ctx, query.qry, q.min, q.max, matchers...)
-			if err != nil {
-				return nil, nil, err
-			}
-			for _, lb := range lbl {
-				labelMap[lb] = struct{}{}
-			}
 		}
 	}
 
@@ -370,90 +310,4 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 // Close 释放查询器的所有资源
 func (q *Querier) Close() error {
 	return nil
-}
-
-// GetInstance 通过 qry 获取实例
-func GetInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
-	var (
-		instance tsdb.Instance
-		err      error
-	)
-	ctx, span := trace.NewSpan(ctx, "stg-get-instance")
-	defer span.End(&err)
-	stg, err := tsdb.GetStorage(qry.StorageID)
-	if err != nil {
-		log.Errorf(
-			ctx, "get stg error: %s.%s: %s", qry.DB, qry.Measurement, err.Error(),
-		)
-		return nil
-	}
-	if stg.Instance != nil {
-		return stg.Instance
-	}
-
-	span.Set("stroage-type", stg.Type)
-	span.Set("stg-id", qry.StorageID)
-	span.Set("stg-address", stg.Address)
-	span.Set("stg-uri-path", stg.UriPath)
-
-	curlGet := &curl.HttpCurl{Log: log.DefaultLogger}
-	switch stg.Type {
-	// vm 实例直接在 stg.instance 就有了，无需进到这个逻辑
-	case consul.ElasticsearchStorageType:
-		instOption := &elasticsearch.InstanceOption{
-			Address:    stg.Address,
-			Username:   stg.Username,
-			Password:   stg.Password,
-			MaxSize:    stg.MaxLimit,
-			Timeout:    stg.Timeout,
-			MaxRouting: stg.MaxRouting,
-		}
-		instance, err = elasticsearch.NewInstance(ctx, instOption)
-		if err != nil {
-			log.Errorf(ctx, err.Error())
-			return nil
-		}
-	case consul.InfluxDBStorageType:
-		insOption := tsDBInfluxdb.Options{
-			ReadRateLimit:  stg.ReadRateLimit,
-			Timeout:        stg.Timeout,
-			ContentType:    stg.ContentType,
-			ChunkSize:      stg.ChunkSize,
-			RawUriPath:     stg.UriPath,
-			Accept:         stg.Accept,
-			AcceptEncoding: stg.AcceptEncoding,
-			MaxLimit:       stg.MaxLimit,
-			MaxSlimit:      stg.MaxSLimit,
-			Tolerance:      stg.Toleration,
-			Curl:           curlGet,
-		}
-
-		host, err := influxdb.GetInfluxDBRouter().GetInfluxDBHost(
-			ctx, qry.TagsKey, qry.ClusterName, qry.DB, qry.Measurement, qry.Condition,
-		)
-		if err != nil {
-			log.Errorf(ctx, err.Error())
-			return nil
-		}
-		insOption.Host = host.DomainName
-		insOption.Port = host.Port
-		insOption.GrpcPort = host.GrpcPort
-		insOption.Protocol = host.Protocol
-		insOption.Username = host.Username
-		insOption.Password = host.Password
-
-		// 如果 host 有单独配置，则替换默认限速配置
-		if host.ReadRateLimit > 0 {
-			insOption.ReadRateLimit = host.ReadRateLimit
-		}
-		instance = tsDBInfluxdb.NewInstance(ctx, insOption)
-
-		span.Set("cluster-name", qry.ClusterName)
-		span.Set("tag-keys", fmt.Sprintf("%+v", qry.TagsKey))
-		span.Set("ins-option", fmt.Sprintf("%+v", insOption))
-	default:
-		return nil
-	}
-
-	return instance
 }

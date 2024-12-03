@@ -138,6 +138,9 @@ func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]strin
 				metricAppCode = "null"
 			}
 			userAgent := c.Request.Header.Get("User-Agent")
+			if userAgent == "" {
+				userAgent = "null"
+			}
 
 			if err != nil {
 				err = fmt.Errorf("jwt auth unauthorized: %s, app_code: %s, space_uid: %s", err, appCode, spaceUID)

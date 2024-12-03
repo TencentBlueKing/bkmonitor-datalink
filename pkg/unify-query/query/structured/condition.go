@@ -78,9 +78,9 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 
 	// 先循环遍历所有的内容，加入到各个列表中
 	for index, field := range c.FieldList {
-		// 不允许值为空，此时可能引起拼接失败
+		// 当 value 为空的时候，直接忽略该查询条件
 		if len(field.Value) == 0 {
-			return nil, nil
+			continue
 		}
 
 		// 第一组的只需要增加即可

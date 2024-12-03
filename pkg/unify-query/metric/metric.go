@@ -54,7 +54,7 @@ var (
 			Name:      "bk_data_api_request_total",
 			Help:      "unify-query bk_data api request",
 		},
-		[]string{"space_uid", "table_id"},
+		[]string{"space_uid", "table_id", "is_match"},
 	)
 
 	apiRequestTotal = promauto.NewCounterVec(
@@ -119,7 +119,7 @@ var (
 			Name:      "jwt_request_total",
 			Help:      "unify-query jwt request",
 		},
-		[]string{"client_ip", "api", "jwt_app_code", "jwt_app_user_name", "space_uid", "status"},
+		[]string{"user_agent", "client_ip", "api", "jwt_app_code", "jwt_app_user_name", "space_uid", "status"},
 	)
 )
 

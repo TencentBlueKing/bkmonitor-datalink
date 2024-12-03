@@ -12,6 +12,7 @@ package structured
 import (
 	"context"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"math"
 	"strconv"
 	"strings"
@@ -27,7 +28,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/offlineDataArchive"
 	queryMod "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
@@ -499,23 +499,32 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			return nil, bkDataErr
 		}
 
-		// 增加 bkdata tableid 校验，只有业务开头的才有权限，防止越权
-		metric.BkDataRequestInc(ctx, spaceUid, string(tableID))
-		// 特性开关是否，打开 bkdata tableid 校验
-		if metadata.GetBkDataTableIDCheck(ctx) {
+		// 判断空间跟业务是否匹配
+		isMatchBizID := func() bool {
 			space := strings.Split(spaceUid, "__")
 			if len(space) != 2 {
-				return queryMetric, nil
+				return false
 			}
 			// 只允许业务下查询
 			if space[0] != "bkcc" {
-				return queryMetric, nil
+				return false
 			}
 
 			if !strings.HasPrefix(string(tableID), space[1]+"_") {
+				return false
+			}
+			return true
+		}()
+
+		// 特性开关是否，打开 bkdata tableid 校验
+		if metadata.GetBkDataTableIDCheck(ctx) {
+			// 增加 bkdata tableid 校验，只有业务开头的才有权限，防止越权
+			if !isMatchBizID {
 				return queryMetric, nil
 			}
 		}
+
+		metric.BkDataRequestInc(ctx, spaceUid, string(tableID), fmt.Sprintf("%v", isMatchBizID))
 
 		route, bkDataErr := MakeRouteFromTableID(q.TableID)
 		if bkDataErr != nil {

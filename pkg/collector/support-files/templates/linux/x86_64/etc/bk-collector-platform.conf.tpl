@@ -112,6 +112,8 @@ processor:
       metrics_dataid: {{ token_checker_config.metric_data_id | default(0) }}
       logs_dataid: {{ token_checker_config.log_data_id | default(0) }}
       profiles_dataid: {{ token_checker_config.profile_data_id | default(0) }}
+      bk_biz_id: {{ token_checker_config.bk_biz_id | default(0) }}
+      bk_app_name: "{{ token_checker_config.bk_app_name }}"
 {%- endif %}
 
 {% if resource_filter_config is defined %}

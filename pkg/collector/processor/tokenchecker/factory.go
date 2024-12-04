@@ -197,15 +197,21 @@ func (p *tokenChecker) processTraces(decoder TokenDecoder, config Config, record
 	var errs []error
 	pdTraces := record.Data.(ptrace.Traces)
 	pdTraces.ResourceSpans().RemoveIf(func(resourceSpans ptrace.ResourceSpans) bool {
-		src := []string{
-			record.Token.Original,
-			tokenFromAttrs(resourceSpans.Resource().Attributes(), config.resourceKeys),
+		rsToken := tokenFromAttrs(resourceSpans.Resource().Attributes(), config.resourceKeys)
+		if len(rsToken) > 0 {
+			record.Token, err = decodeToken(decoder, rsToken)
+			if err != nil {
+				errs = append(errs, err)
+				logger.Errorf("failed to parse pdTraces.rsToken (%s), err: %v", rsToken, err)
+				return true
+			}
+			return false
 		}
 
-		record.Token, err = decodeToken(decoder, src...)
+		record.Token, err = decodeToken(decoder, record.Token.Original)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdTraces token=(%v), err: %v", src, err)
+			logger.Errorf("failed to parse pdTraces.original (%s), err: %v", record.Token.Original, err)
 			return true
 		}
 		return false
@@ -231,15 +237,21 @@ func (p *tokenChecker) processMetrics(decoder TokenDecoder, config Config, recor
 	var errs []error
 	pdMetrics := record.Data.(pmetric.Metrics)
 	pdMetrics.ResourceMetrics().RemoveIf(func(resourceMetrics pmetric.ResourceMetrics) bool {
-		src := []string{
-			record.Token.Original,
-			tokenFromAttrs(resourceMetrics.Resource().Attributes(), config.resourceKeys),
+		rsToken := tokenFromAttrs(resourceMetrics.Resource().Attributes(), config.resourceKeys)
+		if len(rsToken) > 0 {
+			record.Token, err = decodeToken(decoder, rsToken)
+			if err != nil {
+				errs = append(errs, err)
+				logger.Errorf("failed to parse pdMetrics.rsToken (%s), err: %v", rsToken, err)
+				return true
+			}
+			return false
 		}
 
-		record.Token, err = decodeToken(decoder, src...)
+		record.Token, err = decodeToken(decoder, record.Token.Original)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdMetrics token=(%v), err: %v", src, err)
+			logger.Errorf("failed to parse pdMetrics.original (%s), err: %v", record.Token.Original, err)
 			return true
 		}
 		return false
@@ -265,15 +277,21 @@ func (p *tokenChecker) processLogs(decoder TokenDecoder, config Config, record *
 	var errs []error
 	pdLogs := record.Data.(plog.Logs)
 	pdLogs.ResourceLogs().RemoveIf(func(resourceLogs plog.ResourceLogs) bool {
-		src := []string{
-			record.Token.Original,
-			tokenFromAttrs(resourceLogs.Resource().Attributes(), config.resourceKeys),
+		rsToken := tokenFromAttrs(resourceLogs.Resource().Attributes(), config.resourceKeys)
+		if len(rsToken) > 0 {
+			record.Token, err = decodeToken(decoder, rsToken)
+			if err != nil {
+				errs = append(errs, err)
+				logger.Errorf("failed to parse pdLogs.rsToken (%s), err: %v", rsToken, err)
+				return true
+			}
+			return false
 		}
 
-		record.Token, err = decodeToken(decoder, src...)
+		record.Token, err = decodeToken(decoder, record.Token.Original)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdLogs token=(%v), err: %v", src, err)
+			logger.Errorf("failed to parse pdLogs.original (%s), err: %v", record.Token.Original, err)
 			return true
 		}
 		return false

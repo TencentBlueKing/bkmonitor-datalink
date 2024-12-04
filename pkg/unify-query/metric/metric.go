@@ -11,13 +11,13 @@ package metric
 
 import (
 	"context"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/config"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 

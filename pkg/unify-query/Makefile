@@ -42,3 +42,11 @@ fmt:
 .PHONY: lint
 lint:
 	golangci-lint run -c ${ROOTPATH}/.golangci.yml
+
+.PHONY: addlicense
+addlicense:
+	find ./ -type f \( -iname \*.go -o -iname \*.py -iname \*.sh \)|xargs addlicense -v -f ../../scripts/license.txt -ignore vendor/*
+
+.PHONY: imports
+imports: addlicense
+	goimports-reviser -rm-unused -set-alias -format ./...

@@ -21,7 +21,9 @@ var (
 	dataPath    = "data"
 	versionPath = "version"
 )
+
 var globalInstance *Instance
+
 var lock *sync.RWMutex
 
 // init 初始化读写锁

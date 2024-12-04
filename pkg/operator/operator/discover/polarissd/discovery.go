@@ -37,6 +37,7 @@ import (
 	"github.com/prometheus/prometheus/discovery/targetgroup"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 var (
@@ -162,8 +163,12 @@ func (d *Discovery) resolve() ([]string, error) {
 
 	var address []string
 	for _, inst := range response.Instances {
-		ep := fmt.Sprintf("%s:%d", inst.GetHost(), inst.GetPort())
-		address = append(address, ep)
+		// 只取健康的实例
+		if !inst.IsHealthy() {
+			continue
+		}
+		addr := fmt.Sprintf("http://%s:%d", inst.GetHost(), inst.GetPort())
+		address = append(address, addr)
 	}
 	return address, nil
 }
@@ -179,6 +184,8 @@ func (d *Discovery) Refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 	}
 
 	url := urls[rand.Int()%len(urls)]
+	logger.Debugf("polaris:%s/%s found %d urls, select (%s)", d.sdConfig.Namespace, d.sdConfig.Service, len(urls), url)
+
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err

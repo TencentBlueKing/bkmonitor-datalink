@@ -85,11 +85,13 @@ func (a *aggFormat) reset() {
 	a.items = append(a.items, a.item)
 }
 
-func (a *aggFormat) getMetricValue(v *float64) float64 {
+func (a *aggFormat) setMetricValue(v *float64) {
 	if v == nil {
-		return 0
+		return
 	}
-	return *v
+
+	a.item.value = *v
+	a.reset()
 }
 
 // idx 是层级信息，默认为 len(a.aggInfoList), 因为聚合结果跟聚合列表是相反的，通过聚合层级递归解析 data 里面的内容
@@ -158,44 +160,38 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 			switch info.FuncType {
 			case Min:
 				if valueMetric, ok := data.Min(info.Name); ok && valueMetric != nil {
-					a.item.value = a.getMetricValue(valueMetric.Value)
-					a.reset()
+					a.setMetricValue(valueMetric.Value)
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Sum:
 				if valueMetric, ok := data.Sum(info.Name); ok && valueMetric != nil {
-					a.item.value = a.getMetricValue(valueMetric.Value)
-					a.reset()
+					a.setMetricValue(valueMetric.Value)
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Avg:
 				if valueMetric, ok := data.Avg(info.Name); ok && valueMetric != nil {
-					a.item.value = a.getMetricValue(valueMetric.Value)
-					a.reset()
+					a.setMetricValue(valueMetric.Value)
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Cardinality:
 				if valueMetric, ok := data.Cardinality(info.Name); ok && valueMetric != nil {
-					a.item.value = a.getMetricValue(valueMetric.Value)
-					a.reset()
+					a.setMetricValue(valueMetric.Value)
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Max:
 				if valueMetric, ok := data.Max(info.Name); ok && valueMetric != nil {
-					a.item.value = a.getMetricValue(valueMetric.Value)
-					a.reset()
+					a.setMetricValue(valueMetric.Value)
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Count:
 				if valueMetric, ok := data.ValueCount(info.Name); ok && valueMetric != nil {
 					// 计算数量需要造数据
-					a.item.value = a.getMetricValue(valueMetric.Value)
-					a.reset()
+					a.setMetricValue(valueMetric.Value)
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}

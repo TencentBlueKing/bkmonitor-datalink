@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"strconv"
 	"strings"
@@ -165,6 +164,7 @@ func (d *Discovery) resolve() ([]string, error) {
 	for _, inst := range response.Instances {
 		// 只取健康的实例
 		if !inst.IsHealthy() {
+			logger.Infof("%s found unhealthy instance %s:%d", d.uid(), inst.GetHost(), inst.GetPort())
 			continue
 		}
 		addr := fmt.Sprintf("http://%s:%d", inst.GetHost(), inst.GetPort())
@@ -173,19 +173,7 @@ func (d *Discovery) resolve() ([]string, error) {
 	return address, nil
 }
 
-func (d *Discovery) Refresh(ctx context.Context) ([]*targetgroup.Group, error) {
-	urls, err := d.resolve()
-	if err != nil {
-		return nil, err
-	}
-
-	if len(urls) == 0 {
-		return nil, fmt.Errorf("no urls resolved: %s/%s", d.sdConfig.Namespace, d.sdConfig.Service)
-	}
-
-	url := urls[rand.Int()%len(urls)]
-	logger.Debugf("polaris:%s/%s found %d urls, select (%s)", d.sdConfig.Namespace, d.sdConfig.Service, len(urls), url)
-
+func (d *Discovery) refresh(ctx context.Context, url string) ([]*targetgroup.Group, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -249,6 +237,32 @@ func (d *Discovery) Refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 	d.tgLastLength = l
 
 	return targetGroups, nil
+}
+
+func (d *Discovery) Refresh(ctx context.Context) ([]*targetgroup.Group, error) {
+	urls, err := d.resolve()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("no urls resolved: %s/%s", d.sdConfig.Namespace, d.sdConfig.Service)
+	}
+	logger.Debugf("%s found %d urls", d.uid(), len(urls))
+
+	var ret []*targetgroup.Group
+	for _, url := range urls {
+		tgs, err := d.refresh(ctx, url)
+		if err != nil {
+			return nil, err
+		}
+		ret = append(ret, tgs...)
+	}
+	return ret, nil
+}
+
+func (d *Discovery) uid() string {
+	return fmt.Sprintf("polaris:%s/%s", d.sdConfig.Namespace, d.sdConfig.Service)
 }
 
 // urlSource returns a source ID for the i-th target group per URL.

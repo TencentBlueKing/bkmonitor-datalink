@@ -561,21 +561,21 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		isSkipField = true
 	}
 
-	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
-		SpaceUid:    spaceUid,
-		TableID:     tableID,
-		FieldName:   metricName,
-		IsRegexp:    q.IsRegexp,
-		Conditions:  q.Conditions,
-		IsSkipSpace: metadata.GetUser(ctx).IsSkipSpace(),
-		IsSkipK8s:   metadata.GetQueryParams(ctx).IsSkipK8s,
-		IsSkipField: isSkipField,
-	})
+	allConditions, err := q.Conditions.AnalysisConditions()
 	if err != nil {
 		return nil, err
 	}
 
-	queryConditions, err := q.Conditions.AnalysisConditions()
+	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
+		SpaceUid:      spaceUid,
+		TableID:       tableID,
+		FieldName:     metricName,
+		IsRegexp:      q.IsRegexp,
+		AllConditions: allConditions,
+		IsSkipSpace:   metadata.GetUser(ctx).IsSkipSpace(),
+		IsSkipK8s:     metadata.GetQueryParams(ctx).IsSkipK8s,
+		IsSkipField:   isSkipField,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -591,7 +591,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	span.Set("tsdb-num", len(tsDBs))
 
 	for _, tsDB := range tsDBs {
-		query, buildErr := q.BuildMetadataQuery(ctx, tsDB, queryConditions, queryLabelsMatcher)
+		query, buildErr := q.BuildMetadataQuery(ctx, tsDB, allConditions, queryLabelsMatcher)
 		if buildErr != nil {
 			return nil, buildErr
 		}

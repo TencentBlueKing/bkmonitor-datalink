@@ -85,6 +85,7 @@ func (a *aggFormat) reset() {
 	a.items = append(a.items, a.item)
 }
 
+// 增加值判断，如果返回值为 null 的情况，则认为该值为空点，无需加入到 samples 中
 func (a *aggFormat) setMetricValue(v *float64) {
 	if v == nil {
 		return

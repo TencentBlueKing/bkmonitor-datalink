@@ -234,7 +234,8 @@ type Config struct {
 	MonitorBlacklistMatchRules []MonitorBlacklistMatchRule `yaml:"monitor_blacklist_match_rules"`
 	PromSDSecrets              []PromSDSecret              `yaml:"prom_sd_configs"`
 
-	VCluster VCluster `yaml:"vcluster"`
+	VCluster       VCluster `yaml:"vcluster"`
+	PolarisAddress []string `yaml:"polaris_address"`
 }
 
 type PromSDKinds []string

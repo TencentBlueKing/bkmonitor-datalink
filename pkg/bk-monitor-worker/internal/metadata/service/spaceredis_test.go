@@ -203,6 +203,85 @@ func TestSpacePusher_composeBcsSpaceClusterTableIds(t *testing.T) {
 	assert.Equal(t, expectedResults, result)
 }
 
+func TestSpacePusher_getTableIdClusterId(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 创建 BCSClusterInfo 数据
+	clusterInfos := []bcs.BCSClusterInfo{
+		{
+			ClusterID:          "BCS-K8S-00000",
+			K8sMetricDataID:    1001,
+			CustomMetricDataID: 2001,
+		},
+		{
+			ClusterID:          "BCS-K8S-00001",
+			K8sMetricDataID:    1002,
+			CustomMetricDataID: 2002,
+			Status:             models.BcsClusterStatusDeleted, // 已删除
+		},
+		{
+			ClusterID:          "BCS-K8S-00002",
+			K8sMetricDataID:    1003,
+			CustomMetricDataID: 2003,
+			Status:             models.BcsRawClusterStatusDeleted, // 已删除
+		},
+	}
+	db.Delete(&bcs.BCSClusterInfo{})
+	for _, ci := range clusterInfos {
+		err := db.Create(&ci).Error
+		assert.NoError(t, err)
+	}
+
+	// 创建 DataSourceResultTable 数据
+	dataSourceResultTables := []resulttable.DataSourceResultTable{
+		{
+			BkDataId: 1001,
+			TableId:  "table1",
+		},
+		{
+			BkDataId: 2001,
+			TableId:  "table2",
+		},
+		{
+			BkDataId: 1002,
+			TableId:  "table3",
+		},
+		{
+			BkDataId: 2002,
+			TableId:  "table4",
+		},
+		{
+			BkDataId: 1003,
+			TableId:  "table5",
+		},
+		{
+			BkDataId: 2003,
+			TableId:  "table6",
+		},
+	}
+	db.Delete(&resulttable.DataSourceResultTable{})
+	for _, dsrt := range dataSourceResultTables {
+		err := db.Create(&dsrt).Error
+		assert.NoError(t, err)
+	}
+
+	tableIds := []string{"table1", "table2", "table3", "table4", "table5", "table6"}
+	data, err := NewSpacePusher().getTableIdClusterId(tableIds)
+	assert.NoError(t, err)
+
+	// 验证结果
+	expected := map[string]string{
+		"table1": "BCS-K8S-00000",
+		"table2": "BCS-K8S-00000",
+		"table3": "BCS-K8S-00001",
+		"table4": "BCS-K8S-00001",
+		"table5": "BCS-K8S-00002",
+		"table6": "BCS-K8S-00002",
+	}
+	assert.Equal(t, expected, data)
+}
+
 func TestSpacePusher_refineTableIds(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
@@ -923,9 +1002,9 @@ func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
 
 	n := time.Now()
 
-	migrate.Migrate(context.TODO(), &space.BkAppSpace{})
+	migrate.Migrate(context.TODO(), &space.BkAppSpaceRecord{})
 
-	db.Delete(space.BkAppSpace{})
+	db.Delete(space.BkAppSpaceRecord{})
 
 	for _, d := range data {
 		d.CreateTime = n
@@ -935,7 +1014,7 @@ func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	err := db.Model(space.BkAppSpace{}).Where("bk_app_code = ?", "other_code").Updates(map[string]bool{"is_enable": false}).Error
+	err := db.Model(space.BkAppSpaceRecord{}).Where("bk_app_code = ?", "other_code").Updates(map[string]bool{"is_enable": false}).Error
 	assert.NoError(t, err)
 
 	client := redis.GetStorageRedisInstance()

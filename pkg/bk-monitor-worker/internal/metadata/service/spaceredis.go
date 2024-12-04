@@ -979,7 +979,7 @@ func (s *SpacePusher) getTableIdClusterId(tableIds []string) (map[string]string,
 		dataIds = append(dataIds, dsrt.BkDataId)
 	}
 	// 过滤到集群的数据源，仅包含两类，集群内置和集群自定义
-	qs := bcs.NewBCSClusterInfoQuerySet(db).StatusNotIn(models.BcsClusterStatusDeleted, models.BcsRawClusterStatusDeleted)
+	qs := bcs.NewBCSClusterInfoQuerySet(db)
 	dataIds = slicex.RemoveDuplicate(&dataIds)
 	var clusterListA []bcs.BCSClusterInfo
 	if err := qs.Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).K8sMetricDataIDIn(dataIds...).All(&clusterListA); err != nil {

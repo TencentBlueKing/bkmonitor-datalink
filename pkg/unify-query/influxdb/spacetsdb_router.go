@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/kvstore/bbolt"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/memcache"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
@@ -145,9 +147,15 @@ func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entiti
 
 	// 更新成功的对象，需要进行额外操作
 	// 1. 清理对应的缓存
-	// 2. 打印更新的对象内容
+	// 2. 针对 ResultTableDetail 记录元数据情况
+	// 3. 打印更新的对象内容
 	for _, item := range batchItems {
 		r.cache.Del(item.key)
+		if rt, ok := item.val.(*influxdb.ResultTableDetail); ok {
+			metric.ResultTableInfoSet(
+				ctx, float64(len(rt.Fields)), rt.TableId, strconv.FormatInt(rt.DataId, 10), rt.MeasurementType,
+				rt.VmRt, rt.BcsClusterID)
+		}
 		if printBytes {
 			log.Debugf(ctx, "[SpaceTSDB] Write content in kvStorage, once=%v, %s", once, item.Print())
 		}

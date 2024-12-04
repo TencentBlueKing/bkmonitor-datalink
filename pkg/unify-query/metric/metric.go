@@ -68,6 +68,14 @@ var (
 		[]string{"api", "space_uid", "version", "commit_id"},
 	)
 
+	resultTableInfo = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "unify_query",
+			Name:      "result_table_info",
+		},
+		[]string{"rt_table_id", "rt_data_id", "rt_measurement_type", "vm_table_id", "bcs_cluster_id"},
+	)
+
 	tsDBRequestBytesHistogram = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "unify_query",
@@ -133,6 +141,11 @@ func TsDBRequestBytes(ctx context.Context, bytes int, params ...string) {
 	observe(ctx, metric, float64(bytes))
 }
 
+func ResultTableInfoSet(ctx context.Context, value float64, params ...string) {
+	metric, _ := resultTableInfo.GetMetricWithLabelValues(params...)
+	gaugeSet(ctx, metric, value)
+}
+
 func JWTRequestInc(ctx context.Context, params ...string) {
 	metric, _ := jwtRequestTotal.GetMetricWithLabelValues(params...)
 	counterInc(ctx, metric)
@@ -141,6 +154,15 @@ func JWTRequestInc(ctx context.Context, params ...string) {
 func BkDataRequestInc(ctx context.Context, params ...string) {
 	metric, _ := bkDataApiRequestTotal.GetMetricWithLabelValues(params...)
 	counterInc(ctx, metric)
+}
+
+func gaugeSet(
+	_ context.Context, metric prometheus.Gauge, value float64,
+) {
+	if metric == nil {
+		return
+	}
+	metric.Set(value)
 }
 
 func counterInc(

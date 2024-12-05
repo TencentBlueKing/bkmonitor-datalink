@@ -230,7 +230,7 @@ func statToRPCMetricDims(src, attrs map[string]string) map[string]string {
 			slaveSetId = value
 		}
 	}
-	dst[rpcMetricTagsCalleeConSetid] = fmt.Sprintf("%s.%s.%s", slaveSetName, slaveSetArea, slaveSetId)
+	dst[rpcMetricTagsCalleeConSetid] = generateConSetid(slaveSetName, slaveSetArea, slaveSetId)
 	return dst
 }
 

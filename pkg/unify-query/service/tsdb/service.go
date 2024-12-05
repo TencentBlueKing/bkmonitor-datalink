@@ -15,7 +15,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
@@ -61,12 +60,6 @@ func (s *Service) Reload(ctx context.Context) {
 	err = s.loopReloadStorage(s.ctx)
 	if err != nil {
 		log.Errorf(context.TODO(), "start loop reload storage failed for->[%s]", err)
-		return
-	}
-
-	err = metadata.GetQueryRouter().Reload(ctx)
-	if err != nil {
-		log.Errorf(context.TODO(), "start loop reload query router failed for->[%s]", err)
 		return
 	}
 

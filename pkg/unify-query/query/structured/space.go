@@ -65,7 +65,7 @@ func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) 
 	}, nil
 }
 
-func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, conditions Conditions,
+func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, allConditions AllConditions,
 	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool) []*query.TsDBV2 {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
@@ -79,11 +79,6 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 
 		// 容器下只能查单指标单表
 		if !isSplitMeasurement {
-			return nil
-		}
-
-		allConditions, err := conditions.AnalysisConditions()
-		if err != nil {
 			return nil
 		}
 
@@ -299,7 +294,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			continue
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
-		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.Conditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField)
+		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.AllConditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField)
 		for _, newTsDB := range newTsDBs {
 			tsDBs = append(tsDBs, newTsDB)
 		}
@@ -322,8 +317,8 @@ type TsDBOption struct {
 	TableID   TableID
 	FieldName string
 	// IsRegexp 指标是否使用正则查询
-	IsRegexp   bool
-	Conditions Conditions
+	IsRegexp      bool
+	AllConditions AllConditions
 }
 
 type TsDBs []*query.TsDBV2

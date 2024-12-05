@@ -38,7 +38,7 @@ func TestModel_Resources(t *testing.T) {
 	resources, err := testModel.resources(ctx)
 
 	assert.Nil(t, err)
-	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "bklogconfig", "datasource", "deamonset", "deployment", "domain", "ingress", "job", "k8s_address", "node", "pod", "replicaset", "service", "statefulset", "system"}, resources)
+	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "bklogconfig", "business", "datasource", "deamonset", "deployment", "domain", "host", "ingress", "job", "k8s_address", "module", "node", "pod", "replicaset", "service", "set", "statefulset", "system"}, resources)
 }
 
 func TestModel_GetResources(t *testing.T) {

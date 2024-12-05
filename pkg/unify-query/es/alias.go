@@ -20,6 +20,7 @@ import (
 
 // 每个table_id对应一个index，也就对应一组alias
 var aliasMap map[string]map[string]bool
+
 var aliasLock *sync.RWMutex
 
 // AliasExist 判断别名是否存在

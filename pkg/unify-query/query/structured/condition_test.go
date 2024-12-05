@@ -34,6 +34,32 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 		sql       string
 		err       error
 	}{
+		// value 为空
+		{
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "test1",
+						Operator:      ConditionContains,
+						Value:         []string{"abc"},
+					},
+					{
+						DimensionName: "test2",
+						Operator:      ConditionEqual,
+						Value:         []string{},
+					},
+					{
+						DimensionName: "test3",
+						Operator:      ConditionEqual,
+						Value:         []string{"det"},
+					},
+				},
+				ConditionList: []string{"and", "and"},
+			},
+			result: []int{2},
+			sql:    "(`test1` = 'abc' and `test3` = 'det')",
+			vm:     `test1="abc", test3="det", result_table_id="table_id"`,
+		},
 		// 长度不匹配
 		{
 			condition: Conditions{
@@ -58,11 +84,12 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 					DimensionName: "test1",
 					Operator:      ConditionContains,
 					Value:         []string{"abc"},
-				}, {
-					DimensionName: "test1",
-					Operator:      ConditionNotContains,
-					Value:         []string{"abc"},
-				}},
+				},
+					{
+						DimensionName: "test1",
+						Operator:      ConditionNotContains,
+						Value:         []string{"abc"},
+					}},
 				ConditionList: []string{"and"},
 			},
 			result: []int{2},
@@ -72,16 +99,23 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 		// 简单的or拼接
 		{
 			condition: Conditions{
-				FieldList: []ConditionField{{
-					DimensionName: "test1",
-					Operator:      ConditionRegEqual,
-					Value:         []string{"abc"},
-				}, {
-					DimensionName: "test1",
-					Operator:      ConditionNotRegEqual,
-					Value:         []string{"b", "c", "d"},
-				}},
-				ConditionList: []string{"or"},
+				FieldList: []ConditionField{
+					{
+						DimensionName: "test1",
+						Operator:      ConditionRegEqual,
+						Value:         []string{"abc"},
+					},
+					{
+						DimensionName: "test2",
+						Operator:      ConditionContains,
+						Value:         []string{},
+					},
+					{
+						DimensionName: "test1",
+						Operator:      ConditionNotRegEqual,
+						Value:         []string{"b", "c", "d"},
+					}},
+				ConditionList: []string{"or", "or"},
 			},
 			result: []int{1, 1},
 			sql:    "`test1` REGEXP 'abc' or (`test1` NOT REGEXP 'b' and `test1` NOT REGEXP 'c' and `test1` NOT REGEXP 'd')",

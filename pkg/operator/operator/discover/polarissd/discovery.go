@@ -150,7 +150,7 @@ func (d *Discovery) consumerAPI() (polaris.ConsumerAPI, error) {
 	return d.consumer, nil
 }
 
-func (d *Discovery) resolve() ([]string, error) {
+func (d *Discovery) resolveInstances() ([]string, error) {
 	consumer, err := d.consumerAPI()
 	if err != nil {
 		return nil, err
@@ -165,7 +165,7 @@ func (d *Discovery) resolve() ([]string, error) {
 		return nil, err
 	}
 
-	var address []string
+	var instances []string
 	for _, inst := range response.Instances {
 		hostPort := fmt.Sprintf("%s:%d", inst.GetHost(), inst.GetPort())
 
@@ -176,7 +176,7 @@ func (d *Discovery) resolve() ([]string, error) {
 		}
 
 		if len(d.sdConfig.MetadataSelector) == 0 {
-			address = append(address, fmt.Sprintf("http://%s", hostPort))
+			instances = append(instances, fmt.Sprintf("http://%s", hostPort))
 			continue
 		}
 
@@ -184,11 +184,11 @@ func (d *Discovery) resolve() ([]string, error) {
 		for sk, sv := range d.sdConfig.MetadataSelector {
 			mv, ok := meta[sk]
 			if ok && mv == sv {
-				address = append(address, fmt.Sprintf("http://%s", hostPort))
+				instances = append(instances, fmt.Sprintf("http://%s", hostPort))
 			}
 		}
 	}
-	return address, nil
+	return instances, nil
 }
 
 func (d *Discovery) refresh(ctx context.Context, url string) ([]*targetgroup.Group, error) {
@@ -257,19 +257,19 @@ func (d *Discovery) refresh(ctx context.Context, url string) ([]*targetgroup.Gro
 }
 
 func (d *Discovery) Refresh(ctx context.Context) ([]*targetgroup.Group, error) {
-	urls, err := d.resolve()
+	instances, err := d.resolveInstances()
 	if err != nil {
 		return nil, err
 	}
 
-	if len(urls) == 0 {
-		return nil, fmt.Errorf("no urls resolved: %s/%s", d.sdConfig.Namespace, d.sdConfig.Service)
+	if len(instances) == 0 {
+		return nil, fmt.Errorf("no instances resolved: %s/%s", d.sdConfig.Namespace, d.sdConfig.Service)
 	}
-	logger.Infof("%s found %d urls", d.uid(), len(urls))
+	logger.Debugf("%s found instances %v", d.uid(), instances)
 
 	var ret []*targetgroup.Group
-	for _, url := range urls {
-		tgs, err := d.refresh(ctx, url)
+	for _, inst := range instances {
+		tgs, err := d.refresh(ctx, inst)
 		if err != nil {
 			return nil, err
 		}

@@ -175,7 +175,6 @@ func (d *Discovery) resolve() ([]string, error) {
 			continue
 		}
 
-		logger.Infof("d.sdConfig.MetadataSelector: %#v,  inst.GetMetadata(): %#v", d.sdConfig.MetadataSelector, inst.GetMetadata())
 		if len(d.sdConfig.MetadataSelector) == 0 {
 			address = append(address, fmt.Sprintf("http://%s", hostPort))
 			continue

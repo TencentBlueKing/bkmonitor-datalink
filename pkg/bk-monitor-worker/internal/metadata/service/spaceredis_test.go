@@ -219,6 +219,7 @@ func TestSpacePusher_getTableIdClusterId(t *testing.T) {
 			K8sMetricDataID:    1002,
 			CustomMetricDataID: 2002,
 			Status:             models.BcsClusterStatusDeleted, // 已删除
+			IsDeletedAllowView: true,
 		},
 		{
 			ClusterID:          "BCS-K8S-00002",
@@ -227,12 +228,12 @@ func TestSpacePusher_getTableIdClusterId(t *testing.T) {
 			Status:             models.BcsRawClusterStatusDeleted, // 已删除
 		},
 	}
+	migrate.Migrate(context.TODO(), &bcs.BCSClusterInfo{})
 	db.Delete(&bcs.BCSClusterInfo{})
 	for _, ci := range clusterInfos {
 		err := db.Create(&ci).Error
 		assert.NoError(t, err)
 	}
-
 	// 创建 DataSourceResultTable 数据
 	dataSourceResultTables := []resulttable.DataSourceResultTable{
 		{
@@ -276,8 +277,8 @@ func TestSpacePusher_getTableIdClusterId(t *testing.T) {
 		"table2": "BCS-K8S-00000",
 		"table3": "BCS-K8S-00001",
 		"table4": "BCS-K8S-00001",
-		"table5": "BCS-K8S-00002",
-		"table6": "BCS-K8S-00002",
+		"table5": "",
+		"table6": "",
 	}
 	assert.Equal(t, expected, data)
 }

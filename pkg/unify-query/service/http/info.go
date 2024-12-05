@@ -294,11 +294,6 @@ func HandleFeatureFlag(c *gin.Context) {
 	refresh := c.Query("r")
 
 	if refresh != "" {
-		err := metadata.GetQueryRouter().PublishVmQuery(ctx)
-		if err != nil {
-			res += fmt.Sprintf("publish vm query error: %s\n", err.Error())
-		}
-
 		res += "refresh feature flag\n"
 		path := consul.GetFeatureFlagsPath()
 		res += fmt.Sprintf("consul feature flags path: %s\n", path)

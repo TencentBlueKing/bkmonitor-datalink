@@ -499,23 +499,32 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			return nil, bkDataErr
 		}
 
-		// 增加 bkdata tableid 校验，只有业务开头的才有权限，防止越权
-		metric.BkDataRequestInc(ctx, spaceUid, string(tableID))
-		// 特性开关是否，打开 bkdata tableid 校验
-		if metadata.GetBkDataTableIDCheck(ctx) {
+		// 判断空间跟业务是否匹配
+		isMatchBizID := func() bool {
 			space := strings.Split(spaceUid, "__")
 			if len(space) != 2 {
-				return queryMetric, nil
+				return false
 			}
 			// 只允许业务下查询
 			if space[0] != "bkcc" {
-				return queryMetric, nil
+				return false
 			}
 
 			if !strings.HasPrefix(string(tableID), space[1]+"_") {
+				return false
+			}
+			return true
+		}()
+
+		// 特性开关是否，打开 bkdata tableid 校验
+		if metadata.GetBkDataTableIDCheck(ctx) {
+			// 增加 bkdata tableid 校验，只有业务开头的才有权限，防止越权
+			if !isMatchBizID {
 				return queryMetric, nil
 			}
 		}
+
+		metric.BkDataRequestInc(ctx, spaceUid, string(tableID), fmt.Sprintf("%v", isMatchBizID))
 
 		route, bkDataErr := MakeRouteFromTableID(q.TableID)
 		if bkDataErr != nil {
@@ -552,21 +561,21 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		isSkipField = true
 	}
 
-	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
-		SpaceUid:    spaceUid,
-		TableID:     tableID,
-		FieldName:   metricName,
-		IsRegexp:    q.IsRegexp,
-		Conditions:  q.Conditions,
-		IsSkipSpace: metadata.GetUser(ctx).IsSkipSpace(),
-		IsSkipK8s:   metadata.GetQueryParams(ctx).IsSkipK8s,
-		IsSkipField: isSkipField,
-	})
+	allConditions, err := q.Conditions.AnalysisConditions()
 	if err != nil {
 		return nil, err
 	}
 
-	queryConditions, err := q.Conditions.AnalysisConditions()
+	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
+		SpaceUid:      spaceUid,
+		TableID:       tableID,
+		FieldName:     metricName,
+		IsRegexp:      q.IsRegexp,
+		AllConditions: allConditions,
+		IsSkipSpace:   metadata.GetUser(ctx).IsSkipSpace(),
+		IsSkipK8s:     metadata.GetQueryParams(ctx).IsSkipK8s,
+		IsSkipField:   isSkipField,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -582,7 +591,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	span.Set("tsdb-num", len(tsDBs))
 
 	for _, tsDB := range tsDBs {
-		query, buildErr := q.BuildMetadataQuery(ctx, tsDB, queryConditions, queryLabelsMatcher)
+		query, buildErr := q.BuildMetadataQuery(ctx, tsDB, allConditions, queryLabelsMatcher)
 		if buildErr != nil {
 			return nil, buildErr
 		}

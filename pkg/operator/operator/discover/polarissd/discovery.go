@@ -66,6 +66,7 @@ type SDConfig struct {
 	RefreshInterval  model.Duration              `yaml:"refresh_interval,omitempty"`
 	Namespace        string                      `yaml:"namespace"`
 	Service          string                      `yaml:"service"`
+	MetadataSelector map[string]string           `yaml:"metadata_selector"`
 }
 
 // Name returns the name of the Config.
@@ -133,6 +134,10 @@ func (d *Discovery) consumerAPI() (polaris.ConsumerAPI, error) {
 		return d.consumer, nil
 	}
 
+	if len(configs.G().PolarisAddress) == 0 {
+		return nil, errors.New("no polaris address found")
+	}
+
 	cfg := api.NewConfiguration()
 	cfg.GetGlobal().GetServerConnector().SetAddresses(configs.G().PolarisAddress)
 
@@ -162,13 +167,27 @@ func (d *Discovery) resolve() ([]string, error) {
 
 	var address []string
 	for _, inst := range response.Instances {
+		hostPort := fmt.Sprintf("%s:%d", inst.GetHost(), inst.GetPort())
+
 		// 只取健康的实例
 		if !inst.IsHealthy() {
-			logger.Infof("%s found unhealthy instance %s:%d", d.uid(), inst.GetHost(), inst.GetPort())
+			logger.Infof("%s found unhealthy instance %s", d.uid(), hostPort)
 			continue
 		}
-		addr := fmt.Sprintf("http://%s:%d", inst.GetHost(), inst.GetPort())
-		address = append(address, addr)
+
+		// 如果配置了 selector 则要求命中所有规则
+		if len(d.sdConfig.MetadataSelector) > 0 {
+			meta := inst.GetMetadata()
+			for sk, sv := range d.sdConfig.MetadataSelector {
+				mv, ok := meta[sk]
+				if ok && mv == sv {
+					address = append(address, fmt.Sprintf("http://%s", hostPort))
+				}
+			}
+			continue
+		}
+
+		address = append(address, fmt.Sprintf("http://%s", hostPort))
 	}
 	return address, nil
 }

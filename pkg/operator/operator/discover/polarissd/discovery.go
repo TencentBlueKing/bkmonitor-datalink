@@ -175,19 +175,19 @@ func (d *Discovery) resolve() ([]string, error) {
 			continue
 		}
 
-		// 如果配置了 selector 则要求命中所有规则
-		if len(d.sdConfig.MetadataSelector) > 0 {
-			meta := inst.GetMetadata()
-			for sk, sv := range d.sdConfig.MetadataSelector {
-				mv, ok := meta[sk]
-				if ok && mv == sv {
-					address = append(address, fmt.Sprintf("http://%s", hostPort))
-				}
-			}
+		logger.Infof("d.sdConfig.MetadataSelector: %#v,  inst.GetMetadata(): %#v", d.sdConfig.MetadataSelector, inst.GetMetadata())
+		if len(d.sdConfig.MetadataSelector) == 0 {
+			address = append(address, fmt.Sprintf("http://%s", hostPort))
 			continue
 		}
 
-		address = append(address, fmt.Sprintf("http://%s", hostPort))
+		meta := inst.GetMetadata()
+		for sk, sv := range d.sdConfig.MetadataSelector {
+			mv, ok := meta[sk]
+			if ok && mv == sv {
+				address = append(address, fmt.Sprintf("http://%s", hostPort))
+			}
+		}
 	}
 	return address, nil
 }
@@ -228,7 +228,6 @@ func (d *Discovery) refresh(ctx context.Context, url string) ([]*targetgroup.Gro
 	}
 
 	var targetGroups []*targetgroup.Group
-
 	if err := json.Unmarshal(b, &targetGroups); err != nil {
 		failuresCount.Inc()
 		return nil, err
@@ -267,7 +266,7 @@ func (d *Discovery) Refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 	if len(urls) == 0 {
 		return nil, fmt.Errorf("no urls resolved: %s/%s", d.sdConfig.Namespace, d.sdConfig.Service)
 	}
-	logger.Debugf("%s found %d urls", d.uid(), len(urls))
+	logger.Infof("%s found %d urls", d.uid(), len(urls))
 
 	var ret []*targetgroup.Group
 	for _, url := range urls {

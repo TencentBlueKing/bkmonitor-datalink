@@ -50,6 +50,7 @@ type BCSClusterInfo struct {
 	CreateTime         time.Time `json:"create_time"`
 	LastModifyTime     time.Time `gorm:"last_modify_time" json:"last_modify_time"`
 	LastModifyUser     string    `gorm:"size:32" json:"last_modify_user"`
+	IsDeletedAllowView bool      `gorm:"column:is_deleted_allow_view" json:"is_deleted_allow_view"`
 }
 
 // TableName: 用于设置表的别名

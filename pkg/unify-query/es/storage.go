@@ -17,6 +17,7 @@ import (
 )
 
 var storageMap map[string]Client
+
 var storageLock *sync.RWMutex
 
 // ReloadStorage

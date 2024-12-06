@@ -286,8 +286,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 				logger.Warnf("RefreshDatasource: data_id [%v] is not enable or created from bkdata, skip", ds.BkDataId)
 				return
 			}
-
-			dsSvc := service.NewDataSourceSvc(&latestDataSource)
+			dsSvc := service.NewDataSourceSvc(&ds)
 			consulClient, err := consul.GetInstance()
 			if err != nil {
 				logger.Errorf("RefreshDatasource: data_id [%v] failed to get consul client, %v,skip", dsSvc.BkDataId, err)

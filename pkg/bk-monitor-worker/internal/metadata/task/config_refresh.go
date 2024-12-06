@@ -280,6 +280,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 				logger.Warnf("RefreshDatasource: data_id [%v] not found or query error, skip", ds.BkDataId)
 				return
 			}
+			logger.Infof("RefreshDatasource: latest data_id->[%v],latest_data_name->[%v]", latestDataSource.BkDataId, latestDataSource.DataName)
 
 			// double check  bkdata v4数据源不应进行刷新
 			if !latestDataSource.IsEnable || latestDataSource.CreatedFrom == common.DataIdFromBkData {
@@ -287,7 +288,11 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 				return
 			}
 
-			dsSvc := service.NewDataSourceSvc(&latestDataSource)
+			logger.Infof("RefreshDatasource: data_id [%v],ds->[%v]", ds.BkDataId, ds)
+			logger.Infof("RefreshDatasource: data_id [%v],latetst_ds->[%v]", ds.BkDataId, latestDataSource)
+
+			dsSvc := service.NewDataSourceSvc(&ds)
+
 			consulClient, err := consul.GetInstance()
 			if err != nil {
 				logger.Errorf("RefreshDatasource: data_id [%v] failed to get consul client, %v,skip", dsSvc.BkDataId, err)

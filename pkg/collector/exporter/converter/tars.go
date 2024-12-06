@@ -460,7 +460,7 @@ func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, d
 					ip,
 					data.Timestamp,
 					toIntBuckets(bucketMap),
-					propToCustomMetricDims(dims, map[string]string{}),
+					propToCustomMetricDims(dims, nil),
 				)
 				pms = append(pms, customMetricHistogramPms...)
 			default: // Policy -> Max / Min / Avg / Sum / Count

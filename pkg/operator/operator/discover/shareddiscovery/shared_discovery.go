@@ -217,15 +217,16 @@ func (sd *SharedDiscovery) start() {
 			now := time.Now().Unix()
 
 			var total int
-			for source, tg := range sd.store {
+			for source, tgt := range sd.store {
 				// 超过 10 分钟未更新且已经没有目标的对象需要删除
 				// 确保 basediscovery 已经处理了删除事件
-				if now-tg.updatedAt > 600 && len(tg.tg.Targets) == 0 {
+				if now-tgt.updatedAt > 600 && len(tgt.tg.Targets) == 0 {
 					delete(sd.store, source)
 					sd.mm.IncDeletedTgSourceCounter()
 					logger.Infof("sharedDiscovery %s delete tg source '%s'", sd.uk, source)
+				} else {
+					total += len(tgt.tg.Targets)
 				}
-				total += len(tg.tg.Targets)
 			}
 			sd.mm.SetTargetCount(total)
 			sd.mut.Unlock()

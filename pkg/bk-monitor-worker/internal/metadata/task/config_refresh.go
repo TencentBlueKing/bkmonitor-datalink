@@ -292,6 +292,8 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 			logger.Infof("RefreshDatasource: data_id [%v],latetst_ds->[%v]", ds.BkDataId, latestDataSource)
 
 			dsSvc := service.NewDataSourceSvc(&ds)
+			latestDsSvc := service.NewDataSourceSvc(&latestDataSource)
+			logger.Infof("RefreshDatasource: latestDsSvc->[%v],dsSvc->[%v]", latestDsSvc, dsSvc)
 
 			consulClient, err := consul.GetInstance()
 			if err != nil {

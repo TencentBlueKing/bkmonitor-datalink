@@ -25,7 +25,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/config"
-	"github.com/prometheus/prometheus/discovery/targetgroup"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/relabel"
 	"gopkg.in/yaml.v2"
@@ -392,9 +391,6 @@ func (d *BaseDiscover) loopHandleTargetGroup() {
 			// 真正需要变更时才 fetch targetgroups
 			tgList := shareddiscovery.FetchTargetGroups(d.UK())
 			for _, tg := range tgList {
-				if tg == nil {
-					continue
-				}
 				logger.Debugf("%s get targets source: %s, targets: %+v, labels: %+v", d.Name(), tg.Source, tg.Targets, tg.Labels)
 				d.handleTargetGroup(tg)
 			}
@@ -453,23 +449,35 @@ func matchSelector(labels []labels.Label, selector map[string]string) bool {
 	return count == len(selector)
 }
 
-func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSet) (*ChildConfig, error) {
+func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs labels.Labels) (*ChildConfig, error) {
 	lbls := labelspool.Get()
 	defer labelspool.Put(lbls)
 
-	for ln, lv := range tlset {
+	for _, lb := range tlset {
 		lbls = append(lbls, labels.Label{
-			Name:  string(ln),
-			Value: string(lv),
+			Name:  lb.Name,
+			Value: lb.Value,
 		})
 	}
-	for ln, lv := range tglbs {
-		if _, ok := tlset[ln]; !ok {
-			lbls = append(lbls, labels.Label{
-				Name:  string(ln),
-				Value: string(lv),
-			})
+
+	isIn := func(name string) bool {
+		for i := 0; i < len(tlset); i++ {
+			if tlset[i].Name == name {
+				return true
+			}
 		}
+		return false
+	}
+
+	for _, lb := range tglbs {
+		if isIn(lb.Name) {
+			continue
+		}
+
+		lbls = append(lbls, labels.Label{
+			Name:  lb.Name,
+			Value: lb.Value,
+		})
 	}
 
 	// annotations 白名单过滤
@@ -537,7 +545,7 @@ func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSe
 }
 
 // handleTargetGroup 遍历自身的所有 target group 计算得到活跃的 target 并删除消失的 target
-func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
+func (d *BaseDiscover) handleTargetGroup(targetGroup *shareddiscovery.WrapTargetGroup) {
 	d.mm.IncHandledTgCounter()
 
 	namespace := tgSourceNamespace(targetGroup.Source)

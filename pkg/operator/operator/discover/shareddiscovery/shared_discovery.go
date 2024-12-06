@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/discovery/targetgroup"
+	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -55,6 +56,49 @@ func AllDiscovery() []string {
 	return names
 }
 
+type WrapTargetGroup struct {
+	// Targets is a list of targets identified by a label set. Each target is
+	// uniquely identifiable in the group by its address label.
+	Targets []labels.Labels
+	// Labels is a set of labels that is common across all targets in the group.
+	Labels labels.Labels
+
+	// Source is an identifier that describes a group of targets.
+	Source string
+}
+
+// castTg 转换 *targetgroup.Group 到 *WrapTargetGroup
+// 但需要确保所有 labels/targets 已经排序
+func castTg(tg *targetgroup.Group) *WrapTargetGroup {
+	targets := make([]labels.Labels, 0, len(tg.Targets))
+	for _, target := range tg.Targets {
+		tgLbs := make(labels.Labels, 0, len(target))
+		for k, v := range target {
+			tgLbs = append(tgLbs, labels.Label{
+				Name:  string(k),
+				Value: string(v),
+			})
+		}
+		sort.Sort(tgLbs)
+		targets = append(targets, tgLbs)
+	}
+
+	lbs := make(labels.Labels, 0, len(tg.Labels))
+	for k, v := range tg.Labels {
+		lbs = append(lbs, labels.Label{
+			Name:  string(k),
+			Value: string(v),
+		})
+	}
+	sort.Sort(lbs)
+
+	return &WrapTargetGroup{
+		Targets: targets,
+		Labels:  lbs,
+		Source:  tg.Source,
+	}
+}
+
 type Discovery interface {
 	Run(ctx context.Context, ch chan<- []*targetgroup.Group)
 }
@@ -70,12 +114,12 @@ type SharedDiscovery struct {
 }
 
 type tgWithTime struct {
-	tg        *targetgroup.Group
+	tg        *WrapTargetGroup
 	updatedAt int64
 }
 
 // FetchTargetGroups 获取缓存 targetgroups
-func FetchTargetGroups(uk string) []*targetgroup.Group {
+func FetchTargetGroups(uk string) []*WrapTargetGroup {
 	sharedDiscoveryLock.Lock()
 	defer sharedDiscoveryLock.Unlock()
 
@@ -153,16 +197,18 @@ func (sd *SharedDiscovery) start() {
 			sd.mut.Lock()
 			now := time.Now()
 			for _, tg := range tgs {
+				if tg == nil {
+					continue
+				}
+
 				logger.Debugf("targetgroup %s updated at: %v", tg.Source, now)
 				_, ok := sd.store[tg.Source]
-				if !ok {
+				if !ok && len(tg.Targets) == 0 {
 					// 第一次记录且没有 targets 则跳过
-					if tg == nil || len(tg.Targets) == 0 {
-						logger.Debugf("sharedDiscovery %s skip tg source '%s'", sd.uk, tg.Source)
-						continue
-					}
+					logger.Debugf("sharedDiscovery %s skip tg source '%s'", sd.uk, tg.Source)
+					continue
 				}
-				sd.store[tg.Source] = &tgWithTime{tg: tg, updatedAt: now.Unix()}
+				sd.store[tg.Source] = &tgWithTime{tg: castTg(tg), updatedAt: now.Unix()}
 			}
 			sd.mut.Unlock()
 
@@ -174,16 +220,12 @@ func (sd *SharedDiscovery) start() {
 			for source, tg := range sd.store {
 				// 超过 10 分钟未更新且已经没有目标的对象需要删除
 				// 确保 basediscovery 已经处理了删除事件
-				if now-tg.updatedAt > 600 {
-					if tg.tg == nil || len(tg.tg.Targets) == 0 {
-						delete(sd.store, source)
-						sd.mm.IncDeletedTgSourceCounter()
-						logger.Infof("sharedDiscovery %s delete tg source '%s'", sd.uk, source)
-					}
+				if now-tg.updatedAt > 600 && len(tg.tg.Targets) == 0 {
+					delete(sd.store, source)
+					sd.mm.IncDeletedTgSourceCounter()
+					logger.Infof("sharedDiscovery %s delete tg source '%s'", sd.uk, source)
 				}
-				if tg.tg != nil {
-					total += len(tg.tg.Targets)
-				}
+				total += len(tg.tg.Targets)
 			}
 			sd.mm.SetTargetCount(total)
 			sd.mut.Unlock()
@@ -191,11 +233,11 @@ func (sd *SharedDiscovery) start() {
 	}
 }
 
-func (sd *SharedDiscovery) fetch() []*targetgroup.Group {
+func (sd *SharedDiscovery) fetch() []*WrapTargetGroup {
 	sd.mut.RLock()
 	defer sd.mut.RUnlock()
 
-	ret := make([]*targetgroup.Group, 0, len(sd.store))
+	ret := make([]*WrapTargetGroup, 0, len(sd.store))
 	for _, v := range sd.store {
 		ret = append(ret, v.tg)
 	}

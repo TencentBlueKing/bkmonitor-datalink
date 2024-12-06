@@ -89,13 +89,24 @@ type bucket struct {
 	Cnt int
 }
 
+// propNameToNormalizeMetricName 将属性转为标准指标名
+func propNameToNormalizeMetricName(propertyName, policy string) string {
+	name := fmt.Sprintf("%s_%s", propertyName, strings.ToLower(policy))
+	// 在 NormalizeName 基础上，去掉 :
+	return utils.NormalizeName(strings.Replace(name, ":", "", -1))
+}
+
 // splitAtLastOnce 根据指定 sep 从右往左切割 s 一次
 func splitAtLastOnce(s, sep string) (string, string) {
 	lastIndex := strings.LastIndex(s, sep)
-	if lastIndex == -1 {
+	switch lastIndex {
+	case -1:
 		return s, ""
+	case len(s):
+		return s[:lastIndex], ""
+	default:
+		return s[:lastIndex], s[lastIndex+1:]
 	}
-	return s[:lastIndex], s[lastIndex+1:]
 }
 
 func itoSecStr(val int) string {
@@ -445,7 +456,7 @@ func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, d
 
 				// Handle Custom Metrics
 				customMetricHistogramPms := toHistogram(
-					fmt.Sprintf("%s_%s", head.PropertyName, strings.ToLower(info.Policy)),
+					propNameToNormalizeMetricName(head.PropertyName, info.Policy),
 					ip,
 					data.Timestamp,
 					toIntBuckets(bucketMap),
@@ -469,10 +480,10 @@ func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, d
 
 				// Handle Custom Metrics
 				pms = append(pms, &promMapper{
-					Metrics:    common.MapStr{fmt.Sprintf("%s_%s", head.PropertyName, strings.ToLower(info.Policy)): val},
+					Metrics:    common.MapStr{propNameToNormalizeMetricName(head.PropertyName, info.Policy): val},
 					Target:     ip,
 					Timestamp:  data.Timestamp,
-					Dimensions: propToCustomMetricDims(dims, map[string]string{}),
+					Dimensions: propToCustomMetricDims(dims, nil),
 				})
 			}
 		}

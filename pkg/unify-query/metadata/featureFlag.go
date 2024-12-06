@@ -100,27 +100,6 @@ func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 	return status
 }
 
-func GetVMQueryFeatureFlag(ctx context.Context) bool {
-	var (
-		user = GetUser(ctx)
-	)
-
-	// 增加配置的特性开关
-	if GetQueryRouter().CheckVmQuery(ctx, user.SpaceUid) {
-		return true
-	}
-
-	// 特性开关只有指定空间才启用 vm 查询
-	ffUser := featureFlag.FFUser(user.HashID, map[string]interface{}{
-		"name":     user.Name,
-		"source":   user.Source,
-		"spaceUid": user.SpaceUid,
-	})
-
-	status := featureFlag.BoolVariation(ctx, ffUser, "vm-query", false)
-	return status
-}
-
 func GetIsK8sFeatureFlag(ctx context.Context) bool {
 	var (
 		user = GetUser(ctx)

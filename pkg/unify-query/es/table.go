@@ -18,6 +18,7 @@ import (
 
 // key: table_id
 var tableMap map[string]*TableInfo
+
 var tableLock *sync.RWMutex
 
 // ReloadTableInfo

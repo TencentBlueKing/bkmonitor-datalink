@@ -13,7 +13,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/go-redis/redis/v8"
+	redis "github.com/go-redis/redis/v8"
 )
 
 // NewRedisInstance : https://redis.uptrace.dev/guide/universal.html

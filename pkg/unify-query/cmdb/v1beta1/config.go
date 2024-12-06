@@ -131,6 +131,30 @@ var configData = &Config{
 				"bklogconfig_name",
 			},
 		},
+		{
+			Name: "business",
+			Index: cmdb.Index{
+				"biz_id",
+			},
+		},
+		{
+			Name: "set",
+			Index: cmdb.Index{
+				"set_id",
+			},
+		},
+		{
+			Name: "module",
+			Index: cmdb.Index{
+				"module_id",
+			},
+		},
+		{
+			Name: "host",
+			Index: cmdb.Index{
+				"host_id",
+			},
+		},
 	},
 	Relation: []RelationConf{
 		{
@@ -216,6 +240,26 @@ var configData = &Config{
 		{
 			Resources: []cmdb.Resource{
 				"bklogconfig", "datasource",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"business", "set",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"module", "set",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"host", "module",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"host", "system",
 			},
 		},
 	},

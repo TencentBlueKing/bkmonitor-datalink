@@ -141,6 +141,7 @@ func (n *NodeMap) Del(nodeName string) {
 
 	delete(n.nodes, nodeName)
 	delete(n.ips, nodeName)
+	delete(n.priorityIPs, nodeName)
 }
 
 func newNodeObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*NodeMap, error) {

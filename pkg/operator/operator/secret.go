@@ -205,6 +205,7 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 
 	secretClient := c.client.CoreV1().Secrets(configs.G().MonitorNamespace)
 	for node, cfgs := range nodeMap {
+		t0 := time.Now()
 		secretName := tasks.GetDaemonSetTaskSecretName(node)
 		cache := c.daemonSetTaskCache[node]
 		if len(cache) > 0 && EqualMap(currTasksCache[node], cache) {
@@ -245,7 +246,7 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 			continue
 		}
 		c.mm.IncHandledSecretSuccessCounter(secret.Name, action.CreateOrUpdate)
-		logger.Infof("create or update daemonset secret %s", secret.Name)
+		logger.Infof("create or update daemonset secret %s, take: %s", secret.Name, time.Since(t0))
 	}
 	c.daemonSetTaskCache = currTasksCache
 }

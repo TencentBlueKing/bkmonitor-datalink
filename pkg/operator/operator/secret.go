@@ -502,7 +502,7 @@ func (c *Operator) cleanupStatefulSetChildSecret() {
 	for prev := range prevState {
 		if !nextState[prev] {
 			Slowdown()
-			logger.Infof("remove secret %s", prev)
+			t0 := time.Now()
 			if err := secretClient.Delete(c.ctx, prev, metav1.DeleteOptions{}); err != nil {
 				if !errors.IsNotFound(err) {
 					c.mm.IncHandledSecretFailedCounter(prev, action.Delete, err)
@@ -510,6 +510,7 @@ func (c *Operator) cleanupStatefulSetChildSecret() {
 				}
 				continue
 			}
+			logger.Infof("remove secret %s, take: %s", prev, time.Since(t0))
 			c.mm.IncHandledSecretSuccessCounter(prev, action.Delete)
 		}
 	}

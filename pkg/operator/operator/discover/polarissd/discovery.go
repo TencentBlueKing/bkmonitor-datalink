@@ -29,6 +29,7 @@ import (
 	"github.com/polarismesh/polaris-go"
 	"github.com/polarismesh/polaris-go/api"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	promconfig "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/discovery"
@@ -48,7 +49,7 @@ var (
 	userAgent        = "Blueking/Operator"
 	matchContentType = regexp.MustCompile(`^(?i:application\/json(;\s*charset=("utf-8"|utf-8))?)$`)
 
-	failuresCount = prometheus.NewCounter(
+	failuresCount = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "prometheus_sd_polaris_failures_total",
 			Help: "Number of Polaris service discovery refresh failures.",
@@ -57,7 +58,6 @@ var (
 
 func init() {
 	discovery.RegisterConfig(&SDConfig{})
-	prometheus.MustRegister(failuresCount)
 }
 
 // SDConfig is the configuration for HTTP based discovery.

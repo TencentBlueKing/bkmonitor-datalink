@@ -42,10 +42,10 @@ var (
 )
 
 func Slowdown() {
-	time.Sleep(time.Millisecond * 25) // 避免高频操作
+	time.Sleep(time.Millisecond * 20) // 避免高频操作
 }
 
-func EqualMap(a, b map[string]struct{}) bool {
+func equalMapKeys(a, b map[string]struct{}) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -208,7 +208,7 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 		t0 := time.Now()
 		secretName := tasks.GetDaemonSetTaskSecretName(node)
 		cache := c.daemonSetTaskCache[node]
-		if len(cache) > 0 && EqualMap(currTasksCache[node], cache) {
+		if len(cache) > 0 && equalMapKeys(currTasksCache[node], cache) {
 			logger.Infof("node (%s) secrets nothing changed, skipped", node)
 			continue
 		}
@@ -433,7 +433,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		t0 := time.Now()
 		secretName := tasks.GetStatefulSetTaskSecretName(idx)
 		cache := c.statefulSetTaskCache[idx]
-		if len(cache) > 0 && EqualMap(currTasksCache[idx], cache) {
+		if len(cache) > 0 && equalMapKeys(currTasksCache[idx], cache) {
 			logger.Infof("secrets %s nothing changed, skipped", secretName)
 			continue
 		}

@@ -482,7 +482,7 @@ func (c *Operator) handleDiscoverNotify() {
 	c.wg.Add(1)
 	defer c.wg.Done()
 
-	var last int64
+	last := time.Now().Unix() + configs.G().DispatchInterval // 第一次调度时多等待一个周期 避免触发太多 secrets 变更
 	dispatch := func(trigger string) {
 		now := time.Now()
 		c.mm.IncDispatchedTaskCounter(trigger)

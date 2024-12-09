@@ -26,8 +26,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/httpd"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/httpsd"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/kubernetesd"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/polarissd"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -115,7 +116,7 @@ func castDuration(d model.Duration) string {
 	return d.String()
 }
 
-func (c *Operator) createHttpSdDiscover(scrapeConfig config.ScrapeConfig, sdConfig *promhttpsd.SDConfig, index int) (discover.Discover, error) {
+func (c *Operator) createHttpLikeSdDiscover(scrapeConfig config.ScrapeConfig, sdConfig interface{}, kind string, index int) (discover.Discover, error) {
 	metricRelabelings := make([]yaml.MapSlice, 0)
 	if len(scrapeConfig.MetricRelabelConfigs) != 0 {
 		for _, cfg := range scrapeConfig.MetricRelabelConfigs {
@@ -126,7 +127,7 @@ func (c *Operator) createHttpSdDiscover(scrapeConfig config.ScrapeConfig, sdConf
 
 	monitorMeta := define.MonitorMeta{
 		Name:      scrapeConfig.JobName,
-		Kind:      monitorKindHttpSd,
+		Kind:      kind,
 		Namespace: "-", // 不标记 namespace
 		Index:     index,
 	}
@@ -150,28 +151,42 @@ func (c *Operator) createHttpSdDiscover(scrapeConfig config.ScrapeConfig, sdConf
 		bearerTokenFile = auth.CredentialsFile
 	}
 
-	dis := httpd.New(c.ctx, c.objectsController.NodeNameExists, &httpd.Options{
-		CommonOptions: &discover.CommonOptions{
-			MonitorMeta:            monitorMeta,
-			Name:                   monitorMeta.ID(),
-			DataID:                 dataID,
-			Relabels:               scrapeConfig.RelabelConfigs,
-			Path:                   scrapeConfig.MetricsPath,
-			Scheme:                 scrapeConfig.Scheme,
-			BearerTokenFile:        bearerTokenFile,
-			ProxyURL:               proxyURL,
-			Period:                 castDuration(scrapeConfig.ScrapeInterval),
-			Timeout:                castDuration(scrapeConfig.ScrapeTimeout),
-			DisableCustomTimestamp: !ifHonorTimestamps(&scrapeConfig.HonorTimestamps),
-			UrlValues:              scrapeConfig.Params,
-			ExtraLabels:            specLabels,
-			MetricRelabelConfigs:   metricRelabelings,
-		},
-		SDConfig:         sdConfig,
-		HTTPClientConfig: httpClientConfig,
-	})
-	logger.Infof("create http_sd discover: %s", dis.Name())
+	commonOpts := &discover.CommonOptions{
+		MonitorMeta:            monitorMeta,
+		Name:                   monitorMeta.ID(),
+		DataID:                 dataID,
+		Relabels:               scrapeConfig.RelabelConfigs,
+		Path:                   scrapeConfig.MetricsPath,
+		Scheme:                 scrapeConfig.Scheme,
+		BearerTokenFile:        bearerTokenFile,
+		ProxyURL:               proxyURL,
+		Period:                 castDuration(scrapeConfig.ScrapeInterval),
+		Timeout:                castDuration(scrapeConfig.ScrapeTimeout),
+		DisableCustomTimestamp: !ifHonorTimestamps(&scrapeConfig.HonorTimestamps),
+		UrlValues:              scrapeConfig.Params,
+		ExtraLabels:            specLabels,
+		MetricRelabelConfigs:   metricRelabelings,
+	}
 
+	var dis discover.Discover
+	switch kind {
+	case monitorKindHttpSd:
+		dis = httpsd.New(c.ctx, c.objectsController.NodeNameExists, &httpsd.Options{
+			CommonOptions:    commonOpts,
+			SDConfig:         sdConfig.(*promhttpsd.SDConfig),
+			HTTPClientConfig: httpClientConfig,
+		})
+	case monitorKindPolarisSd:
+		dis = polarissd.New(c.ctx, c.objectsController.NodeNameExists, &polarissd.Options{
+			CommonOptions:    commonOpts,
+			SDConfig:         sdConfig.(*polarissd.SDConfig),
+			HTTPClientConfig: httpClientConfig,
+		})
+	default:
+		return nil, fmt.Errorf("unsupported kind '%s'", kind)
+	}
+
+	logger.Infof("create %s discover: %s", kind, dis.Name())
 	return dis, nil
 }
 
@@ -270,12 +285,24 @@ func (c *Operator) createPromScrapeConfigDiscovers() []discover.Discover {
 					continue
 				}
 
-				httpSdDiscover, err := c.createHttpSdDiscover(scrapeConfig, obj, idx)
+				httpSdDiscover, err := c.createHttpLikeSdDiscover(scrapeConfig, obj, monitorKindHttpSd, idx)
 				if err != nil {
 					logger.Errorf("failed to create http_sd discover: %v", err)
 					continue
 				}
 				discovers = append(discovers, httpSdDiscover)
+
+			case *polarissd.SDConfig:
+				if !configs.G().PromSDKinds.Allow(monitorKindPolarisSd) {
+					continue
+				}
+
+				polarisSdDiscover, err := c.createHttpLikeSdDiscover(scrapeConfig, obj, monitorKindPolarisSd, idx)
+				if err != nil {
+					logger.Errorf("failed to create polaris_sd discover: %v", err)
+					continue
+				}
+				discovers = append(discovers, polarisSdDiscover)
 
 			case *promk8ssd.SDConfig:
 				if !configs.G().PromSDKinds.Allow(monitorKindKubernetesSd) {

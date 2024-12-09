@@ -27,4 +27,3 @@ project:
     - influxdbproxy
     - influxdb
     - libgse
-  reviewers: [ ]

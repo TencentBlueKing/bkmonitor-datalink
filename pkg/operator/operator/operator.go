@@ -482,7 +482,7 @@ func (c *Operator) handleDiscoverNotify() {
 	c.wg.Add(1)
 	defer c.wg.Done()
 
-	var last int64
+	last := time.Now().Unix() // 避免重启 operator 删除 secrets 太快
 	dispatch := func(trigger string) {
 		now := time.Now()
 		c.mm.IncDispatchedTaskCounter(trigger)

@@ -309,7 +309,7 @@ func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildCon
 	secretClient := c.client.CoreV1().Secrets(configs.G().MonitorNamespace)
 	for secretName := range dropSecrets {
 		Slowdown()
-		logger.Infof("remove secret %s", secretName)
+		t0 := time.Now()
 		if err := secretClient.Delete(c.ctx, secretName, metav1.DeleteOptions{}); err != nil {
 			if !errors.IsNotFound(err) {
 				c.mm.IncHandledSecretFailedCounter(secretName, action.Delete, err)
@@ -317,6 +317,7 @@ func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildCon
 			}
 			continue
 		}
+		logger.Infof("remove secret %s, take: %s", secretName, time.Since(t0))
 		c.mm.IncHandledSecretSuccessCounter(secretName, action.Delete)
 	}
 }

@@ -165,9 +165,11 @@ func (p *Proxy) Stop() error {
 		}
 	}
 
-	// 关闭 http 服务
+	// 优雅关闭 http 服务
 	if !p.config.Disabled {
-		if err = p.httpSrv.Close(); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), define.ShutdownTimeout)
+		defer cancel()
+		if err = p.httpSrv.Shutdown(ctx); err != nil {
 			err = errors.Wrap(err, "proxy: close http server error")
 		}
 	}

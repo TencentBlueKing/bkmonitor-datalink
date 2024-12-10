@@ -315,33 +315,82 @@ func (r *Receiver) Start() error {
 	}
 }
 
-func (r *Receiver) Stop() error {
-	if r.config.RecvServer.Enabled {
-		if err := r.recvServer.Close(); err != nil {
-			return err
-		}
+func (r *Receiver) shutdownRecvServer() error {
+	if !r.config.RecvServer.Enabled {
+		return nil
 	}
 
-	if r.config.AdminServer.Enabled {
-		if err := r.adminServer.Close(); err != nil {
-			return err
-		}
-	}
-
-	if r.config.GrpcServer.Enabled {
-		r.grpcServer.Stop()
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), define.ShutdownTimeout)
 	defer cancel()
 
-	if r.config.TarsServer.Enabled {
-		if err := r.tarsServer.Shutdown(ctx); err != nil {
-			logger.Errorf("receiver stop tars server got err: %v", err)
-		} else {
-			logger.Info("receiver tars server stopped")
-		}
+	t0 := time.Now()
+	err := r.recvServer.Shutdown(ctx)
+	if err != nil {
+		return err
 	}
+
+	logger.Info("shutdown recv server, take: %s", time.Since(t0))
+	return nil
+}
+
+func (r *Receiver) shutdownAdminServer() error {
+	if !r.config.AdminServer.Enabled {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), define.ShutdownTimeout)
+	defer cancel()
+
+	t0 := time.Now()
+	err := r.adminServer.Shutdown(ctx)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("shutdown admin server, take: %s", time.Since(t0))
+	return nil
+}
+
+func (r *Receiver) shutdownTarsServer() error {
+	if !r.config.TarsServer.Enabled {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), define.ShutdownTimeout)
+	defer cancel()
+
+	t0 := time.Now()
+	err := r.tarsServer.Shutdown(ctx)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("shutdown tars server, take: %s", time.Since(t0))
+	return nil
+}
+
+func (r *Receiver) shutdownGrpcServer() {
+	if !r.config.GrpcServer.Enabled {
+		return
+	}
+
+	t0 := time.Now()
+	r.grpcServer.GracefulStop()
+	logger.Info("shutdown grpc server, take: %s", time.Since(t0))
+}
+
+func (r *Receiver) Stop() error {
+	if err := r.shutdownRecvServer(); err != nil {
+		return err
+	}
+	if err := r.shutdownAdminServer(); err != nil {
+		return err
+	}
+	if err := r.shutdownTarsServer(); err != nil {
+		return err
+	}
+
+	r.shutdownGrpcServer()
 
 	r.wg.Wait()
 	return nil

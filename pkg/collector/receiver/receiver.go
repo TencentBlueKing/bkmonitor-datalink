@@ -253,7 +253,6 @@ func (r *Receiver) Start() error {
 		}
 		if err := r.startRecvHttpServer(); err != nil {
 			if errors.Is(err, http.ErrServerClosed) {
-				logger.Info("receiver http recv server stopped")
 				return
 			}
 			errs <- err
@@ -269,7 +268,6 @@ func (r *Receiver) Start() error {
 		}
 		if err := r.starAdminHttpServer(); err != nil {
 			if errors.Is(err, http.ErrServerClosed) {
-				logger.Info("receiver http admin server stopped")
 				return
 			}
 			errs <- err

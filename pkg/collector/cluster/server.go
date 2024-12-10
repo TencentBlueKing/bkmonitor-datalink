@@ -85,7 +85,7 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop() {
-	s.server.Stop()
+	s.server.GracefulStop()
 }
 
 func (s *Server) Forward(ctx context.Context, r *pb.ForwardRequest) (*pb.ForwardReply, error) {

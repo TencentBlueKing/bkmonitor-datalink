@@ -329,7 +329,7 @@ func (r *Receiver) shutdownRecvServer() error {
 		return err
 	}
 
-	logger.Info("shutdown recv server, take: %s", time.Since(t0))
+	logger.Infof("shutdown recv server, take: %s", time.Since(t0))
 	return nil
 }
 
@@ -347,7 +347,7 @@ func (r *Receiver) shutdownAdminServer() error {
 		return err
 	}
 
-	logger.Info("shutdown admin server, take: %s", time.Since(t0))
+	logger.Infof("shutdown admin server, take: %s", time.Since(t0))
 	return nil
 }
 
@@ -365,7 +365,7 @@ func (r *Receiver) shutdownTarsServer() error {
 		return err
 	}
 
-	logger.Info("shutdown tars server, take: %s", time.Since(t0))
+	logger.Infof("shutdown tars server, take: %s", time.Since(t0))
 	return nil
 }
 
@@ -376,7 +376,7 @@ func (r *Receiver) shutdownGrpcServer() {
 
 	t0 := time.Now()
 	r.grpcServer.GracefulStop()
-	logger.Info("shutdown grpc server, take: %s", time.Since(t0))
+	logger.Infof("shutdown grpc server, take: %s", time.Since(t0))
 }
 
 func (r *Receiver) Stop() error {

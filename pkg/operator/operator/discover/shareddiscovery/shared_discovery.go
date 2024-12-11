@@ -178,23 +178,22 @@ func Unregister(uk string) {
 	sharedDiscoveryLock.Lock()
 	defer sharedDiscoveryLock.Unlock()
 
-	if n, ok := sharedDiscoveryRefs[uk]; ok {
-		if n <= 0 {
-			return
-		}
+	n, ok := sharedDiscoveryRefs[uk]
+	if !ok || n <= 0 {
+		return
+	}
 
-		n--
-		// 没有任何 discover 持有
-		if n == 0 {
-			if d, ok := sharedDiscoveryMap[uk]; ok {
-				d.stop()
-			}
-			delete(sharedDiscoveryRefs, uk)
-			delete(sharedDiscoveryMap, uk)
-			logger.Infof("cleanup sharedDiscovery '%s'", uk)
-		} else {
-			sharedDiscoveryRefs[uk] = n
+	n--
+	// 没有任何 discover 持有 则需要清理
+	if n == 0 {
+		if d, ok := sharedDiscoveryMap[uk]; ok {
+			d.stop()
 		}
+		delete(sharedDiscoveryRefs, uk)
+		delete(sharedDiscoveryMap, uk)
+		logger.Infof("cleanup sharedDiscovery '%s'", uk)
+	} else {
+		sharedDiscoveryRefs[uk] = n
 	}
 }
 

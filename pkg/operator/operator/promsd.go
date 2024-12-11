@@ -160,7 +160,7 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 	}
 
 	monitorMeta := define.MonitorMeta{
-		Name:      fmt.Sprintf("%s/%s/%d", rsc.Resource, rsc.Config.JobName, index),
+		Name:      fmt.Sprintf("%s/%s", rsc.Resource, rsc.Config.JobName),
 		Kind:      kind,
 		Namespace: "-", // 不标记 namespace
 		Index:     index,

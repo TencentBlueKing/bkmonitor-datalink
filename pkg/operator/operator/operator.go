@@ -87,7 +87,8 @@ type Operator struct {
 	statefulSetTaskCache map[int]map[string]struct{}
 	eventTaskCache       string
 
-	promSdConfigsBytes map[string][]byte // 无并发读写
+	promSdConfigsBytes map[string][]byte              // 无并发读写
+	prevScrapeConfigs  map[string]resourceScrapConfig // 无并发读写
 }
 
 func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {

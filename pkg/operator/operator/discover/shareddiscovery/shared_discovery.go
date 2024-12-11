@@ -29,12 +29,14 @@ var (
 
 	sharedDiscoveryLock sync.Mutex
 	sharedDiscoveryMap  map[string]*SharedDiscovery
+	sharedDiscoveryRefs map[string]int // 记录 shared discover 持有引用数
 )
 
 // Activate 初始化全局 SharedDiscovery
 func Activate() {
 	gCtx, gCancel = context.WithCancel(context.Background())
 	sharedDiscoveryMap = map[string]*SharedDiscovery{}
+	sharedDiscoveryRefs = map[string]int{}
 }
 
 // Deactivate 清理全局 SharedDiscovery
@@ -104,8 +106,9 @@ type Discovery interface {
 }
 
 type SharedDiscovery struct {
-	uk        string
 	ctx       context.Context
+	cancel    context.CancelFunc
+	uk        string
 	discovery Discovery
 	ch        chan []*targetgroup.Group
 	mut       sync.RWMutex
@@ -148,10 +151,11 @@ func Register(uk string, createFunc func() (*SharedDiscovery, error)) error {
 	sharedDiscoveryLock.Lock()
 	defer sharedDiscoveryLock.Unlock()
 
+	sharedDiscoveryRefs[uk]++
 	if _, ok := sharedDiscoveryMap[uk]; !ok {
 		sd, err := createFunc()
 		if err != nil {
-			logger.Errorf("failed to create shared discovery(%s): %v", uk, err)
+			logger.Errorf("failed to create shared discovery (%s): %v", uk, err)
 			return err
 		}
 		gWg.Add(2)
@@ -169,9 +173,35 @@ func Register(uk string, createFunc func() (*SharedDiscovery, error)) error {
 	return nil
 }
 
+// Unregister 解注册 shared discovery
+func Unregister(uk string) {
+	sharedDiscoveryLock.Lock()
+	defer sharedDiscoveryLock.Unlock()
+
+	n, ok := sharedDiscoveryRefs[uk]
+	if !ok || n <= 0 {
+		return
+	}
+
+	n--
+	// 没有任何 discover 持有 则需要清理
+	if n == 0 {
+		if d, ok := sharedDiscoveryMap[uk]; ok {
+			d.stop()
+		}
+		delete(sharedDiscoveryRefs, uk)
+		delete(sharedDiscoveryMap, uk)
+		logger.Infof("cleanup sharedDiscovery '%s'", uk)
+	} else {
+		sharedDiscoveryRefs[uk] = n
+	}
+}
+
 func New(uk string, discovery Discovery) *SharedDiscovery {
+	ctx, cancel := context.WithCancel(gCtx)
 	return &SharedDiscovery{
-		ctx:       gCtx, // 生命周期由全局管理
+		ctx:       ctx,
+		cancel:    cancel,
 		uk:        uk,
 		discovery: discovery,
 		ch:        make(chan []*targetgroup.Group),
@@ -182,6 +212,10 @@ func New(uk string, discovery Discovery) *SharedDiscovery {
 
 func (sd *SharedDiscovery) watch() {
 	sd.discovery.Run(sd.ctx, sd.ch)
+}
+
+func (sd *SharedDiscovery) stop() {
+	sd.cancel()
 }
 
 func (sd *SharedDiscovery) start() {

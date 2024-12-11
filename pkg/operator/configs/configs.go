@@ -43,15 +43,15 @@ type PromSDSecret struct {
 func (p PromSDSecret) Validate() bool {
 	// 优先使用 name 精准匹配
 	if p.Name != "" {
-		if p.Namespace != "" {
+		if p.Namespace == "" {
 			return false // 精准匹配不允许空 namespace
 		}
 		return true
 	}
 
 	// 使用 selector 匹配
-	if len(p.Selector) == 0 {
-		return false
+	if p.Selector == "" {
+		return false // 不允许空 selector
 	}
 	// 空 namespace 则表示匹配所有 namespace 的 secrets
 	return true

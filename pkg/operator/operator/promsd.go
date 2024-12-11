@@ -32,11 +32,11 @@ import (
 )
 
 type resourceScrapConfig struct {
-	resource string
-	conf     config.ScrapeConfig
+	Resource string
+	Config   config.ScrapeConfig
 }
 
-func (c *Operator) getPromScrapeConfigs() ([]resourceScrapConfig, bool) {
+func (c *Operator) getPromResourceScrapeConfigs() ([]resourceScrapConfig, bool) {
 	if len(configs.G().PromSDSecrets) == 0 {
 		return nil, false
 	}
@@ -60,8 +60,8 @@ func (c *Operator) getPromScrapeConfigs() ([]resourceScrapConfig, bool) {
 			newRound[resource] = data
 			for i := 0; i < len(sdc); i++ {
 				rscs = append(rscs, resourceScrapConfig{
-					resource: resource,
-					conf:     sdc[i],
+					Resource: resource,
+					Config:   sdc[i],
 				})
 			}
 		}
@@ -152,15 +152,15 @@ func castDuration(d model.Duration) string {
 
 func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig interface{}, kind string, index int) (discover.Discover, error) {
 	metricRelabelings := make([]yaml.MapSlice, 0)
-	if len(rsc.conf.MetricRelabelConfigs) != 0 {
-		for _, cfg := range rsc.conf.MetricRelabelConfigs {
+	if len(rsc.Config.MetricRelabelConfigs) != 0 {
+		for _, cfg := range rsc.Config.MetricRelabelConfigs {
 			relabeling := generatePromRelabelConfig(cfg)
 			metricRelabelings = append(metricRelabelings, relabeling)
 		}
 	}
 
 	monitorMeta := define.MonitorMeta{
-		Name:      fmt.Sprintf("%s/%s", rsc.resource, rsc.conf.JobName),
+		Name:      fmt.Sprintf("%s/%s/%d", rsc.Resource, rsc.Config.JobName, index),
 		Kind:      kind,
 		Namespace: "-", // 不标记 namespace
 		Index:     index,
@@ -172,7 +172,7 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 	}
 
 	specLabels := dataID.Spec.Labels
-	httpClientConfig := rsc.conf.HTTPClientConfig
+	httpClientConfig := rsc.Config.HTTPClientConfig
 
 	var proxyURL string
 	if httpClientConfig.ProxyURL.URL != nil {
@@ -189,15 +189,15 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 		MonitorMeta:            monitorMeta,
 		Name:                   monitorMeta.ID(),
 		DataID:                 dataID,
-		Relabels:               rsc.conf.RelabelConfigs,
-		Path:                   rsc.conf.MetricsPath,
-		Scheme:                 rsc.conf.Scheme,
+		Relabels:               rsc.Config.RelabelConfigs,
+		Path:                   rsc.Config.MetricsPath,
+		Scheme:                 rsc.Config.Scheme,
 		BearerTokenFile:        bearerTokenFile,
 		ProxyURL:               proxyURL,
-		Period:                 castDuration(rsc.conf.ScrapeInterval),
-		Timeout:                castDuration(rsc.conf.ScrapeTimeout),
-		DisableCustomTimestamp: !ifHonorTimestamps(&rsc.conf.HonorTimestamps),
-		UrlValues:              rsc.conf.Params,
+		Period:                 castDuration(rsc.Config.ScrapeInterval),
+		Timeout:                castDuration(rsc.Config.ScrapeTimeout),
+		DisableCustomTimestamp: !ifHonorTimestamps(&rsc.Config.HonorTimestamps),
+		UrlValues:              rsc.Config.Params,
 		ExtraLabels:            specLabels,
 		MetricRelabelConfigs:   metricRelabelings,
 	}
@@ -226,15 +226,15 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 
 func (c *Operator) createKubernetesSdDiscover(rsc resourceScrapConfig, sdConfig *promk8ssd.SDConfig, index int) (discover.Discover, error) {
 	metricRelabelings := make([]yaml.MapSlice, 0)
-	if len(rsc.conf.MetricRelabelConfigs) != 0 {
-		for _, cfg := range rsc.conf.MetricRelabelConfigs {
+	if len(rsc.Config.MetricRelabelConfigs) != 0 {
+		for _, cfg := range rsc.Config.MetricRelabelConfigs {
 			relabeling := generatePromRelabelConfig(cfg)
 			metricRelabelings = append(metricRelabelings, relabeling)
 		}
 	}
 
 	monitorMeta := define.MonitorMeta{
-		Name:      fmt.Sprintf("%s/%s", rsc.resource, rsc.conf.JobName),
+		Name:      fmt.Sprintf("%s/%s", rsc.Resource, rsc.Config.JobName),
 		Kind:      monitorKindKubernetesSd,
 		Namespace: "-", // 不标记 namespace
 		Index:     index,
@@ -246,7 +246,7 @@ func (c *Operator) createKubernetesSdDiscover(rsc resourceScrapConfig, sdConfig 
 	}
 
 	specLabels := dataID.Spec.Labels
-	httpClientConfig := rsc.conf.HTTPClientConfig
+	httpClientConfig := rsc.Config.HTTPClientConfig
 
 	var proxyURL string
 	if httpClientConfig.ProxyURL.URL != nil {
@@ -260,7 +260,7 @@ func (c *Operator) createKubernetesSdDiscover(rsc resourceScrapConfig, sdConfig 
 	}
 
 	var username, password string
-	basicAuth := rsc.conf.HTTPClientConfig.BasicAuth
+	basicAuth := rsc.Config.HTTPClientConfig.BasicAuth
 	if basicAuth != nil {
 		username = basicAuth.Username
 		password = string(basicAuth.Password)
@@ -271,15 +271,15 @@ func (c *Operator) createKubernetesSdDiscover(rsc resourceScrapConfig, sdConfig 
 			MonitorMeta:            monitorMeta,
 			Name:                   monitorMeta.ID(),
 			DataID:                 dataID,
-			Relabels:               rsc.conf.RelabelConfigs,
-			Path:                   rsc.conf.MetricsPath,
-			Scheme:                 rsc.conf.Scheme,
+			Relabels:               rsc.Config.RelabelConfigs,
+			Path:                   rsc.Config.MetricsPath,
+			Scheme:                 rsc.Config.Scheme,
 			BearerTokenFile:        bearerTokenFile,
 			ProxyURL:               proxyURL,
-			Period:                 castDuration(rsc.conf.ScrapeInterval),
-			Timeout:                castDuration(rsc.conf.ScrapeTimeout),
-			DisableCustomTimestamp: !ifHonorTimestamps(&rsc.conf.HonorTimestamps),
-			UrlValues:              rsc.conf.Params,
+			Period:                 castDuration(rsc.Config.ScrapeInterval),
+			Timeout:                castDuration(rsc.Config.ScrapeTimeout),
+			DisableCustomTimestamp: !ifHonorTimestamps(&rsc.Config.HonorTimestamps),
+			UrlValues:              rsc.Config.Params,
 			ExtraLabels:            specLabels,
 			MetricRelabelConfigs:   metricRelabelings,
 		},
@@ -291,9 +291,9 @@ func (c *Operator) createKubernetesSdDiscover(rsc resourceScrapConfig, sdConfig 
 			Password: password,
 		},
 		TLSConfig: &promv1.TLSConfig{
-			CAFile:   rsc.conf.HTTPClientConfig.TLSConfig.CAFile,
-			CertFile: rsc.conf.HTTPClientConfig.TLSConfig.CertFile,
-			KeyFile:  rsc.conf.HTTPClientConfig.TLSConfig.KeyFile,
+			CAFile:   rsc.Config.HTTPClientConfig.TLSConfig.CAFile,
+			CertFile: rsc.Config.HTTPClientConfig.TLSConfig.CertFile,
+			KeyFile:  rsc.Config.HTTPClientConfig.TLSConfig.KeyFile,
 		},
 		UseEndpointSlice: useEndpointslice,
 	})
@@ -308,14 +308,14 @@ const (
 )
 
 func (c *Operator) reloadPromScrapeConfigDiscovers() {
-	resourceScrapeConfigs, ok := c.getPromScrapeConfigs()
+	resourceScrapeConfigs, ok := c.getPromResourceScrapeConfigs()
 	if !ok {
 		return
 	}
 
 	newRound := make(map[string]resourceScrapConfig)
 	for _, sc := range resourceScrapeConfigs {
-		uid := fmt.Sprintf("%s/%s", sc.resource, sc.conf.JobName)
+		uid := fmt.Sprintf("%s/%s", sc.Resource, sc.Config.JobName)
 		_, ok := newRound[uid]
 		if ok {
 			logger.Errorf("found duplicate scrapeConfig: '%s'", uid)
@@ -327,33 +327,35 @@ func (c *Operator) reloadPromScrapeConfigDiscovers() {
 	var addOrUpdateScrapeConfigs []resourceScrapConfig
 	var removeScrapeConfigs []resourceScrapConfig
 	for _, sc := range resourceScrapeConfigs {
-		uid := fmt.Sprintf("%s/%s", sc.resource, sc.conf.JobName)
-		v, ok := c.prevScrapeConfigs[uid]
+		uid := fmt.Sprintf("%s/%s", sc.Resource, sc.Config.JobName)
+		v, ok := c.prevResourceScrapeConfigs[uid]
 		if !ok {
 			addOrUpdateScrapeConfigs = append(addOrUpdateScrapeConfigs, sc) // 新增
+			logger.Infof("promsd add (%s) scrapeConfig", uid)
 			continue
 		}
 		if !reflect.DeepEqual(v, sc) {
 			addOrUpdateScrapeConfigs = append(addOrUpdateScrapeConfigs, sc) // 修改
+			logger.Infof("promsd update (%s) scrapeConfig", uid)
 		}
 	}
 
-	for uid := range c.prevScrapeConfigs {
-		v, ok := newRound[uid]
+	for uid, sc := range c.prevResourceScrapeConfigs {
+		_, ok := newRound[uid]
 		if !ok {
-			removeScrapeConfigs = append(removeScrapeConfigs, v) // 删除
+			removeScrapeConfigs = append(removeScrapeConfigs, sc) // 删除
+			logger.Infof("promsd remove (%s) scrapeConfig", uid)
 		}
 	}
 
+	// 模拟 monitor 资源监听变化
 	if len(addOrUpdateScrapeConfigs) > 0 {
-		logger.Infof("promsd add or update %d scrapeConfigs", len(addOrUpdateScrapeConfigs))
 		c.handlePromScrapeConfigDiscovers(addOrUpdateScrapeConfigs, opAddOrUpdate)
 	}
 	if len(removeScrapeConfigs) > 0 {
-		logger.Infof("promsd remove %d scrapeConfigs", len(removeScrapeConfigs))
 		c.handlePromScrapeConfigDiscovers(removeScrapeConfigs, opRemove)
 	}
-	c.prevScrapeConfigs = newRound
+	c.prevResourceScrapeConfigs = newRound
 }
 
 func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resourceScrapConfig, op string) {
@@ -361,7 +363,7 @@ func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resou
 	kinds := configs.G().PromSDKinds
 	for i := 0; i < len(resourceScrapeConfigs); i++ {
 		rsc := resourceScrapeConfigs[i]
-		for idx, rc := range rsc.conf.ServiceDiscoveryConfigs {
+		for idx, rc := range rsc.Config.ServiceDiscoveryConfigs {
 			switch obj := rc.(type) {
 			case *promhttpsd.SDConfig:
 				if !kinds.Allow(monitorKindHttpSd) {
@@ -409,7 +411,7 @@ func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resou
 				logger.Errorf("add or update prom scrapeConfigs discover %s failed: %s", dis, err)
 			}
 		}
-	case opDelete:
+	case opRemove:
 		for _, dis := range discovers {
 			c.deleteDiscoverByName(dis.Name())
 		}

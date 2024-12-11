@@ -48,7 +48,7 @@ func New(ctx context.Context, checkFn define.CheckFunc, opts *Options) *Discover
 		opts:         opts,
 	}
 
-	d.SetUK(fmt.Sprintf("%s:%s:%s", d.Type(), opts.SDConfig.Namespace, opts.SDConfig.Service))
+	d.SetUK(fmt.Sprintf("%s:%s", d.Type(), opts.Name))
 	d.SetHelper(discover.Helper{
 		AccessBasicAuth:   commonconfigs.WrapHttpAccessBasicAuth(opts.HTTPClientConfig),
 		AccessBearerToken: commonconfigs.WrapHttpAccessBearerToken(opts.HTTPClientConfig),
@@ -64,6 +64,11 @@ func (d *Discover) Type() string {
 func (d *Discover) Reload() error {
 	d.Stop()
 	return d.Start()
+}
+
+func (d *Discover) Stop() {
+	d.BaseDiscover.Stop()
+	shareddiscovery.Unregister(d.UK())
 }
 
 func (d *Discover) Start() error {

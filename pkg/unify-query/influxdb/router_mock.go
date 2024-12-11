@@ -49,6 +49,12 @@ func MockSpaceRouter(ctx context.Context) {
 	  			"false": false
 	  		},
 	  		"targeting": [
+				{
+					"query": "spaceUID in [\"bkdata\"]",
+					"percentage": {
+					   "false": 100
+                	}
+            	}
 			],
 			"defaultRule": {
 	  			"variation": "true"

@@ -19,6 +19,51 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
+func TestGetBkDataTableIDCheck(t *testing.T) {
+	ctx := InitHashID(context.Background())
+	InitMetadata()
+
+	featureFlag.MockFeatureFlag(ctx, `{
+    "bk-data-table-id-auth": {
+        "variations": {
+            "Default": true,
+            "true": true,
+            "false": false
+        },
+        "targeting": [
+            {
+                "query": "spaceUid in [\"bkdata\", \"bkdata_1\"]",
+                "percentage": {
+                    "false": 100,
+					"true": 0
+                }
+            }
+        ],
+        "defaultRule": {
+            "variation": "Default"
+        }
+    }
+}`)
+
+	var actual bool
+
+	SetUser(ctx, "", "bkdata_1", "")
+	actual = GetBkDataTableIDCheck(ctx)
+	assert.Equal(t, false, actual)
+
+	SetUser(ctx, "", "bkmonitor", "")
+	actual = GetBkDataTableIDCheck(ctx)
+	assert.Equal(t, true, actual)
+
+	SetUser(ctx, "", "bkdata_1_1", "")
+	actual = GetBkDataTableIDCheck(ctx)
+	assert.Equal(t, true, actual)
+
+	SetUser(ctx, "", "bkdata", "")
+	actual = GetBkDataTableIDCheck(ctx)
+	assert.Equal(t, false, actual)
+}
+
 func TestGetMustVmQueryFeatureFlag(t *testing.T) {
 	ctx := context.Background()
 

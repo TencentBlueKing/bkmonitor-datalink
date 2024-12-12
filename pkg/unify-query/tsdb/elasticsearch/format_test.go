@@ -90,7 +90,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"bool":{"should":[{"wildcard":{"key":{"value":"*val-1*"}}},{"wildcard":{"key":{"value":"*val-2*"}}}]}},{"bool":{"should":[{"wildcard":{"key":{"value":"*val-3*"}}},{"wildcard":{"key":{"value":"*val-4*"}}}]}}]}},{"bool":{"must":[{"bool":{"must_not":[{"match_phrase":{"key":{"query":"val-1"}}},{"match_phrase":{"key":{"query":"val-2"}}}]}},{"range":{"key":{"from":"9","include_lower":true,"include_upper":true,"to":null}}}]}}]}}}`,
+			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"bool":{"should":[{"wildcard":{"key":{"value":"val-1"}}},{"wildcard":{"key":{"value":"val-2"}}}]}},{"bool":{"should":[{"wildcard":{"key":{"value":"val-3"}}},{"wildcard":{"key":{"value":"val-4"}}}]}}]}},{"bool":{"must":[{"bool":{"must_not":[{"match_phrase":{"key":{"query":"val-1"}}},{"match_phrase":{"key":{"query":"val-2"}}}]}},{"range":{"key":{"from":"9","include_lower":true,"include_upper":true,"to":null}}}]}}]}}}`,
 		},
 		"query 5": {
 			conditions: metadata.AllConditions{
@@ -228,7 +228,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/ShangHai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","fixed_interval":"1m","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex"}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1m","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex"}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 		"aggregate second int field": {
 			timeField: metadata.TimeField{
@@ -244,7 +244,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/ShangHai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","fixed_interval":"1m","min_doc_count":0}}},"terms":{"field":"gseIndex"}}},"query":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1m","min_doc_count":0}}},"terms":{"field":"gseIndex"}}},"query":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 		"aggregate millisecond int field": {
 			timeField: metadata.TimeField{
@@ -260,7 +260,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/ShangHai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","fixed_interval":"1m","min_doc_count":0}}},"terms":{"field":"gseIndex"}}},"query":{"range":{"dtEventTime":{"from":1721024820000,"include_lower":true,"include_upper":true,"to":1721046420000}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","interval":"1m","min_doc_count":0}}},"terms":{"field":"gseIndex"}}},"query":{"range":{"dtEventTime":{"from":1721024820000,"include_lower":true,"include_upper":true,"to":1721046420000}}}}`,
 		},
 		"aggregate millisecond time field": {
 			timeField: metadata.TimeField{
@@ -276,7 +276,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/ShangHai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","fixed_interval":"1m","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex"}}},"query":{"range":{"dtEventTime":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","interval":"1m","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex"}}},"query":{"range":{"dtEventTime":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

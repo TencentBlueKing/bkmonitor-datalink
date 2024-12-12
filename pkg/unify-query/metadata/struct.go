@@ -143,6 +143,9 @@ type ConditionField struct {
 	Value []string
 	// Operator 操作符，包含：eq, ne, erq, nreq, contains, ncontains
 	Operator string
+
+	// IsWildcard 是否是通配符
+	IsWildcard bool
 }
 
 // TimeAggregation 时间聚合字段

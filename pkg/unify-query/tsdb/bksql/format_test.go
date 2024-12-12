@@ -112,20 +112,20 @@ func TestNewSqlFactory(t *testing.T) {
 				},
 				BkSqlCondition: "gseIndex > 0",
 			},
-			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000))) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1733607400000 AND `dtEventTimeStamp` < 1733939375000 AND (`thedate` = '20241207' OR `thedate` = '20241208' OR `thedate` = '20241209' OR `thedate` = '20241210' OR `thedate` = '20241211') AND (gseIndex > 0) GROUP BY `ip`, (`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000)) ORDER BY `_timestamp_` ASC",
+			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000))) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1733607400000 AND `dtEventTimeStamp` < 1733939375000 AND `thedate` >= '20241208' AND `thedate` <= '20241212' AND (gseIndex > 0) GROUP BY `ip`, (`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000)) ORDER BY `_timestamp_` ASC",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
-			if c.start.Unix() > 0 {
-				start = c.start
+			if c.start.Unix() == 0 {
+				c.start = start
 			}
-			if c.end.Unix() > 0 {
-				end = c.end
+			if c.end.Unix() == 0 {
+				c.end = end
 			}
 
-			log.Infof(ctx, "start: %s, end: %s", start, end)
-			fact := NewQueryFactory(ctx, c.query).WithRangeTime(start, end)
+			log.Infof(ctx, "start: %s, end: %s", c.start, c.end)
+			fact := NewQueryFactory(ctx, c.query).WithRangeTime(c.start, c.end)
 			sql, err := fact.SQL()
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, sql)

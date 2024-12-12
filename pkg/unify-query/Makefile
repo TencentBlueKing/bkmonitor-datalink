@@ -45,7 +45,7 @@ lint:
 
 .PHONY: addlicense
 addlicense:
-	find ./ -type f \( -iname \*.go -o -iname \*.py -iname \*.sh \)|xargs addlicense -v -f ../../scripts/license.txt -ignore vendor/*
+	find ./ -type f \( -iname \*.go -o -iname \*.py -iname \*.sh \) | xargs addlicense -v -f ../../scripts/license.txt -ignore vendor/*
 
 .PHONY: imports
 imports: addlicense

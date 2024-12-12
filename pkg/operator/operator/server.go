@@ -554,16 +554,15 @@ func (c *Operator) LabelJoinRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) {
-	buf := bytebufferpool.Get()
-	defer bytebufferpool.Put(buf)
+	c.objectsController.WriteNodeRelations(w)
+	c.objectsController.WriteServiceRelations(w)
+	c.objectsController.WritePodRelations(w)
+	c.objectsController.WriteReplicasetRelations(w)
+	c.objectsController.WriteDataSourceRelations(w)
+}
 
-	c.objectsController.GetNodeRelations(buf)
-	c.objectsController.GetServiceRelations(buf)
-	c.objectsController.GetPodRelations(buf)
-	c.objectsController.GetReplicasetRelations(buf)
-	c.objectsController.GetDataSourceRelations(buf)
-
-	w.Write(buf.Bytes())
+func (c *Operator) HelmChartsMetricsRoute(w http.ResponseWriter, _ *http.Request) {
+	c.helmchartsController.WriteInfoMetrics(w)
 }
 
 func (c *Operator) RuleMetricsRoute(w http.ResponseWriter, _ *http.Request) {
@@ -604,6 +603,7 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /pods?all=true|false
 * GET /relation/metrics
 * GET /rule/metrics
+* GET /helmcharts/metrics
 * GET /configs
 
 # Check Routes
@@ -650,6 +650,7 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/pods", c.PodsRoute)
 	router.HandleFunc("/labeljoin", c.LabelJoinRoute)
 	router.HandleFunc("/relation/metrics", c.RelationMetricsRoute)
+	router.HandleFunc("/helmcharts/metrics", c.HelmChartsMetricsRoute)
 	router.HandleFunc("/rule/metrics", c.RuleMetricsRoute)
 	router.HandleFunc("/configs", c.ConfigsRoute)
 

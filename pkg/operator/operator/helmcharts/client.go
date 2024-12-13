@@ -23,11 +23,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 )
 
-var helmchartsInfo = promauto.NewGaugeVec(
+var helmchartsRevision = promauto.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Namespace: define.MonitorNamespace,
-		Name:      "helm_charts_info",
-		Help:      "helm charts information",
+		Name:      "helm_charts_revision",
+		Help:      "helm charts revision",
 	},
 	[]string{"name", "namespace", "revision", "updated", "status", "chart", "app_version"},
 )
@@ -38,8 +38,8 @@ func newMetricMonitor() *metricMonitor {
 
 type metricMonitor struct{}
 
-func (m *metricMonitor) SetHelmChartsInfo(element ReleaseElement) {
-	helmchartsInfo.WithLabelValues(
+func (m *metricMonitor) SetHelmChartsRevision(element ReleaseElement) {
+	helmchartsRevision.WithLabelValues(
 		element.Name,
 		element.Namespace,
 		strconv.Itoa(element.Revision),
@@ -82,7 +82,7 @@ func NewController(ctx context.Context, client kubernetes.Interface) (*Controlle
 
 func (c *Controller) UpdateMetrics() {
 	c.objects.Range(func(ele ReleaseElement) {
-		c.mm.SetHelmChartsInfo(ele)
+		c.mm.SetHelmChartsRevision(ele)
 	})
 }
 

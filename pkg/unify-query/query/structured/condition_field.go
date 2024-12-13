@@ -82,6 +82,8 @@ type ConditionField struct {
 	Value []string `json:"value" example:"2"`
 	// Operator 操作符，包含：eq,ne,erq,nreq,contains,ncontains
 	Operator string `json:"op" example:"contains"`
+	// IsWildcard 是否是通配符
+	IsWildcard bool `json:"is_wildcard,omitempty"`
 }
 
 // String

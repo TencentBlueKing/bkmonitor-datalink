@@ -203,6 +203,7 @@ func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClus
 				DimensionName: cond.DimensionName,
 				Value:         cond.Value,
 				Operator:      cond.Operator,
+				IsWildcard:    cond.IsWildcard,
 			})
 		}
 		queryConditions = append(queryConditions, queryConds)
@@ -891,6 +892,7 @@ func (q *Query) BuildMetadataQuery(
 					DimensionName: c.DimensionName,
 					Value:         c.Value,
 					Operator:      c.Operator,
+					IsWildcard:    c.IsWildcard,
 				}
 			}
 			query.AllConditions[i] = conds

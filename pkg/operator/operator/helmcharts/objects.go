@@ -31,13 +31,13 @@ import (
 )
 
 type ReleaseElement struct {
-	Name       string
-	Namespace  string
-	Revision   string
-	Updated    string
-	Status     string
-	Chart      string
-	AppVersion string
+	Name       string `json:"name"`
+	Namespace  string `json:"namespace"`
+	Revision   string `json:"revision"`
+	Updated    string `json:"updated"`
+	Status     string `json:"status"`
+	Chart      string `json:"chart"`
+	AppVersion string `json:"app_version"`
 }
 
 var b64 = base64.StdEncoding

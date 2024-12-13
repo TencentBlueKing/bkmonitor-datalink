@@ -246,7 +246,7 @@ func castReleaseElement(r *Release) ReleaseElement {
 	}
 	updated := "-"
 	if tspb := r.Info.LastDeployed; !tspb.IsZero() {
-		updated = tspb.String()
+		updated = tspb.Format(time.RFC3339)
 	}
 	element.Updated = updated
 	return element

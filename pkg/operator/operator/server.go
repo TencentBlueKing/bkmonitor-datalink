@@ -20,7 +20,6 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/valyala/bytebufferpool"
 	"gopkg.in/yaml.v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
@@ -582,14 +581,9 @@ func (c *Operator) RuleMetricsRoute(w http.ResponseWriter, _ *http.Request) {
 func (c *Operator) ConfigsRoute(w http.ResponseWriter, _ *http.Request) {
 	b, _ := yaml.Marshal(configs.G())
 
-	buf := bytebufferpool.Get()
-	defer bytebufferpool.Put(buf)
-
-	buf.WriteString("# " + define.ConfigFilePath)
-	buf.WriteString("\n")
-	buf.Write(b)
-
-	w.Write(buf.Bytes())
+	w.Write([]byte("# " + define.ConfigFilePath))
+	w.Write([]byte("\n"))
+	w.Write(b)
 }
 
 func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {

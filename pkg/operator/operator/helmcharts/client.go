@@ -11,21 +11,49 @@ package helmcharts
 
 import (
 	"context"
-	"io"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/promfmt"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 )
+
+var helmchartsInfo = promauto.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Namespace: define.MonitorNamespace,
+		Name:      "helm_charts_info",
+		Help:      "helm charts information",
+	},
+	[]string{"name", "namespace", "revision", "updated", "status", "chart", "app_version"},
+)
+
+func newMetricMonitor() *metricMonitor {
+	return &metricMonitor{}
+}
+
+type metricMonitor struct{}
+
+func (m *metricMonitor) SetHelmChartsInfo(element ReleaseElement) {
+	helmchartsInfo.WithLabelValues(
+		element.Name,
+		element.Namespace,
+		element.Revision,
+		element.Updated,
+		element.Status,
+		element.Chart,
+		element.AppVersion,
+	).Set(1)
+}
 
 type Controller struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	objects *Objects
+	mm      *metricMonitor
 }
 
 func NewController(ctx context.Context, client kubernetes.Interface) (*Controller, error) {
@@ -47,7 +75,14 @@ func NewController(ctx context.Context, client kubernetes.Interface) (*Controlle
 		ctx:     ctx,
 		cancel:  cancel,
 		objects: objs,
+		mm:      newMetricMonitor(),
 	}, nil
+}
+
+func (c *Controller) UpdateMetrics() {
+	c.objects.Range(func(ele ReleaseElement) {
+		c.mm.SetHelmChartsInfo(ele)
+	})
 }
 
 func (c *Controller) Stop() {
@@ -62,21 +97,4 @@ func (c *Controller) GetByNamespace(namespace string) []ReleaseElement {
 		}
 	})
 	return eles
-}
-
-func (c *Controller) WriteInfoMetrics(w io.Writer) {
-	c.objects.Range(func(ele ReleaseElement) {
-		promfmt.FmtBytes(w, promfmt.Metric{
-			Name: "helm_charts_info",
-			Labels: []promfmt.Label{
-				{Name: "name", Value: ele.Name},
-				{Name: "namespace", Value: ele.Namespace},
-				{Name: "revision", Value: ele.Revision},
-				{Name: "updated", Value: ele.Updated},
-				{Name: "status", Value: ele.Status},
-				{Name: "chart", Value: ele.Chart},
-				{Name: "app_version", Value: ele.AppVersion},
-			},
-		})
-	})
 }

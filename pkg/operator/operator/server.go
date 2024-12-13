@@ -567,10 +567,6 @@ func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) 
 	c.objectsController.WriteDataSourceRelations(w)
 }
 
-func (c *Operator) HelmChartsMetricsRoute(w http.ResponseWriter, _ *http.Request) {
-	c.helmchartsController.WriteInfoMetrics(w)
-}
-
 func (c *Operator) RuleMetricsRoute(w http.ResponseWriter, _ *http.Request) {
 	if configs.G().EnablePromRule {
 		lines := c.promsliController.RuleMetrics()
@@ -604,7 +600,6 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /pods?all=true|false
 * GET /relation/metrics
 * GET /rule/metrics
-* GET /helmcharts/metrics
 * GET /configs
 
 # Check Routes
@@ -651,7 +646,6 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/pods", c.PodsRoute)
 	router.HandleFunc("/labeljoin", c.LabelJoinRoute)
 	router.HandleFunc("/relation/metrics", c.RelationMetricsRoute)
-	router.HandleFunc("/helmcharts/metrics", c.HelmChartsMetricsRoute)
 	router.HandleFunc("/rule/metrics", c.RuleMetricsRoute)
 	router.HandleFunc("/configs", c.ConfigsRoute)
 

@@ -276,6 +276,7 @@ func (c *Operator) recordMetrics() {
 			c.updateMonitorEndpointMetrics()
 			c.updateResourceMetrics()
 			c.updateSharedDiscoveryMetrics()
+			c.helmchartsController.UpdateMetrics()
 
 		case <-c.ctx.Done():
 			return

@@ -133,7 +133,36 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"nested":{"path":"nested","query":{"bool":{"must":[{"bool":{"should":[{"wildcard":{"nested.key":{"value":"*val-1*"}}},{"wildcard":{"nested.key":{"value":"*val-2*"}}}]}},{"match_phrase":{"nested.key":{"query":"val-3"}}},{"exists":{"field":"nested.key"}}]}}}}}`,
+			expected: `{"query":{"nested":{"path":"nested","query":{"bool":{"must":[{"bool":{"should":[{"wildcard":{"nested.key":{"value":"val-1"}}},{"wildcard":{"nested.key":{"value":"val-2"}}}]}},{"match_phrase":{"nested.key":{"query":"val-3"}}},{"exists":{"field":"nested.key"}}]}}}}}`,
+		},
+		"keyword and text check wildcard": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"keyword_not_wildcard"},
+						Operator:      structured.ConditionContains,
+					},
+					{
+						DimensionName: "keyword",
+						Value:         []string{"keyword_is_wildcard"},
+						Operator:      structured.ConditionContains,
+						IsWildcard:    true,
+					},
+					{
+						DimensionName: "text",
+						Value:         []string{"text_not_wildcard"},
+						Operator:      structured.ConditionContains,
+					},
+					{
+						DimensionName: "text",
+						Value:         []string{"text_is_wildcard"},
+						Operator:      structured.ConditionContains,
+						IsWildcard:    true,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":[{"wildcard":{"keyword":{"value":"*keyword_not_wildcard*"}}},{"wildcard":{"keyword":{"value":"*keyword_is_wildcard*"}}},{"match_phrase":{"text":{"query":"text_not_wildcard"}}},{"wildcard":{"text":{"value":"text_is_wildcard"}}}]}}}`,
 		},
 		"existed and not existed query": {
 			conditions: metadata.AllConditions{
@@ -160,6 +189,12 @@ func TestFormatFactory_Query(t *testing.T) {
 					"properties": map[string]any{
 						"nested": map[string]any{
 							"type": "nested",
+						},
+						"keyword": map[string]any{
+							"type": "keyword",
+						},
+						"text": map[string]any{
+							"type": "text",
 						},
 					},
 				},

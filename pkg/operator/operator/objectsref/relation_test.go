@@ -22,7 +22,7 @@ import (
 	loggingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
 )
 
-func TestGetPodRelations(t *testing.T) {
+func TestWritePodRelations(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -59,7 +59,7 @@ container_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-no
 	assert.Equal(t, expected, buf.String())
 }
 
-func TestGetDataSourceRelations(t *testing.T) {
+func TestWriteDataSourceRelations(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -274,9 +274,7 @@ func TestGetDataSourceRelations(t *testing.T) {
 
 			objectsController.bkLogConfigObjs = &BkLogConfigMap{
 				entitiesMap: map[string]*bkLogConfigEntity{
-					name: {
-						Obj: bkLogConfig,
-					},
+					name: newBkLogConfigEntity(bkLogConfig),
 				},
 			}
 

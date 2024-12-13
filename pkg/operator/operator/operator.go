@@ -212,7 +212,7 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 
 	operator.helmchartsController, err = helmcharts.NewController(operator.ctx, operator.client)
 	if err != nil {
-		return nil, errors.Wrap(err, "create helmcharts client failed")
+		return nil, errors.Wrap(err, "create helmchartsController failed")
 	}
 
 	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.mdClient, operator.bkclient)

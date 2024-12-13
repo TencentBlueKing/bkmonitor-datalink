@@ -11,6 +11,7 @@ package helmcharts
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -41,12 +42,12 @@ func (m *metricMonitor) SetHelmChartsInfo(element ReleaseElement) {
 	helmchartsInfo.WithLabelValues(
 		element.Name,
 		element.Namespace,
-		element.Revision,
+		strconv.Itoa(element.Revision),
 		element.Updated,
 		element.Status,
 		element.Chart,
 		element.AppVersion,
-	).Set(1)
+	).Set(float64(element.Revision))
 }
 
 type Controller struct {

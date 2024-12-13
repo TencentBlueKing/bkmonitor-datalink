@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strconv"
 	"sync"
 	"time"
 
@@ -33,7 +32,7 @@ import (
 type ReleaseElement struct {
 	Name       string `json:"name"`
 	Namespace  string `json:"namespace"`
-	Revision   string `json:"revision"`
+	Revision   int    `json:"revision"`
 	Updated    string `json:"updated"`
 	Status     string `json:"status"`
 	Chart      string `json:"chart"`
@@ -240,7 +239,7 @@ func castReleaseElement(r *Release) ReleaseElement {
 	element := ReleaseElement{
 		Name:       r.Name,
 		Namespace:  r.Namespace,
-		Revision:   strconv.Itoa(r.Version),
+		Revision:   r.Version,
 		Status:     r.Info.Status,
 		Chart:      formatChartName(r.Chart),
 		AppVersion: formatAppVersion(r.Chart),

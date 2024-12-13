@@ -19,10 +19,9 @@ import (
 	"io"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
-	"helm.sh/helm/v3/pkg/chart"
-	rspb "helm.sh/helm/v3/pkg/release"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
@@ -171,10 +170,33 @@ func newHelmChartsObjects(ctx context.Context, sharedInformer informers.SharedIn
 	return objs, nil
 }
 
+type Info struct {
+	LastDeployed time.Time `json:"last_deployed,omitempty"`
+	Status       string    `json:"status,omitempty"`
+}
+
+type Metadata struct {
+	Name       string `json:"name,omitempty"`
+	Version    string `json:"version,omitempty"`
+	AppVersion string `json:"appVersion,omitempty"`
+}
+
+type Chart struct {
+	Metadata *Metadata `json:"metadata"`
+}
+
+type Release struct {
+	Name      string `json:"name,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Version   int    `json:"version,omitempty"`
+	Info      *Info  `json:"info,omitempty"`
+	Chart     *Chart `json:"chart,omitempty"`
+}
+
 // decodeRelease decodes the bytes of data into a release
 // type. Data must contain a base64 encoded gzipped string of a
 // valid release, otherwise an error is returned.
-func decodeRelease(data string) (*rspb.Release, error) {
+func decodeRelease(data string) (*Release, error) {
 	// base64 decode string
 	b, err := b64.DecodeString(data)
 	if err != nil {
@@ -197,7 +219,7 @@ func decodeRelease(data string) (*rspb.Release, error) {
 		b = b2
 	}
 
-	var rls rspb.Release
+	var rls Release
 	// unmarshal release object bytes
 	if err := json.Unmarshal(b, &rls); err != nil {
 		return nil, err
@@ -205,12 +227,12 @@ func decodeRelease(data string) (*rspb.Release, error) {
 	return &rls, nil
 }
 
-func castReleaseElement(r *rspb.Release) ReleaseElement {
+func castReleaseElement(r *Release) ReleaseElement {
 	element := ReleaseElement{
 		Name:       r.Name,
 		Namespace:  r.Namespace,
 		Revision:   strconv.Itoa(r.Version),
-		Status:     r.Info.Status.String(),
+		Status:     r.Info.Status,
 		Chart:      formatChartName(r.Chart),
 		AppVersion: formatAppVersion(r.Chart),
 	}
@@ -222,20 +244,20 @@ func castReleaseElement(r *rspb.Release) ReleaseElement {
 	return element
 }
 
-func formatChartName(c *chart.Chart) string {
+func formatChartName(c *Chart) string {
 	if c == nil || c.Metadata == nil {
 		// This is an edge case that has happened in prod, though we don't
 		// know how: https://github.com/helm/helm/issues/1347
 		return "MISSING"
 	}
-	return fmt.Sprintf("%s-%s", c.Name(), c.Metadata.Version)
+	return fmt.Sprintf("%s-%s", c.Metadata.Name, c.Metadata.Version)
 }
 
-func formatAppVersion(c *chart.Chart) string {
+func formatAppVersion(c *Chart) string {
 	if c == nil || c.Metadata == nil {
 		// This is an edge case that has happened in prod, though we don't
 		// know how: https://github.com/helm/helm/issues/1347
 		return "MISSING"
 	}
-	return c.AppVersion()
+	return c.Metadata.AppVersion
 }

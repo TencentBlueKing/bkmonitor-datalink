@@ -54,6 +54,16 @@ func (c *Controller) Stop() {
 	c.cancel()
 }
 
+func (c *Controller) GetByNamespace(namespace string) []ReleaseElement {
+	var eles []ReleaseElement
+	c.objects.Range(func(ele ReleaseElement) {
+		if ele.Namespace == namespace {
+			eles = append(eles, ele)
+		}
+	})
+	return eles
+}
+
 func (c *Controller) WriteInfoMetrics(w io.Writer) {
 	c.objects.Range(func(ele ReleaseElement) {
 		promfmt.FmtBytes(w, promfmt.Metric{

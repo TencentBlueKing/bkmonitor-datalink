@@ -164,6 +164,11 @@ const (
 - Description: bkmonitor-operator 版本信息
 %s
 `
+	formatHelmChartsVersion = `
+[√] check helmcharts version
+- Description: helmcharts 版本信息
+%s
+`
 	formatKubernetesVersionSuccess = `
 [√] check kubernetes version
 - Description: kubernetes 集群版本为 %s
@@ -262,6 +267,7 @@ const (
 //
 // 检查 kubernetes 版本信息
 // 检查 bkmonitor-operator 版本信息
+// 检查 helmcharts 版本信息
 // 检查 dataids 是否符合预期
 // 检查集群信息
 // 检查 dryrun 标识是否打开
@@ -272,11 +278,8 @@ const (
 // 检查处理 secrets 是否有问题
 // 检查给定关键字监测资源
 func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
-	buf := bytebufferpool.Get()
-	defer bytebufferpool.Put(buf)
-
 	writef := func(format string, a ...interface{}) {
-		buf.WriteString(fmt.Sprintf(format, a...))
+		w.Write([]byte(fmt.Sprintf(format, a...)))
 	}
 
 	metaEnv := configs.G().MetaEnv
@@ -291,6 +294,11 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	// 检查 bkmonitor-operator 版本信息
 	b, _ := json.MarshalIndent(c.buildInfo, "", "  ")
 	writef(formatOperatorVersion, string(b))
+
+	// 检查 helmcharts 版本信息
+	eles := c.helmchartsController.GetByNamespace(configs.G().MonitorNamespace)
+	b, _ = json.MarshalIndent(eles, "", "  ")
+	writef(formatHelmChartsVersion, string(b))
 
 	// 检查 dataids 是否符合预期
 	dataids := c.checkDataIdRoute()
@@ -408,7 +416,6 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writef(formatLogContent, metaEnv.Namespace, metaEnv.PodName)
-	w.Write(buf.Bytes())
 }
 
 func (c *Operator) AdminLoggerRoute(w http.ResponseWriter, r *http.Request) {

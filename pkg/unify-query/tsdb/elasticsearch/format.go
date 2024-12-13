@@ -536,7 +536,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			curName := info.Name
 
 			curAgg := elastic.NewDateHistogramAggregation().
-				Field(f.timeField.Name).FixedInterval(info.Window).MinDocCount(0).
+				Field(f.timeField.Name).Interval(info.Window).MinDocCount(0).
 				ExtendedBounds(f.start*f.timeField.UnitRate, f.end*f.timeField.UnitRate)
 			// https://github.com/elastic/elasticsearch/issues/42270 非date类型不支持timezone, time format也无效
 			if f.timeField.Type == TimeFieldTypeTime {
@@ -709,8 +709,15 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 							case structured.ConditionEqual, structured.ConditionNotEqual:
 								query = elastic.NewMatchPhraseQuery(key, value)
 							case structured.ConditionContains, structured.ConditionNotContains:
-								value = fmt.Sprintf("*%s*", value)
-								query = elastic.NewWildcardQuery(key, value)
+								if fieldType == KeyWord {
+									value = fmt.Sprintf("*%s*", value)
+								}
+
+								if !con.IsWildcard && fieldType == Text {
+									query = elastic.NewMatchPhraseQuery(key, value)
+								} else {
+									query = elastic.NewWildcardQuery(key, value)
+								}
 							case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
 								query = elastic.NewRegexpQuery(key, value)
 							case structured.ConditionGt:

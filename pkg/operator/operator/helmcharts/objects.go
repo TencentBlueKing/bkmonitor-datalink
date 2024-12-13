@@ -128,14 +128,23 @@ func newHelmChartsObjects(ctx context.Context, sharedInformer informers.SharedIn
 			}
 			objs.Set(castReleaseElement(rls))
 		},
-		UpdateFunc: func(_, newObj interface{}) {
-			secret, ok := newObj.(*corev1.Secret)
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			old, ok := oldObj.(*corev1.Secret)
 			if !ok {
-				logger.Errorf("excepted Secret type, got %T", newObj)
+				logger.Errorf("expected Secret type, got %T", oldObj)
+				return
+			}
+			cur, ok := newObj.(*corev1.Secret)
+			if !ok {
+				logger.Errorf("expected Secret type, got %T", newObj)
+				return
+			}
+			if old.ResourceVersion == cur.ResourceVersion {
+				logger.Debugf("Secret '%s/%s' does not change", old.Namespace, old.Name)
 				return
 			}
 
-			rls, err := decodeRelease(string(secret.Data["release"]))
+			rls, err := decodeRelease(string(cur.Data["release"]))
 			if err != nil {
 				logger.Errorf("failed to decode release: %s", err)
 				return

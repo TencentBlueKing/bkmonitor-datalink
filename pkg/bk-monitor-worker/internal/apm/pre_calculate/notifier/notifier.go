@@ -27,35 +27,13 @@ type Notifier interface {
 // Options is configuration items for all notifier
 type Options struct {
 	// Configure for difference queue
-	kafkaConfig
+	KafkaConfig
 
-	ctx context.Context
-	// chanBufferSize The maximum amount of cached data in the queue
-	chanBufferSize int
-	// qps rate limiter
-	qps int
-}
-
-type Option func(*Options)
-
-// BufferSize queue chan size
-func BufferSize(s int) Option {
-	return func(args *Options) {
-		args.chanBufferSize = s
-	}
-}
-
-// Context ctx of notifier
-func Context(ctx context.Context) Option {
-	return func(options *Options) {
-		options.ctx = ctx
-	}
-}
-
-func Qps(q int) Option {
-	return func(options *Options) {
-		options.qps = q
-	}
+	Ctx context.Context
+	// ChanBufferSize The maximum amount of cached data in the queue
+	ChanBufferSize int
+	// Qps rate limiter
+	Qps int
 }
 
 type notifyForm int
@@ -66,11 +44,11 @@ const (
 )
 
 // NewNotifier create notifier
-func NewNotifier(form notifyForm, dataId string, options ...Option) (Notifier, error) {
+func NewNotifier(form notifyForm, dataId string, options Options) (Notifier, error) {
 
 	switch form {
 	case KafkaNotifier:
-		return newKafkaNotifier(dataId, options...)
+		return newKafkaNotifier(dataId, options)
 	default:
 		return emptyNotifierInstance, nil
 	}

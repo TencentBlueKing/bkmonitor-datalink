@@ -23,15 +23,16 @@ var (
 	// WindowMaxSize The maximum amount that a single trace can handle,
 	// beyond which the window will be forced to expire.
 	WindowMaxSize int
-	// WindowExpireInterval The single expiration time of a single trace, which is increased with each reentry.
+	// WindowExpireInterval
+	// The single expiration time of a single trace, which is increased with each reentry.
 	WindowExpireInterval time.Duration
-	// WindowMaxDuration The maximum time that a single trace can survive in a window,
+	// WindowMaxDuration unit: s. The maximum time that a single trace can survive in a window,
 	// beyond which the window will be forced to expire.
 	WindowMaxDuration time.Duration
-	// WindowExpireIntervalIncrement The increment of expiration time when span continues to add to the window.
+	// WindowExpireIntervalIncrement unit:s .The increment of expiration time when span continues to add to the window.
 	// When this increment is increased beyond the WindowMaxDuration,
 	// the window expiration time will be changed to WindowMaxDuration.
-	WindowExpireIntervalIncrement int
+	WindowExpireIntervalIncrement time.Duration
 	// WindowNoDataMaxDuration The maximum duration without data received.
 	// If the last update of trace exceeds this range, it will be forced to expire.
 	// This field should be smaller than maxDuration
@@ -41,12 +42,14 @@ var (
 	// DistributiveWindowWatchExpireInterval unit: ms. The duration of check expiration trace in window.
 	// If value is too small, the concurrent performance may be affected
 	DistributiveWindowWatchExpireInterval time.Duration
-	// DistributiveWindowHandleEventConcurrentCount Set the number of goroutine that processes event concurrently
-	// in each sub-window
+	// DistributiveWindowHandleEventConcurrentCount The maximum concurrency.
+	// For example, ConcurrentProcessCount is set to 10 and SubWindowSize is set to 5,
+	// then each sub-window can have a maximum of 10 traces running at the same time,
+	// and a total of 5 * 10 can be processed at the same time.
 	DistributiveWindowHandleEventConcurrentCount int
 	// DistributiveWindowConcurrentExpirationMaximum Maximum number of concurrent expirations
 	DistributiveWindowConcurrentExpirationMaximum int
-	// DistributiveWindowSubWindowMappingMaxSpanCount Maximum number of span in mapping
+	// DistributiveWindowSubWindowMappingMaxSpanCount maximum number of span in sub-window
 	DistributiveWindowSubWindowMappingMaxSpanCount int
 
 	// EnabledTraceInfoCache Whether to enable Storing the latest trace data into cache.
@@ -64,13 +67,13 @@ var (
 	// StorageWorkerCount The number of concurrent storage requests accepted simultaneously
 	StorageWorkerCount int
 	// StorageSaveHoldMaxCount Storage does not process the SaveRequest immediately upon receipt,
-	// it waits for the conditions(SaveHoldDuration + SaveHoldMaxCount).
+	// it waits for the conditions(StorageSaveHoldMaxDuration + StorageSaveHoldMaxCount).
 	// Condition 2: If the request count > SaveHoldMaxCount, it will be executed
 	StorageSaveHoldMaxCount int
 	// StorageSaveHoldMaxDuration
 	// Storage does not process the SaveRequest immediately upon receipt,
-	// it waits for the conditions(SaveHoldDuration + SaveHoldMaxCount).
-	// Condition 1: If the wait time > SaveHoldDuration, it will be executed
+	// it waits for the conditions(StorageSaveHoldMaxDuration + SaveHoldMaxCount).
+	// Condition 1: If the wait time > StorageSaveHoldMaxDuration, it will be executed
 	StorageSaveHoldMaxDuration time.Duration
 	// StorageBloomFpRate fpRate of bloom-filter, this configuration is common to all types of bloom-filters
 	StorageBloomFpRate float64
@@ -136,7 +139,7 @@ func initApmVariables() {
 	WindowMaxSize = GetValue("taskConfig.apmPreCalculate.window.maxSize", 100*100)
 	WindowExpireInterval = GetValue("taskConfig.apmPreCalculate.window.expireInterval", time.Minute, viper.GetDuration)
 	WindowMaxDuration = GetValue("taskConfig.apmPreCalculate.window.maxDuration", 5*time.Minute, viper.GetDuration)
-	WindowExpireIntervalIncrement = GetValue("taskConfig.apmPreCalculate.window.expireIntervalIncrement", 60)
+	WindowExpireIntervalIncrement = GetValue("taskConfig.apmPreCalculate.window.expireIntervalIncrement", 60*time.Second, viper.GetDuration)
 	WindowNoDataMaxDuration = GetValue("taskConfig.apmPreCalculate.window.noDataMaxDuration", 2*time.Minute, viper.GetDuration)
 
 	DistributiveWindowSubSize = GetValue("taskConfig.apmPreCalculate.window.distributive.subSize", 3)
@@ -169,7 +172,7 @@ func initApmVariables() {
 	ProfileEnabled = GetValue("taskConfig.apmPreCalculate.metrics.profile.enabled", false)
 	ProfileHost = GetValue("taskConfig.apmPreCalculate.metrics.profile.host", "")
 	ProfileToken = GetValue("taskConfig.apmPreCalculate.metrics.profile.token", "")
-	ProfileAppIdx = GetValue("taskConfig.apmPreCalculate.metrics.profile.appIdx", "")
+	ProfileAppIdx = GetValue("taskConfig.apmPreCalculate.metrics.profile.appIdx", "apm_precalculate")
 	/*
 	   Metric Config
 	*/

@@ -36,36 +36,20 @@ type PrometheusStorageData struct {
 	Value any
 }
 
-type MetricConfigOption func(options *MetricConfigOptions)
-
 type MetricConfigOptions struct {
-	relationMetricMemDuration time.Duration
-	flowMetricMemDuration     time.Duration
-	flowMetricBuckets         []float64
+	RelationMetricMemDuration time.Duration
+	FlowMetricMemDuration     time.Duration
+	FlowMetricBuckets         []float64
 }
 
-func MetricRelationMemDuration(m time.Duration) MetricConfigOption {
-	return func(options *MetricConfigOptions) {
-		options.relationMetricMemDuration = m
+func ConvertMetricFlowBuckets(b []float64) []float64 {
+	sort.Float64s(b)
+	res := make([]float64, 0, len(b)+1)
+	for i := 0; i < len(b); i++ {
+		res = append(res, b[i]*1e6)
 	}
-}
-
-func MetricFlowMemDuration(m time.Duration) MetricConfigOption {
-	return func(options *MetricConfigOptions) {
-		options.flowMetricMemDuration = m
-	}
-}
-
-func MetricFlowBuckets(b []float64) MetricConfigOption {
-	return func(options *MetricConfigOptions) {
-		sort.Float64s(b)
-		res := make([]float64, 0, len(b)+1)
-		for i := 0; i < len(b); i++ {
-			res = append(res, b[i]*1e6)
-		}
-		res = append(res, math.MaxFloat64)
-		options.flowMetricBuckets = res
-	}
+	res = append(res, math.MaxFloat64)
+	return res
 }
 
 type MetricDimensionsHandler struct {
@@ -137,17 +121,17 @@ func NewMetricDimensionHandler(ctx context.Context, dataId string,
 	token := core.GetMetadataCenter().GetToken(dataId)
 	monitorLogger.Infof(
 		"[MetricDimension] \ncreate metric handler\n====\n"+
-			"prometheus host: %s \nconfigHeaders: %s \ndataId(%s) -> token: %s \n"+
+			"prometheus Host: %s \nconfigHeaders: %s \ndataId(%s) -> token: %s \n"+
 			"flowMetricDuration: %s \nflowMetricBucket: %v \nrelationMetricDuration: %s \n====\n",
 		config.Url, config.Headers, dataId, token,
-		metricsConfig.flowMetricMemDuration, metricsConfig.flowMetricBuckets, metricsConfig.relationMetricMemDuration,
+		metricsConfig.FlowMetricMemDuration, metricsConfig.FlowMetricBuckets, metricsConfig.RelationMetricMemDuration,
 	)
 
 	h := &MetricDimensionsHandler{
 		dataId:                   dataId,
 		promClient:               remote.NewPrometheusWriterClient(token, config.Url, config.Headers),
-		relationMetricDimensions: newRelationMetricCollector(metricsConfig.relationMetricMemDuration),
-		flowMetricCollector:      newFlowMetricCollector(metricsConfig.flowMetricBuckets, metricsConfig.flowMetricMemDuration),
+		relationMetricDimensions: newRelationMetricCollector(metricsConfig.RelationMetricMemDuration),
+		flowMetricCollector:      newFlowMetricCollector(metricsConfig.FlowMetricBuckets, metricsConfig.FlowMetricMemDuration),
 		ctx:                      ctx,
 		logger:                   monitorLogger.With(zap.String("name", "metricHandler"), zap.String("dataId", dataId)),
 	}

@@ -24,7 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 )
 
-type kafkaConfig struct {
+type KafkaConfig struct {
 	KafkaTopic    string
 	KafkaGroupId  string
 	KafkaHost     string
@@ -32,45 +32,10 @@ type kafkaConfig struct {
 	KafkaPassword string
 }
 
-// KafkaHost host of kafka
-func KafkaHost(h string) Option {
-	return func(args *Options) {
-		args.KafkaHost = h
-	}
-}
-
-// KafkaUsername username of kafka
-func KafkaUsername(u string) Option {
-	return func(args *Options) {
-		args.KafkaUsername = u
-	}
-}
-
-// KafkaPassword password of kafka
-func KafkaPassword(p string) Option {
-	return func(args *Options) {
-		args.KafkaPassword = p
-	}
-}
-
-// KafkaTopic listen topic of kafka
-func KafkaTopic(t string) Option {
-	return func(options *Options) {
-		options.KafkaTopic = t
-	}
-}
-
-// KafkaGroupId consumerGroupId of kafka
-func KafkaGroupId(g string) Option {
-	return func(options *Options) {
-		options.KafkaGroupId = g
-	}
-}
-
 type kafkaNotifier struct {
 	ctx context.Context
 
-	config        kafkaConfig
+	config        KafkaConfig
 	consumerGroup sarama.ConsumerGroup
 	handler       consumeHandler
 }
@@ -84,7 +49,7 @@ func (k *kafkaNotifier) Spans() <-chan []window.StandardSpan {
 func (k *kafkaNotifier) Start(errorReceiveChan chan<- error) {
 	defer runtimex.HandleCrashToChan(errorReceiveChan)
 	logger.Infof(
-		"KafkaNotifier started. host: %s topic: %s groupId: %s qps: %d",
+		"KafkaNotifier started. host: %s topic: %s groupId: %s Qps: %d",
 		k.config.KafkaHost, k.config.KafkaTopic, k.config.KafkaGroupId, k.handler.qps,
 	)
 	for {
@@ -98,7 +63,7 @@ func (k *kafkaNotifier) Start(errorReceiveChan chan<- error) {
 			return
 		default:
 			if err := k.consumerGroup.Consume(k.ctx, []string{k.config.KafkaTopic}, k.handler); err != nil {
-				logger.Errorf("ConsumerGroup fails to consume. error: %s", err)
+				logger.Errorf("ConsumerGroup fails to consume topic: %s with groupId: %s. error: %s", k.config.KafkaTopic, k.config.KafkaGroupId, err)
 				time.Sleep(1 * time.Second)
 			}
 		}
@@ -139,7 +104,7 @@ func (c consumeHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim 
 			}
 
 			if !c.limiter.TryAccept() {
-				logger.Errorf("[RateLimiter] Topic: %s reject the message, max qps: %d", c.topic, c.qps)
+				logger.Errorf("[RateLimiter] Topic: %s reject the message, max Qps: %d", c.topic, c.qps)
 				metrics.AddApmPreCalcNotifierRejectMessageCount(c.dataId, c.topic)
 				continue
 			}
@@ -178,14 +143,9 @@ func (c consumeHandler) sendSpans(message []byte) {
 	c.spans <- res
 }
 
-func newKafkaNotifier(dataId string, setters ...Option) (Notifier, error) {
+func newKafkaNotifier(dataId string, args Options) (Notifier, error) {
 
-	args := &Options{}
-
-	for _, setter := range setters {
-		setter(args)
-	}
-	config := args.kafkaConfig
+	config := args.KafkaConfig
 	logger.Infof(
 		"dataId: %s listen %s topic as groupId: %s, establish a kafka[%s(%s:%s)] connection",
 		dataId,
@@ -206,24 +166,24 @@ func newKafkaNotifier(dataId string, setters ...Option) (Notifier, error) {
 	}
 
 	var limiter tokenBucketRateLimiter
-	if args.qps == 0 {
+	if args.Qps == 0 {
 		limiter = tokenBucketRateLimiter{unlimited: true}
-	} else if args.qps < 0 {
+	} else if args.Qps < 0 {
 		limiter = tokenBucketRateLimiter{rejected: true}
 	} else {
-		limiter = tokenBucketRateLimiter{limiter: flowcontrol.NewTokenBucketRateLimiter(float32(args.qps), args.qps*2)}
+		limiter = tokenBucketRateLimiter{limiter: flowcontrol.NewTokenBucketRateLimiter(float32(args.Qps), args.Qps*2)}
 	}
 
 	return &kafkaNotifier{
-		ctx:           args.ctx,
-		config:        args.kafkaConfig,
+		ctx:           args.Ctx,
+		config:        args.KafkaConfig,
 		consumerGroup: group,
 		handler: consumeHandler{
-			ctx:     args.ctx,
+			ctx:     args.Ctx,
 			dataId:  dataId,
-			qps:     args.qps,
+			qps:     args.Qps,
 			limiter: &limiter,
-			spans:   make(chan []window.StandardSpan, args.chanBufferSize),
+			spans:   make(chan []window.StandardSpan, args.ChanBufferSize),
 			groupId: config.KafkaGroupId,
 			topic:   config.KafkaTopic,
 		},

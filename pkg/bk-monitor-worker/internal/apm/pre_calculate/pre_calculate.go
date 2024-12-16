@@ -18,7 +18,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -27,78 +26,87 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 	return NewPrecalculate().
 		WithContext(ctx, cancel).
 		WithNotifierConfig(
-			notifier.BufferSize(config.NotifierChanBufferSize),
+			notifier.Options{
+				ChanBufferSize: config.NotifierChanBufferSize,
+			},
 		).
 		WithWindowRuntimeConfig(
-			window.RuntimeConfigMaxSize(config.WindowMaxSize),
-			window.RuntimeConfigExpireInterval(config.WindowExpireInterval),
-			window.RuntimeConfigMaxDuration(config.WindowMaxDuration),
-			window.ExpireIntervalIncrement(config.WindowExpireIntervalIncrement),
-			window.NoDataMaxDuration(config.WindowNoDataMaxDuration),
+			window.RuntimeConfig{
+				MaxSize:                 config.WindowMaxSize,
+				ExpireInterval:          config.WindowExpireInterval,
+				MaxDuration:             config.WindowMaxDuration,
+				ExpireIntervalIncrement: config.WindowExpireIntervalIncrement,
+				NoDataMaxDuration:       config.WindowNoDataMaxDuration,
+			},
 		).
 		WithDistributiveWindowConfig(
-			window.DistributiveWindowSubSize(config.DistributiveWindowSubSize),
-			window.DistributiveWindowWatchExpiredInterval(config.DistributiveWindowWatchExpireInterval),
-			window.DistributiveWindowConcurrentProcessCount(config.DistributiveWindowHandleEventConcurrentCount),
-			window.DistributiveWindowConcurrentExpirationMaximum(config.DistributiveWindowConcurrentExpirationMaximum),
-			window.DistributiveWindowMappingMaxSpanCount(config.DistributiveWindowSubWindowMappingMaxSpanCount),
+			window.DistributiveWindowOptions{
+				SubWindowSize:               config.DistributiveWindowSubSize,
+				WatchExpiredInterval:        config.DistributiveWindowWatchExpireInterval,
+				ConcurrentProcessCount:      config.DistributiveWindowHandleEventConcurrentCount,
+				ConcurrentExpirationMaximum: config.DistributiveWindowConcurrentExpirationMaximum,
+				MappingMaxSpanCount:         config.DistributiveWindowSubWindowMappingMaxSpanCount,
+			},
 		).
 		WithProcessorConfig(
-			window.EnabledTraceInfoCache(config.EnabledTraceInfoCache != 0),
-			window.TraceEsQueryRate(config.TraceEsQueryRate),
-			window.TraceMetricsReportEnabled(config.EnabledTraceMetricsReport),
-			window.TraceInfoReportEnabled(config.EnabledTraceInfoReport),
-			window.TraceMetricsLayer4ReportEnabled(config.MetricsProcessLayer4ExportEnabled),
+			window.ProcessorOptions{
+				EnabledInfoCache:          config.EnabledTraceInfoCache != 0,
+				TraceEsQueryRate:          config.TraceEsQueryRate,
+				MetricReportEnabled:       config.EnabledTraceMetricsReport,
+				InfoReportEnabled:         config.EnabledTraceInfoReport,
+				MetricLayer4ReportEnabled: config.MetricsProcessLayer4ExportEnabled,
+			},
 		).
 		WithStorageConfig(
-			storage.WorkerCount(config.StorageWorkerCount),
-			storage.SaveHoldMaxCount(config.StorageSaveHoldMaxCount),
-			storage.SaveHoldDuration(config.StorageSaveHoldMaxDuration),
-			storage.CacheBackend(storage.CacheTypeRedis),
-			storage.CacheRedisConfig(
-				storage.RedisCacheMode(config.StorageRedisMode),
-				storage.RedisCacheHost(config.StorageRedisStandaloneHost),
-				storage.RedisCachePort(config.StorageRedisStandalonePort),
-				storage.RedisCacheSentinelAddress(config.StorageRedisSentinelAddress...),
-				storage.RedisCacheMasterName(config.StorageRedisSentinelMasterName),
-				storage.RedisCacheSentinelPassword(config.StorageRedisSentinelPassword),
-				storage.RedisCachePassword(config.StorageRedisStandalonePassword),
-				storage.RedisCacheDb(config.StorageRedisDatabase),
-				storage.RedisCacheDialTimeout(config.StorageRedisDialTimeout),
-				storage.RedisCacheReadTimeout(config.StorageRedisReadTimeout),
-			),
-			storage.BloomConfig(
-				storage.BloomFpRate(config.StorageBloomFpRate),
-				storage.NormalMemoryBloomConfig(
-					storage.MemoryBloomAutoClean(config.StorageBloomNormalAutoClean),
-				),
-				storage.NormalOverlapMemoryBloomConfig(
-					storage.OverlapBloomResetDuration(config.StorageBloomNormalOverlapResetDuration),
-				),
-				storage.LayerBloomConfig(storage.Layers(config.StorageBloomLayersBloomLayers)),
-				storage.LayerCapDecreaseBloomConfig(
-					storage.CapDecreaseBloomCap(config.StorageBloomDecreaseCap),
-					storage.CapDecreaseBloomLayers(config.StorageBloomDecreaseLayers),
-					storage.CapDecreaseBloomDivisor(config.StorageBloomDecreaseDivisor),
-				),
-			),
-			storage.SaveReqBufferSize(config.StorageSaveRequestBufferSize),
-			storage.PrometheusWriterConfig(
-				remote.PrometheusWriterUrl(config.PromRemoteWriteUrl),
-				remote.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
-			),
-			storage.MetricsConfig(
-				storage.MetricRelationMemDuration(config.RelationMetricsInMemDuration),
-				storage.MetricFlowMemDuration(config.FlowMetricsInMemDuration),
-				storage.MetricFlowBuckets(config.MetricsDurationBuckets),
-			),
+			storage.ProxyOptions{
+				WorkerCount:      config.StorageWorkerCount,
+				SaveHoldDuration: config.StorageSaveHoldMaxDuration,
+				SaveHoldMaxCount: config.StorageSaveHoldMaxCount,
+				CacheBackend:     storage.CacheTypeRedis,
+				RedisCacheConfig: storage.RedisCacheOptions{
+					Mode:             config.StorageRedisMode,
+					Host:             config.StorageRedisStandaloneHost,
+					Port:             config.StorageRedisStandalonePort,
+					SentinelAddress:  config.StorageRedisSentinelAddress,
+					MasterName:       config.StorageRedisSentinelMasterName,
+					SentinelPassword: config.StorageRedisSentinelPassword,
+					Password:         config.StorageRedisStandalonePassword,
+					Db:               config.StorageRedisDatabase,
+					DialTimeout:      config.StorageRedisDialTimeout,
+					ReadTimeout:      config.StorageRedisReadTimeout,
+				},
+				BloomConfig: storage.BloomOptions{
+					FpRate: config.StorageBloomFpRate,
+					NormalMemoryBloomOptions: storage.MemoryBloomOptions{
+						AutoClean: config.StorageBloomNormalAutoClean,
+					},
+					NormalOverlapBloomOptions: storage.OverlapBloomOptions{
+						ResetDuration: config.StorageBloomNormalOverlapResetDuration,
+					},
+					LayersBloomOptions: storage.LayersBloomOptions{
+						Layers: config.StorageBloomLayersBloomLayers,
+					},
+					LayersCapDecreaseBloomOptions: storage.LayersCapDecreaseBloomOptions{
+						Cap:     config.StorageBloomDecreaseCap,
+						Layers:  config.StorageBloomDecreaseLayers,
+						Divisor: config.StorageBloomDecreaseDivisor,
+					},
+				},
+				MetricsConfig: storage.MetricConfigOptions{
+					RelationMetricMemDuration: config.RelationMetricsInMemDuration,
+					FlowMetricMemDuration:     config.FlowMetricsInMemDuration,
+					FlowMetricBuckets:         storage.ConvertMetricFlowBuckets(config.MetricsDurationBuckets),
+				},
+			},
 		).
 		WithMetricReport(
-			EnabledProfileReport(config.ProfileEnabled),
-			ProfileAddress(config.ProfileHost),
-			ProfileToken(config.ProfileToken),
-			ProfileAppIdx(config.ProfileAppIdx),
-			MetricReportInterval(config.SemaphoreReportInterval),
+			MetricOptions{
+				EnabledProfile: config.ProfileEnabled,
+				ProfileAddress: config.ProfileHost,
+				ProfileToken:   config.ProfileToken,
+				ProfileAppIdx:  config.ProfileAppIdx,
+				ReportInterval: config.SemaphoreReportInterval,
+			},
 		).
 		Build(), nil
 }

@@ -96,34 +96,10 @@ type EsQueryHitTotal struct {
 type EsOption func(options *EsOptions)
 
 type EsOptions struct {
-	indexName string
-	host      string
-	username  string
-	password  string
-}
-
-func EsIndexName(n string) EsOption {
-	return func(options *EsOptions) {
-		options.indexName = n
-	}
-}
-
-func EsHost(h string) EsOption {
-	return func(options *EsOptions) {
-		options.host = h
-	}
-}
-
-func EsUsername(u string) EsOption {
-	return func(options *EsOptions) {
-		options.username = u
-	}
-}
-
-func EsPassword(p string) EsOption {
-	return func(options *EsOptions) {
-		options.password = p
-	}
+	IndexName string
+	Host      string
+	Username  string
+	Password  string
 }
 
 type esStorage struct {
@@ -212,9 +188,9 @@ func (e *esStorage) getSaveIndexName(indexName string) string {
 
 func newEsStorage(ctx context.Context, options EsOptions) (*esStorage, error) {
 	c, err := elasticsearch.NewClient(elasticsearch.Config{
-		Addresses: []string{options.host},
-		Username:  options.username,
-		Password:  options.password,
+		Addresses: []string{options.Host},
+		Username:  options.Username,
+		Password:  options.Password,
 	})
 	if err != nil {
 		return nil, err
@@ -223,7 +199,7 @@ func newEsStorage(ctx context.Context, options EsOptions) (*esStorage, error) {
 	return &esStorage{
 		ctx:       ctx,
 		client:    c,
-		indexName: options.indexName,
+		indexName: options.IndexName,
 		logger:    monitorLogger.With(zap.String("name", "es")),
 	}, nil
 }

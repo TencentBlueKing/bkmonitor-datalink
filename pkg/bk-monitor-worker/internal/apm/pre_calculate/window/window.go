@@ -232,7 +232,7 @@ type Handler interface {
 
 // Operator Window processing strategy
 type Operator interface {
-	Start(spanChan <-chan []StandardSpan, errorReceiveChan chan<- error, runtimeOpt ...RuntimeConfigOption)
+	Start(<-chan []StandardSpan, chan<- error, RuntimeConfig)
 	GetWindowsLength() int
 	RecordTraceAndSpanCountMetric()
 }
@@ -241,8 +241,8 @@ type Operation struct {
 	Operator Operator
 }
 
-func (o *Operation) Run(spanChan <-chan []StandardSpan, errorReceiveChan chan<- error, runtimeOpt ...RuntimeConfigOption) {
-	o.Operator.Start(spanChan, errorReceiveChan, runtimeOpt...)
+func (o *Operation) Run(spanChan <-chan []StandardSpan, errorReceiveChan chan<- error, runtimeConfig RuntimeConfig) {
+	o.Operator.Start(spanChan, errorReceiveChan, runtimeConfig)
 }
 
 // SpanExistHandler This interface determines how to process existing spans when a span received

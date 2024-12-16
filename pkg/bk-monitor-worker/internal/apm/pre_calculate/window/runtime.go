@@ -24,55 +24,11 @@ type Runtime struct {
 
 // RuntimeConfig Different processing logic for different Windows needs to be implemented based on runtime.
 type RuntimeConfig struct {
-	maxSize                 int
-	expireInterval          time.Duration
-	maxDuration             time.Duration
-	expireIntervalIncrement time.Duration
-	noDataMaxDuration       time.Duration
-}
-
-type RuntimeConfigOption func(*RuntimeConfig)
-
-// RuntimeConfigMaxSize The maximum amount that a single trace can handle,
-// beyond which the window will be forced to expire.
-func RuntimeConfigMaxSize(maxSize int) RuntimeConfigOption {
-	return func(config *RuntimeConfig) {
-		config.maxSize = maxSize
-	}
-}
-
-// RuntimeConfigExpireInterval
-// The single expiration time of a single trace, which is increased with each reentry.
-func RuntimeConfigExpireInterval(interval time.Duration) RuntimeConfigOption {
-	return func(config *RuntimeConfig) {
-		config.expireInterval = interval
-	}
-}
-
-// RuntimeConfigMaxDuration unit: s. The maximum time that a single trace can survive in a window,
-// beyond which the window will be forced to expire.
-func RuntimeConfigMaxDuration(interval time.Duration) RuntimeConfigOption {
-	return func(config *RuntimeConfig) {
-		config.maxDuration = interval
-	}
-}
-
-// ExpireIntervalIncrement unit:s .The increment of expiration time when span continues to add to the window.
-// When this increment is increased beyond the WindowMaxDuration,
-// the window expiration time will be changed to WindowMaxDuration.
-func ExpireIntervalIncrement(i int) RuntimeConfigOption {
-	return func(config *RuntimeConfig) {
-		config.expireIntervalIncrement = time.Duration(i) * time.Second
-	}
-}
-
-// NoDataMaxDuration unit: s. The maximum duration without data.
-// If the last update of trace exceeds this range, it will be forced to expire.
-// This field should be smaller than maxDuration
-func NoDataMaxDuration(i time.Duration) RuntimeConfigOption {
-	return func(config *RuntimeConfig) {
-		config.noDataMaxDuration = i
-	}
+	MaxSize                 int
+	ExpireInterval          time.Duration
+	MaxDuration             time.Duration
+	ExpireIntervalIncrement time.Duration
+	NoDataMaxDuration       time.Duration
 }
 
 // ReentrantRuntimeStrategy Configure the runtime policy.
@@ -82,9 +38,9 @@ type ReentrantRuntimeStrategy func(RuntimeConfig, *Runtime, CollectTrace)
 
 var (
 	ReentrantLogRecord ReentrantRuntimeStrategy = func(config RuntimeConfig, runtime *Runtime, _ CollectTrace) {
-		newExpiration := runtime.Expiration.Add(config.expireIntervalIncrement)
-		if newExpiration.Sub(runtime.FirstExpiration) >= config.maxDuration {
-			newExpiration = runtime.FirstExpiration.Add(config.maxDuration)
+		newExpiration := runtime.Expiration.Add(config.ExpireIntervalIncrement)
+		if newExpiration.Sub(runtime.FirstExpiration) >= config.MaxDuration {
+			newExpiration = runtime.FirstExpiration.Add(config.MaxDuration)
 		}
 		runtime.Expiration = newExpiration
 		runtime.IncreaseExpirationCount++
@@ -92,7 +48,7 @@ var (
 	}
 
 	ReentrantLimitMaxCount ReentrantRuntimeStrategy = func(config RuntimeConfig, runtime *Runtime, collect CollectTrace) {
-		if collect.Graph.Length() > config.maxSize {
+		if collect.Graph.Length() > config.MaxSize {
 			runtime.Expiration = time.Now()
 		}
 	}
@@ -102,13 +58,13 @@ var (
 	}
 
 	PredicateLimitMaxDuration ReentrantRuntimeStrategy = func(config RuntimeConfig, runtime *Runtime, v CollectTrace) {
-		if time.Since(runtime.FirstExpiration) > config.maxDuration {
+		if time.Since(runtime.FirstExpiration) > config.MaxDuration {
 			runtime.Expiration = time.Now()
 		}
 	}
 
 	PredicateNoDataDuration ReentrantRuntimeStrategy = func(config RuntimeConfig, runtime *Runtime, v CollectTrace) {
-		if time.Since(runtime.LastUpdateTime) > config.noDataMaxDuration {
+		if time.Since(runtime.LastUpdateTime) > config.NoDataMaxDuration {
 			runtime.Expiration = time.Now()
 		}
 	}
@@ -138,7 +94,7 @@ func (c *ConfigBaseRuntimeStrategies) handleNew() *Runtime {
 	now := time.Now()
 	return &Runtime{
 		FirstExpiration:         now,
-		Expiration:              now.Add(c.config.expireInterval),
+		Expiration:              now.Add(c.config.ExpireInterval),
 		LastUpdateTime:          now,
 		ReentrantCount:          0,
 		IncreaseExpirationCount: 0,

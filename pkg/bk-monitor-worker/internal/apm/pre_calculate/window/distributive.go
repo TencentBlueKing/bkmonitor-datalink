@@ -11,7 +11,6 @@ package window
 
 import (
 	"context"
-	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -28,56 +27,11 @@ import (
 
 // DistributiveWindowOptions all configs
 type DistributiveWindowOptions struct {
-	subWindowSize               int
-	watchExpiredInterval        time.Duration
-	concurrentProcessCount      int
-	concurrentExpirationMaximum int
-	mappingMaxSpanCount         int
-}
-
-type DistributiveWindowOption func(*DistributiveWindowOptions)
-
-// DistributiveWindowSubSize The number of sub-windows, each of which maintains its own data.
-func DistributiveWindowSubSize(maxSize int) DistributiveWindowOption {
-	return func(options *DistributiveWindowOptions) {
-		options.subWindowSize = maxSize
-	}
-}
-
-// DistributiveWindowWatchExpiredInterval unit: ms. The duration of check expiration trace in window.
-// If value is too small, the concurrent performance may be affected
-func DistributiveWindowWatchExpiredInterval(interval time.Duration) DistributiveWindowOption {
-	return func(options *DistributiveWindowOptions) {
-		options.watchExpiredInterval = interval
-	}
-}
-
-// DistributiveWindowConcurrentProcessCount The maximum concurrency.
-// For example, concurrentProcessCount is set to 10 and subWindowSize is set to 5,
-// then each sub-window can have a maximum of 10 traces running at the same time,
-// and a total of 5 * 10 can be processed at the same time.
-func DistributiveWindowConcurrentProcessCount(c int) DistributiveWindowOption {
-	return func(options *DistributiveWindowOptions) {
-		if c <= 0 {
-			options.concurrentProcessCount = runtime.NumCPU() * 2
-		} else {
-			options.concurrentProcessCount = c
-		}
-	}
-}
-
-// DistributiveWindowConcurrentExpirationMaximum Maximum number of concurrent expirations
-func DistributiveWindowConcurrentExpirationMaximum(c int) DistributiveWindowOption {
-	return func(options *DistributiveWindowOptions) {
-		options.concurrentExpirationMaximum = c
-	}
-}
-
-// DistributiveWindowMappingMaxSpanCount maximum number of span in sub-window
-func DistributiveWindowMappingMaxSpanCount(c int) DistributiveWindowOption {
-	return func(options *DistributiveWindowOptions) {
-		options.mappingMaxSpanCount = c
-	}
+	SubWindowSize               int
+	WatchExpiredInterval        time.Duration
+	ConcurrentProcessCount      int
+	ConcurrentExpirationMaximum int
+	MappingMaxSpanCount         int
 }
 
 // DistributiveWindow Parent-child window implementation classes.
@@ -102,17 +56,15 @@ type DistributiveWindow struct {
 	logger monitorLogger.Logger
 }
 
-func NewDistributiveWindow(dataId string, ctx context.Context, processor Processor, saveReqChan chan<- storage.SaveRequest, specificOptions ...DistributiveWindowOption) Operator {
-
-	specificConfig := &DistributiveWindowOptions{}
-	for _, setter := range specificOptions {
-		setter(specificConfig)
-	}
+func NewDistributiveWindow(
+	dataId string, ctx context.Context, processor Processor, saveReqChan chan<- storage.SaveRequest,
+	specificConfig DistributiveWindowOptions,
+) Operator {
 
 	window := &DistributiveWindow{
 		dataId:          dataId,
-		config:          *specificConfig,
-		observers:       make(map[observer]struct{}, specificConfig.subWindowSize),
+		config:          specificConfig,
+		observers:       make(map[observer]struct{}, specificConfig.SubWindowSize),
 		ctx:             ctx,
 		saveRequestChan: saveReqChan,
 		logger: monitorLogger.With(
@@ -122,11 +74,11 @@ func NewDistributiveWindow(dataId string, ctx context.Context, processor Process
 	}
 
 	// Register sub-windows Event
-	subWindowMapping := make(map[int]*distributiveSubWindow, specificConfig.subWindowSize)
-	for i := 0; i < specificConfig.subWindowSize; i++ {
+	subWindowMapping := make(map[int]*distributiveSubWindow, specificConfig.SubWindowSize)
+	for i := 0; i < specificConfig.SubWindowSize; i++ {
 		w := newDistributiveSubWindow(
 			dataId, ctx, i, processor, window.saveRequestChan,
-			specificConfig.concurrentExpirationMaximum, specificConfig.mappingMaxSpanCount,
+			specificConfig.ConcurrentExpirationMaximum, specificConfig.MappingMaxSpanCount,
 		)
 		subWindowMapping[i] = w
 		window.register(w)
@@ -143,22 +95,22 @@ func (w *DistributiveWindow) locate(uni string) *distributiveSubWindow {
 	// Based on the maximum value of int,
 	// avoid uint > maximum value of int to calculate the negative number of subscript.
 	hashValue := int(xxhash.Sum64([]byte(uni)) & uint64(maxInt))
-	return w.subWindows[hashValue%w.config.subWindowSize]
+	return w.subWindows[hashValue%w.config.SubWindowSize]
 }
 
-func (w *DistributiveWindow) Start(spanChan <-chan []StandardSpan, errorReceiveChan chan<- error, runtimeOpts ...RuntimeConfigOption) {
+func (w *DistributiveWindow) Start(spanChan <-chan []StandardSpan, errorReceiveChan chan<- error, runtimeConfig RuntimeConfig) {
 
 	for ob := range w.observers {
-		ob.assembleRuntimeConfig(runtimeOpts...)
-		for i := 0; i < w.config.concurrentProcessCount; i++ {
+		ob.assembleRuntimeConfig(runtimeConfig)
+		for i := 0; i < w.config.ConcurrentProcessCount; i++ {
 			go ob.handleNotify(errorReceiveChan)
 		}
 	}
 
 	go w.startWatch(errorReceiveChan)
 	w.logger.Infof(
-		"DataId: %s created with %d sub-window, %d concurrentProcessCount",
-		w.dataId, len(w.observers), w.config.concurrentProcessCount,
+		"DataId: %s created with %d sub-window, %d ConcurrentProcessCount",
+		w.dataId, len(w.observers), w.config.ConcurrentProcessCount,
 	)
 
 	go w.Handle(spanChan, errorReceiveChan)
@@ -243,8 +195,8 @@ func (w *DistributiveWindow) startWatch(errorReceiveChan chan<- error) {
 	defer runtimex.HandleCrashToChan(errorReceiveChan)
 
 	// todo addMetrics: 监听器方法耗时
-	tick := time.NewTicker(w.config.watchExpiredInterval)
-	w.logger.Infof("DistributiveWindow watching started. interval: %dms", w.config.watchExpiredInterval.Milliseconds())
+	tick := time.NewTicker(w.config.WatchExpiredInterval)
+	w.logger.Infof("DistributiveWindow watching started. interval: %dms", w.config.WatchExpiredInterval.Milliseconds())
 	for {
 		select {
 		case <-w.ctx.Done():
@@ -302,12 +254,8 @@ func newDistributiveSubWindow(
 	return subWindow
 }
 
-func (d *distributiveSubWindow) assembleRuntimeConfig(runtimeOpt ...RuntimeConfigOption) {
+func (d *distributiveSubWindow) assembleRuntimeConfig(config RuntimeConfig) {
 
-	config := RuntimeConfig{}
-	for _, setter := range runtimeOpt {
-		setter(&config)
-	}
 	d.runtimeStrategy = *NewRuntimeStrategies(
 		config,
 		[]ReentrantRuntimeStrategy{ReentrantLogRecord, ReentrantLimitMaxCount, RefreshUpdateTime},

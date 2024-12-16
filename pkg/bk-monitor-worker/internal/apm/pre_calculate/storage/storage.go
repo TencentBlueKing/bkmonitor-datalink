@@ -53,128 +53,24 @@ const (
 )
 
 type ProxyOptions struct {
-	// workerCount Number of workers processing SaveRequest.
-	workerCount int
+	// WorkerCount Number of workers processing SaveRequest.
+	WorkerCount int
 
-	saveHoldDuration time.Duration
-	saveHoldMaxCount int
+	SaveHoldDuration time.Duration
+	SaveHoldMaxCount int
 
-	cacheBackend     CacheType
-	redisCacheConfig RedisCacheOptions
-	bloomConfig      BloomOptions
+	CacheBackend     CacheType
+	RedisCacheConfig RedisCacheOptions
+	BloomConfig      BloomOptions
 
-	traceEsConfig EsOptions
-	saveEsConfig  EsOptions
+	TraceEsConfig EsOptions
+	SaveEsConfig  EsOptions
 
-	prometheusWriterConfig remotewrite.PrometheusWriterOptions
-	metricsConfig          MetricConfigOptions
+	PrometheusWriterConfig remotewrite.PrometheusWriterOptions
+	MetricsConfig          MetricConfigOptions
 
-	// saveReqBufferSize Number of queue capacity that hold SaveRequest
-	saveReqBufferSize int
-}
-
-type ProxyOption func(options *ProxyOptions)
-
-// WorkerCount The number of concurrent storage requests accepted simultaneously
-func WorkerCount(c int) ProxyOption {
-	return func(options *ProxyOptions) {
-		options.workerCount = c
-	}
-}
-
-// SaveHoldDuration unit: ms.
-// Storage does not process the SaveRequest immediately upon receipt,
-// it waits for the conditions(SaveHoldDuration + SaveHoldMaxCount).
-// Condition 1: If the wait time > SaveHoldDuration, it will be executed
-func SaveHoldDuration(c time.Duration) ProxyOption {
-	return func(options *ProxyOptions) {
-		options.saveHoldDuration = c
-	}
-}
-
-// SaveHoldMaxCount Storage does not process the SaveRequest immediately upon receipt,
-// it waits for the conditions(SaveHoldDuration + SaveHoldMaxCount).
-// Condition 2: If the request count > SaveHoldMaxCount, it will be executed
-func SaveHoldMaxCount(c int) ProxyOption {
-	return func(options *ProxyOptions) {
-		options.saveHoldMaxCount = c
-	}
-}
-
-// CacheBackend Specifies the type of cache
-func CacheBackend(t CacheType) ProxyOption {
-	return func(options *ProxyOptions) {
-		options.cacheBackend = t
-	}
-}
-
-// CacheRedisConfig Redis cache configuration. It is valid only when CacheBackend == CacheTypeRedis
-func CacheRedisConfig(opts ...RedisCacheOption) ProxyOption {
-	return func(options *ProxyOptions) {
-		redisOpt := RedisCacheOptions{}
-		for _, setter := range opts {
-			setter(&redisOpt)
-		}
-		options.redisCacheConfig = redisOpt
-	}
-}
-
-func BloomConfig(opts ...BloomOption) ProxyOption {
-	return func(options *ProxyOptions) {
-		bloomOpts := BloomOptions{}
-		for _, setter := range opts {
-			setter(&bloomOpts)
-		}
-		options.bloomConfig = bloomOpts
-	}
-}
-
-// TraceEsConfig Elasticsearch config of storage
-func TraceEsConfig(opts ...EsOption) ProxyOption {
-	return func(options *ProxyOptions) {
-		esOpts := EsOptions{}
-		for _, setter := range opts {
-			setter(&esOpts)
-		}
-		options.traceEsConfig = esOpts
-	}
-}
-
-func SaveEsConfig(opts ...EsOption) ProxyOption {
-	return func(options *ProxyOptions) {
-		esOpts := EsOptions{}
-		for _, setter := range opts {
-			setter(&esOpts)
-		}
-		options.saveEsConfig = esOpts
-	}
-}
-
-func PrometheusWriterConfig(opts ...remotewrite.PrometheusWriterOption) ProxyOption {
-	return func(options *ProxyOptions) {
-		writerOpts := remotewrite.PrometheusWriterOptions{}
-		for _, setter := range opts {
-			setter(&writerOpts)
-		}
-		options.prometheusWriterConfig = writerOpts
-	}
-}
-
-func MetricsConfig(opts ...MetricConfigOption) ProxyOption {
-	return func(options *ProxyOptions) {
-		metricOpts := MetricConfigOptions{}
-		for _, setter := range opts {
-			setter(&metricOpts)
-		}
-		options.metricsConfig = metricOpts
-	}
-}
-
-// SaveReqBufferSize Number of storage chan
-func SaveReqBufferSize(s int) ProxyOption {
-	return func(options *ProxyOptions) {
-		options.saveReqBufferSize = s
-	}
+	// SaveReqBufferSize Number of queue capacity that hold SaveRequest
+	SaveReqBufferSize int
 }
 
 type Backend interface {
@@ -204,8 +100,8 @@ type Proxy struct {
 }
 
 func (p *Proxy) Run(errorReceiveChan chan<- error) {
-	p.logger.Infof("StorageProxy started with %d workers", p.config.workerCount)
-	for i := 0; i < p.config.workerCount; i++ {
+	p.logger.Infof("StorageProxy started with %d workers", p.config.WorkerCount)
+	for i := 0; i < p.config.WorkerCount; i++ {
 		go p.ReceiveSaveRequest(errorReceiveChan)
 	}
 	go p.watchSaveRequestChan()
@@ -230,9 +126,9 @@ func (p *Proxy) watchSaveRequestChan() {
 func (p *Proxy) ReceiveSaveRequest(errorReceiveChan chan<- error) {
 	defer runtimex.HandleCrashToChan(errorReceiveChan)
 
-	ticker := time.NewTicker(p.config.saveHoldDuration)
-	esSaveData := make([]EsStorageData, 0, p.config.saveHoldMaxCount)
-	cacheSaveData := make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
+	ticker := time.NewTicker(p.config.SaveHoldDuration)
+	esSaveData := make([]EsStorageData, 0, p.config.SaveHoldMaxCount)
+	cacheSaveData := make([]CacheStorageData, 0, p.config.SaveHoldMaxCount)
 loop:
 	for {
 		select {
@@ -246,7 +142,7 @@ loop:
 				item := r.Data.(EsStorageData)
 
 				esSaveData = append(esSaveData, item)
-				if len(esSaveData) >= p.config.saveHoldMaxCount {
+				if len(esSaveData) >= p.config.SaveHoldMaxCount {
 					err := p.saveEs.SaveBatch(esSaveData)
 					metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StorageSaveEs, metrics.OperateSave)
 					metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StorageSaveEs, len(esSaveData))
@@ -254,14 +150,14 @@ loop:
 						p.logger.Errorf("[MAX TRIGGER] Failed to save %d pieces of data to ES, cause: %s", len(esSaveData), err)
 						metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SaveEsFailed)
 					}
-					esSaveData = make([]EsStorageData, 0, p.config.saveHoldMaxCount)
+					esSaveData = make([]EsStorageData, 0, p.config.SaveHoldMaxCount)
 				}
 			case Cache:
 				item := r.Data.(CacheStorageData)
 				metrics.RecordApmPreCalcOperateStorageCount(item.DataId, metrics.StorageCache, metrics.OperateSave)
 
 				cacheSaveData = append(cacheSaveData, item)
-				if len(cacheSaveData) >= p.config.saveHoldMaxCount {
+				if len(cacheSaveData) >= p.config.SaveHoldMaxCount {
 					err := p.cache.SaveBatch(cacheSaveData)
 					metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StorageCache, metrics.OperateSave)
 					metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StorageCache, len(cacheSaveData))
@@ -269,7 +165,7 @@ loop:
 						p.logger.Errorf("[MAX TRIGGER] Failed to save %d pieces of data to CACHE, cause: %s", len(cacheSaveData), err)
 						metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SaveCacheFailed)
 					}
-					cacheSaveData = make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
+					cacheSaveData = make([]CacheStorageData, 0, p.config.SaveHoldMaxCount)
 				}
 			case BloomFilter:
 				// Bloom-filter needs to be added immediately,
@@ -297,7 +193,7 @@ loop:
 					p.logger.Errorf("[TICKER TRIGGER] Failed to save %d pieces of data to ES, cause: %s", len(esSaveData), err)
 					metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SaveEsFailed)
 				}
-				esSaveData = make([]EsStorageData, 0, p.config.saveHoldMaxCount)
+				esSaveData = make([]EsStorageData, 0, p.config.SaveHoldMaxCount)
 			}
 			if len(cacheSaveData) != 0 {
 				err := p.cache.SaveBatch(cacheSaveData)
@@ -307,7 +203,7 @@ loop:
 					p.logger.Errorf("[TICKER TRIGGER] Failed to save %d pieces of data to CACHE, cause: %s", len(cacheSaveData), err)
 					metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SaveCacheFailed)
 				}
-				cacheSaveData = make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
+				cacheSaveData = make([]CacheStorageData, 0, p.config.SaveHoldMaxCount)
 			}
 		case <-p.ctx.Done():
 			ticker.Stop()
@@ -360,24 +256,21 @@ func (p *Proxy) GetClient(t Target) any {
 	}
 }
 
-func NewProxyInstance(dataId string, ctx context.Context, options ...ProxyOption) (*Proxy, error) {
-	opt := ProxyOptions{}
-	for _, setter := range options {
-		setter(&opt)
-	}
-	traceEsInstance, err := newEsStorage(ctx, opt.traceEsConfig)
+func NewProxyInstance(dataId string, ctx context.Context, opt ProxyOptions) (*Proxy, error) {
+
+	traceEsInstance, err := newEsStorage(ctx, opt.TraceEsConfig)
 	if err != nil {
 		return nil, err
 	}
-	saveEsInstance, err := newEsStorage(ctx, opt.saveEsConfig)
+	saveEsInstance, err := newEsStorage(ctx, opt.SaveEsConfig)
 	if err != nil {
 		return nil, err
 	}
 
 	// create cache storage
 	var cache CacheOperator
-	if opt.cacheBackend == CacheTypeRedis {
-		cache, err = newRedisCache(ctx, opt.redisCacheConfig)
+	if opt.CacheBackend == CacheTypeRedis {
+		cache, err = newRedisCache(ctx, opt.RedisCacheConfig)
 		if err != nil {
 			return nil, err
 		}
@@ -388,7 +281,7 @@ func NewProxyInstance(dataId string, ctx context.Context, options ...ProxyOption
 		}
 	}
 
-	bloomFilter, err := newLayersCapDecreaseBloomClient(dataId, ctx, opt.bloomConfig)
+	bloomFilter, err := newLayersCapDecreaseBloomClient(dataId, ctx, opt.BloomConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -400,9 +293,9 @@ func NewProxyInstance(dataId string, ctx context.Context, options ...ProxyOption
 		saveEs:                   saveEsInstance,
 		cache:                    cache,
 		bloomFilter:              bloomFilter,
-		prometheusMetricsHandler: NewMetricDimensionHandler(ctx, dataId, opt.prometheusWriterConfig, opt.metricsConfig),
+		prometheusMetricsHandler: NewMetricDimensionHandler(ctx, dataId, opt.PrometheusWriterConfig, opt.MetricsConfig),
 		ctx:                      ctx,
-		saveRequestChan:          make(chan SaveRequest, opt.saveReqBufferSize),
+		saveRequestChan:          make(chan SaveRequest, opt.SaveReqBufferSize),
 		logger:                   monitorLogger.With(zap.String("name", "storage"), zap.String("dataId", dataId)),
 	}, nil
 }

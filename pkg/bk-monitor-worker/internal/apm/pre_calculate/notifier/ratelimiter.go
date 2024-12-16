@@ -9,7 +9,9 @@
 
 package notifier
 
-import "k8s.io/client-go/util/flowcontrol"
+import (
+	"k8s.io/client-go/util/flowcontrol"
+)
 
 type tokenBucketRateLimiter struct {
 	unlimited bool

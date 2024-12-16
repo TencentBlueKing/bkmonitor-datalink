@@ -68,78 +68,16 @@ type CacheOperator interface {
 
 // RedisCacheOptions resource: cache config
 type RedisCacheOptions struct {
-	mode             string
-	host             string
-	port             int
-	sentinelAddress  []string
-	masterName       string
-	sentinelPassword string
-	password         string
-	db               int
-	dialTimeout      time.Duration
-	readTimeout      time.Duration
-}
-
-type RedisCacheOption func(options *RedisCacheOptions)
-
-func RedisCacheMode(mode string) RedisCacheOption {
-	return func(options *RedisCacheOptions) {
-		options.mode = mode
-	}
-}
-
-func RedisCacheHost(host string) RedisCacheOption {
-	return func(options *RedisCacheOptions) {
-		options.host = host
-	}
-}
-
-func RedisCachePort(port int) RedisCacheOption {
-	return func(options *RedisCacheOptions) {
-		options.port = port
-	}
-}
-
-func RedisCacheSentinelAddress(address ...string) RedisCacheOption {
-	return func(options *RedisCacheOptions) {
-		options.sentinelAddress = address
-	}
-}
-
-func RedisCacheMasterName(masterName string) RedisCacheOption {
-	return func(options *RedisCacheOptions) {
-		options.masterName = masterName
-	}
-}
-
-func RedisCacheSentinelPassword(password string) RedisCacheOption {
-	return func(options *RedisCacheOptions) {
-		options.sentinelPassword = password
-	}
-}
-
-func RedisCachePassword(password string) RedisCacheOption {
-	return func(options *RedisCacheOptions) {
-		options.password = password
-	}
-}
-
-func RedisCacheDb(db int) RedisCacheOption {
-	return func(options *RedisCacheOptions) {
-		options.db = db
-	}
-}
-
-func RedisCacheDialTimeout(dialTimeout time.Duration) RedisCacheOption {
-	return func(options *RedisCacheOptions) {
-		options.dialTimeout = dialTimeout
-	}
-}
-
-func RedisCacheReadTimeout(readTimeout time.Duration) RedisCacheOption {
-	return func(options *RedisCacheOptions) {
-		options.readTimeout = readTimeout
-	}
+	Mode             string
+	Host             string
+	Port             int
+	SentinelAddress  []string
+	MasterName       string
+	SentinelPassword string
+	Password         string
+	Db               int
+	DialTimeout      time.Duration
+	ReadTimeout      time.Duration
 }
 
 type RedisCache struct {
@@ -184,16 +122,16 @@ func newRedisCache(ctx context.Context, options RedisCacheOptions) (*RedisCache,
 	client, err := redisUtils.NewRedisClient(
 		context.Background(),
 		&redisUtils.Option{
-			Mode:             options.mode,
-			Host:             options.host,
-			Port:             options.port,
-			SentinelAddress:  options.sentinelAddress,
-			MasterName:       options.masterName,
-			SentinelPassword: options.sentinelPassword,
-			Password:         options.password,
-			Db:               options.db,
-			DialTimeout:      options.dialTimeout,
-			ReadTimeout:      options.readTimeout,
+			Mode:             options.Mode,
+			Host:             options.Host,
+			Port:             options.Port,
+			SentinelAddress:  options.SentinelAddress,
+			MasterName:       options.MasterName,
+			SentinelPassword: options.SentinelPassword,
+			Password:         options.Password,
+			Db:               options.Db,
+			DialTimeout:      options.DialTimeout,
+			ReadTimeout:      options.ReadTimeout,
 		},
 	)
 	if err != nil {

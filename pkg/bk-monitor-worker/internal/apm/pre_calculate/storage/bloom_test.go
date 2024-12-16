@@ -209,18 +209,18 @@ func BenchmarkBloomFilter(b *testing.B) {
 		count,
 		magnitude,
 		fmt.Sprintf(
-			"InitCap: %d fpRate: %f layers: %d count: %d read&write: %d/s",
+			"InitCap: %d FpRate: %f Layers: %d count: %d read&write: %d/s",
 			initCap, fpRate, layers, count, magnitude,
 		),
 		BloomOptions{
-			fpRate: fpRate,
-			normalOverlapBloomOptions: OverlapBloomOptions{
+			FpRate: fpRate,
+			NormalOverlapBloomOptions: OverlapBloomOptions{
 				2 * time.Hour,
 			},
-			layersCapDecreaseBloomOptions: LayersCapDecreaseBloomOptions{
-				cap:     initCap,
-				layers:  10,
-				divisor: 2,
+			LayersCapDecreaseBloomOptions: LayersCapDecreaseBloomOptions{
+				Cap:     initCap,
+				Layers:  10,
+				Divisor: 2,
 			},
 		})
 }

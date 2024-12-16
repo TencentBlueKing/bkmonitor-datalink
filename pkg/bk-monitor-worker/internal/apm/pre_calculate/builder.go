@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/imdario/mergo"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -34,12 +35,12 @@ import (
 // Builder Pre-Calculate default configuration builder
 type Builder interface {
 	WithContext(context.Context, context.CancelFunc) Builder
-	WithNotifierConfig(options ...notifier.Option) Builder
-	WithWindowRuntimeConfig(...window.RuntimeConfigOption) Builder
-	WithDistributiveWindowConfig(options ...window.DistributiveWindowOption) Builder
-	WithProcessorConfig(options ...window.ProcessorOption) Builder
-	WithStorageConfig(options ...storage.ProxyOption) Builder
-	WithMetricReport(options ...MetricOption) Builder
+	WithNotifierConfig(notifier.Options) Builder
+	WithWindowRuntimeConfig(window.RuntimeConfig) Builder
+	WithDistributiveWindowConfig(window.DistributiveWindowOptions) Builder
+	WithProcessorConfig(window.ProcessorOptions) Builder
+	WithStorageConfig(storage.ProxyOptions) Builder
+	WithMetricReport(MetricOptions) Builder
 	Build() PreCalculateProcessor
 }
 
@@ -79,13 +80,13 @@ type Precalculate struct {
 
 type PrecalculateOption struct {
 	// window-specific-config
-	distributiveWindowConfig []window.DistributiveWindowOption
-	runtimeConfig            []window.RuntimeConfigOption
-	notifierConfig           []notifier.Option
-	processorConfig          []window.ProcessorOption
-	storageConfig            []storage.ProxyOption
+	distributiveWindowConfig window.DistributiveWindowOptions
+	runtimeConfig            window.RuntimeConfig
+	notifierConfig           notifier.Options
+	processorConfig          window.ProcessorOptions
+	storageConfig            storage.ProxyOptions
 
-	profileReportConfig []MetricOption
+	profileReportConfig MetricOptions
 }
 
 type readySignal struct {
@@ -101,32 +102,32 @@ func (p *Precalculate) WithContext(ctx context.Context, cancel context.CancelFun
 	return p
 }
 
-func (p *Precalculate) WithNotifierConfig(options ...notifier.Option) Builder {
+func (p *Precalculate) WithNotifierConfig(options notifier.Options) Builder {
 	p.defaultConfig.notifierConfig = options
 	return p
 }
 
-func (p *Precalculate) WithWindowRuntimeConfig(options ...window.RuntimeConfigOption) Builder {
+func (p *Precalculate) WithWindowRuntimeConfig(options window.RuntimeConfig) Builder {
 	p.defaultConfig.runtimeConfig = options
 	return p
 }
 
-func (p *Precalculate) WithDistributiveWindowConfig(options ...window.DistributiveWindowOption) Builder {
+func (p *Precalculate) WithDistributiveWindowConfig(options window.DistributiveWindowOptions) Builder {
 	p.defaultConfig.distributiveWindowConfig = options
 	return p
 }
 
-func (p *Precalculate) WithProcessorConfig(options ...window.ProcessorOption) Builder {
+func (p *Precalculate) WithProcessorConfig(options window.ProcessorOptions) Builder {
 	p.defaultConfig.processorConfig = options
 	return p
 }
 
-func (p *Precalculate) WithStorageConfig(options ...storage.ProxyOption) Builder {
+func (p *Precalculate) WithStorageConfig(options storage.ProxyOptions) Builder {
 	p.defaultConfig.storageConfig = options
 	return p
 }
 
-func (p *Precalculate) WithMetricReport(options ...MetricOption) Builder {
+func (p *Precalculate) WithMetricReport(options MetricOptions) Builder {
 	p.defaultConfig.profileReportConfig = options
 	return p
 }
@@ -202,8 +203,13 @@ loop:
 				}
 			} else {
 				// config merge
+				mergeConfig, err := p.MergeConfig(p.defaultConfig, config[0])
+				if err != nil {
+					errorReceiveChan <- err
+					return
+				}
 				signal = readySignal{
-					ctx: runInstanceCtx, startInfo: startInfo, config: p.MergeConfig(p.defaultConfig, config[0]), errorReceiveChan: errorReceiveChan,
+					ctx: runInstanceCtx, startInfo: startInfo, config: mergeConfig, errorReceiveChan: errorReceiveChan,
 				}
 			}
 			p.readySignalChan <- signal
@@ -218,26 +224,11 @@ loop:
 	apmLogger.Infof("[StartByDataId] done - DataId: %s Qps: %d", startInfo.DataId, startInfo.Qps)
 }
 
-func (p *Precalculate) MergeConfig(defaultConfig, customConfig PrecalculateOption) PrecalculateOption {
-	if len(customConfig.distributiveWindowConfig) != 0 {
-		defaultConfig.distributiveWindowConfig = append(defaultConfig.distributiveWindowConfig, customConfig.distributiveWindowConfig...)
+func (p *Precalculate) MergeConfig(defaultConfig, customConfig PrecalculateOption) (PrecalculateOption, error) {
+	if err := mergo.Merge(&defaultConfig, customConfig); err != nil {
+		return PrecalculateOption{}, fmt.Errorf("[Precalculate] failed to merge config, error: %s", err)
 	}
-	if len(customConfig.runtimeConfig) != 0 {
-		defaultConfig.runtimeConfig = append(defaultConfig.runtimeConfig, customConfig.runtimeConfig...)
-	}
-	if len(customConfig.notifierConfig) != 0 {
-		defaultConfig.notifierConfig = append(defaultConfig.notifierConfig, customConfig.notifierConfig...)
-	}
-	if len(customConfig.processorConfig) != 0 {
-		defaultConfig.processorConfig = append(defaultConfig.processorConfig, customConfig.processorConfig...)
-	}
-	if len(customConfig.storageConfig) != 0 {
-		defaultConfig.storageConfig = append(defaultConfig.storageConfig, customConfig.storageConfig...)
-	}
-	if len(customConfig.profileReportConfig) != 0 {
-		defaultConfig.profileReportConfig = append(defaultConfig.profileReportConfig, customConfig.profileReportConfig...)
-	}
-	return defaultConfig
+	return defaultConfig, nil
 }
 
 func (p *Precalculate) Run(runSuccess chan<- error) {
@@ -280,8 +271,7 @@ func (p *Precalculate) launch(
 	}
 
 	runInstance.startWindowHandler(messageChan, saveReqChan)
-	runInstance.startProfileReport()
-	go runInstance.startRecordSemaphoreAcquired()
+	runInstance.startRuntimeCollector()
 	go runInstance.watchConsulConfigUpdate(errorReceiveChan)
 	apmLogger.Infof("dataId: %s launch successfully", startInfo.DataId)
 }
@@ -297,7 +287,7 @@ type RunInstance struct {
 	windowHandler window.Operation
 	proxy         *storage.Proxy
 
-	profileCollector ProfileCollector
+	RuntimeCollector ProfileCollector
 }
 
 func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
@@ -313,16 +303,18 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 	n, err := notifier.NewNotifier(
 		notifier.KafkaNotifier,
 		p.startInfo.DataId,
-		append([]notifier.Option{
-			notifier.Context(p.ctx),
-			notifier.KafkaGroupId(groupId),
-			notifier.KafkaHost(kafkaConfig.Host),
-			notifier.KafkaUsername(kafkaConfig.Username),
-			notifier.KafkaPassword(kafkaConfig.Password),
-			notifier.KafkaTopic(kafkaConfig.Topic),
-			notifier.Qps(qps),
-		}, p.config.notifierConfig...,
-		)...,
+		notifier.Options{
+			ChanBufferSize: p.config.notifierConfig.ChanBufferSize,
+			Ctx:            p.ctx,
+			KafkaConfig: notifier.KafkaConfig{
+				KafkaGroupId:  groupId,
+				KafkaHost:     kafkaConfig.Host,
+				KafkaUsername: kafkaConfig.Username,
+				KafkaPassword: kafkaConfig.Password,
+				KafkaTopic:    kafkaConfig.Topic,
+			},
+			Qps: qps,
+		},
 	)
 	if err != nil {
 		return nil, err
@@ -335,7 +327,7 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 
 func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpan, saveReqChan chan<- storage.SaveRequest) {
 
-	processor := window.NewProcessor(p.ctx, p.startInfo.DataId, p.proxy, p.config.processorConfig...)
+	processor := window.NewProcessor(p.ctx, p.startInfo.DataId, p.proxy, p.config.processorConfig)
 
 	operation := window.Operation{
 		Operator: window.NewDistributiveWindow(
@@ -343,10 +335,10 @@ func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpa
 			p.ctx,
 			processor,
 			saveReqChan,
-			p.config.distributiveWindowConfig...,
+			p.config.distributiveWindowConfig,
 		),
 	}
-	operation.Run(messageChan, p.errorReceiveChan, p.config.runtimeConfig...)
+	operation.Run(messageChan, p.errorReceiveChan, p.config.runtimeConfig)
 
 	p.windowHandler = operation
 }
@@ -358,25 +350,31 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 	proxy, err := storage.NewProxyInstance(
 		p.startInfo.DataId,
 		p.ctx,
-		append([]storage.ProxyOption{
-			storage.TraceEsConfig(
-				storage.EsHost(traceEsConfig.Host),
-				storage.EsUsername(traceEsConfig.Username),
-				storage.EsPassword(traceEsConfig.Password),
-				storage.EsIndexName(traceEsConfig.IndexName),
-			),
-			storage.SaveEsConfig(
-				storage.EsHost(saveEsConfig.Host),
-				storage.EsUsername(saveEsConfig.Username),
-				storage.EsPassword(saveEsConfig.Password),
-				storage.EsIndexName(saveEsConfig.IndexName),
-			),
-			storage.PrometheusWriterConfig(
-				remote.PrometheusWriterUrl(config.PromRemoteWriteUrl),
-				remote.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
-			),
-		}, p.config.storageConfig...,
-		)...,
+		storage.ProxyOptions{
+			WorkerCount:      p.config.storageConfig.WorkerCount,
+			SaveHoldDuration: p.config.storageConfig.SaveHoldDuration,
+			SaveHoldMaxCount: p.config.storageConfig.SaveHoldMaxCount,
+			CacheBackend:     p.config.storageConfig.CacheBackend,
+			RedisCacheConfig: p.config.storageConfig.RedisCacheConfig,
+			BloomConfig:      p.config.storageConfig.BloomConfig,
+			TraceEsConfig: storage.EsOptions{
+				Host:      traceEsConfig.Host,
+				Username:  traceEsConfig.Username,
+				Password:  traceEsConfig.Password,
+				IndexName: traceEsConfig.IndexName,
+			},
+			SaveEsConfig: storage.EsOptions{
+				Host:      saveEsConfig.Host,
+				Username:  saveEsConfig.Username,
+				Password:  saveEsConfig.Password,
+				IndexName: saveEsConfig.IndexName,
+			},
+			PrometheusWriterConfig: remote.PrometheusWriterOptions{
+				Url:     config.PromRemoteWriteUrl,
+				Headers: config.PromRemoteWriteHeaders,
+			},
+			MetricsConfig: p.config.storageConfig.MetricsConfig,
+		},
 	)
 	if err != nil {
 		apmLogger.Errorf("Storage fail to started, the calculated data not be saved. error: %s", err)
@@ -388,27 +386,24 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 	return proxy.SaveRequest(), nil
 }
 
-func (p *RunInstance) startProfileReport() {
-	if len(p.config.profileReportConfig) == 0 {
+func (p *RunInstance) startRuntimeCollector() {
+	p.RuntimeCollector = NewProfileCollector(p.ctx, p.config.profileReportConfig, p.startInfo.DataId)
+
+	if !p.config.profileReportConfig.EnabledProfile {
 		apmLogger.Infof("[!] profileConfig is not configured, the profile will not be reported")
-		return
+	} else {
+		p.RuntimeCollector.StartReport()
 	}
 
-	opt := MetricOptions{}
-	for _, setter := range p.config.profileReportConfig {
-		setter(&opt)
-	}
-
-	p.profileCollector = NewProfileCollector(p.ctx, opt, p.startInfo.DataId)
-	p.profileCollector.StartReport()
+	go p.startRecordSemaphoreAcquired()
 }
 
 func (p *RunInstance) startRecordSemaphoreAcquired() {
 
-	ticker := time.NewTicker(p.profileCollector.config.reportInterval)
+	ticker := time.NewTicker(p.RuntimeCollector.config.ReportInterval)
 	apmLogger.Infof(
 		"[RecordSemaphoreAcquired] start report chan metric every %s",
-		p.profileCollector.config.reportInterval,
+		p.RuntimeCollector.config.ReportInterval,
 	)
 	for {
 		select {

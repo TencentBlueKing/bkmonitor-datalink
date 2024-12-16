@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"github.com/grafana/pyroscope-go"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type ProfileCollector struct {
@@ -25,57 +23,13 @@ type ProfileCollector struct {
 	config MetricOptions
 }
 
-type MetricOption func(options *MetricOptions)
-
 type MetricOptions struct {
-	enabledProfile bool
-	profileAddress string
-	profileToken   string
-	profileAppIdx  string
+	EnabledProfile bool
+	ProfileAddress string
+	ProfileToken   string
+	ProfileAppIdx  string
 
-	reportInterval time.Duration
-}
-
-// EnabledProfileReport Whether to enable indicator reporting.
-func EnabledProfileReport(e bool) MetricOption {
-	return func(options *MetricOptions) {
-		if !e {
-			logger.Infof("profile report is disabled.")
-		}
-		options.enabledProfile = e
-	}
-}
-
-// ProfileAddress profile report host
-func ProfileAddress(h string) MetricOption {
-	return func(options *MetricOptions) {
-		options.profileAddress = h
-	}
-}
-
-// ProfileToken profile report token
-func ProfileToken(t string) MetricOption {
-	return func(options *MetricOptions) {
-		options.profileToken = t
-	}
-}
-
-// ProfileAppIdx app name of profile
-func ProfileAppIdx(h string) MetricOption {
-	return func(options *MetricOptions) {
-		if h != "" {
-			options.profileAppIdx = h
-			return
-		}
-		defaultV := "apm_precalculate"
-		options.profileAppIdx = defaultV
-	}
-}
-
-func MetricReportInterval(t time.Duration) MetricOption {
-	return func(options *MetricOptions) {
-		options.reportInterval = t
-	}
+	ReportInterval time.Duration
 }
 
 func NewProfileCollector(ctx context.Context, o MetricOptions, dataId string) ProfileCollector {
@@ -83,18 +37,16 @@ func NewProfileCollector(ctx context.Context, o MetricOptions, dataId string) Pr
 }
 
 func (r *ProfileCollector) StartReport() {
-	if r.config.enabledProfile {
-		go r.startProfiling(r.dataId, r.config.profileAppIdx)
-	}
+	go r.startProfiling(r.dataId, r.config.ProfileAppIdx)
 }
 
 func (r *ProfileCollector) startProfiling(dataId, appIdx string) {
 	appName := fmt.Sprintf("apm_precalculate-%s", appIdx)
 	profiler, err := pyroscope.Start(pyroscope.Config{
 		ApplicationName: appName,
-		ServerAddress:   r.config.profileAddress,
+		ServerAddress:   r.config.ProfileAddress,
 		Logger:          apmLogger,
-		AuthToken:       r.config.profileToken,
+		AuthToken:       r.config.ProfileToken,
 		Tags:            map[string]string{"dataId": dataId},
 		ProfileTypes: []pyroscope.ProfileType{
 			// these profile types are enabled by default:
@@ -117,7 +69,7 @@ func (r *ProfileCollector) startProfiling(dataId, appIdx string) {
 		apmLogger.Errorf("Start pyroscope failed, profile data not be reported, error: %s", err)
 		return
 	}
-	apmLogger.Infof("Start profiling at %s(name: %s)", r.config.profileAddress, appName)
+	apmLogger.Infof("Start profiling at %s(name: %s)", r.config.ProfileAddress, appName)
 
 	for {
 		select {

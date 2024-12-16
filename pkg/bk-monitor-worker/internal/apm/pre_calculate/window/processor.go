@@ -90,7 +90,7 @@ type IndexResponse struct {
 
 func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event) {
 	graph := event.Graph
-	if p.config.infoReportEnabled {
+	if p.config.InfoReportEnabled {
 		exist, err := p.proxy.Exist(storage.ExistRequest{Target: storage.BloomFilter, Key: event.TraceId})
 		if err != nil {
 			p.logger.Warnf(
@@ -108,7 +108,7 @@ func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event)
 		event.Graph = graph
 		p.ToTraceInfo(receiver, event)
 	}
-	if p.config.metricReportEnabled {
+	if p.config.MetricReportEnabled {
 		p.metricProcessor.ToMetrics(receiver, graph)
 	}
 }
@@ -123,7 +123,7 @@ func (p *Processor) revertToCollect(event *Event, exists []*StandardSpan) {
 func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 	var spans []*StandardSpan
 
-	if p.config.enabledInfoCache {
+	if p.config.EnabledInfoCache {
 		// list span data from the cache
 		infoKey := storage.CacheTraceInfoKey.Format(p.dataIdBaseInfo.BkBizId, p.dataIdBaseInfo.AppName, event.TraceId)
 		data, err := p.proxy.Query(storage.QueryRequest{Target: storage.Cache, Data: infoKey})
@@ -146,7 +146,7 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 		logger.Debugf(
 			"[NOTE] dataId: %s This es query exceeds the threshold %d. This request will be discarded.",
 			p.dataId,
-			p.config.traceEsQueryRate,
+			p.config.TraceEsQueryRate,
 		)
 		metrics.AddApmPreCalcRateLimitedCount(p.dataId, metrics.LimiterEs)
 		return spans
@@ -404,7 +404,7 @@ func (p *Processor) ToTraceInfo(receiver chan<- storage.SaveRequest, event Event
 }
 
 func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, result ProcessResult, event Event) {
-	if p.config.enabledInfoCache {
+	if p.config.EnabledInfoCache {
 		spanBytes, _ := jsonx.Marshal(event.Graph.StandardSpans())
 		receiver <- storage.SaveRequest{
 			Target: storage.Cache,
@@ -533,61 +533,19 @@ func collectCollections(collections map[string][]string, spanCollections map[str
 }
 
 type ProcessorOptions struct {
-	enabledInfoCache          bool
-	traceEsQueryRate          int
-	metricReportEnabled       bool
-	infoReportEnabled         bool
-	metricLayer4ReportEnabled bool
+	EnabledInfoCache          bool
+	TraceEsQueryRate          int
+	MetricReportEnabled       bool
+	InfoReportEnabled         bool
+	MetricLayer4ReportEnabled bool
 }
 
-type ProcessorOption func(*ProcessorOptions)
+func NewProcessor(ctx context.Context, dataId string, storageProxy *storage.Proxy, opts ProcessorOptions) Processor {
 
-// EnabledTraceInfoCache Whether to enable Storing the latest trace data into cache.
-// If this is enabled, the query frequency of elasticsearch is reduced.
-func EnabledTraceInfoCache(b bool) ProcessorOption {
-	return func(options *ProcessorOptions) {
-		options.enabledInfoCache = b
-	}
-}
-
-// TraceEsQueryRate To prevent too many es queries caused by bloom-filter,
-// each dataId needs to set a threshold for the maximum number of requests in a minute. default is 20
-func TraceEsQueryRate(r int) ProcessorOption {
-	return func(options *ProcessorOptions) {
-		options.traceEsQueryRate = r
-	}
-}
-
-// TraceMetricsReportEnabled enable the metrics report
-func TraceMetricsReportEnabled(e bool) ProcessorOption {
-	return func(options *ProcessorOptions) {
-		options.metricReportEnabled = e
-	}
-}
-
-// TraceInfoReportEnabled enable the trace info report
-func TraceInfoReportEnabled(e bool) ProcessorOption {
-	return func(options *ProcessorOptions) {
-		options.infoReportEnabled = e
-	}
-}
-
-func TraceMetricsLayer4ReportEnabled(e bool) ProcessorOption {
-	return func(options *ProcessorOptions) {
-		options.metricLayer4ReportEnabled = e
-	}
-}
-
-func NewProcessor(ctx context.Context, dataId string, storageProxy *storage.Proxy, options ...ProcessorOption) Processor {
-	opts := ProcessorOptions{}
-	for _, setter := range options {
-		setter(&opts)
-	}
-
-	limiter := rate.NewLimiter(rate.Every(time.Minute/time.Duration(opts.traceEsQueryRate)), opts.traceEsQueryRate)
+	limiter := rate.NewLimiter(rate.Every(time.Minute/time.Duration(opts.TraceEsQueryRate)), opts.TraceEsQueryRate)
 	logger.Infof(
 		"[NewProcessor] es query limiter, dataId: %s rate: %d metricReport: %t",
-		dataId, opts.traceEsQueryRate, opts.metricReportEnabled,
+		dataId, opts.TraceEsQueryRate, opts.MetricReportEnabled,
 	)
 
 	return Processor{
@@ -601,7 +559,7 @@ func NewProcessor(ctx context.Context, dataId string, storageProxy *storage.Prox
 			zap.String("location", "processor"),
 			zap.String("dataId", dataId),
 		),
-		metricProcessor:        newMetricProcessor(ctx, dataId, opts.metricLayer4ReportEnabled),
+		metricProcessor:        newMetricProcessor(ctx, dataId, opts.MetricLayer4ReportEnabled),
 		baseInfo:               core.GetMetadataCenter().GetBaseInfo(dataId),
 		indexNameLastUpdate:    time.Now().Add(-24 * time.Hour),
 		traceEsOriginIndexName: core.GetMetadataCenter().GetTraceEsConfig(dataId).IndexName,

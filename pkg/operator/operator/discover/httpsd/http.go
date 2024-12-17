@@ -67,6 +67,11 @@ func (d *Discover) Reload() error {
 	return d.Start()
 }
 
+func (d *Discover) Stop() {
+	d.BaseDiscover.Stop()
+	shareddiscovery.Unregister(d.UK())
+}
+
 func (d *Discover) Start() error {
 	d.PreStart()
 

@@ -33,6 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/dataidwatcher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/helmcharts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/promsli"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -71,6 +72,8 @@ type Operator struct {
 
 	promRuleInformer  *prominformers.ForResource
 	promsliController *promsli.Controller
+
+	helmchartsController *helmcharts.Controller
 
 	statefulSetWorkerScaled time.Time
 	statefulSetWorker       int
@@ -207,6 +210,11 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		operator.promsliController = promsli.NewController(operator.ctx, operator.client, useEndpointslice)
 	}
 
+	operator.helmchartsController, err = helmcharts.NewController(operator.ctx, operator.client)
+	if err != nil {
+		return nil, errors.Wrap(err, "create helmchartsController failed")
+	}
+
 	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.mdClient, operator.bkclient)
 	if err != nil {
 		return nil, errors.Wrap(err, "create objectsController failed")
@@ -268,6 +276,7 @@ func (c *Operator) recordMetrics() {
 			c.updateMonitorEndpointMetrics()
 			c.updateResourceMetrics()
 			c.updateSharedDiscoveryMetrics()
+			c.helmchartsController.UpdateMetrics()
 
 		case <-c.ctx.Done():
 			return
@@ -398,6 +407,7 @@ func (c *Operator) Run() error {
 
 	go c.loopHandlePromSdConfigs()
 	c.cleanupInvalidSecrets()
+
 	return nil
 }
 
@@ -409,6 +419,7 @@ func (c *Operator) Stop() {
 	c.wg.Wait()
 
 	c.dw.Stop()
+	c.helmchartsController.Stop()
 	c.objectsController.Stop()
 	shareddiscovery.Deactivate()
 }

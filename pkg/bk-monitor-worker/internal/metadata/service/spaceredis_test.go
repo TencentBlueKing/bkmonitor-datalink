@@ -1045,6 +1045,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 	db := mysql.GetDBSession().DB
 	// 准备测试数据
 	tableID := "bklog.test_rt"
+	tableID2 := "bklog.test_rt2"
 	storageClusterID := uint(1)
 	sourceType := "log"
 	indexSet := "index_1"
@@ -1052,15 +1053,27 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 	db.AutoMigrate(&storage.ESStorage{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
 
 	// 插入 ESStorage 数据
-	esStorage := storage.ESStorage{
-		TableID:          tableID,
-		StorageClusterID: storageClusterID,
-		SourceType:       sourceType,
-		IndexSet:         indexSet,
-		NeedCreateIndex:  true,
+	esStorages := []storage.ESStorage{
+		{
+			TableID:          tableID,
+			StorageClusterID: storageClusterID,
+			SourceType:       sourceType,
+			IndexSet:         indexSet,
+			NeedCreateIndex:  true,
+		},
+		{
+			TableID:          tableID2,
+			StorageClusterID: storageClusterID,
+			SourceType:       sourceType,
+			IndexSet:         indexSet,
+			NeedCreateIndex:  true,
+		},
 	}
-	db.Delete(&storage.ESStorage{}, "table_id = ?", tableID)
-	assert.NoError(t, db.Create(&esStorage).Error, "Failed to insert ESStorage")
+	for _, esStorage := range esStorages {
+		db.Delete(&storage.ESStorage{}, "table_id = ?", esStorage.TableID)
+		err := db.Create(&esStorage).Error
+		assert.NoError(t, err, "Failed to insert ESStorage")
+	}
 
 	// 插入 ResultTableOption 数据
 	tableOption := resulttable.ResultTableOption{
@@ -1103,6 +1116,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 	}
 	// 执行插入
 	for _, record := range testRecords {
+		db.Delete(&storage.ClusterRecord{}, "table_id = ? AND cluster_id = ?", tableID, record.ClusterID)
 		err := db.Create(&record).Error
 		assert.NoError(t, err, "Failed to insert StorageClusterRecord")
 	}
@@ -1114,7 +1128,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 
 	// 执行测试方法
 	pusher := NewSpacePusher()
-	err := pusher.PushEsTableIdDetail([]string{tableID}, false)
+	err := pusher.PushEsTableIdDetail([]string{tableID, tableID2}, false)
 	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
 
 }

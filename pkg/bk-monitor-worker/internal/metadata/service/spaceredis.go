@@ -574,6 +574,7 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 			tableId := es.TableID
 			sourceType := es.SourceType
 			indexSet := es.IndexSet
+			logger.Infof("PushEsTableIdDetail:start to compose es table id detail, table_id->[%s],source_type->[%s],index_set->[%s]", tableId, sourceType, indexSet)
 			_tableId, detailStr, err := s.composeEsTableIdDetail(tableId, options, es.StorageClusterID, sourceType, indexSet)
 			if err != nil {
 				logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %s, error: %s", tableId, err)
@@ -641,14 +642,15 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
-		"storage_type":           models.StorageTypeES,
-		"storage_id":             storageClusterId,
-		"db":                     indexSet,
-		"measurement":            models.TSGroupDefaultMeasurement,
-		"source_type":            sourceType,
-		"options":                options,
-		"storage_cluster_record": clusterRecords,
+		"storage_type":            models.StorageTypeES,
+		"storage_id":              storageClusterId,
+		"db":                      indexSet,
+		"measurement":             models.TSGroupDefaultMeasurement,
+		"source_type":             sourceType,
+		"options":                 options,
+		"storage_cluster_records": clusterRecords,
 	})
+	logger.Infof("compose es table id detail success, table_id [%s], detail [%s]", tableId, detailStr)
 	return tableId, detailStr, err
 }
 

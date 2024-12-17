@@ -285,6 +285,9 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	ctx, span := trace.NewSpan(ctx, "bk-sql-raw")
 	defer span.End(&err)
 
+	span.Set("query-series-set-start", start)
+	span.Set("query-series-set-end", end)
+
 	if start.UnixMilli() > end.UnixMilli() || start.UnixMilli() == 0 {
 		return storage.ErrSeriesSet(fmt.Errorf("range time is error, start: %s, end: %s ", start, end))
 	}
@@ -300,6 +303,9 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	queryFactory := NewQueryFactory(ctx, query).WithRangeTime(start, end)
 
 	sql, err := queryFactory.SQL()
+
+	span.Set("query-series-set-sql", sql)
+
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}

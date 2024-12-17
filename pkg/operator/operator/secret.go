@@ -195,9 +195,6 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 		nodeMap[cfg.Node] = []*discover.ChildConfig{cfg}
 	}
 
-	maxSecretsAllowed := int(float64(c.objectsController.NodeCount()) * configs.G().NodeSecretRatio)
-	count := 0
-
 	if daemonsetAlarmer.Alarm() {
 		c.daemonSetTaskCache = map[string]map[string]struct{}{}
 		logger.Info("daemonset worker resynced")
@@ -210,14 +207,6 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 		cache := c.daemonSetTaskCache[node]
 		if len(cache) > 0 && equalMapKeys(currTasksCache[node], cache) {
 			logger.Infof("node (%s) secrets nothing changed, skipped", node)
-			continue
-		}
-
-		// 确保 secrets 不会超限
-		count++
-		if count > maxSecretsAllowed {
-			c.mm.IncSecretsExceededCounter()
-			logger.Errorf("daemonset secrets exceeded, maxAllowed=%d, current=%d", maxSecretsAllowed, count)
 			continue
 		}
 
@@ -420,9 +409,6 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		currTasksCache[mod][config.FileName] = struct{}{}
 	}
 
-	maxSecretsAllowed := int(float64(c.objectsController.NodeCount()) * configs.G().NodeSecretRatio)
-	count := 0
-
 	if statefulsetAlarmer.Alarm() {
 		c.statefulSetTaskCache = map[int]map[string]struct{}{}
 		logger.Info("statefulset worker resynced")
@@ -435,13 +421,6 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		cache := c.statefulSetTaskCache[idx]
 		if len(cache) > 0 && equalMapKeys(currTasksCache[idx], cache) {
 			logger.Infof("secrets %s nothing changed, skipped", secretName)
-			continue
-		}
-
-		count++
-		if count > maxSecretsAllowed {
-			c.mm.IncSecretsExceededCounter()
-			logger.Errorf("statefulset tasks exceeded, maxAllowed=%d, current=%d", maxSecretsAllowed, count)
 			continue
 		}
 

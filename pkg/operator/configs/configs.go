@@ -36,11 +36,25 @@ type StatefulSetMatchRule struct {
 type PromSDSecret struct {
 	Namespace string `yaml:"namespace"`
 	Name      string `yaml:"name"`
+	Selector  string `yaml:"selector"`
 }
 
 // Validate 校验 PromSDSecret 是否合法
 func (p PromSDSecret) Validate() bool {
-	return p.Namespace != "" && p.Name != ""
+	// 优先使用 name 精准匹配
+	if p.Name != "" {
+		if p.Namespace == "" {
+			return false // 精准匹配不允许空 namespace
+		}
+		return true
+	}
+
+	// 使用 selector 匹配
+	if p.Selector == "" {
+		return false // 不允许空 selector
+	}
+	// 空 namespace 则表示匹配所有 namespace 的 secrets
+	return true
 }
 
 // MonitorBlacklistMatchRule monitor 黑名单匹配规则

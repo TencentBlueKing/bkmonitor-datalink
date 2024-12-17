@@ -132,23 +132,29 @@ func (f *QueryFactory) ParserQuery() (err error) {
 	return
 }
 
-func (f *QueryFactory) getTheDateFilters() (theDateFilter string) {
+func (f *QueryFactory) getTheDateFilters() (theDateFilter string, err error) {
 	// bkbase 使用 时区东八区 转换为 thedate
-	loc, _ := time.LoadLocation("Asia/ShangHai")
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return
+	}
+
 	start := f.start.In(loc)
 	end := f.end.In(loc)
 
 	dates := function.RangeDateWithUnit("day", start, end, 1)
 
 	if len(dates) == 0 {
-		return ""
+		return
 	}
 
 	if len(dates) == 1 {
-		return fmt.Sprintf("`%s` = '%s'", theDate, dates[0])
+		theDateFilter = fmt.Sprintf("`%s` = '%s'", theDate, dates[0])
+		return
 	}
 
-	return fmt.Sprintf("`%s` >= '%s' AND `%s` <= '%s'", theDate, dates[0], theDate, dates[len(dates)-1])
+	theDateFilter = fmt.Sprintf("`%s` >= '%s' AND `%s` <= '%s'", theDate, dates[0], theDate, dates[len(dates)-1])
+	return
 }
 
 func (f *QueryFactory) SQL() (sql string, err error) {
@@ -172,7 +178,10 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	f.write("WHERE")
 	f.write(fmt.Sprintf("`%s` >= %d AND `%s` < %d", f.timeField, f.start.UnixMilli(), f.timeField, f.end.UnixMilli()))
 
-	theDateFilter := f.getTheDateFilters()
+	theDateFilter, err := f.getTheDateFilters()
+	if err != nil {
+		return
+	}
 	if theDateFilter != "" {
 		f.write("AND")
 		f.write(theDateFilter)

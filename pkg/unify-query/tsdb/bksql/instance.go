@@ -303,9 +303,6 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	queryFactory := NewQueryFactory(ctx, query).WithRangeTime(start, end)
 
 	sql, err := queryFactory.SQL()
-
-	span.Set("query-series-set-sql", sql)
-
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}

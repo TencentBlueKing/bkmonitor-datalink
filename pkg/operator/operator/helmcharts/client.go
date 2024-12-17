@@ -11,7 +11,6 @@ package helmcharts
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -29,7 +28,7 @@ var helmchartsRevision = promauto.NewGaugeVec(
 		Name:      "helm_charts_revision",
 		Help:      "helm charts revision",
 	},
-	[]string{"name", "namespace", "revision", "updated", "status", "chart", "app_version"},
+	[]string{"name", "namespace", "updated", "status", "chart", "app_version"},
 )
 
 func newMetricMonitor() *metricMonitor {
@@ -42,7 +41,6 @@ func (m *metricMonitor) SetHelmChartsRevision(element ReleaseElement) {
 	helmchartsRevision.WithLabelValues(
 		element.Name,
 		element.Namespace,
-		strconv.Itoa(element.Revision),
 		element.Updated,
 		element.Status,
 		element.Chart,

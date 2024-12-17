@@ -263,7 +263,7 @@ func TestQueryToMetric(t *testing.T) {
 			metric, err := c.query.ToQueryMetric(ctx, spaceUID)
 			assert.Nil(t, err)
 			if err == nil {
-				assert.Equal(t, *c.metric, *metric)
+				assert.JSONEq(t, c.metric.ToJson(true), metric.ToJson(true))
 			}
 		})
 	}

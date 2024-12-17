@@ -61,30 +61,38 @@ type SpaceResultTable struct {
 //go:generate msgp -tests=false
 type ResultTableList []string
 
+type TimeField struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+	Unit string `json:"unit"`
+}
+
+type Record struct {
+	StorageID  string `json:"storage_id,omitempty"`
+	EnableTime int64  `json:"enable_time,omitempty"`
+}
+
 //go:generate msgp -tests=false
 type ResultTableDetail struct {
-	StorageId       int64    `json:"storage_id"`
-	StorageName     string   `json:"storage_name"`
-	StorageType     string   `json:"storage_type"`
-	ClusterName     string   `json:"cluster_name"`
-	DB              string   `json:"db"`
-	TableId         string   `json:"table_id"`
-	Measurement     string   `json:"measurement"`
-	VmRt            string   `json:"vm_rt"`
-	Fields          []string `json:"fields"`
-	MeasurementType string   `json:"measurement_type"`
-	BcsClusterID    string   `json:"bcs_cluster_id"`
-	DataLabel       string   `json:"data_label"`
-	TagsKey         []string `json:"tags_key"`
-	DataId          int64    `json:"bk_data_id"`
-	SourceType      string   `json:"source_type"`
-	Options         struct {
+	StorageId            int64    `json:"storage_id"`
+	StorageName          string   `json:"storage_name"`
+	StorageType          string   `json:"storage_type"`
+	StorageClusterRecord []Record `json:"storage_cluster_record"`
+	ClusterName          string   `json:"cluster_name"`
+	DB                   string   `json:"db"`
+	TableId              string   `json:"table_id"`
+	Measurement          string   `json:"measurement"`
+	VmRt                 string   `json:"vm_rt"`
+	Fields               []string `json:"fields"`
+	MeasurementType      string   `json:"measurement_type"`
+	BcsClusterID         string   `json:"bcs_cluster_id"`
+	DataLabel            string   `json:"data_label"`
+	TagsKey              []string `json:"tags_key"`
+	DataId               int64    `json:"bk_data_id"`
+	SourceType           string   `json:"source_type"`
+	Options              struct {
 		// 自定义时间聚合字段
-		TimeField struct {
-			Name string `json:"name"`
-			Type string `json:"type"`
-			Unit string `json:"unit"`
-		} `json:"time_field"`
+		TimeField TimeField `json:"time_field"`
 		// db 是否拼接时间格式
 		NeedAddTime bool `json:"need_add_time"`
 	} `json:"options"`

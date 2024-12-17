@@ -11,6 +11,7 @@ package metadata
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -31,30 +32,30 @@ const (
 type VmCondition string
 
 type TimeField struct {
-	Name     string
-	Type     string
-	Unit     string
-	UnitRate int64
+	Name     string `json:"name,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Unit     string `json:"unit,omitempty"`
+	UnitRate int64  `json:"unit_rate,omitempty"`
 }
 
 // Aggregate 聚合方法
 type Aggregate struct {
-	Name       string
-	Dimensions []string
-	Without    bool
+	Name       string   `json:"name,omitempty"`
+	Dimensions []string `json:"dimensions,omitempty"`
+	Without    bool     `json:"without"`
 
-	Window   time.Duration
-	TimeZone string
+	Window   time.Duration `json:"window"`
+	TimeZone string        `json:"time_zone"`
 
-	Args []interface{}
+	Args []interface{} `json:"args,omitempty"`
 }
 
 // OffSetInfo Offset的信息存储，供promql查询转换为influxdb查询语句时使用
 type OffSetInfo struct {
-	OffSet  time.Duration
-	Limit   int
-	SOffSet int
-	SLimit  int
+	OffSet  time.Duration `json:"off_set,omitempty"`
+	Limit   int           `json:"limit,omitempty"`
+	SOffSet int           `json:"s_off_set,omitempty"`
+	SLimit  int           `json:"s_limit,omitempty"`
 }
 
 type Aggregates []Aggregate
@@ -226,6 +227,18 @@ func ReplaceVmCondition(condition VmCondition, replaceLabels ReplaceLabels) VmCo
 	}
 
 	return VmCondition(cond)
+}
+
+// ToJson 通过 tableID 排序，并且返回 json 序列化
+func (qMetric QueryMetric) ToJson(isSort bool) string {
+	if isSort {
+		sort.SliceIsSorted(qMetric.QueryList, func(i, j int) bool {
+			return qMetric.QueryList[i].TableID < qMetric.QueryList[j].TableID
+		})
+	}
+
+	s, _ := json.Marshal(qMetric)
+	return string(s)
 }
 
 // ToVmExpand 判断是否是直查，如果都是 vm 查询的情况下，则使用直查模式

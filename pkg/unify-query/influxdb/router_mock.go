@@ -101,11 +101,13 @@ func MockSpaceRouter(ctx context.Context) {
 			"pod_with_replicaset_relation",
 			"apm_service_instance_with_pod_relation",
 			"apm_service_instance_with_system_relation",
+			"kubelet_info",
 		}
 		influxdbFields := []string{
 			"kube_pod_info",
 			"kube_node_info",
 			"kube_node_status_condition",
+			"kubelet_cluster_request_total",
 		}
 
 		tsdb.SetStorage(
@@ -177,6 +179,16 @@ func MockSpaceRouter(ctx context.Context) {
 				},
 			},
 			ir.ResultTableDetailInfo{
+				"result_table.kubelet_info": &ir.ResultTableDetail{
+					StorageId:       2,
+					TableId:         "result_table.kubelet_info",
+					VmRt:            "2_bcs_prom_computation_result_table",
+					Fields:          vmFiedls,
+					DB:              "other",
+					Measurement:     "kubelet_info",
+					BcsClusterID:    "BCS-K8S-00000",
+					MeasurementType: redis.BkSplitMeasurement,
+				},
 				"system.cpu_summary": &ir.ResultTableDetail{
 					StorageId:       2,
 					TableId:         "system.cpu_summary",

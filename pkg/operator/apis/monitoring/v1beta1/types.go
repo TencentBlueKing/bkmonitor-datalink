@@ -59,6 +59,16 @@ func (mr *MonitorResource) MatchSplitNamespace(namespace string) bool {
 	return false
 }
 
+// MatchSplitName name 支持使用【|】分割
+func (mr *MonitorResource) MatchSplitName(name string) bool {
+	for _, s := range strings.Split(mr.Name, "|") {
+		if strings.TrimSpace(s) == name {
+			return true
+		}
+	}
+	return false
+}
+
 type Report struct {
 	MaxMetric   int `json:"maxMetric,omitempty"`
 	MaxSizeByte int `json:"maxSizeByte,omitempty"`

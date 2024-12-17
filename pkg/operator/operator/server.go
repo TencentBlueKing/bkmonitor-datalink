@@ -20,7 +20,6 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/valyala/bytebufferpool"
 	"gopkg.in/yaml.v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
@@ -164,6 +163,11 @@ const (
 - Description: bkmonitor-operator 版本信息
 %s
 `
+	formatHelmChartsVersion = `
+[√] check helmcharts version
+- Description: helmcharts 版本信息
+%s
+`
 	formatKubernetesVersionSuccess = `
 [√] check kubernetes version
 - Description: kubernetes 集群版本为 %s
@@ -262,6 +266,7 @@ const (
 //
 // 检查 kubernetes 版本信息
 // 检查 bkmonitor-operator 版本信息
+// 检查 helmcharts 版本信息
 // 检查 dataids 是否符合预期
 // 检查集群信息
 // 检查 dryrun 标识是否打开
@@ -272,11 +277,8 @@ const (
 // 检查处理 secrets 是否有问题
 // 检查给定关键字监测资源
 func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
-	buf := bytebufferpool.Get()
-	defer bytebufferpool.Put(buf)
-
 	writef := func(format string, a ...interface{}) {
-		buf.WriteString(fmt.Sprintf(format, a...))
+		w.Write([]byte(fmt.Sprintf(format, a...)))
 	}
 
 	metaEnv := configs.G().MetaEnv
@@ -291,6 +293,11 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	// 检查 bkmonitor-operator 版本信息
 	b, _ := json.MarshalIndent(c.buildInfo, "", "  ")
 	writef(formatOperatorVersion, string(b))
+
+	// 检查 helmcharts 版本信息
+	eles := c.helmchartsController.GetByNamespace(configs.G().MonitorNamespace)
+	b, _ = json.MarshalIndent(eles, "", "  ")
+	writef(formatHelmChartsVersion, string(b))
 
 	// 检查 dataids 是否符合预期
 	dataids := c.checkDataIdRoute()
@@ -408,7 +415,6 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writef(formatLogContent, metaEnv.Namespace, metaEnv.PodName)
-	w.Write(buf.Bytes())
 }
 
 func (c *Operator) AdminLoggerRoute(w http.ResponseWriter, r *http.Request) {
@@ -554,16 +560,11 @@ func (c *Operator) LabelJoinRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) {
-	buf := bytebufferpool.Get()
-	defer bytebufferpool.Put(buf)
-
-	c.objectsController.GetNodeRelations(buf)
-	c.objectsController.GetServiceRelations(buf)
-	c.objectsController.GetPodRelations(buf)
-	c.objectsController.GetReplicasetRelations(buf)
-	c.objectsController.GetDataSourceRelations(buf)
-
-	w.Write(buf.Bytes())
+	c.objectsController.WriteNodeRelations(w)
+	c.objectsController.WriteServiceRelations(w)
+	c.objectsController.WritePodRelations(w)
+	c.objectsController.WriteReplicasetRelations(w)
+	c.objectsController.WriteDataSourceRelations(w)
 }
 
 func (c *Operator) RuleMetricsRoute(w http.ResponseWriter, _ *http.Request) {
@@ -576,14 +577,9 @@ func (c *Operator) RuleMetricsRoute(w http.ResponseWriter, _ *http.Request) {
 func (c *Operator) ConfigsRoute(w http.ResponseWriter, _ *http.Request) {
 	b, _ := yaml.Marshal(configs.G())
 
-	buf := bytebufferpool.Get()
-	defer bytebufferpool.Put(buf)
-
-	buf.WriteString("# " + define.ConfigFilePath)
-	buf.WriteString("\n")
-	buf.Write(b)
-
-	w.Write(buf.Bytes())
+	w.Write([]byte("# " + define.ConfigFilePath))
+	w.Write([]byte("\n"))
+	w.Write(b)
 }
 
 func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {

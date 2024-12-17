@@ -22,61 +22,7 @@ import (
 	loggingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
 )
 
-func TestMetricsToPrometheusFormat(t *testing.T) {
-	t.Run("Labels/Count=2", func(t *testing.T) {
-		rows := []relationMetric{
-			{
-				Name: "usage",
-				Labels: []relationLabel{
-					{Name: "cpu", Value: "1"},
-					{Name: "biz", Value: "0"},
-				},
-			},
-			{
-				Name: "usage",
-				Labels: []relationLabel{
-					{Name: "cpu", Value: "2"},
-					{Name: "biz", Value: "0"},
-				},
-			},
-		}
-
-		buf := &bytes.Buffer{}
-		relationBytes(buf, rows...)
-
-		expected := `usage{cpu="1",biz="0"} 1
-usage{cpu="2",biz="0"} 1
-`
-		assert.Equal(t, expected, buf.String())
-	})
-
-	t.Run("Labels/Count=1", func(t *testing.T) {
-		rows := []relationMetric{
-			{
-				Name: "usage",
-				Labels: []relationLabel{
-					{Name: "cpu", Value: "1"},
-				},
-			},
-			{
-				Name: "usage",
-				Labels: []relationLabel{
-					{Name: "cpu", Value: "2"},
-				},
-			},
-		}
-
-		buf := &bytes.Buffer{}
-		relationBytes(buf, rows...)
-
-		expected := `usage{cpu="1"} 1
-usage{cpu="2"} 1
-`
-		assert.Equal(t, expected, buf.String())
-	})
-}
-
-func TestGetPodRelations(t *testing.T) {
+func TestWritePodRelations(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -104,7 +50,7 @@ func TestGetPodRelations(t *testing.T) {
 	}
 
 	buf := &bytes.Buffer{}
-	objectsController.GetPodRelations(buf)
+	objectsController.WritePodRelations(buf)
 
 	expected := `node_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-node-1"} 1
 container_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-node-1",container="test-container-1"} 1
@@ -113,7 +59,7 @@ container_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-no
 	assert.Equal(t, expected, buf.String())
 }
 
-func TestGetDataSourceRelations(t *testing.T) {
+func TestWriteDataSourceRelations(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -328,14 +274,12 @@ func TestGetDataSourceRelations(t *testing.T) {
 
 			objectsController.bkLogConfigObjs = &BkLogConfigMap{
 				entitiesMap: map[string]*bkLogConfigEntity{
-					name: {
-						Obj: bkLogConfig,
-					},
+					name: newBkLogConfigEntity(bkLogConfig),
 				},
 			}
 
 			buf := &bytes.Buffer{}
-			objectsController.GetDataSourceRelations(buf)
+			objectsController.WriteDataSourceRelations(buf)
 
 			for _, s := range c.expected {
 				assert.Contains(t, buf.String(), s)

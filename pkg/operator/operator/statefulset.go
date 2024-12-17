@@ -213,8 +213,12 @@ func (c *Operator) reconcileStatefulSetWorker(configCount int) {
 
 	// 尽力确保 statefulset worker 已经扩容完成再进行任务调度
 	// 避免影响到原有的数据采集（但此操作会卡住 operator 的调度流程）
+	maxRetry := configs.G().StatefulSetWorkerScaleMaxRetry
+	if maxRetry <= 0 {
+		maxRetry = 12 // 1min
+	}
+
 	start := time.Now()
-	const maxRetry = 12 // 1min
 	for i := 0; i < maxRetry; i++ {
 		time.Sleep(notifier.WaitPeriod)
 		statefulset, err := statefulsetClient.Get(c.ctx, statefulSetWorkerName, metav1.GetOptions{})

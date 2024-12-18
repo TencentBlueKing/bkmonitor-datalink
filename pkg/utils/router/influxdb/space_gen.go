@@ -668,49 +668,49 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 				err = msgp.WrapError(err, "StorageType")
 				return
 			}
-		case "StorageClusterRecord":
+		case "StorageClusterRecords":
 			var zb0002 uint32
 			zb0002, err = dc.ReadArrayHeader()
 			if err != nil {
-				err = msgp.WrapError(err, "StorageClusterRecord")
+				err = msgp.WrapError(err, "StorageClusterRecords")
 				return
 			}
-			if cap(z.StorageClusterRecord) >= int(zb0002) {
-				z.StorageClusterRecord = (z.StorageClusterRecord)[:zb0002]
+			if cap(z.StorageClusterRecords) >= int(zb0002) {
+				z.StorageClusterRecords = (z.StorageClusterRecords)[:zb0002]
 			} else {
-				z.StorageClusterRecord = make([]Record, zb0002)
+				z.StorageClusterRecords = make([]Record, zb0002)
 			}
-			for za0001 := range z.StorageClusterRecord {
+			for za0001 := range z.StorageClusterRecords {
 				var zb0003 uint32
 				zb0003, err = dc.ReadMapHeader()
 				if err != nil {
-					err = msgp.WrapError(err, "StorageClusterRecord", za0001)
+					err = msgp.WrapError(err, "StorageClusterRecords", za0001)
 					return
 				}
 				for zb0003 > 0 {
 					zb0003--
 					field, err = dc.ReadMapKeyPtr()
 					if err != nil {
-						err = msgp.WrapError(err, "StorageClusterRecord", za0001)
+						err = msgp.WrapError(err, "StorageClusterRecords", za0001)
 						return
 					}
 					switch msgp.UnsafeString(field) {
 					case "StorageID":
-						z.StorageClusterRecord[za0001].StorageID, err = dc.ReadString()
+						z.StorageClusterRecords[za0001].StorageID, err = dc.ReadString()
 						if err != nil {
-							err = msgp.WrapError(err, "StorageClusterRecord", za0001, "StorageID")
+							err = msgp.WrapError(err, "StorageClusterRecords", za0001, "StorageID")
 							return
 						}
 					case "EnableTime":
-						z.StorageClusterRecord[za0001].EnableTime, err = dc.ReadInt64()
+						z.StorageClusterRecords[za0001].EnableTime, err = dc.ReadInt64()
 						if err != nil {
-							err = msgp.WrapError(err, "StorageClusterRecord", za0001, "EnableTime")
+							err = msgp.WrapError(err, "StorageClusterRecords", za0001, "EnableTime")
 							return
 						}
 					default:
 						err = dc.Skip()
 						if err != nil {
-							err = msgp.WrapError(err, "StorageClusterRecord", za0001)
+							err = msgp.WrapError(err, "StorageClusterRecords", za0001)
 							return
 						}
 					}
@@ -928,26 +928,26 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 		err = msgp.WrapError(err, "StorageType")
 		return
 	}
-	// write "StorageClusterRecord"
-	err = en.Append(0xb4, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x52, 0x65, 0x63, 0x6f, 0x72, 0x64)
+	// write "StorageClusterRecords"
+	err = en.Append(0xb5, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x52, 0x65, 0x63, 0x6f, 0x72, 0x64, 0x73)
 	if err != nil {
 		return
 	}
-	err = en.WriteArrayHeader(uint32(len(z.StorageClusterRecord)))
+	err = en.WriteArrayHeader(uint32(len(z.StorageClusterRecords)))
 	if err != nil {
-		err = msgp.WrapError(err, "StorageClusterRecord")
+		err = msgp.WrapError(err, "StorageClusterRecords")
 		return
 	}
-	for za0001 := range z.StorageClusterRecord {
+	for za0001 := range z.StorageClusterRecords {
 		// map header, size 2
 		// write "StorageID"
 		err = en.Append(0x82, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x44)
 		if err != nil {
 			return
 		}
-		err = en.WriteString(z.StorageClusterRecord[za0001].StorageID)
+		err = en.WriteString(z.StorageClusterRecords[za0001].StorageID)
 		if err != nil {
-			err = msgp.WrapError(err, "StorageClusterRecord", za0001, "StorageID")
+			err = msgp.WrapError(err, "StorageClusterRecords", za0001, "StorageID")
 			return
 		}
 		// write "EnableTime"
@@ -955,9 +955,9 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 		if err != nil {
 			return
 		}
-		err = en.WriteInt64(z.StorageClusterRecord[za0001].EnableTime)
+		err = en.WriteInt64(z.StorageClusterRecords[za0001].EnableTime)
 		if err != nil {
-			err = msgp.WrapError(err, "StorageClusterRecord", za0001, "EnableTime")
+			err = msgp.WrapError(err, "StorageClusterRecords", za0001, "EnableTime")
 			return
 		}
 	}
@@ -1163,17 +1163,17 @@ func (z *ResultTableDetail) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "StorageType"
 	o = append(o, 0xab, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x54, 0x79, 0x70, 0x65)
 	o = msgp.AppendString(o, z.StorageType)
-	// string "StorageClusterRecord"
-	o = append(o, 0xb4, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x52, 0x65, 0x63, 0x6f, 0x72, 0x64)
-	o = msgp.AppendArrayHeader(o, uint32(len(z.StorageClusterRecord)))
-	for za0001 := range z.StorageClusterRecord {
+	// string "StorageClusterRecords"
+	o = append(o, 0xb5, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x52, 0x65, 0x63, 0x6f, 0x72, 0x64, 0x73)
+	o = msgp.AppendArrayHeader(o, uint32(len(z.StorageClusterRecords)))
+	for za0001 := range z.StorageClusterRecords {
 		// map header, size 2
 		// string "StorageID"
 		o = append(o, 0x82, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x44)
-		o = msgp.AppendString(o, z.StorageClusterRecord[za0001].StorageID)
+		o = msgp.AppendString(o, z.StorageClusterRecords[za0001].StorageID)
 		// string "EnableTime"
 		o = append(o, 0xaa, 0x45, 0x6e, 0x61, 0x62, 0x6c, 0x65, 0x54, 0x69, 0x6d, 0x65)
-		o = msgp.AppendInt64(o, z.StorageClusterRecord[za0001].EnableTime)
+		o = msgp.AppendInt64(o, z.StorageClusterRecords[za0001].EnableTime)
 	}
 	// string "ClusterName"
 	o = append(o, 0xab, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x4e, 0x61, 0x6d, 0x65)
@@ -1274,49 +1274,49 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				err = msgp.WrapError(err, "StorageType")
 				return
 			}
-		case "StorageClusterRecord":
+		case "StorageClusterRecords":
 			var zb0002 uint32
 			zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "StorageClusterRecord")
+				err = msgp.WrapError(err, "StorageClusterRecords")
 				return
 			}
-			if cap(z.StorageClusterRecord) >= int(zb0002) {
-				z.StorageClusterRecord = (z.StorageClusterRecord)[:zb0002]
+			if cap(z.StorageClusterRecords) >= int(zb0002) {
+				z.StorageClusterRecords = (z.StorageClusterRecords)[:zb0002]
 			} else {
-				z.StorageClusterRecord = make([]Record, zb0002)
+				z.StorageClusterRecords = make([]Record, zb0002)
 			}
-			for za0001 := range z.StorageClusterRecord {
+			for za0001 := range z.StorageClusterRecords {
 				var zb0003 uint32
 				zb0003, bts, err = msgp.ReadMapHeaderBytes(bts)
 				if err != nil {
-					err = msgp.WrapError(err, "StorageClusterRecord", za0001)
+					err = msgp.WrapError(err, "StorageClusterRecords", za0001)
 					return
 				}
 				for zb0003 > 0 {
 					zb0003--
 					field, bts, err = msgp.ReadMapKeyZC(bts)
 					if err != nil {
-						err = msgp.WrapError(err, "StorageClusterRecord", za0001)
+						err = msgp.WrapError(err, "StorageClusterRecords", za0001)
 						return
 					}
 					switch msgp.UnsafeString(field) {
 					case "StorageID":
-						z.StorageClusterRecord[za0001].StorageID, bts, err = msgp.ReadStringBytes(bts)
+						z.StorageClusterRecords[za0001].StorageID, bts, err = msgp.ReadStringBytes(bts)
 						if err != nil {
-							err = msgp.WrapError(err, "StorageClusterRecord", za0001, "StorageID")
+							err = msgp.WrapError(err, "StorageClusterRecords", za0001, "StorageID")
 							return
 						}
 					case "EnableTime":
-						z.StorageClusterRecord[za0001].EnableTime, bts, err = msgp.ReadInt64Bytes(bts)
+						z.StorageClusterRecords[za0001].EnableTime, bts, err = msgp.ReadInt64Bytes(bts)
 						if err != nil {
-							err = msgp.WrapError(err, "StorageClusterRecord", za0001, "EnableTime")
+							err = msgp.WrapError(err, "StorageClusterRecords", za0001, "EnableTime")
 							return
 						}
 					default:
 						bts, err = msgp.Skip(bts)
 						if err != nil {
-							err = msgp.WrapError(err, "StorageClusterRecord", za0001)
+							err = msgp.WrapError(err, "StorageClusterRecords", za0001)
 							return
 						}
 					}
@@ -1504,9 +1504,9 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *ResultTableDetail) Msgsize() (s int) {
-	s = 3 + 10 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.StorageName) + 12 + msgp.StringPrefixSize + len(z.StorageType) + 21 + msgp.ArrayHeaderSize
-	for za0001 := range z.StorageClusterRecord {
-		s += 1 + 10 + msgp.StringPrefixSize + len(z.StorageClusterRecord[za0001].StorageID) + 11 + msgp.Int64Size
+	s = 3 + 10 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.StorageName) + 12 + msgp.StringPrefixSize + len(z.StorageType) + 22 + msgp.ArrayHeaderSize
+	for za0001 := range z.StorageClusterRecords {
+		s += 1 + 10 + msgp.StringPrefixSize + len(z.StorageClusterRecords[za0001].StorageID) + 11 + msgp.Int64Size
 	}
 	s += 12 + msgp.StringPrefixSize + len(z.ClusterName) + 3 + msgp.StringPrefixSize + len(z.DB) + 8 + msgp.StringPrefixSize + len(z.TableId) + 12 + msgp.StringPrefixSize + len(z.Measurement) + 5 + msgp.StringPrefixSize + len(z.VmRt) + 7 + msgp.ArrayHeaderSize
 	for za0002 := range z.Fields {

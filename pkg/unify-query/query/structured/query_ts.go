@@ -23,12 +23,10 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/offlineDataArchive"
 	queryMod "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
@@ -663,13 +661,6 @@ func (q *Query) BuildMetadataQuery(
 
 	metricName := q.FieldName
 	expandMetricNames := tsDB.ExpandMetricNames
-
-	db := tsDB.DB
-	storageID := tsDB.StorageID
-	storageName := tsDB.StorageName
-	clusterName := tsDB.ClusterName
-	tagKeys := tsDB.TagsKey
-	vmRt := tsDB.VmRt
 	measurement = tsDB.Measurement
 	if measurement != "" {
 		measurements = []string{measurement}
@@ -679,17 +670,18 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("tsdb-measurement-type", tsDB.MeasurementType)
 	span.Set("tsdb-filters", tsDB.Filters)
 	span.Set("tsdb-data-label", tsDB.DataLabel)
-	span.Set("tsdb-storage-id", storageID)
-	span.Set("tsdb-storage-name", storageName)
-	span.Set("tsdb-cluster-name", clusterName)
-	span.Set("tsdb-tag-keys", tagKeys)
-	span.Set("tsdb-vm-rt", vmRt)
-	span.Set("tsdb-db", db)
+	span.Set("tsdb-storage-type", tsDB.StorageType)
+	span.Set("tsdb-storage-id", tsDB.StorageID)
+	span.Set("tsdb-storage-cluster-records", tsDB.StorageClusterRecords)
+	span.Set("tsdb-storage-name", tsDB.StorageName)
+	span.Set("tsdb-cluster-name", tsDB.ClusterName)
+	span.Set("tsdb-tag-keys", tsDB.TagsKey)
+	span.Set("tsdb-vm-rt", tsDB.VmRt)
+	span.Set("tsdb-db", tsDB.DB)
 	span.Set("tsdb-measurements", measurements)
 	span.Set("tsdb-time-field", tsDB.TimeField)
 	span.Set("tsdb-need-add-time", tsDB.NeedAddTime)
 	span.Set("tsdb-source-type", tsDB.SourceType)
-	span.Set("tsdb-storage-type", tsDB.StorageType)
 
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
@@ -820,35 +812,43 @@ func (q *Query) BuildMetadataQuery(
 		query.IsHasOr = true
 	}
 
-	// 通过过期时间判断是否读取归档模块
+	// 通过过期时间判断查询的 storage
 	start, end, _, timezone, err := ToTime(q.Start, q.End, q.Step, q.Timezone)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
-	// tag 路由转换
-	tagRouter, err := influxdb.GetTagRouter(ctx, tsDB.TagsKey, whereList.String())
+	query.StorageIDSet, err = func() (StorageIDSet set.Set[string], err error) {
+		if len(tsDB.StorageClusterRecords) == 0 {
+			return
+		}
+
+		// 遍历 storageClusterRecords 记录，按照开启时间倒序
+		for _, record := range tsDB.StorageClusterRecords {
+			// 开始时间和结束时间分别扩 1h 预留查询量
+			checkStart := start.Add(time.Hour * -1).Unix()
+			checkEnd := end.Add(time.Hour * 1).Unix()
+
+			// 开启时间小于结束时间则加入查询队列
+			if record.EnableTime < checkEnd {
+				StorageIDSet.Add(record.StorageID)
+			}
+
+			// 开启时间小于开始时间，则退出该循环
+			if record.EnableTime < checkStart {
+				return
+			}
+		}
+		return
+	}()
 	if err != nil {
 		return nil, err
 	}
-	// 获取可以查询的 ShardID
-	offlineDataArchiveQuery, _ := offlineDataArchive.GetMetaData().GetReadShardsByTimeRange(
-		ctx, clusterName, tagRouter, db, query.RetentionPolicy, start.UnixNano(), end.UnixNano(),
-	)
 
-	if len(offlineDataArchiveQuery) > 0 {
-		query.StorageID = consul.OfflineDataArchive
-	} else {
-		query.StorageID = storageID
-	}
-
-	// 判断 rt 是否是 bkdata 的数据源
-	query.StorageType = tsDB.StorageType
-	// 兼容原逻辑，storageType 通过 storageMap 获取
-	if query.StorageType == "" {
-		stg, _ := tsdb.GetStorage(storageID)
-		if stg != nil {
-			query.StorageType = stg.Type
+	// 如果 storageIDs 为空，则补充默认的 storageID
+	if query.StorageIDSet.Size() == 0 {
+		if tsDB.StorageID != "" {
+			query.StorageIDSet.Add(tsDB.StorageID)
 		}
 	}
 
@@ -859,15 +859,24 @@ func (q *Query) BuildMetadataQuery(
 		query.StorageType = consul.ElasticsearchStorageType
 	}
 
+	query.StorageType = tsDB.StorageType
+	// 兼容原逻辑，storageType 通过 storageMap 获取
+	if query.StorageType == "" {
+		stg, _ := tsdb.GetStorage(query.StorageIDSet.First())
+		if stg != nil {
+			query.StorageType = stg.Type
+		}
+	}
+
 	query.DataSource = q.DataSource
 	query.TableID = tsDB.TableID
 	query.MetricName = metricName
-	query.ClusterName = clusterName
-	query.TagsKey = tagKeys
-	query.DB = db
-	query.Measurement = measurement
-	query.VmRt = vmRt
-	query.StorageName = storageName
+	query.ClusterName = tsDB.ClusterName
+	query.TagsKey = tsDB.TagsKey
+	query.DB = tsDB.DB
+	query.Measurement = tsDB.Measurement
+	query.VmRt = tsDB.VmRt
+	query.StorageName = tsDB.StorageName
 	query.Field = field
 	query.Timezone = timezone
 	query.Fields = fields
@@ -877,7 +886,7 @@ func (q *Query) BuildMetadataQuery(
 	query.SourceType = tsDB.SourceType
 
 	query.Condition = whereList.String()
-	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)
+	query.VmCondition, query.VmConditionNum = allCondition.VMString(query.VmRt, vmMetric, q.IsRegexp)
 
 	// 写入 ES 所需内容
 	query.QueryString = q.QueryString
@@ -932,6 +941,8 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("query-vm-condition-num", query.VmConditionNum)
 	span.Set("query-is-regexp", q.IsRegexp)
 
+	span.Set("query-storage-id-set", query.StorageIDSet.String())
+	span.Set("query-storage-id", query.StorageID)
 	span.Set("query-storage-type", query.StorageType)
 	span.Set("query-storage-name", query.StorageName)
 
@@ -945,8 +956,8 @@ func (q *Query) BuildMetadataQuery(
 
 func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (parser.Expr, error) {
 	var (
-		metric string
-		err    error
+		metricName string
+		err        error
 
 		originalOffset time.Duration
 		step           time.Duration
@@ -957,7 +968,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 	)
 
 	// 判断是否使用别名作为指标
-	metric = q.ReferenceName
+	metricName = q.ReferenceName
 	if promExprOpt != nil {
 		// 忽略时间聚合函数开关
 		if promExprOpt.IgnoreTimeAggregationEnable {
@@ -978,7 +989,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 
 		// 替换指标名
 		if m, ok := promExprOpt.ReferenceNameMetric[q.ReferenceName]; ok {
-			metric = m
+			metricName = m
 		}
 
 		// 增加 Matchers
@@ -1027,16 +1038,16 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 	}
 
 	if q.IsRegexp {
-		metricMatcher, err := labels.NewMatcher(labels.MatchRegexp, labels.MetricName, metric)
+		metricMatcher, err := labels.NewMatcher(labels.MatchRegexp, labels.MetricName, metricName)
 		if err != nil {
 			return nil, err
 		}
 		matchers = append(matchers, metricMatcher)
-		metric = ""
+		metricName = ""
 	}
 
 	result = &parser.VectorSelector{
-		Name:          metric,
+		Name:          metricName,
 		LabelMatchers: matchers,
 
 		Offset:         q.VectorOffset,

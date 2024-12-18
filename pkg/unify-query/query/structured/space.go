@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -84,8 +85,13 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 	}
 	t.NeedAddTime = d.Options.NeedAddTime
 	t.SourceType = d.SourceType
-	for _, record := range d.StorageClusterRecord {
-		t.StorageClusterRecord = append(t.StorageClusterRecord, query.Record{
+
+	sort.SliceIsSorted(d.StorageClusterRecords, func(i, j int) bool {
+		return d.StorageClusterRecords[i].EnableTime > d.StorageClusterRecords[j].EnableTime
+	})
+
+	for _, record := range d.StorageClusterRecords {
+		t.StorageClusterRecords = append(t.StorageClusterRecords, query.Record{
 			StorageID:  record.StorageID,
 			EnableTime: record.EnableTime,
 		})

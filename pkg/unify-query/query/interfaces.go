@@ -23,6 +23,8 @@ type Record struct {
 	EnableTime int64  `json:"enable_time,omitempty"`
 }
 
+type StorageClusterRecords []Record
+
 // TsDBV2 适配查询语句的结构体，以 TableID + MetricName 为条件，检索出 RT 基本信息和存储信息
 type TsDBV2 struct {
 	TableID         string   `json:"table_id"`
@@ -35,8 +37,8 @@ type TsDBV2 struct {
 	StorageID   string `json:"storage_id,omitempty"`
 	StorageName string `json:"storage_name,omitempty"`
 
-	// StorageClusterRecord
-	StorageClusterRecord []Record `json:"storage_cluster_record"`
+	// StorageClusterRecords
+	StorageClusterRecords StorageClusterRecords `json:"storage_cluster_records"`
 
 	ClusterName string   `json:"cluster_name,omitempty"`
 	TagsKey     []string `json:"tags_key,omitempty"`

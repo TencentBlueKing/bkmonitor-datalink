@@ -27,11 +27,11 @@ import (
 
 // DistributiveWindowOptions all configs
 type DistributiveWindowOptions struct {
-	SubWindowSize               int
-	WatchExpiredInterval        time.Duration
-	ConcurrentProcessCount      int
-	ConcurrentExpirationMaximum int
-	MappingMaxSpanCount         int
+	SubSize                     int           `json:"subSize"`
+	WatchExpiredInterval        time.Duration `json:"watchExpiredInterval"`
+	ConcurrentHandleCount       int           `json:"concurrentHandleCount"`
+	ConcurrentExpirationMaximum int           `json:"concurrentExpirationMaximum"`
+	MappingMaxSpanCount         int           `json:"mappingMaxSpanCount"`
 }
 
 // DistributiveWindow Parent-child window implementation classes.
@@ -64,7 +64,7 @@ func NewDistributiveWindow(
 	window := &DistributiveWindow{
 		dataId:          dataId,
 		config:          specificConfig,
-		observers:       make(map[observer]struct{}, specificConfig.SubWindowSize),
+		observers:       make(map[observer]struct{}, specificConfig.SubSize),
 		ctx:             ctx,
 		saveRequestChan: saveReqChan,
 		logger: monitorLogger.With(
@@ -74,8 +74,8 @@ func NewDistributiveWindow(
 	}
 
 	// Register sub-windows Event
-	subWindowMapping := make(map[int]*distributiveSubWindow, specificConfig.SubWindowSize)
-	for i := 0; i < specificConfig.SubWindowSize; i++ {
+	subWindowMapping := make(map[int]*distributiveSubWindow, specificConfig.SubSize)
+	for i := 0; i < specificConfig.SubSize; i++ {
 		w := newDistributiveSubWindow(
 			dataId, ctx, i, processor, window.saveRequestChan,
 			specificConfig.ConcurrentExpirationMaximum, specificConfig.MappingMaxSpanCount,
@@ -95,22 +95,22 @@ func (w *DistributiveWindow) locate(uni string) *distributiveSubWindow {
 	// Based on the maximum value of int,
 	// avoid uint > maximum value of int to calculate the negative number of subscript.
 	hashValue := int(xxhash.Sum64([]byte(uni)) & uint64(maxInt))
-	return w.subWindows[hashValue%w.config.SubWindowSize]
+	return w.subWindows[hashValue%w.config.SubSize]
 }
 
 func (w *DistributiveWindow) Start(spanChan <-chan []StandardSpan, errorReceiveChan chan<- error, runtimeConfig RuntimeConfig) {
 
 	for ob := range w.observers {
 		ob.assembleRuntimeConfig(runtimeConfig)
-		for i := 0; i < w.config.ConcurrentProcessCount; i++ {
+		for i := 0; i < w.config.ConcurrentHandleCount; i++ {
 			go ob.handleNotify(errorReceiveChan)
 		}
 	}
 
 	go w.startWatch(errorReceiveChan)
 	w.logger.Infof(
-		"DataId: %s created with %d sub-window, %d ConcurrentProcessCount",
-		w.dataId, len(w.observers), w.config.ConcurrentProcessCount,
+		"DataId: %s created with %d sub-window, %d ConcurrentHandleCount",
+		w.dataId, len(w.observers), w.config.ConcurrentHandleCount,
 	)
 
 	go w.Handle(spanChan, errorReceiveChan)

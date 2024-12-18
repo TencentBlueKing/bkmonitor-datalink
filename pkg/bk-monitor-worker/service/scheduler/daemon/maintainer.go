@@ -150,7 +150,7 @@ func (r *RunMaintainer) handleAddTaskBinding(taskBinding TaskBinding) {
 	r.runningInstance.Store(taskBinding.UniId, binding)
 	go r.listenRunningState(taskBinding.UniId, errorReceiveChan, checkerCtx, define.GetTaskDimension(taskBinding.Payload))
 	logger.Infof(
-		"Binding(%s <------> %s) is discovered, task is started, payload: %s",
+		"Binding(%s <------> %s) is discovered, task is starting, payload: %s",
 		taskBinding.UniId, r.listenWorkerId, taskBinding.Payload,
 	)
 }

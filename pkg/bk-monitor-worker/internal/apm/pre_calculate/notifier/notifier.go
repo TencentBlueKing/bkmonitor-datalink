@@ -31,9 +31,9 @@ type Options struct {
 
 	Ctx context.Context
 	// ChanBufferSize The maximum amount of cached data in the queue
-	ChanBufferSize int
+	ChanBufferSize int `json:"chanBufferSize"`
 	// Qps rate limiter
-	Qps int
+	Qps int `json:"qps"`
 }
 
 type notifyForm int

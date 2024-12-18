@@ -90,7 +90,7 @@ type IndexResponse struct {
 
 func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event) {
 	graph := event.Graph
-	if p.config.InfoReportEnabled {
+	if p.config.EnabledTraceInfoReport {
 		exist, err := p.proxy.Exist(storage.ExistRequest{Target: storage.BloomFilter, Key: event.TraceId})
 		if err != nil {
 			p.logger.Warnf(
@@ -108,7 +108,7 @@ func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event)
 		event.Graph = graph
 		p.ToTraceInfo(receiver, event)
 	}
-	if p.config.MetricReportEnabled {
+	if p.config.EnabledTraceMetricsReport {
 		p.metricProcessor.ToMetrics(receiver, graph)
 	}
 }
@@ -123,7 +123,7 @@ func (p *Processor) revertToCollect(event *Event, exists []*StandardSpan) {
 func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 	var spans []*StandardSpan
 
-	if p.config.EnabledInfoCache {
+	if p.config.EnabledTraceInfoCache {
 		// list span data from the cache
 		infoKey := storage.CacheTraceInfoKey.Format(p.dataIdBaseInfo.BkBizId, p.dataIdBaseInfo.AppName, event.TraceId)
 		data, err := p.proxy.Query(storage.QueryRequest{Target: storage.Cache, Data: infoKey})
@@ -404,7 +404,7 @@ func (p *Processor) ToTraceInfo(receiver chan<- storage.SaveRequest, event Event
 }
 
 func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, result ProcessResult, event Event) {
-	if p.config.EnabledInfoCache {
+	if p.config.EnabledTraceInfoCache {
 		spanBytes, _ := jsonx.Marshal(event.Graph.StandardSpans())
 		receiver <- storage.SaveRequest{
 			Target: storage.Cache,
@@ -533,11 +533,11 @@ func collectCollections(collections map[string][]string, spanCollections map[str
 }
 
 type ProcessorOptions struct {
-	EnabledInfoCache          bool
-	TraceEsQueryRate          int
-	MetricReportEnabled       bool
-	InfoReportEnabled         bool
-	MetricLayer4ReportEnabled bool
+	EnabledTraceInfoCache     bool `json:"enabledTraceInfoCache"`
+	TraceEsQueryRate          int  `json:"traceEsQueryRate"`
+	EnabledTraceMetricsReport bool `json:"enabledTraceMetricsReport"`
+	EnabledTraceInfoReport    bool `json:"enabledTraceInfoReport"`
+	EnabledLayer4MetricReport bool `json:"enabledLayer4MetricReport"`
 }
 
 func NewProcessor(ctx context.Context, dataId string, storageProxy *storage.Proxy, opts ProcessorOptions) Processor {
@@ -545,7 +545,7 @@ func NewProcessor(ctx context.Context, dataId string, storageProxy *storage.Prox
 	limiter := rate.NewLimiter(rate.Every(time.Minute/time.Duration(opts.TraceEsQueryRate)), opts.TraceEsQueryRate)
 	logger.Infof(
 		"[NewProcessor] es query limiter, dataId: %s rate: %d metricReport: %t",
-		dataId, opts.TraceEsQueryRate, opts.MetricReportEnabled,
+		dataId, opts.TraceEsQueryRate, opts.EnabledTraceMetricsReport,
 	)
 
 	return Processor{
@@ -559,7 +559,7 @@ func NewProcessor(ctx context.Context, dataId string, storageProxy *storage.Prox
 			zap.String("location", "processor"),
 			zap.String("dataId", dataId),
 		),
-		metricProcessor:        newMetricProcessor(ctx, dataId, opts.MetricLayer4ReportEnabled),
+		metricProcessor:        newMetricProcessor(ctx, dataId, opts.EnabledLayer4MetricReport),
 		baseInfo:               core.GetMetadataCenter().GetBaseInfo(dataId),
 		indexNameLastUpdate:    time.Now().Add(-24 * time.Hour),
 		traceEsOriginIndexName: core.GetMetadataCenter().GetTraceEsConfig(dataId).IndexName,

@@ -14,20 +14,22 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"reflect"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/imdario/mergo"
+	"github.com/oleiade/reflections"
 	"github.com/pkg/errors"
+	"golang.org/x/exp/slices"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
+	remotewrite "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -40,7 +42,7 @@ type Builder interface {
 	WithDistributiveWindowConfig(window.DistributiveWindowOptions) Builder
 	WithProcessorConfig(window.ProcessorOptions) Builder
 	WithStorageConfig(storage.ProxyOptions) Builder
-	WithMetricReport(MetricOptions) Builder
+	WithMetricReport(SidecarOptions) Builder
 	Build() PreCalculateProcessor
 }
 
@@ -51,7 +53,7 @@ type PreCalculateProcessor interface {
 	GetTaskDimension(payload []byte) string
 	Run(errorChan chan<- error)
 
-	StartByDataId(ctx context.Context, startInfo StartInfo, errorReceiveChan chan<- error, config ...PrecalculateOption)
+	StartByDataId(ctx context.Context, startInfo StartInfo, errorReceiveChan chan<- error)
 }
 
 var (
@@ -60,8 +62,8 @@ var (
 )
 
 type StartInfo struct {
-	DataId string `json:"data_id"`
-	Qps    *int   `json:"qps"`
+	DataId string         `json:"data_id"`
+	Config map[string]any `json:"config"`
 }
 
 type Precalculate struct {
@@ -80,13 +82,12 @@ type Precalculate struct {
 
 type PrecalculateOption struct {
 	// window-specific-config
-	distributiveWindowConfig window.DistributiveWindowOptions
-	runtimeConfig            window.RuntimeConfig
-	notifierConfig           notifier.Options
-	processorConfig          window.ProcessorOptions
-	storageConfig            storage.ProxyOptions
-
-	profileReportConfig MetricOptions
+	WindowConfig    window.DistributiveWindowOptions `json:"windowConfig"`
+	RuntimeConfig   window.RuntimeConfig             `json:"runtimeConfig"`
+	NotifierConfig  notifier.Options                 `json:"notifierConfig"`
+	ProcessorConfig window.ProcessorOptions          `json:"processorConfig"`
+	StorageConfig   storage.ProxyOptions             `json:"storageConfig"`
+	SidecarConfig   SidecarOptions                   `json:"sidecarConfig"`
 }
 
 type readySignal struct {
@@ -103,32 +104,32 @@ func (p *Precalculate) WithContext(ctx context.Context, cancel context.CancelFun
 }
 
 func (p *Precalculate) WithNotifierConfig(options notifier.Options) Builder {
-	p.defaultConfig.notifierConfig = options
+	p.defaultConfig.NotifierConfig = options
 	return p
 }
 
 func (p *Precalculate) WithWindowRuntimeConfig(options window.RuntimeConfig) Builder {
-	p.defaultConfig.runtimeConfig = options
+	p.defaultConfig.RuntimeConfig = options
 	return p
 }
 
 func (p *Precalculate) WithDistributiveWindowConfig(options window.DistributiveWindowOptions) Builder {
-	p.defaultConfig.distributiveWindowConfig = options
+	p.defaultConfig.WindowConfig = options
 	return p
 }
 
 func (p *Precalculate) WithProcessorConfig(options window.ProcessorOptions) Builder {
-	p.defaultConfig.processorConfig = options
+	p.defaultConfig.ProcessorConfig = options
 	return p
 }
 
 func (p *Precalculate) WithStorageConfig(options storage.ProxyOptions) Builder {
-	p.defaultConfig.storageConfig = options
+	p.defaultConfig.StorageConfig = options
 	return p
 }
 
-func (p *Precalculate) WithMetricReport(options MetricOptions) Builder {
-	p.defaultConfig.profileReportConfig = options
+func (p *Precalculate) WithMetricReport(options SidecarOptions) Builder {
+	p.defaultConfig.SidecarConfig = options
 	return p
 }
 
@@ -182,7 +183,7 @@ func (p *Precalculate) Start(runInstanceCtx context.Context, errorReceiveChan ch
 	p.StartByDataId(runInstanceCtx, startInfo, errorReceiveChan)
 }
 
-func (p *Precalculate) StartByDataId(runInstanceCtx context.Context, startInfo StartInfo, errorReceiveChan chan<- error, config ...PrecalculateOption) {
+func (p *Precalculate) StartByDataId(runInstanceCtx context.Context, startInfo StartInfo, errorReceiveChan chan<- error) {
 	ticker := time.NewTicker(5 * time.Second)
 loop:
 	for {
@@ -190,45 +191,313 @@ loop:
 		case <-ticker.C:
 			if err := core.GetMetadataCenter().AddDataId(startInfo.DataId); err != nil {
 				apmLogger.Errorf(
-					"Failed to start the pre-calculation with dataId: %s, it will not be executed. error: %s",
+					"[StartByDataId] Failed to start the pre-calculation with dataId: %s, it will not be executed. error: %s",
 					startInfo.DataId, err,
 				)
 				continue
 			}
-
-			var signal readySignal
-			if len(config) == 0 {
-				signal = readySignal{
-					ctx: runInstanceCtx, startInfo: startInfo, config: p.defaultConfig, errorReceiveChan: errorReceiveChan,
-				}
-			} else {
-				// config merge
-				mergeConfig, err := p.MergeConfig(p.defaultConfig, config[0])
+			config := p.defaultConfig
+			if startInfo.Config != nil {
+				taskConfig := PrecalculateOption{}
+				var updateKeys []string
+				updateKeys, err := p.convertMappingToConfig(&taskConfig, startInfo.Config)
 				if err != nil {
-					errorReceiveChan <- err
+					errorReceiveChan <- fmt.Errorf("[StartByDataId] failed to convert json to config(value: %+v), error: %s", startInfo.Config, err)
 					return
-				}
-				signal = readySignal{
-					ctx: runInstanceCtx, startInfo: startInfo, config: mergeConfig, errorReceiveChan: errorReceiveChan,
+				} else {
+					configP, err := mergeConfigs(&config, &taskConfig, updateKeys)
+					config = *configP
+					if err != nil {
+						errorReceiveChan <- fmt.Errorf("[StartByDataId] failed to merge config, error: %s", err)
+						return
+					}
 				}
 			}
-			p.readySignalChan <- signal
-			break loop
+
+			p.readySignalChan <- readySignal{
+				ctx:              runInstanceCtx,
+				startInfo:        startInfo,
+				config:           config,
+				errorReceiveChan: errorReceiveChan,
+			}
+			return
 		case <-runInstanceCtx.Done():
 			logger.Infof("StartByDataId stopped.")
 			ticker.Stop()
 			break loop
 		}
 	}
-
-	apmLogger.Infof("[StartByDataId] done - DataId: %s Qps: %d", startInfo.DataId, startInfo.Qps)
 }
 
-func (p *Precalculate) MergeConfig(defaultConfig, customConfig PrecalculateOption) (PrecalculateOption, error) {
-	if err := mergo.Merge(&defaultConfig, customConfig); err != nil {
-		return PrecalculateOption{}, fmt.Errorf("[Precalculate] failed to merge config, error: %s", err)
+func mergeConfigs[T any](dst, src T, updateKeys []string) (T, error) {
+	dstPointValue := reflect.ValueOf(dst)
+	dstValue := dstPointValue.Elem()
+	dstType := dstValue.Type()
+	structName := dstType.Name()
+
+	for i := 0; i < dstType.NumField(); i++ {
+		fieldName := dstType.Field(i).Name
+		fieldKind, _ := reflections.GetFieldKind(dst, fieldName)
+		if fieldKind == reflect.Struct {
+			dstFieldIns, err := reflections.GetField(dst, fieldName)
+			if err != nil {
+				return dst, err
+			}
+			srcFieldIns, err := reflections.GetField(src, fieldName)
+			if err != nil {
+				return dst, err
+			}
+			// 没举出所有配置类型 如果在这里没有 case 则代表不能配置
+			// 由于 go 语言限制无法做到使用 reflect 来实现 (reflect 都是基于 interface 的在嵌套结构里面无法转换为具体类型)
+			switch dstFieldIns.(type) {
+			case window.DistributiveWindowOptions:
+				dstSpec := dstFieldIns.(window.DistributiveWindowOptions)
+				srcSpec := srcFieldIns.(window.DistributiveWindowOptions)
+				nestedFieldConfig, err := mergeConfigs(&dstSpec, &srcSpec, updateKeys)
+				if err != nil {
+					return dst, err
+				}
+				if err = reflections.SetField(dst, fieldName, *nestedFieldConfig); err != nil {
+					return dst, err
+				}
+			case window.RuntimeConfig:
+				dstSpec := dstFieldIns.(window.RuntimeConfig)
+				srcSpec := srcFieldIns.(window.RuntimeConfig)
+				nestedFieldConfig, err := mergeConfigs(&dstSpec, &srcSpec, updateKeys)
+				if err != nil {
+					return dst, err
+				}
+				if err = reflections.SetField(dst, fieldName, *nestedFieldConfig); err != nil {
+					return dst, err
+				}
+			case notifier.Options:
+				dstSpec := dstFieldIns.(notifier.Options)
+				srcSpec := srcFieldIns.(notifier.Options)
+				nestedFieldConfig, err := mergeConfigs(&dstSpec, &srcSpec, updateKeys)
+				if err != nil {
+					return dst, err
+				}
+				if err = reflections.SetField(dst, fieldName, *nestedFieldConfig); err != nil {
+					return dst, err
+				}
+			case window.ProcessorOptions:
+				dstSpec := dstFieldIns.(window.ProcessorOptions)
+				srcSpec := srcFieldIns.(window.ProcessorOptions)
+				nestedFieldConfig, err := mergeConfigs(&dstSpec, &srcSpec, updateKeys)
+				if err != nil {
+					return dst, err
+				}
+				if err = reflections.SetField(dst, fieldName, *nestedFieldConfig); err != nil {
+					return dst, err
+				}
+			case storage.ProxyOptions:
+				dstSpec := dstFieldIns.(storage.ProxyOptions)
+				srcSpec := srcFieldIns.(storage.ProxyOptions)
+				nestedFieldConfig, err := mergeConfigs(&dstSpec, &srcSpec, updateKeys)
+				if err != nil {
+					return dst, err
+				}
+				if err = reflections.SetField(dst, fieldName, *nestedFieldConfig); err != nil {
+					return dst, err
+				}
+			case SidecarOptions:
+				dstSpec := dstFieldIns.(SidecarOptions)
+				srcSpec := srcFieldIns.(SidecarOptions)
+				nestedFieldConfig, err := mergeConfigs(&dstSpec, &srcSpec, updateKeys)
+				if err != nil {
+					return dst, err
+				}
+				if err = reflections.SetField(dst, fieldName, *nestedFieldConfig); err != nil {
+					return dst, err
+				}
+			case storage.BloomOptions:
+				dstSpec := dstFieldIns.(storage.BloomOptions)
+				srcSpec := srcFieldIns.(storage.BloomOptions)
+				nestedFieldConfig, err := mergeConfigs(&dstSpec, &srcSpec, updateKeys)
+				if err != nil {
+					return dst, err
+				}
+				if err = reflections.SetField(dst, fieldName, *nestedFieldConfig); err != nil {
+					return dst, err
+				}
+			case remotewrite.PrometheusWriterOptions:
+				dstSpec := dstFieldIns.(remotewrite.PrometheusWriterOptions)
+				srcSpec := srcFieldIns.(remotewrite.PrometheusWriterOptions)
+				nestedFieldConfig, err := mergeConfigs(&dstSpec, &srcSpec, updateKeys)
+				if err != nil {
+					return dst, err
+				}
+				if err = reflections.SetField(dst, fieldName, *nestedFieldConfig); err != nil {
+					return dst, err
+				}
+			case storage.MetricConfigOptions:
+				dstSpec := dstFieldIns.(storage.MetricConfigOptions)
+				srcSpec := srcFieldIns.(storage.MetricConfigOptions)
+				nestedFieldConfig, err := mergeConfigs(&dstSpec, &srcSpec, updateKeys)
+				if err != nil {
+					return dst, err
+				}
+				if err = reflections.SetField(dst, fieldName, *nestedFieldConfig); err != nil {
+					return dst, err
+				}
+			case storage.MemoryBloomOptions:
+				dstSpec := dstFieldIns.(storage.MemoryBloomOptions)
+				srcSpec := srcFieldIns.(storage.MemoryBloomOptions)
+				nestedFieldConfig, err := mergeConfigs(&dstSpec, &srcSpec, updateKeys)
+				if err != nil {
+					return dst, err
+				}
+				if err = reflections.SetField(dst, fieldName, *nestedFieldConfig); err != nil {
+					return dst, err
+				}
+			case storage.OverlapBloomOptions:
+				dstSpec := dstFieldIns.(storage.OverlapBloomOptions)
+				srcSpec := srcFieldIns.(storage.OverlapBloomOptions)
+				nestedFieldConfig, err := mergeConfigs(&dstSpec, &srcSpec, updateKeys)
+				if err != nil {
+					return dst, err
+				}
+				if err = reflections.SetField(dst, fieldName, *nestedFieldConfig); err != nil {
+					return dst, err
+				}
+			case storage.LayersBloomOptions:
+				dstSpec := dstFieldIns.(storage.LayersBloomOptions)
+				srcSpec := srcFieldIns.(storage.LayersBloomOptions)
+				nestedFieldConfig, err := mergeConfigs(&dstSpec, &srcSpec, updateKeys)
+				if err != nil {
+					return dst, err
+				}
+				if err = reflections.SetField(dst, fieldName, *nestedFieldConfig); err != nil {
+					return dst, err
+				}
+			case storage.LayersCapDecreaseBloomOptions:
+				dstSpec := dstFieldIns.(storage.LayersCapDecreaseBloomOptions)
+				srcSpec := srcFieldIns.(storage.LayersCapDecreaseBloomOptions)
+				nestedFieldConfig, err := mergeConfigs(&dstSpec, &srcSpec, updateKeys)
+				if err != nil {
+					return dst, err
+				}
+				if err = reflections.SetField(dst, fieldName, *nestedFieldConfig); err != nil {
+					return dst, err
+				}
+			}
+			continue
+		}
+		key := fmt.Sprintf("%s.%s", structName, fieldName)
+		if slices.Contains(updateKeys, key) {
+			srcFieldValue, _ := reflections.GetField(src, fieldName)
+			if err := reflections.SetField(dst, fieldName, srcFieldValue); err != nil {
+				return dst, err
+			}
+		}
 	}
-	return defaultConfig, nil
+
+	return dst, nil
+}
+
+func (p *Precalculate) convertMappingToConfig(resTemplate any, mapping map[string]any) ([]string, error) {
+	var updateKeys []string
+	v := reflect.ValueOf(resTemplate)
+	elem := v.Elem()
+	templateType := elem.Type()
+	structName := templateType.Name()
+	for key, value := range mapping {
+		field, found := templateType.FieldByNameFunc(func(s string) bool {
+			return strings.ToLower(s) == strings.ToLower(key)
+		})
+		if !found {
+			return updateKeys, fmt.Errorf("[Precalculate] find invalid config key: %s from json", key)
+		}
+		fieldType := elem.FieldByName(field.Name)
+
+		if fieldType.IsValid() && fieldType.CanSet() {
+			switch fieldType.Kind() {
+			case reflect.Int:
+				if val, ok := value.(float64); ok {
+					fieldType.SetInt(int64(val))
+				} else {
+					return updateKeys, fmt.Errorf("[Precalculate] find invalid config value: %s of key: %s(type: %s) from json", value, key, fieldType.Kind())
+				}
+			case reflect.Bool:
+				if val, ok := value.(bool); ok {
+					fieldType.SetBool(val)
+				} else {
+					return updateKeys, fmt.Errorf("[Precalculate] find invalid config value: %s of key: %s(type: %s) from json", value, key, fieldType.Kind())
+				}
+			case reflect.Map:
+				if val, ok := value.(map[string]any); ok {
+					fieldType.Set(reflect.MakeMap(fieldType.Type()))
+					for k, v := range val {
+						vStr := v.(string)
+						fieldType.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(vStr))
+					}
+				} else {
+					return updateKeys, fmt.Errorf("[Precalculate] find invalid config value: %s of key: %s(type: %s) from json", value, key, fieldType.Kind())
+				}
+			case reflect.Slice:
+				elemType := fieldType.Type().Elem().Kind()
+				if elemType == reflect.Float64 {
+					if val, ok := value.([]any); ok {
+						slice := reflect.MakeSlice(fieldType.Type(), len(val), len(val))
+						for i, v := range val {
+							if f, ok := v.(float64); ok {
+								slice.Index(i).SetFloat(f)
+							}
+						}
+						fieldType.Set(slice)
+					} else {
+						logger.Warnf("[Precalculate] can not convert value: %s to array of key: %s from json", value, key)
+					}
+				}
+				if elemType == reflect.Int {
+
+					if val, ok := value.([]any); ok {
+						slice := reflect.MakeSlice(fieldType.Type(), len(val), len(val))
+						for i, v := range val {
+							if f, ok := v.(int64); ok {
+								slice.Index(i).SetInt(f)
+							}
+						}
+						fieldType.Set(slice)
+					}
+				}
+			case reflect.String:
+				if val, ok := value.(string); ok {
+					fieldType.SetString(val)
+				}
+			case reflect.Int64:
+				// All types of int64 used in apm configuration are time.Duration
+				if val, ok := value.(string); ok {
+					d, err := time.ParseDuration(val)
+					if err != nil {
+						return updateKeys, fmt.Errorf("[Precalculate] failed to convert value: %s to duration of key: %s from json", value, key)
+					}
+					fieldType.SetInt(int64(d))
+				} else if val, ok := value.(int64); ok {
+					fieldType.SetInt(val)
+				} else {
+					return updateKeys, fmt.Errorf("[Precalculate] not supported field type(value: %s) of key: %s from json", value, key)
+				}
+			case reflect.Struct:
+				nestedFieldInstance := reflect.New(fieldType.Type()).Interface()
+				if nestedMap, ok := value.(map[string]any); ok {
+					nestedUpdateKeys, err := p.convertMappingToConfig(nestedFieldInstance, nestedMap)
+					if err != nil {
+						return updateKeys, err
+					}
+					fieldType.Set(reflect.ValueOf(nestedFieldInstance).Elem())
+					updateKeys = append(updateKeys, nestedUpdateKeys...)
+				}
+			default:
+				logger.Warnf("[Precalculate] find not supported type: %s of field: %+v", fieldType.Kind(), field)
+				continue
+			}
+			updateKeys = append(updateKeys, fmt.Sprintf("%s.%s", structName, field.Name))
+		} else {
+			return updateKeys, fmt.Errorf("[Precalculate] find invalid config key: %s from json", key)
+		}
+	}
+	return updateKeys, nil
 }
 
 func (p *Precalculate) Run(runSuccess chan<- error) {
@@ -287,24 +556,18 @@ type RunInstance struct {
 	windowHandler window.Operation
 	proxy         *storage.Proxy
 
-	RuntimeCollector ProfileCollector
+	RuntimeCollector SidecarCollector
 }
 
 func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 	kafkaConfig := core.GetMetadataCenter().GetKafkaConfig(p.startInfo.DataId)
 	groupId := "go-apm-pre-calculate-consumer-group"
-	var qps int
-	if p.startInfo.Qps == nil {
-		qps = config.NotifierMessageQps
-	} else {
-		qps = *p.startInfo.Qps
-	}
 
 	n, err := notifier.NewNotifier(
 		notifier.KafkaNotifier,
 		p.startInfo.DataId,
 		notifier.Options{
-			ChanBufferSize: p.config.notifierConfig.ChanBufferSize,
+			ChanBufferSize: p.config.NotifierConfig.ChanBufferSize,
 			Ctx:            p.ctx,
 			KafkaConfig: notifier.KafkaConfig{
 				KafkaGroupId:  groupId,
@@ -313,7 +576,7 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 				KafkaPassword: kafkaConfig.Password,
 				KafkaTopic:    kafkaConfig.Topic,
 			},
-			Qps: qps,
+			Qps: p.config.NotifierConfig.Qps,
 		},
 	)
 	if err != nil {
@@ -327,7 +590,7 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 
 func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpan, saveReqChan chan<- storage.SaveRequest) {
 
-	processor := window.NewProcessor(p.ctx, p.startInfo.DataId, p.proxy, p.config.processorConfig)
+	processor := window.NewProcessor(p.ctx, p.startInfo.DataId, p.proxy, p.config.ProcessorConfig)
 
 	operation := window.Operation{
 		Operator: window.NewDistributiveWindow(
@@ -335,10 +598,10 @@ func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpa
 			p.ctx,
 			processor,
 			saveReqChan,
-			p.config.distributiveWindowConfig,
+			p.config.WindowConfig,
 		),
 	}
-	operation.Run(messageChan, p.errorReceiveChan, p.config.runtimeConfig)
+	operation.Run(messageChan, p.errorReceiveChan, p.config.RuntimeConfig)
 
 	p.windowHandler = operation
 }
@@ -351,12 +614,12 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 		p.startInfo.DataId,
 		p.ctx,
 		storage.ProxyOptions{
-			WorkerCount:      p.config.storageConfig.WorkerCount,
-			SaveHoldDuration: p.config.storageConfig.SaveHoldDuration,
-			SaveHoldMaxCount: p.config.storageConfig.SaveHoldMaxCount,
-			CacheBackend:     p.config.storageConfig.CacheBackend,
-			RedisCacheConfig: p.config.storageConfig.RedisCacheConfig,
-			BloomConfig:      p.config.storageConfig.BloomConfig,
+			WorkerCount:         p.config.StorageConfig.WorkerCount,
+			SaveHoldMaxDuration: p.config.StorageConfig.SaveHoldMaxDuration,
+			SaveHoldMaxCount:    p.config.StorageConfig.SaveHoldMaxCount,
+			CacheBackend:        p.config.StorageConfig.CacheBackend,
+			RedisCacheConfig:    p.config.StorageConfig.RedisCacheConfig,
+			BloomConfig:         p.config.StorageConfig.BloomConfig,
 			TraceEsConfig: storage.EsOptions{
 				Host:      traceEsConfig.Host,
 				Username:  traceEsConfig.Username,
@@ -369,11 +632,8 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 				Password:  saveEsConfig.Password,
 				IndexName: saveEsConfig.IndexName,
 			},
-			PrometheusWriterConfig: remote.PrometheusWriterOptions{
-				Url:     config.PromRemoteWriteUrl,
-				Headers: config.PromRemoteWriteHeaders,
-			},
-			MetricsConfig: p.config.storageConfig.MetricsConfig,
+			PrometheusWriterConfig: p.config.StorageConfig.PrometheusWriterConfig,
+			MetricsConfig:          p.config.StorageConfig.MetricsConfig,
 		},
 	)
 	if err != nil {
@@ -387,9 +647,9 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 }
 
 func (p *RunInstance) startRuntimeCollector() {
-	p.RuntimeCollector = NewProfileCollector(p.ctx, p.config.profileReportConfig, p.startInfo.DataId)
+	p.RuntimeCollector = NewProfileCollector(p.ctx, p.config.SidecarConfig, p.startInfo.DataId)
 
-	if !p.config.profileReportConfig.EnabledProfile {
+	if !p.config.SidecarConfig.EnabledProfile {
 		apmLogger.Infof("[!] profileConfig is not configured, the profile will not be reported")
 	} else {
 		p.RuntimeCollector.StartReport()
@@ -400,10 +660,10 @@ func (p *RunInstance) startRuntimeCollector() {
 
 func (p *RunInstance) startRecordSemaphoreAcquired() {
 
-	ticker := time.NewTicker(p.RuntimeCollector.config.ReportInterval)
+	ticker := time.NewTicker(p.RuntimeCollector.config.MetricsReportInterval)
 	apmLogger.Infof(
 		"[RecordSemaphoreAcquired] start report chan metric every %s",
-		p.RuntimeCollector.config.ReportInterval,
+		p.RuntimeCollector.config.MetricsReportInterval,
 	)
 	for {
 		select {

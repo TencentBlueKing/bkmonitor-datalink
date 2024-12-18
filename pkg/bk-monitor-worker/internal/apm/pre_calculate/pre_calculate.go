@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -28,6 +29,7 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 		WithNotifierConfig(
 			notifier.Options{
 				ChanBufferSize: config.NotifierChanBufferSize,
+				Qps:            config.NotifierMessageQps,
 			},
 		).
 		WithWindowRuntimeConfig(
@@ -41,28 +43,29 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 		).
 		WithDistributiveWindowConfig(
 			window.DistributiveWindowOptions{
-				SubWindowSize:               config.DistributiveWindowSubSize,
+				SubSize:                     config.DistributiveWindowSubSize,
 				WatchExpiredInterval:        config.DistributiveWindowWatchExpireInterval,
-				ConcurrentProcessCount:      config.DistributiveWindowHandleEventConcurrentCount,
+				ConcurrentHandleCount:       config.DistributiveWindowHandleEventConcurrentCount,
 				ConcurrentExpirationMaximum: config.DistributiveWindowConcurrentExpirationMaximum,
 				MappingMaxSpanCount:         config.DistributiveWindowSubWindowMappingMaxSpanCount,
 			},
 		).
 		WithProcessorConfig(
 			window.ProcessorOptions{
-				EnabledInfoCache:          config.EnabledTraceInfoCache != 0,
+				EnabledTraceInfoCache:     config.EnabledTraceInfoCache != 0,
 				TraceEsQueryRate:          config.TraceEsQueryRate,
-				MetricReportEnabled:       config.EnabledTraceMetricsReport,
-				InfoReportEnabled:         config.EnabledTraceInfoReport,
-				MetricLayer4ReportEnabled: config.MetricsProcessLayer4ExportEnabled,
+				EnabledTraceMetricsReport: config.EnabledTraceMetricsReport,
+				EnabledTraceInfoReport:    config.EnabledTraceInfoReport,
+				EnabledLayer4MetricReport: config.MetricsProcessLayer4ExportEnabled,
 			},
 		).
 		WithStorageConfig(
 			storage.ProxyOptions{
-				WorkerCount:      config.StorageWorkerCount,
-				SaveHoldDuration: config.StorageSaveHoldMaxDuration,
-				SaveHoldMaxCount: config.StorageSaveHoldMaxCount,
-				CacheBackend:     storage.CacheTypeRedis,
+				SaveRequestBufferSize: config.StorageSaveRequestBufferSize,
+				WorkerCount:           config.StorageWorkerCount,
+				SaveHoldMaxDuration:   config.StorageSaveHoldMaxDuration,
+				SaveHoldMaxCount:      config.StorageSaveHoldMaxCount,
+				CacheBackend:          storage.CacheTypeRedis,
 				RedisCacheConfig: storage.RedisCacheOptions{
 					Mode:             config.StorageRedisMode,
 					Host:             config.StorageRedisStandaloneHost,
@@ -97,15 +100,19 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 					FlowMetricMemDuration:     config.FlowMetricsInMemDuration,
 					FlowMetricBuckets:         storage.ConvertMetricFlowBuckets(config.MetricsDurationBuckets),
 				},
+				PrometheusWriterConfig: remote.PrometheusWriterOptions{
+					Url:     config.PromRemoteWriteUrl,
+					Headers: config.PromRemoteWriteHeaders,
+				},
 			},
 		).
 		WithMetricReport(
-			MetricOptions{
-				EnabledProfile: config.ProfileEnabled,
-				ProfileAddress: config.ProfileHost,
-				ProfileToken:   config.ProfileToken,
-				ProfileAppIdx:  config.ProfileAppIdx,
-				ReportInterval: config.SemaphoreReportInterval,
+			SidecarOptions{
+				EnabledProfile:        config.ProfileEnabled,
+				ProfileAddress:        config.ProfileHost,
+				ProfileToken:          config.ProfileToken,
+				ProfileAppIdx:         config.ProfileAppIdx,
+				MetricsReportInterval: config.SemaphoreReportInterval,
 			},
 		).
 		Build(), nil

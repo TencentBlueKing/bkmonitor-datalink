@@ -24,11 +24,11 @@ type Runtime struct {
 
 // RuntimeConfig Different processing logic for different Windows needs to be implemented based on runtime.
 type RuntimeConfig struct {
-	MaxSize                 int
-	ExpireInterval          time.Duration
-	MaxDuration             time.Duration
-	ExpireIntervalIncrement time.Duration
-	NoDataMaxDuration       time.Duration
+	MaxSize                 int           `json:"maxSize"`
+	ExpireInterval          time.Duration `json:"expireInterval"`
+	MaxDuration             time.Duration `json:"maxDuration"`
+	ExpireIntervalIncrement time.Duration `json:"expireIntervalIncrement"`
+	NoDataMaxDuration       time.Duration `json:"noDataMaxDuration"`
 }
 
 // ReentrantRuntimeStrategy Configure the runtime policy.

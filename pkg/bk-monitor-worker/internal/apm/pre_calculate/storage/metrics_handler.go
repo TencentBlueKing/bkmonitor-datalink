@@ -37,9 +37,9 @@ type PrometheusStorageData struct {
 }
 
 type MetricConfigOptions struct {
-	RelationMetricMemDuration time.Duration
-	FlowMetricMemDuration     time.Duration
-	FlowMetricBuckets         []float64
+	RelationMetricMemDuration time.Duration `json:"relationMetricMemDuration"`
+	FlowMetricMemDuration     time.Duration `json:"flowMetricMemDuration"`
+	FlowMetricBuckets         []float64     `json:"flowMetricBuckets"`
 }
 
 func ConvertMetricFlowBuckets(b []float64) []float64 {

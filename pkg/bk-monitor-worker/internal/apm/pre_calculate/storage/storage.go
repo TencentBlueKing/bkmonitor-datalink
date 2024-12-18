@@ -54,23 +54,23 @@ const (
 
 type ProxyOptions struct {
 	// WorkerCount Number of workers processing SaveRequest.
-	WorkerCount int
+	WorkerCount int `json:"workerCount"`
 
-	SaveHoldDuration time.Duration
-	SaveHoldMaxCount int
+	SaveHoldMaxDuration time.Duration `json:"saveHoldMaxDuration"`
+	SaveHoldMaxCount    int           `json:"saveHoldMaxCount"`
 
-	CacheBackend     CacheType
+	CacheBackend     CacheType `json:"cacheBackend"`
 	RedisCacheConfig RedisCacheOptions
-	BloomConfig      BloomOptions
+	BloomConfig      BloomOptions `json:"bloomConfig"`
 
 	TraceEsConfig EsOptions
 	SaveEsConfig  EsOptions
 
-	PrometheusWriterConfig remotewrite.PrometheusWriterOptions
-	MetricsConfig          MetricConfigOptions
+	PrometheusWriterConfig remotewrite.PrometheusWriterOptions `json:"prometheusWriterConfig"`
+	MetricsConfig          MetricConfigOptions                 `json:"metricsConfig"`
 
-	// SaveReqBufferSize Number of queue capacity that hold SaveRequest
-	SaveReqBufferSize int
+	// SaveRequestBufferSize Number of queue capacity that hold SaveRequest
+	SaveRequestBufferSize int `json:"saveRequestBufferSize"`
 }
 
 type Backend interface {
@@ -126,7 +126,7 @@ func (p *Proxy) watchSaveRequestChan() {
 func (p *Proxy) ReceiveSaveRequest(errorReceiveChan chan<- error) {
 	defer runtimex.HandleCrashToChan(errorReceiveChan)
 
-	ticker := time.NewTicker(p.config.SaveHoldDuration)
+	ticker := time.NewTicker(p.config.SaveHoldMaxDuration)
 	esSaveData := make([]EsStorageData, 0, p.config.SaveHoldMaxCount)
 	cacheSaveData := make([]CacheStorageData, 0, p.config.SaveHoldMaxCount)
 loop:
@@ -295,7 +295,7 @@ func NewProxyInstance(dataId string, ctx context.Context, opt ProxyOptions) (*Pr
 		bloomFilter:              bloomFilter,
 		prometheusMetricsHandler: NewMetricDimensionHandler(ctx, dataId, opt.PrometheusWriterConfig, opt.MetricsConfig),
 		ctx:                      ctx,
-		saveRequestChan:          make(chan SaveRequest, opt.SaveReqBufferSize),
+		saveRequestChan:          make(chan SaveRequest, opt.SaveRequestBufferSize),
 		logger:                   monitorLogger.With(zap.String("name", "storage"), zap.String("dataId", dataId)),
 	}, nil
 }

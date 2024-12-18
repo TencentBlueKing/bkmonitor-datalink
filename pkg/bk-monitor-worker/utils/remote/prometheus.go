@@ -32,8 +32,8 @@ const (
 )
 
 type PrometheusWriterOptions struct {
-	Url     string
-	Headers map[string]string
+	Url     string            `json:"url"`
+	Headers map[string]string `json:"headers"`
 }
 
 type PrometheusWriter struct {

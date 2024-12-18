@@ -17,30 +17,29 @@ import (
 	"github.com/grafana/pyroscope-go"
 )
 
-type ProfileCollector struct {
+type SidecarCollector struct {
 	ctx    context.Context
 	dataId string
-	config MetricOptions
+	config SidecarOptions
 }
 
-type MetricOptions struct {
-	EnabledProfile bool
-	ProfileAddress string
-	ProfileToken   string
-	ProfileAppIdx  string
-
-	ReportInterval time.Duration
+type SidecarOptions struct {
+	EnabledProfile        bool          `json:"enabledProfile"`
+	ProfileAddress        string        `json:"profileAddress"`
+	ProfileToken          string        `json:"profileToken"`
+	ProfileAppIdx         string        `json:"profileAppIdx"`
+	MetricsReportInterval time.Duration `json:"metricsReportInterval"`
 }
 
-func NewProfileCollector(ctx context.Context, o MetricOptions, dataId string) ProfileCollector {
-	return ProfileCollector{config: o, ctx: ctx, dataId: dataId}
+func NewProfileCollector(ctx context.Context, o SidecarOptions, dataId string) SidecarCollector {
+	return SidecarCollector{config: o, ctx: ctx, dataId: dataId}
 }
 
-func (r *ProfileCollector) StartReport() {
+func (r *SidecarCollector) StartReport() {
 	go r.startProfiling(r.dataId, r.config.ProfileAppIdx)
 }
 
-func (r *ProfileCollector) startProfiling(dataId, appIdx string) {
+func (r *SidecarCollector) startProfiling(dataId, appIdx string) {
 	appName := fmt.Sprintf("apm_precalculate-%s", appIdx)
 	profiler, err := pyroscope.Start(pyroscope.Config{
 		ApplicationName: appName,

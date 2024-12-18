@@ -41,14 +41,14 @@ type BloomOperator interface {
 
 // BloomOptions config of bloom-filter
 type BloomOptions struct {
-	FpRate float64
+	FpRate float64 `json:"fpRate"`
 
-	NormalMemoryBloomOptions    MemoryBloomOptions
+	NormalMemoryBloomOptions    MemoryBloomOptions `json:"normalMemoryBloomConfig"`
 	NormalMemoryQuotientOptions QuotientFilterOptions
 
-	NormalOverlapBloomOptions     OverlapBloomOptions
-	LayersBloomOptions            LayersBloomOptions
-	LayersCapDecreaseBloomOptions LayersCapDecreaseBloomOptions
+	NormalOverlapBloomOptions     OverlapBloomOptions           `json:"normalOverlapBloomConfig"`
+	LayersBloomOptions            LayersBloomOptions            `json:"layersBloomConfig"`
+	LayersCapDecreaseBloomOptions LayersCapDecreaseBloomOptions `json:"layersCapDecreaseBloomConfig"`
 }
 
 type RedisNormalBloom struct {
@@ -76,7 +76,7 @@ func newRedisBloomClient(rConfig RedisCacheOptions, opts BloomOptions) (BloomOpe
 }
 
 type MemoryBloomOptions struct {
-	AutoClean time.Duration
+	AutoClean time.Duration `json:"autoClean"`
 }
 
 type MemoryBloom struct {
@@ -168,7 +168,7 @@ func newQuotientFilter(fpRate float64, resetDuration time.Duration, options Quot
 }
 
 type OverlapBloomOptions struct {
-	ResetDuration time.Duration
+	ResetDuration time.Duration `json:"resetDuration"`
 }
 
 type OverlapBloomOption func(*OverlapBloomOptions)
@@ -290,7 +290,7 @@ func newOverlapBloomClient(dataId string, ctx context.Context, f boom.Filter, ca
 }
 
 type LayersBloomOptions struct {
-	Layers int
+	Layers int `json:"layers"`
 }
 
 type layerStrategy func(string) []byte
@@ -371,9 +371,9 @@ func newLayersBloomClient(options BloomOptions) (BloomOperator, error) {
 }
 
 type LayersCapDecreaseBloomOptions struct {
-	Cap     int
-	Layers  int
-	Divisor int
+	Cap     int `json:"cap"`
+	Layers  int `json:"layers"`
+	Divisor int `json:"divisor"`
 }
 
 // LayersCapDecreaseOverlapBloom Layers + overlap filter.

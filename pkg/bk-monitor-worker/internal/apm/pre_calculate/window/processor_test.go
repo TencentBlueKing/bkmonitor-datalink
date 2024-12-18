@@ -175,7 +175,7 @@ func initialProcessor(t *testing.T, dataId string, enabledMetrics bool) Processo
 
 	return Processor{
 		dataId:         dataId,
-		config:         ProcessorOptions{MetricReportEnabled: enabledMetrics},
+		config:         ProcessorOptions{EnabledTraceMetricsReport: enabledMetrics},
 		dataIdBaseInfo: core.BaseInfo{},
 		proxy:          mockStorage,
 		logger: monitorLogger.With(

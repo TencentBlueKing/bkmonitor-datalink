@@ -67,9 +67,9 @@ func ComposeTableIDStorageClusterRecords(db *gorm.DB, tableID string) ([]map[str
 	// 查询数据库：过滤 table_id 和 is_deleted，按 create_time 升序排列
 
 	err := NewClusterRecordQuerySet(db).
-		TableIDEq(tableID).     // 过滤 table_id
-		IsDeletedEq(false).     // 过滤 is_deleted = false
-		OrderAscByCreateTime(). // 按 create_time 升序
+		TableIDEq(tableID).      // 过滤 table_id
+		IsDeletedEq(false).      // 过滤 is_deleted = false
+		OrderDescByCreateTime(). // 按 create_time 倒序
 		Select("cluster_id", "enable_time", "is_current").
 		All(&records)
 

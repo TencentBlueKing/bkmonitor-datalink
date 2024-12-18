@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/spf13/viper"
@@ -275,12 +276,16 @@ func MockSpaceRouter(ctx context.Context) {
 func setSpaceTsDbMockData(ctx context.Context, bkAppSpace ir.BkAppSpace, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo, fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
 	mockRedisOnce.Do(func() {
 		setRedisClient(ctx)
+
 	})
 
-	sr, err := SetSpaceTsDbRouter(ctx, "mock", "mock", "", 100)
+	mockPath := "mock" + time.Now().String()
+	sr, err := SetSpaceTsDbRouter(ctx, mockPath, mockPath, "", 5, false)
 	if err != nil {
 		panic(err)
 	}
+	sr.cache.Clear()
+
 	for bkApp, spaceUidList := range bkAppSpace {
 		err = sr.Add(ctx, ir.BkAppToSpaceKey, bkApp, spaceUidList)
 		if err != nil {

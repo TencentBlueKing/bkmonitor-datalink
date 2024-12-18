@@ -69,9 +69,9 @@ type Query struct {
 
 	StorageType string // 存储类型
 
-	StorageIDSet set.Set[string]
-	StorageID    string
-	StorageName  string
+	StorageIDs  []string
+	StorageID   string
+	StorageName string
 
 	ClusterName string
 	TagsKey     []string

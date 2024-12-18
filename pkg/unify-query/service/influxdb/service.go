@@ -313,7 +313,7 @@ func (s *Service) reloadInfluxDBRouter(ctx context.Context) error {
 
 // reloadInfluxDBRouter 重新加载 SpaceTsDbRouter
 func (s *Service) reloadSpaceTsDbRouter(ctx context.Context) error {
-	ir, err := inner.SetSpaceTsDbRouter(ctx, SpaceRouterBboltPath, SpaceRouterBboltBucketName, SpaceRouterPrefix, SpaceRouterBboltWriteBatchSize)
+	ir, err := inner.SetSpaceTsDbRouter(ctx, SpaceRouterBboltPath, SpaceRouterBboltBucketName, SpaceRouterPrefix, SpaceRouterBboltWriteBatchSize, true)
 	if err != nil {
 		return err
 	}

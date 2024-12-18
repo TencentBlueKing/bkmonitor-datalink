@@ -38,7 +38,7 @@ type TsDBV2 struct {
 	StorageName string `json:"storage_name,omitempty"`
 
 	// StorageClusterRecords
-	StorageClusterRecords StorageClusterRecords `json:"storage_cluster_records"`
+	StorageClusterRecords StorageClusterRecords `json:"storage_cluster_records,omitempty"`
 
 	ClusterName string   `json:"cluster_name,omitempty"`
 	TagsKey     []string `json:"tags_key,omitempty"`

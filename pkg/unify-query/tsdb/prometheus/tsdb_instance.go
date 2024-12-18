@@ -95,20 +95,24 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			MaxRouting: tsDBService.EsMaxRouting,
 		}
 
-		var connects []elasticsearch.Connect
 		if qry.SourceType == structured.BkData {
-			connects = append(connects, elasticsearch.Connect{Address: bkapi.GetBkDataAPI().QueryUrlForES(user.SpaceUid)})
+			opt.Connects = append(opt.Connects, elasticsearch.Connect{Address: bkapi.GetBkDataAPI().QueryUrlForES(user.SpaceUid)})
 			opt.Headers = bkapi.GetBkDataAPI().Headers(nil)
 			opt.HealthCheck = false
 		} else {
-			for _, sid := range qry.StorageIDSet.ToArray() {
+			storages := qry.StorageIDs
+			if len(storages) == 0 {
+				storages = []string{qry.StorageID}
+			}
+
+			for _, sid := range storages {
 				stg, _ := tsdb.GetStorage(sid)
 				if stg == nil {
 					err = fmt.Errorf("%s storage list is empty in %s", consul.ElasticsearchStorageType, qry.StorageID)
 					continue
 				}
 
-				connects = append(connects, elasticsearch.Connect{
+				opt.Connects = append(opt.Connects, elasticsearch.Connect{
 					Address:  stg.Address,
 					UserName: stg.Username,
 					Password: stg.Password,

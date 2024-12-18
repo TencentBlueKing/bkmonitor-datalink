@@ -812,17 +812,22 @@ func (q *Query) BuildMetadataQuery(
 		query.IsHasOr = true
 	}
 
+	query.StorageID = tsDB.StorageID
+	query.StorageType = tsDB.StorageType
+
 	// 通过过期时间判断查询的 storage
 	start, end, _, timezone, err := ToTime(q.Start, q.End, q.Step, q.Timezone)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
-	query.StorageIDSet, err = func() (StorageIDSet set.Set[string], err error) {
+
+	query.StorageIDs, err = func() (StorageIDs []string, err error) {
 		if len(tsDB.StorageClusterRecords) == 0 {
 			return
 		}
 
+		storageIDSet := set.New[string]()
 		// 遍历 storageClusterRecords 记录，按照开启时间倒序
 		for _, record := range tsDB.StorageClusterRecords {
 			// 开始时间和结束时间分别扩 1h 预留查询量
@@ -831,25 +836,19 @@ func (q *Query) BuildMetadataQuery(
 
 			// 开启时间小于结束时间则加入查询队列
 			if record.EnableTime < checkEnd {
-				StorageIDSet.Add(record.StorageID)
+				storageIDSet.Add(record.StorageID)
 			}
 
 			// 开启时间小于开始时间，则退出该循环
 			if record.EnableTime < checkStart {
-				return
+				break
 			}
 		}
-		return
+
+		return storageIDSet.ToArray(), nil
 	}()
 	if err != nil {
 		return nil, err
-	}
-
-	// 如果 storageIDs 为空，则补充默认的 storageID
-	if query.StorageIDSet.Size() == 0 {
-		if tsDB.StorageID != "" {
-			query.StorageIDSet.Add(tsDB.StorageID)
-		}
 	}
 
 	// 在 metadata 还没有补充 storageType 字段之前
@@ -859,14 +858,19 @@ func (q *Query) BuildMetadataQuery(
 		query.StorageType = consul.ElasticsearchStorageType
 	}
 
-	query.StorageType = tsDB.StorageType
 	// 兼容原逻辑，storageType 通过 storageMap 获取
 	if query.StorageType == "" {
-		stg, _ := tsdb.GetStorage(query.StorageIDSet.First())
+		stg, _ := tsdb.GetStorage(query.StorageID)
 		if stg != nil {
 			query.StorageType = stg.Type
 		}
 	}
+
+	query.Measurement = measurement
+	query.Measurements = measurements
+	query.Field = field
+	query.Fields = fields
+	query.Timezone = timezone
 
 	query.DataSource = q.DataSource
 	query.TableID = tsDB.TableID
@@ -874,13 +878,8 @@ func (q *Query) BuildMetadataQuery(
 	query.ClusterName = tsDB.ClusterName
 	query.TagsKey = tsDB.TagsKey
 	query.DB = tsDB.DB
-	query.Measurement = tsDB.Measurement
 	query.VmRt = tsDB.VmRt
 	query.StorageName = tsDB.StorageName
-	query.Field = field
-	query.Timezone = timezone
-	query.Fields = fields
-	query.Measurements = measurements
 	query.TimeField = tsDB.TimeField
 	query.NeedAddTime = tsDB.NeedAddTime
 	query.SourceType = tsDB.SourceType
@@ -941,7 +940,7 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("query-vm-condition-num", query.VmConditionNum)
 	span.Set("query-is-regexp", q.IsRegexp)
 
-	span.Set("query-storage-id-set", query.StorageIDSet.String())
+	span.Set("query-storage-ids", query.StorageIDs)
 	span.Set("query-storage-id", query.StorageID)
 	span.Set("query-storage-type", query.StorageType)
 	span.Set("query-storage-name", query.StorageName)

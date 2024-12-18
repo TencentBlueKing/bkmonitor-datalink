@@ -1132,3 +1132,165 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
 
 }
+
+func TestSpacePusher_ComposeData(t *testing.T) {
+	// 初始化数据库
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(&storage.ESStorage{}, &resulttable.ResultTable{}, &storage.ClusterRecord{})
+
+	// 准备测试数据
+	spaceType := "bkcc"
+	spaceId := "1001"
+	tableID1 := "1001_bkmonitor_time_series_50010.__default__"
+	tableID2 := "1001_bkmonitor_time_series_50011.__default__"
+	tableID3 := "1001_bkmonitor_time_series_50012.__default__"
+	var defaultFilters []map[string]interface{}
+
+	// 数据源表
+	dataSources := []resulttable.DataSource{
+		{
+			BkDataId:         50010,
+			DataName:         "data_link_test",
+			EtlConfig:        "bk_standard_v2_time_series",
+			IsPlatformDataId: true,
+		},
+		{
+			BkDataId:         50011,
+			DataName:         "data_link_test_2",
+			EtlConfig:        "bk_standard_v2_time_series",
+			IsPlatformDataId: true,
+		},
+		{
+			BkDataId:         50012,
+			DataName:         "data_link_test_3",
+			EtlConfig:        "test",
+			IsPlatformDataId: false,
+		},
+	}
+
+	// 插入 DataSource 数据
+	for _, ds := range dataSources {
+		db.Delete(&resulttable.DataSource{}, "bk_data_id = ?", ds.BkDataId)
+		assert.NoError(t, db.Create(&ds).Error, "Failed to insert DataSource")
+	}
+
+	// 插入 ResultTable 数据
+	resultTables := []resulttable.ResultTable{
+		{
+			TableId:      tableID1,
+			BkBizId:      1001,
+			BkBizIdAlias: "appid",
+		},
+		{
+			TableId:      tableID2,
+			BkBizId:      1001,
+			BkBizIdAlias: "",
+		},
+		{
+			TableId:      tableID3,
+			BkBizId:      1002,
+			BkBizIdAlias: "",
+		},
+	}
+	for _, rt := range resultTables {
+		db.Delete(&resulttable.ResultTable{}, "table_id = ?", rt.TableId)
+		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
+	}
+
+	// 插入 SpaceDataSource 数据
+	spaceDataSources := []space.SpaceDataSource{
+		{
+			SpaceTypeId: "bkcc",
+			SpaceId:     "1001",
+			BkDataId:    50010,
+		},
+		{
+			SpaceTypeId: "bkcc",
+			SpaceId:     "1001",
+			BkDataId:    50011,
+		},
+		{
+			SpaceTypeId: "bkcc",
+			SpaceId:     "1002",
+			BkDataId:    50012,
+		},
+	}
+	for _, sds := range spaceDataSources {
+		db.Delete(&space.SpaceDataSource{}, "bk_data_id = ?", sds.BkDataId)
+		assert.NoError(t, db.Create(&sds).Error, "Failed to insert SpaceDataSource")
+	}
+
+	// 插入 AccessVMRecord 数据
+	accessVMRecords := []storage.AccessVMRecord{
+		{
+			ResultTableId:   tableID1,
+			BkBaseDataId:    50010,
+			VmResultTableId: "1001_vm_test_50010",
+			BkBaseDataName:  "data_link_test",
+		},
+		{
+			ResultTableId:   tableID2,
+			BkBaseDataId:    50011,
+			VmResultTableId: "1001_vm_test_50011",
+			BkBaseDataName:  "data_link_test_2",
+		},
+		{
+			ResultTableId:   tableID3,
+			BkBaseDataId:    50012,
+			VmResultTableId: "1001_vm_test_50012",
+			BkBaseDataName:  "data_link_test_3",
+		},
+	}
+	for _, avm := range accessVMRecords {
+		db.Delete(&storage.AccessVMRecord{}, "result_table_id = ?", avm.ResultTableId)
+		assert.NoError(t, db.Create(&avm).Error, "Failed to insert AccessVMRecord")
+	}
+
+	dsRts := []resulttable.DataSourceResultTable{
+		{
+			TableId:  tableID1,
+			BkDataId: 50010,
+		},
+		{
+			TableId:  tableID2,
+			BkDataId: 50011,
+		},
+		{
+			TableId:  tableID3,
+			BkDataId: 50012,
+		},
+	}
+	for _, dsrt := range dsRts {
+		db.Delete(&resulttable.DataSourceResultTable{}, "table_id = ?", dsrt.TableId)
+		assert.NoError(t, db.Create(&dsrt).Error, "Failed to insert DataSourceResultTable")
+	}
+
+	// 捕获日志输出
+	var logBuffer bytes.Buffer
+	log.SetOutput(&logBuffer)
+	defer log.SetOutput(nil)
+
+	// 执行测试方法
+	pusher := NewSpacePusher()
+
+	// 测试空间 1001 的 composeData
+	valuesForCreator, err := pusher.composeData(spaceType, spaceId, []string{}, defaultFilters, nil)
+	assert.NoError(t, err, "composeData should not return an error")
+
+	expectedForCreator := map[string]map[string]interface{}{
+		tableID1: {"filters": []map[string]interface{}{}},
+		tableID2: {"filters": []map[string]interface{}{}},
+	}
+	assert.Equal(t, expectedForCreator, valuesForCreator, "Unexpected result for space 1001")
+
+	// 测试空间 1003 的 composeData
+	valuesForOthers, err := pusher.composeData(spaceType, "1003", []string{}, defaultFilters, nil)
+	assert.NoError(t, err, "composeData should not return an error")
+
+	expectedForOthers := map[string]map[string]interface{}{
+		tableID1: {"filters": []map[string]interface{}{{"appid": "1003"}}},
+		tableID2: {"filters": []map[string]interface{}{{"bk_biz_id": "1003"}}},
+	}
+	assert.Equal(t, expectedForOthers, valuesForOthers, "Unexpected result for space 1003")
+}

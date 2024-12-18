@@ -1578,10 +1578,23 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 			IsPlatformDataId: ds.IsPlatformDataId,
 		}
 	}
-	// 判断是否添加过滤条件
+	// 查询结果表，同时获取 bk_biz_id_alias 字段
 	var rtList []resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.SchemaType, resulttable.ResultTableDBSchema.DataLabel).TableIdIn(tableIds...).All(&rtList); err != nil {
+	if err := resulttable.NewResultTableQuerySet(db).
+		Select(
+			resulttable.ResultTableDBSchema.TableId,
+			resulttable.ResultTableDBSchema.SchemaType,
+			resulttable.ResultTableDBSchema.DataLabel,
+			resulttable.ResultTableDBSchema.BkBizIdAlias, // 查询 bk_biz_id_alias
+		).
+		TableIdIn(tableIds...).
+		All(&rtList); err != nil {
 		return nil, err
+	}
+	// 构建 table_id -> bk_biz_id_alias 的映射
+	bkBizIdAliasMap := make(map[string]string)
+	for _, rt := range rtList {
+		bkBizIdAliasMap[rt.TableId] = rt.BkBizIdAlias
 	}
 	// 获取结果表对应的类型
 	measurementTypeMap, err := s.getMeasurementTypeByTableId(tableIds, rtList, tableIdDataIdMap)
@@ -1633,7 +1646,13 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 		} else {
 			filters := make([]map[string]interface{}, 0)
 			if s.isNeedFilterForBkcc(measurementType, spaceType, spaceId, detail, isExistSpace) {
-				filters = append(filters, map[string]interface{}{"bk_biz_id": spaceId})
+				// 默认使用 bk_biz_id，若存在别名，则使用别名
+				bkBizIdKey := "bk_biz_id"
+				if alias, ok := bkBizIdAliasMap[tid]; ok && alias != "" {
+					logger.Infof("table_id [%s] got bk_biz_id_alias [%s]", tid, alias)
+					bkBizIdKey = alias
+				}
+				filters = append(filters, map[string]interface{}{bkBizIdKey: spaceId})
 			}
 			valueData[tid] = map[string]interface{}{"filters": filters}
 		}

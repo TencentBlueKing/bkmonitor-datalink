@@ -389,7 +389,7 @@ func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, fact *F
 	return
 }
 
-func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryResult, error) {
+func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult, mergeFunc func(...[]prompb.Sample) []prompb.Sample) (*prompb.QueryResult, error) {
 	seriesMap := make(map[string]*prompb.TimeSeries)
 
 	for ret := range rets {
@@ -409,7 +409,7 @@ func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryRe
 				}
 			}
 
-			seriesMap[key].Samples = append(seriesMap[key].Samples, ts.Samples...)
+			seriesMap[key].Samples = mergeFunc(seriesMap[key].Samples, ts.Samples)
 		}
 
 		ret.TimeSeriesMap = nil
@@ -421,10 +421,6 @@ func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryRe
 		Timeseries: make([]*prompb.TimeSeries, 0, len(seriesMap)),
 	}
 	for _, ts := range seriesMap {
-		sort.Slice(ts.Samples, func(i, j int) bool {
-			return ts.Samples[i].GetTimestamp() < ts.Samples[j].GetTimestamp()
-		})
-
 		qr.Timeseries = append(qr.Timeseries, ts)
 	}
 
@@ -679,7 +675,7 @@ func (i *Instance) QuerySeriesSet(
 		wg.Wait()
 	}()
 
-	qr, err := i.mergeTimeSeries(rets)
+	qr, err := i.mergeTimeSeries(rets, function.MergeSamplesWithSumAndSort)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}

@@ -26,7 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/httpx"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 )
 
@@ -115,7 +115,7 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 	host := fmt.Sprintf("http://%s:%d", configs.G().ServiceName, configs.G().HTTP.Port)
 	params := map[string]string{}
 
-	rules := stringx.SplitTrim(t.RelabelRule, ",")
+	rules := utils.SplitTrim(t.RelabelRule, ",")
 	for _, rule := range rules {
 		switch rule {
 		case relabelV1RuleWorkload:

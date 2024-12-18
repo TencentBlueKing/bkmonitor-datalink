@@ -24,8 +24,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/target"
@@ -62,7 +62,7 @@ func (c *Operator) checkStatefulSetMatchRules(childConfig *discover.ChildConfig)
 	var matched bool
 	for _, rule := range configs.G().StatefulSetMatchRules {
 		// Kind/Namespace 为必选项
-		if stringx.LowerEq(rule.Kind, meta.Kind) && rule.Namespace == meta.Namespace {
+		if utils.LowerEq(rule.Kind, meta.Kind) && rule.Namespace == meta.Namespace {
 			// 1) 如果 rule 中 name 为空表示命中所有的 resource
 			// 2) 如果 rule 中 name 不为空则要求精准匹配
 			if rule.Name == "" || rule.Name == meta.Name {

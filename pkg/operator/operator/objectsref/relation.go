@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/promfmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 )
 
 const (
@@ -59,7 +60,7 @@ func (oc *ObjectsController) WriteServiceRelations(w io.Writer) {
 		for _, svc := range services {
 			if len(svc.selector) > 0 {
 				for _, pod := range pods {
-					if !matchLabels(svc.selector, pod.Labels) {
+					if !utils.MatchSubLabels(svc.selector, pod.Labels) {
 						continue
 					}
 					promfmt.FmtBytes(w, promfmt.Metric{

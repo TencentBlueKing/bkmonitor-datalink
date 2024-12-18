@@ -19,6 +19,7 @@ import (
 
 	"github.com/prometheus/prometheus/prompb"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
@@ -131,6 +132,31 @@ func (f *QueryFactory) ParserQuery() (err error) {
 	return
 }
 
+func (f *QueryFactory) getTheDateFilters() (theDateFilter string, err error) {
+	// bkbase 使用 时区东八区 转换为 thedate
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return
+	}
+
+	start := f.start.In(loc)
+	end := f.end.In(loc)
+
+	dates := function.RangeDateWithUnit("day", start, end, 1)
+
+	if len(dates) == 0 {
+		return
+	}
+
+	if len(dates) == 1 {
+		theDateFilter = fmt.Sprintf("`%s` = '%s'", theDate, dates[0])
+		return
+	}
+
+	theDateFilter = fmt.Sprintf("`%s` >= '%s' AND `%s` <= '%s'", theDate, dates[0], theDate, dates[len(dates)-1])
+	return
+}
+
 func (f *QueryFactory) SQL() (sql string, err error) {
 	f.sql.Reset()
 	err = f.ParserQuery()
@@ -151,6 +177,16 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	f.write(db)
 	f.write("WHERE")
 	f.write(fmt.Sprintf("`%s` >= %d AND `%s` < %d", f.timeField, f.start.UnixMilli(), f.timeField, f.end.UnixMilli()))
+
+	theDateFilter, err := f.getTheDateFilters()
+	if err != nil {
+		return
+	}
+	if theDateFilter != "" {
+		f.write("AND")
+		f.write(theDateFilter)
+	}
+
 	if f.query.BkSqlCondition != "" {
 		f.write("AND")
 		f.write("(" + f.query.BkSqlCondition + ")")

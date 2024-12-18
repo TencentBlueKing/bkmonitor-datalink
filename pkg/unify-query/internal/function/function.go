@@ -10,6 +10,8 @@
 package function
 
 import (
+	"time"
+
 	"github.com/prometheus/prometheus/model/labels"
 )
 
@@ -23,4 +25,41 @@ func MatcherToMetricName(matchers ...*labels.Matcher) string {
 	}
 
 	return ""
+}
+
+func RangeDateWithUnit(unit string, start, end time.Time, step int) (dates []string) {
+	var (
+		addYear  int
+		addMonth int
+		addDay   int
+		toDate   func(t time.Time) time.Time
+		format   string
+	)
+
+	switch unit {
+	case "year":
+		addYear = step
+		format = "2006"
+		toDate = func(t time.Time) time.Time {
+			return time.Date(t.Year(), 1, 1, 0, 0, 0, 0, t.Location())
+		}
+	case "month":
+		addMonth = step
+		format = "200601"
+		toDate = func(t time.Time) time.Time {
+			return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
+		}
+	default:
+		addDay = step
+		format = "20060102"
+		toDate = func(t time.Time) time.Time {
+			return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+		}
+	}
+
+	for d := toDate(start); !d.After(toDate(end)); d = d.AddDate(addYear, addMonth, addDay) {
+		dates = append(dates, d.Format(format))
+	}
+
+	return dates
 }

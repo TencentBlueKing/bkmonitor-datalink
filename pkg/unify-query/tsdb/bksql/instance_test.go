@@ -126,6 +126,8 @@ func TestInstance_bkSql(t *testing.T) {
 	end := time.UnixMilli(1718193555000)
 
 	testCases := []struct {
+		start time.Time
+		end   time.Time
 		query *metadata.Query
 
 		expected string
@@ -143,7 +145,7 @@ func TestInstance_bkSql(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 15000))) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND (namespace REGEXP '^(bgp2\\-new|gz100)$') GROUP BY `namespace`, (`dtEventTimeStamp` - (`dtEventTimeStamp` % 15000)) ORDER BY `_timestamp_` ASC",
+			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 15000))) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' AND (namespace REGEXP '^(bgp2\\-new|gz100)$') GROUP BY `namespace`, (`dtEventTimeStamp` - (`dtEventTimeStamp` % 15000)) ORDER BY `_timestamp_` ASC",
 		},
 		{
 			query: &metadata.Query{
@@ -156,7 +158,7 @@ func TestInstance_bkSql(t *testing.T) {
 				},
 			},
 
-			expected: "SELECT SUM(`value`) AS `_value_` FROM `132_hander_opmon_avg` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000",
+			expected: "SELECT SUM(`value`) AS `_value_` FROM `132_hander_opmon_avg` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612'",
 		},
 		{
 			query: &metadata.Query{
@@ -165,7 +167,7 @@ func TestInstance_bkSql(t *testing.T) {
 				Field:       "value",
 				Size:        5,
 			},
-			expected: "SELECT *, `value` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 LIMIT 5",
+			expected: "SELECT *, `value` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' LIMIT 5",
 		},
 		{
 			query: &metadata.Query{
@@ -176,7 +178,7 @@ func TestInstance_bkSql(t *testing.T) {
 					"_time": false,
 				},
 			},
-			expected: "SELECT *, `value` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 ORDER BY `_timestamp_` DESC",
+			expected: "SELECT *, `value` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' ORDER BY `_timestamp_` DESC",
 		},
 		{
 			query: &metadata.Query{
@@ -194,14 +196,52 @@ func TestInstance_bkSql(t *testing.T) {
 				Size: 5,
 			},
 
-			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 GROUP BY `ip` LIMIT 5",
+			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' GROUP BY `ip` LIMIT 5",
+		},
+		{
+			start: time.Unix(1733756400, 0),
+			end:   time.Unix(1733846399, 0),
+			query: &metadata.Query{
+				DB:    "101068_MatchFullLinkTimeConsumptionFlow_CostTime",
+				Field: "matchstep_start_to_fail_0_100",
+				Aggregates: metadata.Aggregates{
+					{
+						Name: "count",
+					},
+				},
+			},
+
+			expected: "SELECT COUNT(`matchstep_start_to_fail_0_100`) AS `_value_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime` WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` < 1733846399000 AND `thedate` >= '20241209' AND `thedate` <= '20241210'",
+		},
+		{
+			start: time.Unix(1733756400, 0),
+			end:   time.Unix(1733846399, 0),
+			query: &metadata.Query{
+				DB:    "101068_MatchFullLinkTimeConsumptionFlow_CostTime",
+				Field: "matchstep_start_to_fail_0_100",
+				Aggregates: metadata.Aggregates{
+					{
+						Name:   "count",
+						Window: time.Hour,
+					},
+				},
+			},
+
+			expected: "SELECT COUNT(`matchstep_start_to_fail_0_100`) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 3600000))) AS `_timestamp_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime` WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` < 1733846399000 AND `thedate` >= '20241209' AND `thedate` <= '20241210' GROUP BY (`dtEventTimeStamp` - (`dtEventTimeStamp` % 3600000)) ORDER BY `_timestamp_` ASC",
 		},
 	}
 
 	for i, c := range testCases {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
-			sql, err := NewQueryFactory(ctx, c.query).WithRangeTime(start, end).SQL()
+			if c.start.Unix() == 0 {
+				c.start = start
+			}
+			if c.end.Unix() == 0 {
+				c.end = end
+			}
+
+			sql, err := NewQueryFactory(ctx, c.query).WithRangeTime(c.start, c.end).SQL()
 			assert.Nil(t, err)
 			if err == nil {
 				assert.Equal(t, c.expected, sql)

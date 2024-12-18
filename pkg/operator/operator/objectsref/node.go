@@ -96,7 +96,7 @@ func (n *NodeMap) NameExists(name string) (string, bool) {
 
 		matched := utils.MatchSubLabels(configs.G().DaemonSetWorkerIgnoreNodeLabels, node.Labels)
 		if matched {
-			return "", false
+			return name, false
 		}
 	}
 

@@ -15,10 +15,12 @@ import (
 	"errors"
 	"io"
 	nethttp "net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 
 	"github.com/golang/mock/gomock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
@@ -249,4 +251,30 @@ func (s *GatherSuite) TestUpdateEventByResponse() {
 			s.Equalf(tt.want.charset, tt.args.event.Charset, "UpdateEventByResponse() Charset = %v, want %v", tt.args.event.Charset, tt.want.charset)
 		})
 	}
+}
+
+func TestNewClient302Response(t *testing.T) {
+	// 创建一个返回302的测试服务器
+	ts := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		nethttp.Redirect(w, r, "http://example.com", nethttp.StatusFound)
+	}))
+	defer ts.Close()
+
+	// 创建一个HTTPTaskConfig
+	taskConf := configs.NewHTTPTaskConfig()
+
+	// 创建一个Client
+	client := http.NewClient(taskConf, nil)
+
+	// 创建一个请求
+	req, err := nethttp.NewRequest("GET", ts.URL, nil)
+	assert.NoError(t, err)
+
+	// 执行请求
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	// 验证响应码
+	assert.Equal(t, nethttp.StatusFound, resp.StatusCode)
 }

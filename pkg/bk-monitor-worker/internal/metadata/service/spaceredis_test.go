@@ -10,8 +10,10 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"testing"
 	"time"
 
@@ -683,6 +685,7 @@ func insertTestData[T any](t *testing.T, db *gorm.DB, objs []T) {
 	for _, obj := range objs {
 		err := db.Create(&obj).Error
 		assert.NoError(t, err)
+		t.Logf("Inserted data: %+v", obj) // 打印插入的数据
 	}
 }
 
@@ -1034,4 +1037,98 @@ func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
 	}
 
 	assert.Equal(t, expected, actual)
+}
+
+func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
+	// 初始化数据库
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	// 准备测试数据
+	tableID := "bklog.test_rt"
+	tableID2 := "bklog.test_rt2"
+	storageClusterID := uint(1)
+	sourceType := "log"
+	indexSet := "index_1"
+
+	db.AutoMigrate(&storage.ESStorage{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
+
+	// 插入 ESStorage 数据
+	esStorages := []storage.ESStorage{
+		{
+			TableID:          tableID,
+			StorageClusterID: storageClusterID,
+			SourceType:       sourceType,
+			IndexSet:         indexSet,
+			NeedCreateIndex:  true,
+		},
+		{
+			TableID:          tableID2,
+			StorageClusterID: storageClusterID,
+			SourceType:       sourceType,
+			IndexSet:         indexSet,
+			NeedCreateIndex:  true,
+		},
+	}
+	for _, esStorage := range esStorages {
+		db.Delete(&storage.ESStorage{}, "table_id = ?", esStorage.TableID)
+		err := db.Create(&esStorage).Error
+		assert.NoError(t, err, "Failed to insert ESStorage")
+	}
+
+	// 插入 ResultTableOption 数据
+	tableOption := resulttable.ResultTableOption{
+		TableID: tableID,
+		Name:    "shard_count",
+		OptionBase: models.OptionBase{
+			Value:      `{"shards": 3}`,
+			ValueType:  "json",
+			Creator:    "system",
+			CreateTime: time.Now(),
+		},
+	}
+	assert.NoError(t, db.Create(&tableOption).Error, "Failed to insert ResultTableOption")
+
+	now := time.Now()
+	// 插入StorageClusterRecord数据
+	testRecords := []storage.ClusterRecord{
+		{
+			TableID:     tableID,
+			ClusterID:   1,
+			IsDeleted:   false,
+			IsCurrent:   true,
+			Creator:     "test_creator",
+			CreateTime:  now,
+			EnableTime:  &now,
+			DisableTime: nil,
+			DeleteTime:  nil,
+		},
+		{
+			TableID:     tableID,
+			ClusterID:   2,
+			IsDeleted:   false,
+			IsCurrent:   true,
+			Creator:     "test_creator",
+			CreateTime:  now,
+			EnableTime:  &now,
+			DisableTime: nil,
+			DeleteTime:  nil,
+		},
+	}
+	// 执行插入
+	for _, record := range testRecords {
+		db.Delete(&storage.ClusterRecord{}, "table_id = ? AND cluster_id = ?", tableID, record.ClusterID)
+		err := db.Create(&record).Error
+		assert.NoError(t, err, "Failed to insert StorageClusterRecord")
+	}
+
+	// 捕获日志输出
+	var logBuffer bytes.Buffer
+	log.SetOutput(&logBuffer) // 将日志输出到 buffer
+	defer log.SetOutput(nil)  // 恢复原始日志输出
+
+	// 执行测试方法
+	pusher := NewSpacePusher()
+	err := pusher.PushEsTableIdDetail([]string{tableID, tableID2}, false)
+	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
+
 }

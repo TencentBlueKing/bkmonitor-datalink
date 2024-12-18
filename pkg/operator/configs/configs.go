@@ -202,20 +202,20 @@ type Config struct {
 	// EnableDaemonSetWorker 是否启用 daemonset worker 调度
 	EnableDaemonSetWorker bool `yaml:"enable_daemonset_worker"`
 
-	// EnableEndpointSlice 是否启用 endpointslice 特性（kubernetes 版本要求 >= 1.22
+	// EnableEndpointSlice 是否启用 endpointslice 特性（kubernetes 版本要求 >= 1.22)
 	EnableEndpointSlice bool `yaml:"enable_endpointslice"`
 
 	// DispatchInterval 调度周期（单位秒）
 	DispatchInterval int64 `yaml:"dispatch_interval"`
-
-	// NodeSecretRatio 最大支持的 secrets 数量 maxSecrets = node x ratio
-	NodeSecretRatio float64 `yaml:"node_secret_ratio"`
 
 	// StatefulSetWorkerHpa 是否开启 statefulset worker HPA 特性
 	StatefulSetWorkerHpa bool `yaml:"statefulset_worker_hpa"`
 
 	// StatefulSetWorkerFactor statefulset worker 调度因子 即单 worker 最多支持的 secrets 数量
 	StatefulSetWorkerFactor float64 `yaml:"statefulset_worker_factor"`
+
+	// StatefulSetWorkerScaleMaxRetry statefulset worker 调度最大重试次数
+	StatefulSetWorkerScaleMaxRetry int `yaml:"statefulset_worker_scale_max_retry"`
 
 	// StatefulSetReplicas statefulset worker 最小副本数
 	StatefulSetReplicas int `yaml:"statefulset_replicas"`
@@ -341,9 +341,6 @@ func (c *Config) setup() {
 	}
 	if c.DispatchInterval <= 0 {
 		c.DispatchInterval = 30 // 默认调度周期为 30s
-	}
-	if c.NodeSecretRatio <= 0 {
-		c.NodeSecretRatio = 2.0
 	}
 }
 

@@ -96,7 +96,7 @@ func (m *ServiceMap) Del(service *corev1.Service) {
 	}
 }
 
-func (m *ServiceMap) rangeServices(visitFunc func(namespace string, services serviceEntities)) {
+func (m *ServiceMap) Range(visitFunc func(namespace string, services serviceEntities)) {
 	m.mut.Lock()
 	defer m.mut.Unlock()
 

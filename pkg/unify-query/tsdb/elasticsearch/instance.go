@@ -29,6 +29,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -471,15 +472,6 @@ func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryRe
 	return qr, nil
 }
 
-func timeToDate(t time.Time, unit string) time.Time {
-	switch unit {
-	case "month":
-		return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
-	default:
-		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
-	}
-}
-
 func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time, timezone string) ([]string, error) {
 	var (
 		aliases []string
@@ -512,12 +504,7 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 	span.Set("left", left)
 
 	var (
-		dateFormat string
-		addDay     int
-		addMonth   int
-
-		startTime time.Time
-		endTime   time.Time
+		unit string
 	)
 
 	if left > int64(time.Hour.Seconds()*24*14) {
@@ -526,21 +513,17 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 			start = end.Add(halfYear * -1)
 		}
 
-		startTime = timeToDate(start, "month")
-		endTime = timeToDate(end, "month")
-		dateFormat = "200601"
-		addMonth = 1
+		unit = "month"
 	} else {
-		startTime = timeToDate(start, "day")
-		endTime = timeToDate(end, "day")
-		dateFormat = "20060102"
-		addDay = 1
+		unit = "day"
 	}
 
 	newAliases := make([]string, 0)
-	for d := startTime; !d.After(endTime); d = d.AddDate(0, addMonth, addDay) {
+	dates := function.RangeDateWithUnit(unit, start, end, 1)
+
+	for _, d := range dates {
 		for _, alias := range aliases {
-			newAliases = append(newAliases, fmt.Sprintf("%s_%s*", alias, d.Format(dateFormat)))
+			newAliases = append(newAliases, fmt.Sprintf("%s_%s*", alias, d))
 		}
 	}
 

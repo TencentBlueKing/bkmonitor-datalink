@@ -126,14 +126,6 @@ var (
 		[]string{"trigger"},
 	)
 
-	secretsExceeded = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "secrets_exceeded",
-			Help:      "secrets exceeded",
-		},
-	)
-
 	statefulSetWorkerCount = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitorNamespace,
@@ -215,10 +207,6 @@ func (m *metricMonitor) IncHandledSecretFailedCounter(name, action string, err e
 
 func (m *metricMonitor) IncDispatchedTaskCounter(trigger string) {
 	dispatchedTaskTotal.WithLabelValues(trigger).Inc()
-}
-
-func (m *metricMonitor) IncSecretsExceededCounter() {
-	secretsExceeded.Inc()
 }
 
 func (m *metricMonitor) ObserveDispatchedTaskDuration(trigger string, t time.Time) {

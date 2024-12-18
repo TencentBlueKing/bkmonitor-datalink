@@ -264,13 +264,13 @@ func (c *Operator) recordMetrics() {
 	c.wg.Add(1)
 	defer c.wg.Done()
 
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			c.mm.UpdateUptime(5)
+			c.mm.UpdateUptime(15)
 			c.mm.SetAppBuildInfo(c.buildInfo)
 			c.updateNodeConfigMetrics()
 			c.updateMonitorEndpointMetrics()

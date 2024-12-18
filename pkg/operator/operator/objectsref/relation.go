@@ -55,9 +55,9 @@ func (oc *ObjectsController) WriteNodeRelations(w io.Writer) {
 
 func (oc *ObjectsController) WriteServiceRelations(w io.Writer) {
 	oc.serviceObjs.Range(func(namespace string, services serviceEntities) {
+		pods := oc.podObjs.GetByNamespace(namespace)
 		for _, svc := range services {
 			if len(svc.selector) > 0 {
-				pods := oc.podObjs.GetByNamespace(namespace)
 				for _, pod := range pods {
 					if !matchLabels(svc.selector, pod.Labels) {
 						continue

@@ -54,6 +54,7 @@ type ESStorage struct {
 	StorageClusterID  uint                         `json:"storage_cluster_id" gorm:"storage_cluster_id"`
 	SourceType        string                       `json:"source_type" gorm:"column:source_type"`
 	IndexSet          string                       `json:"index_set" gorm:"column:index_set"`
+	NeedCreateIndex   bool                         `json:"need_create_index" gorm:"column:need_create_index;default:true"`
 	esClient          *elasticsearch.Elasticsearch `gorm:"-"`
 }
 

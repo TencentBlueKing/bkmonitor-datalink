@@ -574,6 +574,7 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 			tableId := es.TableID
 			sourceType := es.SourceType
 			indexSet := es.IndexSet
+			logger.Infof("PushEsTableIdDetail:start to compose es table id detail, table_id->[%s],source_type->[%s],index_set->[%s]", tableId, sourceType, indexSet)
 			_tableId, detailStr, err := s.composeEsTableIdDetail(tableId, options, es.StorageClusterID, sourceType, indexSet)
 			if err != nil {
 				logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %s, error: %s", tableId, err)
@@ -581,7 +582,7 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 			}
 			// 推送数据
 			// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Publish操作
-			logger.Infof("PushEsTableIdDetail:start push and publish es table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s]", _tableId, cfg.ResultTableDetailChannel, _tableId)
+			logger.Infof("PushEsTableIdDetail:start push and publish es table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", _tableId, cfg.ResultTableDetailChannel, _tableId, detailStr)
 			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, _tableId, detailStr, cfg.ResultTableDetailChannel, _tableId)
 			if err != nil {
 				logger.Errorf("PushEsTableIdDetail:push and publish es table id detail error, table_id->[%s], error->[%s]", tableId, err)
@@ -631,14 +632,25 @@ func (s *SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]m
 func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]interface{}, storageClusterId uint, sourceType, indexSet string) (string, string, error) {
 	logger.Infof("compose es table id detail, table_id [%s], options [%+v], storage_cluster_id [%d], source_type [%s], index_set [%s]", tableId, options, storageClusterId, sourceType, indexSet)
 
+	// 获取历史存储集群记录
+	db := mysql.GetDBSession().DB
+	clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, tableId)
+	if err != nil {
+		logger.Errorf("composeEsTableIdDetail: failed to get storage cluster records for table_id [%s], error: %v", tableId, err)
+		return "", "", err
+	}
+
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
-		"storage_id":  storageClusterId,
-		"db":          indexSet,
-		"measurement": models.TSGroupDefaultMeasurement,
-		"source_type": sourceType,
-		"options":     options,
+		"storage_type":            models.StorageTypeES,
+		"storage_id":              storageClusterId,
+		"db":                      indexSet,
+		"measurement":             models.TSGroupDefaultMeasurement,
+		"source_type":             sourceType,
+		"options":                 options,
+		"storage_cluster_records": clusterRecords,
 	})
+	logger.Infof("compose es table id detail success, table_id [%s], detail [%s]", tableId, detailStr)
 	return tableId, detailStr, err
 }
 

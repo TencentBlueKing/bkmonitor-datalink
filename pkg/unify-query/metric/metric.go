@@ -83,7 +83,7 @@ var (
 			Help:      "tsdb request bytes",
 			Buckets:   bytesBuckets,
 		},
-		[]string{"source_type", "tsdb_type"},
+		[]string{"tsdb_type"},
 	)
 
 	tsDBRequestSecondHistogram = promauto.NewHistogramVec(
@@ -93,7 +93,7 @@ var (
 			Help:      "tsdb request seconds",
 			Buckets:   secondsBuckets,
 		},
-		[]string{"space_uid", "source_type", "tsdb_type", "url"},
+		[]string{"tsdb_type", "url"},
 	)
 
 	jwtRequestTotal = promauto.NewCounterVec(
@@ -115,44 +115,44 @@ var (
 	)
 )
 
-func APIRequestInc(ctx context.Context, params ...string) {
+func APIRequestInc(ctx context.Context, api, status, spaceUID, sourceType string) {
 	// 拼接 version 和 commit_id
-	params = append(params, config.Version, config.CommitHash)
+	params := append([]string{}, api, status, spaceUID, sourceType, config.Version, config.CommitHash)
 
 	metric, _ := apiRequestTotal.GetMetricWithLabelValues(params...)
 	counterInc(ctx, metric)
 }
 
-func APIRequestSecond(ctx context.Context, duration time.Duration, params ...string) {
+func APIRequestSecond(ctx context.Context, duration time.Duration, api, spaceUID string) {
 	// 拼接 version 和 commit_id
-	params = append(params, config.Version, config.CommitHash)
+	params := append([]string{}, api, spaceUID, config.Version, config.CommitHash)
 
 	metric, _ := apiRequestSecondHistogram.GetMetricWithLabelValues(params...)
 	observe(ctx, metric, duration.Seconds())
 }
 
-func TsDBRequestSecond(ctx context.Context, duration time.Duration, params ...string) {
-	metric, _ := tsDBRequestSecondHistogram.GetMetricWithLabelValues(params...)
+func TsDBRequestSecond(ctx context.Context, duration time.Duration, tsdbType, url string) {
+	metric, _ := tsDBRequestSecondHistogram.GetMetricWithLabelValues(tsdbType, url)
 	observe(ctx, metric, duration.Seconds())
 }
 
-func TsDBRequestBytes(ctx context.Context, bytes int, params ...string) {
-	metric, _ := tsDBRequestBytesHistogram.GetMetricWithLabelValues(params...)
+func TsDBRequestBytes(ctx context.Context, bytes int, tsdbType string) {
+	metric, _ := tsDBRequestBytesHistogram.GetMetricWithLabelValues(tsdbType)
 	observe(ctx, metric, float64(bytes))
 }
 
-func ResultTableInfoSet(ctx context.Context, value float64, params ...string) {
-	metric, _ := resultTableInfo.GetMetricWithLabelValues(params...)
+func ResultTableInfoSet(ctx context.Context, value float64, rtTableID, rtDataID, rtMeasurementType, vmTableID, bcsClusterID string) {
+	metric, _ := resultTableInfo.GetMetricWithLabelValues(rtTableID, rtDataID, rtMeasurementType, vmTableID, bcsClusterID)
 	gaugeSet(ctx, metric, value)
 }
 
-func JWTRequestInc(ctx context.Context, params ...string) {
-	metric, _ := jwtRequestTotal.GetMetricWithLabelValues(params...)
+func JWTRequestInc(ctx context.Context, userAgent, clusterIP, api, jwtAppCode, jwtAppUserName, spaceUID, status string) {
+	metric, _ := jwtRequestTotal.GetMetricWithLabelValues(userAgent, clusterIP, api, jwtAppCode, jwtAppUserName, spaceUID, status)
 	counterInc(ctx, metric)
 }
 
-func BkDataRequestInc(ctx context.Context, params ...string) {
-	metric, _ := bkDataApiRequestTotal.GetMetricWithLabelValues(params...)
+func BkDataRequestInc(ctx context.Context, spaceUID, tableID, isMatch string) {
+	metric, _ := bkDataApiRequestTotal.GetMetricWithLabelValues(spaceUID, tableID, isMatch)
 	counterInc(ctx, metric)
 }
 

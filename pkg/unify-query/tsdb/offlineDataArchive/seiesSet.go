@@ -27,7 +27,6 @@ import (
 	remoteRead "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -110,9 +109,8 @@ func StartStreamSeriesSet(
 				span.Set("resp-series-num", seriesNum)
 				span.Set("resp-point-num", pointsNum)
 
-				user := metadata.GetUser(ctx)
 				metric.TsDBRequestSecond(
-					ctx, sub, user.SpaceUid, user.Source, fmt.Sprintf("%s_grpc", consul.InfluxDBStorageType), name,
+					ctx, sub, fmt.Sprintf("%s_grpc", consul.InfluxDBStorageType), name,
 				)
 
 				span.End(&err)

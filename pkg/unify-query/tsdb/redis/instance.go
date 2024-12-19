@@ -113,8 +113,6 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 		startAnaylize time.Time
 	)
 
-	user := metadata.GetUser(ctx)
-
 	// 根据现有支持情况检查 QueryTs 请求体
 	query := metadata.GetQueryClusterMetric(ctx)
 
@@ -158,7 +156,7 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 	}
 	queryCost := time.Since(startAnaylize)
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, user.Source, i.InstanceType(), "",
+		ctx, queryCost, i.InstanceType(), "",
 	)
 
 	return &df, nil

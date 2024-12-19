@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/spf13/viper"
@@ -107,11 +108,13 @@ func MockSpaceRouter(ctx context.Context) {
 			"pod_with_replicaset_relation",
 			"apm_service_instance_with_pod_relation",
 			"apm_service_instance_with_system_relation",
+			"kubelet_info",
 		}
 		influxdbFields := []string{
 			"kube_pod_info",
 			"kube_node_info",
 			"kube_node_status_condition",
+			"kubelet_cluster_request_total",
 		}
 
 		tsdb.SetStorage(
@@ -183,6 +186,16 @@ func MockSpaceRouter(ctx context.Context) {
 				},
 			},
 			ir.ResultTableDetailInfo{
+				"result_table.kubelet_info": &ir.ResultTableDetail{
+					StorageId:       2,
+					TableId:         "result_table.kubelet_info",
+					VmRt:            "2_bcs_prom_computation_result_table",
+					Fields:          vmFiedls,
+					DB:              "other",
+					Measurement:     "kubelet_info",
+					BcsClusterID:    "BCS-K8S-00000",
+					MeasurementType: redis.BkSplitMeasurement,
+				},
 				"system.cpu_summary": &ir.ResultTableDetail{
 					StorageId:       2,
 					TableId:         "system.cpu_summary",
@@ -228,6 +241,18 @@ func MockSpaceRouter(ctx context.Context) {
 				ResultTableEs: &ir.ResultTableDetail{
 					StorageId: 3,
 					TableId:   ResultTableEs,
+					StorageClusterRecords: []ir.Record{
+						{
+							StorageID: 3,
+							// 2019-12-02 08:00:00
+							EnableTime: 1575244800,
+						},
+						{
+							StorageID: 4,
+							// 2019-11-02 08:00:00
+							EnableTime: 1572652800,
+						},
+					},
 				},
 				ResultTableBkSQL: &ir.ResultTableDetail{
 					StorageId: 4,
@@ -251,12 +276,16 @@ func MockSpaceRouter(ctx context.Context) {
 func setSpaceTsDbMockData(ctx context.Context, bkAppSpace ir.BkAppSpace, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo, fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
 	mockRedisOnce.Do(func() {
 		setRedisClient(ctx)
+
 	})
 
-	sr, err := SetSpaceTsDbRouter(ctx, "mock", "mock", "", 100)
+	mockPath := "mock" + time.Now().String()
+	sr, err := SetSpaceTsDbRouter(ctx, mockPath, mockPath, "", 5, false)
 	if err != nil {
 		panic(err)
 	}
+	sr.cache.Clear()
+
 	for bkApp, spaceUidList := range bkAppSpace {
 		err = sr.Add(ctx, ir.BkAppToSpaceKey, bkApp, spaceUidList)
 		if err != nil {

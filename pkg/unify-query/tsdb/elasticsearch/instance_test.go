@@ -31,7 +31,11 @@ func TestInstance_queryReference(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 
 	ins, err := NewInstance(ctx, &InstanceOption{
-		Address: mock.EsUrl,
+		Connects: []Connect{
+			{
+				Address: mock.EsUrl,
+			},
+		},
 		Timeout: 3 * time.Second,
 	})
 	if err != nil {
@@ -428,7 +432,11 @@ func TestInstance_getAlias(t *testing.T) {
 	metadata.InitMetadata()
 	ctx := metadata.InitHashID(context.Background())
 	inst, err := NewInstance(ctx, &InstanceOption{
-		Address: mock.EsUrl,
+		Connects: []Connect{
+			{
+				Address: mock.EsUrl,
+			},
+		},
 		Timeout: time.Minute,
 	})
 	if err != nil {

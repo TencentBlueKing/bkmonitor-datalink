@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -178,6 +179,21 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		for d := range dataCh {
 			list = append(list, d)
 		}
+
+		sort.Slice(list, func(i, j int) bool {
+			var (
+				a, b string
+				ok   bool
+			)
+			if a, ok = list[i][DefaultTime].(string); !ok {
+				return true
+			}
+			if b, ok = list[j][DefaultTime].(string); !ok {
+				return true
+			}
+
+			return a < b
+		})
 	}()
 
 	// 多协程查询数据

@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"testing"
 	"time"
@@ -684,7 +685,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 				End:   end,
 			},
 			total:    2e4,
-			expected: `[{"__doc_id":"c726c895a380ba1a9df04ba4a977b29b","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"fa209967d4a8c5d21b3e4f67d2cd579e","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"dc888e9a3789976aa11483626fc61a4f","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"c2dae031f095fa4b9deccf81964c7837","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"8a916e558c71d4226f1d7f3279cf0fdd","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"f6950fef394e813999d7316cdbf0de4d","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"328d487e284703b1d0bb8017dba46124","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"cb790ecb36bbaf02f6f0eb80ac2fd65c","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"bd8a8ef60e94ade63c55c8773170d458","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"c8401bb4ec021b038cb374593b8adce3","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594161000"},{"__doc_id":"e058129ae18bff87c95e83f24584e654","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"c124dae69af9b86a7128ee4281820158","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"c7f73abf7e865a4b4d7fc608387d01cf","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"39c3ec662881e44bf26d2a6bfc0e35c3","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"58e03ce0b9754bf0657d49a5513adcb5","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"43a36f412886bf30b0746562513638d3","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"218ceafd04f89b39cda7954e51f4a48a","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"8d9abe9b782fe3a1272c93f0af6b39e1","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__doc_id":"0826407be7f04f19086774ed68eac8dd","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94","dtEventTimeStamp":"1723594224000"},{"__doc_id":"d56b4120194eb37f53410780da777d43","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94","dtEventTimeStamp":"1723594224000"}]`,
+			expected: `[{"__doc_id":"0826407be7f04f19086774ed68eac8dd","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94","_time":"1723594224000","dtEventTimeStamp":"1723594224000"},{"__doc_id":"218ceafd04f89b39cda7954e51f4a48a","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__doc_id":"328d487e284703b1d0bb8017dba46124","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","_time":"1723594161000","dtEventTimeStamp":"1723594161000"},{"__doc_id":"39c3ec662881e44bf26d2a6bfc0e35c3","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__doc_id":"43a36f412886bf30b0746562513638d3","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__doc_id":"58e03ce0b9754bf0657d49a5513adcb5","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__doc_id":"8a916e558c71d4226f1d7f3279cf0fdd","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","_time":"1723594161000","dtEventTimeStamp":"1723594161000"},{"__doc_id":"8d9abe9b782fe3a1272c93f0af6b39e1","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__doc_id":"bd8a8ef60e94ade63c55c8773170d458","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","_time":"1723594161000","dtEventTimeStamp":"1723594161000"},{"__doc_id":"c124dae69af9b86a7128ee4281820158","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__doc_id":"c2dae031f095fa4b9deccf81964c7837","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","_time":"1723594161000","dtEventTimeStamp":"1723594161000"},{"__doc_id":"c726c895a380ba1a9df04ba4a977b29b","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","_time":"1723594161000","dtEventTimeStamp":"1723594161000"},{"__doc_id":"c7f73abf7e865a4b4d7fc608387d01cf","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__doc_id":"c8401bb4ec021b038cb374593b8adce3","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","_time":"1723594161000","dtEventTimeStamp":"1723594161000"},{"__doc_id":"cb790ecb36bbaf02f6f0eb80ac2fd65c","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","_time":"1723594161000","dtEventTimeStamp":"1723594161000"},{"__doc_id":"d56b4120194eb37f53410780da777d43","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94","_time":"1723594224000","dtEventTimeStamp":"1723594224000"},{"__doc_id":"dc888e9a3789976aa11483626fc61a4f","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","_time":"1723594161000","dtEventTimeStamp":"1723594161000"},{"__doc_id":"e058129ae18bff87c95e83f24584e654","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__doc_id":"f6950fef394e813999d7316cdbf0de4d","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","_time":"1723594161000","dtEventTimeStamp":"1723594161000"},{"__doc_id":"fa209967d4a8c5d21b3e4f67d2cd579e","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","_time":"1723594161000","dtEventTimeStamp":"1723594161000"}]`,
 		},
 		"query_bk_base_es_with_errors": {
 			queryTs: &structured.QueryTs{
@@ -702,7 +703,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 				End:   end,
 			},
 			total:    1e4,
-			expected: `[{"__doc_id":"4f3a5e9c167097c9658e88b2f32364b2","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","dtEventTimeStamp":"1723594209000"}]`,
+			expected: `[{"__doc_id":"4f3a5e9c167097c9658e88b2f32364b2","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","_time":"1723594209000","dtEventTimeStamp":"1723594209000"}]`,
 		},
 	}
 
@@ -712,9 +713,21 @@ func TestQueryRawWithInstance(t *testing.T) {
 			if err != nil {
 				panic(err.Error())
 			}
+
+			sort.SliceStable(list, func(i, j int) bool {
+				a := list[i]["_time"].(string) < list[j]["_time"].(string)
+				b := list[i]["__doc_id"].(string) < list[j]["__doc_id"].(string)
+
+				if a {
+					return a
+				} else {
+					return b
+				}
+			})
+
 			assert.Equal(t, c.total, total)
 			actual, _ := json.Marshal(list)
-			assert.Equal(t, c.expected, string(actual))
+			assert.JSONEq(t, c.expected, string(actual))
 		})
 	}
 }
@@ -2273,6 +2286,8 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 
 	mock.Init()
 	promql.MockEngine()
+
+	influxdb.MockSpaceRouter(ctx)
 
 	testCases := map[string]struct {
 		query  string

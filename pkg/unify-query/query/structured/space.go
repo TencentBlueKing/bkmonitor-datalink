@@ -92,7 +92,7 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 
 	for _, record := range d.StorageClusterRecords {
 		t.StorageClusterRecords = append(t.StorageClusterRecords, query.Record{
-			StorageID:  record.StorageID,
+			StorageID:  strconv.Itoa(int(record.StorageID)),
 			EnableTime: record.EnableTime,
 		})
 	}

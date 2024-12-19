@@ -243,12 +243,12 @@ func MockSpaceRouter(ctx context.Context) {
 					TableId:   ResultTableEs,
 					StorageClusterRecords: []ir.Record{
 						{
-							StorageID: "3",
+							StorageID: 3,
 							// 2019-12-02 08:00:00
 							EnableTime: 1575244800,
 						},
 						{
-							StorageID: "4",
+							StorageID: 4,
 							// 2019-11-02 08:00:00
 							EnableTime: 1572652800,
 						},

@@ -269,7 +269,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	bodyJson, _ := json.Marshal(body)
 	bodyString := string(bodyJson)
 
-	span.Set("query-connects", i.connects)
+	span.Set("query-connect", qo.conn)
 	span.Set("query-headers", i.headers)
 
 	span.Set("query-indexes", qo.indexes)
@@ -324,6 +324,8 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 		ret.Error = err
 		rets <- ret
 	}()
+
+	span.Set("query-conn", qo.conn)
 
 	metricLabel := qo.query.MetricLabels(ctx)
 
@@ -503,6 +505,8 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-raw")
 	defer span.End(&err)
 
+	span.Set("instance-connects", i.connects)
+
 	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
 	if err != nil {
 		return 0, err
@@ -589,6 +593,22 @@ func (i *Instance) QuerySeriesSet(
 		return storage.ErrSeriesSet(err)
 	}
 
+	user := metadata.GetUser(ctx)
+	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-source", user.Source)
+	span.Set("query-username", user.Name)
+	span.Set("query-connects", i.connects)
+
+	span.Set("query-storage-id", query.StorageID)
+	span.Set("query-storage-ids", query.StorageIDs)
+
+	span.Set("query-max-size", i.maxSize)
+	span.Set("query-db", query.DB)
+	span.Set("query-measurement", query.Measurement)
+	span.Set("query-measurements", query.Measurements)
+	span.Set("query-field", query.Field)
+	span.Set("query-fields", query.Fields)
+
 	rets := make(chan *TimeSeriesResult, 1)
 
 	go func() {
@@ -610,6 +630,8 @@ func (i *Instance) QuerySeriesSet(
 			}
 			return
 		}
+
+		span.Set("query-aliases", aliases)
 
 		var wg sync.WaitGroup
 		for _, conn := range i.connects {
@@ -660,19 +682,6 @@ func (i *Instance) QuerySeriesSet(
 					i.queryWithoutAgg(ctx, qo, fact, rets)
 				}
 
-				user := metadata.GetUser(ctx)
-				span.Set("query-space-uid", user.SpaceUid)
-				span.Set("query-source", user.Source)
-				span.Set("query-username", user.Name)
-				span.Set("query-option", qo)
-
-				span.Set("query-storage-id", query.StorageID)
-				span.Set("query-max-size", i.maxSize)
-				span.Set("query-db", query.DB)
-				span.Set("query-measurement", query.Measurement)
-				span.Set("query-measurements", query.Measurements)
-				span.Set("query-field", query.Field)
-				span.Set("query-fields", query.Fields)
 			}()
 		}
 

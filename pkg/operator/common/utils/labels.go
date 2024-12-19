@@ -7,22 +7,14 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package stringx
+package utils
 
-import "strings"
-
-func SplitTrim(s, sep string) []string {
-	if s == "" {
-		return nil
+func MatchSubLabels(subset, set map[string]string) bool {
+	for k, v := range subset {
+		val, ok := set[k]
+		if !ok || val != v {
+			return false
+		}
 	}
-
-	var ret []string
-	for _, part := range strings.Split(s, sep) {
-		ret = append(ret, strings.TrimSpace(part))
-	}
-	return ret
-}
-
-func LowerEq(a, b string) bool {
-	return strings.ToLower(a) == strings.ToLower(b)
+	return true
 }

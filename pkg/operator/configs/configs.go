@@ -202,6 +202,9 @@ type Config struct {
 	// EnableDaemonSetWorker 是否启用 daemonset worker 调度
 	EnableDaemonSetWorker bool `yaml:"enable_daemonset_worker"`
 
+	// DaemonSetWorkerIgnoreNodeLabels 部分 nodes 不允许被调度到 daemonset 时指定
+	DaemonSetWorkerIgnoreNodeLabels map[string]string `yaml:"daemonset_worker_ignore_node_labels"`
+
 	// EnableEndpointSlice 是否启用 endpointslice 特性（kubernetes 版本要求 >= 1.22)
 	EnableEndpointSlice bool `yaml:"enable_endpointslice"`
 

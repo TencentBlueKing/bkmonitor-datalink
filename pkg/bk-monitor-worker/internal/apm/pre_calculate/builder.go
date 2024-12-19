@@ -197,7 +197,7 @@ loop:
 				continue
 			}
 			config := p.defaultConfig
-			if startInfo.Config != nil {
+			if len(startInfo.Config) > 0 {
 				taskConfig := PrecalculateOption{}
 				var updateKeys []string
 				updateKeys, err := p.convertMappingToConfig(&taskConfig, startInfo.Config)

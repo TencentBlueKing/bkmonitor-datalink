@@ -344,7 +344,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	writef(formatResource, string(b))
 
 	// 检查 Endpoint 数量
-	endpoints := c.recorder.getActiveEndpoints()
+	endpoints := c.recorder.getEndpoints(true)
 	b, _ = json.MarshalIndent(endpoints, "", "  ")
 	var total int
 	for _, v := range endpoints {

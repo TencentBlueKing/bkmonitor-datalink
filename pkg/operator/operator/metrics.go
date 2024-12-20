@@ -81,12 +81,13 @@ var (
 		},
 	)
 
-	discoverCount = promauto.NewGauge(
+	discoverCount = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "discover_count",
 			Help:      "discover count",
 		},
+		[]string{"type"},
 	)
 
 	handledSecretSuccessTotal = promauto.NewCounterVec(
@@ -191,8 +192,8 @@ func (m *metricMonitor) SetSharedDiscoveryCount(n int) {
 	sharedDiscoveryCount.Set(float64(n))
 }
 
-func (m *metricMonitor) SetDiscoverCount(n int) {
-	discoverCount.Set(float64(n))
+func (m *metricMonitor) SetDiscoverCount(typ string, n int) {
+	discoverCount.WithLabelValues(typ).Set(float64(n))
 }
 
 func (m *metricMonitor) IncHandledSecretSuccessCounter(name, action string) {

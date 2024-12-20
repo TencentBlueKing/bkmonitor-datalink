@@ -438,6 +438,10 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 	)
 	defer span.End(&err)
 
+	if db == "" {
+		return nil, fmt.Errorf("alias is empty")
+	}
+
 	aliases = strings.Split(db, ",")
 
 	span.Set("need-add-time", needAddTime)
@@ -507,9 +511,14 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	span.Set("instance-connects", i.connects)
 
+	if query.DB == "" {
+		err = fmt.Errorf("%s 查询别名为空", query.TableID)
+		return total, err
+	}
+
 	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
 	if err != nil {
-		return 0, err
+		return total, err
 	}
 
 	for _, conn := range i.connects {
@@ -590,6 +599,11 @@ func (i *Instance) QuerySeriesSet(
 
 	if len(query.Aggregates) == 0 {
 		err = fmt.Errorf("聚合函数不能为空以及聚合周期跟 Step 必须一样")
+		return storage.ErrSeriesSet(err)
+	}
+
+	if query.DB == "" {
+		err = fmt.Errorf("%s 查询别名为空", query.TableID)
 		return storage.ErrSeriesSet(err)
 	}
 

@@ -47,10 +47,6 @@ func MergeSamplesWithFuncAndSort(name string) func(samplesList ...[]prompb.Sampl
 				}
 				return j
 			}
-		case Avg:
-			aggFunc = func(i, j float64) float64 {
-				return i + j
-			}
 		default:
 			aggFunc = func(i, j float64) float64 {
 				return i + j
@@ -88,6 +84,7 @@ func MergeSamplesWithFuncAndSort(name string) func(samplesList ...[]prompb.Sampl
 		for i, timestamp := range timestamps {
 			var value float64
 			switch name {
+			// Avg 方法需要等所有的数据合并了之后，再做计算
 			case Avg:
 				value = sampleMap[timestamp] / countMap[timestamp]
 			default:

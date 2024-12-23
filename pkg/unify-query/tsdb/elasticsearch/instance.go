@@ -702,7 +702,7 @@ func (i *Instance) QuerySeriesSet(
 		wg.Wait()
 	}()
 
-	qr, err := i.mergeTimeSeries(rets, function.MergeSamplesWithSumAndSort)
+	qr, err := i.mergeTimeSeries(rets, function.MergeSamplesWithFuncAndSort(query.Aggregates.LastAggName()))
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}

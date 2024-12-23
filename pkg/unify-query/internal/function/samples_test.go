@@ -39,15 +39,15 @@ func TestMergeSamples(t *testing.T) {
 		},
 		{
 			Timestamp: 1734462719000,
-			Value:     1,
+			Value:     3,
 		},
 	}
 
-	t3 := MergeSamplesWithSumAndSort(t1, t2)
+	t3 := MergeSamplesWithFuncAndSort(Sum)(t1, t2)
 	assert.Equal(t, []prompb.Sample{
 		{
 			Timestamp: 1734462719000,
-			Value:     1.3,
+			Value:     3.3,
 		},
 		{
 			Timestamp: 1734462779000,
@@ -59,7 +59,55 @@ func TestMergeSamples(t *testing.T) {
 		},
 	}, t3)
 
-	t4 := MergeSamplesWithUnionAndSort(t1, t2)
+	t4 := MergeSamplesWithFuncAndSort(Min)(t1, t2)
+	assert.Equal(t, []prompb.Sample{
+		{
+			Timestamp: 1734462719000,
+			Value:     0.1,
+		},
+		{
+			Timestamp: 1734462779000,
+			Value:     2,
+		},
+		{
+			Timestamp: 1734462839000,
+			Value:     5,
+		},
+	}, t4)
+
+	t5 := MergeSamplesWithFuncAndSort(Max)(t1, t2)
+	assert.Equal(t, []prompb.Sample{
+		{
+			Timestamp: 1734462719000,
+			Value:     3,
+		},
+		{
+			Timestamp: 1734462779000,
+			Value:     2,
+		},
+		{
+			Timestamp: 1734462839000,
+			Value:     5,
+		},
+	}, t5)
+
+	t6 := MergeSamplesWithFuncAndSort(Avg)(t1, t2)
+	assert.Equal(t, []prompb.Sample{
+		{
+			Timestamp: 1734462719000,
+			Value:     1.0999999999999999,
+		},
+		{
+			Timestamp: 1734462779000,
+			Value:     2,
+		},
+		{
+			Timestamp: 1734462839000,
+			Value:     5,
+		},
+	}, t6)
+
+	t8 := MergeSamplesWithUnionAndSort(t1, t2)
 	assert.Equal(t, []prompb.Sample{
 		{
 			Timestamp: 1734462719000,
@@ -71,7 +119,7 @@ func TestMergeSamples(t *testing.T) {
 		},
 		{
 			Timestamp: 1734462719000,
-			Value:     1,
+			Value:     3,
 		},
 		{
 			Timestamp: 1734462779000,
@@ -81,5 +129,5 @@ func TestMergeSamples(t *testing.T) {
 			Timestamp: 1734462839000,
 			Value:     5,
 		},
-	}, t4)
+	}, t8)
 }

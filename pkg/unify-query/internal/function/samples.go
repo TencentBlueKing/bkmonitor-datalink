@@ -11,41 +11,96 @@ package function
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/prometheus/prometheus/prompb"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
-// MergeSamplesWithSumAndSort 合并 samples 数据，如果相同时间的则相加，并且按照时间排序
-func MergeSamplesWithSumAndSort(samplesList ...[]prompb.Sample) []prompb.Sample {
-	// 生成 sampleMap 用户合并计算
-	sampleMap := make(map[int64]float64)
-	// 生成时间 set 用于排序
-	timestampSet := set.New[int64]()
+const (
+	Min   = "min"
+	Max   = "max"
+	Avg   = "avg"
+	Sum   = "sum"
+	Count = "count"
+)
 
-	for _, samples := range samplesList {
-		for _, sample := range samples {
-			timestampSet.Add(sample.GetTimestamp())
-			sampleMap[sample.GetTimestamp()] += sample.GetValue()
+// MergeSamplesWithFuncAndSort 合并 samples 数据，如果相同时间的进行函数处理，并且按照时间排序
+func MergeSamplesWithFuncAndSort(name string) func(samplesList ...[]prompb.Sample) []prompb.Sample {
+	return func(samplesList ...[]prompb.Sample) []prompb.Sample {
+		var (
+			aggFunc func(i, j float64) float64
+		)
+		switch strings.ToLower(name) {
+		case Min:
+			aggFunc = func(i, j float64) float64 {
+				if i < j {
+					return i
+				}
+				return j
+			}
+		case Max:
+			aggFunc = func(i, j float64) float64 {
+				if i > j {
+					return i
+				}
+				return j
+			}
+		case Avg:
+			aggFunc = func(i, j float64) float64 {
+				return i + j
+			}
+		default:
+			aggFunc = func(i, j float64) float64 {
+				return i + j
+			}
 		}
-	}
 
-	out := make([]prompb.Sample, timestampSet.Size())
+		// 生成 sampleMap 用户合并计算
+		sampleMap := make(map[int64]float64)
+		countMap := make(map[int64]float64)
 
-	// 正序
-	timestamps := timestampSet.ToArray()
-	sort.Slice(timestamps, func(i, j int) bool {
-		return timestamps[i] < timestamps[j]
-	})
+		// 生成时间 set 用于排序
+		timestampSet := set.New[int64]()
 
-	for i, timestamp := range timestamps {
-		out[i] = prompb.Sample{
-			Timestamp: timestamp,
-			Value:     sampleMap[timestamp],
+		for _, samples := range samplesList {
+			for _, sample := range samples {
+				timestampSet.Add(sample.GetTimestamp())
+
+				if v, ok := sampleMap[sample.GetTimestamp()]; ok {
+					sampleMap[sample.GetTimestamp()] = aggFunc(v, sample.GetValue())
+				} else {
+					sampleMap[sample.GetTimestamp()] = sample.GetValue()
+				}
+				countMap[sample.GetTimestamp()] += 1
+			}
 		}
+
+		out := make([]prompb.Sample, timestampSet.Size())
+
+		// 正序
+		timestamps := timestampSet.ToArray()
+		sort.Slice(timestamps, func(i, j int) bool {
+			return timestamps[i] < timestamps[j]
+		})
+
+		for i, timestamp := range timestamps {
+			var value float64
+			switch name {
+			case Avg:
+				value = sampleMap[timestamp] / countMap[timestamp]
+			default:
+				value = sampleMap[timestamp]
+			}
+
+			out[i] = prompb.Sample{
+				Timestamp: timestamp,
+				Value:     value,
+			}
+		}
+		return out
 	}
-	return out
 }
 
 // MergeSamplesWithUnionAndSort 合并 samples 数据，如果相同时间的则追加，并且按照时间排序

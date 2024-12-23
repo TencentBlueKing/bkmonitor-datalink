@@ -296,3 +296,12 @@ func (vs VmCondition) String() string {
 func (vs VmCondition) ToMatch() string {
 	return fmt.Sprintf("{%s}", vs)
 }
+
+// LastAggName 获取最新的聚合函数
+func (a Aggregates) LastAggName() string {
+	if len(a) == 0 {
+		return ""
+	}
+
+	return a[len(a)-1].Name
+}

@@ -83,6 +83,9 @@ func TestInstance_queryReference(t *testing.T) {
 
 		// 根据 field 字段聚合计算数量，同时根据值排序
 		`{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"value_count":{"field":"dtEventTimeStamp"}}},"terms":{"field":"dtEventTimeStamp","order":[{"_value":"asc"}]}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":198,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"dtEventTimeStamp":{"doc_count_error_upper_bound":-1,"sum_other_doc_count":1523292,"buckets":[{"key":1723593878000,"key_as_string":"1723593878000","doc_count":1,"_value":{"value":1}},{"key":1723593947000,"key_as_string":"1723593947000","doc_count":1,"_value":{"value":1}},{"key":1723594186000,"key_as_string":"1723594186000","doc_count":1,"_value":{"value":1}},{"key":1723595733000,"key_as_string":"1723595733000","doc_count":1,"_value":{"value":1}},{"key":1723596287000,"key_as_string":"1723596287000","doc_count":1,"_value":{"value":1}},{"key":1723596309000,"key_as_string":"1723596309000","doc_count":1,"_value":{"value":1}},{"key":1723596597000,"key_as_string":"1723596597000","doc_count":1,"_value":{"value":1}},{"key":1723596677000,"key_as_string":"1723596677000","doc_count":1,"_value":{"value":1}},{"key":1723596938000,"key_as_string":"1723596938000","doc_count":1,"_value":{"value":1}},{"key":1723597150000,"key_as_string":"1723597150000","doc_count":1,"_value":{"value":1}}]}}}`,
+
+		// 根据 field 字段聚合 min，同时根据值排序
+		`{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"min":{"field":"dtEventTimeStamp"}}},"terms":{"field":"dtEventTimeStamp","order":[{"_value":"asc"}]}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":198,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"dtEventTimeStamp":{"doc_count_error_upper_bound":-1,"sum_other_doc_count":1523292,"buckets":[{"key":1723593878000,"key_as_string":"1723593878000","doc_count":1,"_value":{"value":1}},{"key":1723593947000,"key_as_string":"1723593947000","doc_count":1,"_value":{"value":1}},{"key":1723594186000,"key_as_string":"1723594186000","doc_count":1,"_value":{"value":1}},{"key":1723595733000,"key_as_string":"1723595733000","doc_count":1,"_value":{"value":1}},{"key":1723596287000,"key_as_string":"1723596287000","doc_count":1,"_value":{"value":1}},{"key":1723596309000,"key_as_string":"1723596309000","doc_count":1,"_value":{"value":1}},{"key":1723596597000,"key_as_string":"1723596597000","doc_count":1,"_value":{"value":1}},{"key":1723596677000,"key_as_string":"1723596677000","doc_count":1,"_value":{"value":1}},{"key":1723596938000,"key_as_string":"1723596938000","doc_count":1,"_value":{"value":1}},{"key":1723597150000,"key_as_string":"1723597150000","doc_count":1,"_value":{"value":1}}]}}}`,
 	})
 
 	for idx, c := range map[string]struct {
@@ -370,6 +373,32 @@ func TestInstance_queryReference(t *testing.T) {
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Count,
+						Dimensions: []string{
+							field,
+						},
+					},
+				},
+				Orders: map[string]bool{
+					FieldValue: true,
+				},
+			},
+			start:    defaultStart,
+			end:      defaultEnd,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723593878000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723593947000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723594186000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723595733000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596287000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596309000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596597000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596677000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596938000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723597150000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
+		},
+		"根据 field 字段聚合 min，同时根据值排序": {
+			query: &metadata.Query{
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        10,
+				DataSource:  structured.BkLog,
+				TableID:     "bk_log_index_set_10",
+				MetricName:  "__ext.io_kubernetes_pod",
+				StorageType: consul.ElasticsearchStorageType,
+				Aggregates: metadata.Aggregates{
+					{
+						Name: Min,
 						Dimensions: []string{
 							field,
 						},

@@ -322,10 +322,14 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 
 	if t.RelabelRule == relabelV1RuleNode {
 		lbs = append(lbs, yaml.MapItem{Key: "node", Value: t.NodeName})
+
+		// 当且仅当 matcherKind 为 Node 时进行 node 维度补充
 		if t.LabelJoinMatcher != nil && t.LabelJoinMatcher.Kind == feature.LabelJoinMatcherKindNode && t.NodeLabelsFunc != nil {
 			nodeLabels := t.NodeLabelsFunc(t.NodeName)
-			for name, value := range nodeLabels {
-				if !lbsExist(name, lbs) {
+			// 只补充 annotation 声明的维度
+			for _, name := range t.LabelJoinMatcher.Labels {
+				value, ok := nodeLabels[name]
+				if ok && !lbsExist(name, lbs) {
 					lbs = append(lbs, yaml.MapItem{Key: name, Value: value})
 				}
 			}

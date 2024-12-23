@@ -86,7 +86,11 @@ func MergeSamplesWithFuncAndSort(name string) func(samplesList ...[]prompb.Sampl
 			switch name {
 			// Avg 方法需要等所有的数据合并了之后，再做计算
 			case Avg:
-				value = sampleMap[timestamp] / countMap[timestamp]
+				if countMap[timestamp] > 0 {
+					value = sampleMap[timestamp] / countMap[timestamp]
+				} else {
+					value = 0
+				}
 			default:
 				value = sampleMap[timestamp]
 			}

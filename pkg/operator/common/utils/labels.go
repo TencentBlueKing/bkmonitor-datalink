@@ -9,6 +9,11 @@
 
 package utils
 
+import (
+	"strings"
+	"unicode"
+)
+
 func MatchSubLabels(subset, set map[string]string) bool {
 	for k, v := range subset {
 		val, ok := set[k]
@@ -17,4 +22,8 @@ func MatchSubLabels(subset, set map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func NormalizeName(s string) string {
+	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }), "_")
 }

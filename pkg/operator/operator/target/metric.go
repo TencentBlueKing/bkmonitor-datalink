@@ -330,7 +330,7 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 			for _, name := range t.LabelJoinMatcher.Labels {
 				value, ok := nodeLabels[name]
 				if ok && !lbsExist(name, lbs) {
-					lbs = append(lbs, yaml.MapItem{Key: name, Value: value})
+					lbs = append(lbs, yaml.MapItem{Key: utils.NormalizeName(name), Value: value})
 				}
 			}
 		}

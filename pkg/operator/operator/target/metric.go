@@ -89,6 +89,7 @@ type MetricTarget struct {
 	TaskType               string
 	DisableCustomTimestamp bool
 	LabelJoinMatcher       *feature.LabelJoinMatcherSpec
+	NodeLabelsFunc         func(string) map[string]string
 
 	hash uint64 // 缓存 hash 避免重复计算
 }
@@ -309,8 +310,30 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 	lbs = append(lbs, yaml.MapItem{Key: "bk_monitor_name", Value: t.Meta.Name})
 	lbs = append(lbs, yaml.MapItem{Key: "bk_monitor_namespace", Value: t.Meta.Namespace})
 
+	lbsExist := func(s string, items []yaml.MapItem) bool {
+		for i := 0; i < len(items); i++ {
+			k, ok := items[i].Key.(string)
+			if ok && k == s {
+				return true
+			}
+		}
+		return false
+	}
+
 	if t.RelabelRule == relabelV1RuleNode {
 		lbs = append(lbs, yaml.MapItem{Key: "node", Value: t.NodeName})
+
+		// 当且仅当 matcherKind 为 Node 时进行 node 维度补充
+		if t.LabelJoinMatcher != nil && t.LabelJoinMatcher.Kind == feature.LabelJoinMatcherKindNode && t.NodeLabelsFunc != nil {
+			nodeLabels := t.NodeLabelsFunc(t.NodeName)
+			// 只补充 annotation 声明的维度
+			for _, name := range t.LabelJoinMatcher.Labels {
+				value, ok := nodeLabels[name]
+				if ok && !lbsExist(name, lbs) {
+					lbs = append(lbs, yaml.MapItem{Key: utils.NormalizeName(name), Value: value})
+				}
+			}
+		}
 	}
 
 	lbs = append(lbs, sortMap(t.ExtraLabels)...)

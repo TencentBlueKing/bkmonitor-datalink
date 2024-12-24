@@ -238,6 +238,17 @@ func (c *Operator) getAllDiscover() []define.MonitorMeta {
 	return ret
 }
 
+func (c *Operator) getDiscoverCount() map[string]int {
+	c.discoversMut.Lock()
+	defer c.discoversMut.Unlock()
+
+	count := make(map[string]int)
+	for _, dis := range c.discovers {
+		count[dis.Type()]++
+	}
+	return count
+}
+
 func (c *Operator) reloadAllDiscovers() {
 	c.discoversMut.Lock()
 	defer c.discoversMut.Unlock()
@@ -286,7 +297,9 @@ func (c *Operator) recordMetrics() {
 
 func (c *Operator) updateSharedDiscoveryMetrics() {
 	c.mm.SetSharedDiscoveryCount(len(shareddiscovery.AllDiscovery()))
-	c.mm.SetDiscoverCount(len(c.getAllDiscover()))
+	for typ, count := range c.getDiscoverCount() {
+		c.mm.SetDiscoverCount(typ, count)
+	}
 }
 
 func (c *Operator) updateNodeConfigMetrics() {
@@ -302,7 +315,7 @@ func (c *Operator) updateNodeConfigMetrics() {
 }
 
 func (c *Operator) updateMonitorEndpointMetrics() {
-	endpoints := c.recorder.getActiveEndpoints()
+	endpoints := c.recorder.getEndpoints(false)
 	for name, count := range endpoints {
 		c.mm.SetMonitorEndpointCount(name, count)
 	}

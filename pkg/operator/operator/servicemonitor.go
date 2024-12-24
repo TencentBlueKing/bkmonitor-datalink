@@ -183,7 +183,7 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 			proxyURL = *endpoint.ProxyURL
 		}
 
-		dis := kubernetesd.New(c.ctx, kubernetesd.TypeEndpoints(useEndpointslice), c.objectsController.NodeNameExists, &kubernetesd.Options{
+		dis := kubernetesd.New(c.ctx, kubernetesd.TypeEndpoints(useEndpointslice), &kubernetesd.Options{
 			CommonOptions: &discover.CommonOptions{
 				MonitorMeta:            monitorMeta,
 				RelabelRule:            feature.RelabelRule(serviceMonitor.Annotations),
@@ -208,6 +208,8 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 				System:                 systemResource,
 				UrlValues:              endpoint.Params,
 				MetricRelabelConfigs:   metricRelabelings,
+				NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+				NodeLabelsFunc:         c.objectsController.NodeLabels,
 			},
 			Client:            c.client,
 			Namespaces:        namespaces,

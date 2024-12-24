@@ -82,6 +82,22 @@ func (n *NodeMap) IPs() map[string]struct{} {
 	return ret
 }
 
+func (n *NodeMap) NodeLabels(name string) map[string]string {
+	n.mut.Lock()
+	defer n.mut.Unlock()
+
+	node, ok := n.nodes[name]
+	if !ok {
+		return nil
+	}
+
+	cloned := make(map[string]string)
+	for k, v := range node.Labels {
+		cloned[k] = v
+	}
+	return cloned
+}
+
 func (n *NodeMap) NameExists(name string) (string, bool) {
 	n.mut.Lock()
 	defer n.mut.Unlock()

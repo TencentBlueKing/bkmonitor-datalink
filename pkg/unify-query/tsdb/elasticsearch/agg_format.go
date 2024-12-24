@@ -86,13 +86,13 @@ func (a *aggFormat) reset() {
 }
 
 // 增加值判断，如果返回值为 null 的情况，则认为该值为空点，无需加入到 samples 中
+// 其中 count / sum 会补零，该值不会是 null，minx / max /avg 会是 null，如果补零会导致计算异常，所以忽略该值
 func (a *aggFormat) setMetricValue(v *float64) {
-	var nv float64 = 0
-	if v != nil {
-		nv = *v
+	if v == nil {
+		return
 	}
 
-	a.item.value = nv
+	a.item.value = *v
 	a.reset()
 }
 

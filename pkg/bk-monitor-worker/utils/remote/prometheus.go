@@ -31,23 +31,9 @@ const (
 	tokenKey = "X-BK-TOKEN"
 )
 
-type PrometheusWriterOption func(options *PrometheusWriterOptions)
-
 type PrometheusWriterOptions struct {
-	Url     string
-	Headers map[string]string
-}
-
-func PrometheusWriterUrl(u string) PrometheusWriterOption {
-	return func(options *PrometheusWriterOptions) {
-		options.Url = u
-	}
-}
-
-func PrometheusWriterHeaders(h map[string]string) PrometheusWriterOption {
-	return func(options *PrometheusWriterOptions) {
-		options.Headers = h
-	}
+	Url     string            `json:"url"`
+	Headers map[string]string `json:"headers"`
 }
 
 type PrometheusWriter struct {

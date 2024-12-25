@@ -517,7 +517,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			return true
 		}()
 
-		ff := metadata.GetBkDataTableIDCheck(ctx)
+		ff := metadata.GetBkDataTableIDCheck(ctx, string(tableID))
 		metric.BkDataRequestInc(ctx, spaceUid, string(tableID), fmt.Sprintf("%v", isMatchBizID), fmt.Sprintf("%v", ff))
 
 		// 特性开关是否，打开 bkdata tableid 校验

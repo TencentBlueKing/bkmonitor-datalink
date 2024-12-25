@@ -74,33 +74,33 @@ type CommonOptions struct {
 	MatchSelector          map[string]string
 	DropSelector           map[string]string
 	LabelJoinMatcher       *feature.LabelJoinMatcherSpec
+	NodeNameExistsFunc     func(string) (string, bool)
+	NodeLabelsFunc         func(string) map[string]string
 }
 
 type BaseDiscover struct {
-	opts          *CommonOptions
-	parentCtx     context.Context
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
-	monitorMeta   define.MonitorMeta
-	mm            *shareddiscovery.MetricMonitor
-	checkNodeFunc define.CheckFunc
-	fetched       bool
-	cache         *hashCache
-	helper        Helper
+	opts        *CommonOptions
+	parentCtx   context.Context
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
+	monitorMeta define.MonitorMeta
+	mm          *shareddiscovery.MetricMonitor
+	fetched     bool
+	cache       *hashCache
+	helper      Helper
 
 	// 任务配置文件信息 通过 source 进行分组 使用 hash 进行唯一校验
 	childConfigMut    sync.RWMutex
 	childConfigGroups map[string]map[uint64]*ChildConfig // map[targetGroup.Source]map[hash]*ChildConfig
 }
 
-func NewBaseDiscover(ctx context.Context, checkFn define.CheckFunc, opts *CommonOptions) *BaseDiscover {
+func NewBaseDiscover(ctx context.Context, opts *CommonOptions) *BaseDiscover {
 	return &BaseDiscover{
-		parentCtx:     ctx,
-		opts:          opts,
-		checkNodeFunc: checkFn,
-		monitorMeta:   opts.MonitorMeta,
-		mm:            shareddiscovery.NewMetricMonitor(opts.Name),
+		parentCtx:   ctx,
+		opts:        opts,
+		monitorMeta: opts.MonitorMeta,
+		mm:          shareddiscovery.NewMetricMonitor(opts.Name),
 	}
 }
 
@@ -197,8 +197,8 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		metricTarget.NodeName = d.helper.MatchNodeName(origLabels)
 	}
 
-	if d.checkNodeFunc != nil {
-		nodeName, exist := d.checkNodeFunc(metricTarget.NodeName)
+	if d.opts.NodeNameExistsFunc != nil {
+		nodeName, exist := d.opts.NodeNameExistsFunc(metricTarget.NodeName)
 		if exist {
 			taskType = tasks.TaskTypeDaemonSet
 		}
@@ -295,6 +295,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 	metricTarget.RelabelIndex = d.opts.RelabelIndex
 	metricTarget.NormalizeMetricName = d.opts.NormalizeMetricName
 	metricTarget.LabelJoinMatcher = d.opts.LabelJoinMatcher
+	metricTarget.NodeLabelsFunc = d.opts.NodeLabelsFunc
 
 	return metricTarget, nil
 }

@@ -54,6 +54,11 @@ func parseSelector(s string) map[string]string {
 	return selector
 }
 
+const (
+	LabelJoinMatcherKindPod  = "Pod"
+	LabelJoinMatcherKindNode = "Node"
+)
+
 type LabelJoinMatcherSpec struct {
 	Kind        string
 	Annotations []string
@@ -68,9 +73,16 @@ func parseLabelJoinMatcher(s string) *LabelJoinMatcherSpec {
 		labelPrefix      = "label:"
 	)
 
+	var kind string
 	switch {
-	case strings.HasPrefix(s, "Pod://"): // TODO(mando): 目前仅支持 Pod
+	case strings.HasPrefix(s, "Pod://"):
 		s = s[len("Pod://"):]
+		kind = LabelJoinMatcherKindPod
+
+	case strings.HasPrefix(s, "Node://"):
+		s = s[len("Node://"):]
+		kind = LabelJoinMatcherKindNode
+
 	default:
 		return nil
 	}
@@ -89,7 +101,7 @@ func parseLabelJoinMatcher(s string) *LabelJoinMatcherSpec {
 	}
 
 	return &LabelJoinMatcherSpec{
-		Kind:        "Pod",
+		Kind:        kind,
 		Annotations: annotations,
 		Labels:      labels,
 	}

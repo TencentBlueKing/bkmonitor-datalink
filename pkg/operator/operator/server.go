@@ -25,7 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/httpx"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
@@ -344,7 +344,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	writef(formatResource, string(b))
 
 	// 检查 Endpoint 数量
-	endpoints := c.recorder.getActiveEndpoints()
+	endpoints := c.recorder.getEndpoints(true)
 	b, _ = json.MarshalIndent(endpoints, "", "  ")
 	var total int
 	for _, v := range endpoints {
@@ -528,8 +528,8 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 
 	// 补充 workload 维度信息
 	podName := query.Get("podName")
-	annotations := stringx.SplitTrim(query.Get("annotations"), ",")
-	labels := stringx.SplitTrim(query.Get("labels"), ",")
+	annotations := utils.SplitTrim(query.Get("annotations"), ",")
+	labels := utils.SplitTrim(query.Get("labels"), ",")
 	cfgs = append(cfgs, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName, annotations, labels)...)
 
 	// kind/rules 是为了让 workload 同时能够支持其他 labeljoin 等其他规则
@@ -548,8 +548,8 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 func (c *Operator) LabelJoinRoute(w http.ResponseWriter, r *http.Request) {
 	query := httpx.UnwindParams(r.URL.Query().Get("q"))
 	kind := query.Get("kind")
-	annotations := stringx.SplitTrim(query.Get("annotations"), ",")
-	labels := stringx.SplitTrim(query.Get("labels"), ",")
+	annotations := utils.SplitTrim(query.Get("annotations"), ",")
+	labels := utils.SplitTrim(query.Get("labels"), ",")
 
 	switch kind {
 	case "Pod":

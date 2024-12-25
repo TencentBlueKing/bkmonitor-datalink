@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/promfmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 )
 
 const (
@@ -55,11 +56,11 @@ func (oc *ObjectsController) WriteNodeRelations(w io.Writer) {
 
 func (oc *ObjectsController) WriteServiceRelations(w io.Writer) {
 	oc.serviceObjs.Range(func(namespace string, services serviceEntities) {
+		pods := oc.podObjs.GetByNamespace(namespace)
 		for _, svc := range services {
 			if len(svc.selector) > 0 {
-				pods := oc.podObjs.GetByNamespace(namespace)
 				for _, pod := range pods {
-					if !matchLabels(svc.selector, pod.Labels) {
+					if !utils.MatchSubLabels(svc.selector, pod.Labels) {
 						continue
 					}
 					promfmt.FmtBytes(w, promfmt.Metric{

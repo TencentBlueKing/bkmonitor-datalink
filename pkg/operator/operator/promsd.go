@@ -200,18 +200,20 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 		UrlValues:              rsc.Config.Params,
 		ExtraLabels:            specLabels,
 		MetricRelabelConfigs:   metricRelabelings,
+		NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+		NodeLabelsFunc:         c.objectsController.NodeLabels,
 	}
 
 	var dis discover.Discover
 	switch kind {
 	case monitorKindHttpSd:
-		dis = httpsd.New(c.ctx, c.objectsController.NodeNameExists, &httpsd.Options{
+		dis = httpsd.New(c.ctx, &httpsd.Options{
 			CommonOptions:    commonOpts,
 			SDConfig:         sdConfig.(*promhttpsd.SDConfig),
 			HTTPClientConfig: httpClientConfig,
 		})
 	case monitorKindPolarisSd:
-		dis = polarissd.New(c.ctx, c.objectsController.NodeNameExists, &polarissd.Options{
+		dis = polarissd.New(c.ctx, &polarissd.Options{
 			CommonOptions:    commonOpts,
 			SDConfig:         sdConfig.(*polarissd.SDConfig),
 			HTTPClientConfig: httpClientConfig,
@@ -266,7 +268,7 @@ func (c *Operator) createKubernetesSdDiscover(rsc resourceScrapConfig, sdConfig 
 		password = string(basicAuth.Password)
 	}
 
-	dis := kubernetesd.New(c.ctx, string(sdConfig.Role), c.objectsController.NodeNameExists, &kubernetesd.Options{
+	dis := kubernetesd.New(c.ctx, string(sdConfig.Role), &kubernetesd.Options{
 		CommonOptions: &discover.CommonOptions{
 			MonitorMeta:            monitorMeta,
 			Name:                   monitorMeta.ID(),
@@ -282,6 +284,8 @@ func (c *Operator) createKubernetesSdDiscover(rsc resourceScrapConfig, sdConfig 
 			UrlValues:              rsc.Config.Params,
 			ExtraLabels:            specLabels,
 			MetricRelabelConfigs:   metricRelabelings,
+			NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+			NodeLabelsFunc:         c.objectsController.NodeLabels,
 		},
 		KubeConfig: configs.G().KubeConfig,
 		Namespaces: sdConfig.NamespaceDiscovery.Names,

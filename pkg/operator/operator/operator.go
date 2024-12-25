@@ -238,6 +238,17 @@ func (c *Operator) getAllDiscover() []define.MonitorMeta {
 	return ret
 }
 
+func (c *Operator) getDiscoverCount() map[string]int {
+	c.discoversMut.Lock()
+	defer c.discoversMut.Unlock()
+
+	count := make(map[string]int)
+	for _, dis := range c.discovers {
+		count[dis.Type()]++
+	}
+	return count
+}
+
 func (c *Operator) reloadAllDiscovers() {
 	c.discoversMut.Lock()
 	defer c.discoversMut.Unlock()
@@ -264,13 +275,13 @@ func (c *Operator) recordMetrics() {
 	c.wg.Add(1)
 	defer c.wg.Done()
 
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			c.mm.UpdateUptime(5)
+			c.mm.UpdateUptime(15)
 			c.mm.SetAppBuildInfo(c.buildInfo)
 			c.updateNodeConfigMetrics()
 			c.updateMonitorEndpointMetrics()
@@ -286,7 +297,9 @@ func (c *Operator) recordMetrics() {
 
 func (c *Operator) updateSharedDiscoveryMetrics() {
 	c.mm.SetSharedDiscoveryCount(len(shareddiscovery.AllDiscovery()))
-	c.mm.SetDiscoverCount(len(c.getAllDiscover()))
+	for typ, count := range c.getDiscoverCount() {
+		c.mm.SetDiscoverCount(typ, count)
+	}
 }
 
 func (c *Operator) updateNodeConfigMetrics() {
@@ -302,7 +315,7 @@ func (c *Operator) updateNodeConfigMetrics() {
 }
 
 func (c *Operator) updateMonitorEndpointMetrics() {
-	endpoints := c.recorder.getActiveEndpoints()
+	endpoints := c.recorder.getEndpoints(false)
 	for name, count := range endpoints {
 		c.mm.SetMonitorEndpointCount(name, count)
 	}

@@ -111,7 +111,7 @@ var (
 			Name:      "bk_data_api_request_total",
 			Help:      "unify-query bk_data api request",
 		},
-		[]string{"space_uid", "table_id", "is_match"},
+		[]string{"space_uid", "table_id", "is_match", "is_ff"},
 	)
 )
 
@@ -151,8 +151,8 @@ func JWTRequestInc(ctx context.Context, userAgent, clusterIP, api, jwtAppCode, j
 	counterInc(ctx, metric)
 }
 
-func BkDataRequestInc(ctx context.Context, spaceUID, tableID, isMatch string) {
-	metric, _ := bkDataApiRequestTotal.GetMetricWithLabelValues(spaceUID, tableID, isMatch)
+func BkDataRequestInc(ctx context.Context, spaceUID, tableID, isMatch, isFF string) {
+	metric, _ := bkDataApiRequestTotal.GetMetricWithLabelValues(spaceUID, tableID, isMatch, isFF)
 	counterInc(ctx, metric)
 }
 

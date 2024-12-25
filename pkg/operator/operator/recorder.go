@@ -21,10 +21,14 @@ import (
 type Recorder struct {
 	mut              sync.Mutex
 	activeConfigFile map[string]ConfigFileRecord
+	seenMetaID       map[string]struct{}
 }
 
 func newRecorder() *Recorder {
-	return &Recorder{activeConfigFile: make(map[string]ConfigFileRecord)}
+	return &Recorder{
+		activeConfigFile: make(map[string]ConfigFileRecord),
+		seenMetaID:       make(map[string]struct{}),
+	}
 }
 
 type ConfigFileRecord struct {
@@ -72,6 +76,7 @@ func (r *Recorder) updateConfigFiles(cfgs []ConfigFileRecord) {
 	cfgMap := make(map[string]ConfigFileRecord)
 	for _, cfg := range cfgs {
 		cfgMap[cfg.FileName] = cfg
+		r.seenMetaID[cfg.Meta.ID()] = struct{}{}
 	}
 	r.activeConfigFile = cfgMap
 }
@@ -103,7 +108,7 @@ func (r *Recorder) getActiveConfigFiles() []ConfigFileRecord {
 	return cfgs
 }
 
-func (r *Recorder) getActiveEndpoints() map[string]int {
+func (r *Recorder) getEndpoints(active bool) map[string]int {
 	r.mut.Lock()
 	defer r.mut.Unlock()
 
@@ -111,6 +116,23 @@ func (r *Recorder) getActiveEndpoints() map[string]int {
 	for _, cfg := range r.activeConfigFile {
 		ret[cfg.Meta.ID()]++
 	}
+
+	// active 只返回现在正在监听的 discover
+	if active {
+		return ret
+	}
+
+	// 曾经记录过的 id 如果已经被删除则记为 0 避免自监控数据只增不减的情况
+	dropped := make(map[string]struct{})
+	for id := range r.seenMetaID {
+		if _, ok := ret[id]; !ok {
+			dropped[id] = struct{}{}
+		}
+	}
+	for dropID := range dropped {
+		ret[dropID] = 0
+	}
+
 	return ret
 }
 

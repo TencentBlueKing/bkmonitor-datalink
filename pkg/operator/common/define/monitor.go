@@ -24,8 +24,6 @@ const (
 // ConfigFilePath 主配置文件路径
 var ConfigFilePath string
 
-type CheckFunc func(string) (string, bool)
-
 // MonitorMeta 描述了监控类型的元数据信息，目前类型有 serviceMonitor, podMonitor, probe
 type MonitorMeta struct {
 	Name      string `json:"name"`

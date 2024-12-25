@@ -20,6 +20,8 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -80,13 +82,38 @@ func (n *NodeMap) IPs() map[string]struct{} {
 	return ret
 }
 
+func (n *NodeMap) NodeLabels(name string) map[string]string {
+	n.mut.Lock()
+	defer n.mut.Unlock()
+
+	node, ok := n.nodes[name]
+	if !ok {
+		return nil
+	}
+
+	cloned := make(map[string]string)
+	for k, v := range node.Labels {
+		cloned[k] = v
+	}
+	return cloned
+}
+
 func (n *NodeMap) NameExists(name string) (string, bool) {
 	n.mut.Lock()
 	defer n.mut.Unlock()
 
 	// 先判断 nodename 是否存在
-	if _, ok := n.nodes[name]; ok {
-		return name, true
+	node, ok := n.nodes[name]
+	if ok {
+		// 存在且没有 ignore 配置 直接返回
+		if len(configs.G().DaemonSetWorkerIgnoreNodeLabels) == 0 {
+			return name, true
+		}
+
+		matched := utils.MatchSubLabels(configs.G().DaemonSetWorkerIgnoreNodeLabels, node.Labels)
+		if matched {
+			return name, false
+		}
 	}
 
 	// 如果不存在的话再判断 nodename 是否为格式化 ip

@@ -105,16 +105,6 @@ func (m *ServiceMap) Range(visitFunc func(namespace string, services serviceEnti
 	}
 }
 
-func matchLabels(subset, set map[string]string) bool {
-	for k, v := range subset {
-		val, ok := set[k]
-		if !ok || val != v {
-			return false
-		}
-	}
-	return true
-}
-
 func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*ServiceMap, error) {
 	objs := NewServiceMap()
 

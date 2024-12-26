@@ -517,15 +517,16 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			return true
 		}()
 
+		ff := metadata.GetBkDataTableIDCheck(ctx, string(tableID))
+		metric.BkDataRequestInc(ctx, spaceUid, string(tableID), fmt.Sprintf("%v", isMatchBizID), fmt.Sprintf("%v", ff))
+
 		// 特性开关是否，打开 bkdata tableid 校验
-		if metadata.GetBkDataTableIDCheck(ctx) {
+		if ff {
 			// 增加 bkdata tableid 校验，只有业务开头的才有权限，防止越权
 			if !isMatchBizID {
 				return queryMetric, nil
 			}
 		}
-
-		metric.BkDataRequestInc(ctx, spaceUid, string(tableID), fmt.Sprintf("%v", isMatchBizID))
 
 		route, bkDataErr := MakeRouteFromTableID(q.TableID)
 		if bkDataErr != nil {

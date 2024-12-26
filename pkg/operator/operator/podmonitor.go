@@ -178,7 +178,7 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 			safeTlsConfig = tlsConfig.SafeTLSConfig
 		}
 
-		dis := kubernetesd.New(c.ctx, kubernetesd.TypePod, c.objectsController.NodeNameExists, &kubernetesd.Options{
+		dis := kubernetesd.New(c.ctx, kubernetesd.TypePod, &kubernetesd.Options{
 			CommonOptions: &discover.CommonOptions{
 				MonitorMeta:            monitorMeta,
 				RelabelRule:            feature.RelabelRule(podMonitor.Annotations),
@@ -202,6 +202,8 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 				System:                 systemResource,
 				UrlValues:              endpoint.Params,
 				MetricRelabelConfigs:   metricRelabelings,
+				NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+				NodeLabelsFunc:         c.objectsController.NodeLabels,
 			},
 			Client:            c.client,
 			Namespaces:        namespaces,

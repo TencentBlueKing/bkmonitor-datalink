@@ -403,9 +403,9 @@ func (i *Instance) vmQuery(
 	span.Set("response-size", size)
 
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, user.Source, i.InstanceType(), i.url,
+		ctx, queryCost, i.InstanceType(), i.url,
 	)
-	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.InstanceType())
+	metric.TsDBRequestBytes(ctx, size, i.InstanceType())
 	return nil
 }
 

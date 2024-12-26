@@ -190,9 +190,8 @@ func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []stri
 
 func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
 	var (
-		err  error
-		qb   = qo.query
-		user = metadata.GetUser(ctx)
+		err error
+		qb  = qo.query
 	)
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query")
 	defer span.End(&err)
@@ -307,7 +306,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	queryCost := time.Since(startAnalyze)
 	span.Set("query-cost", queryCost.String())
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, user.Source, consul.ElasticsearchStorageType, qo.conn.Address,
+		ctx, queryCost, consul.ElasticsearchStorageType, qo.conn.Address,
 	)
 
 	return res, nil

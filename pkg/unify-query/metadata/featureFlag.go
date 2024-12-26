@@ -16,7 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
-func GetBkDataTableIDCheck(ctx context.Context) bool {
+func GetBkDataTableIDCheck(ctx context.Context, tableID string) bool {
 	var (
 		user = GetUser(ctx)
 		err  error
@@ -30,6 +30,7 @@ func GetBkDataTableIDCheck(ctx context.Context) bool {
 		"name":     user.Name,
 		"source":   user.Source,
 		"spaceUid": user.SpaceUid,
+		"tableID":  tableID,
 	})
 
 	span.Set("ff-user-custom", u.GetCustom())

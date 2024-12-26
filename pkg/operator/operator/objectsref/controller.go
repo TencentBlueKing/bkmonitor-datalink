@@ -358,6 +358,10 @@ func (oc *ObjectsController) NodeNameExists(s string) (string, bool) {
 	return oc.nodeObjs.NameExists(s)
 }
 
+func (oc *ObjectsController) NodeLabels(s string) map[string]string {
+	return oc.nodeObjs.NodeLabels(s)
+}
+
 func (oc *ObjectsController) SecretObjs() []Object {
 	return oc.secretObjs.GetAll()
 }

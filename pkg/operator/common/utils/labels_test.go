@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package objectsref
+package utils
 
 import (
 	"testing"
@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMatchLabels(t *testing.T) {
+func TestMatchSubLabels(t *testing.T) {
 	t.Run("Match/Less", func(t *testing.T) {
 		subset := map[string]string{
 			"k1": "v1",
@@ -27,7 +27,7 @@ func TestMatchLabels(t *testing.T) {
 			"k3": "v3",
 		}
 
-		assert.True(t, matchLabels(subset, set))
+		assert.True(t, MatchSubLabels(subset, set))
 	})
 
 	t.Run("Match/Equal", func(t *testing.T) {
@@ -40,7 +40,7 @@ func TestMatchLabels(t *testing.T) {
 			"k2": "v2",
 		}
 
-		assert.True(t, matchLabels(subset, set))
+		assert.True(t, MatchSubLabels(subset, set))
 	})
 
 	t.Run("Match/Greater", func(t *testing.T) {
@@ -54,6 +54,6 @@ func TestMatchLabels(t *testing.T) {
 			"k2": "v2",
 		}
 
-		assert.False(t, matchLabels(subset, set))
+		assert.False(t, MatchSubLabels(subset, set))
 	})
 }

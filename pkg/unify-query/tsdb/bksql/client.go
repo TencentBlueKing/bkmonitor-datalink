@@ -80,8 +80,7 @@ func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, s
 		return err
 	}
 
-	user := metadata.GetUser(ctx)
-	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, consul.BkSqlStorageType)
+	metric.TsDBRequestBytes(ctx, size, consul.BkSqlStorageType)
 
 	queryCost := time.Since(startAnaylize)
 	if span != nil {
@@ -89,7 +88,7 @@ func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, s
 	}
 
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, user.Source, consul.BkSqlStorageType, c.url,
+		ctx, queryCost, consul.BkSqlStorageType, c.url,
 	)
 	return nil
 }

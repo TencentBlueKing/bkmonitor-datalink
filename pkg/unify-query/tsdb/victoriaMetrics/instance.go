@@ -409,7 +409,7 @@ func (i *Instance) vmQuery(
 	return nil
 }
 
-// QueryRange 查询范围数据
+// DirectQueryRange 查询范围数据
 func (i *Instance) DirectQueryRange(
 	ctx context.Context, promqlStr string,
 	start, end time.Time, step time.Duration,

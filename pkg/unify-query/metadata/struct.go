@@ -32,30 +32,30 @@ const (
 type VmCondition string
 
 type TimeField struct {
-	Name     string `json:"name,omitempty"`
-	Type     string `json:"type,omitempty"`
-	Unit     string `json:"unit,omitempty"`
-	UnitRate int64  `json:"unit_rate,omitempty"`
+	Name     string
+	Type     string
+	Unit     string
+	UnitRate int64
 }
 
 // Aggregate 聚合方法
 type Aggregate struct {
-	Name       string   `json:"name,omitempty"`
-	Dimensions []string `json:"dimensions,omitempty"`
-	Without    bool     `json:"without"`
+	Name       string
+	Dimensions []string
+	Without    bool
 
-	Window   time.Duration `json:"window"`
-	TimeZone string        `json:"time_zone"`
+	Window   time.Duration
+	TimeZone string
 
-	Args []interface{} `json:"args,omitempty"`
+	Args []interface{}
 }
 
 // OffSetInfo Offset的信息存储，供promql查询转换为influxdb查询语句时使用
 type OffSetInfo struct {
-	OffSet  time.Duration `json:"off_set,omitempty"`
-	Limit   int           `json:"limit,omitempty"`
-	SOffSet int           `json:"s_off_set,omitempty"`
-	SLimit  int           `json:"s_limit,omitempty"`
+	OffSet  time.Duration
+	Limit   int
+	SOffSet int
+	SLimit  int
 }
 
 type Aggregates []Aggregate

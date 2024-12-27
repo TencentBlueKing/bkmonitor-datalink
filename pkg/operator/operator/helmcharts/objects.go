@@ -63,7 +63,7 @@ func (o *Objects) Set(element ReleaseElement) {
 	}
 
 	v, ok := o.elements[ik]
-	if !ok || v.Revision < element.Revision {
+	if !ok || v.Revision <= element.Revision {
 		o.elements[ik] = element
 	}
 }

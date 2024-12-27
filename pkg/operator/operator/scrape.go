@@ -112,7 +112,7 @@ func (c *Operator) scrapeLines(ctx context.Context, namespace, monitor, ip strin
 			continue
 		}
 		if monitor == "" || cfg.Meta.Name == monitor {
-			if ip == "" || strings.Contains(cfg.Path, strings.ReplaceAll(ip, ".", "-")) {
+			if ip == "" || strings.Contains(cfg.FileName, strings.ReplaceAll(ip, ".", "-")) {
 				cfgs = append(cfgs, cfg)
 			}
 		}

@@ -608,8 +608,8 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /check?monitor=${monitor}&scrape=true|false&workers=N
 * GET /check/dataid
 * GET /check/scrape?workers=N
-* GET /check/scrape/{namespace}?workers=N&analyze=true|false&topn=M&ip=IP
-* GET /check/scrape/{namespace}/{monitor}?workers=N&analyze=true|false&topn=M&ip=IP
+* GET /check/scrape/{namespace}?workers=N&analyze=true|false&topn=M&endpoint={endpoint}
+* GET /check/scrape/{namespace}/{monitor}?workers=N&analyze=true|false&topn=M&endpoint={endpoint}
 * GET /check/namespace
 * GET /check/monitor_blacklist
 * GET /check/active_discover

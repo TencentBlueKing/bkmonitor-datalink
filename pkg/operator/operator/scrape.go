@@ -65,8 +65,8 @@ func parseMetricName(s string) string {
 	return ""
 }
 
-func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor, ip string, workers int, topn int) []scrapeAnalyze {
-	ch := c.scrapeLines(ctx, namespace, monitor, ip, workers)
+func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor, endpoint string, workers int, topn int) []scrapeAnalyze {
+	ch := c.scrapeLines(ctx, namespace, monitor, endpoint, workers)
 
 	stats := make(map[string]int)
 	sample := make(map[string]string)
@@ -100,7 +100,7 @@ func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor, ip str
 	return ret
 }
 
-func (c *Operator) scrapeLines(ctx context.Context, namespace, monitor, ip string, workers int) chan string {
+func (c *Operator) scrapeLines(ctx context.Context, namespace, monitor, endpoint string, workers int) chan string {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -112,7 +112,7 @@ func (c *Operator) scrapeLines(ctx context.Context, namespace, monitor, ip strin
 			continue
 		}
 		if monitor == "" || cfg.Meta.Name == monitor {
-			if ip == "" || strings.Contains(cfg.FileName, strings.ReplaceAll(ip, ".", "-")) {
+			if endpoint == "" || strings.Contains(cfg.FileName, strings.ReplaceAll(endpoint, ".", "-")) {
 				cfgs = append(cfgs, cfg)
 			}
 		}

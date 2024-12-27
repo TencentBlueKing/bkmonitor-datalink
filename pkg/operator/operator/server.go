@@ -113,17 +113,17 @@ func (c *Operator) CheckScrapeNamespaceMonitorRoute(w http.ResponseWriter, r *ht
 
 	worker, _ := strconv.Atoi(r.URL.Query().Get("workers"))
 	topn, _ := strconv.Atoi(r.URL.Query().Get("topn"))
-	ip := r.URL.Query().Get("ip")
+	endpoint := r.URL.Query().Get("endpoint")
 
 	analyze := r.URL.Query().Get("analyze") // 分析指标
 	if analyze == "true" {
-		ret := c.scrapeAnalyze(r.Context(), namespace, monitor, ip, worker, topn)
+		ret := c.scrapeAnalyze(r.Context(), namespace, monitor, endpoint, worker, topn)
 		b, _ := json.Marshal(ret)
 		w.Write(b)
 		return
 	}
 
-	ch := c.scrapeLines(r.Context(), namespace, monitor, ip, worker)
+	ch := c.scrapeLines(r.Context(), namespace, monitor, endpoint, worker)
 	const batch = 1000
 	n := 0
 	for line := range ch {

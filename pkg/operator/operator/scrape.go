@@ -65,8 +65,8 @@ func parseMetricName(s string) string {
 	return ""
 }
 
-func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor string, workers int, topn int) []scrapeAnalyze {
-	ch := c.scrapeLines(ctx, namespace, monitor, workers)
+func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor, ip string, workers int, topn int) []scrapeAnalyze {
+	ch := c.scrapeLines(ctx, namespace, monitor, ip, workers)
 
 	stats := make(map[string]int)
 	sample := make(map[string]string)
@@ -100,7 +100,7 @@ func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor string,
 	return ret
 }
 
-func (c *Operator) scrapeLines(ctx context.Context, namespace, monitor string, workers int) chan string {
+func (c *Operator) scrapeLines(ctx context.Context, namespace, monitor, ip string, workers int) chan string {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -108,8 +108,11 @@ func (c *Operator) scrapeLines(ctx context.Context, namespace, monitor string, w
 
 	cfgs := make([]*discover.ChildConfig, 0)
 	for _, cfg := range childConfigs {
-		if cfg.Meta.Namespace == namespace {
-			if monitor == "" || cfg.Meta.Name == monitor {
+		if cfg.Meta.Namespace != namespace {
+			continue
+		}
+		if monitor == "" || cfg.Meta.Name == monitor {
+			if ip == "" || strings.Contains(cfg.Path, strings.ReplaceAll(ip, ".", "-")) {
 				cfgs = append(cfgs, cfg)
 			}
 		}

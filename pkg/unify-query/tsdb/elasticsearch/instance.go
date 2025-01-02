@@ -47,7 +47,7 @@ type Instance struct {
 
 	lock sync.Mutex
 
-	connects []Connect
+	connects Connects
 
 	healthCheck bool
 
@@ -55,6 +55,16 @@ type Instance struct {
 
 	timeout time.Duration
 	maxSize int
+}
+
+type Connects []Connect
+
+func (cs Connects) String() string {
+	var s strings.Builder
+	for _, c := range cs {
+		s.WriteString(c.Address)
+	}
+	return s.String()
 }
 
 type Connect struct {
@@ -508,7 +518,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-raw")
 	defer span.End(&err)
 
-	span.Set("instance-connects", i.connects)
+	span.Set("instance-connects", i.connects.String())
 
 	if query.DB == "" {
 		err = fmt.Errorf("%s 查询别名为空", query.TableID)
@@ -610,7 +620,7 @@ func (i *Instance) QuerySeriesSet(
 	span.Set("query-space-uid", user.SpaceUid)
 	span.Set("query-source", user.Source)
 	span.Set("query-username", user.Name)
-	span.Set("query-connects", i.connects)
+	span.Set("query-connects", i.connects.String())
 
 	span.Set("query-storage-id", query.StorageID)
 	span.Set("query-storage-ids", query.StorageIDs)

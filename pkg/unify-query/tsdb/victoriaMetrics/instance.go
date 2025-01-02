@@ -381,9 +381,6 @@ func (i *Instance) vmQuery(
 
 	headers := metadata.Headers(ctx, i.headers)
 
-	headersString, _ := json.Marshal(headers)
-	span.Set("query-headers", headersString)
-
 	size, err := i.curl.Request(
 		ctx, curl.Post,
 		curl.Options{

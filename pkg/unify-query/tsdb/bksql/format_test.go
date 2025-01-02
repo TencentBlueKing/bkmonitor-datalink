@@ -117,10 +117,10 @@ func TestNewSqlFactory(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
-			if c.start.Unix() == 0 {
+			if c.start.Unix() <= 0 {
 				c.start = start
 			}
-			if c.end.Unix() == 0 {
+			if c.end.Unix() <= 0 {
 				c.end = end
 			}
 

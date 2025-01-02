@@ -37,6 +37,13 @@ func TestGetBkDataTableIDCheck(t *testing.T) {
                     "false": 100,
 					"true": 0
                 }
+            },
+			{
+                "query": "tableID sw \"10000_\"",
+                "percentage": {
+                    "false": 100,
+					"true": 0
+                }
             }
         ],
         "defaultRule": {
@@ -45,22 +52,28 @@ func TestGetBkDataTableIDCheck(t *testing.T) {
     }
 }`)
 
-	var actual bool
+	var (
+		actual bool
+	)
 
 	SetUser(ctx, "", "bkdata_1", "")
-	actual = GetBkDataTableIDCheck(ctx)
+	actual = GetBkDataTableIDCheck(ctx, "")
 	assert.Equal(t, false, actual)
 
 	SetUser(ctx, "", "bkmonitor", "")
-	actual = GetBkDataTableIDCheck(ctx)
+	actual = GetBkDataTableIDCheck(ctx, "")
 	assert.Equal(t, true, actual)
 
+	SetUser(ctx, "", "bkmonitor", "")
+	actual = GetBkDataTableIDCheck(ctx, "10000_demo")
+	assert.Equal(t, false, actual)
+
 	SetUser(ctx, "", "bkdata_1_1", "")
-	actual = GetBkDataTableIDCheck(ctx)
+	actual = GetBkDataTableIDCheck(ctx, "")
 	assert.Equal(t, true, actual)
 
 	SetUser(ctx, "", "bkdata", "")
-	actual = GetBkDataTableIDCheck(ctx)
+	actual = GetBkDataTableIDCheck(ctx, "")
 	assert.Equal(t, false, actual)
 }
 

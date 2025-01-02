@@ -67,3 +67,7 @@ func (c *Ristretto) SetWithTTL(key string, val interface{}, cost int64, t time.D
 func (c *Ristretto) Del(key string) {
 	c.cache.Del(key)
 }
+
+func (c *Ristretto) Clear() {
+	c.cache.Clear()
+}

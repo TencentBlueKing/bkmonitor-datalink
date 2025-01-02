@@ -911,3 +911,7 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 
 	return
 }
+
+func (f *FormatFactory) GetTimeField() metadata.TimeField {
+	return f.timeField
+}

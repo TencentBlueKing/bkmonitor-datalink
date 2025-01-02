@@ -92,10 +92,10 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 
 		// 第二组的需要先判断条件是否or
 		if c.ConditionList[index-1] == ConditionAnd {
-			log.Debugf(context.TODO(), "under and condition, element->[%s] will continue add to row buffer", field)
+			log.Debugf(context.TODO(), "under and condition, element->[%v] will continue add to row buffer", field)
 			rowBuffer = append(rowBuffer, field)
 		} else if c.ConditionList[index-1] == ConditionOr {
-			log.Debugf(context.TODO(), "under or condition, will add element->[%s] to new row.", field)
+			log.Debugf(context.TODO(), "under or condition, will add element->[%v] to new row.", field)
 			// 先追加到结果中
 			totalBuffer = append(totalBuffer, rowBuffer)
 			// 然后创建一个新的行数组放置新的内容

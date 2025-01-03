@@ -664,10 +664,6 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	if query.Size > 0 {
 		queryString = fmt.Sprintf(`topk(%d, %s)`, query.Size, queryString)
 	}
-	log.Infof(ctx, "query: %s", queryString)
-	log.Infof(ctx, "start: %s", start.String())
-	log.Infof(ctx, "end: %s", end.String())
-	log.Infof(ctx, "step: %d", step)
 
 	paramsQueryRange := &ParamsQueryRange{
 		InfluxCompatible: i.influxCompatible,

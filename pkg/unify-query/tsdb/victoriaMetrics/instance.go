@@ -438,9 +438,6 @@ func (i *Instance) DirectQueryRange(
 		return promql.Matrix{}, nil
 	}
 
-	ves, _ := json.Marshal(vmExpand)
-	log.Infof(ctx, "vm-expand: %s", ves)
-
 	paramsQueryRange := &ParamsQueryRange{
 		InfluxCompatible: i.influxCompatible,
 		APIType:          APIQueryRange,

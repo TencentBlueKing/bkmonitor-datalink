@@ -438,6 +438,9 @@ func (i *Instance) DirectQueryRange(
 		return promql.Matrix{}, nil
 	}
 
+	rangeLeftTime := end.Sub(start)
+	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
+
 	paramsQueryRange := &ParamsQueryRange{
 		InfluxCompatible: i.influxCompatible,
 		APIType:          APIQueryRange,

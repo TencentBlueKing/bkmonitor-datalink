@@ -113,16 +113,17 @@ func (c *Operator) CheckScrapeNamespaceMonitorRoute(w http.ResponseWriter, r *ht
 
 	worker, _ := strconv.Atoi(r.URL.Query().Get("workers"))
 	topn, _ := strconv.Atoi(r.URL.Query().Get("topn"))
+	endpoint := r.URL.Query().Get("endpoint")
 
 	analyze := r.URL.Query().Get("analyze") // 分析指标
 	if analyze == "true" {
-		ret := c.scrapeAnalyze(r.Context(), namespace, monitor, worker, topn)
+		ret := c.scrapeAnalyze(r.Context(), namespace, monitor, endpoint, worker, topn)
 		b, _ := json.Marshal(ret)
 		w.Write(b)
 		return
 	}
 
-	ch := c.scrapeLines(r.Context(), namespace, monitor, worker)
+	ch := c.scrapeLines(r.Context(), namespace, monitor, endpoint, worker)
 	const batch = 1000
 	n := 0
 	for line := range ch {
@@ -607,8 +608,8 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /check?monitor=${monitor}&scrape=true|false&workers=N
 * GET /check/dataid
 * GET /check/scrape?workers=N
-* GET /check/scrape/{namespace}?workers=N&analyze=true|false&topn=M
-* GET /check/scrape/{namespace}/{monitor}?workers=N&analyze=true|false&topn=M
+* GET /check/scrape/{namespace}?workers=N&analyze=true|false&topn=M&endpoint={endpoint}
+* GET /check/scrape/{namespace}/{monitor}?workers=N&analyze=true|false&topn=M&endpoint={endpoint}
 * GET /check/namespace
 * GET /check/monitor_blacklist
 * GET /check/active_discover

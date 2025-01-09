@@ -29,12 +29,6 @@ var NewKafkaConfig = func(conf define.Configuration) (*sarama.Config, error) {
 	c.Consumer.Return.Errors = true
 	c.Consumer.MaxProcessingTime = 20 * time.Second
 	c.Consumer.Offsets.AutoCommit.Enable = false // 关闭自动提交特性 交由 DelayOffsetManager 管理
-
-	version, err := sarama.ParseKafkaVersion(conf.GetString(ConfKafkaVersion))
-	if err != nil {
-		return nil, err
-	}
-	c.Version = version
 	return c, nil
 }
 

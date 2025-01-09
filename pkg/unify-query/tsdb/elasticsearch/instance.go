@@ -62,7 +62,7 @@ type Connects []Connect
 func (cs Connects) String() string {
 	var s strings.Builder
 	for _, c := range cs {
-		s.WriteString(c.Address)
+		s.WriteString(c.String())
 	}
 	return s.String()
 }
@@ -71,6 +71,12 @@ type Connect struct {
 	Address  string
 	UserName string
 	Password string
+}
+
+func (c Connect) String() string {
+	var s strings.Builder
+	s.WriteString(c.Address)
+	return s.String()
 }
 
 type InstanceOption struct {
@@ -278,7 +284,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	bodyJson, _ := json.Marshal(body)
 	bodyString := string(bodyJson)
 
-	span.Set("query-connect", qo.conn)
+	span.Set("query-connect", qo.conn.String())
 	span.Set("query-headers", i.headers)
 
 	span.Set("query-indexes", qo.indexes)

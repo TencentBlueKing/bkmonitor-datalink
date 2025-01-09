@@ -284,6 +284,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	bodyJson, _ := json.Marshal(body)
 	bodyString := string(bodyJson)
 
+	span.Set("metadata-query", qb)
 	span.Set("query-connect", qo.conn.String())
 	span.Set("query-headers", i.headers)
 

@@ -142,14 +142,13 @@ func (b *Backend) init() error {
 	if err != nil {
 		logging.Warnf("%v may not establish connection %v: password", b.Name, define.ErrGetAuth)
 	}
-	mqConfig := config.MQConfigFromContext(b.ctx)
 	if username != "" || password != "" && err == nil {
 		producerConfig.Net.SASL.User = username
 		producerConfig.Net.SASL.Password = password
 		producerConfig.Net.SASL.Enable = true
 
 		// 目前仅支持 sha512/sha256
-		info := utils.NewMapHelper(mqConfig.AuthInfo)
+		info := utils.NewMapHelper(kafkaConfig.AuthInfo)
 		if mechanisms, ok := info.GetString(optSaslMechanisms); ok {
 			switch mechanisms {
 			case "SCRAM-SHA-512":

@@ -59,6 +59,12 @@ type QueryTs struct {
 	LookBackDelta string `json:"look_back_delta,omitempty"`
 	// Instant 瞬时数据
 	Instant bool `json:"instant"`
+
+	// 增加公共限制
+	// Limit 点数限制数量
+	Limit int `json:"limit,omitempty" example:"0"`
+	// From 翻页开启数字
+	From int `json:"from,omitempty" example:"0"`
 }
 
 // 根据 timezone 偏移对齐

@@ -272,6 +272,10 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		fact.Size(source)
 	}
 
+	if qb.HighLight {
+		source.Highlight(fact.HighLight(qb.QueryString))
+	}
+
 	if source == nil {
 		return nil, fmt.Errorf("empty es query source")
 	}

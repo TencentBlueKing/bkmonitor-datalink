@@ -116,11 +116,18 @@ type Query struct {
 	// Es 查询扩展
 	QueryString   string
 	AllConditions AllConditions
-	Source        []string
-	From          int
-	Size          int
-	Orders        Orders
-	NeedAddTime   bool
+
+	HighLight bool
+
+	Source      []string
+	From        int
+	Size        int
+	Orders      Orders
+	NeedAddTime bool
+}
+
+type HighLight struct {
+	Fields []string
 }
 
 type Orders map[string]bool

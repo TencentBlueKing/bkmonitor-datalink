@@ -393,6 +393,9 @@ type Query struct {
 
 	// IsReference 是否使用非时间聚合查询
 	IsReference bool `json:"-" swaggerignore:"true"`
+
+	// HighLight 是否打开高亮，只对原始数据接口生效
+	HighLight bool `json:"highlight,omitempty"`
 }
 
 func (q *Query) ToRouter() (*Route, error) {
@@ -897,6 +900,7 @@ func (q *Query) BuildMetadataQuery(
 	// 写入 ES 所需内容
 	query.QueryString = q.QueryString
 	query.Source = q.KeepColumns
+	query.HighLight = q.HighLight
 
 	if len(allCondition) > 0 {
 		query.AllConditions = make(metadata.AllConditions, len(allCondition))

@@ -575,6 +575,18 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 	return
 }
 
+func (f *FormatFactory) HighLight(queryString string) *elastic.Highlight {
+	requireFieldMatch := false
+	if strings.Contains(queryString, ":") {
+		requireFieldMatch = true
+	}
+	hl := elastic.NewHighlight().
+		Field("*").NumOfFragments(0).
+		RequireFieldMatch(requireFieldMatch).
+		PreTags("<mark>").PostTags("</mark>")
+	return hl
+}
+
 func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
 	if len(aggregates) == 0 {
 		err := errors.New("aggregate_method_list is empty")

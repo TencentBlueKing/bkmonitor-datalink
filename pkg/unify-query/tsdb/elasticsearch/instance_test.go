@@ -51,8 +51,8 @@ func TestInstance_queryReference(t *testing.T) {
 
 	mock.Es.Set(map[string]any{
 
-		// nested query + query string 测试
-		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"query_string":{"analyze_wildcard":true,"query":"group: fans"}}]}},"size":5}`: `{"took":1,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"user":[{"last":"Smith","first":"John"},{"last":"White","first":"Alice"}],"group":"fans"}}]}}`,
+		// nested query + query string 测试 + highlight
+		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"highlight":{"fields":{"*":{}},"number_of_fragments":0,"post_tags":["\u003c/mark\u003e"],"pre_tags":["\u003cmark\u003e"],"require_field_match":true},"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"query_string":{"analyze_wildcard":true,"query":"group: fans"}}]}},"size":5}`: `{"took":4,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"user":[{"last":"Smith","first":"John"},{"last":"White","first":"Alice"}],"group":"fans"},"highlight":{"user.new_group_user_first":["<mark>John</mark>"],"user.first":["<mark>John</mark>"],"user.new_first":["<mark>John</mark>"],"group":["<mark>fans</mark>"]}}]}}`,
 
 		// "nested aggregate + query 测试
 		`{"_source":{"includes":["group","user.first","user.last"]},"aggregations":{"user":{"aggregations":{"_value":{"value_count":{"field":"user.first"}}},"nested":{"path":"user"}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":17,"relation":"eq"},"max_score":null,"hits":[]},"aggregations":{"user":{"doc_count":18,"_value":{"value":18}}}}`,
@@ -97,7 +97,7 @@ func TestInstance_queryReference(t *testing.T) {
 
 		expected string
 	}{
-		"nested query + query string 测试": {
+		"nested query + query string 测试 + highlight": {
 			query: &metadata.Query{
 				DB:    db,
 				Field: "group",
@@ -121,10 +121,11 @@ func TestInstance_queryReference(t *testing.T) {
 					},
 				},
 				QueryString: "group: fans",
+				HighLight:   true,
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"__doc_id":"aS3KjpEBbwEm76LbcH1G","group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]}]`,
+			expected: `[{"__doc_id":"aS3KjpEBbwEm76LbcH1G","__highlight":{"group":["\u003cmark\u003efans\u003c/mark\u003e"],"user.first":["\u003cmark\u003eJohn\u003c/mark\u003e"],"user.new_first":["\u003cmark\u003eJohn\u003c/mark\u003e"],"user.new_group_user_first":["\u003cmark\u003eJohn\u003c/mark\u003e"]},"group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]}]`,
 		},
 		"nested aggregate + query 测试": {
 			query: &metadata.Query{

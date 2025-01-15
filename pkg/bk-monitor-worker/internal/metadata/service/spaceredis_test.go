@@ -286,8 +286,11 @@ func TestSpacePusher_getTableIdClusterId(t *testing.T) {
 }
 
 func TestSpacePusher_refineTableIds(t *testing.T) {
+	// 初始化测试数据库配置
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
+
+	// 创建 Influxdb 表数据
 	itableName := "i_table_test.dbname"
 	iTable := storage.InfluxdbStorage{TableID: itableName, RealTableName: "i_table_test", Database: "dbname"}
 	db.Delete(&iTable)
@@ -300,16 +303,29 @@ func TestSpacePusher_refineTableIds(t *testing.T) {
 	err = iTable1.Create(db)
 	assert.NoError(t, err)
 
+	// 创建 VM 表数据
 	vmTableName := "vm_table_name"
 	vmTable := storage.AccessVMRecord{ResultTableId: vmTableName}
 	db.Delete(&vmTable)
 	err = vmTable.Create(db)
 	assert.NoError(t, err)
 
+	// 创建 ES 表数据
+	esTableName := "es_table_name"
+	esTable := storage.ESStorage{TableID: esTableName, NeedCreateIndex: true}
+	db.Delete(&esTable)
+	err = esTable.Create(db)
+	assert.NoError(t, err)
+
+	// 不存在的表
 	notExistTable := "not_exist_rt"
 
-	ids, err := NewSpacePusher().refineTableIds([]string{itableName, itableName1, notExistTable, vmTableName})
-	assert.ElementsMatch(t, []string{itableName, itableName1, vmTableName}, ids)
+	// 调用 refineTableIds 方法
+	ids, err := NewSpacePusher().refineTableIds([]string{itableName, itableName1, notExistTable, vmTableName, esTableName})
+
+	// 断言结果，期望返回正确的表 ID
+	assert.NoError(t, err)
+	assert.ElementsMatch(t, []string{itableName, itableName1, vmTableName, esTableName}, ids)
 }
 
 func TestSpacePusher_refineEsTableIds(t *testing.T) {

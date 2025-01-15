@@ -343,7 +343,7 @@ func (s *SpacePusher) getAllDataLabelTableId() (map[string][]string, error) {
 	return dataLabelTableIdMap, nil
 }
 
-// 提取写入到influxdb或vm的结果表数据
+// 提取具备VM、ES、InfluxDB链路的结果表
 func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 	db := mysql.GetDBSession().DB
 	// 过滤写入 influxdb 的结果表
@@ -382,6 +382,26 @@ func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 			return nil, err
 		}
 	}
+
+	// 过滤写入 ES 的结果表
+	var esStorageList []storage.ESStorage
+	qs3 := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID)
+	if len(tableIdList) != 0 {
+		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+			var tempList []storage.ESStorage
+			qsTemp := qs3.TableIDIn(chunkTableIdList...)
+			if err := qsTemp.All(&tempList); err != nil {
+				return nil, err
+			}
+			esStorageList = append(esStorageList, tempList...)
+		}
+	} else {
+		if err := qs3.All(&esStorageList); err != nil {
+			return nil, err
+		}
+	}
+
+	// 合并所有表 ID
 	var tableIds []string
 	for _, i := range influxdbStorageList {
 		tableIds = append(tableIds, i.TableID)
@@ -389,6 +409,11 @@ func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 	for _, i := range vmRecordList {
 		tableIds = append(tableIds, i.ResultTableId)
 	}
+	for _, i := range esStorageList {
+		tableIds = append(tableIds, i.TableID)
+	}
+
+	// 去重
 	tableIds = slicex.RemoveDuplicate(&tableIds)
 	return tableIds, nil
 }
@@ -1536,7 +1561,7 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 		ops.Set("fromAuthorization", need)
 	}
 	tableIdDataId, err := s.GetSpaceTableIdDataId(spaceType, spaceId, tableIdList, nil, ops)
-	logger.Infof("composeData: GetSpaceTableIdDataId success,space_type [%s], space_id [%s],tableIdDataId[%v]", spaceType, spaceId, tableIdDataId)
+	//logger.Infof("composeData: GetSpaceTableIdDataId success,space_type [%s], space_id [%s],tableIdDataId[%v]", spaceType, spaceId, tableIdDataId)
 	if err != nil {
 		logger.Errorf("composeData: GetSpaceTableIdDataId failed,space_type [%s], space_id [%s],err[%v]", spaceType, spaceId, err)
 		return nil, err
@@ -1551,9 +1576,9 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 	for tableId := range tableIdDataId {
 		tableIds = append(tableIds, tableId)
 	}
-	// 提取仅包含写入 influxdb 和 vm 的结果表
+	// 提取具备VM、ES、InfluxDB的链路结果表
 	tableIds, err = s.refineTableIds(tableIds)
-	// 再一次过滤，过滤到有链路的结果表，并且写入 influxdb 或 vm 的数据
+	// 再一次过滤，过滤到有链路的结果表，并且写入 influxdb&vm&es 的数据
 	tableIdDataIdMap := make(map[string]uint)
 	var dataIdList []uint
 	for _, tableId := range tableIds {

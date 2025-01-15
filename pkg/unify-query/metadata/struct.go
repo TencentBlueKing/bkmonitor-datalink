@@ -77,6 +77,7 @@ type Query struct {
 	TagsKey     []string
 
 	DataSource string
+	DataLabel  string
 	TableID    string
 	MetricName string
 

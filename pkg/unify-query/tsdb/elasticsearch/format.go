@@ -58,6 +58,9 @@ const (
 const (
 	KeyDocID     = "__doc_id"
 	KeyHighLight = "__highlight"
+
+	KeyIndex   = "__index"
+	KeyTableID = "__result_table"
 )
 
 const (

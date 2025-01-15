@@ -582,6 +582,8 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 				fact.SetData(data)
 				fact.data[KeyDocID] = d.Id
+				fact.data[KeyIndex] = d.Index
+				fact.data[KeyTableID] = query.TableID
 
 				if timeValue, ok := data[fact.GetTimeField().Name]; ok {
 					fact.data[FieldTime] = timeValue

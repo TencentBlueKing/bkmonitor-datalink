@@ -495,6 +495,8 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	ctx, span := trace.NewSpan(ctx, "query-ts-to-query-metric")
 	defer span.End(&err)
 
+	span.Set("query-metric", q)
+
 	queryMetric := &metadata.QueryMetric{
 		ReferenceName: referenceName,
 		MetricName:    metricName,
@@ -617,8 +619,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			return nil, buildErr
 		}
 
-		query.Size = q.Limit
-		query.From = q.From
 		query.Aggregates = aggregates
 
 		// 针对 vmRt 不为空的情况，进行 vm 判定
@@ -913,6 +913,8 @@ func (q *Query) BuildMetadataQuery(
 	query.QueryString = q.QueryString
 	query.Source = q.KeepColumns
 	query.HighLight = q.HighLight
+	query.Size = q.Limit
+	query.From = q.From
 
 	if len(allCondition) > 0 {
 		query.AllConditions = make(metadata.AllConditions, len(allCondition))
@@ -972,6 +974,8 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("query-tag-keys", query.TagsKey)
 	span.Set("query-vm-rt", query.VmRt)
 	span.Set("query-need-add-time", query.NeedAddTime)
+
+	span.Set("query-json", query)
 
 	return query, nil
 }

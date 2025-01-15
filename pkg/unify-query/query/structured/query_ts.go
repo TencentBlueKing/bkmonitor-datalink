@@ -65,6 +65,8 @@ type QueryTs struct {
 	Limit int `json:"limit,omitempty" example:"0"`
 	// From 翻页开启数字
 	From int `json:"from,omitempty" example:"0"`
+	// HighLight 是否开启高亮
+	HighLight bool `json:"highlight,omitempty"`
 }
 
 // 根据 timezone 偏移对齐
@@ -170,6 +172,11 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		}
 		if q.SpaceUid == "" {
 			q.SpaceUid = metadata.GetUser(ctx).SpaceUid
+		}
+
+		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
+		if !query.HighLight && q.HighLight {
+			query.HighLight = q.HighLight
 		}
 
 		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid)

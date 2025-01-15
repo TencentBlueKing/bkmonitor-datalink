@@ -179,6 +179,11 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 			query.HighLight = q.HighLight
 		}
 
+		// 复用字段配置，没有特殊配置的情况下使用公共配置
+		if len(query.KeepColumns) == 0 && len(q.ResultColumns) != 0 {
+			query.KeepColumns = q.ResultColumns
+		}
+
 		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid)
 		if err != nil {
 			return nil, err

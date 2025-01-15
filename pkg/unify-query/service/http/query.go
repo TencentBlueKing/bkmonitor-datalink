@@ -234,6 +234,16 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				ql.From = queryTs.From
 			}
 
+			// 复用 高亮配置，没有特殊配置的情况下使用公共配置
+			if !ql.HighLight && queryTs.HighLight {
+				ql.HighLight = queryTs.HighLight
+			}
+
+			// 复用字段配置，没有特殊配置的情况下使用公共配置
+			if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
+				ql.KeepColumns = queryTs.ResultColumns
+			}
+
 			qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
 			if qmErr != nil {
 				err = qmErr

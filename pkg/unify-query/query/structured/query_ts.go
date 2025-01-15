@@ -11,6 +11,7 @@ package structured
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -495,8 +496,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	ctx, span := trace.NewSpan(ctx, "query-ts-to-query-metric")
 	defer span.End(&err)
 
-	span.Set("query-metric", q)
-
 	queryMetric := &metadata.QueryMetric{
 		ReferenceName: referenceName,
 		MetricName:    metricName,
@@ -975,7 +974,8 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("query-vm-rt", query.VmRt)
 	span.Set("query-need-add-time", query.NeedAddTime)
 
-	span.Set("query-json", query)
+	jsonString, _ := json.Marshal(query)
+	span.Set("query-json", jsonString)
 
 	return query, nil
 }

@@ -1561,7 +1561,6 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 		ops.Set("fromAuthorization", need)
 	}
 	tableIdDataId, err := s.GetSpaceTableIdDataId(spaceType, spaceId, tableIdList, nil, ops)
-	//logger.Infof("composeData: GetSpaceTableIdDataId success,space_type [%s], space_id [%s],tableIdDataId[%v]", spaceType, spaceId, tableIdDataId)
 	if err != nil {
 		logger.Errorf("composeData: GetSpaceTableIdDataId failed,space_type [%s], space_id [%s],err[%v]", spaceType, spaceId, err)
 		return nil, err

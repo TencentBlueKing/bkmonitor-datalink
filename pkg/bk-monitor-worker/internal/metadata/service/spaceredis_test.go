@@ -1062,6 +1062,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 	// 准备测试数据
 	tableID := "bklog.test_rt"
 	tableID2 := "bklog.test_rt2"
+	tableID3 := "test_system_event"
 	storageClusterID := uint(1)
 	sourceType := "log"
 	indexSet := "index_1"
@@ -1079,6 +1080,13 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 		},
 		{
 			TableID:          tableID2,
+			StorageClusterID: storageClusterID,
+			SourceType:       sourceType,
+			IndexSet:         indexSet,
+			NeedCreateIndex:  true,
+		},
+		{
+			TableID:          tableID3,
 			StorageClusterID: storageClusterID,
 			SourceType:       sourceType,
 			IndexSet:         indexSet,
@@ -1144,7 +1152,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 
 	// 执行测试方法
 	pusher := NewSpacePusher()
-	err := pusher.PushEsTableIdDetail([]string{tableID, tableID2}, false)
+	err := pusher.PushEsTableIdDetail([]string{tableID, tableID2, tableID3}, false)
 	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
 
 }

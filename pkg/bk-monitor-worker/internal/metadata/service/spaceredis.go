@@ -605,11 +605,21 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 				wg.Done()
 			}()
 
-			// 检查并补充 `.__default__` 后缀
+			// 检查并补充 `.__default__` 后缀或记录日志
 			tableId := es.TableID
-			if !strings.Contains(tableId, ".") {
+			parts := strings.Split(tableId, ".")
+
+			if len(parts) == 1 {
+				// 如果长度为 1，补充 `.__default__`
 				logger.Infof("PushEsTableIdDetail: table_id [%s] is missing '.', adding '.__default__'", tableId)
 				tableId = fmt.Sprintf("%s.__default__", tableId)
+			} else if len(parts) == 2 {
+				// 如果长度为 2，保持原样
+				logger.Infof("PushEsTableIdDetail: table_id [%s] is valid, no changes needed", tableId)
+			} else {
+				// 如果长度大于 2，记录错误日志
+				logger.Errorf("PushEsTableIdDetail: table_id [%s] is invalid, contains too many dots", tableId)
+				return
 			}
 
 			sourceType := es.SourceType

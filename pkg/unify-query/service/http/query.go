@@ -195,7 +195,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			return a < b
 		})
 
-		if queryTs.Limit > 0 {
+		if queryTs.Limit > 0 && len(list) > queryTs.Limit {
 			list = list[0:queryTs.Limit]
 		}
 	}()

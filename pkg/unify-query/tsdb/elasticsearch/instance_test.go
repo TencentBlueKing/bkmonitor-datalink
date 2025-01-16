@@ -86,6 +86,8 @@ func TestInstance_queryReference(t *testing.T) {
 
 		// 根据 field 字段聚合 min，同时根据值排序
 		`{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"min":{"field":"dtEventTimeStamp"}}},"terms":{"field":"dtEventTimeStamp","order":[{"_value":"asc"}]}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":198,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"dtEventTimeStamp":{"doc_count_error_upper_bound":-1,"sum_other_doc_count":1523292,"buckets":[{"key":1723593878000,"key_as_string":"1723593878000","doc_count":1,"_value":{"value":1}},{"key":1723593947000,"key_as_string":"1723593947000","doc_count":1,"_value":{"value":1}},{"key":1723594186000,"key_as_string":"1723594186000","doc_count":1,"_value":{"value":1}},{"key":1723595733000,"key_as_string":"1723595733000","doc_count":1,"_value":{"value":1}},{"key":1723596287000,"key_as_string":"1723596287000","doc_count":1,"_value":{"value":1}},{"key":1723596309000,"key_as_string":"1723596309000","doc_count":1,"_value":{"value":1}},{"key":1723596597000,"key_as_string":"1723596597000","doc_count":1,"_value":{"value":1}},{"key":1723596677000,"key_as_string":"1723596677000","doc_count":1,"_value":{"value":1}},{"key":1723596938000,"key_as_string":"1723596938000","doc_count":1,"_value":{"value":1}},{"key":1723597150000,"key_as_string":"1723597150000","doc_count":1,"_value":{"value":1}}]}}}`,
+
+		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"error":{"root_cause":[{"type":"x_content_parse_exception","reason":"[1:138] [highlight] unknown field [max_analyzed_offset]"}],"type":"x_content_parse_exception","reason":"[1:138] [highlight] unknown field [max_analyzed_offset]"},"status":400}`,
 	})
 
 	for idx, c := range map[string]struct {
@@ -96,6 +98,7 @@ func TestInstance_queryReference(t *testing.T) {
 		isReference bool
 
 		expected string
+		err      error
 	}{
 		"nested query + query string 测试 + highlight": {
 			query: &metadata.Query{
@@ -415,6 +418,18 @@ func TestInstance_queryReference(t *testing.T) {
 			end:      defaultEnd,
 			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723593878000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723593947000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723594186000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723595733000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596287000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596309000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596597000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596677000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596938000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723597150000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
 		},
+		"query error with highlight max_analyzed_offset": {
+			query: &metadata.Query{
+				DB:          db,
+				Field:       "error",
+				DataSource:  structured.BkLog,
+				TableID:     "check_error",
+				StorageType: consul.ElasticsearchStorageType,
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+			err:   fmt.Errorf("es query [es_index] error: [1:138] [highlight] unknown field [max_analyzed_offset]"),
+		},
 	} {
 		t.Run(fmt.Sprintf("testing run: %s", idx), func(t *testing.T) {
 			if len(c.query.Aggregates) > 0 {
@@ -448,12 +463,14 @@ func TestInstance_queryReference(t *testing.T) {
 				close(dataCh)
 
 				wg.Wait()
-				if err != nil {
-					panic(err)
+
+				if c.err != nil {
+					assert.Equal(t, c.err, err)
+				} else {
+					res, _ := json.Marshal(list)
+					assert.Equal(t, c.expected, string(res))
 				}
 
-				res, _ := json.Marshal(list)
-				assert.Equal(t, c.expected, string(res))
 			}
 
 		})

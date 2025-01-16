@@ -324,13 +324,17 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 	}
 
+	if res.Error != nil {
+		err = fmt.Errorf("es query %v error: %s", qo.indexes, res.Error.Reason)
+	}
+
 	queryCost := time.Since(startAnalyze)
 	span.Set("query-cost", queryCost.String())
 	metric.TsDBRequestSecond(
 		ctx, queryCost, consul.ElasticsearchStorageType, qo.conn.Address,
 	)
 
-	return res, nil
+	return res, err
 }
 
 func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *FormatFactory, rets chan<- *TimeSeriesResult) {
@@ -546,8 +550,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		conn := conn
 		go func() {
 			defer wg.Done()
-			mappings, err := i.getMappings(ctx, conn, aliases)
-			if err != nil {
+			mappings, mappingErr := i.getMappings(ctx, conn, aliases)
+			if mappingErr != nil {
+				err = mappingErr
 				return
 			}
 			if len(mappings) == 0 {
@@ -573,7 +578,11 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				WithMappings(mappings...).
 				WithOrders(query.Orders)
 
-			sr, err := i.esQuery(ctx, qo, fact)
+			sr, queryErr := i.esQuery(ctx, qo, fact)
+			if queryErr != nil {
+				err = queryErr
+				return
+			}
 			for _, d := range sr.Hits.Hits {
 				data := make(map[string]any)
 				if err = json.Unmarshal(d.Source, &data); err != nil {
@@ -603,7 +612,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 	wg.Wait()
 
-	return total, nil
+	return total, err
 }
 
 // QuerySeriesSet 给 PromEngine 提供查询接口

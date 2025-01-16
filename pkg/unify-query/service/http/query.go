@@ -235,7 +235,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			}
 
 			// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-			if !ql.HighLight && queryTs.HighLight {
+			if !ql.HighLight.Enable && queryTs.HighLight.Enable {
 				ql.HighLight = queryTs.HighLight
 			}
 

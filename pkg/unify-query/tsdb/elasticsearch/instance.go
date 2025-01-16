@@ -272,8 +272,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		fact.Size(source)
 	}
 
-	if qb.HighLight {
-		source.Highlight(fact.HighLight(qb.QueryString))
+	if qb.HighLight.Enable {
+		source.Highlight(fact.HighLight(qb.QueryString, qb.HighLight.MaxAnalyzedOffset))
 	}
 
 	if source == nil {

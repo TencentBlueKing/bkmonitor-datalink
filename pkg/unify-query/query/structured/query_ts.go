@@ -67,7 +67,7 @@ type QueryTs struct {
 	// From 翻页开启数字
 	From int `json:"from,omitempty" example:"0"`
 	// HighLight 是否开启高亮
-	HighLight bool `json:"highlight,omitempty"`
+	HighLight metadata.HighLight `json:"highlight,omitempty"`
 }
 
 // 根据 timezone 偏移对齐
@@ -176,7 +176,7 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		}
 
 		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-		if !query.HighLight && q.HighLight {
+		if !query.HighLight.Enable && q.HighLight.Enable {
 			query.HighLight = q.HighLight
 		}
 
@@ -408,7 +408,7 @@ type Query struct {
 	IsReference bool `json:"-" swaggerignore:"true"`
 
 	// HighLight 是否打开高亮，只对原始数据接口生效
-	HighLight bool `json:"highlight,omitempty"`
+	HighLight metadata.HighLight `json:"highlight,omitempty"`
 }
 
 func (q *Query) ToRouter() (*Route, error) {

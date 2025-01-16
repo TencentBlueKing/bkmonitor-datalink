@@ -118,7 +118,7 @@ type Query struct {
 	QueryString   string
 	AllConditions AllConditions
 
-	HighLight bool
+	HighLight HighLight
 
 	Source      []string
 	From        int
@@ -128,7 +128,8 @@ type Query struct {
 }
 
 type HighLight struct {
-	Fields []string
+	MaxAnalyzedOffset int  `json:"max_analyzed_offset,omitempty"`
+	Enable            bool `json:"enable,omitempty"`
 }
 
 type Orders map[string]bool

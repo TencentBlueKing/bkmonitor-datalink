@@ -24,7 +24,7 @@ tasks:
       hosts: ["{{ metric_url }}"]
       metrics_path: ''
       namespace: {{ config_name }}
-      dataid: {{ dataid }}
+      dataid: {{ dataid }}{% if custom_report == "true" %}custom_report: true{% endif %}
       {% if diff_metrics %}diff_metrics:
       {% for metric in diff_metrics %}- {{ metric }}
       {% endfor %}

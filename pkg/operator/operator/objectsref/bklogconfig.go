@@ -58,13 +58,13 @@ func newBkLogConfigEntity(obj *loggingv1alpha1.BkLogConfig) *bkLogConfigEntity {
 	}
 
 	// 缓存 selector 避免重复实例化
-	labelSelector, err := metav1.LabelSelectorAsSelector(&obj.Spec.LabelSelector)
 	entity.cacheLabelSelector = func() (labels.Selector, error) {
+		labelSelector, err := metav1.LabelSelectorAsSelector(&obj.Spec.LabelSelector)
 		return labelSelector, err
 	}
 
-	annotationSelector, err := metav1.LabelSelectorAsSelector(&obj.Spec.AnnotationSelector)
 	entity.cacheAnnotationSelector = func() (labels.Selector, error) {
+		annotationSelector, err := metav1.LabelSelectorAsSelector(&obj.Spec.AnnotationSelector)
 		return annotationSelector, err
 	}
 	return entity

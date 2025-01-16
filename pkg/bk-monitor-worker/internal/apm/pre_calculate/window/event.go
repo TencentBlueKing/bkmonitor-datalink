@@ -21,7 +21,7 @@ type (
 	observer interface {
 		detectNotify()
 		handleNotify(errorReceiveChan chan<- error)
-		assembleRuntimeConfig(runtimeOpt ...RuntimeConfigOption)
+		assembleRuntimeConfig(RuntimeConfig)
 	}
 
 	trigger interface {

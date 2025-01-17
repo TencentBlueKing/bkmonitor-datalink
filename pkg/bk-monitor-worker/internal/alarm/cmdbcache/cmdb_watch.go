@@ -363,12 +363,14 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 	// 如果超过全量刷新间隔时间，执行全量刷新
 	if h.ifRunRefreshAll(ctx, h.cacheManager.Type()) {
 		// 全量刷新
+		startTime := time.Now()
+		logger.Infof("start refresh all cmdb resource(%s) cache, timestamp: %d", h.cacheManager.Type(), startTime.Unix())
+
 		err := RefreshAll(ctx, h.cacheManager, h.cacheManager.GetConcurrentLimit())
 		if err != nil {
-			logger.Errorf("refresh all cache failed: %v", err)
+			logger.Errorf("refresh all cache failed: %v, timestamp: %d, cost: %v", err, startTime.Unix(), time.Now().Sub(startTime))
 		}
-
-		logger.Infof("refresh all cmdb resource(%s) cache", h.cacheManager.Type())
+		logger.Infof("refresh all cmdb resource(%s) cache, timestamp: %d, cost: %v", h.cacheManager.Type(), startTime.Unix(), time.Now().Sub(startTime))
 
 		// 记录全量刷新时间
 		lastUpdateTimeKey := fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, h.cacheManager.Type())

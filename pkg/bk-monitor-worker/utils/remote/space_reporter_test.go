@@ -143,6 +143,6 @@ func TestSpaceReporter__Do(t *testing.T) {
 		},
 	})
 
-	err = rp.Do(ctx, "bkcc__2", ts...)
+	err = rp.Do(ctx, "bkcc__7", ts...)
 	assert.Nil(t, err)
 }

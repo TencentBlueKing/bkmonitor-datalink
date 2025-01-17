@@ -20,21 +20,18 @@ var configData = &Config{
 			},
 		},
 		{
+			Name: "datasource",
+			Index: cmdb.Index{
+				"bk_data_id",
+			},
+		},
+		{
 			Name: "node",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
 				"node",
 			},
 		},
-		//{
-		//	Name: "container",
-		//	Index: cmdb.Index{
-		//		"bcs_cluster_id",
-		//		"namespace",
-		//		"pod",
-		//		"container",
-		//	},
-		//},
 		{
 			Name: "pod",
 			Index: cmdb.Index{
@@ -127,6 +124,37 @@ var configData = &Config{
 				"apm_service_instance_name",
 			},
 		},
+		{
+			Name: "bklogconfig",
+			Index: cmdb.Index{
+				"bklogconfig_namespace",
+				"bklogconfig_name",
+			},
+		},
+		{
+			Name: "business",
+			Index: cmdb.Index{
+				"biz_id",
+			},
+		},
+		{
+			Name: "set",
+			Index: cmdb.Index{
+				"set_id",
+			},
+		},
+		{
+			Name: "module",
+			Index: cmdb.Index{
+				"module_id",
+			},
+		},
+		{
+			Name: "host",
+			Index: cmdb.Index{
+				"host_id",
+			},
+		},
 	},
 	Relation: []RelationConf{
 		{
@@ -171,6 +199,16 @@ var configData = &Config{
 		},
 		{
 			Resources: []cmdb.Resource{
+				"datasource", "pod",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"datasource", "node",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
 				"ingress", "service",
 			},
 		},
@@ -197,6 +235,31 @@ var configData = &Config{
 		{
 			Resources: []cmdb.Resource{
 				"apm_service", "apm_service_instance",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"bklogconfig", "datasource",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"business", "set",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"module", "set",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"host", "module",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"host", "system",
 			},
 		},
 	},

@@ -13,7 +13,7 @@ import (
 	"fmt"
 
 	parser "github.com/bytedance/go-querystring-parser"
-	"github.com/olivere/elastic/v7"
+	elastic "github.com/olivere/elastic/v7"
 )
 
 type QueryString struct {

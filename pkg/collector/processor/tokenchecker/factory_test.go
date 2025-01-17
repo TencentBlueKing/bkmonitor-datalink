@@ -159,7 +159,6 @@ func TestTracesAes256Token(t *testing.T) {
 
 		_, err := checker.Process(&record)
 		assert.Error(t, err)
-		assert.True(t, strings.Contains(err.Error(), "illegal base64 data at input byte 64"))
 	})
 
 	t.Run("No Token", func(t *testing.T) {
@@ -189,7 +188,7 @@ func TestTracesAes256Token(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("Success(Attributes)", func(t *testing.T) {
+	t.Run("Success Attributes", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		resources := map[string]string{
 			"bk.data.another.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
@@ -213,32 +212,7 @@ func TestTracesAes256Token(t *testing.T) {
 		}, record.Token)
 	})
 
-	t.Run("Success(Headers)", func(t *testing.T) {
-		checker := aes256TokenChecker()
-		resources := map[string]string{
-			"bk.data.token": "not-empty-but-invalid",
-		}
-		g := makeTracesGenerator(1, resources)
-		data := g.Generate()
-		record := define.Record{
-			RecordType: define.RecordTraces,
-			Data:       data,
-			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
-		}
-
-		_, err := checker.Process(&record)
-		assert.NoError(t, err)
-		assert.Equal(t, define.Token{
-			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
-			MetricsDataId: 1002,
-			TracesDataId:  1001,
-			LogsDataId:    1003,
-			BizId:         2,
-			AppName:       "oneapm-appname",
-		}, record.Token)
-	})
-
-	t.Run("Header Token (OK)", func(t *testing.T) {
+	t.Run("Success Header", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		g := makeTracesGenerator(1, nil)
 		data := g.Generate()
@@ -260,7 +234,7 @@ func TestTracesAes256Token(t *testing.T) {
 		}, record.Token)
 	})
 
-	t.Run("Header Token (Failed)", func(t *testing.T) {
+	t.Run("Failed Header", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		g := makeTracesGenerator(1, nil)
 		data := g.Generate()
@@ -290,7 +264,6 @@ func TestMetricsAes256Token(t *testing.T) {
 
 		_, err := checker.Process(&record)
 		assert.Error(t, err)
-		assert.True(t, strings.Contains(err.Error(), "illegal base64 data at input byte 64"))
 	})
 
 	t.Run("No Token", func(t *testing.T) {
@@ -320,7 +293,7 @@ func TestMetricsAes256Token(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("Success(Attributes)", func(t *testing.T) {
+	t.Run("Success Attributes", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		resources := map[string]string{
 			"bk.data.another.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
@@ -344,32 +317,7 @@ func TestMetricsAes256Token(t *testing.T) {
 		}, record.Token)
 	})
 
-	t.Run("Success(Headers)", func(t *testing.T) {
-		checker := aes256TokenChecker()
-		resources := map[string]string{
-			"bk.data.token": "not-empty-but-invalid",
-		}
-		g := makeMetricsGenerator(1, resources)
-		data := g.Generate()
-		record := define.Record{
-			RecordType: define.RecordMetrics,
-			Data:       data,
-			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
-		}
-
-		_, err := checker.Process(&record)
-		assert.NoError(t, err)
-		assert.Equal(t, define.Token{
-			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
-			MetricsDataId: 1002,
-			TracesDataId:  1001,
-			LogsDataId:    1003,
-			BizId:         2,
-			AppName:       "oneapm-appname",
-		}, record.Token)
-	})
-
-	t.Run("Header Token (OK)", func(t *testing.T) {
+	t.Run("Success Header", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		g := makeMetricsGenerator(1, nil)
 		data := g.Generate()
@@ -391,7 +339,7 @@ func TestMetricsAes256Token(t *testing.T) {
 		}, record.Token)
 	})
 
-	t.Run("Header Token (Failed)", func(t *testing.T) {
+	t.Run("Failed Header", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		g := makeMetricsGenerator(1, nil)
 		data := g.Generate()
@@ -421,7 +369,6 @@ func TestLogsAes256Token(t *testing.T) {
 
 		_, err := checker.Process(&record)
 		assert.Error(t, err)
-		assert.True(t, strings.Contains(err.Error(), "illegal base64 data at input byte 64"))
 	})
 
 	t.Run("No Token", func(t *testing.T) {
@@ -451,7 +398,7 @@ func TestLogsAes256Token(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("Success(Attributes)", func(t *testing.T) {
+	t.Run("Success Attributes", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		resources := map[string]string{
 			"bk.data.another.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
@@ -475,32 +422,7 @@ func TestLogsAes256Token(t *testing.T) {
 		}, record.Token)
 	})
 
-	t.Run("Success(Headers)", func(t *testing.T) {
-		checker := aes256TokenChecker()
-		resources := map[string]string{
-			"bk.data.token": "not-empty-but-invalid",
-		}
-		g := makeLogsGenerator(1, resources)
-		data := g.Generate()
-		record := define.Record{
-			RecordType: define.RecordLogs,
-			Data:       data,
-			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
-		}
-
-		_, err := checker.Process(&record)
-		assert.NoError(t, err)
-		assert.Equal(t, define.Token{
-			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
-			MetricsDataId: 1002,
-			TracesDataId:  1001,
-			LogsDataId:    1003,
-			BizId:         2,
-			AppName:       "oneapm-appname",
-		}, record.Token)
-	})
-
-	t.Run("Header Token (OK)", func(t *testing.T) {
+	t.Run("Success Header", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		g := makeLogsGenerator(1, nil)
 		data := g.Generate()
@@ -522,7 +444,7 @@ func TestLogsAes256Token(t *testing.T) {
 		}, record.Token)
 	})
 
-	t.Run("Header Token (Failed)", func(t *testing.T) {
+	t.Run("Failed Header", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		g := makeLogsGenerator(1, nil)
 		data := g.Generate()

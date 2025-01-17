@@ -12,6 +12,7 @@ package configs
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v2"
 	"k8s.io/client-go/rest"
@@ -35,11 +36,25 @@ type StatefulSetMatchRule struct {
 type PromSDSecret struct {
 	Namespace string `yaml:"namespace"`
 	Name      string `yaml:"name"`
+	Selector  string `yaml:"selector"`
 }
 
 // Validate 校验 PromSDSecret 是否合法
 func (p PromSDSecret) Validate() bool {
-	return p.Namespace != "" && p.Name != ""
+	// 优先使用 name 精准匹配
+	if p.Name != "" {
+		if p.Namespace == "" {
+			return false // 精准匹配不允许空 namespace
+		}
+		return true
+	}
+
+	// 使用 selector 匹配
+	if p.Selector == "" {
+		return false // 不允许空 selector
+	}
+	// 空 namespace 则表示匹配所有 namespace 的 secrets
+	return true
 }
 
 // MonitorBlacklistMatchRule monitor 黑名单匹配规则
@@ -75,6 +90,10 @@ func (k Kubelet) String() string {
 	return fmt.Sprintf("%s/%s", k.Namespace, k.Name)
 }
 
+func (k Kubelet) Validate() bool {
+	return k.Namespace != "" && k.Name != ""
+}
+
 // HTTP http 服务配置
 type HTTP struct {
 	Port int    `yaml:"port"`
@@ -89,15 +108,11 @@ func setupHTTP(c *Config) {
 
 // Event kubernetes 事件采集配置
 type Event struct {
-	MaxSpan   string   `yaml:"max_span"`   // 事件最大允许时间跨度
 	Interval  string   `yaml:"interval"`   // 事件上报周期
 	TailFiles []string `yaml:"tail_files"` // 事件监听路径
 }
 
 func setupEvent(c *Config) {
-	if c.Event.MaxSpan == "" {
-		c.Event.MaxSpan = "2h" // 默认事件最大时间跨度为 2h
-	}
 	if c.Event.Interval == "" {
 		c.Event.Interval = "60s" // 默认事件上报周期为 60s
 	}
@@ -131,10 +146,25 @@ type PromSliScrape struct {
 	Alerting  map[string]interface{} `yaml:"alerting"`
 }
 
+// VCluster 配置，bklogconfig 使用中
+type VCluster struct {
+	PodNameAnnotationKey      string `yaml:"pod_name_annotation_key"`
+	PodUidAnnotationKey       string `yaml:"pod_uid_annotation_key"`
+	PodNamespaceAnnotationKey string `yaml:"pod_namespace_annotation_key"`
+	WorkloadNameAnnotationKey string `yaml:"workload_name_annotation_key"`
+	WorkloadTypeAnnotationKey string `yaml:"workload_type_annotation_key"`
+	LabelsAnnotationKey       string `yaml:"labels_annotation_key"`
+	LabelKey                  string `yaml:"label_key"`
+	ManagedAnnotationKey      string `yaml:"managed_annotation_key"`
+}
+
 // Config Operator 进程主配置
 type Config struct {
 	// BkEnv 环境配置信息
 	BkEnv string `yaml:"bk_env"`
+
+	// LogBkEnv bklogconfig 环境配置信息
+	LogBkEnv string `yaml:"log_bk_env"`
 
 	// DryRun 是否使用 dryrun 模式 该模式只匹配 不执行真实的调度逻辑
 	DryRun bool `yaml:"dry_run"`
@@ -172,20 +202,23 @@ type Config struct {
 	// EnableDaemonSetWorker 是否启用 daemonset worker 调度
 	EnableDaemonSetWorker bool `yaml:"enable_daemonset_worker"`
 
-	// EnableEndpointSlice 是否启用 endpointslice 特性（kubernetes 版本要求 >= 1.22
+	// DaemonSetWorkerIgnoreNodeLabels 部分 nodes 不允许被调度到 daemonset 时指定
+	DaemonSetWorkerIgnoreNodeLabels map[string]string `yaml:"daemonset_worker_ignore_node_labels"`
+
+	// EnableEndpointSlice 是否启用 endpointslice 特性（kubernetes 版本要求 >= 1.22)
 	EnableEndpointSlice bool `yaml:"enable_endpointslice"`
 
 	// DispatchInterval 调度周期（单位秒）
 	DispatchInterval int64 `yaml:"dispatch_interval"`
-
-	// NodeSecretRatio 最大支持的 secrets 数量 maxSecrets = node x ratio
-	NodeSecretRatio float64 `yaml:"node_secret_ratio"`
 
 	// StatefulSetWorkerHpa 是否开启 statefulset worker HPA 特性
 	StatefulSetWorkerHpa bool `yaml:"statefulset_worker_hpa"`
 
 	// StatefulSetWorkerFactor statefulset worker 调度因子 即单 worker 最多支持的 secrets 数量
 	StatefulSetWorkerFactor float64 `yaml:"statefulset_worker_factor"`
+
+	// StatefulSetWorkerScaleMaxRetry statefulset worker 调度最大重试次数
+	StatefulSetWorkerScaleMaxRetry int `yaml:"statefulset_worker_scale_max_retry"`
 
 	// StatefulSetReplicas statefulset worker 最小副本数
 	StatefulSetReplicas int `yaml:"statefulset_replicas"`
@@ -205,17 +238,40 @@ type Config struct {
 	// ServiceName operator 注册 service 名称
 	ServiceName string `yaml:"service_name"`
 
-	TLS     TLS          `yaml:"tls"`
-	HTTP    HTTP         `yaml:"http"`
-	Kubelet Kubelet      `yaml:"kubelet"`
-	Event   Event        `yaml:"event"`
-	Logger  Logger       `yaml:"logger"`
-	PromSli PromSli      `yaml:"sli"`
-	MetaEnv env.Metadata `yaml:"meta_env"`
+	TLS         TLS          `yaml:"tls"`
+	HTTP        HTTP         `yaml:"http"`
+	Kubelet     Kubelet      `yaml:"kubelet"`
+	Event       Event        `yaml:"event"`
+	Logger      Logger       `yaml:"logger"`
+	PromSli     PromSli      `yaml:"sli"`
+	MetaEnv     env.Metadata `yaml:"meta_env"`
+	PromSDKinds PromSDKinds  `yaml:"prom_sd_kinds"`
 
 	StatefulSetMatchRules      []StatefulSetMatchRule      `yaml:"statefulset_match_rules"`
 	MonitorBlacklistMatchRules []MonitorBlacklistMatchRule `yaml:"monitor_blacklist_match_rules"`
 	PromSDSecrets              []PromSDSecret              `yaml:"prom_sd_configs"`
+
+	VCluster       VCluster `yaml:"vcluster"`
+	PolarisAddress []string `yaml:"polaris_address"`
+}
+
+type PromSDKinds []string
+
+func (psk PromSDKinds) Allow(s string) bool {
+	if len(psk) == 0 {
+		return false
+	}
+	if len(psk) == 1 && psk[0] == "*" {
+		return true
+	}
+
+	kinds := make(map[string]struct{})
+	for _, kind := range psk {
+		kinds[strings.ToLower(kind)] = struct{}{}
+	}
+
+	_, ok := kinds[strings.ToLower(s)]
+	return ok
 }
 
 func setupStatefulSetWorker(c *Config) {
@@ -230,6 +286,33 @@ func setupStatefulSetWorker(c *Config) {
 	}
 	if c.StatefulSetWorkerFactor <= 0 {
 		c.StatefulSetWorkerFactor = 600
+	}
+}
+
+func setupVCluster(c *Config) {
+	if c.VCluster.PodNameAnnotationKey == "" {
+		c.VCluster.PodNameAnnotationKey = "vcluster.loft.sh/name"
+	}
+	if c.VCluster.PodUidAnnotationKey == "" {
+		c.VCluster.PodUidAnnotationKey = "vcluster.loft.sh/uid"
+	}
+	if c.VCluster.PodNamespaceAnnotationKey == "" {
+		c.VCluster.PodNamespaceAnnotationKey = "vcluster.loft.sh/namespace"
+	}
+	if c.VCluster.WorkloadNameAnnotationKey == "" {
+		c.VCluster.WorkloadNameAnnotationKey = "vcluster.loft.sh/owner-set-name"
+	}
+	if c.VCluster.WorkloadTypeAnnotationKey == "" {
+		c.VCluster.WorkloadTypeAnnotationKey = "vcluster.loft.sh/owner-set-kind"
+	}
+	if c.VCluster.LabelsAnnotationKey == "" {
+		c.VCluster.LabelsAnnotationKey = "vcluster.loft.sh/labels"
+	}
+	if c.VCluster.LabelKey == "" {
+		c.VCluster.LabelKey = "vcluster.loft.sh/managed-by"
+	}
+	if c.VCluster.ManagedAnnotationKey == "" {
+		c.VCluster.ManagedAnnotationKey = "vcluster.loft.sh/managed-annotations"
 	}
 }
 
@@ -250,6 +333,7 @@ func (c *Config) setup() {
 		setupEvent,
 		setupHTTP,
 		setupStatefulSetWorker,
+		setupVCluster,
 	}
 
 	for _, fn := range funcs {
@@ -260,9 +344,6 @@ func (c *Config) setup() {
 	}
 	if c.DispatchInterval <= 0 {
 		c.DispatchInterval = 30 // 默认调度周期为 30s
-	}
-	if c.NodeSecretRatio <= 0 {
-		c.NodeSecretRatio = 2.0
 	}
 }
 

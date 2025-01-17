@@ -113,6 +113,11 @@ func (m *SetCacheManager) Type() string {
 
 // RefreshByBiz 刷新业务模块缓存
 func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
+	// 业务ID为1的是资源池，不需要刷新
+	if bizID == 1 {
+		return nil
+	}
+
 	// 请求集群信息
 	result, err := getSetListByBizID(ctx, bizID)
 	if err != nil {

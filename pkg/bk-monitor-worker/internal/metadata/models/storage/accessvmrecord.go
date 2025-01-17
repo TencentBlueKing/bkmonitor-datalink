@@ -34,6 +34,7 @@ type AccessVMRecord struct {
 	StorageClusterID uint   `gorm:"storage_cluster_id" json:"storage_cluster_id"`
 	VmClusterId      uint   `gorm:"vm_cluster_id" json:"vm_cluster_id"`
 	BkBaseDataId     uint   `gorm:"bk_base_data_id" json:"bk_base_data_id"`
+	BkBaseDataName   string `gorm:"bk_base_data_name;size:64" json:"bk_base_data_name"`
 	VmResultTableId  string `gorm:"vm_result_table_id;size:64" json:"vm_result_table_id"`
 	Remark           string `gorm:"size:256" json:"remark"`
 }
@@ -72,7 +73,7 @@ func (a AccessVMRecord) RefreshVmRouter(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	models.PushToRedis(ctx, models.QueryVmStorageRouterKey, a.ResultTableId, val, false)
+	models.PushToRedis(ctx, models.QueryVmStorageRouterKey, a.ResultTableId, val)
 	return nil
 }
 

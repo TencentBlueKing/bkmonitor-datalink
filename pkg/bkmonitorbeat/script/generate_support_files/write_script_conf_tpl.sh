@@ -41,6 +41,6 @@ tasks:
     {% if labels %}labels:
     {% for label in labels %}{% for key, value in label.items() %}{{ "-" if loop.first else " "  }} {{ key }}: "{{ value }}"
     {% endfor %}{% endfor %}
-    {% endif %}
+    {% endif %}{% if username %}username: {{ username }}{% endif %}
 EOF
 }

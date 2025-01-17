@@ -29,7 +29,7 @@ tidy:
 
 .PHONY: test
 test:
-	go test -timeout 1m -parallel 8  ./...
+	go test -cover -timeout 1m -parallel 8  ./...
 
 .PHONY: swag
 swag:
@@ -42,3 +42,11 @@ fmt:
 .PHONY: lint
 lint:
 	golangci-lint run -c ${ROOTPATH}/.golangci.yml
+
+.PHONY: addlicense
+addlicense:
+	find ./ -type f \( -iname \*.go -o -iname \*.py -iname \*.sh \) | xargs addlicense -v -f ../../scripts/license.txt -ignore vendor/*
+
+.PHONY: imports
+imports: addlicense
+	goimports-reviser -rm-unused -set-alias -format -project-name "github.com/TencentBlueKing/bkmonitor-datalink/pkg" ./...

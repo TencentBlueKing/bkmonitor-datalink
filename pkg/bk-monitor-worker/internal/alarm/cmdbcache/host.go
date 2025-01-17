@@ -267,6 +267,11 @@ func (m *HostTopoCacheManager) Type() string {
 
 // RefreshByBiz 按业务刷新缓存
 func (m *HostTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int) error {
+	// 业务ID为1的是资源池，不需要刷新
+	if bkBizId == 1 {
+		return nil
+	}
+
 	logger.Infof("start refresh cmdb cache by biz: %d", bkBizId)
 	startTime := time.Now()
 	defer func() {

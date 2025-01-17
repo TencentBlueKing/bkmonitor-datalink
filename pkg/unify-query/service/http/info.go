@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	headerutil "github.com/golang/gddo/httputil/header"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
@@ -273,26 +272,6 @@ func (d *InfoData) Fill(tables *influxdb.Tables) error {
 
 }
 
-// HandleShowTagKeys :
-func HandleShowTagKeys(c *gin.Context) {
-	handleTsQueryInfosRequest(infos.TagKeys, c)
-}
-
-// HandleShowTagValues :
-func HandleShowTagValues(c *gin.Context) {
-	handleTsQueryInfosRequest(infos.TagValues, c)
-}
-
-// HandleShowFieldKeys :
-func HandleShowFieldKeys(c *gin.Context) {
-	handleTsQueryInfosRequest(infos.FieldKeys, c)
-}
-
-// HandleShowSeries :
-func HandleShowSeries(c *gin.Context) {
-	handleTsQueryInfosRequest(infos.Series, c)
-}
-
 // HandleTimeSeries :
 func HandleTimeSeries(c *gin.Context) {
 	handleTsQueryInfosRequest(infos.TimeSeries, c)
@@ -304,6 +283,10 @@ func HandlePrint(c *gin.Context) {
 	c.String(200, res)
 }
 
+func HandlerHealth(c *gin.Context) {
+	c.Status(200)
+}
+
 // HandleFeatureFlag  打印特性开关配置信息，refresh 不为空则强制刷新
 func HandleFeatureFlag(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -311,11 +294,6 @@ func HandleFeatureFlag(c *gin.Context) {
 	refresh := c.Query("r")
 
 	if refresh != "" {
-		err := metadata.GetQueryRouter().PublishVmQuery(ctx)
-		if err != nil {
-			res += fmt.Sprintf("publish vm query error: %s\n", err.Error())
-		}
-
 		res += "refresh feature flag\n"
 		path := consul.GetFeatureFlagsPath()
 		res += fmt.Sprintf("consul feature flags path: %s\n", path)
@@ -418,6 +396,7 @@ func HandleSpaceKeyPrint(c *gin.Context) {
 	if refresh {
 		res += fmt.Sprintf("Refresh %s + %s\n", typeKey, hashKey)
 		refreshMapping := map[string]string{
+			routerInfluxdb.BkAppToSpaceKey:           routerInfluxdb.BkAppToSpaceChannelKey,
 			routerInfluxdb.SpaceToResultTableKey:     routerInfluxdb.SpaceToResultTableChannelKey,
 			routerInfluxdb.FieldToResultTableKey:     routerInfluxdb.FieldToResultTableChannelKey,
 			routerInfluxdb.DataLabelToResultTableKey: routerInfluxdb.DataLabelToResultTableChannelKey,
@@ -506,8 +485,9 @@ func HandleTsDBPrint(c *gin.Context) {
 // HandleTsQueryInfosRequest 查询info数据接口
 func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 	var (
-		ctx = c.Request.Context()
-		err error
+		ctx  = c.Request.Context()
+		err  error
+		user = metadata.GetUser(ctx)
 	)
 
 	// 这里开始context就使用trace生成的了
@@ -522,26 +502,19 @@ func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 		return
 	}
 
-	span.Set("info-request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("info-request-header", c.Request.Header)
 	span.Set("info-request-data", string(queryStmt))
 
 	// 如果header中有bkbizid，则以header中的值为最优先
-	bizIDs := headerutil.ParseList(c.Request.Header, BizHeader)
-	spaceUid := c.Request.Header.Get(SpaceUIDHeader)
+	spaceUid := user.SpaceUid
 
 	span.Set("request-space-uid", spaceUid)
-	span.Set("request-biz-ids", bizIDs)
 
-	log.Debugf(context.TODO(), "recevice query info: %s, X-Bk-Scope-Biz-Id:%v ", string(queryStmt), bizIDs)
 	params, err := infos.AnalysisQuery(string(queryStmt))
 	if err != nil {
 		log.Errorf(context.TODO(), "analysis info query failed for->[%s]", err)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
-	}
-
-	if len(bizIDs) > 0 {
-		structured.ReplaceOrAddCondition(&params.Conditions, structured.BizID, bizIDs)
 	}
 
 	result, err := infos.QueryAsync(ctx, infoType, params, spaceUid)

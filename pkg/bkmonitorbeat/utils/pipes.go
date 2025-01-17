@@ -30,19 +30,19 @@ var ErrScriptTimeout = fmt.Errorf("run script timeout")
 // RunString Convert a shell command with a series of pipes into
 // correspondingly piped list of *exec.Cmd
 // If an arg has spaces, this will fail
-func RunString(ctx context.Context, s string, userEnvs map[string]string) (string, error) {
-	return runString(ctx, s, userEnvs, true)
+func RunString(ctx context.Context, s string, userEnvs map[string]string, username string) (string, error) {
+	return runString(ctx, s, userEnvs, username, true)
 }
 
 // RunStringWithoutErr Convert a shell command with a series of pipes into
 // correspondingly piped list of *exec.Cmd
 // If an arg has spaces, this will fail
 // not print error message
-func RunStringWithoutErr(ctx context.Context, s string, userEnvs map[string]string) (string, error) {
-	return runString(ctx, s, userEnvs, false)
+func RunStringWithoutErr(ctx context.Context, s string, userEnvs map[string]string, username string) (string, error) {
+	return runString(ctx, s, userEnvs, username, false)
 }
 
-func runString(ctx context.Context, s string, userEnvs map[string]string, withErr bool) (string, error) {
+func runString(ctx context.Context, s string, userEnvs map[string]string, username string, withErr bool) (string, error) {
 	startTime := time.Now().Unix()
 	buf := bytes.NewBuffer([]byte{})
 	sp, err := ParseCmdline2Cmds(s, userEnvs)
@@ -61,7 +61,7 @@ func runString(ctx context.Context, s string, userEnvs map[string]string, withEr
 	cmds := make([]*exec.Cmd, len(sp))
 	// create the commands
 	for i, cs := range sp {
-		cmd := cmdFromStrings(ctx, cs, userEnvs)
+		cmd := cmdFromStrings(ctx, cs, userEnvs, username)
 		cmds[i] = cmd
 	}
 
@@ -158,7 +158,7 @@ func ParseCmdline2Cmds(cmdline string, userEnvs map[string]string) ([][]string, 
 	return cmds, nil
 }
 
-func cmdFromStrings(cmdCtx context.Context, cs []string, userEnvs map[string]string) *exec.Cmd {
+func cmdFromStrings(cmdCtx context.Context, cs []string, userEnvs map[string]string, username string) *exec.Cmd {
 	var cmd *exec.Cmd
 	if len(cs) == 1 {
 		cmd = exec.CommandContext(cmdCtx, cs[0])
@@ -168,6 +168,12 @@ func cmdFromStrings(cmdCtx context.Context, cs []string, userEnvs map[string]str
 		cmd = exec.CommandContext(cmdCtx, cs[0], cs[1:]...)
 	}
 	setProcessGroupID(cmd)
+	if username != "" {
+		err := setProcessExecByUsername(cmd, username)
+		if err != nil {
+			logger.Errorf("failed to use username: %s", err)
+		}
+	}
 	// pass env to exec process
 	cmd.Env = os.Environ()
 	for k, v := range userEnvs {

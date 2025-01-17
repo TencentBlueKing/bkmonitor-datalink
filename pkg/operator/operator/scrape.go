@@ -13,8 +13,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/scraper"
@@ -39,11 +39,68 @@ type scrapeStat struct {
 	Errors      int    `json:"errors"`
 }
 
+type scrapeAnalyze struct {
+	Metric string `json:"metric"`
+	Count  int    `json:"count"`
+	Sample string `json:"sample"`
+}
+
 func (s scrapeStat) ID() string {
 	return fmt.Sprintf("%s/%s", s.Namespace, s.MonitorName)
 }
 
-func (c *Operator) scrapeForce(ctx context.Context, namespace, monitor string, workers int) chan string {
+func parseMetricName(s string) string {
+	i := strings.Index(s, "{")
+	if i > 0 {
+		return strings.TrimSpace(s[:i])
+	}
+
+	parts := strings.Fields(s)
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		return strings.TrimSpace(part)
+	}
+	return ""
+}
+
+func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor, endpoint string, workers int, topn int) []scrapeAnalyze {
+	ch := c.scrapeLines(ctx, namespace, monitor, endpoint, workers)
+
+	stats := make(map[string]int)
+	sample := make(map[string]string)
+	for line := range ch {
+		s := parseMetricName(line)
+		if s != "" {
+			stats[s]++
+			sample[s] = line
+		}
+	}
+
+	ret := make([]scrapeAnalyze, 0, len(stats))
+	for k, v := range stats {
+		ret = append(ret, scrapeAnalyze{
+			Metric: k,
+			Count:  v,
+			Sample: sample[k],
+		})
+	}
+
+	sort.Slice(ret, func(i, j int) bool {
+		return ret[i].Count > ret[j].Count
+	})
+
+	if topn > 0 {
+		if len(ret) > topn {
+			return ret[:topn]
+		}
+	}
+
+	return ret
+}
+
+func (c *Operator) scrapeLines(ctx context.Context, namespace, monitor, endpoint string, workers int) chan string {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -51,8 +108,11 @@ func (c *Operator) scrapeForce(ctx context.Context, namespace, monitor string, w
 
 	cfgs := make([]*discover.ChildConfig, 0)
 	for _, cfg := range childConfigs {
-		if cfg.Meta.Namespace == namespace {
-			if monitor == "" || cfg.Meta.Name == monitor {
+		if cfg.Meta.Namespace != namespace {
+			continue
+		}
+		if monitor == "" || cfg.Meta.Name == monitor {
+			if endpoint == "" || strings.Contains(cfg.FileName, strings.ReplaceAll(endpoint, ".", "-")) {
 				cfgs = append(cfgs, cfg)
 			}
 		}
@@ -100,7 +160,7 @@ func (c *Operator) scrapeForce(ctx context.Context, namespace, monitor string, w
 	return out
 }
 
-func (c *Operator) scrapeAll(ctx context.Context, workers int) *scrapeStats {
+func (c *Operator) scrapeAllStats(ctx context.Context, workers int) *scrapeStats {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -176,7 +236,6 @@ func (c *Operator) scrapeAll(ctx context.Context, workers int) *scrapeStats {
 		ErrorsTotal:  errorsTotal,
 		Stats:        stats,
 	}
-	c.scrapeUpdated = time.Now()
 
 	return ret
 }

@@ -44,7 +44,7 @@ func (c *Operator) handlePodMonitorAdd(obj interface{}) {
 	discovers := c.createPodMonitorDiscovers(podMonitor)
 	for _, dis := range discovers {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
-			logger.Errorf("add or update podMonitor discover %s failed, err: %s", dis, err)
+			logger.Errorf("add or update podMonitor discover %s failed: %s", dis, err)
 		}
 	}
 }
@@ -80,7 +80,7 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 	}
 	for _, dis := range c.createPodMonitorDiscovers(cur) {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
-			logger.Errorf("add or update podMonitor discover %s failed, err: %s", dis, err)
+			logger.Errorf("add or update podMonitor discover %s failed: %s", dis, err)
 		}
 	}
 }
@@ -178,7 +178,7 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 			safeTlsConfig = tlsConfig.SafeTLSConfig
 		}
 
-		dis := kubernetesd.New(c.ctx, kubernetesd.TypePod, c.objectsController.NodeNameExists, &kubernetesd.Options{
+		dis := kubernetesd.New(c.ctx, kubernetesd.TypePod, &kubernetesd.Options{
 			CommonOptions: &discover.CommonOptions{
 				MonitorMeta:            monitorMeta,
 				RelabelRule:            feature.RelabelRule(podMonitor.Annotations),
@@ -202,6 +202,8 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 				System:                 systemResource,
 				UrlValues:              endpoint.Params,
 				MetricRelabelConfigs:   metricRelabelings,
+				NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+				NodeLabelsFunc:         c.objectsController.NodeLabels,
 			},
 			Client:            c.client,
 			Namespaces:        namespaces,

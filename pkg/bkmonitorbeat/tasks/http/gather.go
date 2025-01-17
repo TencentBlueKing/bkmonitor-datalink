@@ -314,7 +314,11 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 				event := NewEvent(g)
 				event.ToStep(index, step.Method, h.Host)
 				event.Fail(h.Errno)
-				e <- event
+				if conf.CustomReport {
+					e <- NewCustomEventByHttpEvent(event)
+				} else {
+					e <- event
+				}
 			} else {
 				resolvedIPs[h.Host] = h.Ips
 			}
@@ -336,7 +340,11 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 				cancelFunc()
 				event.EndAt = time.Now()
 				g.GetSemaphore().Release(1)
-				e <- event
+				if conf.CustomReport {
+					e <- NewCustomEventByHttpEvent(event)
+				} else {
+					e <- event
+				}
 			}()
 			g.GatherURL(subCtx, event, arg.stepConfig, arg.url, arg.resolvedIP)
 		}

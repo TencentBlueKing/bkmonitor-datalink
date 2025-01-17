@@ -27,7 +27,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -111,9 +110,8 @@ func StartStreamSeriesSet(
 				span.Set("resp-series-num", seriesNum)
 				span.Set("resp-point-num", pointsNum)
 
-				user := metadata.GetUser(ctx)
 				metric.TsDBRequestSecond(
-					ctx, sub, user.SpaceUid, user.Source, fmt.Sprintf("%s_grpc", consul.InfluxDBStorageType), name,
+					ctx, sub, fmt.Sprintf("%s_grpc", consul.InfluxDBStorageType), name,
 				)
 
 				span.End(&err)
@@ -130,6 +128,13 @@ func StartStreamSeriesSet(
 			for {
 				r, err := s.stream.Recv()
 				if r != nil {
+					if opt.MetricLabel != nil {
+						r.Labels = append(r.Labels, &remote.LabelPair{
+							Name:  opt.MetricLabel.Name,
+							Value: opt.MetricLabel.Value,
+						})
+					}
+
 					if s.limiter != nil {
 						s.limiter.WaitN(ctx, len(r.Samples))
 					}

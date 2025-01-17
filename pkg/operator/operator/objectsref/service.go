@@ -10,9 +10,16 @@
 package objectsref
 
 import (
+	"context"
 	"sync"
 
+	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/tools/cache"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type serviceEntity struct {
@@ -36,6 +43,13 @@ func NewServiceMap() *ServiceMap {
 	return &ServiceMap{
 		services: map[string]serviceEntities{},
 	}
+}
+
+func (m *ServiceMap) Count() int {
+	m.mut.Lock()
+	defer m.mut.Unlock()
+
+	return len(m.services)
 }
 
 func (m *ServiceMap) Set(service *corev1.Service) {
@@ -82,7 +96,7 @@ func (m *ServiceMap) Del(service *corev1.Service) {
 	}
 }
 
-func (m *ServiceMap) rangeServices(visitFunc func(namespace string, services serviceEntities)) {
+func (m *ServiceMap) Range(visitFunc func(namespace string, services serviceEntities)) {
 	m.mut.Lock()
 	defer m.mut.Unlock()
 
@@ -91,12 +105,67 @@ func (m *ServiceMap) rangeServices(visitFunc func(namespace string, services ser
 	}
 }
 
-func matchLabels(subset, set map[string]string) bool {
-	for k, v := range subset {
-		val, ok := set[k]
-		if !ok || val != v {
-			return false
-		}
+func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*ServiceMap, error) {
+	objs := NewServiceMap()
+
+	genericInformer, err := sharedInformer.ForResource(corev1.SchemeGroupVersion.WithResource(resourceServices))
+	if err != nil {
+		return nil, err
 	}
-	return true
+
+	informer := genericInformer.Informer()
+	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+		service, ok := obj.(*corev1.Service)
+		if !ok {
+			logger.Errorf("excepted Service type, got %T", obj)
+			return obj, nil
+		}
+
+		service.Annotations = nil
+		service.Labels = nil
+		service.ManagedFields = nil
+		service.Finalizers = nil
+		return service, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			service, ok := obj.(*corev1.Service)
+			if !ok {
+				logger.Errorf("excepted Service type, got %T", obj)
+				return
+			}
+			objs.Set(service)
+		},
+		UpdateFunc: func(_, newObj interface{}) {
+			service, ok := newObj.(*corev1.Service)
+			if !ok {
+				logger.Errorf("excepted Service type, got %T", newObj)
+				return
+			}
+			objs.Set(service)
+		},
+		DeleteFunc: func(obj interface{}) {
+			service, ok := obj.(*corev1.Service)
+			if !ok {
+				logger.Errorf("excepted Service type, got %T", obj)
+				return
+			}
+			objs.Del(service)
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	go informer.Run(ctx.Done())
+
+	synced := k8sutils.WaitForNamedCacheSync(ctx, kindService, informer)
+	if !synced {
+		return nil, errors.New("failed to sync Service caches")
+	}
+	return objs, nil
 }

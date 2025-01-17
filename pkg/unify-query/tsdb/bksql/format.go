@@ -12,11 +12,14 @@ package bksql
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
@@ -49,7 +52,8 @@ var (
 )
 
 type QueryFactory struct {
-	ctx context.Context
+	ctx  context.Context
+	lock sync.RWMutex
 
 	query *metadata.Query
 
@@ -59,8 +63,11 @@ type QueryFactory struct {
 
 	selects []string
 	groups  []string
+	orders  metadata.Orders
 
 	sql strings.Builder
+
+	timeField string
 }
 
 func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
@@ -69,6 +76,18 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 		query:   query,
 		selects: make([]string, 0),
 		groups:  make([]string, 0),
+		orders:  make(metadata.Orders),
+	}
+	if query.Orders != nil {
+		for k, v := range query.Orders {
+			f.orders[k] = v
+		}
+	}
+
+	if query.TimeField.Name != "" {
+		f.timeField = query.TimeField.Name
+	} else {
+		f.timeField = dtEventTimeStamp
 	}
 	return f
 }
@@ -77,65 +96,108 @@ func (f *QueryFactory) write(s string) {
 	f.sql.WriteString(s + " ")
 }
 
-func (f *QueryFactory) WithRangeTime(start, end time.Time, step time.Duration) *QueryFactory {
+func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 	f.start = start
 	f.end = end
-	f.step = step
 	return f
 }
 
 func (f *QueryFactory) ParserQuery() (err error) {
+	f.lock.Lock()
+	defer f.lock.Unlock()
+
 	if len(f.query.Aggregates) > 0 {
 		for _, agg := range f.query.Aggregates {
-			if agg.Window > 0 {
-				timeField := fmt.Sprintf("(`%s`- (`%s` %% %d))", dtEventTimeStamp, dtEventTimeStamp, agg.Window.Milliseconds())
-				f.groups = append(f.groups, timeField)
-				f.selects = append(f.selects, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
-			}
-
-			f.selects = append(f.selects, fmt.Sprintf("%s(`%s`) AS `%s`", agg.Name, f.query.Field, value))
 			for _, dim := range agg.Dimensions {
 				dim = fmt.Sprintf("`%s`", dim)
 				f.groups = append(f.groups, dim)
 				f.selects = append(f.selects, dim)
+			}
+			f.selects = append(f.selects, fmt.Sprintf("%s(`%s`) AS `%s`", strings.ToUpper(agg.Name), f.query.Field, value))
+			if agg.Window > 0 {
+				timeField := fmt.Sprintf("(`%s` - (`%s` %% %d))", f.timeField, f.timeField, agg.Window.Milliseconds())
+				f.groups = append(f.groups, timeField)
+				f.selects = append(f.selects, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
+				f.orders[FieldTime] = true
 			}
 		}
 	}
 
 	if len(f.selects) == 0 {
 		f.selects = append(f.selects, "*")
+		f.selects = append(f.selects, fmt.Sprintf("`%s` AS `%s`", f.query.Field, value))
+		f.selects = append(f.selects, fmt.Sprintf("`%s` AS `%s`", f.timeField, timeStamp))
 	}
 
 	return
 }
 
-func (f *QueryFactory) SQL() string {
+func (f *QueryFactory) getTheDateFilters() (theDateFilter string, err error) {
+	// bkbase 使用 时区东八区 转换为 thedate
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return
+	}
+
+	start := f.start.In(loc)
+	end := f.end.In(loc)
+
+	dates := function.RangeDateWithUnit("day", start, end, 1)
+
+	if len(dates) == 0 {
+		return
+	}
+
+	if len(dates) == 1 {
+		theDateFilter = fmt.Sprintf("`%s` = '%s'", theDate, dates[0])
+		return
+	}
+
+	theDateFilter = fmt.Sprintf("`%s` >= '%s' AND `%s` <= '%s'", theDate, dates[0], theDate, dates[len(dates)-1])
+	return
+}
+
+func (f *QueryFactory) SQL() (sql string, err error) {
 	f.sql.Reset()
+	err = f.ParserQuery()
+	if err != nil {
+		return
+	}
+
+	f.lock.RLock()
+	defer f.lock.RUnlock()
 
 	f.write("SELECT")
 	f.write(strings.Join(f.selects, ", "))
 	f.write("FROM")
-	f.write(f.query.DB)
+	db := fmt.Sprintf("`%s`", f.query.DB)
+	if f.query.Measurement != "" {
+		db += "." + f.query.Measurement
+	}
+	f.write(db)
 	f.write("WHERE")
-	f.write(fmt.Sprintf("%s >= %d AND %s < %d", dtEventTimeStamp, f.start.UnixMilli(), dtEventTimeStamp, f.end.UnixMilli()))
+	f.write(fmt.Sprintf("`%s` >= %d AND `%s` < %d", f.timeField, f.start.UnixMilli(), f.timeField, f.end.UnixMilli()))
+
+	theDateFilter, err := f.getTheDateFilters()
+	if err != nil {
+		return
+	}
+	if theDateFilter != "" {
+		f.write("AND")
+		f.write(theDateFilter)
+	}
+
 	if f.query.BkSqlCondition != "" {
 		f.write("AND")
-		f.write(f.query.BkSqlCondition)
+		f.write("(" + f.query.BkSqlCondition + ")")
 	}
 	if len(f.groups) > 0 {
 		f.write("GROUP BY")
 		f.write(strings.Join(f.groups, ", "))
 	}
-	if f.query.From > 0 {
-		f.write("OFFSET")
-		f.write(fmt.Sprintf("%d", f.query.From))
-	}
-	if f.query.Size > 0 {
-		f.write("LIMIT")
-		f.write(fmt.Sprintf("%d", f.query.Size))
-	}
+
 	orders := make([]string, 0)
-	for key, asc := range f.query.Orders {
+	for key, asc := range f.orders {
 		var orderField string
 		switch key {
 		case FieldValue:
@@ -152,11 +214,21 @@ func (f *QueryFactory) SQL() string {
 		orders = append(orders, fmt.Sprintf("`%s` %s", orderField, ascName))
 	}
 	if len(orders) > 0 {
+		sort.Strings(orders)
 		f.write("ORDER BY")
 		f.write(strings.Join(orders, ", "))
 	}
+	if f.query.From > 0 {
+		f.write("OFFSET")
+		f.write(fmt.Sprintf("%d", f.query.From))
+	}
+	if f.query.Size > 0 {
+		f.write("LIMIT")
+		f.write(fmt.Sprintf("%d", f.query.Size))
+	}
 
-	return strings.Trim(f.sql.String(), " ")
+	sql = strings.Trim(f.sql.String(), " ")
+	return
 }
 
 func (f *QueryFactory) dims(dims []string, field string) []string {
@@ -222,7 +294,7 @@ func (f *QueryFactory) FormatData(keys []string, list []map[string]interface{}) 
 		case float64:
 			vt = int64(vtLong.(float64))
 		default:
-			return res, fmt.Errorf("%s type is error %T, %v", dtEventTimeStamp, vtLong, vtLong)
+			return res, fmt.Errorf("%s type is error %T, %v", f.timeField, vtLong, vtLong)
 		}
 
 		// 获取值

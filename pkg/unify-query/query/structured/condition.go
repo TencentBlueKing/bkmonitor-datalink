@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 )
 
@@ -77,11 +78,11 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 
 	// 先循环遍历所有的内容，加入到各个列表中
 	for index, field := range c.FieldList {
-		// 不允许值为空，此时可能引起拼接失败
+		// 当 value 为空的时候，直接忽略该查询条件
 		if len(field.Value) == 0 {
-			log.Warnf(context.TODO(), "missing value in condition:%s", field.DimensionName)
-			return nil, errors.Wrap(ErrMissingValue, field.DimensionName)
+			continue
 		}
+
 		// 第一组的只需要增加即可
 		if index == 0 {
 			log.Debugf(context.TODO(), "first element->[%s] will add to row buffer", field.String())
@@ -91,10 +92,10 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 
 		// 第二组的需要先判断条件是否or
 		if c.ConditionList[index-1] == ConditionAnd {
-			log.Debugf(context.TODO(), "under and condition, element->[%s] will continue add to row buffer", field)
+			log.Debugf(context.TODO(), "under and condition, element->[%v] will continue add to row buffer", field)
 			rowBuffer = append(rowBuffer, field)
 		} else if c.ConditionList[index-1] == ConditionOr {
-			log.Debugf(context.TODO(), "under or condition, will add element->[%s] to new row.", field)
+			log.Debugf(context.TODO(), "under or condition, will add element->[%v] to new row.", field)
 			// 先追加到结果中
 			totalBuffer = append(totalBuffer, rowBuffer)
 			// 然后创建一个新的行数组放置新的内容
@@ -242,7 +243,7 @@ func (c AllConditions) BkSql() string {
 	return strings.Join(conditionsString, fmt.Sprintf(" %s ", promql.OrOperator))
 }
 
-func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int) {
+func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.VmCondition, int) {
 	var (
 		defaultLabels = make([]string, 0)
 		and           = ", "
@@ -262,7 +263,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int
 	}
 
 	if len(c) == 0 {
-		return strings.Join(defaultLabels, and), len(defaultLabels)
+		return metadata.VmCondition(strings.Join(defaultLabels, and)), len(defaultLabels)
 	}
 
 	num := 0
@@ -285,7 +286,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int
 		vmLabels = append(vmLabels, strings.Join(lbl, and))
 	}
 
-	return strings.Join(vmLabels, or), num
+	return metadata.VmCondition(strings.Join(vmLabels, or)), num
 }
 
 // Compare 比较 AllConditions 中的条件 condition

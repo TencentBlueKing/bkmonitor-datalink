@@ -48,7 +48,7 @@ func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
 	discovers := c.createServiceMonitorDiscovers(serviceMonitor)
 	for _, dis := range discovers {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
-			logger.Errorf("add or update serviceMonitor discover %s failed, err: %s", dis, err)
+			logger.Errorf("add or update serviceMonitor discover %s failed: %s", dis, err)
 		}
 	}
 }
@@ -88,7 +88,7 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 	}
 	for _, dis := range c.createServiceMonitorDiscovers(cur) {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
-			logger.Errorf("add or update serviceMonitor discover %s failed, err: %s", dis, err)
+			logger.Errorf("add or update serviceMonitor discover %s failed: %s", dis, err)
 		}
 	}
 }
@@ -183,7 +183,7 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 			proxyURL = *endpoint.ProxyURL
 		}
 
-		dis := kubernetesd.New(c.ctx, kubernetesd.TypeEndpoints(useEndpointslice), c.objectsController.NodeNameExists, &kubernetesd.Options{
+		dis := kubernetesd.New(c.ctx, kubernetesd.TypeEndpoints(useEndpointslice), &kubernetesd.Options{
 			CommonOptions: &discover.CommonOptions{
 				MonitorMeta:            monitorMeta,
 				RelabelRule:            feature.RelabelRule(serviceMonitor.Annotations),
@@ -208,6 +208,8 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 				System:                 systemResource,
 				UrlValues:              endpoint.Params,
 				MetricRelabelConfigs:   metricRelabelings,
+				NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+				NodeLabelsFunc:         c.objectsController.NodeLabels,
 			},
 			Client:            c.client,
 			Namespaces:        namespaces,

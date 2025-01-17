@@ -27,6 +27,7 @@ type Service struct {
 func (s *Service) Type() string {
 	return "redis"
 }
+
 func (s *Service) Start(ctx context.Context) {
 	s.Reload(ctx)
 }

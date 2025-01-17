@@ -27,6 +27,9 @@ const (
 	ConditionNotRegEqual = "nreq"
 	ConditionContains    = "contains"
 	ConditionNotContains = "ncontains"
+
+	ConditionExisted    = "existed"
+	ConditionNotExisted = "nexisted"
 )
 
 const (
@@ -79,6 +82,8 @@ type ConditionField struct {
 	Value []string `json:"value" example:"2"`
 	// Operator 操作符，包含：eq,ne,erq,nreq,contains,ncontains
 	Operator string `json:"op" example:"contains"`
+	// IsWildcard 是否是通配符
+	IsWildcard bool `json:"is_wildcard,omitempty"`
 }
 
 // String
@@ -103,7 +108,6 @@ func (c *ConditionField) ToPromOperator() labels.MatchType {
 	case ConditionNotRegEqual:
 		return labels.MatchNotRegexp
 	default:
-		log.Errorf(context.TODO(), "failed to translate op->[%s] to prom op.Will return default op", c.Operator)
 		return labels.MatchEqual
 	}
 }

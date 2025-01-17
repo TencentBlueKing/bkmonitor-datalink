@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/discovery/targetgroup"
+	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -28,12 +29,14 @@ var (
 
 	sharedDiscoveryLock sync.Mutex
 	sharedDiscoveryMap  map[string]*SharedDiscovery
+	sharedDiscoveryRefs map[string]int // 记录 shared discover 持有引用数
 )
 
 // Activate 初始化全局 SharedDiscovery
 func Activate() {
 	gCtx, gCancel = context.WithCancel(context.Background())
 	sharedDiscoveryMap = map[string]*SharedDiscovery{}
+	sharedDiscoveryRefs = map[string]int{}
 }
 
 // Deactivate 清理全局 SharedDiscovery
@@ -55,13 +58,57 @@ func AllDiscovery() []string {
 	return names
 }
 
+type WrapTargetGroup struct {
+	// Targets is a list of targets identified by a label set. Each target is
+	// uniquely identifiable in the group by its address label.
+	Targets []labels.Labels
+	// Labels is a set of labels that is common across all targets in the group.
+	Labels labels.Labels
+
+	// Source is an identifier that describes a group of targets.
+	Source string
+}
+
+// castTg 转换 *targetgroup.Group 到 *WrapTargetGroup
+// 但需要确保所有 labels/targets 已经排序
+func castTg(tg *targetgroup.Group) *WrapTargetGroup {
+	targets := make([]labels.Labels, 0, len(tg.Targets))
+	for _, target := range tg.Targets {
+		tgLbs := make(labels.Labels, 0, len(target))
+		for k, v := range target {
+			tgLbs = append(tgLbs, labels.Label{
+				Name:  string(k),
+				Value: string(v),
+			})
+		}
+		sort.Sort(tgLbs)
+		targets = append(targets, tgLbs)
+	}
+
+	lbs := make(labels.Labels, 0, len(tg.Labels))
+	for k, v := range tg.Labels {
+		lbs = append(lbs, labels.Label{
+			Name:  string(k),
+			Value: string(v),
+		})
+	}
+	sort.Sort(lbs)
+
+	return &WrapTargetGroup{
+		Targets: targets,
+		Labels:  lbs,
+		Source:  tg.Source,
+	}
+}
+
 type Discovery interface {
 	Run(ctx context.Context, ch chan<- []*targetgroup.Group)
 }
 
 type SharedDiscovery struct {
-	uk        string
 	ctx       context.Context
+	cancel    context.CancelFunc
+	uk        string
 	discovery Discovery
 	ch        chan []*targetgroup.Group
 	mut       sync.RWMutex
@@ -70,12 +117,12 @@ type SharedDiscovery struct {
 }
 
 type tgWithTime struct {
-	tg        *targetgroup.Group
+	tg        *WrapTargetGroup
 	updatedAt int64
 }
 
-// FetchTargetGroups 获取缓存 targetgroups 以及最新更新时间
-func FetchTargetGroups(uk string) ([]*targetgroup.Group, int64) {
+// FetchTargetGroups 获取缓存 targetgroups
+func FetchTargetGroups(uk string) []*WrapTargetGroup {
 	sharedDiscoveryLock.Lock()
 	defer sharedDiscoveryLock.Unlock()
 
@@ -83,7 +130,19 @@ func FetchTargetGroups(uk string) ([]*targetgroup.Group, int64) {
 		return d.fetch()
 	}
 
-	return nil, 0
+	return nil
+}
+
+// FetchTargetGroupsUpdatedAt 获取缓存最新更新时间
+func FetchTargetGroupsUpdatedAt(uk string) int64 {
+	sharedDiscoveryLock.Lock()
+	defer sharedDiscoveryLock.Unlock()
+
+	if d, ok := sharedDiscoveryMap[uk]; ok {
+		return d.fetchUpdatedAt()
+	}
+
+	return 0
 }
 
 // Register 注册 shared discovery
@@ -92,10 +151,11 @@ func Register(uk string, createFunc func() (*SharedDiscovery, error)) error {
 	sharedDiscoveryLock.Lock()
 	defer sharedDiscoveryLock.Unlock()
 
+	sharedDiscoveryRefs[uk]++
 	if _, ok := sharedDiscoveryMap[uk]; !ok {
 		sd, err := createFunc()
 		if err != nil {
-			logger.Errorf("failed to create shared discovery(%s): %v", uk, err)
+			logger.Errorf("failed to create shared discovery (%s): %v", uk, err)
 			return err
 		}
 		gWg.Add(2)
@@ -113,9 +173,35 @@ func Register(uk string, createFunc func() (*SharedDiscovery, error)) error {
 	return nil
 }
 
+// Unregister 解注册 shared discovery
+func Unregister(uk string) {
+	sharedDiscoveryLock.Lock()
+	defer sharedDiscoveryLock.Unlock()
+
+	n, ok := sharedDiscoveryRefs[uk]
+	if !ok || n <= 0 {
+		return
+	}
+
+	n--
+	// 没有任何 discover 持有 则需要清理
+	if n == 0 {
+		if d, ok := sharedDiscoveryMap[uk]; ok {
+			d.stop()
+		}
+		delete(sharedDiscoveryRefs, uk)
+		delete(sharedDiscoveryMap, uk)
+		logger.Infof("cleanup sharedDiscovery '%s'", uk)
+	} else {
+		sharedDiscoveryRefs[uk] = n
+	}
+}
+
 func New(uk string, discovery Discovery) *SharedDiscovery {
+	ctx, cancel := context.WithCancel(gCtx)
 	return &SharedDiscovery{
-		ctx:       gCtx, // 生命周期由全局管理
+		ctx:       ctx,
+		cancel:    cancel,
 		uk:        uk,
 		discovery: discovery,
 		ch:        make(chan []*targetgroup.Group),
@@ -126,6 +212,10 @@ func New(uk string, discovery Discovery) *SharedDiscovery {
 
 func (sd *SharedDiscovery) watch() {
 	sd.discovery.Run(sd.ctx, sd.ch)
+}
+
+func (sd *SharedDiscovery) stop() {
+	sd.cancel()
 }
 
 func (sd *SharedDiscovery) start() {
@@ -141,16 +231,18 @@ func (sd *SharedDiscovery) start() {
 			sd.mut.Lock()
 			now := time.Now()
 			for _, tg := range tgs {
+				if tg == nil {
+					continue
+				}
+
 				logger.Debugf("targetgroup %s updated at: %v", tg.Source, now)
 				_, ok := sd.store[tg.Source]
-				if !ok {
+				if !ok && len(tg.Targets) == 0 {
 					// 第一次记录且没有 targets 则跳过
-					if tg == nil || len(tg.Targets) == 0 {
-						logger.Infof("sharedDiscovery %s skip tg source '%s'", sd.uk, tg.Source)
-						continue
-					}
+					logger.Debugf("sharedDiscovery %s skip tg source '%s'", sd.uk, tg.Source)
+					continue
 				}
-				sd.store[tg.Source] = &tgWithTime{tg: tg, updatedAt: now.Unix()}
+				sd.store[tg.Source] = &tgWithTime{tg: castTg(tg), updatedAt: now.Unix()}
 			}
 			sd.mut.Unlock()
 
@@ -159,17 +251,15 @@ func (sd *SharedDiscovery) start() {
 			now := time.Now().Unix()
 
 			var total int
-			for source, tg := range sd.store {
+			for source, tgt := range sd.store {
 				// 超过 10 分钟未更新且已经没有目标的对象需要删除
-				if now-tg.updatedAt > 600 {
-					if tg.tg == nil || len(tg.tg.Targets) == 0 {
-						delete(sd.store, source)
-						sd.mm.IncDeletedTgSourceCounter()
-						logger.Infof("sharedDiscovery %s delete tg source '%s'", sd.uk, source)
-					}
-				}
-				if tg.tg != nil {
-					total += len(tg.tg.Targets)
+				// 确保 basediscovery 已经处理了删除事件
+				if now-tgt.updatedAt > 600 && len(tgt.tg.Targets) == 0 {
+					delete(sd.store, source)
+					sd.mm.IncDeletedTgSourceCounter()
+					logger.Infof("sharedDiscovery %s delete tg source '%s'", sd.uk, source)
+				} else {
+					total += len(tgt.tg.Targets)
 				}
 			}
 			sd.mm.SetTargetCount(total)
@@ -178,17 +268,26 @@ func (sd *SharedDiscovery) start() {
 	}
 }
 
-func (sd *SharedDiscovery) fetch() ([]*targetgroup.Group, int64) {
+func (sd *SharedDiscovery) fetch() []*WrapTargetGroup {
+	sd.mut.RLock()
+	defer sd.mut.RUnlock()
+
+	ret := make([]*WrapTargetGroup, 0, len(sd.store))
+	for _, v := range sd.store {
+		ret = append(ret, v.tg)
+	}
+	return ret
+}
+
+func (sd *SharedDiscovery) fetchUpdatedAt() int64 {
 	sd.mut.RLock()
 	defer sd.mut.RUnlock()
 
 	var maxTs int64 = math.MinInt64
-	ret := make([]*targetgroup.Group, 0, 2)
 	for _, v := range sd.store {
 		if maxTs < v.updatedAt {
 			maxTs = v.updatedAt
 		}
-		ret = append(ret, v.tg)
 	}
-	return ret, maxTs
+	return maxTs
 }

@@ -47,13 +47,15 @@ type SpaceTsDbRouter struct {
 	kvBucketName string
 	kvPath       string
 	kvClient     kvstore.KVStore
-	cache        memcache.Cache
-	hasInit      bool
-	batchSize    int
+
+	isCache   bool
+	cache     memcache.Cache
+	hasInit   bool
+	batchSize int
 }
 
 // SetSpaceTsDbRouter 设置全局可用的 Router 单例，用于管理空间数据
-func SetSpaceTsDbRouter(ctx context.Context, kvPath string, kvBucketName string, routerPrefix string, batchSize int) (*SpaceTsDbRouter, error) {
+func SetSpaceTsDbRouter(ctx context.Context, kvPath string, kvBucketName string, routerPrefix string, batchSize int, isCache bool) (*SpaceTsDbRouter, error) {
 	globalSpaceTsDbRouterLock.Lock()
 	defer globalSpaceTsDbRouterLock.Unlock()
 	if globalSpaceTsDbRouter != nil {
@@ -67,6 +69,7 @@ func SetSpaceTsDbRouter(ctx context.Context, kvPath string, kvBucketName string,
 		kvPath:       kvPath,
 		routerPrefix: routerPrefix,
 		batchSize:    batchSize,
+		isCache:      isCache,
 	}
 	err := globalSpaceTsDbRouter.initRouter(ctx)
 	if err != nil {
@@ -121,7 +124,6 @@ func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entiti
 			}
 		}
 		if bytes.Equal(rawV, v) {
-			log.Debugf(ctx, "No change and not to write, %s", k)
 			continue
 		}
 		if keyNotFound {
@@ -145,9 +147,7 @@ func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entiti
 	}
 	// 记录更新日志
 	log.Debugf(ctx, "[SpaceTSDB] Write count in kvStorage, once=%v, key=%s, %d created, %d updated", once, stoPrefix, createdCount, updatedCount)
-	// 按照类型记录更新情况
-	metric.SpaceRequestCounterAdd(ctx, float64(createdCount), stoPrefix, metric.SpaceTypeBolt, metric.SpaceActionCreate)
-	metric.SpaceRequestCounterAdd(ctx, float64(updatedCount), stoPrefix, metric.SpaceTypeBolt, metric.SpaceActionWrite)
+
 	// 更新成功的对象，需要进行额外操作
 	// 1. 清理对应的缓存
 	// 2. 针对 ResultTableDetail 记录元数据情况
@@ -181,10 +181,9 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 		log.Warnf(ctx, "Fail to new generic value, %s", err)
 		return nil
 	}
-	if cached {
+	if cached && r.isCache {
 		data, exist := r.cache.Get(stoKey)
 		if exist {
-			metric.SpaceRequestCounterInc(ctx, stoPrefix, metric.SpaceTypeCache, metric.SpaceActionRead)
 			// 存入缓存的数据可能有 nil 情况，需要兼容
 			if data == nil {
 				return nil
@@ -196,7 +195,6 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 			log.Warnf(ctx, "Fail to unSerialize cached data, %s, %v", stoKey, data)
 		}
 	}
-	metric.SpaceRequestCounterInc(ctx, stoPrefix, metric.SpaceTypeBolt, metric.SpaceActionRead)
 	v, err := r.kvClient.Get(kvstore.String2byte(stoKey))
 	if err != nil {
 		if err.Error() == "keyNotFound" {
@@ -214,7 +212,7 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 		}
 	}
 	// 添加缓存
-	if cached {
+	if cached && r.isCache {
 		// NOTE: 暂时使用 20 作为随机
 		expiredTime := viper.GetInt64(memcache.RistrettoExpiredTimePath) + rand.Int63n(viper.GetInt64(memcache.RistrettoExpiredTimeFluxValuePath))
 		r.cache.SetWithTTL(stoKey, stoVal, 0, time.Duration(expiredTime)*time.Minute)
@@ -277,6 +275,12 @@ func (r *SpaceTsDbRouter) ReloadByChannel(ctx context.Context, channelKey string
 		channelKey = channelKey[len(r.routerPrefix)+1:]
 	}
 	switch channelKey {
+	case influxdb.BkAppToSpaceChannelKey:
+		spaceUidList, err := r.router.GetBkAppSpace(ctx, hashKey)
+		if err != nil {
+			return err
+		}
+		err = r.Add(ctx, influxdb.BkAppToSpaceKey, hashKey, &spaceUidList)
 	case influxdb.SpaceToResultTableChannelKey:
 		space, err := r.router.GetSpace(ctx, hashKey)
 		if err != nil {
@@ -392,6 +396,16 @@ func (r *SpaceTsDbRouter) Stop() error {
 		}
 	}
 	r.hasInit = false
+	return nil
+}
+
+// GetSpaceUIDList 获取 bkAppCode 下的空间信息
+func (r *SpaceTsDbRouter) GetSpaceUIDList(ctx context.Context, bkAppCode string) *influxdb.SpaceUIDList {
+	genericRet := r.Get(ctx, influxdb.BkAppToSpaceKey, bkAppCode, true, true)
+	if genericRet != nil {
+		return genericRet.(*influxdb.SpaceUIDList)
+
+	}
 	return nil
 }
 

@@ -87,6 +87,31 @@ func TestLogsTime(t *testing.T) {
 	})
 }
 
+func TestLogsEscapeHTML(t *testing.T) {
+	g := makeLogsGenerator(1, 20)
+	data := g.Generate()
+
+	const body = "<html>&<tag>"
+
+	first := testkits.FirstLogRecord(data)
+	first.Body().SetStringVal(body)
+
+	record := define.Record{
+		RecordType: define.RecordLogs,
+		Data:       data,
+	}
+
+	gather := func(evts ...define.Event) {
+		for i := 0; i < len(evts); i++ {
+			evt := evts[i]
+			assert.Equal(t, define.RecordLogs, evt.RecordType())
+			assert.Contains(t, evt.Data()["data"], body)
+		}
+	}
+
+	NewCommonConverter().Convert(&record, gather)
+}
+
 func BenchmarkLogsConvert_10x1KB_LogRecords(b *testing.B) {
 	g := makeLogsGenerator(10, 1024) // 1KB
 	data := g.Generate()

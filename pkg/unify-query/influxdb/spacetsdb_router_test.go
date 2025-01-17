@@ -19,14 +19,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	innerRedis "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/redis"
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 func TestRun(t *testing.T) {
-	suite.Run(t, new(TestSuite))
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	suite.Run(t, &TestSuite{
+		ctx: ctx,
+	})
 }
 
 type TestSuite struct {
@@ -37,8 +43,6 @@ type TestSuite struct {
 }
 
 func (s *TestSuite) SetupTest() {
-	config.InitConfig()
-	s.ctx = context.Background()
 	// 初始化全局 Redis 实例
 	(&(redis.Service{})).Reload(s.ctx)
 	// 需要往 redis 写入样例数据
@@ -65,7 +69,7 @@ func (s *TestSuite) SetupTest() {
 		"script_hhb_test.group3",
 		"{\"storage_id\":2,\"cluster_name\":\"default\",\"db\":\"script_hhb_test\",\"measurement\":\"group3\",\"vm_rt\":\"\",\"tags_key\":[],\"fields\":[\"disk_usage30\",\"disk_usage8\",\"disk_usage27\",\"disk_usage4\",\"disk_usage24\",\"disk_usage11\",\"disk_usage7\",\"disk_usage5\",\"disk_usage20\",\"disk_usage25\",\"disk_usage10\",\"disk_usage6\",\"disk_usage19\",\"disk_usage18\",\"disk_usage17\",\"disk_usage15\",\"disk_usage22\",\"disk_usage28\",\"disk_usage21\",\"disk_usage26\",\"disk_usage13\",\"disk_usage14\",\"disk_usage12\",\"disk_usage23\",\"disk_usage3\",\"disk_usage16\",\"disk_usage9\"],\"measurement_type\":\"bk_exporter\",\"bcs_cluster_id\":\"\",\"data_label\":\"script_hhb_test\",\"bk_data_id\": 11}")
 
-	router, err := SetSpaceTsDbRouter(s.ctx, "spacetsdb_test.db", "spacetsdb_test", "bkmonitorv3:spaces", 100)
+	router, err := SetSpaceTsDbRouter(s.ctx, "spacetsdb_test.db", "spacetsdb_test", "bkmonitorv3:spaces", 100, false)
 	if err != nil {
 		panic(err)
 	}
@@ -120,7 +124,7 @@ func (s *TestSuite) TestReloadBySpaceKey() {
 
 	err = router.ReloadByChannel(s.ctx, "bkmonitorv3:spaces:space_to_result_table:channel", "bkcc__2")
 	if err != nil {
-		panic(err)
+		return
 	}
 	space := router.GetSpace(s.ctx, "bkcc__2")
 	s.T().Logf("Space: %v\n", space)

@@ -19,19 +19,47 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 // TestConditionListFieldAnalysis
 func TestConditionListFieldAnalysis(t *testing.T) {
-	log.InitTestLogger()
+	mock.Init()
 
 	var testCases = []struct {
 		condition Conditions
 		result    []int
-		vm        string
+		vm        metadata.VmCondition
 		sql       string
 		err       error
 	}{
+		// value 为空
+		{
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "test1",
+						Operator:      ConditionContains,
+						Value:         []string{"abc"},
+					},
+					{
+						DimensionName: "test2",
+						Operator:      ConditionEqual,
+						Value:         []string{},
+					},
+					{
+						DimensionName: "test3",
+						Operator:      ConditionEqual,
+						Value:         []string{"det"},
+					},
+				},
+				ConditionList: []string{"and", "and"},
+			},
+			result: []int{2},
+			sql:    "(`test1` = 'abc' and `test3` = 'det')",
+			vm:     `test1="abc", test3="det", result_table_id="table_id"`,
+		},
 		// 长度不匹配
 		{
 			condition: Conditions{
@@ -56,33 +84,41 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 					DimensionName: "test1",
 					Operator:      ConditionContains,
 					Value:         []string{"abc"},
-				}, {
-					DimensionName: "test1",
-					Operator:      ConditionNotContains,
-					Value:         []string{"abc"},
-				}},
+				},
+					{
+						DimensionName: "test1",
+						Operator:      ConditionNotContains,
+						Value:         []string{"abc"},
+					}},
 				ConditionList: []string{"and"},
 			},
 			result: []int{2},
-			sql:    `(test1 = 'abc' and test1 != 'abc')`,
+			sql:    "(`test1` = 'abc' and `test1` != 'abc')",
 			vm:     `test1="abc", test1!="abc", result_table_id="table_id"`,
 		},
 		// 简单的or拼接
 		{
 			condition: Conditions{
-				FieldList: []ConditionField{{
-					DimensionName: "test1",
-					Operator:      ConditionRegEqual,
-					Value:         []string{"abc"},
-				}, {
-					DimensionName: "test1",
-					Operator:      ConditionNotRegEqual,
-					Value:         []string{"b", "c", "d"},
-				}},
-				ConditionList: []string{"or"},
+				FieldList: []ConditionField{
+					{
+						DimensionName: "test1",
+						Operator:      ConditionRegEqual,
+						Value:         []string{"abc"},
+					},
+					{
+						DimensionName: "test2",
+						Operator:      ConditionContains,
+						Value:         []string{},
+					},
+					{
+						DimensionName: "test1",
+						Operator:      ConditionNotRegEqual,
+						Value:         []string{"b", "c", "d"},
+					}},
+				ConditionList: []string{"or", "or"},
 			},
 			result: []int{1, 1},
-			sql:    `test1 REGEXP 'abc' or (test1 NOT REGEXP 'b' and test1 NOT REGEXP 'c' and test1 NOT REGEXP 'd')`,
+			sql:    "`test1` REGEXP 'abc' or (`test1` NOT REGEXP 'b' and `test1` NOT REGEXP 'c' and `test1` NOT REGEXP 'd')",
 			vm:     `test1=~"abc", result_table_id="table_id" or test1!~"b|c|d", result_table_id="table_id"`,
 		},
 		// and和or混合
@@ -104,8 +140,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				ConditionList: []string{"and", "or"},
 			},
 			result: []int{2, 1},
+			sql:    "(`test1` = 'abc' and (`test1` = 'abc' or `test1` = 'bcd')) or (`test1` = 'abc' or `test1` = 'ggg')",
 			vm:     `test1="abc", test1=~"^(abc|bcd)$", result_table_id="table_id" or test1=~"^(abc|ggg)$", result_table_id="table_id"`,
-			sql:    `(test1 = 'abc' and (test1 = 'abc' or test1 = 'bcd')) or (test1 = 'abc' or test1 = 'ggg')`,
 		},
 		// and和or混合
 		{
@@ -126,8 +162,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				ConditionList: []string{"or", "and"},
 			},
 			result: []int{1, 2},
+			sql:    "`test1` = 'abc' or (`test1` = 'abc' and `test1` = 'abc')",
 			vm:     `test1="abc", result_table_id="table_id" or test1="abc", test1="abc", result_table_id="table_id"`,
-			sql:    `test1 = 'abc' or (test1 = 'abc' and test1 = 'abc')`,
 		},
 		{
 			condition: Conditions{
@@ -161,8 +197,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				ConditionList: []string{"and", "and", "and", "and"},
 			},
 			result: []int{5},
+			sql:    "(`job` = 'kube-state-metrics' and `namespace` != '' and `pod_name` != '' and (`bcs_cluster_id` REGEXP 'BCS-K8S-40822' or `bcs_cluster_id` REGEXP 'BCS-K8S-40839' or `bcs_cluster_id` REGEXP 'BCS-K8S-40840' or `bcs_cluster_id` REGEXP 'BCS-K8S-40989' or `bcs_cluster_id` REGEXP 'BCS-K8S-41105' or `bcs_cluster_id` REGEXP 'BCS-K8S-41106') and `container` != 'fluentd')",
 			vm:     `job="kube-state-metrics", namespace!="", pod_name!="", bcs_cluster_id=~"BCS-K8S-40822|BCS-K8S-40839|BCS-K8S-40840|BCS-K8S-40989|BCS-K8S-41105|BCS-K8S-41106", container!="fluentd", result_table_id="table_id"`,
-			sql:    `(job = 'kube-state-metrics' and namespace != '' and pod_name != '' and (bcs_cluster_id REGEXP 'BCS-K8S-40822' or bcs_cluster_id REGEXP 'BCS-K8S-40839' or bcs_cluster_id REGEXP 'BCS-K8S-40840' or bcs_cluster_id REGEXP 'BCS-K8S-40989' or bcs_cluster_id REGEXP 'BCS-K8S-41105' or bcs_cluster_id REGEXP 'BCS-K8S-41106') and container != 'fluentd')`,
 		},
 		{
 			condition: Conditions{
@@ -175,8 +211,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				},
 			},
 			result: []int{1},
+			sql:    "`p1` = '{\"moduleType\":3}'",
 			vm:     `p1="{\"moduleType\":3}", result_table_id="table_id"`,
-			sql:    `p1 = '{"moduleType":3}'`,
 		},
 	}
 
@@ -744,7 +780,7 @@ func TestConditionField_LabelMatcherConvert(t *testing.T) {
 func TestAllConditions_VMString(t *testing.T) {
 	for i, c := range []struct {
 		allConditions AllConditions
-		vmCondition   string
+		vmCondition   metadata.VmCondition
 		isRegex       bool
 		metric        string
 		rt            string

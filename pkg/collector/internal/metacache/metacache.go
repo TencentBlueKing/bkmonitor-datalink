@@ -15,13 +15,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-type Cacher interface {
-	Set(k string, v define.Token)
-	Get(k string) (define.Token, bool)
-}
-
-var _ Cacher = (*Cache)(nil)
-
 type Cache struct {
 	mut   sync.RWMutex
 	cache map[string]define.Token
@@ -48,14 +41,14 @@ func (c *Cache) Get(k string) (define.Token, bool) {
 	return v, ok
 }
 
-var defaultCache = New()
+var Default = New()
 
 // Set 调用全局 cache 实例 Set 方法
 func Set(k string, v define.Token) {
-	defaultCache.Set(k, v)
+	Default.Set(k, v)
 }
 
 // Get 调用全局 cache 实例 Get 方法
 func Get(k string) (define.Token, bool) {
-	return defaultCache.Get(k)
+	return Default.Get(k)
 }

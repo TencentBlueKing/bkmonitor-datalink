@@ -64,21 +64,13 @@ var (
 		[]string{"name"},
 	)
 
-	workloadCount = promauto.NewGaugeVec(
+	resourceCount = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitorNamespace,
-			Name:      "workload_count",
-			Help:      "workload count",
+			Name:      "resource_count",
+			Help:      "resource count",
 		},
 		[]string{"resource"},
-	)
-
-	nodeCount = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "node_count",
-			Help:      "node count",
-		},
 	)
 
 	sharedDiscoveryCount = promauto.NewGauge(
@@ -89,12 +81,13 @@ var (
 		},
 	)
 
-	discoverCount = promauto.NewGauge(
+	discoverCount = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "discover_count",
 			Help:      "discover count",
 		},
+		[]string{"type"},
 	)
 
 	handledSecretSuccessTotal = promauto.NewCounterVec(
@@ -132,14 +125,6 @@ var (
 			Buckets:   define.DefObserveDuration,
 		},
 		[]string{"trigger"},
-	)
-
-	secretsExceeded = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "secrets_exceeded",
-			Help:      "secrets exceeded",
-		},
 	)
 
 	statefulSetWorkerCount = promauto.NewGauge(
@@ -199,20 +184,16 @@ func (m *metricMonitor) SetMonitorEndpointCount(name string, n int) {
 	monitorEndpointCount.WithLabelValues(name).Set(float64(n))
 }
 
-func (m *metricMonitor) SetWorkloadCount(resource string, n int) {
-	workloadCount.WithLabelValues(resource).Set(float64(n))
-}
-
-func (m *metricMonitor) SetNodeCount(n int) {
-	nodeCount.Set(float64(n))
+func (m *metricMonitor) SetResourceCount(resource string, n int) {
+	resourceCount.WithLabelValues(resource).Set(float64(n))
 }
 
 func (m *metricMonitor) SetSharedDiscoveryCount(n int) {
 	sharedDiscoveryCount.Set(float64(n))
 }
 
-func (m *metricMonitor) SetDiscoverCount(n int) {
-	discoverCount.Set(float64(n))
+func (m *metricMonitor) SetDiscoverCount(typ string, n int) {
+	discoverCount.WithLabelValues(typ).Set(float64(n))
 }
 
 func (m *metricMonitor) IncHandledSecretSuccessCounter(name, action string) {
@@ -227,10 +208,6 @@ func (m *metricMonitor) IncHandledSecretFailedCounter(name, action string, err e
 
 func (m *metricMonitor) IncDispatchedTaskCounter(trigger string) {
 	dispatchedTaskTotal.WithLabelValues(trigger).Inc()
-}
-
-func (m *metricMonitor) IncSecretsExceededCounter() {
-	secretsExceeded.Inc()
 }
 
 func (m *metricMonitor) ObserveDispatchedTaskDuration(trigger string, t time.Time) {

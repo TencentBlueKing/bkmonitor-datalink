@@ -63,12 +63,12 @@ func (mr *MockStoreMockRecorder) Delete(key interface{}) *gomock.Call {
 }
 
 // Get mocks base method.
-func (m *MockStore) Get(key string) ([]byte, error) {
+func (m *MockStore) Get(key string) (uint64, []byte, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Get", key)
 	ret0, _ := ret[0].([]byte)
 	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	return 0,ret0, ret1
 }
 
 // Get indicates an expected call of Get.
@@ -92,7 +92,7 @@ func (mr *MockStoreMockRecorder) Open() *gomock.Call {
 }
 
 // Put mocks base method.
-func (m *MockStore) Put(key, val string, expiration time.Duration) error {
+func (m *MockStore) Put(key, val string, modifyIndex uint64, expiration time.Duration) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Put", key, val, expiration)
 	ret0, _ := ret[0].(error)

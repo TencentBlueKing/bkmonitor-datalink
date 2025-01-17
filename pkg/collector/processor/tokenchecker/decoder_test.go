@@ -138,13 +138,13 @@ func TestAes256WithMetaDecoder(t *testing.T) {
 		token3 = "a1b82bada7904f0d92ec8390ab192cba"
 	)
 
-	cacher := metacache.New()
-	cacher.Set(token1, define.Token{
+	cache := metacache.New()
+	cache.Set(token1, define.Token{
 		ProfilesDataId: 10001,
 		ProxyDataId:    10002,
 		BeatDataId:     10003,
 	})
-	cacher.Set(token3, define.Token{
+	cache.Set(token3, define.Token{
 		AppName:        "foobar",
 		BizId:          10,
 		TracesDataId:   2001,
@@ -153,7 +153,7 @@ func TestAes256WithMetaDecoder(t *testing.T) {
 		ProfilesDataId: 2004,
 	})
 
-	decoder := newAes256WithMetaTokenDecoder(decoderConfig, cacher)
+	decoder := newAes256WithMetaTokenDecoder(decoderConfig, cache)
 	assert.Equal(t, decoderTypeAes256WithMeta, decoder.Type())
 	assert.False(t, decoder.Skip())
 
@@ -221,10 +221,11 @@ func TestAes256WithMetaDecoder(t *testing.T) {
 
 func TestAes256WithMetaDecoderAndFixedBackup(t *testing.T) {
 	newConfig := func(mustEmptyToken bool) Config {
-		return Config{
+		c := &Config{
 			// aes256
-			Type:       "aes256WithMeta|fixed",
+			Type:       "aes256",
 			Salt:       "bk",
+			Version:    "v2",
 			DecodedIv:  "bkbkbkbkbkbkbkbk",
 			DecodedKey: "81be7fc6-5476-4934-9417-6d4d593728db",
 
@@ -235,6 +236,8 @@ func TestAes256WithMetaDecoderAndFixedBackup(t *testing.T) {
 			LogsDataId:     3003,
 			ProfilesDataId: 3004,
 		}
+		c.Clean()
+		return *c
 	}
 
 	cases := []struct {
@@ -257,7 +260,7 @@ func TestAes256WithMetaDecoderAndFixedBackup(t *testing.T) {
 			Input:     "foobar",
 			Token:     define.Token{},
 			Decoder:   newCombinedTokenDecoder(newConfig(true)),
-			ErrPrefix: "fixed tokenDecoder required empty token string",
+			ErrPrefix: "invalid token",
 		},
 		{
 			Input: "foobar",
@@ -282,7 +285,7 @@ func TestAes256WithMetaDecoderAndFixedBackup(t *testing.T) {
 
 		assert.Len(t, c.Decoder.decoders, 2)
 		assert.Equal(t, c.Token, token)
-		assert.Equal(t, "aes256WithMeta|fixed", c.Decoder.Type())
+		assert.Equal(t, "aes256", c.Decoder.Type())
 	}
 }
 

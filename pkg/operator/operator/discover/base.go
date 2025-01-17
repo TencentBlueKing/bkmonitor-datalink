@@ -25,12 +25,11 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/config"
-	"github.com/prometheus/prometheus/discovery/targetgroup"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/relabel"
 	"gopkg.in/yaml.v2"
 
-	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/crd/v1beta1"
+	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/labelspool"
@@ -75,33 +74,33 @@ type CommonOptions struct {
 	MatchSelector          map[string]string
 	DropSelector           map[string]string
 	LabelJoinMatcher       *feature.LabelJoinMatcherSpec
+	NodeNameExistsFunc     func(string) (string, bool)
+	NodeLabelsFunc         func(string) map[string]string
 }
 
 type BaseDiscover struct {
-	opts          *CommonOptions
-	parentCtx     context.Context
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
-	monitorMeta   define.MonitorMeta
-	mm            *shareddiscovery.MetricMonitor
-	checkNodeFunc define.CheckFunc
-	fetched       bool
-	cache         *hashCache
-	helper        Helper
+	opts        *CommonOptions
+	parentCtx   context.Context
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
+	monitorMeta define.MonitorMeta
+	mm          *shareddiscovery.MetricMonitor
+	fetched     bool
+	cache       *hashCache
+	helper      Helper
 
 	// 任务配置文件信息 通过 source 进行分组 使用 hash 进行唯一校验
 	childConfigMut    sync.RWMutex
 	childConfigGroups map[string]map[uint64]*ChildConfig // map[targetGroup.Source]map[hash]*ChildConfig
 }
 
-func NewBaseDiscover(ctx context.Context, checkFn define.CheckFunc, opts *CommonOptions) *BaseDiscover {
+func NewBaseDiscover(ctx context.Context, opts *CommonOptions) *BaseDiscover {
 	return &BaseDiscover{
-		parentCtx:     ctx,
-		opts:          opts,
-		checkNodeFunc: checkFn,
-		monitorMeta:   opts.MonitorMeta,
-		mm:            shareddiscovery.NewMetricMonitor(opts.Name),
+		parentCtx:   ctx,
+		opts:        opts,
+		monitorMeta: opts.MonitorMeta,
+		mm:          shareddiscovery.NewMetricMonitor(opts.Name),
 	}
 }
 
@@ -198,8 +197,8 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		metricTarget.NodeName = d.helper.MatchNodeName(origLabels)
 	}
 
-	if d.checkNodeFunc != nil {
-		nodeName, exist := d.checkNodeFunc(metricTarget.NodeName)
+	if d.opts.NodeNameExistsFunc != nil {
+		nodeName, exist := d.opts.NodeNameExistsFunc(metricTarget.NodeName)
 		if exist {
 			taskType = tasks.TaskTypeDaemonSet
 		}
@@ -296,6 +295,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 	metricTarget.RelabelIndex = d.opts.RelabelIndex
 	metricTarget.NormalizeMetricName = d.opts.NormalizeMetricName
 	metricTarget.LabelJoinMatcher = d.opts.LabelJoinMatcher
+	metricTarget.NodeLabelsFunc = d.opts.NodeLabelsFunc
 
 	return metricTarget, nil
 }
@@ -380,7 +380,8 @@ func (d *BaseDiscover) loopHandleTargetGroup() {
 
 		case <-ticker.C:
 			counter++
-			tgList, updatedAt := shareddiscovery.FetchTargetGroups(d.UK())
+			// 避免 skip 情况下多申请不必要的内存
+			updatedAt := shareddiscovery.FetchTargetGroupsUpdatedAt(d.UK())
 			logger.Debugf("%s updated at: %v", d.Name(), time.Unix(updatedAt, 0))
 			if time.Now().Unix()-updatedAt > duration*2 && counter%resync != 0 && d.fetched {
 				logger.Debugf("%s found nothing changed, skip targetgourps handled", d.Name())
@@ -388,10 +389,9 @@ func (d *BaseDiscover) loopHandleTargetGroup() {
 			}
 			d.fetched = true
 
+			// 真正需要变更时才 fetch targetgroups
+			tgList := shareddiscovery.FetchTargetGroups(d.UK())
 			for _, tg := range tgList {
-				if tg == nil {
-					continue
-				}
 				logger.Debugf("%s get targets source: %s, targets: %+v, labels: %+v", d.Name(), tg.Source, tg.Targets, tg.Labels)
 				d.handleTargetGroup(tg)
 			}
@@ -450,23 +450,35 @@ func matchSelector(labels []labels.Label, selector map[string]string) bool {
 	return count == len(selector)
 }
 
-func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSet) (*ChildConfig, error) {
+func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs labels.Labels) (*ChildConfig, error) {
 	lbls := labelspool.Get()
 	defer labelspool.Put(lbls)
 
-	for ln, lv := range tlset {
+	for _, lb := range tlset {
 		lbls = append(lbls, labels.Label{
-			Name:  string(ln),
-			Value: string(lv),
+			Name:  lb.Name,
+			Value: lb.Value,
 		})
 	}
-	for ln, lv := range tglbs {
-		if _, ok := tlset[ln]; !ok {
-			lbls = append(lbls, labels.Label{
-				Name:  string(ln),
-				Value: string(lv),
-			})
+
+	isIn := func(name string) bool {
+		for i := 0; i < len(tlset); i++ {
+			if tlset[i].Name == name {
+				return true
+			}
 		}
+		return false
+	}
+
+	for _, lb := range tglbs {
+		if isIn(lb.Name) {
+			continue
+		}
+
+		lbls = append(lbls, labels.Label{
+			Name:  lb.Name,
+			Value: lb.Value,
+		})
 	}
 
 	// annotations 白名单过滤
@@ -534,7 +546,7 @@ func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSe
 }
 
 // handleTargetGroup 遍历自身的所有 target group 计算得到活跃的 target 并删除消失的 target
-func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
+func (d *BaseDiscover) handleTargetGroup(targetGroup *shareddiscovery.WrapTargetGroup) {
 	d.mm.IncHandledTgCounter()
 
 	namespace := tgSourceNamespace(targetGroup.Source)
@@ -570,6 +582,12 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 func (d *BaseDiscover) notify(source string, childConfigs []*ChildConfig) {
 	d.childConfigMut.Lock()
 	defer d.childConfigMut.Unlock()
+
+	// 如果新的 source/childconfigs 为空且之前的缓存也为空 那就无需对比处理了
+	if len(childConfigs) == 0 && len(d.childConfigGroups[source]) == 0 {
+		logger.Debugf("%s skip handle notify", d.Name())
+		return
+	}
 
 	if _, ok := d.childConfigGroups[source]; !ok {
 		d.childConfigGroups[source] = make(map[uint64]*ChildConfig)
@@ -609,6 +627,12 @@ func (d *BaseDiscover) notify(source string, childConfigs []*ChildConfig) {
 		logger.Infof("%s found targetgroup.source changed", source)
 		Publish()
 	}
+
+	// 删除事件 即后续 source 可能不会再有任何事件了
+	if len(d.childConfigGroups[source]) == 0 {
+		delete(d.childConfigGroups, source)
+		logger.Infof("delete source (%s), cause no childconfigs", source)
+	}
 }
 
 // populateLabels builds a label set from the given label set and scrape configuration.
@@ -629,7 +653,7 @@ func (d *BaseDiscover) populateLabels(lset labels.Labels) (res, orig labels.Labe
 		}
 	}
 
-	preRelabelLabels := lb.Labels()
+	preRelabelLabels := lb.Labels(nil)
 	lset = relabel.Process(preRelabelLabels, d.opts.Relabels...)
 
 	// Check if the target was dropped.
@@ -686,7 +710,7 @@ func (d *BaseDiscover) populateLabels(lset labels.Labels) (res, orig labels.Labe
 		lb.Set(model.InstanceLabel, addr)
 	}
 
-	res = lb.Labels()
+	res = lb.Labels(nil)
 	for _, l := range res {
 		// Check label values are valid, drop the target if not.
 		if !model.LabelValue(l.Value).IsValid() {

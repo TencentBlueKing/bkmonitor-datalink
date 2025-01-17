@@ -30,7 +30,9 @@ func TestMakeRouteFromTableID(t *testing.T) {
 		err     error
 	}{
 		"empty table id": {
-			"", &Route{}, ErrEmptyTableID,
+			"", &Route{
+				dataSource: BkMonitor,
+			}, ErrEmptyTableID,
 		},
 		"valid table id": {
 			"system.cpu_summary",
@@ -49,9 +51,10 @@ func TestMakeRouteFromTableID(t *testing.T) {
 		},
 		"wrong table id": {
 			"system.cpu_detail.usage", &Route{
-				dataSource: BkMonitor,
-				db:         "cpu_summary",
-			}, ErrWrongTableIDFormat,
+				dataSource:  BkMonitor,
+				db:          "system",
+				measurement: "cpu_detail",
+			}, nil,
 		},
 	}
 

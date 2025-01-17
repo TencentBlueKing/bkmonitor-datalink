@@ -56,16 +56,6 @@ resource_limit:
 
 # bk-collector self-config
 bk-collector:
-  # ============================= LabelStorage ===============================
-  label_storage:
-    type: "builtin"
-    dir: "."
-
-  # ============================= TraceStorage ===============================
-  trace_storage:
-    type: "builtin"
-    dir: "."
-
   # =============================== SubConfig ================================
   apm:
     patterns:
@@ -102,7 +92,7 @@ bk-collector:
       port: 10205
       middlewares:
         - "logging"
-        - "maxconns"
+        - "maxconns;maxConnectionsRatio=256"
 
   # ============================== Pingserver ================================
   pingserver:
@@ -111,7 +101,7 @@ bk-collector:
     patterns:
       - "./example/fixtures/pingserver_sub*.yml"
 
-  # ============================== Pingserver ================================
+  # ================================ Cluster =================================
   cluster:
     disabled: false
     address: ":4316"
@@ -133,8 +123,8 @@ bk-collector:
         - "logging"
         - "cors"
         - "content_decompressor"
-        - "maxconns"
-        - "maxbytes"
+        - "maxconns;maxConnectionsRatio=256"
+        - "maxbytes;maxRequestBytes=209715200"
 
     admin_server:
       # 是否启动 Http 服务
@@ -158,7 +148,7 @@ bk-collector:
       # default: ""
       endpoint: ":4317"
       middlewares:
-        - "maxbytes"
+        - "maxbytes;maxRequestBytes=8388608"
 
     # Tars Server Config
     tars_server:
@@ -182,7 +172,7 @@ bk-collector:
       remotewrite:
         enabled: true
       zipkin:
-        enabled: false
+        enabled: true
       skywalking:
         enabled: true
       pyroscope:
@@ -395,8 +385,7 @@ bk-collector:
             destination: "telemetry.bksdk.version"
 
     # ResourceFilter: 资源过滤处理器
-    # Assemble
-    - name: "resource_filter/assemble"
+    - name: "resource_filter/common"
       config:
         assemble:
           - destination: "bk.instance.id" # 转换后名称
@@ -410,6 +399,16 @@ bk-collector:
         drop:
           keys:
             - "resource.bk.data.token"
+#        from_cache:
+#          key: "resource.service.name"
+#          cache:
+#            key: "service.name"
+#            url: "http://localhost:8990/service_info"
+#            interval: "1m"
+#            timeout: "1m"
+        from_record:
+          - source: "request.client.ip"
+            destination: "resource.client.ip"
 
     - name: "resource_filter/drop_token"
       config:
@@ -1026,7 +1025,7 @@ bk-collector:
         #- "license_checker/common"
         #- "forwarder/traces"
         #- "sampler/status_code"
-        - "resource_filter/assemble"
+        - "resource_filter/common"
         - "attribute_filter/common"
         - "db_filter/common"
         - "attribute_filter/app"

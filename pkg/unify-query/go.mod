@@ -7,7 +7,6 @@ require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive v0.0.0-00010101000000-000000000000
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
 	github.com/VictoriaMetrics/metricsql v0.69.0
-	github.com/agiledragon/gomonkey/v2 v2.11.0
 	github.com/asaskevich/EventBus v0.0.0-20200907212545-49d423059eef
 	github.com/bytedance/go-querystring-parser v0.0.0-20230310053818-dcfffcaee797
 	github.com/dgraph-io/ristretto v0.1.1
@@ -16,7 +15,7 @@ require (
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-gota/gota v0.12.0
 	github.com/go-redis/redis/v8 v8.11.5
-	github.com/golang/gddo v0.0.0-20210115222349-20d68f94ee1f
+	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/golang/mock v1.6.0
 	github.com/google/gops v0.3.26
 	github.com/google/uuid v1.3.0
@@ -24,6 +23,7 @@ require (
 	github.com/influxdata/influxdb v1.10.0
 	github.com/influxdata/influxdb1-client v0.0.0-20200827194710-b269163b24ab
 	github.com/influxdata/influxql v1.1.1-0.20200828144457-65d3ef77d385
+	github.com/jarcoal/httpmock v1.3.1
 	github.com/likexian/gokit v0.24.7
 	github.com/magiconair/properties v1.8.7
 	github.com/mitchellh/go-homedir v1.1.0
@@ -41,7 +41,6 @@ require (
 	github.com/swaggo/swag v1.16.1
 	github.com/thomaspoignant/go-feature-flag v1.0.1
 	github.com/tinylib/msgp v1.1.6
-	github.com/zhuliquan/es-mapping v1.0.0
 	go.etcd.io/bbolt v1.3.3
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.32.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.42.0
@@ -54,7 +53,6 @@ require (
 	go.uber.org/automaxprocs v1.5.1
 	go.uber.org/zap v1.24.0
 	golang.org/x/exp v0.0.0-20230124195608-d38c7dcee874
-	golang.org/x/sync v0.3.0
 	golang.org/x/time v0.3.0
 	google.golang.org/grpc v1.57.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -168,6 +166,7 @@ require (
 	golang.org/x/crypto v0.22.0 // indirect
 	golang.org/x/net v0.24.0 // indirect
 	golang.org/x/oauth2 v0.8.0 // indirect
+	golang.org/x/sync v0.3.0 // indirect
 	golang.org/x/sys v0.19.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/tools v0.7.0 // indirect

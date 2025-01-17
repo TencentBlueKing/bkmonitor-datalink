@@ -65,6 +65,7 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 	}
 
 	data := new(cmdb.RelationMultiResourceResponse)
+	data.TraceID = span.TraceID()
 	data.Data = make([]cmdb.RelationMultiResourceResponseData, 0, len(request.QueryList))
 	for _, qry := range request.QueryList {
 		d := cmdb.RelationMultiResourceResponseData{
@@ -124,6 +125,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 	}
 
 	data := new(cmdb.RelationMultiResourceRangeResponse)
+	data.TraceID = span.TraceID()
 	data.Data = make([]cmdb.RelationMultiResourceRangeResponseData, 0, len(request.QueryList))
 	for _, qry := range request.QueryList {
 		d := cmdb.RelationMultiResourceRangeResponseData{

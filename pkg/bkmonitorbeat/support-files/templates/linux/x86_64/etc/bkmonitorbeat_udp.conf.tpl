@@ -20,6 +20,9 @@ tasks: {% for task in tasks or get_hosts_by_node(config_hosts) %}
     period: {{ task.period or period }}
     # 检测超时（connect+read总共时间）
     timeout: {{ (task.timeout or timeout) | default("3s", true) }}
+    {%- if custom_report == "true" %}
+    # 是否自定义上报
+    custom_report: {{ custom_report | default("false", true) }}{% endif %}
     target_host: {{ task.target_host or task.ip }}
     # 当配置的target_host_list不为空时，使用target_host_list，忽略target_host
     {% if task.node_list %}{% set instances = get_hosts_by_node(task.node_list) %}{% endif %}
@@ -41,8 +44,11 @@ tasks: {% for task in tasks or get_hosts_by_node(config_hosts) %}
     # 内容匹配方式
     response_format: {{ (task.response_format or response_format) | default("eq", true) }}
     # response为空时是否等待返回
-    wait_empty_response: {{ (task.wait_empty_response or wait_empty_response or false) }}{% endfor %}
-    {% if labels %}labels:
-    {% for label in labels %}{% for key, value in label.items() %}{{"-" if loop.first else " "}} {{key}}: "{{ value }}"
-    {% endfor %}{% endfor %}
+    wait_empty_response: {{ (task.wait_empty_response or wait_empty_response or false) }}
+    {%- if task.labels and custom_report == "true" %}
+    labels:
+    {%- for key, value in task.labels.items() %}
+    {{"-" if loop.first else " "}} {{ key }}: "{{ value }}"
+    {%- endfor %}
     {% endif %}
+{%- endfor %}

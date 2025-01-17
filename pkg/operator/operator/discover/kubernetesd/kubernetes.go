@@ -23,7 +23,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/eplabels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logx"
@@ -48,6 +47,11 @@ const (
 	labelPodAddressTargetName = "__meta_kubernetes_pod_address_target_name"
 )
 
+type BasicAuthRaw struct {
+	Username string
+	Password string
+}
+
 type Options struct {
 	*discover.CommonOptions
 
@@ -55,6 +59,7 @@ type Options struct {
 	Namespaces        []string
 	Client            kubernetes.Interface
 	BasicAuth         *promv1.BasicAuth
+	BasicAuthRaw      BasicAuthRaw
 	TLSConfig         *promv1.TLSConfig
 	BearerTokenSecret *corev1.SecretKeySelector
 	UseEndpointSlice  bool
@@ -70,12 +75,12 @@ type Discover struct {
 
 var _ discover.Discover = (*Discover)(nil)
 
-func New(ctx context.Context, role string, checkFn define.CheckFunc, opts *Options) *Discover {
+func New(ctx context.Context, role string, opts *Options) *Discover {
 	d := &Discover{
 		ctx:          ctx,
 		role:         role,
 		opts:         opts,
-		BaseDiscover: discover.NewBaseDiscover(ctx, checkFn, opts.CommonOptions),
+		BaseDiscover: discover.NewBaseDiscover(ctx, opts.CommonOptions),
 	}
 
 	d.SetUK(fmt.Sprintf("%s:%s", role, strings.Join(d.getNamespaces(), "/")))
@@ -157,6 +162,16 @@ func (d *Discover) matchNodeName(lbs labels.Labels) string {
 }
 
 func (d *Discover) accessBasicAuth() (string, string, error) {
+	raw := d.opts.BasicAuthRaw
+	// 优先使用 raw 配置 当且仅当两者不为空时才生效
+	if raw.Username != "" && raw.Password != "" {
+		return raw.Username, raw.Password, nil
+	}
+
+	return d.accessBasicAuthFromSecret()
+}
+
+func (d *Discover) accessBasicAuthFromSecret() (string, string, error) {
 	auth := d.opts.BasicAuth
 	if auth == nil || auth.Username.String() == "" || auth.Password.String() == "" {
 		return "", "", nil

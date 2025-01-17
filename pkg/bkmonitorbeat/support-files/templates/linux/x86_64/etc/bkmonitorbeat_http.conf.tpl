@@ -22,6 +22,9 @@ tasks: {% for task in tasks %}
     disable_keep_alives: {{ task.disable_keep_alives | lower }}
     # 检测超时（connect+read总共时间）
     timeout: {{ task.timeout | default("3s", true) }}
+    {%- if custom_report == "true" %}
+    # 是否自定义上报
+    custom_report: {{ custom_report | default("false", true) }}{% endif %}
     # 采集步骤
     steps: {% for step in task.steps %}
       - method: {{ step.method }}
@@ -41,8 +44,11 @@ tasks: {% for task in tasks %}
         response: {{ step.response or '' }}
         # 内容匹配方式
         response_format: {{ step.response_format | default("eq", true) }}
-        response_code: {{ step.response_code }}{% endfor %}{% endfor %}
-        {% if labels %}labels:
-        {% for label in labels %}{% for key, value in label.items() %}{{"-" if loop.first else " "}} {{key}}: "{{ value }}"
-        {% endfor %}{% endfor %}
-        {% endif %}
+        response_code: {{ step.response_code }}{% endfor %}
+    {%- if task.labels and custom_report == "true" %}
+    labels:
+    {%- for key, value in task.labels.items() %}
+    {{"-" if loop.first else " "}} {{ key }}: "{{ value }}"
+    {%- endfor %}
+    {% endif %}
+{%- endfor %}

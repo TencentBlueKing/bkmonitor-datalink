@@ -10,6 +10,7 @@
 package structured
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -131,13 +132,13 @@ func TestCompressFilterCondition(t *testing.T) {
 			expect: [][]ConditionField{
 				{
 					ConditionField{
-						DimensionName: "nameSpace",
-						Value:         []string{"nameSpace1"},
+						DimensionName: "bcs_cluster_id",
+						Value:         []string{"bcs_cluster_id1", "bcs_cluster_id2"},
 						Operator:      Contains,
 					},
 					ConditionField{
-						DimensionName: "bcs_cluster_id",
-						Value:         []string{"bcs_cluster_id1", "bcs_cluster_id2"},
+						DimensionName: "nameSpace",
+						Value:         []string{"nameSpace1"},
 						Operator:      Contains,
 					},
 				},
@@ -154,25 +155,25 @@ func TestCompressFilterCondition(t *testing.T) {
 			expect: [][]ConditionField{
 				{
 					ConditionField{
-						DimensionName: "nameSpace",
-						Value:         []string{"nameSpace1"},
+						DimensionName: "bcs_cluster_id",
+						Value:         []string{"bcs_cluster_id1"},
 						Operator:      Contains,
 					},
 					ConditionField{
-						DimensionName: "bcs_cluster_id",
-						Value:         []string{"bcs_cluster_id1"},
+						DimensionName: "nameSpace",
+						Value:         []string{"nameSpace1"},
 						Operator:      Contains,
 					},
 				},
 				{
 					ConditionField{
-						DimensionName: "nameSpace",
-						Value:         []string{"nameSpace2"},
+						DimensionName: "bcs_cluster_id",
+						Value:         []string{"bcs_cluster_id2", "bcs_cluster_id3"},
 						Operator:      Contains,
 					},
 					ConditionField{
-						DimensionName: "bcs_cluster_id",
-						Value:         []string{"bcs_cluster_id2", "bcs_cluster_id3"},
+						DimensionName: "nameSpace",
+						Value:         []string{"nameSpace2"},
 						Operator:      Contains,
 					},
 				},
@@ -183,6 +184,15 @@ func TestCompressFilterCondition(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			condition := compressFilterCondition(testCase.tKeys, testCase.filters)
+			for _, cond := range condition {
+				sort.SliceStable(cond, func(i, j int) bool {
+					return cond[i].DimensionName < cond[j].DimensionName
+				})
+			}
+
+			sort.SliceStable(condition, func(i, j int) bool {
+				return condition[i][0].Value[0] < condition[j][0].Value[0]
+			})
 			assert.Equal(t, testCase.expect, condition)
 		})
 	}

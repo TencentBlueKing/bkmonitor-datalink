@@ -129,9 +129,12 @@ func (cli *HTTPClient) FetchResponse() (*http.Response, error) {
 		return nil, err
 	}
 	u.RawQuery = cli.rawQuery
-
+	reqUrl := u.String()
+	if cli.rawQuery == "" {
+		reqUrl = cli.base.HostData().SanitizedURI
+	}
 	var reader io.Reader
-	req, err := http.NewRequest(cli.method, u.String(), reader)
+	req, err := http.NewRequest(cli.method, reqUrl, reader)
 	if err != nil {
 		return nil, err
 	}

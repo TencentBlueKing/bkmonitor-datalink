@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	tkexversiond "github.com/Tencent/bk-bcs/bcs-scenarios/kourse/pkg/client/clientset/versioned"
 	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -24,6 +23,7 @@ import (
 	prominformers "github.com/prometheus-operator/prometheus-operator/pkg/informers"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/tools/cache"
 
 	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
@@ -33,6 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/dataidwatcher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/helmcharts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/promsli"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -42,6 +43,8 @@ const (
 	monitorKindServiceMonitor = "ServiceMonitor"
 	monitorKindPodMonitor     = "PodMonitor"
 	monitorKindHttpSd         = "HttpSd"
+	monitorKindPolarisSd      = "PolarisSd"
+	monitorKindKubernetesSd   = "KubernetesSd"
 )
 
 var (
@@ -59,9 +62,9 @@ type Operator struct {
 	buildInfo BuildInfo
 
 	client     kubernetes.Interface
+	mdClient   metadata.Interface
 	promclient promversioned.Interface
 	bkclient   bkversioned.Interface
-	tkexclient tkexversiond.Interface
 	srv        *http.Server
 
 	serviceMonitorInformer *prominformers.ForResource
@@ -69,6 +72,8 @@ type Operator struct {
 
 	promRuleInformer  *prominformers.ForResource
 	promsliController *promsli.Controller
+
+	helmchartsController *helmcharts.Controller
 
 	statefulSetWorkerScaled time.Time
 	statefulSetWorker       int
@@ -84,9 +89,9 @@ type Operator struct {
 	daemonSetTaskCache   map[string]map[string]struct{}
 	statefulSetTaskCache map[int]map[string]struct{}
 	eventTaskCache       string
-	scrapeUpdated        time.Time
 
-	promSdConfigsBytes map[string][]byte // 无并发读写
+	promSdConfigsBytes        map[string][]byte              // 无并发读写
+	prevResourceScrapeConfigs map[string]resourceScrapConfig // 无并发读写
 }
 
 func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
@@ -101,22 +106,23 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		return nil, err
 	}
 
-	operator.client, err = k8sutils.NewK8SClient(configs.G().APIServerHost, configs.G().GetTLS())
+	apiHost := configs.G().APIServerHost
+	operator.client, err = k8sutils.NewK8SClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.promclient, err = k8sutils.NewPromClient(configs.G().APIServerHost, configs.G().GetTLS())
+	operator.mdClient, err = k8sutils.NewMetadataClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.bkclient, err = k8sutils.NewBKClient(configs.G().APIServerHost, configs.G().GetTLS())
+	operator.promclient, err = k8sutils.NewPromClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.tkexclient, err = k8sutils.NewTkexClient(configs.G().APIServerHost, configs.G().GetTLS())
+	operator.bkclient, err = k8sutils.NewBKClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +210,12 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		operator.promsliController = promsli.NewController(operator.ctx, operator.client, useEndpointslice)
 	}
 
-	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.tkexclient)
+	operator.helmchartsController, err = helmcharts.NewController(operator.ctx, operator.client)
+	if err != nil {
+		return nil, errors.Wrap(err, "create helmchartsController failed")
+	}
+
+	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.mdClient, operator.bkclient)
 	if err != nil {
 		return nil, errors.Wrap(err, "create objectsController failed")
 	}
@@ -227,6 +238,17 @@ func (c *Operator) getAllDiscover() []define.MonitorMeta {
 	return ret
 }
 
+func (c *Operator) getDiscoverCount() map[string]int {
+	c.discoversMut.Lock()
+	defer c.discoversMut.Unlock()
+
+	count := make(map[string]int)
+	for _, dis := range c.discovers {
+		count[dis.Type()]++
+	}
+	return count
+}
+
 func (c *Operator) reloadAllDiscovers() {
 	c.discoversMut.Lock()
 	defer c.discoversMut.Unlock()
@@ -244,7 +266,7 @@ func (c *Operator) reloadAllDiscovers() {
 
 		dis.SetDataID(newDataID)
 		if err := dis.Reload(); err != nil {
-			logger.Errorf("discover %s reload failed, err: %s", name, err)
+			logger.Errorf("discover %s reload failed: %s", name, err)
 		}
 	}
 }
@@ -253,19 +275,19 @@ func (c *Operator) recordMetrics() {
 	c.wg.Add(1)
 	defer c.wg.Done()
 
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			c.mm.UpdateUptime(5)
+			c.mm.UpdateUptime(15)
 			c.mm.SetAppBuildInfo(c.buildInfo)
 			c.updateNodeConfigMetrics()
 			c.updateMonitorEndpointMetrics()
-			c.updateWorkloadMetrics()
-			c.updateNodeMetrics()
+			c.updateResourceMetrics()
 			c.updateSharedDiscoveryMetrics()
+			c.helmchartsController.UpdateMetrics()
 
 		case <-c.ctx.Done():
 			return
@@ -275,7 +297,9 @@ func (c *Operator) recordMetrics() {
 
 func (c *Operator) updateSharedDiscoveryMetrics() {
 	c.mm.SetSharedDiscoveryCount(len(shareddiscovery.AllDiscovery()))
-	c.mm.SetDiscoverCount(len(c.getAllDiscover()))
+	for typ, count := range c.getDiscoverCount() {
+		c.mm.SetDiscoverCount(typ, count)
+	}
 }
 
 func (c *Operator) updateNodeConfigMetrics() {
@@ -291,22 +315,17 @@ func (c *Operator) updateNodeConfigMetrics() {
 }
 
 func (c *Operator) updateMonitorEndpointMetrics() {
-	endpoints := c.recorder.getActiveEndpoints()
+	endpoints := c.recorder.getEndpoints(false)
 	for name, count := range endpoints {
 		c.mm.SetMonitorEndpointCount(name, count)
 	}
 }
 
-func (c *Operator) updateWorkloadMetrics() {
-	workloads := objectsref.GetWorkloadCount()
-	for resource, count := range workloads {
-		c.mm.SetWorkloadCount(resource, count)
+func (c *Operator) updateResourceMetrics() {
+	resources := objectsref.GetResourceCount()
+	for resource, count := range resources {
+		c.mm.SetResourceCount(resource, count)
 	}
-}
-
-func (c *Operator) updateNodeMetrics() {
-	nodes := objectsref.GetClusterNodeCount()
-	c.mm.SetNodeCount(nodes)
 }
 
 func (c *Operator) Run() error {
@@ -401,6 +420,7 @@ func (c *Operator) Run() error {
 
 	go c.loopHandlePromSdConfigs()
 	c.cleanupInvalidSecrets()
+
 	return nil
 }
 
@@ -412,6 +432,7 @@ func (c *Operator) Stop() {
 	c.wg.Wait()
 
 	c.dw.Stop()
+	c.helmchartsController.Stop()
 	c.objectsController.Stop()
 	shareddiscovery.Deactivate()
 }
@@ -486,7 +507,7 @@ func (c *Operator) handleDiscoverNotify() {
 	c.wg.Add(1)
 	defer c.wg.Done()
 
-	var last int64
+	last := time.Now().Unix() + configs.G().DispatchInterval // 第一次调度时多等待一个周期 避免触发太多 secrets 变更
 	dispatch := func(trigger string) {
 		now := time.Now()
 		c.mm.IncDispatchedTaskCounter(trigger)

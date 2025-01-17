@@ -12,84 +12,32 @@ package mock
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
-	goRedis "github.com/go-redis/redis/v8"
-	"github.com/spf13/viper"
-
-	offlineDataArchiveMetadata "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/offlineDataArchive"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
-	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 var (
-	once sync.Once
-	Path string
+	mockInitOnce sync.Once
 )
 
 func Init() {
-	once.Do(func() {
-		if Path == "" {
-			Path = `../../dist/local/unify-query.yaml`
-		}
-		config.CustomConfigFilePath = Path
+	mockInitOnce.Do(func() {
+		dir, _ := os.Getwd()
+		dir, _ = filepath.Abs(dir)
+		name := `bkmonitor-datalink/pkg/unify-query`
+		rootDir := strings.Split(dir, name)
+		path := fmt.Sprintf("%s%s/unify-query.yaml", rootDir[0], name)
+		config.CustomConfigFilePath = path
 		config.InitConfig()
 		log.InitTestLogger()
-
 		metadata.InitMetadata()
+		ctx := metadata.InitHashID(context.Background())
+		mockHandler(ctx)
 	})
-}
-
-func SetOfflineDataArchiveMetadata(m offlineDataArchiveMetadata.Metadata) {
-	offlineDataArchive.MockMetaData(m)
-}
-
-func SetSpaceTsDbMockData(ctx context.Context, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo, fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
-	Init()
-	sr, err := influxdb.SetSpaceTsDbRouter(ctx, "mock", "mock", "", 100)
-	if err != nil {
-		panic(err)
-	}
-	for sid, space := range spaceInfo {
-		err = sr.Add(ctx, ir.SpaceToResultTableKey, sid, &space)
-		if err != nil {
-			panic(err)
-		}
-	}
-	for rid, rt := range rtInfo {
-		err = sr.Add(ctx, ir.ResultTableDetailKey, rid, rt)
-		if err != nil {
-			panic(err)
-		}
-	}
-	for field, rts := range fieldInfo {
-		err = sr.Add(ctx, ir.FieldToResultTableKey, field, &rts)
-		if err != nil {
-			panic(err)
-		}
-	}
-	for dataLabel, rts := range dataLabelInfo {
-		err = sr.Add(ctx, ir.DataLabelToResultTableKey, dataLabel, &rts)
-		if err != nil {
-			panic(err)
-		}
-	}
-}
-
-func SetRedisClient(ctx context.Context) {
-	Init()
-	host := viper.GetString("redis.host")
-	port := viper.GetInt("redis.port")
-	pwd := viper.GetString("redis.password")
-	options := &goRedis.UniversalOptions{
-		DB:       0,
-		Addrs:    []string{fmt.Sprintf("%s:%d", host, port)},
-		Password: pwd,
-	}
-	redis.SetInstance(ctx, "mock", options)
 }

@@ -10,7 +10,6 @@
 package accumulator
 
 import (
-	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -24,8 +23,9 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labelstore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metricsbuilder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/labelstore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/fasttime"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -142,8 +142,8 @@ type recorder struct {
 	buckets             []float64
 	maxSeriesGrowthRate int
 
-	stor labelstore.Storage
-	mut  sync.RWMutex
+	storage *labelstore.Storage
+	mut     sync.RWMutex
 
 	// https://github.com/golang/go/issues/9477
 	// map 中如果 values 为指针类型 gc 扫描的开销会增大不少
@@ -159,29 +159,26 @@ type recorderOptions struct {
 	dataID              int32
 	buckets             []float64
 	gcInterval          time.Duration
-	storID              string
 	maxSeriesGrowthRate int
 }
 
-func newRecorder(opts recorderOptions, stor labelstore.Storage) *recorder {
+func newRecorder(opts recorderOptions) *recorder {
 	buckets := opts.buckets
 	sort.Float64s(buckets)
 	r := &recorder{
 		done:                make(chan struct{}, 1),
 		metricName:          opts.metricName,
 		dataID:              opts.dataID,
-		storID:              opts.storID,
 		gcInterval:          opts.gcInterval,
 		maxSeries:           opts.maxSeries,
 		buckets:             toNanoseconds(buckets),
 		maxSeriesGrowthRate: opts.maxSeriesGrowthRate,
-		stor:                stor,
+		storage:             labelstore.New(),
 		statsMap:            map[uint64]rStats{},
 	}
 
 	r.wg.Add(1)
 	go r.updateMetrics()
-	logger.Debugf("create new recorder, storid=%s", opts.storID)
 	return r
 }
 
@@ -203,12 +200,7 @@ func (r *recorder) updateMetrics() {
 	for {
 		select {
 		case <-r.done:
-			// 退出前清理 Storage
-			if err := r.stor.Clean(); err != nil {
-				logger.Errorf("failed to clean storage, storid=%s, err: %v", r.storID, err)
-			}
-			// 从全局表中清除
-			labelstore.RemoveStorage(r.storID)
+			r.storage.Clean() // 退出前释放
 			return
 
 		case <-ticker.C:
@@ -286,22 +278,12 @@ func (r *recorder) Set(dims map[string]string, value float64) bool {
 	r.statsMap[h] = s
 
 	// fastpath: 大多数请求都会命中缓存
-	exist, err := r.stor.Exist(h)
-	if err != nil {
-		logger.Errorf("failed to check labels exist: %v, err: %v", dims, err)
-		return false
-	}
-	if exist {
+	if exist := r.storage.Exist(h); exist {
 		return true
 	}
 
 	// slowpath: alloc labels 开销较大 尽量减少此操作
-	lbs := labels.FromMap(dims)
-	if err := r.stor.SetIf(h, lbs); err != nil {
-		logger.Errorf("failed to set labels: %v, err: %v", lbs, err)
-		return false
-	}
-
+	r.storage.SetIf(h, dims)
 	return true
 }
 
@@ -322,9 +304,7 @@ func (r *recorder) Clean() {
 	for h := range dropped {
 		r.mut.Lock() // 尽量减少锁临界区
 		delete(r.statsMap, h)
-		if err := r.stor.Del(h); err != nil {
-			logger.Errorf("failed to delete series labels: %v", err)
-		}
+		r.storage.Del(h)
 		r.mut.Unlock()
 	}
 }
@@ -371,8 +351,8 @@ type LeValue struct {
 }
 
 func (r *recorder) calc(kind string, k uint64, stat rStats) (rStats, []metricsbuilder.Metric) {
-	lbs, err := r.stor.Get(k)
-	if err != nil {
+	lbs, ok := r.storage.Get(k)
+	if !ok {
 		return stat, nil
 	}
 
@@ -422,15 +402,13 @@ func (r *recorder) calc(kind string, k uint64, stat rStats) (rStats, []metricsbu
 		}
 	}
 
-	logger.Debugf("%s stats: %+v", kind, stat)
-
 	var metrics []metricsbuilder.Metric
 	unixNano := uint64(time.Now().UnixNano())
 
 	// histogram 类型处理
 	if len(leValues) > 0 {
 		for _, lev := range leValues {
-			dims := lbs.Map() // 复制新的 labels 保证读写安全
+			dims := utils.CloneMap(lbs) // 复制新的 labels 保证读写安全
 			dims["le"] = lev.Le
 			metrics = append(metrics, metricsbuilder.Metric{
 				Val:        lev.Value,
@@ -444,7 +422,7 @@ func (r *recorder) calc(kind string, k uint64, stat rStats) (rStats, []metricsbu
 		metrics = append(metrics, metricsbuilder.Metric{
 			Val:        val,
 			Ts:         pcommon.Timestamp(unixNano),
-			Dimensions: lbs.Map(),
+			Dimensions: utils.CloneMap(lbs),
 		})
 	}
 
@@ -739,18 +717,15 @@ func (a *Accumulator) Accumulate(dataID int32, dims map[string]string, value flo
 	if v, ok := a.recorders[dataID]; ok {
 		r = v
 	} else {
-		id := fmt.Sprintf("%s:%d", a.conf.MetricName, dataID)
-		stor := labelstore.GetOrCreateStorage(id)
 		opts := recorderOptions{
 			metricName:          a.conf.MetricName,
 			maxSeries:           a.conf.MaxSeries,
 			dataID:              dataID,
-			storID:              id,
 			buckets:             a.conf.GetBuckets(),
 			gcInterval:          a.conf.GcInterval,
 			maxSeriesGrowthRate: a.conf.MaxSeriesGrowthRate,
 		}
-		r = newRecorder(opts, stor)
+		r = newRecorder(opts)
 		a.recorders[dataID] = r
 	}
 	a.mut.Unlock()

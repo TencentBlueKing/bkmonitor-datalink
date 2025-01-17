@@ -156,3 +156,88 @@ func TestCustomEvent(t *testing.T) {
 		"timestamp": ts,
 	}, m)
 }
+
+func TestPingEventToCustomEvent(t *testing.T) {
+	now := time.Now()
+	pingEvent := new(PingEvent)
+	pingEvent.DataID = 100
+	pingEvent.BizID = 2
+	pingEvent.TaskID = 1
+	pingEvent.Time = now
+	pingEvent.Labels = []map[string]string{{"xxx": "1"}, {"yyy": "2"}}
+	pingEvent.Metrics = map[string]interface{}{
+		"available":    1,
+		"loss_percent": 0,
+		"max_rtt":      1,
+		"min_rtt":      0.5,
+		"avg_rtt":      0.75,
+	}
+	pingEvent.Dimensions = map[string]string{
+		"target":      "xxx",
+		"target_type": "ip",
+		"error_code":  "0",
+		"bk_biz_id":   "2",
+		"resolved_ip": "",
+	}
+
+	event := NewCustomEventByPingEvent(pingEvent)
+
+	m := event.AsMapStr()
+	assert.Equal(t, common.MapStr{
+		"dataid": int32(100),
+		"data": []map[string]interface{}{
+			{
+				"dimension": map[string]string{
+					"bk_biz_id":   "2",
+					"bk_host_id":  "0",
+					"error_code":  "0",
+					"resolved_ip": "",
+					"target":      "xxx",
+					"target_type": "ip",
+					"task_id":     "1",
+					"xxx":         "1",
+					"bk_agent_id": "",
+					"ip":          "",
+					"bk_cloud_id": "0",
+					"node_id":     "0:",
+				},
+				"metrics": map[string]interface{}{
+					"available":    1,
+					"avg_rtt":      0.75,
+					"loss_percent": 0,
+					"max_rtt":      1,
+					"min_rtt":      0.5,
+				},
+				"target":    "xxx",
+				"timestamp": now.Unix() * 1000,
+			},
+			{
+				"dimension": map[string]string{
+					"bk_biz_id":   "2",
+					"bk_host_id":  "0",
+					"error_code":  "0",
+					"resolved_ip": "",
+					"target":      "xxx",
+					"target_type": "ip",
+					"task_id":     "1",
+					"yyy":         "2",
+					"bk_agent_id": "",
+					"ip":          "",
+					"bk_cloud_id": "0",
+					"node_id":     "0:",
+				},
+				"metrics": map[string]interface{}{
+					"available":    1,
+					"avg_rtt":      0.75,
+					"loss_percent": 0,
+					"max_rtt":      1,
+					"min_rtt":      0.5,
+				},
+				"target":    "xxx",
+				"timestamp": now.Unix() * 1000,
+			},
+		},
+		"time":      now.Unix(),
+		"timestamp": now.Unix(),
+	}, m)
+}

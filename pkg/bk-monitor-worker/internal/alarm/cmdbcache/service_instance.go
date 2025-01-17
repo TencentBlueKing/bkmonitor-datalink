@@ -41,7 +41,7 @@ import (
 
 const (
 	serviceInstanceCacheKey       = "cmdb.service_instance"
-	hostToServiceInstanceCacheKey = "cmdb.host_to_service_instance"
+	hostToServiceInstanceCacheKey = "cmdb.host_to_service_instance_id"
 )
 
 // AlarmServiceInstanceInfo 服务实例信息
@@ -221,6 +221,17 @@ func (m *ServiceInstanceCacheManager) RefreshByBiz(ctx context.Context, bkBizId 
 		logger.Infof("refresh host to service instance cache by biz: %d, host count: %d", bkBizId, len(hostToServiceInstances))
 	}
 
+	return nil
+}
+
+// RefreshGlobal 刷新全局缓存
+func (m *ServiceInstanceCacheManager) RefreshGlobal(ctx context.Context) error {
+	// 刷新缓存过期时间
+	for _, key := range []string{serviceInstanceCacheKey, hostToServiceInstanceCacheKey} {
+		if err := m.RedisClient.Expire(ctx, m.GetCacheKey(key), m.Expire).Err(); err != nil {
+			logger.Error("set cache expire time failed, key: %s, err: %v", key, err)
+		}
+	}
 	return nil
 }
 

@@ -12,24 +12,32 @@ package httpmiddleware
 import (
 	"net/http"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
-	maxRequestBytes = 1024 * 1024 * 200 // 200MB
+	defaultMaxRequestBytes = 1024 * 1024 * 200 // 200MB
+	optMaxRequestBytes     = "maxRequestBytes"
 )
 
 func init() {
 	Register("maxbytes", MaxBytes)
 }
 
-func MaxBytes(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.ContentLength > maxRequestBytes {
-			logger.Errorf("request entity too large, limit is %d, but got %d", maxRequestBytes, r.ContentLength)
-			w.WriteHeader(http.StatusRequestEntityTooLarge)
-		} else {
-			next.ServeHTTP(w, r)
-		}
-	})
+func MaxBytes(opt string) MiddlewareFunc {
+	om := utils.NewOptMap(opt)
+	n := om.GetIntDefault(optMaxRequestBytes, defaultMaxRequestBytes)
+	logger.Infof("maxbytes middleware opts: %s(%d)", optMaxRequestBytes, n)
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.ContentLength > int64(n) {
+				logger.Errorf("request entity too large, limit is %d, but got %d", n, r.ContentLength)
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+			} else {
+				next.ServeHTTP(w, r)
+			}
+		})
+	}
 }

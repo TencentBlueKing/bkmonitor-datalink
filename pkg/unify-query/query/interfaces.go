@@ -18,33 +18,44 @@ import (
 
 type Filter map[string]string
 
+type Record struct {
+	StorageID  string `json:"storage_id,omitempty"`
+	EnableTime int64  `json:"enable_time,omitempty"`
+}
+
+type StorageClusterRecords []Record
+
 // TsDBV2 适配查询语句的结构体，以 TableID + MetricName 为条件，检索出 RT 基本信息和存储信息
 type TsDBV2 struct {
 	TableID         string   `json:"table_id"`
-	Field           []string `json:"field"`
+	Field           []string `json:"field,omitempty"`
 	MeasurementType string   `json:"measurement_type,omitempty"`
-	Filters         []Filter `json:"filters"`
+	Filters         []Filter `json:"filters,omitempty"`
 	SegmentedEnable bool     `json:"segmented_enable,omitempty"`
 	DataLabel       string   `json:"data_label,omitempty"`
 	// 将存储信息合并在 TsDB 中
-	StorageID   string   `json:"storage_id,omitempty"`
-	StorageName string   `json:"storage_name,omitempty"`
-	ClusterName string   `json:"cluster_name"`
-	TagsKey     []string `json:"tags_key"`
-	DB          string   `json:"db"`
-	Measurement string   `json:"measurement"`
+	StorageID   string `json:"storage_id,omitempty"`
+	StorageName string `json:"storage_name,omitempty"`
+
+	// StorageClusterRecords
+	StorageClusterRecords StorageClusterRecords `json:"storage_cluster_records,omitempty"`
+
+	ClusterName string   `json:"cluster_name,omitempty"`
+	TagsKey     []string `json:"tags_key,omitempty"`
+	DB          string   `json:"db,omitempty"`
+	Measurement string   `json:"measurement,omitempty"`
 	VmRt        string   `json:"vm_rt,omitempty"`
 	// 补充检索的元信息
-	MetricName        string   `json:"metric_name"`
-	ExpandMetricNames []string `json:"expand_metric_names"`
+	MetricName        string   `json:"metric_name,omitempty"`
+	ExpandMetricNames []string `json:"expand_metric_names,omitempty"`
 	// timeField
-	TimeField metadata.TimeField `json:"time_field"`
+	TimeField metadata.TimeField `json:"time_field,omitempty"`
 	// NeedAddTime
 	NeedAddTime bool `json:"need_add_time"`
 
 	// SourceType 数据来源
-	SourceType  string `json:"source_type"`
-	StorageType string `json:"storage_type"`
+	SourceType  string `json:"source_type,omitempty"`
+	StorageType string `json:"storage_type,omitempty"`
 }
 
 func (z *TsDBV2) IsSplit() bool {

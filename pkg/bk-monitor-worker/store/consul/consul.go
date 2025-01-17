@@ -81,31 +81,34 @@ func (c *Instance) Open() error {
 }
 
 // Put put a key-val
-func (c *Instance) Put(key, val string, expiration time.Duration) error {
-	kvPair := &api.KVPair{Key: key, Value: store.String2byte(val)}
+func (c *Instance) Put(key, val string, modifyIndex uint64, expiration time.Duration) error {
+	kvPair := &api.KVPair{Key: key, Value: store.String2byte(val), ModifyIndex: modifyIndex}
 	metrics.ConsulPutCount(key)
+	logger.Infof("Put: try to put 2 consul, key: %s, modifyIndex: %d, kvPair: %v", key, modifyIndex, kvPair)
 	_, err := c.APIClient.KV().Put(kvPair, nil)
 	if err != nil {
-		logger.Errorf("put to consul error, %v", err)
+		logger.Errorf("Put: put to consul error, %v", err)
 		return err
 	}
+	logger.Infof("Put: put to consul success, key: %s", key)
 	return nil
 }
 
-// Get get val by key
-func (c *Instance) Get(key string) ([]byte, error) {
+// Get val by key
+func (c *Instance) Get(key string) (uint64, []byte, error) {
 	var err error
 	kvPair, _, err := c.APIClient.KV().Get(key, nil)
 	if err != nil {
-		logger.Errorf("get consul key: %s error, %v", key, err)
-		return nil, err
+		logger.Errorf("Get: get consul key: %s error, %v", key, err)
+		return 0, nil, err
 	}
 	if kvPair == nil {
 		// Key not exist
-		return nil, nil
+		logger.Infof("Get: key: %s not exist from consul", key)
+		return 0, nil, nil
 	}
 
-	return kvPair.Value, nil
+	return kvPair.ModifyIndex, kvPair.Value, nil
 }
 
 // Delete delete a key

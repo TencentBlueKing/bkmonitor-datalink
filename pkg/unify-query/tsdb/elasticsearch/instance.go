@@ -47,7 +47,7 @@ type Instance struct {
 
 	lock sync.Mutex
 
-	connects []Connect
+	connects Connects
 
 	healthCheck bool
 
@@ -57,10 +57,26 @@ type Instance struct {
 	maxSize int
 }
 
+type Connects []Connect
+
+func (cs Connects) String() string {
+	var s strings.Builder
+	for _, c := range cs {
+		s.WriteString(c.String())
+	}
+	return s.String()
+}
+
 type Connect struct {
 	Address  string
 	UserName string
 	Password string
+}
+
+func (c Connect) String() string {
+	var s strings.Builder
+	s.WriteString(c.Address)
+	return s.String()
 }
 
 type InstanceOption struct {
@@ -256,6 +272,10 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		fact.Size(source)
 	}
 
+	if qb.HighLight.Enable {
+		source.Highlight(fact.HighLight(qb.QueryString, qb.HighLight.MaxAnalyzedOffset))
+	}
+
 	if source == nil {
 		return nil, fmt.Errorf("empty es query source")
 	}
@@ -268,7 +288,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	bodyJson, _ := json.Marshal(body)
 	bodyString := string(bodyJson)
 
-	span.Set("query-connect", qo.conn)
+	span.Set("metadata-query", qb)
+	span.Set("query-connect", qo.conn.String())
 	span.Set("query-headers", i.headers)
 
 	span.Set("query-indexes", qo.indexes)
@@ -303,13 +324,17 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 	}
 
+	if res.Error != nil {
+		err = fmt.Errorf("es query %v error: %s", qo.indexes, res.Error.Reason)
+	}
+
 	queryCost := time.Since(startAnalyze)
 	span.Set("query-cost", queryCost.String())
 	metric.TsDBRequestSecond(
 		ctx, queryCost, consul.ElasticsearchStorageType, qo.conn.Address,
 	)
 
-	return res, nil
+	return res, err
 }
 
 func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *FormatFactory, rets chan<- *TimeSeriesResult) {
@@ -508,7 +533,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-raw")
 	defer span.End(&err)
 
-	span.Set("instance-connects", i.connects)
+	span.Set("instance-connects", i.connects.String())
 
 	if query.DB == "" {
 		err = fmt.Errorf("%s 查询别名为空", query.TableID)
@@ -525,8 +550,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		conn := conn
 		go func() {
 			defer wg.Done()
-			mappings, err := i.getMappings(ctx, conn, aliases)
-			if err != nil {
+			mappings, mappingErr := i.getMappings(ctx, conn, aliases)
+			if mappingErr != nil {
+				err = mappingErr
 				return
 			}
 			if len(mappings) == 0 {
@@ -552,7 +578,11 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				WithMappings(mappings...).
 				WithOrders(query.Orders)
 
-			sr, err := i.esQuery(ctx, qo, fact)
+			sr, queryErr := i.esQuery(ctx, qo, fact)
+			if queryErr != nil {
+				err = queryErr
+				return
+			}
 			for _, d := range sr.Hits.Hits {
 				data := make(map[string]any)
 				if err = json.Unmarshal(d.Source, &data); err != nil {
@@ -561,6 +591,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 				fact.SetData(data)
 				fact.data[KeyDocID] = d.Id
+				fact.data[KeyIndex] = d.Index
+				fact.data[KeyTableID] = query.TableID
+				fact.data[KeyDataLabel] = query.DataLabel
 
 				if timeValue, ok := data[fact.GetTimeField().Name]; ok {
 					fact.data[FieldTime] = timeValue
@@ -579,7 +612,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 	wg.Wait()
 
-	return total, nil
+	return total, err
 }
 
 // QuerySeriesSet 给 PromEngine 提供查询接口
@@ -606,11 +639,14 @@ func (i *Instance) QuerySeriesSet(
 		return storage.ErrSeriesSet(err)
 	}
 
+	rangeLeftTime := end.Sub(start)
+	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
+
 	user := metadata.GetUser(ctx)
 	span.Set("query-space-uid", user.SpaceUid)
 	span.Set("query-source", user.Source)
 	span.Set("query-username", user.Name)
-	span.Set("query-connects", i.connects)
+	span.Set("query-connects", i.connects.String())
 
 	span.Set("query-storage-id", query.StorageID)
 	span.Set("query-storage-ids", query.StorageIDs)

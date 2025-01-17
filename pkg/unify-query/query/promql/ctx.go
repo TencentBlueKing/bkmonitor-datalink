@@ -173,6 +173,7 @@ func tsDBToMetadataQuery(ctx context.Context, metricName string, queryInfo *Quer
 		}
 
 		query.TableID = tsDB.TableID
+		query.DataLabel = tsDB.DataLabel
 		query.DB = db
 		query.Measurement = measurement
 		query.Field = field

@@ -58,6 +58,10 @@ const (
 const (
 	KeyDocID     = "__doc_id"
 	KeyHighLight = "__highlight"
+
+	KeyIndex     = "__index"
+	KeyTableID   = "__result_table"
+	KeyDataLabel = "__data_label"
 )
 
 const (
@@ -573,6 +577,23 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 	}
 
 	return
+}
+
+func (f *FormatFactory) HighLight(queryString string, maxAnalyzedOffset int) *elastic.Highlight {
+	requireFieldMatch := false
+	if strings.Contains(queryString, ":") {
+		requireFieldMatch = true
+	}
+	hl := elastic.NewHighlight().
+		Field("*").NumOfFragments(0).
+		RequireFieldMatch(requireFieldMatch).
+		PreTags("<mark>").PostTags("</mark>")
+
+	if maxAnalyzedOffset > 0 {
+		hl = hl.MaxAnalyzedOffset(maxAnalyzedOffset)
+	}
+
+	return hl
 }
 
 func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {

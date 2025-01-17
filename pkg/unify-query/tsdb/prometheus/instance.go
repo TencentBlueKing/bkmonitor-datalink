@@ -104,12 +104,6 @@ func (i *Instance) DirectQueryRange(
 		LookbackDelta: i.lookBackDelta,
 	}
 
-	log.Infof(ctx, "prometheus-query-range")
-	log.Infof(ctx, "promql: %s", stmt)
-	log.Infof(ctx, "start: %s", start.String())
-	log.Infof(ctx, "end: %s", end.String())
-	log.Infof(ctx, "step: %s", step.String())
-
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
@@ -153,10 +147,6 @@ func (i *Instance) DirectQuery(
 		LookbackDelta: i.lookBackDelta,
 	}
 	span.Set("query-opts-look-back-delta", i.lookBackDelta.String())
-
-	log.Infof(ctx, "prometheus-query")
-	log.Infof(ctx, "promql: %s", qs)
-	log.Infof(ctx, "end: %s", end.String())
 
 	query, err := i.engine.NewInstantQuery(i.queryStorage, opt, qs, end)
 	if err != nil {

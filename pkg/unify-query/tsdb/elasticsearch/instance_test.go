@@ -51,8 +51,8 @@ func TestInstance_queryReference(t *testing.T) {
 
 	mock.Es.Set(map[string]any{
 
-		// nested query + query string 测试
-		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"query_string":{"analyze_wildcard":true,"query":"group: fans"}}]}},"size":5}`: `{"took":1,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"user":[{"last":"Smith","first":"John"},{"last":"White","first":"Alice"}],"group":"fans"}}]}}`,
+		// nested query + query string 测试 + highlight
+		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"highlight":{"fields":{"*":{}},"number_of_fragments":0,"post_tags":["\u003c/mark\u003e"],"pre_tags":["\u003cmark\u003e"],"require_field_match":true},"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"query_string":{"analyze_wildcard":true,"query":"group: fans"}}]}},"size":5}`: `{"took":4,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"user":[{"last":"Smith","first":"John"},{"last":"White","first":"Alice"}],"group":"fans"},"highlight":{"user.new_group_user_first":["<mark>John</mark>"],"user.first":["<mark>John</mark>"],"user.new_first":["<mark>John</mark>"],"group":["<mark>fans</mark>"]}}]}}`,
 
 		// "nested aggregate + query 测试
 		`{"_source":{"includes":["group","user.first","user.last"]},"aggregations":{"user":{"aggregations":{"_value":{"value_count":{"field":"user.first"}}},"nested":{"path":"user"}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":17,"relation":"eq"},"max_score":null,"hits":[]},"aggregations":{"user":{"doc_count":18,"_value":{"value":18}}}}`,
@@ -86,6 +86,8 @@ func TestInstance_queryReference(t *testing.T) {
 
 		// 根据 field 字段聚合 min，同时根据值排序
 		`{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"min":{"field":"dtEventTimeStamp"}}},"terms":{"field":"dtEventTimeStamp","order":[{"_value":"asc"}]}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":198,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"dtEventTimeStamp":{"doc_count_error_upper_bound":-1,"sum_other_doc_count":1523292,"buckets":[{"key":1723593878000,"key_as_string":"1723593878000","doc_count":1,"_value":{"value":1}},{"key":1723593947000,"key_as_string":"1723593947000","doc_count":1,"_value":{"value":1}},{"key":1723594186000,"key_as_string":"1723594186000","doc_count":1,"_value":{"value":1}},{"key":1723595733000,"key_as_string":"1723595733000","doc_count":1,"_value":{"value":1}},{"key":1723596287000,"key_as_string":"1723596287000","doc_count":1,"_value":{"value":1}},{"key":1723596309000,"key_as_string":"1723596309000","doc_count":1,"_value":{"value":1}},{"key":1723596597000,"key_as_string":"1723596597000","doc_count":1,"_value":{"value":1}},{"key":1723596677000,"key_as_string":"1723596677000","doc_count":1,"_value":{"value":1}},{"key":1723596938000,"key_as_string":"1723596938000","doc_count":1,"_value":{"value":1}},{"key":1723597150000,"key_as_string":"1723597150000","doc_count":1,"_value":{"value":1}}]}}}`,
+
+		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"error":{"root_cause":[{"type":"x_content_parse_exception","reason":"[1:138] [highlight] unknown field [max_analyzed_offset]"}],"type":"x_content_parse_exception","reason":"[1:138] [highlight] unknown field [max_analyzed_offset]"},"status":400}`,
 	})
 
 	for idx, c := range map[string]struct {
@@ -96,8 +98,9 @@ func TestInstance_queryReference(t *testing.T) {
 		isReference bool
 
 		expected string
+		err      error
 	}{
-		"nested query + query string 测试": {
+		"nested query + query string 测试 + highlight": {
 			query: &metadata.Query{
 				DB:    db,
 				Field: "group",
@@ -121,10 +124,13 @@ func TestInstance_queryReference(t *testing.T) {
 					},
 				},
 				QueryString: "group: fans",
+				HighLight: metadata.HighLight{
+					Enable: true,
+				},
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"__doc_id":"aS3KjpEBbwEm76LbcH1G","group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]}]`,
+			expected: `[{"__doc_id":"aS3KjpEBbwEm76LbcH1G","__highlight":{"group":["\u003cmark\u003efans\u003c/mark\u003e"],"user.first":["\u003cmark\u003eJohn\u003c/mark\u003e"],"user.new_first":["\u003cmark\u003eJohn\u003c/mark\u003e"],"user.new_group_user_first":["\u003cmark\u003eJohn\u003c/mark\u003e"]},"group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]}]`,
 		},
 		"nested aggregate + query 测试": {
 			query: &metadata.Query{
@@ -412,6 +418,18 @@ func TestInstance_queryReference(t *testing.T) {
 			end:      defaultEnd,
 			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723593878000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723593947000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723594186000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723595733000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596287000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596309000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596597000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596677000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596938000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723597150000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
 		},
+		"query error with highlight max_analyzed_offset": {
+			query: &metadata.Query{
+				DB:          db,
+				Field:       "error",
+				DataSource:  structured.BkLog,
+				TableID:     "check_error",
+				StorageType: consul.ElasticsearchStorageType,
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+			err:   fmt.Errorf("es query [es_index] error: [1:138] [highlight] unknown field [max_analyzed_offset]"),
+		},
 	} {
 		t.Run(fmt.Sprintf("testing run: %s", idx), func(t *testing.T) {
 			if len(c.query.Aggregates) > 0 {
@@ -445,12 +463,14 @@ func TestInstance_queryReference(t *testing.T) {
 				close(dataCh)
 
 				wg.Wait()
-				if err != nil {
-					panic(err)
+
+				if c.err != nil {
+					assert.Equal(t, c.err, err)
+				} else {
+					res, _ := json.Marshal(list)
+					assert.Equal(t, c.expected, string(res))
 				}
 
-				res, _ := json.Marshal(list)
-				assert.Equal(t, c.expected, string(res))
 			}
 
 		})

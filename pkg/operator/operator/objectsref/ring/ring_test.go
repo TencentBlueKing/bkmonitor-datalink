@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package podqueue
+package ring
 
 import (
 	"strconv"
@@ -16,58 +16,51 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPopQueue(t *testing.T) {
-	t.Run("ring", func(t *testing.T) {
+func TestRing(t *testing.T) {
+	t.Run("ring 1", func(t *testing.T) {
 		q := New(5)
+		rv := q.Put(strconv.Itoa(0))
+		assert.Equal(t, ResourceVersion(1), rv)
+
+		objs := []interface{}{"0"}
+		assert.Equal(t, objs, q.Read(0))
+	})
+
+	t.Run("ring 2", func(t *testing.T) {
+		q := New(5)
+		var rv ResourceVersion
 		for i := 0; i < 5; i++ {
-			q.Put(Pod{IP: strconv.Itoa(i)})
+			rv = q.Put(strconv.Itoa(i))
 		}
-		pods := []Pod{
-			{IP: "0"},
-			{IP: "1"},
-			{IP: "2"},
-			{IP: "3"},
-			{IP: "4"},
-		}
-		assert.Equal(t, pods, q.Pop(0))
+		assert.Equal(t, ResourceVersion(5), rv)
+		objs := []interface{}{"0", "1", "2", "3", "4"}
+		assert.Equal(t, objs, q.Read(0))
 	})
 
 	t.Run("ring with start index", func(t *testing.T) {
 		q := New(5)
 		for i := 0; i < 5; i++ {
-			q.Put(Pod{IP: strconv.Itoa(i)})
+			q.Put(strconv.Itoa(i))
 		}
-		pods := []Pod{
-			{IP: "3"},
-			{IP: "4"},
-		}
-		assert.Equal(t, pods, q.Pop(3))
+		objs := []interface{}{"3", "4"}
+		assert.Equal(t, objs, q.Read(3))
 	})
 
-	t.Run("overring", func(t *testing.T) {
+	t.Run("ring oversize", func(t *testing.T) {
 		q := New(5)
 		for i := 0; i < 7; i++ {
-			q.Put(Pod{IP: strconv.Itoa(i)})
+			q.Put(strconv.Itoa(i))
 		}
-		pods := []Pod{
-			{IP: "2"},
-			{IP: "3"},
-			{IP: "4"},
-			{IP: "5"},
-			{IP: "6"},
-		}
-		assert.Equal(t, pods, q.Pop(0))
+		objs := []interface{}{"2", "3", "4", "5", "6"}
+		assert.Equal(t, objs, q.Read(0))
 	})
 
-	t.Run("overring with start index", func(t *testing.T) {
+	t.Run("ring oversize with start index", func(t *testing.T) {
 		q := New(5)
 		for i := 0; i < 7; i++ {
-			q.Put(Pod{IP: strconv.Itoa(i)})
+			q.Put(strconv.Itoa(i))
 		}
-		pods := []Pod{
-			{IP: "5"},
-			{IP: "6"},
-		}
-		assert.Equal(t, pods, q.Pop(5))
+		objs := []interface{}{"5", "6"}
+		assert.Equal(t, objs, q.Read(5))
 	})
 }

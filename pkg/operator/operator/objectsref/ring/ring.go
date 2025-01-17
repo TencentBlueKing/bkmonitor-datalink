@@ -7,44 +7,33 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package podqueue
+package ring
 
 import (
 	"sync"
 )
 
-type Action uint8
+// ResourceVersion 事件版次号 全局自增
+type ResourceVersion int
 
-const (
-	ActionAdd Action = iota
-	ActionUpdate
-	ActionDelete
-)
-
-type Queue struct {
+type Ring struct {
 	ring *ring
 }
 
-func New(size int) *Queue {
-	return &Queue{ring: newRing(size)}
-}
-
-type Pod struct {
-	Action    Action
-	IP        string
-	Name      string
-	Namespace string
+func New(size int) *Ring {
+	return &Ring{ring: newRing(size)}
 }
 
 type event struct {
-	id  int
-	pod Pod
+	resourceVersion int
+	obj             interface{}
 }
 
 type ring struct {
 	mut     sync.RWMutex
 	size    int
-	counter int
+	maxRv   int
+	minRv   int
 	headIdx int
 	tailIdx int
 	events  []event
@@ -62,29 +51,30 @@ func (r *ring) put(evt event) int {
 	r.mut.Lock()
 	defer r.mut.Unlock()
 
-	tailIdx := r.counter % r.size
+	tailIdx := r.maxRv % r.size
 	var headIdx int
-	if r.counter >= r.size {
+	if r.maxRv >= r.size {
 		headIdx = (tailIdx + 1) % r.size
 	}
 
-	r.counter++
+	r.maxRv++
 	r.tailIdx = tailIdx
 	r.headIdx = headIdx
 
-	evt.id = r.counter
+	evt.resourceVersion = r.maxRv
 	r.events[r.tailIdx] = evt
-	return r.counter
+	r.minRv = r.events[r.headIdx].resourceVersion
+	return r.maxRv
 }
 
-func (r *ring) pop(n int) []event {
+func (r *ring) readGt(n int) []event {
 	r.mut.RLock()
 	defer r.mut.RUnlock()
 
 	var events []event
 	for i := r.headIdx; i < r.size; i++ {
 		evt := r.events[i]
-		if evt.id > n {
+		if evt.resourceVersion > int(n) {
 			events = append(events, evt)
 		}
 	}
@@ -92,7 +82,7 @@ func (r *ring) pop(n int) []event {
 	if r.headIdx != 0 {
 		for i := 0; i <= r.tailIdx; i++ {
 			evt := r.events[i]
-			if evt.id > n {
+			if evt.resourceVersion > int(n) {
 				events = append(events, evt)
 			}
 		}
@@ -100,17 +90,41 @@ func (r *ring) pop(n int) []event {
 	return events
 }
 
-func (pq *Queue) Put(pod Pod) int {
-	return pq.ring.put(event{
-		pod: pod,
-	})
+func (r *ring) minResourceVersion() int {
+	r.mut.RLock()
+	defer r.mut.RUnlock()
+
+	return r.minRv
 }
 
-func (pq *Queue) Pop(id int) []Pod {
-	events := pq.ring.pop(id)
-	pods := make([]Pod, 0, len(events))
+func (r *ring) maxResourceVersion() int {
+	r.mut.RLock()
+	defer r.mut.RUnlock()
+
+	return r.maxRv
+}
+
+// Put 将 obj 存放至环内 同时返回当前最新版次号
+func (q *Ring) Put(obj interface{}) ResourceVersion {
+	return ResourceVersion(q.ring.put(event{
+		obj: obj,
+	}))
+}
+
+// ReadGt 读取 > rv 的所有资源对象
+func (q *Ring) ReadGt(rv ResourceVersion) []interface{} {
+	events := q.ring.readGt(int(rv))
+	objs := make([]interface{}, 0, len(events))
 	for _, evt := range events {
-		pods = append(pods, evt.pod)
+		objs = append(objs, evt.obj)
 	}
-	return pods
+	return objs
+}
+
+func (q *Ring) MinResourceVersion() ResourceVersion {
+	return ResourceVersion(q.ring.minResourceVersion())
+}
+
+func (q *Ring) MaxResourceVersion() ResourceVersion {
+	return ResourceVersion(q.ring.maxResourceVersion())
 }

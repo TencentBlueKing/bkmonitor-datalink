@@ -481,7 +481,6 @@ func (c *Operator) WorkloadRoute(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (c *Operator) PodsRoute(w http.ResponseWriter, r *http.Request) {
-	pods := c.objectsController.AllPods()
 	info, err := c.dw.GetClusterInfo()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -489,20 +488,22 @@ func (c *Operator) PodsRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 无此参数默认按 0 处理
+	rv, _ := strconv.Atoi(r.URL.Query().Get("resourceVersion"))
 	type podsResponse struct {
-		ClusterID string `json:"k8s.bcs.cluster.id"`
-		Name      string `json:"k8s.pod.name"`
-		Namespace string `json:"k8s.namespace.name"`
-		IP        string `json:"k8s.pod.ip"`
+		Action    string `json:"action"`
+		ClusterID string `json:"cluster"`
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+		IP        string `json:"ip"`
 	}
 
+	podEvents, lastRv := c.objectsController.FetchPodEvents(rv)
 	nodes := c.objectsController.NodeIPs()
-	all := r.URL.Query().Get("all")
-
 	var ret []podsResponse
-	for _, pod := range pods {
+	for _, pod := range podEvents {
 		_, ok := nodes[pod.IP]
-		if !ok || all == "true" {
+		if !ok {
 			ret = append(ret, podsResponse{
 				ClusterID: info.BcsClusterID,
 				Name:      pod.Name,
@@ -511,7 +512,12 @@ func (c *Operator) PodsRoute(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	writeResponse(w, ret)
+
+	type R struct {
+		Pods            []podsResponse `json:"pods"`
+		ResourceVersion int            `json:"resourceVersion"`
+	}
+	writeResponse(w, R{Pods: ret, ResourceVersion: lastRv})
 }
 
 func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {

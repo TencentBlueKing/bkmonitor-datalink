@@ -11,7 +11,24 @@ package objectsref
 
 import (
 	"sync"
+
+	corev1 "k8s.io/api/core/v1"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref/ring"
 )
+
+type PodEvent struct {
+	Action    Action
+	IP        string
+	Name      string
+	Namespace string
+}
+
+type ContainerKey struct {
+	Name  string
+	ID    string
+	Image string
+}
 
 type PodObject struct {
 	ID          ObjectID
@@ -24,13 +41,16 @@ type PodObject struct {
 }
 
 type PodMap struct {
-	mut  sync.Mutex
-	objs map[string]PodObject
+	mut    sync.RWMutex
+	objs   map[string]PodObject
+	ring   *ring.Ring
+	lastRv ring.ResourceVersion
 }
 
 func NewPodMap() *PodMap {
 	return &PodMap{
 		objs: make(map[string]PodObject),
+		ring: ring.New(10240),
 	}
 }
 
@@ -39,18 +59,65 @@ func (m *PodMap) Set(obj PodObject) {
 	defer m.mut.Unlock()
 
 	m.objs[obj.ID.String()] = obj
+	m.lastRv = m.ring.Put(PodEvent{
+		Action:    ActionCreateOrUpdate,
+		IP:        obj.PodIP,
+		Name:      obj.ID.Name,
+		Namespace: obj.ID.Namespace,
+	})
 }
 
 func (m *PodMap) Del(oid ObjectID) {
 	m.mut.Lock()
 	defer m.mut.Unlock()
 
+	var podIP string
+	if v, ok := m.objs[oid.String()]; ok {
+		podIP = v.PodIP
+	}
+
 	delete(m.objs, oid.String())
+	m.lastRv = m.ring.Put(PodEvent{
+		Action:    ActionDelete,
+		IP:        podIP,
+		Name:      oid.Name,
+		Namespace: oid.Namespace,
+	})
+}
+
+func (m *PodMap) FetchEvents(rv int) ([]PodEvent, int) {
+	m.mut.RLock()
+	defer m.mut.RUnlock()
+
+	// fetch 所有的 pods 以事件的形式
+	if rv <= 0 || rv < int(m.ring.MinResourceVersion()) {
+		return m.fetchAllEventsLocked()
+	}
+
+	var events []PodEvent
+	objs := m.ring.ReadGt(ring.ResourceVersion(rv))
+	for _, obj := range objs {
+		events = append(events, obj.(PodEvent))
+	}
+	return events, int(m.lastRv)
+}
+
+func (m *PodMap) fetchAllEventsLocked() ([]PodEvent, int) {
+	var events []PodEvent
+	for _, obj := range m.objs {
+		events = append(events, PodEvent{
+			Action:    ActionCreateOrUpdate,
+			IP:        obj.PodIP,
+			Name:      obj.ID.Name,
+			Namespace: obj.NodeName,
+		})
+	}
+	return events, int(m.lastRv)
 }
 
 func (m *PodMap) Counter() map[string]int {
-	m.mut.Lock()
-	defer m.mut.Unlock()
+	m.mut.RLock()
+	defer m.mut.RUnlock()
 
 	ret := make(map[string]int)
 	for _, obj := range m.objs {
@@ -60,8 +127,8 @@ func (m *PodMap) Counter() map[string]int {
 }
 
 func (m *PodMap) GetByNodeName(nodeName string) []PodObject {
-	m.mut.Lock()
-	defer m.mut.Unlock()
+	m.mut.RLock()
+	defer m.mut.RUnlock()
 
 	var ret []PodObject
 	for _, obj := range m.objs {
@@ -73,8 +140,8 @@ func (m *PodMap) GetByNodeName(nodeName string) []PodObject {
 }
 
 func (m *PodMap) GetByNamespace(namespace string) []PodObject {
-	m.mut.Lock()
-	defer m.mut.Unlock()
+	m.mut.RLock()
+	defer m.mut.RUnlock()
 
 	var ret []PodObject
 	for _, obj := range m.objs {
@@ -86,8 +153,8 @@ func (m *PodMap) GetByNamespace(namespace string) []PodObject {
 }
 
 func (m *PodMap) GetAll() []PodObject {
-	m.mut.Lock()
-	defer m.mut.Unlock()
+	m.mut.RLock()
+	defer m.mut.RUnlock()
 
 	ret := make([]PodObject, 0, len(m.objs))
 	for _, obj := range m.objs {
@@ -97,9 +164,21 @@ func (m *PodMap) GetAll() []PodObject {
 }
 
 func (m *PodMap) GetRefs(oid ObjectID) ([]OwnerRef, bool) {
-	m.mut.Lock()
-	defer m.mut.Unlock()
+	m.mut.RLock()
+	defer m.mut.RUnlock()
 
 	obj, ok := m.objs[oid.String()]
 	return obj.OwnerRefs, ok
+}
+
+func toContainerKey(pod *corev1.Pod) []ContainerKey {
+	var containers []ContainerKey
+	for _, sc := range pod.Status.ContainerStatuses {
+		containers = append(containers, ContainerKey{
+			Name:  sc.Name,
+			ID:    sc.ContainerID,
+			Image: sc.ImageID,
+		})
+	}
+	return containers
 }

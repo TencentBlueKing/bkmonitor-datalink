@@ -34,16 +34,17 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+type Action string
+
+const (
+	ActionCreateOrUpdate Action = "CreateOrUpdate"
+	ActionDelete         Action = "Delete"
+)
+
 // OwnerRef 代表 Owner 对象引用信息
 type OwnerRef struct {
 	Kind string `json:"kind"`
 	Name string `json:"name"`
-}
-
-type ContainerKey struct {
-	Name  string
-	ID    string
-	Image string
 }
 
 // Object 代表 workload 对象
@@ -51,15 +52,9 @@ type Object struct {
 	ID        ObjectID
 	OwnerRefs []OwnerRef
 
-	// Pod 属性
-	NodeName string
-	PodIP    string
 	// Metadata 属性
 	Labels      map[string]string
 	Annotations map[string]string
-
-	// Containers
-	Containers []ContainerKey
 }
 
 // ObjectID 代表 workload 对象标识
@@ -998,16 +993,4 @@ func toRefs(refs []metav1.OwnerReference) []OwnerRef {
 		})
 	}
 	return ret
-}
-
-func toContainerKey(pod *corev1.Pod) []ContainerKey {
-	var containers []ContainerKey
-	for _, sc := range pod.Status.ContainerStatuses {
-		containers = append(containers, ContainerKey{
-			Name:  sc.Name,
-			ID:    sc.ContainerID,
-			Image: sc.ImageID,
-		})
-	}
-	return containers
 }

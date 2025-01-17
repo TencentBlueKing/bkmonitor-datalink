@@ -555,10 +555,17 @@ func (s *SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool, us
 func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) error {
 	logger.Infof("PushEsTableIdDetail:start to compose es table id detail data, table_id_list [%v]", tableIdList)
 	db := mysql.GetDBSession().DB
+
 	// 获取数据
 	var esStorageList []storage.ESStorage
-	esQuerySet := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID, storage.ESStorageDBSchema.StorageClusterID, storage.ESStorageDBSchema.SourceType, storage.ESStorageDBSchema.IndexSet)
-	// 如果过滤结果表存在，则添加过来条件
+	esQuerySet := storage.NewESStorageQuerySet(db).Select(
+		storage.ESStorageDBSchema.TableID,
+		storage.ESStorageDBSchema.StorageClusterID,
+		storage.ESStorageDBSchema.SourceType,
+		storage.ESStorageDBSchema.IndexSet,
+	)
+
+	// 如果过滤结果表存在，则添加过滤条件
 	if len(tableIdList) != 0 {
 		if err := esQuerySet.TableIDIn(tableIdList...).All(&esStorageList); err != nil {
 			logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %v, error: %s", tableIdList, err)
@@ -570,6 +577,7 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 			return err
 		}
 	}
+
 	// 查询es结果表的 option
 	var tidList []string
 	for _, es := range esStorageList {
@@ -581,7 +589,7 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 	// 组装数据
 	client := redis.GetStorageRedisInstance()
 	wg := &sync.WaitGroup{}
-	// 因为每个完全独立，可以并发执行
+	// 因为每个处理任务完全独立，可以并发执行
 	ch := make(chan struct{}, 50)
 	wg.Add(len(esStorageList))
 	for _, es := range esStorageList {
@@ -596,7 +604,22 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 				<-ch
 				wg.Done()
 			}()
+
+			// 检查并补充 `.__default__` 后缀或记录日志
 			tableId := es.TableID
+			parts := strings.Split(tableId, ".")
+
+			if len(parts) == 1 {
+				// 如果长度为 1，补充 `.__default__`
+				logger.Infof("PushEsTableIdDetail: table_id [%s] is missing '.', adding '.__default__'", tableId)
+				tableId = fmt.Sprintf("%s.__default__", tableId)
+			} else if len(parts) != 2 {
+				// 如果长度不是 2，记录错误日志并返回
+				logger.Errorf("PushEsTableIdDetail: table_id [%s] is invalid, contains too many dots", tableId)
+				return
+			}
+			// 大部份情况下,len(parts)=2，保持原样，无需显式处理
+
 			sourceType := es.SourceType
 			indexSet := es.IndexSet
 			logger.Infof("PushEsTableIdDetail:start to compose es table id detail, table_id->[%s],source_type->[%s],index_set->[%s]", tableId, sourceType, indexSet)
@@ -606,7 +629,7 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 				return
 			}
 			// 推送数据
-			// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Publish操作
+			// NOTE: HSetWithCompareAndPublish 判定新老值是否存在差异，若存在差异，则进行 Publish 操作
 			logger.Infof("PushEsTableIdDetail:start push and publish es table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", _tableId, cfg.ResultTableDetailChannel, _tableId, detailStr)
 			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, _tableId, detailStr, cfg.ResultTableDetailChannel, _tableId)
 			if err != nil {

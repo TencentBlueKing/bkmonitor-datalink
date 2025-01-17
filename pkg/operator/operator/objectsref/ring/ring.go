@@ -13,13 +13,16 @@ import (
 	"sync"
 )
 
-// ResourceVersion 事件版次号 全局自增
+// ResourceVersion 事件版次号 ring 实例内自增如果有变更操作
 type ResourceVersion int
 
 type Ring struct {
 	ring *ring
 }
 
+// New 构建 *Ring 实例
+// size 为 ring 容量 写操作为环形覆写 同时每次都会记录 head/tail 所在 index
+// 操作为线程安全
 func New(size int) *Ring {
 	return &Ring{ring: newRing(size)}
 }

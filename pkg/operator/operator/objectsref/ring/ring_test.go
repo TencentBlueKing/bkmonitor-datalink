@@ -20,10 +20,13 @@ func TestRing(t *testing.T) {
 	t.Run("ring 1", func(t *testing.T) {
 		q := New(5)
 		rv := q.Put(strconv.Itoa(0))
+
 		assert.Equal(t, ResourceVersion(1), rv)
+		assert.Equal(t, ResourceVersion(1), q.MinResourceVersion())
+		assert.Equal(t, ResourceVersion(1), q.MaxResourceVersion())
 
 		objs := []interface{}{"0"}
-		assert.Equal(t, objs, q.Read(0))
+		assert.Equal(t, objs, q.ReadGt(0))
 	})
 
 	t.Run("ring 2", func(t *testing.T) {
@@ -32,9 +35,13 @@ func TestRing(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			rv = q.Put(strconv.Itoa(i))
 		}
+
 		assert.Equal(t, ResourceVersion(5), rv)
+		assert.Equal(t, ResourceVersion(1), q.MinResourceVersion())
+		assert.Equal(t, ResourceVersion(5), q.MaxResourceVersion())
+
 		objs := []interface{}{"0", "1", "2", "3", "4"}
-		assert.Equal(t, objs, q.Read(0))
+		assert.Equal(t, objs, q.ReadGt(0))
 	})
 
 	t.Run("ring with start index", func(t *testing.T) {
@@ -43,7 +50,7 @@ func TestRing(t *testing.T) {
 			q.Put(strconv.Itoa(i))
 		}
 		objs := []interface{}{"3", "4"}
-		assert.Equal(t, objs, q.Read(3))
+		assert.Equal(t, objs, q.ReadGt(3))
 	})
 
 	t.Run("ring oversize", func(t *testing.T) {
@@ -51,8 +58,12 @@ func TestRing(t *testing.T) {
 		for i := 0; i < 7; i++ {
 			q.Put(strconv.Itoa(i))
 		}
+
+		assert.Equal(t, ResourceVersion(3), q.MinResourceVersion())
+		assert.Equal(t, ResourceVersion(7), q.MaxResourceVersion())
+
 		objs := []interface{}{"2", "3", "4", "5", "6"}
-		assert.Equal(t, objs, q.Read(0))
+		assert.Equal(t, objs, q.ReadGt(0))
 	})
 
 	t.Run("ring oversize with start index", func(t *testing.T) {
@@ -61,6 +72,6 @@ func TestRing(t *testing.T) {
 			q.Put(strconv.Itoa(i))
 		}
 		objs := []interface{}{"5", "6"}
-		assert.Equal(t, objs, q.Read(5))
+		assert.Equal(t, objs, q.ReadGt(5))
 	})
 }

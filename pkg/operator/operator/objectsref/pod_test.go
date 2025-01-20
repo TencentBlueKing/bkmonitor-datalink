@@ -15,16 +15,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestObjects(t *testing.T) {
-	objs := NewObjects("")
-	objs.Set(Object{
+func TestPodMap(t *testing.T) {
+	objs := NewPodMap()
+	objs.Set(PodObject{
 		ID: ObjectID{
 			Name:      "obj1",
 			Namespace: "ns1",
 		},
 		NodeName: "node1",
 	})
-	objs.Set(Object{
+	objs.Set(PodObject{
 		ID: ObjectID{
 			Name:      "obj2",
 			Namespace: "ns1",

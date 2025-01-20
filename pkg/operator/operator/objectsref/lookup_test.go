@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	podObjs1        = NewObjects(kindPod)
+	podObjs1        = NewPodMap()
 	replicaSetObjs1 = NewObjects(kindReplicaSet)
 	replicaSetObjs2 = NewObjects(kindReplicaSet)
 	deploymentObjs1 = NewObjects(kindDeployment)
@@ -39,7 +39,7 @@ const (
 )
 
 func init() {
-	podObjs1.Set(Object{
+	podObjs1.Set(PodObject{
 		ID: ObjectID{
 			Name:      podName1,
 			Namespace: namespaceDefault,
@@ -53,7 +53,7 @@ func init() {
 		NodeName: nodeName1,
 	})
 
-	podObjs1.Set(Object{
+	podObjs1.Set(PodObject{
 		ID: ObjectID{
 			Name:      podName1,
 			Namespace: namespaceOther,
@@ -67,7 +67,7 @@ func init() {
 		NodeName: nodeName1,
 	})
 
-	podObjs1.Set(Object{
+	podObjs1.Set(PodObject{
 		ID: ObjectID{
 			Name:      podName2,
 			Namespace: namespaceDefault,
@@ -132,7 +132,7 @@ func init() {
 func TestLookup(t *testing.T) {
 	cases := []struct {
 		PodName   string
-		PodObj    *Objects
+		PodObj    *PodMap
 		Namespace string
 		Refs      map[string]*Objects
 		Excepted  *OwnerRef
@@ -230,7 +230,7 @@ func TestLookup(t *testing.T) {
 func TestLookupOnce(t *testing.T) {
 	cases := []struct {
 		PodName   string
-		PodObj    *Objects
+		PodObj    *PodMap
 		Namespace string
 		Refs      map[string]*Objects
 		Excepted  *OwnerRef

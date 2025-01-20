@@ -7,10 +7,11 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package dimscache
+package k8scache
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -25,11 +26,10 @@ type Config struct {
 	URL      string        `config:"url" mapstructure:"url"`
 	Timeout  time.Duration `config:"timeout" mapstructure:"timeout"`
 	Interval time.Duration `config:"interval" mapstructure:"interval"`
-	Key      string        `config:"key" mapstructure:"key"`
 }
 
 func (c *Config) Validate() bool {
-	if c.URL == "" || c.Key == "" {
+	if c.URL == "" {
 		return false
 	}
 
@@ -50,8 +50,10 @@ type Cache interface {
 
 type noneCache struct{}
 
-func (noneCache) Sync()  {}
+func (noneCache) Sync() {}
+
 func (noneCache) Clean() {}
+
 func (noneCache) Get(_ string) (map[string]string, bool) {
 	return nil, false
 }
@@ -62,6 +64,7 @@ type innerCache struct {
 	conf   *Config
 	client *http.Client
 	done   chan struct{}
+	lastRv int
 	synced atomic.Bool
 }
 
@@ -130,8 +133,24 @@ func (c *innerCache) Get(k string) (map[string]string, bool) {
 	return v, ok
 }
 
+type podObject struct {
+	Action    string `json:"action"`
+	ClusterID string `json:"cluster"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	IP        string `json:"ip"`
+}
+
+type response struct {
+	ResourceVersion int         `json:"resourceVersion"`
+	Pods            []podObject `json:"pods"`
+}
+
 func (c *innerCache) sync() error {
-	req, err := http.NewRequest(http.MethodGet, c.conf.URL, &bytes.Buffer{})
+	url := c.conf.URL + fmt.Sprintf("?resourceVersion=%d", c.lastRv)
+	logger.Debugf("innercache request url: %s", url)
+
+	req, err := http.NewRequest(http.MethodGet, url, &bytes.Buffer{})
 	if err != nil {
 		return err
 	}
@@ -148,21 +167,28 @@ func (c *innerCache) sync() error {
 		return err
 	}
 
-	var dims []map[string]string
-	if err := json.Unmarshal(buf.Bytes(), &dims); err != nil {
+	var ret response
+	if err := json.Unmarshal(buf.Bytes(), &ret); err != nil {
 		return err
 	}
-	logger.Debugf("innerCache (%s) load %d items", c.conf.URL, len(dims))
-
-	newCache := make(map[string]map[string]string)
-	for i := 0; i < len(dims); i++ {
-		dim := dims[i]
-		newCache[dim[c.conf.Key]] = dim
-	}
+	c.lastRv = ret.ResourceVersion
 
 	c.mut.Lock()
-	c.cache = newCache
-	c.mut.Unlock()
+	defer c.mut.Unlock()
 
+	for _, pod := range ret.Pods {
+		switch pod.Action {
+		case "Delete":
+			delete(c.cache, pod.IP)
+
+		case "CreateOrUpdate":
+			c.cache[pod.IP] = map[string]string{
+				"k8s.bcs.cluster.id": pod.ClusterID,
+				"k8s.pod.name":       pod.Name,
+				"k8s.namespace.name": pod.Namespace,
+				"k8s.pod.ip":         pod.IP,
+			}
+		}
+	}
 	return nil
 }

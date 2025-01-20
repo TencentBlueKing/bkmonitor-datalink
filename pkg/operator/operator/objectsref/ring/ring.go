@@ -54,6 +54,9 @@ func (r *ring) put(evt event) int {
 	r.mut.Lock()
 	defer r.mut.Unlock()
 
+	// 双游标方案
+	// headIndex 记录 ring 内当前最早的事件 index 位置
+	// tailIndex 记录 ring 内当前最新的事件 index 位置
 	tailIdx := r.maxRv % r.size
 	var headIdx int
 	if r.maxRv >= r.size {
@@ -75,17 +78,21 @@ func (r *ring) readGt(n int) []event {
 	defer r.mut.RUnlock()
 
 	var events []event
+
+	// head 遍历为左闭右开区间
 	for i := r.headIdx; i < r.size; i++ {
 		evt := r.events[i]
-		if evt.resourceVersion > int(n) {
+		if evt.resourceVersion > n {
 			events = append(events, evt)
 		}
 	}
 
+	// headIndex 非 0 则意味着需要反向遍历一遍
+	// tail 遍历为闭区间
 	if r.headIdx != 0 {
 		for i := 0; i <= r.tailIdx; i++ {
 			evt := r.events[i]
-			if evt.resourceVersion > int(n) {
+			if evt.resourceVersion > n {
 				events = append(events, evt)
 			}
 		}

@@ -430,6 +430,7 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 				logger.Errorf("excepted Pod type, got %T", newObj)
 				return
 			}
+
 			objs.Set(PodObject{
 				ID: ObjectID{
 					Name:      pod.Name,

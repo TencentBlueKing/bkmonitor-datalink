@@ -498,17 +498,21 @@ func (c *Operator) PodsRoute(w http.ResponseWriter, r *http.Request) {
 		IP        string `json:"ip"`
 	}
 
+	all := r.URL.Query().Get("all") // all 则返回所有 pods 不进行任何过滤
+
+	// 只返回已经就绪的 Pod
 	podEvents, lastRv := c.objectsController.FetchPodEvents(rv)
 	nodes := c.objectsController.NodeIPs()
 	var ret []podsResponse
-	for _, pod := range podEvents {
-		_, ok := nodes[pod.IP]
-		if !ok {
+	for _, podEvent := range podEvents {
+		_, ok := nodes[podEvent.IP]
+		if !ok || all == "true" {
 			ret = append(ret, podsResponse{
+				Action:    string(podEvent.Action),
 				ClusterID: info.BcsClusterID,
-				Name:      pod.Name,
-				Namespace: pod.Namespace,
-				IP:        pod.IP,
+				Name:      podEvent.Name,
+				Namespace: podEvent.Namespace,
+				IP:        podEvent.IP,
 			})
 		}
 	}
@@ -604,7 +608,7 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /cluster_info
 * GET /workload
 * GET /workload/node/{node}
-* GET /pods?all=true|false
+* GET /pods?resourceVersion=N&all=true|false
 * GET /relation/metrics
 * GET /rule/metrics
 * GET /configs

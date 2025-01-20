@@ -58,7 +58,21 @@ func (m *PodMap) Set(obj PodObject) {
 	m.mut.Lock()
 	defer m.mut.Unlock()
 
+	prev, ok := m.objs[obj.ID.String()]
 	m.objs[obj.ID.String()] = obj
+
+	// PodIP 为空则表示该 pod 是未就绪状态 无法提供服务
+	if obj.PodIP == "" {
+		return
+	}
+
+	// 更新事件去重
+	// 如果之前存在过且 PodEvent 内容均相等则不触发 ring 写入
+	// 可以减少 ring 事件 因为对于 resync 时资源对象即使没有任何变更也会重新进入流程
+	if ok && prev.PodIP == obj.PodIP && prev.ID == obj.ID {
+		return
+	}
+
 	m.lastRv = m.ring.Put(PodEvent{
 		Action:    ActionCreateOrUpdate,
 		IP:        obj.PodIP,
@@ -89,28 +103,23 @@ func (m *PodMap) FetchEvents(rv int) ([]PodEvent, int) {
 	m.mut.RLock()
 	defer m.mut.RUnlock()
 
+	var events []PodEvent
 	// fetch 所有的 pods 以事件的形式
 	if rv <= 0 || rv < int(m.ring.MinResourceVersion()) {
-		return m.fetchAllEventsLocked()
+		for _, obj := range m.objs {
+			events = append(events, PodEvent{
+				Action:    ActionCreateOrUpdate,
+				IP:        obj.PodIP,
+				Name:      obj.ID.Name,
+				Namespace: obj.NodeName,
+			})
+		}
+		return events, int(m.lastRv)
 	}
 
-	var events []PodEvent
 	objs := m.ring.ReadGt(ring.ResourceVersion(rv))
 	for _, obj := range objs {
 		events = append(events, obj.(PodEvent))
-	}
-	return events, int(m.lastRv)
-}
-
-func (m *PodMap) fetchAllEventsLocked() ([]PodEvent, int) {
-	var events []PodEvent
-	for _, obj := range m.objs {
-		events = append(events, PodEvent{
-			Action:    ActionCreateOrUpdate,
-			IP:        obj.PodIP,
-			Name:      obj.ID.Name,
-			Namespace: obj.NodeName,
-		})
 	}
 	return events, int(m.lastRv)
 }

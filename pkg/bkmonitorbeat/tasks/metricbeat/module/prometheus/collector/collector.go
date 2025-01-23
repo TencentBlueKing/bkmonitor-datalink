@@ -237,7 +237,7 @@ func (m *MetricSet) getEventFromPromEvent(promEvent *tasks.PromEvent) []common.M
 }
 
 // getEventsFromFile 从文件获取指标
-func (m *MetricSet) getEventsFromFile(fileName string) (<-chan common.MapStr, error) {
+func (m *MetricSet) getEventsFromFile(fileName string) (<-chan []common.MapStr, error) {
 	f, err := os.Open(fileName)
 	if err != nil {
 		return nil, err
@@ -256,7 +256,7 @@ func (m *MetricSet) getEventsFromFile(fileName string) (<-chan common.MapStr, er
 }
 
 // getEventsFromReader 从 reader 获取指标
-func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup func(), up bool) <-chan common.MapStr {
+func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup func(), up bool) <-chan []common.MapStr {
 	if m.MetricRelabelRemote != "" {
 		remoteRelabelConfigs, err := m.getRemoteRelabelConfigs()
 		if err != nil {
@@ -280,7 +280,7 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 		worker = 1
 	}
 	milliTs := time.Now().UnixMilli()
-	eventChan := make(chan common.MapStr)
+	eventChan := make(chan []common.MapStr)
 
 	// 补充 up 指标文本
 	var total atomic.Int64
@@ -293,9 +293,7 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 			events = append(events, m.asEvents(CodeUp(define.CodeOK, m.logkvs()), milliTs)...)
 		}
 		events = append(events, m.asEvents(CodeHandleDuration(time.Since(t0).Seconds(), m.logkvs()), milliTs)...)
-		for i := 0; i < len(events); i++ {
-			eventChan <- events[i]
-		}
+		eventChan <- events
 	}
 
 	// 消费指标文本并生成事件
@@ -308,10 +306,8 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 				produceErr.Store(true)
 				continue
 			}
-			for j := 0; j < len(events); j++ {
-				eventChan <- events[j]
-				total.Add(1)
-			}
+			eventChan <- events
+			total.Add(int64(len(events)))
 		}
 	}
 
@@ -484,7 +480,7 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 
 	// 解析 prometheus 数据
 	if m.useTempFile {
-		summary["metrics_reader"] = define.MetricsReaderFunc(func() (<-chan common.MapStr, error) {
+		summary["metrics_reader"] = define.MetricsReaderFunc(func() (<-chan []common.MapStr, error) {
 			return m.getEventsFromFile(metricsFile.Name())
 		})
 	} else {
@@ -495,9 +491,9 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 }
 
 func (m *MetricSet) fillMetrics(summary common.MapStr, rc io.ReadCloser, up bool) {
-	events := make([]common.MapStr, 0)
-	for event := range m.getEventsFromReader(rc, func() {}, up) {
-		events = append(events, event)
+	ret := make([]common.MapStr, 0)
+	for events := range m.getEventsFromReader(rc, func() {}, up) {
+		ret = append(ret, events...)
 	}
-	summary["metrics"] = events
+	summary["metrics"] = ret
 }

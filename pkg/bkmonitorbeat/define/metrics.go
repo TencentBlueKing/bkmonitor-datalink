@@ -13,7 +13,7 @@ import (
 	"github.com/elastic/beats/libbeat/common"
 )
 
-type MetricsReaderFunc func() (<-chan common.MapStr, error)
+type MetricsReaderFunc func() (<-chan []common.MapStr, error)
 
 func (m MetricsReaderFunc) MarshalJSON() ([]byte, error) {
 	return []byte("\"func:metricsReaderFunc\""), nil

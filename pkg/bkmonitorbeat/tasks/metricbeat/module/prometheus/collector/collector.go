@@ -297,8 +297,11 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 	}
 
 	// 消费指标文本并生成事件
+	const maxBatchSize = 100
 	var produceErr atomic.Bool
 	consume := func() {
+		var count int
+		var batch []common.MapStr
 		for line := range linesCh {
 			events, err := m.produceEvents(line, milliTs)
 			if err != nil {
@@ -306,8 +309,23 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 				produceErr.Store(true)
 				continue
 			}
-			eventChan <- events
-			total.Add(int64(len(events)))
+
+			for i := 0; i < len(events); i++ {
+				count++
+				batch = append(batch, events[i])
+				if count >= maxBatchSize {
+					total.Add(int64(len(batch)))
+					eventChan <- batch
+					// 状态重置
+					count = 0
+					batch = make([]common.MapStr, 0)
+				}
+			}
+		}
+
+		if len(batch) > 0 {
+			total.Add(int64(len(batch)))
+			eventChan <- batch
 		}
 	}
 

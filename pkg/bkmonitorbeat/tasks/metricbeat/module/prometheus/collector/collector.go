@@ -266,11 +266,22 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 		}
 	}
 
+	const maxBatchSize = 100
+
 	scanner := bufio.NewScanner(metricsReader)
-	linesCh := make(chan string, 1)
+	linesCh := make(chan []string, 1)
+
 	go func() {
+		batch := make([]string, 0)
 		for scanner.Scan() {
-			linesCh <- scanner.Text()
+			batch = append(batch, scanner.Text())
+			if len(batch) >= maxBatchSize {
+				linesCh <- batch
+				batch = make([]string, 0)
+			}
+		}
+		if len(batch) > 0 {
+			linesCh <- batch
 		}
 		close(linesCh)
 	}()
@@ -297,28 +308,30 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 	}
 
 	// 消费指标文本并生成事件
-	const maxBatchSize = 100
 	var produceErr atomic.Bool
 	consume := func() {
 		var count int
 		var batch []common.MapStr
-		for line := range linesCh {
-			events, err := m.produceEvents(line, milliTs)
-			if err != nil {
-				logger.Warnf("failed to produce events: %v", err)
-				produceErr.Store(true)
-				continue
-			}
+		for lines := range linesCh {
+			for i := 0; i < len(lines); i++ {
+				line := lines[i]
+				events, err := m.produceEvents(line, milliTs)
+				if err != nil {
+					logger.Warnf("failed to produce events: %v", err)
+					produceErr.Store(true)
+					continue
+				}
 
-			for i := 0; i < len(events); i++ {
-				count++
-				batch = append(batch, events[i])
-				if count >= maxBatchSize {
-					total.Add(int64(len(batch)))
-					eventChan <- batch
-					// 状态重置
-					count = 0
-					batch = make([]common.MapStr, 0)
+				for j := 0; j < len(events); j++ {
+					count++
+					batch = append(batch, events[j])
+					if count >= maxBatchSize {
+						total.Add(int64(len(batch)))
+						eventChan <- batch
+						// 状态重置
+						count = 0
+						batch = make([]common.MapStr, 0)
+					}
 				}
 			}
 		}

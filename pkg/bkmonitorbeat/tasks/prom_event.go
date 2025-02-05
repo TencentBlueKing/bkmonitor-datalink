@@ -136,6 +136,7 @@ func newPromEventV2(line string, ts int64, offsetTime time.Duration, handler Tim
 	}
 
 	var pe PromEvent
+	// 此处的 string 不会再变更了
 	parser := textparse.NewOpenMetricsParser(unsafe.Slice(unsafe.StringData(line), len(line)))
 	entry, err := parser.Next()
 	if err != nil {

@@ -285,8 +285,13 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 		return 0, nil, nil
 	})
 
+	worker := m.workers
+	if worker <= 0 {
+		worker = 1
+	}
+
 	const maxBatchSize = 100
-	linesCh := make(chan []string, 1)
+	linesCh := make(chan []string, worker)
 
 	go func() {
 		batch := make([]string, 0, maxBatchSize)
@@ -308,10 +313,6 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 		close(linesCh)
 	}()
 
-	worker := m.workers
-	if worker <= 0 {
-		worker = 1
-	}
 	milliTs := time.Now().UnixMilli()
 	eventChan := make(chan []common.MapStr)
 

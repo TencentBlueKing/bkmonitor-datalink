@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/elastic/beats/libbeat/common"
@@ -135,7 +136,7 @@ func newPromEventV2(line string, ts int64, offsetTime time.Duration, handler Tim
 	}
 
 	var pe PromEvent
-	parser := textparse.NewOpenMetricsParser([]byte(line))
+	parser := textparse.NewOpenMetricsParser(unsafe.Slice(unsafe.StringData(line), len(line)))
 	entry, err := parser.Next()
 	if err != nil {
 		return pe, err

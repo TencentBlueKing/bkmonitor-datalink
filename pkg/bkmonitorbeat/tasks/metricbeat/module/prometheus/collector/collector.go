@@ -11,6 +11,7 @@ package collector
 
 import (
 	"bufio"
+	"bytes"
 	"io"
 	"net/http"
 	"os"
@@ -266,18 +267,39 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 		}
 	}
 
-	const maxBatchSize = 100
-
+	// 保留换行符
 	scanner := bufio.NewScanner(metricsReader)
+	scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
+		if atEOF && len(data) == 0 {
+			return 0, nil, nil
+		}
+		if i := bytes.IndexByte(data, '\n'); i >= 0 {
+			// We have a full newline-terminated line.
+			return i + 1, data[0 : i+1], nil
+		}
+		// If we're at EOF, we have a final, non-terminated line. Return it.
+		if atEOF {
+			return len(data), data, nil
+		}
+		// Request more data.
+		return 0, nil, nil
+	})
+
+	const maxBatchSize = 100
 	linesCh := make(chan []string, 1)
 
 	go func() {
-		batch := make([]string, 0)
+		batch := make([]string, 0, maxBatchSize)
 		for scanner.Scan() {
-			batch = append(batch, scanner.Text())
+			s := scanner.Text()
+			// 忽略注释行或者空行
+			if strings.HasPrefix(s, "#") || len(s) <= 1 {
+				continue
+			}
+			batch = append(batch, s)
 			if len(batch) >= maxBatchSize {
 				linesCh <- batch
-				batch = make([]string, 0)
+				batch = make([]string, 0, maxBatchSize)
 			}
 		}
 		if len(batch) > 0 {

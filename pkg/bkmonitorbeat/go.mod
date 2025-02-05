@@ -38,7 +38,6 @@ require (
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/yumaojun03/dmidecode v0.1.4
 	github.com/yusufpapurcu/wmi v1.2.3
-	go.uber.org/automaxprocs v1.5.1
 	golang.org/x/net v0.24.0
 	golang.org/x/sync v0.7.0
 	golang.org/x/sys v0.19.0

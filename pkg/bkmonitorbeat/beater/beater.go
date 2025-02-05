@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
-	"go.uber.org/automaxprocs/maxprocs"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater/schedulerfactory"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater/taskfactory"
@@ -37,10 +36,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/host"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
-
-func init() {
-	maxprocs.Logger(func(s string, i ...interface{}) {})
-}
 
 const (
 	CMDBLevelKey = "bk_cmdb_level"

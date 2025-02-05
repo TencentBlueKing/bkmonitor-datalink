@@ -290,7 +290,7 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 		worker = 1
 	}
 
-	const maxBatchSize = 100
+	const maxBatchSize = 64
 	linesCh := make(chan []string, worker)
 
 	go func() {

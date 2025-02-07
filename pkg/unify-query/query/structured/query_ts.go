@@ -11,6 +11,7 @@ package structured
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -59,6 +60,14 @@ type QueryTs struct {
 	LookBackDelta string `json:"look_back_delta,omitempty"`
 	// Instant 瞬时数据
 	Instant bool `json:"instant"`
+
+	// 增加公共限制
+	// Limit 点数限制数量
+	Limit int `json:"limit,omitempty" example:"0"`
+	// From 翻页开启数字
+	From int `json:"from,omitempty" example:"0"`
+	// HighLight 是否开启高亮
+	HighLight metadata.HighLight `json:"highlight,omitempty"`
 }
 
 // 根据 timezone 偏移对齐
@@ -164,6 +173,16 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		}
 		if q.SpaceUid == "" {
 			q.SpaceUid = metadata.GetUser(ctx).SpaceUid
+		}
+
+		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
+		if !query.HighLight.Enable && q.HighLight.Enable {
+			query.HighLight = q.HighLight
+		}
+
+		// 复用字段配置，没有特殊配置的情况下使用公共配置
+		if len(query.KeepColumns) == 0 && len(q.ResultColumns) != 0 {
+			query.KeepColumns = q.ResultColumns
 		}
 
 		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid)
@@ -387,6 +406,9 @@ type Query struct {
 
 	// IsReference 是否使用非时间聚合查询
 	IsReference bool `json:"-" swaggerignore:"true"`
+
+	// HighLight 是否打开高亮，只对原始数据接口生效
+	HighLight metadata.HighLight `json:"highlight,omitempty"`
 }
 
 func (q *Query) ToRouter() (*Route, error) {
@@ -596,8 +618,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			return nil, buildErr
 		}
 
-		query.Size = q.Limit
-		query.From = q.From
 		query.Aggregates = aggregates
 
 		// 针对 vmRt 不为空的情况，进行 vm 判定
@@ -891,6 +911,9 @@ func (q *Query) BuildMetadataQuery(
 	// 写入 ES 所需内容
 	query.QueryString = q.QueryString
 	query.Source = q.KeepColumns
+	query.HighLight = q.HighLight
+	query.Size = q.Limit
+	query.From = q.From
 
 	if len(allCondition) > 0 {
 		query.AllConditions = make(metadata.AllConditions, len(allCondition))
@@ -950,6 +973,9 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("query-tag-keys", query.TagsKey)
 	span.Set("query-vm-rt", query.VmRt)
 	span.Set("query-need-add-time", query.NeedAddTime)
+
+	jsonString, _ := json.Marshal(query)
+	span.Set("query-json", jsonString)
 
 	return query, nil
 }

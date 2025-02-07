@@ -194,6 +194,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 			return a < b
 		})
+
+		if queryTs.Limit > 0 && len(list) > queryTs.Limit {
+			list = list[0:queryTs.Limit]
+		}
 	}()
 
 	// 多协程查询数据
@@ -220,6 +224,24 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			// 如果 qry.Step 不存在去外部统一的 step
 			if ql.Step == "" {
 				ql.Step = queryTs.Step
+			}
+
+			// 如果 Limit / From 没有单独指定的话，同时外部指定了的话，使用外部的
+			if ql.Limit == 0 && queryTs.Limit > 0 {
+				ql.Limit = queryTs.Limit
+			}
+			if ql.From == 0 && queryTs.From > 0 {
+				ql.From = queryTs.From
+			}
+
+			// 复用 高亮配置，没有特殊配置的情况下使用公共配置
+			if !ql.HighLight.Enable && queryTs.HighLight.Enable {
+				ql.HighLight = queryTs.HighLight
+			}
+
+			// 复用字段配置，没有特殊配置的情况下使用公共配置
+			if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
+				ql.KeepColumns = queryTs.ResultColumns
 			}
 
 			qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)

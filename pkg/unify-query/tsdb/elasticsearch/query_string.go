@@ -59,11 +59,6 @@ func (s *QueryString) Parser() (elastic.Query, error) {
 		return nil, err
 	}
 
-	// 如果 nestedFields 不存在则直接使用 queryString 透传
-	//if len(s.nestedFields) == 0 {
-	//	return qs, nil
-	//}
-
 	for nestedKey := range s.nestedFields {
 		conditionQuery = elastic.NewNestedQuery(nestedKey, conditionQuery)
 	}

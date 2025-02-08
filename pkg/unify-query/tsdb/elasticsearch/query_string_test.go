@@ -52,7 +52,7 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        `sync_spaces AND -keyword AND -BKLOGAPI`,
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"sync_spaces AND -keyword AND -BKLOGAPI"}}`,
+			expected: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"query":"\"sync_spaces\""}},{"bool":{"must":[{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"query":"\"keyword\""}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"query":"\"BKLOGAPI\""}}}}]}}]}}`,
 		},
 		{
 			q: `*`,

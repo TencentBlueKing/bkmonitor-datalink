@@ -32,19 +32,15 @@ func TestQsToDsl(t *testing.T) {
 	}{
 		{
 			q:        `log: "ERROR MSG"`,
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"log: \"ERROR MSG\""}}`,
+			expected: `{"match_phrase":{"log":{"query":"ERROR MSG"}}}`,
 		},
 		{
 			q:        `quick brown fox`,
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"quick brown fox"}}`,
+			expected: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"query":"\"quick\""}},{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"query":"\"brown\""}},{"query_string":{"analyze_wildcard":true,"query":"\"fox\""}}]}}]}}`,
 		},
 		{
 			q:        `word.key: qu?ck`,
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"word.key: qu?ck"}}`,
-		},
-		{
-			q:        "\"message queue conflict\"",
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"\"message queue conflict\""}}`,
+			expected: `{"wildcard":{"word.key":{"value":"qu?ck"}}}`,
 		},
 		{
 			q:        "\"message queue conflict\"",

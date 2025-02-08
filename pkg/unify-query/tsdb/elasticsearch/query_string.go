@@ -49,22 +49,22 @@ func (s *QueryString) Parser() (elastic.Query, error) {
 	}
 
 	// 解析失败，或者没有 nested 字段，则使用透传的方式查询
-	qs := s.queryString(s.q)
+	//qs := s.queryString(s.q)
 
 	ast, err := parser.Parse(s.q)
 	if err != nil {
-		return qs, nil
+		return nil, err
 	}
 
 	conditionQuery, err := s.walk(ast)
 	if err != nil {
-		return qs, nil
+		return nil, err
 	}
 
 	// 如果 nestedFields 不存在则直接使用 queryString 透传
-	if len(s.nestedFields) == 0 {
-		return qs, nil
-	}
+	//if len(s.nestedFields) == 0 {
+	//	return qs, nil
+	//}
 
 	for nestedKey := range s.nestedFields {
 		conditionQuery = elastic.NewNestedQuery(nestedKey, conditionQuery)

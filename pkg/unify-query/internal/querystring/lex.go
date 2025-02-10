@@ -17,12 +17,9 @@ package querystring
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"io"
 	"strings"
 	"unicode"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 const reservedChars = "+-=&|><!(){}[]^\"~*?:\\/ "
@@ -153,7 +150,7 @@ func inPhraseState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
 		l.nextToken = &yySymType{
 			s: l.buf,
 		}
-		log.Debugf(context.TODO(), "PHRASE - '%s'", l.nextToken.s)
+		//log.Debugf(context.TODO(), "PHRASE - '%s'", l.nextToken.s)
 		l.reset()
 		return startState, true
 	} else if !l.inEscape && next == '\\' {
@@ -216,7 +213,7 @@ func singleCharOpState(l *queryStringLex, next rune, eof bool) (lexState, bool) 
 		l.nextTokenType = tSTAR
 		msg.WriteString("tSTAR")
 	}
-	log.Debugf(context.TODO(), msg.String())
+	//log.Debugf(context.TODO(), msg.String())
 
 	l.reset()
 	return startState, false
@@ -235,7 +232,7 @@ func inNumOrStrState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
 		l.nextToken = &yySymType{
 			s: l.buf,
 		}
-		log.Debugf(context.TODO(), "NUMBER - '%s'", l.nextToken.s)
+		//log.Debugf(context.TODO(), "NUMBER - '%s'", l.nextToken.s)
 		l.reset()
 		return startState, consumed
 	} else if !l.inEscape && next == '\\' {
@@ -302,7 +299,7 @@ func inStrState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
 		l.nextToken = &yySymType{
 			s: l.buf,
 		}
-		log.Debugf(context.TODO(), "STRING - '%s'", l.nextToken.s)
+		//log.Debugf(context.TODO(), "STRING - '%s'", l.nextToken.s)
 		l.reset()
 
 		return startState, consumed

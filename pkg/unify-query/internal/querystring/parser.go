@@ -16,8 +16,6 @@ import (
 	"strings"
 )
 
-var debugLexer bool
-
 // Parse querystring and return Expr
 func Parse(query string) (Expr, error) {
 	if query == "" {

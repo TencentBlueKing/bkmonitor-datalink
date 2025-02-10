@@ -11,8 +11,8 @@ import __yyfmt__ "fmt"
 type yySymType struct {
 	yys int
 	s   string
-	n   int
-	e   Expr
+	n int
+	e Expr
 }
 
 const tSTRING = 57346

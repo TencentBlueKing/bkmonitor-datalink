@@ -14,7 +14,7 @@ import (
 
 	elastic "github.com/olivere/elastic/v7"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch/querystring"
+	qs "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 )
 
 type QueryString struct {
@@ -49,7 +49,7 @@ func (s *QueryString) Parser() (elastic.Query, error) {
 		return nil, nil
 	}
 
-	ast, err := querystring.Parse(s.q)
+	ast, err := qs.Parse(s.q)
 	if err != nil {
 		return nil, err
 	}
@@ -74,20 +74,20 @@ func (s *QueryString) check(field string) {
 	}
 }
 
-func (s *QueryString) walk(expr querystring.Expr) (elastic.Query, error) {
+func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 	var (
 		leftQ  elastic.Query
 		rightQ elastic.Query
 		err    error
 	)
 	switch c := expr.(type) {
-	case *querystring.NotExpr:
+	case *qs.NotExpr:
 		leftQ, err = s.walk(c.Expr)
 		if err != nil {
 			return nil, err
 		}
 		leftQ = elastic.NewBoolQuery().MustNot(leftQ)
-	case *querystring.OrExpr:
+	case *qs.OrExpr:
 		leftQ, err = s.walk(c.Left)
 		if err != nil {
 			return nil, err
@@ -97,7 +97,7 @@ func (s *QueryString) walk(expr querystring.Expr) (elastic.Query, error) {
 			return nil, err
 		}
 		leftQ = elastic.NewBoolQuery().Should(leftQ, rightQ)
-	case *querystring.AndExpr:
+	case *qs.AndExpr:
 		leftQ, err = s.walk(c.Left)
 		if err != nil {
 			return nil, err
@@ -107,14 +107,14 @@ func (s *QueryString) walk(expr querystring.Expr) (elastic.Query, error) {
 			return nil, err
 		}
 		leftQ = elastic.NewBoolQuery().Must(leftQ, rightQ)
-	case *querystring.MatchExpr:
+	case *qs.MatchExpr:
 		if c.Field != "" {
 			leftQ = elastic.NewMatchPhraseQuery(c.Field, c.Value)
 			s.check(c.Field)
 		} else {
 			leftQ = s.queryString(fmt.Sprintf(`"%s"`, c.Value))
 		}
-	case *querystring.NumberRangeExpr:
+	case *qs.NumberRangeExpr:
 		q := elastic.NewRangeQuery(c.Field)
 		if c.IncludeStart {
 			q.Gte(*c.Start)
@@ -128,7 +128,7 @@ func (s *QueryString) walk(expr querystring.Expr) (elastic.Query, error) {
 		}
 		s.check(c.Field)
 		leftQ = q
-	case *querystring.WildcardExpr:
+	case *qs.WildcardExpr:
 		if c.Field != "" {
 			leftQ = elastic.NewWildcardQuery(c.Field, c.Value)
 			s.check(c.Field)

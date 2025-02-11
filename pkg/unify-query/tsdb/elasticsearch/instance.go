@@ -233,7 +233,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
 		qs := NewQueryString(qb.QueryString, fact.NestedField)
-		q, qsErr := qs.Parser()
+		q, qsErr := qs.ToDSL()
 		if qsErr != nil {
 			return nil, qsErr
 		}

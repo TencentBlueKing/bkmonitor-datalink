@@ -44,19 +44,24 @@ func (s *QueryString) queryString(str string) elastic.Query {
 	return elastic.NewQueryStringQuery(str).AnalyzeWildcard(true)
 }
 
-func (s *QueryString) Parser() (elastic.Query, error) {
+func (s *QueryString) ToDSL() (elastic.Query, error) {
 	if s.q == "" || s.q == "*" {
 		return nil, nil
 	}
 
+	q := s.queryString(s.q)
 	ast, err := qs.Parse(s.q)
 	if err != nil {
-		return nil, err
+		return q, nil
 	}
 
 	conditionQuery, err := s.walk(ast)
 	if err != nil {
-		return nil, err
+		return q, nil
+	}
+
+	if len(s.nestedFields) == 0 {
+		return q, nil
 	}
 
 	for nestedKey := range s.nestedFields {

@@ -69,7 +69,7 @@ func TestParser(t *testing.T) {
 		},
 		"通配符匹配": {
 			q: `qu?ck bro*`,
-			e: &AndExpr{
+			e: &OrExpr{
 				Left: &WildcardExpr{
 					Value: "qu?ck",
 				},
@@ -185,13 +185,37 @@ func TestParser(t *testing.T) {
 				},
 			},
 		},
-		"模糊匹配": {
-			q: `quick brown fox`,
-			e: &AndExpr{
+		"new-1": {
+			q: `quick brown +fox -news`,
+			e: &OrExpr{
 				Left: &MatchExpr{
 					Value: "quick",
 				},
-				Right: &AndExpr{
+				Right: &OrExpr{
+					Left: &MatchExpr{
+						Value: "brown",
+					},
+					Right: &OrExpr{
+						Left: &MatchExpr{
+							Value: "fox",
+						},
+						Right: &NotExpr{
+							Expr: &MatchExpr{
+								Field: "",
+								Value: "news",
+							},
+						},
+					},
+				},
+			},
+		},
+		"模糊匹配": {
+			q: `quick brown fox`,
+			e: &OrExpr{
+				Left: &MatchExpr{
+					Value: "quick",
+				},
+				Right: &OrExpr{
 					Left: &MatchExpr{
 						Value: "brown",
 					},

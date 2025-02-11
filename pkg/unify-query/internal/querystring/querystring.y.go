@@ -11,8 +11,8 @@ import __yyfmt__ "fmt"
 type yySymType struct {
 	yys int
 	s   string
-	n int
-	e Expr
+	n   int
+	e   Expr
 }
 
 const tSTRING = 57346
@@ -508,7 +508,7 @@ yydefault:
 		yyDollar = yyS[yypt-2 : yypt+1]
 //line querystring.y:37
 		{
-			yyVAL.e = NewAndExpr(yyDollar[1].e, yyDollar[2].e)
+			yyVAL.e = NewOrExpr(yyDollar[1].e, yyDollar[2].e)
 		}
 	case 3:
 		yyDollar = yyS[yypt-1 : yypt+1]

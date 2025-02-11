@@ -49,6 +49,7 @@ func (s *QueryString) ToDSL() (elastic.Query, error) {
 		return nil, nil
 	}
 
+	// 解析失败，或者没有 nested 字段，则使用透传的方式查询
 	q := s.queryString(s.q)
 	ast, err := qs.Parse(s.q)
 	if err != nil {
@@ -60,6 +61,7 @@ func (s *QueryString) ToDSL() (elastic.Query, error) {
 		return q, nil
 	}
 
+	// 如果 nestedFields 不存在则直接使用 queryString 透传
 	if len(s.nestedFields) == 0 {
 		return q, nil
 	}

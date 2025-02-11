@@ -35,7 +35,7 @@ searchLogicParts {
 
 searchLogicParts:
 searchLogicPart searchLogicParts {
-	$$ = NewAndExpr($1, $2)
+	$$ = NewOrExpr($1, $2)
 }
 |
 searchLogicPart {

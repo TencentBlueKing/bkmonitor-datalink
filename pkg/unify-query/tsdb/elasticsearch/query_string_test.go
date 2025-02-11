@@ -31,19 +31,19 @@ func TestQsToDsl(t *testing.T) {
 		err      error
 	}{
 		{
-			q: `log: "ERROR MSG"`,
-			//expected: `{"query_string":{"analyze_wildcard":true,"query":"log: \"ERROR MSG\""}}`
-			expected: `{"match_phrase":{"log":{"query":"ERROR MSG"}}}`,
+			q:        `log: "ERROR MSG"`,
+			expected: `{"query_string":{"analyze_wildcard":true,"query":"log: \"ERROR MSG\""}}`,
+			//expected: `{"match_phrase":{"log":{"query":"ERROR MSG"}}}`,
 		},
 		{
-			q: `quick brown fox`,
-			//expected: `{"query_string":{"analyze_wildcard":true,"query":"quick brown fox"}}`,
-			expected: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"query":"\"quick\""}},{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"query":"\"brown\""}},{"query_string":{"analyze_wildcard":true,"query":"\"fox\""}}]}}]}}`,
+			q:        `quick brown fox`,
+			expected: `{"query_string":{"analyze_wildcard":true,"query":"quick brown fox"}}`,
+			//expected: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"query":"\"quick\""}},{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"query":"\"brown\""}},{"query_string":{"analyze_wildcard":true,"query":"\"fox\""}}]}}]}}`,
 		},
 		{
-			q: `word.key: qu?ck`,
-			//expected: `{"query_string":{"analyze_wildcard":true,"query":"word.key: qu?ck"}}`
-			expected: `{"wildcard":{"word.key":{"value":"qu?ck"}}}`,
+			q:        `word.key: qu?ck`,
+			expected: `{"query_string":{"analyze_wildcard":true,"query":"word.key: qu?ck"}}`,
+			//expected: `{"wildcard":{"word.key":{"value":"qu?ck"}}}`,
 		},
 		{
 			q:        "\"message queue conflict\"",
@@ -54,9 +54,9 @@ func TestQsToDsl(t *testing.T) {
 			expected: `{"nested":{"path":"nested.key","query":{"bool":{"must":[{"match_phrase":{"nested.key":{"query":"test"}}},{"query_string":{"analyze_wildcard":true,"query":"\"demo\""}}]}}}}`,
 		},
 		{
-			q: `sync_spaces AND -keyword AND -BKLOGAPI`,
-			//expected: `{"query_string":{"analyze_wildcard":true,"query":"sync_spaces AND -keyword AND -BKLOGAPI"}}`,
-			expected: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"query":"\"sync_spaces\""}},{"bool":{"must":[{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"query":"\"keyword\""}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"query":"\"BKLOGAPI\""}}}}]}}]}}`,
+			q:        `sync_spaces AND -keyword AND -BKLOGAPI`,
+			expected: `{"query_string":{"analyze_wildcard":true,"query":"sync_spaces AND -keyword AND -BKLOGAPI"}}`,
+			//expected: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"query":"\"sync_spaces\""}},{"bool":{"must":[{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"query":"\"keyword\""}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"query":"\"BKLOGAPI\""}}}}]}}]}}`,
 		},
 		{
 			q: `*`,

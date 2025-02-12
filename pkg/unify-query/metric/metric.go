@@ -11,8 +11,10 @@ package metric
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	"github.com/VictoriaMetrics/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.opentelemetry.io/otel/trace"
@@ -126,6 +128,12 @@ var (
 		[]string{"space_uid", "table_id", "is_match", "is_ff"},
 	)
 )
+
+func APIRequestWithVMSecond(_ context.Context, duration time.Duration, api, spaceUID string) {
+	metricName := "unify_query_vm_api_request_second"
+	name := fmt.Sprintf(`%s{api=%q, space_uid=%q, version=%q, commit_id=%q}`, metricName, api, spaceUID, config.Version, config.CommitHash)
+	metrics.GetOrCreateHistogram(name).Update(duration.Seconds())
+}
 
 func APIRequestInc(ctx context.Context, api, status, spaceUID, sourceType string) {
 	// 拼接 version 和 commit_id

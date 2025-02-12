@@ -12,6 +12,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"testing"
@@ -1317,4 +1318,115 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 		tableID2: {"filters": []map[string]interface{}{{"bk_biz_id": "1003"}}},
 	}
 	assert.Equal(t, expectedForOthers, valuesForOthers, "Unexpected result for space 1003")
+}
+
+func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
+	// 初始化数据库
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	db.AutoMigrate(&storage.ESStorage{}, &resulttable.ResultTable{}, &storage.ClusterRecord{})
+
+	// 准备测试数据
+	tableID1 := "1001_bkmonitor_time_series_50010.__default__"
+	tableID2 := "1001_bkmonitor_time_series_50011.__default__"
+	dataLabel1 := "a" // 初始化为字符串
+
+	// 插入 ResultTable 数据
+	resultTables := []resulttable.ResultTable{
+		{
+			TableId:      tableID1,
+			BkBizId:      1001,
+			BkBizIdAlias: "appid",
+			DataLabel:    &dataLabel1, // 使用字符串指针
+		},
+		{
+			TableId:      tableID2,
+			BkBizId:      1001,
+			BkBizIdAlias: "",
+			DataLabel:    nil,
+		},
+	}
+	for _, rt := range resultTables {
+		db.Delete(&resulttable.ResultTable{}, "table_id = ?", rt.TableId)
+		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
+	}
+
+	//// 插入 ResultTable 数据
+	//resultTable := resulttable.ResultTable{
+	//	TableId:      tableID1,
+	//	BkBizId:      1001,
+	//	BkBizIdAlias: "appid",
+	//	DataLabel:    &dataLabel1, // 使用字符串指针
+	//}
+	//
+	//// 确保数据不存在后重新插入
+	//db.Delete(&resulttable.ResultTable{}, "table_id = ?", resultTable.TableId)
+	//assert.NoError(t, db.Create(&resultTable).Error, "Failed to insert ResultTable")
+
+	// 准备 SpacePusher 实例
+	spacePusher := SpacePusher{}
+
+	// 调用测试方法
+	tableID, detailStr, err := spacePusher.composeEsTableIdDetail(
+		tableID1,
+		map[string]interface{}{"option1": "value1"},
+		1,
+		"sourceType1",
+		"indexSet1",
+	)
+
+	// 断言返回结果无错误
+	assert.NoError(t, err, "composeEsTableIdDetail should not return an error")
+	assert.Equal(t, tableID1, tableID, "TableID should match")
+
+	// 期望的 JSON 数据（单个对象）
+	expectedDetail := map[string]interface{}{
+		"measurement":             "__default__",
+		"source_type":             "sourceType1",
+		"options":                 map[string]interface{}{"option1": "value1"},
+		"storage_cluster_records": []interface{}{},
+		"data_label":              "a",
+		"storage_type":            "elasticsearch",
+		"storage_id":              float64(1), // 修改为 float64
+		"db":                      "indexSet1",
+	}
+
+	// 将 detailStr 转换为 map 以便比较
+	var actualDetail map[string]interface{}
+	err = json.Unmarshal([]byte(detailStr), &actualDetail)
+	assert.NoError(t, err, "detailStr should be valid JSON")
+
+	// 比较预期值和实际值
+	assert.Equal(t, expectedDetail, actualDetail, "detailStr should match expected JSON")
+
+	// 调用测试方法
+	resTid, detailStr2, err := spacePusher.composeEsTableIdDetail(
+		tableID2,
+		map[string]interface{}{"option1": "value1"},
+		1,
+		"sourceType1",
+		"indexSet1",
+	)
+
+	expectedDetail2 := map[string]interface{}{
+		"measurement":             "__default__",
+		"source_type":             "sourceType1",
+		"options":                 map[string]interface{}{"option1": "value1"},
+		"storage_cluster_records": []interface{}{},
+		"data_label":              nil,
+		"storage_type":            "elasticsearch",
+		"storage_id":              float64(1), // 修改为 float64
+		"db":                      "indexSet1",
+	}
+
+	// 将 detailStr 转换为 map 以便比较
+	var actualDetail2 map[string]interface{}
+	err = json.Unmarshal([]byte(detailStr2), &actualDetail2)
+	assert.NoError(t, err, "detailStr should be valid JSON")
+
+	assert.NoError(t, err, "composeEsTableIdDetail should not return an error")
+	assert.Equal(t, resTid, tableID2, "TableID should match")
+
+	assert.Equal(t, expectedDetail2, actualDetail2, "detailStr should match expected JSON")
+
 }

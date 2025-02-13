@@ -74,8 +74,9 @@ func New(conf *Config) Cache {
 	}
 
 	tr := &http.Transport{
-		MaxIdleConns:    10,
-		IdleConnTimeout: time.Minute * 5,
+		MaxIdleConns:        10,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     time.Minute * 5,
 	}
 
 	return &innerCache{

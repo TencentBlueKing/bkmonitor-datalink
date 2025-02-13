@@ -564,6 +564,26 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			MetricName:     metricName,
 			Aggregates:     aggregates,
 			BkSqlCondition: allConditions.BkSql(),
+			Size:           q.Limit,
+			From:           q.From,
+		}
+
+		if len(q.OrderBy) > 0 {
+			qry.Orders = make(metadata.Orders)
+			for _, o := range q.OrderBy {
+				if len(o) == 0 {
+					continue
+				}
+
+				asc := true
+				name := o
+
+				if strings.HasPrefix(o, "-") {
+					asc = false
+					name = name[1:]
+				}
+				qry.Orders[name] = asc
+			}
 		}
 
 		metadata.GetQueryParams(ctx).SetStorageType(qry.StorageType)

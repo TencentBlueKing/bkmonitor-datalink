@@ -1,6 +1,6 @@
 module github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat
 
-go 1.19
+go 1.21
 
 require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v0.0.0-00010101000000-000000000000
@@ -15,10 +15,11 @@ require (
 	github.com/euank/go-kmsg-parser v2.0.0+incompatible
 	github.com/facebookgo/inject v0.0.0-20180706035515-f23751cae28b
 	github.com/fsnotify/fsnotify v1.7.0
+	github.com/goccy/go-json v0.10.4
 	github.com/golang/mock v1.6.0
 	github.com/gosnmp/gosnmp v1.32.0
 	github.com/hpcloud/tail v1.0.0
-	github.com/influxdata/telegraf v0.10.2-0.20190611181903-c9d8f7b008f6
+	github.com/json-iterator/go v1.1.12
 	github.com/magiconair/properties v1.8.1
 	github.com/mattn/go-shellwords v1.0.12
 	github.com/mdlayher/netlink v1.4.1
@@ -32,15 +33,16 @@ require (
 	github.com/roylee0704/gron v0.0.0-20160621042432-e78485adab46
 	github.com/shirou/gopsutil/v3 v3.23.4
 	github.com/stretchr/testify v1.8.4
-	github.com/tatsushid/go-fastping v0.0.0-20160109021039-d7bb493dee3e
 	github.com/tidwall/gjson v1.9.3
 	github.com/tidwall/sjson v1.1.7
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/yumaojun03/dmidecode v0.1.4
 	github.com/yusufpapurcu/wmi v1.2.3
+	golang.org/x/net v0.24.0
 	golang.org/x/sync v0.7.0
 	golang.org/x/sys v0.19.0
 	golang.org/x/text v0.14.0
+	gopkg.in/yaml.v2 v2.4.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -93,6 +95,8 @@ require (
 	github.com/matttproud/golang_protobuf_extensions v1.0.2-0.20181231171920-c182affec369 // indirect
 	github.com/mdlayher/socket v0.0.0-20210307095302-262dc9984e00 // indirect
 	github.com/mitchellh/hashstructure v1.0.0 // indirect
+	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
+	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/natefinch/npipe v0.0.0-20160621034901-c1b8fa8bdcce // indirect
 	github.com/nightlyone/lockfile v1.0.0 // indirect
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
@@ -124,7 +128,6 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/crypto v0.22.0 // indirect
-	golang.org/x/net v0.24.0 // indirect
 	google.golang.org/genproto v0.0.0-20230306155012-7f2fa6fef1f4 // indirect
 	google.golang.org/grpc v1.55.0 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
@@ -135,7 +138,6 @@ require (
 	gopkg.in/jcmturner/rpc.v1 v1.1.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
-	gopkg.in/yaml.v2 v2.4.0 // indirect
 	howett.net/plist v0.0.0-20181124034731-591f970eefbb // indirect
 )
 

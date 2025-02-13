@@ -158,6 +158,8 @@ func New(cfg *common.Config, name, version string) (*MonitorBeater, error) {
 	configs.SetContainerMode(beat.IsContainerMode())
 	state.heartBeatTicker = time.NewTicker(bt.config.HeartBeat.Period)
 
+	registerGseMarshalFunc(bt.config.JsonLib)
+
 	exe, err := os.Executable()
 	if err == nil {
 		bt.executable = exe

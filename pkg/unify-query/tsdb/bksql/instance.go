@@ -31,6 +31,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
+const (
+	KeyHighLight = "__highlight"
+
+	KeyIndex     = "__index"
+	KeyTableID   = "__result_table"
+	KeyDataLabel = "__data_label"
+)
+
 type Instance struct {
 	ctx context.Context
 
@@ -275,15 +283,81 @@ func (i *Instance) table(query *metadata.Query) string {
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
-	return 0, nil
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, err error) {
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("doris query error: %s", r)
+		}
+	}()
+
+	ctx, span := trace.NewSpan(ctx, "bk-sql-query-raw")
+	defer span.End(&err)
+
+	span.Set("query-raw-start", start)
+	span.Set("query-raw-end", end)
+
+	if start.UnixMilli() > end.UnixMilli() || start.UnixMilli() == 0 {
+		return
+	}
+
+	rangeLeftTime := end.Sub(start)
+	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
+
+	if i.maxLimit > 0 {
+		maxLimit := i.maxLimit + i.tolerance
+		// 如果不传 size，则取最大的限制值
+		if query.Size == 0 || query.Size > i.maxLimit {
+			query.Size = maxLimit
+		}
+	}
+
+	queryFactory := NewQueryFactory(ctx, query).WithRangeTime(start, end)
+
+	sql, err := queryFactory.SQL()
+	if err != nil {
+		return
+	}
+
+	data, err := i.sqlQuery(ctx, sql, span)
+	if err != nil {
+		return
+	}
+
+	if data == nil {
+		return
+	}
+
+	span.Set("data-total-records", data.TotalRecords)
+	log.Infof(ctx, "total records: %d", data.TotalRecords)
+
+	if i.maxLimit > 0 && data.TotalRecords > i.maxLimit {
+		return
+	}
+
+	for _, list := range data.List {
+
+		list[KeyIndex] = query.DB
+		list[KeyTableID] = query.TableID
+		list[KeyDataLabel] = query.DataLabel
+		list[FieldTime] = list[timeStamp]
+
+		if query.HighLight.Enable {
+			list[KeyHighLight] = ""
+		}
+
+		dataCh <- list
+	}
+
+	total = int64(data.TotalRecords)
+	return
 }
 
 func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	var (
 		err error
 	)
-	ctx, span := trace.NewSpan(ctx, "bk-sql-raw")
+	ctx, span := trace.NewSpan(ctx, "bk-sql-query-series-set")
 	defer span.End(&err)
 
 	span.Set("query-series-set-start", start)

@@ -626,7 +626,7 @@ func (i *Instance) QuerySeriesSet(
 		err error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-reference")
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-series-set")
 	defer span.End(&err)
 
 	if len(query.Aggregates) == 0 {

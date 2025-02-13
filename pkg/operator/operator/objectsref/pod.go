@@ -111,7 +111,7 @@ func (m *PodMap) FetchEvents(rv int) ([]PodEvent, int) {
 				Action:    ActionCreateOrUpdate,
 				IP:        obj.PodIP,
 				Name:      obj.ID.Name,
-				Namespace: obj.NodeName,
+				Namespace: obj.ID.Namespace,
 			})
 		}
 		return events, int(m.lastRv)

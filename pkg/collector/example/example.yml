@@ -399,13 +399,7 @@ bk-collector:
         drop:
           keys:
             - "resource.bk.data.token"
-#        from_cache:
-#          key: "resource.service.name"
-#          cache:
-#            key: "service.name"
-#            url: "http://localhost:8990/service_info"
-#            interval: "1m"
-#            timeout: "1m"
+
         from_record:
           - source: "request.client.ip"
             destination: "resource.client.ip"

@@ -605,20 +605,7 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 				wg.Done()
 			}()
 
-			// 检查并补充 `.__default__` 后缀或记录日志
 			tableId := es.TableID
-			parts := strings.Split(tableId, ".")
-
-			if len(parts) == 1 {
-				// 如果长度为 1，补充 `.__default__`
-				logger.Infof("PushEsTableIdDetail: table_id [%s] is missing '.', adding '.__default__'", tableId)
-				tableId = fmt.Sprintf("%s.__default__", tableId)
-			} else if len(parts) != 2 {
-				// 如果长度不是 2，记录错误日志并返回
-				logger.Errorf("PushEsTableIdDetail: table_id [%s] is invalid, contains too many dots", tableId)
-				return
-			}
-			// 大部份情况下,len(parts)=2，保持原样，无需显式处理
 
 			sourceType := es.SourceType
 			indexSet := es.IndexSet
@@ -706,6 +693,20 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 	if err != nil {
 		return tableId, "", err
 	}
+
+	parts := strings.Split(tableId, ".")
+
+	if len(parts) == 1 {
+		// 如果长度为 1，补充 `.__default__`
+		logger.Infof("composeEsTableIdDetail: table_id [%s] is missing '.', adding '.__default__'", tableId)
+		tableId = fmt.Sprintf("%s.__default__", tableId)
+	} else if len(parts) != 2 {
+		// 如果长度不是 2，记录错误日志并返回
+		err = errors.Errorf("invalid table_id format: too many dots in %q", tableId)
+		logger.Errorf("composeEsTableIdDetail: table_id [%s] is invalid, contains too many dots", tableId)
+		return tableId, "", err
+	}
+	// 大部份情况下,len(parts)=2，保持原样，无需显式处理
 
 	logger.Infof("composeEsTableIdDetail:compose success, table_id [%s], detail [%s]", tableId, detailStr)
 	return tableId, detailStr, err

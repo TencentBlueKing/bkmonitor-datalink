@@ -895,6 +895,7 @@ func (q *Query) BuildMetadataQuery(
 
 	query.DataSource = q.DataSource
 	query.TableID = tsDB.TableID
+	query.DataLabel = tsDB.DataLabel
 	query.MetricName = metricName
 	query.ClusterName = tsDB.ClusterName
 	query.TagsKey = tsDB.TagsKey

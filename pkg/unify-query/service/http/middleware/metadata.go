@@ -59,6 +59,7 @@ func MetaData(p *Params) gin.HandlerFunc {
 
 				sub := time.Since(start)
 				metric.APIRequestSecond(ctx, sub, c.Request.URL.Path, spaceUid)
+				metric.APIRequestWithVMSecond(ctx, sub, c.Request.URL.Path, spaceUid)
 
 				// 记录慢查询
 				if p != nil {

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"path"
 
+	"github.com/VictoriaMetrics/metrics"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -128,6 +129,11 @@ func registerOtherHandlers(ctx context.Context, g *gin.RouterGroup) {
 				},
 			),
 		))
+
+		registerHandler.register(http.MethodGet, "/victoriametrics"+handlerPath, func(c *gin.Context) {
+			// 写入 vm 的数据
+			metrics.WritePrometheus(c.Writer, false)
+		})
 	}
 
 	// query/ts/struct_to_promql

@@ -688,6 +688,10 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		return "", "", err
 	}
 
+	var rt resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).TableIdEq(tableId).One(&rt); err != nil {
+		return tableId, "", err
+	}
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
 		"storage_type":            models.StorageTypeES,
@@ -697,8 +701,13 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		"source_type":             sourceType,
 		"options":                 options,
 		"storage_cluster_records": clusterRecords,
+		"data_label":              rt.DataLabel,
 	})
-	logger.Infof("compose es table id detail success, table_id [%s], detail [%s]", tableId, detailStr)
+	if err != nil {
+		return tableId, "", err
+	}
+
+	logger.Infof("composeEsTableIdDetail:compose success, table_id [%s], detail [%s]", tableId, detailStr)
 	return tableId, detailStr, err
 }
 

@@ -46,6 +46,8 @@ const (
 var (
 	secondsBuckets = []float64{0, 0.05, 0.1, 0.2, 0.5, 1, 3, 5, 10, 20, 30, 60}
 	bytesBuckets   = []float64{0, KB, 100 * KB, 500 * KB, MB, 5 * MB, 20 * MB, 50 * MB, 100 * MB}
+
+	minuteBuckets = []float64{5, 30, 60, 3 * 60, 6 * 60, 12 * 60, 24 * 60, 2 * 24 * 60, 7 * 24 * 60, 30 * 24 * 60, 6 * 30 * 24 * 60}
 )
 
 var (
@@ -96,6 +98,16 @@ var (
 		[]string{"tsdb_type", "url"},
 	)
 
+	tsDBRequestRangeMinuteHistogram = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "unify_query",
+			Name:      "tsdb_request_range_minute",
+			Help:      "tsdb request range minute",
+			Buckets:   minuteBuckets,
+		},
+		[]string{"tsdb_type"},
+	)
+
 	jwtRequestTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "unify_query",
@@ -139,6 +151,11 @@ func TsDBRequestSecond(ctx context.Context, duration time.Duration, tsdbType, ur
 func TsDBRequestBytes(ctx context.Context, bytes int, tsdbType string) {
 	metric, _ := tsDBRequestBytesHistogram.GetMetricWithLabelValues(tsdbType)
 	observe(ctx, metric, float64(bytes))
+}
+
+func TsDBRequestRangeMinute(ctx context.Context, duration time.Duration, tsdbType string) {
+	metric, _ := tsDBRequestRangeMinuteHistogram.GetMetricWithLabelValues(tsdbType)
+	observe(ctx, metric, duration.Minutes())
 }
 
 func ResultTableInfoSet(ctx context.Context, value float64, rtTableID, rtDataID, rtMeasurementType, vmTableID, bcsClusterID string) {

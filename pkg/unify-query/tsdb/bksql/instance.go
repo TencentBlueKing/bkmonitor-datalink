@@ -56,11 +56,6 @@ type Instance struct {
 	client *Client
 }
 
-func (i *Instance) QueryReference(ctx context.Context, query *metadata.Query, start int64, end int64) (*prompb.QueryResult, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
 var _ tsdb.Instance = (*Instance)(nil)
 
 type Options struct {
@@ -410,18 +405,15 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 }
 
 func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, nil
 }
 
 func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, nil
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, nil
 }
 
 func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
@@ -492,18 +484,15 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 }
 
 func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, nil
 }
 
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, nil
 }
 
 func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, nil
 }
 
 func (i *Instance) InstanceType() string {

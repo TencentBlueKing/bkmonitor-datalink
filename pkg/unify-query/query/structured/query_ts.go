@@ -892,19 +892,17 @@ func (q *Query) BuildMetadataQuery(
 		return nil, err
 	}
 
-	// 在 metadata 还没有补充 storageType 字段之前
-	// 使用 sourceType 来判断是否是 es 查询
-	//  等后面支持了之后可以删除该段逻辑
-	if tsDB.SourceType == BkData {
-		query.StorageType = consul.ElasticsearchStorageType
-	}
-
 	// 兼容原逻辑，storageType 通过 storageMap 获取
 	if query.StorageType == "" {
+		log.Warnf(ctx, "storageType is empty with %s", query.TableID)
 		stg, _ := tsdb.GetStorage(query.StorageID)
 		if stg != nil {
 			query.StorageType = stg.Type
 		}
+	}
+
+	if query.StorageType == "" {
+		return nil, fmt.Errorf("storageType is empty with %d", query.StorageID)
 	}
 
 	query.Measurement = measurement

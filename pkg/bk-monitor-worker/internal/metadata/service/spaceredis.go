@@ -1667,6 +1667,9 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 		// NOTE: 特殊逻辑，忽略跨空间类型的 bkci 的结果表
 		parts := strings.Split(tid, ".")
 
+		// 原始结果表ID，用于查询关联信息
+		rawTid := tid
+
 		// 针对非二段式TableId，补充.__default__
 		if len(parts) == 1 {
 			// 如果长度为 1，补充 `.__default__`
@@ -1691,15 +1694,15 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 			continue
 		}
 		// 如果查询不到类型，则忽略
-		measurementType, ok := measurementTypeMap[tid]
+		measurementType, ok := measurementTypeMap[rawTid]
 		if !ok {
-			logger.Errorf("table_id [%s] not find measurement type", tid)
+			logger.Errorf("table_id [%s] not find measurement type", rawTid)
 			continue
 		}
 		// 如果没有对应的结果表，则忽略
-		dataId, ok := tableIdDataIdMap[tid]
+		dataId, ok := tableIdDataIdMap[rawTid]
 		if !ok {
-			logger.Errorf("table_id [%s] not found data_id", tid)
+			logger.Errorf("table_id [%s] not found data_id", rawTid)
 			continue
 		}
 		detail := dataIdDetail[dataId]
@@ -1718,7 +1721,7 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 			if s.isNeedFilterForBkcc(measurementType, spaceType, spaceId, detail, isExistSpace) {
 				// 默认使用 bk_biz_id，若存在别名，则使用别名
 				bkBizIdKey := "bk_biz_id"
-				if alias, ok := bkBizIdAliasMap[tid]; ok && alias != "" {
+				if alias, ok := bkBizIdAliasMap[rawTid]; ok && alias != "" {
 					logger.Infof("table_id [%s] got bk_biz_id_alias [%s]", tid, alias)
 					bkBizIdKey = alias
 				}

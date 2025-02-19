@@ -12,12 +12,10 @@
 package collector
 
 import (
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
+	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 )
 
 var DefaultBasereportConfigWin = configs.BasereportConfig{
@@ -34,11 +32,12 @@ var DefaultBasereportConfigWin = configs.BasereportConfig{
 
 func TestGetCPUStatUsageWin(t *testing.T) {
 	report := &CpuReport{}
-	for i := 0; i <= 4; i++ {
+	for i := 0; i <= 20; i++ {
 		err := getCPUStatUsage(report)
 		t.Log(report.TotalStat.Idle)
 		t.Log(report.TotalStat.System)
 		t.Log(report.TotalStat.User)
+		t.Logf("CPU总使用率 %v 百分号", (1-(report.TotalStat.Idle/report.TotalStat.Total()))*100)
 		assert.NoError(t, err)
 		assert.NotNil(t, report.Stat)
 		assert.NotNil(t, report.Usage)

@@ -440,18 +440,22 @@ processor:
 
 func TestTracesFromCacheAction(t *testing.T) {
 	svr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := json.Marshal([]map[string]string{
-			{
-				"k8s.pod.ip":         "127.1.0.1",
-				"k8s.pod.name":       "myapp1",
-				"k8s.namespace.name": "my-ns1",
-				"k8s.bcs.cluster.id": "K8S-BCS-00000",
-			},
-			{
-				"k8s.pod.ip":         "127.1.0.2",
-				"k8s.pod.name":       "myapp2",
-				"k8s.namespace.name": "my-ns2",
-				"k8s.bcs.cluster.id": "K8S-BCS-90000",
+		b, _ := json.Marshal(map[string][]map[string]string{
+			"pods": {
+				{
+					"action":    "CreateOrUpdate",
+					"ip":        "127.1.0.1",
+					"name":      "myapp1",
+					"namespace": "my-ns1",
+					"cluster":   "K8S-BCS-00000",
+				},
+				{
+					"action":    "CreateOrUpdate",
+					"ip":        "127.1.0.2",
+					"name":      "myapp2",
+					"namespace": "my-ns2",
+					"cluster":   "K8S-BCS-90000",
+				},
 			},
 		})
 		w.Write(b)
@@ -464,9 +468,7 @@ processor:
       config:
         from_cache:
           key: "resource.net.host.ip|resource.client.ip"
-          dimensions: ["k8s.namespace.name","k8s.pod.name","k8s.pod.ip","k8s.bcs.cluster.id"]
           cache:
-            key: "k8s.pod.ip"
             url: %s
             interval: "1m"
             timeout: "1m"

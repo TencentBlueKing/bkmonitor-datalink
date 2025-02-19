@@ -1665,6 +1665,19 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 	}
 	for _, tid := range tableIds {
 		// NOTE: 特殊逻辑，忽略跨空间类型的 bkci 的结果表
+		parts := strings.Split(tid, ".")
+
+		// 针对非二段式TableId，补充.__default__
+		if len(parts) == 1 {
+			// 如果长度为 1，补充 `.__default__`
+			logger.Infof("composeData: table_id [%s] is missing '.', adding '.__default__'", tid)
+			tid = fmt.Sprintf("%s.__default__", tid)
+		} else if len(parts) != 2 {
+			// 如果长度不是 2，记录错误日志并跳过此 tableId
+			logger.Errorf("composeData: table_id [%s] is invalid, contains too many dots", tid)
+			continue
+		}
+
 		if strings.HasPrefix(tid, models.Bkci1001TableIdPrefix) {
 			continue
 		}

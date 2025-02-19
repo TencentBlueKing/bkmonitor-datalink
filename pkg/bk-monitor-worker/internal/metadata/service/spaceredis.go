@@ -1580,6 +1580,22 @@ type DataIdDetail struct {
 	IsPlatformDataId bool   `json:"is_platform_data_id"`
 }
 
+// reformat_table_id 用于校验并补充二段式的逻辑
+func reformatTableId(tid string) string {
+	parts := strings.Split(tid, ".")
+	if len(parts) == 1 {
+		// 如果长度为 1，补充 `.__default__`
+		logger.Infof("reformatTableId: table_id [%s] is missing '.', adding '.__default__'", tid)
+		return fmt.Sprintf("%s.__default__", tid)
+	} else if len(parts) != 2 {
+		// 如果长度不是 2，记录错误日志并返回原始值
+		logger.Errorf("reformatTableId: table_id [%s] is invalid, contains too many dots", tid)
+		return tid // 保持原样
+	}
+	// 如果已经是二段式，直接返回
+	return tid
+}
+
 func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []string, defaultFilters []map[string]interface{}, options *optionx.Options) (map[string]map[string]interface{}, error) {
 	logger.Infof("composeData space_type [%s], space_id [%s], table_id_list [%s]", spaceType, spaceId, tableIdList)
 	if options == nil {
@@ -1665,22 +1681,6 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 	}
 	for _, tid := range tableIds {
 		// NOTE: 特殊逻辑，忽略跨空间类型的 bkci 的结果表
-		parts := strings.Split(tid, ".")
-
-		// 原始结果表ID，用于查询关联信息
-		rawTid := tid
-
-		// 针对非二段式TableId，补充.__default__
-		if len(parts) == 1 {
-			// 如果长度为 1，补充 `.__default__`
-			logger.Infof("composeData: table_id [%s] is missing '.', adding '.__default__'", tid)
-			tid = fmt.Sprintf("%s.__default__", tid)
-		} else if len(parts) != 2 {
-			// 如果长度不是 2，记录错误日志并跳过此 tableId
-			logger.Errorf("composeData: table_id [%s] is invalid, contains too many dots", tid)
-			continue
-		}
-
 		if strings.HasPrefix(tid, models.Bkci1001TableIdPrefix) {
 			continue
 		}
@@ -1694,15 +1694,15 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 			continue
 		}
 		// 如果查询不到类型，则忽略
-		measurementType, ok := measurementTypeMap[rawTid]
+		measurementType, ok := measurementTypeMap[tid]
 		if !ok {
-			logger.Errorf("table_id [%s] not find measurement type", rawTid)
+			logger.Errorf("table_id [%s] not find measurement type", tid)
 			continue
 		}
 		// 如果没有对应的结果表，则忽略
-		dataId, ok := tableIdDataIdMap[rawTid]
+		dataId, ok := tableIdDataIdMap[tid]
 		if !ok {
-			logger.Errorf("table_id [%s] not found data_id", rawTid)
+			logger.Errorf("table_id [%s] not found data_id", tid)
 			continue
 		}
 		detail := dataIdDetail[dataId]
@@ -1721,7 +1721,7 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 			if s.isNeedFilterForBkcc(measurementType, spaceType, spaceId, detail, isExistSpace) {
 				// 默认使用 bk_biz_id，若存在别名，则使用别名
 				bkBizIdKey := "bk_biz_id"
-				if alias, ok := bkBizIdAliasMap[rawTid]; ok && alias != "" {
+				if alias, ok := bkBizIdAliasMap[tid]; ok && alias != "" {
 					logger.Infof("table_id [%s] got bk_biz_id_alias [%s]", tid, alias)
 					bkBizIdKey = alias
 				}
@@ -1730,6 +1730,18 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 			valueData[tid] = map[string]interface{}{"filters": filters}
 		}
 	}
+
+	// 二段式补充&校验
+	for tid, value := range valueData {
+		// 处理key
+		reformattedTid := reformatTableId(tid)
+		if reformattedTid != tid {
+			logger.Infof("composeData: table_id [%s] reformat [%s]", tid, reformattedTid)
+			valueData[reformattedTid] = value
+			delete(valueData, tid)
+		}
+	}
+
 	logger.Infof("space_type [%s], space_id [%s], table_id_list [%s], value_data [%+v]", spaceType, spaceId, tableIdList, valueData)
 	return valueData, nil
 }

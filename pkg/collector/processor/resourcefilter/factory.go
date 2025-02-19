@@ -21,7 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/resourcefilter/dimscache"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/resourcefilter/k8scache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -44,7 +44,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 	c.Clean()
 	configs.SetGlobal(*c)
 
-	cache := dimscache.New(&c.FromCache.Cache)
+	cache := k8scache.New(&c.FromCache.Cache)
 	cache.Sync()
 	caches.SetGlobal(cache)
 
@@ -57,7 +57,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 		cfg.Clean()
 		configs.Set(custom.Token, custom.Type, custom.ID, *cfg)
 
-		customCache := dimscache.New(&cfg.FromCache.Cache)
+		customCache := k8scache.New(&cfg.FromCache.Cache)
 		customCache.Sync()
 		caches.Set(custom.Token, custom.Type, custom.ID, customCache)
 	}
@@ -72,7 +72,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 type resourceFilter struct {
 	processor.CommonProcessor
 	configs *confengine.TierConfig // type: Config
-	caches  *confengine.TierConfig // type dimscache.Cache
+	caches  *confengine.TierConfig // type k8scache.Cache
 }
 
 func (p *resourceFilter) Name() string {
@@ -96,25 +96,25 @@ func (p *resourceFilter) Reload(config map[string]interface{}, customized []proc
 
 	equal := processor.DiffMainConfig(p.MainConfig(), config)
 	if equal {
-		f.caches.GetGlobal().(dimscache.Cache).Clean()
+		f.caches.GetGlobal().(k8scache.Cache).Clean()
 	} else {
-		p.caches.GetGlobal().(dimscache.Cache).Clean()
+		p.caches.GetGlobal().(k8scache.Cache).Clean()
 		p.caches.SetGlobal(f.caches.GetGlobal())
 	}
 
 	diffRet := processor.DiffCustomizedConfig(p.SubConfigs(), customized)
 	for _, obj := range diffRet.Keep {
-		f.caches.Get(obj.Token, obj.Type, obj.ID).(dimscache.Cache).Clean()
+		f.caches.Get(obj.Token, obj.Type, obj.ID).(k8scache.Cache).Clean()
 	}
 
 	for _, obj := range diffRet.Updated {
-		p.caches.Get(obj.Token, obj.Type, obj.ID).(dimscache.Cache).Clean()
+		p.caches.Get(obj.Token, obj.Type, obj.ID).(k8scache.Cache).Clean()
 		newCache := f.caches.Get(obj.Token, obj.Type, obj.ID)
 		p.caches.Set(obj.Token, obj.Type, obj.ID, newCache)
 	}
 
 	for _, obj := range diffRet.Deleted {
-		p.caches.Get(obj.Token, obj.Type, obj.ID).(dimscache.Cache).Clean()
+		p.caches.Get(obj.Token, obj.Type, obj.ID).(k8scache.Cache).Clean()
 		p.caches.Del(obj.Token, obj.Type, obj.ID)
 	}
 
@@ -124,7 +124,7 @@ func (p *resourceFilter) Reload(config map[string]interface{}, customized []proc
 
 func (p *resourceFilter) Clean() {
 	for _, obj := range p.caches.All() {
-		obj.(dimscache.Cache).Clean()
+		obj.(k8scache.Cache).Clean()
 	}
 }
 
@@ -311,7 +311,7 @@ func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 // fromCacheAction 从缓存中补充数据
 func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 	token := record.Token.Original
-	cache := p.caches.GetByToken(token).(dimscache.Cache)
+	cache := p.caches.GetByToken(token).(k8scache.Cache)
 
 	keys := config.FromCache.CombineKeys()
 	handleTraces := func(resourceSpans ptrace.ResourceSpans) {
@@ -325,10 +325,8 @@ func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 				continue
 			}
 
-			for _, dim := range config.FromCache.Dimensions {
-				if lb, ok := dims[dim]; ok {
-					resourceSpans.Resource().Attributes().InsertString(dim, lb)
-				}
+			for dk, dv := range dims {
+				resourceSpans.Resource().Attributes().InsertString(dk, dv)
 			}
 			return // 找到一次即可
 		}

@@ -314,10 +314,21 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		)
 		if errors.As(err, &e) {
 			if e.Details != nil {
-				for _, rc := range e.Details.RootCause {
-					msg.WriteString(fmt.Sprintf("%s: %s, ", rc.Index, rc.Reason))
+				if len(e.Details.RootCause) > 0 {
+					msg.WriteString("root cause: \n")
+					for _, rc := range e.Details.RootCause {
+						msg.WriteString(fmt.Sprintf("%s: %s \n", rc.Index, rc.Reason))
+					}
+				}
+
+				if e.Details.CausedBy != nil {
+					msg.WriteString("caused by: \n")
+					for k, v := range e.Details.CausedBy {
+						msg.WriteString(fmt.Sprintf("%s: %v \n", k, v))
+					}
 				}
 			}
+
 			return nil, errors.New(msg.String())
 		} else {
 			return nil, err

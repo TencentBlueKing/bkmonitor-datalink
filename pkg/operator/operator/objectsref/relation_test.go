@@ -26,7 +26,7 @@ func TestWritePodRelations(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	podObject := Object{
+	podObject := PodObject{
 		ID: ObjectID{
 			Name:      "test-pod-1",
 			Namespace: "test-ns-1",
@@ -41,9 +41,8 @@ func TestWritePodRelations(t *testing.T) {
 	objectsController := &ObjectsController{
 		ctx:    ctx,
 		cancel: cancel,
-		podObjs: &Objects{
-			kind: kindPod,
-			objs: map[string]Object{
+		podObjs: &PodMap{
+			objs: map[string]PodObject{
 				podObject.ID.String(): podObject,
 			},
 		},
@@ -63,7 +62,7 @@ func TestWriteDataSourceRelations(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pods := []Object{
+	pods := []PodObject{
 		{
 			ID: ObjectID{
 				Name:      "unify-query-01",
@@ -101,7 +100,7 @@ func TestWriteDataSourceRelations(t *testing.T) {
 			Containers: []ContainerKey{{Name: "unify-query"}},
 		},
 	}
-	podsMap := make(map[string]Object, len(pods))
+	podsMap := make(map[string]PodObject, len(pods))
 	for _, p := range pods {
 		podsMap[p.ID.String()] = p
 	}
@@ -262,8 +261,7 @@ func TestWriteDataSourceRelations(t *testing.T) {
 				nodeObjs: &NodeMap{
 					nodes: nodesMap,
 				},
-				podObjs: &Objects{
-					kind: kindPod,
+				podObjs: &PodMap{
 					objs: podsMap,
 				},
 			}

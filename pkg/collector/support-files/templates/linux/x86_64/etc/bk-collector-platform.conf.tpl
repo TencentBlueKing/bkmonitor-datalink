@@ -145,12 +145,7 @@ processor:
         {%- endfor %}
       from_cache:
         key: "{{ resource_fill_dimensions_config.from_cache.key }}"
-        dimensions:
-          {%- for dimension_key in resource_fill_dimensions_config.from_cache.dimensions %}
-          - "{{ dimension_key }}"
-          {%- endfor %}
         cache:
-          key: "{{ resource_fill_dimensions_config.from_cache.cache.key }}"
           url: "{{ resource_fill_dimensions_config.from_cache.cache.url }}"
           timeout: "{{ resource_fill_dimensions_config.from_cache.cache.timeout }}"
           interval: "{{ resource_fill_dimensions_config.from_cache.cache.interval }}"

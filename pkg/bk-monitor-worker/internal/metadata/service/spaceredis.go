@@ -1732,15 +1732,16 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 	}
 
 	// 二段式补充&校验
-	valueDataToRedis := make(map[string]map[string]interface{})
 	for tid, value := range valueData {
 		// 处理key
 		reformattedTid := reformatTableId(tid)
-		valueDataToRedis[reformattedTid] = value
+		if reformattedTid != tid {
+			logger.Infof("composeData: table_id [%s] reformat [%s]", tid, reformattedTid)
+			valueData[reformattedTid] = value
+		}
 	}
-
 	logger.Infof("space_type [%s], space_id [%s], table_id_list [%s], value_data [%+v]", spaceType, spaceId, tableIdList, valueData)
-	return valueDataToRedis, nil
+	return valueData, nil
 }
 
 // 针对业务类型空间判断是否需要添加过滤条件

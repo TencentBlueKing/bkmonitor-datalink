@@ -246,15 +246,19 @@ func (s *SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string,
 			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
 		}
 		for dl, rts := range dlRtsMap {
+			// 二段式补充
+			for idx, value := range rts {
+				rts[idx] = reformatTableId(value)
+			}
+
 			rtsStr, err := jsonx.MarshalString(rts)
 			if err != nil {
 				logger.Errorf("PushDataLabelTableIds: marshal data_label_to_result_table dl->[%s], rts->[%s], error->[%s]", dl, rts, err)
 				return err
 			}
 			// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Publish操作
-			reformattedTid := reformatTableId(rtsStr)
-			logger.Infof("PushDataLabelTableIds: start push redis data_label_to_result_table, key->[%s], data_label->[%s], result_table->[%s], channel_name->[%s],channel_key->[%s]", key, dl, reformattedTid, cfg.DataLabelToResultTableChannel, dl)
-			isSuccess, err := client.HSetWithCompareAndPublish(key, dl, reformattedTid, cfg.DataLabelToResultTableChannel, dl)
+			logger.Infof("PushDataLabelTableIds: start push redis data_label_to_result_table, key->[%s], data_label->[%s], result_table->[%s], channel_name->[%s],channel_key->[%s]", key, dl, rtsStr, cfg.DataLabelToResultTableChannel, dl)
+			isSuccess, err := client.HSetWithCompareAndPublish(key, dl, rtsStr, cfg.DataLabelToResultTableChannel, dl)
 			if err != nil {
 				logger.Errorf("PushDataLabelTableIds: push redis data_label_to_result_table error, dl->[%s], rts->[%s], error->[%s]", dl, rts, err)
 				return err

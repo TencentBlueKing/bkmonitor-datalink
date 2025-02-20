@@ -191,6 +191,19 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 		f.write("AND")
 		f.write("(" + f.query.BkSqlCondition + ")")
 	}
+
+	// 拼接 querystring 数据
+	if f.query.QueryString != "" {
+		qsSql, qsErr := QueryStringToSQL(f.query.QueryString)
+		if qsErr != nil {
+			err = qsErr
+			return
+		}
+
+		f.write("AND")
+		f.write(qsSql)
+	}
+
 	if len(f.groups) > 0 {
 		f.write("GROUP BY")
 		f.write(strings.Join(f.groups, ", "))

@@ -279,7 +279,6 @@ func (i *Instance) table(query *metadata.Query) string {
 
 // QueryRawData 直接查询原始返回
 func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, err error) {
-
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("doris query error: %s", r)
@@ -331,7 +330,6 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 
 	for _, list := range data.List {
-
 		list[KeyIndex] = query.DB
 		list[KeyTableID] = query.TableID
 		list[KeyDataLabel] = query.DataLabel

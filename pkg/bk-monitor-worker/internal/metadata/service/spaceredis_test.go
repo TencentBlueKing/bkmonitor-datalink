@@ -1305,7 +1305,6 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 
 	expectedForCreator := map[string]map[string]interface{}{
 		tableID1: {"filters": []map[string]interface{}{}},
-		tableID2: {"filters": []map[string]interface{}{}},
 		"1001_bkmonitor_time_series_50011.__default__": {"filters": []map[string]interface{}{}},
 	}
 	assert.Equal(t, expectedForCreator, valuesForCreator, "Unexpected result for space 1001")
@@ -1316,7 +1315,6 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 
 	expectedForOthers := map[string]map[string]interface{}{
 		tableID1: {"filters": []map[string]interface{}{{"appid": "1003"}}},
-		tableID2: {"filters": []map[string]interface{}{{"bk_biz_id": "1003"}}},
 		"1001_bkmonitor_time_series_50011.__default__": {"filters": []map[string]interface{}{{"bk_biz_id": "1003"}}},
 	}
 	assert.Equal(t, expectedForOthers, valuesForOthers, "Unexpected result for space 1003")

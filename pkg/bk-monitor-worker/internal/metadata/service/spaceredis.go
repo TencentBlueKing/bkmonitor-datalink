@@ -252,8 +252,9 @@ func (s *SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string,
 				return err
 			}
 			// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Publish操作
-			logger.Infof("PushDataLabelTableIds: start push redis data_label_to_result_table, key->[%s], data_label->[%s], result_table->[%s], channel_name->[%s],channel_key->[%s]", key, dl, rtsStr, cfg.DataLabelToResultTableChannel, dl)
-			isSuccess, err := client.HSetWithCompareAndPublish(key, dl, rtsStr, cfg.DataLabelToResultTableChannel, dl)
+			reformattedTid := reformatTableId(rtsStr)
+			logger.Infof("PushDataLabelTableIds: start push redis data_label_to_result_table, key->[%s], data_label->[%s], result_table->[%s], channel_name->[%s],channel_key->[%s]", key, dl, reformattedTid, cfg.DataLabelToResultTableChannel, dl)
+			isSuccess, err := client.HSetWithCompareAndPublish(key, dl, reformattedTid, cfg.DataLabelToResultTableChannel, dl)
 			if err != nil {
 				logger.Errorf("PushDataLabelTableIds: push redis data_label_to_result_table error, dl->[%s], rts->[%s], error->[%s]", dl, rts, err)
 				return err
@@ -1408,7 +1409,13 @@ func (s *SpacePusher) composeRecordRuleTableIds(spaceType, spaceId string) (map[
 	for _, recordRuleObj := range recordRuleList {
 		dataValues[recordRuleObj.TableId] = map[string]interface{}{"filters": []interface{}{}}
 	}
-	return dataValues, nil
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]interface{})
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+	return dataValuesToRedis, nil
 }
 
 func (s *SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
@@ -1426,7 +1433,15 @@ func (s *SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (map[string]m
 	for _, rt := range rtList {
 		dataValues[rt.TableId] = map[string]interface{}{"filters": []interface{}{}}
 	}
-	return dataValues, nil
+
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]interface{})
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+
+	return dataValuesToRedis, nil
 }
 
 // ComposeEsBkciTableIds 组装关联的BKCI类型的ES结果表
@@ -1467,8 +1482,14 @@ func (s *SpacePusher) ComposeEsBkciTableIds(spaceType, spaceId string) (map[stri
 	for _, rt := range rtList {
 		dataValues[rt.TableId] = map[string]interface{}{"filters": []interface{}{}}
 	}
-	logger.Infof("composeEsBkciTableIds success, space_type [%s], space_id [%s], data_values->[%v]", spaceType, spaceId, dataValues)
-	return dataValues, nil
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]interface{})
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+	logger.Infof("composeEsBkciTableIds success, space_type [%s], space_id [%s], data_values->[%v]", spaceType, spaceId, dataValuesToRedis)
+	return dataValuesToRedis, nil
 }
 
 // GetRelatedSpaces 获取获取{SpaceTypeID}__{spaceID} 关联的{targetSpaceTypeId}类型的空间ID
@@ -1732,16 +1753,15 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 	}
 
 	// 二段式补充&校验
+	valueDataToRedis := make(map[string]map[string]interface{})
 	for tid, value := range valueData {
 		// 处理key
 		reformattedTid := reformatTableId(tid)
-		if reformattedTid != tid {
-			logger.Infof("composeData: table_id [%s] reformat [%s]", tid, reformattedTid)
-			valueData[reformattedTid] = value
-		}
+		valueDataToRedis[reformattedTid] = value
 	}
-	logger.Infof("space_type [%s], space_id [%s], table_id_list [%s], value_data [%+v]", spaceType, spaceId, tableIdList, valueData)
-	return valueData, nil
+
+	logger.Infof("space_type [%s], space_id [%s], table_id_list [%s], value_data [%+v]", spaceType, spaceId, tableIdList, valueDataToRedis)
+	return valueDataToRedis, nil
 }
 
 // 针对业务类型空间判断是否需要添加过滤条件
@@ -1827,7 +1847,13 @@ func (s *SpacePusher) composeBcsSpaceBizTableIds(spaceType, spaceId string) (map
 		dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"bk_biz_id": bizIdStr}}}
 	}
 
-	return dataValues, nil
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]interface{})
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+	return dataValuesToRedis, nil
 }
 
 func (s *SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string, tableIdList []string) (map[string]map[string]interface{}, error) {
@@ -1913,7 +1939,13 @@ func (s *SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId strin
 		}
 		dataValues[tid] = map[string]interface{}{"filters": filters}
 	}
-	return dataValues, nil
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]interface{})
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+	return dataValuesToRedis, nil
 
 }
 
@@ -2001,7 +2033,13 @@ func (s *SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) 
 		}
 		dataValues[tid] = map[string]interface{}{"filters": filters}
 	}
-	return dataValues, nil
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]interface{})
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+	return dataValuesToRedis, nil
 }
 
 // 获取集群及数据源
@@ -2111,7 +2149,14 @@ func (s *SpacePusher) composeBkciLevelTableIds(spaceType, spaceId string) (map[s
 	for _, tid := range tableIds {
 		dataValues[tid] = map[string]interface{}{"filters": []map[string]interface{}{{"projectId": spaceId}}}
 	}
-	return dataValues, nil
+
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]interface{})
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+	return dataValuesToRedis, nil
 }
 
 func (s *SpacePusher) composeBkciOtherTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
@@ -2145,7 +2190,15 @@ func (s *SpacePusher) composeBkciOtherTableIds(spaceType, spaceId string) (map[s
 		}
 		dataValues[tid] = map[string]interface{}{"filters": []map[string]interface{}{}}
 	}
-	return dataValues, nil
+
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]interface{})
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+
+	return dataValuesToRedis, nil
 
 }
 
@@ -2171,7 +2224,14 @@ func (s *SpacePusher) composeBkciCrossTableIds(spaceType, spaceId string) (map[s
 		dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"devops_id": spaceId}}}
 	}
 
-	return dataValues, nil
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]interface{})
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+
+	return dataValuesToRedis, nil
 }
 
 // 获取缓存的集群对应的数据源 ID
@@ -2233,7 +2293,14 @@ func (s *SpacePusher) composeBksaasOtherTableIds(spaceType, spaceId string, tabl
 		// 针对非集群的数据，不限制过滤条件
 		dataValues[tid] = map[string]interface{}{"filters": []map[string]interface{}{}}
 	}
-	return dataValues, nil
+
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]interface{})
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+	return dataValuesToRedis, nil
 }
 
 // 组装指定全空间的可以访问的结果表数据
@@ -2251,8 +2318,13 @@ func (s *SpacePusher) composeAllTypeTableIds(spaceType, spaceId string) (map[str
 	for _, tid := range models.AllSpaceTableIds {
 		dataValues[tid] = map[string]interface{}{"filters": []map[string]interface{}{{"bk_biz_id": strconv.Itoa(-spaceObj.Id)}}}
 	}
-
-	return dataValues, nil
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]interface{})
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+	return dataValuesToRedis, nil
 }
 
 // SpaceRedisClearer 清理空间路由缓存

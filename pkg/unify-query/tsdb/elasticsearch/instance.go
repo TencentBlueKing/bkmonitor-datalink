@@ -321,10 +321,10 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 					}
 				}
 
-				if len(e.Details.CausedBy) > 0 {
+				if e.Details.CausedBy != nil {
 					msg.WriteString("caused by: \n")
 					for k, v := range e.Details.CausedBy {
-						msg.WriteString(fmt.Sprintf("%s: %s \n", k, v))
+						msg.WriteString(fmt.Sprintf("%s: %v \n", k, v))
 					}
 				}
 			}

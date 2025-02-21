@@ -194,7 +194,9 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 
 	// 拼接 querystring 数据
 	if f.query.QueryString != "" {
-		qsSql, qsErr := QueryStringToSQL(f.query.QueryString)
+		// 字段类型
+		fieldsMap := make(map[string]string)
+		qsSql, qsErr := NewDorisSQLExpr(f.query.QueryString).WithFieldsMap(fieldsMap).Parser()
 		if qsErr != nil {
 			err = qsErr
 			return

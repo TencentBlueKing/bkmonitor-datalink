@@ -16,71 +16,121 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 )
 
+const (
+	KeyWord = "keyword"
+	Text    = "text"
+	Integer = "integer"
+	Long    = "long"
+	Date    = "date"
+)
+
 var (
 	ErrorMatchAll = "doris 不支持全字段检索"
 )
 
-func QueryStringToSQL(q string) (string, error) {
-	e, err := querystring.Parse(q)
+type DorisSQLExpr struct {
+	qs        string
+	fieldsMap map[string]string
+}
+
+func NewDorisSQLExpr(qs string) *DorisSQLExpr {
+	return &DorisSQLExpr{
+		qs: qs,
+	}
+}
+
+func (s *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]string) *DorisSQLExpr {
+	s.fieldsMap = fieldsMap
+	return s
+}
+
+func (s *DorisSQLExpr) checkMatchALL(k string) bool {
+	if s.fieldsMap != nil {
+		if t, ok := s.fieldsMap[k]; ok {
+			if t == Text {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *DorisSQLExpr) Parser() (string, error) {
+	expr, err := querystring.Parse(s.qs)
 	if err != nil {
 		return "", err
 	}
-
-	p := sqlParser{
-		e: e,
+	if expr == nil {
+		return "", nil
 	}
 
-	return parser(p)
+	return s.walk(expr)
 }
 
-type sqlParser struct {
-	e   querystring.Expr
-	not bool
+func (s *DorisSQLExpr) fieldFormat(field string) string {
+	fs := strings.Split(field, ".")
+	if len(fs) > 1 {
+		return fmt.Sprintf(`CAST(%s["%s"] AS STRING)`, fs[0], strings.Join(fs[1:], `"]["`))
+	}
+	return fmt.Sprintf("`%s`", field)
 }
 
-func parser(p sqlParser) (string, error) {
+func (s *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 	var (
 		err   error
-		left  querystring.Expr
-		right querystring.Expr
+		left  string
+		right string
 	)
 
-	switch c := p.e.(type) {
+	if s == nil {
+		return "", nil
+	}
+
+	switch c := e.(type) {
 	case *querystring.NotExpr:
-		p.not = !p.not
-		p.e = c.Expr
-		return parser(p)
+		left, err = s.walk(c.Expr)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("NOT ( %s )", left), nil
 	case *querystring.OrExpr:
-		left, err = parser(sqlParser{not: p.not, e: c.Left})
+		left, err = s.walk(c.Left)
 		if err != nil {
 			return "", err
 		}
-		right, err = parser(sqlParser{not: p.not, e: c.Right})
+		right, err = s.walk(c.Right)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("( %s OR %s)", left, right), nil
+		return fmt.Sprintf("( %s OR %s )", left, right), nil
 	case *querystring.AndExpr:
-		left, err = parser(sqlParser{not: p.not, e: c.Left})
+		left, err = s.walk(c.Left)
 		if err != nil {
 			return "", err
 		}
-		right, err = parser(sqlParser{not: p.not, e: c.Right})
+		right, err = s.walk(c.Right)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("( %s AND %s)", left, right), nil
+		return fmt.Sprintf("( %s AND %s )", left, right), nil
+	case *querystring.WildcardExpr:
+		if c.Field == "" {
+			err = fmt.Errorf(ErrorMatchAll)
+			return "", err
+		}
+
+		return fmt.Sprintf("%s LIKE '%%%s%%'", s.fieldFormat(c.Field), c.Value), nil
 	case *querystring.MatchExpr:
 		if c.Field == "" {
 			err = fmt.Errorf(ErrorMatchAll + ": " + c.Value)
 			return "", err
 		}
 
-		if p.not {
-			return fmt.Sprintf("%s NOT LIKE '%%%s%%'", c.Field, c.Value), nil
-		} else {
-			return fmt.Sprintf("%s LIKE '%%%s%%'", c.Field, c.Value), nil
+		if s.checkMatchALL(c.Field) {
+			return fmt.Sprintf("%s LIKE '%%%s%%'", s.fieldFormat(c.Field), c.Value), nil
 		}
+
+		return fmt.Sprintf("%s = '%s'", s.fieldFormat(c.Field), c.Value), nil
 	case *querystring.NumberRangeExpr:
 		if c.Field == "" {
 			err = fmt.Errorf(ErrorMatchAll)
@@ -93,47 +143,27 @@ func parser(p sqlParser) (string, error) {
 		)
 		if *c.Start != "*" {
 			var op string
-			if !p.not {
-				if c.IncludeStart {
-					op = ">="
-				} else {
-					op = ">"
-				}
+			if c.IncludeStart {
+				op = ">="
 			} else {
-				if c.IncludeStart {
-					op = "<"
-				} else {
-					op = "<="
-				}
+				op = ">"
 			}
-			start = fmt.Sprintf("%s %s %s", c.Field, op, *c.Start)
+			start = fmt.Sprintf("%s %s %s", s.fieldFormat(c.Field), op, *c.Start)
 		}
 
 		if *c.End != "*" {
 			var op string
-			if !p.not {
-				if c.IncludeEnd {
-					op = "<="
-				} else {
-					op = "<"
-				}
+			if c.IncludeEnd {
+				op = "<="
 			} else {
-				if c.IncludeEnd {
-					op = ">"
-				} else {
-					op = ">="
-				}
+				op = "<"
 			}
-			end = fmt.Sprintf("%s %s %s", c.Field, op, *c.End)
+			end = fmt.Sprintf("%s %s %s", s.fieldFormat(c.Field), op, *c.End)
 		}
 
-		if p.not {
-			return fmt.Sprintf("NOT ( %s )", strings.Join([]string{start, end}, " AND ")), nil
-		} else {
-			return fmt.Sprintf("( %s )", strings.Join([]string{start, end}, " AND ")), nil
-		}
+		return fmt.Sprintf("( %s )", strings.Join([]string{start, end}, " AND ")), nil
 	default:
-		err = fmt.Errorf("expr type is not match %T", p.e)
+		err = fmt.Errorf("expr type is not match %T", e)
 	}
 
 	return "", err

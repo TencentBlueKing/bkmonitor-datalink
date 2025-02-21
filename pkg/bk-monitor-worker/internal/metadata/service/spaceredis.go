@@ -1226,9 +1226,6 @@ func (s *SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *
 		client := redis.GetStorageRedisInstance()
 		redisKey := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		valuesStr, err := jsonx.MarshalString(values)
-		if spaceId == "2" {
-			logger.Infof("pushBkccSpaceTableIds:push bkcc space [%s] valuesStr [%v] ", spaceId, valuesStr)
-		}
 		if err != nil {
 			return false, errors.Wrapf(err, "pushBkccSpaceTableIds:push bkcc space [%s] marshal valued [%v] failed", redisKey, values)
 		}
@@ -1420,9 +1417,6 @@ func (s *SpacePusher) composeRecordRuleTableIds(spaceType, spaceId string) (map[
 	dataValuesToRedis := make(map[string]map[string]interface{})
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
-		if tid == "gse_system_event" {
-			logger.Infof("composeRecordRuleTableIds: table_id [%s] is gse_system_event,space_type [%s],space_id [%s],after reformatted [%s]", tid, spaceType, spaceId, reformattedTid)
-		}
 		dataValuesToRedis[reformattedTid] = values
 	}
 	return dataValuesToRedis, nil
@@ -1448,9 +1442,6 @@ func (s *SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (map[string]m
 	dataValuesToRedis := make(map[string]map[string]interface{})
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
-		if tid == "gse_system_event" {
-			logger.Infof("ComposeEsTableIds: table_id [%s] is gse_system_event,space_type [%s],space_id [%s],after reformatted [%s]", tid, spaceType, spaceId, reformattedTid)
-		}
 		dataValuesToRedis[reformattedTid] = values
 	}
 
@@ -1499,9 +1490,6 @@ func (s *SpacePusher) ComposeEsBkciTableIds(spaceType, spaceId string) (map[stri
 	dataValuesToRedis := make(map[string]map[string]interface{})
 	for tid, values := range dataValues {
 		reformattedTid := reformatTableId(tid)
-		if tid == "gse_system_event" {
-			logger.Infof("ComposeEsBkciTableIds: table_id [%s] is gse_system_event,space_type [%s],space_id [%s],after reformatted [%s]", tid, spaceType, spaceId, reformattedTid)
-		}
 		dataValuesToRedis[reformattedTid] = values
 	}
 	logger.Infof("composeEsBkciTableIds success, space_type [%s], space_id [%s], data_values->[%v]", spaceType, spaceId, dataValuesToRedis)
@@ -1773,9 +1761,6 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 	for tid, value := range valueData {
 		// 处理key
 		reformattedTid := reformatTableId(tid)
-		if tid == "gse_system_event" {
-			logger.Infof("composeData: table_id [%s] is gse_system_event,space_type [%s],space_id [%s],after reformatted [%s]", tid, spaceType, spaceId, reformattedTid)
-		}
 		valueDataToRedis[reformattedTid] = value
 	}
 

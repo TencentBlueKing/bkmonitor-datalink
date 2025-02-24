@@ -59,7 +59,7 @@ bkmonitor-operator 对 prometheus discovery 机制做了链接共享优化，在
 
 ### Monitor Secrets
 
-bkmonitor-operator 的采集任务通过 secrets 资源进行分发，每个 secrets 会包含多个采集任务，写入时使用 gzip 压缩，减少数据量。三种不同的 worker 分别对应着不同的 secrets 前缀：
+bkmonitor-operator 的采集任务通过 secrets 资源进行分发，每个 secrets 会包含多个采集任务，写入时使用 gzip 压缩以减少数据量。三种不同的 worker 分别对应着不同的 secrets 前缀：
 
 * event-worker-*
 * daemonset-worker-*

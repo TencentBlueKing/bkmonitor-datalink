@@ -16,3 +16,4 @@ go.work.sum
 .vscode
 /.gtm.yaml
 .python-version
+./bkcodeai.json

@@ -55,7 +55,7 @@ bkmonitor-operator 沿用了 prometheus-operator 的 monitor CRD，包括 podMon
 
 bkmonitor-operator 对 prometheus discovery 机制做了链接共享优化，在 prometheus 的设计里，每个 discovery 有着自己独立的 apiserver 长链接，消费来自 k8s 的事件。但实际上，这些链接是可以共享的，对相同 namespace 资源监听可以缓存，并在内存中使用一套订阅分发机制。
 
-如果集群中有 500 个 serviceMonitor 分布在 30 个 namespace 下，那 prometheus-operator 需要 500 个 tcp 长链，而 bkmonitor-operator 只需要 30 个。bkmonitor-operator 在保证数据准确性的前提下大大优化了监听性能。
+如果集群中有 500 个 serviceMonitor 分布在 30 个 namespace 下，那 prometheus-operator 需要 500 个 TCP 长链，而 bkmonitor-operator 只需要 30 个。bkmonitor-operator 在保证数据准确性的前提下大大优化了监听性能。
 
 ### Monitor Secrets
 

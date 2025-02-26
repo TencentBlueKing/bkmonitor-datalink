@@ -13,7 +13,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"time"
@@ -67,14 +66,14 @@ func main() {
 		exporter, err = newStdoutExporter()
 	}
 	if err != nil {
-		log.Fatalln("failed to initialize log exporter:", err)
+		fmt.Fprintf(os.Stderr, "failed to initialize log exporter: %v\n", err)
+		os.Exit(1)
 	}
 
 	cont := sdklog.NewLoggerProvider(
 		sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter)),
 		sdklog.WithResource(resource.NewSchemaless(attribute.String("process.name", "logger-example"))),
 	)
-
 	global.SetLoggerProvider(cont)
 
 	ctx, cancel := newOSSignalContext()

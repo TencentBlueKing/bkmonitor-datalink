@@ -89,7 +89,7 @@ func main() {
 			select {
 			case <-ticker.C:
 				count++
-				logger.Info("log from opentelemetry sdk", attribute.Int("count", count))
+				logger.Info("log from opentelemetry sdk", "count", count)
 
 			case <-ctx.Done():
 				return

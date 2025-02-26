@@ -188,7 +188,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					{
 						DimensionName: "env",
 						Value:         []string{"prod", "test"},
-						Operator:      metadata.ConditionContains,
+						Operator:      metadata.ConditionEqual,
 					},
 				},
 			},

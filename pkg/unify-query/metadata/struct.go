@@ -58,7 +58,8 @@ type TimeField struct {
 
 // Aggregate 聚合方法
 type Aggregate struct {
-	Name string
+	Name  string
+	Field string
 
 	Dimensions []string
 	Without    bool

@@ -25,6 +25,8 @@ import (
 )
 
 const (
+	selectAll = "*"
+
 	dtEventTimeStamp = "dtEventTimeStamp"
 	dtEventTime      = "dtEventTime"
 	localTime        = "localTime"
@@ -62,22 +64,18 @@ type QueryFactory struct {
 	end   time.Time
 	step  time.Duration
 
-	selects []string
-	groups  []string
-	orders  metadata.Orders
-
-	sql strings.Builder
+	orders metadata.Orders
 
 	timeField string
+
+	expr sqlExpr.SQLExpr
 }
 
 func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	f := &QueryFactory{
-		ctx:     ctx,
-		query:   query,
-		selects: make([]string, 0),
-		groups:  make([]string, 0),
-		orders:  make(metadata.Orders),
+		ctx:    ctx,
+		query:  query,
+		orders: make(metadata.Orders),
 	}
 	if query.Orders != nil {
 		for k, v := range query.Orders {
@@ -90,47 +88,16 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	} else {
 		f.timeField = dtEventTimeStamp
 	}
-	return f
-}
 
-func (f *QueryFactory) write(s string) {
-	f.sql.WriteString(s + " ")
+	fieldsMap := make(map[string]string)
+	f.expr = sqlExpr.GetSQLExpr(f.query.Measurement).WithFieldsMap(fieldsMap).WithInternalFields(f.timeField, query.Field)
+	return f
 }
 
 func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 	f.start = start
 	f.end = end
 	return f
-}
-
-func (f *QueryFactory) ParserQuery() (err error) {
-	f.lock.Lock()
-	defer f.lock.Unlock()
-
-	if len(f.query.Aggregates) > 0 {
-		for _, agg := range f.query.Aggregates {
-			for _, dim := range agg.Dimensions {
-				dim = fmt.Sprintf("`%s`", dim)
-				f.groups = append(f.groups, dim)
-				f.selects = append(f.selects, dim)
-			}
-			f.selects = append(f.selects, fmt.Sprintf("%s(`%s`) AS `%s`", strings.ToUpper(agg.Name), f.query.Field, value))
-			if agg.Window > 0 {
-				timeField := fmt.Sprintf("(`%s` - (`%s` %% %d))", f.timeField, f.timeField, agg.Window.Milliseconds())
-				f.groups = append(f.groups, timeField)
-				f.selects = append(f.selects, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
-				f.orders[FieldTime] = true
-			}
-		}
-	}
-
-	if len(f.selects) == 0 {
-		f.selects = append(f.selects, "*")
-		f.selects = append(f.selects, fmt.Sprintf("`%s` AS `%s`", f.query.Field, value))
-		f.selects = append(f.selects, fmt.Sprintf("`%s` AS `%s`", f.timeField, timeStamp))
-	}
-
-	return
 }
 
 func (f *QueryFactory) getTheDateIndexFilters() (theDateFilter string, err error) {
@@ -170,12 +137,9 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 		s = append(s, theDateFilter)
 	}
 
-	fieldsMap := make(map[string]string)
-	expr := sqlExpr.GetSQLExpr(f.query.Measurement).WithFieldsMap(fieldsMap)
-
 	// QueryString to sql
 	if f.query.QueryString != "" {
-		qs, err := expr.ParserQueryString(f.query.QueryString)
+		qs, err := f.expr.ParserQueryString(f.query.QueryString)
 		if err != nil {
 			return "", err
 		}
@@ -187,7 +151,7 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 
 	// AllConditions to sql
 	if len(f.query.AllConditions) > 0 {
-		qs, err := expr.ParserAllConditions(f.query.AllConditions)
+		qs, err := f.expr.ParserAllConditions(f.query.AllConditions)
 		if err != nil {
 			return "", err
 		}
@@ -201,36 +165,26 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 }
 
 func (f *QueryFactory) SQL() (sql string, err error) {
-	f.sql.Reset()
-	err = f.ParserQuery()
+	selectString, groupString, err := f.expr.ParserAggregates(f.query.Aggregates)
 	if err != nil {
 		return
 	}
 
-	f.lock.RLock()
-	defer f.lock.RUnlock()
-
-	f.write("SELECT")
-	f.write(strings.Join(f.selects, ", "))
-	f.write("FROM")
-	db := fmt.Sprintf("`%s`", f.query.DB)
+	table := fmt.Sprintf("`%s`", f.query.DB)
 	if f.query.Measurement != "" {
-		db += "." + f.query.Measurement
+		table += "." + f.query.Measurement
 	}
-	f.write(db)
 
-	where, err := f.BuildWhere()
+	sql += fmt.Sprintf("SELECT %s FROM %s", selectString, table)
+	whereString, err := f.BuildWhere()
 	if err != nil {
 		return
 	}
-	if where != "" {
-		f.write("WHERE")
-		f.write(where)
+	if whereString != "" {
+		sql += " WHERE " + whereString
 	}
-
-	if len(f.groups) > 0 {
-		f.write("GROUP BY")
-		f.write(strings.Join(f.groups, ", "))
+	if groupString != "" {
+		sql += " GROUP BY " + groupString
 	}
 
 	orders := make([]string, 0)
@@ -252,19 +206,15 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	}
 	if len(orders) > 0 {
 		sort.Strings(orders)
-		f.write("ORDER BY")
-		f.write(strings.Join(orders, ", "))
+		sql += " ORDER BY " + strings.Join(orders, ", ")
 	}
 	if f.query.From > 0 {
-		f.write("OFFSET")
-		f.write(fmt.Sprintf("%d", f.query.From))
+		sql += fmt.Sprintf(" OFFSET %d", f.query.From)
 	}
 	if f.query.Size > 0 {
-		f.write("LIMIT")
-		f.write(fmt.Sprintf("%d", f.query.Size))
+		sql += fmt.Sprintf(" LIMIT %d", f.query.Size)
 	}
 
-	sql = strings.Trim(f.sql.String(), " ")
 	return
 }
 

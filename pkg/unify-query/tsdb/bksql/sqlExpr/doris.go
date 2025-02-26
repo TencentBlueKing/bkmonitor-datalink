@@ -7,56 +7,37 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package bksql
+package sqlExpr
 
 import (
 	"fmt"
 	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const (
-	KeyWord = "keyword"
-	Text    = "text"
-	Integer = "integer"
-	Long    = "long"
-	Date    = "date"
-)
-
-var (
-	ErrorMatchAll = "doris 不支持全字段检索"
+	Doris         = "doris"
+	DorisTypeText = "text"
 )
 
 type DorisSQLExpr struct {
-	qs        string
+	DefaultSQLExpr
+
 	fieldsMap map[string]string
 }
 
-func NewDorisSQLExpr(qs string) *DorisSQLExpr {
-	return &DorisSQLExpr{
-		qs: qs,
-	}
-}
+var _ SQLExpr = (*DorisSQLExpr)(nil)
 
-func (s *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]string) *DorisSQLExpr {
+func (s *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]string) SQLExpr {
 	s.fieldsMap = fieldsMap
+	s.DefaultSQLExpr.WithFieldsMap(fieldsMap).WithTransformDimension(s.fieldFormat)
 	return s
 }
 
-func (s *DorisSQLExpr) checkMatchALL(k string) bool {
-	if s.fieldsMap != nil {
-		if t, ok := s.fieldsMap[k]; ok {
-			if t == Text {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (s *DorisSQLExpr) Parser() (string, error) {
-	expr, err := querystring.Parse(s.qs)
+func (s *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
+	expr, err := querystring.Parse(qs)
 	if err != nil {
 		return "", err
 	}
@@ -65,6 +46,21 @@ func (s *DorisSQLExpr) Parser() (string, error) {
 	}
 
 	return s.walk(expr)
+}
+
+func (s *DorisSQLExpr) ParserAllConditions(allConditions metadata.AllConditions) (string, error) {
+	return s.DefaultSQLExpr.ParserAllConditions(allConditions)
+}
+
+func (s *DorisSQLExpr) checkMatchALL(k string) bool {
+	if s.fieldsMap != nil {
+		if t, ok := s.fieldsMap[k]; ok {
+			if t == DorisTypeText {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *DorisSQLExpr) fieldFormat(field string) string {
@@ -92,7 +88,7 @@ func (s *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("NOT ( %s )", left), nil
+		return fmt.Sprintf("NOT (%s)", left), nil
 	case *querystring.OrExpr:
 		left, err = s.walk(c.Left)
 		if err != nil {
@@ -102,7 +98,7 @@ func (s *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("( %s OR %s )", left, right), nil
+		return fmt.Sprintf("(%s OR %s)", left, right), nil
 	case *querystring.AndExpr:
 		left, err = s.walk(c.Left)
 		if err != nil {
@@ -112,17 +108,17 @@ func (s *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("( %s AND %s )", left, right), nil
+		return fmt.Sprintf("%s AND %s", left, right), nil
 	case *querystring.WildcardExpr:
 		if c.Field == "" {
-			err = fmt.Errorf(ErrorMatchAll)
+			err = fmt.Errorf(Doris + " " + ErrorMatchAll)
 			return "", err
 		}
 
 		return fmt.Sprintf("%s LIKE '%%%s%%'", s.fieldFormat(c.Field), c.Value), nil
 	case *querystring.MatchExpr:
 		if c.Field == "" {
-			err = fmt.Errorf(ErrorMatchAll + ": " + c.Value)
+			err = fmt.Errorf(Doris + " " + ErrorMatchAll + ": " + c.Value)
 			return "", err
 		}
 
@@ -133,7 +129,7 @@ func (s *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		return fmt.Sprintf("%s = '%s'", s.fieldFormat(c.Field), c.Value), nil
 	case *querystring.NumberRangeExpr:
 		if c.Field == "" {
-			err = fmt.Errorf(ErrorMatchAll)
+			err = fmt.Errorf(Doris + " " + ErrorMatchAll)
 			return "", err
 		}
 
@@ -161,10 +157,14 @@ func (s *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 			end = fmt.Sprintf("%s %s %s", s.fieldFormat(c.Field), op, *c.End)
 		}
 
-		return fmt.Sprintf("( %s )", strings.Join([]string{start, end}, " AND ")), nil
+		return fmt.Sprintf("%s", strings.Join([]string{start, end}, " AND ")), nil
 	default:
 		err = fmt.Errorf("expr type is not match %T", e)
 	}
 
 	return "", err
+}
+
+func init() {
+	Register(Doris, &DorisSQLExpr{})
 }

@@ -68,6 +68,8 @@ func (a AggregateMethodList) ToQry(timezone string) metadata.Aggregates {
 type AggregateMethod struct {
 	// Method 聚合方法
 	Method string `json:"method,omitempty" example:"mean"`
+	// Field 聚合字段，默认为指标字段，指定则会进行覆盖
+	Field string `json:"field,omitempty" example:"field"`
 	// Without
 	Without bool `json:"without" example:false`
 	// Dimensions 聚合维度

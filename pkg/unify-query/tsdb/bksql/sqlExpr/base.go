@@ -13,8 +13,17 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+)
+
+const (
+	selectAll = "*"
+	timeStamp = "_timestamp_"
+	value     = "_value_"
+
+	theDate = "thedate"
 )
 
 // ErrorMatchAll 定义全字段检索错误提示信息
@@ -29,10 +38,14 @@ type SQLExpr interface {
 	WithFieldsMap(fieldsMap map[string]string) SQLExpr
 	// WithTransformDimension 设置字段转换方法
 	WithTransformDimension(func(string) string) SQLExpr
+	// WithInternalFields 设置内部字段
+	WithInternalFields(timeField, valueField string) SQLExpr
 	// ParserQueryString 解析 es 特殊语法 queryString 生成SQL条件
 	ParserQueryString(qs string) (string, error)
 	// ParserAllConditions 解析全量条件生成SQL条件表达式
 	ParserAllConditions(allConditions metadata.AllConditions) (string, error)
+	// ParserAggregates 解析聚合条件生成SQL条件表达式
+	ParserAggregates(aggregates metadata.Aggregates) (string, string, error)
 }
 
 // SQL表达式注册管理相关变量
@@ -57,7 +70,13 @@ func GetSQLExpr(key string) SQLExpr {
 	if sqlExpr, ok := ExprMap[key]; ok {
 		return sqlExpr
 	} else {
-		return &DefaultSQLExpr{}
+		return (&DefaultSQLExpr{}).WithTransformDimension(func(s string) string {
+			if s == "" {
+				return ""
+			}
+
+			return fmt.Sprintf("`%s`", s)
+		})
 	}
 }
 
@@ -88,6 +107,18 @@ func UnRegister(key string) {
 type DefaultSQLExpr struct {
 	dimTransform func(string) string
 	fieldsMap    map[string]string
+
+	timeField  string
+	valueField string
+
+	start time.Time
+	end   time.Time
+}
+
+func (d *DefaultSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {
+	d.timeField = timeField
+	d.valueField = valueField
+	return d
 }
 
 func (d *DefaultSQLExpr) WithFieldsMap(fieldsMap map[string]string) SQLExpr {
@@ -102,8 +133,48 @@ func (d *DefaultSQLExpr) WithTransformDimension(fn func(string) string) SQLExpr 
 }
 
 // ParserQueryString 解析查询字符串（当前实现返回空）
-func (d *DefaultSQLExpr) ParserQueryString(qs string) (string, error) {
+func (d *DefaultSQLExpr) ParserQueryString(_ string) (string, error) {
 	return "", nil
+}
+
+// ParserAggregates 解析聚合函数，生成 select 和 group by 字段
+func (d *DefaultSQLExpr) ParserAggregates(aggregates metadata.Aggregates) (string, string, error) {
+	var (
+		selectFields  []string
+		groupByFields []string
+	)
+	valueField := d.dimTransform(d.valueField)
+
+	for _, agg := range aggregates {
+		for _, dim := range agg.Dimensions {
+			dim = d.dimTransform(dim)
+			selectFields = append(selectFields, dim)
+			groupByFields = append(groupByFields, dim)
+		}
+
+		if valueField == "" {
+			valueField = selectAll
+		}
+		selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, value))
+
+		if agg.Window > 0 {
+			timeField := fmt.Sprintf("(`%s` - (`%s` %% %d))", d.timeField, d.timeField, agg.Window.Milliseconds())
+			groupByFields = append(groupByFields, timeField)
+			selectFields = append(selectFields, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
+		}
+	}
+
+	if len(selectFields) == 0 {
+		selectFields = append(selectFields, selectAll)
+		if valueField != "" {
+			selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", valueField, value))
+		}
+		if d.timeField != "" {
+			selectFields = append(selectFields, fmt.Sprintf("`%s` AS `%s`", d.timeField, timeStamp))
+		}
+	}
+
+	return strings.Join(selectFields, ", "), strings.Join(groupByFields, ", "), nil
 }
 
 // ParserAllConditions 解析全量条件生成SQL条件表达式
@@ -145,11 +216,6 @@ func (d *DefaultSQLExpr) ParserAllConditions(allConditions metadata.AllCondition
 	return "", nil
 }
 
-// buildDimensionName 构建维度字段名称（添加反引号包裹）
-func (d *DefaultSQLExpr) buildDimensionName(dim string) string {
-	return fmt.Sprintf("`%s`", dim)
-}
-
 // buildCondition 构建单个条件表达式
 // 参数：
 //
@@ -169,11 +235,7 @@ func (d *DefaultSQLExpr) buildCondition(c metadata.ConditionField) (string, erro
 		val string
 	)
 
-	if d.dimTransform != nil {
-		key = d.dimTransform(c.DimensionName)
-	} else {
-		key = d.buildDimensionName(c.DimensionName)
-	}
+	key = d.dimTransform(c.DimensionName)
 
 	// 根据操作符类型生成不同的SQL表达式
 	switch c.Operator {

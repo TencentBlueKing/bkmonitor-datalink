@@ -32,7 +32,8 @@ var _ SQLExpr = (*DorisSQLExpr)(nil)
 
 func (s *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]string) SQLExpr {
 	s.fieldsMap = fieldsMap
-	s.DefaultSQLExpr.WithFieldsMap(fieldsMap).WithTransformDimension(s.fieldFormat)
+
+	s.DefaultSQLExpr.WithFieldsMap(fieldsMap)
 	return s
 }
 
@@ -49,7 +50,7 @@ func (s *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
 }
 
 func (s *DorisSQLExpr) ParserAllConditions(allConditions metadata.AllConditions) (string, error) {
-	return s.DefaultSQLExpr.ParserAllConditions(allConditions)
+	return s.DefaultSQLExpr.WithTransformDimension(s.dimTransform).ParserAllConditions(allConditions)
 }
 
 func (s *DorisSQLExpr) checkMatchALL(k string) bool {
@@ -63,10 +64,10 @@ func (s *DorisSQLExpr) checkMatchALL(k string) bool {
 	return false
 }
 
-func (s *DorisSQLExpr) fieldFormat(field string) string {
+func (s *DorisSQLExpr) dimTransform(field string) string {
 	fs := strings.Split(field, ".")
 	if len(fs) > 1 {
-		return fmt.Sprintf(`CAST(%s["%s"] AS STRING)`, fs[0], strings.Join(fs[1:], `"]["`))
+		return fmt.Sprintf("CAST(`%s`[\"%s\"] AS STRING)", fs[0], strings.Join(fs[1:], `"]["`))
 	}
 	return fmt.Sprintf("`%s`", field)
 }
@@ -115,7 +116,7 @@ func (s *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 			return "", err
 		}
 
-		return fmt.Sprintf("%s LIKE '%%%s%%'", s.fieldFormat(c.Field), c.Value), nil
+		return fmt.Sprintf("%s LIKE '%%%s%%'", s.dimTransform(c.Field), c.Value), nil
 	case *querystring.MatchExpr:
 		if c.Field == "" {
 			err = fmt.Errorf(Doris + " " + ErrorMatchAll + ": " + c.Value)
@@ -123,10 +124,10 @@ func (s *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		}
 
 		if s.checkMatchALL(c.Field) {
-			return fmt.Sprintf("%s LIKE '%%%s%%'", s.fieldFormat(c.Field), c.Value), nil
+			return fmt.Sprintf("%s LIKE '%%%s%%'", s.dimTransform(c.Field), c.Value), nil
 		}
 
-		return fmt.Sprintf("%s = '%s'", s.fieldFormat(c.Field), c.Value), nil
+		return fmt.Sprintf("%s = '%s'", s.dimTransform(c.Field), c.Value), nil
 	case *querystring.NumberRangeExpr:
 		if c.Field == "" {
 			err = fmt.Errorf(Doris + " " + ErrorMatchAll)
@@ -144,7 +145,7 @@ func (s *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 			} else {
 				op = ">"
 			}
-			start = fmt.Sprintf("%s %s %s", s.fieldFormat(c.Field), op, *c.Start)
+			start = fmt.Sprintf("%s %s %s", s.dimTransform(c.Field), op, *c.Start)
 		}
 
 		if *c.End != "*" {
@@ -154,7 +155,7 @@ func (s *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 			} else {
 				op = "<"
 			}
-			end = fmt.Sprintf("%s %s %s", s.fieldFormat(c.Field), op, *c.End)
+			end = fmt.Sprintf("%s %s %s", s.dimTransform(c.Field), op, *c.End)
 		}
 
 		return fmt.Sprintf("%s", strings.Join([]string{start, end}, " AND ")), nil

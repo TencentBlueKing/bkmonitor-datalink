@@ -51,9 +51,10 @@ func newStdoutExporter() (*stdout.Exporter, error) {
 }
 
 func main() {
-	output := flag.String("output", "grpc", "output represents the standard exporter type, optional: stdout/http/grpc")
+	output := flag.String("exporter", "grpc", "output represents the standard exporter type, optional: stdout/http/grpc")
 	token := flag.String("token", "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==", "authentication token")
 	endpoint := flag.String("endpoint", "localhost:4317", "report endpoint")
+	flag.Parse()
 
 	var exporter sdklog.Exporter
 	var err error

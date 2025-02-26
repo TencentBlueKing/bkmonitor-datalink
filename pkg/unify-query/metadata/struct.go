@@ -29,6 +29,24 @@ const (
 	UUID = "query_uuid"
 )
 
+const (
+	ConditionEqual       = "eq"
+	ConditionNotEqual    = "ne"
+	ConditionRegEqual    = "req"
+	ConditionNotRegEqual = "nreq"
+	ConditionContains    = "contains"
+	ConditionNotContains = "ncontains"
+
+	ConditionExisted    = "existed"
+	ConditionNotExisted = "nexisted"
+
+	ConditionExact = "exact"
+	ConditionGt    = "gt"
+	ConditionGte   = "gte"
+	ConditionLt    = "lt"
+	ConditionLte   = "lte"
+)
+
 type VmCondition string
 
 type TimeField struct {
@@ -40,7 +58,8 @@ type TimeField struct {
 
 // Aggregate 聚合方法
 type Aggregate struct {
-	Name       string
+	Name string
+
 	Dimensions []string
 	Without    bool
 

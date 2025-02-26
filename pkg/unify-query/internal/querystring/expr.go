@@ -172,3 +172,8 @@ func newStringExpr(str string) FieldableExpr {
 
 	return NewMatchExpr(str)
 }
+
+type TermExpr struct {
+	Field string
+	Value string
+}

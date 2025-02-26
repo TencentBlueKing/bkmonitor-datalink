@@ -21,6 +21,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sqlExpr"
 )
 
 const (
@@ -132,7 +133,7 @@ func (f *QueryFactory) ParserQuery() (err error) {
 	return
 }
 
-func (f *QueryFactory) getTheDateFilters() (theDateFilter string, err error) {
+func (f *QueryFactory) getTheDateIndexFilters() (theDateFilter string, err error) {
 	// bkbase 使用 时区东八区 转换为 thedate
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
@@ -157,6 +158,48 @@ func (f *QueryFactory) getTheDateFilters() (theDateFilter string, err error) {
 	return
 }
 
+func (f *QueryFactory) BuildWhere() (string, error) {
+	var s []string
+	s = append(s, fmt.Sprintf("`%s` >= %d AND `%s` < %d", f.timeField, f.start.UnixMilli(), f.timeField, f.end.UnixMilli()))
+
+	theDateFilter, err := f.getTheDateIndexFilters()
+	if err != nil {
+		return "", err
+	}
+	if theDateFilter != "" {
+		s = append(s, theDateFilter)
+	}
+
+	fieldsMap := make(map[string]string)
+	expr := sqlExpr.GetSQLExpr(f.query.Measurement).WithFieldsMap(fieldsMap)
+
+	// QueryString to sql
+	if f.query.QueryString != "" {
+		qs, err := expr.ParserQueryString(f.query.QueryString)
+		if err != nil {
+			return "", err
+		}
+
+		if qs != "" {
+			s = append(s, qs)
+		}
+	}
+
+	// AllConditions to sql
+	if len(f.query.AllConditions) > 0 {
+		qs, err := expr.ParserAllConditions(f.query.AllConditions)
+		if err != nil {
+			return "", err
+		}
+
+		if qs != "" {
+			s = append(s, qs)
+		}
+	}
+
+	return strings.Join(s, " AND "), nil
+}
+
 func (f *QueryFactory) SQL() (sql string, err error) {
 	f.sql.Reset()
 	err = f.ParserQuery()
@@ -175,22 +218,16 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 		db += "." + f.query.Measurement
 	}
 	f.write(db)
-	f.write("WHERE")
-	f.write(fmt.Sprintf("`%s` >= %d AND `%s` < %d", f.timeField, f.start.UnixMilli(), f.timeField, f.end.UnixMilli()))
 
-	theDateFilter, err := f.getTheDateFilters()
+	where, err := f.BuildWhere()
 	if err != nil {
 		return
 	}
-	if theDateFilter != "" {
-		f.write("AND")
-		f.write(theDateFilter)
+	if where != "" {
+		f.write("WHERE")
+		f.write(where)
 	}
 
-	if f.query.BkSqlCondition != "" {
-		f.write("AND")
-		f.write("(" + f.query.BkSqlCondition + ")")
-	}
 	if len(f.groups) > 0 {
 		f.write("GROUP BY")
 		f.write(strings.Join(f.groups, ", "))

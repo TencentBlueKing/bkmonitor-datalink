@@ -12,7 +12,7 @@ package resourcefilter
 import (
 	"strings"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/resourcefilter/dimscache"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/resourcefilter/k8scache"
 )
 
 type Config struct {
@@ -61,9 +61,8 @@ type AssembleAction struct {
 }
 
 type FromCacheAction struct {
-	Key        string           `config:"key" mapstructure:"key"`
-	Dimensions []string         `config:"dimensions" mapstructure:"dimensions"`
-	Cache      dimscache.Config `config:"cache" mapstructure:"cache"`
+	Key   string          `config:"key" mapstructure:"key"`
+	Cache k8scache.Config `config:"cache" mapstructure:"cache"`
 
 	keys []string
 }

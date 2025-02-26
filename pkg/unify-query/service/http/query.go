@@ -285,11 +285,11 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	return
 }
 
-func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs) (*PromData, error) {
+func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.QueryTs) (*PromData, error) {
 	var (
 		res  any
 		err  error
-		resp = NewPromData(query.ResultColumns)
+		resp = NewPromData(queryTs.ResultColumns)
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-reference")
@@ -299,35 +299,52 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 		span.End(&err)
 	}()
 
-	qStr, _ := json.Marshal(query)
+	qStr, _ := json.Marshal(queryTs)
 	span.Set("query-ts", string(qStr))
 
-	for _, q := range query.QueryList {
-		q.IsReference = true
-		if q.TableID == "" {
+	for _, ql := range queryTs.QueryList {
+		ql.IsReference = true
+
+		// 排序复用
+		ql.OrderBy = queryTs.OrderBy
+
+		// 如果 qry.Step 不存在去外部统一的 step
+		if ql.Step == "" {
+			ql.Step = queryTs.Step
+		}
+
+		// 如果 Limit / From 没有单独指定的话，同时外部指定了的话，使用外部的
+		if ql.Limit == 0 && queryTs.Limit > 0 {
+			ql.Limit = queryTs.Limit
+		}
+		if ql.From == 0 && queryTs.From > 0 {
+			ql.From = queryTs.From
+		}
+
+		if ql.TableID == "" {
 			err = fmt.Errorf("tableID is empty")
 			return nil, err
 		}
 	}
 
 	// 判断如果 step 为空，则补充默认 step
-	if query.Step == "" {
-		query.Step = promql.GetDefaultStep().String()
+	if queryTs.Step == "" {
+		queryTs.Step = promql.GetDefaultStep().String()
 	}
 
-	queryRef, err := query.ToQueryReference(ctx)
-	startInt, err := strconv.ParseInt(query.Start, 10, 64)
+	queryRef, err := queryTs.ToQueryReference(ctx)
+	startInt, err := strconv.ParseInt(queryTs.Start, 10, 64)
 	if err != nil {
 		return nil, err
 	}
 	start := time.Unix(startInt, 0)
 
-	endInt, err := strconv.ParseInt(query.End, 10, 64)
+	endInt, err := strconv.ParseInt(queryTs.End, 10, 64)
 	if err != nil {
 		return nil, err
 	}
 	end := time.Unix(endInt, 0)
-	step, err := model.ParseDuration(query.Step)
+	step, err := model.ParseDuration(queryTs.Step)
 	if err != nil {
 		return nil, err
 	}
@@ -337,8 +354,8 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	metadata.SetQueryReference(ctx, queryRef)
 
 	var lookBackDelta time.Duration
-	if query.LookBackDelta != "" {
-		lookBackDelta, err = time.ParseDuration(query.LookBackDelta)
+	if queryTs.LookBackDelta != "" {
+		lookBackDelta, err = time.ParseDuration(queryTs.LookBackDelta)
 		if err != nil {
 			return nil, err
 		}
@@ -349,10 +366,10 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 		Timeout:         SingleflightTimeout,
 	}, lookBackDelta, QueryMaxRouting)
 
-	if query.Instant {
-		res, err = instance.DirectQuery(ctx, query.MetricMerge, start)
+	if queryTs.Instant {
+		res, err = instance.DirectQuery(ctx, queryTs.MetricMerge, start)
 	} else {
-		res, err = instance.DirectQueryRange(ctx, query.MetricMerge, start, end, time.Duration(step))
+		res, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, start, end, time.Duration(step))
 	}
 	if err != nil {
 		return nil, err
@@ -397,7 +414,7 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 }
 
 // queryTsToInstanceAndStmt query 结构体转换为 instance 以及 stmt
-func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (instance tsdb.Instance, stmt string, err error) {
+func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) (instance tsdb.Instance, stmt string, err error) {
 	var (
 		lookBackDelta time.Duration
 		promExprOpt   = &structured.PromExprOption{}
@@ -408,37 +425,53 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 		span.End(&err)
 	}()
 
-	queryString, _ := json.Marshal(query)
+	queryString, _ := json.Marshal(queryTs)
 	span.Set("query-ts", queryString)
 
 	// 限制 queryList 是否过长
 	if DefaultQueryListLimit > 0 {
-		if len(query.QueryList) > DefaultQueryListLimit {
+		if len(queryTs.QueryList) > DefaultQueryListLimit {
 			err = fmt.Errorf("the number of query lists cannot be greater than %d", DefaultQueryListLimit)
 		}
 	}
 
 	// 判断是否打开对齐
-	for _, q := range query.QueryList {
-		q.IsReference = false
-		q.AlignInfluxdbResult = AlignInfluxdbResult
+	for _, ql := range queryTs.QueryList {
+		ql.IsReference = false
+		ql.AlignInfluxdbResult = AlignInfluxdbResult
+
+		// 排序复用
+		ql.OrderBy = queryTs.OrderBy
+
+		// 如果 qry.Step 不存在去外部统一的 step
+		if ql.Step == "" {
+			ql.Step = queryTs.Step
+		}
+
+		// 如果 Limit / From 没有单独指定的话，同时外部指定了的话，使用外部的
+		if ql.Limit == 0 && queryTs.Limit > 0 {
+			ql.Limit = queryTs.Limit
+		}
+		if ql.From == 0 && queryTs.From > 0 {
+			ql.From = queryTs.From
+		}
 	}
 
 	// 判断是否指定 LookBackDelta
-	if query.LookBackDelta != "" {
-		lookBackDelta, err = time.ParseDuration(query.LookBackDelta)
+	if queryTs.LookBackDelta != "" {
+		lookBackDelta, err = time.ParseDuration(queryTs.LookBackDelta)
 		if err != nil {
 			return
 		}
 	}
 
 	// 如果 step 为空，则补充默认 step
-	if query.Step == "" {
-		query.Step = promql.GetDefaultStep().String()
+	if queryTs.Step == "" {
+		queryTs.Step = promql.GetDefaultStep().String()
 	}
 
 	// 转换成 queryRef
-	queryRef, err := query.ToQueryReference(ctx)
+	queryRef, err := queryTs.ToQueryReference(ctx)
 	if err != nil {
 		return
 	}
@@ -467,7 +500,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 		}, lookBackDelta, QueryMaxRouting)
 	}
 
-	expr, err := query.ToPromExpr(ctx, promExprOpt)
+	expr, err := queryTs.ToPromExpr(ctx, promExprOpt)
 	if err != nil {
 		return
 	}

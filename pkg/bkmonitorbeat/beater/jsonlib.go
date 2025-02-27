@@ -30,7 +30,7 @@ type goJson struct{}
 var goJsonImpl goJson
 
 func (goJson) Marshal(v interface{}) ([]byte, error) {
-	return gojson.MarshalWithOption(v, gojson.UnorderedMap(), gojson.DisableHTMLEscape(), gojson.DisableNormalizeUTF8())
+	return gojson.MarshalWithOption(v, gojson.UnorderedMap(), gojson.DisableHTMLEscape())
 }
 
 type jsonIterator struct{}

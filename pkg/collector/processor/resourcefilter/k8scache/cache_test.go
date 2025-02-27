@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package dimscache
+package k8scache
 
 import (
 	"net/http"
@@ -21,27 +21,37 @@ import (
 )
 
 func TestCache(t *testing.T) {
-	row1 := map[string]string{
-		"key1": "val1",
-		"key2": "val2",
+	rsp := response{
+		ResourceVersion: 4,
+		Pods: []podObject{
+			{
+				Action:    "CreateOrUpdate",
+				ClusterID: "BCS-K8S-00000",
+				Name:      "bkm-statefulset-worker-0",
+				Namespace: "bkmonitor-operator",
+				IP:        "127.0.0.1",
+			},
+			{
+				Action:    "CreateOrUpdate",
+				ClusterID: "BCS-K8S-00000",
+				Name:      "bkm-statefulset-worker-1",
+				Namespace: "bkmonitor-operator",
+				IP:        "127.0.0.2",
+			},
+		},
 	}
-	row2 := map[string]string{
-		"key1": "val3",
-		"key2": "val4",
-	}
-	data := []map[string]string{row1, row2}
 
 	svr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := json.Marshal(data)
+		b, _ := json.Marshal(rsp)
 		w.Write(b)
 	}))
 	defer svr.Close()
 
 	c := New(&Config{
 		URL: svr.URL,
-		Key: "key1",
 	})
 	c.Sync()
+	defer c.Clean()
 
 	// wait
 	time.Sleep(time.Second)
@@ -49,17 +59,14 @@ func TestCache(t *testing.T) {
 	var v map[string]string
 	var ok bool
 
-	v, ok = c.Get("val1")
+	v, ok = c.Get("127.0.0.1")
 	assert.True(t, ok)
-	assert.Equal(t, row1, v)
+	assert.Equal(t, "bkm-statefulset-worker-0", v["k8s.pod.name"])
 
-	v, ok = c.Get("val2")
+	v, ok = c.Get("127.0.0.2")
+	assert.True(t, ok)
+	assert.Equal(t, "bkm-statefulset-worker-1", v["k8s.pod.name"])
+
+	v, ok = c.Get("127.0.0.3")
 	assert.False(t, ok)
-	assert.Empty(t, v)
-
-	v, ok = c.Get("val3")
-	assert.True(t, ok)
-	assert.Equal(t, row2, v)
-
-	c.Clean()
 }

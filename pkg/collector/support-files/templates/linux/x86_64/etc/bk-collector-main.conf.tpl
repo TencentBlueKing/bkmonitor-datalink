@@ -241,7 +241,7 @@ bk-collector:
             - "resource.bk.data.token"
 
     # ResourceFilter: 资源过滤处理器
-    - name: "resource_filter/drop_token"
+    - name: "resource_filter/logs"
       config:
         assemble:
         drop:
@@ -300,6 +300,9 @@ bk-collector:
 
     # Attribute_filter 应用层级的配置
     - name: "attribute_filter/app"
+
+    # Attribute_filter 日志数据源的 tag 配置
+    - name: "attribute_filter/logs"
 
     # PprofTranslator: pprof 协议转换器
     - name: "pprof_translator/common"
@@ -365,7 +368,8 @@ bk-collector:
       type: "logs"
       processors:
         - "token_checker/aes256"
-        - "resource_filter/drop_token"
+        - "resource_filter/logs"
+        - "attribute_filter/logs"
 
     - name: "pushgateway_pipeline/common"
       type: "pushgateway"

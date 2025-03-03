@@ -157,6 +157,51 @@ default:
             {%- endfor %}
 {%- endif %}
 
+{% if attributes_config_logs is defined %}
+      - name: "{{ attributes_config_logs.name }}"
+        config:
+          {%- if attributes_config_logs.as_string is defined %}
+          as_string:
+            keys:
+              {%- for key in attributes_config_logs.as_string %}
+              - "{{ key }}"
+              {%- endfor %}
+          {%- endif %}
+          {%- if attributes_config_logs.as_int is defined %}
+          as_int:
+            keys:
+              {%- for key in attributes_config_logs.as_int %}
+              - "{{ key }}"
+              {%- endfor %}
+          {%- endif %}
+          cut:
+            {%- for config in attributes_config_logs.cut %}
+            - predicate_key: "{{ config.predicate_key }}"
+              max_length: {{ config.max_length }}
+              match:
+                {%- for value in config.get("match", []) %}
+                - "{{ value }}"
+                {%- endfor %}
+              keys:
+                {%- for key in config.get("keys", []) %}
+                - "{{ key }}"
+                {%- endfor %}
+            {%- endfor %}
+          drop:
+            {%- for config in attributes_config_logs.drop %}
+            - predicate_key: "{{ config.predicate_key }}"
+              match:
+                {%- for value in config.get("match", []) %}
+                - "{{ value }}"
+                {%- endfor %}
+              keys:
+                {%- for key in config.get("keys", []) %}
+                - "{{ key }}"
+                {%- endfor %}
+            {%- endfor %}
+{%- endif %}
+
+
 {% if sampler_config is defined %}
       - name: '{{ sampler_config.name }}'
         config:

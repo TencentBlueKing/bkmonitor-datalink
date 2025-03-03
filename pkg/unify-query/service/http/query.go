@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -316,17 +315,11 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	}
 
 	queryRef, err := query.ToQueryReference(ctx)
-	startInt, err := strconv.ParseInt(query.Start, 10, 64)
+	start, end, err := query.GetTime()
 	if err != nil {
 		return nil, err
 	}
-	start := time.Unix(startInt, 0)
 
-	endInt, err := strconv.ParseInt(query.End, 10, 64)
-	if err != nil {
-		return nil, err
-	}
-	end := time.Unix(endInt, 0)
 	step, err := model.ParseDuration(query.Step)
 	if err != nil {
 		return nil, err

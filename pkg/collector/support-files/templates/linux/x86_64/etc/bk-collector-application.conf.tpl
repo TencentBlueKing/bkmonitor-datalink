@@ -236,6 +236,25 @@ default:
               {%- endfor %}
 {%- endif %}
 
+{% if resource_filter_config_logs is defined %}
+      - name: '{{ resource_filter_config_logs.name }}'
+        config:
+          assemble:
+            {%- for as_config in  resource_filter_config_logs.assemble %}
+            - destination: '{{ as_config.destination }}'
+              separator: '{{ as_config.separator }}'
+              keys:
+                {%- for key in as_config.get("keys", []) %}
+                - '{{ key }}'
+                {%- endfor %}
+            {%- endfor %}
+          drop:
+            keys:
+              {%- for drop_key in resource_filter_config_logs.get("drop", {}).get("keys", []) %}
+              - '{{ drop_key }}'
+              {%- endfor %}
+{%- endif %}
+
 {% if custom_service_config is defined %}
       - name: '{{ custom_service_config.name }}'
         config:

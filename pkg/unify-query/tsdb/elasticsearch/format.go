@@ -557,7 +557,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			name = info.Name
 		case TermAgg:
 			curName := info.Name
-			curAgg := elastic.NewTermsAggregation().Field(info.Name).Missing("")
+			curAgg := elastic.NewTermsAggregation().Field(info.Name).Missing(" ")
 			if f.size > 0 {
 				curAgg = curAgg.Size(f.size)
 			}

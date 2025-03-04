@@ -157,25 +157,25 @@ default:
             {%- endfor %}
 {%- endif %}
 
-{% if attributes_config_logs is defined %}
-      - name: "{{ attributes_config_logs.name }}"
+{% if attribute_config_logs is defined %}
+      - name: "{{ attribute_config_logs.name }}"
         config:
-          {%- if attributes_config_logs.as_string is defined %}
+          {%- if attribute_config_logs.as_string is defined %}
           as_string:
             keys:
-              {%- for key in attributes_config_logs.as_string %}
+              {%- for key in attribute_config_logs.as_string %}
               - "{{ key }}"
               {%- endfor %}
           {%- endif %}
-          {%- if attributes_config_logs.as_int is defined %}
+          {%- if attribute_config_logs.as_int is defined %}
           as_int:
             keys:
-              {%- for key in attributes_config_logs.as_int %}
+              {%- for key in attribute_config_logs.as_int %}
               - "{{ key }}"
               {%- endfor %}
           {%- endif %}
           cut:
-            {%- for config in attributes_config_logs.cut %}
+            {%- for config in attribute_config_logs.cut %}
             - predicate_key: "{{ config.predicate_key }}"
               max_length: {{ config.max_length }}
               match:
@@ -188,7 +188,7 @@ default:
                 {%- endfor %}
             {%- endfor %}
           drop:
-            {%- for config in attributes_config_logs.drop %}
+            {%- for config in attribute_config_logs.drop %}
             - predicate_key: "{{ config.predicate_key }}"
               match:
                 {%- for value in config.get("match", []) %}

@@ -10,6 +10,8 @@
 package attributefilter
 
 import (
+	"fmt"
+	"go.opentelemetry.io/collector/pdata/plog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -79,7 +81,7 @@ const (
 
 func makeTracesGenerator(n int, valueType string) *generator.TracesGenerator {
 	opts := define.TracesOptions{SpanCount: n}
-	opts.RandomResourceKeys = []string{
+	opts.RandomAttributeKeys = []string{
 		resourceKeyPerIp,
 		resourceKeyPerPort,
 	}
@@ -95,6 +97,25 @@ func makeTracesAttributesGenerator(n int, attrs map[string]string) *generator.Tr
 		"http.status_code": "200",
 	}
 	return generator.NewTracesGenerator(opts)
+}
+
+func makeLogsGenerator(n int, valueType string) *generator.LogsGenerator {
+	opts := define.LogsOptions{LogName: "testlog", LogCount: n, LogLength: 10}
+	opts.RandomAttributeKeys = []string{"attr1", "attr2"}
+	opts.DimensionsValueType = valueType
+	return generator.NewLogsGenerator(opts)
+}
+
+func makeLogsAttributesGenerator(n int, attrs map[string]string) *generator.LogsGenerator {
+	return generator.NewLogsGenerator(define.LogsOptions{
+		GeneratorOptions: define.GeneratorOptions{
+			Resources:  map[string]string{"foo": "bar"},
+			Attributes: attrs,
+		},
+		LogName:   "testlog",
+		LogCount:  n,
+		LogLength: 10,
+	})
 }
 
 func makeMetricsGenerator(n int, valueType string) *generator.MetricsGenerator {
@@ -129,7 +150,8 @@ processor:
 	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
-	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
+	attrs := span.Attributes()
 	v, ok := attrs.Get(resourceKeyPerIp)
 	assert.True(t, ok)
 	assert.Equal(t, pcommon.ValueTypeString, v.Type())
@@ -145,6 +167,30 @@ func TestTracesIntAsStringAction(t *testing.T) {
 
 func TestTracesFloatAsStringAction(t *testing.T) {
 	testAsStringAction(t, "float")
+}
+
+func TestLogsAsStringAction(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/logs"
+    config:
+      as_string:
+        keys:
+          - "attributes.attr1"
+          - "attributes.attr2"
+`
+	factory := processor.MustCreateFactory(content, NewFactory)
+	record := define.Record{
+		RecordType: define.RecordLogs,
+		Data:       makeLogsGenerator(1, "int").Generate(),
+	}
+	_, err := factory.Process(&record)
+	assert.NoError(t, err)
+
+	rsAttrs := testkits.FirstLogRecord(record.Data.(plog.Logs)).Attributes()
+	v, ok := rsAttrs.Get("attr1")
+	assert.True(t, ok)
+	assert.Equal(t, pcommon.ValueTypeString, v.Type())
 }
 
 func TestTracesFromTokenAction(t *testing.T) {
@@ -173,7 +219,39 @@ processor:
 	assert.NoError(t, err)
 
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "bk_biz_id", "10086")
+	testkits.AssertAttrsStringVal(t, span.Attributes(), "bk_biz_id", "10086")
+	testkits.AssertAttrsStringVal(t, span.Attributes(), "bk_app_name", "my_app_name")
+	testkits.AssertAttrsNotFound(t, span.Attributes(), "traces_dataid")
+}
+
+func TestLogsFromTokenAction(t *testing.T) {
+	content := `
+processor:
+   - name: "attribute_filter/from_token"
+     config:
+       from_token:
+         biz_id: "bk_biz_id"
+         app_name: "bk_app_name"
+`
+	factory := processor.MustCreateFactory(content, NewFactory)
+	g := makeLogsGenerator(1, "int")
+	data := g.Generate()
+	record := &define.Record{
+		RecordType: define.RecordLogs,
+		Data:       data,
+		Token: define.Token{
+			BizId:   2147483647,
+			AppName: "test_app_name",
+		},
+	}
+
+	_, err := factory.Process(record)
+	assert.NoError(t, err)
+
+	logRecord := testkits.FirstLogRecord(record.Data.(plog.Logs))
+	testkits.AssertAttrsStringVal(t, logRecord.Attributes(), "bk_biz_id", "2147483647")
+	testkits.AssertAttrsStringVal(t, logRecord.Attributes(), "bk_app_name", "test_app_name")
+	testkits.AssertAttrsNotFound(t, logRecord.Attributes(), "logs_dataid")
 }
 
 func TestMetricsFromTokenAction(t *testing.T) {
@@ -202,7 +280,9 @@ processor:
 	assert.NoError(t, err)
 
 	dp := testkits.FirstGaugeDataPoint(record.Data.(pmetric.Metrics))
-	testkits.AssertAttrsFoundStringVal(t, dp.Attributes(), "bk_biz_id", "10086")
+	testkits.AssertAttrsStringVal(t, dp.Attributes(), "bk_biz_id", "10086")
+	testkits.AssertAttrsStringVal(t, dp.Attributes(), "bk_app_name", "my_app_name")
+	testkits.AssertAttrsNotFound(t, dp.Attributes(), "metrics_dataid")
 }
 
 func TestTraceAssembleAction(t *testing.T) {
@@ -536,13 +616,48 @@ processor:
 	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
-	rsAttrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-	testkits.AssertAttrsFoundIntVal(t, rsAttrs, semconv.AttributeHTTPStatusCode, 200)
-
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
 	attrs := span.Attributes()
+
 	testkits.AssertAttrsFoundIntVal(t, attrs, semconv.AttributeHTTPStatusCode, 200)
 	testkits.AssertAttrsFoundStringVal(t, attrs, semconv.AttributeHTTPScheme, "https")
+}
+
+func TestLogsAsIntAction(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/logs"
+    config:
+      as_int:
+        keys:
+          - "attributes.uid"
+          - "attributes.http.url"
+`
+	factory := processor.MustCreateFactory(content, NewFactory)
+	m := map[string]string{
+		"uid":      "8430020787040790664",
+		"http.url": "abc",
+	}
+	g := makeLogsAttributesGenerator(1, m)
+	data := g.Generate()
+	record := define.Record{
+		RecordType: define.RecordLogs,
+		Data:       data,
+	}
+	_, err := factory.Process(&record)
+	assert.NoError(t, err)
+
+	rsAttrs := testkits.FirstLogRecord(record.Data.(plog.Logs)).Attributes()
+	attrVal, exists := rsAttrs.Get("uid")
+	if exists {
+		intVal := attrVal.IntVal()
+		strVal := attrVal.StringVal()
+		fmt.Println(intVal, strVal)
+	}
+	// 如果可以转换，则成功
+	testkits.AssertAttrsFoundIntVal(t, rsAttrs, "uid", 8430020787040790664)
+	// 如果转换不了，则保留原来的值
+	testkits.AssertAttrsFoundStringVal(t, rsAttrs, "http.url", "abc")
 }
 
 func TestTraceDropAction(t *testing.T) {
@@ -578,6 +693,42 @@ processor:
 
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
 	attrs := span.Attributes()
+	testkits.AssertAttrsNotFound(t, attrs, semconv.AttributeDBStatement)
+	testkits.AssertAttrsNotFound(t, attrs, "db.parameters")
+}
+
+func TestLogDropAction(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/logs"
+    config:
+      drop:
+        - predicate_key: "attributes.db.system"
+          match:
+            - "mysql"
+            - "postgresql"
+            - "elasticsearch"
+          keys:
+            - "attributes.db.parameters"
+            - "attributes.db.statement"
+`
+	factory := processor.MustCreateFactory(content, NewFactory)
+	m := map[string]string{
+		"db.system":     "mysql",
+		"db.parameters": "testDbParameters",
+		"db.statement":  "testDbStatement",
+	}
+	g := makeLogsAttributesGenerator(1, m)
+	data := g.Generate()
+	record := define.Record{
+		RecordType: define.RecordLogs,
+		Data:       data,
+	}
+	_, err := factory.Process(&record)
+	assert.NoError(t, err)
+
+	logRecord := testkits.FirstLogRecord(record.Data.(plog.Logs))
+	attrs := logRecord.Attributes()
 	testkits.AssertAttrsNotFound(t, attrs, semconv.AttributeDBStatement)
 	testkits.AssertAttrsNotFound(t, attrs, "db.parameters")
 }
@@ -688,6 +839,46 @@ processor:
 	const maxLen = 10
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
 	attrs := span.Attributes()
+	testkits.AssertAttrsFoundStringVal(t, attrs, semconv.AttributeDBStatement, "testDbStatement"[:maxLen])
+	testkits.AssertAttrsFoundStringVal(t, attrs, "db.parameters", "testDbParameters"[:maxLen])
+}
+
+func TestLogCutAction(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/logs"
+    config:
+      cut:
+        - predicate_key: "attributes.db.system"
+          match:
+            - "mysql"
+            - "postgresql"
+          max_length: 10
+          keys:
+            - "attributes.db.parameters"
+            - "attributes.db.statement"
+`
+	factory := processor.MustCreateFactory(content, NewFactory)
+
+	m := map[string]string{
+		"db.system":     "postgresql",
+		"db.parameters": "testDbParameters",
+		"db.statement":  "testDbStatement",
+	}
+
+	g := makeLogsAttributesGenerator(1, m)
+	data := g.Generate()
+	record := define.Record{
+		RecordType: define.RecordLogs,
+		Data:       data,
+	}
+	_, err := factory.Process(&record)
+	assert.NoError(t, err)
+
+	const maxLen = 10
+	logRecord := testkits.FirstLogRecord(record.Data.(plog.Logs))
+	attrs := logRecord.Attributes()
+
 	testkits.AssertAttrsFoundStringVal(t, attrs, semconv.AttributeDBStatement, "testDbStatement"[:maxLen])
 	testkits.AssertAttrsFoundStringVal(t, attrs, "db.parameters", "testDbParameters"[:maxLen])
 }

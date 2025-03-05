@@ -10,12 +10,11 @@
 package attributefilter
 
 import (
-	"fmt"
-	"go.opentelemetry.io/collector/pdata/plog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	semconv "go.opentelemetry.io/collector/semconv/v1.8.0"
@@ -648,12 +647,7 @@ processor:
 	assert.NoError(t, err)
 
 	rsAttrs := testkits.FirstLogRecord(record.Data.(plog.Logs)).Attributes()
-	attrVal, exists := rsAttrs.Get("uid")
-	if exists {
-		intVal := attrVal.IntVal()
-		strVal := attrVal.StringVal()
-		fmt.Println(intVal, strVal)
-	}
+
 	// 如果可以转换，则成功
 	testkits.AssertAttrsFoundIntVal(t, rsAttrs, "uid", 8430020787040790664)
 	// 如果转换不了，则保留原来的值

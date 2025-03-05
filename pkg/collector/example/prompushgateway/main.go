@@ -80,7 +80,7 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
-	// pusher.Format(expfmt.FmtText)
+	// pusher.TimeUnit(expfmt.FmtText)
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 

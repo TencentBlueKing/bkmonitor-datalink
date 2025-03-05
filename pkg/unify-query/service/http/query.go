@@ -163,12 +163,12 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
 
-	timeFormat, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
+	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if timeErr != nil {
 		err = timeErr
 		return
 	}
-	metadata.GetQueryParams(ctx).SetTime(start, end, timeFormat)
+	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 
 	var (
 		receiveWg sync.WaitGroup
@@ -323,7 +323,7 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	}
 
 	queryRef, err := query.ToQueryReference(ctx)
-	format, start, end, err := function.QueryTimestamp(query.Start, query.End)
+	unit, start, end, err := function.QueryTimestamp(query.Start, query.End)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +334,7 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	}
 
 	// es 需要使用自己的查询时间范围
-	metadata.GetQueryParams(ctx).SetTime(start, end, format).SetIsReference(true)
+	metadata.GetQueryParams(ctx).SetTime(start, end, unit).SetIsReference(true)
 	metadata.SetQueryReference(ctx, queryRef)
 
 	var lookBackDelta time.Duration
@@ -503,7 +503,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 		span.End(&err)
 	}()
 
-	format, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
+	unit, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
@@ -516,7 +516,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	query.Timezone = timezone
 
 	// 写入查询时间到全局缓存
-	metadata.GetQueryParams(ctx).SetTime(start, end, format)
+	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 	instance, stmt, err = queryTsToInstanceAndStmt(ctx, query)
 	if err != nil {
 		return nil, err

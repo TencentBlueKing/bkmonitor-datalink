@@ -288,7 +288,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	}
 
 	span.Set("paths", paths)
-	metadata.GetQueryParams(ctx).SetTime(opt.Start, opt.End, opt.Format).SetIsSkipK8s(true)
+	metadata.GetQueryParams(ctx).SetTime(opt.Start, opt.End, opt.TimeUnit).SetIsSkipK8s(true)
 
 	var errorMessage []string
 	for _, path := range paths {
@@ -322,7 +322,7 @@ type QueryResourceOptions struct {
 	Step          time.Duration
 	Start         time.Time
 	End           time.Time
-	Format        string
+	TimeUnit      string
 	Target        cmdb.Resource
 	Source        cmdb.Resource
 	Matcher       cmdb.Matcher
@@ -331,7 +331,7 @@ type QueryResourceOptions struct {
 }
 
 func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUid string, timestamp int64, target, source cmdb.Resource, matcher cmdb.Matcher, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Matchers, error) {
-	format, ts, err := function.ParseTimestamp(strconv.FormatInt(timestamp, 10))
+	unit, ts, err := function.ParseTimestamp(strconv.FormatInt(timestamp, 10))
 	if err != nil {
 		return "", nil, nil, nil, err
 	}
@@ -342,7 +342,7 @@ func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUi
 		Step:          time.Duration(0),
 		Start:         ts,
 		End:           ts,
-		Format:        format,
+		TimeUnit:      unit,
 		Source:        source,
 		Target:        target,
 		Matcher:       matcher,
@@ -358,7 +358,7 @@ func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUi
 }
 
 func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, step time.Duration, startTs, endTs int64, target, source cmdb.Resource, matcher cmdb.Matcher, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, []cmdb.MatchersWithTimestamp, error) {
-	format, start, end, err := function.QueryTimestamp(strconv.FormatInt(startTs, 10), strconv.FormatInt(endTs, 10))
+	unit, start, end, err := function.QueryTimestamp(strconv.FormatInt(startTs, 10), strconv.FormatInt(endTs, 10))
 	if err != nil {
 		return "", nil, nil, nil, err
 	}
@@ -369,7 +369,7 @@ func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, sp
 		Step:          step,
 		Start:         start,
 		End:           end,
-		Format:        format,
+		TimeUnit:      unit,
 		Source:        source,
 		Target:        target,
 		Matcher:       matcher,

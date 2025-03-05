@@ -336,8 +336,8 @@ type ProfileJfrFormatOrigin struct {
 type ProfilesRawData struct {
 	Metadata ProfileMetadata
 	// Data Profile 原始数据
-	// Format = pprof -> PprofFormatOrigin
-	// Format = jfr -> JfrFormatOrigin
+	// TimeUnit = pprof -> PprofFormatOrigin
+	// TimeUnit = jfr -> JfrFormatOrigin
 	Data any
 }
 

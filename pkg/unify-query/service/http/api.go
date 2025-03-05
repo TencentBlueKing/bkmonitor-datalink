@@ -470,8 +470,8 @@ func HandlerLabelValues(c *gin.Context) {
 		return
 	}
 
-	format, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
-	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, format)
+	unit, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
+	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit)
 	instance, stmt, err := queryTsToInstanceAndStmt(ctx, query)
 	if err != nil {
 		return
@@ -519,8 +519,8 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 		Timezone:    params.Timezone,
 	}
 
-	var format string
-	format, start, end, err = function.QueryTimestamp(params.Start, params.End)
+	var unit string
+	unit, start, end, err = function.QueryTimestamp(params.Start, params.End)
 	if err != nil {
 		// 如果时间异常则使用最近 1h
 		end = time.Now()
@@ -528,7 +528,7 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 	}
 
 	// 写入查询时间到全局缓存
-	metadata.GetQueryParams(ctx).SetTime(start, end, format)
+	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 	queryRef, err = queryTs.ToQueryReference(ctx)
 	return
 }

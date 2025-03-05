@@ -109,12 +109,12 @@ func ParseTimestamp(s string) (f string, t time.Time, err error) {
 // QueryTimestamp 将开始时间和结束时间的时间戳从 string 转换为 time.Time，根据长度判定单位
 func QueryTimestamp(s, e string) (format string, start time.Time, end time.Time, err error) {
 	var (
-		startFormat string
-		endFormat   string
+		startUnit string
+		endUnit   string
 	)
 
 	if s != "" {
-		startFormat, start, err = ParseTimestamp(s)
+		startUnit, start, err = ParseTimestamp(s)
 		if err != nil {
 			err = fmt.Errorf("invalid start time: %v", err)
 			return
@@ -122,11 +122,11 @@ func QueryTimestamp(s, e string) (format string, start time.Time, end time.Time,
 	} else {
 		// 默认查询1小时内的数据
 		start = time.Now().Add(-time.Hour * 1)
-		startFormat = Second
+		startUnit = Second
 	}
 
 	if e != "" {
-		endFormat, end, err = ParseTimestamp(e)
+		endUnit, end, err = ParseTimestamp(e)
 		if err != nil {
 			err = fmt.Errorf("invalid end time: %v", err)
 			return
@@ -134,19 +134,19 @@ func QueryTimestamp(s, e string) (format string, start time.Time, end time.Time,
 	} else {
 		// 默认查询1小时内的数据
 		end = time.Now()
-		endFormat = Second
+		endUnit = Second
 	}
 
-	if startFormat != endFormat {
+	if startUnit != endUnit {
 		err = fmt.Errorf("start time and end time must have the same format")
 		return
 	}
-	format = startFormat
+	format = startUnit
 
 	return
 }
 
 // MsIntMergeNs 将毫秒时间和纳秒时间戳合并为新的时间
 func MsIntMergeNs(ms int64, ns time.Time) time.Time {
-	return time.Unix(0, (ms-ns.UnixMilli())*1e6+ns.UnixNano()).UTC()
+	return time.Unix(0, (ms-ns.UnixMilli())*1e6+ns.UnixNano())
 }

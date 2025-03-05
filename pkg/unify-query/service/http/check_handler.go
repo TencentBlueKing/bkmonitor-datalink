@@ -158,7 +158,7 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 	}
 	r.Step("query-reference", qr)
 
-	format, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
+	unit, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
 	if err != nil {
 		r.Error("function.QueryTimestamp", err)
 		return
@@ -171,7 +171,7 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 	}
 
 	// 写入查询缓存
-	metadata.GetQueryParams(ctx).SetTime(start, end, format)
+	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 
 	promQL, err := q.ToPromQL(ctx)
 	if err != nil {

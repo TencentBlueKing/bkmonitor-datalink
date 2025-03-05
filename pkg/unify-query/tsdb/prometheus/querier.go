@@ -170,7 +170,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 						// 如果使用时间聚合计算，是否对齐开始时间
 						if agg.Window.Milliseconds() > 0 {
 							ns := intMathFloor(startTime.UnixNano(), agg.Window.Nanoseconds()) * agg.Window.Nanoseconds()
-							startTime = time.Unix(0, ns).UTC()
+							startTime = time.Unix(0, ns)
 						}
 					}
 				}

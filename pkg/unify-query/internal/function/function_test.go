@@ -83,7 +83,7 @@ func TestMsIntMergeNs(t *testing.T) {
 
 func TestQueryTimestamp(t *testing.T) {
 	// 固定参考时间（2021-01-01 00:00:00 UTC）
-	refTime := time.Unix(1609459200, 0).UTC()
+	refTime := time.Unix(1609459200, 0)
 
 	defaultEnd := time.Now()
 	defaultStart := time.Now().Add(-time.Hour * 1)
@@ -182,7 +182,7 @@ func TestQueryTimestamp(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			format, start, end, err := function.QueryTimestamp(tt.s, tt.e)
+			unit, start, end, err := function.QueryTimestamp(tt.s, tt.e)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -193,7 +193,7 @@ func TestQueryTimestamp(t *testing.T) {
 			}
 
 			assert.NoError(t, err)
-			assert.Equal(t, tt.wantFormat, format)
+			assert.Equal(t, tt.wantFormat, unit)
 
 			// 处理动态生成的时间（默认值情况）
 			switch {
@@ -202,13 +202,13 @@ func TestQueryTimestamp(t *testing.T) {
 				assert.WithinDuration(t, defaultEnd, end, time.Second)
 			case tt.s == "":
 				assert.WithinDuration(t, defaultStart, start, time.Second)
-				assert.Equal(t, tt.wantEnd, end.UTC())
+				assert.Equal(t, tt.wantEnd, end)
 			case tt.e == "":
-				assert.Equal(t, tt.wantStart, start.UTC())
+				assert.Equal(t, tt.wantStart, start)
 				assert.WithinDuration(t, defaultEnd, end, time.Second)
 			default:
-				assert.Equal(t, tt.wantStart, start.UTC())
-				assert.Equal(t, tt.wantEnd, end.UTC())
+				assert.Equal(t, tt.wantStart, start)
+				assert.Equal(t, tt.wantEnd, end)
 			}
 		})
 	}

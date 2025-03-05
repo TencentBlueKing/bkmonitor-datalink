@@ -89,7 +89,9 @@ func NewTable(index int, series prom.Series, queryRawFormat func(string) string)
 			}
 
 			// es 查询使用了空格作为占位符，所以这里需要将标签中的空格替换掉
-			label.Value = strings.TrimSpace(label.Value)
+			if label.Value == " " {
+				label.Value = ""
+			}
 
 			t.GroupKeys = append(t.GroupKeys, label.Name)
 			t.GroupValues = append(t.GroupValues, label.Value)

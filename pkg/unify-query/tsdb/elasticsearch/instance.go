@@ -550,7 +550,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		err = fmt.Errorf("%s 查询别名为空", query.TableID)
 		return total, err
 	}
-	timeFormat := metadata.GetQueryParams(ctx).Format
+	unit := metadata.GetQueryParams(ctx).TimeUnit
 
 	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
 	if err != nil {
@@ -586,7 +586,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 			fact := NewFormatFactory(ctx).
 				WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-				WithQuery(query.Field, query.TimeField, qo.start, qo.end, timeFormat, query.From, query.Size).
+				WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.From, query.Size).
 				WithMappings(mappings...).
 				WithOrders(query.Orders)
 
@@ -651,7 +651,7 @@ func (i *Instance) QuerySeriesSet(
 		return storage.ErrSeriesSet(err)
 	}
 
-	timeFormat := metadata.GetQueryParams(ctx).Format
+	unit := metadata.GetQueryParams(ctx).TimeUnit
 
 	rangeLeftTime := end.Sub(start)
 	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
@@ -734,7 +734,7 @@ func (i *Instance) QuerySeriesSet(
 
 				fact := NewFormatFactory(ctx).
 					WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-					WithQuery(query.Field, query.TimeField, qo.start, qo.end, timeFormat, query.From, size).
+					WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.From, size).
 					WithMappings(mappings...).
 					WithOrders(query.Orders).
 					WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())

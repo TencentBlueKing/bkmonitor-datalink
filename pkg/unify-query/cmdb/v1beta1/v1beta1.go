@@ -288,7 +288,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	}
 
 	span.Set("paths", paths)
-	metadata.GetQueryParams(ctx).SetTime(opt.Start, opt.End, opt.TimeUnit).SetIsSkipK8s(true)
+	metadata.GetQueryParams(ctx).SetTime(opt.Start, opt.End, opt.Unit).SetIsSkipK8s(true)
 
 	var errorMessage []string
 	for _, path := range paths {
@@ -322,7 +322,7 @@ type QueryResourceOptions struct {
 	Step          time.Duration
 	Start         time.Time
 	End           time.Time
-	TimeUnit      string
+	Unit          string
 	Target        cmdb.Resource
 	Source        cmdb.Resource
 	Matcher       cmdb.Matcher
@@ -342,7 +342,7 @@ func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUi
 		Step:          time.Duration(0),
 		Start:         ts,
 		End:           ts,
-		TimeUnit:      unit,
+		Unit:          unit,
 		Source:        source,
 		Target:        target,
 		Matcher:       matcher,
@@ -369,7 +369,7 @@ func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, sp
 		Step:          step,
 		Start:         start,
 		End:           end,
-		TimeUnit:      unit,
+		Unit:          unit,
 		Source:        source,
 		Target:        target,
 		Matcher:       matcher,

@@ -21,9 +21,9 @@ import (
 type QueryParams struct {
 	ctx context.Context
 
-	Start  time.Time
-	End    time.Time
-	Format string
+	Start    time.Time
+	End      time.Time
+	TimeUnit string
 
 	StorageType *set.Set[string]
 
@@ -50,10 +50,10 @@ func (q *QueryParams) SetStorageType(ds string) *QueryParams {
 	return q
 }
 
-func (q *QueryParams) SetTime(start, end time.Time, format string) *QueryParams {
+func (q *QueryParams) SetTime(start, end time.Time, unit string) *QueryParams {
 	q.Start = start
 	q.End = end
-	q.Format = format
+	q.TimeUnit = unit
 	return q
 }
 

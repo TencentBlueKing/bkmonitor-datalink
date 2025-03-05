@@ -96,23 +96,13 @@ func (m *ServiceMap) Del(service *corev1.Service) {
 	}
 }
 
-func (m *ServiceMap) rangeServices(visitFunc func(namespace string, services serviceEntities)) {
+func (m *ServiceMap) Range(visitFunc func(namespace string, services serviceEntities)) {
 	m.mut.Lock()
 	defer m.mut.Unlock()
 
 	for k, v := range m.services {
 		visitFunc(k, v)
 	}
-}
-
-func matchLabels(subset, set map[string]string) bool {
-	for k, v := range subset {
-		val, ok := set[k]
-		if !ok || val != v {
-			return false
-		}
-	}
-	return true
 }
 
 func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*ServiceMap, error) {

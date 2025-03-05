@@ -27,7 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -47,7 +47,7 @@ func newBkLogConfigEntity(obj *loggingv1alpha1.BkLogConfig) *bkLogConfigEntity {
 		Obj: obj,
 	}
 
-	// check bk env
+	// 需要过滤 logbkenv 归属
 	env := feature.BkEnv(obj.Labels)
 	if env != configs.G().LogBkEnv {
 		logger.Warnf("want bkenv '%s', but got '%s', object (%s)", configs.G().LogBkEnv, env, entity.UUID())
@@ -71,7 +71,7 @@ func (e *bkLogConfigEntity) isVCluster(matcherLabel map[string]string) bool {
 }
 
 func (e *bkLogConfigEntity) getWorkloadName(name string, kind string) string {
-	if stringx.LowerEq(kind, kindReplicaSet) {
+	if utils.LowerEq(kind, kindReplicaSet) {
 		index := strings.LastIndex(name, "-")
 		return name[:index]
 	}
@@ -107,7 +107,7 @@ func (e *bkLogConfigEntity) matchWorkloadName(labels, annotations map[string]str
 		if r.MatchString(name) {
 			return true
 		}
-		if stringx.LowerEq(name, e.Obj.Spec.WorkloadName) {
+		if utils.LowerEq(name, e.Obj.Spec.WorkloadName) {
 			return true
 		}
 	}
@@ -129,12 +129,12 @@ func (e *bkLogConfigEntity) matchWorkloadType(labels, annotations map[string]str
 	}
 
 	for _, kind := range kinds {
-		if stringx.LowerEq(kind, kindReplicaSet) {
-			if stringx.LowerEq(e.Obj.Spec.WorkloadType, kindDeployment) {
+		if utils.LowerEq(kind, kindReplicaSet) {
+			if utils.LowerEq(e.Obj.Spec.WorkloadType, kindDeployment) {
 				return true
 			}
 		}
-		if stringx.LowerEq(e.Obj.Spec.WorkloadType, kind) {
+		if utils.LowerEq(e.Obj.Spec.WorkloadType, kind) {
 			return true
 		}
 	}
@@ -167,13 +167,7 @@ func (e *bkLogConfigEntity) MatchAnnotation(matchAnnotations map[string]string) 
 	if err != nil {
 		return false
 	}
-
-	labelSet := labels.Set(matchAnnotations)
-	if !selector.Matches(labelSet) {
-		return false
-	}
-
-	return true
+	return selector.Matches(labels.Set(matchAnnotations))
 }
 
 func (e *bkLogConfigEntity) MatchLabel(matchLabels map[string]string) bool {
@@ -181,13 +175,7 @@ func (e *bkLogConfigEntity) MatchLabel(matchLabels map[string]string) bool {
 	if err != nil {
 		return false
 	}
-
-	labelSet := labels.Set(matchLabels)
-	if !selector.Matches(labelSet) {
-		return false
-	}
-
-	return true
+	return selector.Matches(labels.Set(matchLabels))
 }
 
 // MatchNamespace 判断 namespace 是否匹配上

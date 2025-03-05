@@ -17,8 +17,7 @@ import (
 
 func TestGetPodRelabelConfigs(t *testing.T) {
 	oc := ObjectsController{}
-
-	pods := []Object{
+	pods := []PodObject{
 		{
 			PodIP: "pod1",
 			Labels: map[string]string{

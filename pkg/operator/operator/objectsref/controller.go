@@ -34,16 +34,17 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+type Action string
+
+const (
+	ActionCreateOrUpdate Action = "CreateOrUpdate"
+	ActionDelete         Action = "Delete"
+)
+
 // OwnerRef 代表 Owner 对象引用信息
 type OwnerRef struct {
 	Kind string `json:"kind"`
 	Name string `json:"name"`
-}
-
-type ContainerKey struct {
-	Name  string
-	ID    string
-	Image string
 }
 
 // Object 代表 workload 对象
@@ -51,16 +52,9 @@ type Object struct {
 	ID        ObjectID
 	OwnerRefs []OwnerRef
 
-	// Pod 属性
-	NodeName string
-	PodIP    string
-
 	// Metadata 属性
 	Labels      map[string]string
 	Annotations map[string]string
-
-	// Containers
-	Containers []ContainerKey
 }
 
 // ObjectID 代表 workload 对象标识
@@ -106,32 +100,6 @@ func (o *Objects) Del(oid ObjectID) {
 	defer o.mut.Unlock()
 
 	delete(o.objs, oid.String())
-}
-
-func (o *Objects) GetByNodeName(nodeName string) []Object {
-	o.mut.Lock()
-	defer o.mut.Unlock()
-
-	var ret []Object
-	for _, obj := range o.objs {
-		if obj.NodeName == nodeName {
-			ret = append(ret, obj)
-		}
-	}
-	return ret
-}
-
-func (o *Objects) GetByNamespace(namespace string) []Object {
-	o.mut.Lock()
-	defer o.mut.Unlock()
-
-	var ret []Object
-	for _, obj := range o.objs {
-		if obj.ID.Namespace == namespace {
-			ret = append(ret, obj)
-		}
-	}
-	return ret
 }
 
 func (o *Objects) GetAll() []Object {
@@ -230,7 +198,6 @@ type ObjectsController struct {
 
 	client kubernetes.Interface
 
-	podObjs             *Objects
 	replicaSetObjs      *Objects
 	deploymentObjs      *Objects
 	daemonSetObjs       *Objects
@@ -240,11 +207,13 @@ type ObjectsController struct {
 	gameStatefulSetObjs *Objects
 	gameDeploymentsObjs *Objects
 	secretObjs          *Objects
-	nodeObjs            *NodeMap
-	serviceObjs         *ServiceMap
-	endpointsObjs       *EndpointsMap
-	ingressObjs         *IngressMap
-	bkLogConfigObjs     *BkLogConfigMap
+
+	podObjs         *PodMap
+	nodeObjs        *NodeMap
+	serviceObjs     *ServiceMap
+	endpointsObjs   *EndpointsMap
+	ingressObjs     *IngressMap
+	bkLogConfigObjs *BkLogConfigMap
 }
 
 func NewController(ctx context.Context, client kubernetes.Interface, mClient metadata.Interface, bkClient bkversioned.Interface) (*ObjectsController, error) {
@@ -358,6 +327,10 @@ func (oc *ObjectsController) NodeNameExists(s string) (string, bool) {
 	return oc.nodeObjs.NameExists(s)
 }
 
+func (oc *ObjectsController) NodeLabels(s string) map[string]string {
+	return oc.nodeObjs.NodeLabels(s)
+}
+
 func (oc *ObjectsController) SecretObjs() []Object {
 	return oc.secretObjs.GetAll()
 }
@@ -399,12 +372,12 @@ func (oc *ObjectsController) recordMetrics() {
 	}
 }
 
-func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*Objects, error) {
+func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*PodMap, error) {
 	genericInformer, err := sharedInformer.ForResource(corev1.SchemeGroupVersion.WithResource(resourcePods))
 	if err != nil {
 		return nil, err
 	}
-	objs := NewObjects(kindPod)
+	objs := NewPodMap()
 
 	informer := genericInformer.Informer()
 	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
@@ -438,7 +411,7 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 				return
 			}
 
-			objs.Set(Object{
+			objs.Set(PodObject{
 				ID: ObjectID{
 					Name:      pod.Name,
 					Namespace: pod.Namespace,
@@ -457,7 +430,8 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 				logger.Errorf("excepted Pod type, got %T", newObj)
 				return
 			}
-			objs.Set(Object{
+
+			objs.Set(PodObject{
 				ID: ObjectID{
 					Name:      pod.Name,
 					Namespace: pod.Namespace,
@@ -1020,16 +994,4 @@ func toRefs(refs []metav1.OwnerReference) []OwnerRef {
 		})
 	}
 	return ret
-}
-
-func toContainerKey(pod *corev1.Pod) []ContainerKey {
-	var containers []ContainerKey
-	for _, sc := range pod.Status.ContainerStatuses {
-		containers = append(containers, ContainerKey{
-			Name:  sc.Name,
-			ID:    sc.ContainerID,
-			Image: sc.ImageID,
-		})
-	}
-	return containers
 }

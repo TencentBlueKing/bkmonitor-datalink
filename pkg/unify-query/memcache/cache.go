@@ -18,4 +18,5 @@ type Cache interface {
 	Set(string, interface{}, int64) bool
 	SetWithTTL(string, interface{}, int64, time.Duration) bool
 	Del(string)
+	Clear()
 }

@@ -189,6 +189,10 @@ func TestCompressFilterCondition(t *testing.T) {
 					return cond[i].DimensionName < cond[j].DimensionName
 				})
 			}
+
+			sort.SliceStable(condition, func(i, j int) bool {
+				return condition[i][0].Value[0] < condition[j][0].Value[0]
+			})
 			assert.Equal(t, testCase.expect, condition)
 		})
 	}

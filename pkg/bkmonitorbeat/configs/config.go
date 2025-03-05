@@ -81,6 +81,7 @@ type Config struct {
 	AdminAddr        string `config:"admin_addr"`
 	// 并发限制配置
 	ConcurrencyLimit ConcurrencyLimitConfig `config:"concurrency_limit"`
+	JsonLib          string                 `config:"jsonlib"`
 
 	MetricbeatWorkers        int  `config:"metricbeat_workers"`
 	MetricbeatSpreadWorkload bool `config:"metricbeat_spread_workload"`

@@ -7,38 +7,38 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package objectsref
+package promfmt
 
-import (
-	"testing"
+import "io"
 
-	"github.com/stretchr/testify/assert"
-)
+type Metric struct {
+	Name   string
+	Labels []Label
+}
 
-func TestObjects(t *testing.T) {
-	objs := NewObjects("")
-	objs.Set(Object{
-		ID: ObjectID{
-			Name:      "obj1",
-			Namespace: "ns1",
-		},
-		NodeName: "node1",
-	})
-	objs.Set(Object{
-		ID: ObjectID{
-			Name:      "obj2",
-			Namespace: "ns1",
-		},
-		NodeName: "node1",
-	})
-	assert.Len(t, objs.GetByNamespace("ns1"), 2)
-	assert.Len(t, objs.GetByNodeName("node1"), 2)
-	assert.Len(t, objs.GetByNodeName("node2"), 0)
+type Label struct {
+	Name  string
+	Value string
+}
 
-	objs.Del(ObjectID{
-		Name:      "obj1",
-		Namespace: "ns1",
-	})
-	assert.Len(t, objs.GetByNamespace("ns1"), 1)
-	assert.Len(t, objs.GetByNodeName("node1"), 1)
+func FmtBytes(w io.Writer, metrics ...Metric) {
+	for _, metric := range metrics {
+		w.Write([]byte(metric.Name))
+		w.Write([]byte(`{`))
+
+		var n int
+		for _, label := range metric.Labels {
+			if n > 0 {
+				w.Write([]byte(`,`))
+			}
+			n++
+			w.Write([]byte(label.Name))
+			w.Write([]byte(`="`))
+			w.Write([]byte(label.Value))
+			w.Write([]byte(`"`))
+		}
+
+		w.Write([]byte("} 1"))
+		w.Write([]byte("\n"))
+	}
 }

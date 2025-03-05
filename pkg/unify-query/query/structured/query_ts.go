@@ -11,6 +11,7 @@ package structured
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -23,12 +24,10 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/offlineDataArchive"
 	queryMod "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
@@ -61,6 +60,14 @@ type QueryTs struct {
 	LookBackDelta string `json:"look_back_delta,omitempty"`
 	// Instant 瞬时数据
 	Instant bool `json:"instant"`
+
+	// 增加公共限制
+	// Limit 点数限制数量
+	Limit int `json:"limit,omitempty" example:"0"`
+	// From 翻页开启数字
+	From int `json:"from,omitempty" example:"0"`
+	// HighLight 是否开启高亮
+	HighLight metadata.HighLight `json:"highlight,omitempty"`
 }
 
 // 根据 timezone 偏移对齐
@@ -168,6 +175,16 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 			q.SpaceUid = metadata.GetUser(ctx).SpaceUid
 		}
 
+		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
+		if !query.HighLight.Enable && q.HighLight.Enable {
+			query.HighLight = q.HighLight
+		}
+
+		// 复用字段配置，没有特殊配置的情况下使用公共配置
+		if len(query.KeepColumns) == 0 && len(q.ResultColumns) != 0 {
+			query.KeepColumns = q.ResultColumns
+		}
+
 		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid)
 		if err != nil {
 			return nil, err
@@ -203,6 +220,7 @@ func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClus
 				DimensionName: cond.DimensionName,
 				Value:         cond.Value,
 				Operator:      cond.Operator,
+				IsWildcard:    cond.IsWildcard,
 			})
 		}
 		queryConditions = append(queryConditions, queryConds)
@@ -388,6 +406,9 @@ type Query struct {
 
 	// IsReference 是否使用非时间聚合查询
 	IsReference bool `json:"-" swaggerignore:"true"`
+
+	// HighLight 是否打开高亮，只对原始数据接口生效
+	HighLight metadata.HighLight `json:"highlight,omitempty"`
 }
 
 func (q *Query) ToRouter() (*Route, error) {
@@ -516,15 +537,16 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			return true
 		}()
 
+		ff := metadata.GetBkDataTableIDCheck(ctx, string(tableID))
+		metric.BkDataRequestInc(ctx, spaceUid, string(tableID), fmt.Sprintf("%v", isMatchBizID), fmt.Sprintf("%v", ff))
+
 		// 特性开关是否，打开 bkdata tableid 校验
-		if metadata.GetBkDataTableIDCheck(ctx) {
+		if ff {
 			// 增加 bkdata tableid 校验，只有业务开头的才有权限，防止越权
 			if !isMatchBizID {
 				return queryMetric, nil
 			}
 		}
-
-		metric.BkDataRequestInc(ctx, spaceUid, string(tableID), fmt.Sprintf("%v", isMatchBizID))
 
 		route, bkDataErr := MakeRouteFromTableID(q.TableID)
 		if bkDataErr != nil {
@@ -596,8 +618,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			return nil, buildErr
 		}
 
-		query.Size = q.Limit
-		query.From = q.From
 		query.Aggregates = aggregates
 
 		// 针对 vmRt 不为空的情况，进行 vm 判定
@@ -662,13 +682,6 @@ func (q *Query) BuildMetadataQuery(
 
 	metricName := q.FieldName
 	expandMetricNames := tsDB.ExpandMetricNames
-
-	db := tsDB.DB
-	storageID := tsDB.StorageID
-	storageName := tsDB.StorageName
-	clusterName := tsDB.ClusterName
-	tagKeys := tsDB.TagsKey
-	vmRt := tsDB.VmRt
 	measurement = tsDB.Measurement
 	if measurement != "" {
 		measurements = []string{measurement}
@@ -678,17 +691,18 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("tsdb-measurement-type", tsDB.MeasurementType)
 	span.Set("tsdb-filters", tsDB.Filters)
 	span.Set("tsdb-data-label", tsDB.DataLabel)
-	span.Set("tsdb-storage-id", storageID)
-	span.Set("tsdb-storage-name", storageName)
-	span.Set("tsdb-cluster-name", clusterName)
-	span.Set("tsdb-tag-keys", tagKeys)
-	span.Set("tsdb-vm-rt", vmRt)
-	span.Set("tsdb-db", db)
+	span.Set("tsdb-storage-type", tsDB.StorageType)
+	span.Set("tsdb-storage-id", tsDB.StorageID)
+	span.Set("tsdb-storage-cluster-records", tsDB.StorageClusterRecords)
+	span.Set("tsdb-storage-name", tsDB.StorageName)
+	span.Set("tsdb-cluster-name", tsDB.ClusterName)
+	span.Set("tsdb-tag-keys", tsDB.TagsKey)
+	span.Set("tsdb-vm-rt", tsDB.VmRt)
+	span.Set("tsdb-db", tsDB.DB)
 	span.Set("tsdb-measurements", measurements)
 	span.Set("tsdb-time-field", tsDB.TimeField)
 	span.Set("tsdb-need-add-time", tsDB.NeedAddTime)
 	span.Set("tsdb-source-type", tsDB.SourceType)
-	span.Set("tsdb-storage-type", tsDB.StorageType)
 
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
@@ -819,36 +833,43 @@ func (q *Query) BuildMetadataQuery(
 		query.IsHasOr = true
 	}
 
-	// 通过过期时间判断是否读取归档模块
+	query.StorageID = tsDB.StorageID
+	query.StorageType = tsDB.StorageType
+
+	// 通过过期时间判断查询的 storage
 	start, end, _, timezone, err := ToTime(q.Start, q.End, q.Step, q.Timezone)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
-	// tag 路由转换
-	tagRouter, err := influxdb.GetTagRouter(ctx, tsDB.TagsKey, whereList.String())
+
+	query.StorageIDs, err = func() (StorageIDs []string, err error) {
+		if len(tsDB.StorageClusterRecords) == 0 {
+			return
+		}
+
+		storageIDSet := set.New[string]()
+		// 遍历 storageClusterRecords 记录，按照开启时间倒序
+		for _, record := range tsDB.StorageClusterRecords {
+			// 开始时间和结束时间分别扩 1h 预留查询量
+			checkStart := start.Add(time.Hour * -1).Unix()
+			checkEnd := end.Add(time.Hour * 1).Unix()
+
+			// 开启时间小于结束时间则加入查询队列
+			if record.EnableTime < checkEnd {
+				storageIDSet.Add(record.StorageID)
+			}
+
+			// 开启时间小于开始时间，则退出该循环
+			if record.EnableTime < checkStart {
+				break
+			}
+		}
+
+		return storageIDSet.ToArray(), nil
+	}()
 	if err != nil {
 		return nil, err
-	}
-	// 获取可以查询的 ShardID
-	offlineDataArchiveQuery, _ := offlineDataArchive.GetMetaData().GetReadShardsByTimeRange(
-		ctx, clusterName, tagRouter, db, query.RetentionPolicy, start.UnixNano(), end.UnixNano(),
-	)
-
-	if len(offlineDataArchiveQuery) > 0 {
-		query.StorageID = consul.OfflineDataArchive
-	} else {
-		query.StorageID = storageID
-	}
-
-	// 判断 rt 是否是 bkdata 的数据源
-	query.StorageType = tsDB.StorageType
-	// 兼容原逻辑，storageType 通过 storageMap 获取
-	if query.StorageType == "" {
-		stg, _ := tsdb.GetStorage(storageID)
-		if stg != nil {
-			query.StorageType = stg.Type
-		}
 	}
 
 	// 在 metadata 还没有补充 storageType 字段之前
@@ -858,29 +879,42 @@ func (q *Query) BuildMetadataQuery(
 		query.StorageType = consul.ElasticsearchStorageType
 	}
 
+	// 兼容原逻辑，storageType 通过 storageMap 获取
+	if query.StorageType == "" {
+		stg, _ := tsdb.GetStorage(query.StorageID)
+		if stg != nil {
+			query.StorageType = stg.Type
+		}
+	}
+
+	query.Measurement = measurement
+	query.Measurements = measurements
+	query.Field = field
+	query.Fields = fields
+	query.Timezone = timezone
+
 	query.DataSource = q.DataSource
 	query.TableID = tsDB.TableID
+	query.DataLabel = tsDB.DataLabel
 	query.MetricName = metricName
-	query.ClusterName = clusterName
-	query.TagsKey = tagKeys
-	query.DB = db
-	query.Measurement = measurement
-	query.VmRt = vmRt
-	query.StorageName = storageName
-	query.Field = field
-	query.Timezone = timezone
-	query.Fields = fields
-	query.Measurements = measurements
+	query.ClusterName = tsDB.ClusterName
+	query.TagsKey = tsDB.TagsKey
+	query.DB = tsDB.DB
+	query.VmRt = tsDB.VmRt
+	query.StorageName = tsDB.StorageName
 	query.TimeField = tsDB.TimeField
 	query.NeedAddTime = tsDB.NeedAddTime
 	query.SourceType = tsDB.SourceType
 
 	query.Condition = whereList.String()
-	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)
+	query.VmCondition, query.VmConditionNum = allCondition.VMString(query.VmRt, vmMetric, q.IsRegexp)
 
 	// 写入 ES 所需内容
 	query.QueryString = q.QueryString
 	query.Source = q.KeepColumns
+	query.HighLight = q.HighLight
+	query.Size = q.Limit
+	query.From = q.From
 
 	if len(allCondition) > 0 {
 		query.AllConditions = make(metadata.AllConditions, len(allCondition))
@@ -891,6 +925,7 @@ func (q *Query) BuildMetadataQuery(
 					DimensionName: c.DimensionName,
 					Value:         c.Value,
 					Operator:      c.Operator,
+					IsWildcard:    c.IsWildcard,
 				}
 			}
 			query.AllConditions[i] = conds
@@ -930,6 +965,8 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("query-vm-condition-num", query.VmConditionNum)
 	span.Set("query-is-regexp", q.IsRegexp)
 
+	span.Set("query-storage-ids", query.StorageIDs)
+	span.Set("query-storage-id", query.StorageID)
 	span.Set("query-storage-type", query.StorageType)
 	span.Set("query-storage-name", query.StorageName)
 
@@ -938,13 +975,16 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("query-vm-rt", query.VmRt)
 	span.Set("query-need-add-time", query.NeedAddTime)
 
+	jsonString, _ := json.Marshal(query)
+	span.Set("query-json", jsonString)
+
 	return query, nil
 }
 
 func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (parser.Expr, error) {
 	var (
-		metric string
-		err    error
+		metricName string
+		err        error
 
 		originalOffset time.Duration
 		step           time.Duration
@@ -955,7 +995,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 	)
 
 	// 判断是否使用别名作为指标
-	metric = q.ReferenceName
+	metricName = q.ReferenceName
 	if promExprOpt != nil {
 		// 忽略时间聚合函数开关
 		if promExprOpt.IgnoreTimeAggregationEnable {
@@ -976,7 +1016,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 
 		// 替换指标名
 		if m, ok := promExprOpt.ReferenceNameMetric[q.ReferenceName]; ok {
-			metric = m
+			metricName = m
 		}
 
 		// 增加 Matchers
@@ -1025,16 +1065,16 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 	}
 
 	if q.IsRegexp {
-		metricMatcher, err := labels.NewMatcher(labels.MatchRegexp, labels.MetricName, metric)
+		metricMatcher, err := labels.NewMatcher(labels.MatchRegexp, labels.MetricName, metricName)
 		if err != nil {
 			return nil, err
 		}
 		matchers = append(matchers, metricMatcher)
-		metric = ""
+		metricName = ""
 	}
 
 	result = &parser.VectorSelector{
-		Name:          metric,
+		Name:          metricName,
 		LabelMatchers: matchers,
 
 		Offset:         q.VectorOffset,

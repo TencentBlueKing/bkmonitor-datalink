@@ -202,7 +202,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 		},
 		res,
 	)
-	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.InstanceType())
+	metric.TsDBRequestBytes(ctx, size, i.InstanceType())
 
 	return res, nil
 }
@@ -504,10 +504,12 @@ func (i *Instance) query(
 	queryCost := time.Since(startAnaylize)
 	span.Set("query-cost", queryCost.String())
 
+	rangeLeftTime := end.Sub(start)
+	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, user.Source, fmt.Sprintf("%s_http", i.InstanceType()), i.host,
+		ctx, queryCost, fmt.Sprintf("%s_http", i.InstanceType()), i.host,
 	)
-	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.InstanceType())
+	metric.TsDBRequestBytes(ctx, size, i.InstanceType())
 
 	series := make([]*decoder.Row, 0)
 	for _, r := range res.Results {
@@ -840,7 +842,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 			},
 			res,
 		)
-		metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.InstanceType())
+		metric.TsDBRequestBytes(ctx, size, i.InstanceType())
 
 		span.Set("query-cost", time.Since(startAnaylize).String())
 
@@ -951,7 +953,7 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 		},
 		res,
 	)
-	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.InstanceType())
+	metric.TsDBRequestBytes(ctx, size, i.InstanceType())
 
 	span.Set("query-cost", time.Since(startAnaylize).String())
 
@@ -1093,7 +1095,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 			},
 			res,
 		)
-		metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.InstanceType())
+		metric.TsDBRequestBytes(ctx, size, i.InstanceType())
 
 		span.Set("query-cost", time.Since(startAnaylize).String())
 		span.Set("response-size", size)

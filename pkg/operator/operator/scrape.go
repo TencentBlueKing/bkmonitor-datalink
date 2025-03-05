@@ -40,9 +40,10 @@ type scrapeStat struct {
 }
 
 type scrapeAnalyze struct {
-	Metric string `json:"metric"`
-	Count  int    `json:"count"`
-	Sample string `json:"sample"`
+	Metric  string `json:"metric"`
+	Count   int    `json:"count"`
+	Sample  string `json:"sample"`
+	Invalid bool   `json:"invalid"`
 }
 
 func (s scrapeStat) ID() string {
@@ -65,25 +66,44 @@ func parseMetricName(s string) string {
 	return ""
 }
 
-func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor string, workers int, topn int) []scrapeAnalyze {
-	ch := c.scrapeLines(ctx, namespace, monitor, workers)
+func isNameNormalized(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for i, b := range s {
+		if !((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_' || (b >= '0' && b <= '9' && i > 0)) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor, endpoint string, workers int, topn int) []scrapeAnalyze {
+	ch := c.scrapeLines(ctx, namespace, monitor, endpoint, workers)
 
 	stats := make(map[string]int)
 	sample := make(map[string]string)
+	invalid := make(map[string]bool)
+
 	for line := range ch {
 		s := parseMetricName(line)
-		if s != "" {
-			stats[s]++
-			sample[s] = line
+		if s == "" {
+			continue
+		}
+		stats[s]++
+		sample[s] = line
+		if !isNameNormalized(s) {
+			invalid[s] = true
 		}
 	}
 
 	ret := make([]scrapeAnalyze, 0, len(stats))
 	for k, v := range stats {
 		ret = append(ret, scrapeAnalyze{
-			Metric: k,
-			Count:  v,
-			Sample: sample[k],
+			Metric:  k,
+			Count:   v,
+			Sample:  sample[k],
+			Invalid: invalid[k],
 		})
 	}
 
@@ -100,7 +120,7 @@ func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor string,
 	return ret
 }
 
-func (c *Operator) scrapeLines(ctx context.Context, namespace, monitor string, workers int) chan string {
+func (c *Operator) scrapeLines(ctx context.Context, namespace, monitor, endpoint string, workers int) chan string {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -108,8 +128,11 @@ func (c *Operator) scrapeLines(ctx context.Context, namespace, monitor string, w
 
 	cfgs := make([]*discover.ChildConfig, 0)
 	for _, cfg := range childConfigs {
-		if cfg.Meta.Namespace == namespace {
-			if monitor == "" || cfg.Meta.Name == monitor {
+		if cfg.Meta.Namespace != namespace {
+			continue
+		}
+		if monitor == "" || cfg.Meta.Name == monitor {
+			if endpoint == "" || strings.Contains(cfg.FileName, strings.ReplaceAll(endpoint, ".", "-")) {
 				cfgs = append(cfgs, cfg)
 			}
 		}

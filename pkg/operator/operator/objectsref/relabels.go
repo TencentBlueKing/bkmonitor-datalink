@@ -13,9 +13,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
-	"unicode"
 
 	"k8s.io/client-go/util/jsonpath"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 )
 
 // RelabelConfig relabel 配置 遵循 prometheus 规则
@@ -83,7 +84,7 @@ func (pr PodInfoRefs) AsRelabelConfigs() []RelabelConfig {
 				SourceLabels: []string{"namespace", "pod_name"},
 				Separator:    ";",
 				Regex:        ref.Namespace + ";" + ref.Name,
-				TargetLabel:  normalizeName(name),
+				TargetLabel:  utils.NormalizeName(name),
 				Replacement:  value,
 				Action:       "replace",
 			})
@@ -179,7 +180,7 @@ func (oc *ObjectsController) WorkloadsRelabelConfigsByPodName(nodeName, podName 
 	return configs
 }
 
-func (oc *ObjectsController) getWorkloadRelabelConfigs(pods []Object, podName string) []RelabelConfig {
+func (oc *ObjectsController) getWorkloadRelabelConfigs(pods []PodObject, podName string) []RelabelConfig {
 	workloadRefs := make(WorkloadRefs, 0, len(pods))
 
 	for _, pod := range pods {
@@ -209,7 +210,7 @@ func (oc *ObjectsController) PodsRelabelConfigs(annotations, labels []string) []
 	return oc.getPodRelabelConfigs(pods, "", annotations, labels)
 }
 
-func (oc *ObjectsController) getPodRelabelConfigs(pods []Object, podName string, annotations, labels []string) []RelabelConfig {
+func (oc *ObjectsController) getPodRelabelConfigs(pods []PodObject, podName string, annotations, labels []string) []RelabelConfig {
 	podInfoRefs := make(PodInfoRefs, 0)
 
 	parseFunc := func(s string) func(string) string {
@@ -335,8 +336,4 @@ func (oc *ObjectsController) objsMap() map[string]*Objects {
 		om[kindGameDeployment] = oc.gameDeploymentsObjs
 	}
 	return om
-}
-
-func normalizeName(s string) string {
-	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }), "_")
 }

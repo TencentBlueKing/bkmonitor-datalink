@@ -20,13 +20,12 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/valyala/bytebufferpool"
 	"gopkg.in/yaml.v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/httpx"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/stringx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
@@ -114,16 +113,17 @@ func (c *Operator) CheckScrapeNamespaceMonitorRoute(w http.ResponseWriter, r *ht
 
 	worker, _ := strconv.Atoi(r.URL.Query().Get("workers"))
 	topn, _ := strconv.Atoi(r.URL.Query().Get("topn"))
+	endpoint := r.URL.Query().Get("endpoint")
 
 	analyze := r.URL.Query().Get("analyze") // 分析指标
 	if analyze == "true" {
-		ret := c.scrapeAnalyze(r.Context(), namespace, monitor, worker, topn)
+		ret := c.scrapeAnalyze(r.Context(), namespace, monitor, endpoint, worker, topn)
 		b, _ := json.Marshal(ret)
 		w.Write(b)
 		return
 	}
 
-	ch := c.scrapeLines(r.Context(), namespace, monitor, worker)
+	ch := c.scrapeLines(r.Context(), namespace, monitor, endpoint, worker)
 	const batch = 1000
 	n := 0
 	for line := range ch {
@@ -162,6 +162,11 @@ const (
 	formatOperatorVersion = `
 [√] check operator version
 - Description: bkmonitor-operator 版本信息
+%s
+`
+	formatHelmChartsVersion = `
+[√] check helmcharts version
+- Description: helmcharts 版本信息
 %s
 `
 	formatKubernetesVersionSuccess = `
@@ -262,6 +267,7 @@ const (
 //
 // 检查 kubernetes 版本信息
 // 检查 bkmonitor-operator 版本信息
+// 检查 helmcharts 版本信息
 // 检查 dataids 是否符合预期
 // 检查集群信息
 // 检查 dryrun 标识是否打开
@@ -272,11 +278,8 @@ const (
 // 检查处理 secrets 是否有问题
 // 检查给定关键字监测资源
 func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
-	buf := bytebufferpool.Get()
-	defer bytebufferpool.Put(buf)
-
 	writef := func(format string, a ...interface{}) {
-		buf.WriteString(fmt.Sprintf(format, a...))
+		w.Write([]byte(fmt.Sprintf(format, a...)))
 	}
 
 	metaEnv := configs.G().MetaEnv
@@ -291,6 +294,11 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	// 检查 bkmonitor-operator 版本信息
 	b, _ := json.MarshalIndent(c.buildInfo, "", "  ")
 	writef(formatOperatorVersion, string(b))
+
+	// 检查 helmcharts 版本信息
+	eles := c.helmchartsController.GetByNamespace(configs.G().MonitorNamespace)
+	b, _ = json.MarshalIndent(eles, "", "  ")
+	writef(formatHelmChartsVersion, string(b))
 
 	// 检查 dataids 是否符合预期
 	dataids := c.checkDataIdRoute()
@@ -337,7 +345,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	writef(formatResource, string(b))
 
 	// 检查 Endpoint 数量
-	endpoints := c.recorder.getActiveEndpoints()
+	endpoints := c.recorder.getEndpoints(true)
 	b, _ = json.MarshalIndent(endpoints, "", "  ")
 	var total int
 	for _, v := range endpoints {
@@ -408,7 +416,6 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writef(formatLogContent, metaEnv.Namespace, metaEnv.PodName)
-	w.Write(buf.Bytes())
 }
 
 func (c *Operator) AdminLoggerRoute(w http.ResponseWriter, r *http.Request) {
@@ -474,7 +481,6 @@ func (c *Operator) WorkloadRoute(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (c *Operator) PodsRoute(w http.ResponseWriter, r *http.Request) {
-	pods := c.objectsController.AllPods()
 	info, err := c.dw.GetClusterInfo()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -482,29 +488,40 @@ func (c *Operator) PodsRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 无此参数默认按 0 处理
+	rv, _ := strconv.Atoi(r.URL.Query().Get("resourceVersion"))
 	type podsResponse struct {
-		ClusterID string `json:"k8s.bcs.cluster.id"`
-		Name      string `json:"k8s.pod.name"`
-		Namespace string `json:"k8s.namespace.name"`
-		IP        string `json:"k8s.pod.ip"`
+		Action    string `json:"action"`
+		ClusterID string `json:"cluster"`
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+		IP        string `json:"ip"`
 	}
 
-	nodes := c.objectsController.NodeIPs()
-	all := r.URL.Query().Get("all")
+	all := r.URL.Query().Get("all") // all 则返回所有 pods 不进行任何过滤
 
+	// 只返回已经就绪的 Pod
+	podEvents, lastRv := c.objectsController.FetchPodEvents(rv)
+	nodes := c.objectsController.NodeIPs()
 	var ret []podsResponse
-	for _, pod := range pods {
-		_, ok := nodes[pod.IP]
+	for _, podEvent := range podEvents {
+		_, ok := nodes[podEvent.IP]
 		if !ok || all == "true" {
 			ret = append(ret, podsResponse{
+				Action:    string(podEvent.Action),
 				ClusterID: info.BcsClusterID,
-				Name:      pod.Name,
-				Namespace: pod.Namespace,
-				IP:        pod.IP,
+				Name:      podEvent.Name,
+				Namespace: podEvent.Namespace,
+				IP:        podEvent.IP,
 			})
 		}
 	}
-	writeResponse(w, ret)
+
+	type R struct {
+		Pods            []podsResponse `json:"pods"`
+		ResourceVersion int            `json:"resourceVersion"`
+	}
+	writeResponse(w, R{Pods: ret, ResourceVersion: lastRv})
 }
 
 func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
@@ -522,8 +539,8 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 
 	// 补充 workload 维度信息
 	podName := query.Get("podName")
-	annotations := stringx.SplitTrim(query.Get("annotations"), ",")
-	labels := stringx.SplitTrim(query.Get("labels"), ",")
+	annotations := utils.SplitTrim(query.Get("annotations"), ",")
+	labels := utils.SplitTrim(query.Get("labels"), ",")
 	cfgs = append(cfgs, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName, annotations, labels)...)
 
 	// kind/rules 是为了让 workload 同时能够支持其他 labeljoin 等其他规则
@@ -542,8 +559,8 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 func (c *Operator) LabelJoinRoute(w http.ResponseWriter, r *http.Request) {
 	query := httpx.UnwindParams(r.URL.Query().Get("q"))
 	kind := query.Get("kind")
-	annotations := stringx.SplitTrim(query.Get("annotations"), ",")
-	labels := stringx.SplitTrim(query.Get("labels"), ",")
+	annotations := utils.SplitTrim(query.Get("annotations"), ",")
+	labels := utils.SplitTrim(query.Get("labels"), ",")
 
 	switch kind {
 	case "Pod":
@@ -554,16 +571,11 @@ func (c *Operator) LabelJoinRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) {
-	buf := bytebufferpool.Get()
-	defer bytebufferpool.Put(buf)
-
-	c.objectsController.GetNodeRelations(buf)
-	c.objectsController.GetServiceRelations(buf)
-	c.objectsController.GetPodRelations(buf)
-	c.objectsController.GetReplicasetRelations(buf)
-	c.objectsController.GetDataSourceRelations(buf)
-
-	w.Write(buf.Bytes())
+	c.objectsController.WriteNodeRelations(w)
+	c.objectsController.WriteServiceRelations(w)
+	c.objectsController.WritePodRelations(w)
+	c.objectsController.WriteReplicasetRelations(w)
+	c.objectsController.WriteDataSourceRelations(w)
 }
 
 func (c *Operator) RuleMetricsRoute(w http.ResponseWriter, _ *http.Request) {
@@ -576,14 +588,9 @@ func (c *Operator) RuleMetricsRoute(w http.ResponseWriter, _ *http.Request) {
 func (c *Operator) ConfigsRoute(w http.ResponseWriter, _ *http.Request) {
 	b, _ := yaml.Marshal(configs.G())
 
-	buf := bytebufferpool.Get()
-	defer bytebufferpool.Put(buf)
-
-	buf.WriteString("# " + define.ConfigFilePath)
-	buf.WriteString("\n")
-	buf.Write(b)
-
-	w.Write(buf.Bytes())
+	w.Write([]byte("# " + define.ConfigFilePath))
+	w.Write([]byte("\n"))
+	w.Write(b)
 }
 
 func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
@@ -601,7 +608,7 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /cluster_info
 * GET /workload
 * GET /workload/node/{node}
-* GET /pods?all=true|false
+* GET /pods?resourceVersion=N&all=true|false
 * GET /relation/metrics
 * GET /rule/metrics
 * GET /configs
@@ -611,8 +618,8 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /check?monitor=${monitor}&scrape=true|false&workers=N
 * GET /check/dataid
 * GET /check/scrape?workers=N
-* GET /check/scrape/{namespace}?workers=N&analyze=true|false&topn=M
-* GET /check/scrape/{namespace}/{monitor}?workers=N&analyze=true|false&topn=M
+* GET /check/scrape/{namespace}?workers=N&analyze=true|false&topn=M&endpoint={endpoint}
+* GET /check/scrape/{namespace}/{monitor}?workers=N&analyze=true|false&topn=M&endpoint={endpoint}
 * GET /check/namespace
 * GET /check/monitor_blacklist
 * GET /check/active_discover

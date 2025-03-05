@@ -47,13 +47,15 @@ type SpaceTsDbRouter struct {
 	kvBucketName string
 	kvPath       string
 	kvClient     kvstore.KVStore
-	cache        memcache.Cache
-	hasInit      bool
-	batchSize    int
+
+	isCache   bool
+	cache     memcache.Cache
+	hasInit   bool
+	batchSize int
 }
 
 // SetSpaceTsDbRouter 设置全局可用的 Router 单例，用于管理空间数据
-func SetSpaceTsDbRouter(ctx context.Context, kvPath string, kvBucketName string, routerPrefix string, batchSize int) (*SpaceTsDbRouter, error) {
+func SetSpaceTsDbRouter(ctx context.Context, kvPath string, kvBucketName string, routerPrefix string, batchSize int, isCache bool) (*SpaceTsDbRouter, error) {
 	globalSpaceTsDbRouterLock.Lock()
 	defer globalSpaceTsDbRouterLock.Unlock()
 	if globalSpaceTsDbRouter != nil {
@@ -67,6 +69,7 @@ func SetSpaceTsDbRouter(ctx context.Context, kvPath string, kvBucketName string,
 		kvPath:       kvPath,
 		routerPrefix: routerPrefix,
 		batchSize:    batchSize,
+		isCache:      isCache,
 	}
 	err := globalSpaceTsDbRouter.initRouter(ctx)
 	if err != nil {
@@ -178,7 +181,7 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 		log.Warnf(ctx, "Fail to new generic value, %s", err)
 		return nil
 	}
-	if cached {
+	if cached && r.isCache {
 		data, exist := r.cache.Get(stoKey)
 		if exist {
 			// 存入缓存的数据可能有 nil 情况，需要兼容
@@ -209,7 +212,7 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 		}
 	}
 	// 添加缓存
-	if cached {
+	if cached && r.isCache {
 		// NOTE: 暂时使用 20 作为随机
 		expiredTime := viper.GetInt64(memcache.RistrettoExpiredTimePath) + rand.Int63n(viper.GetInt64(memcache.RistrettoExpiredTimeFluxValuePath))
 		r.cache.SetWithTTL(stoKey, stoVal, 0, time.Duration(expiredTime)*time.Minute)

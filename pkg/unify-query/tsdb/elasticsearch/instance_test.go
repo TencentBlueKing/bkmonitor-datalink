@@ -31,7 +31,11 @@ func TestInstance_queryReference(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 
 	ins, err := NewInstance(ctx, &InstanceOption{
-		Address: mock.EsUrl,
+		Connects: []Connect{
+			{
+				Address: mock.EsUrl,
+			},
+		},
 		Timeout: 3 * time.Second,
 	})
 	if err != nil {
@@ -47,8 +51,8 @@ func TestInstance_queryReference(t *testing.T) {
 
 	mock.Es.Set(map[string]any{
 
-		// nested query + query string 测试
-		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"query_string":{"analyze_wildcard":true,"query":"group: fans"}}]}},"size":5}`: `{"took":1,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"user":[{"last":"Smith","first":"John"},{"last":"White","first":"Alice"}],"group":"fans"}}]}}`,
+		// nested query + query string 测试 + highlight
+		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"highlight":{"fields":{"*":{}},"number_of_fragments":0,"post_tags":["\u003c/mark\u003e"],"pre_tags":["\u003cmark\u003e"],"require_field_match":true},"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"query_string":{"analyze_wildcard":true,"query":"group: fans"}}]}},"size":5}`: `{"took":4,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"user":[{"last":"Smith","first":"John"},{"last":"White","first":"Alice"}],"group":"fans"},"highlight":{"user.new_group_user_first":["<mark>John</mark>"],"user.first":["<mark>John</mark>"],"user.new_first":["<mark>John</mark>"],"group":["<mark>fans</mark>"]}}]}}`,
 
 		// "nested aggregate + query 测试
 		`{"_source":{"includes":["group","user.first","user.last"]},"aggregations":{"user":{"aggregations":{"_value":{"value_count":{"field":"user.first"}}},"nested":{"path":"user"}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":17,"relation":"eq"},"max_score":null,"hits":[]},"aggregations":{"user":{"doc_count":18,"_value":{"value":18}}}}`,
@@ -66,7 +70,7 @@ func TestInstance_queryReference(t *testing.T) {
 		`{"_source":{"includes":["__ext.io_kubernetes_pod","__ext.container_name"]},"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":10}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8defd23f1c2599e70f3ace3a042b2b5f","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"ba0a6e66f01d6cb77ae25b13ddf4ad1b","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"74ea55e7397582b101f0e21efbc876c6","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"084792484f943e314e31ef2b2e878115","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"0a3f47a7c57d0af7d40d82c729c37155","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"85981293cca7102b9560b49a7f089737","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"b429dc6611efafc4d02b90f882271dea","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"01213026ae064c6726fd99dc8276e842","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"93027432b40ccb01b1be8f4ea06a6853","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"bc31babcb5d1075fc421bd641199d3aa","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}}]}}`,
 
 		// 使用 promql 计算平均值 sum(count_over_time(field[12h]))
-		`{"aggregations":{"__ext.container_name":{"aggregations":{"__ext.io_kubernetes_pod":{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"value_count":{"field":"dtEventTimeStamp"}}},"date_histogram":{"extended_bounds":{"max":1723679962000,"min":1723593608000},"field":"dtEventTimeStamp","fixed_interval":"12h","min_doc_count":0}}},"terms":{"field":"__ext.io_kubernetes_pod"}}},"terms":{"field":"__ext.container_name"}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":185,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"__ext.container_name":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"unify-query","doc_count":1523254,"__ext.io_kubernetes_pod":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"bkmonitor-unify-query-64bd4f5df4-599f9","doc_count":767743,"dtEventTimeStamp":{"buckets":[{"key_as_string":"1723593600000","key":1723593600000,"doc_count":375064,"_value":{"value":375064}},{"key_as_string":"1723636800000","key":1723636800000,"doc_count":392679,"_value":{"value":392679}}]}},{"key":"bkmonitor-unify-query-64bd4f5df4-llp94","doc_count":755511,"dtEventTimeStamp":{"buckets":[{"key_as_string":"1723593600000","key":1723593600000,"doc_count":381173,"_value":{"value":381173}},{"key_as_string":"1723636800000","key":1723636800000,"doc_count":374338,"_value":{"value":374338}}]}}]}},{"key":"sync-apigw","doc_count":48,"__ext.io_kubernetes_pod":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"bkmonitor-unify-query-apigw-sync-1178-cl8k8","doc_count":24,"dtEventTimeStamp":{"buckets":[{"key_as_string":"1723593600000","key":1723593600000,"doc_count":24,"_value":{"value":24}},{"key_as_string":"1723636800000","key":1723636800000,"doc_count":0,"_value":{"value":0}}]}},{"key":"bkmonitor-unify-query-apigw-sync-1179-9h9xv","doc_count":24,"dtEventTimeStamp":{"buckets":[{"key_as_string":"1723593600000","key":1723593600000,"doc_count":24,"_value":{"value":24}},{"key_as_string":"1723636800000","key":1723636800000,"doc_count":0,"_value":{"value":0}}]}}]}}]}}}`,
+		`{"aggregations":{"__ext.container_name":{"aggregations":{"__ext.io_kubernetes_pod":{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"value_count":{"field":"dtEventTimeStamp"}}},"date_histogram":{"extended_bounds":{"max":1723679962000,"min":1723593608000},"field":"dtEventTimeStamp","interval":"12h","min_doc_count":0}}},"terms":{"field":"__ext.io_kubernetes_pod"}}},"terms":{"field":"__ext.container_name"}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":185,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"__ext.container_name":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"unify-query","doc_count":1523254,"__ext.io_kubernetes_pod":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"bkmonitor-unify-query-64bd4f5df4-599f9","doc_count":767743,"dtEventTimeStamp":{"buckets":[{"key_as_string":"1723593600000","key":1723593600000,"doc_count":375064,"_value":{"value":375064}},{"key_as_string":"1723636800000","key":1723636800000,"doc_count":392679,"_value":{"value":392679}}]}},{"key":"bkmonitor-unify-query-64bd4f5df4-llp94","doc_count":755511,"dtEventTimeStamp":{"buckets":[{"key_as_string":"1723593600000","key":1723593600000,"doc_count":381173,"_value":{"value":381173}},{"key_as_string":"1723636800000","key":1723636800000,"doc_count":374338,"_value":{"value":374338}}]}}]}},{"key":"sync-apigw","doc_count":48,"__ext.io_kubernetes_pod":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"bkmonitor-unify-query-apigw-sync-1178-cl8k8","doc_count":24,"dtEventTimeStamp":{"buckets":[{"key_as_string":"1723593600000","key":1723593600000,"doc_count":24,"_value":{"value":24}},{"key_as_string":"1723636800000","key":1723636800000,"doc_count":0,"_value":{"value":0}}]}},{"key":"bkmonitor-unify-query-apigw-sync-1179-9h9xv","doc_count":24,"dtEventTimeStamp":{"buckets":[{"key_as_string":"1723593600000","key":1723593600000,"doc_count":24,"_value":{"value":24}},{"key_as_string":"1723636800000","key":1723636800000,"doc_count":0,"_value":{"value":0}}]}}]}}]}}}`,
 
 		// 使用非时间聚合统计数量
 		`{"aggregations":{"_value":{"value_count":{"field":"dtEventTimeStamp"}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":36,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"_value":{"value":1523302}}}`,
@@ -75,10 +79,15 @@ func TestInstance_queryReference(t *testing.T) {
 		`{"aggregations":{"_value":{"percentiles":{"field":"dtEventTimeStamp","percents":[50]}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":675,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"_value":{"values":{"50.0":1.7236371328063303E12,"50.0_as_string":"1723637132806"}}}}`,
 
 		// 获取 50, 90 分支值，同时按 6h 时间聚合
-		`{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"percentiles":{"field":"dtEventTimeStamp","percents":[50,90]}}},"date_histogram":{"extended_bounds":{"max":1723679962000,"min":1723593608000},"field":"dtEventTimeStamp","fixed_interval":"6h","min_doc_count":0}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":1338,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"dtEventTimeStamp":{"buckets":[{"key_as_string":"1723593600000","key":1723593600000,"doc_count":387467,"_value":{"values":{"50.0":1.7236043803502532E12,"50.0_as_string":"1723604380350","90.0":1.7236129561289934E12,"90.0_as_string":"1723612956128"}}},{"key_as_string":"1723615200000","key":1723615200000,"doc_count":368818,"_value":{"values":{"50.0":1.7236258380061033E12,"50.0_as_string":"1723625838006","90.0":1.7236346787215513E12,"90.0_as_string":"1723634678721"}}},{"key_as_string":"1723636800000","key":1723636800000,"doc_count":382721,"_value":{"values":{"50.0":1.7236475858829739E12,"50.0_as_string":"1723647585882","90.0":1.723656196499344E12,"90.0_as_string":"1723656196499"}}},{"key_as_string":"1723658400000","key":1723658400000,"doc_count":384296,"_value":{"values":{"50.0":1.7236691776407131E12,"50.0_as_string":"1723669177640","90.0":1.723677836133885E12,"90.0_as_string":"1723677836133"}}}]}}}`,
+		`{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"percentiles":{"field":"dtEventTimeStamp","percents":[50,90]}}},"date_histogram":{"extended_bounds":{"max":1723679962000,"min":1723593608000},"field":"dtEventTimeStamp","interval":"6h","min_doc_count":0}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":1338,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"dtEventTimeStamp":{"buckets":[{"key_as_string":"1723593600000","key":1723593600000,"doc_count":387467,"_value":{"values":{"50.0":1.7236043803502532E12,"50.0_as_string":"1723604380350","90.0":1.7236129561289934E12,"90.0_as_string":"1723612956128"}}},{"key_as_string":"1723615200000","key":1723615200000,"doc_count":368818,"_value":{"values":{"50.0":1.7236258380061033E12,"50.0_as_string":"1723625838006","90.0":1.7236346787215513E12,"90.0_as_string":"1723634678721"}}},{"key_as_string":"1723636800000","key":1723636800000,"doc_count":382721,"_value":{"values":{"50.0":1.7236475858829739E12,"50.0_as_string":"1723647585882","90.0":1.723656196499344E12,"90.0_as_string":"1723656196499"}}},{"key_as_string":"1723658400000","key":1723658400000,"doc_count":384296,"_value":{"values":{"50.0":1.7236691776407131E12,"50.0_as_string":"1723669177640","90.0":1.723677836133885E12,"90.0_as_string":"1723677836133"}}}]}}}`,
 
 		// 根据 field 字段聚合计算数量，同时根据值排序
 		`{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"value_count":{"field":"dtEventTimeStamp"}}},"terms":{"field":"dtEventTimeStamp","order":[{"_value":"asc"}]}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":198,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"dtEventTimeStamp":{"doc_count_error_upper_bound":-1,"sum_other_doc_count":1523292,"buckets":[{"key":1723593878000,"key_as_string":"1723593878000","doc_count":1,"_value":{"value":1}},{"key":1723593947000,"key_as_string":"1723593947000","doc_count":1,"_value":{"value":1}},{"key":1723594186000,"key_as_string":"1723594186000","doc_count":1,"_value":{"value":1}},{"key":1723595733000,"key_as_string":"1723595733000","doc_count":1,"_value":{"value":1}},{"key":1723596287000,"key_as_string":"1723596287000","doc_count":1,"_value":{"value":1}},{"key":1723596309000,"key_as_string":"1723596309000","doc_count":1,"_value":{"value":1}},{"key":1723596597000,"key_as_string":"1723596597000","doc_count":1,"_value":{"value":1}},{"key":1723596677000,"key_as_string":"1723596677000","doc_count":1,"_value":{"value":1}},{"key":1723596938000,"key_as_string":"1723596938000","doc_count":1,"_value":{"value":1}},{"key":1723597150000,"key_as_string":"1723597150000","doc_count":1,"_value":{"value":1}}]}}}`,
+
+		// 根据 field 字段聚合 min，同时根据值排序
+		`{"aggregations":{"dtEventTimeStamp":{"aggregations":{"_value":{"min":{"field":"dtEventTimeStamp"}}},"terms":{"field":"dtEventTimeStamp","order":[{"_value":"asc"}]}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":198,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"dtEventTimeStamp":{"doc_count_error_upper_bound":-1,"sum_other_doc_count":1523292,"buckets":[{"key":1723593878000,"key_as_string":"1723593878000","doc_count":1,"_value":{"value":1}},{"key":1723593947000,"key_as_string":"1723593947000","doc_count":1,"_value":{"value":1}},{"key":1723594186000,"key_as_string":"1723594186000","doc_count":1,"_value":{"value":1}},{"key":1723595733000,"key_as_string":"1723595733000","doc_count":1,"_value":{"value":1}},{"key":1723596287000,"key_as_string":"1723596287000","doc_count":1,"_value":{"value":1}},{"key":1723596309000,"key_as_string":"1723596309000","doc_count":1,"_value":{"value":1}},{"key":1723596597000,"key_as_string":"1723596597000","doc_count":1,"_value":{"value":1}},{"key":1723596677000,"key_as_string":"1723596677000","doc_count":1,"_value":{"value":1}},{"key":1723596938000,"key_as_string":"1723596938000","doc_count":1,"_value":{"value":1}},{"key":1723597150000,"key_as_string":"1723597150000","doc_count":1,"_value":{"value":1}}]}}}`,
+
+		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"error":{"root_cause":[{"type":"x_content_parse_exception","reason":"[1:138] [highlight] unknown field [max_analyzed_offset]"}],"type":"x_content_parse_exception","reason":"[1:138] [highlight] unknown field [max_analyzed_offset]"},"status":400}`,
 	})
 
 	for idx, c := range map[string]struct {
@@ -89,8 +98,9 @@ func TestInstance_queryReference(t *testing.T) {
 		isReference bool
 
 		expected string
+		err      error
 	}{
-		"nested query + query string 测试": {
+		"nested query + query string 测试 + highlight": {
 			query: &metadata.Query{
 				DB:    db,
 				Field: "group",
@@ -114,10 +124,13 @@ func TestInstance_queryReference(t *testing.T) {
 					},
 				},
 				QueryString: "group: fans",
+				HighLight: metadata.HighLight{
+					Enable: true,
+				},
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"__doc_id":"aS3KjpEBbwEm76LbcH1G","group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]}]`,
+			expected: `[{"__doc_id":"aS3KjpEBbwEm76LbcH1G","__highlight":{"group":["\u003cmark\u003efans\u003c/mark\u003e"],"user.first":["\u003cmark\u003eJohn\u003c/mark\u003e"],"user.new_first":["\u003cmark\u003eJohn\u003c/mark\u003e"],"user.new_group_user_first":["\u003cmark\u003eJohn\u003c/mark\u003e"]},"group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]}]`,
 		},
 		"nested aggregate + query 测试": {
 			query: &metadata.Query{
@@ -379,6 +392,44 @@ func TestInstance_queryReference(t *testing.T) {
 			end:      defaultEnd,
 			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723593878000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723593947000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723594186000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723595733000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596287000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596309000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596597000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596677000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596938000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723597150000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
 		},
+		"根据 field 字段聚合 min，同时根据值排序": {
+			query: &metadata.Query{
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        10,
+				DataSource:  structured.BkLog,
+				TableID:     "bk_log_index_set_10",
+				MetricName:  "__ext.io_kubernetes_pod",
+				StorageType: consul.ElasticsearchStorageType,
+				Aggregates: metadata.Aggregates{
+					{
+						Name: Min,
+						Dimensions: []string{
+							field,
+						},
+					},
+				},
+				Orders: map[string]bool{
+					FieldValue: true,
+				},
+			},
+			start:    defaultStart,
+			end:      defaultEnd,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723593878000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723593947000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723594186000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723595733000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596287000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596309000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596597000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596677000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723596938000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"dtEventTimeStamp","value":"1723597150000"}],"samples":[{"value":1,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
+		},
+		"query error with highlight max_analyzed_offset": {
+			query: &metadata.Query{
+				DB:          db,
+				Field:       "error",
+				DataSource:  structured.BkLog,
+				TableID:     "check_error",
+				StorageType: consul.ElasticsearchStorageType,
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+			err:   fmt.Errorf("es query [es_index] error: [1:138] [highlight] unknown field [max_analyzed_offset]"),
+		},
 	} {
 		t.Run(fmt.Sprintf("testing run: %s", idx), func(t *testing.T) {
 			if len(c.query.Aggregates) > 0 {
@@ -412,12 +463,14 @@ func TestInstance_queryReference(t *testing.T) {
 				close(dataCh)
 
 				wg.Wait()
-				if err != nil {
-					panic(err)
+
+				if c.err != nil {
+					assert.Equal(t, c.err, err)
+				} else {
+					res, _ := json.Marshal(list)
+					assert.Equal(t, c.expected, string(res))
 				}
 
-				res, _ := json.Marshal(list)
-				assert.Equal(t, c.expected, string(res))
 			}
 
 		})
@@ -428,7 +481,11 @@ func TestInstance_getAlias(t *testing.T) {
 	metadata.InitMetadata()
 	ctx := metadata.InitHashID(context.Background())
 	inst, err := NewInstance(ctx, &InstanceOption{
-		Address: mock.EsUrl,
+		Connects: []Connect{
+			{
+				Address: mock.EsUrl,
+			},
+		},
 		Timeout: time.Minute,
 	})
 	if err != nil {

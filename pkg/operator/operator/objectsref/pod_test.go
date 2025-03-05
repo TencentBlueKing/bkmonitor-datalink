@@ -15,45 +15,30 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMatchLabels(t *testing.T) {
-	t.Run("Match/Less", func(t *testing.T) {
-		subset := map[string]string{
-			"k1": "v1",
-			"k2": "v2",
-		}
-		set := map[string]string{
-			"k1": "v1",
-			"k2": "v2",
-			"k3": "v3",
-		}
-
-		assert.True(t, matchLabels(subset, set))
+func TestPodMap(t *testing.T) {
+	objs := NewPodMap()
+	objs.Set(PodObject{
+		ID: ObjectID{
+			Name:      "obj1",
+			Namespace: "ns1",
+		},
+		NodeName: "node1",
 	})
-
-	t.Run("Match/Equal", func(t *testing.T) {
-		subset := map[string]string{
-			"k1": "v1",
-			"k2": "v2",
-		}
-		set := map[string]string{
-			"k1": "v1",
-			"k2": "v2",
-		}
-
-		assert.True(t, matchLabels(subset, set))
+	objs.Set(PodObject{
+		ID: ObjectID{
+			Name:      "obj2",
+			Namespace: "ns1",
+		},
+		NodeName: "node1",
 	})
+	assert.Len(t, objs.GetByNamespace("ns1"), 2)
+	assert.Len(t, objs.GetByNodeName("node1"), 2)
+	assert.Len(t, objs.GetByNodeName("node2"), 0)
 
-	t.Run("Match/Greater", func(t *testing.T) {
-		subset := map[string]string{
-			"k1": "v1",
-			"k2": "v2",
-			"k3": "v3",
-		}
-		set := map[string]string{
-			"k1": "v1",
-			"k2": "v2",
-		}
-
-		assert.False(t, matchLabels(subset, set))
+	objs.Del(ObjectID{
+		Name:      "obj1",
+		Namespace: "ns1",
 	})
+	assert.Len(t, objs.GetByNamespace("ns1"), 1)
+	assert.Len(t, objs.GetByNodeName("node1"), 1)
 }

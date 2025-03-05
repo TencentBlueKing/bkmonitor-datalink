@@ -331,7 +331,10 @@ func (d *distributiveSubWindow) detectNotify() {
 	if len(expiredKeys) > 0 {
 		metrics.RecordApmPreCalcExpiredKeyTotal(d.dataId, d.id, len(expiredKeys))
 		for _, k := range expiredKeys {
+			// 防止在执行前 addWindow 方法已经把值取了出来导致值还存放着上次窗口的数据
+			d.mLock.Lock()
 			v, exists := d.m.LoadAndDelete(k)
+			d.mLock.Unlock()
 			if !exists {
 				d.logger.Errorf("An expired key[%s] was detected but does not exist in the mapping", k)
 				continue

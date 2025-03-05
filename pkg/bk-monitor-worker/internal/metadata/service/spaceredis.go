@@ -343,7 +343,7 @@ func (s *SpacePusher) getAllDataLabelTableId() (map[string][]string, error) {
 	return dataLabelTableIdMap, nil
 }
 
-// 提取写入到influxdb或vm的结果表数据
+// 提取具备VM、ES、InfluxDB链路的结果表
 func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 	db := mysql.GetDBSession().DB
 	// 过滤写入 influxdb 的结果表
@@ -382,6 +382,26 @@ func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 			return nil, err
 		}
 	}
+
+	// 过滤写入 ES 的结果表
+	var esStorageList []storage.ESStorage
+	qs3 := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID)
+	if len(tableIdList) != 0 {
+		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+			var tempList []storage.ESStorage
+			qsTemp := qs3.TableIDIn(chunkTableIdList...)
+			if err := qsTemp.All(&tempList); err != nil {
+				return nil, err
+			}
+			esStorageList = append(esStorageList, tempList...)
+		}
+	} else {
+		if err := qs3.All(&esStorageList); err != nil {
+			return nil, err
+		}
+	}
+
+	// 合并所有表 ID
 	var tableIds []string
 	for _, i := range influxdbStorageList {
 		tableIds = append(tableIds, i.TableID)
@@ -389,6 +409,11 @@ func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 	for _, i := range vmRecordList {
 		tableIds = append(tableIds, i.ResultTableId)
 	}
+	for _, i := range esStorageList {
+		tableIds = append(tableIds, i.TableID)
+	}
+
+	// 去重
 	tableIds = slicex.RemoveDuplicate(&tableIds)
 	return tableIds, nil
 }
@@ -530,10 +555,17 @@ func (s *SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool, us
 func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) error {
 	logger.Infof("PushEsTableIdDetail:start to compose es table id detail data, table_id_list [%v]", tableIdList)
 	db := mysql.GetDBSession().DB
+
 	// 获取数据
 	var esStorageList []storage.ESStorage
-	esQuerySet := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID, storage.ESStorageDBSchema.StorageClusterID, storage.ESStorageDBSchema.SourceType, storage.ESStorageDBSchema.IndexSet)
-	// 如果过滤结果表存在，则添加过来条件
+	esQuerySet := storage.NewESStorageQuerySet(db).Select(
+		storage.ESStorageDBSchema.TableID,
+		storage.ESStorageDBSchema.StorageClusterID,
+		storage.ESStorageDBSchema.SourceType,
+		storage.ESStorageDBSchema.IndexSet,
+	)
+
+	// 如果过滤结果表存在，则添加过滤条件
 	if len(tableIdList) != 0 {
 		if err := esQuerySet.TableIDIn(tableIdList...).All(&esStorageList); err != nil {
 			logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %v, error: %s", tableIdList, err)
@@ -545,6 +577,7 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 			return err
 		}
 	}
+
 	// 查询es结果表的 option
 	var tidList []string
 	for _, es := range esStorageList {
@@ -556,7 +589,7 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 	// 组装数据
 	client := redis.GetStorageRedisInstance()
 	wg := &sync.WaitGroup{}
-	// 因为每个完全独立，可以并发执行
+	// 因为每个处理任务完全独立，可以并发执行
 	ch := make(chan struct{}, 50)
 	wg.Add(len(esStorageList))
 	for _, es := range esStorageList {
@@ -571,17 +604,20 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 				<-ch
 				wg.Done()
 			}()
+
 			tableId := es.TableID
+
 			sourceType := es.SourceType
 			indexSet := es.IndexSet
+			logger.Infof("PushEsTableIdDetail:start to compose es table id detail, table_id->[%s],source_type->[%s],index_set->[%s]", tableId, sourceType, indexSet)
 			_tableId, detailStr, err := s.composeEsTableIdDetail(tableId, options, es.StorageClusterID, sourceType, indexSet)
 			if err != nil {
 				logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %s, error: %s", tableId, err)
 				return
 			}
 			// 推送数据
-			// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Publish操作
-			logger.Infof("PushEsTableIdDetail:start push and publish es table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s]", _tableId, cfg.ResultTableDetailChannel, _tableId)
+			// NOTE: HSetWithCompareAndPublish 判定新老值是否存在差异，若存在差异，则进行 Publish 操作
+			logger.Infof("PushEsTableIdDetail:start push and publish es table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", _tableId, cfg.ResultTableDetailChannel, _tableId, detailStr)
 			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, _tableId, detailStr, cfg.ResultTableDetailChannel, _tableId)
 			if err != nil {
 				logger.Errorf("PushEsTableIdDetail:push and publish es table id detail error, table_id->[%s], error->[%s]", tableId, err)
@@ -631,14 +667,48 @@ func (s *SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]m
 func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]interface{}, storageClusterId uint, sourceType, indexSet string) (string, string, error) {
 	logger.Infof("compose es table id detail, table_id [%s], options [%+v], storage_cluster_id [%d], source_type [%s], index_set [%s]", tableId, options, storageClusterId, sourceType, indexSet)
 
+	// 获取历史存储集群记录
+	db := mysql.GetDBSession().DB
+	clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, tableId)
+	if err != nil {
+		logger.Errorf("composeEsTableIdDetail: failed to get storage cluster records for table_id [%s], error: %v", tableId, err)
+		return "", "", err
+	}
+
+	var rt resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).TableIdEq(tableId).One(&rt); err != nil {
+		return tableId, "", err
+	}
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
-		"storage_id":  storageClusterId,
-		"db":          indexSet,
-		"measurement": models.TSGroupDefaultMeasurement,
-		"source_type": sourceType,
-		"options":     options,
+		"storage_type":            models.StorageTypeES,
+		"storage_id":              storageClusterId,
+		"db":                      indexSet,
+		"measurement":             models.TSGroupDefaultMeasurement,
+		"source_type":             sourceType,
+		"options":                 options,
+		"storage_cluster_records": clusterRecords,
+		"data_label":              rt.DataLabel,
 	})
+	if err != nil {
+		return tableId, "", err
+	}
+
+	parts := strings.Split(tableId, ".")
+
+	if len(parts) == 1 {
+		// 如果长度为 1，补充 `.__default__`
+		logger.Infof("composeEsTableIdDetail: table_id [%s] is missing '.', adding '.__default__'", tableId)
+		tableId = fmt.Sprintf("%s.__default__", tableId)
+	} else if len(parts) != 2 {
+		// 如果长度不是 2，记录错误日志并返回
+		err = errors.Errorf("invalid table_id format: too many dots in %q", tableId)
+		logger.Errorf("composeEsTableIdDetail: table_id [%s] is invalid, contains too many dots", tableId)
+		return tableId, "", err
+	}
+	// 大部份情况下,len(parts)=2，保持原样，无需显式处理
+
+	logger.Infof("composeEsTableIdDetail:compose success, table_id [%s], detail [%s]", tableId, detailStr)
 	return tableId, detailStr, err
 }
 
@@ -1524,7 +1594,6 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 		ops.Set("fromAuthorization", need)
 	}
 	tableIdDataId, err := s.GetSpaceTableIdDataId(spaceType, spaceId, tableIdList, nil, ops)
-	logger.Infof("composeData: GetSpaceTableIdDataId success,space_type [%s], space_id [%s],tableIdDataId[%v]", spaceType, spaceId, tableIdDataId)
 	if err != nil {
 		logger.Errorf("composeData: GetSpaceTableIdDataId failed,space_type [%s], space_id [%s],err[%v]", spaceType, spaceId, err)
 		return nil, err
@@ -1539,9 +1608,9 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 	for tableId := range tableIdDataId {
 		tableIds = append(tableIds, tableId)
 	}
-	// 提取仅包含写入 influxdb 和 vm 的结果表
+	// 提取具备VM、ES、InfluxDB的链路结果表
 	tableIds, err = s.refineTableIds(tableIds)
-	// 再一次过滤，过滤到有链路的结果表，并且写入 influxdb 或 vm 的数据
+	// 再一次过滤，过滤到有链路的结果表，并且写入 influxdb&vm&es 的数据
 	tableIdDataIdMap := make(map[string]uint)
 	var dataIdList []uint
 	for _, tableId := range tableIds {
@@ -1566,10 +1635,23 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 			IsPlatformDataId: ds.IsPlatformDataId,
 		}
 	}
-	// 判断是否添加过滤条件
+	// 查询结果表，同时获取 bk_biz_id_alias 字段
 	var rtList []resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.SchemaType, resulttable.ResultTableDBSchema.DataLabel).TableIdIn(tableIds...).All(&rtList); err != nil {
+	if err := resulttable.NewResultTableQuerySet(db).
+		Select(
+			resulttable.ResultTableDBSchema.TableId,
+			resulttable.ResultTableDBSchema.SchemaType,
+			resulttable.ResultTableDBSchema.DataLabel,
+			resulttable.ResultTableDBSchema.BkBizIdAlias, // 查询 bk_biz_id_alias
+		).
+		TableIdIn(tableIds...).
+		All(&rtList); err != nil {
 		return nil, err
+	}
+	// 构建 table_id -> bk_biz_id_alias 的映射
+	bkBizIdAliasMap := make(map[string]string)
+	for _, rt := range rtList {
+		bkBizIdAliasMap[rt.TableId] = rt.BkBizIdAlias
 	}
 	// 获取结果表对应的类型
 	measurementTypeMap, err := s.getMeasurementTypeByTableId(tableIds, rtList, tableIdDataIdMap)
@@ -1621,7 +1703,13 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 		} else {
 			filters := make([]map[string]interface{}, 0)
 			if s.isNeedFilterForBkcc(measurementType, spaceType, spaceId, detail, isExistSpace) {
-				filters = append(filters, map[string]interface{}{"bk_biz_id": spaceId})
+				// 默认使用 bk_biz_id，若存在别名，则使用别名
+				bkBizIdKey := "bk_biz_id"
+				if alias, ok := bkBizIdAliasMap[tid]; ok && alias != "" {
+					logger.Infof("table_id [%s] got bk_biz_id_alias [%s]", tid, alias)
+					bkBizIdKey = alias
+				}
+				filters = append(filters, map[string]interface{}{bkBizIdKey: spaceId})
 			}
 			valueData[tid] = map[string]interface{}{"filters": filters}
 		}

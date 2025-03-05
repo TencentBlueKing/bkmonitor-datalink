@@ -16,7 +16,6 @@ import (
 	"github.com/pkg/errors"
 	promconfig "github.com/prometheus/common/config"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/commonconfigs"
@@ -42,13 +41,13 @@ type Discover struct {
 
 var _ discover.Discover = (*Discover)(nil)
 
-func New(ctx context.Context, checkFn define.CheckFunc, opts *Options) *Discover {
+func New(ctx context.Context, opts *Options) *Discover {
 	d := &Discover{
-		BaseDiscover: discover.NewBaseDiscover(ctx, checkFn, opts.CommonOptions),
+		BaseDiscover: discover.NewBaseDiscover(ctx, opts.CommonOptions),
 		opts:         opts,
 	}
 
-	d.SetUK(fmt.Sprintf("%s:%s:%s", d.Type(), opts.SDConfig.Namespace, opts.SDConfig.Service))
+	d.SetUK(fmt.Sprintf("%s:%s", d.Type(), opts.Name))
 	d.SetHelper(discover.Helper{
 		AccessBasicAuth:   commonconfigs.WrapHttpAccessBasicAuth(opts.HTTPClientConfig),
 		AccessBearerToken: commonconfigs.WrapHttpAccessBearerToken(opts.HTTPClientConfig),
@@ -64,6 +63,11 @@ func (d *Discover) Type() string {
 func (d *Discover) Reload() error {
 	d.Stop()
 	return d.Start()
+}
+
+func (d *Discover) Stop() {
+	d.BaseDiscover.Stop()
+	shareddiscovery.Unregister(d.UK())
 }
 
 func (d *Discover) Start() error {

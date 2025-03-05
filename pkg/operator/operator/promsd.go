@@ -14,7 +14,6 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/pkg/errors"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/config"
@@ -32,57 +31,92 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-func (c *Operator) getPromScrapeConfigs() ([]config.ScrapeConfig, bool) {
+type resourceScrapConfig struct {
+	Resource string
+	Config   config.ScrapeConfig
+}
+
+func (c *Operator) getPromResourceScrapeConfigs() ([]resourceScrapConfig, bool) {
 	if len(configs.G().PromSDSecrets) == 0 {
 		return nil, false
 	}
 
-	var cfgs []config.ScrapeConfig
-	round := make(map[string][]byte) // 本轮获取到的数据
+	var rscs []resourceScrapConfig
+	newRound := make(map[string][]byte) // 本轮获取到的数据
 	for _, secret := range configs.G().PromSDSecrets {
-		m, err := c.getPromSDSecretData(secret)
+		secData, err := c.getPromSDSecretData(secret)
 		if err != nil {
-			logger.Errorf("get secrets sesource failed, config=(%+v), err: %v", secret, err)
+			logger.Errorf("get secrets sesource failed, config=(%+v): %v", secret, err)
 			continue
 		}
 
-		for k, v := range m {
-			sdc, err := unmarshalPromSdConfigs(v)
+		for resource, data := range secData {
+			sdc, err := unmarshalPromSdConfigs(data)
 			if err != nil {
-				logger.Errorf("unmarshal prom sdconfigs failed, resource=(%s), err: %v", k, err)
+				logger.Errorf("unmarshal prom sdconfigs failed, resource=(%s): %v", resource, err)
 				continue
 			}
 
-			round[k] = v
-			cfgs = append(cfgs, sdc...)
+			newRound[resource] = data
+			for i := 0; i < len(sdc); i++ {
+				rscs = append(rscs, resourceScrapConfig{
+					Resource: resource,
+					Config:   sdc[i],
+				})
+			}
 		}
 	}
 
-	eq := reflect.DeepEqual(c.promSdConfigsBytes, round) // 对比是否需要更新操作
-	c.promSdConfigsBytes = round
-	return cfgs, !eq // changed
+	eq := reflect.DeepEqual(c.promSdConfigsBytes, newRound) // 对比是否需要更新操作
+	c.promSdConfigsBytes = newRound
+	return rscs, !eq // changed
 }
 
-func (c *Operator) getPromSDSecretData(secret configs.PromSDSecret) (map[string][]byte, error) {
-	// 需要同时指定 namespace/name
-	if secret.Namespace == "" || secret.Name == "" {
-		return nil, errors.New("empty sdconfig namespace/name")
-	}
-	secretClient := c.client.CoreV1().Secrets(secret.Namespace)
-	obj, err := secretClient.Get(c.ctx, secret.Name, metav1.GetOptions{})
+func (c *Operator) getPromSDSecretDataByName(sdSecret configs.PromSDSecret) (map[string][]byte, error) {
+	secretClient := c.client.CoreV1().Secrets(sdSecret.Namespace)
+	obj, err := secretClient.Get(c.ctx, sdSecret.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	ret := make(map[string][]byte)
+	secData := make(map[string][]byte)
 	for file, data := range obj.Data {
-		ret[secretKeyFunc(secret, file)] = data
+		secData[secretKeyFunc(sdSecret.Namespace, sdSecret.Name, file)] = data
 	}
-	return ret, nil
+	return secData, nil
 }
 
-func secretKeyFunc(secret configs.PromSDSecret, file string) string {
-	return fmt.Sprintf("%s/%s/%s", secret.Namespace, secret.Name, file)
+func (c *Operator) getPromSDSecretDataBySelector(sdSecret configs.PromSDSecret) (map[string][]byte, error) {
+	secretClient := c.client.CoreV1().Secrets(sdSecret.Namespace)
+	objList, err := secretClient.List(c.ctx, metav1.ListOptions{
+		LabelSelector: sdSecret.Selector,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	secData := make(map[string][]byte)
+	for _, obj := range objList.Items {
+		for file, data := range obj.Data {
+			secData[secretKeyFunc(obj.Namespace, obj.Name, file)] = data
+		}
+	}
+	return secData, nil
+}
+
+func (c *Operator) getPromSDSecretData(sdSecret configs.PromSDSecret) (map[string][]byte, error) {
+	if !sdSecret.Validate() {
+		return nil, fmt.Errorf("invalid sdconfig (%#v)", sdSecret)
+	}
+
+	if len(sdSecret.Name) > 0 {
+		return c.getPromSDSecretDataByName(sdSecret)
+	}
+	return c.getPromSDSecretDataBySelector(sdSecret)
+}
+
+func secretKeyFunc(namespace, name, file string) string {
+	return fmt.Sprintf("%s/%s/%s", namespace, name, file)
 }
 
 func unmarshalPromSdConfigs(b []byte) ([]config.ScrapeConfig, error) {
@@ -116,17 +150,17 @@ func castDuration(d model.Duration) string {
 	return d.String()
 }
 
-func (c *Operator) createHttpLikeSdDiscover(scrapeConfig config.ScrapeConfig, sdConfig interface{}, kind string, index int) (discover.Discover, error) {
+func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig interface{}, kind string, index int) (discover.Discover, error) {
 	metricRelabelings := make([]yaml.MapSlice, 0)
-	if len(scrapeConfig.MetricRelabelConfigs) != 0 {
-		for _, cfg := range scrapeConfig.MetricRelabelConfigs {
+	if len(rsc.Config.MetricRelabelConfigs) != 0 {
+		for _, cfg := range rsc.Config.MetricRelabelConfigs {
 			relabeling := generatePromRelabelConfig(cfg)
 			metricRelabelings = append(metricRelabelings, relabeling)
 		}
 	}
 
 	monitorMeta := define.MonitorMeta{
-		Name:      scrapeConfig.JobName,
+		Name:      fmt.Sprintf("%s/%s", rsc.Resource, rsc.Config.JobName),
 		Kind:      kind,
 		Namespace: "-", // 不标记 namespace
 		Index:     index,
@@ -138,7 +172,7 @@ func (c *Operator) createHttpLikeSdDiscover(scrapeConfig config.ScrapeConfig, sd
 	}
 
 	specLabels := dataID.Spec.Labels
-	httpClientConfig := scrapeConfig.HTTPClientConfig
+	httpClientConfig := rsc.Config.HTTPClientConfig
 
 	var proxyURL string
 	if httpClientConfig.ProxyURL.URL != nil {
@@ -155,29 +189,31 @@ func (c *Operator) createHttpLikeSdDiscover(scrapeConfig config.ScrapeConfig, sd
 		MonitorMeta:            monitorMeta,
 		Name:                   monitorMeta.ID(),
 		DataID:                 dataID,
-		Relabels:               scrapeConfig.RelabelConfigs,
-		Path:                   scrapeConfig.MetricsPath,
-		Scheme:                 scrapeConfig.Scheme,
+		Relabels:               rsc.Config.RelabelConfigs,
+		Path:                   rsc.Config.MetricsPath,
+		Scheme:                 rsc.Config.Scheme,
 		BearerTokenFile:        bearerTokenFile,
 		ProxyURL:               proxyURL,
-		Period:                 castDuration(scrapeConfig.ScrapeInterval),
-		Timeout:                castDuration(scrapeConfig.ScrapeTimeout),
-		DisableCustomTimestamp: !ifHonorTimestamps(&scrapeConfig.HonorTimestamps),
-		UrlValues:              scrapeConfig.Params,
+		Period:                 castDuration(rsc.Config.ScrapeInterval),
+		Timeout:                castDuration(rsc.Config.ScrapeTimeout),
+		DisableCustomTimestamp: !ifHonorTimestamps(&rsc.Config.HonorTimestamps),
+		UrlValues:              rsc.Config.Params,
 		ExtraLabels:            specLabels,
 		MetricRelabelConfigs:   metricRelabelings,
+		NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+		NodeLabelsFunc:         c.objectsController.NodeLabels,
 	}
 
 	var dis discover.Discover
 	switch kind {
 	case monitorKindHttpSd:
-		dis = httpsd.New(c.ctx, c.objectsController.NodeNameExists, &httpsd.Options{
+		dis = httpsd.New(c.ctx, &httpsd.Options{
 			CommonOptions:    commonOpts,
 			SDConfig:         sdConfig.(*promhttpsd.SDConfig),
 			HTTPClientConfig: httpClientConfig,
 		})
 	case monitorKindPolarisSd:
-		dis = polarissd.New(c.ctx, c.objectsController.NodeNameExists, &polarissd.Options{
+		dis = polarissd.New(c.ctx, &polarissd.Options{
 			CommonOptions:    commonOpts,
 			SDConfig:         sdConfig.(*polarissd.SDConfig),
 			HTTPClientConfig: httpClientConfig,
@@ -190,17 +226,17 @@ func (c *Operator) createHttpLikeSdDiscover(scrapeConfig config.ScrapeConfig, sd
 	return dis, nil
 }
 
-func (c *Operator) createKubernetesSdDiscover(scrapeConfig config.ScrapeConfig, sdConfig *promk8ssd.SDConfig, index int) (discover.Discover, error) {
+func (c *Operator) createKubernetesSdDiscover(rsc resourceScrapConfig, sdConfig *promk8ssd.SDConfig, index int) (discover.Discover, error) {
 	metricRelabelings := make([]yaml.MapSlice, 0)
-	if len(scrapeConfig.MetricRelabelConfigs) != 0 {
-		for _, cfg := range scrapeConfig.MetricRelabelConfigs {
+	if len(rsc.Config.MetricRelabelConfigs) != 0 {
+		for _, cfg := range rsc.Config.MetricRelabelConfigs {
 			relabeling := generatePromRelabelConfig(cfg)
 			metricRelabelings = append(metricRelabelings, relabeling)
 		}
 	}
 
 	monitorMeta := define.MonitorMeta{
-		Name:      scrapeConfig.JobName,
+		Name:      fmt.Sprintf("%s/%s", rsc.Resource, rsc.Config.JobName),
 		Kind:      monitorKindKubernetesSd,
 		Namespace: "-", // 不标记 namespace
 		Index:     index,
@@ -212,7 +248,7 @@ func (c *Operator) createKubernetesSdDiscover(scrapeConfig config.ScrapeConfig, 
 	}
 
 	specLabels := dataID.Spec.Labels
-	httpClientConfig := scrapeConfig.HTTPClientConfig
+	httpClientConfig := rsc.Config.HTTPClientConfig
 
 	var proxyURL string
 	if httpClientConfig.ProxyURL.URL != nil {
@@ -226,28 +262,30 @@ func (c *Operator) createKubernetesSdDiscover(scrapeConfig config.ScrapeConfig, 
 	}
 
 	var username, password string
-	basicAuth := scrapeConfig.HTTPClientConfig.BasicAuth
+	basicAuth := rsc.Config.HTTPClientConfig.BasicAuth
 	if basicAuth != nil {
 		username = basicAuth.Username
 		password = string(basicAuth.Password)
 	}
 
-	dis := kubernetesd.New(c.ctx, string(sdConfig.Role), c.objectsController.NodeNameExists, &kubernetesd.Options{
+	dis := kubernetesd.New(c.ctx, string(sdConfig.Role), &kubernetesd.Options{
 		CommonOptions: &discover.CommonOptions{
 			MonitorMeta:            monitorMeta,
 			Name:                   monitorMeta.ID(),
 			DataID:                 dataID,
-			Relabels:               scrapeConfig.RelabelConfigs,
-			Path:                   scrapeConfig.MetricsPath,
-			Scheme:                 scrapeConfig.Scheme,
+			Relabels:               rsc.Config.RelabelConfigs,
+			Path:                   rsc.Config.MetricsPath,
+			Scheme:                 rsc.Config.Scheme,
 			BearerTokenFile:        bearerTokenFile,
 			ProxyURL:               proxyURL,
-			Period:                 castDuration(scrapeConfig.ScrapeInterval),
-			Timeout:                castDuration(scrapeConfig.ScrapeTimeout),
-			DisableCustomTimestamp: !ifHonorTimestamps(&scrapeConfig.HonorTimestamps),
-			UrlValues:              scrapeConfig.Params,
+			Period:                 castDuration(rsc.Config.ScrapeInterval),
+			Timeout:                castDuration(rsc.Config.ScrapeTimeout),
+			DisableCustomTimestamp: !ifHonorTimestamps(&rsc.Config.HonorTimestamps),
+			UrlValues:              rsc.Config.Params,
 			ExtraLabels:            specLabels,
 			MetricRelabelConfigs:   metricRelabelings,
+			NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+			NodeLabelsFunc:         c.objectsController.NodeLabels,
 		},
 		KubeConfig: configs.G().KubeConfig,
 		Namespaces: sdConfig.NamespaceDiscovery.Names,
@@ -257,9 +295,9 @@ func (c *Operator) createKubernetesSdDiscover(scrapeConfig config.ScrapeConfig, 
 			Password: password,
 		},
 		TLSConfig: &promv1.TLSConfig{
-			CAFile:   scrapeConfig.HTTPClientConfig.TLSConfig.CAFile,
-			CertFile: scrapeConfig.HTTPClientConfig.TLSConfig.CertFile,
-			KeyFile:  scrapeConfig.HTTPClientConfig.TLSConfig.KeyFile,
+			CAFile:   rsc.Config.HTTPClientConfig.TLSConfig.CAFile,
+			CertFile: rsc.Config.HTTPClientConfig.TLSConfig.CertFile,
+			KeyFile:  rsc.Config.HTTPClientConfig.TLSConfig.KeyFile,
 		},
 		UseEndpointSlice: useEndpointslice,
 	})
@@ -268,73 +306,127 @@ func (c *Operator) createKubernetesSdDiscover(scrapeConfig config.ScrapeConfig, 
 	return dis, nil
 }
 
-func (c *Operator) createPromScrapeConfigDiscovers() []discover.Discover {
-	scrapeConfigs, ok := c.getPromScrapeConfigs()
+const (
+	opAddOrUpdate = "addOrUpdate"
+	opRemove      = "remove"
+)
+
+func (c *Operator) reloadPromScrapeConfigDiscovers() {
+	resourceScrapeConfigs, ok := c.getPromResourceScrapeConfigs()
 	if !ok {
-		return nil
+		return
 	}
 
-	logger.Infof("got prom scrapeConfigs, count=%d", len(scrapeConfigs))
+	newRound := make(map[string]resourceScrapConfig)
+	for _, sc := range resourceScrapeConfigs {
+		uid := fmt.Sprintf("%s/%s", sc.Resource, sc.Config.JobName)
+		_, ok := newRound[uid]
+		if ok {
+			logger.Errorf("found duplicate scrapeConfig: '%s'", uid)
+			continue
+		}
+		newRound[uid] = sc
+	}
+
+	var addOrUpdateScrapeConfigs []resourceScrapConfig
+	var removeScrapeConfigs []resourceScrapConfig
+	for _, sc := range resourceScrapeConfigs {
+		uid := fmt.Sprintf("%s/%s", sc.Resource, sc.Config.JobName)
+		v, ok := c.prevResourceScrapeConfigs[uid]
+		if !ok {
+			addOrUpdateScrapeConfigs = append(addOrUpdateScrapeConfigs, sc) // 新增
+			logger.Infof("promsd add (%s) scrapeConfig", uid)
+			continue
+		}
+		if !reflect.DeepEqual(v, sc) {
+			addOrUpdateScrapeConfigs = append(addOrUpdateScrapeConfigs, sc) // 修改
+			logger.Infof("promsd update (%s) scrapeConfig", uid)
+		}
+	}
+
+	for uid, sc := range c.prevResourceScrapeConfigs {
+		_, ok := newRound[uid]
+		if !ok {
+			removeScrapeConfigs = append(removeScrapeConfigs, sc) // 删除
+			logger.Infof("promsd remove (%s) scrapeConfig", uid)
+		}
+	}
+
+	// 模拟 monitor 资源监听变化
+	if len(addOrUpdateScrapeConfigs) > 0 {
+		c.handlePromScrapeConfigDiscovers(addOrUpdateScrapeConfigs, opAddOrUpdate)
+	}
+	if len(removeScrapeConfigs) > 0 {
+		c.handlePromScrapeConfigDiscovers(removeScrapeConfigs, opRemove)
+	}
+	c.prevResourceScrapeConfigs = newRound
+}
+
+func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resourceScrapConfig, op string) {
 	var discovers []discover.Discover
-	for i := 0; i < len(scrapeConfigs); i++ {
-		scrapeConfig := scrapeConfigs[i]
-		for idx, rc := range scrapeConfig.ServiceDiscoveryConfigs {
+	kinds := configs.G().PromSDKinds
+	for i := 0; i < len(resourceScrapeConfigs); i++ {
+		rsc := resourceScrapeConfigs[i]
+		for idx, rc := range rsc.Config.ServiceDiscoveryConfigs {
 			switch obj := rc.(type) {
 			case *promhttpsd.SDConfig:
-				if !configs.G().PromSDKinds.Allow(monitorKindHttpSd) {
+				if !kinds.Allow(monitorKindHttpSd) {
 					continue
 				}
 
-				httpSdDiscover, err := c.createHttpLikeSdDiscover(scrapeConfig, obj, monitorKindHttpSd, idx)
+				sd, err := c.createHttpLikeSdDiscover(rsc, obj, monitorKindHttpSd, idx)
 				if err != nil {
 					logger.Errorf("failed to create http_sd discover: %v", err)
 					continue
 				}
-				discovers = append(discovers, httpSdDiscover)
+				discovers = append(discovers, sd)
 
 			case *polarissd.SDConfig:
-				if !configs.G().PromSDKinds.Allow(monitorKindPolarisSd) {
+				if !kinds.Allow(monitorKindPolarisSd) {
 					continue
 				}
 
-				polarisSdDiscover, err := c.createHttpLikeSdDiscover(scrapeConfig, obj, monitorKindPolarisSd, idx)
+				sd, err := c.createHttpLikeSdDiscover(rsc, obj, monitorKindPolarisSd, idx)
 				if err != nil {
 					logger.Errorf("failed to create polaris_sd discover: %v", err)
 					continue
 				}
-				discovers = append(discovers, polarisSdDiscover)
+				discovers = append(discovers, sd)
 
 			case *promk8ssd.SDConfig:
-				if !configs.G().PromSDKinds.Allow(monitorKindKubernetesSd) {
+				if !kinds.Allow(monitorKindKubernetesSd) {
 					continue
 				}
 
-				kubernetesSd, err := c.createKubernetesSdDiscover(scrapeConfig, obj, idx)
+				sd, err := c.createKubernetesSdDiscover(rsc, obj, idx)
 				if err != nil {
 					logger.Errorf("failed to create kubernetes_sd discover: %v", err)
 					continue
 				}
-				discovers = append(discovers, kubernetesSd)
+				discovers = append(discovers, sd)
 			}
 		}
 	}
-	return discovers
+
+	switch op {
+	case opAddOrUpdate:
+		for _, dis := range discovers {
+			if err := c.addOrUpdateDiscover(dis); err != nil {
+				logger.Errorf("add or update prom scrapeConfigs discover %s failed: %s", dis, err)
+			}
+		}
+	case opRemove:
+		for _, dis := range discovers {
+			c.deleteDiscoverByName(dis.Name())
+		}
+	}
 }
 
 func (c *Operator) loopHandlePromSdConfigs() {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 
-	fn := func() {
-		discovers := c.createPromScrapeConfigDiscovers()
-		for _, dis := range discovers {
-			if err := c.addOrUpdateDiscover(dis); err != nil {
-				logger.Errorf("add or update prom scrapeConfigs discover %s failed: %s", dis, err)
-			}
-		}
-	}
-
-	fn() // 启动即执行
+	c.reloadPromScrapeConfigDiscovers() // 启动即执行
 
 	for {
 		select {
@@ -342,7 +434,7 @@ func (c *Operator) loopHandlePromSdConfigs() {
 			return
 
 		case <-ticker.C:
-			fn()
+			c.reloadPromScrapeConfigDiscovers()
 		}
 	}
 }

@@ -168,10 +168,6 @@ var (
 	WorkerDaemonTaskMaintainerInterval time.Duration
 	// WorkerDaemonTaskRetryTolerateCount max retry of task
 	WorkerDaemonTaskRetryTolerateCount int
-	// WorkerDaemonTaskRetryTolerateInterval retry interval of failed task
-	WorkerDaemonTaskRetryTolerateInterval time.Duration
-	// WorkerDaemonTaskRetryIntolerantFactor retry duration factor of failed task
-	WorkerDaemonTaskRetryIntolerantFactor int
 
 	// SchedulerTaskWatchChanSize Listen for the maximum number of concurrent tasks in the broker queue
 	SchedulerTaskWatchChanSize int
@@ -350,14 +346,6 @@ func initVariables() {
 	)
 	// WorkerDaemonTaskRetryTolerateCount worker常驻任务配置，当任务重试超过指定数量仍然失败时，下次重试间隔就不断动态增长
 	WorkerDaemonTaskRetryTolerateCount = GetValue("worker.daemonTask.maintainer.tolerateCount", 60)
-	// WorkerDaemonTaskRetryTolerateInterval worker常驻任务当任务执行失败并且重试次数未超过 WorkerDaemonTaskRetryTolerateCount 时
-	// 下次重试时间间隔
-	WorkerDaemonTaskRetryTolerateInterval = GetValue(
-		"worker.daemonTask.maintainer.tolerateInterval", 10*time.Second, viper.GetDuration,
-	)
-	// WorkerDaemonTaskRetryIntolerantFactor worker常驻任务当任务重试次数超过 WorkerDaemonTaskRetryTolerateCount 时
-	// 下次重试按照Nx倍数增长 设置倍数因子
-	WorkerDaemonTaskRetryIntolerantFactor = GetValue("worker.daemonTask.maintainer.intolerantFactor", 2)
 	/*
 		Worker配置 ----- END
 	*/

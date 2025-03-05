@@ -11,6 +11,7 @@ package metadata
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -67,6 +68,8 @@ type Query struct {
 	ClusterID string // 存储 ID
 
 	StorageType string // 存储类型
+
+	StorageIDs  []string
 	StorageID   string
 	StorageName string
 
@@ -74,6 +77,7 @@ type Query struct {
 	TagsKey     []string
 
 	DataSource string
+	DataLabel  string
 	TableID    string
 	MetricName string
 
@@ -113,11 +117,19 @@ type Query struct {
 	// Es 查询扩展
 	QueryString   string
 	AllConditions AllConditions
-	Source        []string
-	From          int
-	Size          int
-	Orders        Orders
-	NeedAddTime   bool
+
+	HighLight HighLight
+
+	Source      []string
+	From        int
+	Size        int
+	Orders      Orders
+	NeedAddTime bool
+}
+
+type HighLight struct {
+	MaxAnalyzedOffset int  `json:"max_analyzed_offset,omitempty"`
+	Enable            bool `json:"enable,omitempty"`
 }
 
 type Orders map[string]bool
@@ -143,6 +155,9 @@ type ConditionField struct {
 	Value []string
 	// Operator 操作符，包含：eq, ne, erq, nreq, contains, ncontains
 	Operator string
+
+	// IsWildcard 是否是通配符
+	IsWildcard bool
 }
 
 // TimeAggregation 时间聚合字段
@@ -225,6 +240,18 @@ func ReplaceVmCondition(condition VmCondition, replaceLabels ReplaceLabels) VmCo
 	return VmCondition(cond)
 }
 
+// ToJson 通过 tableID 排序，并且返回 json 序列化
+func (qMetric QueryMetric) ToJson(isSort bool) string {
+	if isSort {
+		sort.SliceIsSorted(qMetric.QueryList, func(i, j int) bool {
+			return qMetric.QueryList[i].TableID < qMetric.QueryList[j].TableID
+		})
+	}
+
+	s, _ := json.Marshal(qMetric)
+	return string(s)
+}
+
 // ToVmExpand 判断是否是直查，如果都是 vm 查询的情况下，则使用直查模式
 func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
 	vmClusterNames := set.New[string]()
@@ -277,4 +304,13 @@ func (vs VmCondition) String() string {
 
 func (vs VmCondition) ToMatch() string {
 	return fmt.Sprintf("{%s}", vs)
+}
+
+// LastAggName 获取最新的聚合函数
+func (a Aggregates) LastAggName() string {
+	if len(a) == 0 {
+		return ""
+	}
+
+	return a[len(a)-1].Name
 }

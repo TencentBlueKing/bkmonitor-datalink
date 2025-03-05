@@ -12,6 +12,7 @@ package define
 import (
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // RouteInfo 路由信息
@@ -67,3 +68,5 @@ var (
 		0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600,
 	}
 )
+
+const ShutdownTimeout = 10 * time.Second

@@ -16,7 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
-func GetBkDataTableIDCheck(ctx context.Context) bool {
+func GetBkDataTableIDCheck(ctx context.Context, tableID string) bool {
 	var (
 		user = GetUser(ctx)
 		err  error
@@ -30,6 +30,7 @@ func GetBkDataTableIDCheck(ctx context.Context) bool {
 		"name":     user.Name,
 		"source":   user.Source,
 		"spaceUid": user.SpaceUid,
+		"tableID":  tableID,
 	})
 
 	span.Set("ff-user-custom", u.GetCustom())
@@ -83,7 +84,8 @@ func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 
 	span.Set("ff-user-custom", ffUser.GetCustom())
 
-	status := featureFlag.BoolVariation(ctx, ffUser, "must-vm-query", false)
+	// 如果匹配不到，则默认查询 vm
+	status := featureFlag.BoolVariation(ctx, ffUser, "must-vm-query", true)
 
 	// 根据查询时间范围判断是否满足当前时间配置
 	vmDataTime := featureFlag.IntVariation(ctx, ffUser, "range-vm-query", 0)

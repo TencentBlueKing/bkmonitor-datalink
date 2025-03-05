@@ -33,6 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/dataidwatcher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/helmcharts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/promsli"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -72,6 +73,8 @@ type Operator struct {
 	promRuleInformer  *prominformers.ForResource
 	promsliController *promsli.Controller
 
+	helmchartsController *helmcharts.Controller
+
 	statefulSetWorkerScaled time.Time
 	statefulSetWorker       int
 	statefulSetSecretMap    map[string]struct{}
@@ -87,7 +90,8 @@ type Operator struct {
 	statefulSetTaskCache map[int]map[string]struct{}
 	eventTaskCache       string
 
-	promSdConfigsBytes map[string][]byte // 无并发读写
+	promSdConfigsBytes        map[string][]byte              // 无并发读写
+	prevResourceScrapeConfigs map[string]resourceScrapConfig // 无并发读写
 }
 
 func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
@@ -206,6 +210,11 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		operator.promsliController = promsli.NewController(operator.ctx, operator.client, useEndpointslice)
 	}
 
+	operator.helmchartsController, err = helmcharts.NewController(operator.ctx, operator.client)
+	if err != nil {
+		return nil, errors.Wrap(err, "create helmchartsController failed")
+	}
+
 	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.mdClient, operator.bkclient)
 	if err != nil {
 		return nil, errors.Wrap(err, "create objectsController failed")
@@ -227,6 +236,17 @@ func (c *Operator) getAllDiscover() []define.MonitorMeta {
 	}
 	c.discoversMut.Unlock()
 	return ret
+}
+
+func (c *Operator) getDiscoverCount() map[string]int {
+	c.discoversMut.Lock()
+	defer c.discoversMut.Unlock()
+
+	count := make(map[string]int)
+	for _, dis := range c.discovers {
+		count[dis.Type()]++
+	}
+	return count
 }
 
 func (c *Operator) reloadAllDiscovers() {
@@ -255,18 +275,19 @@ func (c *Operator) recordMetrics() {
 	c.wg.Add(1)
 	defer c.wg.Done()
 
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			c.mm.UpdateUptime(5)
+			c.mm.UpdateUptime(15)
 			c.mm.SetAppBuildInfo(c.buildInfo)
 			c.updateNodeConfigMetrics()
 			c.updateMonitorEndpointMetrics()
 			c.updateResourceMetrics()
 			c.updateSharedDiscoveryMetrics()
+			c.helmchartsController.UpdateMetrics()
 
 		case <-c.ctx.Done():
 			return
@@ -276,7 +297,9 @@ func (c *Operator) recordMetrics() {
 
 func (c *Operator) updateSharedDiscoveryMetrics() {
 	c.mm.SetSharedDiscoveryCount(len(shareddiscovery.AllDiscovery()))
-	c.mm.SetDiscoverCount(len(c.getAllDiscover()))
+	for typ, count := range c.getDiscoverCount() {
+		c.mm.SetDiscoverCount(typ, count)
+	}
 }
 
 func (c *Operator) updateNodeConfigMetrics() {
@@ -292,7 +315,7 @@ func (c *Operator) updateNodeConfigMetrics() {
 }
 
 func (c *Operator) updateMonitorEndpointMetrics() {
-	endpoints := c.recorder.getActiveEndpoints()
+	endpoints := c.recorder.getEndpoints(false)
 	for name, count := range endpoints {
 		c.mm.SetMonitorEndpointCount(name, count)
 	}
@@ -397,6 +420,7 @@ func (c *Operator) Run() error {
 
 	go c.loopHandlePromSdConfigs()
 	c.cleanupInvalidSecrets()
+
 	return nil
 }
 
@@ -408,6 +432,7 @@ func (c *Operator) Stop() {
 	c.wg.Wait()
 
 	c.dw.Stop()
+	c.helmchartsController.Stop()
 	c.objectsController.Stop()
 	shareddiscovery.Deactivate()
 }
@@ -482,7 +507,7 @@ func (c *Operator) handleDiscoverNotify() {
 	c.wg.Add(1)
 	defer c.wg.Done()
 
-	var last int64
+	last := time.Now().Unix() + configs.G().DispatchInterval // 第一次调度时多等待一个周期 避免触发太多 secrets 变更
 	dispatch := func(trigger string) {
 		now := time.Now()
 		c.mm.IncDispatchedTaskCounter(trigger)

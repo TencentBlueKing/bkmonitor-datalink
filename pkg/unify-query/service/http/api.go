@@ -24,6 +24,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
@@ -469,13 +470,8 @@ func HandlerLabelValues(c *gin.Context) {
 		return
 	}
 
-	startTime, endTime, err := query.GetTime()
-	// start 和 end 如果为空，则默认给 1h
-	if err != nil {
-		endTime = time.Now()
-		startTime = endTime.Add(time.Hour * -1)
-	}
-	metadata.GetQueryParams(ctx).SetTime(startTime.Unix(), endTime.Unix())
+	format, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
+	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, format)
 	instance, stmt, err := queryTsToInstanceAndStmt(ctx, query)
 	if err != nil {
 		return
@@ -523,7 +519,8 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 		Timezone:    params.Timezone,
 	}
 
-	start, end, err = queryTs.GetTime()
+	var format string
+	format, start, end, err = function.QueryTimestamp(params.Start, params.End)
 	if err != nil {
 		// 如果时间异常则使用最近 1h
 		end = time.Now()
@@ -531,7 +528,7 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 	}
 
 	// 写入查询时间到全局缓存
-	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix())
+	metadata.GetQueryParams(ctx).SetTime(start, end, format)
 	queryRef, err = queryTs.ToQueryReference(ctx)
 	return
 }

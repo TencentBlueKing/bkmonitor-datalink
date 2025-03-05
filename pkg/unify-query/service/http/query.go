@@ -29,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -64,7 +65,13 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 		return nil, err
 	}
 
-	start, end, _, timezone, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
+	_, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		return nil, err
+	}
+
+	start, end, _, timezone, err := structured.ToTime(startTime, endTime, query.Step, query.Timezone)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
@@ -156,11 +163,12 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
 
-	start, end, timeErr := queryTs.GetTime()
+	timeFormat, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if timeErr != nil {
 		err = timeErr
 		return
 	}
+	metadata.GetQueryParams(ctx).SetTime(start, end, timeFormat)
 
 	var (
 		receiveWg sync.WaitGroup
@@ -315,7 +323,7 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	}
 
 	queryRef, err := query.ToQueryReference(ctx)
-	start, end, err := query.GetTime()
+	format, start, end, err := function.QueryTimestamp(query.Start, query.End)
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +334,7 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	}
 
 	// es 需要使用自己的查询时间范围
-	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix()).SetIsReference(true)
+	metadata.GetQueryParams(ctx).SetTime(start, end, format).SetIsReference(true)
 	metadata.SetQueryReference(ctx, queryRef)
 
 	var lookBackDelta time.Duration
@@ -495,14 +503,20 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 		span.End(&err)
 	}()
 
-	start, end, step, timezone, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
+	format, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		return nil, err
+	}
+
+	start, end, step, timezone, err := structured.ToTime(startTime, endTime, query.Step, query.Timezone)
 	if err != nil {
 		return nil, err
 	}
 	query.Timezone = timezone
 
 	// 写入查询时间到全局缓存
-	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix())
+	metadata.GetQueryParams(ctx).SetTime(start, end, format)
 	instance, stmt, err = queryTsToInstanceAndStmt(ctx, query)
 	if err != nil {
 		return nil, err
@@ -673,7 +687,14 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	)
 	ctx, span := trace.NewSpan(ctx, "query-ts-cluster-metrics")
 	defer span.End(&err)
-	start, end, step, timezone, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
+
+	_, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		return nil, err
+	}
+
+	start, end, step, timezone, err := structured.ToTime(startTime, endTime, query.Step, query.Timezone)
 	if err != nil {
 		return nil, err
 	}

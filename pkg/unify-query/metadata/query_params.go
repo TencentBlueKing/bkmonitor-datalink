@@ -11,6 +11,7 @@ package metadata
 
 import (
 	"context"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -20,8 +21,9 @@ import (
 type QueryParams struct {
 	ctx context.Context
 
-	Start int64
-	End   int64
+	Start  time.Time
+	End    time.Time
+	Format string
 
 	StorageType *set.Set[string]
 
@@ -48,9 +50,10 @@ func (q *QueryParams) SetStorageType(ds string) *QueryParams {
 	return q
 }
 
-func (q *QueryParams) SetTime(start, end int64) *QueryParams {
+func (q *QueryParams) SetTime(start, end time.Time, format string) *QueryParams {
 	q.Start = start
 	q.End = end
+	q.Format = format
 	return q
 }
 

@@ -45,7 +45,6 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		Labels: g.TaskConfig.GetLabels(),
 		Data:   stats2Metrics(taskConf.MetricPrefix, stat),
 	}
-	logger.Errorf("mandotest: gather timesync stats success")
 }
 
 func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {

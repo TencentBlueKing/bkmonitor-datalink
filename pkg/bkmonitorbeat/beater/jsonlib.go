@@ -7,14 +7,36 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package define
+package beater
 
 import (
-	"github.com/elastic/beats/libbeat/common"
+	gojson "github.com/goccy/go-json"
+	jsoniter "github.com/json-iterator/go"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 )
 
-type MetricsReaderFunc func() (<-chan []common.MapStr, error)
+func registerGseMarshalFunc(lib string) {
+	switch lib {
+	case "gojson":
+		gse.MarshalFunc = goJsonImpl.Marshal
+	case "jsoniter":
+		gse.MarshalFunc = jsonIteratorImpl.Marshal
+	}
+}
 
-func (m MetricsReaderFunc) MarshalJSON() ([]byte, error) {
-	return []byte("\"func:metricsReaderFunc\""), nil
+type goJson struct{}
+
+var goJsonImpl goJson
+
+func (goJson) Marshal(v interface{}) ([]byte, error) {
+	return gojson.MarshalWithOption(v, gojson.UnorderedMap(), gojson.DisableHTMLEscape())
+}
+
+type jsonIterator struct{}
+
+var jsonIteratorImpl jsonIterator
+
+func (jsonIterator) Marshal(v interface{}) ([]byte, error) {
+	return jsoniter.Marshal(v)
 }

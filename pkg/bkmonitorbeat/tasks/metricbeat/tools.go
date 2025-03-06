@@ -92,34 +92,37 @@ func splitBigMetricsFromReader(m common.MapStr, batchsize, maxBatches int, ret c
 	total := 0
 
 	var drain bool
-	for event := range metricsChan {
+	for events := range metricsChan {
 		if drain {
 			// 排空 channel
 			continue
 		}
 
-		eventList = append(eventList, event)
-		if len(eventList) >= batchsize {
-			cloned := m.Clone()
-			if _, err = cloned.Put(metricKey, eventList); err != nil {
-				logger.Errorf("failed to put '%s' key: %v", metricKey, err)
-				continue
-			}
-			err = cloned.Delete(metricReaderKey)
-			if err != nil {
-				logger.Errorf("failed to delete '%s' key: %v", metricReaderKey, err)
-				continue
-			}
+		for i := 0; i < len(events); i++ {
+			event := events[i]
+			eventList = append(eventList, event)
+			if len(eventList) >= batchsize {
+				cloned := m.Clone()
+				if _, err = cloned.Put(metricKey, eventList); err != nil {
+					logger.Errorf("failed to put '%s' key: %v", metricKey, err)
+					continue
+				}
+				err = cloned.Delete(metricReaderKey)
+				if err != nil {
+					logger.Errorf("failed to delete '%s' key: %v", metricReaderKey, err)
+					continue
+				}
 
-			ret <- cloned
-			total += len(eventList)
-			batches++
+				ret <- cloned
+				total += len(eventList)
+				batches++
 
-			// 清空当前批次
-			eventList = make([]common.MapStr, 0, batchsize)
-			if batches >= maxBatches {
-				logger.Errorf("metric batches reached max batches: %d", maxBatches)
-				drain = true // 如果已经超过了最大批次 则需要丢弃接下来的其他数据
+				// 清空当前批次
+				eventList = make([]common.MapStr, 0, batchsize)
+				if batches >= maxBatches {
+					logger.Errorf("metric batches reached max batches: %d", maxBatches)
+					drain = true // 如果已经超过了最大批次 则需要丢弃接下来的其他数据
+				}
 			}
 		}
 	}

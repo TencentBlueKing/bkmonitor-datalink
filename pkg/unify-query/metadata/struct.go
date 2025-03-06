@@ -50,10 +50,9 @@ const (
 type VmCondition string
 
 type TimeField struct {
-	Name     string
-	Type     string
-	Unit     string
-	UnitRate int64
+	Name string
+	Type string
+	Unit string
 }
 
 // Aggregate 聚合方法
@@ -82,7 +81,7 @@ type Aggregates []Aggregate
 
 // Query 查询扩展信息，为后面查询提供定位
 type Query struct {
-	SourceType string // 查询数据源 InfluxDB 或者 VictoriaMetrics
+	SourceType string
 	Password   string // 查询鉴权
 
 	ClusterID string // 存储 ID

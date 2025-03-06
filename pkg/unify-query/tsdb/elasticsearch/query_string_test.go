@@ -64,6 +64,10 @@ func TestQsToDsl(t *testing.T) {
 		{
 			q: ``,
 		},
+		{
+			q:        "ms: \u003e500 AND \"/fs-server\" AND NOT \"heartbeat\"",
+			expected: `{"query_string":{"analyze_wildcard":true,"query":"ms: \u003e500 AND \"/fs-server\" AND NOT \"heartbeat\""}}`,
+		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)

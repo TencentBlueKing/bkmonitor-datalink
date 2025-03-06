@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
@@ -125,7 +126,17 @@ func (p *attributeFilter) fromTokenAction(record *define.Record, config Config) 
 				attrs.UpsertString(config.FromToken.AppName, record.Token.AppName)
 			}
 		})
-
+	case define.RecordLogs:
+		pdLogs := record.Data.(plog.Logs)
+		foreach.Logs(pdLogs.ResourceLogs(), func(logRecord plog.LogRecord) {
+			attrs := logRecord.Attributes()
+			if config.FromToken.BizId != "" {
+				attrs.UpsertInt(config.FromToken.BizId, int64(record.Token.BizId))
+			}
+			if config.FromToken.AppName != "" {
+				attrs.UpsertString(config.FromToken.AppName, record.Token.AppName)
+			}
+		})
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
 		foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
@@ -150,13 +161,19 @@ func (p *attributeFilter) asStringAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansWithResourceAttrs(pdTraces.ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) {
+		foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
 			for _, key := range config.AsString.Keys {
-				if v, ok := rsAttrs.Get(key); ok {
-					rsAttrs.UpsertString(key, v.AsString())
-				}
-
 				attrs := span.Attributes()
+				if v, ok := attrs.Get(key); ok {
+					attrs.UpsertString(key, v.AsString())
+				}
+			}
+		})
+	case define.RecordLogs:
+		pdLogs := record.Data.(plog.Logs)
+		foreach.Logs(pdLogs.ResourceLogs(), func(logRecord plog.LogRecord) {
+			for _, key := range config.AsString.Keys {
+				attrs := logRecord.Attributes()
 				if v, ok := attrs.Get(key); ok {
 					attrs.UpsertString(key, v.AsString())
 				}
@@ -183,10 +200,16 @@ func (p *attributeFilter) asIntAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansWithResourceAttrs(pdTraces.ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) {
+		foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
 			for _, key := range config.AsInt.Keys {
-				processAsIntAction(rsAttrs, key)
 				processAsIntAction(span.Attributes(), key)
+			}
+		})
+	case define.RecordLogs:
+		pdLogs := record.Data.(plog.Logs)
+		foreach.Logs(pdLogs.ResourceLogs(), func(logRecord plog.LogRecord) {
+			for _, key := range config.AsInt.Keys {
+				processAsIntAction(logRecord.Attributes(), key)
 			}
 		})
 	}
@@ -267,24 +290,34 @@ func (p *attributeFilter) dropAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		resourceSpansSlice := pdTraces.ResourceSpans()
-		foreach.Spans(resourceSpansSlice, func(span ptrace.Span) {
+		foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
 			for _, action := range config.Drop {
-				v, ok := span.Attributes().Get(action.PredicateKey)
-				if !ok {
-					continue
-				}
-
-				// 取到 key，但是判定条件不符合的时候
-				_, ok = action.match[v.AsString()]
-				if len(action.Match) > 0 && !ok {
-					continue
-				}
-				for _, k := range action.Keys {
-					span.Attributes().Remove(k)
-				}
+				processDropAction(span.Attributes(), action)
 			}
 		})
+	case define.RecordLogs:
+		pdLogs := record.Data.(plog.Logs)
+		foreach.Logs(pdLogs.ResourceLogs(), func(logRecord plog.LogRecord) {
+			for _, action := range config.Drop {
+				processDropAction(logRecord.Attributes(), action)
+			}
+		})
+	}
+}
+
+func processDropAction(attrs pcommon.Map, action DropAction) {
+	v, ok := attrs.Get(action.PredicateKey)
+	if !ok {
+		return
+	}
+
+	// 取到 key，但是判定条件不符合的时候
+	_, ok = action.match[v.AsString()]
+	if len(action.Match) > 0 && !ok {
+		return
+	}
+	for _, k := range action.Keys {
+		attrs.Remove(k)
 	}
 }
 
@@ -292,33 +325,43 @@ func (p *attributeFilter) cutAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		resourceSpansSlice := pdTraces.ResourceSpans()
-		foreach.Spans(resourceSpansSlice, func(span ptrace.Span) {
+		foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
 			for _, action := range config.Cut {
-				v, ok := span.Attributes().Get(action.PredicateKey)
-				if !ok {
-					continue
-				}
-
-				// 不符合匹配条件的时候跳过
-				_, ok = action.match[v.AsString()]
-				if len(action.Match) > 0 && !ok {
-					continue
-				}
-
-				// preKey 取值 ok 并且 无匹配条件 或 匹配条件符合的情况下
-				for _, k := range action.Keys {
-					// 无法获取到 key 的值 则跳过
-					if v, ok = span.Attributes().Get(k); !ok {
-						continue
-					}
-					// 对于长度超出的情况，进行裁剪
-					value := v.AsString()
-					if len(value) > action.MaxLength {
-						span.Attributes().UpsertString(k, value[:action.MaxLength])
-					}
-				}
+				processCutAction(span.Attributes(), action)
 			}
 		})
+	case define.RecordLogs:
+		pdLogs := record.Data.(plog.Logs)
+		foreach.Logs(pdLogs.ResourceLogs(), func(logRecord plog.LogRecord) {
+			for _, action := range config.Cut {
+				processCutAction(logRecord.Attributes(), action)
+			}
+		})
+	}
+}
+
+func processCutAction(attrs pcommon.Map, action CutAction) {
+	v, ok := attrs.Get(action.PredicateKey)
+	if !ok {
+		return
+	}
+
+	// 不符合匹配条件的时候跳过
+	_, ok = action.match[v.AsString()]
+	if len(action.Match) > 0 && !ok {
+		return
+	}
+
+	// preKey 取值 ok 并且 无匹配条件 或 匹配条件符合的情况下
+	for _, k := range action.Keys {
+		// 无法获取到 key 的值 则跳过
+		if v, ok = attrs.Get(k); !ok {
+			continue
+		}
+		// 对于长度超出的情况，进行裁剪
+		value := v.AsString()
+		if len(value) > action.MaxLength {
+			attrs.UpsertString(k, value[:action.MaxLength])
+		}
 	}
 }

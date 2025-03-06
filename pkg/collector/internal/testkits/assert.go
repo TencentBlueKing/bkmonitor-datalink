@@ -32,7 +32,7 @@ func assertAttrsKey(t *testing.T, attrs pcommon.Map, key string, found bool) {
 func AssertAttrsFoundStringVal(t *testing.T, attrs pcommon.Map, key, val string) {
 	v, ok := attrs.Get(key)
 	assert.True(t, ok)
-	assert.Equal(t, val, v.AsString())
+	assert.Equal(t, val, v.StringVal())
 }
 
 func AssertAttrsStringVal(t *testing.T, attrs pcommon.Map, key, val string) {

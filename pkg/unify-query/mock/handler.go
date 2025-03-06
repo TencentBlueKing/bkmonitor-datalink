@@ -197,6 +197,7 @@ func mockElasticSearchHandler(ctx context.Context) {
 	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/es_index/_mapping/", mappingResp)
 	httpmock.RegisterResponder(http.MethodPost, bkBaseUrl+"/es_index/_search", searchHandler)
 	httpmock.RegisterResponder(http.MethodPost, EsUrl+"/es_index/_search", searchHandler)
+	httpmock.RegisterResponder(http.MethodHead, EsUrl, searchHandler)
 }
 
 func mockBkSQLHandler(ctx context.Context) {

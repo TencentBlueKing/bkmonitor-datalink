@@ -9,7 +9,13 @@
 
 package target
 
-import "gopkg.in/yaml.v2"
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v2"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
+)
 
 // TimeSyncTarget 时间同步采集项
 type TimeSyncTarget struct {
@@ -18,21 +24,24 @@ type TimeSyncTarget struct {
 }
 
 func (t *TimeSyncTarget) FileName() string {
-	return "timesync.conf"
+	b, _ := t.YamlBytes()
+	return fmt.Sprintf("timesync-%d.conf", fnvHash(b))
 }
 
 func (t *TimeSyncTarget) YamlBytes() ([]byte, error) {
-	cfg := make(yaml.MapSlice, 0)
+	timesync := configs.G().TimeSync
 
+	cfg := make(yaml.MapSlice, 0)
 	cfg = append(cfg, yaml.MapItem{Key: "type", Value: "timesync"})
 	cfg = append(cfg, yaml.MapItem{Key: "name", Value: "timesync_collect"})
 	cfg = append(cfg, yaml.MapItem{Key: "version", Value: "1"})
 	cfg = append(cfg, yaml.MapItem{Key: "task_id", Value: 1})
 	cfg = append(cfg, yaml.MapItem{Key: "dataid", Value: t.DataID})
-	cfg = append(cfg, yaml.MapItem{Key: "ntpd_path", Value: "/etc/nptd.conf"})
-	cfg = append(cfg, yaml.MapItem{Key: "query_timeout", Value: "5s"})
+	cfg = append(cfg, yaml.MapItem{Key: "period", Value: "1m"})
 	cfg = append(cfg, yaml.MapItem{Key: "metric_prefix", Value: "kube"})
-	cfg = append(cfg, yaml.MapItem{Key: "chrony_address", Value: "[::1]:323"})
+	cfg = append(cfg, yaml.MapItem{Key: "ntpd_path", Value: timesync.NtpdPath})
+	cfg = append(cfg, yaml.MapItem{Key: "query_timeout", Value: timesync.QueryTimeout})
+	cfg = append(cfg, yaml.MapItem{Key: "chrony_address", Value: timesync.ChronyAddress})
 	cfg = append(cfg, yaml.MapItem{Key: "labels", Value: []yaml.MapSlice{sortMap(t.Labels)}})
 	return yaml.Marshal(cfg)
 }

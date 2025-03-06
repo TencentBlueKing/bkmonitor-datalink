@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -151,29 +152,28 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				span.Set(fmt.Sprintf("query_%d_qry_vmrt", i), query.qry.VmRt)
 
 				var (
-					start int64
-					end   int64
+					startTime time.Time
+					endTime   time.Time
 				)
 				qp := metadata.GetQueryParams(ctx)
 				if qp.IsReference {
-					start = qp.Start * 1e3
-					end = qp.End * 1e3
+					startTime = qp.Start
+					endTime = qp.End
 				} else {
-					start = hints.Start
-					end = hints.End
+					// 获取因转毫秒丢失的时间精度
+					startTime = function.MsIntMergeNs(hints.Start, qp.Start)
+					endTime = function.MsIntMergeNs(hints.End, qp.End)
 
 					if len(query.qry.Aggregates) == 1 {
 						agg := query.qry.Aggregates[0]
 
 						// 如果使用时间聚合计算，是否对齐开始时间
 						if agg.Window.Milliseconds() > 0 {
-							start = intMathFloor(start, agg.Window.Milliseconds()) * agg.Window.Milliseconds()
+							ns := intMathFloor(startTime.UnixNano(), agg.Window.Nanoseconds()) * agg.Window.Nanoseconds()
+							startTime = time.Unix(0, ns)
 						}
 					}
 				}
-
-				startTime := time.UnixMilli(start)
-				endTime := time.UnixMilli(end)
 
 				setCh <- query.instance.QuerySeriesSet(ctx, query.qry, startTime, endTime)
 				return

@@ -157,6 +157,51 @@ default:
             {%- endfor %}
 {%- endif %}
 
+{% if attribute_config_logs is defined %}
+      - name: "{{ attribute_config_logs.name }}"
+        config:
+          {%- if attribute_config_logs.as_string is defined %}
+          as_string:
+            keys:
+              {%- for key in attribute_config_logs.as_string %}
+              - "{{ key }}"
+              {%- endfor %}
+          {%- endif %}
+          {%- if attribute_config_logs.as_int is defined %}
+          as_int:
+            keys:
+              {%- for key in attribute_config_logs.as_int %}
+              - "{{ key }}"
+              {%- endfor %}
+          {%- endif %}
+          cut:
+            {%- for config in attribute_config_logs.cut %}
+            - predicate_key: "{{ config.predicate_key }}"
+              max_length: {{ config.max_length }}
+              match:
+                {%- for value in config.get("match", []) %}
+                - "{{ value }}"
+                {%- endfor %}
+              keys:
+                {%- for key in config.get("keys", []) %}
+                - "{{ key }}"
+                {%- endfor %}
+            {%- endfor %}
+          drop:
+            {%- for config in attribute_config_logs.drop %}
+            - predicate_key: "{{ config.predicate_key }}"
+              match:
+                {%- for value in config.get("match", []) %}
+                - "{{ value }}"
+                {%- endfor %}
+              keys:
+                {%- for key in config.get("keys", []) %}
+                - "{{ key }}"
+                {%- endfor %}
+            {%- endfor %}
+{%- endif %}
+
+
 {% if sampler_config is defined %}
       - name: '{{ sampler_config.name }}'
         config:
@@ -187,6 +232,25 @@ default:
           drop:
             keys:
               {%- for drop_key in resource_filter_config.get("drop", {}).get("keys", []) %}
+              - '{{ drop_key }}'
+              {%- endfor %}
+{%- endif %}
+
+{% if resource_filter_config_logs is defined %}
+      - name: '{{ resource_filter_config_logs.name }}'
+        config:
+          assemble:
+            {%- for as_config in  resource_filter_config_logs.assemble %}
+            - destination: '{{ as_config.destination }}'
+              separator: '{{ as_config.separator }}'
+              keys:
+                {%- for key in as_config.get("keys", []) %}
+                - '{{ key }}'
+                {%- endfor %}
+            {%- endfor %}
+          drop:
+            keys:
+              {%- for drop_key in resource_filter_config_logs.get("drop", {}).get("keys", []) %}
               - '{{ drop_key }}'
               {%- endfor %}
 {%- endif %}

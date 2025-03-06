@@ -194,7 +194,6 @@ func (c *Operator) createTimeSyncTask(nodeName string) (string, []byte, error) {
 		Labels: lbs,
 	}
 	b, _ := t.YamlBytes()
-
 	compressed, err := gzip.Compress(b)
 	if err != nil {
 		return "", nil, err

@@ -639,7 +639,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 
 func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) (res []string, err error) {
 	var (
-		resp = &VmResponse{}
+		resp = &VmLableValuesResponse{}
 	)
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-label-values")
@@ -692,21 +692,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		return nil, err
 	}
 
-	series, err := i.matrixFormat(ctx, resp, span)
-	if err != nil {
-		return nil, err
-	}
-
-	lbsMap := set.New[string]()
-	for _, s := range series {
-		for _, l := range s.Metric {
-			if l.Name == name {
-				lbsMap.Add(l.Value)
-			}
-		}
-	}
-
-	return lbsMap.ToArray(), nil
+	return i.labelFormat(ctx, resp, span)
 }
 
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {

@@ -113,6 +113,22 @@ func TestAPIHandler(t *testing.T) {
 	start := time.Unix(1729863085, 0)
 
 	mock.Vm.Set(map[string]any{
+		`label_values:17298630851729859485__name__{result_table_id="2_bcs_prom_computation_result_table"}`: []string{
+			"container_tasks_state_value",
+			"kube_resource_quota_value",
+		},
+		`label_values:17298630851729859485namespace{result_table_id="2_bcs_prom_computation_result_table", __name__="container_cpu_usage_seconds_total_value"}`: []string{
+			"bkbase", "bkmonitor-operator", "blueking", "kube-system",
+		},
+		`label_values:17298630851729859485bcs_cluster_id{result_table_id="2_bcs_prom_computation_result_table", __name__="container_cpu_usage_seconds_total_value"}`: []string{
+			"BCS-K8S-00000",
+		},
+		`label_values:17298630851729859485namespace{result_table_id="2_bcs_prom_computation_result_table", __name__=~"container_.*_value"}`: []string{
+			"bkbase", "bkmonitor-operator", "blueking", "kube-system",
+		},
+		`label_values:17298630851729859485bcs_cluster_id{result_table_id="2_bcs_prom_computation_result_table", __name__=~"container_.*_value"}`: []string{
+			"BCS-K8S-00000",
+		},
 		`label_values:17298630851729859485container{bcs_cluster_id="BCS-K8S-00000", namespace="kube-system", result_table_id="2_bcs_prom_computation_result_table", __name__="container_cpu_usage_seconds_total_value"}`: []string{
 			"POD",
 			"kube-proxy",

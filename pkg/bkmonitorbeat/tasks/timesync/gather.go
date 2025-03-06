@@ -80,7 +80,7 @@ func stats2Metrics(prefix string, stat *Stat) *Metrics {
 		return prefix + "_" + s
 	}
 	metrics := map[string]float64{
-		named("tiemsync_query_seconds_min"): stat.Min,
+		named("timesync_query_seconds_min"): stat.Min,
 		named("timesync_query_seconds_max"): stat.Max,
 		named("timesync_query_seconds_avg"): stat.Sum / float64(stat.Count),
 		named("timesync_query_count"):       float64(stat.Count),

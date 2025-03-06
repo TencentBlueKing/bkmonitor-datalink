@@ -88,9 +88,9 @@ func stats2Metrics(prefix string, stat *Stat) *Metrics {
 	}
 	return &Metrics{
 		Metrics:   metrics,
-		Target:    "timesync",
+		Target:    stat.Source,
 		Timestamp: time.Now().UnixMilli(),
-		Dimension: map[string]string{"source": stat.Source},
+		Dimension: map[string]string{},
 	}
 }
 

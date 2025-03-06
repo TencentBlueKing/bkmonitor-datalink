@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -46,9 +46,9 @@ type QueryTs struct {
 	OrderBy OrderBy `json:"order_by,omitempty"`
 	// ResultColumns 指定保留返回字段值
 	ResultColumns []string `json:"result_columns,omitempty" swaggerignore:"true"`
-	// Start 开始时间：单位为毫秒的时间戳
+	// Start 开始时间：单位为任意长度的时间戳
 	Start string `json:"start_time,omitempty" example:"1657848000"`
-	// End 结束时间：单位为毫秒的时间戳
+	// End 结束时间：单位为任意长度的时间戳
 	End string `json:"end_time,omitempty" example:"1657851600"`
 	// Step 步长：最终返回的点数的时间间隔
 	Step string `json:"step,omitempty" example:"1m"`
@@ -70,7 +70,7 @@ type QueryTs struct {
 	HighLight metadata.HighLight `json:"highlight,omitempty"`
 }
 
-// 根据 timezone 偏移对齐
+// timeOffset 根据 timezone 偏移对齐
 func timeOffset(t time.Time, timezone string, step time.Duration) (string, time.Time, error) {
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
@@ -86,37 +86,10 @@ func timeOffset(t time.Time, timezone string, step time.Duration) (string, time.
 	return outTimezone, t3, nil
 }
 
-func ToTime(startStr, endStr, stepStr, timezone string) (time.Time, time.Time, time.Duration, string, error) {
+func ToTime(start, end time.Time, stepStr, timezone string) (time.Time, time.Time, time.Duration, string, error) {
 	var (
-		start    time.Time
-		stop     time.Time
 		interval time.Duration
-		err      error
 	)
-
-	var toTime = func(timestamp string) (time.Time, error) {
-		timeNum, err := strconv.Atoi(timestamp)
-		if err != nil {
-			return time.Time{}, err
-		}
-		return time.Unix(int64(timeNum), 0), nil
-	}
-
-	if startStr != "" {
-		start, err = toTime(startStr)
-		if err != nil {
-			return start, stop, interval, timezone, err
-		}
-	}
-
-	if endStr == "" {
-		stop = time.Now()
-	} else {
-		stop, err = toTime(endStr)
-		if err != nil {
-			return start, stop, interval, timezone, err
-		}
-	}
 
 	if stepStr == "" {
 		interval = promql.GetDefaultStep()
@@ -125,35 +98,13 @@ func ToTime(startStr, endStr, stepStr, timezone string) (time.Time, time.Time, t
 		interval = time.Duration(dTmp)
 
 		if err != nil {
-			return start, stop, interval, timezone, err
+			return start, end, interval, timezone, err
 		}
 	}
 
-	// 根据 timezone 来对齐
-	timezone, start, err = timeOffset(start, timezone, interval)
-	return start, stop, interval, timezone, nil
-}
-
-func (q *QueryTs) GetTime() (time.Time, time.Time, error) {
-	var (
-		start time.Time
-		end   time.Time
-	)
-	if q.Start == "" || q.End == "" {
-		return start, end, fmt.Errorf("query get time: start or end is empty")
-	}
-
-	startInt, err := strconv.ParseInt(q.Start, 10, 64)
-	if err != nil {
-		return start, end, err
-	}
-	start = time.Unix(startInt, 0)
-	endInt, err := strconv.ParseInt(q.End, 10, 64)
-	if err != nil {
-		return start, end, err
-	}
-	end = time.Unix(endInt, 0)
-	return start, end, err
+	// 根据 timezone 来对齐开始时间
+	newTimezone, newStart, nErr := timeOffset(start, timezone, interval)
+	return newStart, end, interval, newTimezone, nErr
 }
 
 func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference, error) {
@@ -836,8 +787,14 @@ func (q *Query) BuildMetadataQuery(
 	query.StorageID = tsDB.StorageID
 	query.StorageType = tsDB.StorageType
 
+	_, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		return nil, err
+	}
+
 	// 通过过期时间判断查询的 storage
-	start, end, _, timezone, err := ToTime(q.Start, q.End, q.Step, q.Timezone)
+	start, end, _, timezone, err := ToTime(startTime, endTime, q.Step, q.Timezone)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err

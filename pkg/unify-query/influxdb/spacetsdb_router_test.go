@@ -87,6 +87,10 @@ func (s *TestSuite) SetupBigData() {
 }
 
 func (s *TestSuite) TearDownTest() {
+	if s.client == nil {
+		return
+	}
+
 	s.client.Del(
 		s.ctx,
 		"bkmonitorv3:spaces:space_to_result_table",

@@ -12,6 +12,7 @@ package metadata
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -173,7 +174,9 @@ func TestGetMustVmQueryFeatureFlag(t *testing.T) {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithCancel(ctx)
 			defer cancel()
-			GetQueryParams(ctx).SetTime(c.Start, c.End)
+
+			start, end := time.Unix(c.Start, 0), time.Unix(c.End, 0)
+			GetQueryParams(ctx).SetTime(start, end, "")
 
 			actual := GetMustVmQueryFeatureFlag(ctx, c.TableID)
 			assert.Equal(t, c.Expected, actual)

@@ -123,7 +123,7 @@ func MockSpaceRouter(ctx context.Context) {
 		)
 		tsdb.SetStorage("2", &tsdb.Storage{Type: consul.InfluxDBStorageType})
 		tsdb.SetStorage("3", &tsdb.Storage{Type: consul.ElasticsearchStorageType, Address: mock.EsUrl})
-		tsdb.SetStorage("4", &tsdb.Storage{Type: consul.BkSqlStorageType})
+		tsdb.SetStorage("4", &tsdb.Storage{Type: consul.BkSqlStorageType, Address: mock.BkSQLUrl})
 
 		r := GetInfluxDBRouter()
 		r.clusterInfo = ir.ClusterInfo{
@@ -195,6 +195,7 @@ func MockSpaceRouter(ctx context.Context) {
 					Measurement:     "kubelet_info",
 					BcsClusterID:    "BCS-K8S-00000",
 					MeasurementType: redis.BkSplitMeasurement,
+					DataLabel:       "kubelet_info",
 				},
 				"system.cpu_summary": &ir.ResultTableDetail{
 					StorageId:       2,
@@ -205,6 +206,7 @@ func MockSpaceRouter(ctx context.Context) {
 					VmRt:            "",
 					Fields:          []string{"usage", "free"},
 					MeasurementType: redis.BKTraditionalMeasurement,
+					DataLabel:       "cpu_summary",
 				},
 				"system.cpu_detail": &ir.ResultTableDetail{
 					StorageId:       2,
@@ -212,6 +214,7 @@ func MockSpaceRouter(ctx context.Context) {
 					VmRt:            "100147_ieod_system_cpu_detail_raw",
 					Fields:          []string{"usage", "free"},
 					MeasurementType: redis.BKTraditionalMeasurement,
+					DataLabel:       "cpu_detail",
 				},
 				"system.disk": &ir.ResultTableDetail{
 					StorageId:       2,
@@ -219,6 +222,7 @@ func MockSpaceRouter(ctx context.Context) {
 					VmRt:            "100147_ieod_system_disk_raw",
 					Fields:          []string{"usage", "free"},
 					MeasurementType: redis.BKTraditionalMeasurement,
+					DataLabel:       "disk",
 				},
 				ResultTableVM: &ir.ResultTableDetail{
 					StorageId:       2,
@@ -227,6 +231,7 @@ func MockSpaceRouter(ctx context.Context) {
 					Fields:          vmFiedls,
 					BcsClusterID:    "BCS-K8S-00000",
 					MeasurementType: redis.BkSplitMeasurement,
+					DataLabel:       "vm",
 				},
 				ResultTableInfluxDB: &ir.ResultTableDetail{
 					StorageId:       2,
@@ -237,10 +242,13 @@ func MockSpaceRouter(ctx context.Context) {
 					Measurement:     "influxdb",
 					MeasurementType: redis.BkSplitMeasurement,
 					ClusterName:     "default",
+					DataLabel:       "influxdb",
 				},
 				ResultTableEs: &ir.ResultTableDetail{
-					StorageId: 3,
-					TableId:   ResultTableEs,
+					StorageId:  3,
+					TableId:    ResultTableEs,
+					DB:         "es_index",
+					SourceType: "bkdata",
 					StorageClusterRecords: []ir.Record{
 						{
 							StorageID: 3,
@@ -253,14 +261,17 @@ func MockSpaceRouter(ctx context.Context) {
 							EnableTime: 1572652800,
 						},
 					},
+					DataLabel: "es",
 				},
 				ResultTableBkSQL: &ir.ResultTableDetail{
 					StorageId: 4,
 					TableId:   ResultTableBkSQL,
+					DataLabel: "bksql",
 				},
 				ResultTableBkBaseEs: &ir.ResultTableDetail{
 					SourceType: "bkdata",
 					DB:         "es_index",
+					DataLabel:  "bkbase_es",
 				},
 			}, nil,
 			ir.DataLabelToResultTable{

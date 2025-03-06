@@ -38,6 +38,9 @@ func TestQueryToMetric(t *testing.T) {
 	ctx := md.InitHashID(context.Background())
 	influxdb.MockSpaceRouter(ctx)
 
+	start := "1741056443"
+	end := "1741060043"
+
 	var testCases = map[string]struct {
 		spaceUID string
 		query    *Query
@@ -48,8 +51,8 @@ func TestQueryToMetric(t *testing.T) {
 				TableID:       TableID(tableID),
 				FieldName:     field,
 				ReferenceName: "a",
-				Start:         "0",
-				End:           "300",
+				Start:         start,
+				End:           end,
 				Step:          "1m",
 			},
 			metric: &md.QueryMetric{
@@ -69,6 +72,7 @@ func TestQueryToMetric(t *testing.T) {
 						Timezone:       "UTC",
 						VmCondition:    `__name__="kube_pod_info_value"`,
 						VmConditionNum: 1,
+						DataLabel:      "influxdb",
 					},
 				},
 				ReferenceName: "a",
@@ -79,8 +83,8 @@ func TestQueryToMetric(t *testing.T) {
 			query: &Query{
 				FieldName:     field,
 				ReferenceName: "a",
-				Start:         "0",
-				End:           "300",
+				Start:         start,
+				End:           end,
 				Step:          "1m",
 			},
 			metric: &md.QueryMetric{
@@ -100,6 +104,7 @@ func TestQueryToMetric(t *testing.T) {
 						Timezone:       "UTC",
 						VmCondition:    `__name__="kube_pod_info_value"`,
 						VmConditionNum: 1,
+						DataLabel:      "influxdb",
 					},
 					{
 						DataSource:     BkMonitor,
@@ -115,6 +120,7 @@ func TestQueryToMetric(t *testing.T) {
 						Timezone:       "UTC",
 						VmCondition:    `result_table_id="2_bcs_prom_computation_result_table", __name__="kube_pod_info_value"`,
 						VmConditionNum: 2,
+						DataLabel:      "vm",
 					},
 				},
 				ReferenceName: "a",
@@ -127,8 +133,8 @@ func TestQueryToMetric(t *testing.T) {
 				TableID:       TableID(dataLabel),
 				FieldName:     field,
 				ReferenceName: "a",
-				Start:         "0",
-				End:           "300",
+				Start:         start,
+				End:           end,
 				Step:          "1m",
 			},
 			metric: &md.QueryMetric{
@@ -136,6 +142,7 @@ func TestQueryToMetric(t *testing.T) {
 					{
 						DataSource:     BkMonitor,
 						TableID:        tableID,
+						DataLabel:      "influxdb",
 						DB:             db,
 						StorageType:    consul.InfluxDBStorageType,
 						StorageID:      storageID,
@@ -163,6 +170,7 @@ func TestQueryToMetric(t *testing.T) {
 						Timezone:       "UTC",
 						VmCondition:    `result_table_id="2_bcs_prom_computation_result_table", __name__="kube_pod_info_value"`,
 						VmConditionNum: 2,
+						DataLabel:      "vm",
 					},
 				},
 				ReferenceName: "a",
@@ -175,8 +183,8 @@ func TestQueryToMetric(t *testing.T) {
 				TableID:       TableID(tableID),
 				FieldName:     "kube_.*",
 				ReferenceName: "a",
-				Start:         "0",
-				End:           "300",
+				Start:         start,
+				End:           end,
 				Step:          "1m",
 				IsRegexp:      true,
 			},
@@ -197,6 +205,7 @@ func TestQueryToMetric(t *testing.T) {
 						Timezone:       "UTC",
 						VmCondition:    `__name__=~"kube_.*_value"`,
 						VmConditionNum: 1,
+						DataLabel:      "influxdb",
 					},
 				},
 				ReferenceName: "a",
@@ -263,7 +272,7 @@ func TestQueryToMetric(t *testing.T) {
 			metric, err := c.query.ToQueryMetric(ctx, spaceUID)
 			assert.Nil(t, err)
 			if err == nil {
-				assert.JSONEq(t, c.metric.ToJson(true), metric.ToJson(true))
+				assert.Equal(t, c.metric, metric)
 			}
 		})
 	}
@@ -318,6 +327,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
 							TableID:        "system.cpu_detail",
+							DataLabel:      "cpu_detail",
 							MetricName:     "usage",
 							VmRt:           "100147_ieod_system_cpu_detail_raw",
 							VmConditionNum: 3,
@@ -347,6 +357,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
 							TableID:        "system.disk",
+							DataLabel:      "disk",
 							MetricName:     "usage",
 							VmRt:           "100147_ieod_system_disk_raw",
 							VmConditionNum: 3,
@@ -404,6 +415,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
 							TableID:        "system.cpu_summary",
+							DataLabel:      "cpu_summary",
 							MetricName:     "usage",
 							ClusterName:    "default",
 							DB:             "system",
@@ -436,6 +448,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
 							TableID:        "system.disk",
+							DataLabel:      "disk",
 							MetricName:     "usage",
 							VmRt:           "100147_ieod_system_disk_raw",
 							VmConditionNum: 3,
@@ -480,6 +493,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
 							TableID:        "system.cpu_summary",
+							DataLabel:      "cpu_summary",
 							MetricName:     "usage",
 							DB:             "system",
 							Measurement:    "cpu_summary",
@@ -541,6 +555,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
 							TableID:        "system.cpu_detail",
+							DataLabel:      "cpu_detail",
 							MetricName:     "usage",
 							VmRt:           "100147_ieod_system_cpu_detail_cmdb",
 							VmConditionNum: 4,
@@ -609,6 +624,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
 							TableID:        "system.cpu_detail",
+							DataLabel:      "cpu_detail",
 							MetricName:     "usage",
 							VmRt:           "100147_ieod_system_cpu_detail_cmdb",
 							VmConditionNum: 3,
@@ -674,6 +690,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
 							TableID:        "system.cpu_detail",
+							DataLabel:      "cpu_detail",
 							MetricName:     "usage",
 							VmRt:           "100147_ieod_system_cpu_detail_raw",
 							VmConditionNum: 3,
@@ -746,6 +763,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
 							TableID:        "system.cpu_detail",
+							DataLabel:      "cpu_detail",
 							MetricName:     "usage",
 							VmRt:           "100147_ieod_system_cpu_detail_raw",
 							VmConditionNum: 3,
@@ -817,6 +835,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
 							TableID:        "system.cpu_detail",
+							DataLabel:      "cpu_detail",
 							MetricName:     "usage",
 							VmRt:           "100147_ieod_system_cpu_detail_raw",
 							VmConditionNum: 3,
@@ -883,6 +902,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
 							TableID:        "system.cpu_summary",
+							DataLabel:      "cpu_summary",
 							MetricName:     "usage",
 							VmConditionNum: 2,
 							VmCondition:    `bk_biz_id="2", __name__="usage_value"`,
@@ -952,6 +972,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							Timezone:       "UTC",
 							Fields:         []string{"usage"},
 							TableID:        "system.cpu_summary",
+							DataLabel:      "cpu_summary",
 							MetricName:     "usage",
 							DB:             "system",
 							Measurement:    "cpu_summary",
@@ -1030,6 +1051,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							StorageID:      "2",
 							StorageType:    consul.InfluxDBStorageType,
 							Field:          "usage",
+							DataLabel:      "cpu_summary",
 							AllConditions: md.AllConditions{
 								{
 									{
@@ -1092,7 +1114,10 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 						{
 							DataSource:     BkLog,
 							Timezone:       "UTC",
+							SourceType:     "bkdata",
 							TableID:        "result_table.es",
+							DataLabel:      "es",
+							DB:             "es_index",
 							MetricName:     "usage",
 							VmConditionNum: 1,
 							VmCondition:    `__name__="usage_value"`,

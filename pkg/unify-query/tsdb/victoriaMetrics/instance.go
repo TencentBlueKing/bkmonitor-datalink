@@ -662,32 +662,27 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 
 	span.Set("query-step", step)
 
-	queryString := query.VmCondition.ToMatch()
-	queryString = fmt.Sprintf(`count(%s) by (%s)`, queryString, name)
-	if query.Size > 0 {
-		queryString = fmt.Sprintf(`topk(%d, %s)`, query.Size, queryString)
-	}
-
-	paramsQueryRange := &ParamsQueryRange{
+	paramsQuery := &ParamsLabelValues{
 		InfluxCompatible: i.influxCompatible,
-		APIType:          APIQueryRange,
+		APIType:          APILabelValues,
 		APIParams: struct {
-			Query   string `json:"query"`
-			Start   int64  `json:"start"`
-			End     int64  `json:"end"`
-			Step    int64  `json:"step"`
-			NoCache int    `json:"nocache"`
+			Label string `json:"label"`
+			Match string `json:"match[]"`
+			Start int64  `json:"start"`
+			End   int64  `json:"end"`
+			Limit int    `json:"limit"`
 		}{
-			Query: queryString,
+			Label: name,
+			Match: query.VmCondition.ToMatch(),
+			Limit: query.Size,
 			Start: start.Unix(),
 			End:   end.Unix(),
-			Step:  step,
 		},
 		ResultTableList: []string{query.VmRt},
 		ClusterName:     query.StorageName,
 	}
 
-	sql, err := json.Marshal(paramsQueryRange)
+	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -764,6 +759,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 			Limit: limit,
 		},
 		ResultTableList: vmExpand.ResultTableList,
+		ClusterName:     vmExpand.ClusterName,
 	}
 
 	span.Set("query-label", name)
@@ -779,10 +775,6 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 	}
 	if end.Unix() > 0 {
 		paramsQuery.APIParams.End = end.Unix()
-	}
-
-	if vmExpand.ClusterName != "" {
-		paramsQuery.ClusterName = vmExpand.ClusterName
 	}
 
 	sql, err := json.Marshal(paramsQuery)

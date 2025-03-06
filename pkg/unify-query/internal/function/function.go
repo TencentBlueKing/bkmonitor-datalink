@@ -10,9 +10,18 @@
 package function
 
 import (
+	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
+)
+
+const (
+	Second      = "second"
+	Millisecond = "millisecond"
+	Microsecond = "microsecond"
+	Nanosecond  = "nanosecond"
 )
 
 func MatcherToMetricName(matchers ...*labels.Matcher) string {
@@ -62,4 +71,82 @@ func RangeDateWithUnit(unit string, start, end time.Time, step int) (dates []str
 	}
 
 	return dates
+}
+
+// ParseTimestamp 将字符串根据格式转换为时间戳
+func ParseTimestamp(s string) (f string, t time.Time, err error) {
+	// 将字符串转换为int64
+	val, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return
+	}
+
+	// 根据字符串长度判断单位
+	switch len(s) {
+	case 10: // 秒（10位）
+		t = time.Unix(val, 0)
+		f = Second
+	case 13: // 毫秒（13位）
+		sec := val / 1000
+		nsec := (val % 1000) * 1e6
+		t = time.Unix(sec, nsec)
+		f = Millisecond
+	case 16: // 微秒（16位）
+		sec := val / 1e6
+		nsec := (val % 1e6) * 1e3
+		t = time.Unix(sec, nsec)
+		f = Microsecond
+	case 19: // 纳秒（19位）
+		t = time.Unix(0, val)
+		f = Nanosecond
+	default:
+		err = fmt.Errorf("unsupported timestamp length: %d", len(s))
+	}
+
+	return
+}
+
+// QueryTimestamp 将开始时间和结束时间的时间戳从 string 转换为 time.Time，根据长度判定单位
+func QueryTimestamp(s, e string) (format string, start time.Time, end time.Time, err error) {
+	var (
+		startUnit string
+		endUnit   string
+	)
+
+	if s != "" {
+		startUnit, start, err = ParseTimestamp(s)
+		if err != nil {
+			err = fmt.Errorf("invalid start time: %v", err)
+			return
+		}
+	} else {
+		// 默认查询1小时内的数据
+		start = time.Now().Add(-time.Hour * 1)
+		startUnit = Second
+	}
+
+	if e != "" {
+		endUnit, end, err = ParseTimestamp(e)
+		if err != nil {
+			err = fmt.Errorf("invalid end time: %v", err)
+			return
+		}
+	} else {
+		// 默认查询1小时内的数据
+		end = time.Now()
+		endUnit = Second
+	}
+
+	if startUnit != endUnit {
+		err = fmt.Errorf("start time and end time must have the same format")
+		return
+	}
+	format = startUnit
+
+	return
+}
+
+// MsIntMergeNs 将毫秒时间和纳秒时间戳合并为新的时间
+func MsIntMergeNs(ms int64, ns time.Time) time.Time {
+	return time.Unix(0, (ms-ns.UnixMilli())*1e6+ns.UnixNano())
 }

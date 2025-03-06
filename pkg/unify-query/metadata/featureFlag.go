@@ -92,7 +92,7 @@ func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 
 	if vmDataTime > 0 {
 		queryParams := GetQueryParams(ctx)
-		status = int64(vmDataTime) < queryParams.Start
+		status = int64(vmDataTime) < queryParams.Start.Unix()
 
 		span.Set("vm-data-time", vmDataTime)
 		span.Set("query-params-start", queryParams.Start)

@@ -100,7 +100,7 @@ func CreateTask(c *gin.Context) {
 			return
 		}
 	} else if strings.HasPrefix(kind, DaemonTask) {
-		if err = enqueueDaemonTask(newedTask); err != nil {
+		if err = handleDaemonTask(*params, newedTask); err != nil {
 			ServerErrResponse(c, "enqueue daemon task error error, %v", err)
 			return
 		}
@@ -173,19 +173,26 @@ func pushPeriodicTaskToRedis(t *task.Task) error {
 }
 
 // 推送任务到 task队列中
-func enqueueDaemonTask(t *task.Task) error {
+func handleDaemonTask(param taskParams, t *task.Task) error {
+	// 如果任务已存在 走更新逻辑 如果不存在 走创建逻辑
 	broker := rdb.GetRDB()
-
 	serializerTask, err := task.NewSerializerTask(*t)
 	if err != nil {
 		return err
 	}
-	data, err := jsonx.Marshal(serializerTask)
-	if err != nil {
-		return err
+	taskUniId := daemon.ComputeTaskUniId(*serializerTask)
+	if !isDaemonTaskExist(taskUniId) {
+		data, err := jsonx.Marshal(serializerTask)
+		if err != nil {
+			return err
+		}
+		return broker.Client().SAdd(context.Background(), common.DaemonTaskKey(), data).Err()
+	} else {
+		if err = updateDaemonTask(taskUniId, param.Payload); err != nil {
+			return err
+		}
+		return nil
 	}
-
-	return broker.Client().SAdd(context.Background(), common.DaemonTaskKey(), data).Err()
 }
 
 // RemoveAllTask 删除所有任务
@@ -220,7 +227,7 @@ func RemoveTask(c *gin.Context) {
 
 	switch params.TaskType {
 	case DaemonTask:
-		daemonTaskBytes, err := getDaemonTask(params.TaskUniId)
+		_, daemonTaskBytes, err := getDaemonTaskBytes(params.TaskUniId)
 		if err != nil {
 			BadReqResponse(c, "get daemonTask failed error: %v", err)
 			return

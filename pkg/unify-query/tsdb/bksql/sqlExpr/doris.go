@@ -20,6 +20,8 @@ import (
 const (
 	Doris         = "doris"
 	DorisTypeText = "text"
+
+	ShardKey = "__shard_key__"
 )
 
 type DorisSQLExpr struct {
@@ -34,12 +36,6 @@ func (s *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]string) SQLExpr {
 	s.fieldsMap = fieldsMap
 
 	s.DefaultSQLExpr.WithFieldsMap(fieldsMap)
-	return s
-}
-
-func (s *DorisSQLExpr) WithTransformDimension(fn func(string) string) SQLExpr {
-	s.dimTransform = fn
-	s.DefaultSQLExpr.WithTransformDimension(fn)
 	return s
 }
 
@@ -114,21 +110,35 @@ func (s *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 			return "", err
 		}
 
-		return fmt.Sprintf("%s LIKE '%%%s%%'", s.dimTransform(c.Field), c.Value), nil
+		field, err := s.dimTransform(c.Field)
+		if err != nil {
+			return "", err
+		}
+
+		return fmt.Sprintf("%s LIKE '%%%s%%'", field, c.Value), nil
 	case *querystring.MatchExpr:
 		if c.Field == "" {
 			err = fmt.Errorf(Doris + " " + ErrorMatchAll + ": " + c.Value)
 			return "", err
 		}
-
-		if s.checkMatchALL(c.Field) {
-			return fmt.Sprintf("%s LIKE '%%%s%%'", s.dimTransform(c.Field), c.Value), nil
+		field, err := s.dimTransform(c.Field)
+		if err != nil {
+			return "", err
 		}
 
-		return fmt.Sprintf("%s = '%s'", s.dimTransform(c.Field), c.Value), nil
+		if s.checkMatchALL(c.Field) {
+			return fmt.Sprintf("%s LIKE '%%%s%%'", field, c.Value), nil
+		}
+
+		return fmt.Sprintf("%s = '%s'", field, c.Value), nil
 	case *querystring.NumberRangeExpr:
 		if c.Field == "" {
 			err = fmt.Errorf(Doris + " " + ErrorMatchAll)
+			return "", err
+		}
+
+		field, err := s.dimTransform(c.Field)
+		if err != nil {
 			return "", err
 		}
 
@@ -140,7 +150,7 @@ func (s *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 			} else {
 				op = ">"
 			}
-			timeFilter = append(timeFilter, fmt.Sprintf("%s %s %s", s.dimTransform(c.Field), op, *c.Start))
+			timeFilter = append(timeFilter, fmt.Sprintf("%s %s %s", field, op, *c.Start))
 		}
 
 		if c.End != nil && *c.End != "*" {
@@ -150,7 +160,7 @@ func (s *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 			} else {
 				op = "<"
 			}
-			timeFilter = append(timeFilter, fmt.Sprintf("%s %s %s", s.dimTransform(c.Field), op, *c.End))
+			timeFilter = append(timeFilter, fmt.Sprintf("%s %s %s", field, op, *c.End))
 		}
 
 		return fmt.Sprintf("%s", strings.Join(timeFilter, " AND ")), nil
@@ -162,15 +172,15 @@ func (s *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 }
 
 func init() {
-	Register(Doris, (&DorisSQLExpr{}).WithTransformDimension(func(s string) string {
+	Register(Doris, (&DorisSQLExpr{}).WithDimensionTransform(func(s string) (string, error) {
 		if s == "" {
-			return ""
+			return "", nil
 		}
 
 		fs := strings.Split(s, ".")
 		if len(fs) > 1 {
-			return fmt.Sprintf("CAST(`%s`[\"%s\"] AS STRING)", fs[0], strings.Join(fs[1:], `"]["`))
+			return fmt.Sprintf("CAST(%s[\"%s\"] AS STRING)", fs[0], strings.Join(fs[1:], "][")), nil
 		}
-		return fmt.Sprintf("`%s`", s)
+		return fmt.Sprintf("`%s`", s), nil
 	}))
 }

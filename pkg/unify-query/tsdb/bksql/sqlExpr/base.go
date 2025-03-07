@@ -39,8 +39,10 @@ var (
 type SQLExpr interface {
 	// WithFieldsMap 设置字段类型
 	WithFieldsMap(fieldsMap map[string]string) SQLExpr
-	// WithTransformDimension 设置字段转换方法
-	WithTransformDimension(func(string) string) SQLExpr
+	// WithDimensionTransform 设置标签字段转换方法
+	WithDimensionTransform(func(string) (string, error)) SQLExpr
+	// WithEncode 字段转换方法
+	WithEncode(func(string) string) SQLExpr
 	// WithInternalFields 设置内部字段
 	WithInternalFields(timeField, valueField string) SQLExpr
 	// ParserQueryString 解析 es 特殊语法 queryString 生成SQL条件
@@ -59,11 +61,16 @@ var (
 	ExprMap = make(map[string]SQLExpr) // 存储注册的SQL表达式实现
 )
 
-func defaultTransformDimension(s string) string {
+func defaultDimensionTransform(s string) (string, error) {
 	if s == "" {
-		return ""
+		return "", nil
 	}
-	return fmt.Sprintf("`%s`", s)
+	fs := strings.Split(s, ".")
+	if len(fs) > 1 {
+		return "", fmt.Errorf("query is not support object with %s", s)
+	}
+
+	return fmt.Sprintf("`%s`", s), nil
 }
 
 // GetSQLExpr 获取指定key的SQL表达式实现
@@ -80,7 +87,8 @@ func GetSQLExpr(key string) SQLExpr {
 	if sqlExpr, ok := ExprMap[key]; ok {
 		return sqlExpr
 	} else {
-		return (&DefaultSQLExpr{}).WithTransformDimension(defaultTransformDimension)
+		return (&DefaultSQLExpr{}).
+			WithDimensionTransform(defaultDimensionTransform)
 	}
 }
 
@@ -109,8 +117,12 @@ func UnRegister(key string) {
 
 // DefaultSQLExpr SQL表达式默认实现
 type DefaultSQLExpr struct {
-	dimTransform func(string) string
-	fieldsMap    map[string]string
+	timeFieldTransform func(string, time.Duration) string
+	dimTransform       func(string) (string, error)
+
+	encodeFunc func(string) string
+
+	fieldsMap map[string]string
 
 	timeField  string
 	valueField string
@@ -125,14 +137,24 @@ func (d *DefaultSQLExpr) WithInternalFields(timeField, valueField string) SQLExp
 	return d
 }
 
+func (d *DefaultSQLExpr) WithEncode(fn func(string) string) SQLExpr {
+	d.encodeFunc = fn
+	return d
+}
+
 func (d *DefaultSQLExpr) WithFieldsMap(fieldsMap map[string]string) SQLExpr {
 	d.fieldsMap = fieldsMap
 	return d
 }
 
-// WithTransformDimension 实现设置字段转换方法
-func (d *DefaultSQLExpr) WithTransformDimension(fn func(string) string) SQLExpr {
+// WithDimensionTransform 实现设置字段转换方法
+func (d *DefaultSQLExpr) WithDimensionTransform(fn func(string) (string, error)) SQLExpr {
 	d.dimTransform = fn
+	return d
+}
+
+func (d *DefaultSQLExpr) WithTimeFieldTransform(fn func(string, time.Duration) string) SQLExpr {
+	d.timeFieldTransform = fn
 	return d
 }
 
@@ -141,14 +163,28 @@ func (d *DefaultSQLExpr) ParserQueryString(_ string) (string, error) {
 	return "", nil
 }
 
-// ParserAggregates 解析聚合函数，生成 select 和 group by 字段
+// ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段
 func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, err error) {
-	valueField := d.dimTransform(d.valueField)
+	valueField, err := d.dimTransform(d.valueField)
+	if err != nil {
+		return
+	}
 
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
-			dim = d.dimTransform(dim)
-			selectFields = append(selectFields, dim)
+			var alias string
+			if d.encodeFunc != nil {
+				alias = d.encodeFunc(dim)
+			} else {
+				alias = dim
+			}
+
+			dim, err = d.dimTransform(dim)
+			if err != nil {
+				return
+			}
+			alias = fmt.Sprintf("%s AS `%s`", dim, alias)
+			selectFields = append(selectFields, alias)
 			groupByFields = append(groupByFields, dim)
 		}
 
@@ -159,6 +195,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 
 		if agg.Window > 0 {
 			timeField := fmt.Sprintf("(`%s` - (`%s` %% %d))", d.timeField, d.timeField, agg.Window.Milliseconds())
+
 			groupByFields = append(groupByFields, timeField)
 			selectFields = append(selectFields, fmt.Sprintf("MAX(%s) AS `%s`", timeField, TimeStamp))
 
@@ -177,6 +214,11 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 	}
 
 	for key, asc := range orders {
+		key, err = d.dimTransform(key)
+		if err != nil {
+			return
+		}
+
 		var orderField string
 		switch key {
 		case FieldValue:
@@ -186,11 +228,12 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		default:
 			orderField = key
 		}
+
 		ascName := "ASC"
 		if !asc {
 			ascName = "DESC"
 		}
-		orderByFields = append(orderByFields, fmt.Sprintf("`%s` %s", orderField, ascName))
+		orderByFields = append(orderByFields, fmt.Sprintf("%s %s", orderField, ascName))
 	}
 
 	return
@@ -254,7 +297,10 @@ func (d *DefaultSQLExpr) buildCondition(c metadata.ConditionField) (string, erro
 		val string
 	)
 
-	key = d.dimTransform(c.DimensionName)
+	key, err := d.dimTransform(c.DimensionName)
+	if err != nil {
+		return "", err
+	}
 
 	// 根据操作符类型生成不同的SQL表达式
 	switch c.Operator {

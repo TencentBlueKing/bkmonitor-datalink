@@ -300,6 +300,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 		end      time.Time
 		query    *metadata.Query
 		expected string
+		err      error
 	}{
 		// 测试用例1: 无聚合函数的原始查询
 		{
@@ -434,7 +435,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 					"__ext.container_id": false,
 				},
 			},
-			expected: "SELECT `__ext.container_id`, `test`, COUNT(`__ext.container_id`) AS `_value_` FROM `transaction_logs` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' AND `__ext.container_id` = '1234567890' GROUP BY `__ext.container_id`, `test` ORDER BY `__ext.container_id` DESC, `timestamp` ASC",
+			err: fmt.Errorf("query is not support object with __ext.container_id"),
 		},
 
 		// 测试用例8: doris 处理 object 字段
@@ -448,9 +449,9 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 				AllConditions: metadata.AllConditions{
 					{
 						{
-							DimensionName: "__ext.container_id",
+							DimensionName: "__ext.io_kubernetes_workload_name",
 							Operator:      metadata.ConditionEqual,
-							Value:         []string{"5782c24d05ae0eceb3074d6ae492e7b027b7310711a4b63392eacd9314fc9a83"},
+							Value:         []string{"bkm-daemonset-worker"},
 						},
 						{
 							DimensionName: "bk_host_id",
@@ -462,15 +463,53 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 				Aggregates: metadata.Aggregates{
 					{
 						Name:       "count",
-						Dimensions: []string{"__ext.container_id", "bk_host_id"},
+						Dimensions: []string{"__ext.io_kubernetes_workload_name", "__ext.io_kubernetes_workload_type"},
 					},
 				},
 				Orders: map[string]bool{
-					"timestamp":          true,
-					"__ext.container_id": false,
+					"__ext.io_kubernetes_workload_name": false,
 				},
 			},
-			expected: "",
+			start:    time.Unix(1741334700, 0),
+			end:      time.Unix(1741335000, 0),
+			expected: "SELECT CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_type`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` < 1741335000000 AND `thedate` = '20250307' AND CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) = 'bkm-daemonset-worker' AND `bk_host_id` = '267730' GROUP BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING), CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING) ORDER BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) DESC LIMIT 3",
+		},
+		// 测试用例8: doris 处理 object 字段 + 时间聚合
+		{
+			name: "default multiple order fields and time aggregate",
+			query: &metadata.Query{
+				DB:          "5000140_bklog_container_log_demo_analysis",
+				Measurement: sqlExpr.Doris,
+				Field:       "__ext.container_id",
+				Size:        3,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "__ext.io_kubernetes_workload_name",
+							Operator:      metadata.ConditionEqual,
+							Value:         []string{"bkm-daemonset-worker"},
+						},
+						{
+							DimensionName: "bk_host_id",
+							Operator:      metadata.ConditionEqual,
+							Value:         []string{"267730"},
+						},
+					},
+				},
+				Aggregates: metadata.Aggregates{
+					{
+						Name:       "count",
+						Dimensions: []string{"__ext.io_kubernetes_workload_name", "__ext.io_kubernetes_workload_type"},
+						Window:     time.Minute,
+					},
+				},
+				Orders: map[string]bool{
+					"__ext.io_kubernetes_workload_name": false,
+				},
+			},
+			start:    time.Unix(1741334700, 0),
+			end:      time.Unix(1741335000, 0),
+			expected: "SELECT CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_type`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000))) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` < 1741335000000 AND `thedate` = '20250307' AND CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) = 'bkm-daemonset-worker' AND `bk_host_id` = '267730' GROUP BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING), CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING), (`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000)) ORDER BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
 		},
 	}
 
@@ -491,9 +530,13 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			// 条件解析验证
 			if len(tc.query.AllConditions) > 0 {
 				condition, err := sqlExpr.GetSQLExpr(tc.query.Measurement).WithFieldsMap(nil).ParserAllConditions(tc.query.AllConditions)
-				assert.Nil(t, err)
-				if err == nil {
-					assert.NotEmpty(t, condition, "Parsed condition should not be empty")
+				if tc.err != nil {
+					assert.Equal(t, tc.err, err)
+				} else {
+					assert.Nil(t, err)
+					if err == nil {
+						assert.NotEmpty(t, condition, "Parsed condition should not be empty")
+					}
 				}
 			}
 
@@ -501,15 +544,19 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			fact := bksql.NewQueryFactory(ctx, tc.query).WithRangeTime(start, end)
 			generatedSQL, err := fact.SQL()
 
-			assert.Nil(t, err)
-			if err == nil {
-				assert.Equal(t, tc.expected, generatedSQL)
-			}
+			if tc.err != nil {
+				assert.Equal(t, tc.err, err)
+			} else {
+				assert.Nil(t, err)
+				if err == nil {
+					assert.Equal(t, tc.expected, generatedSQL)
 
-			// 验证时间条件
-			if tc.start.IsZero() && tc.end.IsZero() {
-				assert.Contains(t, generatedSQL, fmt.Sprintf("`dtEventTimeStamp` >= %d", baseStart.UnixMilli()))
-				assert.Contains(t, generatedSQL, fmt.Sprintf("`dtEventTimeStamp` < %d", baseEnd.UnixMilli()))
+					// 验证时间条件
+					if tc.start.IsZero() && tc.end.IsZero() {
+						assert.Contains(t, generatedSQL, fmt.Sprintf("`dtEventTimeStamp` >= %d", baseStart.UnixMilli()))
+						assert.Contains(t, generatedSQL, fmt.Sprintf("`dtEventTimeStamp` < %d", baseEnd.UnixMilli()))
+					}
+				}
 			}
 		})
 	}

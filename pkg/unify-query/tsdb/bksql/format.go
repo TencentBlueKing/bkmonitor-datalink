@@ -85,7 +85,10 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	}
 
 	fieldsMap := make(map[string]string)
-	f.expr = sqlExpr.GetSQLExpr(f.query.Measurement).WithFieldsMap(fieldsMap).WithInternalFields(f.timeField, query.Field)
+	f.expr = sqlExpr.GetSQLExpr(f.query.Measurement).
+		WithFieldsMap(fieldsMap).
+		WithInternalFields(f.timeField, query.Field).
+		WithEncode(metadata.GetPromDataFormat(ctx).EncodeFunc())
 	return f
 }
 

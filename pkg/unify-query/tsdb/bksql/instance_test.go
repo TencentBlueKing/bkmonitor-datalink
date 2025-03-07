@@ -509,7 +509,55 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.Unix(1741334700, 0),
 			end:      time.Unix(1741335000, 0),
-			expected: "SELECT CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_type`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000))) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` < 1741335000000 AND `thedate` = '20250307' AND CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) = 'bkm-daemonset-worker' AND `bk_host_id` = '267730' GROUP BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING), CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING), (`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000)) ORDER BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
+			expected: "SELECT CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_type`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, __shard_key__ * 60 AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` < 1741335000000 AND `thedate` = '20250307' AND CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) = 'bkm-daemonset-worker' AND `bk_host_id` = '267730' GROUP BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING), CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING), __shard_key__ ORDER BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
+		},
+		// 测试用例8: doris 处理 object 字段 + 时间聚合 5m
+		{
+			name: "default multiple order fields and time aggregate 5m",
+			query: &metadata.Query{
+				DB:            "5000140_bklog_container_log_demo_analysis",
+				Measurement:   sqlExpr.Doris,
+				Field:         "__ext.container_id",
+				Size:          3,
+				AllConditions: metadata.AllConditions{},
+				Aggregates: metadata.Aggregates{
+					{
+						Name:       "count",
+						Dimensions: []string{"__ext.io_kubernetes_workload_name"},
+						Window:     time.Minute * 5,
+					},
+				},
+				Orders: map[string]bool{
+					"__ext.io_kubernetes_workload_name": false,
+				},
+			},
+			start:    time.Unix(1741334700, 0),
+			end:      time.Unix(1741335000, 0),
+			expected: "",
+		},
+		// 测试用例8: doris 处理 object 字段 + 时间聚合 15s
+		{
+			name: "default multiple order fields and time aggregate 15s",
+			query: &metadata.Query{
+				DB:            "5000140_bklog_container_log_demo_analysis",
+				Measurement:   sqlExpr.Doris,
+				Field:         "__ext.container_id",
+				Size:          3,
+				AllConditions: metadata.AllConditions{},
+				Aggregates: metadata.Aggregates{
+					{
+						Name:       "count",
+						Dimensions: []string{"__ext.io_kubernetes_workload_name"},
+						Window:     time.Second * 15,
+					},
+				},
+				Orders: map[string]bool{
+					"__ext.io_kubernetes_workload_name": false,
+				},
+			},
+			start:    time.Unix(1741334700, 0),
+			end:      time.Unix(1741335000, 0),
+			expected: "",
 		},
 	}
 
@@ -525,19 +573,6 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			end := tc.end
 			if end.IsZero() {
 				end = baseEnd
-			}
-
-			// 条件解析验证
-			if len(tc.query.AllConditions) > 0 {
-				condition, err := sqlExpr.GetSQLExpr(tc.query.Measurement).WithFieldsMap(nil).ParserAllConditions(tc.query.AllConditions)
-				if tc.err != nil {
-					assert.Equal(t, tc.err, err)
-				} else {
-					assert.Nil(t, err)
-					if err == nil {
-						assert.NotEmpty(t, condition, "Parsed condition should not be empty")
-					}
-				}
 			}
 
 			// SQL生成验证

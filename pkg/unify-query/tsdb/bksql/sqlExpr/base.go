@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -39,8 +38,6 @@ var (
 type SQLExpr interface {
 	// WithFieldsMap 设置字段类型
 	WithFieldsMap(fieldsMap map[string]string) SQLExpr
-	// WithDimensionTransform 设置标签字段转换方法
-	WithDimensionTransform(func(string) (string, error)) SQLExpr
 	// WithEncode 字段转换方法
 	WithEncode(func(string) string) SQLExpr
 	// WithInternalFields 设置内部字段
@@ -58,20 +55,8 @@ var (
 	_ SQLExpr = (*DefaultSQLExpr)(nil) // 接口实现检查
 
 	lock    sync.RWMutex               // 读写锁用于并发安全
-	ExprMap = make(map[string]SQLExpr) // 存储注册的SQL表达式实现
+	exprMap = make(map[string]SQLExpr) // 存储注册的SQL表达式实现
 )
-
-func defaultDimensionTransform(s string) (string, error) {
-	if s == "" {
-		return "", nil
-	}
-	fs := strings.Split(s, ".")
-	if len(fs) > 1 {
-		return "", fmt.Errorf("query is not support object with %s", s)
-	}
-
-	return fmt.Sprintf("`%s`", s), nil
-}
 
 // GetSQLExpr 获取指定key的SQL表达式实现
 // 参数：
@@ -84,11 +69,10 @@ func defaultDimensionTransform(s string) (string, error) {
 func GetSQLExpr(key string) SQLExpr {
 	lock.RLock()
 	defer lock.RUnlock()
-	if sqlExpr, ok := ExprMap[key]; ok {
+	if sqlExpr, ok := exprMap[key]; ok {
 		return sqlExpr
 	} else {
-		return (&DefaultSQLExpr{}).
-			WithDimensionTransform(defaultDimensionTransform)
+		return &DefaultSQLExpr{}
 	}
 }
 
@@ -100,7 +84,7 @@ func GetSQLExpr(key string) SQLExpr {
 func Register(key string, sqlExpr SQLExpr) {
 	lock.Lock()
 	defer lock.Unlock()
-	ExprMap[key] = sqlExpr
+	exprMap[key] = sqlExpr
 }
 
 // UnRegister 注销指定key的SQL表达式实现
@@ -110,25 +94,19 @@ func Register(key string, sqlExpr SQLExpr) {
 func UnRegister(key string) {
 	lock.Lock()
 	defer lock.Unlock()
-	if _, ok := ExprMap[key]; ok {
-		delete(ExprMap, key)
+	if _, ok := exprMap[key]; ok {
+		delete(exprMap, key)
 	}
 }
 
 // DefaultSQLExpr SQL表达式默认实现
 type DefaultSQLExpr struct {
-	timeFieldTransform func(string, time.Duration) string
-	dimTransform       func(string) (string, error)
-
 	encodeFunc func(string) string
 
 	fieldsMap map[string]string
 
 	timeField  string
 	valueField string
-
-	start time.Time
-	end   time.Time
 }
 
 func (d *DefaultSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {
@@ -147,15 +125,16 @@ func (d *DefaultSQLExpr) WithFieldsMap(fieldsMap map[string]string) SQLExpr {
 	return d
 }
 
-// WithDimensionTransform 实现设置字段转换方法
-func (d *DefaultSQLExpr) WithDimensionTransform(fn func(string) (string, error)) SQLExpr {
-	d.dimTransform = fn
-	return d
-}
+func (d *DefaultSQLExpr) dimTransform(s string) (string, error) {
+	if s == "" {
+		return "", nil
+	}
+	fs := strings.Split(s, ".")
+	if len(fs) > 1 {
+		return "", fmt.Errorf("query is not support object with %s", s)
+	}
 
-func (d *DefaultSQLExpr) WithTimeFieldTransform(fn func(string, time.Duration) string) SQLExpr {
-	d.timeFieldTransform = fn
-	return d
+	return fmt.Sprintf("`%s`", s), nil
 }
 
 // ParserQueryString 解析查询字符串（当前实现返回空）
@@ -172,19 +151,11 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
-			var alias string
-			if d.encodeFunc != nil {
-				alias = d.encodeFunc(dim)
-			} else {
-				alias = dim
-			}
-
 			dim, err = d.dimTransform(dim)
 			if err != nil {
 				return
 			}
-			alias = fmt.Sprintf("%s AS `%s`", dim, alias)
-			selectFields = append(selectFields, alias)
+			selectFields = append(selectFields, dim)
 			groupByFields = append(groupByFields, dim)
 		}
 
@@ -214,11 +185,6 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 	}
 
 	for key, asc := range orders {
-		key, err = d.dimTransform(key)
-		if err != nil {
-			return
-		}
-
 		var orderField string
 		switch key {
 		case FieldValue:
@@ -227,6 +193,11 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 			orderField = TimeStamp
 		default:
 			orderField = key
+		}
+
+		orderField, err = d.dimTransform(orderField)
+		if err != nil {
+			return
 		}
 
 		ascName := "ASC"

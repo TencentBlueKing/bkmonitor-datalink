@@ -89,7 +89,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "object field",
 			input: "__ext.container_name: value",
-			want:  "CAST(`__ext`[\"container_name\"] AS STRING) = 'value'",
+			want:  "CAST(__ext[\"container_name\"] AS STRING) = 'value'",
 		},
 		{
 			name:  "start",

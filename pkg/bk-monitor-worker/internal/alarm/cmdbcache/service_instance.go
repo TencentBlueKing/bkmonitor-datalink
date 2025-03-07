@@ -1,6 +1,6 @@
 // MIT License
 
-// Copyright (c) 2021~2022 腾讯蓝鲸
+// Copyright (c) 2021~2024 腾讯蓝鲸
 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/mitchellh/mapstructure"
@@ -83,11 +82,6 @@ func NewServiceInstanceCacheManager(prefix string, opt *redis.Options, concurren
 // Type 缓存类型
 func (m *ServiceInstanceCacheManager) Type() string {
 	return "service_instance"
-}
-
-// UseBiz 是否按业务执行
-func (m *ServiceInstanceCacheManager) useBiz() bool {
-	return true
 }
 
 // getServiceInstances 获取服务实例列表
@@ -196,7 +190,6 @@ func (m *ServiceInstanceCacheManager) RefreshByBiz(ctx context.Context, bkBizId 
 	}
 
 	// 刷新服务实例缓存
-	key := m.GetCacheKey(serviceInstanceCacheKey)
 	serviceInstanceMap := make(map[string]string)
 	for _, instance := range serviceInstances {
 		value, err := json.Marshal(instance)
@@ -205,13 +198,14 @@ func (m *ServiceInstanceCacheManager) RefreshByBiz(ctx context.Context, bkBizId 
 		}
 		serviceInstanceMap[strconv.Itoa(instance.ID)] = string(value)
 	}
-	err = m.UpdateHashMapCache(ctx, key, serviceInstanceMap)
+	err = m.UpdateHashMapCache(ctx, serviceInstanceCacheKey, serviceInstanceMap)
 	if err != nil {
 		return errors.Wrap(err, "update hashmap cmdb service instance cache failed")
+	} else {
+		logger.Infof("refresh service instance cache by biz: %d, instance count: %d", bkBizId, len(serviceInstances))
 	}
 
 	// 刷新主机到服务实例缓存
-	key = m.GetCacheKey(hostToServiceInstanceCacheKey)
 	hostToServiceInstances := make(map[string][]string)
 	for _, instance := range serviceInstances {
 		hostToServiceInstances[strconv.Itoa(instance.BkHostId)] = append(hostToServiceInstances[strconv.Itoa(instance.BkHostId)], strconv.Itoa(instance.ID))
@@ -220,9 +214,11 @@ func (m *ServiceInstanceCacheManager) RefreshByBiz(ctx context.Context, bkBizId 
 	for hostId, instances := range hostToServiceInstances {
 		hostToServiceInstancesStr[hostId] = fmt.Sprintf("[%s]", strings.Join(instances, ","))
 	}
-	err = m.UpdateHashMapCache(ctx, key, hostToServiceInstancesStr)
+	err = m.UpdateHashMapCache(ctx, hostToServiceInstanceCacheKey, hostToServiceInstancesStr)
 	if err != nil {
 		return errors.Wrap(err, "update hashmap host to service instance cache failed")
+	} else {
+		logger.Infof("refresh host to service instance cache by biz: %d, host count: %d", bkBizId, len(hostToServiceInstances))
 	}
 
 	return nil
@@ -241,68 +237,102 @@ func (m *ServiceInstanceCacheManager) RefreshGlobal(ctx context.Context) error {
 
 // CleanGlobal 清理全局缓存
 func (m *ServiceInstanceCacheManager) CleanGlobal(ctx context.Context) error {
-	key := m.GetCacheKey(serviceInstanceCacheKey)
-	if err := m.DeleteMissingHashMapFields(ctx, key); err != nil {
+	if err := m.DeleteMissingHashMapFields(ctx, serviceInstanceCacheKey); err != nil {
 		return errors.Wrap(err, "delete missing fields failed")
 	}
 
-	key = m.GetCacheKey(hostToServiceInstanceCacheKey)
-	if err := m.DeleteMissingHashMapFields(ctx, key); err != nil {
+	if err := m.DeleteMissingHashMapFields(ctx, hostToServiceInstanceCacheKey); err != nil {
 		return errors.Wrap(err, "delete missing fields failed")
 	}
 
 	return nil
 }
 
-// CleanByEvents 根据事件清理缓存
-func (m *ServiceInstanceCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
-	return nil
-}
-
-// UpdateByEvents 根据事件更新缓存
-func (m *ServiceInstanceCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
-	if len(events) == 0 {
-		return nil
+func (m *ServiceInstanceCacheManager) CleanPartial(ctx context.Context, key string, cleanFields []string) {
+	if key != serviceInstanceCacheKey || len(cleanFields) == 0 {
+		return
 	}
 
-	needUpdateBizIds := make(map[int]struct{})
-	switch resourceType {
-	case "process":
-		for _, event := range events {
-			bkBizID, ok := event["bk_biz_id"].(float64)
-			if !ok {
-				continue
-			}
-			needUpdateBizIds[int(bkBizID)] = struct{}{}
+	cacheKey := m.GetCacheKey(key)
+	needCleanFields := make([]string, 0)
+	for _, field := range cleanFields {
+		if _, ok := m.updatedFieldSet[cacheKey][field]; !ok {
+			needCleanFields = append(needCleanFields, field)
 		}
 	}
 
-	// 记录需要更新的业务ID
-	needUpdateBizIdSlice := make([]string, 0, len(needUpdateBizIds))
-	for bizID := range needUpdateBizIds {
-		needUpdateBizIdSlice = append(needUpdateBizIdSlice, strconv.Itoa(bizID))
-	}
-	logger.Infof("need update service instance cache biz ids: %v", strings.Join(needUpdateBizIdSlice, ","))
+	logger.Info(fmt.Sprintf("clean partial cache, key: %s, expect clean fields: %v, actual clean fields: %v", key, cleanFields, needCleanFields))
 
-	// 按业务刷新缓存
-	wg := sync.WaitGroup{}
-	limitChan := make(chan struct{}, m.ConcurrentLimit)
-	for bizID := range needUpdateBizIds {
-		wg.Add(1)
-		limitChan <- struct{}{}
-
-		go func(bizId int) {
-			defer func() {
-				<-limitChan
-				wg.Done()
-			}()
-			err := m.RefreshByBiz(ctx, bizId)
-			if err != nil {
-				logger.Errorf("failed to refresh service instance cache by biz: %d, err: %v", bizId, err)
+	if len(needCleanFields) != 0 {
+		// 查询需要清理的主机ID
+		results := m.RedisClient.HMGet(ctx, cacheKey, needCleanFields...).Val()
+		hostIdToCleanServiceInstanceIds := make(map[string][]int)
+		for _, result := range results {
+			if result == nil {
+				continue
 			}
-		}(bizID)
-	}
+			var serviceInstance map[string]interface{}
+			if err := json.Unmarshal([]byte(result.(string)), &serviceInstance); err != nil {
+				logger.Errorf("unmarshal service instance failed, %v", err)
+				continue
+			}
+			hostId := strconv.Itoa(int(serviceInstance["bk_host_id"].(float64)))
+			hostIdToCleanServiceInstanceIds[hostId] = append(hostIdToCleanServiceInstanceIds[hostId], int(serviceInstance["id"].(float64)))
+		}
+		// 清理服务实例缓存
+		m.RedisClient.HDel(ctx, cacheKey, needCleanFields...)
 
-	wg.Wait()
-	return nil
+		// 清理主机到服务实例缓存
+		cacheKey = m.GetCacheKey(hostToServiceInstanceCacheKey)
+		hostIds := make([]string, len(hostIdToCleanServiceInstanceIds))
+		for hostId := range hostIdToCleanServiceInstanceIds {
+			hostIds = append(hostIds, hostId)
+		}
+
+		logger.Infof("partial clean host to service instance cache, host ids: %v", hostIds)
+
+		results = m.RedisClient.HMGet(ctx, cacheKey, hostIds...).Val()
+		for i, result := range results {
+			if result == nil {
+				continue
+			}
+
+			hostId := hostIds[i]
+			// 查询主机到服务实例缓存
+			var existsInstanceIds []int
+			if err := json.Unmarshal([]byte(result.(string)), &existsInstanceIds); err != nil {
+				logger.Errorf("unmarshal host to service instance cache failed, %v", err)
+				continue
+			}
+
+			// 剔除需要清理的服务实例ID
+			cleanInstanceIds := hostIdToCleanServiceInstanceIds[hostId]
+			newInstanceIds := make([]int, 0, len(existsInstanceIds))
+			for _, instanceId := range existsInstanceIds {
+				add := true
+				for _, id := range cleanInstanceIds {
+					if id == instanceId {
+						add = false
+						break
+					}
+				}
+				if add {
+					newInstanceIds = append(newInstanceIds, instanceId)
+				}
+			}
+
+			// 更新主机到服务实例缓存
+			if len(newInstanceIds) == 0 {
+				m.RedisClient.HDel(ctx, cacheKey, hostId)
+			} else {
+				value, err := json.Marshal(newInstanceIds)
+				if err != nil {
+					logger.Errorf("marshal host to service instance cache failed, %v", err)
+					continue
+				}
+				m.RedisClient.HSet(ctx, cacheKey, hostId, string(value))
+			}
+		}
+
+	}
 }

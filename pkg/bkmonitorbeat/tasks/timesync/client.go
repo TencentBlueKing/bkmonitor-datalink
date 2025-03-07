@@ -102,7 +102,7 @@ func (c *Client) queryNtpd() (*Stat, error) {
 			continue
 		}
 
-		delay := rsp.RootDelay.Seconds()
+		delay := rsp.ClockOffset.Seconds()
 		if delay == 0 {
 			continue
 		}
@@ -156,7 +156,14 @@ func (c *Client) queryChrony() (*Stat, error) {
 			logger.Warnf("want *chrony.ReplySourceData type, but got %T", packet)
 			continue
 		}
+
+		// 本地时钟 忽略
 		if sourceData.LatestMeas == 0 {
+			continue
+		}
+		// 异常节点忽略
+		if sourceData.State == chrony.SourceStateUnreach {
+			stat.Err++
 			continue
 		}
 

@@ -175,7 +175,6 @@ func (r *Instance) HSetWithCompareAndPublish(key, field, value, channelName, cha
 		logger.Errorf("HSetWithCompareAndPublish: key or field or value or channelName or channelKey is empty")
 		return false, fmt.Errorf("key or field or value or channelName or channelKey is empty")
 	}
-
 	//var isNeedUpdate bool
 	logger.Infof("HSetWithCompareAndPublish: try to operate [redis_diff] HashSet key [%s] field [%s],value [%s] channelName [%s],channelKey [%s]", key, field, value, channelName, channelKey)
 	oldValue := r.HGet(key, field)

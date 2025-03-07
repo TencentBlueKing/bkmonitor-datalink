@@ -89,7 +89,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "object field",
 			input: "__ext.container_name: value",
-			want:  "CAST(__ext[\"container_name\"] AS STRING) = 'value'",
+			want:  "CAST(`__ext`[\"container_name\"] AS STRING) = 'value'",
+		},
+		{
+			name:  "start",
+			input: "a: >100",
+			want:  "`a` > 100",
 		},
 	}
 
@@ -132,7 +137,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "CAST(object[\"field\"] AS STRING) = 'test-value' AND `tag` != 'test'",
+			want: "CAST(`object`[\"field\"] AS STRING) = 'test-value' AND `tag` != 'test'",
 		},
 		{
 			name: "test text field wildcard",
@@ -146,7 +151,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: `CAST(object["field"] AS STRING) LIKE '%partial%'`,
+			want: "CAST(`object`[\"field\"] AS STRING) LIKE '%partial%'",
 		},
 		{
 			name: "test OR condition",

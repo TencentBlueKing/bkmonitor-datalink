@@ -20,7 +20,7 @@ import (
 
 // TestParserAllConditions 测试全条件解析的主测试函数
 func TestParserAllConditions(t *testing.T) {
-	d := &sqlExpr.DefaultSQLExpr{}
+	d := sqlExpr.GetSQLExpr("")
 
 	t.Run("空条件测试", func(t *testing.T) {
 		conditions := metadata.AllConditions{}

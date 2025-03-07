@@ -267,6 +267,13 @@ func TestParser(t *testing.T) {
 				},
 			},
 		},
+		"start": {
+			q: "a: >100",
+			e: &NumberRangeExpr{
+				Field: "a",
+				Start: pointer("100"),
+			},
+		},
 	}
 
 	metadata.InitMetadata()

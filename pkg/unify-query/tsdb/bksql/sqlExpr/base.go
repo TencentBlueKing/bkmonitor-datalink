@@ -19,9 +19,12 @@ import (
 )
 
 const (
-	selectAll = "*"
-	timeStamp = "_timestamp_"
-	value     = "_value_"
+	SelectAll = "*"
+	TimeStamp = "_timestamp_"
+	Value     = "_value_"
+
+	FieldValue = "_value"
+	FieldTime  = "_time"
 
 	theDate = "thedate"
 )
@@ -44,8 +47,8 @@ type SQLExpr interface {
 	ParserQueryString(qs string) (string, error)
 	// ParserAllConditions 解析全量条件生成SQL条件表达式
 	ParserAllConditions(allConditions metadata.AllConditions) (string, error)
-	// ParserAggregates 解析聚合条件生成SQL条件表达式
-	ParserAggregates(aggregates metadata.Aggregates) (string, string, error)
+	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
+	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, error)
 }
 
 // SQL表达式注册管理相关变量
@@ -55,6 +58,13 @@ var (
 	lock    sync.RWMutex               // 读写锁用于并发安全
 	ExprMap = make(map[string]SQLExpr) // 存储注册的SQL表达式实现
 )
+
+func defaultTransformDimension(s string) string {
+	if s == "" {
+		return ""
+	}
+	return fmt.Sprintf("`%s`", s)
+}
 
 // GetSQLExpr 获取指定key的SQL表达式实现
 // 参数：
@@ -70,13 +80,7 @@ func GetSQLExpr(key string) SQLExpr {
 	if sqlExpr, ok := ExprMap[key]; ok {
 		return sqlExpr
 	} else {
-		return (&DefaultSQLExpr{}).WithTransformDimension(func(s string) string {
-			if s == "" {
-				return ""
-			}
-
-			return fmt.Sprintf("`%s`", s)
-		})
+		return (&DefaultSQLExpr{}).WithTransformDimension(defaultTransformDimension)
 	}
 }
 
@@ -138,11 +142,7 @@ func (d *DefaultSQLExpr) ParserQueryString(_ string) (string, error) {
 }
 
 // ParserAggregates 解析聚合函数，生成 select 和 group by 字段
-func (d *DefaultSQLExpr) ParserAggregates(aggregates metadata.Aggregates) (string, string, error) {
-	var (
-		selectFields  []string
-		groupByFields []string
-	)
+func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, err error) {
 	valueField := d.dimTransform(d.valueField)
 
 	for _, agg := range aggregates {
@@ -153,28 +153,47 @@ func (d *DefaultSQLExpr) ParserAggregates(aggregates metadata.Aggregates) (strin
 		}
 
 		if valueField == "" {
-			valueField = selectAll
+			valueField = SelectAll
 		}
-		selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, value))
+		selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, Value))
 
 		if agg.Window > 0 {
 			timeField := fmt.Sprintf("(`%s` - (`%s` %% %d))", d.timeField, d.timeField, agg.Window.Milliseconds())
 			groupByFields = append(groupByFields, timeField)
-			selectFields = append(selectFields, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
+			selectFields = append(selectFields, fmt.Sprintf("MAX(%s) AS `%s`", timeField, TimeStamp))
+
+			orderByFields = append(orderByFields, fmt.Sprintf("`%s` ASC", TimeStamp))
 		}
 	}
 
 	if len(selectFields) == 0 {
-		selectFields = append(selectFields, selectAll)
+		selectFields = append(selectFields, SelectAll)
 		if valueField != "" {
-			selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", valueField, value))
+			selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", valueField, Value))
 		}
 		if d.timeField != "" {
-			selectFields = append(selectFields, fmt.Sprintf("`%s` AS `%s`", d.timeField, timeStamp))
+			selectFields = append(selectFields, fmt.Sprintf("`%s` AS `%s`", d.timeField, TimeStamp))
 		}
 	}
 
-	return strings.Join(selectFields, ", "), strings.Join(groupByFields, ", "), nil
+	for key, asc := range orders {
+		var orderField string
+		switch key {
+		case FieldValue:
+			orderField = d.valueField
+		case FieldTime:
+			orderField = TimeStamp
+		default:
+			orderField = key
+		}
+		ascName := "ASC"
+		if !asc {
+			ascName = "DESC"
+		}
+		orderByFields = append(orderByFields, fmt.Sprintf("`%s` %s", orderField, ascName))
+	}
+
+	return
 }
 
 // ParserAllConditions 解析全量条件生成SQL条件表达式

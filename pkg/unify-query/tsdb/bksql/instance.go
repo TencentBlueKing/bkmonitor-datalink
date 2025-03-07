@@ -29,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sqlExpr"
 )
 
 const (
@@ -189,7 +190,7 @@ func (i *Instance) formatData(ctx context.Context, start time.Time, query *metad
 		}
 
 		// 获取时间戳，单位是毫秒
-		if vtLong, ok = d[timeStamp]; !ok {
+		if vtLong, ok = d[sqlExpr.TimeStamp]; !ok {
 			vtLong = start.UnixMilli()
 		}
 
@@ -206,8 +207,8 @@ func (i *Instance) formatData(ctx context.Context, start time.Time, query *metad
 		}
 
 		// 获取值
-		if vvDouble, ok = d[value]; !ok {
-			return res, fmt.Errorf("dimension %s is emtpy", value)
+		if vvDouble, ok = d[sqlExpr.Value]; !ok {
+			return res, fmt.Errorf("dimension %s is emtpy", sqlExpr.Value)
 		}
 
 		if vvDouble == nil {
@@ -219,7 +220,7 @@ func (i *Instance) formatData(ctx context.Context, start time.Time, query *metad
 		case float64:
 			vv = vvDouble.(float64)
 		default:
-			return res, fmt.Errorf("%s type is error %T, %v", value, vvDouble, vvDouble)
+			return res, fmt.Errorf("%s type is error %T, %v", sqlExpr.Value, vvDouble, vvDouble)
 		}
 
 		lbl := make([]prompb.Label, 0)
@@ -333,7 +334,6 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		list[KeyIndex] = query.DB
 		list[KeyTableID] = query.TableID
 		list[KeyDataLabel] = query.DataLabel
-		list[FieldTime] = list[timeStamp]
 
 		if query.HighLight.Enable {
 			list[KeyHighLight] = ""

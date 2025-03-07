@@ -10,11 +10,13 @@
 package elasticsearch
 
 import (
+	"context"
 	"fmt"
 
 	elastic "github.com/olivere/elastic/v7"
 
 	qs "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 type QueryString struct {
@@ -45,6 +47,12 @@ func (s *QueryString) queryString(str string) elastic.Query {
 }
 
 func (s *QueryString) ToDSL() (elastic.Query, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf(context.TODO(), "querystring(%s) todsl panic: %v", s.q, r)
+		}
+	}()
+
 	if s.q == "" || s.q == "*" {
 		return nil, nil
 	}
@@ -123,15 +131,23 @@ func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 		}
 	case *qs.NumberRangeExpr:
 		q := elastic.NewRangeQuery(c.Field)
-		if c.IncludeStart {
-			q.Gte(*c.Start)
-		} else {
-			q.Gt(*c.Start)
+		if c.Start == nil && c.End == nil {
+			return nil, fmt.Errorf("start and end is nil")
 		}
-		if c.IncludeEnd {
-			q.Lte(*c.End)
-		} else {
-			q.Lt(*c.End)
+
+		if c.Start != nil {
+			if c.IncludeStart {
+				q.Gte(*c.Start)
+			} else {
+				q.Gt(*c.Start)
+			}
+		}
+		if c.End != nil {
+			if c.IncludeEnd {
+				q.Lte(*c.End)
+			} else {
+				q.Lt(*c.End)
+			}
 		}
 		s.check(c.Field)
 		leftQ = q

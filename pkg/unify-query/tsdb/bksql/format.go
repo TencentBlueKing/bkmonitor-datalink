@@ -33,24 +33,19 @@ const (
 	startTime        = "_startTime_"
 	endTime          = "_endTime_"
 	theDate          = "thedate"
-
-	timeStamp = "_timestamp_"
-	value     = "_value_"
-
-	FieldValue = "_value"
-	FieldTime  = "_time"
 )
 
 var (
 	internalDimension = map[string]struct{}{
-		value:            {},
-		timeStamp:        {},
 		dtEventTimeStamp: {},
 		dtEventTime:      {},
 		localTime:        {},
 		startTime:        {},
 		endTime:          {},
 		theDate:          {},
+
+		sqlExpr.TimeStamp: {},
+		sqlExpr.Value:     {},
 	}
 )
 
@@ -165,7 +160,7 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 }
 
 func (f *QueryFactory) SQL() (sql string, err error) {
-	selectString, groupString, err := f.expr.ParserAggregates(f.query.Aggregates)
+	selectFields, groupFields, orderFields, err := f.expr.ParserAggregatesAndOrders(f.query.Aggregates, f.orders)
 	if err != nil {
 		return
 	}
@@ -175,7 +170,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 		table += "." + f.query.Measurement
 	}
 
-	sql += fmt.Sprintf("SELECT %s FROM %s", selectString, table)
+	sql += fmt.Sprintf("SELECT %s FROM %s", strings.Join(selectFields, ", "), table)
 	whereString, err := f.BuildWhere()
 	if err != nil {
 		return
@@ -183,30 +178,13 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	if whereString != "" {
 		sql += " WHERE " + whereString
 	}
-	if groupString != "" {
-		sql += " GROUP BY " + groupString
+	if len(groupFields) > 0 {
+		sql += " GROUP BY " + strings.Join(groupFields, ", ")
 	}
 
-	orders := make([]string, 0)
-	for key, asc := range f.orders {
-		var orderField string
-		switch key {
-		case FieldValue:
-			orderField = f.query.Field
-		case FieldTime:
-			orderField = timeStamp
-		default:
-			orderField = key
-		}
-		ascName := "ASC"
-		if !asc {
-			ascName = "DESC"
-		}
-		orders = append(orders, fmt.Sprintf("`%s` %s", orderField, ascName))
-	}
-	if len(orders) > 0 {
-		sort.Strings(orders)
-		sql += " ORDER BY " + strings.Join(orders, ", ")
+	if len(orderFields) > 0 {
+		sort.Strings(orderFields)
+		sql += " ORDER BY " + strings.Join(orderFields, ", ")
 	}
 	if f.query.From > 0 {
 		sql += fmt.Sprintf(" OFFSET %d", f.query.From)
@@ -268,7 +246,7 @@ func (f *QueryFactory) FormatData(keys []string, list []map[string]interface{}) 
 		}
 
 		// 获取时间戳，单位是毫秒
-		if vtLong, ok = d[timeStamp]; !ok {
+		if vtLong, ok = d[sqlExpr.TimeStamp]; !ok {
 			vtLong = 0
 		}
 

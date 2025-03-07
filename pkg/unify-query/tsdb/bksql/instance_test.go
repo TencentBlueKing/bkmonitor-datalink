@@ -11,6 +11,7 @@ package bksql_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -44,15 +45,16 @@ func TestInstance_QueryRaw(t *testing.T) {
 	field := "login_rate"
 	tableID := db + ".default"
 
-	for idx, c := range []struct {
+	for name, c := range map[string]struct {
 		query    *metadata.Query
 		expected string
 	}{
-		{
+		"query with in": {
 			query: &metadata.Query{
 				DataSource:     datasource,
 				TableID:        tableID,
 				DB:             db,
+				DataLabel:      db,
 				MetricName:     field,
 				BkSqlCondition: "`namespace` IN ('gz100', 'bgp2\\-new')",
 				OffsetInfo:     metadata.OffSetInfo{Limit: 10},
@@ -66,14 +68,15 @@ func TestInstance_QueryRaw(t *testing.T) {
 					},
 				},
 			},
-			expected: `[{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:login_rate"},{"name":"namespace","value":"gz100"}],"samples":[{"value":269,"timestamp":1730118660000},{"value":271,"timestamp":1730118480000},{"value":267,"timestamp":1730118540000},{"value":274,"timestamp":1730118600000},{"value":279,"timestamp":1730118420000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_endTime_":"2024-10-28 20:32:00","_startTime_":"2024-10-28 20:31:00","_timestamp_":1730118660000,"_value_":269,"dtEventTime":"2024-10-28 20:31:00","dtEventTimeStamp":1730118660000,"localTime":"2024-10-28 20:32:03","login_rate":269,"namespace":"gz100","thedate":20241028},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_endTime_":"2024-10-28 20:29:00","_startTime_":"2024-10-28 20:28:00","_timestamp_":1730118480000,"_value_":271,"dtEventTime":"2024-10-28 20:28:00","dtEventTimeStamp":1730118480000,"localTime":"2024-10-28 20:29:03","login_rate":271,"namespace":"gz100","thedate":20241028},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_endTime_":"2024-10-28 20:30:00","_startTime_":"2024-10-28 20:29:00","_timestamp_":1730118540000,"_value_":267,"dtEventTime":"2024-10-28 20:29:00","dtEventTimeStamp":1730118540000,"localTime":"2024-10-28 20:30:02","login_rate":267,"namespace":"gz100","thedate":20241028},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_endTime_":"2024-10-28 20:31:00","_startTime_":"2024-10-28 20:30:00","_timestamp_":1730118600000,"_value_":274,"dtEventTime":"2024-10-28 20:30:00","dtEventTimeStamp":1730118600000,"localTime":"2024-10-28 20:31:04","login_rate":274,"namespace":"gz100","thedate":20241028},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_endTime_":"2024-10-28 20:28:00","_startTime_":"2024-10-28 20:27:00","_timestamp_":1730118420000,"_value_":279,"dtEventTime":"2024-10-28 20:27:00","dtEventTimeStamp":1730118420000,"localTime":"2024-10-28 20:28:03","login_rate":279,"namespace":"gz100","thedate":20241028}]`,
 		},
-		{
+		"count by namespace": {
 			query: &metadata.Query{
 				DataSource: datasource,
 				TableID:    tableID,
 				DB:         db,
 				MetricName: field,
+				DataLabel:  db,
 				Aggregates: metadata.Aggregates{
 					{
 						Name:       "count",
@@ -81,14 +84,15 @@ func TestInstance_QueryRaw(t *testing.T) {
 					},
 				},
 			},
-			expected: `[{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:login_rate"},{"name":"namespace","value":"bgp2"}],"samples":[{"value":5,"timestamp":1730118589181}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:login_rate"},{"name":"namespace","value":"cq100"}],"samples":[{"value":5,"timestamp":1730118589181}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:login_rate"},{"name":"namespace","value":"gz100"}],"samples":[{"value":5,"timestamp":1730118589181}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:login_rate"},{"name":"namespace","value":"hn0-new"}],"samples":[{"value":5,"timestamp":1730118589181}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:login_rate"},{"name":"namespace","value":"hn1"}],"samples":[{"value":5,"timestamp":1730118589181}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:login_rate"},{"name":"namespace","value":"hn10"}],"samples":[{"value":5,"timestamp":1730118589181}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:login_rate"},{"name":"namespace","value":"nj100"}],"samples":[{"value":5,"timestamp":1730118589181}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:login_rate"},{"name":"namespace","value":"njloadtest"}],"samples":[{"value":5,"timestamp":1730118589181}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:login_rate"},{"name":"namespace","value":"pbe"}],"samples":[{"value":5,"timestamp":1730118589181}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:login_rate"},{"name":"namespace","value":"tj100"}],"samples":[{"value":5,"timestamp":1730118589181}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:login_rate"},{"name":"namespace","value":"tj101"}],"samples":[{"value":5,"timestamp":1730118589181}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_value_":5,"namespace":"bgp2"},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_value_":5,"namespace":"cq100"},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_value_":5,"namespace":"gz100"},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_value_":5,"namespace":"hn0-new"},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_value_":5,"namespace":"hn1"},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_value_":5,"namespace":"hn10"},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_value_":5,"namespace":"nj100"},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_value_":5,"namespace":"njloadtest"},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_value_":5,"namespace":"pbe"},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_value_":5,"namespace":"tj100"},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_value_":5,"namespace":"tj101"}]`,
 		},
-		{
+		"count with 1m": {
 			query: &metadata.Query{
 				DataSource: datasource,
 				TableID:    tableID,
 				DB:         db,
 				MetricName: field,
+				DataLabel:  db,
 				Aggregates: metadata.Aggregates{
 					{
 						Name:   "count",
@@ -96,10 +100,10 @@ func TestInstance_QueryRaw(t *testing.T) {
 					},
 				},
 			},
-			expected: `[{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:login_rate"}],"samples":[{"value":11,"timestamp":1730118600000},{"value":11,"timestamp":1730118660000},{"value":11,"timestamp":1730118720000},{"value":11,"timestamp":1730118780000},{"value":11,"timestamp":1730118840000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_timestamp_":1730118600000,"_value_":11},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_timestamp_":1730118660000,"_value_":11},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_timestamp_":1730118720000,"_value_":11},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_timestamp_":1730118780000,"_value_":11},{"__data_label":"132_lol_new_login_queue_login_1min","__index":"132_lol_new_login_queue_login_1min","__result_table":"132_lol_new_login_queue_login_1min.default","_timestamp_":1730118840000,"_value_":11}]`,
 		},
 	} {
-		t.Run(fmt.Sprintf("%d", idx), func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			if c.query.DB == "" {
 				c.query.DB = db
@@ -107,13 +111,27 @@ func TestInstance_QueryRaw(t *testing.T) {
 			if c.query.Field == "" {
 				c.query.Field = field
 			}
-			ss := ins.QuerySeriesSet(ctx, c.query, start, end)
 
-			timeSeries, err := mock.SeriesSetToTimeSeries(ss)
-			if err != nil {
-				log.Fatalf(ctx, err.Error())
+			dataCh := make(chan map[string]any)
+
+			go func() {
+				defer func() {
+					close(dataCh)
+				}()
+
+				_, err := ins.QueryRawData(ctx, c.query, start, end, dataCh)
+				assert.Nil(t, err)
+			}()
+
+			list := make([]map[string]any, 0)
+			for d := range dataCh {
+				list = append(list, d)
 			}
-			assert.Equal(t, c.expected, timeSeries.String())
+
+			actual, err := json.Marshal(list)
+			assert.Nil(t, err)
+
+			assert.Equal(t, c.expected, string(actual))
 		})
 	}
 }

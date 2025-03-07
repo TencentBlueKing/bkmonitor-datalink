@@ -860,7 +860,7 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	if query.StorageType == "" {
-		return nil, fmt.Errorf("storageType is empty with %d", query.StorageID)
+		return nil, fmt.Errorf("storageType is empty with %v", query.StorageID)
 	}
 
 	query.Measurement = measurement

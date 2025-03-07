@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -362,8 +363,26 @@ func (h *CmdbEventHandler) ifRunRefreshAll(ctx context.Context, cacheType string
 func (h *CmdbEventHandler) Handle(ctx context.Context) {
 	// 如果超过全量刷新间隔时间，执行全量刷新
 	if h.ifRunRefreshAll(ctx, h.cacheManager.Type()) {
+		// 获取需要全量刷新的业务ID
+		result := h.redisClient.Get(ctx, fmt.Sprintf("%s.bk_biz_ids", h.prefix))
+		if result.Err() != nil || result.Val() == "" {
+			logger.Errorf("refresh all cache failed, get bk_biz_ids error: %v", result.Err())
+			return
+		}
+
+		bizIDStr := result.Val()[1 : len(result.Val())-1]
+		bizIDStrs := strings.Split(bizIDStr, ",")
+		bizIDs := make([]int, 0)
+		for _, bizIDStr := range bizIDStrs {
+			bizID, err := strconv.Atoi(bizIDStr)
+			if err != nil || bizID <= 0 {
+				continue
+			}
+			bizIDs = append(bizIDs, bizID)
+		}
+
 		// 全量刷新
-		err := RefreshAll(ctx, h.cacheManager, h.cacheManager.GetConcurrentLimit())
+		err := RefreshAll(ctx, bizIDs, h.cacheManager, h.cacheManager.GetConcurrentLimit())
 		if err != nil {
 			logger.Errorf("refresh all cache failed: %v", err)
 		}

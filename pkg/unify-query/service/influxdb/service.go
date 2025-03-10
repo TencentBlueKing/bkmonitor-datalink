@@ -69,19 +69,16 @@ func (s *Service) Reload(ctx context.Context) {
 	err = s.loopReloadStorage(s.ctx)
 	if err != nil {
 		log.Errorf(context.TODO(), "start loop reload es storage failed for->[%s]", err)
-		return
 	}
 
 	err = s.loopReloadTableInfo(s.ctx)
 	if err != nil {
 		log.Errorf(context.TODO(), "start loop reload table info failed,error:%s", err)
-		return
 	}
 
 	err = s.loopReloadRouter(s.ctx)
 	if err != nil {
 		log.Errorf(context.TODO(), "start loop reload query router failed,error:%s", err)
-		return
 	}
 
 	err = s.loopReloadBCSInfo(s.ctx)
@@ -313,7 +310,7 @@ func (s *Service) reloadInfluxDBRouter(ctx context.Context) error {
 
 // reloadInfluxDBRouter 重新加载 SpaceTsDbRouter
 func (s *Service) reloadSpaceTsDbRouter(ctx context.Context) error {
-	ir, err := inner.SetSpaceTsDbRouter(ctx, SpaceRouterBboltPath, SpaceRouterBboltBucketName, SpaceRouterPrefix, SpaceRouterBboltWriteBatchSize, true)
+	ir, err := inner.SetSpaceTsDbRouter(ctx, SpaceRouterBboltPath, SpaceRouterBboltBucketName, SpaceRouterPrefix, SpaceRouterBboltWriteBatchSize, IsCache)
 	if err != nil {
 		return err
 	}

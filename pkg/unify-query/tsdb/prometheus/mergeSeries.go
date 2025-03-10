@@ -72,7 +72,9 @@ func NewMergeSeriesSetWithFuncAndSort(name string) func(...storage.Series) stora
 				return &storage.SeriesEntry{
 					Lset: series[0].Labels(),
 					SampleIteratorFn: func(iterator chunkenc.Iterator) chunkenc.Iterator {
-						return chunkenc.NewNopIterator()
+						return &seriesIterator{
+							err: err,
+						}
 					},
 				}
 			}
@@ -92,7 +94,6 @@ func NewMergeSeriesSetWithFuncAndSort(name string) func(...storage.Series) stora
 				return &seriesIterator{
 					list: sortedData,
 					idx:  -1,
-					err:  nil,
 				}
 			},
 		}
@@ -106,11 +107,11 @@ type seriesIterator struct {
 }
 
 func (it *seriesIterator) AtHistogram() (int64, *histogram.Histogram) {
-	panic("tsdb series set implement me AtHistogram")
+	return 0, nil
 }
 
 func (it *seriesIterator) AtFloatHistogram() (int64, *histogram.FloatHistogram) {
-	panic("tsdb series set implement me AtFloatHistogram")
+	return 0, nil
 }
 
 func (it *seriesIterator) AtT() int64 {

@@ -145,6 +145,20 @@ func TestMergeSeriesSet(t *testing.T) {
 				*ts2, *ts4, *ts1, *ts3,
 			},
 		},
+		"two timeSeries with mergeSeriesSetWithFuncAndSort": {
+			qrs: []*prompb.QueryResult{
+				{
+
+					Timeseries: []*prompb.TimeSeries{
+						ts1, ts2, ts3, ts4,
+					},
+				},
+			},
+			ts: mock.TimeSeriesList{
+				*ts2, *ts4, *ts1, *ts3,
+			},
+			fn: prometheus.NewMergeSeriesSetWithFuncAndSort(""),
+		},
 		"two queryResult with chainedSeriesMerge": {
 			qrs: []*prompb.QueryResult{
 				{

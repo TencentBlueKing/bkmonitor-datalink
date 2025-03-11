@@ -125,7 +125,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				sets = append(sets, s)
 			}
 		}
-		set = storage.NewMergeSeriesSet(sets, NewMergeSeriesSetWithFuncAndSort(""))
+		set = storage.NewMergeSeriesSet(sets, NewMergeSeriesSetWithFuncAndSort(hints.Func))
 	}()
 
 	for _, m := range matchers {

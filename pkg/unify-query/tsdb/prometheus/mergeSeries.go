@@ -18,7 +18,7 @@ import (
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
 func NewMergeSeriesSetWithFuncAndSort(name string) func(...storage.Series) storage.Series {
@@ -36,14 +36,14 @@ func NewMergeSeriesSetWithFuncAndSort(name string) func(...storage.Series) stora
 		// 根据name选择聚合函数
 		var aggFunc func(float64, float64) float64
 		switch strings.ToLower(name) {
-		case function.Min:
+		case structured.MIN, structured.MinOT:
 			aggFunc = func(a, b float64) float64 {
 				if a < b {
 					return a
 				}
 				return b
 			}
-		case function.Max:
+		case structured.MAX, structured.MaxOT:
 			aggFunc = func(a, b float64) float64 {
 				if a > b {
 					return a

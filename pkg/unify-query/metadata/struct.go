@@ -251,6 +251,7 @@ func (qMetric QueryMetric) ToJson(isSort bool) string {
 	return string(s)
 }
 
+// Range 遍历查询列表
 func (qRef QueryReference) Range(name string, fn func(qry *Query)) {
 	for refName, references := range qRef {
 		if name != "" {
@@ -260,7 +261,14 @@ func (qRef QueryReference) Range(name string, fn func(qry *Query)) {
 		}
 
 		for _, reference := range references {
+			if reference == nil {
+				continue
+			}
 			for _, query := range reference.QueryList {
+				if query == nil {
+					continue
+				}
+
 				fn(query)
 			}
 		}

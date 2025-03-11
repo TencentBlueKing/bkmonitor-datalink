@@ -82,7 +82,7 @@ func (q *Querier) getQueryList(referenceName string) []*Query {
 	queryList = make([]*Query, 0)
 	queryReference.Range(referenceName, func(qry *metadata.Query) {
 		instance := GetTsDbInstance(ctx, qry)
-		if instance != nil {
+		if instance == nil {
 			log.Warnf(ctx, "not instance in %s", qry.StorageID)
 			return
 		}

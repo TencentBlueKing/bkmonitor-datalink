@@ -274,25 +274,31 @@ func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
 	metricFilterCondition := make(map[string]string)
 
 	for referenceName, references := range qRef {
-		filterCondition := ""
-		vmConditions := set.New[string]()
-		for _, reference := range references {
-			if 0 < len(reference.QueryList) {
-				for _, query := range reference.QueryList {
-					if query.VmRt == "" {
-						continue
-					}
+		if len(references) == 0 {
+			continue
+		}
 
-					vmResultTable.Add(query.VmRt)
-					vmConditions.Add(string(query.VmCondition))
-					vmClusterNames.Add(query.StorageName)
+		// 因为是直查，reference 还需要承担聚合语法生成，所以 vm 不支持同指标的拼接，所以这里只取第一个 reference
+		reference := references[0]
+		if 0 < len(reference.QueryList) {
+			vmConditions := set.New[string]()
+			for _, query := range reference.QueryList {
+				if query.VmRt == "" {
+					continue
 				}
+
+				vmResultTable.Add(query.VmRt)
+				vmConditions.Add(string(query.VmCondition))
+				vmClusterNames.Add(query.StorageName)
 			}
+
+			filterCondition := ""
+			if vmConditions.Size() > 0 {
+				filterCondition = fmt.Sprintf(`%s`, strings.Join(vmConditions.ToArray(), ` or `))
+			}
+
+			metricFilterCondition[referenceName] = filterCondition
 		}
-		if vmConditions.Size() > 0 {
-			filterCondition = fmt.Sprintf(`%s`, strings.Join(vmConditions.ToArray(), ` or `))
-		}
-		metricFilterCondition[referenceName] = filterCondition
 	}
 
 	if vmResultTable.Size() == 0 {

@@ -277,10 +277,13 @@ func (q *QueryTs) ToPromExpr(
 		if expr, err = query.ToPromExpr(ctx, promExprOpt); err != nil {
 			return nil, err
 		}
-		exprMap[query.ReferenceName] = &PromExpr{
-			Expr:       expr,
-			Dimensions: nil,
-			ctx:        ctx,
+
+		if _, ok := exprMap[query.ReferenceName]; !ok {
+			exprMap[query.ReferenceName] = &PromExpr{
+				Expr:       expr,
+				Dimensions: nil,
+				ctx:        ctx,
+			}
 		}
 	}
 

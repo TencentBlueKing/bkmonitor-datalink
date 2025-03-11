@@ -163,13 +163,12 @@ func TestVmExpand(t *testing.T) {
 			},
 			vmExpand: &VmExpand{
 				MetricFilterCondition: map[string]string{
-					"a": `__name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table" or __name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table_2"`,
+					"a": `__name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table"`,
 					"b": `__name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table" or __name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table_1"`,
 				},
 				ResultTableList: []string{
 					"vm_result_table",
 					"vm_result_table_1",
-					"vm_result_table_2",
 				},
 			},
 		},

@@ -760,7 +760,7 @@ func (i *Instance) QuerySeriesSet(
 		return storage.EmptySeriesSet()
 	}
 
-	return remote.FromQueryResult(false, qr)
+	return remote.FromQueryResult(true, qr)
 }
 
 // QueryRange 使用 es 直接查询引擎

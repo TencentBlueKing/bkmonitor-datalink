@@ -140,7 +140,11 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		if err != nil {
 			return nil, err
 		}
-		queryReference[query.ReferenceName] = queryMetric
+		if _, ok := queryReference[query.ReferenceName]; !ok {
+			queryReference[query.ReferenceName] = make([]*metadata.QueryMetric, 0, len(q.QueryList))
+		}
+
+		queryReference[query.ReferenceName] = append(queryReference[query.ReferenceName], queryMetric)
 	}
 
 	return queryReference, nil

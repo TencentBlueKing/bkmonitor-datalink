@@ -176,7 +176,7 @@ type QueryClusterMetric struct {
 	TimeAggregation TimeAggregation
 }
 
-type QueryReference map[string]*QueryMetric
+type QueryReference map[string][]*QueryMetric
 
 type Queries struct {
 	Query QueryReference
@@ -251,32 +251,48 @@ func (qMetric QueryMetric) ToJson(isSort bool) string {
 	return string(s)
 }
 
+func (qRef QueryReference) Range(name string, fn func(qry *Query)) {
+	for refName, references := range qRef {
+		if name != "" {
+			if refName != name {
+				continue
+			}
+		}
+
+		for _, reference := range references {
+			for _, query := range reference.QueryList {
+				fn(query)
+			}
+		}
+	}
+}
+
 // ToVmExpand 判断是否是直查，如果都是 vm 查询的情况下，则使用直查模式
 func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
 	vmClusterNames := set.New[string]()
 	vmResultTable := set.New[string]()
 	metricFilterCondition := make(map[string]string)
 
-	for referenceName, reference := range qRef {
-		if 0 < len(reference.QueryList) {
-			vmConditions := set.New[string]()
-			for _, query := range reference.QueryList {
-				if query.VmRt == "" {
-					continue
+	for referenceName, references := range qRef {
+		filterCondition := ""
+		vmConditions := set.New[string]()
+		for _, reference := range references {
+			if 0 < len(reference.QueryList) {
+				for _, query := range reference.QueryList {
+					if query.VmRt == "" {
+						continue
+					}
+
+					vmResultTable.Add(query.VmRt)
+					vmConditions.Add(string(query.VmCondition))
+					vmClusterNames.Add(query.StorageName)
 				}
-
-				vmResultTable.Add(query.VmRt)
-				vmConditions.Add(string(query.VmCondition))
-				vmClusterNames.Add(query.StorageName)
 			}
-
-			filterCondition := ""
-			if vmConditions.Size() > 0 {
-				filterCondition = fmt.Sprintf(`%s`, strings.Join(vmConditions.ToArray(), ` or `))
-			}
-
-			metricFilterCondition[referenceName] = filterCondition
 		}
+		if vmConditions.Size() > 0 {
+			filterCondition = fmt.Sprintf(`%s`, strings.Join(vmConditions.ToArray(), ` or `))
+		}
+		metricFilterCondition[referenceName] = filterCondition
 	}
 
 	if vmResultTable.Size() == 0 {

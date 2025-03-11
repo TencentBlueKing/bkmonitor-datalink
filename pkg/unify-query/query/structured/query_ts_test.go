@@ -319,65 +319,69 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				},
 			},
 			ref: md.QueryReference{
-				"a": &md.QueryMetric{
-					QueryList: md.QueryList{
-						{
-							DataSource:     BkMonitor,
-							Condition:      "bk_biz_id='2'",
-							Timezone:       "UTC",
-							Fields:         []string{"usage"},
-							TableID:        "system.cpu_detail",
-							DataLabel:      "cpu_detail",
-							MetricName:     "usage",
-							VmRt:           "100147_ieod_system_cpu_detail_raw",
-							VmConditionNum: 3,
-							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
-							StorageID:      "2",
-							StorageType:    consul.VictoriaMetricsStorageType,
-							Field:          "usage",
-							AllConditions: md.AllConditions{
-								{
+				"a": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:     BkMonitor,
+								Condition:      "bk_biz_id='2'",
+								Timezone:       "UTC",
+								Fields:         []string{"usage"},
+								TableID:        "system.cpu_detail",
+								DataLabel:      "cpu_detail",
+								MetricName:     "usage",
+								VmRt:           "100147_ieod_system_cpu_detail_raw",
+								VmConditionNum: 3,
+								VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+								StorageID:      "2",
+								StorageType:    consul.VictoriaMetricsStorageType,
+								Field:          "usage",
+								AllConditions: md.AllConditions{
 									{
-										DimensionName: "bk_biz_id",
-										Operator:      Contains,
-										Value:         []string{"2"},
+										{
+											DimensionName: "bk_biz_id",
+											Operator:      Contains,
+											Value:         []string{"2"},
+										},
 									},
 								},
 							},
 						},
+						MetricName:    "usage",
+						ReferenceName: "a",
 					},
-					MetricName:    "usage",
-					ReferenceName: "a",
 				},
-				"b": &md.QueryMetric{
-					QueryList: md.QueryList{
-						{
-							DataSource:     BkMonitor,
-							Condition:      "bk_biz_id='2'",
-							Timezone:       "UTC",
-							Fields:         []string{"usage"},
-							TableID:        "system.disk",
-							DataLabel:      "disk",
-							MetricName:     "usage",
-							VmRt:           "100147_ieod_system_disk_raw",
-							VmConditionNum: 3,
-							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
-							StorageID:      "2",
-							StorageType:    consul.VictoriaMetricsStorageType,
-							Field:          "usage",
-							AllConditions: md.AllConditions{
-								{
+				"b": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:     BkMonitor,
+								Condition:      "bk_biz_id='2'",
+								Timezone:       "UTC",
+								Fields:         []string{"usage"},
+								TableID:        "system.disk",
+								DataLabel:      "disk",
+								MetricName:     "usage",
+								VmRt:           "100147_ieod_system_disk_raw",
+								VmConditionNum: 3,
+								VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
+								StorageID:      "2",
+								StorageType:    consul.VictoriaMetricsStorageType,
+								Field:          "usage",
+								AllConditions: md.AllConditions{
 									{
-										DimensionName: "bk_biz_id",
-										Operator:      Contains,
-										Value:         []string{"2"},
+										{
+											DimensionName: "bk_biz_id",
+											Operator:      Contains,
+											Value:         []string{"2"},
+										},
 									},
 								},
 							},
 						},
+						MetricName:    "usage",
+						ReferenceName: "b",
 					},
-					MetricName:    "usage",
-					ReferenceName: "b",
 				},
 			},
 		},
@@ -407,68 +411,72 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				},
 			},
 			ref: md.QueryReference{
-				"a": &md.QueryMetric{
-					QueryList: md.QueryList{
-						{
-							DataSource:     BkMonitor,
-							Condition:      "bk_biz_id='2'",
-							Timezone:       "UTC",
-							Fields:         []string{"usage"},
-							TableID:        "system.cpu_summary",
-							DataLabel:      "cpu_summary",
-							MetricName:     "usage",
-							ClusterName:    "default",
-							DB:             "system",
-							Measurement:    "cpu_summary",
-							Measurements:   []string{"cpu_summary"},
-							VmConditionNum: 2,
-							VmCondition:    `bk_biz_id="2", __name__="usage_value"`,
-							StorageID:      "2",
-							StorageType:    consul.InfluxDBStorageType,
-							Field:          "usage",
-							AllConditions: md.AllConditions{
-								{
+				"a": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:     BkMonitor,
+								Condition:      "bk_biz_id='2'",
+								Timezone:       "UTC",
+								Fields:         []string{"usage"},
+								TableID:        "system.cpu_summary",
+								DataLabel:      "cpu_summary",
+								MetricName:     "usage",
+								ClusterName:    "default",
+								DB:             "system",
+								Measurement:    "cpu_summary",
+								Measurements:   []string{"cpu_summary"},
+								VmConditionNum: 2,
+								VmCondition:    `bk_biz_id="2", __name__="usage_value"`,
+								StorageID:      "2",
+								StorageType:    consul.InfluxDBStorageType,
+								Field:          "usage",
+								AllConditions: md.AllConditions{
 									{
-										DimensionName: "bk_biz_id",
-										Operator:      Contains,
-										Value:         []string{"2"},
+										{
+											DimensionName: "bk_biz_id",
+											Operator:      Contains,
+											Value:         []string{"2"},
+										},
 									},
 								},
 							},
 						},
+						MetricName:    "usage",
+						ReferenceName: "a",
 					},
-					MetricName:    "usage",
-					ReferenceName: "a",
 				},
-				"b": &md.QueryMetric{
-					QueryList: md.QueryList{
-						{
-							DataSource:     BkMonitor,
-							Condition:      "bk_biz_id='2'",
-							Timezone:       "UTC",
-							Fields:         []string{"usage"},
-							TableID:        "system.disk",
-							DataLabel:      "disk",
-							MetricName:     "usage",
-							VmRt:           "100147_ieod_system_disk_raw",
-							VmConditionNum: 3,
-							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
-							StorageID:      "2",
-							StorageType:    consul.VictoriaMetricsStorageType,
-							Field:          "usage",
-							AllConditions: md.AllConditions{
-								{
+				"b": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:     BkMonitor,
+								Condition:      "bk_biz_id='2'",
+								Timezone:       "UTC",
+								Fields:         []string{"usage"},
+								TableID:        "system.disk",
+								DataLabel:      "disk",
+								MetricName:     "usage",
+								VmRt:           "100147_ieod_system_disk_raw",
+								VmConditionNum: 3,
+								VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
+								StorageID:      "2",
+								StorageType:    consul.VictoriaMetricsStorageType,
+								Field:          "usage",
+								AllConditions: md.AllConditions{
 									{
-										DimensionName: "bk_biz_id",
-										Operator:      Contains,
-										Value:         []string{"2"},
+										{
+											DimensionName: "bk_biz_id",
+											Operator:      Contains,
+											Value:         []string{"2"},
+										},
 									},
 								},
 							},
 						},
+						MetricName:    "usage",
+						ReferenceName: "b",
 					},
-					MetricName:    "usage",
-					ReferenceName: "b",
 				},
 			},
 		},
@@ -485,38 +493,40 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			},
 			promql: "b",
 			ref: md.QueryReference{
-				"b": &md.QueryMetric{
-					QueryList: md.QueryList{
-						{
-							DataSource:     BkMonitor,
-							Condition:      "bk_biz_id='2'",
-							Timezone:       "UTC",
-							Fields:         []string{"usage"},
-							TableID:        "system.cpu_summary",
-							DataLabel:      "cpu_summary",
-							MetricName:     "usage",
-							DB:             "system",
-							Measurement:    "cpu_summary",
-							Measurements:   []string{"cpu_summary"},
-							ClusterName:    "default",
-							VmConditionNum: 2,
-							VmCondition:    `bk_biz_id="2", __name__="usage_value"`,
-							StorageID:      "2",
-							StorageType:    consul.InfluxDBStorageType,
-							Field:          "usage",
-							AllConditions: md.AllConditions{
-								{
+				"b": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:     BkMonitor,
+								Condition:      "bk_biz_id='2'",
+								Timezone:       "UTC",
+								Fields:         []string{"usage"},
+								TableID:        "system.cpu_summary",
+								DataLabel:      "cpu_summary",
+								MetricName:     "usage",
+								DB:             "system",
+								Measurement:    "cpu_summary",
+								Measurements:   []string{"cpu_summary"},
+								ClusterName:    "default",
+								VmConditionNum: 2,
+								VmCondition:    `bk_biz_id="2", __name__="usage_value"`,
+								StorageID:      "2",
+								StorageType:    consul.InfluxDBStorageType,
+								Field:          "usage",
+								AllConditions: md.AllConditions{
 									{
-										DimensionName: "bk_biz_id",
-										Operator:      Contains,
-										Value:         []string{"2"},
+										{
+											DimensionName: "bk_biz_id",
+											Operator:      Contains,
+											Value:         []string{"2"},
+										},
 									},
 								},
 							},
 						},
+						ReferenceName: "b",
+						MetricName:    "usage",
 					},
-					ReferenceName: "b",
-					MetricName:    "usage",
 				},
 			},
 		},
@@ -547,40 +557,42 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				},
 			},
 			ref: md.QueryReference{
-				"b": &md.QueryMetric{
-					QueryList: md.QueryList{
-						{
-							DataSource:     BkMonitor,
-							Condition:      "bk_obj_id!='0' and bk_biz_id='2'",
-							Timezone:       "UTC",
-							Fields:         []string{"usage"},
-							TableID:        "system.cpu_detail",
-							DataLabel:      "cpu_detail",
-							MetricName:     "usage",
-							VmRt:           "100147_ieod_system_cpu_detail_cmdb",
-							VmConditionNum: 4,
-							VmCondition:    `bk_biz_id="2", bk_obj_id!="0", result_table_id="100147_ieod_system_cpu_detail_cmdb", __name__="usage_value"`,
-							StorageID:      "2",
-							StorageType:    consul.VictoriaMetricsStorageType,
-							Field:          "usage",
-							AllConditions: md.AllConditions{
-								{
+				"b": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:     BkMonitor,
+								Condition:      "bk_obj_id!='0' and bk_biz_id='2'",
+								Timezone:       "UTC",
+								Fields:         []string{"usage"},
+								TableID:        "system.cpu_detail",
+								DataLabel:      "cpu_detail",
+								MetricName:     "usage",
+								VmRt:           "100147_ieod_system_cpu_detail_cmdb",
+								VmConditionNum: 4,
+								VmCondition:    `bk_biz_id="2", bk_obj_id!="0", result_table_id="100147_ieod_system_cpu_detail_cmdb", __name__="usage_value"`,
+								StorageID:      "2",
+								StorageType:    consul.VictoriaMetricsStorageType,
+								Field:          "usage",
+								AllConditions: md.AllConditions{
 									{
-										DimensionName: "bk_biz_id",
-										Operator:      Contains,
-										Value:         []string{"2"},
-									},
-									{
-										DimensionName: "bk_obj_id",
-										Operator:      Ncontains,
-										Value:         []string{"0"},
+										{
+											DimensionName: "bk_biz_id",
+											Operator:      Contains,
+											Value:         []string{"2"},
+										},
+										{
+											DimensionName: "bk_obj_id",
+											Operator:      Ncontains,
+											Value:         []string{"0"},
+										},
 									},
 								},
 							},
 						},
+						ReferenceName: "b",
+						MetricName:    "usage",
 					},
-					ReferenceName: "b",
-					MetricName:    "usage",
 				},
 			},
 		},
@@ -616,41 +628,42 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				},
 			},
 			ref: md.QueryReference{
-				"b": &md.QueryMetric{
-					QueryList: md.QueryList{
-						{
-							DataSource:     BkMonitor,
-							Condition:      "bk_biz_id='2'",
-							Timezone:       "UTC",
-							Fields:         []string{"usage"},
-							TableID:        "system.cpu_detail",
-							DataLabel:      "cpu_detail",
-							MetricName:     "usage",
-							VmRt:           "100147_ieod_system_cpu_detail_cmdb",
-							VmConditionNum: 3,
-							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_cmdb", __name__="usage_value"`,
-							StorageID:      "2",
-							StorageType:    consul.VictoriaMetricsStorageType,
-							Field:          "usage",
-							AllConditions: md.AllConditions{
-								{
+				"b": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:     BkMonitor,
+								Condition:      "bk_biz_id='2'",
+								Timezone:       "UTC",
+								Fields:         []string{"usage"},
+								TableID:        "system.cpu_detail",
+								DataLabel:      "cpu_detail",
+								MetricName:     "usage",
+								VmRt:           "100147_ieod_system_cpu_detail_cmdb",
+								VmConditionNum: 3,
+								VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_cmdb", __name__="usage_value"`,
+								StorageID:      "2",
+								StorageType:    consul.VictoriaMetricsStorageType,
+								Field:          "usage",
+								AllConditions: md.AllConditions{
 									{
-										DimensionName: "bk_biz_id",
-										Operator:      Contains,
-										Value:         []string{"2"},
+										{
+											DimensionName: "bk_biz_id",
+											Operator:      Contains,
+											Value:         []string{"2"},
+										},
 									},
 								},
 							},
 						},
+						ReferenceName: "b",
+						MetricName:    "usage",
 					},
-					ReferenceName: "b",
-					MetricName:    "usage",
 				},
 			},
 		},
 		"vm 聚合查询验证 - 1": {
 			ts: &QueryTs{
-
 				QueryList: []*Query{
 					{
 						TableID:       "system.cpu_detail",
@@ -682,42 +695,44 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				},
 			},
 			ref: md.QueryReference{
-				"a": &md.QueryMetric{
-					QueryList: md.QueryList{
-						{
-							DataSource:     BkMonitor,
-							Condition:      "bk_biz_id='2'",
-							Timezone:       "UTC",
-							Fields:         []string{"usage"},
-							TableID:        "system.cpu_detail",
-							DataLabel:      "cpu_detail",
-							MetricName:     "usage",
-							VmRt:           "100147_ieod_system_cpu_detail_raw",
-							VmConditionNum: 3,
-							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
-							StorageID:      "2",
-							StorageType:    consul.VictoriaMetricsStorageType,
-							Field:          "usage",
-							AllConditions: md.AllConditions{
-								{
+				"a": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:     BkMonitor,
+								Condition:      "bk_biz_id='2'",
+								Timezone:       "UTC",
+								Fields:         []string{"usage"},
+								TableID:        "system.cpu_detail",
+								DataLabel:      "cpu_detail",
+								MetricName:     "usage",
+								VmRt:           "100147_ieod_system_cpu_detail_raw",
+								VmConditionNum: 3,
+								VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+								StorageID:      "2",
+								StorageType:    consul.VictoriaMetricsStorageType,
+								Field:          "usage",
+								AllConditions: md.AllConditions{
 									{
-										DimensionName: "bk_biz_id",
-										Operator:      Contains,
-										Value:         []string{"2"},
+										{
+											DimensionName: "bk_biz_id",
+											Operator:      Contains,
+											Value:         []string{"2"},
+										},
+									},
+								},
+								Aggregates: md.Aggregates{
+									{
+										Name:       "count",
+										Dimensions: []string{"ip"},
+										Window:     time.Minute,
 									},
 								},
 							},
-							Aggregates: md.Aggregates{
-								{
-									Name:       "count",
-									Dimensions: []string{"ip"},
-									Window:     time.Minute,
-								},
-							},
 						},
+						MetricName:    "usage",
+						ReferenceName: "a",
 					},
-					MetricName:    "usage",
-					ReferenceName: "a",
 				},
 			},
 		},
@@ -755,35 +770,37 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				},
 			},
 			ref: md.QueryReference{
-				"a": &md.QueryMetric{
-					QueryList: md.QueryList{
-						{
-							DataSource:     BkMonitor,
-							Condition:      "bk_biz_id='2'",
-							Timezone:       "UTC",
-							Fields:         []string{"usage"},
-							TableID:        "system.cpu_detail",
-							DataLabel:      "cpu_detail",
-							MetricName:     "usage",
-							VmRt:           "100147_ieod_system_cpu_detail_raw",
-							VmConditionNum: 3,
-							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
-							StorageID:      "2",
-							StorageType:    consul.VictoriaMetricsStorageType,
-							Field:          "usage",
-							AllConditions: md.AllConditions{
-								{
+				"a": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:     BkMonitor,
+								Condition:      "bk_biz_id='2'",
+								Timezone:       "UTC",
+								Fields:         []string{"usage"},
+								TableID:        "system.cpu_detail",
+								DataLabel:      "cpu_detail",
+								MetricName:     "usage",
+								VmRt:           "100147_ieod_system_cpu_detail_raw",
+								VmConditionNum: 3,
+								VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+								StorageID:      "2",
+								StorageType:    consul.VictoriaMetricsStorageType,
+								Field:          "usage",
+								AllConditions: md.AllConditions{
 									{
-										DimensionName: "bk_biz_id",
-										Operator:      Contains,
-										Value:         []string{"2"},
+										{
+											DimensionName: "bk_biz_id",
+											Operator:      Contains,
+											Value:         []string{"2"},
+										},
 									},
 								},
 							},
 						},
+						MetricName:    "usage",
+						ReferenceName: "a",
 					},
-					MetricName:    "usage",
-					ReferenceName: "a",
 				},
 			},
 		},
@@ -827,42 +844,44 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				},
 			},
 			ref: md.QueryReference{
-				"a": &md.QueryMetric{
-					QueryList: md.QueryList{
-						{
-							DataSource:     BkMonitor,
-							Condition:      "bk_biz_id='2'",
-							Timezone:       "UTC",
-							Fields:         []string{"usage"},
-							TableID:        "system.cpu_detail",
-							DataLabel:      "cpu_detail",
-							MetricName:     "usage",
-							VmRt:           "100147_ieod_system_cpu_detail_raw",
-							VmConditionNum: 3,
-							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
-							StorageID:      "2",
-							StorageType:    consul.VictoriaMetricsStorageType,
-							Field:          "usage",
-							AllConditions: md.AllConditions{
-								{
+				"a": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:     BkMonitor,
+								Condition:      "bk_biz_id='2'",
+								Timezone:       "UTC",
+								Fields:         []string{"usage"},
+								TableID:        "system.cpu_detail",
+								DataLabel:      "cpu_detail",
+								MetricName:     "usage",
+								VmRt:           "100147_ieod_system_cpu_detail_raw",
+								VmConditionNum: 3,
+								VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+								StorageID:      "2",
+								StorageType:    consul.VictoriaMetricsStorageType,
+								Field:          "usage",
+								AllConditions: md.AllConditions{
 									{
-										DimensionName: "bk_biz_id",
-										Operator:      Contains,
-										Value:         []string{"2"},
+										{
+											DimensionName: "bk_biz_id",
+											Operator:      Contains,
+											Value:         []string{"2"},
+										},
+									},
+								},
+								Aggregates: md.Aggregates{
+									{
+										Name:       "sum",
+										Dimensions: []string{"ip", "service"},
+										Window:     time.Minute,
 									},
 								},
 							},
-							Aggregates: md.Aggregates{
-								{
-									Name:       "sum",
-									Dimensions: []string{"ip", "service"},
-									Window:     time.Minute,
-								},
-							},
 						},
+						MetricName:    "usage",
+						ReferenceName: "a",
 					},
-					MetricName:    "usage",
-					ReferenceName: "a",
 				},
 			},
 		},
@@ -894,51 +913,52 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			isDirectQuery: false,
 			promql:        `sum by (ip) (last_over_time(a[1m]))`,
 			ref: md.QueryReference{
-				"a": &md.QueryMetric{
-					QueryList: md.QueryList{
-						{
-							DataSource:     BkMonitor,
-							Condition:      "bk_biz_id='2'",
-							Timezone:       "UTC",
-							Fields:         []string{"usage"},
-							TableID:        "system.cpu_summary",
-							DataLabel:      "cpu_summary",
-							MetricName:     "usage",
-							VmConditionNum: 2,
-							VmCondition:    `bk_biz_id="2", __name__="usage_value"`,
-							StorageID:      "2",
-							DB:             "system",
-							Measurement:    "cpu_summary",
-							Measurements:   []string{"cpu_summary"},
-							ClusterName:    "default",
-							StorageType:    consul.InfluxDBStorageType,
-							Field:          "usage",
-							AllConditions: md.AllConditions{
-								{
+				"a": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:     BkMonitor,
+								Condition:      "bk_biz_id='2'",
+								Timezone:       "UTC",
+								Fields:         []string{"usage"},
+								TableID:        "system.cpu_summary",
+								DataLabel:      "cpu_summary",
+								MetricName:     "usage",
+								VmConditionNum: 2,
+								VmCondition:    `bk_biz_id="2", __name__="usage_value"`,
+								StorageID:      "2",
+								DB:             "system",
+								Measurement:    "cpu_summary",
+								Measurements:   []string{"cpu_summary"},
+								ClusterName:    "default",
+								StorageType:    consul.InfluxDBStorageType,
+								Field:          "usage",
+								AllConditions: md.AllConditions{
 									{
-										DimensionName: "bk_biz_id",
-										Operator:      Contains,
-										Value:         []string{"2"},
+										{
+											DimensionName: "bk_biz_id",
+											Operator:      Contains,
+											Value:         []string{"2"},
+										},
+									},
+								},
+								Aggregates: md.Aggregates{
+									{
+										Name:       "count",
+										Dimensions: []string{"ip"},
+										Window:     time.Minute,
 									},
 								},
 							},
-							Aggregates: md.Aggregates{
-								{
-									Name:       "count",
-									Dimensions: []string{"ip"},
-									Window:     time.Minute,
-								},
-							},
 						},
+						MetricName:    "usage",
+						ReferenceName: "a",
 					},
-					MetricName:    "usage",
-					ReferenceName: "a",
 				},
 			},
 		},
 		"非 vm 聚合查询验证 - 2": {
 			ts: &QueryTs{
-
 				QueryList: []*Query{
 					{
 						TableID:       "system.cpu_summary",
@@ -964,38 +984,40 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			isDirectQuery: false,
 			promql:        `sum by (ip) (increase(a[1m]))`,
 			ref: md.QueryReference{
-				"a": &md.QueryMetric{
-					QueryList: md.QueryList{
-						{
-							DataSource:     BkMonitor,
-							Condition:      "bk_biz_id='2'",
-							Timezone:       "UTC",
-							Fields:         []string{"usage"},
-							TableID:        "system.cpu_summary",
-							DataLabel:      "cpu_summary",
-							MetricName:     "usage",
-							DB:             "system",
-							Measurement:    "cpu_summary",
-							Measurements:   []string{"cpu_summary"},
-							ClusterName:    "default",
-							VmConditionNum: 2,
-							VmCondition:    `bk_biz_id="2", __name__="usage_value"`,
-							StorageID:      "2",
-							StorageType:    consul.InfluxDBStorageType,
-							Field:          "usage",
-							AllConditions: md.AllConditions{
-								{
+				"a": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:     BkMonitor,
+								Condition:      "bk_biz_id='2'",
+								Timezone:       "UTC",
+								Fields:         []string{"usage"},
+								TableID:        "system.cpu_summary",
+								DataLabel:      "cpu_summary",
+								MetricName:     "usage",
+								DB:             "system",
+								Measurement:    "cpu_summary",
+								Measurements:   []string{"cpu_summary"},
+								ClusterName:    "default",
+								VmConditionNum: 2,
+								VmCondition:    `bk_biz_id="2", __name__="usage_value"`,
+								StorageID:      "2",
+								StorageType:    consul.InfluxDBStorageType,
+								Field:          "usage",
+								AllConditions: md.AllConditions{
 									{
-										DimensionName: "bk_biz_id",
-										Operator:      Contains,
-										Value:         []string{"2"},
+										{
+											DimensionName: "bk_biz_id",
+											Operator:      Contains,
+											Value:         []string{"2"},
+										},
 									},
 								},
 							},
 						},
+						MetricName:    "usage",
+						ReferenceName: "a",
 					},
-					MetricName:    "usage",
-					ReferenceName: "a",
 				},
 			},
 		},
@@ -1033,45 +1055,47 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			isDirectQuery: false,
 			promql:        `topk(1, sum by (ip) (last_over_time(a[1m])))`,
 			ref: md.QueryReference{
-				"a": &md.QueryMetric{
-					QueryList: md.QueryList{
-						{
-							DataSource:     BkMonitor,
-							Condition:      "bk_biz_id='2'",
-							Timezone:       "UTC",
-							Fields:         []string{"usage"},
-							TableID:        "system.cpu_summary",
-							MetricName:     "usage",
-							DB:             "system",
-							Measurement:    "cpu_summary",
-							Measurements:   []string{"cpu_summary"},
-							ClusterName:    "default",
-							VmConditionNum: 2,
-							VmCondition:    `bk_biz_id="2", __name__="usage_value"`,
-							StorageID:      "2",
-							StorageType:    consul.InfluxDBStorageType,
-							Field:          "usage",
-							DataLabel:      "cpu_summary",
-							AllConditions: md.AllConditions{
-								{
+				"a": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:     BkMonitor,
+								Condition:      "bk_biz_id='2'",
+								Timezone:       "UTC",
+								Fields:         []string{"usage"},
+								TableID:        "system.cpu_summary",
+								MetricName:     "usage",
+								DB:             "system",
+								Measurement:    "cpu_summary",
+								Measurements:   []string{"cpu_summary"},
+								ClusterName:    "default",
+								VmConditionNum: 2,
+								VmCondition:    `bk_biz_id="2", __name__="usage_value"`,
+								StorageID:      "2",
+								StorageType:    consul.InfluxDBStorageType,
+								Field:          "usage",
+								DataLabel:      "cpu_summary",
+								AllConditions: md.AllConditions{
 									{
-										DimensionName: "bk_biz_id",
-										Operator:      Contains,
-										Value:         []string{"2"},
+										{
+											DimensionName: "bk_biz_id",
+											Operator:      Contains,
+											Value:         []string{"2"},
+										},
+									},
+								},
+								Aggregates: md.Aggregates{
+									{
+										Name:       "sum",
+										Dimensions: []string{"ip"},
+										Window:     time.Minute,
 									},
 								},
 							},
-							Aggregates: md.Aggregates{
-								{
-									Name:       "sum",
-									Dimensions: []string{"ip"},
-									Window:     time.Minute,
-								},
-							},
 						},
+						MetricName:    "usage",
+						ReferenceName: "a",
 					},
-					MetricName:    "usage",
-					ReferenceName: "a",
 				},
 			},
 		},
@@ -1109,35 +1133,37 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			isDirectQuery: false,
 			promql:        `topk(1, sum by (__ext__bk_46__container) (last_over_time(a[1m])))`,
 			ref: md.QueryReference{
-				"a": &md.QueryMetric{
-					QueryList: md.QueryList{
-						{
-							DataSource:     BkLog,
-							Timezone:       "UTC",
-							SourceType:     "bkdata",
-							TableID:        "result_table.es",
-							DataLabel:      "es",
-							DB:             "es_index",
-							MetricName:     "usage",
-							VmConditionNum: 1,
-							VmCondition:    `__name__="usage_value"`,
-							StorageID:      "3",
-							StorageIDs: []string{
-								"3",
-							},
-							Field:       "usage",
-							StorageType: consul.ElasticsearchStorageType,
-							Aggregates: md.Aggregates{
-								{
-									Name:       "sum",
-									Dimensions: []string{"__ext.container"},
-									Window:     time.Minute,
+				"a": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:     BkLog,
+								Timezone:       "UTC",
+								SourceType:     "bkdata",
+								TableID:        "result_table.es",
+								DataLabel:      "es",
+								DB:             "es_index",
+								MetricName:     "usage",
+								VmConditionNum: 1,
+								VmCondition:    `__name__="usage_value"`,
+								StorageID:      "3",
+								StorageIDs: []string{
+									"3",
+								},
+								Field:       "usage",
+								StorageType: consul.ElasticsearchStorageType,
+								Aggregates: md.Aggregates{
+									{
+										Name:       "sum",
+										Dimensions: []string{"__ext.container"},
+										Window:     time.Minute,
+									},
 								},
 							},
 						},
+						MetricName:    "usage",
+						ReferenceName: "a",
 					},
-					MetricName:    "usage",
-					ReferenceName: "a",
 				},
 			},
 		},

@@ -44,28 +44,6 @@ func TestMergeSeriesSet(t *testing.T) {
 			},
 		},
 	}
-	ts2 := &prompb.TimeSeries{
-		Labels: []prompb.Label{
-			{
-				Name:  "__name__",
-				Value: "up",
-			},
-			{
-				Name:  "job",
-				Value: "elasticsearch",
-			},
-		},
-		Samples: []prompb.Sample{
-			{
-				Value:     2,
-				Timestamp: 60,
-			},
-			{
-				Value:     3,
-				Timestamp: 120,
-			},
-		},
-	}
 	ts3 := &prompb.TimeSeries{
 		Labels: []prompb.Label{
 			{
@@ -85,6 +63,29 @@ func TestMergeSeriesSet(t *testing.T) {
 			{
 				Value:     5,
 				Timestamp: 60,
+			},
+		},
+	}
+
+	ts2 := &prompb.TimeSeries{
+		Labels: []prompb.Label{
+			{
+				Name:  "__name__",
+				Value: "up",
+			},
+			{
+				Name:  "job",
+				Value: "elasticsearch",
+			},
+		},
+		Samples: []prompb.Sample{
+			{
+				Value:     2,
+				Timestamp: 60,
+			},
+			{
+				Value:     3,
+				Timestamp: 120,
 			},
 		},
 	}
@@ -175,7 +176,54 @@ func TestMergeSeriesSet(t *testing.T) {
 				},
 			},
 			ts: mock.TimeSeriesList{
-				*ts4, *ts3,
+				{
+					Labels: []prompb.Label{
+						{
+							Name:  "__name__",
+							Value: "up",
+						},
+						{
+							Name:  "job",
+							Value: "elasticsearch",
+						},
+					},
+					Samples: []prompb.Sample{
+						{
+							Value:     8,
+							Timestamp: 60,
+						},
+						{
+							Value:     9,
+							Timestamp: 120,
+						},
+					},
+				},
+				{
+					Labels: []prompb.Label{
+						{
+							Name:  "__name__",
+							Value: "up",
+						},
+						{
+							Name:  "job",
+							Value: "prometheus",
+						},
+					},
+					Samples: []prompb.Sample{
+						{
+							Value:     4,
+							Timestamp: 0,
+						},
+						{
+							Value:     5,
+							Timestamp: 60,
+						},
+						{
+							Value:     3,
+							Timestamp: 120,
+						},
+					},
+				},
 			},
 		},
 		"two queryResult with mergeSeriesSetWithFuncAndSort": {

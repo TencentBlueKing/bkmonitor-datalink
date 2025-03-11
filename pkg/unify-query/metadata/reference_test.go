@@ -27,35 +27,39 @@ func TestVmExpand(t *testing.T) {
 	}{
 		"default-1": {
 			queryRef: QueryReference{
-				"a": &QueryMetric{
-					QueryList: []*Query{
-						{
-							TableID:     "result_table.vm",
-							VmRt:        "vm_result_table",
-							MetricName:  "container_cpu_usage_seconds",
-							VmCondition: `__name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table"`,
-						},
-						{
-							TableID:     "result_table.vm_1",
-							VmRt:        "vm_result_table_1",
-							MetricName:  "container_cpu_usage_seconds",
-							VmCondition: `__name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table_1"`,
+				"a": {
+					{
+						QueryList: []*Query{
+							{
+								TableID:     "result_table.vm",
+								VmRt:        "vm_result_table",
+								MetricName:  "container_cpu_usage_seconds",
+								VmCondition: `__name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table"`,
+							},
+							{
+								TableID:     "result_table.vm_1",
+								VmRt:        "vm_result_table_1",
+								MetricName:  "container_cpu_usage_seconds",
+								VmCondition: `__name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table_1"`,
+							},
 						},
 					},
 				},
-				"b": &QueryMetric{
-					QueryList: []*Query{
-						{
-							TableID:     "result_table.vm",
-							VmRt:        "vm_result_table",
-							MetricName:  "kube_pod_container_resource_requests",
-							VmCondition: `__name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table"`,
-						},
-						{
-							TableID:     "result_table.vm_1",
-							VmRt:        "vm_result_table_1",
-							MetricName:  "kube_pod_container_resource_requests",
-							VmCondition: `__name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table_1"`,
+				"b": {
+					{
+						QueryList: []*Query{
+							{
+								TableID:     "result_table.vm",
+								VmRt:        "vm_result_table",
+								MetricName:  "kube_pod_container_resource_requests",
+								VmCondition: `__name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table"`,
+							},
+							{
+								TableID:     "result_table.vm_1",
+								VmRt:        "vm_result_table_1",
+								MetricName:  "kube_pod_container_resource_requests",
+								VmCondition: `__name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table_1"`,
+							},
 						},
 					},
 				},
@@ -73,29 +77,33 @@ func TestVmExpand(t *testing.T) {
 		},
 		"default-2": {
 			queryRef: QueryReference{
-				"a": &QueryMetric{
-					QueryList: []*Query{
-						{
-							TableID:     "result_table.vm",
-							VmRt:        "vm_result_table",
-							MetricName:  "container_cpu_usage_seconds",
-							VmCondition: `__name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table"`,
+				"a": {
+					{
+						QueryList: []*Query{
+							{
+								TableID:     "result_table.vm",
+								VmRt:        "vm_result_table",
+								MetricName:  "container_cpu_usage_seconds",
+								VmCondition: `__name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table"`,
+							},
 						},
 					},
 				},
-				"b": &QueryMetric{
-					QueryList: []*Query{
-						{
-							TableID:     "result_table.vm",
-							VmRt:        "vm_result_table",
-							MetricName:  "kube_pod_container_resource_requests",
-							VmCondition: `__name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table"`,
-						},
-						{
-							TableID:     "result_table.vm_1",
-							VmRt:        "",
-							MetricName:  "kube_pod_container_resource_requests",
-							VmCondition: `__name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table_1"`,
+				"b": {
+					{
+						QueryList: []*Query{
+							{
+								TableID:     "result_table.vm",
+								VmRt:        "vm_result_table",
+								MetricName:  "kube_pod_container_resource_requests",
+								VmCondition: `__name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table"`,
+							},
+							{
+								TableID:     "result_table.vm_1",
+								VmRt:        "",
+								MetricName:  "kube_pod_container_resource_requests",
+								VmCondition: `__name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table_1"`,
+							},
 						},
 					},
 				},
@@ -107,6 +115,61 @@ func TestVmExpand(t *testing.T) {
 				},
 				ResultTableList: []string{
 					"vm_result_table",
+				},
+			},
+		},
+		"default-3": {
+			queryRef: QueryReference{
+				"a": {
+					{
+						QueryList: []*Query{
+							{
+								TableID:     "result_table.vm",
+								VmRt:        "vm_result_table",
+								MetricName:  "container_cpu_usage_seconds",
+								VmCondition: `__name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table"`,
+							},
+						},
+					},
+					{
+						QueryList: []*Query{
+							{
+								TableID:     "result_table.vm",
+								VmRt:        "vm_result_table_2",
+								MetricName:  "container_cpu_usage_seconds",
+								VmCondition: `__name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table_2"`,
+							},
+						},
+					},
+				},
+				"b": {
+					{
+						QueryList: []*Query{
+							{
+								TableID:     "result_table.vm",
+								VmRt:        "vm_result_table",
+								MetricName:  "kube_pod_container_resource_requests",
+								VmCondition: `__name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table"`,
+							},
+							{
+								TableID:     "result_table.vm_1",
+								VmRt:        "vm_result_table_1",
+								MetricName:  "kube_pod_container_resource_requests",
+								VmCondition: `__name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table_1"`,
+							},
+						},
+					},
+				},
+			},
+			vmExpand: &VmExpand{
+				MetricFilterCondition: map[string]string{
+					"a": `__name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table" or __name__="bkmonitor:container_cpu_usage_seconds_total_value", result_table_id="vm_result_table_2"`,
+					"b": `__name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table" or __name__="bkmonitor:kube_pod_container_resource_requests_value", result_table_id="vm_result_table_1"`,
+				},
+				ResultTableList: []string{
+					"vm_result_table",
+					"vm_result_table_1",
+					"vm_result_table_2",
 				},
 			},
 		},

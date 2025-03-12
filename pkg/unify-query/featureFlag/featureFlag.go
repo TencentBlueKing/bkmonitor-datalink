@@ -34,6 +34,9 @@ type FeatureFlag struct {
 
 // ReloadFeatureFlags
 func ReloadFeatureFlags(data []byte) error {
+	if data == nil {
+		return nil
+	}
 	featureFlag.lock.Lock()
 	defer featureFlag.lock.Unlock()
 	featureFlag.flags = data

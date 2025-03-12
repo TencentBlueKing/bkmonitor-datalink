@@ -140,7 +140,11 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		if err != nil {
 			return nil, err
 		}
-		queryReference[query.ReferenceName] = queryMetric
+		if _, ok := queryReference[query.ReferenceName]; !ok {
+			queryReference[query.ReferenceName] = make([]*metadata.QueryMetric, 0)
+		}
+
+		queryReference[query.ReferenceName] = append(queryReference[query.ReferenceName], queryMetric)
 	}
 
 	return queryReference, nil
@@ -273,10 +277,14 @@ func (q *QueryTs) ToPromExpr(
 		if expr, err = query.ToPromExpr(ctx, promExprOpt); err != nil {
 			return nil, err
 		}
-		exprMap[query.ReferenceName] = &PromExpr{
-			Expr:       expr,
-			Dimensions: nil,
-			ctx:        ctx,
+
+		// 表达式转换只支持一个 reference_name
+		if _, ok := exprMap[query.ReferenceName]; !ok {
+			exprMap[query.ReferenceName] = &PromExpr{
+				Expr:       expr,
+				Dimensions: nil,
+				ctx:        ctx,
+			}
 		}
 	}
 

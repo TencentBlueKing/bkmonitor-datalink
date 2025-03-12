@@ -289,53 +289,6 @@ func queryInfoMetadataQuery(ctx context.Context, metricName string, queryInfo *Q
 	return queryList, nil
 }
 
-// QueryInfoIntoContext 获取 queryInfo 的数据进行解析，存入 ctx 缓存中，给后续的请求使用
-func QueryInfoIntoContext(ctx context.Context, referenceName, metricName string, queryInfo *QueryInfo) (context.Context, error) {
-	// 查询列表，里面包含该次查询对应的所有实例，实现跨 DB 查询
-	var (
-		err         error
-		queryMetric = &metadata.QueryMetric{
-			ReferenceName: referenceName,
-			MetricName:    metricName,
-			IsCount:       queryInfo.IsCount,
-		}
-	)
-
-	ctx, span := trace.NewSpan(ctx, "query-info-into-context")
-	defer span.End(&err)
-
-	// 空间内容解析
-	if queryInfo.TsDBs != nil {
-		queryMetric.QueryList, err = tsDBToMetadataQuery(ctx, metricName, queryInfo)
-	} else {
-		queryMetric.QueryList, err = queryInfoMetadataQuery(ctx, metricName, queryInfo)
-	}
-	if err != nil {
-		return ctx, err
-	}
-	queries := metadata.GetQueries(ctx)
-	if queries == nil {
-		queries = &metadata.Queries{
-			Query: make(metadata.QueryReference),
-		}
-	}
-
-	queries.Query[referenceName] = queryMetric
-
-	err = metadata.SetQueries(ctx, queries)
-	return ctx, err
-}
-
-// QueryInfoFromContext 通过 ctx 获取查询信息
-func QueryInfoFromContext(ctx context.Context, referenceName string) (*metadata.QueryMetric, error) {
-	queries := metadata.GetQueries(ctx)
-	if queryMetric, ok := queries.Query[referenceName]; ok {
-		return queryMetric, nil
-	} else {
-		return nil, fmt.Errorf("metadata query is empty, with referenceName: %s", referenceName)
-	}
-}
-
 // OffSetInfo Offset的信息存储，供promql查询转换为influxdb查询语句时使用
 type OffSetInfo struct {
 	OffSet  time.Duration

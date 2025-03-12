@@ -32,7 +32,7 @@ func TestNewSqlFactory(t *testing.T) {
 		start time.Time
 		end   time.Time
 	}{
-		"sum-count_over_time-with-promql-1": {
+		"doris sum-count_over_time-with-promql-1": {
 			query: &metadata.Query{
 				DB:          "100133_ieod_logsearch4_errorlog_p",
 				Measurement: "doris",
@@ -61,7 +61,7 @@ func TestNewSqlFactory(t *testing.T) {
 			},
 			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, __shard_key__ * 60 AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1717144141000 AND `dtEventTimeStamp` < 1717147741000 AND `thedate` = '20240531' AND `gseIndex` > 0 GROUP BY `ip`, (`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000)) ORDER BY `_timestamp_` ASC, `ip` ASC",
 		},
-		"sum-with-promql-1": {
+		"doris sum-with-promql-1": {
 			query: &metadata.Query{
 				DB:          "100133_ieod_logsearch4_errorlog_p",
 				Measurement: "doris",
@@ -89,7 +89,7 @@ func TestNewSqlFactory(t *testing.T) {
 			},
 			expected: "SELECT `ip`, SUM(`gseIndex`) AS `_value_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1717144141000 AND `dtEventTimeStamp` < 1717147741000 AND `thedate` = '20240531' AND `gseIndex` > 0 GROUP BY `ip` LIMIT 10",
 		},
-		"count-with-count-promql-1": {
+		"doris count-with-count-promql-1": {
 			query: &metadata.Query{
 				DB:          "100133_ieod_logsearch4_errorlog_p",
 				Measurement: "doris",
@@ -106,7 +106,7 @@ func TestNewSqlFactory(t *testing.T) {
 			},
 			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, __shard_key__ * 60 AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1717144141000 AND `dtEventTimeStamp` < 1717147741000 AND `thedate` = '20240531' GROUP BY `ip`, (`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000)) ORDER BY `_timestamp_` ASC",
 		},
-		"count-with-count-promql-2": {
+		"doris count-with-count-promql-2": {
 			// 2024-12-07 21:36:40	UTC
 			// 2024-12-08 05:36:40  Asia/ShangHai
 			start: time.Unix(1733607400, 0),

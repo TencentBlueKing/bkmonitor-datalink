@@ -122,7 +122,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 		wantErr   error
 	}{
 		{
-			name: "test object field condition",
+			name: "doris test object field condition",
 			condition: metadata.AllConditions{
 				{
 					{
@@ -140,7 +140,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			want: "CAST(`object`[\"field\"] AS STRING) = 'test-value' AND `tag` != 'test'",
 		},
 		{
-			name: "test text field wildcard",
+			name: "doris t8est text field wildcard",
 			condition: metadata.AllConditions{
 				{
 					{
@@ -154,7 +154,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			want: "CAST(`object`[\"field\"] AS STRING) LIKE '%partial%'",
 		},
 		{
-			name: "test OR condition",
+			name: "doris test OR condition",
 			condition: metadata.AllConditions{
 				{
 					{
@@ -174,7 +174,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			want: "(`status` = 'running' OR `code` = '500')",
 		},
 		{
-			name: "test numeric field without cast",
+			name: "doris test numeric field without cast",
 			condition: metadata.AllConditions{
 				{
 					{
@@ -200,7 +200,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			want: "`env` IN ('prod', 'test')",
 		},
 		{
-			name: "test empty value",
+			name: "doris test empty value",
 			condition: metadata.AllConditions{
 				{
 					{
@@ -213,7 +213,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			want: "",
 		},
 		{
-			name: "test invalid operator",
+			name: "doris test invalid operator",
 			condition: metadata.AllConditions{
 				{
 					{

@@ -304,7 +304,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 	}{
 		// 测试用例1: 无聚合函数的原始查询
 		{
-			name: "raw query without aggregation",
+			name: "mysql raw query without aggregation",
 			query: &metadata.Query{
 				DB:    "test_db",
 				Field: "value",
@@ -314,7 +314,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 
 		// 测试用例2: 多聚合函数组合
 		{
-			name: "multiple aggregates",
+			name: "mysql multiple aggregates",
 			query: &metadata.Query{
 				DB:    "metrics_db",
 				Field: "temperature",
@@ -328,7 +328,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 
 		// 测试用例3: 复杂条件组合
 		{
-			name: "complex conditions",
+			name: "mysql complex conditions",
 			query: &metadata.Query{
 				DB:    "security_logs",
 				Field: "duration",
@@ -352,7 +352,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 
 		// 测试用例4: 多字段排序
 		{
-			name: "multiple order fields",
+			name: "mysql multiple order fields",
 			query: &metadata.Query{
 				DB:    "transaction_logs",
 				Field: "amount",
@@ -366,7 +366,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 
 		// 测试用例5: 特殊字符转义
 		{
-			name: "special characters in fields",
+			name: "mysql special characters in fields",
 			query: &metadata.Query{
 				DB:          "special_metrics",
 				Measurement: "select", // 保留字作为measurement
@@ -380,7 +380,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 
 		// 测试用例6: 零窗口时间
 		{
-			name: "zero window size",
+			name: "mysql zero window size",
 			query: &metadata.Query{
 				DB:    "time_series_data",
 				Field: "value",
@@ -396,7 +396,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 
 		// 测试用例7: 跨多天的时间范围
 		{
-			name:  "multi-day time range",
+			name:  "mysql multi-day time range",
 			start: crossDayStart,
 			end:   crossDayEnd,
 			query: &metadata.Query{
@@ -411,7 +411,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 
 		// 测试用例8: 默认处理 object 字段
 		{
-			name: "default multiple order fields",
+			name: "mysql default multiple order fields",
 			query: &metadata.Query{
 				DB:    "transaction_logs",
 				Field: "__ext.container_id",
@@ -438,9 +438,9 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			err: fmt.Errorf("query is not support object with __ext.container_id"),
 		},
 
-		// 测试用例8: doris 处理 object 字段
+		// 测试用例9: doris 处理 object 字段
 		{
-			name: "default multiple order fields",
+			name: "doris default multiple order fields",
 			query: &metadata.Query{
 				DB:          "5000140_bklog_container_log_demo_analysis",
 				Measurement: sqlExpr.Doris,
@@ -474,9 +474,9 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			end:      time.Unix(1741335000, 0),
 			expected: "SELECT CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_type`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` < 1741335000000 AND `thedate` = '20250307' AND CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) = 'bkm-daemonset-worker' AND `bk_host_id` = '267730' GROUP BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING), CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING) ORDER BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) DESC LIMIT 3",
 		},
-		// 测试用例8: doris 处理 object 字段 + 时间聚合
+		// 测试用例10: doris 处理 object 字段 + 时间聚合
 		{
-			name: "default multiple order fields and time aggregate",
+			name: "doris default multiple order fields and time aggregate",
 			query: &metadata.Query{
 				DB:          "5000140_bklog_container_log_demo_analysis",
 				Measurement: sqlExpr.Doris,
@@ -511,9 +511,9 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			end:      time.Unix(1741335000, 0),
 			expected: "SELECT CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_type`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, __shard_key__ * 60 AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` < 1741335000000 AND `thedate` = '20250307' AND CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) = 'bkm-daemonset-worker' AND `bk_host_id` = '267730' GROUP BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING), CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING), __shard_key__ ORDER BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
 		},
-		// 测试用例8: doris 处理 object 字段 + 时间聚合 5m
+		// 测试用例11: doris 处理 object 字段 + 时间聚合 5m
 		{
-			name: "default multiple order fields and time aggregate 5m",
+			name: "doris default multiple order fields and time aggregate 5m",
 			query: &metadata.Query{
 				DB:            "5000140_bklog_container_log_demo_analysis",
 				Measurement:   sqlExpr.Doris,
@@ -535,9 +535,9 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			end:      time.Unix(1741335000, 0),
 			expected: "",
 		},
-		// 测试用例8: doris 处理 object 字段 + 时间聚合 15s
+		// 测试用例12: doris 处理 object 字段 + 时间聚合 15s
 		{
-			name: "default multiple order fields and time aggregate 15s",
+			name: "doris default multiple order fields and time aggregate 15s",
 			query: &metadata.Query{
 				DB:            "5000140_bklog_container_log_demo_analysis",
 				Measurement:   sqlExpr.Doris,

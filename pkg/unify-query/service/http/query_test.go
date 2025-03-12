@@ -936,24 +936,20 @@ func TestVmQueryParams(t *testing.T) {
 				var queryPromQL *structured.QueryPromQL
 				err = json.Unmarshal([]byte(c.promql), &queryPromQL)
 				assert.Nil(t, err)
-				if err == nil {
-					query, err = promQLToStruct(ctx, queryPromQL)
-				}
+				query, err = promQLToStruct(ctx, queryPromQL)
 			} else {
 				err = json.Unmarshal([]byte(c.query), &query)
 			}
 
 			query.SpaceUid = c.spaceUid
 			assert.Nil(t, err)
-			if err == nil {
-				_, err = queryTsWithPromEngine(ctx, query)
-				if c.error != nil {
-					assert.Contains(t, err.Error(), c.error.Error())
-				} else {
-					var vmParams map[string]string
-					if vmParams != nil {
-						assert.Equal(t, c.params, vmParams["sql"])
-					}
+			_, err = queryTsWithPromEngine(ctx, query)
+			if c.error != nil {
+				assert.Contains(t, err.Error(), c.error.Error())
+			} else {
+				var vmParams map[string]string
+				if vmParams != nil {
+					assert.Equal(t, c.params, vmParams["sql"])
 				}
 			}
 		})

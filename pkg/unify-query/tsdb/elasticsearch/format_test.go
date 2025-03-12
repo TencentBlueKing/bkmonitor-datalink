@@ -204,14 +204,12 @@ func TestFormatFactory_Query(t *testing.T) {
 			ss := elastic.NewSearchSource()
 			query, err := fact.Query(c.conditions)
 			assert.Nil(t, err)
-			if err == nil {
-				ss.Query(query)
+			ss.Query(query)
 
-				body, _ := ss.Source()
-				bodyJson, _ := json.Marshal(body)
-				bodyString := string(bodyJson)
-				assert.Equal(t, c.expected, bodyString)
-			}
+			body, _ := ss.Source()
+			bodyJson, _ := json.Marshal(body)
+			bodyString := string(bodyJson)
+			assert.Equal(t, c.expected, bodyString)
 
 		})
 	}
@@ -325,14 +323,12 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 			ss := elastic.NewSearchSource()
 			rangeQuery, err := fact.RangeQuery()
 			assert.Nil(t, err)
-			if err == nil {
-				ss.Query(rangeQuery)
-				if len(c.aggregates) > 0 {
-					aggName, agg, aggErr := fact.EsAgg(c.aggregates)
-					assert.Nil(t, aggErr)
-					if aggErr == nil {
-						ss.Aggregation(aggName, agg)
-					}
+			ss.Query(rangeQuery)
+			if len(c.aggregates) > 0 {
+				aggName, agg, aggErr := fact.EsAgg(c.aggregates)
+				assert.Nil(t, aggErr)
+				if aggErr == nil {
+					ss.Aggregation(aggName, agg)
 				}
 			}
 

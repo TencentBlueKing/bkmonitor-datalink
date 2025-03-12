@@ -309,10 +309,7 @@ func TestMergeSeriesSet(t *testing.T) {
 
 			ts, err := mock.SeriesSetToTimeSeries(set)
 			assert.Nil(t, err)
-
-			if err == nil {
-				assert.Equal(t, tc.ts, ts)
-			}
+			assert.Equal(t, tc.ts, ts)
 		})
 	}
 }

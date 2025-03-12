@@ -243,9 +243,7 @@ func TestInstance_bkSql(t *testing.T) {
 
 			sql, err := NewQueryFactory(ctx, c.query).WithRangeTime(c.start, c.end).SQL()
 			assert.Nil(t, err)
-			if err == nil {
-				assert.Equal(t, c.expected, sql)
-			}
+			assert.Equal(t, c.expected, sql)
 		})
 	}
 }

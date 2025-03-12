@@ -271,9 +271,7 @@ func TestQueryToMetric(t *testing.T) {
 
 			metric, err := c.query.ToQueryMetric(ctx, spaceUID)
 			assert.Nil(t, err)
-			if err == nil {
-				assert.Equal(t, c.metric, metric)
-			}
+			assert.Equal(t, c.metric, metric)
 		})
 	}
 }
@@ -1178,22 +1176,20 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			md.SetUser(ctx, "", influxdb.SpaceUid, "")
 			ref, err := tc.ts.ToQueryReference(ctx)
 			assert.Nil(t, err)
-			if err == nil {
-				assert.Equal(t, tc.ref, ref)
+			assert.Equal(t, tc.ref, ref)
 
-				vmExpand = ref.ToVmExpand(ctx)
-				isDirectQuery := md.GetQueryParams(ctx).IsDirectQuery()
+			vmExpand = ref.ToVmExpand(ctx)
+			isDirectQuery := md.GetQueryParams(ctx).IsDirectQuery()
 
-				assert.Equal(t, tc.isDirectQuery, isDirectQuery)
-				assert.Equal(t, tc.expand, vmExpand)
+			assert.Equal(t, tc.isDirectQuery, isDirectQuery)
+			assert.Equal(t, tc.expand, vmExpand)
 
-				promExprOpt := &PromExprOption{
-					IgnoreTimeAggregationEnable: !isDirectQuery,
-				}
-
-				promql, _ := tc.ts.ToPromExpr(ctx, promExprOpt)
-				assert.Equal(t, tc.promql, promql.String())
+			promExprOpt := &PromExprOption{
+				IgnoreTimeAggregationEnable: !isDirectQuery,
 			}
+
+			promql, _ := tc.ts.ToPromExpr(ctx, promExprOpt)
+			assert.Equal(t, tc.promql, promql.String())
 		})
 	}
 }
@@ -1264,9 +1260,7 @@ func TestAggregations(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			aggs, err := c.query.Aggregates()
 			assert.Nil(t, err)
-			if err == nil {
-				assert.Equal(t, c.aggs, aggs)
-			}
+			assert.Equal(t, c.aggs, aggs)
 		})
 	}
 }

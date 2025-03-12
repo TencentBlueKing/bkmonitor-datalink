@@ -24,7 +24,7 @@ import (
 func NewMergeSeriesSetWithFuncAndSort(name string) func(...storage.Series) storage.Series {
 	return func(series ...storage.Series) storage.Series {
 		// 处理空输入
-		if series == nil || len(series) == 0 {
+		if len(series) == 0 {
 			return nil
 		}
 

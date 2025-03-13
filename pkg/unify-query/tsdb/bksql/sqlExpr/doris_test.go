@@ -137,7 +137,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "CAST(`object`[\"field\"] AS STRING) = 'test-value' AND `tag` != 'test'",
+			want: "CAST(object[\"field\"] AS STRING) = 'test-value' AND `tag` != 'test'",
 		},
 		{
 			name: "doris t8est text field wildcard",
@@ -151,7 +151,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "CAST(`object`[\"field\"] AS STRING) LIKE '%partial%'",
+			want: "CAST(object[\"field\"] AS STRING) LIKE '%partial%'",
 		},
 		{
 			name: "doris test OR condition",

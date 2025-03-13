@@ -11,10 +11,10 @@ package es
 
 import (
 	"context"
-	"encoding/json"
 	"strconv"
 	"sync"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 

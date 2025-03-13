@@ -11,13 +11,14 @@ package elasticsearch
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 
 	elastic "github.com/olivere/elastic/v7"
 	"golang.org/x/exp/slices"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
 var itemsPool = sync.Pool{

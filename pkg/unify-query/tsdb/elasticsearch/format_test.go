@@ -11,7 +11,6 @@ package elasticsearch
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
@@ -209,7 +209,7 @@ func TestFormatFactory_Query(t *testing.T) {
 			body, _ := ss.Source()
 			bodyJson, _ := json.Marshal(body)
 			bodyString := string(bodyJson)
-			assert.Equal(t, c.expected, bodyString)
+			assert.JSONEq(t, c.expected, bodyString)
 
 		})
 	}
@@ -335,7 +335,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 			body, _ := ss.Source()
 			bodyJson, _ := json.Marshal(body)
 			bodyString := string(bodyJson)
-			assert.Equal(t, c.expected, bodyString)
+			assert.JSONEq(t, c.expected, bodyString)
 		})
 	}
 }
@@ -383,7 +383,7 @@ func TestFormatFactory_AggDataFormat(t *testing.T) {
 			outTs, err := json.Marshal(ts)
 			assert.NoError(t, err)
 
-			assert.Equal(t, string(outTs), c.expected)
+			assert.JSONEq(t, string(outTs), c.expected)
 		})
 	}
 }

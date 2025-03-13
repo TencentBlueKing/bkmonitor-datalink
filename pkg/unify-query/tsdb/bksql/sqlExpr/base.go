@@ -275,28 +275,57 @@ func (d *DefaultSQLExpr) buildCondition(c metadata.ConditionField) (string, erro
 
 	// 根据操作符类型生成不同的SQL表达式
 	switch c.Operator {
-	// 处理等于类操作符（=, IN）
+	// 处理等于类操作符（=, IN, LIKE）
 	case metadata.ConditionEqual, metadata.ConditionExact, metadata.ConditionContains:
-		if len(c.Value) == 1 {
-			if c.IsWildcard {
-				op = "LIKE"
-				val = fmt.Sprintf("'%%%s%%'", c.Value[0])
-			} else {
-				op = "="
-				val = fmt.Sprintf("'%s'", c.Value[0])
-			}
-		} else {
+		if len(c.Value) > 1 && !c.IsWildcard {
 			op = "IN"
 			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
-		}
-	// 处理不等于类操作符（!=, NOT IN）
-	case metadata.ConditionNotEqual, metadata.ConditionNotContains:
-		if len(c.Value) == 1 {
-			op = "!="
-			val = fmt.Sprintf("'%s'", c.Value[0])
 		} else {
+			var format string
+			if c.IsWildcard {
+				format = "'%%%s%%'"
+				op = "LIKE"
+			} else {
+				format = "'%s'"
+				op = "="
+			}
+
+			var filter []string
+			for _, v := range c.Value {
+				filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
+			}
+			key = ""
+			if len(filter) == 1 {
+				val = filter[0]
+			} else {
+				val = fmt.Sprintf("(%s)", strings.Join(filter, " OR "))
+			}
+		}
+	// 处理不等于类操作符（!=, NOT IN, NOT LIKE）
+	case metadata.ConditionNotEqual, metadata.ConditionNotContains:
+		if len(c.Value) > 1 && !c.IsWildcard {
 			op = "NOT IN"
 			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
+		} else {
+			var format string
+			if c.IsWildcard {
+				format = "'%%%s%%'"
+				op = "NOT LIKE"
+			} else {
+				format = "'%s'"
+				op = "!="
+			}
+
+			var filter []string
+			for _, v := range c.Value {
+				filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
+			}
+			key = ""
+			if len(filter) == 1 {
+				val = filter[0]
+			} else {
+				val = fmt.Sprintf("(%s)", strings.Join(filter, " AND "))
+			}
 		}
 	// 处理正则表达式匹配
 	case metadata.ConditionRegEqual:
@@ -334,5 +363,8 @@ func (d *DefaultSQLExpr) buildCondition(c metadata.ConditionField) (string, erro
 		return "", fmt.Errorf("unknown operator %s", c.Operator)
 	}
 
-	return fmt.Sprintf("%s %s %s", key, op, val), nil
+	if key != "" {
+		return fmt.Sprintf("%s %s %s", key, op, val), nil
+	}
+	return val, nil
 }

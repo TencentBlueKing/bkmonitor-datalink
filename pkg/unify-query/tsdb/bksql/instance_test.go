@@ -175,6 +175,131 @@ func TestInstance_bkSql(t *testing.T) {
 		},
 		{
 			query: &metadata.Query{
+				DB:    "132_lol_new_login_queue_login_1min",
+				Field: "login_rate",
+				AllConditions: metadata.AllConditions{
+					[]metadata.ConditionField{
+						{
+							DimensionName: "namespace",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"test", "test2"},
+							IsWildcard:    true,
+						},
+						{
+							DimensionName: "namespace",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"test", "test2"},
+						},
+						{
+							DimensionName: "namespace",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"test"},
+							IsWildcard:    true,
+						},
+						{
+							DimensionName: "namespace",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"test"},
+						},
+					},
+				},
+				BkSqlCondition: "(`namespace` NOT LIKE '%test%' AND `namespace` NOT LIKE '%test2%') AND `namespace` NOT IN ('test', 'test2') AND (`namespace` NOT LIKE '%test%') AND (`namespace` != 'test')",
+			},
+			expected: "SELECT *, `login_rate` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' AND (`namespace` NOT LIKE '%test%' AND `namespace` NOT LIKE '%test2%') AND `namespace` NOT IN ('test', 'test2') AND (`namespace` NOT LIKE '%test%') AND (`namespace` != 'test')",
+		},
+		{
+			query: &metadata.Query{
+				DB:          "132_lol_new_login_queue_login_1min",
+				Measurement: sqlExpr.Doris,
+				Field:       "login_rate",
+				AllConditions: metadata.AllConditions{
+					[]metadata.ConditionField{
+						{
+							DimensionName: "namespace",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"test", "test2"},
+							IsWildcard:    true,
+						},
+						{
+							DimensionName: "namespace",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"test", "test2"},
+						},
+						{
+							DimensionName: "namespace",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"test"},
+							IsWildcard:    true,
+						},
+						{
+							DimensionName: "namespace",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"test"},
+						},
+						{
+							DimensionName: "text",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"test", "test2"},
+							IsWildcard:    true,
+						},
+						{
+							DimensionName: "text",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"test", "test2"},
+						},
+						{
+							DimensionName: "text",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"test"},
+							IsWildcard:    true,
+						},
+						{
+							DimensionName: "text",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"test"},
+						},
+					},
+				},
+				BkSqlCondition: "(`namespace` NOT LIKE '%test%' AND `namespace` NOT LIKE '%test2%') AND `namespace` NOT IN ('test', 'test2') AND (`namespace` NOT LIKE '%test%') AND (`namespace` != 'test') AND (`text` NOT LIKE '%test%' AND `text` NOT LIKE '%test2%') AND (`text` NOT MATCH_PHRASE_PREFIX 'test' AND `text` NOT MATCH_PHRASE_PREFIX 'test2') AND (`text` NOT LIKE '%test%') AND (`text` NOT MATCH_PHRASE_PREFIX 'test')",
+			},
+			expected: "SELECT *, `login_rate` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' AND (`namespace` NOT LIKE '%test%' AND `namespace` NOT LIKE '%test2%') AND `namespace` NOT IN ('test', 'test2') AND (`namespace` NOT LIKE '%test%') AND (`namespace` != 'test') AND (`text` NOT LIKE '%test%' AND `text` NOT LIKE '%test2%') AND (`text` NOT MATCH_PHRASE_PREFIX 'test' AND `text` NOT MATCH_PHRASE_PREFIX 'test2') AND (`text` NOT LIKE '%test%') AND (`text` NOT MATCH_PHRASE_PREFIX 'test')",
+		},
+		{
+			query: &metadata.Query{
+				DB:    "132_lol_new_login_queue_login_1min",
+				Field: "login_rate",
+				AllConditions: metadata.AllConditions{
+					[]metadata.ConditionField{
+						{
+							DimensionName: "namespace",
+							Operator:      metadata.ConditionContains,
+							Value:         []string{"test", "test2"},
+							IsWildcard:    true,
+						},
+						{
+							DimensionName: "namespace",
+							Operator:      metadata.ConditionContains,
+							Value:         []string{"test", "test2"},
+						},
+						{
+							DimensionName: "namespace",
+							Operator:      metadata.ConditionContains,
+							Value:         []string{"test"},
+							IsWildcard:    true,
+						},
+						{
+							DimensionName: "namespace",
+							Operator:      metadata.ConditionContains,
+							Value:         []string{"test"},
+						},
+					},
+				},
+				BkSqlCondition: "(`namespace` LIKE '%test%' OR `namespace` LIKE '%test2%') AND `namespace` IN ('test', 'test2') AND (`namespace` LIKE '%test%') AND (`namespace` = 'test')",
+			},
+			expected: "SELECT *, `login_rate` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' AND (`namespace` LIKE '%test%' OR `namespace` LIKE '%test2%') AND `namespace` IN ('test', 'test2') AND (`namespace` LIKE '%test%') AND (`namespace` = 'test')",
+		},
+		{
+			query: &metadata.Query{
 				DB:    "132_hander_opmon_avg",
 				Field: "value",
 				Aggregates: metadata.Aggregates{
@@ -267,13 +392,17 @@ func TestInstance_bkSql(t *testing.T) {
 				c.end = end
 			}
 
-			condition, err := sqlExpr.GetSQLExpr(c.query.Measurement).WithFieldsMap(nil).ParserAllConditions(c.query.AllConditions)
+			fieldsMap := map[string]string{
+				"text": sqlExpr.DorisTypeText,
+			}
+
+			condition, err := sqlExpr.GetSQLExpr(c.query.Measurement).WithFieldsMap(fieldsMap).ParserAllConditions(c.query.AllConditions)
 			assert.Nil(t, err)
 			if err == nil {
 				assert.Equal(t, c.query.BkSqlCondition, condition)
 			}
 
-			fact := bksql.NewQueryFactory(ctx, c.query).WithRangeTime(c.start, c.end)
+			fact := bksql.NewQueryFactory(ctx, c.query).WithFieldsMap(fieldsMap).WithRangeTime(c.start, c.end)
 			sql, err := fact.SQL()
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, sql)
@@ -574,7 +703,9 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			}
 
 			// SQL生成验证
-			fact := bksql.NewQueryFactory(ctx, tc.query).WithRangeTime(start, end)
+			fact := bksql.NewQueryFactory(ctx, tc.query).WithFieldsMap(map[string]string{
+				"text": sqlExpr.DorisTypeText,
+			}).WithRangeTime(start, end)
 			generatedSQL, err := fact.SQL()
 
 			if tc.err != nil {

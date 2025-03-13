@@ -84,11 +84,14 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 		f.timeField = dtEventTimeStamp
 	}
 
-	fieldsMap := make(map[string]string)
 	f.expr = sqlExpr.GetSQLExpr(f.query.Measurement).
-		WithFieldsMap(fieldsMap).
 		WithInternalFields(f.timeField, query.Field).
 		WithEncode(metadata.GetPromDataFormat(ctx).EncodeFunc())
+	return f
+}
+
+func (f *QueryFactory) WithFieldsMap(fieldsMap map[string]string) *QueryFactory {
+	f.expr.WithFieldsMap(fieldsMap)
 	return f
 }
 

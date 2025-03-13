@@ -189,16 +189,18 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 	// 根据操作符类型生成不同的SQL表达式
 	switch c.Operator {
-	// 处理等于类操作符（=, IN）
+	// 处理等于类操作符（=, IN, LIKE）
 	case metadata.ConditionEqual, metadata.ConditionExact, metadata.ConditionContains:
-		if len(c.Value) > 1 && !c.IsWildcard {
+		if len(c.Value) > 1 && !c.IsWildcard && !d.checkMatchALL(c.DimensionName) {
 			op = "IN"
 			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
 		} else {
+			var format string
 			if c.IsWildcard {
+				format = "'%%%s%%'"
 				op = "LIKE"
-				val = fmt.Sprintf("'%%%s%%'", c.Value[0])
 			} else {
+				format = "'%s'"
 				if d.checkMatchALL(c.DimensionName) {
 					op = "MATCH_PHRASE_PREFIX"
 				} else {
@@ -208,31 +210,44 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 			var filter []string
 			for _, v := range c.Value {
-				filter = append(filter, fmt.Sprintf("%s %s %s", key, op, v))
+				filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
 			}
-			val = fmt.Sprintf("(%s)", strings.Join(filter, " OR "))
-		}
-
-		if len(c.Value) == 1 {
-			if c.IsWildcard {
-				op = "LIKE"
-				val = fmt.Sprintf("'%%%s%%'", c.Value[0])
+			key = ""
+			if len(filter) == 1 {
+				val = filter[0]
 			} else {
-				op = "="
-				val = fmt.Sprintf("'%s'", c.Value[0])
+				val = fmt.Sprintf("(%s)", strings.Join(filter, " OR "))
 			}
-		} else {
-			op = "IN"
-			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
 		}
-	// 处理不等于类操作符（!=, NOT IN）
+	// 处理不等于类操作符（!=, NOT IN, NOT LIKE）
 	case metadata.ConditionNotEqual, metadata.ConditionNotContains:
-		if len(c.Value) == 1 {
-			op = "!="
-			val = fmt.Sprintf("'%s'", c.Value[0])
-		} else {
+		if len(c.Value) > 1 && !c.IsWildcard && !d.checkMatchALL(c.DimensionName) {
 			op = "NOT IN"
 			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
+		} else {
+			var format string
+			if c.IsWildcard {
+				format = "'%%%s%%'"
+				op = "NOT LIKE"
+			} else {
+				format = "'%s'"
+				if d.checkMatchALL(c.DimensionName) {
+					op = "NOT MATCH_PHRASE_PREFIX"
+				} else {
+					op = "!="
+				}
+			}
+
+			var filter []string
+			for _, v := range c.Value {
+				filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
+			}
+			key = ""
+			if len(filter) == 1 {
+				val = filter[0]
+			} else {
+				val = fmt.Sprintf("(%s)", strings.Join(filter, " AND "))
+			}
 		}
 	// 处理正则表达式匹配
 	case metadata.ConditionRegEqual:
@@ -270,7 +285,10 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 		return "", fmt.Errorf("unknown operator %s", c.Operator)
 	}
 
-	return fmt.Sprintf("%s %s %s", key, op, val), nil
+	if key != "" {
+		return fmt.Sprintf("%s %s %s", key, op, val), nil
+	}
+	return val, nil
 }
 
 func (d *DorisSQLExpr) checkMatchALL(k string) bool {
@@ -339,7 +357,7 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		field, _ := d.dimTransform(c.Field)
 
 		if d.checkMatchALL(c.Field) {
-			return fmt.Sprintf("%s MATCH_PHRASE_PREFIX '%%%s%%'", field, c.Value), nil
+			return fmt.Sprintf("%s MATCH_PHRASE_PREFIX '%s'", field, c.Value), nil
 		}
 
 		return fmt.Sprintf("%s = '%s'", field, c.Value), nil

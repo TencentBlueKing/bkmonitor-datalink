@@ -10,7 +10,6 @@
 package es_test
 
 import (
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -22,6 +21,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/es"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/es/mocktest"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/es"
 )

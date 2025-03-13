@@ -11,12 +11,12 @@ package consul
 
 import (
 	"context"
-	"encoding/json"
 	"regexp"
 	"sync"
 
 	"github.com/hashicorp/consul/api"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 

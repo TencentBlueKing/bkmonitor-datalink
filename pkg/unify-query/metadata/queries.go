@@ -11,9 +11,10 @@ package metadata
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/prometheus/prometheus/model/labels"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
 // SetQueries 写入查询扩展，因为有多个查询所以除了常量前缀之外，还需要指定 k（该值一般为指标名，用于对应）

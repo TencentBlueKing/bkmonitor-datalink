@@ -507,7 +507,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.Unix(1741334700, 0),
 			end:      time.Unix(1741335000, 0),
-			expected: "SELECT CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_type`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, __shard_key__ * 60 AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` < 1741335000000 AND `thedate` = '20250307' AND CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) = 'bkm-daemonset-worker' AND `bk_host_id` = '267730' GROUP BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING), CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING), __shard_key__ ORDER BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
+			expected: "SELECT CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_type`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, CAST(__shard_key__ / 1000 / 1 AS INT) * 1 * 60 * 1000 AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` < 1741335000000 AND `thedate` = '20250307' AND CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) = 'bkm-daemonset-worker' AND `bk_host_id` = '267730' GROUP BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING), CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING), _timestamp_ ORDER BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
 		},
 		// 测试用例11: doris 处理 object 字段 + 时间聚合 5m
 		{
@@ -531,7 +531,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.Unix(1741334700, 0),
 			end:      time.Unix(1741335000, 0),
-			expected: "",
+			expected: "SELECT CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, CAST(__shard_key__ / 1000 / 5 AS INT) * 5 * 60 * 1000 AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` < 1741335000000 AND `thedate` = '20250307' GROUP BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING), _timestamp_ ORDER BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
 		},
 		// 测试用例12: doris 处理 object 字段 + 时间聚合 15s
 		{
@@ -555,7 +555,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.Unix(1741334700, 0),
 			end:      time.Unix(1741335000, 0),
-			expected: "",
+			expected: "SELECT CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, CAST(dtEventTimeStamp / 1000 / 15 AS INT) * 15 * 1000 AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` < 1741335000000 AND `thedate` = '20250307' GROUP BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING), _timestamp_ ORDER BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
 		},
 	}
 

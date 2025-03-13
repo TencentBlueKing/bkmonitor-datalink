@@ -92,9 +92,16 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, Value))
 
 		if agg.Window > 0 {
-			groupByFields = append(groupByFields, ShardKey)
-			selectFields = append(selectFields, fmt.Sprintf("%s * 60 AS `%s`", ShardKey, TimeStamp))
+			// 如果是按照分钟聚合，则使用 __shard_key__ 作为时间字段
+			var timeField string
+			if int64(agg.Window.Seconds())%60 == 0 {
+				timeField = fmt.Sprintf(`CAST(%s / 1000 / %.f AS INT) * %.f * 60 * 1000`, ShardKey, agg.Window.Minutes(), agg.Window.Minutes())
+			} else {
+				timeField = fmt.Sprintf(`CAST(%s / 1000 / %.f AS INT) * %.f * 1000`, d.timeField, agg.Window.Seconds(), agg.Window.Seconds())
+			}
 
+			selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", timeField, TimeStamp))
+			groupByFields = append(groupByFields, TimeStamp)
 			orderByFields = append(orderByFields, fmt.Sprintf("`%s` ASC", TimeStamp))
 		}
 	}

@@ -71,7 +71,7 @@ func (s *Service) Reload(ctx context.Context) {
 	out, err := redis.Ping(s.ctx)
 	if err != nil {
 		log.Errorf(context.TODO(), "redis ping errors: %s", err.Error())
-		panic(err)
+		return
 	}
 
 	log.Warnf(context.TODO(), "redis service reloaded or start success, with %s", out)

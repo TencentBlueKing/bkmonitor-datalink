@@ -296,7 +296,6 @@ func MockSpaceRouter(ctx context.Context) {
 func setSpaceTsDbMockData(ctx context.Context, bkAppSpace ir.BkAppSpace, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo, fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
 	mockRedisOnce.Do(func() {
 		setRedisClient(ctx)
-
 	})
 
 	mockPath := "mock" + time.Now().String()

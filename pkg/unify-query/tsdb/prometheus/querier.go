@@ -77,21 +77,22 @@ func (q *Querier) getQueryList(referenceName string) []*Query {
 	ctx, span := trace.NewSpan(ctx, "querier-get-query-list")
 	defer span.End(&err)
 
-	queries := metadata.GetQueryReference(ctx)
-	if queryMetric, ok := queries[referenceName]; ok {
-		queryList = make([]*Query, 0, len(queryMetric.QueryList))
-		for _, qry := range queryMetric.QueryList {
-			instance := GetTsDbInstance(ctx, qry)
-			if instance != nil {
-				queryList = append(queryList, &Query{
-					instance: instance,
-					qry:      qry,
-				})
-			} else {
-				log.Warnf(ctx, "not instance in %s", qry.StorageID)
-			}
+	queryReference := metadata.GetQueryReference(ctx)
+
+	queryList = make([]*Query, 0)
+	queryReference.Range(referenceName, func(qry *metadata.Query) {
+		instance := GetTsDbInstance(ctx, qry)
+		if instance == nil {
+			log.Warnf(ctx, "not instance in %s", qry.StorageID)
+			return
 		}
-	}
+
+		queryList = append(queryList, &Query{
+			instance: instance,
+			qry:      qry,
+		})
+	})
+
 	return queryList
 }
 
@@ -124,7 +125,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				sets = append(sets, s)
 			}
 		}
-		set = storage.NewMergeSeriesSet(sets, storage.ChainedSeriesMerge)
+		set = storage.NewMergeSeriesSet(sets, NewMergeSeriesSetWithFuncAndSort(hints.Func))
 	}()
 
 	for _, m := range matchers {

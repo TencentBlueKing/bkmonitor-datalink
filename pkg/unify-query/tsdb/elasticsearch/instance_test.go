@@ -11,7 +11,6 @@ package elasticsearch
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
@@ -21,6 +20,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
@@ -444,7 +444,7 @@ func TestInstance_queryReference(t *testing.T) {
 					return
 				}
 
-				assert.Equal(t, c.expected, timeSeries.String())
+				assert.JSONEq(t, c.expected, timeSeries.String())
 			} else {
 				var (
 					wg sync.WaitGroup
@@ -469,7 +469,7 @@ func TestInstance_queryReference(t *testing.T) {
 					assert.Equal(t, c.err, err)
 				} else {
 					res, _ := json.Marshal(list)
-					assert.Equal(t, c.expected, string(res))
+					assert.JSONEq(t, c.expected, string(res))
 				}
 
 			}

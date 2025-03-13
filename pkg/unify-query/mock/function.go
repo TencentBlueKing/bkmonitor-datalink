@@ -10,7 +10,6 @@
 package mock
 
 import (
-	"encoding/json"
 	"sort"
 	"strings"
 
@@ -18,6 +17,8 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
 type TimeSeriesList []prompb.TimeSeries

@@ -11,7 +11,6 @@ package mock
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +18,8 @@ import (
 	"sync"
 
 	"github.com/jarcoal/httpmock"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
 type VmRequest struct {

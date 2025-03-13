@@ -11,7 +11,6 @@ package http
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
@@ -188,19 +188,17 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 		r.Step("query instance", consul.VictoriaMetricsStorageType)
 		r.Step("query vmExpand", vmExpand)
 	} else {
-		for _, qm := range qr {
-			for _, qry := range qm.QueryList {
-				instance := prometheus.GetTsDbInstance(ctx, qry)
-				if instance == nil {
-					r.Error("prometheus.GetInstance", fmt.Errorf("instance is null, with storageID %s", qry.StorageID))
-					continue
-				}
-
-				r.Step("instance id", qry.StorageID)
-				r.Step("instance type", instance.InstanceType())
-				r.Step("query struct", qry)
+		qr.Range("", func(qry *metadata.Query) {
+			instance := prometheus.GetTsDbInstance(ctx, qry)
+			if instance == nil {
+				r.Error("prometheus.GetInstance", fmt.Errorf("instance is null, with storageID %s", qry.StorageID))
+				return
 			}
-		}
+
+			r.Step("instance id", qry.StorageID)
+			r.Step("instance type", instance.InstanceType())
+			r.Step("query struct", qry)
+		})
 	}
 
 	status := metadata.GetStatus(ctx)

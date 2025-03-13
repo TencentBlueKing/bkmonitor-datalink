@@ -11,12 +11,12 @@ package elasticsearch
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
@@ -83,7 +83,7 @@ func TestQsToDsl(t *testing.T) {
 					body, _ := query.Source()
 					bodyJson, _ := json.Marshal(body)
 					bodyString := string(bodyJson)
-					assert.Equal(t, c.expected, bodyString)
+					assert.JSONEq(t, c.expected, bodyString)
 				}
 			} else {
 				assert.Equal(t, c.err, err)

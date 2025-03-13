@@ -276,9 +276,7 @@ func TestInstance_bkSql(t *testing.T) {
 			fact := bksql.NewQueryFactory(ctx, c.query).WithRangeTime(c.start, c.end)
 			sql, err := fact.SQL()
 			assert.Nil(t, err)
-			if err == nil {
-				assert.Equal(t, c.expected, sql)
-			}
+			assert.Equal(t, c.expected, sql)
 		})
 	}
 }

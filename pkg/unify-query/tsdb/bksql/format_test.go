@@ -114,6 +114,28 @@ func TestNewSqlFactory(t *testing.T) {
 			},
 			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000))) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1733607400000 AND `dtEventTimeStamp` < 1733939375000 AND `thedate` >= '20241208' AND `thedate` <= '20241212' AND (gseIndex > 0) GROUP BY `ip`, (`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000)) ORDER BY `_timestamp_` ASC",
 		},
+		"count-with-count-promql-3": {
+			// 2024-12-07 21:36:40	UTC
+			// 2024-12-08 05:36:40  Asia/ShangHai
+			start: time.UnixMilli(1741276799999),
+			// 2024-12-11 17:49:35 	UTC
+			// 2024-12-12 01:49:35  Asia/ShangHai
+			end: time.UnixMilli(1741967999999),
+			query: &metadata.Query{
+				DB:          "100680_alpha_server_perf_data_tglog",
+				Measurement: "",
+				Field:       "sum_Sub8MsFrames",
+				Aggregates: metadata.Aggregates{
+					{
+						Name:     "count",
+						Window:   time.Hour * 24,
+						TimeZone: "Asia/Shanghai",
+					},
+				},
+				BkSqlCondition: "`deployment` = 'alpha1-gp-3' and `datacenter` = 'qcloud-tj1'",
+			},
+			expected: "",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())

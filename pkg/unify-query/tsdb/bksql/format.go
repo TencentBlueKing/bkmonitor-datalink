@@ -115,7 +115,17 @@ func (f *QueryFactory) ParserQuery() (err error) {
 			}
 			f.selects = append(f.selects, fmt.Sprintf("%s(`%s`) AS `%s`", strings.ToUpper(agg.Name), f.query.Field, value))
 			if agg.Window > 0 {
-				timeField := fmt.Sprintf("(`%s` - (`%s` %% %d))", f.timeField, f.timeField, agg.Window.Milliseconds())
+				// 时间聚合函数兼容时区
+				loc, locErr := time.LoadLocation(agg.TimeZone)
+				if locErr != nil {
+					loc = time.UTC
+				}
+				// 获取时区偏移量
+				_, offset := time.Now().In(loc).Zone()
+				offsetMillis := offset * 1000
+
+				timeField := fmt.Sprintf("(`%s` - ((`%s` - %d) %% %d - %d))", f.timeField, f.timeField, offsetMillis, agg.Window.Milliseconds(), offsetMillis)
+
 				f.groups = append(f.groups, timeField)
 				f.selects = append(f.selects, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
 				f.orders[FieldTime] = true

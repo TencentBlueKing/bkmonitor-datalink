@@ -294,12 +294,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs) (*PromData, error) {
 	var (
-		res any
-		err error
-
-		instance tsdb.Instance
-		stmt     string
-
+		res  any
+		err  error
 		resp = NewPromData(query.ResultColumns)
 	)
 
@@ -341,12 +337,23 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	metadata.GetQueryParams(ctx).SetTime(start, end, unit).SetIsReference(true)
 	metadata.SetQueryReference(ctx, queryRef)
 
-	instance, stmt, err = queryTsToInstanceAndStmt(ctx, query)
+	var lookBackDelta time.Duration
+	if query.LookBackDelta != "" {
+		lookBackDelta, err = time.ParseDuration(query.LookBackDelta)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	instance := prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
+		QueryMaxRouting: QueryMaxRouting,
+		Timeout:         SingleflightTimeout,
+	}, lookBackDelta, QueryMaxRouting)
 
 	if query.Instant {
-		res, err = instance.DirectQuery(ctx, stmt, start)
+		res, err = instance.DirectQuery(ctx, query.MetricMerge, start)
 	} else {
-		res, err = instance.DirectQueryRange(ctx, stmt, start, end, time.Duration(step))
+		res, err = instance.DirectQueryRange(ctx, query.MetricMerge, start, end, time.Duration(step))
 	}
 	if err != nil {
 		return nil, err

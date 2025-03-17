@@ -12,6 +12,7 @@ package sqlExpr
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -92,6 +93,15 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, Value))
 
 		if agg.Window > 0 {
+			// 时间聚合函数兼容时区
+			loc, locErr := time.LoadLocation(agg.TimeZone)
+			if locErr != nil {
+				loc = time.UTC
+			}
+			// 获取时区偏移量
+			_, offset := time.Now().In(loc).Zone()
+			fmt.Println(offset)
+
 			// 如果是按照分钟聚合，则使用 __shard_key__ 作为时间字段
 			var timeField string
 			if int64(agg.Window.Seconds())%60 == 0 {

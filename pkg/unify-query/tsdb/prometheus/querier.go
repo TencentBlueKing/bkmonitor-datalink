@@ -164,16 +164,6 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 					// 获取因转毫秒丢失的时间精度
 					startTime = function.MsIntMergeNs(hints.Start, qp.Start)
 					endTime = function.MsIntMergeNs(hints.End, qp.End)
-
-					if len(query.qry.Aggregates) == 1 {
-						agg := query.qry.Aggregates[0]
-
-						// 如果使用时间聚合计算，是否对齐开始时间
-						if agg.Window.Milliseconds() > 0 {
-							ns := intMathFloor(startTime.UnixNano(), agg.Window.Nanoseconds()) * agg.Window.Nanoseconds()
-							startTime = time.Unix(0, ns)
-						}
-					}
 				}
 
 				setCh <- query.instance.QuerySeriesSet(ctx, query.qry, startTime, endTime)

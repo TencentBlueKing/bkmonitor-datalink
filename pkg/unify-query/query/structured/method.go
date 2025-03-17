@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -54,9 +55,9 @@ func (a AggregateMethodList) ToQry(timezone string) metadata.Aggregates {
 		}
 
 		if aggr.Window != "" {
-			window, err := time.ParseDuration(string(aggr.Window))
+			window, err := model.ParseDuration(string(aggr.Window))
 			if err == nil {
-				agg.Window = window
+				agg.Window = time.Duration(window)
 			}
 		}
 		aggs = append(aggs, agg)

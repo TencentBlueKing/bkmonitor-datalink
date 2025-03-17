@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -165,7 +166,16 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, Value))
 
 		if agg.Window > 0 {
-			timeField := fmt.Sprintf("(`%s` - (`%s` %% %d))", d.timeField, d.timeField, agg.Window.Milliseconds())
+			// 时间聚合函数兼容时区
+			loc, locErr := time.LoadLocation(agg.TimeZone)
+			if locErr != nil {
+				loc = time.UTC
+			}
+			// 获取时区偏移量
+			_, offset := time.Now().In(loc).Zone()
+			offsetMillis := offset * 1000
+
+			timeField := fmt.Sprintf("(`%s` - ((`%s` - %d) %% %d - %d))", d.timeField, d.timeField, offsetMillis, agg.Window.Milliseconds(), offsetMillis)
 
 			groupByFields = append(groupByFields, timeField)
 			selectFields = append(selectFields, fmt.Sprintf("MAX(%s) AS `%s`", timeField, TimeStamp))

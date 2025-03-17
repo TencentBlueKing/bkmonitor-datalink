@@ -359,6 +359,8 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	// 例如：查询最近 10 分钟聚合 1 天的数据，返回的数据时间则为 0 点，并不包含在最近 10 分钟内，计算引擎中会丢弃
 	newStart := start.Add(maxWindow * -1)
 
+	log.Infof(ctx, "query-reference reload start time oldStart: %s, newStart: %s, window: %s", start, newStart, maxWindow)
+
 	if query.Instant {
 		res, err = instance.DirectQuery(ctx, query.MetricMerge, newStart)
 	} else {

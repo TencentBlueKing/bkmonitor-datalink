@@ -183,9 +183,15 @@ func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClus
 	if err != nil {
 		return nil, err
 	}
+
+	agg, err := qry.AggregateMethodList.ToQry(qry.Timezone)
+	if err != nil {
+		return nil, err
+	}
+
 	queryCM := &metadata.QueryClusterMetric{
 		MetricName: qry.FieldName,
-		Aggregates: qry.AggregateMethodList.ToQry(qry.Timezone),
+		Aggregates: agg,
 		Conditions: queryConditions,
 	}
 	if qry.TimeAggregation.Function != "" {
@@ -386,7 +392,7 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 
 	// 非时间聚合函数使用透传的方式
 	if q.IsReference {
-		aggs = q.AggregateMethodList.ToQry(q.Timezone)
+		aggs, err = q.AggregateMethodList.ToQry(q.Timezone)
 		return
 	}
 

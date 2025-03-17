@@ -1284,3 +1284,84 @@ func TestAggregations(t *testing.T) {
 		})
 	}
 }
+
+func TestGetMaxWindow(t *testing.T) {
+	tests := []struct {
+		name        string
+		queryList   []*Query
+		expected    time.Duration
+		expectError bool
+	}{
+		{
+			name: "Normal case with multiple windows",
+			queryList: []*Query{
+				{
+					AggregateMethodList: []AggregateMethod{
+						{Window: "5m"},
+						{Window: "10m"},
+					},
+				},
+				{
+					AggregateMethodList: []AggregateMethod{
+						{Window: "15m"},
+						{Window: "20m"},
+					},
+				},
+			},
+			expected:    20 * time.Minute,
+			expectError: false,
+		},
+		{
+			name:        "Empty QueryList",
+			queryList:   []*Query{},
+			expected:    0,
+			expectError: false,
+		},
+		{
+			name: "Invalid Window",
+			queryList: []*Query{
+				{
+					AggregateMethodList: []AggregateMethod{
+						{Window: "invalid"},
+					},
+				},
+			},
+			expected:    0,
+			expectError: true,
+		},
+		{
+			name: "Multiple Windows with one invalid",
+			queryList: []*Query{
+				{
+					AggregateMethodList: []AggregateMethod{
+						{Window: "5m"},
+						{Window: "invalid"},
+					},
+				},
+				{
+					AggregateMethodList: []AggregateMethod{
+						{Window: "15m"},
+						{Window: "20m"},
+					},
+				},
+			},
+			expected:    0,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := &QueryTs{
+				QueryList: tt.queryList,
+			}
+			result, err := q.GetMaxWindow()
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}

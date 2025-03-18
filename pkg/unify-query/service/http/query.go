@@ -350,16 +350,10 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 		Timeout:         SingleflightTimeout,
 	}, lookBackDelta, QueryMaxRouting)
 
-	maxWindow, err := query.GetMaxWindow()
-	if err != nil {
-		return nil, err
-	}
+	// 根据 step 重新对齐开始时间，因为 prometheus engine 中时间如果不能覆盖源数据，则会丢弃，而源数据是通过聚合而来
+	_, newStart := function.TimeOffset(start, query.Timezone, time.Duration(step))
 
-	// 根据最大的聚合周期重新对齐开始时间，因为 prometheus engine 中时间如果不能覆盖源数据，则会丢弃，而源数据是通过聚合而来
-	// 例如：查询最近 10 分钟聚合 1 天的数据，返回的数据时间则为 0 点，并不包含在最近 10 分钟内，计算引擎中会丢弃
-	newStart := start.Add(maxWindow * -1)
-
-	log.Infof(ctx, "query-reference reload start time oldStart: %s, newStart: %s, window: %s", start, newStart, maxWindow)
+	log.Infof(ctx, "query-reference reload start time oldStart: %s, newStart: %s, step: %s", start, newStart, step)
 
 	if query.Instant {
 		res, err = instance.DirectQuery(ctx, query.MetricMerge, newStart)

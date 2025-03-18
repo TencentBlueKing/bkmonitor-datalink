@@ -12,7 +12,6 @@ package structured
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -70,22 +69,6 @@ type QueryTs struct {
 	HighLight metadata.HighLight `json:"highlight,omitempty"`
 }
 
-// timeOffset 根据 timezone 偏移对齐
-func timeOffset(t time.Time, timezone string, step time.Duration) (string, time.Time, error) {
-	loc, err := time.LoadLocation(timezone)
-	if err != nil {
-		loc = time.UTC
-	}
-	t0 := t.In(loc)
-	_, offset := t0.Zone()
-	outTimezone := t0.Location().String()
-	offsetDuration := time.Duration(offset) * time.Second
-	t1 := t.Add(offsetDuration)
-	t2 := time.Unix(int64(math.Floor(float64(t1.Unix())/step.Seconds())*step.Seconds()), 0)
-	t3 := t2.Add(offsetDuration * -1).In(loc)
-	return outTimezone, t3, nil
-}
-
 func ToTime(start, end time.Time, stepStr, timezone string) (time.Time, time.Time, time.Duration, string, error) {
 	var (
 		interval time.Duration
@@ -103,8 +86,8 @@ func ToTime(start, end time.Time, stepStr, timezone string) (time.Time, time.Tim
 	}
 
 	// 根据 timezone 来对齐开始时间
-	newTimezone, newStart, nErr := timeOffset(start, timezone, interval)
-	return newStart, end, interval, newTimezone, nErr
+	newTimezone, newStart := function.TimeOffset(start, timezone, interval)
+	return newStart, end, interval, newTimezone, nil
 }
 
 func (q *QueryTs) GetMaxWindow() (time.Duration, error) {

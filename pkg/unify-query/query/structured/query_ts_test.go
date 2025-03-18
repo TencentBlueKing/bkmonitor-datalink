@@ -11,7 +11,6 @@ package structured
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -1190,59 +1189,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 
 			promql, _ := tc.ts.ToPromExpr(ctx, promExprOpt)
 			assert.Equal(t, tc.promql, promql.String())
-		})
-	}
-}
-
-func TestTimeOffset(t *testing.T) {
-	for name, c := range map[string]struct {
-		t      time.Time
-		tz     string
-		step   time.Duration
-		actual time.Time
-	}{
-		"test align": {
-			t:    time.Unix(1701306000, 0), // 2023-11-30 09:00:00 +0800 ~ 2024-05-30 09:00:00 +0800
-			tz:   "Asia/Shanghai",
-			step: time.Hour * 3,
-		},
-		"test align -1": {
-			t:    time.Unix(1703732400, 0), // 2023-11-30 09:00:00 +0800 ~ 2024-05-30 09:00:00 +0800
-			tz:   "Asia/Shanghai",
-			step: time.Hour * 3,
-		},
-		"test align - 2": {
-			t:    time.Unix(1730082578, 0), // 2024-10-28 10:29:38 +0800 ~ 2024-10-28 10:12:00 +0800
-			tz:   "Asia/Shanghai",
-			step: time.Minute * 18,
-		},
-		"test align - 3": {
-			t:    time.Unix(1741190400, 0), // 2024-10-28 10:29:38 +0800 ~ 2024-10-28 10:12:00 +0800
-			tz:   "Asia/Shanghai",
-			step: time.Hour * 24,
-		},
-		"test alian - 4": {
-			t:      time.UnixMilli(1741336672161),
-			tz:     "Asia/Shanghai",
-			step:   time.Hour * 24,
-			actual: time.UnixMilli(1741276800000),
-		},
-		"test alian - 5": {
-			t:      time.UnixMilli(1741336672161),
-			tz:     "UTC",
-			step:   time.Hour * 24,
-			actual: time.UnixMilli(1741305600000),
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			tz1, t1, err := timeOffset(c.t, c.tz, c.step)
-
-			assert.Nil(t, err)
-			fmt.Println(c.tz, "=>", tz1)
-			fmt.Println(c.t.String(), "=>", t1.String())
-			fmt.Println(c.t, "=>", t1.Unix())
-
-			assert.Equal(t, c.actual.UnixMilli(), t1.UnixMilli())
 		})
 	}
 }

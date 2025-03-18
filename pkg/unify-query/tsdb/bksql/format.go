@@ -122,7 +122,11 @@ func (f *QueryFactory) ParserQuery() (err error) {
 				}
 				// 获取时区偏移量
 				_, offset := time.Now().In(loc).Zone()
-				offsetMillis := offset * 1000
+				var offsetMillis int
+				// 只有按天聚合才需要偏移
+				if agg.Window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
+					offsetMillis = offset * 1000
+				}
 
 				timeField := fmt.Sprintf("(`%s` - ((`%s` - %d) %% %d - %d))", f.timeField, f.timeField, offsetMillis, agg.Window.Milliseconds(), offsetMillis)
 

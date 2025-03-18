@@ -18,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 func TestNewSqlFactory(t *testing.T) {
@@ -151,6 +152,96 @@ func TestNewSqlFactory(t *testing.T) {
 			sql, err := fact.SQL()
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, sql)
+		})
+	}
+}
+
+func TestWindowWithTimezone(t *testing.T) {
+	mock.Init()
+
+	testCases := []struct {
+		name     string
+		start    time.Time
+		timezone string
+		window   time.Duration
+
+		expected time.Time
+	}{
+		{
+			name:     "test window 1m - 1",
+			start:    time.UnixMilli(1742267704000),
+			timezone: "Asia/ShangHai",
+			window:   time.Minute,
+
+			expected: time.UnixMilli(1742267700000),
+		},
+		{
+			name:   "test window 1d +8 - 1",
+			start:  time.UnixMilli(1742267704000),
+			window: time.Hour * 24,
+
+			expected: time.UnixMilli(1742256000000),
+		},
+		{
+			name:     "test window 1d +8 - 1",
+			start:    time.UnixMilli(1742267704000),
+			timezone: "Asia/ShangHai",
+			window:   time.Hour * 24,
+
+			expected: time.UnixMilli(1742227200000),
+		},
+		{
+			name:     "test window 26h +8 - 1",
+			start:    time.UnixMilli(1742267704000),
+			timezone: "Asia/ShangHai",
+			window:   time.Hour*24 + time.Hour*2,
+
+			expected: time.UnixMilli(1742176800000),
+		},
+		{
+			name:     "test window 3d +8 - 1",
+			start:    time.UnixMilli(1742267704000),
+			timezone: "Asia/ShangHai",
+			window:   time.Hour * 24 * 3,
+
+			expected: time.UnixMilli(1742140800000),
+		},
+		{
+			name:     "test window 1m +8 - 2",
+			start:    time.UnixMilli(1742266099000),
+			timezone: "Asia/ShangHai",
+			window:   time.Minute,
+
+			expected: time.UnixMilli(1742266080000),
+		},
+		{
+			name:     "test window 6h +8 - 2",
+			start:    time.UnixMilli(1742266099000),
+			timezone: "Asia/ShangHai",
+			window:   time.Hour * 6,
+
+			expected: time.UnixMilli(1742256000000),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cTime := tc.start.UnixMilli()
+			window := tc.window.Milliseconds()
+
+			var offset int64
+			loc, _ := time.LoadLocation(tc.timezone)
+			if window%(time.Hour*24).Milliseconds() == 0 {
+				_, z := time.Now().In(loc).Zone()
+				offset = int64(z) * 1000
+			}
+
+			nTime := cTime - ((cTime-offset)%window - offset)
+
+			actual := time.UnixMilli(nTime)
+			assert.Equal(t, tc.expected.UnixMilli(), actual.UnixMilli())
+			log.Infof(context.TODO(), "%d - ((%d - %d) %% %d - %d", nTime, cTime, offset, window, offset)
+			log.Infof(context.TODO(), "%s => %s", tc.start.In(loc).String(), actual.In(loc).String())
 		})
 	}
 }

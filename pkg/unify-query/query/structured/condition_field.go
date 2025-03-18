@@ -120,7 +120,7 @@ func (c *ConditionField) BkSql() *ConditionField {
 	// bksql 查询遇到单引号需要转义
 	for k, v := range c.Value {
 		if strings.Contains(v, "'") {
-			v = strings.ReplaceAll(v, "'", "\\'")
+			v = strings.ReplaceAll(v, "'", "''")
 			c.Value[k] = v
 		}
 	}

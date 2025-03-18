@@ -214,6 +214,20 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 			sql:    "`p1` = '{\"moduleType\":3}'",
 			vm:     `p1="{\"moduleType\":3}", result_table_id="table_id"`,
 		},
+		{
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "say",
+						Operator:      ConditionContains,
+						Value:         []string{`What's this?`},
+					},
+				},
+			},
+			result: []int{1},
+			sql:    "`say` = 'What\\'s this?'",
+			vm:     `say="What's this?", result_table_id="table_id"`,
+		},
 	}
 
 	for idx, testCase := range testCases {

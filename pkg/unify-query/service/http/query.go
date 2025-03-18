@@ -20,7 +20,6 @@ import (
 
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/pkg/errors"
-	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -328,11 +327,6 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 		return nil, err
 	}
 
-	step, err := model.ParseDuration(query.Step)
-	if err != nil {
-		return nil, err
-	}
-
 	// es 需要使用自己的查询时间范围
 	metadata.GetQueryParams(ctx).SetTime(start, end, unit).SetIsReference(true)
 	metadata.SetQueryReference(ctx, queryRef)
@@ -351,14 +345,22 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	}, lookBackDelta, QueryMaxRouting)
 
 	// 根据 step 重新对齐开始时间，因为 prometheus engine 中时间如果不能覆盖源数据，则会丢弃，而源数据是通过聚合而来
-	_, newStart := function.TimeOffset(start, query.Timezone, time.Duration(step))
+	unit, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		return nil, err
+	}
+	start, end, step, _, err := structured.ToTime(startTime, endTime, query.Step, query.Timezone)
+	if err != nil {
+		return nil, err
+	}
 
-	log.Infof(ctx, "query-reference reload start time oldStart: %s, newStart: %s, step: %s", start, newStart, step)
+	log.Infof(ctx, "query-reference reload start time oldStart: %s, newStart: %s, step: %s", start, start, step)
 
 	if query.Instant {
-		res, err = instance.DirectQuery(ctx, query.MetricMerge, newStart)
+		res, err = instance.DirectQuery(ctx, query.MetricMerge, start)
 	} else {
-		res, err = instance.DirectQueryRange(ctx, query.MetricMerge, newStart, end, time.Duration(step))
+		res, err = instance.DirectQueryRange(ctx, query.MetricMerge, start, end, step)
 	}
 	if err != nil {
 		return nil, err

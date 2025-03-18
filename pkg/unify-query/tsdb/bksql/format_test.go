@@ -18,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 func TestNewSqlFactory(t *testing.T) {
@@ -114,6 +115,28 @@ func TestNewSqlFactory(t *testing.T) {
 			},
 			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000))) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1733607400000 AND `dtEventTimeStamp` < 1733939375000 AND `thedate` >= '20241208' AND `thedate` <= '20241212' AND (gseIndex > 0) GROUP BY `ip`, (`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000)) ORDER BY `_timestamp_` ASC",
 		},
+		"count-with-count-promql-3": {
+			// 2024-12-07 21:36:40	UTC
+			// 2024-12-08 05:36:40  Asia/ShangHai
+			start: time.UnixMilli(1741276799999),
+			// 2024-12-11 17:49:35 	UTC
+			// 2024-12-12 01:49:35  Asia/ShangHai
+			end: time.UnixMilli(1741967999999),
+			query: &metadata.Query{
+				DB:          "100680_alpha_server_perf_data_tglog",
+				Measurement: "",
+				Field:       "sum_Sub8MsFrames",
+				Aggregates: metadata.Aggregates{
+					{
+						Name:     "count",
+						Window:   time.Hour * 24,
+						TimeZone: "Asia/Shanghai",
+					},
+				},
+				BkSqlCondition: "`deployment` = 'alpha1-gp-3' and `datacenter` = 'qcloud-tj1'",
+			},
+			expected: "",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
@@ -129,6 +152,96 @@ func TestNewSqlFactory(t *testing.T) {
 			sql, err := fact.SQL()
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, sql)
+		})
+	}
+}
+
+func TestWindowWithTimezone(t *testing.T) {
+	mock.Init()
+
+	testCases := []struct {
+		name     string
+		start    time.Time
+		timezone string
+		window   time.Duration
+
+		expected time.Time
+	}{
+		{
+			name:     "test window 1m - 1",
+			start:    time.UnixMilli(1742267704000),
+			timezone: "Asia/ShangHai",
+			window:   time.Minute,
+
+			expected: time.UnixMilli(1742267700000),
+		},
+		{
+			name:   "test window 1d +8 - 1",
+			start:  time.UnixMilli(1742267704000),
+			window: time.Hour * 24,
+
+			expected: time.UnixMilli(1742256000000),
+		},
+		{
+			name:     "test window 1d +8 - 1",
+			start:    time.UnixMilli(1742267704000),
+			timezone: "Asia/ShangHai",
+			window:   time.Hour * 24,
+
+			expected: time.UnixMilli(1742227200000),
+		},
+		{
+			name:     "test window 26h +8 - 1",
+			start:    time.UnixMilli(1742267704000),
+			timezone: "Asia/ShangHai",
+			window:   time.Hour*24 + time.Hour*2,
+
+			expected: time.UnixMilli(1742176800000),
+		},
+		{
+			name:     "test window 3d +8 - 1",
+			start:    time.UnixMilli(1742267704000),
+			timezone: "Asia/ShangHai",
+			window:   time.Hour * 24 * 3,
+
+			expected: time.UnixMilli(1742140800000),
+		},
+		{
+			name:     "test window 1m +8 - 2",
+			start:    time.UnixMilli(1742266099000),
+			timezone: "Asia/ShangHai",
+			window:   time.Minute,
+
+			expected: time.UnixMilli(1742266080000),
+		},
+		{
+			name:     "test window 6h +8 - 2",
+			start:    time.UnixMilli(1742266099000),
+			timezone: "Asia/ShangHai",
+			window:   time.Hour * 6,
+
+			expected: time.UnixMilli(1742256000000),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cTime := tc.start.UnixMilli()
+			window := tc.window.Milliseconds()
+
+			var offset int64
+			loc, _ := time.LoadLocation(tc.timezone)
+			if window%(time.Hour*24).Milliseconds() == 0 {
+				_, z := time.Now().In(loc).Zone()
+				offset = int64(z) * 1000
+			}
+
+			nTime := cTime - ((cTime-offset)%window - offset)
+
+			actual := time.UnixMilli(nTime)
+			assert.Equal(t, tc.expected.UnixMilli(), actual.UnixMilli())
+			log.Infof(context.TODO(), "%d - ((%d - %d) %% %d - %d", nTime, cTime, offset, window, offset)
+			log.Infof(context.TODO(), "%s => %s", tc.start.In(loc).String(), actual.In(loc).String())
 		})
 	}
 }

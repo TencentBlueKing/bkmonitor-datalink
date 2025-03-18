@@ -12,9 +12,10 @@ package decoder
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
 var jsonType = "application/json"

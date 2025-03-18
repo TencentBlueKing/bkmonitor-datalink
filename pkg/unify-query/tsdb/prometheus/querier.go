@@ -77,21 +77,22 @@ func (q *Querier) getQueryList(referenceName string) []*Query {
 	ctx, span := trace.NewSpan(ctx, "querier-get-query-list")
 	defer span.End(&err)
 
-	queries := metadata.GetQueryReference(ctx)
-	if queryMetric, ok := queries[referenceName]; ok {
-		queryList = make([]*Query, 0, len(queryMetric.QueryList))
-		for _, qry := range queryMetric.QueryList {
-			instance := GetTsDbInstance(ctx, qry)
-			if instance != nil {
-				queryList = append(queryList, &Query{
-					instance: instance,
-					qry:      qry,
-				})
-			} else {
-				log.Warnf(ctx, "not instance in %s", qry.StorageID)
-			}
+	queryReference := metadata.GetQueryReference(ctx)
+
+	queryList = make([]*Query, 0)
+	queryReference.Range(referenceName, func(qry *metadata.Query) {
+		instance := GetTsDbInstance(ctx, qry)
+		if instance == nil {
+			log.Warnf(ctx, "not instance in %s", qry.StorageID)
+			return
 		}
-	}
+
+		queryList = append(queryList, &Query{
+			instance: instance,
+			qry:      qry,
+		})
+	})
+
 	return queryList
 }
 
@@ -124,7 +125,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				sets = append(sets, s)
 			}
 		}
-		set = storage.NewMergeSeriesSet(sets, storage.ChainedSeriesMerge)
+		set = storage.NewMergeSeriesSet(sets, NewMergeSeriesSetWithFuncAndSort(hints.Func))
 	}()
 
 	for _, m := range matchers {
@@ -163,21 +164,10 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 					// 获取因转毫秒丢失的时间精度
 					startTime = function.MsIntMergeNs(hints.Start, qp.Start)
 					endTime = function.MsIntMergeNs(hints.End, qp.End)
-
-					if len(query.qry.Aggregates) == 1 {
-						agg := query.qry.Aggregates[0]
-
-						// 如果使用时间聚合计算，是否对齐开始时间
-						if agg.Window.Milliseconds() > 0 {
-							ns := intMathFloor(startTime.UnixNano(), agg.Window.Nanoseconds()) * agg.Window.Nanoseconds()
-							startTime = time.Unix(0, ns)
-						}
-					}
 				}
 
 				setCh <- query.instance.QuerySeriesSet(ctx, query.qry, startTime, endTime)
 				return
-
 			} else {
 				log.Errorf(ctx, "sql index error: %+v", index)
 			}

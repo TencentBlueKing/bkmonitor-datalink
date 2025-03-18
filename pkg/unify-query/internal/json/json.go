@@ -7,31 +7,37 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package bkapi
+package json
 
 import (
-	"testing"
+	"encoding/json"
+	"io"
 
-	"github.com/stretchr/testify/assert"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	"github.com/bytedance/sonic"
 )
 
-func TestGetBkAPI(t *testing.T) {
-	mock.Init()
+type Number struct {
+	json.Number
+}
 
-	code := GetBkAPI().GetCode()
-	assert.Equal(t, "bk_code", code)
+var sonicAPI = sonic.Config{
+	EscapeHTML:       true, // 安全性
+	CompactMarshaler: true, // 兼容性
+	CopyString:       true, // 正确性
+}.Froze()
 
-	url := GetBkAPI().Url("query")
-	assert.Equal(t, "http://127.0.0.1:12001/query", url)
+func Marshal(v interface{}) ([]byte, error) {
+	return sonicAPI.Marshal(v)
+}
 
-	headers := GetBkAPI().Headers(map[string]string{
-		"Content-Type": "application/json",
-	})
+func Unmarshal(data []byte, v interface{}) error {
+	return sonicAPI.Unmarshal(data, v)
+}
 
-	assert.Equal(t, map[string]string{
-		"Content-Type":          "application/json",
-		"X-Bkapi-Authorization": `{"bk_username":"admin","bk_app_code":"bk_code","bk_app_secret":"bk_secret"}`,
-	}, headers)
+func NewEncoder(w io.Writer) sonic.Encoder {
+	return sonicAPI.NewEncoder(w)
+}
+
+func NewDecoder(r io.Reader) sonic.Decoder {
+	return sonicAPI.NewDecoder(r)
 }

@@ -145,7 +145,7 @@ func TestInstance_bkSql(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 15000))) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' AND (namespace REGEXP '^(bgp2\\-new|gz100)$') GROUP BY `namespace`, (`dtEventTimeStamp` - (`dtEventTimeStamp` % 15000)) ORDER BY `_timestamp_` ASC",
+			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, MAX((`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 15000 - 0))) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' AND (namespace REGEXP '^(bgp2\\-new|gz100)$') GROUP BY `namespace`, (`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 15000 - 0)) ORDER BY `_timestamp_` ASC",
 		},
 		{
 			query: &metadata.Query{
@@ -227,7 +227,58 @@ func TestInstance_bkSql(t *testing.T) {
 				},
 			},
 
-			expected: "SELECT COUNT(`matchstep_start_to_fail_0_100`) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 3600000))) AS `_timestamp_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime` WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` < 1733846399000 AND `thedate` >= '20241209' AND `thedate` <= '20241210' GROUP BY (`dtEventTimeStamp` - (`dtEventTimeStamp` % 3600000)) ORDER BY `_timestamp_` ASC",
+			expected: "SELECT COUNT(`matchstep_start_to_fail_0_100`) AS `_value_`, MAX((`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 3600000 - 0))) AS `_timestamp_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime` WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` < 1733846399000 AND `thedate` >= '20241209' AND `thedate` <= '20241210' GROUP BY (`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 3600000 - 0)) ORDER BY `_timestamp_` ASC",
+		},
+		{
+			start: time.Unix(1733756400, 0),
+			end:   time.Unix(1733846399, 0),
+			query: &metadata.Query{
+				DB:    "101068_MatchFullLinkTimeConsumptionFlow_CostTime",
+				Field: "matchstep_start_to_fail_0_100",
+				Aggregates: metadata.Aggregates{
+					{
+						Name:     "count",
+						Window:   time.Hour * 24,
+						TimeZone: "Asia/Shanghai",
+					},
+				},
+			},
+
+			expected: "SELECT COUNT(`matchstep_start_to_fail_0_100`) AS `_value_`, MAX((`dtEventTimeStamp` - ((`dtEventTimeStamp` - 28800000) % 86400000 - 28800000))) AS `_timestamp_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime` WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` < 1733846399000 AND `thedate` >= '20241209' AND `thedate` <= '20241210' GROUP BY (`dtEventTimeStamp` - ((`dtEventTimeStamp` - 28800000) % 86400000 - 28800000)) ORDER BY `_timestamp_` ASC",
+		},
+		{
+			start: time.Unix(1733756400, 0),
+			end:   time.Unix(1733846399, 0),
+			query: &metadata.Query{
+				DB:    "101068_MatchFullLinkTimeConsumptionFlow_CostTime",
+				Field: "matchstep_start_to_fail_0_100",
+				Aggregates: metadata.Aggregates{
+					{
+						Name:     "count",
+						Window:   time.Hour * 24 * 7,
+						TimeZone: "Asia/Shanghai",
+					},
+				},
+			},
+
+			expected: "SELECT COUNT(`matchstep_start_to_fail_0_100`) AS `_value_`, MAX((`dtEventTimeStamp` - ((`dtEventTimeStamp` - 28800000) % 604800000 - 28800000))) AS `_timestamp_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime` WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` < 1733846399000 AND `thedate` >= '20241209' AND `thedate` <= '20241210' GROUP BY (`dtEventTimeStamp` - ((`dtEventTimeStamp` - 28800000) % 604800000 - 28800000)) ORDER BY `_timestamp_` ASC",
+		},
+		{
+			start: time.Unix(1733756400, 0),
+			end:   time.Unix(1733846399, 0),
+			query: &metadata.Query{
+				DB:    "101068_MatchFullLinkTimeConsumptionFlow_CostTime",
+				Field: "matchstep_start_to_fail_0_100",
+				Aggregates: metadata.Aggregates{
+					{
+						Name:     "count",
+						Window:   time.Hour*24*2 + time.Hour*2,
+						TimeZone: "Asia/Shanghai",
+					},
+				},
+			},
+
+			expected: "SELECT COUNT(`matchstep_start_to_fail_0_100`) AS `_value_`, MAX((`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 180000000 - 0))) AS `_timestamp_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime` WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` < 1733846399000 AND `thedate` >= '20241209' AND `thedate` <= '20241210' GROUP BY (`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 180000000 - 0)) ORDER BY `_timestamp_` ASC",
 		},
 	}
 
@@ -243,9 +294,7 @@ func TestInstance_bkSql(t *testing.T) {
 
 			sql, err := NewQueryFactory(ctx, c.query).WithRangeTime(c.start, c.end).SQL()
 			assert.Nil(t, err)
-			if err == nil {
-				assert.Equal(t, c.expected, sql)
-			}
+			assert.Equal(t, c.expected, sql)
 		})
 	}
 }

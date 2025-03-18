@@ -11,7 +11,6 @@ package http
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -25,11 +24,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
 
 func TestQueryTsWithEs(t *testing.T) {
@@ -936,24 +938,20 @@ func TestVmQueryParams(t *testing.T) {
 				var queryPromQL *structured.QueryPromQL
 				err = json.Unmarshal([]byte(c.promql), &queryPromQL)
 				assert.Nil(t, err)
-				if err == nil {
-					query, err = promQLToStruct(ctx, queryPromQL)
-				}
+				query, err = promQLToStruct(ctx, queryPromQL)
 			} else {
 				err = json.Unmarshal([]byte(c.query), &query)
 			}
 
 			query.SpaceUid = c.spaceUid
 			assert.Nil(t, err)
-			if err == nil {
-				_, err = queryTsWithPromEngine(ctx, query)
-				if c.error != nil {
-					assert.Contains(t, err.Error(), c.error.Error())
-				} else {
-					var vmParams map[string]string
-					if vmParams != nil {
-						assert.Equal(t, c.params, vmParams["sql"])
-					}
+			_, err = queryTsWithPromEngine(ctx, query)
+			if c.error != nil {
+				assert.Contains(t, err.Error(), c.error.Error())
+			} else {
+				var vmParams map[string]string
+				if vmParams != nil {
+					assert.Equal(t, c.params, vmParams["sql"])
 				}
 			}
 		})
@@ -2337,8 +2335,24 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 
 	mock.Init()
 	promql.MockEngine()
-
 	influxdb.MockSpaceRouter(ctx)
+
+	var (
+		key string
+		err error
+	)
+
+	key = fmt.Sprintf("%s:%s", ClusterMetricQueryPrefix, redis.ClusterMetricMetaKey)
+	_, err = redisUtil.HSet(ctx, key, "influxdb_shard_write_points_ok", `{"metric_name":"influxdb_shard_write_points_ok","tags":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"]}`)
+	if err != nil {
+		return
+	}
+
+	key = fmt.Sprintf("%s:%s", ClusterMetricQueryPrefix, redis.ClusterMetricKey)
+	_, err = redisUtil.HSet(ctx, key, "influxdb_shard_write_points_ok|bkm_cluster=default", `[{"bkm_cluster":"default","database":"_internal","engine":"tsm1","hostname":"influxdb-0","id":"43","index_type":"inmem","path":"/var/lib/influxdb/data/_internal/monitor/43","retention_policy":"monitor","wal_path":"/var/lib/influxdb/wal/_internal/monitor/43","time":1700903220,"value":1498687},{"bkm_cluster":"default","database":"_internal","engine":"tsm1","hostname":"influxdb-0","id":"44","index_type":"inmem","path":"/var/lib/influxdb/data/_internal/monitor/44","retention_policy":"monitor","wal_path":"/var/lib/influxdb/wal/_internal/monitor/44","time":1700903340,"value":1499039.5}]`)
+	if err != nil {
+		return
+	}
 
 	testCases := map[string]struct {
 		query  string
@@ -2442,7 +2456,7 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 					"instant": true
                 }
 			`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","43","inmem","/var/lib/influxdb/data/_internal/monitor/43","monitor","/var/lib/influxdb/wal/_internal/monitor/43"],"values":[[1700903370000,0]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","44","inmem","/var/lib/influxdb/data/_internal/monitor/44","monitor","/var/lib/influxdb/wal/_internal/monitor/44"],"values":[[1700903370000,0]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","43","inmem","/var/lib/influxdb/data/_internal/monitor/43","monitor","/var/lib/influxdb/wal/_internal/monitor/43"],"values":[[1700903220000,1498687]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","44","inmem","/var/lib/influxdb/data/_internal/monitor/44","monitor","/var/lib/influxdb/wal/_internal/monitor/44"],"values":[[1700903340000,1499039.5]]}]}`,
 		},
 	}
 	for name, c := range testCases {
@@ -2472,6 +2486,7 @@ func TestQueryTsToInstanceAndStmt(t *testing.T) {
 
 	mock.Init()
 	promql.MockEngine()
+	influxdb.MockSpaceRouter(ctx)
 
 	testCases := map[string]struct {
 		query        *structured.QueryTs

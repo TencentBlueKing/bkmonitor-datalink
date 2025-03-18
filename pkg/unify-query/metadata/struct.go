@@ -11,7 +11,6 @@ package metadata
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -20,6 +19,7 @@ import (
 	"github.com/VictoriaMetrics/metricsql"
 	"github.com/prometheus/prometheus/model/labels"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
@@ -176,7 +176,7 @@ type QueryClusterMetric struct {
 	TimeAggregation TimeAggregation
 }
 
-type QueryReference map[string]*QueryMetric
+type QueryReference map[string][]*QueryMetric
 
 type Queries struct {
 	Query QueryReference
@@ -251,13 +251,43 @@ func (qMetric QueryMetric) ToJson(isSort bool) string {
 	return string(s)
 }
 
+// Range 遍历查询列表
+func (qRef QueryReference) Range(name string, fn func(qry *Query)) {
+	for refName, references := range qRef {
+		if name != "" {
+			if refName != name {
+				continue
+			}
+		}
+
+		for _, reference := range references {
+			if reference == nil {
+				continue
+			}
+			for _, query := range reference.QueryList {
+				if query == nil {
+					continue
+				}
+
+				fn(query)
+			}
+		}
+	}
+}
+
 // ToVmExpand 判断是否是直查，如果都是 vm 查询的情况下，则使用直查模式
 func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
 	vmClusterNames := set.New[string]()
 	vmResultTable := set.New[string]()
 	metricFilterCondition := make(map[string]string)
 
-	for referenceName, reference := range qRef {
+	for referenceName, references := range qRef {
+		if len(references) == 0 {
+			continue
+		}
+
+		// 因为是直查，reference 还需要承担聚合语法生成，所以 vm 不支持同指标的拼接，所以这里只取第一个 reference
+		reference := references[0]
 		if 0 < len(reference.QueryList) {
 			vmConditions := set.New[string]()
 			for _, query := range reference.QueryList {

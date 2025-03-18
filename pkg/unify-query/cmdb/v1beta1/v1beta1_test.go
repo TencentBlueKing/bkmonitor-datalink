@@ -299,25 +299,21 @@ func TestModel_GetPath(t *testing.T) {
 
 			indexMatcher, allMatch, err := testModel.getIndexMatcher(ctx, source, c.matcher)
 			assert.Nil(t, err)
-			if err == nil {
-				assert.Equal(t, c.allMatch, allMatch)
-				assert.Equal(t, c.source, source)
-				assert.Equal(t, c.indexMatcher, indexMatcher)
+			assert.Equal(t, c.allMatch, allMatch)
+			assert.Equal(t, c.source, source)
+			assert.Equal(t, c.indexMatcher, indexMatcher)
 
-				path, err := testModel.getPaths(ctx, source, c.target, c.pathResource)
-				if c.error != nil {
-					assert.Equal(t, c.error.Error(), err.Error())
-				} else {
-					assert.Nil(t, err)
-					if err == nil {
-						sort.SliceStable(path, func(i, j int) bool {
-							listLength := len(path[i]) < len(path[j])
-							stringLength := len(strings.Join(path[i], "")) < len(strings.Join(path[j], ""))
-							return listLength || stringLength
-						})
-						assert.Equal(t, c.expected, path)
-					}
-				}
+			path, err := testModel.getPaths(ctx, source, c.target, c.pathResource)
+			if c.error != nil {
+				assert.Equal(t, c.error.Error(), err.Error())
+			} else {
+				assert.Nil(t, err)
+				sort.SliceStable(path, func(i, j int) bool {
+					listLength := len(path[i]) < len(path[j])
+					stringLength := len(strings.Join(path[i], "")) < len(strings.Join(path[j], ""))
+					return listLength || stringLength
+				})
+				assert.Equal(t, c.expected, path)
 			}
 		})
 	}

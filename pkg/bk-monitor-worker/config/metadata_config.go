@@ -39,6 +39,8 @@ var (
 	BcsInfluxdbDefaultProxyClusterNameForK8s string
 	// BcsCustomEventStorageClusterId 自定义上报存储集群ID
 	BcsCustomEventStorageClusterId uint
+	// BkciSpaceAccessPlugins 允许被项目空间访问业务数据的RT列表
+	BkciSpaceAccessPlugins []string
 
 	// GlobalFetchTimeSeriesMetricIntervalSeconds 获取指标的间隔时间
 	GlobalFetchTimeSeriesMetricIntervalSeconds int
@@ -158,6 +160,7 @@ func initMetadataVariables() {
 	GlobalIsAutoDeployCustomReportServer = GetValue("taskConfig.metadata.global.isAutoDeployCustomReportServer", true)
 	GlobalIPV6SupportBizList = GetValue("taskConfig.metadata.global.ipv6SupportBizList", []int{})
 	GlobalHostDisableMonitorStates = GetValue("taskConfig.metadata.global.hostDisableMonitorStates", []string{"备用机", "测试中", "故障中"})
+	BkciSpaceAccessPlugins = GetValue("taskConfig.metadata.bcs.bkciSpaceAccessPlugins", []string{})
 
 	PingServerEnablePingAlarm = GetValue("taskConfig.metadata.pingserver.enablePingAlarm", true)
 	PingServerEnableDirectAreaPingCollect = GetValue("taskConfig.metadata.pingserver.enableDirectAreaPingCollect", true)

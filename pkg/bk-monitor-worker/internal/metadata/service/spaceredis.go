@@ -1790,7 +1790,10 @@ func (s *SpacePusher) composeBcsSpaceBizTableIds(spaceType, spaceId string) (map
 	// 现阶段支持主机和部分插件授权给蓝盾使用
 	var rtList []resulttable.ResultTable
 	likeTableIds := []string{fmt.Sprintf("%s%%", models.SystemTableIdPrefix)}
-	for _, tableId := range models.BkciSpaceAccessPlugins {
+
+	// 特殊授权逻辑,读取环境配置,将部分业务RT授权给CI空间访问
+	for _, tableId := range cfg.BkciSpaceAccessPlugins {
+		logger.Infof("composeBcsSpaceBizTableIds: try to add table_id->[%s] to router for space_type->[%s],space_id->[%s]", tableId, spaceType, spaceId)
 		likeTableIds = append(likeTableIds, fmt.Sprintf("%s%%", tableId))
 	}
 

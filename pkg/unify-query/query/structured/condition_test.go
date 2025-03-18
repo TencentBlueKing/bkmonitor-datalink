@@ -225,7 +225,7 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				},
 			},
 			result: []int{1},
-			sql:    "`say` = 'What\\'s this?'",
+			sql:    "`say` = 'What''s this?'",
 			vm:     `say="What's this?", result_table_id="table_id"`,
 		},
 	}

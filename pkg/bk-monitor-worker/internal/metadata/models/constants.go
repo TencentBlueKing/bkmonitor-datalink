@@ -273,4 +273,4 @@ var SkipDataIdListForBkcc = []uint{1110000}
 var AllSpaceTableIds = []string{"custom_report_aggate.base", "bkm_statistics.base"}
 
 // 插件授权给 bkci 访问的插件列表
-var BkciSpaceAccessPlugins = []string{"script_p4d_process_monitor.__default__"}
+//var BkciSpaceAccessPlugins = []string{"script_p4d_process_monitor.__default__"}

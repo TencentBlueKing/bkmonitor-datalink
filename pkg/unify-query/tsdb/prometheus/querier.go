@@ -168,7 +168,6 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 
 				setCh <- query.instance.QuerySeriesSet(ctx, query.qry, startTime, endTime)
 				return
-
 			} else {
 				log.Errorf(ctx, "sql index error: %+v", index)
 			}

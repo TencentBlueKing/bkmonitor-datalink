@@ -217,7 +217,7 @@ loop:
 			}
 			metrics.RecordApmPreCalcLocateSpanDuration(w.dataId, start)
 		case <-w.ctx.Done():
-			w.logger.Infof("Handle span stopped.")
+			w.logger.Infof("Run span stopped.")
 			// clear data
 			for _, subWindow := range w.subWindows {
 				subWindow.m = &sync.Map{}

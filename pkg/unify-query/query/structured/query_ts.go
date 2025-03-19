@@ -69,27 +69,36 @@ type QueryTs struct {
 	HighLight metadata.HighLight `json:"highlight,omitempty"`
 }
 
-func ToTime(start, end time.Time, stepStr, timezone string) (time.Time, time.Time, time.Duration, string, error) {
+// StepParse 解析step
+func StepParse(step string) time.Duration {
+	var stepDuration time.Duration
+	if step == "" {
+		stepDuration = promql.GetDefaultStep()
+	} else {
+		dTmp, err := model.ParseDuration(step)
+		stepDuration = time.Duration(dTmp)
+
+		if err != nil {
+			return time.Duration(0)
+		}
+	}
+	return stepDuration
+}
+
+// AlignTime 开始时间根据时区对齐
+func AlignTime(start, end time.Time, stepStr, timezone string) (time.Time, time.Time, time.Duration, string, error) {
 	var (
 		interval time.Duration
 	)
 
-	if stepStr == "" {
-		interval = promql.GetDefaultStep()
-	} else {
-		dTmp, err := model.ParseDuration(stepStr)
-		interval = time.Duration(dTmp)
-
-		if err != nil {
-			return start, end, interval, timezone, err
-		}
-	}
+	step := StepParse(stepStr)
 
 	// 根据 timezone 来对齐开始时间
 	newTimezone, newStart := function.TimeOffset(start, timezone, interval)
-	return newStart, end, interval, newTimezone, nil
+	return newStart, end, step, newTimezone, nil
 }
 
+// GetMaxWindow 获取最大聚合时间
 func (q *QueryTs) GetMaxWindow() (time.Duration, error) {
 	var window time.Duration = 0
 	for _, query := range q.QueryList {
@@ -810,7 +819,7 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	// 通过过期时间判断查询的 storage
-	start, end, _, timezone, err := ToTime(startTime, endTime, q.Step, q.Timezone)
+	start, end, _, timezone, err := AlignTime(startTime, endTime, q.Step, q.Timezone)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err

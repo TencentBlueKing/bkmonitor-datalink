@@ -17,7 +17,7 @@ import (
 
 type Window string
 
-// ToTime
+// AlignTime
 func (i Window) ToTime() (time.Duration, error) {
 	duration, err := model.ParseDuration(string(i))
 	if err != nil {

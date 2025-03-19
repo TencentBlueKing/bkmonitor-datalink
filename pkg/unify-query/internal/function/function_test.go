@@ -223,24 +223,28 @@ func TestTimeOffset(t *testing.T) {
 		actual time.Time
 	}{
 		"test align": {
-			t:    time.Unix(1701306000, 0), // 2023-11-30 09:00:00 +0800 ~ 2024-05-30 09:00:00 +0800
-			tz:   "Asia/Shanghai",
-			step: time.Hour * 3,
+			t:      time.Unix(1701306000, 0), // 2023-11-30 09:00:00 +0800 ~ 2024-05-30 09:00:00 +0800
+			tz:     "Asia/Shanghai",
+			step:   time.Hour * 3,
+			actual: time.UnixMilli(1701306000000),
 		},
 		"test align -1": {
-			t:    time.Unix(1703732400, 0), // 2023-11-30 09:00:00 +0800 ~ 2024-05-30 09:00:00 +0800
-			tz:   "Asia/Shanghai",
-			step: time.Hour * 3,
+			t:      time.Unix(1703732400, 0), // 2023-11-30 09:00:00 +0800 ~ 2024-05-30 09:00:00 +0800
+			tz:     "Asia/Shanghai",
+			step:   time.Hour * 3,
+			actual: time.UnixMilli(1703725200000),
 		},
 		"test align - 2": {
-			t:    time.Unix(1730082578, 0), // 2024-10-28 10:29:38 +0800 ~ 2024-10-28 10:12:00 +0800
-			tz:   "Asia/Shanghai",
-			step: time.Minute * 18,
+			t:      time.Unix(1730082578, 0), // 2024-10-28 10:29:38 +0800 ~ 2024-10-28 10:12:00 +0800
+			tz:     "Asia/Shanghai",
+			step:   time.Minute * 18,
+			actual: time.UnixMilli(1730081520000),
 		},
 		"test align - 3": {
-			t:    time.Unix(1741190400, 0), // 2024-10-28 10:29:38 +0800 ~ 2024-10-28 10:12:00 +0800
-			tz:   "Asia/Shanghai",
-			step: time.Hour * 24,
+			t:      time.Unix(1741190400, 0), // 2024-10-28 10:29:38 +0800 ~ 2024-10-28 10:12:00 +0800
+			tz:     "Asia/Shanghai",
+			step:   time.Hour * 24,
+			actual: time.UnixMilli(1741190400000),
 		},
 		"test alian - 4": {
 			t:      time.UnixMilli(1741336672161),

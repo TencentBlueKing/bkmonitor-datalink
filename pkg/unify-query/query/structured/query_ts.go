@@ -87,14 +87,10 @@ func StepParse(step string) time.Duration {
 
 // AlignTime 开始时间根据时区对齐
 func AlignTime(start, end time.Time, stepStr, timezone string) (time.Time, time.Time, time.Duration, string, error) {
-	var (
-		interval time.Duration
-	)
-
 	step := StepParse(stepStr)
 
 	// 根据 timezone 来对齐开始时间
-	newTimezone, newStart := function.TimeOffset(start, timezone, interval)
+	newTimezone, newStart := function.TimeOffset(start, timezone, step)
 	return newStart, end, step, newTimezone, nil
 }
 

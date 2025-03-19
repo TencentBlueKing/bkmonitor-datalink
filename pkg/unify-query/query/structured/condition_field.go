@@ -117,6 +117,14 @@ func (c *ConditionField) BkSql() *ConditionField {
 		return nil
 	}
 
+	// bksql 查询遇到单引号需要转义
+	for k, v := range c.Value {
+		if strings.Contains(v, "'") {
+			v = strings.ReplaceAll(v, "'", "''")
+			c.Value[k] = v
+		}
+	}
+
 	switch c.Operator {
 	case ConditionEqual, ConditionExact, ConditionContains:
 		c.Operator = SqlEqual

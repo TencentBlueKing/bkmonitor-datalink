@@ -26,7 +26,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -139,11 +138,14 @@ func (w *dataIDWatcher) matchDataID(meta define.MonitorMeta, systemResource bool
 
 	// 3) 自定义匹配
 	// 此处实现了 namespace/name 的类正则匹配 支持【|】分隔符 但要求 namespace/name 是全匹配
+	//
+	// TODO(mando): 目前的实现并不合理 此处会有语义上的歧义 实际上变成了笛卡尔积的匹配
+	//  - 后续如果升级了 DataID 资源版本 则应该使用更合适的字段
 	for _, dataID := range dataIDs {
 		resource := dataID.Spec.MonitorResource
 
 		// 要求资源类型一定要匹配
-		if !utils.LowerEq(resource.Kind, meta.Kind) {
+		if !resource.MatchSplitKind(meta.Kind) {
 			continue
 		}
 

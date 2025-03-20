@@ -100,7 +100,7 @@ func (q *QueryTs) GetMaxWindow() (time.Duration, error) {
 	for _, query := range q.QueryList {
 		for _, agg := range query.AggregateMethodList {
 			if agg.Window != "" {
-				aw, err := agg.Window.ToTime()
+				aw, err := agg.Window.Duration()
 				if err != nil {
 					return 0, err
 				}
@@ -202,7 +202,7 @@ func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClus
 		Conditions: queryConditions,
 	}
 	if qry.TimeAggregation.Function != "" {
-		wDuration, err := qry.TimeAggregation.Window.ToTime()
+		wDuration, err := qry.TimeAggregation.Window.Duration()
 		if err != nil {
 			return nil, errors.Errorf("TimeAggregation.Window(%v) format is invalid, %v", qry.TimeAggregation, err)
 		}

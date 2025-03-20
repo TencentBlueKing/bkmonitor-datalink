@@ -44,7 +44,7 @@ func (m TimeAggregation) ToProm(expr parser.Expr) (*parser.Call, error) {
 		stepDur model.Duration
 	)
 
-	window, err = m.Window.ToTime()
+	window, err = m.Window.Duration()
 	if err != nil {
 		return nil, err
 	}

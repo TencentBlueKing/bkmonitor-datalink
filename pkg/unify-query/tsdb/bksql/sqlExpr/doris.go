@@ -95,21 +95,23 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		if agg.Window > 0 {
 
 			// 获取时区偏移量
-			var offset int
+			var offsetMinutes int
+			// 如果是按天聚合，则增加时区偏移量
 			if agg.Window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
 				// 时间聚合函数兼容时区
 				loc, locErr := time.LoadLocation(agg.TimeZone)
 				if locErr != nil {
 					loc = time.UTC
 				}
-				_, offset = time.Now().In(loc).Zone()
-				fmt.Println(offset)
+				_, offset := time.Now().In(loc).Zone()
+				offsetMinutes = offset / 60
 			}
 
 			// 如果是按照分钟聚合，则使用 __shard_key__ 作为时间字段
 			var timeField string
 			if int64(agg.Window.Seconds())%60 == 0 {
-				timeField = fmt.Sprintf(`CAST(%s / 1000 / %.f AS INT) * %.f * 60 * 1000`, ShardKey, agg.Window.Minutes(), agg.Window.Minutes())
+				windowMinutes := int(agg.Window.Minutes())
+				timeField = fmt.Sprintf(`((CAST((%s / 1000 + %d) / %d AS INT) * %d - %d) * 60 * 1000)`, ShardKey, offsetMinutes, windowMinutes, windowMinutes, offsetMinutes)
 			} else {
 				timeField = fmt.Sprintf(`CAST(%s / %d AS INT) * %d `, d.timeField, agg.Window.Milliseconds(), agg.Window.Milliseconds())
 			}

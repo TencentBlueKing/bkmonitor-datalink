@@ -355,8 +355,6 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 		step = structured.StepParse(query.Step)
 	}
 
-	log.Infof(ctx, "query-reference reload start time oldStart: %s, newStart: %s, step: %s", startTime, startTime, step)
-
 	if query.Instant {
 		res, err = instance.DirectQuery(ctx, query.MetricMerge, startTime)
 	} else {

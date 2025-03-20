@@ -43,7 +43,7 @@ type Args map[string]string
 // 聚合方法列表
 type AggregateMethodList []AggregateMethod
 
-func (a AggregateMethodList) ToQry(timezone string) metadata.Aggregates {
+func (a AggregateMethodList) ToQry(timezone string) (metadata.Aggregates, error) {
 	aggs := make(metadata.Aggregates, 0, len(a))
 	for _, aggr := range a {
 		agg := metadata.Aggregate{
@@ -56,13 +56,15 @@ func (a AggregateMethodList) ToQry(timezone string) metadata.Aggregates {
 
 		if aggr.Window != "" {
 			window, err := model.ParseDuration(string(aggr.Window))
-			if err == nil {
-				agg.Window = time.Duration(window)
+			if err != nil {
+				return nil, err
 			}
+
+			agg.Window = time.Duration(window)
 		}
 		aggs = append(aggs, agg)
 	}
-	return aggs
+	return aggs, nil
 }
 
 // 聚合方法

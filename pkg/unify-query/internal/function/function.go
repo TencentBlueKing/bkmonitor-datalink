@@ -11,6 +11,7 @@ package function
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -149,4 +150,20 @@ func QueryTimestamp(s, e string) (format string, start time.Time, end time.Time,
 // MsIntMergeNs 将毫秒时间和纳秒时间戳合并为新的时间
 func MsIntMergeNs(ms int64, ns time.Time) time.Time {
 	return time.Unix(0, (ms-ns.UnixMilli())*1e6+ns.UnixNano())
+}
+
+// TimeOffset 根据 timezone 偏移对齐
+func TimeOffset(t time.Time, timezone string, step time.Duration) (string, time.Time) {
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	t0 := t.In(loc)
+	_, offset := t0.Zone()
+	outTimezone := t0.Location().String()
+	offsetDuration := time.Duration(offset) * time.Second
+	t1 := t.Add(offsetDuration)
+	t2 := time.Unix(int64(math.Floor(float64(t1.Unix())/step.Seconds())*step.Seconds()), 0)
+	t3 := t2.Add(offsetDuration * -1).In(loc)
+	return outTimezone, t3
 }

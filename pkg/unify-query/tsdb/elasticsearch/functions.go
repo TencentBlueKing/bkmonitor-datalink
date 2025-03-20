@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/prometheus/common/model"
 )
 
 const (
@@ -64,11 +66,15 @@ func parseSizeString(sizeStr string) (int64, error) {
 }
 
 func shortDur(d time.Duration) string {
-	s := d.String()
+	nd := model.Duration(d)
+	s := nd.String()
 	if strings.HasSuffix(s, "m0s") {
 		s = s[:len(s)-2]
 	}
 	if strings.HasSuffix(s, "h0m") {
+		s = s[:len(s)-2]
+	}
+	if strings.HasSuffix(s, "d0h") {
 		s = s[:len(s)-2]
 	}
 	return s

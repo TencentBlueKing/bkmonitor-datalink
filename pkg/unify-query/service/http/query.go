@@ -334,7 +334,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	}
 
 	queryRef, err := queryTs.ToQueryReference(ctx)
-	unit, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
+	unit, startTime, endTime, err := function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
@@ -364,7 +364,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 
 	// 只有聚合场景需要对齐
 	if window, windowErr := queryTs.GetMaxWindow(); windowErr == nil && window.Seconds() > 0 {
-		startTime, endTime, step, _, err = structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
+		startTime, endTime, step, _, err = structured.AlignTime(startTime, endTime, queryTs.Step, queryTs.Timezone)
 		if err != nil {
 			return nil, err
 		}
@@ -373,9 +373,9 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	}
 
 	if queryTs.Instant {
-		res, err = instance.DirectQuery(ctx, query.MetricMerge, startTime)
+		res, err = instance.DirectQuery(ctx, queryTs.MetricMerge, startTime)
 	} else {
-		res, err = instance.DirectQueryRange(ctx, query.MetricMerge, startTime, endTime, step)
+		res, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, endTime, step)
 	}
 	if err != nil {
 		return nil, err

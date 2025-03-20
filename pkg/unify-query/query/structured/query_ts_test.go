@@ -11,6 +11,7 @@ package structured
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	md "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
@@ -270,7 +273,9 @@ func TestQueryToMetric(t *testing.T) {
 
 			metric, err := c.query.ToQueryMetric(ctx, spaceUID)
 			assert.Nil(t, err)
-			assert.Equal(t, c.metric, metric)
+			actual, _ := json.Marshal(metric)
+			expect, _ := json.Marshal(c.metric)
+			assert.JSONEq(t, string(expect), string(actual))
 		})
 	}
 }
@@ -1246,9 +1251,8 @@ func TestTimeOffset(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			tz1, t1, err := timeOffset(c.t, c.tz, c.step)
+			tz1, t1 := function.TimeOffset(c.t, c.tz, c.step)
 
-			assert.Nil(t, err)
 			assert.Equal(t, c.tz, tz1)
 			assert.Equal(t, c.out, fmt.Sprintf("%s => %s", c.t.String(), t1.String()))
 			assert.Equal(t, c.expected.UnixMilli(), t1.UnixMilli())

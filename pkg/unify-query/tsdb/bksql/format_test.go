@@ -98,7 +98,7 @@ func TestNewSqlFactory(t *testing.T) {
 				Size:   0,
 				Orders: metadata.Orders{"level": true},
 			},
-			expected: "SELECT `level`, COUNT(`gseIndex`) AS `_value_`, CAST(dtEventTimeStamp / 1000 / 75 AS INT) * 75 * 1000 AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `thedate` = '20250313' AND `gseIndex` > 0 AND `level` = 'ERROR' GROUP BY `level`, _timestamp_ ORDER BY `_timestamp_` ASC, `level` ASC",
+			expected: "SELECT `level`, COUNT(`gseIndex`) AS `_value_`, CAST(dtEventTimeStamp / 75000 AS INT) * 75000  AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `thedate` = '20250313' AND `gseIndex` > 0 AND `level` = 'ERROR' GROUP BY `level`, _timestamp_ ORDER BY `_timestamp_` ASC, `level` ASC",
 		},
 		"doris sum-with-promql-1": {
 			query: &metadata.Query{

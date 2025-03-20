@@ -93,21 +93,25 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, Value))
 
 		if agg.Window > 0 {
-			// 时间聚合函数兼容时区
-			loc, locErr := time.LoadLocation(agg.TimeZone)
-			if locErr != nil {
-				loc = time.UTC
-			}
+
 			// 获取时区偏移量
-			_, offset := time.Now().In(loc).Zone()
-			fmt.Println(offset)
+			var offset int
+			if agg.Window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
+				// 时间聚合函数兼容时区
+				loc, locErr := time.LoadLocation(agg.TimeZone)
+				if locErr != nil {
+					loc = time.UTC
+				}
+				_, offset = time.Now().In(loc).Zone()
+				fmt.Println(offset)
+			}
 
 			// 如果是按照分钟聚合，则使用 __shard_key__ 作为时间字段
 			var timeField string
 			if int64(agg.Window.Seconds())%60 == 0 {
 				timeField = fmt.Sprintf(`CAST(%s / 1000 / %.f AS INT) * %.f * 60 * 1000`, ShardKey, agg.Window.Minutes(), agg.Window.Minutes())
 			} else {
-				timeField = fmt.Sprintf(`CAST(%s / 1000 / %.f AS INT) * %.f * 1000`, d.timeField, agg.Window.Seconds(), agg.Window.Seconds())
+				timeField = fmt.Sprintf(`CAST(%s / %d AS INT) * %d `, d.timeField, agg.Window.Milliseconds(), agg.Window.Milliseconds())
 			}
 
 			selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", timeField, TimeStamp))
@@ -196,6 +200,11 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	)
 
 	key, _ = d.dimTransform(c.DimensionName)
+
+	// 对值进行转义处理
+	for i, v := range c.Value {
+		c.Value[i] = d.valueTransform(v)
+	}
 
 	// 根据操作符类型生成不同的SQL表达式
 	switch c.Operator {
@@ -417,6 +426,13 @@ func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
 		return fmt.Sprintf("CAST(%s[\"%s\"] AS STRING)", fs[0], strings.Join(fs[1:], "][")), true
 	}
 	return fmt.Sprintf("`%s`", s), false
+}
+
+func (d *DorisSQLExpr) valueTransform(s string) string {
+	if strings.Contains(s, "'") {
+		s = strings.ReplaceAll(s, "'", "''")
+	}
+	return s
 }
 
 func init() {

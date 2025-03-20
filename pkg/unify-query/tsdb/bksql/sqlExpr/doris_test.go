@@ -127,7 +127,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 				{
 					{
 						DimensionName: "object.field",
-						Value:         []string{"test-value"},
+						Value:         []string{"What's UP"},
 						Operator:      metadata.ConditionEqual,
 					},
 					{
@@ -137,7 +137,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "CAST(object[\"field\"] AS STRING) = 'test-value' AND `tag` != 'test'",
+			want: "CAST(object[\"field\"] AS STRING) MATCH_PHRASE_PREFIX 'What''s UP' AND `tag` != 'test'",
 		},
 		{
 			name: "doris t8est text field wildcard",

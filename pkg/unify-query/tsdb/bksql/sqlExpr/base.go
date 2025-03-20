@@ -126,18 +126,6 @@ func (d *DefaultSQLExpr) WithFieldsMap(fieldsMap map[string]string) SQLExpr {
 	return d
 }
 
-func (d *DefaultSQLExpr) dimTransform(s string) (string, error) {
-	if s == "" {
-		return "", nil
-	}
-	fs := strings.Split(s, ".")
-	if len(fs) > 1 {
-		return "", fmt.Errorf("query is not support object with %s", s)
-	}
-
-	return fmt.Sprintf("`%s`", s), nil
-}
-
 // ParserQueryString 解析查询字符串（当前实现返回空）
 func (d *DefaultSQLExpr) ParserQueryString(_ string) (string, error) {
 	return "", nil
@@ -166,14 +154,18 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, Value))
 
 		if agg.Window > 0 {
-			// 时间聚合函数兼容时区
-			loc, locErr := time.LoadLocation(agg.TimeZone)
-			if locErr != nil {
-				loc = time.UTC
+
+			var offsetMillis int
+			if agg.Window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
+				// 时间聚合函数兼容时区
+				loc, locErr := time.LoadLocation(agg.TimeZone)
+				if locErr != nil {
+					loc = time.UTC
+				}
+				// 获取时区偏移量
+				_, offset := time.Now().In(loc).Zone()
+				offsetMillis = offset * 1e3
 			}
-			// 获取时区偏移量
-			_, offset := time.Now().In(loc).Zone()
-			offsetMillis := offset * 1000
 
 			timeField := fmt.Sprintf("(`%s` - ((`%s` - %d) %% %d - %d))", d.timeField, d.timeField, offsetMillis, agg.Window.Milliseconds(), offsetMillis)
 
@@ -260,13 +252,6 @@ func (d *DefaultSQLExpr) ParserAllConditions(allConditions metadata.AllCondition
 }
 
 // buildCondition 构建单个条件表达式
-// 参数：
-//
-//	c - 条件字段对象
-//
-// 返回值：
-//
-//	生成的SQL条件表达式字符串和错误信息
 func (d *DefaultSQLExpr) buildCondition(c metadata.ConditionField) (string, error) {
 	if len(c.Value) == 0 {
 		return "", nil
@@ -281,6 +266,11 @@ func (d *DefaultSQLExpr) buildCondition(c metadata.ConditionField) (string, erro
 	key, err := d.dimTransform(c.DimensionName)
 	if err != nil {
 		return "", err
+	}
+
+	// 对值进行转义处理
+	for i, v := range c.Value {
+		c.Value[i] = d.valueTransform(v)
 	}
 
 	// 根据操作符类型生成不同的SQL表达式
@@ -377,4 +367,23 @@ func (d *DefaultSQLExpr) buildCondition(c metadata.ConditionField) (string, erro
 		return fmt.Sprintf("%s %s %s", key, op, val), nil
 	}
 	return val, nil
+}
+
+func (d *DefaultSQLExpr) valueTransform(s string) string {
+	if strings.Contains(s, "'") {
+		s = strings.ReplaceAll(s, "'", "''")
+	}
+	return s
+}
+
+func (d *DefaultSQLExpr) dimTransform(s string) (string, error) {
+	if s == "" {
+		return "", nil
+	}
+	fs := strings.Split(s, ".")
+	if len(fs) > 1 {
+		return "", fmt.Errorf("query is not support object with %s", s)
+	}
+
+	return fmt.Sprintf("`%s`", s), nil
 }

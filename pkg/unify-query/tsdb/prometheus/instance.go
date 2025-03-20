@@ -104,8 +104,6 @@ func (i *Instance) DirectQueryRange(
 		LookbackDelta: i.lookBackDelta,
 	}
 
-	log.Infof(ctx, "prometheus query range: %s, start: %s, end: %s, step: %s", stmt, start, end, step)
-
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
 		log.Errorf(ctx, err.Error())

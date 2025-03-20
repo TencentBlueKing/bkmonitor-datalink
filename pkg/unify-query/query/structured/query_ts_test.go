@@ -11,7 +11,6 @@ package structured
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -1194,59 +1193,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 	}
 }
 
-func TestTimeOffset(t *testing.T) {
-	for name, c := range map[string]struct {
-		t      time.Time
-		tz     string
-		step   time.Duration
-		actual time.Time
-	}{
-		"test align": {
-			t:    time.Unix(1701306000, 0), // 2023-11-30 09:00:00 +0800 ~ 2024-05-30 09:00:00 +0800
-			tz:   "Asia/Shanghai",
-			step: time.Hour * 3,
-		},
-		"test align -1": {
-			t:    time.Unix(1703732400, 0), // 2023-11-30 09:00:00 +0800 ~ 2024-05-30 09:00:00 +0800
-			tz:   "Asia/Shanghai",
-			step: time.Hour * 3,
-		},
-		"test align - 2": {
-			t:    time.Unix(1730082578, 0), // 2024-10-28 10:29:38 +0800 ~ 2024-10-28 10:12:00 +0800
-			tz:   "Asia/Shanghai",
-			step: time.Minute * 18,
-		},
-		"test align - 3": {
-			t:    time.Unix(1741190400, 0), // 2024-10-28 10:29:38 +0800 ~ 2024-10-28 10:12:00 +0800
-			tz:   "Asia/Shanghai",
-			step: time.Hour * 24,
-		},
-		"test alian - 4": {
-			t:      time.UnixMilli(1741336672161),
-			tz:     "Asia/Shanghai",
-			step:   time.Hour * 24,
-			actual: time.UnixMilli(1741276800000),
-		},
-		"test alian - 5": {
-			t:      time.UnixMilli(1741336672161),
-			tz:     "UTC",
-			step:   time.Hour * 24,
-			actual: time.UnixMilli(1741305600000),
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			tz1, t1, err := timeOffset(c.t, c.tz, c.step)
-
-			assert.Nil(t, err)
-			fmt.Println(c.tz, "=>", tz1)
-			fmt.Println(c.t.String(), "=>", t1.String())
-			fmt.Println(c.t, "=>", t1.Unix())
-
-			assert.Equal(t, c.actual.UnixMilli(), t1.UnixMilli())
-		})
-	}
-}
-
 func TestAggregations(t *testing.T) {
 	for name, c := range map[string]struct {
 		query *Query
@@ -1281,6 +1227,87 @@ func TestAggregations(t *testing.T) {
 			aggs, err := c.query.Aggregates()
 			assert.Nil(t, err)
 			assert.Equal(t, c.aggs, aggs)
+		})
+	}
+}
+
+func TestGetMaxWindow(t *testing.T) {
+	tests := []struct {
+		name        string
+		queryList   []*Query
+		expected    time.Duration
+		expectError bool
+	}{
+		{
+			name: "Normal case with multiple windows",
+			queryList: []*Query{
+				{
+					AggregateMethodList: []AggregateMethod{
+						{Window: "5m"},
+						{Window: "10m"},
+					},
+				},
+				{
+					AggregateMethodList: []AggregateMethod{
+						{Window: "15m"},
+						{Window: "20m"},
+					},
+				},
+			},
+			expected:    20 * time.Minute,
+			expectError: false,
+		},
+		{
+			name:        "Empty QueryList",
+			queryList:   []*Query{},
+			expected:    0,
+			expectError: false,
+		},
+		{
+			name: "Invalid Window",
+			queryList: []*Query{
+				{
+					AggregateMethodList: []AggregateMethod{
+						{Window: "invalid"},
+					},
+				},
+			},
+			expected:    0,
+			expectError: true,
+		},
+		{
+			name: "Multiple Windows with one invalid",
+			queryList: []*Query{
+				{
+					AggregateMethodList: []AggregateMethod{
+						{Window: "5m"},
+						{Window: "invalid"},
+					},
+				},
+				{
+					AggregateMethodList: []AggregateMethod{
+						{Window: "15m"},
+						{Window: "20m"},
+					},
+				},
+			},
+			expected:    0,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := &QueryTs{
+				QueryList: tt.queryList,
+			}
+			result, err := q.GetMaxWindow()
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

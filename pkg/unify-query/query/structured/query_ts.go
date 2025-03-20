@@ -71,18 +71,18 @@ type QueryTs struct {
 
 // StepParse 解析step
 func StepParse(step string) time.Duration {
-	var stepDuration time.Duration
 	if step == "" {
-		stepDuration = promql.GetDefaultStep()
+		return promql.GetDefaultStep()
 	} else {
 		dTmp, err := model.ParseDuration(step)
-		stepDuration = time.Duration(dTmp)
+		stepDuration := time.Duration(dTmp)
 
 		if err != nil {
-			return time.Duration(0)
+			return promql.GetDefaultStep()
 		}
+
+		return stepDuration
 	}
-	return stepDuration
 }
 
 // AlignTime 开始时间根据时区对齐

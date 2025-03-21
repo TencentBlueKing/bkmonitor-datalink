@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -2497,13 +2498,17 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 			assert.Nil(t, err)
 
 			res, err := QueryTsClusterMetrics(ctx, query)
-			t.Logf("QueryTsClusterMetrics error: %+v", err)
+
+			pd := res.(*PromData)
+
+			sort.SliceStable(pd.Tables, func(i, j int) bool {
+				return strings.Join(pd.Tables[i].GroupKeys, "") < strings.Join(pd.Tables[j].GroupKeys, "")
+			})
+
 			assert.Nil(t, err)
 			out, err := json.Marshal(res)
-			actual := string(out)
 			assert.Nil(t, err)
-			fmt.Printf("ActualResult: %v\n", actual)
-			assert.Equal(t, c.result, actual)
+			assert.JSONEq(t, c.result, string(out))
 		})
 	}
 }

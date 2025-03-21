@@ -441,6 +441,7 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 	if name, ok := domSampledFunc[am.Method+q.TimeAggregation.Function]; ok {
 		agg := metadata.Aggregate{
 			Name:       name,
+			Field:      am.Field,
 			Dimensions: am.Dimensions,
 			Without:    am.Without,
 			Window:     time.Duration(window),
@@ -536,6 +537,26 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			MetricName:     metricName,
 			Aggregates:     aggregates,
 			BkSqlCondition: allConditions.BkSql(),
+			Size:           q.Limit,
+			From:           q.From,
+		}
+
+		if len(q.OrderBy) > 0 {
+			qry.Orders = make(metadata.Orders)
+			for _, o := range q.OrderBy {
+				if len(o) == 0 {
+					continue
+				}
+
+				asc := true
+				name := o
+
+				if strings.HasPrefix(o, "-") {
+					asc = false
+					name = name[1:]
+				}
+				qry.Orders[name] = asc
+			}
 		}
 
 		metadata.GetQueryParams(ctx).SetStorageType(qry.StorageType)
@@ -850,19 +871,17 @@ func (q *Query) BuildMetadataQuery(
 		return nil, err
 	}
 
-	// 在 metadata 还没有补充 storageType 字段之前
-	// 使用 sourceType 来判断是否是 es 查询
-	//  等后面支持了之后可以删除该段逻辑
-	if tsDB.SourceType == BkData {
-		query.StorageType = consul.ElasticsearchStorageType
-	}
-
 	// 兼容原逻辑，storageType 通过 storageMap 获取
 	if query.StorageType == "" {
+		log.Warnf(ctx, "storageType is empty with %s", query.TableID)
 		stg, _ := tsdb.GetStorage(query.StorageID)
 		if stg != nil {
 			query.StorageType = stg.Type
 		}
+	}
+
+	if query.StorageType == "" {
+		return nil, fmt.Errorf("storageType is empty with %v", query.StorageID)
 	}
 
 	query.Measurement = measurement

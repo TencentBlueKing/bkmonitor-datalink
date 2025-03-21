@@ -145,10 +145,10 @@ type VmResponse struct {
 		TotalRecords         int         `json:"totalRecords"`
 		Timetaken            float64     `json:"timetaken"`
 		List                 []struct {
-			Data      Data   `json:"data,omitempty""`
+			Data      Data   `json:"data,omitempty"`
 			IsPartial bool   `json:"isPartial,omitempty"`
 			Status    string `json:"status,omitempty"`
-		} `json:"list,omitempty""`
+		} `json:"list,omitempty"`
 		BksqlCallElapsedTime int           `json:"bksql_call_elapsed_time"`
 		Device               string        `json:"device"`
 		ResultTableIds       []string      `json:"result_table_ids"`
@@ -172,10 +172,10 @@ type VmLableValuesResponse struct {
 		TotalRecords         int         `json:"totalRecords"`
 		Timetaken            float64     `json:"timetaken"`
 		List                 []struct {
-			Data      []string `json:"data,omitempty""`
+			Data      []string `json:"data,omitempty"`
 			IsPartial bool     `json:"isPartial,omitempty"`
 			Status    string   `json:"status,omitempty"`
-		} `json:"list,omitempty""`
+		} `json:"list,omitempty"`
 		BksqlCallElapsedTime int           `json:"bksql_call_elapsed_time"`
 		Device               string        `json:"device"`
 		ResultTableIds       []string      `json:"result_table_ids"`
@@ -199,10 +199,10 @@ type VmSeriesResponse struct {
 		TotalRecords         int         `json:"totalRecords"`
 		Timetaken            float64     `json:"timetaken"`
 		List                 []struct {
-			Data      []map[string]string `json:"data,omitempty""`
+			Data      []map[string]string `json:"data,omitempty"`
 			IsPartial bool                `json:"isPartial,omitempty"`
 			Status    string              `json:"status,omitempty"`
-		} `json:"list,omitempty""`
+		} `json:"list,omitempty"`
 		BksqlCallElapsedTime int           `json:"bksql_call_elapsed_time"`
 		Device               string        `json:"device"`
 		ResultTableIds       []string      `json:"result_table_ids"`

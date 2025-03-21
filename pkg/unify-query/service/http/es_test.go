@@ -10,7 +10,6 @@
 package http_test
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"strconv"
@@ -25,6 +24,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/es"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/es/mocktest"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	servicehttp "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http"
 )

@@ -270,6 +270,7 @@ func (i *Instance) formatData(ctx context.Context, start time.Time, query *metad
 func (i *Instance) table(query *metadata.Query) string {
 	table := fmt.Sprintf("`%s`", query.DB)
 	if query.Measurement != "" {
+		table += "." + query.Measurement
 	}
 	return table
 }
@@ -363,7 +364,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 	if query.BkSqlCondition != "" {
 		where = fmt.Sprintf("%s AND (%s)", where, query.BkSqlCondition)
 	}
-	sql := fmt.Sprintf("SELECT * FROM %s WHERE %s LIMIT 1", query.Measurement, where)
+	sql := fmt.Sprintf("SELECT * FROM %s WHERE %s LIMIT 1", i.table(query), where)
 	data, err := i.sqlQuery(ctx, sql, span)
 	if err != nil {
 		return nil, err
@@ -392,7 +393,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	if query.BkSqlCondition != "" {
 		where = fmt.Sprintf("%s AND (%s)", where, query.BkSqlCondition)
 	}
-	sql := fmt.Sprintf("SELECT COUNT(`%s`) AS `%s`, %s FROM %s WHERE %s GROUP BY %s", query.Field, query.Field, name, query.Measurement, where, name)
+	sql := fmt.Sprintf("SELECT COUNT(`%s`) AS `%s`, %s FROM %s WHERE %s GROUP BY %s", query.Field, query.Field, name, i.table(query), where, name)
 	data, err := i.sqlQuery(ctx, sql, span)
 	if err != nil {
 		return nil, err

@@ -11,7 +11,6 @@ package promql
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
 	"strconv"
 	"time"
@@ -22,6 +21,7 @@ import (
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 

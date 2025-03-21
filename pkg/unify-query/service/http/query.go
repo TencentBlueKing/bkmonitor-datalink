@@ -11,7 +11,6 @@ package http
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -21,7 +20,6 @@ import (
 
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/pkg/errors"
-	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -30,6 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -71,7 +70,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 		return nil, err
 	}
 
-	start, end, _, timezone, err := structured.ToTime(startTime, endTime, query.Step, query.Timezone)
+	start, end, _, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
@@ -317,24 +316,15 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 		}
 	}
 
-	// 判断如果 step 为空，则补充默认 step
-	if query.Step == "" {
-		query.Step = promql.GetDefaultStep().String()
-	}
-
 	queryRef, err := query.ToQueryReference(ctx)
-	unit, start, end, err := function.QueryTimestamp(query.Start, query.End)
+	unit, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
 	if err != nil {
-		return nil, err
-	}
-
-	step, err := model.ParseDuration(query.Step)
-	if err != nil {
+		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
 
 	// es 需要使用自己的查询时间范围
-	metadata.GetQueryParams(ctx).SetTime(start, end, unit).SetIsReference(true)
+	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit).SetIsReference(true)
 	metadata.SetQueryReference(ctx, queryRef)
 
 	var lookBackDelta time.Duration
@@ -350,10 +340,25 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 		Timeout:         SingleflightTimeout,
 	}, lookBackDelta, QueryMaxRouting)
 
-	if query.Instant {
-		res, err = instance.DirectQuery(ctx, query.MetricMerge, start)
+	// 根据 step 重新对齐开始时间，因为 prometheus engine 中时间如果不能覆盖源数据，则会丢弃，而源数据是通过聚合而来
+	var (
+		step time.Duration
+	)
+
+	// 只有聚合场景需要对齐
+	if window, windowErr := query.GetMaxWindow(); windowErr == nil && window.Seconds() > 0 {
+		startTime, endTime, step, _, err = structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
+		if err != nil {
+			return nil, err
+		}
 	} else {
-		res, err = instance.DirectQueryRange(ctx, query.MetricMerge, start, end, time.Duration(step))
+		step = structured.StepParse(query.Step)
+	}
+
+	if query.Instant {
+		res, err = instance.DirectQuery(ctx, query.MetricMerge, startTime)
+	} else {
+		res, err = instance.DirectQueryRange(ctx, query.MetricMerge, startTime, endTime, step)
 	}
 	if err != nil {
 		return nil, err
@@ -509,7 +514,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 		return nil, err
 	}
 
-	start, end, step, timezone, err := structured.ToTime(startTime, endTime, query.Step, query.Timezone)
+	start, end, step, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
 	if err != nil {
 		return nil, err
 	}
@@ -694,7 +699,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 		return nil, err
 	}
 
-	start, end, step, timezone, err := structured.ToTime(startTime, endTime, query.Step, query.Timezone)
+	start, end, step, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
 	if err != nil {
 		return nil, err
 	}

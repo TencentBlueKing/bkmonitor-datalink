@@ -76,7 +76,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
 
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.RemoteAddr)
+	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 
 	// 优先尝试从请求头中获取 token，取不到则中参数中获取
 	token := req.Header.Get(define.KeyToken)

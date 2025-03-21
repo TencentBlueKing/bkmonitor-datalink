@@ -49,6 +49,8 @@ type SQLExpr interface {
 	ParserAllConditions(allConditions metadata.AllConditions) (string, error)
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
 	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, error)
+	// DescribeTable 返回当前表结构
+	DescribeTable(table string) string
 }
 
 // SQL表达式注册管理相关变量
@@ -167,7 +169,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 				offsetMillis = offset * 1e3
 			}
 
-			timeField := fmt.Sprintf("(%s + %d) / %d * %d - %d", d.timeField, d.timeField, offsetMillis, agg.Window.Milliseconds(), offsetMillis)
+			timeField := fmt.Sprintf("(%s + %d) / %d * %d - %d", d.timeField, offsetMillis, agg.Window.Milliseconds(), agg.Window.Milliseconds(), offsetMillis)
 
 			groupByFields = append(groupByFields, timeField)
 			selectFields = append(selectFields, fmt.Sprintf("MAX(%s) AS `%s`", timeField, TimeStamp))
@@ -249,6 +251,10 @@ func (d *DefaultSQLExpr) ParserAllConditions(allConditions metadata.AllCondition
 	}
 
 	return "", nil
+}
+
+func (d *DefaultSQLExpr) DescribeTable(table string) string {
+	return ""
 }
 
 // buildCondition 构建单个条件表达式

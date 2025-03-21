@@ -38,6 +38,9 @@ const (
 	KeyIndex     = "__index"
 	KeyTableID   = "__result_table"
 	KeyDataLabel = "__data_label"
+
+	TableFieldName = "Field"
+	TableFieldType = "Type"
 )
 
 type Instance struct {
@@ -115,6 +118,10 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string, span *trace.Span) (
 		ok  bool
 		err error
 	)
+
+	if sql == "" {
+		return data, nil
+	}
 
 	log.Infof(ctx, "%s: %s", i.InstanceType(), sql)
 	span.Set("query-sql", sql)
@@ -271,9 +278,62 @@ func (i *Instance) formatData(ctx context.Context, start time.Time, query *metad
 	return res, nil
 }
 
-func (i *Instance) table(query *metadata.Query) string {
+func (i *Instance) getFieldsMap(ctx context.Context, sql string, span *trace.Span) (map[string]string, error) {
+	fieldsMap := make(map[string]string)
+
+	if sql == "" {
+		return nil, nil
+	}
+
+	data, err := i.sqlQuery(ctx, sql, span)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, list := range data.List {
+		var (
+			k  string
+			v  string
+			ok bool
+		)
+		k, ok = list[TableFieldName].(string)
+		if !ok {
+			continue
+		}
+
+		v, ok = list[TableFieldType].(string)
+		if !ok {
+			continue
+		}
+		fieldsMap[k] = v
+	}
+
+	return fieldsMap, nil
+}
+
+func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, start, end time.Time, span *trace.Span) (*QueryFactory, error) {
+
+	f := NewQueryFactory(ctx, query).WithRangeTime(start, end)
+
+	// 只有 Doris 才需要获取字段表结构
+	if query.Measurement == sqlExpr.Doris {
+		fieldsMap, err := i.getFieldsMap(ctx, f.DescribeTable(), span)
+		if err != nil {
+			return f, err
+		}
+
+		span.Set("table_fields_map", fieldsMap)
+
+		f.WithFieldsMap(fieldsMap)
+	}
+
+	return f, nil
+}
+
+func (i *Instance) Table(query *metadata.Query) string {
 	table := fmt.Sprintf("`%s`", query.DB)
 	if query.Measurement != "" {
+		table += "." + query.Measurement
 	}
 	return table
 }
@@ -307,8 +367,10 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		}
 	}
 
-	queryFactory := NewQueryFactory(ctx, query).WithRangeTime(start, end)
-
+	queryFactory, err := i.InitQueryFactory(ctx, query, start, end, span)
+	if err != nil {
+		return
+	}
 	sql, err := queryFactory.SQL()
 	if err != nil {
 		return
@@ -371,8 +433,10 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 		}
 	}
 
-	queryFactory := NewQueryFactory(ctx, query).WithRangeTime(start, end)
-
+	queryFactory, err := i.InitQueryFactory(ctx, query, start, end, span)
+	if err != nil {
+		return storage.ErrSeriesSet(err)
+	}
 	sql, err := queryFactory.SQL()
 	if err != nil {
 		return storage.ErrSeriesSet(err)
@@ -428,7 +492,11 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 	// 取字段名不需要返回数据，但是 size 不能使用 0，所以还是用 1
 	query.Size = 1
 
-	queryFactory := NewQueryFactory(ctx, query).WithRangeTime(start, end)
+	queryFactory, err := i.InitQueryFactory(ctx, query, start, end, span)
+	if err != nil {
+		return nil, err
+	}
+
 	sql, err := queryFactory.SQL()
 	if err != nil {
 		return nil, err
@@ -465,7 +533,10 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		},
 	}
 
-	queryFactory := NewQueryFactory(ctx, query).WithRangeTime(start, end)
+	queryFactory, err := i.InitQueryFactory(ctx, query, start, end, span)
+	if err != nil {
+		return nil, err
+	}
 	sql, err := queryFactory.SQL()
 	if err != nil {
 		return nil, err

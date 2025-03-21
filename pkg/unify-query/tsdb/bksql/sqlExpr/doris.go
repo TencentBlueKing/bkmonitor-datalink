@@ -64,6 +64,10 @@ func (d *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
 	return d.walk(expr)
 }
 
+func (d *DorisSQLExpr) DescribeTable(table string) string {
+	return fmt.Sprintf("SHOW CREATE %s", table)
+}
+
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段
 func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, err error) {
 	valueField, _ := d.dimTransform(d.valueField)

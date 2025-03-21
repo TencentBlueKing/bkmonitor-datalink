@@ -90,15 +90,27 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	return f
 }
 
-func (f *QueryFactory) WithFieldsMap(fieldsMap map[string]string) *QueryFactory {
-	f.expr.WithFieldsMap(fieldsMap)
-	return f
-}
-
 func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 	f.start = start
 	f.end = end
 	return f
+}
+
+func (f *QueryFactory) WithFieldsMap(m map[string]string) *QueryFactory {
+	f.expr.WithFieldsMap(m)
+	return f
+}
+
+func (f *QueryFactory) Table() string {
+	table := fmt.Sprintf("`%s`", f.query.DB)
+	if f.query.Measurement != "" {
+		table += "." + f.query.Measurement
+	}
+	return table
+}
+
+func (f *QueryFactory) DescribeTable() string {
+	return f.expr.DescribeTable(f.Table())
 }
 
 func (f *QueryFactory) getTheDateIndexFilters() (theDateFilter string, err error) {
@@ -171,12 +183,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 		return
 	}
 
-	table := fmt.Sprintf("`%s`", f.query.DB)
-	if f.query.Measurement != "" {
-		table += "." + f.query.Measurement
-	}
-
-	sql += fmt.Sprintf("SELECT %s FROM %s", strings.Join(selectFields, ", "), table)
+	sql += fmt.Sprintf("SELECT %s FROM %s", strings.Join(selectFields, ", "), f.Table())
 	whereString, err := f.BuildWhere()
 	if err != nil {
 		return

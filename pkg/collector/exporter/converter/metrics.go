@@ -136,6 +136,7 @@ func (c metricsConverter) convertHistogramMetrics(dataId int32, pdMetric pmetric
 	dps := pdMetric.Histogram().DataPoints()
 	for i := 0; i < dps.Len(); i++ {
 		dp := dps.At(i)
+		dpTime := dp.Timestamp().AsTime()
 		dimensions := utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs)
 
 		if !utils.IsValidFloat64(dp.Sum()) {
@@ -149,7 +150,29 @@ func (c metricsConverter) convertHistogramMetrics(dataId int32, pdMetric pmetric
 				Metric:     pdMetric.Name() + "_sum",
 				Value:      dp.Sum(),
 				Dimensions: dimensions,
-				Time:       dp.Timestamp().AsTime(),
+				Time:       dpTime,
+			}
+			items = append(items, m.AsMapStr())
+		}
+
+		// 当且仅当 Min 存在时才追加 _min 指标
+		if dp.HasMin() {
+			m := otMetricMapper{
+				Metric:     pdMetric.Name() + "_min",
+				Value:      dp.Min(),
+				Dimensions: dimensions,
+				Time:       dpTime,
+			}
+			items = append(items, m.AsMapStr())
+		}
+
+		// 当且仅当 Max 存在时才追加 _max 指标
+		if dp.HasMax() {
+			m := otMetricMapper{
+				Metric:     pdMetric.Name() + "_max",
+				Value:      dp.Max(),
+				Dimensions: dimensions,
+				Time:       dpTime,
 			}
 			items = append(items, m.AsMapStr())
 		}
@@ -163,7 +186,7 @@ func (c metricsConverter) convertHistogramMetrics(dataId int32, pdMetric pmetric
 			Metric:     pdMetric.Name() + "_count",
 			Value:      float64(dp.Count()),
 			Dimensions: dimensions,
-			Time:       dp.Timestamp().AsTime(),
+			Time:       dpTime,
 		}
 		items = append(items, m.AsMapStr())
 
@@ -185,7 +208,7 @@ func (c metricsConverter) convertHistogramMetrics(dataId int32, pdMetric pmetric
 				Metric:     pdMetric.Name() + "_bucket",
 				Value:      val,
 				Dimensions: utils.MergeReplaceMaps(additional, dimensions),
-				Time:       dp.Timestamp().AsTime(),
+				Time:       dpTime,
 			}
 			items = append(items, m.AsMapStr())
 		}
@@ -199,7 +222,7 @@ func (c metricsConverter) convertHistogramMetrics(dataId int32, pdMetric pmetric
 			Metric:     pdMetric.Name() + "_bucket",
 			Value:      val,
 			Dimensions: utils.MergeReplaceMaps(map[string]string{"le": "+Inf"}, dimensions),
-			Time:       dp.Timestamp().AsTime(),
+			Time:       dpTime,
 		}
 		items = append(items, m.AsMapStr())
 	}

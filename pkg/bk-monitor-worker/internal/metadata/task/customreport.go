@@ -96,8 +96,6 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 		// 如果不存在 vm rt, 则不会通过bkbase查询
 		vmRt, ok := rtMapVmRt[eg.TableID]
 
-		//var ds resulttable.DataSource
-
 		var ds resulttable.DataSource
 		if err := resulttable.NewDataSourceQuerySet(db).BkDataIdEq(eg.BkDataID).One(&ds); err != nil {
 			logger.Errorf("RefreshTimeSeriesMetric:table_id %s found datasource record error, %v", eg.TableID, err)

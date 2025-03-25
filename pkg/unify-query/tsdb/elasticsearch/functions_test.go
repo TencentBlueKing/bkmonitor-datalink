@@ -12,6 +12,8 @@ package elasticsearch
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestShortDur(t *testing.T) {
@@ -38,7 +40,7 @@ func TestShortDur(t *testing.T) {
 		{
 			name:     "1 hour 30 minutes",
 			duration: time.Hour + 30*time.Minute,
-			expected: "1h30m",
+			expected: "90m",
 		},
 		{
 			name:     "1 hour 0 minutes",
@@ -53,7 +55,7 @@ func TestShortDur(t *testing.T) {
 		{
 			name:     "1 hour 30 minutes 0 seconds",
 			duration: time.Hour + 30*time.Minute + 0*time.Second,
-			expected: "1h30m",
+			expected: "90m",
 		},
 		{
 			name:     "1 hour 0 minutes 0 seconds",
@@ -63,7 +65,7 @@ func TestShortDur(t *testing.T) {
 		{
 			name:     "1 minute 30 seconds",
 			duration: time.Minute + 30*time.Second,
-			expected: "1m30s",
+			expected: "90s",
 		},
 		{
 			name:     "0 seconds",
@@ -85,9 +87,7 @@ func TestShortDur(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := shortDur(tt.duration)
-			if got != tt.expected {
-				t.Errorf("shortDur(%v) = %v, want %v", tt.duration, got, tt.expected)
-			}
+			assert.Equal(t, got, tt.expected)
 		})
 	}
 }

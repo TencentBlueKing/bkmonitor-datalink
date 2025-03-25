@@ -911,7 +911,7 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	if len(q.OrderBy) > 0 {
-		query.Orders = make(metadata.Orders)
+		query.Orders = make(metadata.Orders, 0, len(q.OrderBy))
 		for _, o := range q.OrderBy {
 			if len(o) == 0 {
 				continue
@@ -924,7 +924,10 @@ func (q *Query) BuildMetadataQuery(
 				asc = false
 				name = name[1:]
 			}
-			query.Orders[name] = asc
+			query.Orders = append(query.Orders, metadata.Order{
+				Name: name,
+				Ast:  asc,
+			})
 		}
 	}
 

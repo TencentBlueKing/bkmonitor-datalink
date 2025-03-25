@@ -108,7 +108,10 @@ func TestInstance_queryReference(t *testing.T) {
 				From:  0,
 				Size:  5,
 				Orders: metadata.Orders{
-					FieldTime: false,
+					{
+						Name: FieldTime,
+						Ast:  false,
+					},
 				},
 				DataSource:  structured.BkLog,
 				TableID:     "es_index",
@@ -139,7 +142,10 @@ func TestInstance_queryReference(t *testing.T) {
 				DB:    db,
 				Field: "user.first",
 				Orders: metadata.Orders{
-					FieldTime: false,
+					{
+						Name: FieldTime,
+						Ast:  false,
+					},
 				},
 				DataSource:    structured.BkLog,
 				TableID:       "es_index",
@@ -167,7 +173,10 @@ func TestInstance_queryReference(t *testing.T) {
 				TableID:    "bk_log_index_set_10",
 				MetricName: "__ext.io_kubernetes_pod",
 				Orders: metadata.Orders{
-					FieldTime: false,
+					{
+						Name: FieldTime,
+						Ast:  false,
+					},
 				},
 				StorageType: consul.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{
@@ -199,7 +208,10 @@ func TestInstance_queryReference(t *testing.T) {
 				TableID:    "bk_log_index_set_10",
 				MetricName: "__ext.io_kubernetes_pod",
 				Orders: metadata.Orders{
-					FieldTime: false,
+					{
+						Name: FieldTime,
+						Ast:  false,
+					},
 				},
 				StorageType: consul.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{
@@ -232,7 +244,10 @@ func TestInstance_queryReference(t *testing.T) {
 				DataLabel:  "set_10",
 				MetricName: "__ext.io_kubernetes_pod",
 				Orders: metadata.Orders{
-					FieldTime: false,
+					{
+						Name: FieldTime,
+						Ast:  false,
+					},
 				},
 				Source:      []string{"__ext.container_id"},
 				StorageType: consul.ElasticsearchStorageType,
@@ -268,7 +283,10 @@ func TestInstance_queryReference(t *testing.T) {
 					Unit: function.Millisecond,
 				},
 				Orders: metadata.Orders{
-					FieldTime: false,
+					{
+						Name: FieldTime,
+						Ast:  false,
+					},
 				},
 			},
 			start:    defaultStart,
@@ -388,8 +406,11 @@ func TestInstance_queryReference(t *testing.T) {
 						},
 					},
 				},
-				Orders: map[string]bool{
-					FieldValue: true,
+				Orders: metadata.Orders{
+					{
+						Name: FieldValue,
+						Ast:  true,
+					},
 				},
 			},
 			start:    defaultStart,
@@ -414,8 +435,11 @@ func TestInstance_queryReference(t *testing.T) {
 						},
 					},
 				},
-				Orders: map[string]bool{
-					FieldValue: true,
+				Orders: metadata.Orders{
+					{
+						Name: FieldValue,
+						Ast:  true,
+					},
 				},
 			},
 			start:    defaultStart,

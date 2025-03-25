@@ -745,7 +745,7 @@ func (q *Query) BuildMetadataQuery(
 					cond = append(cond, ConditionField{
 						DimensionName: k,
 						Value:         []string{v},
-						Operator:      Contains,
+						Operator:      ConditionEqual,
 					})
 				}
 			}

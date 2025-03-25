@@ -165,9 +165,7 @@ func (e *wrapEvent) GetType() string {
 }
 
 func toEventMapStr(e k8sEvent, externalLabels []map[string]string) common.MapStr {
-	relKey := strings.ToLower(e.InvolvedObject.Kind)
 	dimensions := common.MapStr{
-		relKey:       e.InvolvedObject.Name,
 		"kind":       e.InvolvedObject.Kind,
 		"namespace":  e.InvolvedObject.Namespace,
 		"name":       e.InvolvedObject.Name,
@@ -175,6 +173,11 @@ func toEventMapStr(e k8sEvent, externalLabels []map[string]string) common.MapStr
 		"uid":        e.Metadata.Uid,
 		"host":       e.Source.Host,
 		"type":       e.Type,
+	}
+
+	relKey := strings.ToLower(e.InvolvedObject.Kind)
+	if _, ok := dimensions[relKey]; !ok {
+		dimensions[relKey] = e.InvolvedObject.Name
 	}
 
 	for i := 0; i < len(externalLabels); i++ {

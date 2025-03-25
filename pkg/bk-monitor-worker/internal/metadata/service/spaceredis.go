@@ -1709,12 +1709,9 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 		if strings.HasPrefix(tid, models.Bkci1001TableIdPrefix) {
 			continue
 		}
-		// NOTE: 特殊逻辑，针对 `dbm_system` 开头的结果表，设置过滤条件为空
-		if strings.HasPrefix(tid, models.Dbm1001TableIdPrefix) {
-			// 如果不允许访问，则需要跳过
-			if !stringx.StringInSlice(fmt.Sprintf("%s__%s", spaceType, spaceId), cfg.GlobalAccessDbmRtSpaceUid) {
-				continue
-			}
+		// NOTE: 特殊逻辑，针对 `dbm_system` 开头的结果表，授权给DBM业务访问全部数据,之所以没走常规授权,是因为这部分数据的DataId都是1001
+		spaceUid := fmt.Sprintf("%s__%s", spaceType, spaceId)
+		if strings.HasPrefix(tid, models.Dbm1001TableIdPrefix) && stringx.StringInSlice(spaceUid, cfg.GlobalAccessDbmRtSpaceUid) {
 			valueData[tid] = map[string]interface{}{"filters": []interface{}{}}
 			continue
 		}

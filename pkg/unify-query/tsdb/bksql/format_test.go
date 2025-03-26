@@ -49,7 +49,7 @@ func TestNewSqlFactory(t *testing.T) {
 				BkSqlCondition: "gseIndex > 0",
 				From:           0,
 				Size:           0,
-				Orders:         metadata.Orders{"ip": true},
+				Orders:         metadata.Orders{{Name: "ip", Ast: true}},
 			},
 			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, MAX((`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 60000 - 0))) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1717144141000 AND `dtEventTimeStamp` < 1717147741000 AND `thedate` = '20240531' AND (gseIndex > 0) GROUP BY `ip`, (`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 60000 - 0)) ORDER BY `_timestamp_` ASC, `ip` ASC",
 		},

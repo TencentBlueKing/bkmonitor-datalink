@@ -165,6 +165,7 @@ const (
 	OptionIsSplitMeasurement   = "is_split_measurement"
 	OptionDisableMetricCutter  = "disable_metric_cutter"
 	OptionEnableFieldBlackList = "enable_field_black_list"
+	OptionFieldWhitelist       = "metric_field_whitelist"
 )
 
 // root consul path template

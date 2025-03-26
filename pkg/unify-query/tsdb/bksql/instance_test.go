@@ -339,8 +339,11 @@ func TestInstance_bkSql(t *testing.T) {
 				DB:          "100133_ieod_logsearch4_errorlog_p",
 				Measurement: "doris",
 				Field:       "value",
-				Orders: map[string]bool{
-					"_time": false,
+				Orders: metadata.Orders{
+					{
+						Name: "_time",
+						Ast:  false,
+					},
 				},
 			},
 			expected: "SELECT *, `value` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' ORDER BY `_timestamp_` DESC",
@@ -497,9 +500,14 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			query: &metadata.Query{
 				DB:    "transaction_logs",
 				Field: "amount",
-				Orders: map[string]bool{
-					"timestamp":  true,
-					"account_id": false,
+				Orders: metadata.Orders{
+					{
+						Name: "timestamp",
+						Ast:  true,
+					},
+					{
+						Name: "account_id",
+					},
 				},
 			},
 			expected: "SELECT *, `amount` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `transaction_logs` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' ORDER BY `account_id` DESC, `timestamp` ASC",
@@ -571,9 +579,14 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 						Dimensions: []string{"__ext.container_id", "test"},
 					},
 				},
-				Orders: map[string]bool{
-					"timestamp":          true,
-					"__ext.container_id": false,
+				Orders: metadata.Orders{
+					{
+						Name: "timestamp",
+						Ast:  true,
+					},
+					{
+						Name: "__ext.container_id",
+					},
 				},
 			},
 			err: fmt.Errorf("query is not support object with __ext.container_id"),
@@ -607,8 +620,10 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 						Dimensions: []string{"__ext.io_kubernetes_workload_name", "__ext.io_kubernetes_workload_type"},
 					},
 				},
-				Orders: map[string]bool{
-					"__ext.io_kubernetes_workload_name": false,
+				Orders: metadata.Orders{
+					{
+						Name: "__ext.io_kubernetes_workload_name",
+					},
 				},
 			},
 			start:    time.Unix(1741334700, 0),
@@ -644,8 +659,10 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 						Window:     time.Minute,
 					},
 				},
-				Orders: map[string]bool{
-					"__ext.io_kubernetes_workload_name": false,
+				Orders: metadata.Orders{
+					{
+						Name: "__ext.io_kubernetes_workload_name",
+					},
 				},
 			},
 			start:    time.Unix(1741334700, 0),
@@ -668,8 +685,10 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 						Window:     time.Minute * 5,
 					},
 				},
-				Orders: map[string]bool{
-					"__ext.io_kubernetes_workload_name": false,
+				Orders: metadata.Orders{
+					{
+						Name: "__ext.io_kubernetes_workload_name",
+					},
 				},
 			},
 			start:    time.Unix(1741334700, 0),
@@ -692,8 +711,10 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 						Window:     time.Second * 15,
 					},
 				},
-				Orders: map[string]bool{
-					"__ext.io_kubernetes_workload_name": false,
+				Orders: metadata.Orders{
+					{
+						Name: "__ext.io_kubernetes_workload_name",
+					},
 				},
 			},
 			start:    time.Unix(1741334700, 0),

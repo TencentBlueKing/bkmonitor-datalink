@@ -188,15 +188,15 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		}
 	}
 
-	for key, asc := range orders {
+	for _, order := range orders {
 		var orderField string
-		switch key {
+		switch order.Name {
 		case FieldValue:
 			orderField = d.valueField
 		case FieldTime:
 			orderField = TimeStamp
 		default:
-			orderField = key
+			orderField = order.Name
 		}
 
 		orderField, err = d.dimTransform(orderField)
@@ -205,7 +205,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		}
 
 		ascName := "ASC"
-		if !asc {
+		if !order.Ast {
 			ascName = "DESC"
 		}
 		orderByFields = append(orderByFields, fmt.Sprintf("%s %s", orderField, ascName))

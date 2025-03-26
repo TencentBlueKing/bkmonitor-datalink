@@ -243,10 +243,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}
 
 	source := elastic.NewSearchSource()
-	order := fact.Order()
-
-	for key, asc := range order {
-		source.Sort(key, asc)
+	for _, order := range fact.Orders() {
+		source.Sort(order.Name, order.Ast)
 	}
 
 	if len(filterQueries) > 0 {

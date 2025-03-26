@@ -542,7 +542,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		}
 
 		if len(q.OrderBy) > 0 {
-			qry.Orders = make(metadata.Orders)
+			qry.Orders = make(metadata.Orders, 0, len(q.OrderBy))
 			for _, o := range q.OrderBy {
 				if len(o) == 0 {
 					continue
@@ -555,7 +555,11 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 					asc = false
 					name = name[1:]
 				}
-				qry.Orders[name] = asc
+
+				qry.Orders = append(qry.Orders, metadata.Order{
+					Name: name,
+					Ast:  asc,
+				})
 			}
 		}
 
@@ -766,7 +770,7 @@ func (q *Query) BuildMetadataQuery(
 					cond = append(cond, ConditionField{
 						DimensionName: k,
 						Value:         []string{v},
-						Operator:      Contains,
+						Operator:      ConditionEqual,
 					})
 				}
 			}
@@ -930,7 +934,7 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	if len(q.OrderBy) > 0 {
-		query.Orders = make(metadata.Orders)
+		query.Orders = make(metadata.Orders, 0, len(q.OrderBy))
 		for _, o := range q.OrderBy {
 			if len(o) == 0 {
 				continue
@@ -943,7 +947,10 @@ func (q *Query) BuildMetadataQuery(
 				asc = false
 				name = name[1:]
 			}
-			query.Orders[name] = asc
+			query.Orders = append(query.Orders, metadata.Order{
+				Name: name,
+				Ast:  asc,
+			})
 		}
 	}
 

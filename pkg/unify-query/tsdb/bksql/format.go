@@ -68,14 +68,12 @@ type QueryFactory struct {
 
 func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	f := &QueryFactory{
-		ctx:    ctx,
-		query:  query,
-		orders: make(metadata.Orders),
+		ctx:   ctx,
+		query: query,
 	}
+
 	if query.Orders != nil {
-		for k, v := range query.Orders {
-			f.orders[k] = v
-		}
+		f.orders = query.Orders
 	}
 
 	if query.TimeField.Name != "" {

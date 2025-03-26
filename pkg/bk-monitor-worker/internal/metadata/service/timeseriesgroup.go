@@ -10,6 +10,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"time"
@@ -79,11 +80,48 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, queryFromBkDat
 		logger.Infof("UpdateTimeSeriesMetrics get redis data for vm_rt: %s, metric_info is empty", vmRt)
 		return false, nil
 	}
+
+	// 检查是否配置了字段白名单
+	db := mysql.GetDBSession().DB
+	var whitelistOption resulttable.ResultTableOption
+	err = resulttable.NewResultTableOptionQuerySet(db).TableIDEq(s.TableID).NameEq(models.OptionFieldWhitelist).One(&whitelistOption)
+	if err == nil {
+		// 存在白名单配置，解析白名单字段列表
+		var whitelistFields []string
+		logger.Infof("UpdateTimeSeriesMetrics: tableId->[%s],got whitelist option->[%v]", s.TableID, whitelistOption.Value)
+		if err := json.Unmarshal([]byte(whitelistOption.Value), &whitelistFields); err != nil {
+			logger.Errorf("UpdateTimeSeriesMetrics parse whitelist fields for table_id [%s] failed: %v", s.TableID, err)
+		} else if len(whitelistFields) > 0 {
+			logger.Infof("UpdateTimeSeriesMetrics applied whitelist filter for table_id [%s], whitelist_fields-> %v", s.TableID, whitelistFields)
+			// 将白名单字段列表转换为map，方便查找
+			whitelistMap := make(map[string]bool)
+			for _, field := range whitelistFields {
+				whitelistMap[field] = true
+			}
+
+			// 过滤metricInfo，只保留白名单中的字段
+			var filteredMetricInfo []map[string]interface{}
+			for _, metric := range metricInfo {
+				fieldName, ok := metric["field_name"].(string)
+				if !ok {
+					continue
+				}
+				if whitelistMap[fieldName] {
+					filteredMetricInfo = append(filteredMetricInfo, metric)
+				}
+			}
+
+			logger.Infof("UpdateTimeSeriesMetrics applied whitelist filter for table_id [%s], filtered metrics from %d to %d",
+				s.TableID, len(metricInfo), len(filteredMetricInfo))
+			metricInfo = filteredMetricInfo
+		}
+	}
+
 	// 记录是否有更新，然后推送redis并发布通知
 	return s.UpdateMetrics(metricInfo)
 }
 
-// RefreshMetric 更新指标
+// QueryMetricAndDimension RefreshMetric 更新指标
 func (s *TimeSeriesGroupSvc) QueryMetricAndDimension(vmRt string) (vmRtMetrics *[]map[string]interface{}, err error) {
 	// NOTE: 现阶段仅支持 vm 存储
 	vmStorage := "vm"

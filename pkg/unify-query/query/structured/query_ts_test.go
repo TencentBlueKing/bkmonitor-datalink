@@ -337,7 +337,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 									{
 										{
 											DimensionName: "bk_biz_id",
-											Operator:      Contains,
+											Operator:      ConditionEqual,
 											Value:         []string{"2"},
 										},
 									},
@@ -369,7 +369,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 									{
 										{
 											DimensionName: "bk_biz_id",
-											Operator:      Contains,
+											Operator:      ConditionEqual,
 											Value:         []string{"2"},
 										},
 									},
@@ -432,7 +432,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 									{
 										{
 											DimensionName: "bk_biz_id",
-											Operator:      Contains,
+											Operator:      ConditionEqual,
 											Value:         []string{"2"},
 										},
 									},
@@ -464,7 +464,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 									{
 										{
 											DimensionName: "bk_biz_id",
-											Operator:      Contains,
+											Operator:      ConditionEqual,
 											Value:         []string{"2"},
 										},
 									},
@@ -514,7 +514,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 									{
 										{
 											DimensionName: "bk_biz_id",
-											Operator:      Contains,
+											Operator:      ConditionEqual,
 											Value:         []string{"2"},
 										},
 									},
@@ -575,7 +575,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 									{
 										{
 											DimensionName: "bk_biz_id",
-											Operator:      Contains,
+											Operator:      ConditionEqual,
 											Value:         []string{"2"},
 										},
 										{
@@ -646,7 +646,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 									{
 										{
 											DimensionName: "bk_biz_id",
-											Operator:      Contains,
+											Operator:      ConditionEqual,
 											Value:         []string{"2"},
 										},
 									},
@@ -713,7 +713,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 									{
 										{
 											DimensionName: "bk_biz_id",
-											Operator:      Contains,
+											Operator:      ConditionEqual,
 											Value:         []string{"2"},
 										},
 									},
@@ -788,7 +788,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 									{
 										{
 											DimensionName: "bk_biz_id",
-											Operator:      Contains,
+											Operator:      ConditionEqual,
 											Value:         []string{"2"},
 										},
 									},
@@ -862,7 +862,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 									{
 										{
 											DimensionName: "bk_biz_id",
-											Operator:      Contains,
+											Operator:      ConditionEqual,
 											Value:         []string{"2"},
 										},
 									},
@@ -934,7 +934,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 									{
 										{
 											DimensionName: "bk_biz_id",
-											Operator:      Contains,
+											Operator:      ConditionEqual,
 											Value:         []string{"2"},
 										},
 									},
@@ -1005,7 +1005,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 									{
 										{
 											DimensionName: "bk_biz_id",
-											Operator:      Contains,
+											Operator:      ConditionEqual,
 											Value:         []string{"2"},
 										},
 									},
@@ -1076,7 +1076,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 									{
 										{
 											DimensionName: "bk_biz_id",
-											Operator:      Contains,
+											Operator:      ConditionEqual,
 											Value:         []string{"2"},
 										},
 									},

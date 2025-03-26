@@ -150,8 +150,8 @@ type TimeAgg struct {
 }
 
 type TermAgg struct {
-	Name  string
-	Order map[string]bool
+	Name   string
+	Orders metadata.Orders
 }
 
 type NestedAgg struct {
@@ -288,13 +288,13 @@ func (f *FormatFactory) WithTransform(encode func(string) string, decode func(st
 	return f
 }
 
-func (f *FormatFactory) WithOrders(orders map[string]bool) *FormatFactory {
-	f.orders = make(metadata.Orders, len(orders))
-	for k, ok := range orders {
+func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
+	f.orders = make(metadata.Orders, 0, len(orders))
+	for _, order := range orders {
 		if f.decode != nil {
-			k = f.encode(k)
+			order.Name = f.encode(order.Name)
 		}
-		f.orders[k] = ok
+		f.orders = append(f.orders, order)
 	}
 	return f
 }
@@ -347,16 +347,17 @@ func (f *FormatFactory) termAgg(name string, isFirst bool) {
 		Name: name,
 	}
 
-	info.Order = make(map[string]bool, len(f.orders))
-	for key, asc := range f.orders {
-		if name == key {
-			info.Order[KeyValue] = asc
+	for _, order := range f.orders {
+		if name == order.Name {
+			order.Name = KeyValue
+			info.Orders = append(info.Orders, order)
 		} else if isFirst {
-			if key == FieldValue {
-				info.Order[FieldValue] = asc
+			if order.Name == FieldValue {
+				info.Orders = append(info.Orders, order)
 			}
 		}
 	}
+
 	f.aggInfoList = append(f.aggInfoList, info)
 }
 
@@ -591,8 +592,8 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			if f.size > 0 {
 				curAgg = curAgg.Size(f.size)
 			}
-			for key, asc := range info.Order {
-				curAgg = curAgg.Order(key, asc)
+			for _, order := range info.Orders {
+				curAgg = curAgg.Order(order.Name, order.Ast)
 			}
 			if agg != nil {
 				curAgg = curAgg.SubAggregation(name, agg)
@@ -669,20 +670,20 @@ func (f *FormatFactory) Size(ss *elastic.SearchSource) {
 	ss.From(f.from).Size(f.size)
 }
 
-func (f *FormatFactory) Order() map[string]bool {
-	order := make(map[string]bool)
-	for name, asc := range f.orders {
-		if name == FieldValue {
-			name = f.valueField
-		} else if name == FieldTime {
-			name = f.timeField.Name
+func (f *FormatFactory) Orders() metadata.Orders {
+	orders := make(metadata.Orders, 0, len(f.orders))
+	for _, order := range f.orders {
+		if order.Name == FieldValue {
+			order.Name = f.valueField
+		} else if order.Name == FieldTime {
+			order.Name = f.timeField.Name
 		}
 
-		if _, ok := f.mapping[name]; ok {
-			order[name] = asc
+		if _, ok := f.mapping[order.Name]; ok {
+			orders = append(orders, order)
 		}
 	}
-	return order
+	return orders
 }
 
 func (f *FormatFactory) TimeFieldUnix(t time.Time) (u int64) {

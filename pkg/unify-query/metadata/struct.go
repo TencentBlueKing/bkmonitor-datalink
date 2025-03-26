@@ -131,7 +131,12 @@ type HighLight struct {
 	Enable            bool `json:"enable,omitempty"`
 }
 
-type Orders map[string]bool
+type Order struct {
+	Name string
+	Ast  bool
+}
+
+type Orders []Order
 
 type AllConditions [][]ConditionField
 

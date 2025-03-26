@@ -16,8 +16,6 @@ import (
 	"strings"
 
 	prom "github.com/prometheus/prometheus/promql"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 )
 
 // Table :
@@ -49,6 +47,12 @@ func NewTableWithSample(index int, sample prom.Sample, queryRawFormat func(strin
 		if queryRawFormat != nil {
 			label.Name = queryRawFormat(label.Name)
 		}
+
+		// es 查询使用了空格作为占位符，所以这里需要将标签中的空格替换掉
+		if label.Value == " " {
+			label.Value = ""
+		}
+
 		t.GroupKeys = append(t.GroupKeys, label.Name)
 		t.GroupValues = append(t.GroupValues, label.Value)
 	}
@@ -83,19 +87,17 @@ func NewTable(index int, series prom.Series, queryRawFormat func(string) string)
 	// 根据labels获取group信息
 	for _, label := range series.Metric {
 		// 过滤随机标签数据
-		if label.Name != influxdb.BKTaskIndex {
-			if queryRawFormat != nil {
-				label.Name = queryRawFormat(label.Name)
-			}
-
-			// es 查询使用了空格作为占位符，所以这里需要将标签中的空格替换掉
-			if label.Value == " " {
-				label.Value = ""
-			}
-
-			t.GroupKeys = append(t.GroupKeys, label.Name)
-			t.GroupValues = append(t.GroupValues, label.Value)
+		if queryRawFormat != nil {
+			label.Name = queryRawFormat(label.Name)
 		}
+
+		// es 查询使用了空格作为占位符，所以这里需要将标签中的空格替换掉
+		if label.Value == " " {
+			label.Value = ""
+		}
+
+		t.GroupKeys = append(t.GroupKeys, label.Name)
+		t.GroupValues = append(t.GroupValues, label.Value)
 	}
 
 	t.Name = "series" + strconv.Itoa(index)

@@ -12,7 +12,6 @@ package http
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -175,6 +174,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 		message strings.Builder
 		lock    sync.Mutex
+
+		querySize int64
 	)
 
 	receiveWg.Add(1)
@@ -186,23 +187,14 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			list = append(list, d)
 		}
 
-		sort.Slice(list, func(i, j int) bool {
-			var (
-				a, b string
-				ok   bool
-			)
-			if a, ok = list[i][DefaultTime].(string); !ok {
-				return true
-			}
-			if b, ok = list[j][DefaultTime].(string); !ok {
-				return true
-			}
+		// dataCh close 之后会进入到该逻辑，多数据合并才需要进行排序和翻页
+		if atomic.LoadInt64(&querySize) > 1 {
+			// 根据 orderby 对 list 进行排序
+			queryTs.OrderBy.Orders().SortSliceList(list)
 
-			return a < b
-		})
-
-		if queryTs.Limit > 0 && len(list) > queryTs.Limit {
-			list = list[0:queryTs.Limit]
+			if queryTs.Limit > 0 && len(list) > queryTs.Limit {
+				list = list[0:queryTs.Limit]
+			}
 		}
 	}()
 
@@ -263,6 +255,9 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					defer func() {
 						sendWg.Done()
 					}()
+
+					// 启动的查询数量
+					atomic.AddInt64(&querySize, 1)
 
 					instance := prometheus.GetTsDbInstance(ctx, qry)
 					if instance == nil {

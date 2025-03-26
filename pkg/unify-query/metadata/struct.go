@@ -368,3 +368,27 @@ func (a Aggregates) LastAggName() string {
 
 	return a[len(a)-1].Name
 }
+
+func (os Orders) SortSliceList(list []map[string]any) {
+	if len(os) == 0 {
+		return
+	}
+
+	sort.SliceStable(list, func(i, j int) bool {
+		for _, o := range os {
+			a, _ := list[i][o.Name].(string)
+			b, _ := list[j][o.Name].(string)
+
+			if a != b {
+				if o.Ast {
+					r := a < b
+					return r
+				} else {
+					r := a > b
+					return r
+				}
+			}
+		}
+		return true
+	})
+}

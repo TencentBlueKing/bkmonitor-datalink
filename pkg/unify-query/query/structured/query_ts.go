@@ -911,24 +911,7 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	if len(q.OrderBy) > 0 {
-		query.Orders = make(metadata.Orders, 0, len(q.OrderBy))
-		for _, o := range q.OrderBy {
-			if len(o) == 0 {
-				continue
-			}
-
-			asc := true
-			name := o
-
-			if strings.HasPrefix(o, "-") {
-				asc = false
-				name = name[1:]
-			}
-			query.Orders = append(query.Orders, metadata.Order{
-				Name: name,
-				Ast:  asc,
-			})
-		}
+		query.Orders = q.OrderBy.Orders()
 	}
 
 	span.Set("query-source-type", query.SourceType)

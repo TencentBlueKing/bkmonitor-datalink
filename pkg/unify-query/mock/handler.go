@@ -192,7 +192,7 @@ func mockElasticSearchHandler(ctx context.Context) {
 		return
 	}
 
-	mappings := `{"es_index":{"mappings":{"properties":{"group":{"type":"keyword"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}}}}}}`
+	mappings := `{"es_index":{"mappings":{"properties":{"group":{"type":"keyword"},"dtEventTimeStamp":{"type":"date"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}}}}}}`
 	mappingResp := httpmock.NewStringResponder(http.StatusOK, mappings)
 	httpmock.RegisterResponder(http.MethodGet, bkBaseUrl+"/es_index/_mapping/", mappingResp)
 	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/es_index/_mapping/", mappingResp)

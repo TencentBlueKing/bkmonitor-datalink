@@ -480,6 +480,11 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		return nil, err
 	}
 
+	allConditions, err := q.Conditions.AnalysisConditions()
+	if err != nil {
+		return nil, err
+	}
+
 	// 如果 DataSource 为空，则自动补充
 	if q.DataSource == "" {
 		q.DataSource = BkMonitor
@@ -487,12 +492,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 	// 如果是 BkSql 查询无需获取 tsdb 路由关系
 	if q.DataSource == BkData {
-		allConditions, bkDataErr := q.Conditions.AnalysisConditions()
-		if bkDataErr != nil {
-			err = bkDataErr
-			return nil, bkDataErr
-		}
-
 		// 判断空间跟业务是否匹配
 		isMatchBizID := func() bool {
 			space := strings.Split(spaceUid, "__")
@@ -528,17 +527,17 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		}
 
 		qry := &metadata.Query{
-			StorageType:    consul.BkSqlStorageType,
-			TableID:        string(tableID),
-			DataSource:     q.DataSource,
-			DB:             route.DB(),
-			Measurement:    route.Measurement(),
-			Field:          q.FieldName,
-			MetricName:     metricName,
-			Aggregates:     aggregates,
-			BkSqlCondition: allConditions.BkSql(),
-			Size:           q.Limit,
-			From:           q.From,
+			StorageType:   consul.BkSqlStorageType,
+			TableID:       string(tableID),
+			DataSource:    q.DataSource,
+			DB:            route.DB(),
+			Measurement:   route.Measurement(),
+			Field:         q.FieldName,
+			MetricName:    metricName,
+			Aggregates:    aggregates,
+			AllConditions: allConditions.MetaDataAllConditions(),
+			Size:          q.Limit,
+			From:          q.From,
 		}
 
 		if len(q.OrderBy) > 0 {
@@ -578,11 +577,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	isSkipField := false
 	if metricName == "" || q.DataSource == BkLog || q.DataSource == BkApm {
 		isSkipField = true
-	}
-
-	allConditions, err := q.Conditions.AnalysisConditions()
-	if err != nil {
-		return nil, err
 	}
 
 	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
@@ -907,6 +901,7 @@ func (q *Query) BuildMetadataQuery(
 	query.NeedAddTime = tsDB.NeedAddTime
 	query.SourceType = tsDB.SourceType
 
+	query.AllConditions = allCondition.MetaDataAllConditions()
 	query.Condition = whereList.String()
 	query.VmCondition, query.VmConditionNum = allCondition.VMString(query.VmRt, vmMetric, q.IsRegexp)
 
@@ -916,22 +911,6 @@ func (q *Query) BuildMetadataQuery(
 	query.HighLight = q.HighLight
 	query.Size = q.Limit
 	query.From = q.From
-
-	if len(allCondition) > 0 {
-		query.AllConditions = make(metadata.AllConditions, len(allCondition))
-		for i, conditions := range allCondition {
-			conds := make([]metadata.ConditionField, len(conditions))
-			for j, c := range conditions {
-				conds[j] = metadata.ConditionField{
-					DimensionName: c.DimensionName,
-					Value:         c.Value,
-					Operator:      c.Operator,
-					IsWildcard:    c.IsWildcard,
-				}
-			}
-			query.AllConditions[i] = conds
-		}
-	}
 
 	if len(q.OrderBy) > 0 {
 		query.Orders = q.OrderBy.Orders()

@@ -157,7 +157,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 	return resp, err
 }
 
-func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, err error) {
+func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
 
@@ -180,6 +180,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 	receiveWg.Add(1)
 	list = make([]map[string]any, 0)
+	resultTableOptions = make(metadata.ResultTableOptions)
+
 	// 启动合并数据
 	go func() {
 		defer receiveWg.Done()
@@ -232,9 +234,13 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				ql.From = queryTs.From
 			}
 
+			// 复用 Scroll 配置
+
 			// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-			if !ql.HighLight.Enable && queryTs.HighLight.Enable {
-				ql.HighLight = queryTs.HighLight
+			if ql.HighLight != nil {
+				if !ql.HighLight.Enable && queryTs.HighLight.Enable {
+					ql.HighLight = queryTs.HighLight
+				}
 			}
 
 			// 复用字段配置，没有特殊配置的情况下使用公共配置
@@ -265,13 +271,18 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 						return
 					}
 
-					size, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
+					options, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
+					lock.Lock()
 					if queryErr != nil {
-						lock.Lock()
 						message.WriteString(fmt.Sprintf("query %s:%s is error: %s ", qry.TableID, qry.Fields, queryErr.Error()))
-						lock.Unlock()
+					} else {
+						// 合并 ResultTableOptions
+						for k, v := range options {
+							resultTableOptions[k] = v
+							total += v.Total
+						}
 					}
-					atomic.AddInt64(&total, size)
+					lock.Unlock()
 				})
 			}
 		}

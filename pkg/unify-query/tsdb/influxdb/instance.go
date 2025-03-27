@@ -649,8 +649,8 @@ func (i *Instance) grpcStream(
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
-	return 0, nil
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (metadata.ResultTableOptions, error) {
+	return nil, nil
 }
 
 // QuerySeriesSet 给 PromEngine 提供查询接口

@@ -129,7 +129,7 @@ func TestInstance_queryReference(t *testing.T) {
 					},
 				},
 				QueryString: "group: fans",
-				HighLight: metadata.HighLight{
+				HighLight: &metadata.HighLight{
 					Enable: true,
 				},
 			},

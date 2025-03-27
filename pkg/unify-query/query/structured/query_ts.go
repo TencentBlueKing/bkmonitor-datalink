@@ -65,8 +65,14 @@ type QueryTs struct {
 	Limit int `json:"limit,omitempty" example:"0"`
 	// From 翻页开启数字
 	From int `json:"from,omitempty" example:"0"`
+
+	// Scroll 是否启用 Scroll 查询
+	Scroll string `json:"scroll,omitempty"`
+
+	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`
+
 	// HighLight 是否开启高亮
-	HighLight metadata.HighLight `json:"highlight,omitempty"`
+	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
 // StepParse 解析step
@@ -133,9 +139,19 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 			q.SpaceUid = metadata.GetUser(ctx).SpaceUid
 		}
 
+		if q.ResultTableOptions != nil {
+			query.ResultTableOptions = q.ResultTableOptions
+		}
+
+		if q.Scroll != "" {
+			query.Scroll = q.Scroll
+		}
+
 		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-		if !query.HighLight.Enable && q.HighLight.Enable {
-			query.HighLight = q.HighLight
+		if query.HighLight != nil {
+			if !query.HighLight.Enable && q.HighLight.Enable {
+				query.HighLight = q.HighLight
+			}
 		}
 
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
@@ -379,8 +395,12 @@ type Query struct {
 	// IsReference 是否使用非时间聚合查询
 	IsReference bool `json:"-" swaggerignore:"true"`
 
+	Scroll string `json:"scroll,omitempty"`
+	// ResultTableOptions
+	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`
+
 	// HighLight 是否打开高亮，只对原始数据接口生效
-	HighLight metadata.HighLight `json:"highlight,omitempty"`
+	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
 func (q *Query) ToRouter() (*Route, error) {
@@ -893,6 +913,8 @@ func (q *Query) BuildMetadataQuery(
 	query.HighLight = q.HighLight
 	query.Size = q.Limit
 	query.From = q.From
+	query.Scroll = q.Scroll
+	query.ResultTableOptions = q.ResultTableOptions
 
 	if len(allCondition) > 0 {
 		query.AllConditions = make(metadata.AllConditions, len(allCondition))

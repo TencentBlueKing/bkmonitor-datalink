@@ -117,11 +117,15 @@ type Query struct {
 	QueryString   string
 	AllConditions AllConditions
 
-	HighLight HighLight
+	HighLight *HighLight
 
-	Source      []string
-	From        int
-	Size        int
+	Source []string
+	From   int
+	Size   int
+
+	Scroll             string
+	ResultTableOptions ResultTableOptions
+
 	Orders      Orders
 	NeedAddTime bool
 }

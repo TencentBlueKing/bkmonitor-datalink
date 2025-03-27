@@ -7,31 +7,13 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package bkapi
+package metadata
 
-import (
-	"encoding/json"
-	"testing"
+type ResultTableOptions map[string]ResultTableOption
 
-	"github.com/stretchr/testify/assert"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
-)
-
-func TestGetBkAPI(t *testing.T) {
-	mock.Init()
-
-	code := GetBkAPI().GetCode()
-	assert.Equal(t, "bk_code", code)
-
-	url := GetBkAPI().Url("query")
-	assert.Equal(t, "http://127.0.0.1:12001/query", url)
-
-	headers := GetBkAPI().Headers(map[string]string{
-		"Content-Type": "application/json",
-	})
-
-	actual, _ := json.Marshal(headers)
-
-	assert.JSONEq(t, `{"Content-Type":"application/json","X-Bkapi-Authorization":"{\"bk_username\":\"admin\",\"bk_app_code\":\"bk_code\",\"bk_app_secret\":\"bk_secret\"}"}`, string(actual))
+type ResultTableOption struct {
+	Total       int64  `json:"total,omitempty"`
+	From        int    `json:"from,omitempty"`
+	ScrollID    string `json:"scroll_id,omitempty"`
+	SearchAfter []any  `json:"search_after,omitempty"`
 }

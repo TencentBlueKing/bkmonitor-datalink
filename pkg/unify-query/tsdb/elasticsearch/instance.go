@@ -17,7 +17,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	elastic "github.com/olivere/elastic/v7"
@@ -270,7 +269,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		fact.Size(source)
 	}
 
-	if qb.HighLight.Enable {
+	if qb.HighLight != nil && qb.HighLight.Enable {
 		source.Highlight(fact.HighLight(qb.QueryString, qb.HighLight.MaxAnalyzedOffset))
 	}
 
@@ -301,9 +300,26 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	if err != nil {
 		return nil, err
 	}
-	search := client.Search().Index(qo.indexes...).SearchSource(source)
 
-	res, err := search.Do(ctx)
+	var res *elastic.SearchResult
+	func() {
+		if opt, ok := qb.ResultTableOptions[qb.TableID+"|"+qo.conn.Address]; ok {
+			if opt.ScrollID != "" {
+				res, err = client.Scroll(qo.indexes...).ScrollId(opt.ScrollID).Do(ctx)
+				return
+			}
+
+			if len(opt.SearchAfter) > 0 {
+				return
+			}
+		}
+
+		if qb.Scroll != "" {
+			res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source).Do(ctx)
+		} else {
+			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
+		}
+	}()
 
 	if err != nil {
 		var (
@@ -526,11 +542,12 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (metadata.ResultTableOptions, error) {
 	var (
-		err   error
-		total int64
-		wg    sync.WaitGroup
+		err error
+		wg  sync.WaitGroup
+
+		resultTableOptions = make(metadata.ResultTableOptions)
 	)
 
 	defer func() {
@@ -546,13 +563,13 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	if query.DB == "" {
 		err = fmt.Errorf("%s 查询别名为空", query.TableID)
-		return total, err
+		return resultTableOptions, err
 	}
 	unit := metadata.GetQueryParams(ctx).TimeUnit
 
 	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
 	if err != nil {
-		return total, err
+		return resultTableOptions, err
 	}
 
 	for _, conn := range i.connects {
@@ -593,36 +610,50 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				err = queryErr
 				return
 			}
-			for _, d := range sr.Hits.Hits {
-				data := make(map[string]any)
-				if err = json.Unmarshal(d.Source, &data); err != nil {
-					return
+
+			option := metadata.ResultTableOption{}
+			if sr != nil {
+				if sr.ScrollId != "" {
+					option.ScrollID = sr.ScrollId
 				}
 
-				fact.SetData(data)
-				fact.data[KeyDocID] = d.Id
-				fact.data[KeyIndex] = d.Index
-				fact.data[KeyTableID] = query.TableID
-				fact.data[KeyDataLabel] = query.DataLabel
+				if sr.Hits != nil {
+					for _, d := range sr.Hits.Hits {
+						data := make(map[string]any)
+						if err = json.Unmarshal(d.Source, &data); err != nil {
+							return
+						}
 
-				if timeValue, ok := data[fact.GetTimeField().Name]; ok {
-					fact.data[FieldTime] = timeValue
-				}
+						fact.SetData(data)
+						fact.data[KeyDocID] = d.Id
+						fact.data[KeyIndex] = d.Index
+						fact.data[KeyTableID] = query.TableID
+						fact.data[KeyDataLabel] = query.DataLabel
 
-				if len(d.Highlight) > 0 {
-					fact.data[KeyHighLight] = d.Highlight
+						if timeValue, ok := data[fact.GetTimeField().Name]; ok {
+							fact.data[FieldTime] = timeValue
+						}
+
+						if len(d.Highlight) > 0 {
+							fact.data[KeyHighLight] = d.Highlight
+						}
+						dataCh <- fact.data
+					}
+
+					option.From = query.From + len(sr.Hits.Hits)
+
+					if sr.Hits.TotalHits != nil {
+						option.Total = sr.Hits.TotalHits.Value
+					}
 				}
-				dataCh <- fact.data
 			}
 
-			if sr != nil && sr.Hits != nil && sr.Hits.TotalHits != nil {
-				atomic.AddInt64(&total, sr.Hits.TotalHits.Value)
-			}
+			resultTableOptions[query.TableID+"|"+conn.Address] = option
 		}()
 	}
 	wg.Wait()
 
-	return total, err
+	return resultTableOptions, nil
 }
 
 // QuerySeriesSet 给 PromEngine 提供查询接口

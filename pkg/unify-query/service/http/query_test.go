@@ -724,6 +724,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 		queryTs  *structured.QueryTs
 		total    int64
 		expected string
+		options  string
 	}{
 		"query with EpochMillis": {
 			queryTs: &structured.QueryTs{
@@ -742,6 +743,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    1e4,
 			expected: `[{"_time":"1723594211000","dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"e058129ae18bff87c95e83f24584e654","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es"},{"__doc_id":"c124dae69af9b86a7128ee4281820158","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","_time":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000"},{"__data_label":"bkbase_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"c7f73abf7e865a4b4d7fc608387d01cf","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es"},{"_time":"1723594211000","dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"39c3ec662881e44bf26d2a6bfc0e35c3","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es"},{"__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"58e03ce0b9754bf0657d49a5513adcb5","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"43a36f412886bf30b0746562513638d3","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","_time":"1723594211000"},{"dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"218ceafd04f89b39cda7954e51f4a48a","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","_time":"1723594211000"},{"dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"8d9abe9b782fe3a1272c93f0af6b39e1","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","_time":"1723594211000"},{"__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","_time":"1723594224000","dtEventTimeStamp":"1723594224000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94","__doc_id":"0826407be7f04f19086774ed68eac8dd"},{"__data_label":"bkbase_es","_time":"1723594224000","dtEventTimeStamp":"1723594224000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94","__doc_id":"d56b4120194eb37f53410780da777d43","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es"}]`,
+			options:  `{"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"total":10000,"from":11}}`,
 		},
 		"query_bk_base_es_with_raw": {
 			queryTs: &structured.QueryTs{
@@ -794,7 +796,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 
 	for name, c := range tcs {
 		t.Run(name, func(t *testing.T) {
-			total, list, err := queryRawWithInstance(ctx, c.queryTs)
+			total, list, options, err := queryRawWithInstance(ctx, c.queryTs)
 			assert.Nil(t, err)
 			if err != nil {
 				return
@@ -803,6 +805,9 @@ func TestQueryRawWithInstance(t *testing.T) {
 			assert.Equal(t, c.total, total)
 			actual, _ := json.Marshal(list)
 			assert.JSONEq(t, c.expected, string(actual))
+
+			optActual, _ := json.Marshal(options)
+			assert.JSONEq(t, c.options, string(optActual))
 		})
 	}
 }

@@ -198,6 +198,26 @@ func MergeConditionField(source, target AllConditions) AllConditions {
 	return all
 }
 
+func (c AllConditions) MetaDataAllConditions() metadata.AllConditions {
+	var allConditions metadata.AllConditions
+	if len(c) > 0 {
+		allConditions = make(metadata.AllConditions, 0, len(c))
+		for _, conditions := range c {
+			conds := make([]metadata.ConditionField, 0, len(conditions))
+			for _, c := range conditions {
+				conds = append(conds, metadata.ConditionField{
+					DimensionName: c.DimensionName,
+					Value:         c.Value,
+					Operator:      c.Operator,
+					IsWildcard:    c.IsWildcard,
+				})
+			}
+			allConditions = append(allConditions, conds)
+		}
+	}
+	return allConditions
+}
+
 func (c AllConditions) BkSql() string {
 	var conditionsString []string
 	for _, cond := range c {

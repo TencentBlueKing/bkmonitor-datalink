@@ -303,7 +303,9 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	var res *elastic.SearchResult
 	func() {
-		if opt, ok := qb.ResultTableOptions[qb.TableID+"|"+qo.conn.Address]; ok {
+
+		if qb.ResultTableOptions != nil {
+			opt := qb.ResultTableOptions.GetOption(qb.TableID, qo.conn.Address)
 			if opt.ScrollID != "" {
 				res, err = client.Scroll(qo.indexes...).ScrollId(opt.ScrollID).Do(ctx)
 				return
@@ -547,7 +549,8 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		err error
 		wg  sync.WaitGroup
 
-		resultTableOptions = make(metadata.ResultTableOptions)
+		lock    sync.Mutex
+		options = metadata.ResultTableOptions{}
 	)
 
 	defer func() {
@@ -563,20 +566,26 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	if query.DB == "" {
 		err = fmt.Errorf("%s 查询别名为空", query.TableID)
-		return resultTableOptions, err
+		return nil, err
 	}
 	unit := metadata.GetQueryParams(ctx).TimeUnit
 
 	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
 	if err != nil {
-		return resultTableOptions, err
+		return nil, err
 	}
+
+	errChan := make(chan error, len(i.connects))
 
 	for _, conn := range i.connects {
 		wg.Add(1)
 		conn := conn
 		go func() {
-			defer wg.Done()
+			defer func() {
+				errChan <- err
+				wg.Done()
+			}()
+
 			mappings, mappingErr := i.getMappings(ctx, conn, aliases)
 			if mappingErr != nil {
 				err = mappingErr
@@ -589,6 +598,10 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 			if i.maxSize > 0 && query.Size > i.maxSize {
 				query.Size = i.maxSize
+			}
+
+			if len(query.ResultTableOptions) > 0 {
+				query.From = query.ResultTableOptions.GetOption(query.TableID, conn.Address).From
 			}
 
 			qo := &queryOption{
@@ -611,7 +624,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				return
 			}
 
-			option := metadata.ResultTableOption{}
+			option := &metadata.ResultTableOption{}
 			if sr != nil {
 				if sr.ScrollId != "" {
 					option.ScrollID = sr.ScrollId
@@ -630,6 +643,8 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 						fact.data[KeyTableID] = query.TableID
 						fact.data[KeyDataLabel] = query.DataLabel
 
+						fact.data[KeyAddress] = conn.Address
+
 						if timeValue, ok := data[fact.GetTimeField().Name]; ok {
 							fact.data[FieldTime] = timeValue
 						}
@@ -640,20 +655,27 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 						dataCh <- fact.data
 					}
 
-					option.From = query.From + len(sr.Hits.Hits)
-
 					if sr.Hits.TotalHits != nil {
 						option.Total = sr.Hits.TotalHits.Value
 					}
 				}
 			}
 
-			resultTableOptions[query.TableID+"|"+conn.Address] = option
+			lock.Lock()
+			options.SetOption(query.TableID, conn.Address, option)
+			lock.Unlock()
 		}()
 	}
 	wg.Wait()
+	close(errChan)
 
-	return resultTableOptions, nil
+	for e := range errChan {
+		if e != nil {
+			return nil, e
+		}
+	}
+
+	return options, nil
 }
 
 // QuerySeriesSet 给 PromEngine 提供查询接口

@@ -61,8 +61,10 @@ const (
 	KeyDocID     = "__doc_id"
 	KeyHighLight = "__highlight"
 
-	KeyIndex     = "__index"
-	KeyTableID   = "__result_table"
+	KeyIndex   = "__index"
+	KeyTableID = "__result_table"
+	KeyAddress = "__address"
+
 	KeyDataLabel = "__data_label"
 )
 

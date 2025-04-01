@@ -590,10 +590,8 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			curName := info.Name
 			curAgg := elastic.NewTermsAggregation().Field(info.Name)
 			fieldType, ok := f.mapping[info.Name]
-			if ok {
-				if fieldType == Text || fieldType == KeyWord {
-					curAgg = curAgg.Missing(" ")
-				}
+			if !ok || fieldType == Text || fieldType == KeyWord {
+				curAgg = curAgg.Missing(" ")
 			}
 
 			if f.size > 0 {

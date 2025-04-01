@@ -1179,6 +1179,56 @@ func (s *SpacePusher) composeValue(values *map[string]map[string]interface{}, co
 	}
 }
 
+func (s *SpacePusher) updateFiltersWithAlias(spaceType string, spaceId string, values map[string]map[string]interface{}) error {
+	logger.Infof("updateFiltersWithAlias: start, space_type=[%s], space_id=[%s]", spaceType, spaceId)
+
+	// 获取全量的空间类型-结果表ID-过滤关键字 map
+	db := mysql.GetDBSession().DB
+	var aliases []space.SpaceTypeToResultTableFilterAlias
+	if err := db.Where("space_type = ? AND is_deleted = ?", spaceType, false).Find(&aliases).Error; err != nil {
+		return fmt.Errorf("query aliases failed: %v", err)
+	}
+
+	aliasMap := make(map[string]string)
+	for _, alias := range aliases {
+		aliasMap[alias.TableId] = alias.FilterAlias
+	}
+
+	// 遍历更新filters
+	for tableId, tableData := range values {
+		filterAlias, ok := aliasMap[tableId]
+		if !ok {
+			continue
+		}
+
+		rawFilters, ok := tableData["filters"]
+		if !ok {
+			continue
+		}
+
+		filters, ok := rawFilters.([]map[string]interface{})
+		if !ok {
+			logger.Warnf("filters for table [%s] is not []map[string]interface{}, actual: %T", tableId, rawFilters)
+			continue
+		}
+
+		for _, filterMap := range filters {
+			logger.Infof("updateFiltersWithAlias: try to update filters for space_type->[%s],space_id->[%s],"+
+				"table_id->[%s],old_filter->[%v],new_filter_alias->[%s]",
+				spaceType, spaceId, tableId, filterMap, filterAlias)
+			for key, val := range filterMap {
+				delete(filterMap, key)
+				filterMap[filterAlias] = val
+				break
+			}
+		}
+
+		tableData["filters"] = filters
+	}
+
+	return nil
+}
+
 // 推送 bkcc 类型空间数据
 func (s *SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *optionx.Options) (bool, error) {
 	if options == nil {
@@ -1216,6 +1266,12 @@ func (s *SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *
 	}
 	logger.Infof("pushBkccSpaceTableIds:compose es bkci space table_id data successfully, space_type [%s], space_id [%s],data->[%v]", spaceType, spaceId, esBkciValues)
 	s.composeValue(&values, &esBkciValues)
+
+	// 补充自定义过滤条件别名
+	err := s.updateFiltersWithAlias(spaceType, spaceId, values)
+	if err != nil {
+		return false, errors.Wrapf(err, "pushBkccSpaceTableIds:update filters with alias failed, space_type [%s], space_id [%s]", spaceType, spaceId)
+	}
 
 	// 如果有异常，则直接返回
 	if errMetric != nil && errEs != nil && errRecordRule != nil {
@@ -1308,6 +1364,13 @@ func (s *SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) (bool, er
 		logger.Errorf("pushBkciSpaceTableIds： compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
 	}
 	s.composeValue(&values, &esValues)
+
+	// 补充自定义过滤条件别名
+	err = s.updateFiltersWithAlias(spaceType, spaceId, values)
+	if err != nil {
+		return false, errors.Wrapf(err, "pushBkccSpaceTableIds:update filters with alias failed, space_type [%s], space_id [%s]", spaceType, spaceId)
+	}
+
 	// 推送数据
 	if len(values) != 0 {
 		client := redis.GetStorageRedisInstance()
@@ -1371,6 +1434,13 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableId
 		logger.Errorf("pushBksaasSpaceTableIds: compose all type table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, allTypeErr)
 	}
 	s.composeValue(&values, &allTypeTableIdValues)
+
+	// 补充自定义过滤条件别名
+	err = s.updateFiltersWithAlias(spaceType, spaceId, values)
+	if err != nil {
+		return false, errors.Wrapf(err, "pushBkccSpaceTableIds:update filters with alias failed, space_type [%s], space_id [%s]", spaceType, spaceId)
+	}
+
 	// 推送数据
 	if len(values) != 0 {
 		client := redis.GetStorageRedisInstance()

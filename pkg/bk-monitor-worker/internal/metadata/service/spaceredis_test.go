@@ -1430,3 +1430,266 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 	assert.Equal(t, expectedDetail2, actualDetail2, "detailStr should match expected JSON")
 
 }
+
+func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 数据源表
+	dataSources := []resulttable.DataSource{
+		{
+			BkDataId:         50010,
+			DataName:         "data_link_test",
+			EtlConfig:        "bk_standard_v2_time_series",
+			IsPlatformDataId: false,
+		},
+		{
+			BkDataId:         50011,
+			DataName:         "data_link_test_2",
+			EtlConfig:        "bk_standard_v2_time_series",
+			IsPlatformDataId: true,
+		},
+	}
+
+	// 插入 DataSource 数据
+	for _, ds := range dataSources {
+		db.Delete(&resulttable.DataSource{}, "bk_data_id = ?", ds.BkDataId)
+		assert.NoError(t, db.Create(&ds).Error, "Failed to insert DataSource")
+	}
+
+	// 准备测试数据
+	tableID1 := "1001_bkmonitor_time_series_50010.__default__"
+	tableID2 := "1001_bkmonitor_time_series_50011.__default__"
+	dataLabel1 := "a" // 初始化为字符串
+
+	// 插入 ResultTable 数据
+	resultTables := []resulttable.ResultTable{
+		{
+			TableId:      tableID1,
+			BkBizId:      1001,
+			BkBizIdAlias: "appid",
+			DataLabel:    &dataLabel1, // 使用字符串指针
+		},
+		{
+			TableId:      tableID2,
+			BkBizId:      1001,
+			BkBizIdAlias: "",
+			DataLabel:    nil,
+		},
+	}
+	for _, rt := range resultTables {
+		db.Delete(&resulttable.ResultTable{}, "table_id = ?", rt.TableId)
+		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
+	}
+
+	obj := space.Space{Id: 1, SpaceTypeId: "bkcc", SpaceId: "1001"}
+	obj2 := space.Space{Id: 5, SpaceTypeId: "bkci", SpaceId: "bkmonitor"}
+	obj3 := space.Space{Id: 6, SpaceTypeId: "bksaas", SpaceId: "monitor_saas"}
+
+	db.Delete(obj)
+	db.Delete(obj2)
+	db.Delete(obj3)
+
+	assert.NoError(t, obj.Create(db))
+	assert.NoError(t, obj2.Create(db))
+	assert.NoError(t, obj3.Create(db))
+
+	spaceDataSources := []space.SpaceDataSource{
+		{
+			SpaceTypeId:       "bkcc",
+			SpaceId:           "1001",
+			BkDataId:          50010,
+			FromAuthorization: false,
+		},
+	}
+
+	for _, sds := range spaceDataSources {
+		db.Delete(&space.SpaceDataSource{}, "bk_data_id = ?", sds.BkDataId)
+		assert.NoError(t, db.Create(&sds).Error, "Failed to insert SpaceDataSource")
+	}
+
+	// 创建 DataSourceResultTable 数据
+	dataSourceResultTables := []resulttable.DataSourceResultTable{
+		{
+			BkDataId: 50010,
+			TableId:  tableID1,
+		},
+		{
+			BkDataId: 50011,
+			TableId:  tableID2,
+		},
+	}
+
+	for _, dsrt := range dataSourceResultTables {
+		db.Delete(&resulttable.DataSourceResultTable{}, "bk_data_id = ? and table_id = ?", dsrt.BkDataId, dsrt.TableId)
+		assert.NoError(t, db.Create(&dsrt).Error, "Failed to insert DataSourceResultTable")
+	}
+
+	// 插入 AccessVMRecord 数据
+	accessVMRecords := []storage.AccessVMRecord{
+		{
+			ResultTableId:   tableID1,
+			BkBaseDataId:    50010,
+			VmResultTableId: "1001_vm_test_50010",
+			BkBaseDataName:  "data_link_test",
+		},
+		{
+			ResultTableId:   tableID2,
+			BkBaseDataId:    50011,
+			VmResultTableId: "1001_vm_test_50011",
+			BkBaseDataName:  "data_link_test_2",
+		},
+	}
+	for _, avm := range accessVMRecords {
+		db.Delete(&storage.AccessVMRecord{}, "result_table_id = ?", avm.ResultTableId)
+		assert.NoError(t, db.Create(&avm).Error, "Failed to insert AccessVMRecord")
+	}
+
+	// 创建自定义过滤别名
+	db.AutoMigrate(&space.SpaceTypeToResultTableFilterAlias{})
+	spaceTypeToResultTableFilterAlias := []space.SpaceTypeToResultTableFilterAlias{
+		{
+			SpaceType:   "bkcc",
+			TableId:     tableID2,
+			FilterAlias: "dimensions.bk_biz_id",
+			CreateTime:  time.Now(),
+			IsDeleted:   false,
+		},
+		{
+			SpaceType:   "bkci",
+			TableId:     tableID2,
+			FilterAlias: "dimensions.project_id",
+			CreateTime:  time.Now(),
+			IsDeleted:   false,
+		},
+		{
+			SpaceType:   "bksaas",
+			TableId:     tableID1,
+			FilterAlias: "dimensions.app_id",
+			CreateTime:  time.Now(),
+			IsDeleted:   false,
+		},
+	}
+
+	for _, st := range spaceTypeToResultTableFilterAlias {
+		db.Delete(&space.SpaceTypeToResultTableFilterAlias{}, "space_type = ? and table_id = ?", st.SpaceType, st.TableId)
+		assert.NoError(t, db.Create(&st).Error, "Failed to insert SpaceTypeToResultTableFilterAlias")
+	}
+
+	// 准备 SpacePusher 实例
+	spacePusher := SpacePusher{}
+
+	isPublish, err := spacePusher.pushBkccSpaceTableIds("bkcc", "1001", nil)
+	if err != nil {
+		return
+	}
+	println(isPublish)
+}
+
+func TestSpacePusher_pushBkciSpaceTableIds(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	spaceType, spaceId, resourceType, resourceId := "bkci", "bcs_project", "bkcc", "1"
+	obj := space.SpaceResource{SpaceTypeId: spaceType, SpaceId: spaceId, ResourceType: resourceType, ResourceId: &resourceId}
+	db.Delete(obj)
+	err := obj.Create(db)
+	assert.NoError(t, err)
+
+	// 初始化结果表
+	tableIdOne, tableIdTwo, tableIdThree := "system.mem1", "dbm_system.mem1", "script_p4_connect_monitor.__default__"
+	objone := resulttable.ResultTable{TableId: tableIdOne, TableNameZh: tableIdOne}
+	objtwo := resulttable.ResultTable{TableId: tableIdTwo, TableNameZh: tableIdTwo}
+	objthree := resulttable.ResultTable{TableId: tableIdThree, TableNameZh: tableIdThree}
+	for _, obj := range []resulttable.ResultTable{objone, objtwo, objthree} {
+		db.Delete(obj)
+		err := obj.Create(db)
+		assert.NoError(t, err)
+	}
+
+	// 创建自定义过滤别名
+	db.AutoMigrate(&space.SpaceTypeToResultTableFilterAlias{})
+	spaceTypeToResultTableFilterAlias := []space.SpaceTypeToResultTableFilterAlias{
+		{
+			SpaceType:   "bkci",
+			TableId:     tableIdOne,
+			FilterAlias: "dimensions.bk_biz_id",
+			CreateTime:  time.Now(),
+			IsDeleted:   false,
+		},
+		{
+			SpaceType:   "bkci",
+			TableId:     "system.net",
+			FilterAlias: "dimensions.project_id",
+			CreateTime:  time.Now(),
+			IsDeleted:   false,
+		},
+	}
+
+	for _, st := range spaceTypeToResultTableFilterAlias {
+		db.Delete(&space.SpaceTypeToResultTableFilterAlias{}, "space_type = ? and table_id = ?", st.SpaceType, st.TableId)
+		assert.NoError(t, db.Create(&st).Error, "Failed to insert SpaceTypeToResultTableFilterAlias")
+	}
+
+	// 准备 SpacePusher 实例
+	spacePusher := SpacePusher{}
+
+	isPublish, err := spacePusher.pushBkciSpaceTableIds("bkci", "bcs_project")
+	if err != nil {
+		return
+	}
+	println(isPublish)
+}
+
+func TestSpacePusher_pushBksaasSpaceTableIds(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	// 初始数据
+	db := mysql.GetDBSession().DB
+	sr := "demo"
+	srObj := space.SpaceResource{SpaceTypeId: "bksaas", SpaceId: "demo", ResourceType: "bksaas", ResourceId: &sr, DimensionValues: `[{"cluster_id": "BCS-K8S-00000", "namespace": ["bkapp-demo-stage", "bkapp-demo-prod"], "cluster_type":"shared"}]`}
+	db.Delete(srObj)
+	assert.NoError(t, srObj.Create(db))
+
+	// 添加集群信息
+	clusterObj := bcs.BCSClusterInfo{ClusterID: "BCS-K8S-00000", K8sMetricDataID: 100001, CustomMetricDataID: 100002}
+	db.Delete(clusterObj)
+	assert.NoError(t, clusterObj.Create(db))
+
+	// 添加结果表
+	rtObj := resulttable.ResultTable{TableId: "demo.test", IsDeleted: false, IsEnable: true, DataLabel: nil}
+	db.Delete(rtObj)
+	assert.NoError(t, rtObj.Create(db))
+	rtObj1 := resulttable.ResultTable{TableId: "demo.test1", IsDeleted: false, IsEnable: true, DataLabel: nil}
+	db.Delete(rtObj1)
+	assert.NoError(t, rtObj1.Create(db))
+
+	// 添加数据源和结果表关系
+	dsRtObj := resulttable.DataSourceResultTable{BkDataId: 100001, TableId: "demo.test"}
+	db.Delete(dsRtObj, "table_id=?", dsRtObj.TableId)
+	assert.NoError(t, dsRtObj.Create(db))
+	dsRtObj1 := resulttable.DataSourceResultTable{BkDataId: 100002, TableId: "demo.test1"}
+	db.Delete(dsRtObj1, "table_id=?", dsRtObj1.TableId)
+	assert.NoError(t, dsRtObj1.Create(db))
+
+	// 创建自定义过滤别名
+	spaceTypeToResultTableFilterAlias := []space.SpaceTypeToResultTableFilterAlias{
+		{
+			SpaceType:   "bksaas",
+			TableId:     "demo.test",
+			FilterAlias: "dimensions.app_id",
+			CreateTime:  time.Now(),
+			IsDeleted:   false,
+		},
+	}
+	for _, st := range spaceTypeToResultTableFilterAlias {
+		db.Delete(&space.SpaceTypeToResultTableFilterAlias{}, "space_type = ? and table_id = ?", st.SpaceType, st.TableId)
+		assert.NoError(t, db.Create(&st).Error, "Failed to insert SpaceTypeToResultTableFilterAlias")
+	}
+
+	// 准备 SpacePusher 实例
+	spacePusher := SpacePusher{}
+	isPublish, err := spacePusher.pushBksaasSpaceTableIds("bksaas", "demo", nil)
+	if err != nil {
+		return
+	}
+	println(isPublish)
+}

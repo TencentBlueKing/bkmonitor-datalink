@@ -55,7 +55,7 @@ var httpSvc HttpService
 
 func (s HttpService) Write(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.RemoteAddr)
+	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 
 	start := time.Now()
 

@@ -111,12 +111,38 @@ func TestConvertHistogramMetrics(t *testing.T) {
 	dp.SetMBucketCounts([]uint64{4, 3, 2, 1})
 	dp.SetSum(100)
 	dp.SetCount(10)
+	dp.SetMin(1)
+	dp.SetMax(66)
 
 	MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
 	excepted := []common.MapStr{
 		{
 			"metrics": map[string]float64{
 				"bk_apm_duration_sum": float64(100),
+			},
+			"target": define.Identity(),
+			"dimension": map[string]string{
+				"scope_name": generator.ScopeName,
+				"a1":         "v1",
+				"r1":         "v1",
+			},
+			"timestamp": int64(0),
+		},
+		{
+			"metrics": map[string]float64{
+				"bk_apm_duration_min": float64(1),
+			},
+			"target": define.Identity(),
+			"dimension": map[string]string{
+				"scope_name": generator.ScopeName,
+				"a1":         "v1",
+				"r1":         "v1",
+			},
+			"timestamp": int64(0),
+		},
+		{
+			"metrics": map[string]float64{
+				"bk_apm_duration_max": float64(66),
 			},
 			"target": define.Identity(),
 			"dimension": map[string]string{

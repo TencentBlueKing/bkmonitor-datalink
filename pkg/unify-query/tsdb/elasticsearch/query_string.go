@@ -43,7 +43,7 @@ func (s *QueryString) NestedFields() map[string]struct{} {
 }
 
 func (s *QueryString) queryString(str string) elastic.Query {
-	return elastic.NewQueryStringQuery(str).AnalyzeWildcard(true)
+	return elastic.NewQueryStringQuery(str).AnalyzeWildcard(true).Field("*").Field("__*").Lenient(true)
 }
 
 func (s *QueryString) Parser() (elastic.Query, error) {

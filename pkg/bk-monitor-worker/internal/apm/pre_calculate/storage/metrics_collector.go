@@ -37,7 +37,7 @@ const (
 // Flow metrics category and kind
 const (
 	CategoryHttp       = "http"
-	CategoryDb         = "db"
+	CategoryDb         = "Db"
 	CategoryMessaging  = "messaging"
 	KindService        = "service"
 	KindComponent      = "component"

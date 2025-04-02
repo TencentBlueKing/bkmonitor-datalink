@@ -633,7 +633,7 @@ func (i *Instance) grpcStream(
 
 	span.Set("grpc-start-stream-series-set", name)
 
-	qry := &metadata.Query{TableID: fmt.Sprintf("%s.%s", db, measurement), Field: field}
+	qry := &metadata.Query{TableID: fmt.Sprintf("%s.%s", db, measurement), MetricName: field}
 
 	seriesSet := StartStreamSeriesSet(
 		ctx, name, &StreamSeriesSetOption{

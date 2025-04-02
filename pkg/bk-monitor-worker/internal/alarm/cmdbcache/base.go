@@ -33,7 +33,6 @@ import (
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
@@ -281,24 +280,16 @@ func NewCacheManagerByType(opt *redis.Options, prefix string, cacheType string, 
 }
 
 // RefreshAll 执行缓存管理器
-func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) error {
+func RefreshAll(ctx context.Context, bkBizIds []int, cacheManager Manager, concurrentLimit int) error {
 	// 判断是否启用业务缓存刷新
 	if cacheManager.useBiz() {
-		// 获取业务列表
-		cmdbApi := getCmdbApi()
-		var result cmdb.SearchBusinessResp
-		_, err := cmdbApi.SearchBusiness().SetResult(&result).Request()
-		if err = api.HandleApiResultError(result.ApiCommonRespMeta, err, "search business failed"); err != nil {
-			return err
-		}
-
 		// 并发控制
 		wg := sync.WaitGroup{}
 		limitChan := make(chan struct{}, concurrentLimit)
 
 		// 按业务刷新缓存
-		errChan := make(chan error, len(result.Data.Info))
-		for _, biz := range result.Data.Info {
+		errChan := make(chan error, len(bkBizIds))
+		for _, bkBizID := range bkBizIds {
 			limitChan <- struct{}{}
 			wg.Add(1)
 			go func(bizId int) {
@@ -310,7 +301,7 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 				if err != nil {
 					errChan <- errors.Wrapf(err, "refresh %s cache by biz failed, biz: %d", cacheManager.Type(), bizId)
 				}
-			}(biz.BkBizId)
+			}(bkBizID)
 		}
 
 		// 等待所有任务完成
@@ -321,8 +312,8 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 		}
 
 		// 按业务清理缓存
-		errChan = make(chan error, len(result.Data.Info))
-		for _, biz := range result.Data.Info {
+		errChan = make(chan error, len(bkBizIds))
+		for _, bkBizId := range bkBizIds {
 			limitChan <- struct{}{}
 			wg.Add(1)
 			go func(bizId int) {
@@ -334,7 +325,7 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 				if err != nil {
 					errChan <- errors.Wrapf(err, "clean %s cache by biz failed, biz: %d", cacheManager.Type(), bizId)
 				}
-			}(biz.BkBizId)
+			}(bkBizId)
 		}
 
 		// 等待所有任务完成

@@ -357,6 +357,9 @@ func (os Orders) SortSliceList(list []map[string]any) {
 	if len(os) == 0 {
 		return
 	}
+	if len(list) == 0 {
+		return
+	}
 
 	sort.SliceStable(list, func(i, j int) bool {
 		for _, o := range os {

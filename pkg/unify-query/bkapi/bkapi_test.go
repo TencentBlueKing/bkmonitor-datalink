@@ -10,7 +10,7 @@
 package bkapi
 
 import (
-	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,7 +31,7 @@ func TestGetBkAPI(t *testing.T) {
 		"Content-Type": "application/json",
 	})
 
-	actual, _ := json.Marshal(headers)
+	actual := fmt.Sprintf("%s", headers)
 
-	assert.JSONEq(t, `{"Content-Type":"application/json","X-Bkapi-Authorization":"{\"bk_username\":\"admin\",\"bk_app_code\":\"bk_code\",\"bk_app_secret\":\"bk_secret\"}"}`, string(actual))
+	assert.Equal(t, `map[Content-Type:application/json X-Bkapi-Authorization:{"bk_username":"admin","bk_app_code":"bk_code","bk_app_secret":"bk_secret"}]`, actual)
 }

@@ -40,7 +40,10 @@ func (o ResultTableOptions) GetOption(tableID, address string) *ResultTableOptio
 	if option, ok := o[tableID+"|"+address]; ok {
 		return option
 	}
-	return &ResultTableOption{}
+	return &ResultTableOption{
+		From:  0,
+		Total: 0,
+	}
 }
 
 func (o ResultTableOptions) GetTotal() int64 {
@@ -52,6 +55,10 @@ func (o ResultTableOptions) GetTotal() int64 {
 }
 
 func (o ResultTableOptions) IsMultiFrom() bool {
+	if len(o) == 0 {
+		return false
+	}
+
 	for _, v := range o {
 		if v.ScrollID != "" || len(v.SearchAfter) > 0 {
 			return false

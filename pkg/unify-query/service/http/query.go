@@ -240,6 +240,9 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 	receiveWg.Add(1)
 	resultTableOptions = queryTs.ResultTableOptions
+	if resultTableOptions == nil {
+		resultTableOptions = make(metadata.ResultTableOptions)
+	}
 
 	// 启动合并数据
 	go func() {
@@ -253,7 +256,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			queryTs.OrderBy.Orders().SortSliceList(list)
 
 			// 判定是否启用 multi from 特性
-			if resultTableOptions.IsMultiFrom() {
+			if len(list) > queryTs.Limit && resultTableOptions.IsMultiFrom() {
 				list = list[0:queryTs.Limit]
 
 				newResultTableOptions := metadata.ResultTableOptions{}
@@ -284,10 +287,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			qry := qry
 
 			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
-			//if len(queryList) > 1 && qry.ResultTableOptions.IsMultiFrom() {
-			//	qry.Size += qry.From
-			//	qry.From = 0
-			//}
+			if len(queryList) > 1 && !qry.ResultTableOptions.IsMultiFrom() {
+				qry.Size += qry.From
+				qry.From = 0
+			}
 
 			err = p.Submit(func() {
 				defer func() {

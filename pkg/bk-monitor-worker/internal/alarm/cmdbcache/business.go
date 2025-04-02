@@ -1,6 +1,6 @@
 // MIT License
 
-// Copyright (c) 2021~2022 腾讯蓝鲸
+// Copyright (c) 2021~2024 腾讯蓝鲸
 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -152,7 +152,7 @@ func (m *BusinessCacheManager) Type() string {
 
 // UseBiz 是否按业务执行
 func (m *BusinessCacheManager) useBiz() bool {
-	return true
+	return false
 }
 
 // RefreshGlobal 刷新全局缓存
@@ -242,15 +242,14 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 	}
 
 	// 更新缓存
-	key := m.GetCacheKey(businessCacheKey)
-	err = m.UpdateHashMapCache(ctx, key, bizCacheData)
+	err = m.UpdateHashMapCache(ctx, businessCacheKey, bizCacheData)
 	if err != nil {
 		return errors.Wrap(err, "update business cache failed")
 	}
 
 	// 更新缓存过期时间
-	if err := m.RedisClient.Expire(ctx, key, m.Expire).Err(); err != nil {
-		return errors.Wrap(err, "set business cache expire time failed")
+	if err := m.UpdateExpire(ctx, businessCacheKey); err != nil {
+		return errors.Wrap(err, "update expire failed")
 	}
 
 	return nil
@@ -258,45 +257,8 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 
 // CleanGlobal 清理全局缓存
 func (m *BusinessCacheManager) CleanGlobal(ctx context.Context) error {
-	key := m.GetCacheKey(businessCacheKey)
-	if err := m.DeleteMissingHashMapFields(ctx, key); err != nil {
+	if err := m.DeleteMissingHashMapFields(ctx, businessCacheKey); err != nil {
 		return errors.Wrap(err, "delete missing fields failed")
 	}
-	return nil
-}
-
-// CleanByEvents 根据事件清理缓存
-func (m *BusinessCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
-	if resourceType != "biz" {
-		return nil
-	}
-
-	// 获取业务ID
-	bizIds := make([]string, 0, len(events))
-	for _, event := range events {
-		if bizID, ok := event["bk_biz_id"].(float64); ok {
-			bizIds = append(bizIds, strconv.Itoa(int(bizID)))
-		}
-	}
-
-	// 删除缓存
-	if len(bizIds) > 0 {
-		m.RedisClient.HDel(ctx, m.GetCacheKey(businessCacheKey), bizIds...)
-	}
-
-	return nil
-}
-
-// UpdateByEvents 根据事件更新缓存
-func (m *BusinessCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
-	if resourceType != "biz" || len(events) == 0 {
-		return nil
-	}
-
-	// 如果有更新就直接刷新全局缓存
-	if err := m.RefreshGlobal(ctx); err != nil {
-		return err
-	}
-
 	return nil
 }

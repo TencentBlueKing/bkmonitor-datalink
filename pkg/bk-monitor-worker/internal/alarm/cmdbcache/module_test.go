@@ -1,6 +1,6 @@
 // MIT License
 
-// Copyright (c) 2021~2022 腾讯蓝鲸
+// Copyright (c) 2021~2024 腾讯蓝鲸
 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -112,52 +112,5 @@ func TestModuleCacheManager(t *testing.T) {
 
 		assert.EqualValues(t, 0, client.HLen(ctx, cacheManager.GetCacheKey(moduleCacheKey)).Val())
 		assert.EqualValues(t, 0, client.HLen(ctx, cacheManager.GetCacheKey(serviceTemplateCacheKey)).Val())
-	})
-
-	t.Run("TestModuleCacheManager_Events", func(t *testing.T) {
-		cacheManager, err := NewModuleCacheManager(t.Name(), rOpts, 1)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-
-		events := []map[string]interface{}{
-			{
-				"bk_biz_id":    float64(2),
-				"bk_module_id": float64(1),
-			},
-		}
-
-		err = cacheManager.UpdateByEvents(ctx, "module", events)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-
-		assert.EqualValues(t, 3, client.HLen(ctx, cacheManager.GetCacheKey(moduleCacheKey)).Val())
-		assert.EqualValues(t, 2, client.HLen(ctx, cacheManager.GetCacheKey(serviceTemplateCacheKey)).Val())
-
-		events = []map[string]interface{}{
-			{
-				"bk_biz_id":           float64(2),
-				"bk_module_id":        float64(1),
-				"service_template_id": float64(1),
-			},
-			{
-				"bk_biz_id":           float64(2),
-				"bk_module_id":        float64(2),
-				"service_template_id": float64(2),
-			},
-		}
-
-		err = cacheManager.CleanByEvents(ctx, "module", events)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-
-		assert.EqualValues(t, 1, client.HLen(ctx, cacheManager.GetCacheKey(moduleCacheKey)).Val())
-		assert.EqualValues(t, 1, client.HLen(ctx, cacheManager.GetCacheKey(serviceTemplateCacheKey)).Val())
-		assert.EqualValues(t, "[3]", client.HGet(ctx, cacheManager.GetCacheKey(serviceTemplateCacheKey), "2").Val())
 	})
 }

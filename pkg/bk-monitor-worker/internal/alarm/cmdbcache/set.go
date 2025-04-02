@@ -1,6 +1,6 @@
 // MIT License
 
-// Copyright (c) 2021~2022 腾讯蓝鲸
+// Copyright (c) 2021~2024 腾讯蓝鲸
 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/mitchellh/mapstructure"
@@ -151,8 +150,7 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 
 	// 更新集群缓存
 	if len(setCacheData) > 0 {
-		key := m.GetCacheKey(setCacheKey)
-		err = m.UpdateHashMapCache(ctx, key, setCacheData)
+		err = m.UpdateHashMapCache(ctx, setCacheKey, setCacheData)
 		if err != nil {
 			return errors.Wrapf(err, "refresh set cache by biz: %d failed", bizID)
 		}
@@ -161,12 +159,11 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 
 	// 更新服务模板关联的模块缓存
 	if len(templateToSets) > 0 {
-		key := m.GetCacheKey(setTemplateCacheKey)
 		setTemplateCacheData := make(map[string]string)
 		for templateID, setIDs := range templateToSets {
 			setTemplateCacheData[templateID] = fmt.Sprintf("[%s]", strings.Join(setIDs, ","))
 		}
-		err = m.UpdateHashMapCache(ctx, key, setTemplateCacheData)
+		err = m.UpdateHashMapCache(ctx, setTemplateCacheKey, setTemplateCacheData)
 		if err != nil {
 			return errors.Wrapf(err, "refresh set template cache by biz: %d failed", bizID)
 		}
@@ -178,144 +175,25 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 
 // RefreshGlobal 刷新全局模块缓存
 func (m *SetCacheManager) RefreshGlobal(ctx context.Context) error {
-	result := m.RedisClient.Expire(ctx, m.GetCacheKey(setCacheKey), m.Expire)
-	if err := result.Err(); err != nil {
-		return errors.Wrap(err, "set module cache expire time failed")
-	}
-
-	result = m.RedisClient.Expire(ctx, m.GetCacheKey(setTemplateCacheKey), m.Expire)
-	if err := result.Err(); err != nil {
-		return errors.Wrap(err, "set template module cache expire time failed")
+	keys := []string{setCacheKey, setTemplateCacheKey}
+	for _, key := range keys {
+		if err := m.UpdateExpire(ctx, key); err != nil {
+			logger.Errorf("expire hashmap failed, key: %s, err: %v", key, err)
+		}
 	}
 	return nil
 }
 
 // CleanGlobal 清理全局模块缓存
 func (m *SetCacheManager) CleanGlobal(ctx context.Context) error {
-	err := m.DeleteMissingHashMapFields(ctx, m.GetCacheKey(setCacheKey))
+	err := m.DeleteMissingHashMapFields(ctx, setCacheKey)
 	if err != nil {
 		return errors.Wrap(err, "failed to delete missing hashmap fields")
 	}
 
-	err = m.DeleteMissingHashMapFields(ctx, m.GetCacheKey(setTemplateCacheKey))
+	err = m.DeleteMissingHashMapFields(ctx, setTemplateCacheKey)
 	if err != nil {
 		return errors.Wrap(err, "failed to delete missing hashmap fields")
 	}
-	return nil
-}
-
-// CleanByEvents 根据事件清理缓存
-func (m *SetCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
-	if resourceType != "set" || len(events) == 0 {
-		return nil
-	}
-
-	// 提取集群ID及集群模板ID
-	needDeleteSetIds := make(map[int]struct{})
-	needUpdateSetTemplateIds := make(map[string]struct{})
-	for _, event := range events {
-		setID, ok := event["bk_set_id"].(float64)
-		if !ok {
-			continue
-		}
-		// 记录需要删除的集群ID
-		needDeleteSetIds[int(setID)] = struct{}{}
-
-		// 记录需要删除的集群模板关联的集群ID
-		if setTemplateID, ok := event["set_template_id"].(float64); ok && setTemplateID > 0 {
-			needUpdateSetTemplateIds[strconv.Itoa(int(setTemplateID))] = struct{}{}
-		}
-	}
-
-	setTemplateCacheData := make(map[string]string)
-	needDeleteSetTemplateIds := make([]string, 0)
-	for setTemplateID := range needUpdateSetTemplateIds {
-		// 获取原有的集群ID
-		result := m.RedisClient.HGet(ctx, m.GetCacheKey(setTemplateCacheKey), setTemplateID)
-		if result.Err() != nil {
-			continue
-		}
-
-		var oldSetIds []int
-		err := json.Unmarshal([]byte(result.Val()), &oldSetIds)
-		if err != nil {
-			continue
-		}
-
-		// 计算新的集群ID
-		var newSetIds []string
-		for _, oldSetID := range oldSetIds {
-			if _, ok := needDeleteSetIds[oldSetID]; !ok {
-				newSetIds = append(newSetIds, strconv.Itoa(oldSetID))
-			}
-		}
-
-		// 更新集群模板关联的集群缓存
-		if len(newSetIds) > 0 {
-			setTemplateCacheData[setTemplateID] = fmt.Sprintf("[%s]", strings.Join(newSetIds, ","))
-		} else {
-			needDeleteSetTemplateIds = append(needDeleteSetTemplateIds, setTemplateID)
-		}
-	}
-
-	// 删除缓存
-	if len(needDeleteSetIds) > 0 {
-		setIds := make([]string, 0, len(needDeleteSetIds))
-		for setID := range needDeleteSetIds {
-			setIds = append(setIds, strconv.Itoa(setID))
-		}
-		m.RedisClient.HDel(ctx, m.GetCacheKey(setCacheKey), setIds...)
-	}
-
-	// 删除集群模板关联的集群缓存
-	if len(needDeleteSetTemplateIds) > 0 {
-		m.RedisClient.HDel(ctx, m.GetCacheKey(setTemplateCacheKey), needDeleteSetTemplateIds...)
-	}
-
-	// 更新集群模板关联的集群缓存
-	if len(setTemplateCacheData) > 0 {
-		err := m.UpdateHashMapCache(ctx, m.GetCacheKey(setTemplateCacheKey), setTemplateCacheData)
-		if err != nil {
-			return errors.Wrap(err, "failed to update set template hashmap cache")
-		}
-	}
-
-	return nil
-}
-
-// UpdateByEvents 根据事件更新缓存
-func (m *SetCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
-	if resourceType != "set" || len(events) == 0 {
-		return nil
-	}
-
-	// 提取业务ID
-	needUpdateBizIds := make(map[int]struct{})
-	for _, event := range events {
-		bizID, ok := event["bk_biz_id"].(float64)
-		if ok {
-			needUpdateBizIds[int(bizID)] = struct{}{}
-		}
-	}
-
-	// 按业务更新缓存
-	wg := sync.WaitGroup{}
-	limitChan := make(chan struct{}, m.ConcurrentLimit)
-	for bizID := range needUpdateBizIds {
-		wg.Add(1)
-		limitChan <- struct{}{}
-		go func(bizID int) {
-			defer func() {
-				<-limitChan
-				wg.Done()
-			}()
-			err := m.RefreshByBiz(ctx, bizID)
-			if err != nil {
-				logger.Errorf("failed to refresh set cache by biz: %d, err: %v", bizID, err)
-			}
-		}(bizID)
-	}
-	wg.Wait()
-
 	return nil
 }

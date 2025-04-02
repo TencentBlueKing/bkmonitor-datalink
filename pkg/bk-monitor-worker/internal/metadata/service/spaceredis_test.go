@@ -1547,21 +1547,21 @@ func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {
 			TableId:     tableID2,
 			FilterAlias: "dimensions.bk_biz_id",
 			CreateTime:  time.Now(),
-			IsDeleted:   false,
+			Status:      false,
 		},
 		{
 			SpaceType:   "bkci",
 			TableId:     tableID2,
 			FilterAlias: "dimensions.project_id",
 			CreateTime:  time.Now(),
-			IsDeleted:   false,
+			Status:      false,
 		},
 		{
 			SpaceType:   "bksaas",
 			TableId:     tableID1,
 			FilterAlias: "dimensions.app_id",
 			CreateTime:  time.Now(),
-			IsDeleted:   false,
+			Status:      false,
 		},
 	}
 
@@ -1608,14 +1608,14 @@ func TestSpacePusher_pushBkciSpaceTableIds(t *testing.T) {
 			TableId:     tableIdOne,
 			FilterAlias: "dimensions.bk_biz_id",
 			CreateTime:  time.Now(),
-			IsDeleted:   false,
+			Status:      false,
 		},
 		{
 			SpaceType:   "bkci",
 			TableId:     "system.net",
 			FilterAlias: "dimensions.project_id",
 			CreateTime:  time.Now(),
-			IsDeleted:   false,
+			Status:      false,
 		},
 	}
 
@@ -1671,7 +1671,7 @@ func TestSpacePusher_pushBksaasSpaceTableIds(t *testing.T) {
 			TableId:     "demo.test",
 			FilterAlias: "dimensions.app_id",
 			CreateTime:  time.Now(),
-			IsDeleted:   false,
+			Status:      false,
 		},
 	}
 	for _, st := range spaceTypeToResultTableFilterAlias {

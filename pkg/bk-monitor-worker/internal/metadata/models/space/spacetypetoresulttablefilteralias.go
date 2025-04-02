@@ -22,7 +22,7 @@ type SpaceTypeToResultTableFilterAlias struct {
 	SpaceType   string    `gorm:"size:64" json:"space_type"`
 	TableId     string    `gorm:"size:128" json:"table_id"`
 	FilterAlias string    `gorm:"size:128" json:"filter_alias"`
-	IsDeleted   bool      `json:"is_deleted" gorm:"default:false"`
+	Status      bool      `json:"status" gorm:"default:true"`
 	CreateTime  time.Time `gorm:"autoCreateTime" json:"create_time"`
 }
 

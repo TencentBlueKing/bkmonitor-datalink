@@ -92,34 +92,37 @@ type SpaceRedisSvc struct {
 	goroutineLimit int
 }
 
-func (s *SpacePusher) buildFiltersByUsage(ctx FilterBuildContext, usage FilterUsage) []map[string]interface{} {
+func (s *SpacePusher) buildFiltersByUsage(filterBuilderOptions FilterBuildContext, usage FilterUsage) []map[string]interface{} {
+	logger.Infof("buildFiltersByUsage: try to build space router fitlers for spaceType->[%s],spaceId->[%s],tableId->[%s],Usage->[%d]",
+		filterBuilderOptions.SpaceType, filterBuilderOptions.SpaceId, filterBuilderOptions.TableId, usage)
+
 	switch usage {
 
 	case UsageComposeData: // BKCC类型,业务关联数据路由
-		key, _ := s.getFilterKeyBySpaceTypeAndTableId(ctx.SpaceType, ctx.SpaceId, ctx.TableId, "bk_biz_id")
-		return []map[string]interface{}{{key: ctx.SpaceId}}
+		key := s.getFilterKeyBySpaceTypeAndTableId(filterBuilderOptions.SpaceType, filterBuilderOptions.SpaceId, filterBuilderOptions.TableId, "bk_biz_id")
+		return []map[string]interface{}{{key: filterBuilderOptions.SpaceId}}
 
 	case UsageComposeBcsSpaceBizTableIds: // 适用于BKCI类型, BKCI空间关联的归属业务数据,如主机数据、插件数据等
-		key, _ := s.getFilterKeyBySpaceTypeAndTableId(ctx.SpaceType, ctx.SpaceId, ctx.TableId, "bk_biz_id")
-		return []map[string]interface{}{{key: ctx.BkBizId}} // 	这里拼接的过滤条件,是BKCI项目归属的业务ID
+		key := s.getFilterKeyBySpaceTypeAndTableId(filterBuilderOptions.SpaceType, filterBuilderOptions.SpaceId, filterBuilderOptions.TableId, "bk_biz_id")
+		return []map[string]interface{}{{key: filterBuilderOptions.BkBizId}} // 	这里拼接的过滤条件,是BKCI项目归属的业务ID
 
 	case UsageComposeBkciLevelTableIds, UsageComposeBkciCrossTableIds: // BKCI类型,自身数据,关联跨空间数据
-		key, _ := s.getFilterKeyBySpaceTypeAndTableId(ctx.SpaceType, ctx.SpaceId, ctx.TableId, ctx.originFilterKey)
-		return []map[string]interface{}{{key: ctx.SpaceId}}
+		key := s.getFilterKeyBySpaceTypeAndTableId(filterBuilderOptions.SpaceType, filterBuilderOptions.SpaceId, filterBuilderOptions.TableId, filterBuilderOptions.originFilterKey)
+		return []map[string]interface{}{{key: filterBuilderOptions.SpaceId}}
 
 	case UsageComposeBkciOtherTableIds, UsageComposeBksaasOtherTableIds, UsageComposeRecordRuleTableIds, UsageComposeEsTableIds, UsageComposeEsBkciTableIds:
 		return []map[string]interface{}{}
 
 	case UsageComposeAllTypeTableIds: // BKCI&BKSAAS类型，组装指定全空间的可以访问的结果表数据
-		key, _ := s.getFilterKeyBySpaceTypeAndTableId(ctx.SpaceType, ctx.SpaceId, ctx.TableId, "bk_biz_id")
-		return []map[string]interface{}{{key: ctx.ExtraStringVal}} // e.g. "-1001"
+		key := s.getFilterKeyBySpaceTypeAndTableId(filterBuilderOptions.SpaceType, filterBuilderOptions.SpaceId, filterBuilderOptions.TableId, "bk_biz_id")
+		return []map[string]interface{}{{key: filterBuilderOptions.ExtraStringVal}} // e.g. "-1001"
 
 	case UsageComposeBksaasSpaceClusterTableIds, UsageComposeBcsSpaceClusterTableIds: // 适用于BKCI、BKSAAS类型,推送关联的集群数据,包括共享集群
-		if ctx.IsShared && len(ctx.NamespaceList) > 0 {
-			filters := make([]map[string]interface{}, 0, len(ctx.NamespaceList))
-			for _, ns := range ctx.NamespaceList {
+		if filterBuilderOptions.IsShared && len(filterBuilderOptions.NamespaceList) > 0 {
+			filters := make([]map[string]interface{}, 0, len(filterBuilderOptions.NamespaceList))
+			for _, ns := range filterBuilderOptions.NamespaceList {
 				filters = append(filters, map[string]interface{}{
-					"bcs_cluster_id": ctx.ClusterId,
+					"bcs_cluster_id": filterBuilderOptions.ClusterId,
 					"namespace":      ns,
 				})
 			}
@@ -127,7 +130,7 @@ func (s *SpacePusher) buildFiltersByUsage(ctx FilterBuildContext, usage FilterUs
 		}
 		// 单集群
 		return []map[string]interface{}{{
-			"bcs_cluster_id": ctx.ClusterId,
+			"bcs_cluster_id": filterBuilderOptions.ClusterId,
 			"namespace":      nil,
 		}}
 
@@ -812,7 +815,7 @@ type InfluxdbTableData struct {
 
 // 获取influxdb 和 vm的结果表
 func (s *SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[string]map[string]interface{}, error) {
-	logger.Debugf("start to push table_id detail data, table_id_list", tableIdList)
+	logger.Debugf("start to push table_id detail data, table_id_list->[%s]", tableIdList)
 	db := mysql.GetDBSession().DB
 
 	var influxdbStorageList []storage.InfluxdbStorage
@@ -1500,12 +1503,12 @@ func (s *SpacePusher) composeRecordRuleTableIds(spaceType, spaceId string) (map[
 	dataValues := make(map[string]map[string]interface{})
 	for _, recordRuleObj := range recordRuleList {
 		//dataValues[recordRuleObj.TableId] = map[string]interface{}{"filters": []interface{}{}}
-		ctx := FilterBuildContext{
+		options := FilterBuildContext{
 			SpaceType: spaceType,
 			SpaceId:   spaceId,
 			TableId:   recordRuleObj.TableId,
 		}
-		filters := s.buildFiltersByUsage(ctx, UsageComposeRecordRuleTableIds)
+		filters := s.buildFiltersByUsage(options, UsageComposeRecordRuleTableIds)
 		dataValues[recordRuleObj.TableId] = map[string]interface{}{"filters": filters}
 	}
 	// 二段式校验&补充
@@ -1532,13 +1535,13 @@ func (s *SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (map[string]m
 	dataValues := make(map[string]map[string]interface{})
 	for _, rt := range rtList {
 		// dataValues[rt.TableId] = map[string]interface{}{"filters": []interface{}{}}
-		ctx := FilterBuildContext{
+		options := FilterBuildContext{
 			SpaceType: spaceType,
 			SpaceId:   spaceId,
 			TableId:   rt.TableId,
 		}
 		// 使用统一抽象方法生成filters
-		filters := s.buildFiltersByUsage(ctx, UsageComposeEsTableIds)
+		filters := s.buildFiltersByUsage(options, UsageComposeEsTableIds)
 		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
 	}
 
@@ -1589,13 +1592,13 @@ func (s *SpacePusher) ComposeEsBkciTableIds(spaceType, spaceId string) (map[stri
 	dataValues := make(map[string]map[string]interface{})
 	for _, rt := range rtList {
 		//dataValues[rt.TableId] = map[string]interface{}{"filters": []interface{}{}}
-		ctx := FilterBuildContext{
+		options := FilterBuildContext{
 			SpaceType: spaceType,
 			SpaceId:   spaceId,
 			TableId:   rt.TableId,
 		}
 		// 使用统一抽象方法生成filters
-		filters := s.buildFiltersByUsage(ctx, UsageComposeEsBkciTableIds)
+		filters := s.buildFiltersByUsage(options, UsageComposeEsBkciTableIds)
 		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
 	}
 
@@ -1714,18 +1717,18 @@ func (s *SpacePusher) getPlatformDataIds(spaceType string) ([]uint, error) {
 
 // getFilterKeyBySpaceTypeAndTableId 根据 spaceType 和 tableId 查询对应的 filter_alias，
 // 如果存在则返回 filter_alias，否则返回 originFilterKey
-func (s *SpacePusher) getFilterKeyBySpaceTypeAndTableId(spaceType, spaceId, tableId, originFilterKey string) (string, error) {
+func (s *SpacePusher) getFilterKeyBySpaceTypeAndTableId(spaceType, spaceId, tableId, originFilterKey string) string {
 	// 查询 SpaceTypeToResultTableFilterAlias 表，获取对应的 filter_alias
 	var alias space.SpaceTypeToResultTableFilterAlias
 	db := mysql.GetDBSession().DB
-	err := db.Where("space_type = ? AND table_id = ? AND is_deleted = ?", spaceType, tableId, false).First(&alias).Error
+	err := db.Where("space_type = ? AND table_id = ? AND status = ?", spaceType, tableId, false).First(&alias).Error
 
 	// 如果查询失败，返回原始 filterKey
 	if err != nil {
 		logger.Warnf("getFilterKeyBySpaceTypeAndTableId: failed to query alias for spaceType->[%s]"+
 			",spaceId->[%s],tableId->[%s],originFilterKey->[%s],err->[%s]",
 			spaceType, spaceId, tableId, originFilterKey, err)
-		return originFilterKey, err
+		return originFilterKey
 	}
 
 	// 如果找到对应的 alias，则返回对应记录的filter_alias作为过滤key
@@ -1733,7 +1736,7 @@ func (s *SpacePusher) getFilterKeyBySpaceTypeAndTableId(spaceType, spaceId, tabl
 		logger.Infof("getFilterKeyBySpaceTypeAndTableId: found alias for spaceType->[%s]"+
 			",spaceId->[%s],tableId->[%s],originFilterKey->[%s],filterAlias->[%s]",
 			spaceType, spaceId, tableId, originFilterKey, alias.FilterAlias)
-		return alias.FilterAlias, nil
+		return alias.FilterAlias
 	}
 
 	logger.Infof("getFilterKeyBySpaceTypeAndTableId: found no alias for spaceType->[%s]"+
@@ -1741,7 +1744,7 @@ func (s *SpacePusher) getFilterKeyBySpaceTypeAndTableId(spaceType, spaceId, tabl
 		spaceType, spaceId, tableId, originFilterKey)
 
 	// 如果没有找到 alias，返回原始 filterKey
-	return originFilterKey, nil
+	return originFilterKey
 }
 
 type DataIdDetail struct {
@@ -1888,12 +1891,12 @@ func (s *SpacePusher) composeData(spaceType, spaceId string, tableIdList []strin
 			filters := make([]map[string]interface{}, 0)
 			if s.isNeedFilterForBkcc(measurementType, spaceType, spaceId, detail, isExistSpace) {
 				// 若需要拼接过滤条件,那么调用通用filters生成方法,生成filters
-				ctx := FilterBuildContext{
+				options := FilterBuildContext{
 					SpaceType: spaceType,
 					SpaceId:   spaceId,
 					TableId:   tid,
 				}
-				newFilters := s.buildFiltersByUsage(ctx, UsageComposeData)
+				newFilters := s.buildFiltersByUsage(options, UsageComposeData)
 				filters = append(filters, newFilters...)
 			}
 			valueData[tid] = map[string]interface{}{"filters": filters}
@@ -1996,13 +1999,13 @@ func (s *SpacePusher) composeBcsSpaceBizTableIds(spaceType, spaceId string) (map
 	}
 	for _, rt := range rtList {
 		//dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"bk_biz_id": bizIdStr}}}
-		ctx := FilterBuildContext{
+		options := FilterBuildContext{
 			SpaceType: spaceType,
 			SpaceId:   spaceId,
 			TableId:   rt.TableId,
 			BkBizId:   bizIdStr, // 归属的业务ID
 		}
-		filters := s.buildFiltersByUsage(ctx, UsageComposeBcsSpaceBizTableIds)
+		filters := s.buildFiltersByUsage(options, UsageComposeBcsSpaceBizTableIds)
 		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
 	}
 
@@ -2074,7 +2077,7 @@ func (s *SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId strin
 			continue
 		}
 
-		ctx := FilterBuildContext{
+		options := FilterBuildContext{
 			SpaceType:     spaceType,
 			SpaceId:       spaceId,
 			ClusterId:     clusterId,
@@ -2082,7 +2085,7 @@ func (s *SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId strin
 			IsShared:      clusterType == models.BcsClusterTypeShared,
 		}
 		// 使用统一抽象方法生成filters
-		filters := s.buildFiltersByUsage(ctx, UsageComposeBksaasSpaceClusterTableIds)
+		filters := s.buildFiltersByUsage(options, UsageComposeBksaasSpaceClusterTableIds)
 		clusterInfoMap[clusterId] = filters
 
 		clusterIdList = append(clusterIdList, clusterId)
@@ -2185,7 +2188,7 @@ func (s *SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) 
 			continue
 		}
 
-		ctx := FilterBuildContext{
+		options := FilterBuildContext{
 			SpaceType:     spaceType,
 			SpaceId:       spaceId,
 			ClusterId:     clusterId,
@@ -2193,7 +2196,7 @@ func (s *SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) 
 			IsShared:      clusterType == models.BcsClusterTypeShared,
 		}
 		// 使用统一抽象方法生成filters
-		filters := s.buildFiltersByUsage(ctx, UsageComposeBcsSpaceClusterTableIds)
+		filters := s.buildFiltersByUsage(options, UsageComposeBcsSpaceClusterTableIds)
 		clusterInfoMap[clusterId] = filters
 		clusterIdList = append(clusterIdList, clusterId)
 
@@ -2343,14 +2346,14 @@ func (s *SpacePusher) composeBkciLevelTableIds(spaceType, spaceId string) (map[s
 	}
 	for _, tid := range tableIds {
 		//dataValues[tid] = map[string]interface{}{"filters": []map[string]interface{}{{"projectId": spaceId}}}
-		ctx := FilterBuildContext{
+		options := FilterBuildContext{
 			SpaceType:       spaceType,
 			SpaceId:         spaceId,
 			TableId:         tid,
 			originFilterKey: "projectId",
 		}
 		// 使用统一抽象方法生成filters
-		filters := s.buildFiltersByUsage(ctx, UsageComposeBkciLevelTableIds)
+		filters := s.buildFiltersByUsage(options, UsageComposeBkciLevelTableIds)
 		dataValues[tid] = map[string]interface{}{"filters": filters}
 	}
 
@@ -2394,12 +2397,12 @@ func (s *SpacePusher) composeBkciOtherTableIds(spaceType, spaceId string) (map[s
 			continue
 		}
 		//dataValues[tid] = map[string]interface{}{"filters": []map[string]interface{}{}}
-		ctx := FilterBuildContext{
+		options := FilterBuildContext{
 			SpaceType: spaceType,
 			SpaceId:   spaceId,
 			TableId:   tid,
 		}
-		filters := s.buildFiltersByUsage(ctx, UsageComposeBkciOtherTableIds)
+		filters := s.buildFiltersByUsage(options, UsageComposeBkciOtherTableIds)
 		dataValues[tid] = map[string]interface{}{"filters": filters}
 	}
 
@@ -2424,14 +2427,14 @@ func (s *SpacePusher) composeBkciCrossTableIds(spaceType, spaceId string) (map[s
 	dataValues := make(map[string]map[string]interface{})
 	for _, rt := range rtList {
 		// dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"projectId": spaceId}}}
-		ctx := FilterBuildContext{
+		options := FilterBuildContext{
 			SpaceType:       spaceType,
 			SpaceId:         spaceId,
 			TableId:         rt.TableId,
 			originFilterKey: "projectId",
 		}
 		// 使用统一抽象方法生成filters
-		filters := s.buildFiltersByUsage(ctx, UsageComposeBkciCrossTableIds)
+		filters := s.buildFiltersByUsage(options, UsageComposeBkciCrossTableIds)
 		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
 	}
 
@@ -2443,14 +2446,14 @@ func (s *SpacePusher) composeBkciCrossTableIds(spaceType, spaceId string) (map[s
 	}
 	for _, rt := range rtP4List {
 		// dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"devops_id": spaceId}}}
-		ctx := FilterBuildContext{
+		options := FilterBuildContext{
 			SpaceType:       spaceType,
 			SpaceId:         spaceId,
 			TableId:         rt.TableId,
 			originFilterKey: "devops_id",
 		}
 		// 使用统一抽象方法生成filters
-		filters := s.buildFiltersByUsage(ctx, UsageComposeBkciCrossTableIds)
+		filters := s.buildFiltersByUsage(options, UsageComposeBkciCrossTableIds)
 		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
 	}
 
@@ -2522,12 +2525,12 @@ func (s *SpacePusher) composeBksaasOtherTableIds(spaceType, spaceId string, tabl
 	for _, tid := range tableIds {
 		// 针对非集群的数据，不限制过滤条件
 		// dataValues[tid] = map[string]interface{}{"filters": []map[string]interface{}{}}
-		ctx := FilterBuildContext{
+		options := FilterBuildContext{
 			SpaceType: spaceType,
 			SpaceId:   spaceId,
 			TableId:   tid,
 		}
-		filters := s.buildFiltersByUsage(ctx, UsageComposeBksaasOtherTableIds)
+		filters := s.buildFiltersByUsage(options, UsageComposeBksaasOtherTableIds)
 		dataValues[tid] = map[string]interface{}{"filters": filters}
 	}
 
@@ -2555,13 +2558,13 @@ func (s *SpacePusher) composeAllTypeTableIds(spaceType, spaceId string) (map[str
 	for _, tid := range models.AllSpaceTableIds {
 		// dataValues[tid] = map[string]interface{}{"filters": []map[string]interface{}{{"bk_biz_id": strconv.Itoa(-spaceObj.Id)}}}
 
-		ctx := FilterBuildContext{
+		options := FilterBuildContext{
 			SpaceType:      spaceType,
 			SpaceId:        spaceId,
 			TableId:        tid,
 			ExtraStringVal: strconv.Itoa(-spaceObj.Id),
 		}
-		filters := s.buildFiltersByUsage(ctx, UsageComposeAllTypeTableIds)
+		filters := s.buildFiltersByUsage(options, UsageComposeAllTypeTableIds)
 		dataValues[tid] = map[string]interface{}{"filters": filters}
 	}
 	// 二段式校验&补充

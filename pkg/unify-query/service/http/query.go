@@ -172,10 +172,9 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
 
-		message strings.Builder
-		lock    sync.Mutex
-
+		message   strings.Builder
 		queryList []*metadata.Query
+		lock      sync.Mutex
 	)
 
 	// 构建查询路由列表
@@ -255,27 +254,28 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		if len(queryList) > 1 {
 			queryTs.OrderBy.Orders().SortSliceList(list)
 
-			// 判定是否启用 multi from 特性
-			if len(list) > queryTs.Limit && resultTableOptions.IsMultiFrom() {
-				list = list[0:queryTs.Limit]
-
-				newResultTableOptions := metadata.ResultTableOptions{}
-				for _, l := range list {
-					if tableID, ok1 := l[elasticsearch.KeyTableID].(string); ok1 {
-						if address, ok2 := l[elasticsearch.KeyAddress].(string); ok2 {
-							opt := newResultTableOptions.GetOption(tableID, address)
-							opt.From += 1
+			// scroll 模式不进行裁剪
+			if queryTs.Scroll == "" {
+				// 判定是否启用 multi from 特性
+				if len(list) > queryTs.Limit {
+					if queryTs.IsMultiFrom {
+						list = list[0:queryTs.Limit]
+						for _, l := range list {
+							resultTableOptions.FromInc(l[elasticsearch.KeyTableID].(string), l[elasticsearch.KeyAddress].(string))
 						}
+					} else {
+						list = list[queryTs.From : queryTs.From+queryTs.Limit]
 					}
 				}
-
-				resultTableOptions.MergeOptions(newResultTableOptions)
 			}
 		}
 	}()
 
 	// 多协程查询数据
-	var sendWg sync.WaitGroup
+	var (
+		sendWg sync.WaitGroup
+	)
+
 	p, _ := ants.NewPool(QueryMaxRouting)
 	go func() {
 		defer func() {
@@ -287,9 +287,11 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			qry := qry
 
 			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
-			if len(queryList) > 1 && !qry.ResultTableOptions.IsMultiFrom() {
-				qry.Size += qry.From
-				qry.From = 0
+			if len(queryList) > 1 {
+				if !queryTs.IsMultiFrom {
+					qry.Size += qry.From
+					qry.From = 0
+				}
 			}
 
 			err = p.Submit(func() {
@@ -303,14 +305,16 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					return
 				}
 
-				options, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
-				lock.Lock()
+				size, options, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
 				if queryErr != nil {
 					message.WriteString(fmt.Sprintf("query %s:%s is error: %s ", qry.TableID, qry.Fields, queryErr.Error()))
-				} else {
-					resultTableOptions.MergeOptions(options)
 				}
+
+				lock.Lock()
+				resultTableOptions.MergeOptions(options)
 				lock.Unlock()
+
+				total += size
 			})
 		}
 	}()
@@ -320,8 +324,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	if message.Len() > 0 {
 		err = errors.New(message.String())
 	}
-
-	total = resultTableOptions.GetTotal()
 
 	return
 }

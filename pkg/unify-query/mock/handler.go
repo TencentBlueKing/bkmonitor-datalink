@@ -196,8 +196,16 @@ func mockElasticSearchHandler(ctx context.Context) {
 	mappingResp := httpmock.NewStringResponder(http.StatusOK, mappings)
 	httpmock.RegisterResponder(http.MethodGet, bkBaseUrl+"/es_index/_mapping/", mappingResp)
 	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/es_index/_mapping/", mappingResp)
+
 	httpmock.RegisterResponder(http.MethodPost, bkBaseUrl+"/es_index/_search", searchHandler)
 	httpmock.RegisterResponder(http.MethodPost, EsUrl+"/es_index/_search", searchHandler)
+
+	httpmock.RegisterResponder(http.MethodPost, bkBaseUrl+"/es_index/_search?scroll=5m", searchHandler)
+	httpmock.RegisterResponder(http.MethodPost, EsUrl+"/es_index/_search?scroll=5m", searchHandler)
+
+	httpmock.RegisterResponder(http.MethodPost, bkBaseUrl+"/_search/scroll", searchHandler)
+	httpmock.RegisterResponder(http.MethodPost, EsUrl+"/_search/scroll", searchHandler)
+
 	httpmock.RegisterResponder(http.MethodHead, EsUrl, searchHandler)
 }
 

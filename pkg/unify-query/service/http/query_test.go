@@ -30,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
 
@@ -704,7 +705,6 @@ func TestQueryRawWithInstance(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 
 	spaceUid := influxdb.SpaceUid
-	tableID := influxdb.ResultTableBkBaseEs
 
 	mock.Init()
 	influxdb.MockSpaceRouter(ctx)
@@ -718,8 +718,15 @@ func TestQueryRawWithInstance(t *testing.T) {
 		`{"_source":{"includes":["__ext.io_kubernetes_pod","dtEventTimeStamp"]},"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":20,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":468,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"e058129ae18bff87c95e83f24584e654","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c124dae69af9b86a7128ee4281820158","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c7f73abf7e865a4b4d7fc608387d01cf","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"39c3ec662881e44bf26d2a6bfc0e35c3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"58e03ce0b9754bf0657d49a5513adcb5","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"43a36f412886bf30b0746562513638d3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"218ceafd04f89b39cda7954e51f4a48a","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8d9abe9b782fe3a1272c93f0af6b39e1","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"0826407be7f04f19086774ed68eac8dd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"d56b4120194eb37f53410780da777d43","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}}]}}`,
 		`{"_source":{"includes":["__ext.container_id","dtEventTimeStamp"]},"from":1,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":1}`:                                                      `{"took":17,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"4f3a5e9c167097c9658e88b2f32364b2","_score":0.0,"_source":{"dtEventTimeStamp":"1723594209000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}}]}}`,
 		`{"_source":{"includes":["__ext.container_id","dtEventTimeStamp"]},"from":1,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":1723594000123,"include_lower":true,"include_upper":true,"to":1723595000234}}}}},"size":10}`:                                               `{"took":468,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"e058129ae18bff87c95e83f24584e654","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c124dae69af9b86a7128ee4281820158","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c7f73abf7e865a4b4d7fc608387d01cf","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"39c3ec662881e44bf26d2a6bfc0e35c3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"58e03ce0b9754bf0657d49a5513adcb5","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"43a36f412886bf30b0746562513638d3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"218ceafd04f89b39cda7954e51f4a48a","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8d9abe9b782fe3a1272c93f0af6b39e1","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"0826407be7f04f19086774ed68eac8dd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"d56b4120194eb37f53410780da777d43","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}}]}}`,
-		//`{"_source":{"includes":["__ext.io_kubernetes_pod","dtEventTimeStamp"]},"from":20,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":10,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":468,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"e058129ae18bff87c95e83f24584e654","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c124dae69af9b86a7128ee4281820158","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c7f73abf7e865a4b4d7fc608387d01cf","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"39c3ec662881e44bf26d2a6bfc0e35c3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"58e03ce0b9754bf0657d49a5513adcb5","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"43a36f412886bf30b0746562513638d3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"218ceafd04f89b39cda7954e51f4a48a","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8d9abe9b782fe3a1272c93f0af6b39e1","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"0826407be7f04f19086774ed68eac8dd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"d56b4120194eb37f53410780da777d43","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}}]}}`,
-		//`{"_source":{"includes":["__ext.container_id","dtEventTimeStamp"]},"from":1,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":10,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`:      `{"took":301,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c726c895a380ba1a9df04ba4a977b29b","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"fa209967d4a8c5d21b3e4f67d2cd579e","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"dc888e9a3789976aa11483626fc61a4f","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c2dae031f095fa4b9deccf81964c7837","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8a916e558c71d4226f1d7f3279cf0fdd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"f6950fef394e813999d7316cdbf0de4d","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"328d487e284703b1d0bb8017dba46124","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"cb790ecb36bbaf02f6f0eb80ac2fd65c","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"bd8a8ef60e94ade63c55c8773170d458","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c8401bb4ec021b038cb374593b8adce3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}}]}}`,
+
+		// merge rt test mock data
+		`{"_source":{"includes":["a","b"]},"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":5}`:  `{"hits":{"total":{"value":123},"hits":[{"_index":"result_table_index","_id":"1","_source":{"a":"1","b":"1"}},{"_index":"result_table_index","_id":"2","_source":{"a":"1","b":"2"}},{"_index":"result_table_index","_id":"3","_source":{"a":"1","b":"3"}},{"_index":"result_table_index","_id":"4","_source":{"a":"1","b":"4"}},{"_index":"result_table_index","_id":"5","_source":{"a":"1","b":"5"}}]}}`,
+		`{"_source":{"includes":["a","b"]},"from":5,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":5}`:  `{"hits":{"total":{"value":123},"hits":[{"_index":"result_table_index","_id":"6","_source":{"a":"2","b":"1"}},{"_index":"result_table_index","_id":"7","_source":{"a":"2","b":"2"}},{"_index":"result_table_index","_id":"8","_source":{"a":"2","b":"3"}},{"_index":"result_table_index","_id":"9","_source":{"a":"2","b":"4"}},{"_index":"result_table_index","_id":"10","_source":{"a":"2","b":"5"}}]}}`,
+		`{"_source":{"includes":["a","b"]},"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":10}`: `{"hits":{"total":{"value":123},"hits":[{"_index":"result_table_index","_id":"1","_source":{"a":"1","b":"1"}},{"_index":"result_table_index","_id":"2","_source":{"a":"1","b":"2"}},{"_index":"result_table_index","_id":"3","_source":{"a":"1","b":"3"}},{"_index":"result_table_index","_id":"4","_source":{"a":"1","b":"4"}},{"_index":"result_table_index","_id":"5","_source":{"a":"1","b":"5"}},{"_index":"result_table_index","_id":"6","_source":{"a":"2","b":"1"}},{"_index":"result_table_index","_id":"7","_source":{"a":"2","b":"2"}},{"_index":"result_table_index","_id":"8","_source":{"a":"2","b":"3"}},{"_index":"result_table_index","_id":"9","_source":{"a":"2","b":"4"}},{"_index":"result_table_index","_id":"10","_source":{"a":"2","b":"5"}}]}}`,
+
+		// scroll
+		`{"_source":{"includes":["a","b"]},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":5,"sort":["_doc"]}`: `{"_scroll_id":"one","hits":{"total":{"value":123},"hits":[{"_index":"result_table_index","_id":"1","_source":{"a":"1","b":"1"}},{"_index":"result_table_index","_id":"2","_source":{"a":"1","b":"2"}},{"_index":"result_table_index","_id":"3","_source":{"a":"1","b":"3"}},{"_index":"result_table_index","_id":"4","_source":{"a":"1","b":"4"}},{"_index":"result_table_index","_id":"5","_source":{"a":"1","b":"5"}}]}}`,
+		`{"scroll":"5m","scroll_id":"one"}`: `{"_scroll_id":"two","hits":{"total":{"value":123},"hits":[{"_index":"result_table_index","_id":"6","_source":{"a":"2","b":"1"}},{"_index":"result_table_index","_id":"7","_source":{"a":"2","b":"2"}},{"_index":"result_table_index","_id":"8","_source":{"a":"2","b":"3"}},{"_index":"result_table_index","_id":"9","_source":{"a":"2","b":"4"}},{"_index":"result_table_index","_id":"10","_source":{"a":"2","b":"5"}}]}}`,
 	})
 
 	tcs := map[string]struct {
@@ -734,57 +741,166 @@ func TestQueryRawWithInstance(t *testing.T) {
 				QueryList: []*structured.Query{
 					{
 						DataSource:  structured.BkLog,
-						TableID:     structured.TableID(tableID),
-						From:        1,
-						Limit:       10,
+						TableID:     structured.TableID(influxdb.ResultTableBkBaseEs),
 						KeepColumns: []string{"__ext.container_id", "dtEventTimeStamp"},
 					},
 				},
+				From:  1,
+				Limit: 10,
 				Start: "1723594000123",
 				End:   "1723595000234",
 			},
 			total:    1e4,
-			expected: `[{"__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"e058129ae18bff87c95e83f24584e654","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594211000","dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"c124dae69af9b86a7128ee4281820158"},{"__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594211000","dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"c7f73abf7e865a4b4d7fc608387d01cf","__index":"v2_2_bklog_bk_unify_query_20240814_0"},{"__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000","__doc_id":"39c3ec662881e44bf26d2a6bfc0e35c3"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594211000","dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"58e03ce0b9754bf0657d49a5513adcb5","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es"},{"_time":"1723594211000","dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"43a36f412886bf30b0746562513638d3","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es"},{"__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594211000","dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"218ceafd04f89b39cda7954e51f4a48a"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594211000","dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"8d9abe9b782fe3a1272c93f0af6b39e1","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es"},{"dtEventTimeStamp":"1723594224000","__doc_id":"0826407be7f04f19086774ed68eac8dd","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594224000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"},{"dtEventTimeStamp":"1723594224000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94","__doc_id":"d56b4120194eb37f53410780da777d43","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594224000"}]`,
-			options:  `{"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"total":10000,"from":11}}`,
+			expected: `[{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"e058129ae18bff87c95e83f24584e654","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"c124dae69af9b86a7128ee4281820158","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"c7f73abf7e865a4b4d7fc608387d01cf","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"39c3ec662881e44bf26d2a6bfc0e35c3","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"58e03ce0b9754bf0657d49a5513adcb5","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"43a36f412886bf30b0746562513638d3","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"218ceafd04f89b39cda7954e51f4a48a","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"8d9abe9b782fe3a1272c93f0af6b39e1","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"0826407be7f04f19086774ed68eac8dd","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594224000","dtEventTimeStamp":"1723594224000"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"d56b4120194eb37f53410780da777d43","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594224000","dtEventTimeStamp":"1723594224000"}]`,
 		},
-		"query_bk_base_es_with_raw": {
+		"query es with multi rt and multi from 0 - 5": {
 			queryTs: &structured.QueryTs{
 				SpaceUid: spaceUid,
 				QueryList: []*structured.Query{
 					{
 						DataSource:    structured.BkLog,
 						TableID:       structured.TableID(influxdb.ResultTableEs),
-						KeepColumns:   []string{"__ext.container_id", "dtEventTimeStamp"},
+						KeepColumns:   []string{"a", "b"},
 						ReferenceName: "a",
 					},
 					{
 						DataSource:    structured.BkLog,
-						TableID:       structured.TableID(tableID),
-						KeepColumns:   []string{"__ext.io_kubernetes_pod", "dtEventTimeStamp"},
+						TableID:       structured.TableID(influxdb.ResultTableBkBaseEs),
+						KeepColumns:   []string{"a", "b"},
 						ReferenceName: "a",
 					},
 				},
 				OrderBy: structured.OrderBy{
-					"-dtEventTimeStamp",
-					"__doc_id",
+					"a",
+					"b",
 				},
-				From:        10,
-				Limit:       10,
+				Limit:       5,
+				MetricMerge: "a",
+				Start:       start,
+				End:         end,
+				IsMultiFrom: true,
+				ResultTableOptions: map[string]*metadata.ResultTableOption{
+					"result_table.es|http://127.0.0.1:12001/bk_data/query_sync/es": {
+						From: 0,
+					},
+					"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es": {
+						From: 5,
+					},
+				},
+			},
+			total:    246,
+			expected: `[{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"1","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"1"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"2","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"2"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"3","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"3"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"4","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"4"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"5","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"5"}]`,
+			options:  `{"result_table.es|http://127.0.0.1:12001/bk_data/query_sync/es":{"from":5},"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"from":5}}`,
+		},
+		"query es with multi rt and multi from 5 - 10": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(influxdb.ResultTableEs),
+						KeepColumns:   []string{"a", "b"},
+						ReferenceName: "a",
+					},
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(influxdb.ResultTableBkBaseEs),
+						KeepColumns:   []string{"a", "b"},
+						ReferenceName: "a",
+					},
+				},
+				OrderBy: structured.OrderBy{
+					"a",
+					"b",
+					elasticsearch.KeyTableID,
+				},
+				Limit:       5,
+				MetricMerge: "a",
+				Start:       start,
+				End:         end,
+				IsMultiFrom: true,
+				ResultTableOptions: map[string]*metadata.ResultTableOption{
+					"result_table.es|http://127.0.0.1:12001/bk_data/query_sync/es": {
+						From: 5,
+					},
+					"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es": {
+						From: 5,
+					},
+				},
+			},
+			total:    246,
+			expected: `[{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"6","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"1"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"6","__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"1"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"7","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"2"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"7","__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"2"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"8","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"3"}]`,
+			options:  `{"result_table.es|http://127.0.0.1:12001/bk_data/query_sync/es":{"from":7},"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"from":8}}`,
+		},
+		"query es with multi rt and one from 0 - 5": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(influxdb.ResultTableEs),
+						KeepColumns:   []string{"a", "b"},
+						ReferenceName: "a",
+					},
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(influxdb.ResultTableBkBaseEs),
+						KeepColumns:   []string{"a", "b"},
+						ReferenceName: "a",
+					},
+				},
+				OrderBy: structured.OrderBy{
+					"a",
+					"b",
+					elasticsearch.KeyTableID,
+				},
+				From:        0,
+				Limit:       5,
 				MetricMerge: "a",
 				Start:       start,
 				End:         end,
 			},
-			total:    2e4,
-			expected: `[{"_time":"1723594224000","dtEventTimeStamp":"1723594224000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94","__doc_id":"0826407be7f04f19086774ed68eac8dd","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es"},{"__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594224000","dtEventTimeStamp":"1723594224000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94","__doc_id":"d56b4120194eb37f53410780da777d43","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es"},{"__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594211000","dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"218ceafd04f89b39cda7954e51f4a48a"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","dtEventTimeStamp":"1723594211000","__doc_id":"39c3ec662881e44bf26d2a6bfc0e35c3","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es"},{"__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594211000","dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"43a36f412886bf30b0746562513638d3","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es"},{"__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594211000","dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"58e03ce0b9754bf0657d49a5513adcb5"},{"_time":"1723594211000","dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"8d9abe9b782fe3a1272c93f0af6b39e1","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es"},{"__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"c124dae69af9b86a7128ee4281820158","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594211000","dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"c7f73abf7e865a4b4d7fc608387d01cf","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es"},{"dtEventTimeStamp":"1723594211000","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"e058129ae18bff87c95e83f24584e654","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","__data_label":"bkbase_es","__address":"http://127.0.0.1:12001/bk_data/query_sync/es","_time":"1723594211000"}]`,
-			options:  `{"result_table.es|http://127.0.0.1:12001/bk_data/query_sync/es":{"total":10000,"from":10},"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"total":10000,"from":10}}`,
+			total:    246,
+			expected: `[{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"1","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"1"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"1","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"1"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"2","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"2"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"2","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"2"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"3","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"3"}]`,
 		},
-		"query_bk_base_es_with_errors": {
+		"query es with multi rt and one from 5 - 10": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(influxdb.ResultTableEs),
+						KeepColumns:   []string{"a", "b"},
+						ReferenceName: "a",
+					},
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(influxdb.ResultTableBkBaseEs),
+						KeepColumns:   []string{"a", "b"},
+						ReferenceName: "a",
+					},
+				},
+				OrderBy: structured.OrderBy{
+					"a",
+					"b",
+					elasticsearch.KeyTableID,
+				},
+				From:        5,
+				Limit:       5,
+				MetricMerge: "a",
+				Start:       start,
+				End:         end,
+			},
+			total:    246,
+			expected: `[{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"3","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"3"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"4","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"4"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"4","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"4"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"5","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"5"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"5","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"5"}]`,
+		},
+		"query_bk_base_es_1 to 1": {
 			queryTs: &structured.QueryTs{
 				SpaceUid: spaceUid,
 				QueryList: []*structured.Query{
 					{
 						DataSource:  structured.BkLog,
-						TableID:     structured.TableID(tableID),
+						TableID:     structured.TableID(influxdb.ResultTableEs),
 						From:        1,
 						Limit:       1,
 						KeepColumns: []string{"__ext.container_id", "dtEventTimeStamp"},
@@ -794,8 +910,81 @@ func TestQueryRawWithInstance(t *testing.T) {
 				End:   end,
 			},
 			total:    1e4,
-			expected: `[{"__data_label":"bkbase_es","__doc_id":"4f3a5e9c167097c9658e88b2f32364b2","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594209000","dtEventTimeStamp":"1723594209000"}]`,
-			options:  `{"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"total":10000,"from":2}}`,
+			expected: `[{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"4f3a5e9c167097c9658e88b2f32364b2","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.es","_time":"1723594209000","dtEventTimeStamp":"1723594209000"}]`,
+		},
+		"query with scroll - 1": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(influxdb.ResultTableEs),
+						KeepColumns:   []string{"a", "b"},
+						ReferenceName: "a",
+					},
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(influxdb.ResultTableBkBaseEs),
+						KeepColumns:   []string{"a", "b"},
+						ReferenceName: "a",
+					},
+				},
+				OrderBy: structured.OrderBy{
+					"a",
+					"b",
+					elasticsearch.KeyTableID,
+				},
+				From:        0,
+				Limit:       5,
+				MetricMerge: "a",
+				Start:       start,
+				End:         end,
+				Scroll:      "5m",
+			},
+			expected: `[{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"1","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"1"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"1","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"1"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"2","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"2"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"2","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"2"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"3","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"3"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"3","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"3"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"4","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"4"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"4","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"4"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"5","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"5"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"5","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"5"}]`,
+			total:    246,
+			options:  `{"result_table.es|http://127.0.0.1:12001/bk_data/query_sync/es":{"scroll_id":"one"},"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"scroll_id":"one"}}`,
+		},
+		"query with scroll - 2": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(influxdb.ResultTableEs),
+						KeepColumns:   []string{"a", "b"},
+						ReferenceName: "a",
+					},
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(influxdb.ResultTableBkBaseEs),
+						KeepColumns:   []string{"a", "b"},
+						ReferenceName: "a",
+					},
+				},
+				OrderBy: structured.OrderBy{
+					"a",
+					"b",
+					elasticsearch.KeyTableID,
+				},
+				From:        0,
+				Limit:       5,
+				MetricMerge: "a",
+				Start:       start,
+				End:         end,
+				ResultTableOptions: map[string]*metadata.ResultTableOption{
+					"result_table.es|http://127.0.0.1:12001/bk_data/query_sync/es": {
+						ScrollID: "one",
+					},
+					"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es": {
+						ScrollID: "one",
+					},
+				},
+				Scroll: "5m",
+			},
+			expected: `[{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"6","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"1"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"6","__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"1"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"7","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"2"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"7","__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"2"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"8","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"3"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"8","__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"3"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"9","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"4"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"9","__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"4"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"bkbase_es","__doc_id":"10","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"5"},{"__address":"http://127.0.0.1:12001/bk_data/query_sync/es","__data_label":"es","__doc_id":"10","__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"5"}]`,
+			total:    246,
+			options:  `{"result_table.es|http://127.0.0.1:12001/bk_data/query_sync/es":{"scroll_id":"two"},"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"scroll_id":"two"}}`,
 		},
 	}
 
@@ -808,11 +997,15 @@ func TestQueryRawWithInstance(t *testing.T) {
 			}
 
 			assert.Equal(t, c.total, total)
-			actual, _ := json.Marshal(list)
-			assert.JSONEq(t, c.expected, string(actual))
 
-			optActual, _ := json.Marshal(options)
-			assert.JSONEq(t, c.options, string(optActual))
+			actual := json.MarshalListMap(list)
+
+			assert.Equal(t, c.expected, actual)
+
+			if len(options) > 0 || c.options != "" {
+				optActual, _ := json.Marshal(options)
+				assert.JSONEq(t, c.options, string(optActual))
+			}
 		})
 	}
 }

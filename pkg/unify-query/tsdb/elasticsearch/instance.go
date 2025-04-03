@@ -266,7 +266,10 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		source.Size(0)
 		source.Aggregation(name, agg)
 	} else {
-		fact.Size(source)
+		source.Size(qb.Size)
+		if qb.Scroll == "" {
+			source.From(qb.From)
+		}
 	}
 
 	if qb.HighLight != nil && qb.HighLight.Enable {
@@ -544,13 +547,13 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (metadata.ResultTableOptions, error) {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
 	var (
 		err error
 		wg  sync.WaitGroup
 
-		lock    sync.Mutex
-		options = metadata.ResultTableOptions{}
+		total              int64
+		resultTableOptions = make(metadata.ResultTableOptions)
 	)
 
 	defer func() {
@@ -566,13 +569,13 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	if query.DB == "" {
 		err = fmt.Errorf("%s 查询别名为空", query.TableID)
-		return nil, err
+		return total, resultTableOptions, err
 	}
 	unit := metadata.GetQueryParams(ctx).TimeUnit
 
 	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
 	if err != nil {
-		return nil, err
+		return total, resultTableOptions, err
 	}
 
 	errChan := make(chan error, len(i.connects))
@@ -614,7 +617,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 			fact := NewFormatFactory(ctx).
 				WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-				WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.From, query.Size).
+				WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.Size).
 				WithMappings(mappings...).
 				WithOrders(query.Orders)
 
@@ -624,10 +627,12 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				return
 			}
 
-			option := &metadata.ResultTableOption{}
+			var option *metadata.ResultTableOption
 			if sr != nil {
 				if sr.ScrollId != "" {
-					option.ScrollID = sr.ScrollId
+					option = &metadata.ResultTableOption{
+						ScrollID: sr.ScrollId,
+					}
 				}
 
 				if sr.Hits != nil {
@@ -656,14 +661,12 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 					}
 
 					if sr.Hits.TotalHits != nil {
-						option.Total = sr.Hits.TotalHits.Value
+						total += sr.Hits.TotalHits.Value
 					}
 				}
 			}
 
-			lock.Lock()
-			options.SetOption(query.TableID, conn.Address, option)
-			lock.Unlock()
+			resultTableOptions.SetOption(query.TableID, conn.Address, option)
 		}()
 	}
 	wg.Wait()
@@ -671,11 +674,11 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	for e := range errChan {
 		if e != nil {
-			return nil, e
+			return total, resultTableOptions, e
 		}
 	}
 
-	return options, nil
+	return total, resultTableOptions, nil
 }
 
 // QuerySeriesSet 给 PromEngine 提供查询接口
@@ -785,7 +788,7 @@ func (i *Instance) QuerySeriesSet(
 
 				fact := NewFormatFactory(ctx).
 					WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-					WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.From, size).
+					WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
 					WithMappings(mappings...).
 					WithOrders(query.Orders).
 					WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())

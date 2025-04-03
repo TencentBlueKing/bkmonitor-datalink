@@ -177,7 +177,6 @@ type FormatFactory struct {
 	aggInfoList aggInfoList
 	orders      metadata.Orders
 
-	from     int
 	size     int
 	timezone string
 
@@ -253,7 +252,7 @@ func (f *FormatFactory) queryToUnix(t time.Time, unit string) int64 {
 	}
 }
 
-func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField, start, end time.Time, timeFormat string, from, size int) *FormatFactory {
+func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField, start, end time.Time, timeFormat string, size int) *FormatFactory {
 	if timeField.Name == "" {
 		timeField.Name = DefaultTimeFieldName
 	}
@@ -272,7 +271,6 @@ func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField,
 	f.timeFormat = timeFormat
 	f.valueField = valueKey
 	f.timeField = timeField
-	f.from = from
 	f.size = size
 
 	return f
@@ -671,10 +669,6 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 	}
 
 	return f.Agg()
-}
-
-func (f *FormatFactory) Size(ss *elastic.SearchSource) {
-	ss.From(f.from).Size(f.size)
 }
 
 func (f *FormatFactory) Orders() metadata.Orders {

@@ -68,6 +68,8 @@ type QueryTs struct {
 
 	// Scroll 是否启用 Scroll 查询
 	Scroll string `json:"scroll,omitempty"`
+	// IsMultiFrom 是否启用 MultiFrom 查询
+	IsMultiFrom bool `json:"is_multi_from,omitempty"`
 
 	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`
 

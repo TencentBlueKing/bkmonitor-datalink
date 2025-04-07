@@ -1721,7 +1721,7 @@ func (s *SpacePusher) getFilterKeyBySpaceTypeAndTableId(spaceType, spaceId, tabl
 	// 查询 SpaceTypeToResultTableFilterAlias 表，获取对应的 filter_alias
 	var alias space.SpaceTypeToResultTableFilterAlias
 	db := mysql.GetDBSession().DB
-	err := db.Where("space_type = ? AND table_id = ? AND status = ?", spaceType, tableId, false).First(&alias).Error
+	err := db.Where("space_type = ? AND table_id = ? AND status = ?", spaceType, tableId, true).First(&alias).Error
 
 	// 如果查询失败，返回原始 filterKey
 	if err != nil {

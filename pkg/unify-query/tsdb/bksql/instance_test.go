@@ -157,6 +157,7 @@ func TestInstance_bkSql(t *testing.T) {
 	end := time.UnixMilli(1718193555000)
 
 	testCases := []struct {
+		name  string
 		start time.Time
 		end   time.Time
 		query *metadata.Query
@@ -164,6 +165,7 @@ func TestInstance_bkSql(t *testing.T) {
 		expected string
 	}{
 		{
+			name: "namespace in and aggregate count",
 			query: &metadata.Query{
 				DB:             "132_lol_new_login_queue_login_1min",
 				Field:          "login_rate",
@@ -188,6 +190,7 @@ func TestInstance_bkSql(t *testing.T) {
 			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, MAX((dtEventTimeStamp + 0) / 15000 * 15000 - 0) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' AND `namespace` IN ('bgp2-new', 'gz100') GROUP BY `namespace`, (dtEventTimeStamp + 0) / 15000 * 15000 - 0 ORDER BY `_timestamp_` ASC",
 		},
 		{
+			name: "conditions with or",
 			query: &metadata.Query{
 				DB:    "132_lol_new_login_queue_login_1min",
 				Field: "login_rate",
@@ -222,6 +225,7 @@ func TestInstance_bkSql(t *testing.T) {
 			expected: "SELECT *, `login_rate` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' AND (`namespace` NOT LIKE '%test%' AND `namespace` NOT LIKE '%test2%') AND `namespace` NOT IN ('test', 'test2') AND `namespace` NOT LIKE '%test%' AND `namespace` != 'test'",
 		},
 		{
+			name: "conditions with or and",
 			query: &metadata.Query{
 				DB:          "132_lol_new_login_queue_login_1min",
 				Measurement: sqlExpr.Doris,
@@ -279,6 +283,7 @@ func TestInstance_bkSql(t *testing.T) {
 			expected: "SELECT *, `login_rate` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' AND (`namespace` NOT LIKE '%test%' AND `namespace` NOT LIKE '%test2%') AND `namespace` NOT IN ('test', 'test2') AND `namespace` NOT LIKE '%test%' AND `namespace` != 'test' AND (`text` NOT LIKE '%test%' AND `text` NOT LIKE '%test2%') AND (`text` NOT MATCH_PHRASE_PREFIX 'test' AND `text` NOT MATCH_PHRASE_PREFIX 'test2') AND `text` NOT LIKE '%test%' AND `text` NOT MATCH_PHRASE_PREFIX 'test'",
 		},
 		{
+			name: "conditions with or and like",
 			query: &metadata.Query{
 				DB:    "132_lol_new_login_queue_login_1min",
 				Field: "login_rate",
@@ -313,6 +318,7 @@ func TestInstance_bkSql(t *testing.T) {
 			expected: "SELECT *, `login_rate` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' AND (`namespace` LIKE '%test%' OR `namespace` LIKE '%test2%') AND `namespace` IN ('test', 'test2') AND `namespace` LIKE '%test%' AND `namespace` = 'test'",
 		},
 		{
+			name: "aggregate sum",
 			query: &metadata.Query{
 				DB:    "132_hander_opmon_avg",
 				Field: "value",
@@ -326,6 +332,28 @@ func TestInstance_bkSql(t *testing.T) {
 			expected: "SELECT SUM(`value`) AS `_value_` FROM `132_hander_opmon_avg` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612'",
 		},
 		{
+			name: "aggregate multi function",
+			query: &metadata.Query{
+				DB:    "132_hander_opmon_avg",
+				Field: "value",
+				Aggregates: metadata.Aggregates{
+					{
+						Name:   "sum",
+						Field:  "value",
+						Window: time.Second * 15,
+					},
+					{
+						Name:   "count",
+						Field:  "other",
+						Window: time.Hour,
+					},
+				},
+			},
+
+			expected: "",
+		},
+		{
+			name: "query raw",
 			query: &metadata.Query{
 				DB:          "100133_ieod_logsearch4_errorlog_p",
 				Measurement: "doris",
@@ -335,6 +363,7 @@ func TestInstance_bkSql(t *testing.T) {
 			expected: "SELECT *, `value` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' LIMIT 5",
 		},
 		{
+			name: "query raw with order desc",
 			query: &metadata.Query{
 				DB:          "100133_ieod_logsearch4_errorlog_p",
 				Measurement: "doris",
@@ -349,6 +378,7 @@ func TestInstance_bkSql(t *testing.T) {
 			expected: "SELECT *, `value` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' ORDER BY `_timestamp_` DESC",
 		},
 		{
+			name: "query aggregate count and dimensions",
 			query: &metadata.Query{
 				DB:          "100133_ieod_logsearch4_errorlog_p",
 				Measurement: "doris",
@@ -367,6 +397,7 @@ func TestInstance_bkSql(t *testing.T) {
 			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' GROUP BY `ip` LIMIT 5",
 		},
 		{
+			name:  "query aggregate count",
 			start: time.Unix(1733756400, 0),
 			end:   time.Unix(1733846399, 0),
 			query: &metadata.Query{
@@ -382,6 +413,7 @@ func TestInstance_bkSql(t *testing.T) {
 			expected: "SELECT COUNT(`matchstep_start_to_fail_0_100`) AS `_value_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime` WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` < 1733846399000 AND `thedate` >= '20241209' AND `thedate` <= '20241210'",
 		},
 		{
+			name:  "query aggregate count with window hour",
 			start: time.Unix(1733756400, 0),
 			end:   time.Unix(1733846399, 0),
 			query: &metadata.Query{
@@ -399,8 +431,8 @@ func TestInstance_bkSql(t *testing.T) {
 		},
 	}
 
-	for i, c := range testCases {
-		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+	for _, c := range testCases {
+		t.Run(c.name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			if c.start.Unix() <= 0 {
 				c.start = start

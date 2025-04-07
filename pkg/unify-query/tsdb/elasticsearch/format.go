@@ -60,6 +60,7 @@ const (
 const (
 	KeyDocID     = "__doc_id"
 	KeyHighLight = "__highlight"
+	KeySort      = "sort"
 
 	KeyIndex   = "__index"
 	KeyTableID = "__result_table"

@@ -12,7 +12,7 @@ package metadata
 type ResultTableOptions map[string]*ResultTableOption
 
 type ResultTableOption struct {
-	From        int    `json:"from,omitempty"`
+	From        *int   `json:"from,omitempty"`
 	ScrollID    string `json:"scroll_id,omitempty"`
 	SearchAfter []any  `json:"search_after,omitempty"`
 }
@@ -20,7 +20,9 @@ type ResultTableOption struct {
 func (o ResultTableOptions) FromInc(tableID, address string) {
 	option := o.GetOption(tableID, address)
 	if option != nil {
-		option.From++
+		if option.From != nil {
+			*option.From++
+		}
 	}
 }
 

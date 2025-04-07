@@ -306,15 +306,16 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	var res *elastic.SearchResult
 	func() {
-
 		if qb.ResultTableOptions != nil {
 			opt := qb.ResultTableOptions.GetOption(qb.TableID, qo.conn.Address)
 			if opt.ScrollID != "" {
-				res, err = client.Scroll(qo.indexes...).ScrollId(opt.ScrollID).Do(ctx)
+				res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).ScrollId(opt.ScrollID).Do(ctx)
 				return
 			}
 
 			if len(opt.SearchAfter) > 0 {
+				source.SearchAfter(opt.SearchAfter...)
+				res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
 				return
 			}
 		}
@@ -553,7 +554,8 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		wg  sync.WaitGroup
 
 		total              int64
-		resultTableOptions = make(metadata.ResultTableOptions)
+		lock               sync.Mutex
+		resultTableOptions metadata.ResultTableOptions
 	)
 
 	defer func() {
@@ -566,6 +568,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	defer span.End(&err)
 
 	span.Set("instance-connects", i.connects.String())
+	span.Set("instance-query-result-table-options", query.ResultTableOptions)
 
 	if query.DB == "" {
 		err = fmt.Errorf("%s 查询别名为空", query.TableID)
@@ -579,6 +582,8 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 
 	errChan := make(chan error, len(i.connects))
+
+	span.Set("aliases", aliases)
 
 	for _, conn := range i.connects {
 		wg.Add(1)
@@ -604,7 +609,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			}
 
 			if len(query.ResultTableOptions) > 0 {
-				query.From = query.ResultTableOptions.GetOption(query.TableID, conn.Address).From
+				if query.ResultTableOptions.GetOption(query.TableID, conn.Address).From != nil {
+					query.From = *query.ResultTableOptions.GetOption(query.TableID, conn.Address).From
+				}
 			}
 
 			qo := &queryOption{
@@ -627,16 +634,12 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				return
 			}
 
-			var option *metadata.ResultTableOption
-			if sr != nil {
-				if sr.ScrollId != "" {
-					option = &metadata.ResultTableOption{
-						ScrollID: sr.ScrollId,
-					}
-				}
+			var addOption bool
+			option := &metadata.ResultTableOption{}
 
+			if sr != nil {
 				if sr.Hits != nil {
-					for _, d := range sr.Hits.Hits {
+					for idx, d := range sr.Hits.Hits {
 						data := make(map[string]any)
 						if err = json.Unmarshal(d.Source, &data); err != nil {
 							return
@@ -657,6 +660,12 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 						if len(d.Highlight) > 0 {
 							fact.data[KeyHighLight] = d.Highlight
 						}
+
+						if idx == len(sr.Hits.Hits)-1 && d.Sort != nil {
+							option.SearchAfter = d.Sort
+							addOption = true
+						}
+
 						dataCh <- fact.data
 					}
 
@@ -666,7 +675,21 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				}
 			}
 
-			resultTableOptions.SetOption(query.TableID, conn.Address, option)
+			if sr.ScrollId != "" {
+				addOption = true
+				option.ScrollID = sr.ScrollId
+			}
+
+			if addOption {
+				if resultTableOptions == nil {
+					resultTableOptions = make(metadata.ResultTableOptions)
+				}
+
+				lock.Lock()
+				resultTableOptions.SetOption(query.TableID, conn.Address, option)
+				lock.Unlock()
+			}
+
 		}()
 	}
 	wg.Wait()

@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -781,10 +782,10 @@ func TestQueryRawWithInstance(t *testing.T) {
 				IsMultiFrom: true,
 				ResultTableOptions: map[string]*metadata.ResultTableOption{
 					"result_table.es|http://127.0.0.1:12001/bk_data/query_sync/es": {
-						From: 0,
+						From: function.IntPoint(0),
 					},
 					"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es": {
-						From: 5,
+						From: function.IntPoint(5),
 					},
 				},
 			},
@@ -821,10 +822,10 @@ func TestQueryRawWithInstance(t *testing.T) {
 				IsMultiFrom: true,
 				ResultTableOptions: map[string]*metadata.ResultTableOption{
 					"result_table.es|http://127.0.0.1:12001/bk_data/query_sync/es": {
-						From: 5,
+						From: function.IntPoint(5),
 					},
 					"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es": {
-						From: 5,
+						From: function.IntPoint(5),
 					},
 				},
 			},

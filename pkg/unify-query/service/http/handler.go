@@ -246,6 +246,9 @@ func HandlerQueryRaw(c *gin.Context) {
 		}
 		return
 	}
+	if listData.List == nil {
+		listData.List = make([]map[string]any, 0)
+	}
 	resp.success(ctx, listData)
 }
 

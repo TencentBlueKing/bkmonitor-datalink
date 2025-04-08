@@ -700,6 +700,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				lock.Lock()
 				resultTableOptions.SetOption(query.TableID, conn.Address, option)
 				lock.Unlock()
+
 			}
 		}()
 	}
@@ -711,6 +712,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			return total, resultTableOptions, e
 		}
 	}
+	span.Set("instance-out-result-table-options", resultTableOptions)
 
 	return total, resultTableOptions, nil
 }

@@ -357,6 +357,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			}
 
 			return nil, errors.New(msg.String())
+		} else if err.Error() == "EOF" {
+			return nil, nil
 		} else {
 			return nil, err
 		}
@@ -683,12 +685,12 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 						total += sr.Hits.TotalHits.Value
 					}
 				}
-			}
 
-			// ScrollID 覆盖 SearchAfter 配置
-			if sr.ScrollId != "" {
-				option = &metadata.ResultTableOption{
-					ScrollID: sr.ScrollId,
+				// ScrollID 覆盖 SearchAfter 配置
+				if sr.ScrollId != "" {
+					option = &metadata.ResultTableOption{
+						ScrollID: sr.ScrollId,
+					}
 				}
 			}
 

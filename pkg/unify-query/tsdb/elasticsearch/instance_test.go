@@ -496,8 +496,11 @@ func TestInstance_queryRawData(t *testing.T) {
 
 		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"error":{"root_cause":[{"type":"x_content_parse_exception","reason":"[1:138] [highlight] unknown field [max_analyzed_offset]"}],"type":"x_content_parse_exception","reason":"[1:138] [highlight] unknown field [max_analyzed_offset]"},"status":400}`,
 
-		// scroll
+		// scroll_id_1
 		`{"scroll":"10m","scroll_id":"scroll_id_1"}`: `{"_scroll_id":"scroll_id_1","took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8defd23f1c2599e70f3ace3a042b2b5f","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"ba0a6e66f01d6cb77ae25b13ddf4ad1b","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"74ea55e7397582b101f0e21efbc876c6","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"084792484f943e314e31ef2b2e878115","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"0a3f47a7c57d0af7d40d82c729c37155","_score":0.0,"_source":{"__ext":{"container_name":"unify-query","io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}}]}}`,
+
+		// scroll_id_2
+		`{"scroll":"10m","scroll_id":"scroll_id_2"}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":0,"relation":"eq"},"max_score":null,"hits":[]}}`,
 
 		// search after
 		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"search_after":[1743465646224,"kibana_settings",null],"size":5,"sort":[{"timestamp":{"order":"desc"}},{"type":{"order":"desc"}},{"kibana_stats.kibana.name":{"order":"desc"}}]}`: `{"took":13,"timed_out":false,"_shards":{"total":7,"successful":7,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[{"_index":".monitoring-kibana-7-2025.04.01","_id":"rYSm7pUBxj8-27WaYRCB","_score":null,"_source":{"timestamp":"2025-04-01T00:00:36.224Z","type":"kibana_stats","kibana_stats":{"kibana":{"name":"es-os60crz7-kibana"}}},"sort":[1743465636224,"kibana_stats","es-os60crz7-kibana"]},{"_index":".monitoring-kibana-7-2025.04.01","_id":"roSm7pUBxj8-27WaYRCB","_score":null,"_source":{"timestamp":"2025-04-01T00:00:36.224Z","type":"kibana_settings"},"sort":[1743465636224,"kibana_settings",null]},{"_index":".monitoring-kibana-7-2025.04.01","_id":"q4Sm7pUBxj8-27WaOhBx","_score":null,"_source":{"timestamp":"2025-04-01T00:00:26.225Z","type":"kibana_stats","kibana_stats":{"kibana":{"name":"es-os60crz7-kibana"}}},"sort":[1743465626225,"kibana_stats","es-os60crz7-kibana"]},{"_index":".monitoring-kibana-7-2025.04.01","_id":"rISm7pUBxj8-27WaOhBx","_score":null,"_source":{"timestamp":"2025-04-01T00:00:26.225Z","type":"kibana_settings"},"sort":[1743465626225,"kibana_settings",null]},{"_index":".monitoring-kibana-7-2025.04.01","_id":"8DSm7pUBipSLyy3IEwRg","_score":null,"_source":{"timestamp":"2025-04-01T00:00:16.224Z","type":"kibana_stats","kibana_stats":{"kibana":{"name":"es-os60crz7-kibana"}}},"sort":[1743465616224,"kibana_stats","es-os60crz7-kibana"]}]}}`,
@@ -626,7 +629,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			end:   defaultEnd,
 			err:   fmt.Errorf("es query [es_index] error: [1:138] [highlight] unknown field [max_analyzed_offset]"),
 		},
-		"query with scroll id": {
+		"query with scroll id 1": {
 			query: &metadata.Query{
 				DB:          db,
 				Field:       field,
@@ -649,6 +652,24 @@ func TestInstance_queryRawData(t *testing.T) {
 					ScrollID: "scroll_id_1",
 				},
 			},
+		},
+		"query with scroll id 2": {
+			query: &metadata.Query{
+				DB:          db,
+				Field:       field,
+				DataSource:  structured.BkLog,
+				TableID:     "bk_log_index_set_10",
+				StorageType: consul.ElasticsearchStorageType,
+				ResultTableOptions: metadata.ResultTableOptions{
+					"bk_log_index_set_10|http://127.0.0.1:93002": &metadata.ResultTableOption{
+						ScrollID: "scroll_id_2",
+					},
+				},
+				Scroll: "10m",
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+			size:  0,
 		},
 		"query with search after": {
 			query: &metadata.Query{
@@ -713,8 +734,12 @@ func TestInstance_queryRawData(t *testing.T) {
 				assert.Equal(t, c.err, err)
 			} else {
 				assert.Nil(t, err)
-				res, _ := json.Marshal(list)
-				assert.JSONEq(t, c.list, string(res))
+				if len(list) > 0 {
+					res, _ := json.Marshal(list)
+					assert.JSONEq(t, c.list, string(res))
+				} else {
+					assert.Nil(t, list)
+				}
 
 				assert.Equal(t, c.size, size)
 				assert.Equal(t, c.resultTableOptions, options)

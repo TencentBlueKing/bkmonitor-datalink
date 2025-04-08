@@ -238,10 +238,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	}
 
 	receiveWg.Add(1)
-	resultTableOptions = queryTs.ResultTableOptions
-	if resultTableOptions == nil {
-		resultTableOptions = make(metadata.ResultTableOptions)
-	}
 
 	// 启动合并数据
 	go func() {
@@ -260,14 +256,28 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			span.Set("query-result-table", queryTs.ResultTableOptions)
 
 			// scroll 和 searchAfter 模式不进行裁剪
-			if queryTs.Scroll == "" || queryTs.ResultTableOptions.IsCrop() {
+			if queryTs.Scroll == "" && queryTs.ResultTableOptions.IsCrop() {
 				// 判定是否启用 multi from 特性
 				span.Set("query-multi-from", queryTs.IsMultiFrom)
 				if len(list) > queryTs.Limit {
 					if queryTs.IsMultiFrom {
+						resultTableOptions = queryTs.ResultTableOptions
+						if resultTableOptions == nil {
+							resultTableOptions = make(metadata.ResultTableOptions)
+						}
+
 						list = list[0:queryTs.Limit]
 						for _, l := range list {
-							resultTableOptions.FromInc(l[elasticsearch.KeyTableID].(string), l[elasticsearch.KeyAddress].(string))
+							tableID := l[elasticsearch.KeyTableID].(string)
+							address := l[elasticsearch.KeyAddress].(string)
+
+							option := resultTableOptions.GetOption(tableID, address)
+							if option == nil {
+								resultTableOptions.SetOption(tableID, address, &metadata.ResultTableOption{From: function.IntPoint(1)})
+							} else {
+								*option.From++
+							}
+
 						}
 					} else {
 						list = list[queryTs.From : queryTs.From+queryTs.Limit]
@@ -316,9 +326,15 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					message.WriteString(fmt.Sprintf("query %s:%s is error: %s ", qry.TableID, qry.Fields, queryErr.Error()))
 				}
 
-				lock.Lock()
-				resultTableOptions.MergeOptions(options)
-				lock.Unlock()
+				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
+				if !queryTs.IsMultiFrom {
+					if resultTableOptions == nil {
+						resultTableOptions = make(metadata.ResultTableOptions)
+					}
+					lock.Lock()
+					resultTableOptions.MergeOptions(options)
+					lock.Unlock()
+				}
 
 				total += size
 			})

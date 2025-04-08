@@ -17,15 +17,6 @@ type ResultTableOption struct {
 	SearchAfter []any  `json:"search_after,omitempty"`
 }
 
-func (o ResultTableOptions) FromInc(tableID, address string) {
-	option := o.GetOption(tableID, address)
-	if option != nil {
-		if option.From != nil {
-			*option.From++
-		}
-	}
-}
-
 func (o ResultTableOptions) SetOption(tableID, address string, option *ResultTableOption) {
 	if option == nil {
 		return
@@ -36,13 +27,13 @@ func (o ResultTableOptions) SetOption(tableID, address string, option *ResultTab
 
 func (o ResultTableOptions) GetOption(tableID, address string) *ResultTableOption {
 	if o == nil {
-		return &ResultTableOption{}
+		return nil
 	}
 
 	if option, ok := o[tableID+"|"+address]; ok {
 		return option
 	}
-	return &ResultTableOption{}
+	return nil
 }
 
 func (o ResultTableOptions) MergeOptions(options ResultTableOptions) {

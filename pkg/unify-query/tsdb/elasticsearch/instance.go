@@ -308,18 +308,21 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	func() {
 		if qb.ResultTableOptions != nil {
 			opt := qb.ResultTableOptions.GetOption(qb.TableID, qo.conn.Address)
-			if opt.ScrollID != "" {
-				span.Set("query-scroll-id", opt.ScrollID)
-				res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).ScrollId(opt.ScrollID).Do(ctx)
-				return
+			if opt != nil {
+				if opt.ScrollID != "" {
+					span.Set("query-scroll-id", opt.ScrollID)
+					res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).ScrollId(opt.ScrollID).Do(ctx)
+					return
+				}
+
+				if len(opt.SearchAfter) > 0 {
+					span.Set("query-search-after", opt.SearchAfter)
+					source.SearchAfter(opt.SearchAfter...)
+					res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
+					return
+				}
 			}
 
-			if len(opt.SearchAfter) > 0 {
-				span.Set("query-search-after", opt.SearchAfter)
-				source.SearchAfter(opt.SearchAfter...)
-				res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
-				return
-			}
 		}
 
 		if qb.Scroll != "" {
@@ -641,8 +644,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				return
 			}
 
-			var addOption bool
-			option := &metadata.ResultTableOption{}
+			var option *metadata.ResultTableOption
 
 			if sr != nil {
 				if sr.Hits != nil {
@@ -669,8 +671,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 						}
 
 						if idx == len(sr.Hits.Hits)-1 && d.Sort != nil {
-							option.SearchAfter = d.Sort
-							addOption = true
+							option = &metadata.ResultTableOption{
+								SearchAfter: d.Sort,
+							}
 						}
 
 						dataCh <- fact.data
@@ -682,21 +685,22 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				}
 			}
 
+			// ScrollID 覆盖 SearchAfter 配置
 			if sr.ScrollId != "" {
-				addOption = true
-				option.ScrollID = sr.ScrollId
+				option = &metadata.ResultTableOption{
+					ScrollID: sr.ScrollId,
+				}
 			}
 
-			if addOption {
+			if option != nil {
 				if resultTableOptions == nil {
-					resultTableOptions = make(metadata.ResultTableOptions)
+					resultTableOptions = metadata.ResultTableOptions{}
 				}
 
 				lock.Lock()
 				resultTableOptions.SetOption(query.TableID, conn.Address, option)
 				lock.Unlock()
 			}
-
 		}()
 	}
 	wg.Wait()

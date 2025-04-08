@@ -53,3 +53,13 @@ func (o ResultTableOptions) MergeOptions(options ResultTableOptions) {
 		o[k] = v
 	}
 }
+
+// IsCrop 是否裁剪数据
+func (o ResultTableOptions) IsCrop() bool {
+	for _, v := range o {
+		if v.ScrollID != "" || len(v.SearchAfter) > 0 {
+			return false
+		}
+	}
+	return true
+}

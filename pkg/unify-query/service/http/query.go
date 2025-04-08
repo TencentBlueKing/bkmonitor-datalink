@@ -251,12 +251,18 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			list = append(list, d)
 		}
 
+		span.Set("query-list-num", len(queryList))
+
 		if len(queryList) > 1 {
 			queryTs.OrderBy.Orders().SortSliceList(list)
 
-			// scroll 模式不进行裁剪
-			if queryTs.Scroll == "" {
+			span.Set("query-scroll", queryTs.Scroll)
+			span.Set("query-result-table", queryTs.ResultTableOptions)
+
+			// scroll 和 searchAfter 模式不进行裁剪
+			if queryTs.Scroll == "" || queryTs.ResultTableOptions.IsCrop() {
 				// 判定是否启用 multi from 特性
+				span.Set("query-multi-from", queryTs.IsMultiFrom)
 				if len(list) > queryTs.Limit {
 					if queryTs.IsMultiFrom {
 						list = list[0:queryTs.Limit]

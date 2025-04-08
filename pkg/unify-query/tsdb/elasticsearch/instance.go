@@ -309,11 +309,13 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		if qb.ResultTableOptions != nil {
 			opt := qb.ResultTableOptions.GetOption(qb.TableID, qo.conn.Address)
 			if opt.ScrollID != "" {
+				span.Set("query-scroll-id", opt.ScrollID)
 				res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).ScrollId(opt.ScrollID).Do(ctx)
 				return
 			}
 
 			if len(opt.SearchAfter) > 0 {
+				span.Set("query-search-after", opt.SearchAfter)
 				source.SearchAfter(opt.SearchAfter...)
 				res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
 				return
@@ -321,8 +323,10 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 
 		if qb.Scroll != "" {
+			span.Set("query-scroll", qb.Scroll)
 			res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source).Do(ctx)
 		} else {
+			span.Set("query-from", qb.From)
 			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
 		}
 	}()

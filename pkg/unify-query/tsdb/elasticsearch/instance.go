@@ -609,8 +609,11 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			}
 
 			if len(query.ResultTableOptions) > 0 {
-				if query.ResultTableOptions.GetOption(query.TableID, conn.Address).From != nil {
-					query.From = *query.ResultTableOptions.GetOption(query.TableID, conn.Address).From
+				option := query.ResultTableOptions.GetOption(query.TableID, conn.Address)
+				if option != nil {
+					if option.From != nil {
+						query.From = *option.From
+					}
 				}
 			}
 

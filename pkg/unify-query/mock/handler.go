@@ -20,6 +20,7 @@ import (
 	"github.com/jarcoal/httpmock"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 type VmRequest struct {
@@ -186,6 +187,7 @@ func mockElasticSearchHandler(ctx context.Context) {
 		d, ok := Es.Get(string(body))
 		if !ok {
 			err = fmt.Errorf(`es mock data is empty in "%s"`, body)
+			log.Errorf(ctx, err.Error())
 			return
 		}
 		w = httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf("%s", d))

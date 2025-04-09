@@ -201,6 +201,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	// 多协程查询数据
 	var sendWg sync.WaitGroup
 	p, _ := ants.NewPool(QueryMaxRouting)
+	defer p.Release()
+
 	go func() {
 		defer func() {
 			sendWg.Wait()

@@ -357,10 +357,15 @@ func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUi
 	return resource, matcher, path, shimMatcherWithTimestamp(ret), nil
 }
 
-func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, step time.Duration, startTs, endTs int64, target, source cmdb.Resource, matcher cmdb.Matcher, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, []cmdb.MatchersWithTimestamp, error) {
+func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, stepString string, startTs, endTs int64, target, source cmdb.Resource, matcher cmdb.Matcher, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, []cmdb.MatchersWithTimestamp, error) {
 	unit, start, end, err := function.QueryTimestamp(strconv.FormatInt(startTs, 10), strconv.FormatInt(endTs, 10))
 	if err != nil {
 		return "", nil, nil, nil, err
+	}
+
+	step, err := time.ParseDuration(stepString)
+	if err != nil {
+		step = time.Minute
 	}
 
 	opt := QueryResourceOptions{

@@ -203,6 +203,12 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		if ql.Limit == 0 && queryTs.Limit > 0 {
 			ql.Limit = queryTs.Limit
 		}
+
+		// 在使用 multiFrom 模式下，From 需要保持为 0，因为 from 存放在 resultTableOptions 里面
+		if queryTs.IsMultiFrom {
+			queryTs.From = 0
+		}
+
 		if ql.From == 0 && queryTs.From > 0 {
 			ql.From = queryTs.From
 		}
@@ -259,6 +265,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			if queryTs.Scroll == "" && queryTs.ResultTableOptions.IsCrop() {
 				// 判定是否启用 multi from 特性
 				span.Set("query-multi-from", queryTs.IsMultiFrom)
+				span.Set("list-length", len(list))
+				span.Set("query-ts-from", queryTs.From)
+				span.Set("query-ts-limit", queryTs.Limit)
+
 				if len(list) > queryTs.Limit {
 					if queryTs.IsMultiFrom {
 						resultTableOptions = queryTs.ResultTableOptions

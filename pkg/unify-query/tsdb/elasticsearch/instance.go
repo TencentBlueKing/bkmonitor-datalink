@@ -650,6 +650,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 			if sr != nil {
 				if sr.Hits != nil {
+
+					span.Set("instance-out-list-size", len(sr.Hits.Hits))
+
 					for idx, d := range sr.Hits.Hits {
 						data := make(map[string]any)
 						if err = json.Unmarshal(d.Source, &data); err != nil {
@@ -714,6 +717,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			return total, resultTableOptions, e
 		}
 	}
+	span.Set("instance-out-total", total)
 	span.Set("instance-out-result-table-options", resultTableOptions)
 
 	return total, resultTableOptions, nil

@@ -304,6 +304,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	)
 
 	p, _ := ants.NewPool(QueryMaxRouting)
+	defer p.Release()
+
 	go func() {
 		defer func() {
 			sendWg.Wait()

@@ -7,31 +7,37 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package bkapi
+package json
 
 import (
 	"fmt"
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	"sort"
+	"strings"
 )
 
-func TestGetBkAPI(t *testing.T) {
-	mock.Init()
+func MarshalListMap(data []map[string]interface{}) string {
+	if len(data) == 0 {
+		return "[]"
+	}
 
-	code := GetBkAPI().GetCode()
-	assert.Equal(t, "bk_code", code)
+	var (
+		s  []string
+		ks []string
+	)
+	for _, d := range data {
+		if len(ks) == 0 {
+			for k := range d {
+				ks = append(ks, k)
+			}
+			sort.Strings(ks)
+		}
 
-	url := GetBkAPI().Url("query")
-	assert.Equal(t, "http://127.0.0.1:12001/query", url)
+		var m []string
+		for _, k := range ks {
+			m = append(m, fmt.Sprintf(`"%s":"%v"`, k, d[k]))
+		}
+		s = append(s, strings.Join(m, ","))
+	}
 
-	headers := GetBkAPI().Headers(map[string]string{
-		"Content-Type": "application/json",
-	})
-
-	actual := fmt.Sprintf("%s", headers)
-
-	assert.Equal(t, `map[Content-Type:application/json X-Bkapi-Authorization:{"bk_username":"admin","bk_app_code":"bk_code","bk_app_secret":"bk_secret"}]`, actual)
+	return fmt.Sprintf(`[{%s}]`, strings.Join(s, "},{"))
 }

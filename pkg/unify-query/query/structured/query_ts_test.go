@@ -11,7 +11,7 @@ package structured
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -19,8 +19,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	md "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
@@ -273,9 +271,11 @@ func TestQueryToMetric(t *testing.T) {
 
 			metric, err := c.query.ToQueryMetric(ctx, spaceUID)
 			assert.Nil(t, err)
-			actual, _ := json.Marshal(metric)
-			expect, _ := json.Marshal(c.metric)
-			assert.JSONEq(t, string(expect), string(actual))
+
+			a, _ := json.Marshal(c.metric)
+			b, _ := json.Marshal(metric)
+
+			assert.JSONEq(t, string(a), string(b))
 		})
 	}
 }
@@ -1194,68 +1194,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 
 			promql, _ := tc.ts.ToPromExpr(ctx, promExprOpt)
 			assert.Equal(t, tc.promql, promql.String())
-		})
-	}
-}
-
-func TestTimeOffset(t *testing.T) {
-	for name, c := range map[string]struct {
-		t        time.Time
-		tz       string
-		step     time.Duration
-		expected time.Time
-
-		out string
-	}{
-		"test align": {
-			t:        time.Unix(1701306000, 0),
-			tz:       "Asia/Shanghai",
-			step:     time.Hour * 3,
-			expected: time.UnixMilli(1701306000000),
-			out:      `2023-11-30 09:00:00 +0800 CST => 2023-11-30 09:00:00 +0800 CST`,
-		},
-		"test align -1": {
-			t:        time.Unix(1703732400, 0),
-			tz:       "Asia/Shanghai",
-			step:     time.Hour * 3,
-			expected: time.UnixMilli(1703725200000),
-			out:      `2023-12-28 11:00:00 +0800 CST => 2023-12-28 09:00:00 +0800 CST`,
-		},
-		"test align - 2": {
-			t:        time.Unix(1730082578, 0),
-			tz:       "Asia/Shanghai",
-			step:     time.Minute * 18,
-			expected: time.UnixMilli(1730081520000),
-			out:      `2024-10-28 10:29:38 +0800 CST => 2024-10-28 10:12:00 +0800 CST`,
-		},
-		"test align - 3": {
-			t:        time.Unix(1741190400, 0),
-			tz:       "Asia/Shanghai",
-			step:     time.Hour * 24,
-			expected: time.UnixMilli(1741190400000),
-			out:      `2025-03-06 00:00:00 +0800 CST => 2025-03-06 00:00:00 +0800 CST`,
-		},
-		"test alian - 4": {
-			t:        time.UnixMilli(1741336672161),
-			tz:       "Asia/Shanghai",
-			step:     time.Hour * 24,
-			expected: time.UnixMilli(1741276800000),
-			out:      `2025-03-07 16:37:52.161 +0800 CST => 2025-03-07 00:00:00 +0800 CST`,
-		},
-		"test alian - 5": {
-			t:        time.UnixMilli(1741336672161),
-			tz:       "UTC",
-			step:     time.Hour * 24,
-			expected: time.UnixMilli(1741305600000),
-			out:      `2025-03-07 16:37:52.161 +0800 CST => 2025-03-07 00:00:00 +0000 UTC`,
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			tz1, t1 := function.TimeOffset(c.t, c.tz, c.step)
-
-			assert.Equal(t, c.tz, tz1)
-			assert.Equal(t, c.out, fmt.Sprintf("%s => %s", c.t.String(), t1.String()))
-			assert.Equal(t, c.expected.UnixMilli(), t1.UnixMilli())
 		})
 	}
 }

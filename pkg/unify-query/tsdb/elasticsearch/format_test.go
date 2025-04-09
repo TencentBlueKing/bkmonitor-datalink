@@ -381,7 +381,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).
-				WithQuery("value", c.timeField, start, end, timeFormat, 0, 0).
+				WithQuery("value", c.timeField, start, end, timeFormat, 0).
 				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
 
 			ss := elastic.NewSearchSource()
@@ -432,7 +432,7 @@ func TestFormatFactory_AggDataFormat(t *testing.T) {
 					Name: DefaultTimeFieldName,
 					Type: DefaultTimeFieldType,
 					Unit: DefaultTimeFieldUnit,
-				}, time.Time{}, time.Time{}, "", 0, 0)
+				}, time.Time{}, time.Time{}, "", 0)
 
 			_, _, err := fact.EsAgg(c.aggregates)
 			assert.NoError(t, err)

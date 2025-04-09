@@ -32,31 +32,31 @@ func TestQsToDsl(t *testing.T) {
 	}{
 		{
 			q:        `log: "ERROR MSG"`,
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"log: \"ERROR MSG\""}}`,
-			//expected: `{"match_phrase":{"log":{"query":"ERROR MSG"}}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"log: \"ERROR MSG\""}}`,
 		},
 		{
 			q:        `quick brown fox`,
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"quick brown fox"}}`,
-			//expected: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"query":"\"quick\""}},{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"query":"\"brown\""}},{"query_string":{"analyze_wildcard":true,"query":"\"fox\""}}]}}]}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"quick brown fox"}}`,
 		},
 		{
 			q:        `word.key: qu?ck`,
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"word.key: qu?ck"}}`,
-			//expected: `{"wildcard":{"word.key":{"value":"qu?ck"}}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"word.key: qu?ck"}}`,
 		},
 		{
 			q:        "\"message queue conflict\"",
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"\"message queue conflict\""}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"\"message queue conflict\""}}`,
+		},
+		{
+			q:        "\"message queue conflict\"",
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"\"message queue conflict\""}}`,
 		},
 		{
 			q:        `nested.key: test AND demo`,
-			expected: `{"nested":{"path":"nested.key","query":{"bool":{"must":[{"match_phrase":{"nested.key":{"query":"test"}}},{"query_string":{"analyze_wildcard":true,"query":"\"demo\""}}]}}}}`,
+			expected: `{"nested":{"path":"nested.key","query":{"bool":{"must":[{"match_phrase":{"nested.key":{"query":"test"}}},{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"\"demo\""}}]}}}}`,
 		},
 		{
 			q:        `sync_spaces AND -keyword AND -BKLOGAPI`,
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"sync_spaces AND -keyword AND -BKLOGAPI"}}`,
-			//expected: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"query":"\"sync_spaces\""}},{"bool":{"must":[{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"query":"\"keyword\""}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"query":"\"BKLOGAPI\""}}}}]}}]}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"sync_spaces AND -keyword AND -BKLOGAPI"}}`,
 		},
 		{
 			q: `*`,
@@ -66,7 +66,7 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        "ms: \u003e500 AND \"/fs-server\" AND NOT \"heartbeat\"",
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"ms: \u003e500 AND \"/fs-server\" AND NOT \"heartbeat\""}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"ms: \u003e500 AND \"/fs-server\" AND NOT \"heartbeat\""}}`,
 		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
@@ -77,7 +77,7 @@ func TestQsToDsl(t *testing.T) {
 				}
 				return ""
 			})
-			query, err := qs.ToDSL()
+			query, err := qs.Parser()
 			if err == nil {
 				if query != nil {
 					body, _ := query.Source()

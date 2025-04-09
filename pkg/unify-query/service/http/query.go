@@ -213,9 +213,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			ql.From = queryTs.From
 		}
 
-		// 复用 Scroll 配置
+		// 复用 scroll 配置，如果配置了 scroll 优先使用 scroll
 		if queryTs.Scroll != "" {
 			ql.Scroll = queryTs.Scroll
+			queryTs.IsMultiFrom = false
 		}
 
 		// 复用 高亮配置，没有特殊配置的情况下使用公共配置

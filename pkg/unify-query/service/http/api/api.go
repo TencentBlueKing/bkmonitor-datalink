@@ -160,6 +160,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 		qry := qry
 		sendWg.Add(1)
 		_ = p.Submit(func() {
+			defer sendWg.Done()
 			d := cmdb.RelationMultiResourceRangeResponseData{
 				Code: http.StatusOK,
 			}

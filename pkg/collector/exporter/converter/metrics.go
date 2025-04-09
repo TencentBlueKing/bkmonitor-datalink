@@ -136,36 +136,52 @@ func (c metricsConverter) convertHistogramMetrics(dataId int32, pdMetric pmetric
 	dps := pdMetric.Histogram().DataPoints()
 	for i := 0; i < dps.Len(); i++ {
 		dp := dps.At(i)
+		dpTime := dp.Timestamp().AsTime()
 		dimensions := utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs)
 
-		if !utils.IsValidFloat64(dp.Sum()) {
-			DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
-			continue
-		}
-
 		// 当且仅当 Sum 存在时才追加 _sum 指标
-		if dp.HasSum() {
+		if dp.HasSum() && utils.IsValidFloat64(dp.Sum()) {
 			m := otMetricMapper{
 				Metric:     pdMetric.Name() + "_sum",
 				Value:      dp.Sum(),
 				Dimensions: dimensions,
-				Time:       dp.Timestamp().AsTime(),
+				Time:       dpTime,
+			}
+			items = append(items, m.AsMapStr())
+		}
+
+		// 当且仅当 Min 存在时才追加 _min 指标
+		if dp.HasMin() && utils.IsValidFloat64(dp.Min()) {
+			m := otMetricMapper{
+				Metric:     pdMetric.Name() + "_min",
+				Value:      dp.Min(),
+				Dimensions: dimensions,
+				Time:       dpTime,
+			}
+			items = append(items, m.AsMapStr())
+		}
+
+		// 当且仅当 Max 存在时才追加 _max 指标
+		if dp.HasMax() && utils.IsValidFloat64(dp.Max()) {
+			m := otMetricMapper{
+				Metric:     pdMetric.Name() + "_max",
+				Value:      dp.Max(),
+				Dimensions: dimensions,
+				Time:       dpTime,
 			}
 			items = append(items, m.AsMapStr())
 		}
 
 		// 追加 _count 指标
-		if !utils.IsValidUint64(dp.Count()) {
-			DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
-			continue
+		if utils.IsValidUint64(dp.Count()) {
+			m := otMetricMapper{
+				Metric:     pdMetric.Name() + "_count",
+				Value:      float64(dp.Count()),
+				Dimensions: dimensions,
+				Time:       dpTime,
+			}
+			items = append(items, m.AsMapStr())
 		}
-		m := otMetricMapper{
-			Metric:     pdMetric.Name() + "_count",
-			Value:      float64(dp.Count()),
-			Dimensions: dimensions,
-			Time:       dp.Timestamp().AsTime(),
-		}
-		items = append(items, m.AsMapStr())
 
 		// 追加 buckets 指标
 		bounds := dp.MExplicitBounds()
@@ -181,11 +197,11 @@ func (c metricsConverter) convertHistogramMetrics(dataId int32, pdMetric pmetric
 			additional := map[string]string{
 				"le": strconv.FormatFloat(bounds[j], 'f', -1, 64),
 			}
-			m = otMetricMapper{
+			m := otMetricMapper{
 				Metric:     pdMetric.Name() + "_bucket",
 				Value:      val,
 				Dimensions: utils.MergeReplaceMaps(additional, dimensions),
-				Time:       dp.Timestamp().AsTime(),
+				Time:       dpTime,
 			}
 			items = append(items, m.AsMapStr())
 		}
@@ -195,11 +211,11 @@ func (c metricsConverter) convertHistogramMetrics(dataId int32, pdMetric pmetric
 		if dp.Flags().HasFlag(pmetric.MetricDataPointFlagNoRecordedValue) {
 			val = math.Float64frombits(value.StaleNaN)
 		}
-		m = otMetricMapper{
+		m := otMetricMapper{
 			Metric:     pdMetric.Name() + "_bucket",
 			Value:      val,
 			Dimensions: utils.MergeReplaceMaps(map[string]string{"le": "+Inf"}, dimensions),
-			Time:       dp.Timestamp().AsTime(),
+			Time:       dpTime,
 		}
 		items = append(items, m.AsMapStr())
 	}

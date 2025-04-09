@@ -107,6 +107,10 @@ func ParseTimestamp(s string) (f string, t time.Time, err error) {
 	return
 }
 
+func IntPoint(d int) *int {
+	return &d
+}
+
 // QueryTimestamp 将开始时间和结束时间的时间戳从 string 转换为 time.Time，根据长度判定单位
 func QueryTimestamp(s, e string) (format string, start time.Time, end time.Time, err error) {
 	var (

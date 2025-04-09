@@ -38,6 +38,10 @@ func NewEnvProcessor(ctx context.Context, name string) *template.RecordProcessor
 			etl.ExtractByJMESPath("data.system.info.procs"), etl.TransformNilFloat64,
 		),
 		etl.NewSimpleField(
+			"procs_zombie",
+			etl.ExtractByJMESPath("data.system.info.procs_zombie"), etl.TransformNilFloat64,
+		),
+		etl.NewSimpleField(
 			"uptime",
 			etl.ExtractByJMESPath("data.system.info.uptime"), etl.TransformNilFloat64,
 		),

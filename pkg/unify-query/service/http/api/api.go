@@ -46,7 +46,7 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 		}
 	)
 
-	ctx, span := trace.NewSpan(ctx, "api-relation-multi-resource")
+	ctx, span := trace.NewSpan(ctx, "handler-api-relation-multi-resource")
 	defer span.End(&err)
 
 	request := new(cmdb.RelationMultiResourceRequest)
@@ -57,7 +57,8 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 	}
 
 	paramsBody, _ := json.Marshal(request)
-	span.Set("params-body", string(paramsBody))
+	span.Set("handler-headers", c.Request.Header)
+	span.Set("handler-body", string(paramsBody))
 
 	model, err := v1beta1.GetModel(ctx)
 	if err != nil {
@@ -123,7 +124,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 		}
 	)
 
-	ctx, span := trace.NewSpan(ctx, "api-relation-multi-resource-range")
+	ctx, span := trace.NewSpan(ctx, "handler-api-relation-multi-resource-range")
 	defer span.End(&err)
 
 	request := new(cmdb.RelationMultiResourceRangeRequest)
@@ -134,7 +135,8 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 	}
 
 	paramsBody, _ := json.Marshal(request)
-	span.Set("params-body", string(paramsBody))
+	span.Set("handler-headers", c.Request.Header)
+	span.Set("handler-body", string(paramsBody))
 
 	model, err := v1beta1.GetModel(ctx)
 	if err != nil {

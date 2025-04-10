@@ -36,6 +36,10 @@ type DorisSQLExpr struct {
 
 var _ SQLExpr = (*DorisSQLExpr)(nil)
 
+func (d *DorisSQLExpr) FieldMap() map[string]string {
+	return d.fieldsMap
+}
+
 func (d *DorisSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {
 	d.timeField = timeField
 	d.valueField = valueField
@@ -64,7 +68,7 @@ func (d *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
 	return d.walk(expr)
 }
 
-func (d *DorisSQLExpr) DescribeTable(table string) string {
+func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
 	return fmt.Sprintf("SHOW CREATE TABLE %s", table)
 }
 

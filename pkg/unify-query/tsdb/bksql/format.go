@@ -107,8 +107,12 @@ func (f *QueryFactory) Table() string {
 	return table
 }
 
-func (f *QueryFactory) DescribeTable() string {
-	return f.expr.DescribeTable(f.Table())
+func (f *QueryFactory) DescribeTableSQL() string {
+	return f.expr.DescribeTableSQL(f.Table())
+}
+
+func (f *QueryFactory) FieldMap() map[string]string {
+	return f.expr.FieldMap()
 }
 
 func (f *QueryFactory) getTheDateIndexFilters() (theDateFilter string, err error) {

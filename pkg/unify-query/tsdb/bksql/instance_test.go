@@ -22,9 +22,52 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sqlExpr"
 )
+
+func TestInstance_ShowCreateTable(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	ins := createTestInstance(ctx)
+
+	mock.BkSQL.Set(map[string]any{
+		"SHOW CREATE TABLE `132_lol_new_login_queue_login_1min`.doris": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":20,"external_api_call_time_mills":{"bkbase_auth_api":64,"bkbase_meta_api":6,"bkbase_apigw_api":25},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtimestamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtime","Type":"varchar(32)","Null":"NO","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"localtime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__shard_key__","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"path","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"log","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"time","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"c1","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"c2","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__ext","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"gseindex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"iterationindex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"message","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"report_time","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"file","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"trace_id","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"cloudid","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"level","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"serverip","Type":"varchar(65533)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"}],"stage_elapsed_time_mills":{"check_query_syntax":2,"query_db":27,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":9,"connect_db":56,"match_query_routing_rule":0,"check_permission":66,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["Field","Type","Null","Key","Default","Extra"],"sql":"SHOW COLUMNS FROM mapleleaf_2.bklog_bkunify_query_doris_2","total_record_size":13168,"timetaken":0.161,"result_schema":[{"field_type":"string","field_name":"Field","field_alias":"Field","field_index":0},{"field_type":"string","field_name":"Type","field_alias":"Type","field_index":1},{"field_type":"string","field_name":"Null","field_alias":"Null","field_index":2},{"field_type":"string","field_name":"Key","field_alias":"Key","field_index":3},{"field_type":"string","field_name":"Default","field_alias":"Default","field_index":4},{"field_type":"string","field_name":"Extra","field_alias":"Extra","field_index":5}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+	})
+
+	end := time.UnixMilli(1730118889181)
+	start := time.UnixMilli(1730118589181)
+
+	datasource := "bklog"
+	db := "132_lol_new_login_queue_login_1min"
+	measurement := "doris"
+
+	for name, c := range map[string]struct {
+		query    *metadata.Query
+		expected string
+	}{
+		"field map": {
+			query: &metadata.Query{
+				DataSource:  datasource,
+				DB:          db,
+				Measurement: measurement,
+			},
+			expected: `{"__ext":"varchar(65533)","__shard_key__":"bigint","c1":"text","c2":"text","cloudid":"double","dteventtime":"varchar(32)","dteventtimestamp":"bigint","file":"varchar(65533)","gseindex":"double","iterationindex":"double","level":"varchar(65533)","localtime":"varchar(32)","log":"text","message":"varchar(65533)","path":"text","report_time":"varchar(65533)","serverip":"varchar(65533)","thedate":"int","time":"text","trace_id":"varchar(65533)"}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+
+			ctx, span := trace.NewSpan(ctx, "test")
+			fact, err := ins.InitQueryFactory(ctx, c.query, start, end, span)
+			assert.Nil(t, err)
+
+			actual, _ := json.Marshal(fact.FieldMap())
+			assert.JSONEq(t, c.expected, string(actual))
+
+		})
+	}
+}
 
 func TestInstance_QuerySeriesSet(t *testing.T) {
 

@@ -11,6 +11,7 @@ package bksql
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -111,13 +112,17 @@ func (i *Instance) checkResult(res *Result) error {
 	return nil
 }
 
-func (i *Instance) sqlQuery(ctx context.Context, sql string, span *trace.Span) (*QuerySyncResultData, error) {
+func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultData, error) {
 	var (
 		data *QuerySyncResultData
 
-		ok  bool
-		err error
+		ok   bool
+		err  error
+		span *trace.Span
 	)
+
+	ctx, span = trace.NewSpan(ctx, "sql-query")
+	defer span.End(&err)
 
 	if sql == "" {
 		return data, nil
@@ -278,14 +283,14 @@ func (i *Instance) formatData(ctx context.Context, start time.Time, query *metad
 	return res, nil
 }
 
-func (i *Instance) getFieldsMap(ctx context.Context, sql string, span *trace.Span) (map[string]string, error) {
+func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]string, error) {
 	fieldsMap := make(map[string]string)
 
 	if sql == "" {
 		return nil, nil
 	}
 
-	data, err := i.sqlQuery(ctx, sql, span)
+	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -311,18 +316,23 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string, span *trace.Spa
 	return fieldsMap, nil
 }
 
-func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, start, end time.Time, span *trace.Span) (*QueryFactory, error) {
+func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, start, end time.Time) (*QueryFactory, error) {
+	var err error
+
+	ctx, span := trace.NewSpan(ctx, "instance-init-query-factory")
+	defer span.End(&err)
 
 	f := NewQueryFactory(ctx, query).WithRangeTime(start, end)
 
 	// 只有 Doris 才需要获取字段表结构
 	if query.Measurement == sqlExpr.Doris {
-		fieldsMap, err := i.getFieldsMap(ctx, f.DescribeTable(), span)
+		fieldsMap, err := i.getFieldsMap(ctx, f.DescribeTableSQL())
 		if err != nil {
 			return f, err
 		}
 
-		span.Set("table_fields_map", fieldsMap)
+		out, _ := json.Marshal(fieldsMap)
+		span.Set("table_fields_map", string(out))
 
 		f.WithFieldsMap(fieldsMap)
 	}
@@ -376,7 +386,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		}
 	}
 
-	queryFactory, err := i.InitQueryFactory(ctx, query, start, end, span)
+	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
 	if err != nil {
 		return
 	}
@@ -385,7 +395,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		return
 	}
 
-	data, err := i.sqlQuery(ctx, sql, span)
+	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
 		return
 	}
@@ -444,7 +454,7 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 		}
 	}
 
-	queryFactory, err := i.InitQueryFactory(ctx, query, start, end, span)
+	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
@@ -453,9 +463,7 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 		return storage.ErrSeriesSet(err)
 	}
 
-	span.Set("query-sql", sql)
-
-	data, err := i.sqlQuery(ctx, sql, span)
+	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
@@ -505,7 +513,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 	// 取字段名不需要返回数据，但是 size 不能使用 0，所以还是用 1
 	query.Size = 1
 
-	queryFactory, err := i.InitQueryFactory(ctx, query, start, end, span)
+	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -515,7 +523,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 		return nil, err
 	}
 
-	data, err := i.sqlQuery(ctx, sql, span)
+	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -546,7 +554,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		},
 	}
 
-	queryFactory, err := i.InitQueryFactory(ctx, query, start, end, span)
+	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -555,7 +563,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		return nil, err
 	}
 
-	data, err := i.sqlQuery(ctx, sql, span)
+	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
 		return nil, err
 	}

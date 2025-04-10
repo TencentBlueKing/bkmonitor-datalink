@@ -49,8 +49,10 @@ type SQLExpr interface {
 	ParserAllConditions(allConditions metadata.AllConditions) (string, error)
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
 	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, error)
-	// DescribeTable 返回当前表结构
-	DescribeTable(table string) string
+	// DescribeTableSQL 返回当前表结构
+	DescribeTableSQL(table string) string
+	// FieldMap 返回当前表结构
+	FieldMap() map[string]string
 }
 
 // SQL表达式注册管理相关变量
@@ -106,10 +108,14 @@ func UnRegister(key string) {
 type DefaultSQLExpr struct {
 	encodeFunc func(string) string
 
-	fieldsMap map[string]string
+	fieldMap map[string]string
 
 	timeField  string
 	valueField string
+}
+
+func (d *DefaultSQLExpr) FieldMap() map[string]string {
+	return d.fieldMap
 }
 
 func (d *DefaultSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {
@@ -123,8 +129,8 @@ func (d *DefaultSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 	return d
 }
 
-func (d *DefaultSQLExpr) WithFieldsMap(fieldsMap map[string]string) SQLExpr {
-	d.fieldsMap = fieldsMap
+func (d *DefaultSQLExpr) WithFieldsMap(fieldMap map[string]string) SQLExpr {
+	d.fieldMap = fieldMap
 	return d
 }
 
@@ -253,7 +259,7 @@ func (d *DefaultSQLExpr) ParserAllConditions(allConditions metadata.AllCondition
 	return "", nil
 }
 
-func (d *DefaultSQLExpr) DescribeTable(table string) string {
+func (d *DefaultSQLExpr) DescribeTableSQL(table string) string {
 	return ""
 }
 

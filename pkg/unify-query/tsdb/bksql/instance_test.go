@@ -22,7 +22,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sqlExpr"
 )
@@ -58,8 +57,7 @@ func TestInstance_ShowCreateTable(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 
-			ctx, span := trace.NewSpan(ctx, "test")
-			fact, err := ins.InitQueryFactory(ctx, c.query, start, end, span)
+			fact, err := ins.InitQueryFactory(ctx, c.query, start, end)
 			assert.Nil(t, err)
 
 			actual, _ := json.Marshal(fact.FieldMap())

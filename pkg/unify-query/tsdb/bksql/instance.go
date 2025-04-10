@@ -147,6 +147,7 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 		return data, fmt.Errorf("queryAsyncResult type is error: %T", res.Data)
 	}
 
+	span.Set("result-size", len(data.List))
 	return data, nil
 }
 

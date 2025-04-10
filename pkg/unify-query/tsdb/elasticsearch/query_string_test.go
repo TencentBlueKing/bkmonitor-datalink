@@ -59,7 +59,8 @@ func TestQsToDsl(t *testing.T) {
 			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"sync_spaces AND -keyword AND -BKLOGAPI"}}`,
 		},
 		{
-			q: `*`,
+			q:        `*`,
+			expected: `{"query_string":{"fields":["*","__*"],"analyze_wildcard":true,"lenient":true,"query":"*"}}`,
 		},
 		{
 			q: ``,
@@ -80,10 +81,16 @@ func TestQsToDsl(t *testing.T) {
 			query, err := qs.ToDSL()
 			if err == nil {
 				if query != nil {
-					body, _ := query.Source()
-					bodyJson, _ := json.Marshal(body)
-					bodyString := string(bodyJson)
-					assert.JSONEq(t, c.expected, bodyString)
+					body, err := query.Source()
+					assert.Nil(t, err)
+
+					if body != nil {
+						bodyJson, _ := json.Marshal(body)
+						bodyString := string(bodyJson)
+						assert.JSONEq(t, c.expected, bodyString)
+					} else {
+						assert.Empty(t, c.expected)
+					}
 				}
 			} else {
 				assert.Equal(t, c.err, err)

@@ -21,6 +21,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sqlExpr"
 )
 
@@ -153,7 +154,7 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 	}
 
 	// QueryString to sql
-	if f.query.QueryString != "" {
+	if f.query.QueryString != "" && f.query.QueryString != "*" {
 		qs, err := f.expr.ParserQueryString(f.query.QueryString)
 		if err != nil {
 			return "", err
@@ -180,13 +181,27 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 }
 
 func (f *QueryFactory) SQL() (sql string, err error) {
+	var (
+		span *trace.Span
+	)
+
+	_, span = trace.NewSpan(f.ctx, "make-sql")
+	defer span.End(&err)
+
 	selectFields, groupFields, orderFields, err := f.expr.ParserAggregatesAndOrders(f.query.Aggregates, f.orders)
 	if err != nil {
 		return
 	}
 
+	span.Set("select-fields", selectFields)
+	span.Set("group-fields", groupFields)
+	span.Set("order-fields", orderFields)
+
 	sql += fmt.Sprintf("SELECT %s FROM %s", strings.Join(selectFields, ", "), f.Table())
 	whereString, err := f.BuildWhere()
+
+	span.Set("where-string", whereString)
+
 	if err != nil {
 		return
 	}
@@ -208,6 +223,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 		sql += fmt.Sprintf(" LIMIT %d", f.query.Size)
 	}
 
+	span.Set("sql", sql)
 	return
 }
 

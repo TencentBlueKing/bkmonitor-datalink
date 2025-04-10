@@ -18,7 +18,7 @@ import (
 
 // Parse querystring and return Expr
 func Parse(query string) (Expr, error) {
-	if query == "" {
+	if query == "" || query == "*" {
 		return nil, nil
 	}
 

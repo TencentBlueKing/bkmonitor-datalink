@@ -65,7 +65,7 @@ func (d *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
 }
 
 func (d *DorisSQLExpr) DescribeTable(table string) string {
-	return fmt.Sprintf("SHOW CREATE %s", table)
+	return fmt.Sprintf("SHOW CREATE TABLE %s", table)
 }
 
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段

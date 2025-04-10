@@ -453,6 +453,8 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 		return storage.ErrSeriesSet(err)
 	}
 
+	span.Set("query-sql", sql)
+
 	data, err := i.sqlQuery(ctx, sql, span)
 	if err != nil {
 		return storage.ErrSeriesSet(err)

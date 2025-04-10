@@ -338,10 +338,6 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		right string
 	)
 
-	if d == nil {
-		return "", nil
-	}
-
 	switch c := e.(type) {
 	case *querystring.NotExpr:
 		left, err = d.walk(c.Expr)

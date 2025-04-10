@@ -31,14 +31,11 @@ type DorisSQLExpr struct {
 	timeField  string
 	valueField string
 
-	fieldsMap map[string]string
+	keepColumns []string
+	fieldsMap   map[string]string
 }
 
 var _ SQLExpr = (*DorisSQLExpr)(nil)
-
-func (d *DorisSQLExpr) FieldMap() map[string]string {
-	return d.fieldsMap
-}
 
 func (d *DorisSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {
 	d.timeField = timeField
@@ -54,6 +51,15 @@ func (d *DorisSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 func (d *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]string) SQLExpr {
 	d.fieldsMap = fieldsMap
 	return d
+}
+
+func (d *DorisSQLExpr) WithKeepColumns(cols []string) SQLExpr {
+	d.keepColumns = cols
+	return d
+}
+
+func (d *DorisSQLExpr) FieldMap() map[string]string {
+	return d.fieldsMap
 }
 
 func (d *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
@@ -131,7 +137,12 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 	}
 
 	if len(selectFields) == 0 {
-		selectFields = append(selectFields, SelectAll)
+		if len(d.keepColumns) > 0 {
+			selectFields = append(selectFields, d.keepColumns...)
+		} else {
+			selectFields = append(selectFields, SelectAll)
+		}
+
 		if valueField != "" {
 			selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", valueField, Value))
 		}

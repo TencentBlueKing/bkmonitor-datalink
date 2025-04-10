@@ -100,6 +100,11 @@ func (f *QueryFactory) WithFieldsMap(m map[string]string) *QueryFactory {
 	return f
 }
 
+func (f *QueryFactory) WithKeepColumns(cols []string) *QueryFactory {
+	f.expr.WithKeepColumns(cols)
+	return f
+}
+
 func (f *QueryFactory) Table() string {
 	table := fmt.Sprintf("`%s`", f.query.DB)
 	if f.query.Measurement != "" {

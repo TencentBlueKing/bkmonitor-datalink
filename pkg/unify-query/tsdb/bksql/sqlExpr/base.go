@@ -37,6 +37,8 @@ var (
 // SQLExpr 定义SQL表达式生成接口
 // 接口包含字段映射、查询字符串解析、全条件解析等功能
 type SQLExpr interface {
+	// WithKeepColumns 设置保留字段
+	WithKeepColumns([]string) SQLExpr
 	// WithFieldsMap 设置字段类型
 	WithFieldsMap(fieldsMap map[string]string) SQLExpr
 	// WithEncode 字段转换方法
@@ -108,14 +110,11 @@ func UnRegister(key string) {
 type DefaultSQLExpr struct {
 	encodeFunc func(string) string
 
-	fieldMap map[string]string
+	keepColumns []string
+	fieldMap    map[string]string
 
 	timeField  string
 	valueField string
-}
-
-func (d *DefaultSQLExpr) FieldMap() map[string]string {
-	return d.fieldMap
 }
 
 func (d *DefaultSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {
@@ -132,6 +131,15 @@ func (d *DefaultSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 func (d *DefaultSQLExpr) WithFieldsMap(fieldMap map[string]string) SQLExpr {
 	d.fieldMap = fieldMap
 	return d
+}
+
+func (d *DefaultSQLExpr) WithKeepColumns(cols []string) SQLExpr {
+	d.keepColumns = cols
+	return d
+}
+
+func (d *DefaultSQLExpr) FieldMap() map[string]string {
+	return d.fieldMap
 }
 
 // ParserQueryString 解析查询字符串（当前实现返回空）

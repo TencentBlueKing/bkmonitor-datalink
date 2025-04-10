@@ -332,10 +332,18 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 			return f, err
 		}
 
+		// 只能使用在表结构的字段才能使用
+		var keepColumns []string
+		for _, k := range query.Source {
+			if _, ok := fieldsMap[k]; ok {
+				keepColumns = append(keepColumns, k)
+			}
+		}
 		out, _ := json.Marshal(fieldsMap)
 		span.Set("table_fields_map", string(out))
 
-		f.WithFieldsMap(fieldsMap)
+		span.Set("keep-columns", keepColumns)
+		f.WithFieldsMap(fieldsMap).WithKeepColumns(keepColumns)
 	}
 
 	return f, nil

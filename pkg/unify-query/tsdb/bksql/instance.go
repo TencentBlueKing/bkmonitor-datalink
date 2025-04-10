@@ -339,10 +339,10 @@ func (i *Instance) Table(query *metadata.Query) string {
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, err error) {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, resultTableOptions metadata.ResultTableOptions, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("doris query error: %s", r)
+			err = fmt.Errorf("doris query panic: %s", r)
 		}
 	}()
 
@@ -364,6 +364,15 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		// 如果不传 size，则取最大的限制值
 		if query.Size == 0 || query.Size > i.maxLimit {
 			query.Size = maxLimit
+		}
+	}
+
+	if len(query.ResultTableOptions) > 0 {
+		option := query.ResultTableOptions.GetOption(query.TableID, "")
+		if option != nil {
+			if option.From != nil {
+				query.From = *option.From
+			}
 		}
 	}
 
@@ -397,8 +406,10 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		list[KeyTableID] = query.TableID
 		list[KeyDataLabel] = query.DataLabel
 
-		if query.HighLight.Enable {
-			list[KeyHighLight] = ""
+		if query.HighLight != nil {
+			if query.HighLight.Enable {
+				list[KeyHighLight] = ""
+			}
 		}
 
 		dataCh <- list

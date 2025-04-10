@@ -77,7 +77,7 @@ func TestQsToDsl(t *testing.T) {
 				}
 				return ""
 			})
-			query, err := qs.Parser()
+			query, err := qs.ToDSL()
 			if err == nil {
 				if query != nil {
 					body, _ := query.Source()

@@ -111,8 +111,10 @@ func TestAPIHandler(t *testing.T) {
 
 	end := time.Unix(1729859485, 0)
 	start := time.Unix(1729863085, 0)
+	end2d := start.Add(time.Hour * 24 * 2)
 
 	mock.Vm.Set(map[string]any{
+		//
 		`label_values:17298630851729859485container{bcs_cluster_id="BCS-K8S-00000", namespace="kube-system", result_table_id="2_bcs_prom_computation_result_table", __name__="container_cpu_usage_seconds_total_value"}`: []string{
 			"POD",
 			"kube-proxy",
@@ -120,6 +122,17 @@ func TestAPIHandler(t *testing.T) {
 		`label_values:17298630851729859485bcs_cluster_id{bcs_cluster_id="BCS-K8S-00000", result_table_id="2_bcs_prom_computation_result_table", __name__="kube_pod_info_value"}`: []string{
 			"BCS-K8S-00000",
 		},
+
+		// above 1d bcs_cluster_id
+		`label_values:17298630851730035885bcs_cluster_id{result_table_id="2_bcs_prom_computation_result_table", __name__=~"container_.*_value"}`: []string{
+			"BCS-K8S-00000",
+		},
+		// above 1d namespace
+		`label_values:17298630851730035885namespace{result_table_id="2_bcs_prom_computation_result_table", __name__=~"container_.*_value"}`: []string{
+			"POD",
+			"kube-proxy",
+		},
+
 		`query_range:1729863085172985948560topk(2, count({result_table_id="2_bcs_prom_computation_result_table"}) by (__name__))`: victoriaMetrics.Data{
 			ResultType: victoriaMetrics.MatrixType,
 			Result: []victoriaMetrics.Series{
@@ -170,6 +183,7 @@ func TestAPIHandler(t *testing.T) {
 				},
 			},
 		},
+		// below 1d bcs_cluster_id
 		`query_range:1729863085172985948560topk(5, count({result_table_id="2_bcs_prom_computation_result_table", __name__=~"container_.*_value"}) by (bcs_cluster_id))`: victoriaMetrics.Data{
 			ResultType: victoriaMetrics.MatrixType,
 			Result: []victoriaMetrics.Series{
@@ -185,6 +199,7 @@ func TestAPIHandler(t *testing.T) {
 				},
 			},
 		},
+		// below 1d namespace
 		`query_range:1729863085172985948560topk(5, count({result_table_id="2_bcs_prom_computation_result_table", __name__=~"container_.*_value"}) by (namespace))`: victoriaMetrics.Data{
 			ResultType: victoriaMetrics.MatrixType,
 			Result: []victoriaMetrics.Series{
@@ -359,7 +374,7 @@ func TestAPIHandler(t *testing.T) {
 			},
 			expected: `{"values":{"bcs_cluster_id":["BCS-K8S-00000"],"namespace":["bkbase","bkmonitor-operator","blueking","kube-system"]}}`,
 		},
-		"test tag values in prometheus with regex": {
+		"test tag values in prometheus with regex below 1d": {
 			handler: HandlerTagValues,
 			method:  http.MethodPost,
 			infoParams: &infos.Params{
@@ -372,6 +387,20 @@ func TestAPIHandler(t *testing.T) {
 				Keys:     []string{"namespace", "bcs_cluster_id"},
 			},
 			expected: `{"values":{"bcs_cluster_id":["BCS-K8S-00000"],"namespace":["bkbase","bkmonitor-operator","blueking","kube-system"]}}`,
+		},
+		"test tag values in prometheus with regex above 1d": {
+			handler: HandlerTagValues,
+			method:  http.MethodPost,
+			infoParams: &infos.Params{
+				TableID:  "result_table.vm",
+				Start:    fmt.Sprintf("%d", start.Unix()),
+				End:      fmt.Sprintf("%d", end2d.Unix()),
+				IsRegexp: true,
+				Metric:   "container_.*",
+				Limit:    5,
+				Keys:     []string{"namespace", "bcs_cluster_id"},
+			},
+			expected: `{"values":{"bcs_cluster_id":["BCS-K8S-00000"],"namespace":["POD","kube-proxy"]}}`,
 		},
 		"test series in prometheus": {
 			handler: HandlerSeries,

@@ -51,7 +51,6 @@ func (a AggregateMethodList) ToQry(timezone string) (metadata.Aggregates, error)
 			Dimensions: aggr.Dimensions,
 			Without:    aggr.Without,
 			Args:       aggr.VArgsList,
-			TimeZone:   timezone,
 		}
 
 		if aggr.Window != "" {
@@ -61,6 +60,7 @@ func (a AggregateMethodList) ToQry(timezone string) (metadata.Aggregates, error)
 			}
 
 			agg.Window = time.Duration(window)
+			agg.TimeZone = timezone
 		}
 		aggs = append(aggs, agg)
 	}

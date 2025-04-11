@@ -154,7 +154,11 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		return
 	}
 
-	dimensionMap := make(map[string]struct{})
+	var (
+		window       time.Duration
+		timezone     string
+		dimensionMap = make(map[string]struct{})
+	)
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
 			dim, err = d.dimTransform(dim)
@@ -174,31 +178,36 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		switch agg.Name {
 		case "cardinality":
 			selectFields = append(selectFields, fmt.Sprintf("COUNT(DISTINCT %s) AS `%s`", valueField, Value))
+		// date_histogram 不支持无需进行函数聚合
+		case "date_histogram":
 		default:
 			selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, Value))
 		}
 
 		if agg.Window > 0 {
-
-			var offsetMillis int
-			if agg.Window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
-				// 时间聚合函数兼容时区
-				loc, locErr := time.LoadLocation(agg.TimeZone)
-				if locErr != nil {
-					loc = time.UTC
-				}
-				// 获取时区偏移量
-				_, offset := time.Now().In(loc).Zone()
-				offsetMillis = offset * 1e3
-			}
-
-			timeField := fmt.Sprintf("(%s + %d) / %d * %d - %d", d.timeField, offsetMillis, agg.Window.Milliseconds(), agg.Window.Milliseconds(), offsetMillis)
-
-			groupByFields = append(groupByFields, timeField)
-			selectFields = append(selectFields, fmt.Sprintf("MAX(%s) AS `%s`", timeField, TimeStamp))
-
-			orderByFields = append(orderByFields, fmt.Sprintf("`%s` ASC", TimeStamp))
+			window = agg.Window
+			timezone = agg.TimeZone
 		}
+	}
+
+	if window > 0 {
+		var offsetMillis int
+		if window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
+			// 时间聚合函数兼容时区
+			loc, locErr := time.LoadLocation(timezone)
+			if locErr != nil {
+				loc = time.UTC
+			}
+			// 获取时区偏移量
+			_, offset := time.Now().In(loc).Zone()
+			offsetMillis = offset * 1e3
+		}
+
+		timeField := fmt.Sprintf("(%s + %d) / %d * %d - %d", d.timeField, offsetMillis, window.Milliseconds(), window.Milliseconds(), offsetMillis)
+
+		groupByFields = append(groupByFields, timeField)
+		selectFields = append(selectFields, fmt.Sprintf("MAX(%s) AS `%s`", timeField, TimeStamp))
+		orderByFields = append(orderByFields, fmt.Sprintf("`%s` ASC", TimeStamp))
 	}
 
 	if len(selectFields) == 0 {

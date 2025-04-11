@@ -78,27 +78,16 @@ func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
 	return fmt.Sprintf("SHOW CREATE TABLE %s", table)
 }
 
-func (d *DorisSQLExpr) aggregateTransform(aggregates metadata.Aggregates) metadata.Aggregates {
-	newAggregates := make(metadata.Aggregates, 0)
-	for _, agg := range aggregates {
-		switch agg.Name {
-		case "cardinality":
-		default:
-			newAggregates = append(newAggregates, agg)
-		}
-	}
-	return newAggregates
-}
-
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段
 func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, err error) {
 	valueField, _ := d.dimTransform(d.valueField)
 
-	newAggregates := d.aggregateTransform(aggregates)
-
-	dimensionMap := make(map[string]struct{})
-
-	for _, agg := range newAggregates {
+	var (
+		window       time.Duration
+		timezone     string
+		dimensionMap = make(map[string]struct{})
+	)
+	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
 			var (
 				isObject = false
@@ -126,37 +115,44 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		switch agg.Name {
 		case "cardinality":
 			selectFields = append(selectFields, fmt.Sprintf("COUNT(DISTINCT %s) AS `%s`", valueField, Value))
+		// date_histogram 不支持无需进行函数聚合
+		case "date_histogram":
 		default:
 			selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, Value))
 		}
 
 		if agg.Window > 0 {
-			// 获取时区偏移量
-			var offsetMinutes int
-			// 如果是按天聚合，则增加时区偏移量
-			if agg.Window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
-				// 时间聚合函数兼容时区
-				loc, locErr := time.LoadLocation(agg.TimeZone)
-				if locErr != nil {
-					loc = time.UTC
-				}
-				_, offset := time.Now().In(loc).Zone()
-				offsetMinutes = offset / 60
-			}
-
-			// 如果是按照分钟聚合，则使用 __shard_key__ 作为时间字段
-			var timeField string
-			if int64(agg.Window.Seconds())%60 == 0 {
-				windowMinutes := int(agg.Window.Minutes())
-				timeField = fmt.Sprintf(`((CAST((%s / 1000 + %d) / %d AS INT) * %d - %d) * 60 * 1000)`, ShardKey, offsetMinutes, windowMinutes, windowMinutes, offsetMinutes)
-			} else {
-				timeField = fmt.Sprintf(`CAST(%s / %d AS INT) * %d `, d.timeField, agg.Window.Milliseconds(), agg.Window.Milliseconds())
-			}
-
-			selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", timeField, TimeStamp))
-			groupByFields = append(groupByFields, TimeStamp)
-			orderByFields = append(orderByFields, fmt.Sprintf("`%s` ASC", TimeStamp))
+			window = agg.Window
+			timezone = agg.TimeZone
 		}
+	}
+
+	if window > 0 {
+		// 获取时区偏移量
+		var offsetMinutes int
+		// 如果是按天聚合，则增加时区偏移量
+		if window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
+			// 时间聚合函数兼容时区
+			loc, locErr := time.LoadLocation(timezone)
+			if locErr != nil {
+				loc = time.UTC
+			}
+			_, offset := time.Now().In(loc).Zone()
+			offsetMinutes = offset / 60
+		}
+
+		// 如果是按照分钟聚合，则使用 __shard_key__ 作为时间字段
+		var timeField string
+		if int64(window.Seconds())%60 == 0 {
+			windowMinutes := int(window.Minutes())
+			timeField = fmt.Sprintf(`((CAST((%s / 1000 + %d) / %d AS INT) * %d - %d) * 60 * 1000)`, ShardKey, offsetMinutes, windowMinutes, windowMinutes, offsetMinutes)
+		} else {
+			timeField = fmt.Sprintf(`CAST(%s / %d AS INT) * %d `, d.timeField, window.Milliseconds(), window.Milliseconds())
+		}
+
+		selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", timeField, TimeStamp))
+		groupByFields = append(groupByFields, TimeStamp)
+		orderByFields = append(orderByFields, fmt.Sprintf("`%s` ASC", TimeStamp))
 	}
 
 	if len(selectFields) == 0 {

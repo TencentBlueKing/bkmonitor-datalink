@@ -418,7 +418,7 @@ func TestInstance_bkSql(t *testing.T) {
 			expected: "SELECT SUM(`value`) AS `_value_` FROM `132_hander_opmon_avg` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612'",
 		},
 		{
-			name: "aggregate cardinality",
+			name: "aggregate cardinality with mysql",
 			query: &metadata.Query{
 				DB:          "2_bklog_bkunify_query_doris",
 				Measurement: "",
@@ -446,6 +446,102 @@ func TestInstance_bkSql(t *testing.T) {
 
 			expected: "SELECT COUNT(DISTINCT `gseIndex`) AS `_value_` FROM `2_bklog_bkunify_query_doris` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612'",
 		},
+		{
+			name: "aggregate date_histogram with mysql",
+			query: &metadata.Query{
+				DB:          "2_bklog_bkunify_query_doris",
+				Measurement: "",
+				Field:       "gseIndex",
+				Aggregates: metadata.Aggregates{
+					{
+						Name: "count",
+					},
+					{
+						Name:   "date_histogram",
+						Window: time.Minute * 5,
+					},
+				},
+				Orders: metadata.Orders{
+					{
+						Name: "dtEventTimeStamp",
+						Ast:  false,
+					},
+					{
+						Name: "gseIndex",
+						Ast:  false,
+					},
+					{
+						Name: "iterationIndex",
+						Ast:  false,
+					},
+				},
+			},
+
+			expected: "SELECT COUNT(`gseIndex`) AS `_value_`, MAX((dtEventTimeStamp + 0) / 300000 * 300000 - 0) AS `_timestamp_` FROM `2_bklog_bkunify_query_doris` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' GROUP BY (dtEventTimeStamp + 0) / 300000 * 300000 - 0 ORDER BY `_timestamp_` ASC",
+		},
+		{
+			name: "aggregate cardinality with doris",
+			query: &metadata.Query{
+				DB:          "2_bklog_bkunify_query_doris",
+				Measurement: "doris",
+				Field:       "gseIndex",
+				Aggregates: metadata.Aggregates{
+					{
+						Name: "cardinality",
+					},
+				},
+				Orders: metadata.Orders{
+					{
+						Name: "dtEventTimeStamp",
+						Ast:  false,
+					},
+					{
+						Name: "gseIndex",
+						Ast:  false,
+					},
+					{
+						Name: "iterationIndex",
+						Ast:  false,
+					},
+				},
+			},
+
+			expected: "SELECT COUNT(DISTINCT `gseIndex`) AS `_value_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612'",
+		},
+		{
+			name: "aggregate date_histogram with doris",
+			query: &metadata.Query{
+				DB:          "2_bklog_bkunify_query_doris",
+				Measurement: "doris",
+				Field:       "gseIndex",
+				Aggregates: metadata.Aggregates{
+					{
+						Name: "count",
+					},
+					{
+						Name:   "date_histogram",
+						Window: time.Minute * 5,
+					},
+				},
+				Orders: metadata.Orders{
+					{
+						Name: "dtEventTimeStamp",
+						Ast:  false,
+					},
+					{
+						Name: "gseIndex",
+						Ast:  false,
+					},
+					{
+						Name: "iterationIndex",
+						Ast:  false,
+					},
+				},
+			},
+
+			expected: "SELECT COUNT(`gseIndex`) AS `_value_`, ((CAST((__shard_key__ / 1000 + 0) / 5 AS INT) * 5 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC",
+		},
+
 		//{
 		//	name: "aggregate multi function",
 		//	query: &metadata.Query{

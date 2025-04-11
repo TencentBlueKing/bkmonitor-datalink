@@ -428,6 +428,20 @@ func TestInstance_bkSql(t *testing.T) {
 						Name: "cardinality",
 					},
 				},
+				Orders: metadata.Orders{
+					{
+						Name: "dtEventTimeStamp",
+						Ast:  false,
+					},
+					{
+						Name: "gseIndex",
+						Ast:  false,
+					},
+					{
+						Name: "iterationIndex",
+						Ast:  false,
+					},
+				},
 			},
 
 			expected: "SELECT COUNT(DISTINCT `gseIndex`) AS `_value_` FROM `2_bklog_bkunify_query_doris` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612'",
@@ -454,6 +468,30 @@ func TestInstance_bkSql(t *testing.T) {
 		//	// TODO 适配多字段查询特性
 		//	expected: "",
 		//},
+		{
+			name: "query raw order ",
+			query: &metadata.Query{
+				DB:          "100133_ieod_logsearch4_errorlog_p",
+				Measurement: "doris",
+				Field:       "value",
+				Size:        5,
+				Orders: metadata.Orders{
+					{
+						Name: "dtEventTimeStamp",
+						Ast:  false,
+					},
+					{
+						Name: "gseIndex",
+						Ast:  false,
+					},
+					{
+						Name: "iterationIndex",
+						Ast:  false,
+					},
+				},
+			},
+			expected: "SELECT *, `value` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' ORDER BY `dtEventTimeStamp` DESC, `gseIndex` DESC, `iterationIndex` DESC LIMIT 5",
+		},
 		{
 			name: "query raw",
 			query: &metadata.Query{

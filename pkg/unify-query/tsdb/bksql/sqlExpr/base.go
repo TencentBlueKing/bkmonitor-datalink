@@ -154,12 +154,15 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		return
 	}
 
+	dimensionMap := make(map[string]struct{})
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
 			dim, err = d.dimTransform(dim)
 			if err != nil {
 				return
 			}
+			dimensionMap[dim] = struct{}{}
+
 			selectFields = append(selectFields, dim)
 			groupByFields = append(groupByFields, dim)
 		}
@@ -209,6 +212,13 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 	}
 
 	for _, order := range orders {
+		// 如果是聚合操作的话，只能使用维度进行排序
+		if len(aggregates) > 0 {
+			if _, ok := dimensionMap[order.Name]; !ok {
+				continue
+			}
+		}
+
 		var orderField string
 		switch order.Name {
 		case FieldValue:

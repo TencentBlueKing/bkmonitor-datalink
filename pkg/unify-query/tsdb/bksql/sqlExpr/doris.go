@@ -96,6 +96,8 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 
 	newAggregates := d.aggregateTransform(aggregates)
 
+	dimensionMap := make(map[string]struct{})
+
 	for _, agg := range newAggregates {
 		for _, dim := range agg.Dimensions {
 			var (
@@ -110,6 +112,8 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 			} else {
 				selectAlias = newDim
 			}
+
+			dimensionMap[dim] = struct{}{}
 
 			selectFields = append(selectFields, selectAlias)
 			groupByFields = append(groupByFields, newDim)
@@ -171,6 +175,13 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 	}
 
 	for _, order := range orders {
+		// 如果是聚合操作的话，只能使用维度进行排序
+		if len(aggregates) > 0 {
+			if _, ok := dimensionMap[order.Name]; !ok {
+				continue
+			}
+		}
+
 		var orderField string
 		switch order.Name {
 		case FieldValue:

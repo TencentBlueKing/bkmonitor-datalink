@@ -78,11 +78,25 @@ func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
 	return fmt.Sprintf("SHOW CREATE TABLE %s", table)
 }
 
+func (d *DorisSQLExpr) aggregateTransform(aggregates metadata.Aggregates) metadata.Aggregates {
+	newAggregates := make(metadata.Aggregates, 0)
+	for _, agg := range aggregates {
+		switch agg.Name {
+		case "cardinality":
+		default:
+			newAggregates = append(newAggregates, agg)
+		}
+	}
+	return newAggregates
+}
+
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段
 func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, err error) {
 	valueField, _ := d.dimTransform(d.valueField)
 
-	for _, agg := range aggregates {
+	newAggregates := d.aggregateTransform(aggregates)
+
+	for _, agg := range newAggregates {
 		for _, dim := range agg.Dimensions {
 			var (
 				isObject = false
@@ -104,10 +118,15 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		if valueField == "" {
 			valueField = SelectAll
 		}
-		selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, Value))
+
+		switch agg.Name {
+		case "cardinality":
+			selectFields = append(selectFields, fmt.Sprintf("COUNT(DISTINCT %s) AS `%s`", valueField, Value))
+		default:
+			selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, Value))
+		}
 
 		if agg.Window > 0 {
-
 			// 获取时区偏移量
 			var offsetMinutes int
 			// 如果是按天聚合，则增加时区偏移量

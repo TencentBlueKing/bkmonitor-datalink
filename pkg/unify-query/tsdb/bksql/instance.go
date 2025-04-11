@@ -425,12 +425,6 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		list[KeyTableID] = query.TableID
 		list[KeyDataLabel] = query.DataLabel
 
-		if query.HighLight != nil {
-			if query.HighLight.Enable {
-				list[KeyHighLight] = ""
-			}
-		}
-
 		dataCh <- list
 	}
 

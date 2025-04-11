@@ -417,6 +417,21 @@ func TestInstance_bkSql(t *testing.T) {
 
 			expected: "SELECT SUM(`value`) AS `_value_` FROM `132_hander_opmon_avg` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612'",
 		},
+		{
+			name: "aggregate cardinality",
+			query: &metadata.Query{
+				DB:          "2_bklog_bkunify_query_doris",
+				Measurement: "",
+				Field:       "gseIndex",
+				Aggregates: metadata.Aggregates{
+					{
+						Name: "cardinality",
+					},
+				},
+			},
+
+			expected: "SELECT COUNT(DISTINCT `gseIndex`) AS `_value_` FROM `2_bklog_bkunify_query_doris` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612'",
+		},
 		//{
 		//	name: "aggregate multi function",
 		//	query: &metadata.Query{

@@ -294,6 +294,11 @@ func HandlerQueryTs(c *gin.Context) {
 		return
 	}
 
+	// metadata 中的 spaceUid 是从 header 头信息中获取，header 如果有的话，覆盖参数里的
+	if user.SpaceUid != "" {
+		query.SpaceUid = user.SpaceUid
+	}
+
 	queryStr, _ := json.Marshal(query)
 	span.Set("query-body", string(queryStr))
 	span.Set("query-body-size", len(queryStr))

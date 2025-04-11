@@ -21,33 +21,32 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sqlExpr"
 )
 
 const (
+	selectAll = "*"
+
 	dtEventTimeStamp = "dtEventTimeStamp"
 	dtEventTime      = "dtEventTime"
 	localTime        = "localTime"
 	startTime        = "_startTime_"
 	endTime          = "_endTime_"
 	theDate          = "thedate"
-
-	timeStamp = "_timestamp_"
-	value     = "_value_"
-
-	FieldValue = "_value"
-	FieldTime  = "_time"
 )
 
 var (
 	internalDimension = map[string]struct{}{
-		value:            {},
-		timeStamp:        {},
 		dtEventTimeStamp: {},
 		dtEventTime:      {},
 		localTime:        {},
 		startTime:        {},
 		endTime:          {},
 		theDate:          {},
+
+		sqlExpr.TimeStamp: {},
+		sqlExpr.Value:     {},
 	}
 )
 
@@ -61,22 +60,19 @@ type QueryFactory struct {
 	end   time.Time
 	step  time.Duration
 
-	selects []string
-	groups  []string
-	orders  metadata.Orders
-
-	sql strings.Builder
+	orders metadata.Orders
 
 	timeField string
+
+	expr sqlExpr.SQLExpr
 }
 
 func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	f := &QueryFactory{
-		ctx:     ctx,
-		query:   query,
-		selects: make([]string, 0),
-		groups:  make([]string, 0),
+		ctx:   ctx,
+		query: query,
 	}
+
 	if query.Orders != nil {
 		f.orders = query.Orders
 	}
@@ -86,11 +82,11 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	} else {
 		f.timeField = dtEventTimeStamp
 	}
-	return f
-}
 
-func (f *QueryFactory) write(s string) {
-	f.sql.WriteString(s + " ")
+	f.expr = sqlExpr.GetSQLExpr(f.query.Measurement).
+		WithInternalFields(f.timeField, query.Field).
+		WithEncode(metadata.GetPromDataFormat(ctx).EncodeFunc())
+	return f
 }
 
 func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
@@ -99,54 +95,33 @@ func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 	return f
 }
 
-func (f *QueryFactory) ParserQuery() (err error) {
-	f.lock.Lock()
-	defer f.lock.Unlock()
-
-	if len(f.query.Aggregates) > 0 {
-		for _, agg := range f.query.Aggregates {
-			for _, dim := range agg.Dimensions {
-				dim = fmt.Sprintf("`%s`", dim)
-				f.groups = append(f.groups, dim)
-				f.selects = append(f.selects, dim)
-			}
-			f.selects = append(f.selects, fmt.Sprintf("%s(`%s`) AS `%s`", strings.ToUpper(agg.Name), f.query.Field, value))
-			if agg.Window > 0 {
-				// 时间聚合函数兼容时区
-				loc, locErr := time.LoadLocation(agg.TimeZone)
-				if locErr != nil {
-					loc = time.UTC
-				}
-				// 获取时区偏移量
-				_, offset := time.Now().In(loc).Zone()
-				var offsetMillis int
-				// 只有按天聚合才需要偏移
-				if agg.Window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
-					offsetMillis = offset * 1000
-				}
-
-				timeField := fmt.Sprintf("(`%s` - ((`%s` - %d) %% %d - %d))", f.timeField, f.timeField, offsetMillis, agg.Window.Milliseconds(), offsetMillis)
-
-				f.groups = append(f.groups, timeField)
-				f.selects = append(f.selects, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
-				f.orders = append(f.orders, metadata.Order{
-					Name: FieldTime,
-					Ast:  true,
-				})
-			}
-		}
-	}
-
-	if len(f.selects) == 0 {
-		f.selects = append(f.selects, "*")
-		f.selects = append(f.selects, fmt.Sprintf("`%s` AS `%s`", f.query.Field, value))
-		f.selects = append(f.selects, fmt.Sprintf("`%s` AS `%s`", f.timeField, timeStamp))
-	}
-
-	return
+func (f *QueryFactory) WithFieldsMap(m map[string]string) *QueryFactory {
+	f.expr.WithFieldsMap(m)
+	return f
 }
 
-func (f *QueryFactory) getTheDateFilters() (theDateFilter string, err error) {
+func (f *QueryFactory) WithKeepColumns(cols []string) *QueryFactory {
+	f.expr.WithKeepColumns(cols)
+	return f
+}
+
+func (f *QueryFactory) Table() string {
+	table := fmt.Sprintf("`%s`", f.query.DB)
+	if f.query.Measurement != "" {
+		table += "." + f.query.Measurement
+	}
+	return table
+}
+
+func (f *QueryFactory) DescribeTableSQL() string {
+	return f.expr.DescribeTableSQL(f.Table())
+}
+
+func (f *QueryFactory) FieldMap() map[string]string {
+	return f.expr.FieldMap()
+}
+
+func (f *QueryFactory) getTheDateIndexFilters() (theDateFilter string, err error) {
 	// bkbase 使用 时区东八区 转换为 thedate
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
@@ -171,77 +146,89 @@ func (f *QueryFactory) getTheDateFilters() (theDateFilter string, err error) {
 	return
 }
 
-func (f *QueryFactory) SQL() (sql string, err error) {
-	f.sql.Reset()
-	err = f.ParserQuery()
+func (f *QueryFactory) BuildWhere() (string, error) {
+	var s []string
+	s = append(s, fmt.Sprintf("`%s` >= %d AND `%s` < %d", f.timeField, f.start.UnixMilli(), f.timeField, f.end.UnixMilli()))
+
+	theDateFilter, err := f.getTheDateIndexFilters()
 	if err != nil {
-		return
-	}
-
-	f.lock.RLock()
-	defer f.lock.RUnlock()
-
-	f.write("SELECT")
-	f.write(strings.Join(f.selects, ", "))
-	f.write("FROM")
-	db := fmt.Sprintf("`%s`", f.query.DB)
-	if f.query.Measurement != "" {
-		db += "." + f.query.Measurement
-	}
-	f.write(db)
-	f.write("WHERE")
-	f.write(fmt.Sprintf("`%s` >= %d AND `%s` < %d", f.timeField, f.start.UnixMilli(), f.timeField, f.end.UnixMilli()))
-
-	theDateFilter, err := f.getTheDateFilters()
-	if err != nil {
-		return
+		return "", err
 	}
 	if theDateFilter != "" {
-		f.write("AND")
-		f.write(theDateFilter)
+		s = append(s, theDateFilter)
 	}
 
-	if f.query.BkSqlCondition != "" {
-		f.write("AND")
-		f.write("(" + f.query.BkSqlCondition + ")")
-	}
-	if len(f.groups) > 0 {
-		f.write("GROUP BY")
-		f.write(strings.Join(f.groups, ", "))
+	// QueryString to sql
+	if f.query.QueryString != "" && f.query.QueryString != "*" {
+		qs, err := f.expr.ParserQueryString(f.query.QueryString)
+		if err != nil {
+			return "", err
+		}
+
+		if qs != "" {
+			s = append(s, qs)
+		}
 	}
 
-	orders := make([]string, 0)
-	for _, order := range f.orders {
-		var orderField string
-		switch order.Name {
-		case FieldValue:
-			orderField = f.query.Field
-		case FieldTime:
-			orderField = timeStamp
-		default:
-			orderField = order.Name
+	// AllConditions to sql
+	if len(f.query.AllConditions) > 0 {
+		qs, err := f.expr.ParserAllConditions(f.query.AllConditions)
+		if err != nil {
+			return "", err
 		}
-		ascName := "ASC"
-		if !order.Ast {
-			ascName = "DESC"
+
+		if qs != "" {
+			s = append(s, qs)
 		}
-		orders = append(orders, fmt.Sprintf("`%s` %s", orderField, ascName))
 	}
-	if len(orders) > 0 {
-		sort.Strings(orders)
-		f.write("ORDER BY")
-		f.write(strings.Join(orders, ", "))
+
+	return strings.Join(s, " AND "), nil
+}
+
+func (f *QueryFactory) SQL() (sql string, err error) {
+	var (
+		span *trace.Span
+	)
+
+	_, span = trace.NewSpan(f.ctx, "make-sql")
+	defer span.End(&err)
+
+	selectFields, groupFields, orderFields, err := f.expr.ParserAggregatesAndOrders(f.query.Aggregates, f.orders)
+	if err != nil {
+		return
+	}
+
+	span.Set("select-fields", selectFields)
+	span.Set("group-fields", groupFields)
+	span.Set("order-fields", orderFields)
+
+	sql += fmt.Sprintf("SELECT %s FROM %s", strings.Join(selectFields, ", "), f.Table())
+	whereString, err := f.BuildWhere()
+
+	span.Set("where-string", whereString)
+
+	if err != nil {
+		return
+	}
+	if whereString != "" {
+		sql += " WHERE " + whereString
+	}
+	if len(groupFields) > 0 {
+		sql += " GROUP BY " + strings.Join(groupFields, ", ")
+	}
+
+	if len(orderFields) > 0 {
+		sort.Strings(orderFields)
+		sql += " ORDER BY " + strings.Join(orderFields, ", ")
 	}
 	if f.query.From > 0 {
-		f.write("OFFSET")
-		f.write(fmt.Sprintf("%d", f.query.From))
+		sql += fmt.Sprintf(" OFFSET %d", f.query.From)
 	}
 	if f.query.Size > 0 {
-		f.write("LIMIT")
-		f.write(fmt.Sprintf("%d", f.query.Size))
+		sql += fmt.Sprintf(" LIMIT %d", f.query.Size)
 	}
 
-	sql = strings.Trim(f.sql.String(), " ")
+	span.Set("sql", sql)
 	return
 }
 
@@ -295,7 +282,7 @@ func (f *QueryFactory) FormatData(keys []string, list []map[string]interface{}) 
 		}
 
 		// 获取时间戳，单位是毫秒
-		if vtLong, ok = d[timeStamp]; !ok {
+		if vtLong, ok = d[sqlExpr.TimeStamp]; !ok {
 			vtLong = 0
 		}
 

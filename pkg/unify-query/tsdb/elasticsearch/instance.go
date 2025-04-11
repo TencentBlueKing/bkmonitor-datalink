@@ -232,7 +232,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
 		qs := NewQueryString(qb.QueryString, fact.NestedField)
-		q, qsErr := qs.Parser()
+		q, qsErr := qs.ToDSL()
 		if qsErr != nil {
 			return nil, qsErr
 		}
@@ -734,7 +734,7 @@ func (i *Instance) QuerySeriesSet(
 		err error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-reference")
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-series-set")
 	defer span.End(&err)
 
 	if len(query.Aggregates) == 0 {

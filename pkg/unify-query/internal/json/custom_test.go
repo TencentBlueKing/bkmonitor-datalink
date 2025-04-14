@@ -28,16 +28,16 @@ func TestParseJson(t *testing.T) {
 			name:  "test1",
 			input: `{"a": "b"}`,
 			expected: map[string]any{
-				"a": "b",
+				"__ext.a": "b",
 			},
 		},
 		{
 			name:  "normal nested json",
 			input: `{"a": {"b": 1, "c": "test"}, "d": true}`,
 			expected: map[string]interface{}{
-				"a.b": float64(1),
-				"a.c": "test",
-				"d":   true,
+				"__ext.a.b": float64(1),
+				"__ext.a.c": "test",
+				"__ext.d":   true,
 			},
 			wantErr: false,
 		},
@@ -45,8 +45,8 @@ func TestParseJson(t *testing.T) {
 			name:  "single level json",
 			input: `{"key1": "value1", "key2": 123}`,
 			expected: map[string]interface{}{
-				"key1": "value1",
-				"key2": float64(123), // JSON numbers are decoded as float64
+				"__ext.key1": "value1",
+				"__ext.key2": float64(123), // JSON numbers are decoded as float64
 			},
 			wantErr: false,
 		},
@@ -66,7 +66,7 @@ func TestParseJson(t *testing.T) {
 			name:  "json with special characters in keys",
 			input: `{"a.b": {"c-d": "value"}}`,
 			expected: map[string]interface{}{
-				"a.b.c-d": "value",
+				"__ext.a.b.c-d": "value",
 			},
 			wantErr: false,
 		},
@@ -74,7 +74,7 @@ func TestParseJson(t *testing.T) {
 			name:  "deeply nested json",
 			input: `{"a": {"b": {"c": {"d": "value"}}}}`,
 			expected: map[string]interface{}{
-				"a.b.c.d": "value",
+				"__ext.a.b.c.d": "value",
 			},
 			wantErr: false,
 		},
@@ -99,8 +99,8 @@ func TestParseJson_WithArrays(t *testing.T) {
 	// 虽然当前实现不支持数组，但测试一下看看行为
 	input := `{"a": [1, 2, 3], "b": {"c": [4, 5]}}`
 	expected := map[string]any{
-		"a":   []any{float64(1), float64(2), float64(3)},
-		"b.c": []any{float64(4), float64(5)},
+		"__ext.a":   []any{float64(1), float64(2), float64(3)},
+		"__ext.b.c": []any{float64(4), float64(5)},
 	}
 	got, err := json.ParseObject("__ext", input)
 	if err != nil {

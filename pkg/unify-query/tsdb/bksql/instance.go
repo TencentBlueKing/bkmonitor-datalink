@@ -179,9 +179,6 @@ func (i *Instance) formatData(ctx context.Context, start time.Time, query *metad
 		return res, fmt.Errorf("SelectFieldsOrder is empty")
 	}
 
-	// 获取该指标的维度 key
-	dimensions := i.dims(keys, query.Field)
-
 	// 获取 metricLabel
 	metricLabel := query.MetricLabels(ctx)
 
@@ -202,14 +199,36 @@ func (i *Instance) formatData(ctx context.Context, start time.Time, query *metad
 			continue
 		}
 
-		// 获取时间戳，单位是毫秒
-		if vtLong, ok = d[sqlExpr.TimeStamp]; !ok {
-			vtLong = start.UnixMilli()
+		lbl := make([]prompb.Label, 0)
+		for _, k := range keys {
+			switch k {
+			case sqlExpr.TimeStamp:
+				if _, ok = d[k]; ok {
+					vtLong = d[k]
+				}
+			case sqlExpr.Value:
+				if _, ok = d[k]; ok {
+					vvDouble = d[k]
+				}
+			default:
+				// 获取维度信息
+				val, err := getValue(k, d)
+				if err != nil {
+					log.Errorf(ctx, "get dimension (%s) value error in %+v %s", k, d, err.Error())
+					continue
+				}
+
+				lbl = append(lbl, prompb.Label{
+					Name:  k,
+					Value: val,
+				})
+			}
 		}
 
 		if vtLong == nil {
-			continue
+			vtLong = start.UnixMilli()
 		}
+
 		switch vtLong.(type) {
 		case int64:
 			vt = vtLong.(int64)
@@ -217,11 +236,6 @@ func (i *Instance) formatData(ctx context.Context, start time.Time, query *metad
 			vt = int64(vtLong.(float64))
 		default:
 			return res, fmt.Errorf("%s type is error %T, %v", dtEventTimeStamp, vtLong, vtLong)
-		}
-
-		// 获取值
-		if vvDouble, ok = d[sqlExpr.Value]; !ok {
-			return res, fmt.Errorf("dimension %s is emtpy", sqlExpr.Value)
 		}
 
 		if vvDouble == nil {
@@ -234,20 +248,6 @@ func (i *Instance) formatData(ctx context.Context, start time.Time, query *metad
 			vv = vvDouble.(float64)
 		default:
 			return res, fmt.Errorf("%s type is error %T, %v", sqlExpr.Value, vvDouble, vvDouble)
-		}
-
-		lbl := make([]prompb.Label, 0)
-		// 获取维度信息
-		for _, dimName := range dimensions {
-			val, err := getValue(dimName, d)
-			if err != nil {
-				return res, fmt.Errorf("dimensions %+v %s", dimensions, err.Error())
-			}
-
-			lbl = append(lbl, prompb.Label{
-				Name:  dimName,
-				Value: val,
-			})
 		}
 
 		// 如果是非时间聚合计算，则无需进行指标名的拼接作用
@@ -311,6 +311,10 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]str
 		if !ok {
 			continue
 		}
+
+		// 忽略大小写，所以统一转成小写
+		k = strings.ToLower(k)
+
 		fieldsMap[k] = v
 	}
 
@@ -428,7 +432,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		dataCh <- list
 	}
 
-	total = int64(data.TotalRecords)
+	total = int64(data.TotalRecordSize)
 	return
 }
 

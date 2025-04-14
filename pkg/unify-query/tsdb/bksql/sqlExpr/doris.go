@@ -359,6 +359,8 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 func (d *DorisSQLExpr) checkMatchALL(k string) bool {
 	if d.fieldsMap != nil {
+		// 忽略大小写，所以统一转成小写
+		k = strings.ToLower(k)
 		if t, ok := d.fieldsMap[k]; ok {
 			if t == DorisTypeText {
 				return true

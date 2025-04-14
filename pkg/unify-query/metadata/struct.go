@@ -117,11 +117,15 @@ type Query struct {
 	QueryString   string
 	AllConditions AllConditions
 
-	HighLight HighLight
+	HighLight *HighLight
 
-	Source      []string
-	From        int
-	Size        int
+	Source []string
+	From   int
+	Size   int
+
+	Scroll             string
+	ResultTableOptions ResultTableOptions
+
 	Orders      Orders
 	NeedAddTime bool
 }
@@ -131,7 +135,12 @@ type HighLight struct {
 	Enable            bool `json:"enable,omitempty"`
 }
 
-type Orders map[string]bool
+type Order struct {
+	Name string
+	Ast  bool
+}
+
+type Orders []Order
 
 type AllConditions [][]ConditionField
 
@@ -342,4 +351,31 @@ func (a Aggregates) LastAggName() string {
 	}
 
 	return a[len(a)-1].Name
+}
+
+func (os Orders) SortSliceList(list []map[string]any) {
+	if len(os) == 0 {
+		return
+	}
+	if len(list) == 0 {
+		return
+	}
+
+	sort.SliceStable(list, func(i, j int) bool {
+		for _, o := range os {
+			a, _ := list[i][o.Name].(string)
+			b, _ := list[j][o.Name].(string)
+
+			if a != b {
+				if o.Ast {
+					r := a < b
+					return r
+				} else {
+					r := a > b
+					return r
+				}
+			}
+		}
+		return true
+	})
 }

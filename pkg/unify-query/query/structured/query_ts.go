@@ -65,8 +65,16 @@ type QueryTs struct {
 	Limit int `json:"limit,omitempty" example:"0"`
 	// From 翻页开启数字
 	From int `json:"from,omitempty" example:"0"`
+
+	// Scroll 是否启用 Scroll 查询
+	Scroll string `json:"scroll,omitempty"`
+	// IsMultiFrom 是否启用 MultiFrom 查询
+	IsMultiFrom bool `json:"is_multi_from,omitempty"`
+
+	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`
+
 	// HighLight 是否开启高亮
-	HighLight metadata.HighLight `json:"highlight,omitempty"`
+	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
 // StepParse 解析step
@@ -133,9 +141,19 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 			q.SpaceUid = metadata.GetUser(ctx).SpaceUid
 		}
 
+		if q.ResultTableOptions != nil {
+			query.ResultTableOptions = q.ResultTableOptions
+		}
+
+		if q.Scroll != "" {
+			query.Scroll = q.Scroll
+		}
+
 		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-		if !query.HighLight.Enable && q.HighLight.Enable {
-			query.HighLight = q.HighLight
+		if query.HighLight != nil {
+			if !query.HighLight.Enable && q.HighLight.Enable {
+				query.HighLight = q.HighLight
+			}
 		}
 
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
@@ -379,8 +397,13 @@ type Query struct {
 	// IsReference 是否使用非时间聚合查询
 	IsReference bool `json:"-" swaggerignore:"true"`
 
+	// ResultTableOptions
+	ResultTableOptions metadata.ResultTableOptions `json:"-"`
+	// Scroll
+	Scroll string `json:"-"`
+
 	// HighLight 是否打开高亮，只对原始数据接口生效
-	HighLight metadata.HighLight `json:"highlight,omitempty"`
+	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
 func (q *Query) ToRouter() (*Route, error) {
@@ -745,7 +768,7 @@ func (q *Query) BuildMetadataQuery(
 					cond = append(cond, ConditionField{
 						DimensionName: k,
 						Value:         []string{v},
-						Operator:      Contains,
+						Operator:      ConditionEqual,
 					})
 				}
 			}
@@ -891,6 +914,10 @@ func (q *Query) BuildMetadataQuery(
 	query.QueryString = q.QueryString
 	query.Source = q.KeepColumns
 	query.HighLight = q.HighLight
+
+	query.Scroll = q.Scroll
+	query.ResultTableOptions = q.ResultTableOptions
+
 	query.Size = q.Limit
 	query.From = q.From
 
@@ -911,21 +938,7 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	if len(q.OrderBy) > 0 {
-		query.Orders = make(metadata.Orders)
-		for _, o := range q.OrderBy {
-			if len(o) == 0 {
-				continue
-			}
-
-			asc := true
-			name := o
-
-			if strings.HasPrefix(o, "-") {
-				asc = false
-				name = name[1:]
-			}
-			query.Orders[name] = asc
-		}
+		query.Orders = q.OrderBy.Orders()
 	}
 
 	span.Set("query-source-type", query.SourceType)

@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -268,29 +269,30 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	if opt.IsRegexp {
 		fieldNameExp = regexp.MustCompile(opt.FieldName)
 	}
-	tableIDs := make([]string, 0)
+
+	// tableID 去重，防止重复获取
+	tableIDs := set.New[string]()
 	isK8s := false
 
 	if db != "" && measurement != "" {
 		// 判断如果 tableID 完整的情况下（三段式），则直接取对应的 tsDB
-		tableIDs = append(tableIDs, string(opt.TableID))
+		tableIDs.Add(string(opt.TableID))
 	} else if db != "" {
 		// 指标二段式，仅传递 data-label
 		tIDs := s.router.GetDataLabelRelatedRts(s.ctx, db)
-		if tIDs != nil {
-			tableIDs = tIDs
-		}
+		tableIDs.Add(tIDs...)
 
-		if len(tableIDs) == 0 {
+		if tableIDs.Size() == 0 {
 			routerMessage = fmt.Sprintf("data_label router is empty with data_label: %s", db)
 			return nil, nil
 		}
 	} else {
 		// 如果不指定 tableID 或者 dataLabel，则检索跟字段相关的 RT，且只获取容器指标的 TsDB
 		isK8s = !opt.IsSkipK8s
-		tableIDs = s.GetSpaceRtIDs()
+		tIDs := s.GetSpaceRtIDs()
+		tableIDs.Add(tIDs...)
 
-		if len(tableIDs) == 0 {
+		if tableIDs.Size() == 0 {
 			routerMessage = fmt.Sprintf("space is empty with spaceUid: %s", opt.SpaceUid)
 			return nil, nil
 		}
@@ -298,7 +300,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 
 	isK8sFeatureFlag := metadata.GetIsK8sFeatureFlag(s.ctx)
 
-	for _, tID := range tableIDs {
+	for _, tID := range tableIDs.ToArray() {
 		spaceRt := s.GetSpaceRtInfo(tID)
 		// 如果不跳过空间，则取 space 和 tableIDs 的交集
 		if !opt.IsSkipSpace && spaceRt == nil {

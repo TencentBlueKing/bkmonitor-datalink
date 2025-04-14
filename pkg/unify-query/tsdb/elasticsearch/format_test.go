@@ -249,6 +249,70 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 			},
 			expected: `{"query":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
+		"aggregate 1d": {
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: TimeFieldTypeTime,
+				Unit: function.Second,
+			},
+			aggregates: metadata.Aggregates{
+				{
+					Name:       "count",
+					Dimensions: []string{"gseIndex"},
+					Window:     time.Hour * 24,
+					TimeZone:   "Asia/ShangHai",
+				},
+			},
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1d","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+		},
+		"aggregate 1h": {
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: TimeFieldTypeTime,
+				Unit: function.Second,
+			},
+			aggregates: metadata.Aggregates{
+				{
+					Name:       "count",
+					Dimensions: []string{"gseIndex"},
+					Window:     time.Hour,
+					TimeZone:   "Asia/ShangHai",
+				},
+			},
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1h","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+		},
+		"aggregate 1h2m": {
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: TimeFieldTypeTime,
+				Unit: function.Second,
+			},
+			aggregates: metadata.Aggregates{
+				{
+					Name:       "count",
+					Dimensions: []string{"gseIndex"},
+					Window:     time.Hour + 2*time.Minute,
+					TimeZone:   "Asia/ShangHai",
+				},
+			},
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"62m","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+		},
+		"aggregate 1h12s": {
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: TimeFieldTypeTime,
+				Unit: function.Second,
+			},
+			aggregates: metadata.Aggregates{
+				{
+					Name:       "count",
+					Dimensions: []string{"gseIndex"},
+					Window:     time.Hour + 12*time.Second,
+					TimeZone:   "Asia/ShangHai",
+				},
+			},
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"3612s","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+		},
 		"aggregate second time field": {
 			timeField: metadata.TimeField{
 				Name: "time",
@@ -317,7 +381,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).
-				WithQuery("value", c.timeField, start, end, timeFormat, 0, 0).
+				WithQuery("value", c.timeField, start, end, timeFormat, 0).
 				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
 
 			ss := elastic.NewSearchSource()
@@ -368,7 +432,7 @@ func TestFormatFactory_AggDataFormat(t *testing.T) {
 					Name: DefaultTimeFieldName,
 					Type: DefaultTimeFieldType,
 					Unit: DefaultTimeFieldUnit,
-				}, time.Time{}, time.Time{}, "", 0, 0)
+				}, time.Time{}, time.Time{}, "", 0)
 
 			_, _, err := fact.EsAgg(c.aggregates)
 			assert.NoError(t, err)

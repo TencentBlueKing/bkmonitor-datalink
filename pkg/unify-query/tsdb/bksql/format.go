@@ -20,6 +20,8 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sqlExpr"
@@ -119,6 +121,33 @@ func (f *QueryFactory) DescribeTableSQL() string {
 
 func (f *QueryFactory) FieldMap() map[string]string {
 	return f.expr.FieldMap()
+}
+
+func (f *QueryFactory) ReloadListData(data map[string]any) map[string]any {
+	newData := make(map[string]any)
+	newData[KeyIndex] = f.query.DB
+	newData[KeyTableID] = f.query.TableID
+	newData[KeyDataLabel] = f.query.DataLabel
+
+	fieldMap := f.FieldMap()
+	for k, d := range data {
+		if v, ok := fieldMap[k]; ok {
+			if v == TableTypeVariant {
+				objectData, err := json.ParseObject(k, d.(string))
+				if err != nil {
+					log.Errorf(f.ctx, "json.ParseObject err: %v", err)
+					continue
+				}
+				for nk, nd := range objectData {
+					newData[nk] = nd
+				}
+				continue
+			}
+		}
+
+		newData[k] = d
+	}
+	return newData
 }
 
 func (f *QueryFactory) getTheDateIndexFilters() (theDateFilter string, err error) {

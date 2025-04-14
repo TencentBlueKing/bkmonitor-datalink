@@ -42,6 +42,8 @@ const (
 
 	TableFieldName = "Field"
 	TableFieldType = "Type"
+
+	TableTypeVariant = "variant"
 )
 
 type Instance struct {
@@ -425,11 +427,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 
 	for _, list := range data.List {
-		list[KeyIndex] = query.DB
-		list[KeyTableID] = query.TableID
-		list[KeyDataLabel] = query.DataLabel
-
-		dataCh <- list
+		dataCh <- queryFactory.ReloadListData(list)
 	}
 
 	total = int64(data.TotalRecordSize)

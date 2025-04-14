@@ -199,12 +199,13 @@ func HandlerQueryExemplar(c *gin.Context) {
 // @Router   /query/raw [post]
 func HandlerQueryRaw(c *gin.Context) {
 	var (
-		ctx      = c.Request.Context()
-		resp     = &response{c: c}
-		user     = metadata.GetUser(ctx)
-		err      error
-		span     *trace.Span
-		listData ListData
+		ctx              = c.Request.Context()
+		resp             = &response{c: c}
+		user             = metadata.GetUser(ctx)
+		err              error
+		span             *trace.Span
+		listData         ListData
+		ignoreDimensions = []string{elasticsearch.KeyAddress}
 	)
 
 	ctx, span = trace.NewSpan(ctx, "handler-query-raw")
@@ -255,7 +256,9 @@ func HandlerQueryRaw(c *gin.Context) {
 			continue
 		}
 
-		delete(item, elasticsearch.KeyAddress)
+		for _, ignoreDimension := range ignoreDimensions {
+			delete(item, ignoreDimension)
+		}
 		listData.List = append(listData.List, item)
 	}
 	listData.ResultTableOptions = resultTableOptions

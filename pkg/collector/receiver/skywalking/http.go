@@ -95,7 +95,7 @@ func extractMetadata(s string) (token, serviceInstance string, err error) {
 
 func (s HttpService) reportV3Segment(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.RemoteAddr)
+	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 
 	start := time.Now()
 	buf := &bytes.Buffer{}
@@ -148,7 +148,7 @@ func (s HttpService) reportV3Segment(w http.ResponseWriter, req *http.Request) {
 
 func (s HttpService) reportV3Segments(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.RemoteAddr)
+	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 
 	start := time.Now()
 	buf := &bytes.Buffer{}

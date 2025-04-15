@@ -68,7 +68,7 @@ var acceptedFormats = map[string]Encoder{
 
 func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.RemoteAddr)
+	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 
 	start := time.Now()
 	buf := &bytes.Buffer{}

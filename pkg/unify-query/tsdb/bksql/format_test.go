@@ -71,7 +71,7 @@ func TestNewSqlFactory(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT `level`, COUNT(`gseIndex`) AS `_value_`, ((CAST((__shard_key__ / 1000 + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `thedate` = '20250313' AND `gseIndex` > 0 AND `level` = 'ERROR' GROUP BY `level`, _timestamp_ ORDER BY `_timestamp_` ASC, `level` ASC",
+			expected: "SELECT `level`, COUNT(`gseIndex`) AS `_value_`, ((CAST((__shard_key__ / 1000 + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `thedate` = '20250313' AND `gseIndex` > 0 AND `level` = 'ERROR' GROUP BY `level`, _timestamp_ ORDER BY `_timestamp_` ASC, `level` ASC",
 		},
 		"doris sum-count_over_time-with-promql-seconds": {
 			query: &metadata.Query{
@@ -110,7 +110,7 @@ func TestNewSqlFactory(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT `level`, COUNT(`gseIndex`) AS `_value_`, CAST(dtEventTimeStamp / 75000 AS INT) * 75000  AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `thedate` = '20250313' AND `gseIndex` > 0 AND `level` = 'ERROR' GROUP BY `level`, _timestamp_ ORDER BY `_timestamp_` ASC, `level` ASC",
+			expected: "SELECT `level`, COUNT(`gseIndex`) AS `_value_`, CAST(dtEventTimeStamp / 75000 AS INT) * 75000  AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `thedate` = '20250313' AND `gseIndex` > 0 AND `level` = 'ERROR' GROUP BY `level`, _timestamp_ ORDER BY `_timestamp_` ASC, `level` ASC",
 		},
 		"doris sum-with-promql-1": {
 			query: &metadata.Query{
@@ -138,7 +138,7 @@ func TestNewSqlFactory(t *testing.T) {
 				Size:   10,
 				Orders: nil,
 			},
-			expected: "SELECT `ip`, SUM(`gseIndex`) AS `_value_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `thedate` = '20250313' AND `gseIndex` > 0 GROUP BY `ip` LIMIT 10",
+			expected: "SELECT `ip`, SUM(`gseIndex`) AS `_value_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `thedate` = '20250313' AND `gseIndex` > 0 GROUP BY `ip` LIMIT 10",
 		},
 		"doris count-with-count-promql-1": {
 			query: &metadata.Query{
@@ -155,7 +155,7 @@ func TestNewSqlFactory(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, ((CAST((__shard_key__ / 1000 + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `thedate` = '20250313' GROUP BY `ip`, _timestamp_ ORDER BY `_timestamp_` ASC",
+			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, ((CAST((__shard_key__ / 1000 + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `thedate` = '20250313' GROUP BY `ip`, _timestamp_ ORDER BY `_timestamp_` ASC",
 		},
 		"doris count-with-count-promql-2": {
 			// 2024-12-07 21:36:40	UTC
@@ -187,7 +187,7 @@ func TestNewSqlFactory(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, ((CAST((__shard_key__ / 1000 + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1733607400000 AND `dtEventTimeStamp` < 1733939375000 AND `thedate` >= '20241208' AND `thedate` <= '20241212' AND `gseIndex` > 0 GROUP BY `ip`, _timestamp_ ORDER BY `_timestamp_` ASC",
+			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, ((CAST((__shard_key__ / 1000 + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1733607400000 AND `dtEventTimeStamp` <= 1733939375000 AND `thedate` >= '20241208' AND `thedate` <= '20241212' AND `gseIndex` > 0 GROUP BY `ip`, _timestamp_ ORDER BY `_timestamp_` ASC",
 		},
 		"doris count by day with UTC": {
 			// 2025-03-14 15:05:45  Asia/ShangHai
@@ -205,7 +205,7 @@ func TestNewSqlFactory(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, ((CAST((__shard_key__ / 1000 + 0) / 1440 AS INT) * 1440 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741935945000 AND `dtEventTimeStamp` < 1742456145000 AND `thedate` >= '20250314' AND `thedate` <= '20250320' GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC",
+			expected: "SELECT COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, ((CAST((__shard_key__ / 1000 + 0) / 1440 AS INT) * 1440 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741935945000 AND `dtEventTimeStamp` <= 1742456145000 AND `thedate` >= '20250314' AND `thedate` <= '20250320' GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC",
 		},
 		"doris count by day with Asia/Shanghai": {
 			// 2025-03-14 15:05:45  Asia/ShangHai
@@ -224,7 +224,26 @@ func TestNewSqlFactory(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, ((CAST((__shard_key__ / 1000 + 480) / 1440 AS INT) * 1440 - 480) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741935945000 AND `dtEventTimeStamp` < 1742456145000 AND `thedate` >= '20250314' AND `thedate` <= '20250320' GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC",
+			expected: "SELECT COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, ((CAST((__shard_key__ / 1000 + 480) / 1440 AS INT) * 1440 - 480) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741935945000 AND `dtEventTimeStamp` <= 1742456145000 AND `thedate` >= '20250314' AND `thedate` <= '20250320' GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC",
+		},
+		"doris count by dimension with object": {
+			// 2025-03-14 15:05:45  Asia/ShangHai
+			start: time.UnixMilli(1741935945000),
+			// 2025-03-20 15:35:45 Asia/ShangHai
+			end: time.UnixMilli(1742456145000),
+			query: &metadata.Query{
+				DB:          "5000140_bklog_container_log_demo_analysis",
+				Measurement: "doris",
+				Field:       "__ext.container_id",
+				Aggregates: metadata.Aggregates{
+					{
+						Name:       "count",
+						Window:     time.Hour * 24,
+						Dimensions: []string{"__ext.container_id"},
+					},
+				},
+			},
+			expected: "SELECT CAST(__ext[\"container_id\"] AS STRING) AS `__ext__bk_46__container_id`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, ((CAST((__shard_key__ / 1000 + 0) / 1440 AS INT) * 1440 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741935945000 AND `dtEventTimeStamp` <= 1742456145000 AND `thedate` >= '20250314' AND `thedate` <= '20250320' GROUP BY CAST(__ext[\"container_id\"] AS STRING), _timestamp_ ORDER BY `_timestamp_` ASC",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

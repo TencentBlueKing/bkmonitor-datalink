@@ -625,6 +625,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	span.Set("query-metric", metricName)
 	span.Set("query-is-regexp", q.IsRegexp)
 	span.Set("tsdb-num", len(tsDBs))
+	span.Set("query-aggregate", aggregates)
 
 	for _, tsDB := range tsDBs {
 		query, buildErr := q.BuildMetadataQuery(ctx, tsDB, allConditions, queryLabelsMatcher)

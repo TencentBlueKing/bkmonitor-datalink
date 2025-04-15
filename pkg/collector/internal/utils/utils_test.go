@@ -21,15 +21,15 @@ import (
 
 func TestParseRequestIP(t *testing.T) {
 	t.Run("localhost", func(t *testing.T) {
-		assert.Equal(t, "", ParseRequestIP("localhost"))
+		assert.Equal(t, "", ParseRequestIP("localhost", nil))
 	})
 
 	t.Run("127.0.0.1", func(t *testing.T) {
-		assert.Equal(t, "127.0.0.1", ParseRequestIP("127.0.0.1"))
+		assert.Equal(t, "127.0.0.1", ParseRequestIP("127.0.0.1", nil))
 	})
 
 	t.Run("127.0.0.1:8080", func(t *testing.T) {
-		assert.Equal(t, "127.0.0.1", ParseRequestIP("127.0.0.1:8080"))
+		assert.Equal(t, "127.0.0.1", ParseRequestIP("127.0.0.1:8080", nil))
 	})
 }
 

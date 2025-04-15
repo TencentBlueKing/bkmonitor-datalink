@@ -115,7 +115,7 @@ func extractTokenFromHttpHeader(header http.Header) string {
 
 func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype define.RecordType) {
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.RemoteAddr)
+	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 
 	start := time.Now()
 	buf := &bytes.Buffer{}

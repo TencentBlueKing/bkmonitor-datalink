@@ -91,7 +91,7 @@ func Ready(config receiver.ComponentConfig) {
 
 func (s HttpService) Push(_ context.Context, req *connect.Request[pushv1.PushRequest]) (*connect.Response[pushv1.PushResponse], error) {
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.Peer().Addr)
+	ip := utils.ParseRequestIP(req.Peer().Addr, req.Header())
 	start := time.Now()
 
 	originToken := req.Header().Get(define.KeyToken)
@@ -154,7 +154,7 @@ func (s HttpService) Push(_ context.Context, req *connect.Request[pushv1.PushReq
 // ProfilesIngest 接收 pyroscope 上报的 profile 数据
 func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.RemoteAddr)
+	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 	start := time.Now()
 
 	buf := &bytes.Buffer{}

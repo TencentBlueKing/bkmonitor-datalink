@@ -41,7 +41,7 @@ func (s *CCApiClientSuite) TestAgent() {
 	s.NoError(err)
 	s.Equal("http://paas.service.consul/api/c/compapi/v2/cc/", req.URL.String())
 
-	// test apigw"
+	// test apigw
 	s.conf.Set(esb.ConfESBUseAPIGateway, true)
 
 	req, err = s.apiClient.Agent().Request()

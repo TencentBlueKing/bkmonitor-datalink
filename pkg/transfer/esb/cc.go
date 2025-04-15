@@ -50,16 +50,12 @@ type CCApiClient struct {
 	SearchServiceInstanceCounter      *monitor.CounterMixin
 	GetBizLocationCounter             *monitor.CounterMixin
 	client                            *Client
-	useApiGateway                     bool
-	customCmdbApi                     string
 }
 
 // NewCCApiClient :
 func NewCCApiClient(client *Client) *CCApiClient {
 	return &CCApiClient{
-		useApiGateway: client.conf.GetBool(ConfESBUseAPIGateway),
-		customCmdbApi: client.conf.GetString(ConfESBCmdbApiAddress),
-		client:        client,
+		client: client,
 		SearchHostTimeObserver: monitor.NewTimeObserver(MonitorRequestHandledDuration.With(prometheus.Labels{
 			"name": "list_biz_host_topo",
 		})),
@@ -115,15 +111,21 @@ func NewCCApiClient(client *Client) *CCApiClient {
 	}
 }
 
+// useApiGateway: use api gateway or not
+func (c *CCApiClient) useApiGateway() bool {
+	return c.client.conf.GetBool(ConfESBUseAPIGateway)
+}
+
 // Agent :
 func (c *CCApiClient) Agent() *sling.Sling {
 	agent := c.client.Agent()
 
 	// use esb or api gateway
-	if c.useApiGateway {
-		if c.customCmdbApi != "" {
+	if c.useApiGateway() {
+		customCmdbApi := c.client.conf.GetString(ConfESBCmdbApiAddress)
+		if customCmdbApi != "" {
 			// use custom cmdb apigw address
-			agent = agent.Base(c.customCmdbApi)
+			agent = agent.Base(customCmdbApi)
 		} else {
 			// use default cmdb apigw address
 			agent = agent.Path("/api/bk-cmdb/prod/")
@@ -166,7 +168,7 @@ func (c *CCApiClient) GetHostsByRange(bizID, limit, start int) (*CCSearchHostRes
 
 	// use different path by esb or api gateway
 	var path string
-	if c.useApiGateway {
+	if c.useApiGateway() {
 		path = fmt.Sprintf("/api/v3/hosts/app/%d/list_hosts_topo", bizID)
 	} else {
 		path = "/list_biz_hosts_topo/"
@@ -203,7 +205,7 @@ func (c *CCApiClient) GetSearchBizInstTopo(start, bizID, limit, level int) ([]CC
 
 	// use different path by esb or api gateway
 	var path string
-	if c.useApiGateway {
+	if c.useApiGateway() {
 		path = fmt.Sprintf("/api/v3/find/topoinst/biz/%d", bizID)
 	} else {
 		path = "/search_biz_inst_topo/"
@@ -246,7 +248,7 @@ func (c *CCApiClient) GetSearchBusiness() ([]CCSearchBusinessResponseInfo, error
 
 	// use different path by esb or api gateway
 	var path string
-	if c.useApiGateway {
+	if c.useApiGateway() {
 		path = fmt.Sprintf("/api/v3/biz/search/%s", c.client.commonArgs.BkSupplierAccount)
 	} else {
 		path = "/search_business/"
@@ -301,7 +303,7 @@ func (c *CCApiClient) GetServiceInstance(bizID, limit, start int, ServiceInstanc
 
 	// use different path by esb or api gateway
 	var path string
-	if c.useApiGateway {
+	if c.useApiGateway() {
 		path = "/api/v3/findmany/proc/service_instance/details"
 	} else {
 		path = "/list_service_instance_detail/"

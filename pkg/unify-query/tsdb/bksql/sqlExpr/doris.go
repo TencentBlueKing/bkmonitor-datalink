@@ -23,6 +23,8 @@ const (
 	DorisTypeText = "text"
 
 	ShardKey = "__shard_key__"
+
+	DefaultKey = "log"
 )
 
 type DorisSQLExpr struct {
@@ -406,8 +408,7 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		return fmt.Sprintf("%s AND %s", left, right), nil
 	case *querystring.WildcardExpr:
 		if c.Field == "" {
-			err = fmt.Errorf(Doris + " " + ErrorMatchAll)
-			return "", err
+			c.Field = DefaultKey
 		}
 
 		field, _ := d.dimTransform(c.Field)
@@ -415,8 +416,7 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		return fmt.Sprintf("%s LIKE '%%%s%%'", field, c.Value), nil
 	case *querystring.MatchExpr:
 		if c.Field == "" {
-			err = fmt.Errorf(Doris + " " + ErrorMatchAll + ": " + c.Value)
-			return "", err
+			c.Field = DefaultKey
 		}
 		field, _ := d.dimTransform(c.Field)
 
@@ -427,8 +427,7 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		return fmt.Sprintf("%s = '%s'", field, c.Value), nil
 	case *querystring.NumberRangeExpr:
 		if c.Field == "" {
-			err = fmt.Errorf(Doris + " " + ErrorMatchAll)
-			return "", err
+			c.Field = DefaultKey
 		}
 		field, _ := d.dimTransform(c.Field)
 

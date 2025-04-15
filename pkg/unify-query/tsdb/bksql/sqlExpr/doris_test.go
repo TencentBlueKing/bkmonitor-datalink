@@ -34,7 +34,8 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "one word",
 			input: "test",
-			err:   "doris 不支持全字段检索: test",
+			want:  "`log` = 'test'",
+			//err:   "doris 不支持全字段检索: test",
 		},
 		{
 			name:  "complex nested query",

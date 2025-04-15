@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -24,6 +25,19 @@ const (
 	Microsecond = "microsecond"
 	Nanosecond  = "nanosecond"
 )
+
+func MatcherToString(matchers ...*labels.Matcher) string {
+	vals := make([]string, 0, len(matchers))
+	for _, m := range matchers {
+		vals = append(vals, m.String())
+	}
+
+	if len(vals) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("{%s}", strings.Join(vals, ","))
+}
 
 func MatcherToMetricName(matchers ...*labels.Matcher) string {
 	for _, m := range matchers {

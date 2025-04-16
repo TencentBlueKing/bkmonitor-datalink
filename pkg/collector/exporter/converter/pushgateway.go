@@ -148,6 +148,8 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 
 	for _, metric := range metrics {
 		lbs := map[string]string{}
+		ts := getTimestamp(now, metric.TimestampMs)
+
 		for _, label := range metric.Label {
 			if label.GetName() != "" && label.GetValue() != "" {
 				lbs[label.GetName()] = label.GetValue()
@@ -162,7 +164,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					name: counter.GetValue(),
 				},
 				Target:     target,
-				Timestamp:  getTimestamp(now, metric.TimestampMs),
+				Timestamp:  ts,
 				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 				Exemplar:   counter.Exemplar,
 			})
@@ -177,7 +179,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					name: gauge.GetValue(),
 				},
 				Target:     target,
-				Timestamp:  getTimestamp(now, metric.TimestampMs),
+				Timestamp:  ts,
 				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			})
 			sendOut()
@@ -192,7 +194,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					name + "_count": summary.GetSampleCount(),
 				},
 				Target:     target,
-				Timestamp:  getTimestamp(now, metric.TimestampMs),
+				Timestamp:  ts,
 				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			})
 			sendOut()
@@ -210,7 +212,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 						name: quantile.GetValue(),
 					},
 					Target:     target,
-					Timestamp:  getTimestamp(now, metric.TimestampMs),
+					Timestamp:  ts,
 					Dimensions: utils.MergeMaps(lbs, quantileLabels, pd.Labels),
 				})
 				sendOut()
@@ -226,7 +228,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					name + "_count": histogram.GetSampleCount(),
 				},
 				Target:     target,
-				Timestamp:  getTimestamp(now, metric.TimestampMs),
+				Timestamp:  ts,
 				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			})
 			sendOut()
@@ -248,7 +250,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 						name + "_bucket": bucket.GetCumulativeCount(),
 					},
 					Target:     target,
-					Timestamp:  getTimestamp(now, metric.TimestampMs),
+					Timestamp:  ts,
 					Dimensions: utils.MergeMaps(lbs, bucketLabels, pd.Labels),
 					Exemplar:   bucket.Exemplar,
 				})
@@ -265,7 +267,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 						name + "_bucket": histogram.GetSampleCount(),
 					},
 					Target:     target,
-					Timestamp:  getTimestamp(now, metric.TimestampMs),
+					Timestamp:  ts,
 					Dimensions: utils.MergeMaps(lbs, bucketLabels, pd.Labels),
 				})
 				sendOut()
@@ -280,7 +282,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					name: untyped.GetValue(),
 				},
 				Target:     target,
-				Timestamp:  getTimestamp(now, metric.TimestampMs),
+				Timestamp:  ts,
 				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			})
 			sendOut()

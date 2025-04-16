@@ -271,7 +271,6 @@ func HandlerTagValues(c *gin.Context) {
 
 					span.Set("direct-label-values-matcher", matcher.String())
 					span.Set("direct-label-values-size", qry.Size)
-					span.Set("direct-label-values-size", vmExpand)
 
 					res, err = instance.DirectLabelValues(ctx, name, start, end, qry.Size, matcher)
 				} else {

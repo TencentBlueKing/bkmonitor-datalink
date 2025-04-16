@@ -286,6 +286,8 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 			sendOut()
 		}
 	}
+
+	sendOut() // 处理剩余数据
 }
 
 // compactTrpcOTFilter 兼容 trpc 框架 OTfilter 指标格式

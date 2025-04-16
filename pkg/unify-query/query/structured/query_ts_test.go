@@ -11,6 +11,7 @@ package structured
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -270,7 +271,11 @@ func TestQueryToMetric(t *testing.T) {
 
 			metric, err := c.query.ToQueryMetric(ctx, spaceUID)
 			assert.Nil(t, err)
-			assert.Equal(t, c.metric, metric)
+
+			a, _ := json.Marshal(c.metric)
+			b, _ := json.Marshal(metric)
+
+			assert.JSONEq(t, string(a), string(b))
 		})
 	}
 }

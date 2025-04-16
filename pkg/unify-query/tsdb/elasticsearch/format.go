@@ -60,9 +60,12 @@ const (
 const (
 	KeyDocID     = "__doc_id"
 	KeyHighLight = "__highlight"
+	KeySort      = "sort"
 
-	KeyIndex     = "__index"
-	KeyTableID   = "__result_table"
+	KeyIndex   = "__index"
+	KeyTableID = "__result_table"
+	KeyAddress = "__address"
+
 	KeyDataLabel = "__data_label"
 )
 
@@ -175,7 +178,6 @@ type FormatFactory struct {
 	aggInfoList aggInfoList
 	orders      metadata.Orders
 
-	from     int
 	size     int
 	timezone string
 
@@ -251,7 +253,7 @@ func (f *FormatFactory) queryToUnix(t time.Time, unit string) int64 {
 	}
 }
 
-func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField, start, end time.Time, timeFormat string, from, size int) *FormatFactory {
+func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField, start, end time.Time, timeFormat string, size int) *FormatFactory {
 	if timeField.Name == "" {
 		timeField.Name = DefaultTimeFieldName
 	}
@@ -270,7 +272,6 @@ func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField,
 	f.timeFormat = timeFormat
 	f.valueField = valueKey
 	f.timeField = timeField
-	f.from = from
 	f.size = size
 
 	return f
@@ -588,7 +589,12 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			name = info.Name
 		case TermAgg:
 			curName := info.Name
-			curAgg := elastic.NewTermsAggregation().Field(info.Name).Missing(" ")
+			curAgg := elastic.NewTermsAggregation().Field(info.Name)
+			fieldType, ok := f.mapping[info.Name]
+			if !ok || fieldType == Text || fieldType == KeyWord {
+				curAgg = curAgg.Missing(" ")
+			}
+
 			if f.size > 0 {
 				curAgg = curAgg.Size(f.size)
 			}
@@ -664,10 +670,6 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 	}
 
 	return f.Agg()
-}
-
-func (f *FormatFactory) Size(ss *elastic.SearchSource) {
-	ss.From(f.from).Size(f.size)
 }
 
 func (f *FormatFactory) Orders() metadata.Orders {

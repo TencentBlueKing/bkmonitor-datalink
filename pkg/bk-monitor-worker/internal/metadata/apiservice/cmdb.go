@@ -234,7 +234,7 @@ func (s CMDBService) GetAllHost() ([]Host, error) {
 		return nil, errors.Wrap(err, "GetCmdbApi failed")
 	}
 	var bizResp cmdb.SearchBusinessResp
-	if _, err := cmdbApi.SearchBusiness().SetResult(&bizResp).Request(); err != nil {
+	if _, err := cmdbApi.SearchBusiness().SetBody(map[string]interface{}{"bk_supplier_account": 0}).SetResult(&bizResp).Request(); err != nil {
 		return nil, errors.Wrap(err, "SearchBusinessResp failed")
 	}
 	if err := bizResp.Err(); err != nil {

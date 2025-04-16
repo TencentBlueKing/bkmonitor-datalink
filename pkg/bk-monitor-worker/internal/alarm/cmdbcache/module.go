@@ -80,7 +80,7 @@ func getModuleListByBizID(ctx context.Context, bizID int) ([]map[string]interfac
 			return result.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.SearchModule().SetContext(ctx).SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.SearchModule().SetContext(ctx).SetBody(map[string]interface{}{"bk_supplier_account": 0, "bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)

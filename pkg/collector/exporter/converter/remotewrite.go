@@ -40,7 +40,10 @@ func (c remoteWriteConverter) ToDataID(record *define.Record) int32 {
 func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc) {
 	rwData := record.Data.(*define.RemoteWriteData)
 	dataId := c.ToDataID(record)
-	events := make([]define.Event, 0)
+
+	const batchSize = 1024
+
+	events := make([]define.Event, 0, batchSize)
 	for i := 0; i < len(rwData.Timeseries); i++ {
 		ts := rwData.Timeseries[i]
 		name, dims := c.extractNameDimensions(ts.GetLabels())
@@ -62,6 +65,10 @@ func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc
 				Dimensions: utils.CloneMap(dims),
 			}
 			events = append(events, c.ToEvent(record.Token, dataId, pm.AsMapStr()))
+			if len(events) >= batchSize {
+				f(events...)
+				events = make([]define.Event, 0, batchSize)
+			}
 		}
 	}
 	if len(events) > 0 {

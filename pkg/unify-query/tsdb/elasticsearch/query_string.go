@@ -53,7 +53,7 @@ func (s *QueryString) ToDSL() (elastic.Query, error) {
 		}
 	}()
 
-	if s.q == "" {
+	if s.q == "" || s.q == "*" {
 		return nil, nil
 	}
 

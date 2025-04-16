@@ -132,18 +132,19 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 	const batchSize = 1024
 	pms := make([]*promMapper, 0, batchSize)
 
-	sendOut := func() {
-		pms = c.compactTrpcOTFilter(pms)
-		if len(pms) <= 0 {
-			return
+	sendOut := func(force bool) {
+		if len(pms) >= batchSize || force {
+			pms = c.compactTrpcOTFilter(pms)
+			if len(pms) <= 0 {
+				return
+			}
+			events := make([]define.Event, 0, len(pms))
+			for _, pm := range pms {
+				events = append(events, c.ToEvent(token, dataId, pm.AsMapStr()))
+			}
+			f(events...)
+			pms = make([]*promMapper, 0, batchSize)
 		}
-
-		events := make([]define.Event, 0, len(pms))
-		for _, pm := range pms {
-			events = append(events, c.ToEvent(token, dataId, pm.AsMapStr()))
-		}
-		f(events...)
-		pms = make([]*promMapper, 0, batchSize)
 	}
 
 	for _, metric := range metrics {
@@ -168,7 +169,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 				Exemplar:   counter.Exemplar,
 			})
-			sendOut()
+			sendOut(false)
 		}
 
 		// 处理 Gauge 类型数据
@@ -182,7 +183,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				Timestamp:  ts,
 				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			})
-			sendOut()
+			sendOut(false)
 		}
 
 		// 处理 Summary 类型数据
@@ -197,7 +198,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				Timestamp:  ts,
 				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			})
-			sendOut()
+			sendOut(false)
 
 			for _, quantile := range summary.GetQuantile() {
 				if !utils.IsValidFloat64(quantile.GetValue()) {
@@ -215,7 +216,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					Timestamp:  ts,
 					Dimensions: utils.MergeMaps(lbs, quantileLabels, pd.Labels),
 				})
-				sendOut()
+				sendOut(false)
 			}
 		}
 
@@ -231,7 +232,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				Timestamp:  ts,
 				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			})
-			sendOut()
+			sendOut(false)
 
 			infSeen := false
 			for _, bucket := range histogram.GetBucket() {
@@ -254,7 +255,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					Dimensions: utils.MergeMaps(lbs, bucketLabels, pd.Labels),
 					Exemplar:   bucket.Exemplar,
 				})
-				sendOut()
+				sendOut(false)
 			}
 
 			// 仅 expfmt.FmtText 格式支持 inf
@@ -270,7 +271,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					Timestamp:  ts,
 					Dimensions: utils.MergeMaps(lbs, bucketLabels, pd.Labels),
 				})
-				sendOut()
+				sendOut(false)
 			}
 		}
 
@@ -285,11 +286,11 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				Timestamp:  ts,
 				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			})
-			sendOut()
+			sendOut(false)
 		}
 	}
 
-	sendOut() // 处理剩余数据
+	sendOut(true) // 处理剩余数据
 }
 
 // compactTrpcOTFilter 兼容 trpc 框架 OTfilter 指标格式

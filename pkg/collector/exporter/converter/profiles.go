@@ -73,7 +73,6 @@ func (c profilesConverter) Convert(record *define.Record, f define.GatherFunc) {
 			"biz_id":       record.Token.BizId,
 			"service_name": svrName,
 		})
-
 		f(event)
 	}
 }

@@ -248,29 +248,28 @@ func (c metricsConverter) convertSummaryMetrics(pdMetric pmetric.Metric, rsAttrs
 	dps := pdMetric.Summary().DataPoints()
 	for i := 0; i < dps.Len(); i++ {
 		dp := dps.At(i)
+		dpTime := dp.Timestamp().AsTime()
 		dimensions := utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs)
 
 		if !utils.IsValidFloat64(dp.Sum()) {
 			continue
 		}
-
 		m := otMetricMapper{
 			Metric:     pdMetric.Name() + "_sum",
 			Value:      dp.Sum(),
 			Dimensions: dimensions,
-			Time:       dp.Timestamp().AsTime(),
+			Time:       dpTime,
 		}
 		items = append(items, m.AsMapStr())
 
 		if !utils.IsValidUint64(dp.Count()) {
 			continue
 		}
-
 		m = otMetricMapper{
 			Metric:     pdMetric.Name() + "_count",
 			Value:      float64(dp.Count()),
 			Dimensions: dimensions,
-			Time:       dp.Timestamp().AsTime(),
+			Time:       dpTime,
 		}
 		items = append(items, m.AsMapStr())
 
@@ -284,12 +283,11 @@ func (c metricsConverter) convertSummaryMetrics(pdMetric pmetric.Metric, rsAttrs
 			if !utils.IsValidFloat64(qua.Value()) {
 				continue
 			}
-
 			m = otMetricMapper{
 				Metric:     pdMetric.Name(),
 				Value:      qua.Value(),
 				Dimensions: utils.MergeReplaceMaps(additional, dimensions),
-				Time:       dp.Timestamp().AsTime(),
+				Time:       dpTime,
 			}
 			items = append(items, m.AsMapStr())
 		}

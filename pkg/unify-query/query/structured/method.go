@@ -48,7 +48,7 @@ func (a AggregateMethodList) ToQry(timezone string) (metadata.Aggregates, error)
 	for _, aggr := range a {
 		agg := metadata.Aggregate{
 			Name:       aggr.Method,
-			Dimensions: aggr.Dimensions,
+			Dimensions: append([]string{}, aggr.Dimensions...),
 			Without:    aggr.Without,
 			Args:       aggr.VArgsList,
 		}

@@ -465,7 +465,7 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 		agg := metadata.Aggregate{
 			Name:       name,
 			Field:      am.Field,
-			Dimensions: am.Dimensions,
+			Dimensions: append([]string{}, am.Dimensions...),
 			Without:    am.Without,
 			Window:     time.Duration(window),
 			TimeZone:   q.Timezone,

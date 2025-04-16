@@ -125,9 +125,6 @@ func (f *QueryFactory) FieldMap() map[string]string {
 
 func (f *QueryFactory) ReloadListData(data map[string]any) map[string]any {
 	newData := make(map[string]any)
-	newData[KeyIndex] = f.query.DB
-	newData[KeyTableID] = f.query.TableID
-	newData[KeyDataLabel] = f.query.DataLabel
 
 	fieldMap := f.FieldMap()
 	for k, d := range data {
@@ -148,6 +145,134 @@ func (f *QueryFactory) ReloadListData(data map[string]any) map[string]any {
 		newData[k] = d
 	}
 	return newData
+}
+
+func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[string]interface{}) (*prompb.QueryResult, error) {
+	res := &prompb.QueryResult{}
+
+	if len(list) == 0 {
+		return res, nil
+	}
+
+	encodeFunc := metadata.GetPromDataFormat(ctx).EncodeFunc()
+	// 获取 metricLabel
+	metricLabel := f.query.MetricLabels(ctx)
+	tsMap := map[string]*prompb.TimeSeries{}
+
+	// 先获取维度的 key 保证顺序一致
+	keys := make([]string, 0)
+	for _, d := range list {
+		// 优先获取时间和值
+		var (
+			vt int64
+			vv float64
+
+			vtLong   interface{}
+			vvDouble interface{}
+
+			ok bool
+		)
+
+		if d == nil {
+			continue
+		}
+
+		nd := f.ReloadListData(d)
+		if len(keys) == 0 {
+			for k := range nd {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+		}
+
+		lbl := make([]prompb.Label, 0)
+		for _, k := range keys {
+			switch k {
+			case sqlExpr.TimeStamp:
+				if _, ok = nd[k]; ok {
+					vtLong = nd[k]
+				}
+			case sqlExpr.Value:
+				if _, ok = nd[k]; ok {
+					vvDouble = nd[k]
+				}
+			default:
+				// 获取维度信息
+				val, err := getValue(k, nd)
+				if err != nil {
+					log.Errorf(ctx, "get dimension (%s) value error in %+v %s", k, d, err.Error())
+					continue
+				}
+
+				if encodeFunc != nil {
+					k = encodeFunc(k)
+				}
+
+				lbl = append(lbl, prompb.Label{
+					Name:  k,
+					Value: val,
+				})
+
+			}
+		}
+
+		if vtLong == nil {
+			vtLong = f.start.UnixMilli()
+		}
+
+		switch vtLong.(type) {
+		case int64:
+			vt = vtLong.(int64)
+		case float64:
+			vt = int64(vtLong.(float64))
+		default:
+			return res, fmt.Errorf("%s type is error %T, %v", dtEventTimeStamp, vtLong, vtLong)
+		}
+
+		if vvDouble == nil {
+			continue
+		}
+		switch vvDouble.(type) {
+		case int64:
+			vv = float64(vvDouble.(int64))
+		case float64:
+			vv = vvDouble.(float64)
+		default:
+			return res, fmt.Errorf("%s type is error %T, %v", sqlExpr.Value, vvDouble, vvDouble)
+		}
+
+		// 如果是非时间聚合计算，则无需进行指标名的拼接作用
+		if metricLabel != nil {
+			lbl = append(lbl, *metricLabel)
+		}
+
+		var buf strings.Builder
+		for _, l := range lbl {
+			buf.WriteString(l.String())
+		}
+
+		// 同一个 series 进行合并分组
+		key := buf.String()
+		if _, ok := tsMap[key]; !ok {
+			tsMap[key] = &prompb.TimeSeries{
+				Labels:  lbl,
+				Samples: make([]prompb.Sample, 0),
+			}
+		}
+
+		tsMap[key].Samples = append(tsMap[key].Samples, prompb.Sample{
+			Value:     vv,
+			Timestamp: vt,
+		})
+	}
+
+	// 转换结构体
+	res.Timeseries = make([]*prompb.TimeSeries, 0, len(tsMap))
+	for _, ts := range tsMap {
+		res.Timeseries = append(res.Timeseries, ts)
+	}
+
+	return res, nil
 }
 
 func (f *QueryFactory) getTheDateIndexFilters() (theDateFilter string, err error) {

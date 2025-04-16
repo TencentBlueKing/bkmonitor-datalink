@@ -87,7 +87,7 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 	t.NeedAddTime = d.Options.NeedAddTime
 	t.SourceType = d.SourceType
 
-	sort.SliceIsSorted(d.StorageClusterRecords, func(i, j int) bool {
+	sort.SliceStable(d.StorageClusterRecords, func(i, j int) bool {
 		return d.StorageClusterRecords[i].EnableTime > d.StorageClusterRecords[j].EnableTime
 	})
 

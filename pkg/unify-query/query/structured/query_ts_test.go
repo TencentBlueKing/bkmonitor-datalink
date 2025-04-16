@@ -11,7 +11,6 @@ package structured
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -272,10 +271,7 @@ func TestQueryToMetric(t *testing.T) {
 			metric, err := c.query.ToQueryMetric(ctx, spaceUID)
 			assert.Nil(t, err)
 
-			a, _ := json.Marshal(c.metric)
-			b, _ := json.Marshal(metric)
-
-			assert.JSONEq(t, string(a), string(b))
+			assert.Equal(t, c.metric.ToJson(true), metric.ToJson(true))
 		})
 	}
 }
@@ -1141,7 +1137,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							{
 								DataSource:     BkLog,
 								Timezone:       "UTC",
-								SourceType:     "bkdata",
 								TableID:        "result_table.es",
 								DataLabel:      "es",
 								DB:             "es_index",

@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/prompb"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
@@ -170,122 +169,6 @@ func (i *Instance) dims(dims []string, field string) []string {
 	return dimensions
 }
 
-func (i *Instance) formatData(ctx context.Context, start time.Time, query *metadata.Query, keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
-	res := &prompb.QueryResult{}
-
-	if len(list) == 0 {
-		return res, nil
-	}
-	// 维度结构体为空则任务异常
-	if len(keys) == 0 {
-		return res, fmt.Errorf("SelectFieldsOrder is empty")
-	}
-
-	// 获取 metricLabel
-	metricLabel := query.MetricLabels(ctx)
-
-	tsMap := make(map[string]*prompb.TimeSeries, 0)
-	for _, d := range list {
-		// 优先获取时间和值
-		var (
-			vt int64
-			vv float64
-
-			vtLong   interface{}
-			vvDouble interface{}
-
-			ok bool
-		)
-
-		if d == nil {
-			continue
-		}
-
-		lbl := make([]prompb.Label, 0)
-		for _, k := range keys {
-			switch k {
-			case sqlExpr.TimeStamp:
-				if _, ok = d[k]; ok {
-					vtLong = d[k]
-				}
-			case sqlExpr.Value:
-				if _, ok = d[k]; ok {
-					vvDouble = d[k]
-				}
-			default:
-				// 获取维度信息
-				val, err := getValue(k, d)
-				if err != nil {
-					log.Errorf(ctx, "get dimension (%s) value error in %+v %s", k, d, err.Error())
-					continue
-				}
-
-				lbl = append(lbl, prompb.Label{
-					Name:  k,
-					Value: val,
-				})
-			}
-		}
-
-		if vtLong == nil {
-			vtLong = start.UnixMilli()
-		}
-
-		switch vtLong.(type) {
-		case int64:
-			vt = vtLong.(int64)
-		case float64:
-			vt = int64(vtLong.(float64))
-		default:
-			return res, fmt.Errorf("%s type is error %T, %v", dtEventTimeStamp, vtLong, vtLong)
-		}
-
-		if vvDouble == nil {
-			continue
-		}
-		switch vvDouble.(type) {
-		case int64:
-			vv = float64(vvDouble.(int64))
-		case float64:
-			vv = vvDouble.(float64)
-		default:
-			return res, fmt.Errorf("%s type is error %T, %v", sqlExpr.Value, vvDouble, vvDouble)
-		}
-
-		// 如果是非时间聚合计算，则无需进行指标名的拼接作用
-		if metricLabel != nil {
-			lbl = append(lbl, *metricLabel)
-		}
-
-		var buf strings.Builder
-		for _, l := range lbl {
-			buf.WriteString(l.String())
-		}
-
-		// 同一个 series 进行合并分组
-		key := buf.String()
-		if _, ok := tsMap[key]; !ok {
-			tsMap[key] = &prompb.TimeSeries{
-				Labels:  lbl,
-				Samples: make([]prompb.Sample, 0),
-			}
-		}
-
-		tsMap[key].Samples = append(tsMap[key].Samples, prompb.Sample{
-			Value:     vv,
-			Timestamp: vt,
-		})
-	}
-
-	// 转换结构体
-	res.Timeseries = make([]*prompb.TimeSeries, 0, len(tsMap))
-	for _, ts := range tsMap {
-		res.Timeseries = append(res.Timeseries, ts)
-	}
-
-	return res, nil
-}
-
 func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]string, error) {
 	fieldsMap := make(map[string]string)
 
@@ -427,7 +310,11 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 
 	for _, list := range data.List {
-		dataCh <- queryFactory.ReloadListData(list)
+		newData := queryFactory.ReloadListData(list)
+		newData[KeyIndex] = query.DB
+		newData[KeyTableID] = query.TableID
+		newData[KeyDataLabel] = query.DataLabel
+		dataCh <- newData
 	}
 
 	total = int64(data.TotalRecordSize)
@@ -484,7 +371,7 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 		return storage.ErrSeriesSet(fmt.Errorf("记录数(%d)超过限制(%d)", data.TotalRecords, i.maxLimit))
 	}
 
-	qr, err := i.formatData(ctx, start, query, data.SelectFieldsOrder, data.List)
+	qr, err := queryFactory.FormatDataToQueryResult(ctx, data.List)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}

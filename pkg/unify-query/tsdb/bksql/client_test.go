@@ -30,7 +30,7 @@ var (
 
 func MockClient() *bksql.Client {
 	if client == nil {
-		client = (&bksql.Client{}).WithUrl(mock.BkSQLUrl).WithCurl(&curl.HttpCurl{Log: log.DefaultLogger})
+		client = (&bksql.Client{}).WithUrl(mock.BkBaseUrl).WithCurl(&curl.HttpCurl{Log: log.DefaultLogger})
 	}
 
 	return client

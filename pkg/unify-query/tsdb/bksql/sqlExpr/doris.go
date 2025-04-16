@@ -87,8 +87,12 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 	var (
 		window       time.Duration
 		timezone     string
-		dimensionMap = make(map[string]struct{})
+		dimensionMap = map[string]struct{}{
+			FieldValue: {},
+			FieldTime:  {},
+		}
 	)
+
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
 			var (
@@ -183,7 +187,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		var orderField string
 		switch order.Name {
 		case FieldValue:
-			orderField = d.valueField
+			orderField = Value
 		case FieldTime:
 			orderField = TimeStamp
 		default:
@@ -259,63 +263,77 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	switch c.Operator {
 	// 处理等于类操作符（=, IN, LIKE）
 	case metadata.ConditionEqual, metadata.ConditionExact, metadata.ConditionContains:
+		if len(c.Value) == 1 && c.Value[0] == "" {
+			op = "IS"
+			val = "NULL"
+			break
+		}
+
 		if len(c.Value) > 1 && !c.IsWildcard && !d.checkMatchALL(c.DimensionName) {
 			op = "IN"
 			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
-		} else {
-			var format string
-			if c.IsWildcard {
-				format = "'%%%s%%'"
-				op = "LIKE"
-			} else {
-				format = "'%s'"
-				if d.checkMatchALL(c.DimensionName) {
-					op = "MATCH_PHRASE_PREFIX"
-				} else {
-					op = "="
-				}
-			}
+			break
+		}
 
-			var filter []string
-			for _, v := range c.Value {
-				filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
-			}
-			key = ""
-			if len(filter) == 1 {
-				val = filter[0]
+		var format string
+		if c.IsWildcard {
+			format = "'%%%s%%'"
+			op = "LIKE"
+		} else {
+			format = "'%s'"
+			if d.checkMatchALL(c.DimensionName) {
+				op = "MATCH_PHRASE_PREFIX"
 			} else {
-				val = fmt.Sprintf("(%s)", strings.Join(filter, " OR "))
+				op = "="
 			}
+		}
+
+		var filter []string
+		for _, v := range c.Value {
+			filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
+		}
+		key = ""
+		if len(filter) == 1 {
+			val = filter[0]
+		} else {
+			val = fmt.Sprintf("(%s)", strings.Join(filter, " OR "))
 		}
 	// 处理不等于类操作符（!=, NOT IN, NOT LIKE）
 	case metadata.ConditionNotEqual, metadata.ConditionNotContains:
+		if len(c.Value) == 1 && c.Value[0] == "" {
+			op = "IS NOT"
+			val = "NULL"
+			break
+		}
+
 		if len(c.Value) > 1 && !c.IsWildcard && !d.checkMatchALL(c.DimensionName) {
 			op = "NOT IN"
 			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
-		} else {
-			var format string
-			if c.IsWildcard {
-				format = "'%%%s%%'"
-				op = "NOT LIKE"
-			} else {
-				format = "'%s'"
-				if d.checkMatchALL(c.DimensionName) {
-					op = "NOT MATCH_PHRASE_PREFIX"
-				} else {
-					op = "!="
-				}
-			}
+			break
+		}
 
-			var filter []string
-			for _, v := range c.Value {
-				filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
-			}
-			key = ""
-			if len(filter) == 1 {
-				val = filter[0]
+		var format string
+		if c.IsWildcard {
+			format = "'%%%s%%'"
+			op = "NOT LIKE"
+		} else {
+			format = "'%s'"
+			if d.checkMatchALL(c.DimensionName) {
+				op = "NOT MATCH_PHRASE_PREFIX"
 			} else {
-				val = fmt.Sprintf("(%s)", strings.Join(filter, " AND "))
+				op = "!="
 			}
+		}
+
+		var filter []string
+		for _, v := range c.Value {
+			filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
+		}
+		key = ""
+		if len(filter) == 1 {
+			val = filter[0]
+		} else {
+			val = fmt.Sprintf("(%s)", strings.Join(filter, " AND "))
 		}
 	// 处理正则表达式匹配
 	case metadata.ConditionRegEqual:

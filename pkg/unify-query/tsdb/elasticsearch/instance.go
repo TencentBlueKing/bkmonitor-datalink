@@ -184,6 +184,10 @@ func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []stri
 		return nil, err
 	}
 	mappingMap, err := client.GetMapping().Index(aliases...).Type("").Do(ctx)
+	if err != nil {
+		log.Warnf(ctx, "get mapping error: %s", err.Error())
+		return nil, err
+	}
 
 	indexes := make([]string, 0, len(mappingMap))
 	for index := range mappingMap {
@@ -808,16 +812,16 @@ func (i *Instance) QuerySeriesSet(
 					conn:    conn,
 				}
 
-				mappings, err1 := i.getMappings(ctx, qo.conn, qo.indexes)
+				mappings, errMapping := i.getMappings(ctx, qo.conn, qo.indexes)
 				// index 不存在，mappings 获取异常直接返回空
 				if len(mappings) == 0 {
-					log.Warnf(ctx, "index is empty with %v", qo.indexes)
+					log.Warnf(ctx, "index is empty with %v with %s error %v", qo.indexes, qo.conn.String(), errMapping)
 					return
 				}
 
-				if err1 != nil {
+				if errMapping != nil {
 					rets <- &TimeSeriesResult{
-						Error: err1,
+						Error: errMapping,
 					}
 					return
 				}

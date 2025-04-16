@@ -50,23 +50,23 @@ const (
 type VmCondition string
 
 type TimeField struct {
-	Name string
-	Type string
-	Unit string
+	Name string `json:"name,omitempty"`
+	Type string `json:"type,omitempty"`
+	Unit string `json:"unit,omitempty"`
 }
 
 // Aggregate 聚合方法
 type Aggregate struct {
-	Name  string
-	Field string
+	Name  string `json:"name,omitempty"`
+	Field string `json:"field,omitempty"`
 
-	Dimensions []string
-	Without    bool
+	Dimensions []string `json:"dimensions,omitempty"`
+	Without    bool     `json:"without,omitempty"`
 
-	Window   time.Duration
-	TimeZone string
+	Window   time.Duration `json:"window,omitempty"`
+	TimeZone string        `json:"time_zone,omitempty"`
 
-	Args []interface{}
+	Args []interface{} `json:"args,omitempty"`
 }
 
 // OffSetInfo Offset的信息存储，供promql查询转换为influxdb查询语句时使用
@@ -81,73 +81,73 @@ type Aggregates []Aggregate
 
 // Query 查询扩展信息，为后面查询提供定位
 type Query struct {
-	SourceType string
-	Password   string // 查询鉴权
+	SourceType string `json:"source_type,omitempty"`
+	Password   string `json:"password,omitempty"` // 查询鉴权
 
-	ClusterID string // 存储 ID
+	ClusterID string `json:"cluster_id,omitempty"` // 存储 ID
 
-	StorageType string // 存储类型
+	StorageType string `json:"storage_type,omitempty"` // 存储类型
 
-	StorageIDs  []string
-	StorageID   string
-	StorageName string
+	StorageIDs  []string `json:"storage_ids,omitempty"`
+	StorageID   string   `json:"storage_id,omitempty"`
+	StorageName string   `json:"storage_name,omitempty"`
 
-	ClusterName string
-	TagsKey     []string
+	ClusterName string   `json:"cluster_name,omitempty"`
+	TagsKey     []string `json:"tags_key,omitempty"`
 
-	DataSource string
-	DataLabel  string
-	TableID    string
-	MetricName string
+	DataSource string `json:"data_source,omitempty"`
+	DataLabel  string `json:"data_label,omitempty"`
+	TableID    string `json:"table_id,omitempty"`
+	MetricName string `json:"metric_name,omitempty"`
 
 	// vm 的 rt
-	VmRt string
+	VmRt string `json:"vm_rt,omitempty"`
 
 	// 兼容 InfluxDB 结构体
-	RetentionPolicy string    // 存储 RP
-	DB              string    // 存储 DB
-	Measurement     string    // 存储 Measurement
-	Field           string    // 存储 Field
-	TimeField       TimeField // 时间字段
-	Timezone        string    // 存储 Timezone
-	Fields          []string  // 存储命中的 Field 列表，一般情况下为一个，当 Field 为模糊匹配时，解析为多个
-	Measurements    []string  // 存储命中的 Measurement 列表，一般情况下为一个，当 Measurement 为模糊匹配时，解析为多个
+	RetentionPolicy string    `json:"retention_policy,omitempty"` // 存储 RP
+	DB              string    `json:"db,omitempty"`               // 存储 DB
+	Measurement     string    `json:"measurement,omitempty"`      // 存储 Measurement
+	Field           string    `json:"field,omitempty"`            // 存储 Field
+	TimeField       TimeField `json:"time_field,omitempty"`       // 时间字段
+	Timezone        string    `json:"timezone,omitempty"`         // 存储 Timezone
+	Fields          []string  `json:"fields,omitempty"`           // 存储命中的 Field 列表，一般情况下为一个，当 Field 为模糊匹配时，解析为多个
+	Measurements    []string  `json:"measurements,omitempty"`     // 存储命中的 Measurement 列表，一般情况下为一个，当 Measurement 为模糊匹配时，解析为多个
 
 	// 用于 promql 查询
-	IsHasOr bool // 标记是否有 or 条件
+	IsHasOr bool `json:"is_has_or,omitempty"` // 标记是否有 or 条件
 
-	Aggregates Aggregates // 聚合方法列表，从内到外排序
+	Aggregates Aggregates `json:"aggregates,omitempty"` // 聚合方法列表，从内到外排序
 
-	Condition string // 过滤条件
+	Condition string `json:"condition,omitempty"` // 过滤条件
 
 	// BkSql 过滤条件
-	BkSqlCondition string
+	BkSqlCondition string `json:"bk_sql_condition,omitempty"`
 
 	// Vm 过滤条件
-	VmCondition    VmCondition
-	VmConditionNum int
+	VmCondition    VmCondition `json:"vm_condition,omitempty"`
+	VmConditionNum int         `json:"vm_condition_num,omitempty"`
 
-	Filters []map[string]string // 查询中自带查询条件，用于拼接
+	Filters []map[string]string `json:"filters,omitempty"` // 查询中自带查询条件，用于拼接
 
-	OffsetInfo OffSetInfo // limit等偏移量配置
+	OffsetInfo OffSetInfo `json:"offset_info,omitempty"` // limit等偏移量配置
 
-	SegmentedEnable bool // 是否开启分段查询
+	SegmentedEnable bool `json:"segmented_enable,omitempty"` // 是否开启分段查询
 
 	// Es 查询扩展
-	QueryString   string
-	AllConditions AllConditions
+	QueryString   string        `json:"query_string,omitempty"`
+	AllConditions AllConditions `json:"all_conditions,omitempty"`
 
-	HighLight *HighLight
+	HighLight *HighLight `json:"high_light,omitempty"`
 
-	Source []string
-	From   int
-	Size   int
+	Source []string `json:"source,omitempty"`
+	From   int      `json:"from,omitempty"`
+	Size   int      `json:"size,omitempty"`
 
-	Scroll             string
-	ResultTableOptions ResultTableOptions
+	Scroll             string             `json:"scroll,omitempty"`
+	ResultTableOptions ResultTableOptions `json:"result_table_options,omitempty"`
 
-	Orders      Orders
-	NeedAddTime bool
+	Orders      Orders `json:"orders,omitempty"`
+	NeedAddTime bool   `json:"need_add_time,omitempty"`
 }
 
 type HighLight struct {
@@ -269,10 +269,13 @@ func ReplaceVmCondition(condition VmCondition, replaceLabels ReplaceLabels) VmCo
 }
 
 // ToJson 通过 tableID 排序，并且返回 json 序列化
-func (qMetric QueryMetric) ToJson(isSort bool) string {
+func (qMetric *QueryMetric) ToJson(isSort bool) string {
 	if isSort {
-		sort.SliceIsSorted(qMetric.QueryList, func(i, j int) bool {
-			return qMetric.QueryList[i].TableID < qMetric.QueryList[j].TableID
+		sort.SliceStable(qMetric.QueryList, func(i, j int) bool {
+			a := qMetric.QueryList[i].TableID
+			b := qMetric.QueryList[j].TableID
+			c := a < b
+			return c
 		})
 	}
 

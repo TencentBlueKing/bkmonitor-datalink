@@ -158,6 +158,8 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 }
 
 func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
+	ignoreDimensions := []string{elasticsearch.KeyAddress}
+
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
 
@@ -250,14 +252,15 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	go func() {
 		defer receiveWg.Done()
 
+		var datas []map[string]any
 		for d := range dataCh {
-			list = append(list, d)
+			datas = append(datas, d)
 		}
 
 		span.Set("query-list-num", len(queryList))
 
 		if len(queryList) > 1 {
-			queryTs.OrderBy.Orders().SortSliceList(list)
+			queryTs.OrderBy.Orders().SortSliceList(datas)
 
 			span.Set("query-scroll", queryTs.Scroll)
 			span.Set("query-result-table", queryTs.ResultTableOptions)
@@ -266,19 +269,19 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			if queryTs.Scroll == "" && queryTs.ResultTableOptions.IsCrop() {
 				// 判定是否启用 multi from 特性
 				span.Set("query-multi-from", queryTs.IsMultiFrom)
-				span.Set("list-length", len(list))
+				span.Set("datas-length", len(datas))
 				span.Set("query-ts-from", queryTs.From)
 				span.Set("query-ts-limit", queryTs.Limit)
 
-				if len(list) > queryTs.Limit {
+				if len(datas) > queryTs.Limit {
 					if queryTs.IsMultiFrom {
 						resultTableOptions = queryTs.ResultTableOptions
 						if resultTableOptions == nil {
 							resultTableOptions = make(metadata.ResultTableOptions)
 						}
 
-						list = list[0:queryTs.Limit]
-						for _, l := range list {
+						datas = datas[0:queryTs.Limit]
+						for _, l := range datas {
 							tableID := l[elasticsearch.KeyTableID].(string)
 							address := l[elasticsearch.KeyAddress].(string)
 
@@ -290,10 +293,22 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 							}
 						}
 					} else {
-						list = list[queryTs.From : queryTs.From+queryTs.Limit]
+						datas = datas[queryTs.From : queryTs.From+queryTs.Limit]
 					}
 				}
 			}
+
+		}
+
+		for _, item := range datas {
+			if item == nil {
+				continue
+			}
+
+			for _, ignoreDimension := range ignoreDimensions {
+				delete(item, ignoreDimension)
+			}
+			list = append(list, item)
 		}
 	}()
 

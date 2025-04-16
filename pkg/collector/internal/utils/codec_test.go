@@ -41,17 +41,3 @@ func BenchmarkDecodeWriteRequest(b *testing.B) {
 		}
 	})
 }
-
-func BenchmarkDecodeWriteRequest1(b *testing.B) {
-	b.ReportAllocs()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			buf := &bytes.Buffer{}
-			content, err := os.ReadFile("../../example/fixtures/remotewrite.bytes")
-			assert.NoError(b, err)
-			buf.Write(content)
-			_, _, err = DecodeWriteRequest1(buf)
-			assert.NoError(b, err)
-		}
-	})
-}

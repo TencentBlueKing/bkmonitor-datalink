@@ -10,7 +10,6 @@
 package jaeger
 
 import (
-	"bytes"
 	"io"
 	"mime"
 	"net/http"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/jaegertracing/jaeger/proto-gen/api_v2"
 	"github.com/pkg/errors"
+	"github.com/valyala/bytebufferpool"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"google.golang.org/grpc"
 
@@ -71,7 +71,10 @@ func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 
 	start := time.Now()
-	buf := &bytes.Buffer{}
+
+	buf := bytebufferpool.Get()
+	defer bytebufferpool.Put(buf)
+
 	_, err := io.Copy(buf, req.Body)
 	if err != nil {
 		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordTraces)

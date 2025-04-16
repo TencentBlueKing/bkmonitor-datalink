@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestCodec(t *testing.T) {
+func TestDecodeWriteRequest(t *testing.T) {
 	buf := &bytes.Buffer{}
 	content, err := os.ReadFile("../../example/fixtures/remotewrite.bytes")
 	assert.NoError(t, err)
@@ -26,4 +26,32 @@ func TestCodec(t *testing.T) {
 	_, size, err := DecodeWriteRequest(buf)
 	assert.NoError(t, err)
 	assert.Equal(t, 9979, size)
+}
+
+func BenchmarkDecodeWriteRequest(b *testing.B) {
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			buf := &bytes.Buffer{}
+			content, err := os.ReadFile("../../example/fixtures/remotewrite.bytes")
+			assert.NoError(b, err)
+			buf.Write(content)
+			_, _, err = DecodeWriteRequest(buf)
+			assert.NoError(b, err)
+		}
+	})
+}
+
+func BenchmarkDecodeWriteRequest1(b *testing.B) {
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			buf := &bytes.Buffer{}
+			content, err := os.ReadFile("../../example/fixtures/remotewrite.bytes")
+			assert.NoError(b, err)
+			buf.Write(content)
+			_, _, err = DecodeWriteRequest1(buf)
+			assert.NoError(b, err)
+		}
+	})
 }

@@ -15,16 +15,20 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/snappy"
 	"github.com/prometheus/prometheus/prompb"
+	"github.com/valyala/bytebufferpool"
 )
 
 func DecodeWriteRequest(r io.Reader) (*prompb.WriteRequest, int, error) {
-	compressed, err := io.ReadAll(r)
+	buf := bytebufferpool.Get()
+	defer bytebufferpool.Put(buf)
+
+	_, err := io.Copy(buf, r)
 	if err != nil {
 		return nil, 0, err
 	}
-	size := len(compressed)
+	size := buf.Len()
 
-	reqBuf, err := snappy.Decode(nil, compressed)
+	reqBuf, err := snappy.Decode(nil, buf.Bytes())
 	if err != nil {
 		return nil, 0, err
 	}

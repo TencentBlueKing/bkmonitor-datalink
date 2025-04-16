@@ -40,6 +40,7 @@ require (
 	github.com/spf13/cast v1.5.0
 	github.com/stretchr/testify v1.8.4
 	github.com/tinylib/msgp v1.1.6
+	github.com/valyala/bytebufferpool v1.0.0
 	go.opentelemetry.io/collector/pdata v0.52.0
 	go.opentelemetry.io/collector/semconv v0.52.0
 	go.uber.org/atomic v1.11.0

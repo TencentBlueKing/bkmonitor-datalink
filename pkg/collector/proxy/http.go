@@ -10,13 +10,13 @@
 package proxy
 
 import (
-	"bytes"
 	"io"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/valyala/bytebufferpool"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
@@ -29,7 +29,9 @@ func (p *Proxy) V2PushRoute(w http.ResponseWriter, req *http.Request) {
 	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 
 	start := time.Now()
-	buf := &bytes.Buffer{}
+	buf := bytebufferpool.Get()
+	defer bytebufferpool.Put(buf)
+
 	_, err := io.Copy(buf, req.Body)
 	if err != nil {
 		logger.Errorf("failed to read prometheus exported content, error %s", err)

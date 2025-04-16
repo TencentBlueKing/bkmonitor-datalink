@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"github.com/valyala/bytebufferpool"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
@@ -91,18 +92,22 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	buf := bytebufferpool.Get()
+	defer bytebufferpool.Put(buf)
+
 	// 从请求中获取数据
-	buf, err := io.ReadAll(req.Body)
+	_, err := io.Copy(buf, req.Body)
 	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordFta)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, errResponse(err))
 		logger.Errorf("failed to read request body, err: %v", err)
 		return
 	}
+	size := buf.Len()
 
 	// 将数据转换为 map
 	var data map[string]interface{}
-	err = json.Unmarshal(buf, &data)
+	err = json.Unmarshal(buf.Bytes(), &data)
 	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordFta)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, errResponse(err))
@@ -158,6 +163,6 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 
 	s.Publish(r)
 
-	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordFta, len(buf), start)
+	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordFta, size, start)
 	receiver.WriteResponse(w, define.ContentTypeJson, http.StatusOK, []byte(`{"status": "success"}`))
 }

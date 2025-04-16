@@ -17,6 +17,7 @@ import (
 
 	"github.com/gogo/protobuf/jsonpb"
 	"github.com/gogo/protobuf/proto"
+	"github.com/valyala/bytebufferpool"
 	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
 	"go.opentelemetry.io/collector/pdata/pmetric/pmetricotlp"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
@@ -118,7 +119,9 @@ func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype 
 	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 
 	start := time.Now()
-	buf := &bytes.Buffer{}
+	buf := bytebufferpool.Get()
+	defer bytebufferpool.Put(buf)
+
 	_, err := io.Copy(buf, req.Body)
 	if err != nil {
 		metricMonitor.IncInternalErrorCounter(define.RequestHttp, rtype)

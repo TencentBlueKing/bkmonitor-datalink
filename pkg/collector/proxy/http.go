@@ -26,7 +26,7 @@ import (
 
 func (p *Proxy) V2PushRoute(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
-	ip := utils.ParseRequestIP(req.RemoteAddr)
+	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
 
 	start := time.Now()
 	buf := &bytes.Buffer{}

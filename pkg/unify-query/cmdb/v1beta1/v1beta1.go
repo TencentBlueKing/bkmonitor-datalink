@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,8 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -239,8 +242,8 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	span.Set("source", user.Source)
 	span.Set("username", user.Name)
 	span.Set("space-uid", opt.SpaceUid)
-	span.Set("startTs", opt.StartTs)
-	span.Set("endTs", opt.EndTs)
+	span.Set("startTs", opt.Start)
+	span.Set("endTs", opt.End)
 	span.Set("step", opt.Step.String())
 	span.Set("source", opt.Source)
 	span.Set("target", opt.Target)
@@ -271,7 +274,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		return
 	}
 
-	if opt.StartTs == 0 || opt.EndTs == 0 {
+	if opt.Start.Unix() == 0 || opt.End.Unix() == 0 {
 		err = errors.New("timestamp is empty")
 		return
 	}
@@ -286,30 +289,27 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	}
 
 	span.Set("paths", paths)
+	metadata.GetQueryParams(ctx).SetTime(opt.Start, opt.End, opt.Unit).SetIsSkipK8s(true)
 
-	var errorMessage []string
+	var (
+		errorMessage []string
+	)
+
 	for _, path := range paths {
-		reqTs, reqErr := r.doRequest(ctx, opt.LookBackDelta, opt.SpaceUid, opt.StartTs, opt.EndTs, opt.Step, path, matcher, opt.Instant)
+		reqTs, reqErr := r.doRequest(ctx, opt.LookBackDelta, opt.SpaceUid, opt.Start, opt.End, opt.Step, path, matcher, opt.Instant)
 		if reqErr != nil {
 			errorMessage = append(errorMessage, fmt.Sprintf("path [%v] do request error: %s", path, reqErr))
 			continue
 		}
 
+		hitPath = path
 		if len(reqTs) > 0 {
-			hitPath = path
 			ts = reqTs
-			span.Set("hit_path", hitPath)
 			break
 		}
 	}
 
-	// 查询不到数据无需返回异常
-	if len(ts) == 0 {
-		if len(errorMessage) > 0 {
-			err = errors.New(strings.Join(errorMessage, "\n"))
-		}
-	}
-
+	span.Set("hit_path", hitPath)
 	return
 }
 
@@ -317,8 +317,9 @@ type QueryResourceOptions struct {
 	LookBackDelta string
 	SpaceUid      string
 	Step          time.Duration
-	StartTs       int64
-	EndTs         int64
+	Start         time.Time
+	End           time.Time
+	Unit          string
 	Target        cmdb.Resource
 	Source        cmdb.Resource
 	Matcher       cmdb.Matcher
@@ -327,12 +328,18 @@ type QueryResourceOptions struct {
 }
 
 func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUid string, timestamp int64, target, source cmdb.Resource, matcher cmdb.Matcher, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Matchers, error) {
+	unit, ts, err := function.ParseTimestamp(strconv.FormatInt(timestamp, 10))
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+
 	opt := QueryResourceOptions{
 		LookBackDelta: lookBackDelta,
 		SpaceUid:      spaceUid,
 		Step:          time.Duration(0),
-		StartTs:       timestamp,
-		EndTs:         timestamp,
+		Start:         ts,
+		End:           ts,
+		Unit:          unit,
 		Source:        source,
 		Target:        target,
 		Matcher:       matcher,
@@ -347,13 +354,24 @@ func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUi
 	return resource, matcher, path, shimMatcherWithTimestamp(ret), nil
 }
 
-func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, step time.Duration, startTs, endTs int64, target, source cmdb.Resource, matcher cmdb.Matcher, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, []cmdb.MatchersWithTimestamp, error) {
+func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, stepString string, startTs, endTs int64, target, source cmdb.Resource, matcher cmdb.Matcher, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, []cmdb.MatchersWithTimestamp, error) {
+	unit, start, end, err := function.QueryTimestamp(strconv.FormatInt(startTs, 10), strconv.FormatInt(endTs, 10))
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+
+	step, err := time.ParseDuration(stepString)
+	if err != nil {
+		step = time.Minute
+	}
+
 	opt := QueryResourceOptions{
 		LookBackDelta: lookBackDelta,
 		SpaceUid:      spaceUid,
 		Step:          step,
-		StartTs:       startTs,
-		EndTs:         endTs,
+		Start:         start,
+		End:           end,
+		Unit:          unit,
 		Source:        source,
 		Target:        target,
 		Matcher:       matcher,
@@ -363,7 +381,7 @@ func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, sp
 	return r.queryResourceMatcher(ctx, opt)
 }
 
-func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string, startTs, endTs int64, step time.Duration, path []string, matcher map[string]string, instant bool) ([]cmdb.MatchersWithTimestamp, error) {
+func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string, startTs, endTs time.Time, step time.Duration, path []string, matcher map[string]string, instant bool) ([]cmdb.MatchersWithTimestamp, error) {
 	// 按照关联路径遍历查询
 	var (
 		lookBackDelta time.Duration
@@ -394,7 +412,6 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 		return nil, err
 	}
 
-	metadata.GetQueryParams(ctx).SetTime(startTs, endTs).SetIsSkipK8s(true)
 	queryReference, err := queryTs.ToQueryReference(ctx)
 
 	if err != nil {
@@ -433,23 +450,22 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	}
 
 	statement := promQL.String()
-	start := time.Unix(startTs, 0)
-	end := time.Unix(endTs, 0)
 
 	var matrix pl.Matrix
 	var vector pl.Vector
 	if instant {
-		vector, err = instance.DirectQuery(ctx, statement, end)
+		vector, err = instance.DirectQuery(ctx, statement, endTs)
 		matrix = vectorToMatrix(vector)
 	} else {
-		matrix, err = instance.DirectQueryRange(ctx, statement, start, end, step)
+		matrix, err = instance.DirectQueryRange(ctx, statement, startTs, endTs, step)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("instance query error: %s", err)
 	}
 
 	if len(matrix) == 0 {
-		return nil, fmt.Errorf("instance data empty, promql: %s", realPromQL)
+		log.Warnf(ctx, "instance data empty, promql: %s", realPromQL)
+		return nil, nil
 	}
 
 	merged := make(map[int64]cmdb.Matchers)

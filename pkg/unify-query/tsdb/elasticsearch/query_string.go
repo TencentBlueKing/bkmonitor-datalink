@@ -10,10 +10,13 @@
 package elasticsearch
 
 import (
+	"context"
 	"fmt"
 
 	parser "github.com/bytedance/go-querystring-parser"
 	elastic "github.com/olivere/elastic/v7"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 type QueryString struct {
@@ -40,10 +43,16 @@ func (s *QueryString) NestedFields() map[string]struct{} {
 }
 
 func (s *QueryString) queryString(str string) elastic.Query {
-	return elastic.NewQueryStringQuery(str).AnalyzeWildcard(true)
+	return elastic.NewQueryStringQuery(str).AnalyzeWildcard(true).Field("*").Field("__*").Lenient(true)
 }
 
 func (s *QueryString) Parser() (elastic.Query, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf(context.TODO(), "query string (%v) parser error", s.q)
+		}
+	}()
+
 	if s.q == "" || s.q == "*" {
 		return nil, nil
 	}
@@ -123,15 +132,20 @@ func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
 		}
 	case *parser.NumberRangeCondition:
 		q := elastic.NewRangeQuery(c.Field)
-		if c.IncludeStart {
-			q.Gte(*c.Start)
-		} else {
-			q.Gt(*c.Start)
+		if c.Start != nil {
+			if c.IncludeStart {
+				q.Gte(*c.Start)
+			} else {
+				q.Gt(*c.Start)
+			}
 		}
-		if c.IncludeEnd {
-			q.Lte(*c.End)
-		} else {
-			q.Lt(*c.End)
+
+		if c.End != nil {
+			if c.IncludeEnd {
+				q.Lte(*c.End)
+			} else {
+				q.Lt(*c.End)
+			}
 		}
 		s.check(c.Field)
 		leftQ = q

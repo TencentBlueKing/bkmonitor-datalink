@@ -11,7 +11,6 @@ package http
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -24,6 +23,8 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
@@ -81,25 +82,23 @@ func HandlerFieldKeys(c *gin.Context) {
 		lbl = set.New[string]()
 	)
 
-	for _, queryMetric := range queryRef {
-		for _, qry := range queryMetric.QueryList {
-			wg.Add(1)
-			qry := qry
-			_ = p.Submit(func() {
-				defer wg.Done()
-				instance := prometheus.GetTsDbInstance(ctx, qry)
-				if instance == nil {
-					return
-				}
+	queryRef.Range("", func(qry *metadata.Query) {
+		wg.Add(1)
+		_ = p.Submit(func() {
+			defer wg.Done()
+			instance := prometheus.GetTsDbInstance(ctx, qry)
+			if instance == nil {
+				return
+			}
 
-				res, err := instance.QueryLabelValues(ctx, qry, labels.MetricName, start, end)
-				if err != nil {
-					return
-				}
-				lbl.Add(res...)
-			})
-		}
-	}
+			res, err := instance.QueryLabelValues(ctx, qry, labels.MetricName, start, end)
+			if err != nil {
+				return
+			}
+			lbl.Add(res...)
+		})
+	})
+
 	wg.Wait()
 
 	data := lbl.ToArray()
@@ -157,25 +156,22 @@ func HandlerTagKeys(c *gin.Context) {
 		lbl = set.New[string]()
 	)
 
-	for _, queryMetric := range queryRef {
-		for _, qry := range queryMetric.QueryList {
-			wg.Add(1)
-			qry := qry
-			_ = p.Submit(func() {
-				defer wg.Done()
-				instance := prometheus.GetTsDbInstance(ctx, qry)
-				if instance == nil {
-					return
-				}
+	queryRef.Range("", func(qry *metadata.Query) {
+		wg.Add(1)
+		_ = p.Submit(func() {
+			defer wg.Done()
+			instance := prometheus.GetTsDbInstance(ctx, qry)
+			if instance == nil {
+				return
+			}
 
-				res, err := instance.QueryLabelNames(ctx, qry, start, end)
-				if err != nil {
-					return
-				}
-				lbl.Add(res...)
-			})
-		}
-	}
+			res, err := instance.QueryLabelNames(ctx, qry, start, end)
+			if err != nil {
+				return
+			}
+			lbl.Add(res...)
+		})
+	})
 	wg.Wait()
 
 	data := lbl.ToArray()
@@ -239,29 +235,26 @@ func HandlerTagValues(c *gin.Context) {
 
 	for _, name := range params.Keys {
 		lbl, _ := lblMap.LoadOrStore(name, set.New[string]())
-		for _, queryMetric := range queryRef {
-			for _, qry := range queryMetric.QueryList {
-				wg.Add(1)
-				name := name
-				lbl := lbl
-				qry := qry
+		queryRef.Range("", func(qry *metadata.Query) {
+			wg.Add(1)
+			name := name
+			lbl := lbl
 
-				_ = p.Submit(func() {
-					defer wg.Done()
-					instance := prometheus.GetTsDbInstance(ctx, qry)
-					if instance == nil {
-						return
-					}
+			_ = p.Submit(func() {
+				defer wg.Done()
+				instance := prometheus.GetTsDbInstance(ctx, qry)
+				if instance == nil {
+					return
+				}
 
-					res, err := instance.QueryLabelValues(ctx, qry, name, start, end)
-					if err != nil {
-						return
-					}
+				res, err := instance.QueryLabelValues(ctx, qry, name, start, end)
+				if err != nil {
+					return
+				}
 
-					lbl.(*set.Set[string]).Add(res...)
-				})
-			}
-		}
+				lbl.(*set.Set[string]).Add(res...)
+			})
+		})
 	}
 	wg.Wait()
 
@@ -340,66 +333,64 @@ func HandlerSeries(c *gin.Context) {
 		paramsSet.Add(k)
 	}
 
-	for _, queryMetric := range queryRef {
-		for _, qry := range queryMetric.QueryList {
-			wg.Add(1)
-			qry := qry
-			_ = p.Submit(func() {
-				defer wg.Done()
+	queryRef.Range("", func(qry *metadata.Query) {
+		wg.Add(1)
+		_ = p.Submit(func() {
+			defer wg.Done()
 
-				if params.Limit > 0 && len(data.Series) > params.Limit {
-					return
-				}
+			if params.Limit > 0 && len(data.Series) > params.Limit {
+				return
+			}
 
-				instance := prometheus.GetTsDbInstance(ctx, qry)
-				if instance == nil {
-					return
-				}
+			instance := prometheus.GetTsDbInstance(ctx, qry)
+			if instance == nil {
+				return
+			}
 
-				res, err := instance.QuerySeries(ctx, qry, start, end)
-				if err != nil {
-					return
-				}
+			res, err := instance.QuerySeries(ctx, qry, start, end)
+			if err != nil {
+				return
+			}
 
-				for _, r := range res {
-					// 首先获取 series key，为了避免数据冲突，只获取一次
-					if keySet.Size() == 0 {
-						for k := range r {
-							if k == labels.MetricName {
-								data.Measurement = r[k]
-							}
-
-							if paramsSet.Size() == 0 || paramsSet.Existed(k) {
-								keySet.Add(k)
-							}
+			for _, r := range res {
+				// 首先获取 series key，为了避免数据冲突，只获取一次
+				if keySet.Size() == 0 {
+					for k := range r {
+						if k == labels.MetricName {
+							data.Measurement = r[k]
 						}
 
-						data.Keys = keySet.ToArray()
-						sort.Strings(data.Keys)
-					}
-
-					var (
-						series = make([]string, 0, len(data.Keys))
-						buf    = strings.Builder{}
-					)
-					for _, k := range data.Keys {
-						v, ok := r[k]
-						if !ok {
-							v = ""
+						if paramsSet.Size() == 0 || paramsSet.Existed(k) {
+							keySet.Add(k)
 						}
-						series = append(series, v)
-						buf.WriteString(v)
 					}
 
-					if !seriesSet.Existed(buf.String()) {
-						seriesSet.Add(buf.String())
-						data.Series = append(data.Series, series)
-					}
-
+					data.Keys = keySet.ToArray()
+					sort.Strings(data.Keys)
 				}
-			})
-		}
-	}
+
+				var (
+					series = make([]string, 0, len(data.Keys))
+					buf    = strings.Builder{}
+				)
+				for _, k := range data.Keys {
+					v, ok := r[k]
+					if !ok {
+						v = ""
+					}
+					series = append(series, v)
+					buf.WriteString(v)
+				}
+
+				if !seriesSet.Existed(buf.String()) {
+					seriesSet.Add(buf.String())
+					data.Series = append(data.Series, series)
+				}
+
+			}
+		})
+	})
+
 	wg.Wait()
 
 	resp.success(ctx, data)
@@ -469,13 +460,8 @@ func HandlerLabelValues(c *gin.Context) {
 		return
 	}
 
-	startTime, endTime, err := query.GetTime()
-	// start 和 end 如果为空，则默认给 1h
-	if err != nil {
-		endTime = time.Now()
-		startTime = endTime.Add(time.Hour * -1)
-	}
-	metadata.GetQueryParams(ctx).SetTime(startTime.Unix(), endTime.Unix())
+	unit, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
+	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit)
 	instance, stmt, err := queryTsToInstanceAndStmt(ctx, query)
 	if err != nil {
 		return
@@ -523,7 +509,8 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 		Timezone:    params.Timezone,
 	}
 
-	start, end, err = queryTs.GetTime()
+	var unit string
+	unit, start, end, err = function.QueryTimestamp(params.Start, params.End)
 	if err != nil {
 		// 如果时间异常则使用最近 1h
 		end = time.Now()
@@ -531,7 +518,7 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 	}
 
 	// 写入查询时间到全局缓存
-	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix())
+	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 	queryRef, err = queryTs.ToQueryReference(ctx)
 	return
 }

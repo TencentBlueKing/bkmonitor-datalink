@@ -165,6 +165,7 @@ const (
 	OptionIsSplitMeasurement   = "is_split_measurement"
 	OptionDisableMetricCutter  = "disable_metric_cutter"
 	OptionEnableFieldBlackList = "enable_field_black_list"
+	OptionFieldWhitelist       = "metric_field_whitelist"
 )
 
 // root consul path template
@@ -271,6 +272,3 @@ var SkipDataIdListForBkcc = []uint{1110000}
 
 // 全空间可以访问的结果表，对应的授权数据
 var AllSpaceTableIds = []string{"custom_report_aggate.base", "bkm_statistics.base"}
-
-// 插件授权给 bkci 访问的插件列表
-var BkciSpaceAccessPlugins = []string{"script_p4d_process_monitor.__default__"}

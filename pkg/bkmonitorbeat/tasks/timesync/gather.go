@@ -10,156 +10,128 @@
 package timesync
 
 import (
-	"bufio"
-	"bytes"
-	"net"
-	"os"
-	"strings"
+	"context"
 	"time"
 
-	"github.com/beevik/ntp"
-	"github.com/facebook/time/ntp/chrony"
-	"github.com/pkg/errors"
+	"github.com/elastic/beats/libbeat/common"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-type Stat struct {
-	Source string
-	Min    float64
-	Max    float64
-	Avg    float64
-	Sum    float64
-	Err    int
-	Count  int
+// Gather :
+type Gather struct {
+	tasks.BaseTask
+	cli *Client
 }
 
-type Client struct {
-	NtpdPath   string
-	ChronyAddr string
-	Timeout    time.Duration
-}
+func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
+	g.PreRun(ctx)
+	defer g.PostRun(ctx)
 
-func NewClient(nptdPath, chronyAddr string, timeout time.Duration) *Client {
-	if timeout == 0 {
-		timeout = time.Second * 5
-	}
-	return &Client{
-		NtpdPath:   nptdPath,
-		ChronyAddr: chronyAddr,
-		Timeout:    timeout,
-	}
-}
-
-func (c *Client) Query() (*Stat, error) {
-	if c.ChronyAddr == "" && c.NtpdPath == "" {
-		return nil, errors.New("no source found")
-	}
-
-	var stat *Stat
-	var err error
-	if c.ChronyAddr != "" {
-		stat, err = c.queryChrony()
-		if err == nil {
-			return stat, nil
-		}
-	}
-	if c.NtpdPath != "" {
-		stat, err = c.queryNtpd()
-		if err == nil {
-			return stat, nil
-		}
-	}
-	return nil, err
-}
-
-func (c *Client) queryNtpd() (*Stat, error) {
-	b, err := os.ReadFile(c.NtpdPath)
+	stat, err := g.cli.Query()
 	if err != nil {
-		return nil, err
+		logger.Errorf("failed to query stats: %v", err)
+		return
 	}
 
-	stat := &Stat{Source: "ntpd"}
-	scanner := bufio.NewScanner(bytes.NewBuffer(b))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "server") {
-			continue
-		}
-		parts := strings.Fields(line)
-		if len(parts) != 3 {
-			continue
-		}
-		rsp, err := ntp.QueryWithOptions(parts[1], ntp.QueryOptions{Timeout: c.Timeout})
-		if err != nil {
-			stat.Err++
-			continue
-		}
+	taskConf := g.TaskConfig.(*configs.TimeSyncConfig)
 
-		delay := rsp.RootDelay.Seconds()
-		if delay == 0 {
-			continue
-		}
-
-		stat.Count++
-		stat.Sum += delay
-		if stat.Max < delay {
-			stat.Max = delay
-		}
-		if stat.Min > delay {
-			stat.Min = delay
-		}
+	e <- &Event{
+		BizID:  g.TaskConfig.GetBizID(),
+		DataID: g.TaskConfig.GetDataID(),
+		Labels: g.TaskConfig.GetLabels(),
+		Data:   stats2Metrics(taskConf.MetricPrefix, stat),
 	}
-	return stat, nil
 }
 
-func (c *Client) queryChrony() (*Stat, error) {
-	conn, err := net.DialTimeout("udp", c.ChronyAddr, c.Timeout)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
+func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
+	gather := &Gather{}
+	gather.GlobalConfig = globalConfig
+	gather.TaskConfig = taskConfig
+	gather.Init()
 
-	client := chrony.Client{
-		Sequence:   1,
-		Connection: conn,
+	taskConf := taskConfig.(*configs.TimeSyncConfig)
+	gather.cli = NewClient(taskConf.NtpdPath, taskConf.ChronyAddress, taskConf.Timeout)
+
+	return gather
+}
+
+type Metrics struct {
+	Metrics   map[string]float64
+	Target    string
+	Timestamp int64
+	Dimension map[string]string
+}
+
+func (ms Metrics) AsMapStr() common.MapStr {
+	return common.MapStr{
+		"metrics":   ms.Metrics,
+		"target":    ms.Target,
+		"timestamp": ms.Timestamp,
+		"dimension": ms.Dimension,
 	}
-	packet, err := client.Communicate(chrony.NewSourcesPacket())
-	if err != nil {
-		return nil, err
+}
+
+func stats2Metrics(prefix string, stat *Stat) *Metrics {
+	named := func(s string) string {
+		return prefix + "_" + s
 	}
-	sources, ok := packet.(*chrony.ReplySources)
-	if !ok {
-		return nil, errors.Errorf("want *chrony.ReplySources type, but got %T", packet)
+	metrics := map[string]float64{
+		named("timesync_query_seconds_min"): stat.Min,
+		named("timesync_query_seconds_max"): stat.Max,
+		named("timesync_query_seconds_avg"): stat.Sum / float64(stat.Count),
+		named("timesync_query_count"):       float64(stat.Count),
+		named("timesync_query_err"):         float64(stat.Err),
+	}
+	return &Metrics{
+		Metrics:   metrics,
+		Target:    stat.Source,
+		Timestamp: time.Now().UnixMilli(),
+		Dimension: map[string]string{},
+	}
+}
+
+type Event struct {
+	BizID  int32
+	DataID int32
+	Labels []map[string]string
+	Data   *Metrics
+}
+
+func (e *Event) GetType() string {
+	return define.ModuleTimeSync
+}
+
+func (e *Event) IgnoreCMDBLevel() bool {
+	return true
+}
+
+func (e *Event) AsMapStr() common.MapStr {
+	ts := time.Now().Unix()
+	if len(e.Labels) == 0 {
+		return common.MapStr{
+			"dataid":    e.DataID,
+			"data":      []map[string]interface{}{e.Data.AsMapStr()},
+			"time":      ts,
+			"timestamp": ts,
+		}
 	}
 
-	stat := &Stat{Source: "chrony"}
-	for i := 0; i < sources.NSources; i++ {
-		packet, err = client.Communicate(chrony.NewSourceDataPacket(int32(i)))
-		if err != nil {
-			logger.Warnf("client communicate error: %v", err)
-			stat.Err++
+	lbs := e.Labels[0] // 只会有一个元素
+	for k, v := range lbs {
+		if _, ok := e.Data.Dimension[k]; ok {
+			e.Data.Dimension["exported_"+k] = v
 			continue
 		}
-		sourceData, ok := packet.(*chrony.ReplySourceData)
-		if !ok {
-			stat.Err++
-			logger.Warnf("want *chrony.ReplySourceData type, but got %T", packet)
-			continue
-		}
-		if sourceData.LatestMeas == 0 {
-			continue
-		}
-
-		stat.Count++
-		stat.Sum += sourceData.LatestMeas
-
-		if stat.Max < sourceData.LatestMeas {
-			stat.Max = sourceData.LatestMeas
-		}
-		if stat.Min > sourceData.LatestMeas {
-			stat.Min = sourceData.LatestMeas
-		}
+		e.Data.Dimension[k] = v
 	}
-	return stat, nil
+	return common.MapStr{
+		"dataid":    e.DataID,
+		"data":      []map[string]interface{}{e.Data.AsMapStr()},
+		"time":      ts,
+		"timestamp": ts,
+	}
 }

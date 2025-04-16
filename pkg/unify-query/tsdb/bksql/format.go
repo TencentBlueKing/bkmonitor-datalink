@@ -76,12 +76,9 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 		query:   query,
 		selects: make([]string, 0),
 		groups:  make([]string, 0),
-		orders:  make(metadata.Orders),
 	}
 	if query.Orders != nil {
-		for k, v := range query.Orders {
-			f.orders[k] = v
-		}
+		f.orders = query.Orders
 	}
 
 	if query.TimeField.Name != "" {
@@ -115,10 +112,27 @@ func (f *QueryFactory) ParserQuery() (err error) {
 			}
 			f.selects = append(f.selects, fmt.Sprintf("%s(`%s`) AS `%s`", strings.ToUpper(agg.Name), f.query.Field, value))
 			if agg.Window > 0 {
-				timeField := fmt.Sprintf("(`%s` - (`%s` %% %d))", f.timeField, f.timeField, agg.Window.Milliseconds())
+				// 时间聚合函数兼容时区
+				loc, locErr := time.LoadLocation(agg.TimeZone)
+				if locErr != nil {
+					loc = time.UTC
+				}
+				// 获取时区偏移量
+				_, offset := time.Now().In(loc).Zone()
+				var offsetMillis int
+				// 只有按天聚合才需要偏移
+				if agg.Window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
+					offsetMillis = offset * 1000
+				}
+
+				timeField := fmt.Sprintf("(`%s` - ((`%s` - %d) %% %d - %d))", f.timeField, f.timeField, offsetMillis, agg.Window.Milliseconds(), offsetMillis)
+
 				f.groups = append(f.groups, timeField)
 				f.selects = append(f.selects, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
-				f.orders[FieldTime] = true
+				f.orders = append(f.orders, metadata.Order{
+					Name: FieldTime,
+					Ast:  true,
+				})
 			}
 		}
 	}
@@ -197,18 +211,18 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	}
 
 	orders := make([]string, 0)
-	for key, asc := range f.orders {
+	for _, order := range f.orders {
 		var orderField string
-		switch key {
+		switch order.Name {
 		case FieldValue:
 			orderField = f.query.Field
 		case FieldTime:
 			orderField = timeStamp
 		default:
-			orderField = key
+			orderField = order.Name
 		}
 		ascName := "ASC"
-		if !asc {
+		if !order.Ast {
 			ascName = "DESC"
 		}
 		orders = append(orders, fmt.Sprintf("`%s` %s", orderField, ascName))

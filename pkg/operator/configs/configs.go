@@ -158,6 +158,13 @@ type VCluster struct {
 	ManagedAnnotationKey      string `yaml:"managed_annotation_key"`
 }
 
+type TimeSync struct {
+	Enabled       bool   `yaml:"enabled"`
+	NtpdPath      string `yaml:"ntpd_path"`
+	ChronyAddress string `yaml:"chrony_address"`
+	QueryTimeout  string `yaml:"query_timeout"`
+}
+
 // Config Operator 进程主配置
 type Config struct {
 	// BkEnv 环境配置信息
@@ -201,6 +208,9 @@ type Config struct {
 
 	// EnableDaemonSetWorker 是否启用 daemonset worker 调度
 	EnableDaemonSetWorker bool `yaml:"enable_daemonset_worker"`
+
+	// EnableTimeSyncTask 是否启用时间同步采集任务
+	EnableTimeSyncTask bool `yaml:"enable_timesync_task"`
 
 	// DaemonSetWorkerIgnoreNodeLabels 部分 nodes 不允许被调度到 daemonset 时指定
 	DaemonSetWorkerIgnoreNodeLabels map[string]string `yaml:"daemonset_worker_ignore_node_labels"`
@@ -253,6 +263,7 @@ type Config struct {
 
 	VCluster       VCluster `yaml:"vcluster"`
 	PolarisAddress []string `yaml:"polaris_address"`
+	TimeSync       TimeSync `yaml:"timesync"`
 }
 
 type PromSDKinds []string
@@ -316,6 +327,12 @@ func setupVCluster(c *Config) {
 	}
 }
 
+func setupTimeSync(c *Config) {
+	if c.TimeSync.QueryTimeout == "" {
+		c.TimeSync.QueryTimeout = "5s"
+	}
+}
+
 // GetTLS 转换 tls 配置为 restclinet tls
 func (c *Config) GetTLS() *rest.TLSClientConfig {
 	return &rest.TLSClientConfig{
@@ -334,6 +351,7 @@ func (c *Config) setup() {
 		setupHTTP,
 		setupStatefulSetWorker,
 		setupVCluster,
+		setupTimeSync,
 	}
 
 	for _, fn := range funcs {

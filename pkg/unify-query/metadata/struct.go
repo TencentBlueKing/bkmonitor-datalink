@@ -11,7 +11,6 @@ package metadata
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -20,6 +19,7 @@ import (
 	"github.com/VictoriaMetrics/metricsql"
 	"github.com/prometheus/prometheus/model/labels"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
@@ -32,10 +32,9 @@ const (
 type VmCondition string
 
 type TimeField struct {
-	Name     string
-	Type     string
-	Unit     string
-	UnitRate int64
+	Name string
+	Type string
+	Unit string
 }
 
 // Aggregate 聚合方法
@@ -62,7 +61,7 @@ type Aggregates []Aggregate
 
 // Query 查询扩展信息，为后面查询提供定位
 type Query struct {
-	SourceType string // 查询数据源 InfluxDB 或者 VictoriaMetrics
+	SourceType string
 	Password   string // 查询鉴权
 
 	ClusterID string // 存储 ID
@@ -118,11 +117,15 @@ type Query struct {
 	QueryString   string
 	AllConditions AllConditions
 
-	HighLight HighLight
+	HighLight *HighLight
 
-	Source      []string
-	From        int
-	Size        int
+	Source []string
+	From   int
+	Size   int
+
+	Scroll             string
+	ResultTableOptions ResultTableOptions
+
 	Orders      Orders
 	NeedAddTime bool
 }
@@ -132,7 +135,12 @@ type HighLight struct {
 	Enable            bool `json:"enable,omitempty"`
 }
 
-type Orders map[string]bool
+type Order struct {
+	Name string
+	Ast  bool
+}
+
+type Orders []Order
 
 type AllConditions [][]ConditionField
 
@@ -177,7 +185,7 @@ type QueryClusterMetric struct {
 	TimeAggregation TimeAggregation
 }
 
-type QueryReference map[string]*QueryMetric
+type QueryReference map[string][]*QueryMetric
 
 type Queries struct {
 	Query QueryReference
@@ -252,13 +260,43 @@ func (qMetric QueryMetric) ToJson(isSort bool) string {
 	return string(s)
 }
 
+// Range 遍历查询列表
+func (qRef QueryReference) Range(name string, fn func(qry *Query)) {
+	for refName, references := range qRef {
+		if name != "" {
+			if refName != name {
+				continue
+			}
+		}
+
+		for _, reference := range references {
+			if reference == nil {
+				continue
+			}
+			for _, query := range reference.QueryList {
+				if query == nil {
+					continue
+				}
+
+				fn(query)
+			}
+		}
+	}
+}
+
 // ToVmExpand 判断是否是直查，如果都是 vm 查询的情况下，则使用直查模式
 func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
 	vmClusterNames := set.New[string]()
 	vmResultTable := set.New[string]()
 	metricFilterCondition := make(map[string]string)
 
-	for referenceName, reference := range qRef {
+	for referenceName, references := range qRef {
+		if len(references) == 0 {
+			continue
+		}
+
+		// 因为是直查，reference 还需要承担聚合语法生成，所以 vm 不支持同指标的拼接，所以这里只取第一个 reference
+		reference := references[0]
 		if 0 < len(reference.QueryList) {
 			vmConditions := set.New[string]()
 			for _, query := range reference.QueryList {
@@ -313,4 +351,31 @@ func (a Aggregates) LastAggName() string {
 	}
 
 	return a[len(a)-1].Name
+}
+
+func (os Orders) SortSliceList(list []map[string]any) {
+	if len(os) == 0 {
+		return
+	}
+	if len(list) == 0 {
+		return
+	}
+
+	sort.SliceStable(list, func(i, j int) bool {
+		for _, o := range os {
+			a, _ := list[i][o.Name].(string)
+			b, _ := list[j][o.Name].(string)
+
+			if a != b {
+				if o.Ast {
+					r := a < b
+					return r
+				} else {
+					r := a > b
+					return r
+				}
+			}
+		}
+		return true
+	})
 }

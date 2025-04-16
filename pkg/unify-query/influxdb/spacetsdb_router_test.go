@@ -87,6 +87,10 @@ func (s *TestSuite) SetupBigData() {
 }
 
 func (s *TestSuite) TearDownTest() {
+	if s.client == nil {
+		return
+	}
+
 	s.client.Del(
 		s.ctx,
 		"bkmonitorv3:spaces:space_to_result_table",
@@ -103,6 +107,8 @@ func (s *TestSuite) TestReloadByKey() {
 	}
 
 	space := router.GetSpace(s.ctx, "bkcc__2")
+	assert.NotNil(s.T(), space)
+
 	s.T().Logf("Space: %v\n", space)
 	assert.Equal(s.T(), space["script_hhb_test.group3"].Filters[0]["bk_biz_id"], "2")
 

@@ -11,13 +11,13 @@ package featureFlag
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 
 	ffclient "github.com/thomaspoignant/go-feature-flag"
 	"github.com/thomaspoignant/go-feature-flag/exporter"
 	"github.com/thomaspoignant/go-feature-flag/ffuser"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
@@ -34,6 +34,9 @@ type FeatureFlag struct {
 
 // ReloadFeatureFlags
 func ReloadFeatureFlags(data []byte) error {
+	if data == nil {
+		return nil
+	}
 	featureFlag.lock.Lock()
 	defer featureFlag.lock.Unlock()
 	featureFlag.flags = data

@@ -11,7 +11,6 @@ package influxdb
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -35,6 +34,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -633,7 +633,7 @@ func (i *Instance) grpcStream(
 
 	span.Set("grpc-start-stream-series-set", name)
 
-	qry := &metadata.Query{TableID: fmt.Sprintf("%s.%s", db, measurement), Field: field}
+	qry := &metadata.Query{TableID: fmt.Sprintf("%s.%s", db, measurement), MetricName: field}
 
 	seriesSet := StartStreamSeriesSet(
 		ctx, name, &StreamSeriesSetOption{
@@ -649,8 +649,8 @@ func (i *Instance) grpcStream(
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
-	return 0, nil
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
+	return 0, nil, nil
 }
 
 // QuerySeriesSet 给 PromEngine 提供查询接口

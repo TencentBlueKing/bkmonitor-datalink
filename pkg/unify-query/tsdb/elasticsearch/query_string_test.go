@@ -11,12 +11,12 @@ package elasticsearch
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
@@ -32,37 +32,41 @@ func TestQsToDsl(t *testing.T) {
 	}{
 		{
 			q:        `log: "ERROR MSG"`,
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"log: \"ERROR MSG\""}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"log: \"ERROR MSG\""}}`,
 		},
 		{
 			q:        `quick brown fox`,
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"quick brown fox"}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"quick brown fox"}}`,
 		},
 		{
 			q:        `word.key: qu?ck`,
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"word.key: qu?ck"}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"word.key: qu?ck"}}`,
 		},
 		{
 			q:        "\"message queue conflict\"",
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"\"message queue conflict\""}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"\"message queue conflict\""}}`,
 		},
 		{
 			q:        "\"message queue conflict\"",
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"\"message queue conflict\""}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"\"message queue conflict\""}}`,
 		},
 		{
 			q:        `nested.key: test AND demo`,
-			expected: `{"nested":{"path":"nested.key","query":{"bool":{"must":[{"match_phrase":{"nested.key":{"query":"test"}}},{"query_string":{"analyze_wildcard":true,"query":"\"demo\""}}]}}}}`,
+			expected: `{"nested":{"path":"nested.key","query":{"bool":{"must":[{"match_phrase":{"nested.key":{"query":"test"}}},{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"\"demo\""}}]}}}}`,
 		},
 		{
 			q:        `sync_spaces AND -keyword AND -BKLOGAPI`,
-			expected: `{"query_string":{"analyze_wildcard":true,"query":"sync_spaces AND -keyword AND -BKLOGAPI"}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"sync_spaces AND -keyword AND -BKLOGAPI"}}`,
 		},
 		{
 			q: `*`,
 		},
 		{
 			q: ``,
+		},
+		{
+			q:        "ms: \u003e500 AND \"/fs-server\" AND NOT \"heartbeat\"",
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"ms: \u003e500 AND \"/fs-server\" AND NOT \"heartbeat\""}}`,
 		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
@@ -79,7 +83,7 @@ func TestQsToDsl(t *testing.T) {
 					body, _ := query.Source()
 					bodyJson, _ := json.Marshal(body)
 					bodyString := string(bodyJson)
-					assert.Equal(t, c.expected, bodyString)
+					assert.JSONEq(t, c.expected, bodyString)
 				}
 			} else {
 				assert.Equal(t, c.err, err)

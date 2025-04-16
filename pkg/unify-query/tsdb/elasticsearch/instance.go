@@ -11,14 +11,12 @@ package elasticsearch
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	elastic "github.com/olivere/elastic/v7"
@@ -31,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -91,9 +90,9 @@ type InstanceOption struct {
 
 type queryOption struct {
 	indexes []string
-	// 单位是 s
-	start    int64
-	end      int64
+	start   time.Time
+	end     time.Time
+
 	timeZone string
 
 	conn Connect
@@ -243,10 +242,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}
 
 	source := elastic.NewSearchSource()
-	order := fact.Order()
-
-	for key, asc := range order {
-		source.Sort(key, asc)
+	for _, order := range fact.Orders() {
+		source.Sort(order.Name, order.Ast)
 	}
 
 	if len(filterQueries) > 0 {
@@ -269,10 +266,13 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		source.Size(0)
 		source.Aggregation(name, agg)
 	} else {
-		fact.Size(source)
+		source.Size(qb.Size)
+		if qb.Scroll == "" {
+			source.From(qb.From)
+		}
 	}
 
-	if qb.HighLight.Enable {
+	if qb.HighLight != nil && qb.HighLight.Enable {
 		source.Highlight(fact.HighLight(qb.QueryString, qb.HighLight.MaxAnalyzedOffset))
 	}
 
@@ -303,9 +303,36 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	if err != nil {
 		return nil, err
 	}
-	search := client.Search().Index(qo.indexes...).SearchSource(source)
 
-	res, err := search.Do(ctx)
+	var res *elastic.SearchResult
+	func() {
+		if qb.ResultTableOptions != nil {
+			opt := qb.ResultTableOptions.GetOption(qb.TableID, qo.conn.Address)
+			if opt != nil {
+				if opt.ScrollID != "" {
+					span.Set("query-scroll-id", opt.ScrollID)
+					res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).ScrollId(opt.ScrollID).Do(ctx)
+					return
+				}
+
+				if len(opt.SearchAfter) > 0 {
+					span.Set("query-search-after", opt.SearchAfter)
+					source.SearchAfter(opt.SearchAfter...)
+					res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
+					return
+				}
+			}
+
+		}
+
+		if qb.Scroll != "" {
+			span.Set("query-scroll", qb.Scroll)
+			res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source).Do(ctx)
+		} else {
+			span.Set("query-from", qb.From)
+			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
+		}
+	}()
 
 	if err != nil {
 		var (
@@ -330,6 +357,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			}
 
 			return nil, errors.New(msg.String())
+		} else if err.Error() == "EOF" {
+			return nil, nil
 		} else {
 			return nil, err
 		}
@@ -528,11 +557,14 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
 	var (
-		err   error
-		total int64
-		wg    sync.WaitGroup
+		err error
+		wg  sync.WaitGroup
+
+		total              int64
+		lock               sync.Mutex
+		resultTableOptions metadata.ResultTableOptions
 	)
 
 	defer func() {
@@ -545,22 +577,32 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	defer span.End(&err)
 
 	span.Set("instance-connects", i.connects.String())
+	span.Set("instance-query-result-table-options", query.ResultTableOptions)
 
 	if query.DB == "" {
 		err = fmt.Errorf("%s 查询别名为空", query.TableID)
-		return total, err
+		return total, resultTableOptions, err
 	}
+	unit := metadata.GetQueryParams(ctx).TimeUnit
 
 	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
 	if err != nil {
-		return total, err
+		return total, resultTableOptions, err
 	}
+
+	errChan := make(chan error, len(i.connects))
+
+	span.Set("aliases", aliases)
 
 	for _, conn := range i.connects {
 		wg.Add(1)
 		conn := conn
 		go func() {
-			defer wg.Done()
+			defer func() {
+				errChan <- err
+				wg.Done()
+			}()
+
 			mappings, mappingErr := i.getMappings(ctx, conn, aliases)
 			if mappingErr != nil {
 				err = mappingErr
@@ -575,17 +617,26 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				query.Size = i.maxSize
 			}
 
+			if len(query.ResultTableOptions) > 0 {
+				option := query.ResultTableOptions.GetOption(query.TableID, conn.Address)
+				if option != nil {
+					if option.From != nil {
+						query.From = *option.From
+					}
+				}
+			}
+
 			qo := &queryOption{
 				indexes: aliases,
-				start:   start.Unix(),
-				end:     end.Unix(),
+				start:   start,
+				end:     end,
 				query:   query,
 				conn:    conn,
 			}
 
 			fact := NewFormatFactory(ctx).
 				WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-				WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.From, query.Size).
+				WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.Size).
 				WithMappings(mappings...).
 				WithOrders(query.Orders)
 
@@ -594,36 +645,82 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				err = queryErr
 				return
 			}
-			for _, d := range sr.Hits.Hits {
-				data := make(map[string]any)
-				if err = json.Unmarshal(d.Source, &data); err != nil {
-					return
+
+			var option *metadata.ResultTableOption
+
+			if sr != nil {
+				if sr.Hits != nil {
+
+					span.Set("instance-out-list-size", len(sr.Hits.Hits))
+
+					for idx, d := range sr.Hits.Hits {
+						data := make(map[string]any)
+						if err = json.Unmarshal(d.Source, &data); err != nil {
+							return
+						}
+
+						fact.SetData(data)
+						fact.data[KeyDocID] = d.Id
+						fact.data[KeyIndex] = d.Index
+						fact.data[KeyTableID] = query.TableID
+						fact.data[KeyDataLabel] = query.DataLabel
+
+						fact.data[KeyAddress] = conn.Address
+
+						if timeValue, ok := data[fact.GetTimeField().Name]; ok {
+							fact.data[FieldTime] = timeValue
+						}
+
+						if len(d.Highlight) > 0 {
+							fact.data[KeyHighLight] = d.Highlight
+						}
+
+						if idx == len(sr.Hits.Hits)-1 && d.Sort != nil {
+							option = &metadata.ResultTableOption{
+								SearchAfter: d.Sort,
+							}
+						}
+
+						dataCh <- fact.data
+					}
+
+					if sr.Hits.TotalHits != nil {
+						total += sr.Hits.TotalHits.Value
+					}
 				}
 
-				fact.SetData(data)
-				fact.data[KeyDocID] = d.Id
-				fact.data[KeyIndex] = d.Index
-				fact.data[KeyTableID] = query.TableID
-				fact.data[KeyDataLabel] = query.DataLabel
-
-				if timeValue, ok := data[fact.GetTimeField().Name]; ok {
-					fact.data[FieldTime] = timeValue
+				// ScrollID 覆盖 SearchAfter 配置
+				if sr.ScrollId != "" {
+					option = &metadata.ResultTableOption{
+						ScrollID: sr.ScrollId,
+					}
 				}
-
-				if len(d.Highlight) > 0 {
-					fact.data[KeyHighLight] = d.Highlight
-				}
-				dataCh <- fact.data
 			}
 
-			if sr != nil && sr.Hits != nil && sr.Hits.TotalHits != nil {
-				atomic.AddInt64(&total, sr.Hits.TotalHits.Value)
+			if option != nil {
+				if resultTableOptions == nil {
+					resultTableOptions = metadata.ResultTableOptions{}
+				}
+
+				lock.Lock()
+				resultTableOptions.SetOption(query.TableID, conn.Address, option)
+				lock.Unlock()
+
 			}
 		}()
 	}
 	wg.Wait()
+	close(errChan)
 
-	return total, err
+	for e := range errChan {
+		if e != nil {
+			return total, resultTableOptions, e
+		}
+	}
+	span.Set("instance-out-total", total)
+	span.Set("instance-out-result-table-options", resultTableOptions)
+
+	return total, resultTableOptions, nil
 }
 
 // QuerySeriesSet 给 PromEngine 提供查询接口
@@ -649,6 +746,8 @@ func (i *Instance) QuerySeriesSet(
 		err = fmt.Errorf("%s 查询别名为空", query.TableID)
 		return storage.ErrSeriesSet(err)
 	}
+
+	unit := metadata.GetQueryParams(ctx).TimeUnit
 
 	rangeLeftTime := end.Sub(start)
 	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
@@ -703,8 +802,8 @@ func (i *Instance) QuerySeriesSet(
 
 				qo := &queryOption{
 					indexes: aliases,
-					start:   start.Unix(),
-					end:     end.Unix(),
+					start:   start,
+					end:     end,
 					query:   query,
 					conn:    conn,
 				}
@@ -731,7 +830,7 @@ func (i *Instance) QuerySeriesSet(
 
 				fact := NewFormatFactory(ctx).
 					WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-					WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.From, size).
+					WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
 					WithMappings(mappings...).
 					WithOrders(query.Orders).
 					WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
@@ -757,7 +856,7 @@ func (i *Instance) QuerySeriesSet(
 		return storage.EmptySeriesSet()
 	}
 
-	return remote.FromQueryResult(false, qr)
+	return remote.FromQueryResult(true, qr)
 }
 
 // QueryRange 使用 es 直接查询引擎

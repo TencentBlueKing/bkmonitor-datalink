@@ -77,12 +77,6 @@ func (g *Gather) Stop() {
 	logger.Info("ExceptionBeat has already Stopped")
 }
 
-func (g *Gather) Reload() {
-	g.cancel()
-	g.isRunning = false
-	logger.Info("ExceptionBeat has already Reloaded")
-}
-
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	logger.Info("ExceptionBeat is running....")
 	if g.isRunning {

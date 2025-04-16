@@ -13,7 +13,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -24,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
@@ -415,11 +415,11 @@ func TestQueryHandler(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	influxdb.MockSpaceRouter(ctx)
 
-	end := time.Unix(0, 0)
-	start := time.Unix(1000, 0)
+	end := time.Unix(1741060043, 0)
+	start := time.Unix(1741056443, 0)
 
 	mock.Vm.Set(map[string]any{
-		`query_range:6000600count by (bcs_cluster_id) (a)`: victoriaMetrics.Data{
+		`query_range:17410560001741060043600count by (bcs_cluster_id) (a)`: victoriaMetrics.Data{
 			ResultType: victoriaMetrics.MatrixType,
 			Result: []victoriaMetrics.Series{
 				{
@@ -452,7 +452,7 @@ func TestQueryHandler(t *testing.T) {
 				},
 			},
 		},
-		`query:0sum by (bcs_cluster_id) (a)`: victoriaMetrics.Data{
+		`query:1741060043sum by (bcs_cluster_id) (a)`: victoriaMetrics.Data{
 			ResultType: victoriaMetrics.VectorType,
 			Result: []victoriaMetrics.Series{
 				{

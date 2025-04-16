@@ -69,8 +69,8 @@ func (i *Instance) InstanceType() string {
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
-	return 0, nil
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
+	return 0, nil, nil
 }
 
 // QuerySeriesSet 给 PromEngine 提供查询接口
@@ -199,27 +199,27 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	var wg sync.WaitGroup
 	queryReference := metadata.GetQueryReference(ctx)
-	if queryMetric, ok := queryReference[metricName]; ok {
-		for _, qry := range queryMetric.QueryList {
-			wg.Add(1)
-			qry.Size = limit
-			query := qry
-			_ = p.Submit(func() {
-				defer func() {
-					wg.Done()
-				}()
-				instance := GetTsDbInstance(ctx, query)
-				if instance != nil {
-					lbl, lvErr := instance.QueryLabelValues(ctx, query, name, start, end)
-					if lvErr == nil {
-						for _, l := range lbl {
-							res.Add(l)
-						}
-					}
+
+	queryReference.Range(metricName, func(qry *metadata.Query) {
+		wg.Add(1)
+		qry.Size = limit
+		_ = p.Submit(func() {
+			defer func() {
+				wg.Done()
+			}()
+			instance := GetTsDbInstance(ctx, qry)
+			if instance == nil {
+				return
+			}
+
+			lbl, lvErr := instance.QueryLabelValues(ctx, qry, name, start, end)
+			if lvErr == nil {
+				for _, l := range lbl {
+					res.Add(l)
 				}
-			})
-		}
-	}
+			}
+		})
+	})
 
 	wg.Wait()
 	list = res.ToArray()

@@ -108,6 +108,7 @@ func (s *Service) Start(ctx context.Context) {
 	s.wg.Add(1)
 
 	s.tracerProvider = sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(s.newResource()),
 	)

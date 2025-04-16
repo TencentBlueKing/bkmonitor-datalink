@@ -351,6 +351,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				size, options, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
 				if queryErr != nil {
 					message.WriteString(fmt.Sprintf("query %s:%s is error: %s ", qry.TableID, qry.Fields, queryErr.Error()))
+					return
 				}
 
 				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置

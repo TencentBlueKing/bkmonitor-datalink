@@ -128,23 +128,35 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 
 	name := *pd.MetricFamilies.Name
 	metrics := pd.MetricFamilies.Metric
-	pms := make([]*promMapper, 0)
+
+	const batchSize = 1024
+	pms := make([]*promMapper, 0, batchSize)
+
+	sendOut := func() {
+		pms = c.compactTrpcOTFilter(pms)
+		if len(pms) <= 0 {
+			return
+		}
+
+		events := make([]define.Event, 0, len(pms))
+		for _, pm := range pms {
+			events = append(events, c.ToEvent(token, dataId, pm.AsMapStr()))
+		}
+		f(events...)
+		pms = make([]*promMapper, 0, batchSize)
+	}
+
 	for _, metric := range metrics {
 		lbs := map[string]string{}
-		if len(metric.Label) != 0 {
-			for _, label := range metric.Label {
-				if label.GetName() != "" && label.GetValue() != "" {
-					lbs[label.GetName()] = label.GetValue()
-				}
+		for _, label := range metric.Label {
+			if label.GetName() != "" && label.GetValue() != "" {
+				lbs[label.GetName()] = label.GetValue()
 			}
 		}
 
 		// 处理 Counter 类型数据
 		counter := metric.GetCounter()
-		if counter != nil {
-			if !utils.IsValidFloat64(counter.GetValue()) {
-				continue
-			}
+		if counter != nil && utils.IsValidFloat64(counter.GetValue()) {
 			pms = append(pms, &promMapper{
 				Metrics: common.MapStr{
 					name: counter.GetValue(),
@@ -154,15 +166,12 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 				Exemplar:   counter.Exemplar,
 			})
+			sendOut()
 		}
 
 		// 处理 Gauge 类型数据
 		gauge := metric.GetGauge()
-		if gauge != nil {
-			if !utils.IsValidFloat64(gauge.GetValue()) {
-				continue
-			}
-
+		if gauge != nil && utils.IsValidFloat64(gauge.GetValue()) {
 			pms = append(pms, &promMapper{
 				Metrics: common.MapStr{
 					name: gauge.GetValue(),
@@ -171,15 +180,12 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
 				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			})
+			sendOut()
 		}
 
 		// 处理 Summary 类型数据
 		summary := metric.GetSummary()
-		if summary != nil {
-			if !utils.IsValidFloat64(summary.GetSampleSum()) {
-				continue
-			}
-
+		if summary != nil && utils.IsValidFloat64(summary.GetSampleSum()) {
 			pms = append(pms, &promMapper{
 				Metrics: common.MapStr{
 					name + "_sum":   summary.GetSampleSum(),
@@ -189,6 +195,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
 				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			})
+			sendOut()
 
 			for _, quantile := range summary.GetQuantile() {
 				if !utils.IsValidFloat64(quantile.GetValue()) {
@@ -206,16 +213,13 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					Timestamp:  getTimestamp(now, metric.TimestampMs),
 					Dimensions: utils.MergeMaps(lbs, quantileLabels, pd.Labels),
 				})
+				sendOut()
 			}
 		}
 
 		// 处理 Histogram 类型数据
 		histogram := metric.GetHistogram()
-		if histogram != nil {
-			if !utils.IsValidFloat64(histogram.GetSampleSum()) {
-				continue
-			}
-
+		if histogram != nil && utils.IsValidFloat64(histogram.GetSampleSum()) {
 			pms = append(pms, &promMapper{
 				Metrics: common.MapStr{
 					name + "_sum":   histogram.GetSampleSum(),
@@ -225,6 +229,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
 				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			})
+			sendOut()
 
 			infSeen := false
 			for _, bucket := range histogram.GetBucket() {
@@ -247,7 +252,9 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					Dimensions: utils.MergeMaps(lbs, bucketLabels, pd.Labels),
 					Exemplar:   bucket.Exemplar,
 				})
+				sendOut()
 			}
+
 			// 仅 expfmt.FmtText 格式支持 inf
 			// 其他格式需要自行检查
 			if !infSeen {
@@ -261,16 +268,13 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					Timestamp:  getTimestamp(now, metric.TimestampMs),
 					Dimensions: utils.MergeMaps(lbs, bucketLabels, pd.Labels),
 				})
+				sendOut()
 			}
 		}
 
 		// 处理未知类型数据
 		untyped := metric.GetUntyped()
-		if untyped != nil {
-			if !utils.IsValidFloat64(untyped.GetValue()) {
-				continue
-			}
-
+		if untyped != nil && utils.IsValidFloat64(untyped.GetValue()) {
 			pms = append(pms, &promMapper{
 				Metrics: common.MapStr{
 					name: untyped.GetValue(),
@@ -279,19 +283,9 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
 				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			})
+			sendOut()
 		}
 	}
-
-	pms = c.compactTrpcOTFilter(pms)
-	if len(pms) <= 0 {
-		return
-	}
-
-	events := make([]define.Event, 0, len(pms))
-	for _, pm := range pms {
-		events = append(events, c.ToEvent(token, dataId, pm.AsMapStr()))
-	}
-	f(events...)
 }
 
 // compactTrpcOTFilter 兼容 trpc 框架 OTfilter 指标格式

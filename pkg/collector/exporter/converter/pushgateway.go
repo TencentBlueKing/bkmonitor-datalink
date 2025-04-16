@@ -143,7 +143,6 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 		counter := metric.GetCounter()
 		if counter != nil {
 			if !utils.IsValidFloat64(counter.GetValue()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
 				continue
 			}
 			pms = append(pms, &promMapper{
@@ -161,7 +160,6 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 		gauge := metric.GetGauge()
 		if gauge != nil {
 			if !utils.IsValidFloat64(gauge.GetValue()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
 				continue
 			}
 
@@ -179,7 +177,6 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 		summary := metric.GetSummary()
 		if summary != nil {
 			if !utils.IsValidFloat64(summary.GetSampleSum()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
 				continue
 			}
 
@@ -195,7 +192,6 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 
 			for _, quantile := range summary.GetQuantile() {
 				if !utils.IsValidFloat64(quantile.GetValue()) {
-					DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
 					continue
 				}
 
@@ -217,7 +213,6 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 		histogram := metric.GetHistogram()
 		if histogram != nil {
 			if !utils.IsValidFloat64(histogram.GetSampleSum()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
 				continue
 			}
 
@@ -234,7 +229,6 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 			infSeen := false
 			for _, bucket := range histogram.GetBucket() {
 				if !utils.IsValidUint64(bucket.GetCumulativeCount()) {
-					DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
 					continue
 				}
 				if math.IsInf(bucket.GetUpperBound(), +1) {
@@ -274,7 +268,6 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 		untyped := metric.GetUntyped()
 		if untyped != nil {
 			if !utils.IsValidFloat64(untyped.GetValue()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
 				continue
 			}
 

@@ -41,7 +41,6 @@ func (c beatConverter) Convert(record *define.Record, f define.GatherFunc) {
 	data := record.Data.(*define.BeatData)
 	dst := make(map[string]interface{})
 	if err := json.Unmarshal(data.Data, &dst); err != nil {
-		DefaultMetricMonitor.IncConverterFailedCounter(define.RecordBeat, dataID)
 		return
 	}
 

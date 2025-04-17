@@ -509,33 +509,6 @@ func HandlerLabelValues(c *gin.Context) {
 	return
 }
 
-func infoParamsToQueryTs(ctx context.Context, params *infos.Params) *structured.QueryTs {
-	var (
-		user = metadata.GetUser(ctx)
-	)
-
-	queryTs := &structured.QueryTs{
-		SpaceUid: user.SpaceUid,
-		QueryList: []*structured.Query{
-			{
-				DataSource:    params.DataSource,
-				TableID:       params.TableID,
-				FieldName:     params.Metric,
-				IsRegexp:      params.IsRegexp,
-				Conditions:    params.Conditions,
-				Limit:         params.Limit,
-				ReferenceName: prometheus.ReferenceName,
-			},
-		},
-		MetricMerge: prometheus.ReferenceName,
-		Start:       params.Start,
-		End:         params.End,
-		Timezone:    params.Timezone,
-	}
-
-	return queryTs
-}
-
 func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (queryRef metadata.QueryReference, startTime, endTime time.Time, err error) {
 	var (
 		user = metadata.GetUser(ctx)

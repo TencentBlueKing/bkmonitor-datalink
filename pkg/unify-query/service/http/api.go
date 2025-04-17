@@ -536,7 +536,9 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 
 	unit, startTime, endTime, err = function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if err != nil {
-		return
+		endTime = time.Now()
+		startTime = endTime.Add(time.Hour * -1)
+		err = nil
 	}
 
 	// 写入查询时间到全局缓存

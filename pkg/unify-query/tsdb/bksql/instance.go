@@ -13,7 +13,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -196,9 +195,6 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]str
 		if !ok {
 			continue
 		}
-
-		// 忽略大小写，所以统一转成小写
-		k = strings.ToLower(k)
 
 		fieldsMap[k] = v
 	}

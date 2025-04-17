@@ -179,6 +179,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		lock      sync.Mutex
 	)
 
+	list = make([]map[string]any, 0)
+
 	// 构建查询路由列表
 	if queryTs.SpaceUid == "" {
 		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUid

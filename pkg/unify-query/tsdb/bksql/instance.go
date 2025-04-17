@@ -261,6 +261,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	span.Set("query-raw-end", end)
 
 	if start.UnixMilli() > end.UnixMilli() || start.UnixMilli() == 0 {
+		err = fmt.Errorf("start time must less than end time")
 		return
 	}
 

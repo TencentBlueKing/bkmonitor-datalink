@@ -288,7 +288,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 							} else {
 								*option.From++
 							}
-
 						}
 					} else {
 						list = list[queryTs.From : queryTs.From+queryTs.Limit]

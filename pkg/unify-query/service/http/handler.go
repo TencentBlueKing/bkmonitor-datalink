@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 )
 
 // HandlerPromQLToStruct
@@ -198,12 +199,13 @@ func HandlerQueryExemplar(c *gin.Context) {
 // @Router   /query/raw [post]
 func HandlerQueryRaw(c *gin.Context) {
 	var (
-		ctx      = c.Request.Context()
-		resp     = &response{c: c}
-		user     = metadata.GetUser(ctx)
-		err      error
-		span     *trace.Span
-		listData ListData
+		ctx              = c.Request.Context()
+		resp             = &response{c: c}
+		user             = metadata.GetUser(ctx)
+		err              error
+		span             *trace.Span
+		listData         ListData
+		ignoreDimensions = []string{elasticsearch.KeyAddress}
 	)
 
 	ctx, span = trace.NewSpan(ctx, "handler-query-raw")
@@ -238,7 +240,8 @@ func HandlerQueryRaw(c *gin.Context) {
 	span.Set("query-body", string(queryStr))
 
 	listData.TraceID = span.TraceID()
-	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithInstance(ctx, queryTs)
+
+	total, list, resultTableOptions, err := queryRawWithInstance(ctx, queryTs)
 	if err != nil {
 		listData.Status = &metadata.Status{
 			Code:    metadata.QueryRawError,
@@ -246,9 +249,20 @@ func HandlerQueryRaw(c *gin.Context) {
 		}
 		return
 	}
-	if listData.List == nil {
-		listData.List = make([]map[string]any, 0)
+	listData.Total = total
+	listData.List = make([]map[string]any, 0, len(list))
+	for _, item := range list {
+		if item == nil {
+			continue
+		}
+
+		for _, ignoreDimension := range ignoreDimensions {
+			delete(item, ignoreDimension)
+		}
+		listData.List = append(listData.List, item)
 	}
+	listData.ResultTableOptions = resultTableOptions
+
 	resp.success(ctx, listData)
 }
 

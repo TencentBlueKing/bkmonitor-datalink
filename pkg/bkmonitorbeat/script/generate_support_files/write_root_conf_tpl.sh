@@ -256,6 +256,7 @@ fi
   timesync_task:
     dataid: 1100030
     task_id: 120
+    period: 1m
     metric_prefix: host
     query_timeout: 5s
     ntpd_path: /etc/ntpd.conf

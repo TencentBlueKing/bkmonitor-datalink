@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	ConfigTypeTimeSync = "timesync"
+	ConfigTypeTimeSync = define.ModuleTimeSync
 )
 
 type TimeSyncConfig struct {
@@ -44,7 +44,7 @@ func (c *TimeSyncConfig) InitIdent() error {
 }
 
 func (c *TimeSyncConfig) GetType() string {
-	return define.ModuleTimeSync
+	return ConfigTypeTimeSync
 }
 
 func (c *TimeSyncConfig) Clean() error {
@@ -55,7 +55,7 @@ func NewTimeSyncConfig(root *Config) *TimeSyncConfig {
 	config := &TimeSyncConfig{
 		BaseTaskParam: NewBaseTaskParam(),
 	}
-	root.TaskTypeMapping[define.ModuleTimeSync] = config
+	root.TaskTypeMapping[ConfigTypeTimeSync] = config
 
 	return config
 }

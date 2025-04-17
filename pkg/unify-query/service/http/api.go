@@ -69,10 +69,6 @@ func HandlerFieldKeys(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	queryTs := infoParamsToQueryTs(ctx, params)
-	unit, startTime, endTime, err := function.QueryTimestamp(queryTs.Start, queryTs.End)
-	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit)
-
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
 		resp.failed(ctx, err)
@@ -239,7 +235,6 @@ func HandlerTagValues(c *gin.Context) {
 	)
 
 	left := end.Sub(start)
-
 	span.Set("left", left)
 
 	for _, name := range params.Keys {
@@ -542,8 +537,30 @@ func infoParamsToQueryTs(ctx context.Context, params *infos.Params) *structured.
 }
 
 func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (queryRef metadata.QueryReference, startTime, endTime time.Time, err error) {
-	var unit string
-	queryTs := infoParamsToQueryTs(ctx, params)
+	var (
+		user = metadata.GetUser(ctx)
+		unit string
+	)
+
+	queryTs := &structured.QueryTs{
+		SpaceUid: user.SpaceUid,
+		QueryList: []*structured.Query{
+			{
+				DataSource:    params.DataSource,
+				TableID:       params.TableID,
+				FieldName:     params.Metric,
+				IsRegexp:      params.IsRegexp,
+				Conditions:    params.Conditions,
+				Limit:         params.Limit,
+				ReferenceName: prometheus.ReferenceName,
+			},
+		},
+		MetricMerge: prometheus.ReferenceName,
+		Start:       params.Start,
+		End:         params.End,
+		Timezone:    params.Timezone,
+	}
+
 	unit, startTime, endTime, err = function.QueryTimestamp(queryTs.Start, queryTs.End)
 	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit)
 	// 写入查询时间到全局缓存

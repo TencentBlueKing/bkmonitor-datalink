@@ -54,7 +54,7 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather.Init()
 
 	taskConf := taskConfig.(*configs.TimeSyncConfig)
-	gather.cli = NewClient(taskConf.NtpdPath, taskConf.ChronyAddress, taskConf.Timeout)
+	gather.cli = NewClient(taskConf.NtpdPath, taskConf.ChronyAddress, taskConf.QueryTimeout)
 
 	return gather
 }

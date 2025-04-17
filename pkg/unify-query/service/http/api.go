@@ -535,8 +535,12 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 	}
 
 	unit, startTime, endTime, err = function.QueryTimestamp(queryTs.Start, queryTs.End)
-	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit)
+	if err != nil {
+		return
+	}
+
 	// 写入查询时间到全局缓存
+	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit)
 
 	queryRef, err = queryTs.ToQueryReference(ctx)
 	return

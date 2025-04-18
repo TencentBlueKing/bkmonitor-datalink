@@ -11,6 +11,8 @@ package timesync
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
@@ -18,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -43,7 +46,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		BizID:  g.TaskConfig.GetBizID(),
 		DataID: g.TaskConfig.GetDataID(),
 		Labels: g.TaskConfig.GetLabels(),
-		Data:   stats2Metrics(taskConf.MetricPrefix, stat),
+		Data:   stats2Metrics(taskConf.Env, stat),
 	}
 }
 
@@ -75,9 +78,9 @@ func (ms Metrics) AsMapStr() common.MapStr {
 	}
 }
 
-func stats2Metrics(prefix string, stat *Stat) *Metrics {
+func stats2Metrics(env string, stat *Stat) *Metrics {
 	named := func(s string) string {
-		return prefix + "_" + s
+		return env + "_" + s
 	}
 	metrics := map[string]float64{
 		named("timesync_query_seconds_min"): stat.Min,
@@ -86,11 +89,25 @@ func stats2Metrics(prefix string, stat *Stat) *Metrics {
 		named("timesync_query_count"):       float64(stat.Count),
 		named("timesync_query_err"):         float64(stat.Err),
 	}
+
+	dims := map[string]string{}
+	if env == "host" {
+		info, _ := gse.GetAgentInfo()
+		dims = map[string]string{
+			"cloudid":     strconv.Itoa(int(info.Cloudid)),
+			"ip":          info.IP,
+			"hostname":    info.Hostname,
+			"bk_agent_id": info.BKAgentID,
+			"bk_host_id":  strconv.Itoa(int(info.HostID)),
+			"bk_biz_id":   strconv.Itoa(int(info.BKBizID)),
+			"node_id":     fmt.Sprintf("%d:%s", info.Cloudid, info.IP),
+		}
+	}
 	return &Metrics{
 		Metrics:   metrics,
 		Target:    stat.Source,
 		Timestamp: time.Now().UnixMilli(),
-		Dimension: map[string]string{},
+		Dimension: dims,
 	}
 }
 

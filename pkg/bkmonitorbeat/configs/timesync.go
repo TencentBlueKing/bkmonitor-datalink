@@ -22,7 +22,7 @@ const (
 type TimeSyncConfig struct {
 	BaseTaskParam `config:"_,inline"`
 
-	MetricPrefix  string        `config:"metric_prefix"`
+	Env           string        `config:"env"`
 	QueryTimeout  time.Duration `config:"query_timeout"`
 	NtpdPath      string        `config:"ntpd_path"`
 	ChronyAddress string        `config:"chrony_address"`

@@ -174,9 +174,9 @@ bkmonitorbeat:
     dataid: 1100030
     task_id: 120
     period: 1m
-    metric_prefix: host
-    query_timeout: 5s
-    ntpd_path: /etc/ntpd.conf
+    env: host
+    query_timeout: 10s
+    ntpd_path: /etc/ntp.conf
     chrony_address: "[::1]:323"
 
 {%- if extra_vars is defined and extra_vars.enable_audit_tasks is defined and extra_vars.enable_audit_tasks == "true" %}

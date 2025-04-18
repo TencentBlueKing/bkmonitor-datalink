@@ -243,7 +243,7 @@ func TestNewSqlFactory(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT CAST(__ext[\"container_id\"] AS STRING) AS `__ext__bk_46__container_id`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, ((CAST((__shard_key__ / 1000 + 0) / 1440 AS INT) * 1440 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741935945000 AND `dtEventTimeStamp` <= 1742456145000 AND `thedate` >= '20250314' AND `thedate` <= '20250320' GROUP BY CAST(__ext[\"container_id\"] AS STRING), _timestamp_ ORDER BY `_timestamp_` ASC",
+			expected: "SELECT CAST(__ext[\"container_id\"] AS STRING) AS `__ext__bk_46__container_id`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, ((CAST((__shard_key__ / 1000 + 0) / 1440 AS INT) * 1440 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741935945000 AND `dtEventTimeStamp` <= 1742456145000 AND `thedate` >= '20250314' AND `thedate` <= '20250320' GROUP BY __ext__bk_46__container_id, _timestamp_ ORDER BY `_timestamp_` ASC",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

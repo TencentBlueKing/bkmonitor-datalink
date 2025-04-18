@@ -104,6 +104,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 			newDim, isObject = d.dimTransform(dim)
 			if isObject && d.encodeFunc != nil {
 				selectAlias = fmt.Sprintf("%s AS `%s`", newDim, d.encodeFunc(dim))
+				newDim = d.encodeFunc(dim)
 			} else {
 				selectAlias = newDim
 			}
@@ -483,7 +484,7 @@ func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
 
 	fs := strings.Split(s, ".")
 	if len(fs) > 1 {
-		return fmt.Sprintf("CAST(%s[\"%s\"] AS STRING)", fs[0], strings.Join(fs[1:], `"]["`)), true
+		return fmt.Sprintf("CAST(%s[\"%s\"] AS STRING)", fs[0], strings.Join(fs[1:], `.`)), true
 	}
 	return fmt.Sprintf("`%s`", s), false
 }

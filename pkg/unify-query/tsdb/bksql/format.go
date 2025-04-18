@@ -375,11 +375,11 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 		sort.Strings(orderFields)
 		sql += " ORDER BY " + strings.Join(orderFields, ", ")
 	}
-	if f.query.From > 0 {
-		sql += fmt.Sprintf(" OFFSET %d", f.query.From)
-	}
 	if f.query.Size > 0 {
 		sql += fmt.Sprintf(" LIMIT %d", f.query.Size)
+	}
+	if f.query.From > 0 {
+		sql += fmt.Sprintf(" OFFSET %d", f.query.From)
 	}
 
 	span.Set("sql", sql)

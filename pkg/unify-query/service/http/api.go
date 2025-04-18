@@ -69,10 +69,6 @@ func HandlerFieldKeys(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
-	queryTs := infoParamsToQueryTs(ctx, params)
-	unit, startTime, endTime, err := function.QueryTimestamp(queryTs.Start, queryTs.End)
-	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit)
-
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
 		resp.failed(ctx, err)
@@ -239,7 +235,6 @@ func HandlerTagValues(c *gin.Context) {
 	)
 
 	left := end.Sub(start)
-
 	span.Set("left", left)
 
 	for _, name := range params.Keys {
@@ -267,7 +262,7 @@ func HandlerTagValues(c *gin.Context) {
 					vmExpand := queryRef.ToVmExpand(ctx)
 					metadata.SetExpand(ctx, vmExpand)
 
-					matcher, err = labels.NewMatcher(labels.MatchEqual, labels.MetricName, prometheus.ReferenceName)
+					matcher, _ = labels.NewMatcher(labels.MatchEqual, labels.MetricName, prometheus.ReferenceName)
 
 					span.Set("direct-label-values-matcher", matcher.String())
 					span.Set("direct-label-values-size", qry.Size)
@@ -514,9 +509,10 @@ func HandlerLabelValues(c *gin.Context) {
 	return
 }
 
-func infoParamsToQueryTs(ctx context.Context, params *infos.Params) *structured.QueryTs {
+func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (queryRef metadata.QueryReference, startTime, endTime time.Time, err error) {
 	var (
 		user = metadata.GetUser(ctx)
+		unit string
 	)
 
 	queryTs := &structured.QueryTs{
@@ -538,16 +534,16 @@ func infoParamsToQueryTs(ctx context.Context, params *infos.Params) *structured.
 		Timezone:    params.Timezone,
 	}
 
-	return queryTs
-}
-
-func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (queryRef metadata.QueryReference, startTime, endTime time.Time, err error) {
-	var unit string
-	queryTs := infoParamsToQueryTs(ctx, params)
 	unit, startTime, endTime, err = function.QueryTimestamp(queryTs.Start, queryTs.End)
-	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit)
-	// 写入查询时间到全局缓存
+	if err != nil {
+		// 如果时间异常则使用最近 1h
+		endTime = time.Now()
+		startTime = endTime.Add(time.Hour * -1)
+		err = nil
+	}
 
+	// 写入查询时间到全局缓存
+	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit)
 	queryRef, err = queryTs.ToQueryReference(ctx)
 	return
 }

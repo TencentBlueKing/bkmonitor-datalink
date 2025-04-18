@@ -439,6 +439,9 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		// reference 接口背后都使用了存储引擎计算，所以在不特殊指定的情况下，使用 1s 补点逻辑，防止出的数据异常
+		lookBackDelta = time.Second
 	}
 
 	instance := prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{

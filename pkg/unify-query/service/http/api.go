@@ -262,7 +262,7 @@ func HandlerTagValues(c *gin.Context) {
 					vmExpand := queryRef.ToVmExpand(ctx)
 					metadata.SetExpand(ctx, vmExpand)
 
-					matcher, err = labels.NewMatcher(labels.MatchEqual, labels.MetricName, prometheus.ReferenceName)
+					matcher, _ = labels.NewMatcher(labels.MatchEqual, labels.MetricName, prometheus.ReferenceName)
 
 					span.Set("direct-label-values-matcher", matcher.String())
 					span.Set("direct-label-values-size", qry.Size)

@@ -252,6 +252,16 @@ EOF
 fi
   if [ "$system" = "linux" ]; then
         cat <<EOF >> "$path"
+  # 时间同步服务采集
+  timesync_task:
+    dataid: 1100030
+    task_id: 120
+    period: 1m
+    env: host
+    query_timeout: 10s
+    ntpd_path: /etc/ntp.conf
+    chrony_address: "[::1]:323"
+
 {%- if extra_vars is defined and extra_vars.enable_audit_tasks is defined and extra_vars.enable_audit_tasks == "true" %}
   # 登录日志采集
   loginlog_task:

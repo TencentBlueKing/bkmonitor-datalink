@@ -201,6 +201,20 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			want: "`env` IN ('prod', 'test')",
 		},
 		{
+			name: "test IN operator with wildcard",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "env",
+						Value:         []string{"prod", "test"},
+						Operator:      metadata.ConditionContains,
+						IsWildcard:    true,
+					},
+				},
+			},
+			want: "(`env` LIKE '%prod%' OR `env` LIKE '%test%')",
+		},
+		{
 			name: "doris test empty value",
 			condition: metadata.AllConditions{
 				{

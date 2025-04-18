@@ -101,6 +101,10 @@ func (c *Client) Open() error {
 		return fmt.Errorf("unable to open boltdb: %w", err)
 	}
 
+	if db == nil {
+		return fmt.Errorf("open boltdb is empty")
+	}
+
 	// New Bucket
 	err = db.Update(func(tx *bolt.Tx) error {
 		_, bucketErr := tx.CreateBucketIfNotExists(c.BucketName)

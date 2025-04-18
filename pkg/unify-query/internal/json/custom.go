@@ -10,10 +10,43 @@
 package json
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 )
+
+const (
+	StepString = "."
+)
+
+func mapData(prefix string, data map[string]any, res map[string]any) {
+	for k, v := range data {
+		if prefix != "" {
+			k = prefix + StepString + k
+		}
+		switch v.(type) {
+		case map[string]any:
+			mapData(k, v.(map[string]any), res)
+		default:
+			res[k] = v
+		}
+	}
+}
+
+// ParseObject 解析 json，按照层级打平
+func ParseObject(prefix, intput string) (map[string]any, error) {
+	oldData := make(map[string]any)
+	newData := make(map[string]any)
+
+	err := json.Unmarshal([]byte(intput), &oldData)
+	if err != nil {
+		return newData, err
+	}
+
+	mapData(prefix, oldData, newData)
+	return newData, nil
+}
 
 func MarshalListMap(data []map[string]interface{}) string {
 	if len(data) == 0 {

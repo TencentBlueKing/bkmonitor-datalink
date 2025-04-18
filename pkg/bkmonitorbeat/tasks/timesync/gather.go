@@ -95,6 +95,7 @@ func stats2Metrics(env string, stat *Stat) *Metrics {
 		info, _ := gse.GetAgentInfo()
 		dims = map[string]string{
 			"cloudid":     strconv.Itoa(int(info.Cloudid)),
+			"bk_cloud_id": strconv.Itoa(int(info.Cloudid)), // 兼容字段
 			"ip":          info.IP,
 			"hostname":    info.Hostname,
 			"bk_agent_id": info.BKAgentID,

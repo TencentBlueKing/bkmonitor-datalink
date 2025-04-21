@@ -34,6 +34,11 @@ var (
 	ErrorMatchAll = "不支持全字段检索"
 )
 
+type TimeAggregate struct {
+	Window       time.Duration
+	OffsetMillis int64
+}
+
 // SQLExpr 定义SQL表达式生成接口
 // 接口包含字段映射、查询字符串解析、全条件解析等功能
 type SQLExpr interface {
@@ -50,11 +55,13 @@ type SQLExpr interface {
 	// ParserAllConditions 解析全量条件生成SQL条件表达式
 	ParserAllConditions(allConditions metadata.AllConditions) (string, error)
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
-	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, error)
+	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, TimeAggregate, error)
 	// DescribeTableSQL 返回当前表结构
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
 	FieldMap() map[string]string
+	// Type 返回表达式类型
+	Type() string
 }
 
 // SQL表达式注册管理相关变量
@@ -117,6 +124,10 @@ type DefaultSQLExpr struct {
 	valueField string
 }
 
+func (d *DefaultSQLExpr) Type() string {
+	return "default"
+}
+
 func (d *DefaultSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {
 	d.timeField = timeField
 	d.valueField = valueField
@@ -148,7 +159,7 @@ func (d *DefaultSQLExpr) ParserQueryString(_ string) (string, error) {
 }
 
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段
-func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, err error) {
+func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, timeAggregate TimeAggregate, err error) {
 	valueField, err := d.dimTransform(d.valueField)
 	if err != nil {
 		return
@@ -156,6 +167,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 
 	var (
 		window       time.Duration
+		offsetMillis int64
 		timezone     string
 		dimensionMap = make(map[string]struct{})
 	)
@@ -191,7 +203,6 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 	}
 
 	if window > 0 {
-		var offsetMillis int
 		if window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
 			// 时间聚合函数兼容时区
 			loc, locErr := time.LoadLocation(timezone)
@@ -200,7 +211,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 			}
 			// 获取时区偏移量
 			_, offset := time.Now().In(loc).Zone()
-			offsetMillis = offset * 1e3
+			offsetMillis = int64(offset) * 1e3
 		}
 
 		timeField := fmt.Sprintf("(%s + %d) / %d * %d - %d", d.timeField, offsetMillis, window.Milliseconds(), window.Milliseconds(), offsetMillis)
@@ -248,6 +259,12 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 			ascName = "DESC"
 		}
 		orderByFields = append(orderByFields, fmt.Sprintf("%s %s", orderField, ascName))
+	}
+
+	// 回传时间聚合信息
+	timeAggregate = TimeAggregate{
+		Window:       window,
+		OffsetMillis: offsetMillis,
 	}
 
 	return

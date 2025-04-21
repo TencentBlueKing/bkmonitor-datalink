@@ -39,6 +39,10 @@ type DorisSQLExpr struct {
 
 var _ SQLExpr = (*DorisSQLExpr)(nil)
 
+func (d *DorisSQLExpr) Type() string {
+	return Doris
+}
+
 func (d *DorisSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {
 	d.timeField = timeField
 	d.valueField = valueField
@@ -81,11 +85,13 @@ func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
 }
 
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段
-func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, err error) {
+func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, timeAggregate TimeAggregate, err error) {
 	valueField, _ := d.dimTransform(d.valueField)
 
 	var (
-		window       time.Duration
+		window        time.Duration
+		offsetMinutes int64
+
 		timezone     string
 		dimensionMap = map[string]struct{}{
 			FieldValue: {},
@@ -136,7 +142,6 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 
 	if window > 0 {
 		// 获取时区偏移量
-		var offsetMinutes int
 		// 如果是按天聚合，则增加时区偏移量
 		if window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
 			// 时间聚合函数兼容时区
@@ -145,7 +150,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 				loc = time.UTC
 			}
 			_, offset := time.Now().In(loc).Zone()
-			offsetMinutes = offset / 60
+			offsetMinutes = int64(offset) / 60
 		}
 
 		// 如果是按照分钟聚合，则使用 __shard_key__ 作为时间字段
@@ -202,6 +207,12 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 			ascName = "DESC"
 		}
 		orderByFields = append(orderByFields, fmt.Sprintf("%s %s", orderField, ascName))
+	}
+
+	// 回传时间聚合信息
+	timeAggregate = TimeAggregate{
+		Window:       window,
+		OffsetMillis: offsetMinutes,
 	}
 
 	return

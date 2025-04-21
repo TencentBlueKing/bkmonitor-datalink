@@ -150,10 +150,8 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		}
 
 		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-		if query.HighLight != nil {
-			if !query.HighLight.Enable && q.HighLight.Enable {
-				query.HighLight = q.HighLight
-			}
+		if query.HighLight == nil && q.HighLight != nil {
+			query.HighLight = q.HighLight
 		}
 
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
@@ -932,6 +930,7 @@ func (q *Query) BuildMetadataQuery(
 	// 写入 ES 所需内容
 	query.QueryString = q.QueryString
 	query.Source = q.KeepColumns
+
 	query.HighLight = q.HighLight
 
 	query.Scroll = q.Scroll

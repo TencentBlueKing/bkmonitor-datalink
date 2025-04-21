@@ -60,7 +60,8 @@ type QueryFactory struct {
 
 	start time.Time
 	end   time.Time
-	step  time.Duration
+
+	timeAggregate sqlExpr.TimeAggregate
 
 	orders metadata.Orders
 
@@ -157,7 +158,10 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 	encodeFunc := metadata.GetPromDataFormat(ctx).EncodeFunc()
 	// 获取 metricLabel
 	metricLabel := f.query.MetricLabels(ctx)
+
 	tsMap := map[string]*prompb.TimeSeries{}
+	tsTimeMap := make(map[string]map[int64]float64)
+	isAddZero := f.timeAggregate.Window > 0 && f.expr.Type() == sqlExpr.Doris
 
 	// 先获取维度的 key 保证顺序一致
 	keys := make([]string, 0)
@@ -260,16 +264,52 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 			}
 		}
 
-		tsMap[key].Samples = append(tsMap[key].Samples, prompb.Sample{
-			Value:     vv,
-			Timestamp: vt,
-		})
+		// 如果是时间聚合需要进行补零，否则直接返回
+		if isAddZero {
+			if _, ok := tsTimeMap[key]; !ok {
+				tsTimeMap[key] = make(map[int64]float64)
+			}
+
+			tsTimeMap[key][vt] = vv
+		} else {
+			tsMap[key].Samples = append(tsMap[key].Samples, prompb.Sample{
+				Value:     vv,
+				Timestamp: vt,
+			})
+		}
 	}
 
 	// 转换结构体
 	res.Timeseries = make([]*prompb.TimeSeries, 0, len(tsMap))
-	for _, ts := range tsMap {
-		res.Timeseries = append(res.Timeseries, ts)
+
+	// 如果是时间聚合需要进行补零，否则直接返回
+	if isAddZero {
+		var (
+			start time.Time
+			end   time.Time
+		)
+
+		startMilli := (f.start.UnixMilli()+f.timeAggregate.OffsetMillis)/f.timeAggregate.Window.Milliseconds()*f.timeAggregate.Window.Milliseconds() - f.timeAggregate.OffsetMillis
+		start = time.UnixMilli(startMilli)
+		end = f.end
+
+		for key, ts := range tsMap {
+			for i := start; end.Sub(i) > 0; i = i.Add(f.timeAggregate.Window) {
+				sample := prompb.Sample{
+					Timestamp: i.UnixMilli(),
+					Value:     0,
+				}
+				if v, ok := tsTimeMap[key][i.UnixMilli()]; ok {
+					sample.Value = v
+				}
+				ts.Samples = append(ts.Samples, sample)
+			}
+			res.Timeseries = append(res.Timeseries, ts)
+		}
+	} else {
+		for _, ts := range tsMap {
+			res.Timeseries = append(res.Timeseries, ts)
+		}
 	}
 
 	return res, nil
@@ -347,14 +387,17 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	_, span = trace.NewSpan(f.ctx, "make-sql")
 	defer span.End(&err)
 
-	selectFields, groupFields, orderFields, err := f.expr.ParserAggregatesAndOrders(f.query.Aggregates, f.orders)
+	selectFields, groupFields, orderFields, timeAggregate, err := f.expr.ParserAggregatesAndOrders(f.query.Aggregates, f.orders)
 	if err != nil {
 		return
 	}
 
+	f.timeAggregate = timeAggregate
+
 	span.Set("select-fields", selectFields)
 	span.Set("group-fields", groupFields)
 	span.Set("order-fields", orderFields)
+	span.Set("timeAggregate", timeAggregate)
 
 	sql += fmt.Sprintf("SELECT %s FROM %s", strings.Join(selectFields, ", "), f.Table())
 	whereString, err := f.BuildWhere()
@@ -401,110 +444,4 @@ func (f *QueryFactory) dims(dims []string, field string) []string {
 		dimensions = append(dimensions, dim)
 	}
 	return dimensions
-}
-
-func (f *QueryFactory) FormatData(keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
-	res := &prompb.QueryResult{}
-
-	if len(list) == 0 {
-		return res, nil
-	}
-	// 维度结构体为空则任务异常
-	if len(keys) == 0 {
-		return res, fmt.Errorf("SelectFieldsOrder is empty")
-	}
-
-	// 获取该指标的维度 key
-	field := f.query.Field
-	dimensions := f.dims(keys, field)
-
-	tsMap := make(map[string]*prompb.TimeSeries, 0)
-	for _, d := range list {
-		// 优先获取时间和值
-		var (
-			vt int64
-			vv float64
-
-			vtLong   interface{}
-			vvDouble interface{}
-
-			ok bool
-		)
-
-		if d == nil {
-			continue
-		}
-
-		// 获取时间戳，单位是毫秒
-		if vtLong, ok = d[sqlExpr.TimeStamp]; !ok {
-			vtLong = 0
-		}
-
-		if vtLong == nil {
-			continue
-		}
-		switch vtLong.(type) {
-		case int64:
-			vt = vtLong.(int64)
-		case float64:
-			vt = int64(vtLong.(float64))
-		default:
-			return res, fmt.Errorf("%s type is error %T, %v", f.timeField, vtLong, vtLong)
-		}
-
-		// 获取值
-		if vvDouble, ok = d[field]; !ok {
-			return res, fmt.Errorf("dimension %s is emtpy", field)
-		}
-
-		if vvDouble == nil {
-			continue
-		}
-		switch vvDouble.(type) {
-		case int64:
-			vv = float64(vvDouble.(int64))
-		case float64:
-			vv = vvDouble.(float64)
-		default:
-			return res, fmt.Errorf("%s type is error %T, %v", field, vvDouble, vvDouble)
-		}
-
-		var buf strings.Builder
-		lbl := make([]prompb.Label, 0, len(dimensions))
-		// 获取维度信息
-		for _, dimName := range dimensions {
-			val, err := getValue(dimName, d)
-			if err != nil {
-				return res, fmt.Errorf("dimensions %+v %s", dimensions, err.Error())
-			}
-
-			buf.WriteString(fmt.Sprintf("%s:%s,", dimName, val))
-			lbl = append(lbl, prompb.Label{
-				Name:  dimName,
-				Value: val,
-			})
-		}
-
-		// 同一个 series 进行合并分组
-		key := buf.String()
-		if _, ok := tsMap[key]; !ok {
-			tsMap[key] = &prompb.TimeSeries{
-				Labels:  lbl,
-				Samples: make([]prompb.Sample, 0),
-			}
-		}
-
-		tsMap[key].Samples = append(tsMap[key].Samples, prompb.Sample{
-			Value:     vv,
-			Timestamp: vt,
-		})
-	}
-
-	// 转换结构体
-	res.Timeseries = make([]*prompb.TimeSeries, 0, len(tsMap))
-	for _, ts := range tsMap {
-		res.Timeseries = append(res.Timeseries, ts)
-	}
-
-	return res, nil
 }

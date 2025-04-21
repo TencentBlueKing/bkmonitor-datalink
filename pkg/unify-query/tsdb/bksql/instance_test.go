@@ -194,7 +194,7 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
     "timestamp" : 1730118540000
   }, {
     "timestamp" : 1730118600000
-  }, 
+  }, {
     "timestamp" : 1730118660000
   }, {
     "value" : 2,

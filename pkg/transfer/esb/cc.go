@@ -213,7 +213,7 @@ func (c *CCApiClient) GetSearchBizInstTopo(start, bizID, limit, level int) ([]CC
 
 	response, err := c.Agent().
 		Set(authKey, c.client.commonArgs.JSON()).
-		Get(path).
+		Post(path).
 		QueryStruct(
 			&CCSearchBizInstTopoParams{
 				BkBizID: bizID,

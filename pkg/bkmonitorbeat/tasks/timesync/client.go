@@ -64,6 +64,7 @@ func (c *Client) Query() (*Stat, error) {
 		if err == nil {
 			return stat, nil
 		}
+		// 默认配置里 chrony / ntpd 都会存在
 		logger.Warnf("failed to query chrony: %v", err)
 	}
 	if c.NtpdPath != "" {

@@ -42,6 +42,7 @@ const (
 	ModuleShellHistory    = "shellhistory"
 	ModuleRpmPackage      = "rpmpackage"
 	ModuleTimeSync        = "timesync"
+	ModuleDmesg           = "dmesg"
 )
 
 const (

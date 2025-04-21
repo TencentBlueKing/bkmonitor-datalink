@@ -12,20 +12,18 @@ package cmdb_test
 import (
 	"testing"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
-	"github.com/stretchr/testify/assert"
 )
 
-
 func TestMain(m *testing.M) {
-	config.FilePath = "../../../dist/bmw.yaml"
-	config.InitConfig()
+	// config.FilePath = "../../../dist/bmw.yaml"
+	// config.InitConfig()
 
-	m.Run()
+	// m.Run()
 }
-
 
 func TestSearchBusiness(t *testing.T) {
 	cmdbApi, err := api.GetCmdbApi()
@@ -155,7 +153,7 @@ func TestGetBizInternalModule(t *testing.T) {
 	var result cmdb.GetBizInternalModuleResp
 	params := map[string]interface{}{
 		"bk_supplier_account": "0",
-		"bk_biz_id": 2,
+		"bk_biz_id":           2,
 	}
 	_, err = cmdbApi.GetBizInternalModule().SetPathParams(map[string]string{"bk_supplier_account": "0", "bk_biz_id": "2"}).SetBody(params).SetResult(&result).Request()
 	if err != nil {
@@ -195,9 +193,9 @@ func TestSearchModule(t *testing.T) {
 	}
 
 	params := map[string]string{
-		"bk_biz_id": "2",
+		"bk_biz_id":           "2",
 		"bk_supplier_account": "0",
-		"bk_set_id": "0",
+		"bk_set_id":           "0",
 	}
 
 	var result cmdb.SearchModuleResp
@@ -228,7 +226,7 @@ func TestSearchSet(t *testing.T) {
 	}
 
 	params := map[string]string{
-		"bk_biz_id": "2",
+		"bk_biz_id":           "2",
 		"bk_supplier_account": "0",
 	}
 
@@ -293,13 +291,13 @@ func TestDynamicGroup(t *testing.T) {
 
 	pathParams := map[string]string{
 		"bk_biz_id": "2",
-		"id": searchResult.Data.Info[len(searchResult.Data.Info)-1].ID,
+		"id":        searchResult.Data.Info[len(searchResult.Data.Info)-1].ID,
 	}
 
 	params = map[string]interface{}{
 		"bk_biz_id": 2,
-		"id": searchResult.Data.Info[len(searchResult.Data.Info)-1].ID,
-		"fields": []string{"bk_host_id"},
+		"id":        searchResult.Data.Info[len(searchResult.Data.Info)-1].ID,
+		"fields":    []string{"bk_host_id"},
 		"page": map[string]interface{}{
 			"start": 0,
 			"limit": 10,

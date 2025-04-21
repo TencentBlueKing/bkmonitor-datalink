@@ -138,7 +138,7 @@ func (s CustomReportSubscriptionSvc) RefreshCollectorCustomConf(bkBizId *int, pl
 		return errors.Wrap(err, "GetCmdbApi failed")
 	}
 	var bizResp cmdb.SearchBusinessResp
-	if _, err := cmdbApi.SearchBusiness().SetBody(map[string]interface{}{"bk_supplier_account": 0}).SetResult(&bizResp).Request(); err != nil {
+	if _, err := cmdbApi.SearchBusiness().SetPathParams(map[string]string{"bk_supplier_account": "0"}).SetResult(&bizResp).Request(); err != nil {
 		return errors.Wrap(err, "SearchBusinessResp failed")
 	}
 	allBizIdSet := mapset.NewSet[int]()

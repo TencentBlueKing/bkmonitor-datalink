@@ -164,7 +164,7 @@ func (*SpaceSvc) getBkccBizIdNameMap() (map[string]string, error) {
 		return nil, errors.Wrap(err, "get cmdb api failed")
 	}
 	var bizResp cmdb.SearchBusinessResp
-	if _, err := cmdbApi.SearchBusiness().SetBody(map[string]interface{}{"bk_supplier_account": 0}).SetResult(&bizResp).Request(); err != nil {
+	if _, err := cmdbApi.SearchBusiness().SetPathParams(map[string]string{"bk_supplier_account": "0"}).SetResult(&bizResp).Request(); err != nil {
 		return nil, errors.Wrap(err, "search business failed")
 	}
 	bizIdNameMap := make(map[string]string)

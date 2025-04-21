@@ -95,7 +95,7 @@ func getBusinessList(ctx context.Context) ([]map[string]interface{}, error) {
 		},
 		// 设置分页参数
 		func(page int) define.Operation {
-			return cmdbApi.SearchBusiness().SetContext(ctx).SetBody(map[string]interface{}{"bk_supplier_account": 0, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.SearchBusiness().SetContext(ctx).SetPathParams(map[string]string{"bk_supplier_account": "0"}).SetBody(map[string]interface{}{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)

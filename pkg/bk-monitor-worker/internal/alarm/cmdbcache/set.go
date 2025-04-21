@@ -83,7 +83,7 @@ func getSetListByBizID(ctx context.Context, bizID int) ([]map[string]interface{}
 		},
 		// 生成分页请求
 		func(page int) define.Operation {
-			return cmdbApi.SearchSet().SetContext(ctx).SetBody(map[string]interface{}{"bk_supplier_account": 0, "bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.SearchSet().SetContext(ctx).SetPathParams(map[string]string{"bk_supplier_account": "0", "bk_biz_id": strconv.Itoa(bizID)}).SetBody(map[string]interface{}{"bk_supplier_account": 0, "bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)

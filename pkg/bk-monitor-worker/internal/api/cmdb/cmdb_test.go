@@ -12,7 +12,7 @@ package cmdb_test
 import (
 	"testing"
 
-	// "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/stretchr/testify/assert"
@@ -20,10 +20,10 @@ import (
 
 
 func TestMain(m *testing.M) {
-	// config.FilePath = "../../../dist/bmw.yaml"
-	// config.InitConfig()
+	config.FilePath = "../../../dist/bmw.yaml"
+	config.InitConfig()
 
-	// m.Run()
+	m.Run()
 }
 
 
@@ -67,6 +67,7 @@ func TestListBizHostsTopo(t *testing.T) {
 	}
 
 	params := map[string]interface{}{
+		"bk_biz_id": 2,
 		"page": map[string]interface{}{
 			"start": 0,
 			"limit": 10,
@@ -135,7 +136,7 @@ func TestSearchBizInstTopo(t *testing.T) {
 	}
 
 	var result cmdb.SearchBizInstTopoResp
-	_, err = cmdbApi.SearchBizInstTopo().SetPathParams(map[string]string{"bk_biz_id": "2"}).SetResult(&result).Request()
+	_, err = cmdbApi.SearchBizInstTopo().SetPathParams(map[string]string{"bk_biz_id": "2"}).SetBody(map[string]interface{}{"bk_biz_id": 2}).SetResult(&result).Request()
 	if err != nil {
 		t.Errorf("TestSearchBizInstTopo failed, err: %v", err)
 		return
@@ -152,7 +153,11 @@ func TestGetBizInternalModule(t *testing.T) {
 	}
 
 	var result cmdb.GetBizInternalModuleResp
-	_, err = cmdbApi.GetBizInternalModule().SetPathParams(map[string]string{"bk_supplier_account": "0", "bk_biz_id": "2"}).SetResult(&result).Request()
+	params := map[string]interface{}{
+		"bk_supplier_account": "0",
+		"bk_biz_id": 2,
+	}
+	_, err = cmdbApi.GetBizInternalModule().SetPathParams(map[string]string{"bk_supplier_account": "0", "bk_biz_id": "2"}).SetBody(params).SetResult(&result).Request()
 	if err != nil {
 		t.Errorf("TestGetBizInternalModule failed, err: %v", err)
 		return
@@ -196,7 +201,7 @@ func TestSearchModule(t *testing.T) {
 	}
 
 	var result cmdb.SearchModuleResp
-	_, err = cmdbApi.SearchModule().SetPathParams(params).SetResult(&result).Request()
+	_, err = cmdbApi.SearchModule().SetPathParams(params).SetBody(map[string]interface{}{"bk_biz_id": 2, "bk_supplier_account": "0"}).SetResult(&result).Request()
 	if err != nil {
 		t.Errorf("TestSearchModule failed, err: %v", err)
 		return
@@ -206,7 +211,7 @@ func TestSearchModule(t *testing.T) {
 
 	params["bk_set_id"] = "2"
 
-	_, err = cmdbApi.SearchModule().SetPathParams(params).SetResult(&result).Request()
+	_, err = cmdbApi.SearchModule().SetPathParams(params).SetBody(map[string]interface{}{"bk_biz_id": 2, "bk_supplier_account": "0", "bk_set_id": "2"}).SetResult(&result).Request()
 	if err != nil {
 		t.Errorf("TestSearchModule failed, err: %v", err)
 		return
@@ -228,7 +233,7 @@ func TestSearchSet(t *testing.T) {
 	}
 
 	var result cmdb.SearchSetResp
-	_, err = cmdbApi.SearchSet().SetPathParams(params).SetResult(&result).Request()
+	_, err = cmdbApi.SearchSet().SetPathParams(params).SetBody(map[string]interface{}{"bk_biz_id": 2, "bk_supplier_account": "0"}).SetResult(&result).Request()
 	if err != nil {
 		t.Errorf("TestSearchSet failed, err: %v", err)
 		return
@@ -292,6 +297,8 @@ func TestDynamicGroup(t *testing.T) {
 	}
 
 	params = map[string]interface{}{
+		"bk_biz_id": 2,
+		"id": searchResult.Data.Info[len(searchResult.Data.Info)-1].ID,
 		"fields": []string{"bk_host_id"},
 		"page": map[string]interface{}{
 			"start": 0,

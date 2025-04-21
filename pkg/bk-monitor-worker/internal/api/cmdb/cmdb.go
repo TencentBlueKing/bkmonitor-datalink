@@ -154,15 +154,18 @@ func (c *Client) SearchBizInstTopo(opts ...define.OperationOption) define.Operat
 // 查询业务内部模块
 func (c *Client) GetBizInternalModule(opts ...define.OperationOption) define.Operation {
 	var path string
+	var method string
 	if c.useApiGateway {
 		path = "/api/v3/topo/internal/{bk_supplier_account}/{bk_biz_id}"
+		method = "GET"
 	} else {
 		path = "get_biz_internal_module"
+		method = "POST"
 	}
 
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
 		Name:   "get_biz_internal_module",
-		Method: "GET",
+		Method: method,
 		Path:   path,
 	}, opts...)
 }

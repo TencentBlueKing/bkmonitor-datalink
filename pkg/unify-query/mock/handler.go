@@ -224,6 +224,7 @@ func mockBkSQLHandler(ctx context.Context) {
 		d, ok := BkSQL.Get(request.Sql)
 		if !ok {
 			err = fmt.Errorf(`bksql mock data is empty in "%s"`, request.Sql)
+			log.Errorf(ctx, err.Error())
 			return
 		}
 
@@ -305,6 +306,7 @@ func mockVmHandler(ctx context.Context) {
 		d, ok := Vm.Get(key)
 		if !ok {
 			err = fmt.Errorf(`vm mock data is empty in "%s"`, key)
+			log.Errorf(ctx, err.Error())
 			return
 		}
 

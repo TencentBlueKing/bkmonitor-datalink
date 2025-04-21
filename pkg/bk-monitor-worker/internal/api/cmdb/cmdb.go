@@ -162,7 +162,7 @@ func (c *Client) GetBizInternalModule(opts ...define.OperationOption) define.Ope
 
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
 		Name:   "get_biz_internal_module",
-		Method: "POST",
+		Method: "GET",
 		Path:   path,
 	}, opts...)
 }

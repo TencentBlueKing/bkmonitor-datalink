@@ -893,7 +893,7 @@ func (q *Query) BuildMetadataQuery(
 
 	// 兼容原逻辑，storageType 通过 storageMap 获取
 	if query.StorageType == "" {
-		log.Warnf(ctx, "storageType is empty with %s", query.TableID)
+		log.Warnf(ctx, "storageType is empty with %s", tsDB.TableID)
 		stg, _ := tsdb.GetStorage(query.StorageID)
 		if stg != nil {
 			query.StorageType = stg.Type

@@ -203,17 +203,19 @@ func (c *CCApiClient) GetSearchBizInstTopo(start, bizID, limit, level int) ([]CC
 		Data []CCSearchBizInstTopoResponseInfo `json:"data"`
 	}{}
 
+	sling := c.Agent().Set(authKey, c.client.commonArgs.JSON())
+
 	// use different path by esb or api gateway
 	var path string
 	if c.useApiGateway() {
 		path = fmt.Sprintf("/api/v3/find/topoinst/biz/%d", bizID)
+		sling = sling.Post(path)
 	} else {
 		path = "/search_biz_inst_topo/"
+		sling = sling.Get(path)
 	}
 
-	response, err := c.Agent().
-		Set(authKey, c.client.commonArgs.JSON()).
-		Post(path).
+	response, err := sling.
 		QueryStruct(
 			&CCSearchBizInstTopoParams{
 				BkBizID: bizID,

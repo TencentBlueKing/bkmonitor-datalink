@@ -20,7 +20,7 @@ seccomp.enabled: false
 
 # ================================ Logging ======================================
 # Available log levels are: critical, error, warning, info, debug
-logging.level: error
+logging.level: debug
 logging.path: '{{ plugin_path.log_path }}'
 logging.maxsize: 10
 logging.maxage: 3

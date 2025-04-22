@@ -28,6 +28,7 @@ type KmsgException struct {
 	Message string
 }
 
+// 按序遍历异常判断列表
 var kmsgExceptions = []KmsgException{
 	{Name: "ext3_fs_error", Message: "EXT3-fs error"},
 	{Name: "disk_io_error", Message: "I/O error"},
@@ -40,6 +41,7 @@ var kmsgExceptions = []KmsgException{
 	{Name: "transmit_time_out", Message: "transmit timed out"},
 	{Name: "oom", Message: "Out of Memory"},
 	{Name: "oom", Message: "out_of_memory"},
+	{Name: "oom", Message: "oom-kill"},
 	{Name: "alloc_kernel_sgl", Message: "Failed to alloc kernel SGL buffer for IOCTL"},
 	{Name: "nmi_received", Message: "Uhhuh. NMI received"},
 	{Name: "page_alloc_fail", Message: "page allocation failure"},
@@ -70,21 +72,26 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	return gather
 }
 
+type expTime struct {
+	Message string
+	Time    time.Time
+}
+
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	g.PreRun(ctx)
 	defer g.PostRun(ctx)
 
 	g.ctx, g.cancel = context.WithCancel(ctx)
-	exps := make(map[KmsgException]time.Time) // 相同事件在同一个上报周期内需要去重
+	exps := make(map[string]expTime) // 相同事件在同一个上报周期内需要去重
 	const batchSize = 10
 
-	toWrapException := func(m map[KmsgException]time.Time) []wrapException {
+	toWrapException := func(m map[string]expTime) []wrapException {
 		var ret []wrapException
-		for k, v := range m {
+		for name, v := range m {
 			ret = append(ret, wrapException{
-				Name:    k.Name,
-				Message: k.Message,
-				Time:    v,
+				Name:    name,
+				Message: v.Message,
+				Time:    v.Time,
 			})
 		}
 		return ret
@@ -104,14 +111,17 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		case <-ticker.C:
 			if len(exps) > 0 {
 				e <- newEvent(g.TaskConfig.GetDataID(), toWrapException(exps))
-				exps = make(map[KmsgException]time.Time)
+				exps = make(map[string]expTime)
 			}
 
 		case exception := <-ch:
-			exps[exception] = time.Now()
+			exps[exception.Name] = expTime{
+				Message: exception.Message,
+				Time:    time.Now(),
+			}
 			if len(exps) >= batchSize {
 				e <- newEvent(g.TaskConfig.GetDataID(), toWrapException(exps))
-				exps = make(map[KmsgException]time.Time)
+				exps = make(map[string]expTime)
 			}
 		}
 	}
@@ -171,7 +181,7 @@ func (p *parser) Tail() <-chan KmsgException {
 				}
 				p.exception <- KmsgException{
 					Name:    exception.Name,
-					Message: exception.Message,
+					Message: msgStr,
 				}
 				break
 			}

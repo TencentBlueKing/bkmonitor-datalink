@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -68,6 +69,8 @@ func HandlerFieldKeys(c *gin.Context) {
 	span.Set("request-url", c.Request.URL.String())
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
+
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
@@ -143,6 +146,8 @@ func HandlerTagKeys(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
+
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
 		resp.failed(ctx, err)
@@ -215,6 +220,8 @@ func HandlerTagValues(c *gin.Context) {
 	span.Set("request-url", c.Request.URL.String())
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
+
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
@@ -329,6 +336,8 @@ func HandlerSeries(c *gin.Context) {
 	span.Set("request-url", c.Request.URL.String())
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
+
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
@@ -469,6 +478,8 @@ func HandlerLabelValues(c *gin.Context) {
 
 	span.Set("request-url", c.Request.URL.String())
 	span.Set("request-header", c.Request.Header)
+
+	log.Infof(ctx, fmt.Sprintf("header: %+v, url: %s", c.Request.Header, c.Request.URL.String()))
 
 	if len(matches) != 1 {
 		err = fmt.Errorf("match[] 参数只支持 1 个, %+v", matches)

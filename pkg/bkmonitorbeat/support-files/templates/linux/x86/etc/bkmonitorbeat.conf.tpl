@@ -179,6 +179,11 @@ bkmonitorbeat:
     ntpd_path: /etc/ntp.conf
     chrony_address: "[::1]:323"
 
+  dmesg_task:
+    dataid: 1100031
+    task_id: 121
+    period: 1m
+
 {%- if extra_vars is defined and extra_vars.enable_audit_tasks is defined and extra_vars.enable_audit_tasks == "true" %}
   # 登录日志采集
   loginlog_task:

@@ -228,6 +228,8 @@ var (
 	BkApiBcsCcApiUrl string
 	// BkApiGseApiGwUrl bk-apigw bkgse base url
 	BkApiGseApiGwUrl string
+	// BkApiCmdbApiGatewayUrl bk-apigw cmdb base url
+	BkApiCmdbApiGatewayUrl string
 	// SloPushGatewayApi 是否启用监控的apiGateway
 	BkMonitorApiGatewayEnabled bool
 	// BkMonitorApiGatewayBaseUrl 监控的apiGateway
@@ -397,6 +399,7 @@ func initVariables() {
 	BkApiBkssmUrl = GetValue("taskConfig.common.bkapi.bkssmUrl", "")
 	BkApiBcsCcApiUrl = GetValue("taskConfig.common.bkapi.bcsCcApiUrl", "")
 	BkApiGseApiGwUrl = GetValue("taskConfig.common.bkapi.bkgseApiGwUrl", "")
+	BkApiCmdbApiGatewayUrl = GetValue("taskConfig.common.bkapi.cmdbApiGatewayUrl", "")
 
 	// SloPushGatewayApi 是否启用监控的apiGateway
 	BkMonitorApiGatewayEnabled = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayEnabled", false)

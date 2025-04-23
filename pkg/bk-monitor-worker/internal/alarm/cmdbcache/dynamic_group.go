@@ -25,6 +25,7 @@ package cmdbcache
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/mitchellh/mapstructure"
@@ -100,7 +101,7 @@ func getDynamicGroupRelatedIds(ctx context.Context, bizID int, dynamicGroupID st
 			return result.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.ExecuteDynamicGroup().SetContext(ctx).SetBody(map[string]interface{}{"bk_biz_id": bizID, "id": dynamicGroupID, "fields": []string{field}, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.ExecuteDynamicGroup().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID), "id": dynamicGroupID}).SetBody(map[string]interface{}{"bk_biz_id": bizID, "id": dynamicGroupID, "fields": []string{field}, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)
@@ -151,7 +152,7 @@ func getDynamicGroupList(ctx context.Context, bizID int) (map[string]map[string]
 			return result.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.SearchDynamicGroup().SetContext(ctx).SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.SearchDynamicGroup().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID)}).SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)

@@ -7,16 +7,37 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package api
+package json
 
-const (
-	RelationMultiResourceConfigPath      = "api.relation.multi_resource"
-	RelationMultiResourceRangeConfigPath = "api.relation.mutil_resource_range"
-	RelationMaxRoutingConfigPath         = "api.relation.max_routing"
+import (
+	"fmt"
+	"sort"
+	"strings"
 )
 
-var (
-	RelationMultiResource      string
-	RelationMultiResourceRange string
-	RelationMaxRouting         int
-)
+func MarshalListMap(data []map[string]interface{}) string {
+	if len(data) == 0 {
+		return "[]"
+	}
+
+	var (
+		s  []string
+		ks []string
+	)
+	for _, d := range data {
+		if len(ks) == 0 {
+			for k := range d {
+				ks = append(ks, k)
+			}
+			sort.Strings(ks)
+		}
+
+		var m []string
+		for _, k := range ks {
+			m = append(m, fmt.Sprintf(`"%s":"%v"`, k, d[k]))
+		}
+		s = append(s, strings.Join(m, ","))
+	}
+
+	return fmt.Sprintf(`[{%s}]`, strings.Join(s, "},{"))
+}

@@ -95,10 +95,10 @@ func (c ClusterInfo) GetESClient(ctx context.Context) (*elasticsearch.Elasticsea
 	timeoutCtx, _ := context.WithTimeout(ctx, 5*time.Second)
 	resp, err := client.Ping(timeoutCtx)
 	// ref: https://andrii-kushch.medium.com/is-it-necessary-to-close-the-body-in-the-http-response-object-in-golang-171c44c9394d
-	defer resp.Close()
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Close()
 
 	return client, nil
 }

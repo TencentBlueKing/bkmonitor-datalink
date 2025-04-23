@@ -12,7 +12,6 @@ package structured
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -66,45 +65,61 @@ type QueryTs struct {
 	Limit int `json:"limit,omitempty" example:"0"`
 	// From 翻页开启数字
 	From int `json:"from,omitempty" example:"0"`
+
+	// Scroll 是否启用 Scroll 查询
+	Scroll string `json:"scroll,omitempty"`
+	// IsMultiFrom 是否启用 MultiFrom 查询
+	IsMultiFrom bool `json:"is_multi_from,omitempty"`
+
+	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`
+
 	// HighLight 是否开启高亮
-	HighLight metadata.HighLight `json:"highlight,omitempty"`
+	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
-// timeOffset 根据 timezone 偏移对齐
-func timeOffset(t time.Time, timezone string, step time.Duration) (string, time.Time, error) {
-	loc, err := time.LoadLocation(timezone)
-	if err != nil {
-		loc = time.UTC
-	}
-	t0 := t.In(loc)
-	_, offset := t0.Zone()
-	outTimezone := t0.Location().String()
-	offsetDuration := time.Duration(offset) * time.Second
-	t1 := t.Add(offsetDuration)
-	t2 := time.Unix(int64(math.Floor(float64(t1.Unix())/step.Seconds())*step.Seconds()), 0)
-	t3 := t2.Add(offsetDuration * -1).In(loc)
-	return outTimezone, t3, nil
-}
-
-func ToTime(start, end time.Time, stepStr, timezone string) (time.Time, time.Time, time.Duration, string, error) {
-	var (
-		interval time.Duration
-	)
-
-	if stepStr == "" {
-		interval = promql.GetDefaultStep()
+// StepParse 解析step
+func StepParse(step string) time.Duration {
+	if step == "" {
+		return promql.GetDefaultStep()
 	} else {
-		dTmp, err := model.ParseDuration(stepStr)
-		interval = time.Duration(dTmp)
+		dTmp, err := model.ParseDuration(step)
+		stepDuration := time.Duration(dTmp)
 
 		if err != nil {
-			return start, end, interval, timezone, err
+			return promql.GetDefaultStep()
 		}
+
+		return stepDuration
 	}
+}
+
+// AlignTime 开始时间根据时区对齐
+func AlignTime(start, end time.Time, stepStr, timezone string) (time.Time, time.Time, time.Duration, string, error) {
+	step := StepParse(stepStr)
 
 	// 根据 timezone 来对齐开始时间
-	newTimezone, newStart, nErr := timeOffset(start, timezone, interval)
-	return newStart, end, interval, newTimezone, nErr
+	newTimezone, newStart := function.TimeOffset(start, timezone, step)
+	return newStart, end, step, newTimezone, nil
+}
+
+// GetMaxWindow 获取最大聚合时间
+func (q *QueryTs) GetMaxWindow() (time.Duration, error) {
+	var window time.Duration = 0
+	for _, query := range q.QueryList {
+		for _, agg := range query.AggregateMethodList {
+			if agg.Window != "" {
+				aw, err := agg.Window.Duration()
+				if err != nil {
+					return 0, err
+				}
+
+				if aw > window {
+					window = aw
+				}
+			}
+		}
+	}
+	return window, nil
 }
 
 func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference, error) {
@@ -126,9 +141,19 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 			q.SpaceUid = metadata.GetUser(ctx).SpaceUid
 		}
 
+		if q.ResultTableOptions != nil {
+			query.ResultTableOptions = q.ResultTableOptions
+		}
+
+		if q.Scroll != "" {
+			query.Scroll = q.Scroll
+		}
+
 		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-		if !query.HighLight.Enable && q.HighLight.Enable {
-			query.HighLight = q.HighLight
+		if query.HighLight != nil {
+			if !query.HighLight.Enable && q.HighLight.Enable {
+				query.HighLight = q.HighLight
+			}
 		}
 
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
@@ -183,13 +208,19 @@ func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClus
 	if err != nil {
 		return nil, err
 	}
+
+	agg, err := qry.AggregateMethodList.ToQry(qry.Timezone)
+	if err != nil {
+		return nil, err
+	}
+
 	queryCM := &metadata.QueryClusterMetric{
 		MetricName: qry.FieldName,
-		Aggregates: qry.AggregateMethodList.ToQry(qry.Timezone),
+		Aggregates: agg,
 		Conditions: queryConditions,
 	}
 	if qry.TimeAggregation.Function != "" {
-		wDuration, err := qry.TimeAggregation.Window.ToTime()
+		wDuration, err := qry.TimeAggregation.Window.Duration()
 		if err != nil {
 			return nil, errors.Errorf("TimeAggregation.Window(%v) format is invalid, %v", qry.TimeAggregation, err)
 		}
@@ -366,8 +397,13 @@ type Query struct {
 	// IsReference 是否使用非时间聚合查询
 	IsReference bool `json:"-" swaggerignore:"true"`
 
+	// ResultTableOptions
+	ResultTableOptions metadata.ResultTableOptions `json:"-"`
+	// Scroll
+	Scroll string `json:"-"`
+
 	// HighLight 是否打开高亮，只对原始数据接口生效
-	HighLight metadata.HighLight `json:"highlight,omitempty"`
+	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
 func (q *Query) ToRouter() (*Route, error) {
@@ -386,7 +422,7 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 
 	// 非时间聚合函数使用透传的方式
 	if q.IsReference {
-		aggs = q.AggregateMethodList.ToQry(q.Timezone)
+		aggs, err = q.AggregateMethodList.ToQry(q.Timezone)
 		return
 	}
 
@@ -732,7 +768,7 @@ func (q *Query) BuildMetadataQuery(
 					cond = append(cond, ConditionField{
 						DimensionName: k,
 						Value:         []string{v},
-						Operator:      Contains,
+						Operator:      ConditionEqual,
 					})
 				}
 			}
@@ -802,7 +838,7 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	// 通过过期时间判断查询的 storage
-	start, end, _, timezone, err := ToTime(startTime, endTime, q.Step, q.Timezone)
+	start, end, _, timezone, err := AlignTime(startTime, endTime, q.Step, q.Timezone)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
@@ -878,6 +914,10 @@ func (q *Query) BuildMetadataQuery(
 	query.QueryString = q.QueryString
 	query.Source = q.KeepColumns
 	query.HighLight = q.HighLight
+
+	query.Scroll = q.Scroll
+	query.ResultTableOptions = q.ResultTableOptions
+
 	query.Size = q.Limit
 	query.From = q.From
 
@@ -898,21 +938,7 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	if len(q.OrderBy) > 0 {
-		query.Orders = make(metadata.Orders)
-		for _, o := range q.OrderBy {
-			if len(o) == 0 {
-				continue
-			}
-
-			asc := true
-			name := o
-
-			if strings.HasPrefix(o, "-") {
-				asc = false
-				name = name[1:]
-			}
-			query.Orders[name] = asc
-		}
+		query.Orders = q.OrderBy.Orders()
 	}
 
 	span.Set("query-source-type", query.SourceType)

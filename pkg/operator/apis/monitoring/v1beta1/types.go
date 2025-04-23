@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 )
 
 const (
@@ -53,6 +55,16 @@ type MonitorResource struct {
 func (mr *MonitorResource) MatchSplitNamespace(namespace string) bool {
 	for _, ns := range strings.Split(mr.NameSpace, "|") {
 		if strings.TrimSpace(ns) == namespace {
+			return true
+		}
+	}
+	return false
+}
+
+// MatchSplitKind kind 支持使用【|】分割
+func (mr *MonitorResource) MatchSplitKind(kind string) bool {
+	for _, s := range strings.Split(mr.Kind, "|") {
+		if utils.LowerEq(strings.TrimSpace(s), kind) {
 			return true
 		}
 	}

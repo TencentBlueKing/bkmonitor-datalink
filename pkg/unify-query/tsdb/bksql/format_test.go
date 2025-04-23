@@ -49,9 +49,9 @@ func TestNewSqlFactory(t *testing.T) {
 				BkSqlCondition: "gseIndex > 0",
 				From:           0,
 				Size:           0,
-				Orders:         metadata.Orders{"ip": true},
+				Orders:         metadata.Orders{{Name: "ip", Ast: true}},
 			},
-			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000))) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1717144141000 AND `dtEventTimeStamp` < 1717147741000 AND `thedate` = '20240531' AND (gseIndex > 0) GROUP BY `ip`, (`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000)) ORDER BY `_timestamp_` ASC, `ip` ASC",
+			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, MAX((`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 60000 - 0))) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1717144141000 AND `dtEventTimeStamp` < 1717147741000 AND `thedate` = '20240531' AND (gseIndex > 0) GROUP BY `ip`, (`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 60000 - 0)) ORDER BY `_timestamp_` ASC, `ip` ASC",
 		},
 		"sum-with-promql-1": {
 			query: &metadata.Query{
@@ -89,7 +89,7 @@ func TestNewSqlFactory(t *testing.T) {
 				},
 				BkSqlCondition: "gseIndex > 0",
 			},
-			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000))) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1717144141000 AND `dtEventTimeStamp` < 1717147741000 AND `thedate` = '20240531' AND (gseIndex > 0) GROUP BY `ip`, (`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000)) ORDER BY `_timestamp_` ASC",
+			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, MAX((`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 60000 - 0))) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1717144141000 AND `dtEventTimeStamp` < 1717147741000 AND `thedate` = '20240531' AND (gseIndex > 0) GROUP BY `ip`, (`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 60000 - 0)) ORDER BY `_timestamp_` ASC",
 		},
 		"count-with-count-promql-2": {
 			// 2024-12-07 21:36:40	UTC
@@ -113,7 +113,7 @@ func TestNewSqlFactory(t *testing.T) {
 				},
 				BkSqlCondition: "gseIndex > 0",
 			},
-			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000))) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1733607400000 AND `dtEventTimeStamp` < 1733939375000 AND `thedate` >= '20241208' AND `thedate` <= '20241212' AND (gseIndex > 0) GROUP BY `ip`, (`dtEventTimeStamp` - (`dtEventTimeStamp` % 60000)) ORDER BY `_timestamp_` ASC",
+			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, MAX((`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 60000 - 0))) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1733607400000 AND `dtEventTimeStamp` < 1733939375000 AND `thedate` >= '20241208' AND `thedate` <= '20241212' AND (gseIndex > 0) GROUP BY `ip`, (`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 60000 - 0)) ORDER BY `_timestamp_` ASC",
 		},
 		"count-with-count-promql-3": {
 			// 2024-12-07 21:36:40	UTC
@@ -135,7 +135,7 @@ func TestNewSqlFactory(t *testing.T) {
 				},
 				BkSqlCondition: "`deployment` = 'alpha1-gp-3' and `datacenter` = 'qcloud-tj1'",
 			},
-			expected: "",
+			expected: "SELECT COUNT(`sum_Sub8MsFrames`) AS `_value_`, MAX((`dtEventTimeStamp` - ((`dtEventTimeStamp` - 28800000) % 86400000 - 28800000))) AS `_timestamp_` FROM `100680_alpha_server_perf_data_tglog` WHERE `dtEventTimeStamp` >= 1741276799999 AND `dtEventTimeStamp` < 1741967999999 AND `thedate` >= '20250306' AND `thedate` <= '20250314' AND (`deployment` = 'alpha1-gp-3' and `datacenter` = 'qcloud-tj1') GROUP BY (`dtEventTimeStamp` - ((`dtEventTimeStamp` - 28800000) % 86400000 - 28800000)) ORDER BY `_timestamp_` ASC",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

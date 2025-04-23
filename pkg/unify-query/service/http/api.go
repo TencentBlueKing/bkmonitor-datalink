@@ -23,9 +23,11 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -67,6 +69,8 @@ func HandlerFieldKeys(c *gin.Context) {
 	span.Set("request-url", c.Request.URL.String())
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
+
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
@@ -142,6 +146,8 @@ func HandlerTagKeys(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
+
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
 		resp.failed(ctx, err)
@@ -215,6 +221,8 @@ func HandlerTagValues(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
 
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
+
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
 		resp.failed(ctx, err)
@@ -233,6 +241,9 @@ func HandlerTagValues(c *gin.Context) {
 		lblMap sync.Map
 	)
 
+	left := end.Sub(start)
+	span.Set("left", left)
+
 	for _, name := range params.Keys {
 		lbl, _ := lblMap.LoadOrStore(name, set.New[string]())
 		queryRef.Range("", func(qry *metadata.Query) {
@@ -242,16 +253,36 @@ func HandlerTagValues(c *gin.Context) {
 
 			_ = p.Submit(func() {
 				defer wg.Done()
+
 				instance := prometheus.GetTsDbInstance(ctx, qry)
 				if instance == nil {
 					return
 				}
 
-				res, err := instance.QueryLabelValues(ctx, qry, name, start, end)
+				var (
+					res     []string
+					matcher *labels.Matcher
+				)
+
+				// 优化 vm 查询，超过 1d 使用直查接口
+				if left >= 24*time.Hour && instance.InstanceType() == consul.VictoriaMetricsStorageType {
+					vmExpand := queryRef.ToVmExpand(ctx)
+					metadata.SetExpand(ctx, vmExpand)
+
+					matcher, _ = labels.NewMatcher(labels.MatchEqual, labels.MetricName, prometheus.ReferenceName)
+
+					span.Set("direct-label-values-matcher", matcher.String())
+					span.Set("direct-label-values-size", qry.Size)
+
+					res, err = instance.DirectLabelValues(ctx, name, start, end, qry.Size, matcher)
+				} else {
+					res, err = instance.QueryLabelValues(ctx, qry, name, start, end)
+				}
 				if err != nil {
 					return
 				}
 
+				span.Set("result-size", len(res))
 				lbl.(*set.Set[string]).Add(res...)
 			})
 		})
@@ -305,6 +336,8 @@ func HandlerSeries(c *gin.Context) {
 	span.Set("request-url", c.Request.URL.String())
 	span.Set("request-header", c.Request.Header)
 	span.Set("request-data", paramsStr)
+
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
@@ -446,6 +479,8 @@ func HandlerLabelValues(c *gin.Context) {
 	span.Set("request-url", c.Request.URL.String())
 	span.Set("request-header", c.Request.Header)
 
+	log.Infof(ctx, fmt.Sprintf("header: %+v, url: %s", c.Request.Header, c.Request.URL.String()))
+
 	if len(matches) != 1 {
 		err = fmt.Errorf("match[] 参数只支持 1 个, %+v", matches)
 		return
@@ -485,9 +520,10 @@ func HandlerLabelValues(c *gin.Context) {
 	return
 }
 
-func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (queryRef metadata.QueryReference, start, end time.Time, err error) {
+func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (queryRef metadata.QueryReference, startTime, endTime time.Time, err error) {
 	var (
 		user = metadata.GetUser(ctx)
+		unit string
 	)
 
 	queryTs := &structured.QueryTs{
@@ -509,16 +545,16 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 		Timezone:    params.Timezone,
 	}
 
-	var unit string
-	unit, start, end, err = function.QueryTimestamp(params.Start, params.End)
+	unit, startTime, endTime, err = function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if err != nil {
 		// 如果时间异常则使用最近 1h
-		end = time.Now()
-		start = end.Add(time.Hour * -1)
+		endTime = time.Now()
+		startTime = endTime.Add(time.Hour * -1)
+		err = nil
 	}
 
 	// 写入查询时间到全局缓存
-	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
+	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit)
 	queryRef, err = queryTs.ToQueryReference(ctx)
 	return
 }

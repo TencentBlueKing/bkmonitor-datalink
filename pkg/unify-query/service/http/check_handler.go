@@ -164,9 +164,9 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 		return
 	}
 
-	start, end, _, _, err := structured.ToTime(startTime, endTime, q.Step, q.Timezone)
+	start, end, _, _, err := structured.AlignTime(startTime, endTime, q.Step, q.Timezone)
 	if err != nil {
-		r.Error("structured.ToTime", err)
+		r.Error("structured.AlignTime", err)
 		return
 	}
 

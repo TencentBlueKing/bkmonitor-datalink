@@ -36,6 +36,10 @@ func (c *DmesgConfig) InitIdent() error {
 	return c.initIdent(c)
 }
 
+func (c *DmesgConfig) GetIdent() string {
+	return ConfigTypeDmesg
+}
+
 func (c *DmesgConfig) GetType() string {
 	return ConfigTypeDmesg
 }

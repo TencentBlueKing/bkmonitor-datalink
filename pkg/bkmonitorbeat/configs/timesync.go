@@ -51,6 +51,10 @@ func (c *TimeSyncConfig) Clean() error {
 	return nil
 }
 
+func (c *TimeSyncConfig) GetIdent() string {
+	return ConfigTypeTimeSync
+}
+
 func NewTimeSyncConfig(root *Config) *TimeSyncConfig {
 	config := &TimeSyncConfig{
 		BaseTaskParam: NewBaseTaskParam(),

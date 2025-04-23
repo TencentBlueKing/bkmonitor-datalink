@@ -24,6 +24,12 @@ const (
 	Avg   = "avg"
 	Sum   = "sum"
 	Count = "count"
+
+	MinOT   = "min_over_time"
+	MaxOT   = "max_over_time"
+	AvgOT   = "avg_over_time"
+	SumOT   = "sum_over_time"
+	CountOT = "count_over_time"
 )
 
 // MergeSamplesWithFuncAndSort 合并 samples 数据，如果相同时间的进行函数处理，并且按照时间排序

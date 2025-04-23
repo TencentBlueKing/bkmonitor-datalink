@@ -397,7 +397,7 @@ func (f *FormatFactory) nestedAgg(key string) {
 }
 
 // AggDataFormat 解析 es 的聚合计算
-func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *prompb.Label) (map[string]*prompb.TimeSeries, error) {
+func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *prompb.Label) (*prompb.QueryResult, error) {
 	if data == nil {
 		return nil, nil
 	}
@@ -424,6 +424,8 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 	}
 
 	timeSeriesMap := make(map[string]*prompb.TimeSeries)
+	keySort := make([]string, 0)
+
 	for _, im := range af.items {
 		var (
 			tsLabels []prompb.Label
@@ -448,6 +450,7 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 
 		seriesKey := seriesNameBuilder.String()
 		if _, ok := timeSeriesMap[seriesKey]; !ok {
+			keySort = append(keySort, seriesKey)
 			timeSeriesMap[seriesKey] = &prompb.TimeSeries{
 				Samples: make([]prompb.Sample, 0),
 			}
@@ -464,7 +467,14 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 		})
 	}
 
-	return timeSeriesMap, nil
+	tss := make([]*prompb.TimeSeries, 0, len(timeSeriesMap))
+	for _, key := range keySort {
+		if ts, ok := timeSeriesMap[key]; ok {
+			tss = append(tss, ts)
+		}
+	}
+
+	return &prompb.QueryResult{Timeseries: tss}, nil
 }
 
 func (f *FormatFactory) SetData(data map[string]any) {

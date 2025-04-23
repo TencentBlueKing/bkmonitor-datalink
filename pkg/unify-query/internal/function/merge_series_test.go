@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package prometheus_test
+package function_test
 
 import (
 	"testing"
@@ -17,8 +17,8 @@ import (
 	"github.com/prometheus/prometheus/storage/remote"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 )
 
 func TestMergeSeriesSet(t *testing.T) {
@@ -158,7 +158,7 @@ func TestMergeSeriesSet(t *testing.T) {
 			ts: mock.TimeSeriesList{
 				*ts2, *ts4, *ts1, *ts3,
 			},
-			fn: prometheus.NewMergeSeriesSetWithFuncAndSort(""),
+			fn: function.NewMergeSeriesSetWithFuncAndSort(""),
 		},
 		"two queryResult with chainedSeriesMerge": {
 			qrs: []*prompb.QueryResult{
@@ -291,7 +291,7 @@ func TestMergeSeriesSet(t *testing.T) {
 					},
 				},
 			},
-			fn: prometheus.NewMergeSeriesSetWithFuncAndSort(""),
+			fn: function.NewMergeSeriesSetWithFuncAndSort(""),
 		},
 		"two queryResult with mergeSeriesSetWithFuncAndSort max": {
 			qrs: []*prompb.QueryResult{
@@ -358,7 +358,7 @@ func TestMergeSeriesSet(t *testing.T) {
 					},
 				},
 			},
-			fn: prometheus.NewMergeSeriesSetWithFuncAndSort("max"),
+			fn: function.NewMergeSeriesSetWithFuncAndSort("max"),
 		},
 		"two queryResult with mergeSeriesSetWithFuncAndSort min": {
 			qrs: []*prompb.QueryResult{
@@ -425,7 +425,7 @@ func TestMergeSeriesSet(t *testing.T) {
 					},
 				},
 			},
-			fn: prometheus.NewMergeSeriesSetWithFuncAndSort("min"),
+			fn: function.NewMergeSeriesSetWithFuncAndSort("min"),
 		},
 	}
 

@@ -50,8 +50,16 @@ var (
 // getCmdbApi Get cmdb api client instance with lock
 func getCmdbApi() *cmdb.Client {
 	cmdbApiClientOnce.Do(func() {
+		// 判断是否使用网关
+		var endpoint string
+		if cfg.BkApiCmdbApiGatewayUrl != "" {
+			endpoint = cfg.BkApiCmdbApiGatewayUrl
+		} else {
+			endpoint = fmt.Sprintf("%s/api/c/compapi/v2/cc/", cfg.BkApiUrl)
+		}
+
 		config := bkapi.ClientConfig{
-			Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/cc/", cfg.BkApiUrl),
+			Endpoint:            endpoint,
 			AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
 			AppCode:             cfg.BkApiAppCode,
 			AppSecret:           cfg.BkApiAppSecret,
@@ -287,7 +295,7 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 		// 获取业务列表
 		cmdbApi := getCmdbApi()
 		var result cmdb.SearchBusinessResp
-		_, err := cmdbApi.SearchBusiness().SetResult(&result).Request()
+		_, err := cmdbApi.SearchBusiness().SetPathParams(map[string]string{"bk_supplier_account": "0"}).SetResult(&result).Request()
 		if err = api.HandleApiResultError(result.ApiCommonRespMeta, err, "search business failed"); err != nil {
 			return err
 		}

@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package prometheus
+package function
 
 import (
 	"sort"
@@ -17,8 +17,6 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
 func NewMergeSeriesSetWithFuncAndSort(name string) func(...storage.Series) storage.Series {
@@ -36,14 +34,14 @@ func NewMergeSeriesSetWithFuncAndSort(name string) func(...storage.Series) stora
 		// 根据name选择聚合函数
 		var aggFunc func(float64, float64) float64
 		switch strings.ToLower(name) {
-		case structured.MIN, structured.MinOT:
+		case Min, MinOT:
 			aggFunc = func(a, b float64) float64 {
 				if a < b {
 					return a
 				}
 				return b
 			}
-		case structured.MAX, structured.MaxOT:
+		case Max, MaxOT:
 			aggFunc = func(a, b float64) float64 {
 				if a > b {
 					return a

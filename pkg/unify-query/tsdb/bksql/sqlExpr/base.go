@@ -50,6 +50,8 @@ type SQLExpr interface {
 	WithEncode(func(string) string) SQLExpr
 	// WithInternalFields 设置内部字段
 	WithInternalFields(timeField, valueField string) SQLExpr
+	// IsSetLabels 是否保留查询标签
+	IsSetLabels(bool) SQLExpr
 	// ParserQueryString 解析 es 特殊语法 queryString 生成SQL条件
 	ParserQueryString(qs string) (string, error)
 	// ParserAllConditions 解析全量条件生成SQL条件表达式
@@ -60,6 +62,8 @@ type SQLExpr interface {
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
 	FieldMap() map[string]string
+	// GetLabelMap 返回当前查询值
+	GetLabelMap() map[string][]string
 	// Type 返回表达式类型
 	Type() string
 }
@@ -128,6 +132,10 @@ func (d *DefaultSQLExpr) Type() string {
 	return "default"
 }
 
+func (d *DefaultSQLExpr) IsSetLabels(_ bool) SQLExpr {
+	return d
+}
+
 func (d *DefaultSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {
 	d.timeField = timeField
 	d.valueField = valueField
@@ -147,6 +155,10 @@ func (d *DefaultSQLExpr) WithFieldsMap(fieldMap map[string]string) SQLExpr {
 func (d *DefaultSQLExpr) WithKeepColumns(cols []string) SQLExpr {
 	d.keepColumns = cols
 	return d
+}
+
+func (d *DefaultSQLExpr) GetLabelMap() map[string][]string {
+	return nil
 }
 
 func (d *DefaultSQLExpr) FieldMap() map[string]string {

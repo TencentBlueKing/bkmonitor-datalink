@@ -68,12 +68,15 @@ type QueryFactory struct {
 	timeField string
 
 	expr sqlExpr.SQLExpr
+
+	highlight *metadata.HighLight
 }
 
 func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	f := &QueryFactory{
-		ctx:   ctx,
-		query: query,
+		ctx:       ctx,
+		query:     query,
+		highlight: query.HighLight,
 	}
 
 	if query.Orders != nil {
@@ -89,6 +92,11 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	f.expr = sqlExpr.GetSQLExpr(f.query.Measurement).
 		WithInternalFields(f.timeField, query.Field).
 		WithEncode(metadata.GetPromDataFormat(ctx).EncodeFunc())
+
+	if f.highlight != nil && f.highlight.Enable {
+		f.expr.IsSetLabels(true)
+	}
+
 	return f
 }
 
@@ -124,10 +132,53 @@ func (f *QueryFactory) FieldMap() map[string]string {
 	return f.expr.FieldMap()
 }
 
-func (f *QueryFactory) ReloadListData(data map[string]any) map[string]any {
-	newData := make(map[string]any)
+func (f *QueryFactory) HighLight(data map[string]any) (newData map[string]any) {
+	if f.query.HighLight == nil || !f.query.HighLight.Enable {
+		return
+	}
+
+	newData = make(map[string]any)
+	for k, vs := range f.expr.GetLabelMap() {
+		if vs == nil {
+			return
+		}
+
+		if d, ok := data[k]; ok {
+			var (
+				mark1 string
+				mark2 string
+			)
+
+			switch s := d.(type) {
+			case string:
+				if f.query.HighLight.MaxAnalyzedOffset > 0 && len(s) > f.query.HighLight.MaxAnalyzedOffset {
+					mark1 = s[0:f.query.HighLight.MaxAnalyzedOffset]
+					mark2 = s[f.query.HighLight.MaxAnalyzedOffset:]
+				} else {
+					mark1 = s
+				}
+
+				for _, v := range vs {
+					mark1 = strings.ReplaceAll(mark1, v, fmt.Sprintf("<mark>%s</mark>", v))
+				}
+
+				res := fmt.Sprintf("%s%s", mark1, mark2)
+				if res != d {
+					newData[k] = []string{res}
+				}
+			}
+
+		}
+	}
+
+	return
+}
+
+func (f *QueryFactory) ReloadListData(data map[string]any) (newData map[string]any) {
+	newData = make(map[string]any)
 
 	fieldMap := f.FieldMap()
+
 	for k, d := range data {
 		if v, ok := fieldMap[k]; ok {
 			if v == TableTypeVariant {
@@ -145,7 +196,7 @@ func (f *QueryFactory) ReloadListData(data map[string]any) map[string]any {
 
 		newData[k] = d
 	}
-	return newData
+	return
 }
 
 func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[string]interface{}) (*prompb.QueryResult, error) {

@@ -12,6 +12,7 @@ package sqlExpr
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
@@ -35,6 +36,11 @@ type DorisSQLExpr struct {
 
 	keepColumns []string
 	fieldsMap   map[string]string
+
+	isSetLabels bool
+	lock        sync.Mutex
+	labelCheck  map[string]struct{}
+	labelMap    map[string][]string
 }
 
 var _ SQLExpr = (*DorisSQLExpr)(nil)
@@ -54,6 +60,11 @@ func (d *DorisSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 	return d
 }
 
+func (d *DorisSQLExpr) IsSetLabels(isSetLabels bool) SQLExpr {
+	d.isSetLabels = isSetLabels
+	return d
+}
+
 func (d *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]string) SQLExpr {
 	d.fieldsMap = fieldsMap
 	return d
@@ -66,6 +77,10 @@ func (d *DorisSQLExpr) WithKeepColumns(cols []string) SQLExpr {
 
 func (d *DorisSQLExpr) FieldMap() map[string]string {
 	return d.fieldsMap
+}
+
+func (d *DorisSQLExpr) GetLabelMap() map[string][]string {
+	return d.labelMap
 }
 
 func (d *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
@@ -259,12 +274,14 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	}
 
 	var (
-		key string
-		op  string
-		val string
+		oldKey string
+		key    string
+		op     string
+		val    string
 	)
 
-	key, _ = d.dimTransform(c.DimensionName)
+	oldKey = c.DimensionName
+	key, _ = d.dimTransform(oldKey)
 
 	// 对值进行转义处理
 	for i, v := range c.Value {
@@ -276,8 +293,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	// 处理等于类操作符（=, IN, LIKE）
 	case metadata.ConditionEqual, metadata.ConditionExact, metadata.ConditionContains:
 		if len(c.Value) == 1 && c.Value[0] == "" {
-			op = "IS"
-			val = "NULL"
+			op = "IS NULL"
 			break
 		}
 
@@ -302,6 +318,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 		var filter []string
 		for _, v := range c.Value {
+			d.addLabel(oldKey, v)
 			filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
 		}
 		key = ""
@@ -313,8 +330,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	// 处理不等于类操作符（!=, NOT IN, NOT LIKE）
 	case metadata.ConditionNotEqual, metadata.ConditionNotContains:
 		if len(c.Value) == 1 && c.Value[0] == "" {
-			op = "IS NOT"
-			val = "NULL"
+			op = "IS NOT NULL"
 			break
 		}
 
@@ -339,6 +355,9 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 		var filter []string
 		for _, v := range c.Value {
+			if v != "" {
+				d.addLabel(key, v)
+			}
 			filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
 		}
 		key = ""
@@ -384,7 +403,12 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	}
 
 	if key != "" {
-		return fmt.Sprintf("%s %s %s", key, op, val), nil
+		condition := fmt.Sprintf("%s %s", key, op)
+		if val != "" {
+			d.addLabel(oldKey, val)
+			condition = fmt.Sprintf("%s %s", condition, val)
+		}
+		return condition, nil
 	}
 	return val, nil
 }
@@ -398,6 +422,27 @@ func (d *DorisSQLExpr) checkMatchALL(k string) bool {
 		}
 	}
 	return false
+}
+
+func (d *DorisSQLExpr) addLabel(key, value string) {
+	if !d.isSetLabels {
+		return
+	}
+
+	d.lock.Lock()
+	defer d.lock.Unlock()
+
+	if d.labelCheck == nil {
+		d.labelCheck = make(map[string]struct{})
+	}
+	if d.labelMap == nil {
+		d.labelMap = make(map[string][]string)
+	}
+
+	if _, ok := d.labelCheck[key+value]; !ok {
+		d.labelCheck[key+value] = struct{}{}
+		d.labelMap[key] = append(d.labelMap[key], value)
+	}
 }
 
 func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
@@ -439,15 +484,15 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 			c.Field = DefaultKey
 		}
 
+		d.addLabel(c.Field, c.Value)
 		field, _ := d.dimTransform(c.Field)
-
 		return fmt.Sprintf("%s LIKE '%%%s%%'", field, c.Value), nil
 	case *querystring.MatchExpr:
 		if c.Field == "" {
 			c.Field = DefaultKey
 		}
+		d.addLabel(c.Field, c.Value)
 		field, _ := d.dimTransform(c.Field)
-
 		if d.checkMatchALL(c.Field) {
 			return fmt.Sprintf("%s MATCH_PHRASE_PREFIX '%s'", field, c.Value), nil
 		}
@@ -458,7 +503,6 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 			c.Field = DefaultKey
 		}
 		field, _ := d.dimTransform(c.Field)
-
 		var timeFilter []string
 		if c.Start != nil && *c.Start != "*" {
 			var op string

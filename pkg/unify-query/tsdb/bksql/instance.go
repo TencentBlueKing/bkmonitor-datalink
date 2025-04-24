@@ -299,12 +299,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		return
 	}
 
+	span.Set("label-map", queryFactory.GetLabelMap())
 	span.Set("data-total-records", data.TotalRecords)
-	log.Infof(ctx, "total records: %d", data.TotalRecords)
-
-	if i.maxLimit > 0 && data.TotalRecords > i.maxLimit {
-		return
-	}
+	span.Set("data-list-size", len(data.List))
 
 	for _, list := range data.List {
 		newData := queryFactory.ReloadListData(list)

@@ -132,13 +132,17 @@ func (f *QueryFactory) FieldMap() map[string]string {
 	return f.expr.FieldMap()
 }
 
+func (f *QueryFactory) GetLabelMap() map[string][]string {
+	return f.expr.GetLabelMap()
+}
+
 func (f *QueryFactory) HighLight(data map[string]any) (newData map[string]any) {
 	if f.query.HighLight == nil || !f.query.HighLight.Enable {
 		return
 	}
 
 	newData = make(map[string]any)
-	for k, vs := range f.expr.GetLabelMap() {
+	for k, vs := range f.GetLabelMap() {
 		if vs == nil {
 			return
 		}

@@ -128,11 +128,11 @@ func (c *CCApiClient) Agent() *sling.Sling {
 			agent = agent.Base(customCmdbApi)
 		} else {
 			// use default cmdb apigw address
-			agent = agent.Path("/api/bk-cmdb/prod/")
+			agent = agent.Path("/api/bk-cmdb/prod")
 		}
 	} else {
 		// use esb cmdb address
-		agent = agent.Path("/api/c/compapi/v2/cc/")
+		agent = agent.Path("/api/c/compapi/v2/cc")
 	}
 	return agent
 }
@@ -169,9 +169,9 @@ func (c *CCApiClient) GetHostsByRange(bizID, limit, start int) (*CCSearchHostRes
 	// use different path by esb or api gateway
 	var path string
 	if c.useApiGateway() {
-		path = fmt.Sprintf("/api/v3/hosts/app/%d/list_hosts_topo", bizID)
+		path = fmt.Sprintf("api/v3/hosts/app/%d/list_hosts_topo", bizID)
 	} else {
-		path = "/list_biz_hosts_topo/"
+		path = "list_biz_hosts_topo/"
 	}
 
 	response, err := c.Agent().
@@ -208,10 +208,10 @@ func (c *CCApiClient) GetSearchBizInstTopo(start, bizID, limit, level int) ([]CC
 	// use different path by esb or api gateway
 	var path string
 	if c.useApiGateway() {
-		path = fmt.Sprintf("/api/v3/find/topoinst/biz/%d", bizID)
+		path = fmt.Sprintf("api/v3/find/topoinst/biz/%d", bizID)
 		sling = sling.Post(path)
 	} else {
-		path = "/search_biz_inst_topo/"
+		path = "search_biz_inst_topo/"
 		sling = sling.Get(path)
 	}
 
@@ -251,9 +251,9 @@ func (c *CCApiClient) GetSearchBusiness() ([]CCSearchBusinessResponseInfo, error
 	// use different path by esb or api gateway
 	var path string
 	if c.useApiGateway() {
-		path = fmt.Sprintf("/api/v3/biz/search/%s", c.client.commonArgs.BkSupplierAccount)
+		path = fmt.Sprintf("api/v3/biz/search/%s", c.client.commonArgs.BkSupplierAccount)
 	} else {
-		path = "/search_business/"
+		path = "search_business/"
 	}
 
 	// 请求并将结果写入到result中
@@ -306,9 +306,9 @@ func (c *CCApiClient) GetServiceInstance(bizID, limit, start int, ServiceInstanc
 	// use different path by esb or api gateway
 	var path string
 	if c.useApiGateway() {
-		path = "/api/v3/findmany/proc/service_instance/details"
+		path = "api/v3/findmany/proc/service_instance/details"
 	} else {
-		path = "/list_service_instance_detail/"
+		path = "list_service_instance_detail/"
 	}
 
 	response, err := c.Agent().

@@ -329,7 +329,7 @@ func setupVCluster(c *Config) {
 
 func setupTimeSync(c *Config) {
 	if c.TimeSync.QueryTimeout == "" {
-		c.TimeSync.QueryTimeout = "5s"
+		c.TimeSync.QueryTimeout = "10s"
 	}
 }
 

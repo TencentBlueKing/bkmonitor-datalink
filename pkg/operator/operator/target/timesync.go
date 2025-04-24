@@ -52,6 +52,11 @@ func (t *TimeSyncTarget) generateTaskID() uint64 {
 	h := fnv.New64a()
 	h.Write([]byte(fmt.Sprintf("%d", t.DataID)))
 
+	timesync := configs.G().TimeSync
+	h.Write([]byte(timesync.NtpdPath))
+	h.Write([]byte(timesync.QueryTimeout))
+	h.Write([]byte(timesync.ChronyAddress))
+
 	keys := make([]string, 0, len(t.Labels))
 	for key := range t.Labels {
 		keys = append(keys, key)

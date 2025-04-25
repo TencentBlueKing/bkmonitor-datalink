@@ -17,6 +17,7 @@ output.bkpipe:
   endpoint: {{ plugin_path.endpoint }}
   synccfg: true
   fastmode: true
+  concurrency: 6
 
 seccomp.enabled: false
 

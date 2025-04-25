@@ -550,7 +550,3 @@ func (d *DorisSQLExpr) valueTransform(s string) string {
 	}
 	return s
 }
-
-func init() {
-	Register(Doris, &DorisSQLExpr{})
-}

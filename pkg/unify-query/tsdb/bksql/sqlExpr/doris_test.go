@@ -101,7 +101,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := sqlExpr.GetSQLExpr(sqlExpr.Doris).WithFieldsMap(map[string]string{
+			got, err := sqlExpr.NewSQLExpr(sqlExpr.Doris).WithFieldsMap(map[string]string{
 				"text": sqlExpr.DorisTypeText,
 			}).ParserQueryString(tt.input)
 			if err != nil {
@@ -242,7 +242,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 		},
 	}
 
-	e := sqlExpr.GetSQLExpr(sqlExpr.Doris).WithFieldsMap(map[string]string{
+	e := sqlExpr.NewSQLExpr(sqlExpr.Doris).WithFieldsMap(map[string]string{
 		"object.field": sqlExpr.DorisTypeText,
 	})
 

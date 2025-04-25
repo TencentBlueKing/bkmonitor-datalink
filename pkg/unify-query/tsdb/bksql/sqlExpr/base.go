@@ -12,7 +12,6 @@ package sqlExpr
 import (
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -71,12 +70,9 @@ type SQLExpr interface {
 // SQL表达式注册管理相关变量
 var (
 	_ SQLExpr = (*DefaultSQLExpr)(nil) // 接口实现检查
-
-	lock    sync.RWMutex               // 读写锁用于并发安全
-	exprMap = make(map[string]SQLExpr) // 存储注册的SQL表达式实现
 )
 
-// GetSQLExpr 获取指定key的SQL表达式实现
+// NewSQLExpr 获取指定key的SQL表达式实现
 // 参数：
 //
 //	key - 注册时使用的标识符
@@ -84,36 +80,12 @@ var (
 // 返回值：
 //
 //	找到返回对应实现，未找到返回默认实现
-func GetSQLExpr(key string) SQLExpr {
-	lock.RLock()
-	defer lock.RUnlock()
-	if sqlExpr, ok := exprMap[key]; ok {
-		return sqlExpr
-	} else {
+func NewSQLExpr(key string) SQLExpr {
+	switch key {
+	case Doris:
+		return &DorisSQLExpr{}
+	default:
 		return &DefaultSQLExpr{}
-	}
-}
-
-// Register 注册SQL表达式实现
-// 参数：
-//
-//	key - 实现标识符
-//	sqlExpr - 具体的SQL表达式实现
-func Register(key string, sqlExpr SQLExpr) {
-	lock.Lock()
-	defer lock.Unlock()
-	exprMap[key] = sqlExpr
-}
-
-// UnRegister 注销指定key的SQL表达式实现
-// 参数：
-//
-//	key - 要注销的实现标识符
-func UnRegister(key string) {
-	lock.Lock()
-	defer lock.Unlock()
-	if _, ok := exprMap[key]; ok {
-		delete(exprMap, key)
 	}
 }
 

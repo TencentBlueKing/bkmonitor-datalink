@@ -836,7 +836,7 @@ func TestInstance_bkSql(t *testing.T) {
 				"text": sqlExpr.DorisTypeText,
 			}
 
-			condition, err := sqlExpr.GetSQLExpr(c.query.Measurement).WithFieldsMap(fieldsMap).ParserAllConditions(c.query.AllConditions)
+			condition, err := sqlExpr.NewSQLExpr(c.query.Measurement).WithFieldsMap(fieldsMap).ParserAllConditions(c.query.AllConditions)
 			assert.Nil(t, err)
 			if err == nil {
 				assert.Equal(t, c.query.BkSqlCondition, condition)

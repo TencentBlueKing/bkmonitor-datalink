@@ -747,3 +747,259 @@ func TestInstance_queryRawData(t *testing.T) {
 		})
 	}
 }
+
+func TestInstance_mappingCache(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	// 创建一个带有较短TTL的实例，方便测试缓存过期
+	ins, err := NewInstance(ctx, &InstanceOption{
+		Connects: []Connect{
+			{
+				Address: mock.EsUrl,
+			},
+		},
+		Timeout:    3 * time.Second,
+		MappingTTL: 100 * time.Millisecond, // 设置较短的TTL方便测试过期
+	})
+	if err != nil {
+		t.Fatal(err)
+		return
+	}
+
+	// 调整时间范围以匹配索引名称
+	defaultStart := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	defaultEnd := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+
+	db := "es_index"
+	field := "dtEventTimeStamp"
+
+	// 测试用例
+	for name, c := range map[string]struct {
+		query *metadata.Query
+		start time.Time
+		end   time.Time
+
+		expectedMappings []map[string]any
+		shouldCacheHit   bool
+		waitForExpire    bool
+	}{
+		"第一次查询应该从ES获取mapping并缓存": {
+			query: &metadata.Query{
+				DB:          db,
+				Field:       field,
+				DataSource:  structured.BkLog,
+				TableID:     "es_index",
+				StorageType: consul.ElasticsearchStorageType,
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+			expectedMappings: []map[string]any{
+				{
+					"properties": map[string]any{
+						"a": map[string]any{
+							"type": "keyword",
+						},
+						"b": map[string]any{
+							"type": "keyword",
+						},
+						"group": map[string]any{
+							"type": "keyword",
+						},
+						"kibana_stats": map[string]any{
+							"properties": map[string]any{
+								"kibana": map[string]any{
+									"properties": map[string]any{
+										"name": map[string]any{
+											"type": "keyword",
+										},
+									},
+								},
+							},
+						},
+						"timestamp": map[string]any{
+							"type": "log",
+						},
+						"type": map[string]any{
+							"type": "keyword",
+						},
+						"dtEventTimeStamp": map[string]any{
+							"type": "date",
+						},
+						"user": map[string]any{
+							"type": "nested",
+							"properties": map[string]any{
+								"first": map[string]any{
+									"type": "keyword",
+								},
+								"last": map[string]any{
+									"type": "keyword",
+								},
+							},
+						},
+					},
+				},
+			},
+			shouldCacheHit: false,
+		},
+		"第二次查询应该命中缓存": {
+			query: &metadata.Query{
+				DB:          db,
+				Field:       field,
+				DataSource:  structured.BkLog,
+				TableID:     "es_index",
+				StorageType: consul.ElasticsearchStorageType,
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+			expectedMappings: []map[string]any{
+				{
+					"properties": map[string]any{
+						"a": map[string]any{
+							"type": "keyword",
+						},
+						"b": map[string]any{
+							"type": "keyword",
+						},
+						"group": map[string]any{
+							"type": "keyword",
+						},
+						"kibana_stats": map[string]any{
+							"properties": map[string]any{
+								"kibana": map[string]any{
+									"properties": map[string]any{
+										"name": map[string]any{
+											"type": "keyword",
+										},
+									},
+								},
+							},
+						},
+						"timestamp": map[string]any{
+							"type": "log",
+						},
+						"type": map[string]any{
+							"type": "keyword",
+						},
+						"dtEventTimeStamp": map[string]any{
+							"type": "date",
+						},
+						"user": map[string]any{
+							"type": "nested",
+							"properties": map[string]any{
+								"first": map[string]any{
+									"type": "keyword",
+								},
+								"last": map[string]any{
+									"type": "keyword",
+								},
+							},
+						},
+					},
+				},
+			},
+			shouldCacheHit: true,
+		},
+		"等待缓存过期后应该重新从ES获取": {
+			query: &metadata.Query{
+				DB:          db,
+				Field:       field,
+				DataSource:  structured.BkLog,
+				TableID:     "es_index",
+				StorageType: consul.ElasticsearchStorageType,
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+			expectedMappings: []map[string]any{
+				{
+					"properties": map[string]any{
+						"a": map[string]any{
+							"type": "keyword",
+						},
+						"b": map[string]any{
+							"type": "keyword",
+						},
+						"group": map[string]any{
+							"type": "keyword",
+						},
+						"kibana_stats": map[string]any{
+							"properties": map[string]any{
+								"kibana": map[string]any{
+									"properties": map[string]any{
+										"name": map[string]any{
+											"type": "keyword",
+										},
+									},
+								},
+							},
+						},
+						"timestamp": map[string]any{
+							"type": "log",
+						},
+						"type": map[string]any{
+							"type": "keyword",
+						},
+						"dtEventTimeStamp": map[string]any{
+							"type": "date",
+						},
+						"user": map[string]any{
+							"type": "nested",
+							"properties": map[string]any{
+								"first": map[string]any{
+									"type": "keyword",
+								},
+								"last": map[string]any{
+									"type": "keyword",
+								},
+							},
+						},
+					},
+				},
+			},
+			shouldCacheHit: false,
+			waitForExpire:  true,
+		},
+	} {
+		t.Run(fmt.Sprintf("testing run: %s", name), func(t *testing.T) {
+			if c.waitForExpire {
+				// 等待缓存过期
+				time.Sleep(ins.mappingTTL + 10*time.Millisecond)
+			}
+
+			// 检查缓存状态
+			mappings, cacheHit := ins.checkIsMappingCached(c.query.FieldsUniqueKey())
+			t.Logf("Cache hit: %v, Mappings: %+v", cacheHit, mappings)
+
+			// 验证缓存命中状态
+			assert.Equal(t, c.shouldCacheHit, cacheHit, "Cache hit status mismatch")
+
+			// 如果应该命中缓存，验证返回的mappings是否正确
+			if c.shouldCacheHit {
+				assert.NotNil(t, mappings, "Cached mappings should not be nil")
+				assert.Equal(t, c.expectedMappings, mappings, "Cached mappings mismatch")
+			}
+
+			// 执行查询
+			aliases, err := ins.getAlias(ctx, c.query.DB, c.query.NeedAddTime, c.start, c.end, c.query.Timezone)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// 获取mappings
+			conn := ins.connects[0]
+			mappings, err = ins.getMappings(ctx, conn, aliases)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// 验证mappings是否正确
+			assert.Equal(t, c.expectedMappings, mappings, "Mappings mismatch")
+
+			// 如果是第一次查询或缓存过期，应该写入缓存
+			if !c.shouldCacheHit {
+				err = ins.writeMappings(mappings, c.query.FieldsUniqueKey())
+				assert.Nil(t, err, "Failed to write mappings to cache")
+			}
+		})
+	}
+}

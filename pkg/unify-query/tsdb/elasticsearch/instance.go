@@ -37,6 +37,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
+const (
+	MappingCacheTTL = 5 * time.Minute
+)
+
 var _ tsdb.Instance = (*Instance)(nil)
 
 type Instance struct {
@@ -53,6 +57,10 @@ type Instance struct {
 
 	timeout time.Duration
 	maxSize int
+
+	mappingCache     MappingCache
+	mappingCacheLock sync.RWMutex
+	mappingTTL       time.Duration
 }
 
 type Connects []Connect
@@ -85,6 +93,7 @@ type InstanceOption struct {
 	Timeout     time.Duration
 	Headers     map[string]string
 	HealthCheck bool
+	MappingTTL  time.Duration
 }
 
 type queryOption struct {
@@ -106,6 +115,11 @@ var TimeSeriesResultPool = sync.Pool{
 }
 
 func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
+	mappingTTL := opt.MappingTTL
+	if mappingTTL <= 0 {
+		mappingTTL = MappingCacheTTL
+	}
+
 	ins := &Instance{
 		ctx:      ctx,
 		maxSize:  opt.MaxSize,
@@ -114,6 +128,9 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 		headers:     opt.Headers,
 		healthCheck: opt.HealthCheck,
 		timeout:     opt.Timeout,
+
+		mappingCache: make(MappingCache),
+		mappingTTL:   mappingTTL,
 	}
 
 	if len(ins.connects) == 0 {
@@ -516,11 +533,17 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				errChan <- err
 				wg.Done()
 			}()
-
-			mappings, mappingErr := i.getMappings(ctx, conn, aliases)
-			if mappingErr != nil {
-				err = mappingErr
-				return
+			mappings, exist := i.checkIsMappingCached(query.FieldsUniqueKey())
+			if exist {
+				span.Set("mapping-exist", true)
+			} else {
+				span.Set("mapping-exist", false)
+				var mappingErr error
+				mappings, mappingErr = i.getMappings(ctx, conn, aliases)
+				if mappingErr != nil {
+					err = mappingErr
+					return
+				}
 			}
 			if len(mappings) == 0 {
 				err = fmt.Errorf("index is empty with %v，url: %s", aliases, conn.Address)
@@ -717,11 +740,20 @@ func (i *Instance) QuerySeriesSet(
 					conn:    conn,
 				}
 
-				mappings, err1 := i.getMappings(ctx, qo.conn, qo.indexes)
-				// index 不存在，mappings 获取异常直接返回空
-				if len(mappings) == 0 {
-					log.Warnf(ctx, "index is empty with %v", qo.indexes)
-					return
+				mappings, exist := i.checkIsMappingCached(query.FieldsUniqueKey())
+				span.Set("mapping-exist", exist)
+				if !exist {
+					var mappingErr error
+					mappings, mappingErr = i.getMappings(ctx, conn, aliases)
+					if mappingErr != nil {
+						err = mappingErr
+						return
+					}
+					if len(mappings) == 0 {
+						log.Warnf(ctx, "index is empty with %v", qo.indexes)
+						err = fmt.Errorf("index is empty with %v，url: %s", aliases, conn.Address)
+						return
+					}
 				}
 
 				if err1 != nil {

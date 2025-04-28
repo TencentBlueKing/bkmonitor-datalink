@@ -92,6 +92,11 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 				d.Message = err.Error()
 				d.Code = http.StatusBadRequest
 			}
+
+			if d.TargetList == nil {
+				d.TargetList = make(cmdb.Matchers, 0)
+			}
+
 			lock.Lock()
 			data.Data[idx] = d
 			lock.Unlock()
@@ -171,6 +176,10 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 
 				d.Message = err.Error()
 				d.Code = http.StatusBadRequest
+			}
+
+			if d.TargetList == nil {
+				d.TargetList = make([]cmdb.MatchersWithTimestamp, 0)
 			}
 
 			lock.Lock()

@@ -236,7 +236,6 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		user = metadata.GetUser(ctx)
 	)
 
-	ts = make([]cmdb.MatchersWithTimestamp, 0)
 	ctx, span := trace.NewSpan(ctx, "get-resource-matcher")
 	defer span.End(&err)
 

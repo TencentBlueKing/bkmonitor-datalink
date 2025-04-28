@@ -8,6 +8,7 @@
       endpoint: /data/ipc/{{ .Values.global.ipc.endpoint }}
       synccfg: true
       fastmode: true
+      concurrency: 6
     seccomp.enabled: false
 
     path.pid: /data/pid

@@ -75,7 +75,7 @@ func TestLoadConfigPatterns(t *testing.T) {
 	}
 }
 
-func TestLoadConfigFromType(t *testing.T) {
+func TestSelectConfigFromType(t *testing.T) {
 	t.Run("Platform", func(t *testing.T) {
 		subConfigs := LoadConfigPatterns([]string{"../example/fixtures/platform.yml"})
 		config := SelectConfigFromType(subConfigs, define.ConfigTypePlatform)

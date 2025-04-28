@@ -53,17 +53,17 @@ type RelationMultiResourceRequest struct {
 // RelationMultiResourceResponseData 响应数据
 type RelationMultiResourceResponseData struct {
 	Code       int      `json:"code"`
-	SourceType Resource `json:"source_type,omitempty"`
-	SourceInfo Matcher  `json:"source_info,omitempty"`
-	TargetType Resource `json:"target_type,omitempty"`
-	TargetList Matchers `json:"target_list,omitempty"`
-	Path       []string `json:"path,omitempty"`
-	Message    string   `json:"message,omitempty"`
+	SourceType Resource `json:"source_type"`
+	SourceInfo Matcher  `json:"source_info"`
+	TargetType Resource `json:"target_type"`
+	TargetList Matchers `json:"target_list"`
+	Path       []string `json:"path"`
+	Message    string   `json:"message"`
 }
 
 // RelationMultiResourceResponse 请求返回
 type RelationMultiResourceResponse struct {
-	TraceID string                              `json:"trace_id,omitempty"`
+	TraceID string                              `json:"trace_id"`
 	Data    []RelationMultiResourceResponseData `json:"data"`
 }
 
@@ -84,16 +84,16 @@ type RelationMultiResourceRangeRequest struct {
 // RelationMultiResourceRangeResponseData 响应数据
 type RelationMultiResourceRangeResponseData struct {
 	Code       int                     `json:"code"`
-	SourceType Resource                `json:"source_type,omitempty"`
-	SourceInfo Matcher                 `json:"source_info,omitempty"`
-	TargetType Resource                `json:"target_type,omitempty"`
-	TargetList []MatchersWithTimestamp `json:"target_list,omitempty"`
-	Path       []string                `json:"path,omitempty"`
-	Message    string                  `json:"message,omitempty"`
+	SourceType Resource                `json:"source_type"`
+	SourceInfo Matcher                 `json:"source_info"`
+	TargetType Resource                `json:"target_type"`
+	TargetList []MatchersWithTimestamp `json:"target_list"`
+	Path       []string                `json:"path"`
+	Message    string                  `json:"message"`
 }
 
 // RelationMultiResourceRangeResponse 请求返回
 type RelationMultiResourceRangeResponse struct {
-	TraceID string                                   `json:"trace_id,omitempty"`
+	TraceID string                                   `json:"trace_id"`
 	Data    []RelationMultiResourceRangeResponseData `json:"data"`
 }

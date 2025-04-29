@@ -1003,3 +1003,91 @@ func TestInstance_mappingCache(t *testing.T) {
 		})
 	}
 }
+
+// TestMappingCacheConcurrency tests the thread safety of the MappingCache implementation
+func TestMappingCacheConcurrency(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	ins, err := NewInstance(ctx, &InstanceOption{
+		Connects: []Connect{
+			{
+				Address: mock.EsUrl,
+			},
+		},
+		Timeout:    3 * time.Second,
+		MappingTTL: 500 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+		return
+	}
+
+	const numTables = 10
+	const numGoroutines = 20
+	const numOperations = 100
+
+	var wg sync.WaitGroup
+
+	sampleMappings := []map[string]any{
+		{
+			"properties": map[string]any{
+				"field1": map[string]any{"type": "keyword"},
+				"field2": map[string]any{"type": "integer"},
+			},
+		},
+	}
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(goroutineID int) {
+			defer wg.Done()
+
+			for j := 0; j < numOperations; j++ {
+				tableID := fmt.Sprintf("table_%d", j%numTables)
+				fieldsStr := fmt.Sprintf("field_%d", j%5)
+				queryID := tableID + "|" + fieldsStr
+
+				// randomly choose between write and read operation
+				if j%3 == 0 {
+					// write strategy
+					err := ins.writeMappings(sampleMappings, queryID)
+					assert.NoError(t, err, "Write operation failed in goroutine %d, iteration %d", goroutineID, j)
+				} else {
+					// read strategy
+					mappings, _ := ins.checkIsMappingCached(queryID)
+					if mappings != nil {
+						assert.Equal(t, len(sampleMappings), len(mappings),
+							"Unexpected mapping length in goroutine %d, iteration %d", goroutineID, j)
+					}
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	for i := 0; i < numTables; i++ {
+		tableID := fmt.Sprintf("table_%d", i)
+		fieldsStr := "field_0"
+		queryID := tableID + "|" + fieldsStr
+
+		mappings, exists := ins.checkIsMappingCached(queryID)
+
+		if exists {
+			assert.NotNil(t, mappings, "Mappings should not be nil if cache hit")
+			assert.Equal(t, len(sampleMappings), len(mappings), "Unexpected mapping length")
+		}
+	}
+
+	time.Sleep(ins.mappingTTL + 100*time.Millisecond)
+
+	for i := 0; i < 5; i++ {
+		tableID := fmt.Sprintf("table_%d", i)
+		fieldsStr := "field_0"
+		queryID := tableID + "|" + fieldsStr
+
+		_, exists := ins.checkIsMappingCached(queryID)
+		assert.False(t, exists, "Cache should return miss after expiration for query %s", queryID)
+	}
+}

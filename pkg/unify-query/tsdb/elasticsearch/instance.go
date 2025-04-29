@@ -58,9 +58,8 @@ type Instance struct {
 	timeout time.Duration
 	maxSize int
 
-	mappingCache     MappingCache
-	mappingCacheLock sync.RWMutex
-	mappingTTL       time.Duration
+	mappingCache MappingCache
+	mappingTTL   time.Duration
 }
 
 type Connects []Connect
@@ -129,7 +128,7 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 		healthCheck: opt.HealthCheck,
 		timeout:     opt.Timeout,
 
-		mappingCache: make(MappingCache),
+		mappingCache: NewMappingCache(),
 		mappingTTL:   mappingTTL,
 	}
 

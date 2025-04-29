@@ -756,7 +756,6 @@ func (i *Instance) QuerySeriesSet(
 					}
 					if len(mappings) == 0 {
 						log.Warnf(ctx, "index is empty with %v", qo.indexes)
-						err = fmt.Errorf("index is empty with %v，url: %s", aliases, conn.Address)
 						return
 					}
 				}

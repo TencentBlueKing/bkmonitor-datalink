@@ -102,55 +102,55 @@ func (m *MappingCache) Get(tableID string, fieldsStr string) (MappingEntry, bool
 		return MappingEntry{}, false
 	}
 
-	// 直接使用一次读锁检查是否有效（非过期），如果有效则返回
-	var result MappingEntry
-	var found bool
-
-	m.lock.RLock()
-	if tableMap, ok := m.data[tableID]; ok {
-		if entry, ok := tableMap[fieldsStr]; ok {
-			if !entry.IsExpired(m.ttl) { // 直接使用m.ttl而不是调用GetTTL()避免嵌套锁
-				result = entry
-				found = true
+	readResult, readOK := m.withReadLock(func() (interface{}, bool) {
+		if tableMap, ok := m.data[tableID]; ok {
+			if entry, ok := tableMap[fieldsStr]; ok {
+				if !entry.IsExpired(m.ttl) {
+					return entry, true
+				}
 			}
 		}
-	}
-	m.lock.RUnlock()
+		return nil, false
+	})
 
-	if found {
-		return result, true
+	if readOK && readResult != nil {
+		return readResult.(MappingEntry), true
 	}
 
-	// 如果读锁检查没有找到有效条目，使用写锁检查并清理过期条目
 	return m.cleanupOrGetEntry(tableID, fieldsStr)
 }
 
 // 辅助方法：使用写锁清理过期条目或获取有效条目
 func (m *MappingCache) cleanupOrGetEntry(tableID string, fieldsStr string) (MappingEntry, bool) {
-	m.lock.Lock()
-	defer m.lock.Unlock()
+	var result MappingEntry
+	var found bool
 
-	// 双重检查
-	tableMap, ok := m.data[tableID]
-	if !ok {
-		return MappingEntry{}, false
-	}
-
-	entry, ok := tableMap[fieldsStr]
-	if !ok {
-		return MappingEntry{}, false
-	}
-
-	if entry.IsExpired(m.ttl) { // 直接使用m.ttl而不是调用GetTTL()
-		// 清理过期条目
-		delete(tableMap, fieldsStr)
-		if len(tableMap) == 0 {
-			delete(m.data, tableID)
+	m.withWriteLock(func() {
+		// 双重检查
+		tableMap, ok := m.data[tableID]
+		if !ok {
+			return
 		}
-		return MappingEntry{}, false
-	}
 
-	return entry, true
+		entry, ok := tableMap[fieldsStr]
+		if !ok {
+			return
+		}
+
+		if entry.IsExpired(m.ttl) {
+			// 清理过期条目
+			delete(tableMap, fieldsStr)
+			if len(tableMap) == 0 {
+				delete(m.data, tableID)
+			}
+			return
+		}
+
+		result = entry
+		found = true
+	})
+
+	return result, found
 }
 
 // Delete 从缓存删除映射

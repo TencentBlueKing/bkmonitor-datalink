@@ -11,7 +11,6 @@ package elasticsearch
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 )
@@ -207,19 +206,8 @@ func (m *MappingCache) Clear() {
 	})
 }
 
-// checkIsMappingCached 检查映射是否已缓存
-func (i *Instance) checkIsMappingCached(queryIdentifier string) ([]map[string]any, bool) {
-	parts := strings.Split(queryIdentifier, "|")
-	if len(parts) < 1 {
-		return nil, false
-	}
-
-	tableID := parts[0]
-	fieldsStr := ""
-	if len(parts) > 1 {
-		fieldsStr = strings.Join(parts[1:], "|")
-	}
-
+// checkMappingCache 检查映射是否已缓存
+func (i *Instance) checkMappingCache(tableID string, fieldsStr string) ([]map[string]any, bool) {
 	entry, exist := i.mappingCache.Get(tableID, fieldsStr)
 	if !exist {
 		return nil, false
@@ -228,21 +216,10 @@ func (i *Instance) checkIsMappingCached(queryIdentifier string) ([]map[string]an
 	return entry.mappings, true
 }
 
-// writeMappings 写入映射到缓存
-func (i *Instance) writeMappings(mappings []map[string]any, queryIdentifier string) error {
+// writeMappingCache 写入映射到缓存
+func (i *Instance) writeMappingCache(mappings []map[string]any, tableID string, fieldsStr string) error {
 	if len(mappings) == 0 {
 		return fmt.Errorf("cannot cache empty mappings")
-	}
-
-	parts := strings.Split(queryIdentifier, "|")
-	if len(parts) < 1 {
-		return fmt.Errorf("invalid query identifier format: %s", queryIdentifier)
-	}
-
-	tableID := parts[0]
-	fieldsStr := ""
-	if len(parts) > 1 {
-		fieldsStr = strings.Join(parts[1:], "|")
 	}
 
 	i.mappingCache.Put(tableID, fieldsStr, mappings)

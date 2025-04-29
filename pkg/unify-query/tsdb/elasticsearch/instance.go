@@ -530,7 +530,8 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				errChan <- err
 				wg.Done()
 			}()
-			mappings, exist := i.checkIsMappingCached(query.FieldsUniqueKey())
+			tableID, fieldsStr := query.GetCacheKey()
+			mappings, exist := i.checkMappingCache(tableID, fieldsStr)
 			if exist {
 				span.Set("mapping-exist", true)
 			} else {
@@ -538,6 +539,12 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				var mappingErr error
 				mappings, mappingErr = i.getMappings(ctx, conn, aliases)
 				if mappingErr != nil {
+					err = mappingErr
+					return
+				}
+				// 缓存新获取的映射
+				err := i.writeMappingCache(mappings, tableID, fieldsStr)
+				if err != nil {
 					err = mappingErr
 					return
 				}
@@ -737,7 +744,8 @@ func (i *Instance) QuerySeriesSet(
 					conn:    conn,
 				}
 
-				mappings, exist := i.checkIsMappingCached(query.FieldsUniqueKey())
+				tableID, fieldsStr := query.GetCacheKey()
+				mappings, exist := i.checkMappingCache(tableID, fieldsStr)
 				span.Set("mapping-exist", exist)
 				if !exist {
 					var mappingErr error

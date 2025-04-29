@@ -31,12 +31,14 @@ func (m MappingEntry) IsExpired(ttl time.Duration) bool {
 type MappingCache struct {
 	data map[string]map[string]MappingEntry
 	lock sync.RWMutex
+	ttl  time.Duration
 }
 
 // NewMappingCache 创建一个新的映射缓存
-func NewMappingCache() *MappingCache {
+func NewMappingCache(ttl time.Duration) *MappingCache {
 	return &MappingCache{
 		data: make(map[string]map[string]MappingEntry),
+		ttl:  ttl,
 	}
 }
 
@@ -64,6 +66,32 @@ func (m *MappingCache) withWriteLock(fn func()) {
 	fn()
 }
 
+// SetTTL 设置缓存的TTL
+func (m *MappingCache) SetTTL(ttl time.Duration) {
+	if m == nil {
+		return
+	}
+
+	m.withWriteLock(func() {
+		m.ttl = ttl
+	})
+}
+
+// GetTTL 获取缓存的TTL
+func (m *MappingCache) GetTTL() time.Duration {
+	if m == nil {
+		return 0
+	}
+
+	var ttl time.Duration
+	m.withReadLock(func() (interface{}, bool) {
+		ttl = m.ttl
+		return nil, true
+	})
+
+	return ttl
+}
+
 // Put 添加映射到缓存
 func (m *MappingCache) Put(tableID string, fieldsStr string, mappings []map[string]any) {
 	if m == nil {
@@ -87,7 +115,7 @@ func (m *MappingCache) Put(tableID string, fieldsStr string, mappings []map[stri
 }
 
 // Get 从缓存获取映射条目，自动处理过期条目
-func (m *MappingCache) Get(tableID string, fieldsStr string, ttl time.Duration) (MappingEntry, bool) {
+func (m *MappingCache) Get(tableID string, fieldsStr string) (MappingEntry, bool) {
 	if m == nil || m.data == nil {
 		return MappingEntry{}, false
 	}
@@ -105,7 +133,7 @@ func (m *MappingCache) Get(tableID string, fieldsStr string, ttl time.Duration) 
 		}
 
 		// 如果已经过期，需要删除条目
-		if entry.IsExpired(ttl) {
+		if entry.IsExpired(m.GetTTL()) {
 			return nil, false
 		}
 
@@ -132,7 +160,7 @@ func (m *MappingCache) Get(tableID string, fieldsStr string, ttl time.Duration) 
 			return
 		}
 
-		if entry.IsExpired(ttl) {
+		if entry.IsExpired(m.GetTTL()) {
 			// 删除过期条目
 			delete(tableMap, fieldsStr)
 			if len(tableMap) == 0 {
@@ -196,7 +224,7 @@ func (i *Instance) checkIsMappingCached(queryIdentifier string) ([]map[string]an
 		fieldsStr = strings.Join(parts[1:], "|")
 	}
 
-	entry, exist := i.mappingCache.Get(tableID, fieldsStr, i.mappingTTL)
+	entry, exist := i.mappingCache.Get(tableID, fieldsStr)
 	if !exist {
 		return nil, false
 	}

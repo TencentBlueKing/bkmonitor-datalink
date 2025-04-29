@@ -58,7 +58,7 @@ type Instance struct {
 	timeout time.Duration
 	maxSize int
 
-	mappingCache MappingCache
+	mappingCache *MappingCache
 	mappingTTL   time.Duration
 }
 

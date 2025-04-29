@@ -34,8 +34,8 @@ type MappingCache struct {
 }
 
 // NewMappingCache 创建一个新的映射缓存
-func NewMappingCache() MappingCache {
-	return MappingCache{
+func NewMappingCache() *MappingCache {
+	return &MappingCache{
 		data: make(map[string]map[string]MappingEntry),
 	}
 }

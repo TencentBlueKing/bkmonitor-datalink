@@ -130,42 +130,6 @@ type Query struct {
 	NeedAddTime bool
 }
 
-func (q *Query) FieldsUniqueKey() string {
-	if q.TableID == "" {
-		return ""
-	}
-
-	s := set.New[string]()
-
-	if q.Field != "" {
-		s.Add(q.Field)
-	}
-
-	for _, condGroup := range q.AllConditions {
-		for _, cond := range condGroup {
-			if cond.DimensionName != "" {
-				s.Add(cond.DimensionName)
-			}
-		}
-	}
-
-	for _, agg := range q.Aggregates {
-		for _, dim := range agg.Dimensions {
-			if dim != "" {
-				s.Add(dim)
-			}
-		}
-	}
-
-	for _, order := range q.Orders {
-		if order.Name != "" {
-			s.Add(order.Name)
-		}
-	}
-
-	return fmt.Sprintf("%s|%s", q.TableID, s.ToArray())
-}
-
 type HighLight struct {
 	MaxAnalyzedOffset int  `json:"max_analyzed_offset,omitempty"`
 	Enable            bool `json:"enable,omitempty"`
@@ -420,4 +384,41 @@ func (os Orders) SortSliceList(list []map[string]any) {
 		}
 		return true
 	})
+}
+
+// GetCacheKey 返回tableID和fields，用于缓存查询
+func (q *Query) GetCacheKey() (tableID string, fieldsStr string) {
+	if q.TableID == "" {
+		return "", ""
+	}
+
+	s := set.New[string]()
+
+	if q.Field != "" {
+		s.Add(q.Field)
+	}
+
+	for _, condGroup := range q.AllConditions {
+		for _, cond := range condGroup {
+			if cond.DimensionName != "" {
+				s.Add(cond.DimensionName)
+			}
+		}
+	}
+
+	for _, agg := range q.Aggregates {
+		for _, dim := range agg.Dimensions {
+			if dim != "" {
+				s.Add(dim)
+			}
+		}
+	}
+
+	for _, order := range q.Orders {
+		if order.Name != "" {
+			s.Add(order.Name)
+		}
+	}
+
+	return q.TableID, s.String()
 }

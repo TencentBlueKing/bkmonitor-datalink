@@ -70,10 +70,7 @@ func (m *MappingCache) SetTTL(ttl time.Duration) {
 	if m == nil {
 		return
 	}
-
-	m.withWriteLock(func() {
-		m.ttl = ttl
-	})
+	m.ttl = ttl
 }
 
 // GetTTL 获取缓存的TTL
@@ -82,13 +79,7 @@ func (m *MappingCache) GetTTL() time.Duration {
 		return 0
 	}
 
-	var ttl time.Duration
-	m.withReadLock(func() (interface{}, bool) {
-		ttl = m.ttl
-		return nil, true
-	})
-
-	return ttl
+	return m.ttl
 }
 
 // Put 添加映射到缓存

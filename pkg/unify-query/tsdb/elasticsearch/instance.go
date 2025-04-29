@@ -59,7 +59,6 @@ type Instance struct {
 	maxSize int
 
 	mappingCache *MappingCache
-	mappingTTL   time.Duration
 }
 
 type Connects []Connect
@@ -128,8 +127,7 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 		healthCheck: opt.HealthCheck,
 		timeout:     opt.Timeout,
 
-		mappingCache: NewMappingCache(),
-		mappingTTL:   mappingTTL,
+		mappingCache: NewMappingCache(mappingTTL),
 	}
 
 	if len(ins.connects) == 0 {

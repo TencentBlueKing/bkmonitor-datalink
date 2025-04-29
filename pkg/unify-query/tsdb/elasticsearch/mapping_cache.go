@@ -55,10 +55,6 @@ func (m *MappingCache) withReadLock(fn func() (interface{}, bool)) (interface{},
 
 // withWriteLock 使用写锁执行函数
 func (m *MappingCache) withWriteLock(fn func()) {
-	if m == nil {
-		return
-	}
-
 	m.lock.Lock()
 	defer m.lock.Unlock()
 

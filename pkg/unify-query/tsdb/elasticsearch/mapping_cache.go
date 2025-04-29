@@ -94,10 +94,6 @@ func (m *MappingCache) GetTTL() time.Duration {
 
 // Put 添加映射到缓存
 func (m *MappingCache) Put(tableID string, fieldsStr string, mappings []map[string]any) {
-	if m == nil {
-		return
-	}
-
 	m.withWriteLock(func() {
 		if m.data == nil {
 			m.data = make(map[string]map[string]MappingEntry)

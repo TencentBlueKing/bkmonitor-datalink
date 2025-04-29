@@ -12,6 +12,7 @@ package elasticsearch
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,7 +28,17 @@ func (m MappingEntry) IsExpired(ttl time.Duration) bool {
 
 // MappingCache 保存缓存映射
 // 结构: map[tableID]map[fieldsStr]MappingEntry
-type MappingCache map[string]map[string]MappingEntry
+type MappingCache struct {
+	data map[string]map[string]MappingEntry
+	lock sync.RWMutex
+}
+
+// NewMappingCache 创建一个新的映射缓存
+func NewMappingCache() MappingCache {
+	return MappingCache{
+		data: make(map[string]map[string]MappingEntry),
+	}
+}
 
 // Put 添加映射到缓存
 func (m *MappingCache) Put(tableID string, fieldsStr string, mappings []map[string]any) {
@@ -35,15 +46,18 @@ func (m *MappingCache) Put(tableID string, fieldsStr string, mappings []map[stri
 		return
 	}
 
-	if *m == nil {
-		*m = make(MappingCache)
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	if m.data == nil {
+		m.data = make(map[string]map[string]MappingEntry)
 	}
 
-	if _, ok := (*m)[tableID]; !ok {
-		(*m)[tableID] = make(map[string]MappingEntry)
+	if _, ok := m.data[tableID]; !ok {
+		m.data[tableID] = make(map[string]MappingEntry)
 	}
 
-	(*m)[tableID][fieldsStr] = MappingEntry{
+	m.data[tableID][fieldsStr] = MappingEntry{
 		mappings:    mappings,
 		lastUpdated: time.Now(),
 	}
@@ -51,57 +65,86 @@ func (m *MappingCache) Put(tableID string, fieldsStr string, mappings []map[stri
 
 // Get 从缓存获取映射条目，自动处理过期条目
 func (m *MappingCache) Get(tableID string, fieldsStr string, ttl time.Duration) (MappingEntry, bool) {
-	if m == nil || *m == nil {
+	if m == nil || m.data == nil {
 		return MappingEntry{}, false
 	}
 
-	tableMap, ok := (*m)[tableID]
+	m.lock.RLock()
+	tableMap, ok := m.data[tableID]
 	if !ok {
+		m.lock.RUnlock()
 		return MappingEntry{}, false
 	}
 
 	entry, ok := tableMap[fieldsStr]
 	if !ok {
+		m.lock.RUnlock()
 		return MappingEntry{}, false
 	}
 
 	if entry.IsExpired(ttl) {
-		delete(tableMap, fieldsStr)
-		if len(tableMap) == 0 {
-			delete(*m, tableID)
+		m.lock.RUnlock()
+
+		// 需要获取写锁来删除过期条目
+		m.lock.Lock()
+		defer m.lock.Unlock()
+
+		// 再次检查，因为可能在解锁后有另一个线程已经删除了该条目
+		tableMap, ok = m.data[tableID]
+		if !ok {
+			return MappingEntry{}, false
 		}
-		return MappingEntry{}, false
+
+		entry, ok = tableMap[fieldsStr]
+		if !ok || entry.IsExpired(ttl) {
+			delete(tableMap, fieldsStr)
+			if len(tableMap) == 0 {
+				delete(m.data, tableID)
+			}
+			return MappingEntry{}, false
+		}
+
+		return entry, true
 	}
 
+	m.lock.RUnlock()
 	return entry, true
 }
 
 // Delete 从缓存删除映射
 func (m *MappingCache) Delete(tableID string, fieldsStr string) {
-	if m == nil || *m == nil {
+	if m == nil || m.data == nil {
 		return
 	}
 
-	tableMap, ok := (*m)[tableID]
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	tableMap, ok := m.data[tableID]
 	if !ok {
 		return
 	}
 
 	if fieldsStr == "" {
-		delete(*m, tableID)
+		delete(m.data, tableID)
 	} else {
 		delete(tableMap, fieldsStr)
 		if len(tableMap) == 0 {
-			delete(*m, tableID)
+			delete(m.data, tableID)
 		}
 	}
 }
 
 // Clear 清空缓存
 func (m *MappingCache) Clear() {
-	if m != nil {
-		*m = make(MappingCache)
+	if m == nil {
+		return
 	}
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	m.data = make(map[string]map[string]MappingEntry)
 }
 
 // checkIsMappingCached 检查映射是否已缓存
@@ -116,9 +159,6 @@ func (i *Instance) checkIsMappingCached(queryIdentifier string) ([]map[string]an
 	if len(parts) > 1 {
 		fieldsStr = strings.Join(parts[1:], "|")
 	}
-
-	i.mappingCacheLock.RLock()
-	defer i.mappingCacheLock.RUnlock()
 
 	entry, exist := i.mappingCache.Get(tableID, fieldsStr, i.mappingTTL)
 	if !exist {
@@ -144,9 +184,6 @@ func (i *Instance) writeMappings(mappings []map[string]any, queryIdentifier stri
 	if len(parts) > 1 {
 		fieldsStr = strings.Join(parts[1:], "|")
 	}
-
-	i.mappingCacheLock.Lock()
-	defer i.mappingCacheLock.Unlock()
 
 	i.mappingCache.Put(tableID, fieldsStr, mappings)
 	return nil

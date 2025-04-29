@@ -40,8 +40,20 @@ func NewMappingCache() *MappingCache {
 	}
 }
 
-// Put 添加映射到缓存
-func (m *MappingCache) Put(tableID string, fieldsStr string, mappings []map[string]any) {
+// withReadLock 使用读锁执行函数
+func (m *MappingCache) withReadLock(fn func() (interface{}, bool)) (interface{}, bool) {
+	if m == nil {
+		return nil, false
+	}
+
+	m.lock.RLock()
+	defer m.lock.RUnlock()
+
+	return fn()
+}
+
+// withWriteLock 使用写锁执行函数
+func (m *MappingCache) withWriteLock(fn func()) {
 	if m == nil {
 		return
 	}
@@ -49,18 +61,29 @@ func (m *MappingCache) Put(tableID string, fieldsStr string, mappings []map[stri
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	if m.data == nil {
-		m.data = make(map[string]map[string]MappingEntry)
+	fn()
+}
+
+// Put 添加映射到缓存
+func (m *MappingCache) Put(tableID string, fieldsStr string, mappings []map[string]any) {
+	if m == nil {
+		return
 	}
 
-	if _, ok := m.data[tableID]; !ok {
-		m.data[tableID] = make(map[string]MappingEntry)
-	}
+	m.withWriteLock(func() {
+		if m.data == nil {
+			m.data = make(map[string]map[string]MappingEntry)
+		}
 
-	m.data[tableID][fieldsStr] = MappingEntry{
-		mappings:    mappings,
-		lastUpdated: time.Now(),
-	}
+		if _, ok := m.data[tableID]; !ok {
+			m.data[tableID] = make(map[string]MappingEntry)
+		}
+
+		m.data[tableID][fieldsStr] = MappingEntry{
+			mappings:    mappings,
+			lastUpdated: time.Now(),
+		}
+	})
 }
 
 // Get 从缓存获取映射条目，自动处理过期条目
@@ -69,46 +92,61 @@ func (m *MappingCache) Get(tableID string, fieldsStr string, ttl time.Duration) 
 		return MappingEntry{}, false
 	}
 
-	m.lock.RLock()
-	tableMap, ok := m.data[tableID]
-	if !ok {
-		m.lock.RUnlock()
-		return MappingEntry{}, false
-	}
-
-	entry, ok := tableMap[fieldsStr]
-	if !ok {
-		m.lock.RUnlock()
-		return MappingEntry{}, false
-	}
-
-	if entry.IsExpired(ttl) {
-		m.lock.RUnlock()
-
-		// 需要获取写锁来删除过期条目
-		m.lock.Lock()
-		defer m.lock.Unlock()
-
-		// 再次检查，因为可能在解锁后有另一个线程已经删除了该条目
-		tableMap, ok = m.data[tableID]
+	// 先尝试用读锁获取
+	readResult, readOK := m.withReadLock(func() (interface{}, bool) {
+		tableMap, ok := m.data[tableID]
 		if !ok {
-			return MappingEntry{}, false
+			return nil, false
 		}
 
-		entry, ok = tableMap[fieldsStr]
-		if !ok || entry.IsExpired(ttl) {
+		entry, ok := tableMap[fieldsStr]
+		if !ok {
+			return nil, false
+		}
+
+		// 如果已经过期，需要删除条目
+		if entry.IsExpired(ttl) {
+			return nil, false
+		}
+
+		return entry, true
+	})
+
+	if readOK {
+		return readResult.(MappingEntry), true
+	}
+
+	// 如果读锁获取失败或条目过期，使用写锁尝试删除过期条目
+	var result MappingEntry
+	var found bool
+
+	m.withWriteLock(func() {
+		// 再次检查，可能在获取写锁期间已经更新或删除了条目
+		tableMap, ok := m.data[tableID]
+		if !ok {
+			return
+		}
+
+		entry, ok := tableMap[fieldsStr]
+		if !ok {
+			return
+		}
+
+		if entry.IsExpired(ttl) {
+			// 删除过期条目
 			delete(tableMap, fieldsStr)
 			if len(tableMap) == 0 {
 				delete(m.data, tableID)
 			}
-			return MappingEntry{}, false
+			return
 		}
 
-		return entry, true
-	}
+		// 找到有效条目
+		result = entry
+		found = true
+	})
 
-	m.lock.RUnlock()
-	return entry, true
+	return result, found
 }
 
 // Delete 从缓存删除映射
@@ -117,22 +155,21 @@ func (m *MappingCache) Delete(tableID string, fieldsStr string) {
 		return
 	}
 
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	tableMap, ok := m.data[tableID]
-	if !ok {
-		return
-	}
-
-	if fieldsStr == "" {
-		delete(m.data, tableID)
-	} else {
-		delete(tableMap, fieldsStr)
-		if len(tableMap) == 0 {
-			delete(m.data, tableID)
+	m.withWriteLock(func() {
+		tableMap, ok := m.data[tableID]
+		if !ok {
+			return
 		}
-	}
+
+		if fieldsStr == "" {
+			delete(m.data, tableID)
+		} else {
+			delete(tableMap, fieldsStr)
+			if len(tableMap) == 0 {
+				delete(m.data, tableID)
+			}
+		}
+	})
 }
 
 // Clear 清空缓存
@@ -141,10 +178,9 @@ func (m *MappingCache) Clear() {
 		return
 	}
 
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	m.data = make(map[string]map[string]MappingEntry)
+	m.withWriteLock(func() {
+		m.data = make(map[string]map[string]MappingEntry)
+	})
 }
 
 // checkIsMappingCached 检查映射是否已缓存

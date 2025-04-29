@@ -106,61 +106,55 @@ func (m *MappingCache) Get(tableID string, fieldsStr string) (MappingEntry, bool
 		return MappingEntry{}, false
 	}
 
-	// 先尝试用读锁获取
-	readResult, readOK := m.withReadLock(func() (interface{}, bool) {
-		tableMap, ok := m.data[tableID]
-		if !ok {
-			return nil, false
-		}
-
-		entry, ok := tableMap[fieldsStr]
-		if !ok {
-			return nil, false
-		}
-
-		// 如果已经过期，需要删除条目
-		if entry.IsExpired(m.GetTTL()) {
-			return nil, false
-		}
-
-		return entry, true
-	})
-
-	if readOK {
-		return readResult.(MappingEntry), true
-	}
-
-	// 如果读锁获取失败或条目过期，使用写锁尝试删除过期条目
+	// 直接使用一次读锁检查是否有效（非过期），如果有效则返回
 	var result MappingEntry
 	var found bool
 
-	m.withWriteLock(func() {
-		// 再次检查，可能在获取写锁期间已经更新或删除了条目
-		tableMap, ok := m.data[tableID]
-		if !ok {
-			return
-		}
-
-		entry, ok := tableMap[fieldsStr]
-		if !ok {
-			return
-		}
-
-		if entry.IsExpired(m.GetTTL()) {
-			// 删除过期条目
-			delete(tableMap, fieldsStr)
-			if len(tableMap) == 0 {
-				delete(m.data, tableID)
+	m.lock.RLock()
+	if tableMap, ok := m.data[tableID]; ok {
+		if entry, ok := tableMap[fieldsStr]; ok {
+			if !entry.IsExpired(m.ttl) { // 直接使用m.ttl而不是调用GetTTL()避免嵌套锁
+				result = entry
+				found = true
 			}
-			return
 		}
+	}
+	m.lock.RUnlock()
 
-		// 找到有效条目
-		result = entry
-		found = true
-	})
+	if found {
+		return result, true
+	}
 
-	return result, found
+	// 如果读锁检查没有找到有效条目，使用写锁检查并清理过期条目
+	return m.cleanupOrGetEntry(tableID, fieldsStr)
+}
+
+// 辅助方法：使用写锁清理过期条目或获取有效条目
+func (m *MappingCache) cleanupOrGetEntry(tableID string, fieldsStr string) (MappingEntry, bool) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	// 双重检查
+	tableMap, ok := m.data[tableID]
+	if !ok {
+		return MappingEntry{}, false
+	}
+
+	entry, ok := tableMap[fieldsStr]
+	if !ok {
+		return MappingEntry{}, false
+	}
+
+	if entry.IsExpired(m.ttl) { // 直接使用m.ttl而不是调用GetTTL()
+		// 清理过期条目
+		delete(tableMap, fieldsStr)
+		if len(tableMap) == 0 {
+			delete(m.data, tableID)
+		}
+		return MappingEntry{}, false
+	}
+
+	return entry, true
 }
 
 // Delete 从缓存删除映射

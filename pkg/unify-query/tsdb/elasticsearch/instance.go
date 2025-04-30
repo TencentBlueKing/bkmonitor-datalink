@@ -398,6 +398,10 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 		return storage.ErrSeriesSet(err)
 	}
 
+	if sr == nil || sr.Aggregations == nil {
+		return storage.EmptySeriesSet()
+	}
+
 	// 如果是非时间聚合计算，则无需进行指标名的拼接作用
 	qr, err := fact.AggDataFormat(sr.Aggregations, metricLabel)
 	if err != nil {

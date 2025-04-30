@@ -399,7 +399,9 @@ func (f *FormatFactory) nestedAgg(key string) {
 // AggDataFormat 解析 es 的聚合计算
 func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *prompb.Label) (*prompb.QueryResult, error) {
 	if data == nil {
-		return nil, nil
+		return &prompb.QueryResult{
+			Timeseries: []*prompb.TimeSeries{},
+		}, nil
 	}
 
 	defer func() {

@@ -132,6 +132,20 @@ func (r *Receiver) ready() {
 		f(config)
 		logger.Infof("register '%s' component", k)
 	}
+
+	RegisterRecvHttpRoute("healthz", []RouteWithFunc{
+		{
+			Method:       http.MethodGet,
+			RelativePath: "/healthz",
+			HandlerFunc: func(w http.ResponseWriter, r *http.Request) {
+				if confengine.LoadedPlatformConfig() {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				w.WriteHeader(http.StatusServiceUnavailable) // 未加载到平台配置表示服务未就绪
+			},
+		},
+	})
 }
 
 func (r *Receiver) Reload(conf *confengine.Config) {

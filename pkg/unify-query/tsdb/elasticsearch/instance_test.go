@@ -764,8 +764,7 @@ func TestInstance_mappingCache(t *testing.T) {
 		MappingTTL: 100 * time.Millisecond, // 设置较短的TTL方便测试过期
 	})
 	if err != nil {
-		t.Logf("Instance creation error: %v - continuing with test", err)
-		return
+		t.Fatalf("Instance creation error: %v", err)
 	}
 
 	// 定义测试数据
@@ -976,8 +975,7 @@ func TestMappingCacheConcurrency(t *testing.T) {
 		MappingTTL: 100 * time.Millisecond,
 	})
 	if err != nil {
-		t.Logf("Instance creation error: %v - continuing with test", err)
-		return
+		t.Fatalf("Instance creation error: %v", err)
 	}
 
 	const numTables = 5

@@ -797,14 +797,14 @@ func TestInstance_mappingCache(t *testing.T) {
 
 		for _, c := range combinations {
 			err := ins.writeMappingCache(sampleMappings, c.tableID, c.fieldsStr)
-			assert.Nil(t, err, "Failed to write mappings to cache for %s|%s", c.tableID, c.fieldsStr)
+			assert.Nil(t, err, "Failed to write mappings to cache for tableID=%s fieldsStr=%s", c.tableID, c.fieldsStr)
 		}
 
 		// 验证每个组合都能正确获取
 		for _, c := range combinations {
 			mappings, exists := ins.checkMappingCache(c.tableID, c.fieldsStr)
-			assert.True(t, exists, "Cache should contain entry for %s|%s", c.tableID, c.fieldsStr)
-			assert.Equal(t, sampleMappings, mappings, "Cached mappings mismatch for %s|%s", c.tableID, c.fieldsStr)
+			assert.True(t, exists, "Cache should contain entry for tableID=%s fieldsStr=%s", c.tableID, c.fieldsStr)
+			assert.Equal(t, sampleMappings, mappings, "Cached mappings mismatch for tableID=%s fieldsStr=%s", c.tableID, c.fieldsStr)
 		}
 
 		// 验证不存在的组合返回不存在
@@ -819,7 +819,7 @@ func TestInstance_mappingCache(t *testing.T) {
 
 		for _, c := range notExistCombinations {
 			_, exists := ins.checkMappingCache(c.tableID, c.fieldsStr)
-			assert.False(t, exists, "Cache should not contain entry for %s|%s", c.tableID, c.fieldsStr)
+			assert.False(t, exists, "Cache should not contain entry for tableID=%s fieldsStr=%s", c.tableID, c.fieldsStr)
 		}
 	})
 
@@ -1037,7 +1037,7 @@ func TestMappingCacheConcurrency(t *testing.T) {
 					cacheEntries++
 					assert.NotNil(t, mappings, "Mappings should not be nil if cache hit")
 					assert.Equal(t, len(sampleMappings), len(mappings),
-						"Unexpected mapping length for %s|%s", tableID, fieldsStr)
+						"Unexpected mapping length for tableID=%s fieldsStr=%s", tableID, fieldsStr)
 				}
 			}
 		}

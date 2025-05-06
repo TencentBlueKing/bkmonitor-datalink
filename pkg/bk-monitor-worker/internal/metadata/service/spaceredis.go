@@ -544,6 +544,7 @@ func (s *SpacePusher) refineEsTableIds(tableIdList []string) ([]string, error) {
 func (s *SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool, useByPass bool) error {
 	logger.Infof("PushTableIdDetail: start to push table_id detail data")
 	tableIdDetail, err := s.getTableInfoForInfluxdbAndVm(tableIdList)
+	logger.Infof("PushTableIdDetail: get table info for influxdb and vm:%s", tableIdDetail)
 	if err != nil {
 		return err
 	}
@@ -900,19 +901,23 @@ func (s *SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[st
 			"measurement":  detail.RealTableName,
 			"vm_rt":        "",
 			"tags_key":     detail.TagsKey,
+			"storage_type": models.StorageTypeInfluxdb,
 		}
 	}
+
 	// 处理 vm 的数据信息
 	for tableId, detail := range vmTableMap {
 		if _, ok := tableIdInfo[tableId]; ok {
 			tableIdInfo[tableId]["vm_rt"] = detail["vm_rt"]
 			tableIdInfo[tableId]["storage_name"] = detail["storage_name"]
+			tableIdInfo[tableId]["storage_type"] = models.StorageTypeVM
 		} else {
 			detail["cluster_name"] = ""
 			detail["db"] = ""
 			detail["measurement"] = ""
 			detail["tags_key"] = []string{}
 			tableIdInfo[tableId] = detail
+			tableIdInfo[tableId]["storage_type"] = models.StorageTypeVM
 		}
 	}
 	return tableIdInfo, nil

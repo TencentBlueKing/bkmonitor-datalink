@@ -544,7 +544,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				// 缓存新获取的映射
 				err := i.writeMappingCache(mappings, tableID, fieldsStr)
 				if err != nil {
-					err = mappingErr
+					err = fmt.Errorf("write mapping cache failed: %v, original error: %v", err, mappingErr)
 					return
 				}
 			}

@@ -43,10 +43,6 @@ func NewMappingCache(ttl time.Duration) *MappingCache {
 
 // withReadLock 使用读锁执行函数
 func (m *MappingCache) withReadLock(fn func() (interface{}, bool)) (interface{}, bool) {
-	if m == nil {
-		return nil, false
-	}
-
 	m.lock.RLock()
 	defer m.lock.RUnlock()
 
@@ -63,18 +59,11 @@ func (m *MappingCache) withWriteLock(fn func()) {
 
 // SetTTL 设置缓存的TTL
 func (m *MappingCache) SetTTL(ttl time.Duration) {
-	if m == nil {
-		return
-	}
 	m.ttl = ttl
 }
 
 // GetTTL 获取缓存的TTL
 func (m *MappingCache) GetTTL() time.Duration {
-	if m == nil {
-		return 0
-	}
-
 	return m.ttl
 }
 
@@ -98,7 +87,7 @@ func (m *MappingCache) Put(tableID string, fieldsStr string, mappings []map[stri
 
 // Get 从缓存获取映射条目，自动处理过期条目
 func (m *MappingCache) Get(tableID string, fieldsStr string) (MappingEntry, bool) {
-	if m == nil || m.data == nil {
+	if m.data == nil {
 		return MappingEntry{}, false
 	}
 
@@ -155,7 +144,7 @@ func (m *MappingCache) cleanupOrGetEntry(tableID string, fieldsStr string) (Mapp
 
 // Delete 从缓存删除映射
 func (m *MappingCache) Delete(tableID string, fieldsStr string) {
-	if m == nil || m.data == nil {
+	if m.data == nil {
 		return
 	}
 
@@ -178,10 +167,6 @@ func (m *MappingCache) Delete(tableID string, fieldsStr string) {
 
 // Clear 清空缓存
 func (m *MappingCache) Clear() {
-	if m == nil {
-		return
-	}
-
 	m.withWriteLock(func() {
 		m.data = make(map[string]map[string]MappingEntry)
 	})

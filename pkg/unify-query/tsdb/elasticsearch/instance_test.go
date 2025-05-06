@@ -957,8 +957,8 @@ func TestInstance_mappingCache(t *testing.T) {
 			fieldStrs[fieldStr] = true
 		}
 
-		assert.Equal(t, 2, len(tableIDs), "Should have 2 unique tableIDs")
-		assert.Equal(t, 2, len(fieldStrs), "Should have 2 unique fieldStrs")
+		assert.Len(t, fieldStrs, 2, "Should have 2 unique fieldStrs")
+		assert.Len(t, tableIDs, 2, "Should have 2 unique tableIDs")
 	})
 }
 

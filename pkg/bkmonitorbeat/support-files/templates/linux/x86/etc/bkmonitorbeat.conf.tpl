@@ -184,6 +184,22 @@ bkmonitorbeat:
 #    period: 1m
 #    dst_dir: '{{ plugin_path.subconfig_path }}'
 
+  # 时间同步服务采集
+  timesync_task:
+    dataid: 1100030
+    task_id: 98
+    period: 1m
+    env: host
+    query_timeout: 10s
+    ntpd_path: /etc/ntp.conf
+    chrony_address: "[::1]:323"
+
+  # dmesg 事件采集
+  dmesg_task:
+    dataid: 1100031
+    task_id: 99
+    period: 1m
+
 {%- if extra_vars is defined and extra_vars.enable_audit_tasks is defined and extra_vars.enable_audit_tasks == "true" %}
   # 登录日志采集
   loginlog_task:

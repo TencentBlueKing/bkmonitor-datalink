@@ -49,36 +49,41 @@ var virtualInterfaceSet = common.NewSet()
 
 var lastNetStatMap map[string]net.IOCountersStat
 
-var lastUdpStat net.ProtoCountersStat
-
 var lastStatTime time.Time
 
-func getProtocolStats() (map[string]map[string]int64, error) {
-	// udp protocol packages
-	udpProtocolName := []string{
-		"udp",
-	}
+var lastProtoCounters = make(map[string]map[string]int64)
 
-	// TODO : only has udp
-	// ignore error, protocol will be empty when error occur
-	protocols, err := ProtoCounters(udpProtocolName) // only implement on Linux
+func getProtocolStats() (map[string]map[string]int64, error) {
+	protos := []string{"udp", "tcp"}
+	protoCounters, err := ProtoCounters(protos) // only implement on Linux
 	if err != nil {
 		return nil, err
 	}
-	curUdpStat := protocols[0]
-	var udpStat net.ProtoCountersStat
-	udpStat.Protocol = curUdpStat.Protocol
-	udpStat.Stats = make(map[string]int64)
-	// cast first character to lower case
-	for key, value := range curUdpStat.Stats {
-		lowerKey := common.FirstCharToLower(key)
-		udpStat.Stats[lowerKey] = value - lastUdpStat.Stats[key]
+
+	ret := make(map[string]map[string]int64)
+	origin := make(map[string]map[string]int64)
+	for _, pc := range protoCounters {
+		counter := make(map[string]int64)
+		for key, value := range pc.Stats {
+			normalizeKey := common.FirstCharToLower(key)
+
+			// 记录原始数据值
+			if _, ok := origin[pc.Protocol]; !ok {
+				origin[pc.Protocol] = make(map[string]int64)
+			}
+			origin[pc.Protocol][normalizeKey] = value
+
+			lastV := value // 如果取不到上一个周期的话置 0 否则可能会取到一个非常大的数值
+			if lastCounter, ok := lastProtoCounters[pc.Protocol]; ok {
+				lastV = lastCounter[normalizeKey]
+			}
+			counter[normalizeKey] = value - lastV // 计算两个周期差值
+		}
+		ret[pc.Protocol] = counter
 	}
 
-	lastUdpStat = protocols[0]
-	protocolStatList := make(map[string]map[string]int64)
-	protocolStatList[udpStat.Protocol] = udpStat.Stats
-	return protocolStatList, nil
+	lastProtoCounters = origin
+	return ret, nil
 }
 
 func getStatByIOCounterStat(stat []net.IOCountersStat) ([]Stat, error) {

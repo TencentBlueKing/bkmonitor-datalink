@@ -532,10 +532,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			}()
 			tableID, fieldsStr := query.GetCacheKey()
 			mappings, exist := i.checkMappingCache(tableID, fieldsStr)
+			span.Set("mapping-exist", exist)
 			if exist {
-				span.Set("mapping-exist", true)
 			} else {
-				span.Set("mapping-exist", false)
 				var mappingErr error
 				mappings, mappingErr = i.getMappings(ctx, conn, aliases)
 				if mappingErr != nil {

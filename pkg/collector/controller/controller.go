@@ -121,12 +121,10 @@ func New(conf *confengine.Config, buildInfo define.BuildInfo) (*Controller, erro
 		return nil, err
 	}
 
-	var receiverMgr *receiver.Receiver
-	if !conf.Disabled(define.ConfigFieldReceiver) {
-		receiverMgr, err = receiver.New(conf)
-		if err != nil {
-			return nil, err
-		}
+	// 优先加载 pipeline 当配置就绪以后才启动服务
+	pipelineMgr, err := pipeline.New(conf)
+	if err != nil {
+		return nil, err
 	}
 
 	var exporterMgr *exporter.Exporter
@@ -161,9 +159,12 @@ func New(conf *confengine.Config, buildInfo define.BuildInfo) (*Controller, erro
 		}
 	}
 
-	pipelineMgr, err := pipeline.New(conf)
-	if err != nil {
-		return nil, err
+	var receiverMgr *receiver.Receiver
+	if !conf.Disabled(define.ConfigFieldReceiver) {
+		receiverMgr, err = receiver.New(conf)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

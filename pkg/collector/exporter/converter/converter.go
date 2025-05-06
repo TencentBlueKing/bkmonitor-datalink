@@ -20,33 +20,18 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-var (
-	converterFailedTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitoringNamespace,
-			Name:      "converter_failed_total",
-			Help:      "Converter convert failed total",
-		},
-		[]string{"record_type", "id"},
-	)
-
-	converterSpanKindTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitoringNamespace,
-			Name:      "converter_span_kind_total",
-			Help:      "Converter traces span kind total",
-		},
-		[]string{"id", "kind"},
-	)
+var converterSpanKindTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: define.MonitoringNamespace,
+		Name:      "converter_span_kind_total",
+		Help:      "Converter traces span kind total",
+	},
+	[]string{"id", "kind"},
 )
 
 var DefaultMetricMonitor = &metricMonitor{}
 
 type metricMonitor struct{}
-
-func (m *metricMonitor) IncConverterFailedCounter(rtype define.RecordType, dataId int32) {
-	converterFailedTotal.WithLabelValues(rtype.S(), strconv.Itoa(int(dataId))).Inc()
-}
 
 func (m *metricMonitor) IncConverterSpanKindCounter(dataId int32, kind string) {
 	converterSpanKindTotal.WithLabelValues(strconv.Itoa(int(dataId)), kind).Inc()

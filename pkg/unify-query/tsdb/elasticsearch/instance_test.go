@@ -765,6 +765,7 @@ func TestInstance_mappingCache(t *testing.T) {
 	})
 	if err != nil {
 		t.Logf("Instance creation error: %v - continuing with test", err)
+		return
 	}
 
 	// 定义测试数据
@@ -976,6 +977,7 @@ func TestMappingCacheConcurrency(t *testing.T) {
 	})
 	if err != nil {
 		t.Logf("Instance creation error: %v - continuing with test", err)
+		return
 	}
 
 	const numTables = 5

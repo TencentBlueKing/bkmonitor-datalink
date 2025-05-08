@@ -10,14 +10,13 @@
 package elasticsearch
 
 import (
-	"fmt"
 	"sync"
 	"time"
 )
 
-// MappingEntry 保存缓存映射数据和最后更新时间
+// MappingEntry 保存缓存映射类型和最后更新时间
 type MappingEntry struct {
-	mappings    []map[string]any
+	fieldType   string
 	lastUpdated time.Time
 }
 
@@ -67,8 +66,7 @@ func (m *MappingCache) GetTTL() time.Duration {
 	return m.ttl
 }
 
-// Put 添加映射到缓存
-func (m *MappingCache) Put(tableID string, fieldsStr string, mappings []map[string]any) {
+func (m *MappingCache) AppendFieldTypesCache(tableID string, mapping map[string]string) {
 	m.withWriteLock(func() {
 		if m.data == nil {
 			m.data = make(map[string]map[string]MappingEntry)
@@ -78,15 +76,21 @@ func (m *MappingCache) Put(tableID string, fieldsStr string, mappings []map[stri
 			m.data[tableID] = make(map[string]MappingEntry)
 		}
 
-		m.data[tableID][fieldsStr] = MappingEntry{
-			mappings:    mappings,
-			lastUpdated: time.Now(),
+		for field, fieldType := range mapping {
+			m.data[tableID][field] = MappingEntry{
+				fieldType:   fieldType,
+				lastUpdated: time.Now(),
+			}
 		}
 	})
 }
 
-// Get 从缓存获取映射条目，自动处理过期条目
-func (m *MappingCache) Get(tableID string, fieldsStr string) (MappingEntry, bool) {
+func (m *MappingCache) GetFieldType(tableID string, fieldsStr string) (string, bool) {
+	entry, ok := m.get(tableID, fieldsStr)
+	return entry.fieldType, ok
+}
+
+func (m *MappingCache) get(tableID string, fieldsStr string) (MappingEntry, bool) {
 	if m.data == nil {
 		return MappingEntry{}, false
 	}
@@ -140,54 +144,4 @@ func (m *MappingCache) cleanupOrGetEntry(tableID string, fieldsStr string) (Mapp
 	})
 
 	return result, found
-}
-
-// Delete 从缓存删除映射
-func (m *MappingCache) Delete(tableID string, fieldsStr string) {
-	if m.data == nil {
-		return
-	}
-
-	m.withWriteLock(func() {
-		tableMap, ok := m.data[tableID]
-		if !ok {
-			return
-		}
-
-		if fieldsStr == "" {
-			delete(m.data, tableID)
-		} else {
-			delete(tableMap, fieldsStr)
-			if len(tableMap) == 0 {
-				delete(m.data, tableID)
-			}
-		}
-	})
-}
-
-// Clear 清空缓存
-func (m *MappingCache) Clear() {
-	m.withWriteLock(func() {
-		m.data = make(map[string]map[string]MappingEntry)
-	})
-}
-
-// checkMappingCache 检查映射是否已缓存
-func (i *Instance) checkMappingCache(tableID string, fieldsStr string) ([]map[string]any, bool) {
-	entry, exist := i.mappingCache.Get(tableID, fieldsStr)
-	if !exist {
-		return nil, false
-	}
-
-	return entry.mappings, true
-}
-
-// writeMappingCache 写入映射到缓存
-func (i *Instance) writeMappingCache(mappings []map[string]any, tableID string, fieldsStr string) error {
-	if len(mappings) == 0 {
-		return fmt.Errorf("cannot cache empty mappings")
-	}
-
-	i.mappingCache.Put(tableID, fieldsStr, mappings)
-	return nil
 }

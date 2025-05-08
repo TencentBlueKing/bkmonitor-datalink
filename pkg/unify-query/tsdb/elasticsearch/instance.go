@@ -530,22 +530,11 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				errChan <- err
 				wg.Done()
 			}()
-			tableID, fieldsStr := query.GetCacheKey()
-			mappings, exist := i.checkMappingCache(tableID, fieldsStr)
-			span.Set("mapping-exist", exist)
-			if !exist {
-				var mappingErr error
-				mappings, mappingErr = i.getMappings(ctx, conn, aliases)
-				if mappingErr != nil {
-					err = mappingErr
-					return
-				}
-				// 缓存新获取的映射
-				err := i.writeMappingCache(mappings, tableID, fieldsStr)
-				if err != nil {
-					err = fmt.Errorf("write mapping cache failed: %v, original error: %v", err, mappingErr)
-					return
-				}
+
+			mappings, mappingErr := i.getMappings(ctx, conn, aliases)
+			if mappingErr != nil {
+				err = mappingErr
+				return
 			}
 			if len(mappings) == 0 {
 				err = fmt.Errorf("index is empty with %v，url: %s", aliases, conn.Address)
@@ -742,20 +731,11 @@ func (i *Instance) QuerySeriesSet(
 					conn:    conn,
 				}
 
-				tableID, fieldsStr := query.GetCacheKey()
-				mappings, exist := i.checkMappingCache(tableID, fieldsStr)
-				span.Set("mapping-exist", exist)
-				if !exist {
-					var mappingErr error
-					mappings, mappingErr = i.getMappings(ctx, conn, aliases)
-					if mappingErr != nil {
-						err = mappingErr
-						return
-					}
-					if len(mappings) == 0 {
-						log.Warnf(ctx, "index is empty with %v", qo.indexes)
-						return
-					}
+				mappings, err1 := i.getMappings(ctx, qo.conn, qo.indexes)
+				// index 不存在，mappings 获取异常直接返回空
+				if len(mappings) == 0 {
+					log.Warnf(ctx, "index is empty with %v", qo.indexes)
+					return
 				}
 
 				if err1 != nil {

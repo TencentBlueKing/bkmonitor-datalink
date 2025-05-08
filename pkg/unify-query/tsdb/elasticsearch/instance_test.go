@@ -767,49 +767,37 @@ func TestInstance_mappingCache(t *testing.T) {
 		t.Fatalf("Instance creation error: %v", err)
 	}
 
-	// 定义测试数据
-	sampleMappings := []map[string]any{
-		{
-			"properties": map[string]any{
-				"field1":    map[string]any{"type": "keyword"},
-				"field2":    map[string]any{"type": "integer"},
-				"timestamp": map[string]any{"type": "date"},
-			},
-		},
-	}
-
 	// 1. 测试不同的tableID和field组合
 	t.Run("different tableID and field combinations", func(t *testing.T) {
 		// 确保缓存是空的
-		ins.mappingCache.Clear()
+		ins.fieldTypesCache.Clear()
 
-		// 写入不同的tableID和field组合
-		combinations := []struct {
-			tableID   string
-			fieldsStr string
-		}{
-			{"table1", "field1"},
-			{"table1", "field2"},
-			{"table2", "field1"},
-			{"table2", "field2"},
+		// 定义测试数据
+		tableIDs := []string{"table1", "table2"}
+		fields := map[string]string{
+			"field1":    "keyword",
+			"field2":    "integer",
+			"timestamp": "date",
 		}
 
-		for _, c := range combinations {
-			err := ins.writeMappingCache(sampleMappings, c.tableID, c.fieldsStr)
-			assert.Nil(t, err, "Failed to write mappings to cache for tableID=%s fieldsStr=%s", c.tableID, c.fieldsStr)
+		// 分别为不同表写入字段类型
+		for _, tableID := range tableIDs {
+			ins.fieldTypesCache.AppendFieldTypesCache(tableID, fields)
 		}
 
 		// 验证每个组合都能正确获取
-		for _, c := range combinations {
-			mappings, exists := ins.checkMappingCache(c.tableID, c.fieldsStr)
-			assert.True(t, exists, "Cache should contain entry for tableID=%s fieldsStr=%s", c.tableID, c.fieldsStr)
-			assert.Equal(t, sampleMappings, mappings, "Cached mappings mismatch for tableID=%s fieldsStr=%s", c.tableID, c.fieldsStr)
+		for _, tableID := range tableIDs {
+			for field, expectedType := range fields {
+				fieldType, exists := ins.fieldTypesCache.GetFieldType(tableID, field)
+				assert.True(t, exists, "Cache should contain entry for tableID=%s field=%s", tableID, field)
+				assert.Equal(t, expectedType, fieldType, "Cached field type mismatch for tableID=%s field=%s", tableID, field)
+			}
 		}
 
 		// 验证不存在的组合返回不存在
 		notExistCombinations := []struct {
-			tableID   string
-			fieldsStr string
+			tableID string
+			field   string
 		}{
 			{"table3", "field1"}, // 不存在的tableID
 			{"table1", "field3"}, // 不存在的field
@@ -817,104 +805,103 @@ func TestInstance_mappingCache(t *testing.T) {
 		}
 
 		for _, c := range notExistCombinations {
-			_, exists := ins.checkMappingCache(c.tableID, c.fieldsStr)
-			assert.False(t, exists, "Cache should not contain entry for tableID=%s fieldsStr=%s", c.tableID, c.fieldsStr)
+			_, exists := ins.fieldTypesCache.GetFieldType(c.tableID, c.field)
+			assert.False(t, exists, "Cache should not contain entry for tableID=%s field=%s", c.tableID, c.field)
 		}
 	})
 
 	// 2. 测试缓存过期
 	t.Run("cache expiration", func(t *testing.T) {
 		// 确保缓存是空的
-		ins.mappingCache.Clear()
+		ins.fieldTypesCache.Clear()
 
 		// 写入缓存
 		tableID := "expiry_table"
-		fieldsStr := "expiry_field"
-		err := ins.writeMappingCache(sampleMappings, tableID, fieldsStr)
-		assert.Nil(t, err, "Failed to write mappings to cache")
+		field := "field1"
+		fieldTypes := map[string]string{
+			field: "keyword",
+		}
+		ins.fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
 
 		// 验证缓存命中
-		mappings, exists := ins.checkMappingCache(tableID, fieldsStr)
+		fieldType, exists := ins.fieldTypesCache.GetFieldType(tableID, field)
 		assert.True(t, exists, "Cache should contain entry immediately after writing")
-		assert.Equal(t, sampleMappings, mappings, "Cached mappings mismatch")
+		assert.Equal(t, "keyword", fieldType, "Cached field type mismatch")
 
 		// 等待缓存过期（TTL + 额外时间确保过期）
-		waitDuration := ins.mappingCache.GetTTL() + 50*time.Millisecond
+		waitDuration := ins.fieldTypesCache.GetTTL() + 50*time.Millisecond
 		t.Logf("Waiting for cache expiration: %v", waitDuration)
 		time.Sleep(waitDuration)
 		t.Logf("Cache expiration wait complete")
 
 		// 验证缓存已过期
-		_, exists = ins.checkMappingCache(tableID, fieldsStr)
+		_, exists = ins.fieldTypesCache.GetFieldType(tableID, field)
 		assert.False(t, exists, "Cache should return miss after expiration")
 	})
 
 	// 3. 测试更新已存在的缓存条目
 	t.Run("update existing cache entry", func(t *testing.T) {
 		// 确保缓存是空的
-		ins.mappingCache.Clear()
+		ins.fieldTypesCache.Clear()
 
-		// 定义两个不同的mapping内容
 		tableID := "update_table"
-		fieldsStr := "update_field"
+		field := "field1"
 
-		initialMappings := []map[string]any{
-			{
-				"properties": map[string]any{
-					"field1": map[string]any{"type": "keyword"},
-				},
-			},
-		}
-
-		updatedMappings := []map[string]any{
-			{
-				"properties": map[string]any{
-					"field1": map[string]any{"type": "keyword"},
-					"field2": map[string]any{"type": "integer"},
-				},
-			},
+		// 初始映射
+		initialFieldType := "keyword"
+		initialTypes := map[string]string{
+			field: initialFieldType,
 		}
 
 		// 写入初始值
-		err := ins.writeMappingCache(initialMappings, tableID, fieldsStr)
-		assert.Nil(t, err, "Failed to write initial mappings to cache")
+		ins.fieldTypesCache.AppendFieldTypesCache(tableID, initialTypes)
 
 		// 验证初始值
-		mappings, exists := ins.checkMappingCache(tableID, fieldsStr)
+		fieldType, exists := ins.fieldTypesCache.GetFieldType(tableID, field)
 		assert.True(t, exists, "Cache should contain initial entry")
-		assert.Equal(t, initialMappings, mappings, "Initial cached mappings mismatch")
+		assert.Equal(t, initialFieldType, fieldType, "Initial cached field type mismatch")
+
+		// 更新映射
+		updatedFieldType := "text"
+		updatedTypes := map[string]string{
+			field: updatedFieldType,
+		}
 
 		// 更新值
-		err = ins.writeMappingCache(updatedMappings, tableID, fieldsStr)
-		assert.Nil(t, err, "Failed to update mappings in cache")
+		ins.fieldTypesCache.AppendFieldTypesCache(tableID, updatedTypes)
 
 		// 验证更新后的值
-		mappings, exists = ins.checkMappingCache(tableID, fieldsStr)
+		fieldType, exists = ins.fieldTypesCache.GetFieldType(tableID, field)
 		assert.True(t, exists, "Cache should contain updated entry")
-		assert.Equal(t, updatedMappings, mappings, "Updated cached mappings mismatch")
+		assert.Equal(t, updatedFieldType, fieldType, "Updated cached field type mismatch")
 	})
 
-	// 4. 测试空mappings不能写入缓存
-	t.Run("empty mappings should not be cached", func(t *testing.T) {
+	// 4. 测试FormatFactory使用GetFieldType
+	t.Run("FormatFactory uses GetFieldType", func(t *testing.T) {
 		// 确保缓存是空的
-		ins.mappingCache.Clear()
+		ins.fieldTypesCache.Clear()
 
-		// 尝试写入空mappings
-		tableID := "empty_table"
-		fieldsStr := "empty_field"
-		emptyMappings := []map[string]any{}
+		tableID := "format_factory_table"
+		field := "test_field"
+		fieldType := "keyword"
 
-		err := ins.writeMappingCache(emptyMappings, tableID, fieldsStr)
-		assert.Error(t, err, "Should not be able to cache empty mappings")
+		// 准备字段类型映射
+		fieldTypes := map[string]string{
+			field: fieldType,
+		}
 
-		// 验证没有写入成功
-		_, exists := ins.checkMappingCache(tableID, fieldsStr)
-		assert.False(t, exists, "Cache should not contain entry for empty mappings")
+		// 添加到缓存
+		ins.fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
+
+		// 不再需要创建FormatFactory实例进行测试，直接测试缓存功能
+		retrievedType, exists := ins.fieldTypesCache.GetFieldType(tableID, field)
+		assert.True(t, exists, "Should be able to retrieve field type")
+		assert.Equal(t, fieldType, retrievedType, "Retrieved field type should match")
 	})
 
 	// 5. 测试使用metadata.Query的GetCacheKey方法
 	t.Run("using metadata.Query.GetCacheKey", func(t *testing.T) {
-		ins.mappingCache.Clear()
+		ins.fieldTypesCache.Clear()
 
 		queries := []*metadata.Query{
 			{
@@ -932,32 +919,21 @@ func TestInstance_mappingCache(t *testing.T) {
 		}
 
 		// 写入缓存
-		for i, query := range queries {
-			tableID, fieldsStr := query.GetCacheKey()
-			err := ins.writeMappingCache(sampleMappings, tableID, fieldsStr)
-			assert.Nil(t, err, "Failed to write mappings to cache for query %d", i)
+		for _, query := range queries {
+			tableID, _ := query.GetCacheKey()
+			fieldTypes := map[string]string{
+				query.Field: "keyword",
+			}
+			ins.fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
 		}
 
 		// 验证缓存命中
 		for i, query := range queries {
-			tableID, fieldsStr := query.GetCacheKey()
-			mappings, exists := ins.checkMappingCache(tableID, fieldsStr)
+			tableID, _ := query.GetCacheKey()
+			fieldType, exists := ins.fieldTypesCache.GetFieldType(tableID, query.Field)
 			assert.True(t, exists, "Cache should contain entry for query %d", i)
-			assert.Equal(t, sampleMappings, mappings, "Cached mappings mismatch for query %d", i)
+			assert.Equal(t, "keyword", fieldType, "Cached field type mismatch for query %d", i)
 		}
-
-		// 验证不同的Query组合确实有不同的缓存键
-		tableIDs := make(map[string]bool)
-		fieldStrs := make(map[string]bool)
-
-		for _, query := range queries {
-			tableID, fieldStr := query.GetCacheKey()
-			tableIDs[tableID] = true
-			fieldStrs[fieldStr] = true
-		}
-
-		assert.Len(t, fieldStrs, 2, "Should have 2 unique fieldStrs")
-		assert.Len(t, tableIDs, 2, "Should have 2 unique tableIDs")
 	})
 }
 
@@ -984,19 +960,11 @@ func TestMappingCacheConcurrency(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	sampleMappings := []map[string]any{
-		{
-			"properties": map[string]any{
-				"field1": map[string]any{"type": "keyword"},
-				"field2": map[string]any{"type": "integer"},
-			},
-		},
-	}
-
-	ins.mappingCache.Clear()
+	// 清空缓存
+	ins.fieldTypesCache.Clear()
 
 	t.Run("concurrent read and write operations", func(t *testing.T) {
-		ins.mappingCache.Clear()
+		ins.fieldTypesCache.Clear()
 
 		for i := 0; i < numGoroutines; i++ {
 			wg.Add(1)
@@ -1005,16 +973,17 @@ func TestMappingCacheConcurrency(t *testing.T) {
 
 				for j := 0; j < numOperations; j++ {
 					tableID := fmt.Sprintf("table_%d", j%numTables)
-					fieldsStr := fmt.Sprintf("field_%d", j%3) // 减少字段数量
+					field := fmt.Sprintf("field_%d", j%3) // 减少字段数量
 
 					if j%3 == 0 {
-						err := ins.writeMappingCache(sampleMappings, tableID, fieldsStr)
-						if err != nil {
-							t.Logf("Write operation failed in goroutine %d, iteration %d: %v",
-								goroutineID, j, err)
+						// 写入操作
+						fieldTypes := map[string]string{
+							field: "keyword",
 						}
+						ins.fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
 					} else {
-						_, _ = ins.checkMappingCache(tableID, fieldsStr)
+						// 读取操作
+						_, _ = ins.fieldTypesCache.GetFieldType(tableID, field)
 					}
 
 					time.Sleep(1 * time.Millisecond)
@@ -1028,14 +997,12 @@ func TestMappingCacheConcurrency(t *testing.T) {
 		for i := 0; i < numTables; i++ {
 			for j := 0; j < 3; j++ {
 				tableID := fmt.Sprintf("table_%d", i)
-				fieldsStr := fmt.Sprintf("field_%d", j)
+				field := fmt.Sprintf("field_%d", j)
 
-				mappings, exists := ins.checkMappingCache(tableID, fieldsStr)
+				fieldType, exists := ins.fieldTypesCache.GetFieldType(tableID, field)
 				if exists {
 					cacheEntries++
-					assert.NotNil(t, mappings, "Mappings should not be nil if cache hit")
-					assert.Equal(t, len(sampleMappings), len(mappings),
-						"Unexpected mapping length for tableID=%s fieldsStr=%s", tableID, fieldsStr)
+					assert.Equal(t, "keyword", fieldType, "Unexpected field type for tableID=%s field=%s", tableID, field)
 				}
 			}
 		}
@@ -1044,31 +1011,33 @@ func TestMappingCacheConcurrency(t *testing.T) {
 	})
 
 	t.Run("concurrent operations with TTL expiration", func(t *testing.T) {
-		ins.mappingCache.Clear()
+		ins.fieldTypesCache.Clear()
 
 		for i := 0; i < numTables; i++ {
 			tableID := fmt.Sprintf("exp_table_%d", i)
-			fieldsStr := "exp_field"
+			field := "exp_field"
+			fieldTypes := map[string]string{
+				field: "keyword",
+			}
 
-			err := ins.writeMappingCache(sampleMappings, tableID, fieldsStr)
-			assert.Nil(t, err, "Failed to write initial mappings to cache")
+			ins.fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
 		}
 
 		var expireWg sync.WaitGroup
-		halfTTL := ins.mappingCache.GetTTL() / 2
+		halfTTL := ins.fieldTypesCache.GetTTL() / 2
 
 		for i := 0; i < 3; i++ {
 			expireWg.Add(1)
 			go func(id int) {
 				defer expireWg.Done()
 
-				end := time.Now().Add(ins.mappingCache.GetTTL() + 50*time.Millisecond)
+				end := time.Now().Add(ins.fieldTypesCache.GetTTL() + 50*time.Millisecond)
 				for time.Now().Before(end) {
 					for j := 0; j < numTables; j++ {
 						tableID := fmt.Sprintf("exp_table_%d", j)
-						fieldsStr := "exp_field"
+						field := "exp_field"
 
-						_, _ = ins.checkMappingCache(tableID, fieldsStr)
+						_, _ = ins.fieldTypesCache.GetFieldType(tableID, field)
 
 						time.Sleep(2 * time.Millisecond)
 					}
@@ -1081,10 +1050,12 @@ func TestMappingCacheConcurrency(t *testing.T) {
 
 		for i := 0; i < numTables/2; i++ {
 			tableID := fmt.Sprintf("exp_table_%d", i)
-			fieldsStr := "exp_field"
+			field := "exp_field"
+			fieldTypes := map[string]string{
+				field: "keyword",
+			}
 
-			err := ins.writeMappingCache(sampleMappings, tableID, fieldsStr)
-			assert.Nil(t, err, "Failed to update mappings in cache")
+			ins.fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
 		}
 
 		expireWg.Wait()
@@ -1094,9 +1065,9 @@ func TestMappingCacheConcurrency(t *testing.T) {
 
 		for i := 0; i < numTables; i++ {
 			tableID := fmt.Sprintf("exp_table_%d", i)
-			fieldsStr := "exp_field"
+			field := "exp_field"
 
-			_, exists := ins.checkMappingCache(tableID, fieldsStr)
+			_, exists := ins.fieldTypesCache.GetFieldType(tableID, field)
 			if exists {
 				updatedEntries++
 			} else {

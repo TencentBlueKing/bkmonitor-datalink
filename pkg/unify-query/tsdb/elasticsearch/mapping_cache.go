@@ -145,3 +145,33 @@ func (m *MappingCache) cleanupOrGetEntry(tableID string, fieldsStr string) (Mapp
 
 	return result, found
 }
+
+// Delete 从缓存删除映射
+func (m *MappingCache) Delete(tableID string, field string) {
+	if m.data == nil {
+		return
+	}
+
+	m.withWriteLock(func() {
+		tableMap, ok := m.data[tableID]
+		if !ok {
+			return
+		}
+
+		if field == "" {
+			delete(m.data, tableID)
+		} else {
+			delete(tableMap, field)
+			if len(tableMap) == 0 {
+				delete(m.data, tableID)
+			}
+		}
+	})
+}
+
+// Clear 清空缓存
+func (m *MappingCache) Clear() {
+	m.withWriteLock(func() {
+		m.data = make(map[string]map[string]MappingEntry)
+	})
+}

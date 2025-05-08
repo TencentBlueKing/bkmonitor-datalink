@@ -330,6 +330,7 @@ func (f *FormatFactory) WithMappings(tableID string, fieldTypesFactory FieldType
 		mapProperties("", mapping, f.mapping)
 	}
 	f.fieldTypeFactory = fieldTypesFactory
+	f.tableID = tableID
 	f.fieldTypeFactory.AppendFieldTypesCache(tableID, f.mapping)
 	return f
 }

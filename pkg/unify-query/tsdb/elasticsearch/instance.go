@@ -38,7 +38,7 @@ import (
 )
 
 const (
-	MappingCacheTTL = 5 * time.Minute
+	DefaultMappingCacheTTL = 5 * time.Minute
 )
 
 var _ tsdb.Instance = (*Instance)(nil)
@@ -115,7 +115,7 @@ var TimeSeriesResultPool = sync.Pool{
 func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	mappingTTL := opt.MappingTTL
 	if mappingTTL <= 0 {
-		mappingTTL = MappingCacheTTL
+		mappingTTL = DefaultMappingCacheTTL
 	}
 
 	ins := &Instance{

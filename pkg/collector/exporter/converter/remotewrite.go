@@ -52,7 +52,6 @@ func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc
 		for j := 0; j < len(samples); j++ {
 			sample := samples[j]
 			if !utils.IsValidFloat64(sample.GetValue()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordRemoteWrite, dataId)
 				continue
 			}
 

@@ -53,26 +53,19 @@ func (m *metricMonitor) IncLoadConfigFailedCounter() {
 	loadConfigFailedTotal.Inc()
 }
 
-func LoadConfigFromType(patterns []string, typ string) *Config {
+func SelectConfigFromType(configs []*Config, typ string) *Config {
 	type T struct {
 		Type string `config:"type"`
 	}
 
-	for _, p := range patterns {
-		configs, err := LoadConfigPattern(p)
-		if err != nil {
-			logger.Errorf("failed to load platform, path: %s, err: %v", p, err)
+	for _, c := range configs {
+		var subConf T
+		if err := c.Unpack(&subConf); err != nil {
+			logger.Errorf("failed to unpack config, err: %v", err)
 			continue
 		}
-		for _, c := range configs {
-			var subConf T
-			if err = c.Unpack(&subConf); err != nil {
-				logger.Errorf("failed to unpack config, err: %v", err)
-				continue
-			}
-			if subConf.Type == typ {
-				return c
-			}
+		if subConf.Type == typ {
+			return c
 		}
 	}
 	return nil

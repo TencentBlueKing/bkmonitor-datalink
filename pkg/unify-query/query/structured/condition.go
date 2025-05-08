@@ -204,12 +204,14 @@ func (c AllConditions) MetaDataAllConditions() metadata.AllConditions {
 		allConditions = make(metadata.AllConditions, 0, len(c))
 		for _, conditions := range c {
 			conds := make([]metadata.ConditionField, 0, len(conditions))
-			for _, c := range conditions {
+			for _, cond := range conditions {
 				conds = append(conds, metadata.ConditionField{
-					DimensionName: c.DimensionName,
-					Value:         c.Value,
-					Operator:      c.Operator,
-					IsWildcard:    c.IsWildcard,
+					DimensionName: cond.DimensionName,
+					Value:         cond.Value,
+					Operator:      cond.Operator,
+					IsWildcard:    cond.IsWildcard,
+					IsPrefix:      cond.IsPrefix,
+					IsSuffix:      cond.IsSuffix,
 				})
 			}
 			allConditions = append(allConditions, conds)

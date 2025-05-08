@@ -141,11 +141,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 
 		// 处理 Counter 类型数据
 		counter := metric.GetCounter()
-		if counter != nil {
-			if !utils.IsValidFloat64(counter.GetValue()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
-				continue
-			}
+		if counter != nil && utils.IsValidFloat64(counter.GetValue()) {
 			pms = append(pms, &promMapper{
 				Metrics: common.MapStr{
 					name: counter.GetValue(),
@@ -159,12 +155,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 
 		// 处理 Gauge 类型数据
 		gauge := metric.GetGauge()
-		if gauge != nil {
-			if !utils.IsValidFloat64(gauge.GetValue()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
-				continue
-			}
-
+		if gauge != nil && utils.IsValidFloat64(gauge.GetValue()) {
 			pms = append(pms, &promMapper{
 				Metrics: common.MapStr{
 					name: gauge.GetValue(),
@@ -177,12 +168,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 
 		// 处理 Summary 类型数据
 		summary := metric.GetSummary()
-		if summary != nil {
-			if !utils.IsValidFloat64(summary.GetSampleSum()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
-				continue
-			}
-
+		if summary != nil && utils.IsValidFloat64(summary.GetSampleSum()) {
 			pms = append(pms, &promMapper{
 				Metrics: common.MapStr{
 					name + "_sum":   summary.GetSampleSum(),
@@ -195,7 +181,6 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 
 			for _, quantile := range summary.GetQuantile() {
 				if !utils.IsValidFloat64(quantile.GetValue()) {
-					DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
 					continue
 				}
 
@@ -215,12 +200,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 
 		// 处理 Histogram 类型数据
 		histogram := metric.GetHistogram()
-		if histogram != nil {
-			if !utils.IsValidFloat64(histogram.GetSampleSum()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
-				continue
-			}
-
+		if histogram != nil && utils.IsValidFloat64(histogram.GetSampleSum()) {
 			pms = append(pms, &promMapper{
 				Metrics: common.MapStr{
 					name + "_sum":   histogram.GetSampleSum(),
@@ -234,7 +214,6 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 			infSeen := false
 			for _, bucket := range histogram.GetBucket() {
 				if !utils.IsValidUint64(bucket.GetCumulativeCount()) {
-					DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
 					continue
 				}
 				if math.IsInf(bucket.GetUpperBound(), +1) {
@@ -272,12 +251,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 
 		// 处理未知类型数据
 		untyped := metric.GetUntyped()
-		if untyped != nil {
-			if !utils.IsValidFloat64(untyped.GetValue()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordPushGateway, dataId)
-				continue
-			}
-
+		if untyped != nil && utils.IsValidFloat64(untyped.GetValue()) {
 			pms = append(pms, &promMapper{
 				Metrics: common.MapStr{
 					name: untyped.GetValue(),

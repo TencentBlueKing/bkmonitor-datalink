@@ -185,24 +185,12 @@ func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClus
 		return nil, errors.Errorf("Only one query supported, now %d ", len(q.QueryList))
 	}
 
-	for _, qry = range q.QueryList {
-	}
+	qry = q.QueryList[0]
 
 	// 结构定义转换
 	allConditions, err := qry.Conditions.AnalysisConditions()
-	queryConditions := make([][]metadata.ConditionField, 0, len(allConditions))
-	for _, conds := range allConditions {
-		queryConds := make([]metadata.ConditionField, 0, len(conds))
-		for _, cond := range conds {
-			queryConds = append(queryConds, metadata.ConditionField{
-				DimensionName: cond.DimensionName,
-				Value:         cond.Value,
-				Operator:      cond.Operator,
-				IsWildcard:    cond.IsWildcard,
-			})
-		}
-		queryConditions = append(queryConditions, queryConds)
-	}
+	queryConditions := allConditions.MetaDataAllConditions()
+
 	if err != nil {
 		return nil, err
 	}

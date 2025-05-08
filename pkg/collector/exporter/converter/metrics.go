@@ -63,7 +63,7 @@ func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 			dimensions.InsertString("scope_name", scopeMetric.Scope().Name())
 			metrics := scopeMetric.Metrics()
 			for k := 0; k < metrics.Len(); k++ {
-				for _, dp := range c.Extract(dataId, metrics.At(k), dimensions) {
+				for _, dp := range c.Extract(metrics.At(k), dimensions) {
 					events = append(events, c.ToEvent(record.Token, dataId, dp))
 				}
 			}
@@ -109,7 +109,7 @@ func toFloatValue(dp pmetric.NumberDataPoint) float64 {
 	return val
 }
 
-func (c metricsConverter) convertSumMetrics(dataId int32, pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
+func (c metricsConverter) convertSumMetrics(pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
 	dps := pdMetric.Sum().DataPoints()
 	items := make([]common.MapStr, 0, dps.Len())
 	for i := 0; i < dps.Len(); i++ {
@@ -117,7 +117,6 @@ func (c metricsConverter) convertSumMetrics(dataId int32, pdMetric pmetric.Metri
 
 		val := toFloatValue(dp)
 		if !utils.IsValidFloat64(val) {
-			DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
 			continue
 		}
 		m := otMetricMapper{
@@ -131,7 +130,7 @@ func (c metricsConverter) convertSumMetrics(dataId int32, pdMetric pmetric.Metri
 	return items
 }
 
-func (c metricsConverter) convertHistogramMetrics(dataId int32, pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
+func (c metricsConverter) convertHistogramMetrics(pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
 	var items []common.MapStr
 	dps := pdMetric.Histogram().DataPoints()
 	for i := 0; i < dps.Len(); i++ {
@@ -222,7 +221,7 @@ func (c metricsConverter) convertHistogramMetrics(dataId int32, pdMetric pmetric
 	return items
 }
 
-func (c metricsConverter) convertGaugeMetrics(dataId int32, pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
+func (c metricsConverter) convertGaugeMetrics(pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
 	dps := pdMetric.Gauge().DataPoints()
 	items := make([]common.MapStr, 0, dps.Len())
 	for i := 0; i < dps.Len(); i++ {
@@ -230,7 +229,6 @@ func (c metricsConverter) convertGaugeMetrics(dataId int32, pdMetric pmetric.Met
 
 		val := toFloatValue(dp)
 		if !utils.IsValidFloat64(val) {
-			DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
 			continue
 		}
 
@@ -245,7 +243,7 @@ func (c metricsConverter) convertGaugeMetrics(dataId int32, pdMetric pmetric.Met
 	return items
 }
 
-func (c metricsConverter) convertSummaryMetrics(dataId int32, pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
+func (c metricsConverter) convertSummaryMetrics(pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
 	var items []common.MapStr
 	dps := pdMetric.Summary().DataPoints()
 	for i := 0; i < dps.Len(); i++ {
@@ -253,7 +251,6 @@ func (c metricsConverter) convertSummaryMetrics(dataId int32, pdMetric pmetric.M
 		dimensions := utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs)
 
 		if !utils.IsValidFloat64(dp.Sum()) {
-			DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
 			continue
 		}
 
@@ -266,7 +263,6 @@ func (c metricsConverter) convertSummaryMetrics(dataId int32, pdMetric pmetric.M
 		items = append(items, m.AsMapStr())
 
 		if !utils.IsValidUint64(dp.Count()) {
-			DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
 			continue
 		}
 
@@ -286,7 +282,6 @@ func (c metricsConverter) convertSummaryMetrics(dataId int32, pdMetric pmetric.M
 			}
 
 			if !utils.IsValidFloat64(qua.Value()) {
-				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
 				continue
 			}
 
@@ -302,22 +297,22 @@ func (c metricsConverter) convertSummaryMetrics(dataId int32, pdMetric pmetric.M
 	return items
 }
 
-func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
+func (c metricsConverter) Extract(pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
 	name := utils.NormalizeName(pdMetric.Name())
 	pdMetric.SetName(name)
 
 	switch pdMetric.DataType() {
 	case pmetric.MetricDataTypeSum:
-		return c.convertSumMetrics(dataId, pdMetric, rsAttrs)
+		return c.convertSumMetrics(pdMetric, rsAttrs)
 
 	case pmetric.MetricDataTypeHistogram:
-		return c.convertHistogramMetrics(dataId, pdMetric, rsAttrs)
+		return c.convertHistogramMetrics(pdMetric, rsAttrs)
 
 	case pmetric.MetricDataTypeGauge:
-		return c.convertGaugeMetrics(dataId, pdMetric, rsAttrs)
+		return c.convertGaugeMetrics(pdMetric, rsAttrs)
 
 	case pmetric.MetricDataTypeSummary:
-		return c.convertSummaryMetrics(dataId, pdMetric, rsAttrs)
+		return c.convertSummaryMetrics(pdMetric, rsAttrs)
 	}
 
 	return nil

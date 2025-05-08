@@ -788,14 +788,22 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 							// 非空才进行验证
 							switch con.Operator {
 							case structured.ConditionEqual, structured.ConditionNotEqual:
-								query = elastic.NewMatchPhraseQuery(key, value)
+								if con.IsPrefix {
+									query = elastic.NewMatchPhrasePrefixQuery(key, value)
+								} else {
+									query = elastic.NewMatchPhraseQuery(key, value)
+								}
 							case structured.ConditionContains, structured.ConditionNotContains:
 								if fieldType == KeyWord {
 									value = fmt.Sprintf("*%s*", value)
 								}
 
 								if !con.IsWildcard && fieldType == Text {
-									query = elastic.NewMatchPhraseQuery(key, value)
+									if con.IsPrefix {
+										query = elastic.NewMatchPhrasePrefixQuery(key, value)
+									} else {
+										query = elastic.NewMatchPhraseQuery(key, value)
+									}
 								} else {
 									query = elastic.NewWildcardQuery(key, value)
 								}

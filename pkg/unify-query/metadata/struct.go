@@ -389,7 +389,7 @@ func (os Orders) SortSliceList(list []map[string]any) {
 // GetCacheKey 返回tableID和fields，用于缓存查询
 func (q *Query) GetCacheKey() (tableID string, fieldsStr string) {
 	if q.TableID == "" {
-		return "", ""
+		return
 	}
 
 	s := set.New[string]()

@@ -596,6 +596,30 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 				WithQuery("value", c.timeField, start, end, timeFormat, 0).
 				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
 
+			// Initialize mappings for tests with aggregates
+			if len(c.aggregates) > 0 {
+				mappings := []map[string]any{
+					{
+						"properties": map[string]any{
+							"value": map[string]any{
+								"type": "keyword",
+							},
+							"gseIndex": map[string]any{
+								"type": "keyword",
+							},
+							"time": map[string]any{
+								"type": "date",
+							},
+							"dtEventTime": map[string]any{
+								"type": "date",
+							},
+						},
+					},
+				}
+				fieldTypeFactory := &MockFieldTypeFactory{}
+				fact = fact.WithMappings("test", fieldTypeFactory, mappings...)
+			}
+
 			ss := elastic.NewSearchSource()
 			rangeQuery, err := fact.RangeQuery()
 			assert.Nil(t, err)
@@ -645,6 +669,22 @@ func TestFormatFactory_AggDataFormat(t *testing.T) {
 					Type: DefaultTimeFieldType,
 					Unit: DefaultTimeFieldUnit,
 				}, time.Time{}, time.Time{}, "", 0)
+
+			// Initialize mappings for the test
+			mappings := []map[string]any{
+				{
+					"properties": map[string]any{
+						"database_name": map[string]any{
+							"type": "keyword",
+						},
+						DefaultTimeFieldName: map[string]any{
+							"type": "date",
+						},
+					},
+				},
+			}
+			fieldTypeFactory := &MockFieldTypeFactory{}
+			fact = fact.WithMappings("test", fieldTypeFactory, mappings...)
 
 			_, _, err := fact.EsAgg(c.aggregates)
 			assert.NoError(t, err)

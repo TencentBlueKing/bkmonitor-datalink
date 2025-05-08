@@ -401,7 +401,7 @@ func (f *FormatFactory) NestedField(field string) string {
 	lbs := strings.Split(field, ESStep)
 	for i := len(lbs) - 1; i >= 0; i-- {
 		checkKey := strings.Join(lbs[0:i], ESStep)
-		if v, ok := f.fieldTypeFactory.GetFieldType(f.tableID, field); ok {
+		if v, ok := f.fieldTypeFactory.GetFieldType(f.tableID, checkKey); ok {
 			if v == Nested {
 				return checkKey
 			}

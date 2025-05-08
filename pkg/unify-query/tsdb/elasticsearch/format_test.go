@@ -24,6 +24,7 @@ import (
 )
 
 func TestFormatFactory_Query(t *testing.T) {
+	defaultTableID := "test"
 	for name, c := range map[string]struct {
 		conditions metadata.AllConditions
 		expected   string
@@ -387,7 +388,8 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			}
-			fact := NewFormatFactory(ctx).WithMappings(mappings...)
+			fieldTypeFactory := &MockFieldTypeFactory{}
+			fact := NewFormatFactory(ctx).WithMappings(defaultTableID, fieldTypeFactory, mappings...)
 			ss := elastic.NewSearchSource()
 			query, err := fact.Query(c.conditions)
 			assert.Nil(t, err)
@@ -397,9 +399,32 @@ func TestFormatFactory_Query(t *testing.T) {
 			bodyJson, _ := json.Marshal(body)
 			bodyString := string(bodyJson)
 			assert.JSONEq(t, c.expected, bodyString)
-
 		})
 	}
+}
+
+type MockFieldTypeFactory struct {
+	// map[tableID]map[fieldStr]type
+	fieldTypes map[string]map[string]string
+}
+
+func (m *MockFieldTypeFactory) GetFieldType(tableID, field string) (string, bool) {
+	fieldType, ok := m.fieldTypes[tableID][field]
+	return fieldType, ok
+}
+
+func (m *MockFieldTypeFactory) AppendFieldTypesCache(tableID string, mapping map[string]string) {
+	if m.fieldTypes == nil {
+		m.fieldTypes = make(map[string]map[string]string)
+	}
+	tableFieldMap := m.fieldTypes[tableID]
+	if tableFieldMap == nil {
+		tableFieldMap = make(map[string]string)
+	}
+	for k, v := range mapping {
+		tableFieldMap[k] = v
+	}
+	m.fieldTypes[tableID] = tableFieldMap
 }
 
 func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {

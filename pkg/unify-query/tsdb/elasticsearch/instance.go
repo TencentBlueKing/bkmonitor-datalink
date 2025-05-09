@@ -183,6 +183,10 @@ func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []stri
 		return nil, err
 	}
 	mappingMap, err := client.GetMapping().Index(aliases...).Type("").Do(ctx)
+	if err != nil {
+		log.Warnf(ctx, "get mapping error: %s", err.Error())
+		return nil, err
+	}
 
 	indexes := make([]string, 0, len(mappingMap))
 	for index := range mappingMap {
@@ -231,7 +235,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
 		qs := NewQueryString(qb.QueryString, fact.NestedField)
-		q, qsErr := qs.Parser()
+		q, qsErr := qs.ToDSL()
 		if qsErr != nil {
 			return nil, qsErr
 		}
@@ -648,7 +652,7 @@ func (i *Instance) QuerySeriesSet(
 		err error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-reference")
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-series-set")
 	defer span.End(&err)
 
 	if len(query.Aggregates) == 0 {
@@ -717,10 +721,10 @@ func (i *Instance) QuerySeriesSet(
 					conn:    conn,
 				}
 
-				mappings, err1 := i.getMappings(ctx, qo.conn, qo.indexes)
+				mappings, errMapping := i.getMappings(ctx, qo.conn, qo.indexes)
 				// index 不存在，mappings 获取异常直接返回空
 				if len(mappings) == 0 {
-					log.Warnf(ctx, "index is empty with %v", qo.indexes)
+					log.Warnf(ctx, "index is empty with %v with %s error %v", qo.indexes, qo.conn.String(), errMapping)
 					return
 				}
 

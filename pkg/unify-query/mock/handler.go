@@ -158,16 +158,23 @@ type elasticSearchResultData struct {
 func mockHandler(ctx context.Context) {
 	httpmock.Activate()
 
-	mockVmHandler(ctx)
+	log.Infof(context.Background(), "mock handler start")
+
+	mockBKBaseHandler(ctx)
 	mockInfluxDBHandler(ctx)
-	mockBkSQLHandler(ctx)
 	mockElasticSearchHandler(ctx)
+
+	log.Infof(context.Background(), "mock handler end")
 }
 
 const (
-	EsUrl    = "http://127.0.0.1:93002"
-	BkSQLUrl = "http://127.0.0.1:92001"
-	VmUrl    = "http://127.0.0.1:12001/bk_data/query_sync"
+	EsUrlDomain     = "http://127.0.0.1:93002"
+	BkBaseUrlDomain = "http://127.0.0.1:12001"
+)
+
+const (
+	EsUrl     = EsUrlDomain
+	BkBaseUrl = BkBaseUrlDomain + "/bk_data/query_sync"
 )
 
 type BkSQLRequest struct {
@@ -179,7 +186,7 @@ type BkSQLRequest struct {
 }
 
 func mockElasticSearchHandler(ctx context.Context) {
-	bkBaseUrl := "http://127.0.0.1:12001/bk_data/query_sync/es"
+	bkBaseEsUrl := BkBaseUrl + "/es"
 
 	searchHandler := func(r *http.Request) (w *http.Response, err error) {
 		body, _ := io.ReadAll(r.Body)
@@ -196,45 +203,20 @@ func mockElasticSearchHandler(ctx context.Context) {
 
 	mappings := `{"es_index":{"mappings":{"properties":{"a":{"type":"keyword"},"b":{"type":"keyword"},"group":{"type":"keyword"},"kibana_stats":{"properties":{"kibana":{"properties":{"name":{"type":"keyword"}}}}},"timestamp":{"type":"log"},"type":{"type":"keyword"},"dtEventTimeStamp":{"type":"date"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}}}}}}`
 	mappingResp := httpmock.NewStringResponder(http.StatusOK, mappings)
-	httpmock.RegisterResponder(http.MethodGet, bkBaseUrl+"/es_index/_mapping/", mappingResp)
+	httpmock.RegisterResponder(http.MethodGet, bkBaseEsUrl+"/es_index/_mapping/", mappingResp)
 	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/es_index/_mapping/", mappingResp)
 
-	httpmock.RegisterResponder(http.MethodPost, bkBaseUrl+"/es_index/_search", searchHandler)
+	httpmock.RegisterResponder(http.MethodPost, bkBaseEsUrl+"/es_index/_search", searchHandler)
 	httpmock.RegisterResponder(http.MethodPost, EsUrl+"/es_index/_search", searchHandler)
 
-	httpmock.RegisterResponder(http.MethodPost, bkBaseUrl+"/es_index/_search?scroll=5m", searchHandler)
+	httpmock.RegisterResponder(http.MethodPost, bkBaseEsUrl+"/es_index/_search?scroll=5m", searchHandler)
 	httpmock.RegisterResponder(http.MethodPost, EsUrl+"/es_index/_search?scroll=5m", searchHandler)
 
-	httpmock.RegisterResponder(http.MethodPost, bkBaseUrl+"/_search/scroll", searchHandler)
+	httpmock.RegisterResponder(http.MethodPost, bkBaseEsUrl+"/_search/scroll", searchHandler)
 	httpmock.RegisterResponder(http.MethodPost, EsUrl+"/_search/scroll", searchHandler)
 
-	httpmock.RegisterResponder(http.MethodHead, EsUrl, searchHandler)
-}
-
-func mockBkSQLHandler(ctx context.Context) {
-	httpmock.RegisterResponder(http.MethodPost, BkSQLUrl, func(r *http.Request) (w *http.Response, err error) {
-		var (
-			request BkSQLRequest
-		)
-		err = json.NewDecoder(r.Body).Decode(&request)
-		if err != nil {
-			return
-		}
-
-		d, ok := BkSQL.Get(request.Sql)
-		if !ok {
-			err = fmt.Errorf(`bksql mock data is empty in "%s"`, request.Sql)
-			log.Errorf(ctx, err.Error())
-			return
-		}
-
-		switch t := d.(type) {
-		case string:
-			w = httpmock.NewStringResponse(http.StatusOK, t)
-		default:
-			w, err = httpmock.NewJsonResponse(http.StatusOK, d)
-		}
-		return
+	httpmock.RegisterResponder(http.MethodHead, EsUrl, func(request *http.Request) (*http.Response, error) {
+		return httpmock.NewStringResponse(http.StatusOK, ""), nil
 	})
 }
 
@@ -268,14 +250,31 @@ func mockInfluxDBHandler(ctx context.Context) {
 	})
 }
 
-func mockVmHandler(ctx context.Context) {
-	httpmock.RegisterResponder(http.MethodPost, VmUrl, func(r *http.Request) (w *http.Response, err error) {
+func mockBKBaseHandler(ctx context.Context) {
+	httpmock.RegisterResponder(http.MethodPost, BkBaseUrl, func(r *http.Request) (w *http.Response, err error) {
 		var (
 			request VmRequest
 			params  VmParams
 		)
 		err = json.NewDecoder(r.Body).Decode(&request)
 		if err != nil {
+			return
+		}
+
+		if request.PreferStorage != "vm" {
+			d, ok := BkSQL.Get(request.Sql)
+			if !ok {
+				err = fmt.Errorf(`bksql mock data is empty in "%s"`, request.Sql)
+				log.Errorf(ctx, err.Error())
+				return
+			}
+			switch t := d.(type) {
+			case string:
+				w = httpmock.NewStringResponse(http.StatusOK, t)
+			default:
+				w, err = httpmock.NewJsonResponse(http.StatusOK, d)
+			}
+
 			return
 		}
 
@@ -306,7 +305,6 @@ func mockVmHandler(ctx context.Context) {
 		d, ok := Vm.Get(key)
 		if !ok {
 			err = fmt.Errorf(`vm mock data is empty in "%s"`, key)
-			log.Errorf(ctx, err.Error())
 			return
 		}
 

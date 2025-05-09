@@ -31,7 +31,7 @@ var (
 	vmRt        string               = "2_bcs_prom_computation_result_table_00000"
 
 	instance = &Instance{
-		url:     mock.VmUrl,
+		url:     mock.BkBaseUrl,
 		timeout: time.Minute * 5,
 		curl:    &curl.HttpCurl{},
 	}
@@ -103,7 +103,7 @@ func TestInstance_DirectQueryRange(t *testing.T) {
 	})
 
 	instance := &Instance{
-		url:     mock.VmUrl,
+		url:     mock.BkBaseUrl,
 		timeout: time.Minute * 5,
 		curl:    &curl.HttpCurl{},
 	}

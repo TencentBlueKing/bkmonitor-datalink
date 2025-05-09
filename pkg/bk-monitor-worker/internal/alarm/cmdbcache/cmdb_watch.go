@@ -78,7 +78,7 @@ type CmdbResourceWatcher struct {
 }
 
 // NewCmdbResourceWatcher 创建cmdb资源监听器
-func NewCmdbResourceWatcher(prefix string, rOpt *redis.Options) (*CmdbResourceWatcher, error) {
+func NewCmdbResourceWatcher(bkTenantId string, prefix string, rOpt *redis.Options) (*CmdbResourceWatcher, error) {
 	// 创建redis client
 	redisClient, err := redis.GetClient(rOpt)
 	if err != nil {
@@ -86,7 +86,7 @@ func NewCmdbResourceWatcher(prefix string, rOpt *redis.Options) (*CmdbResourceWa
 	}
 
 	// 创建cmdb api client
-	cmdbApi := getCmdbApi(tenant.DefaultTenantId)
+	cmdbApi := getCmdbApi(bkTenantId)
 
 	return &CmdbResourceWatcher{
 		prefix:      prefix,
@@ -220,8 +220,9 @@ func (w *CmdbResourceWatcher) Run(ctx context.Context) {
 
 // WatchCmdbResourceChangeEventTaskParams 监听cmdb资源变更任务参数
 type WatchCmdbResourceChangeEventTaskParams struct {
-	Prefix string        `json:"prefix" mapstructure:"prefix"`
-	Redis  redis.Options `json:"redis" mapstructure:"redis"`
+	BkTenantId string        `json:"bk_tenant_id" mapstructure:"bk_tenant_id"`
+	Prefix     string        `json:"prefix" mapstructure:"prefix"`
+	Redis      redis.Options `json:"redis" mapstructure:"redis"`
 }
 
 // WatchCmdbResourceChangeEventTask 监听cmdb资源变更任务
@@ -233,8 +234,13 @@ func WatchCmdbResourceChangeEventTask(ctx context.Context, payload []byte) error
 		return errors.Wrapf(err, "unmarshal payload failed, payload: %s", string(payload))
 	}
 
+	// 默认租户id
+	if params.BkTenantId == "" {
+		params.BkTenantId = tenant.DefaultTenantId
+	}
+
 	// 创建cmdb资源变更事件监听器
-	watcher, err := NewCmdbResourceWatcher(params.Prefix, &params.Redis)
+	watcher, err := NewCmdbResourceWatcher(params.BkTenantId, params.Prefix, &params.Redis)
 	if err != nil {
 		return errors.Wrap(err, "new cmdb resource watcher failed")
 	}

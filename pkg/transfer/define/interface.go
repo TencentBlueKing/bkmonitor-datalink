@@ -90,6 +90,7 @@ type Backend interface {
 	Stringer
 	SavePoint
 	Push(d Payload, killChan chan<- error)
+	SetFilter(opts map[string]interface{})
 }
 
 // Pipeline : pipeline to process data

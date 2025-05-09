@@ -128,6 +128,9 @@ const (
 	// PipelineConfigOptFlatBatchKey: 事件类数据需要进行进行插件的
 	PipelineConfigOptMetricsReportPathKey    = "metrics_report_path"
 	PipelineConfigCacheFieldRefreshPeriodKey = "cache_field_refresh_period"
+
+	// PipelineConfigIsLogCluster 是否开启日志聚类
+	PipelineConfigOptIsLogCluster = "is_log_cluster"
 )
 
 // MetaResultTableConfig 专用

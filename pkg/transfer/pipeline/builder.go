@@ -614,3 +614,163 @@ func (b *ConfigBuilder) BuildBranching(from Node, allowGluttonous bool, callback
 	logging.Debugf("pipeline %v layout: %v", pipeConfig.DataID, b)
 	return b.Finish() // 返回一个 NewPipeline(b.context, b.name, exists)
 }
+
+/*
+is_log_cluster: true|false
+
+log_cluster_config:
+  log_filter:
+    conditions:
+    - key: log_type
+      op: eq
+      value: ["foo", "bar"]
+    - key: log_category
+      op: nq
+      value: ["foo", "bar"]
+    - key: log_name
+      op: contains
+      value: ["foo", "bar"]
+
+   log_cluster:
+     address: 127.0.0.1:8080/foo/bar
+     timeout: 10s
+     retry: 3
+
+   backend_filter:
+     raw_es:
+       dimensions: ["my_dim1", "my_dim2"]
+       metrics: ["log"]
+     pattern_es:
+       dimensions: ["my_dim1", "my_dim2"]
+	   metrics: ["log"]
+*/
+
+func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...ContextBuilderBranchingCallback) (*Pipeline, error) {
+	ctx := b.ctx
+
+	// 当关闭日志聚类时 回退到正常的日志清洗分支
+	// callbacks[0] : bk_flat_batch
+	// callbacks[1] : bk_log_cluster
+	pipeConfig := config.PipelineConfigFromContext(ctx)
+	pipeOpts := utils.NewMapHelper(pipeConfig.Option)
+	isLogCluster, _ := pipeOpts.GetBool(config.PipelineConfigOptIsLogCluster)
+	if !isLogCluster {
+		pipeConfig.ResultTableList = pipeConfig.ResultTableList[:1]
+		config.PipelineConfigIntoContext(b.ctx, pipeConfig)
+		return b.BuildBranching(from, true, callbacks[0])
+	}
+
+	conf := config.FromContext(ctx)
+	strictMode := conf.GetBool(define.ConfPipelineStrictMode)
+
+	// 日志聚类会从单个数据源派生出多个分支
+	// 但此流程只会在内部处理 共用同一个数据源
+	if from == nil {
+		if b.frontend == nil {
+			b.SetupFrontend()
+		}
+		from = b.frontend
+	}
+
+	if len(pipeConfig.ResultTableList) == 0 {
+		return nil, errors.Wrapf(define.ErrOperationForbidden, "result table is empty")
+	}
+
+	// 日志聚类必须保证两个 ES backend (raw/pattern)
+	if len(pipeConfig.ResultTableList) != 2 {
+		return nil, errors.Wrapf(define.ErrOperationForbidden, "result table missing")
+	}
+
+	// 初始化 pipeline 配置
+	if b.PipeConfigInitFn != nil {
+		b.PipeConfigInitFn(pipeConfig)
+	}
+
+	buildBackend := func(subCtx context.Context, rt *config.MetaResultTableConfig) (Node, error) {
+		backend, err := b.GetBackendByContext(subCtx)
+		if err != nil {
+			if strictMode {
+				return nil, errors.Wrapf(err, "get result table %s backend failed", rt.ResultTable)
+			}
+			logging.Warnf("get result table %s backend error %v", rt.ResultTable, err)
+			return nil, nil // 非严格模式下忽略此错误
+		}
+		return backend, nil
+	}
+
+	chainNode := func(subCtx context.Context, rt *config.MetaResultTableConfig, cb ContextBuilderBranchingCallback, backends ...Node) error {
+		for i := 0; i < len(backends); i++ {
+			backend := backends[i]
+			var passer Node
+			var err error
+
+			multiNum := rt.MultiNum
+			multiNum = GetPipeLineNum(pipeConfig.DataID)
+			if multiNum > 1 {
+				passer, err = b.DataProcessor(subCtx, "passer")
+				if err != nil {
+					return err
+				}
+				passer.SetNoCopy(true)
+				b.Connect(from, passer)
+				backend = NewFanInConnector(ctx, backend)
+			} else {
+				passer = from
+			}
+
+			for index := 0; index < multiNum; index++ {
+				runtimeConfig := new(config.RuntimeConfig)
+				runtimeConfig.PipelineCount = index
+				runtimeCtx := config.RuntimeConfigIntoContext(subCtx, runtimeConfig)
+
+				err = cb(runtimeCtx, passer, backend)
+				if err != nil {
+					if strictMode {
+						return errors.Wrapf(err, "create branching by %s failed", rt.ResultTable)
+					}
+					// 非严格模式下忽略此错误
+					logging.Warnf("create etl data processor %s error %v", rt.ResultTable, err)
+				}
+			}
+		}
+		return nil
+	}
+
+	// [0]: bk_flat_batch
+	//
+	// 兼容原先的 flat_batch 处理逻辑
+	rt0 := pipeConfig.ResultTableList[0]
+	ctx0 := config.ResultTableConfigIntoContext(ctx, rt0)
+	cb0 := callbacks[0]
+
+	backend0, err := buildBackend(ctx0, rt0)
+	if err != nil {
+		return nil, err
+	}
+	if err := chainNode(ctx0, rt0, cb0, backend0); err != nil {
+		return nil, err
+	}
+
+	// [1]: bk_log_cluster
+	//
+	// 日志聚类处理逻辑 需要构造一个虚拟的 fanout 后端 同时写入两个 ES
+	// TODO(mando): 此后端需要有过滤字段的能力
+	rt1 := pipeConfig.ResultTableList[1]
+	cb1 := callbacks[1]
+	ctx1 := config.ResultTableConfigIntoContext(ctx, rt1)
+	backend0, err = buildBackend(ctx1, rt0) // 聚类结构与原始日志数据共享同一个后端 ES
+	if err != nil {
+		return nil, err
+	}
+	backend1, err := buildBackend(ctx1, rt1)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := chainNode(ctx1, rt1, cb1, backend0, backend1); err != nil {
+		return nil, err
+	}
+
+	logging.Debugf("pipeline %v layout: %v", pipeConfig.DataID, b)
+	return b.Finish() // 返回一个 NewPipeline(b.context, b.name, exists)
+}

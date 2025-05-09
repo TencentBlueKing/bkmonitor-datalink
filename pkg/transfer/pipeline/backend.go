@@ -156,6 +156,33 @@ type BulkBackendAdapter struct {
 	pushSem             utils.Semaphore
 }
 
+//type ETLRecordFilter struct {
+//	metrics    map[string]struct{}
+//	dimensions map[string]struct{}
+//}
+//
+//func NewETLRecordFilter(opts map[string]interface{}) {
+//	filter := &ETLRecordFilter{
+//		metrics:    make(map[string]struct{}),
+//		dimensions: make(map[string]struct{}),
+//	}
+//
+//	/*
+//	log_cluster_config:
+//	  log_filter:
+//
+//	*/
+//
+//	//opts["dimensions"]
+//	//for _, metric := range config.MQConfigFromContext(ctx).Metrics {
+//	//	filter.metrics[metric] = struct{}{}
+//	//}
+//	//for _, dimension := range config.MQConfigFromContext(ctx).Dimensions {
+//	//	filter.dimensions[dimension] = struct{}{}
+//	//}
+//	//opts["filter"] = filter
+//}
+
 func getBufferSizeAndFlushInterval(ctx context.Context, name string) (int, time.Duration) {
 	bufferSize := BulkDefaultBufferSize
 	flushInterval := BulkDefaultFlushInterval
@@ -229,6 +256,10 @@ func NewBulkBackendAdapter(ctx context.Context, name string, handler BulkHandler
 	}
 	handler.SetManager(adapter)
 	return adapter
+}
+
+func (b *BulkBackendAdapter) SetFilter(opts map[string]interface{}) {
+
 }
 
 func (b *BulkBackendAdapter) isEmpty() bool {

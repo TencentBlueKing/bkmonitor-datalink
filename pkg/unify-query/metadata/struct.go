@@ -166,6 +166,12 @@ type ConditionField struct {
 
 	// IsWildcard 是否是通配符
 	IsWildcard bool
+
+	// IsPrefix 是否是前缀匹配
+	IsPrefix bool
+
+	// IsSuffix 是否是后缀匹配
+	IsSuffix bool
 }
 
 // TimeAggregation 时间聚合字段

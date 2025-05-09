@@ -115,6 +115,30 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"must":[{"match_phrase":{"key-1":{"query":"val-1"}}},{"match_phrase":{"key-2":{"query":"val-2"}}},{"match_phrase":{"key-3":{"query":"val-3"}}}]}}}`,
 		},
+		"query with prefix and suffix": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "key-1",
+						Value:         []string{"val-1"},
+						Operator:      structured.ConditionEqual,
+						IsPrefix:      true,
+					},
+					{
+						DimensionName: "key-2",
+						Value:         []string{"val-2"},
+						Operator:      structured.ConditionEqual,
+						IsSuffix:      true,
+					},
+					{
+						DimensionName: "key-3",
+						Value:         []string{"val-3"},
+						Operator:      structured.ConditionEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":[{"match_phrase_prefix":{"key-1":{"query":"val-1"}}},{"match_phrase":{"key-2":{"query":"val-2"}}},{"match_phrase":{"key-3":{"query":"val-3"}}}]}}}`,
+		},
 		"nested query": {
 			conditions: metadata.AllConditions{
 				{

@@ -85,7 +85,6 @@ type InstanceOption struct {
 	Timeout     time.Duration
 	Headers     map[string]string
 	HealthCheck bool
-	MappingTTL  time.Duration
 }
 
 type queryOption struct {
@@ -107,11 +106,6 @@ var TimeSeriesResultPool = sync.Pool{
 }
 
 func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
-	mappingTTL := opt.MappingTTL
-	if mappingTTL <= 0 {
-		mappingTTL = DefaultMappingCacheTTL
-	}
-
 	ins := &Instance{
 		ctx:      ctx,
 		maxSize:  opt.MaxSize,

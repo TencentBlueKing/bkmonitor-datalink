@@ -35,6 +35,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
@@ -161,7 +162,11 @@ func (c *BaseCacheManager) GetConcurrentLimit() int {
 
 // GetCacheKey 获取缓存key
 func (c *BaseCacheManager) GetCacheKey(key string) string {
-	return fmt.Sprintf("%s.%s", c.Prefix, key)
+	// 如果租户id为默认租户，则不添加租户id，为了兼容旧的缓存key
+	if c.bkTenantId == tenant.DefaultTenantId {
+		return fmt.Sprintf("%s.%s", c.Prefix, key)
+	}
+	return fmt.Sprintf("%s.%s.%s", c.bkTenantId, c.Prefix, key)
 }
 
 // UpdateHashMapCache 更新hashmap类型缓存

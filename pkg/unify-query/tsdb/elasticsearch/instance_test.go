@@ -754,7 +754,7 @@ func TestInstance_mappingCache(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 
 	// 创建一个带有较短TTL的实例，方便测试缓存过期
-	ins, err := NewInstance(ctx, &InstanceOption{
+	_, err := NewInstance(ctx, &InstanceOption{
 		Connects: []Connect{
 			{
 				Address: mock.EsUrl,
@@ -770,7 +770,7 @@ func TestInstance_mappingCache(t *testing.T) {
 	// 1. 测试不同的tableID和field组合
 	t.Run("different tableID and field combinations", func(t *testing.T) {
 		// 确保缓存是空的
-		ins.fieldTypesCache.Clear()
+		fieldTypesCache.Clear()
 
 		// 定义测试数据
 		tableIDs := []string{"table1", "table2"}
@@ -782,13 +782,13 @@ func TestInstance_mappingCache(t *testing.T) {
 
 		// 分别为不同表写入字段类型
 		for _, tableID := range tableIDs {
-			ins.fieldTypesCache.AppendFieldTypesCache(tableID, fields)
+			fieldTypesCache.AppendFieldTypesCache(tableID, fields)
 		}
 
 		// 验证每个组合都能正确获取
 		for _, tableID := range tableIDs {
 			for field, expectedType := range fields {
-				fieldType, exists := ins.fieldTypesCache.GetFieldType(tableID, field)
+				fieldType, exists := fieldTypesCache.GetFieldType(tableID, field)
 				assert.True(t, exists, "Cache should contain entry for tableID=%s field=%s", tableID, field)
 				assert.Equal(t, expectedType, fieldType, "Cached field type mismatch for tableID=%s field=%s", tableID, field)
 			}
@@ -805,7 +805,7 @@ func TestInstance_mappingCache(t *testing.T) {
 		}
 
 		for _, c := range notExistCombinations {
-			_, exists := ins.fieldTypesCache.GetFieldType(c.tableID, c.field)
+			_, exists := fieldTypesCache.GetFieldType(c.tableID, c.field)
 			assert.False(t, exists, "Cache should not contain entry for tableID=%s field=%s", c.tableID, c.field)
 		}
 	})
@@ -813,7 +813,7 @@ func TestInstance_mappingCache(t *testing.T) {
 	// 2. 测试缓存过期
 	t.Run("cache expiration", func(t *testing.T) {
 		// 确保缓存是空的
-		ins.fieldTypesCache.Clear()
+		fieldTypesCache.Clear()
 
 		// 写入缓存
 		tableID := "expiry_table"
@@ -821,28 +821,28 @@ func TestInstance_mappingCache(t *testing.T) {
 		fieldTypes := map[string]string{
 			field: "keyword",
 		}
-		ins.fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
+		fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
 
 		// 验证缓存命中
-		fieldType, exists := ins.fieldTypesCache.GetFieldType(tableID, field)
+		fieldType, exists := fieldTypesCache.GetFieldType(tableID, field)
 		assert.True(t, exists, "Cache should contain entry immediately after writing")
 		assert.Equal(t, "keyword", fieldType, "Cached field type mismatch")
 
 		// 等待缓存过期（TTL + 额外时间确保过期）
-		waitDuration := ins.fieldTypesCache.GetTTL() + 50*time.Millisecond
+		waitDuration := fieldTypesCache.GetTTL() + 50*time.Millisecond
 		t.Logf("Waiting for cache expiration: %v", waitDuration)
 		time.Sleep(waitDuration)
 		t.Logf("Cache expiration wait complete")
 
 		// 验证缓存已过期
-		_, exists = ins.fieldTypesCache.GetFieldType(tableID, field)
+		_, exists = fieldTypesCache.GetFieldType(tableID, field)
 		assert.False(t, exists, "Cache should return miss after expiration")
 	})
 
 	// 3. 测试更新已存在的缓存条目
 	t.Run("update existing cache entry", func(t *testing.T) {
 		// 确保缓存是空的
-		ins.fieldTypesCache.Clear()
+		fieldTypesCache.Clear()
 
 		tableID := "update_table"
 		field := "field1"
@@ -854,10 +854,10 @@ func TestInstance_mappingCache(t *testing.T) {
 		}
 
 		// 写入初始值
-		ins.fieldTypesCache.AppendFieldTypesCache(tableID, initialTypes)
+		fieldTypesCache.AppendFieldTypesCache(tableID, initialTypes)
 
 		// 验证初始值
-		fieldType, exists := ins.fieldTypesCache.GetFieldType(tableID, field)
+		fieldType, exists := fieldTypesCache.GetFieldType(tableID, field)
 		assert.True(t, exists, "Cache should contain initial entry")
 		assert.Equal(t, initialFieldType, fieldType, "Initial cached field type mismatch")
 
@@ -868,10 +868,10 @@ func TestInstance_mappingCache(t *testing.T) {
 		}
 
 		// 更新值
-		ins.fieldTypesCache.AppendFieldTypesCache(tableID, updatedTypes)
+		fieldTypesCache.AppendFieldTypesCache(tableID, updatedTypes)
 
 		// 验证更新后的值
-		fieldType, exists = ins.fieldTypesCache.GetFieldType(tableID, field)
+		fieldType, exists = fieldTypesCache.GetFieldType(tableID, field)
 		assert.True(t, exists, "Cache should contain updated entry")
 		assert.Equal(t, updatedFieldType, fieldType, "Updated cached field type mismatch")
 	})
@@ -879,7 +879,7 @@ func TestInstance_mappingCache(t *testing.T) {
 	// 4. 测试FormatFactory使用GetFieldType
 	t.Run("FormatFactory uses GetFieldType", func(t *testing.T) {
 		// 确保缓存是空的
-		ins.fieldTypesCache.Clear()
+		fieldTypesCache.Clear()
 
 		tableID := "format_factory_table"
 		field := "test_field"
@@ -891,10 +891,10 @@ func TestInstance_mappingCache(t *testing.T) {
 		}
 
 		// 添加到缓存
-		ins.fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
+		fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
 
 		// 不再需要创建FormatFactory实例进行测试，直接测试缓存功能
-		retrievedType, exists := ins.fieldTypesCache.GetFieldType(tableID, field)
+		retrievedType, exists := fieldTypesCache.GetFieldType(tableID, field)
 		assert.True(t, exists, "Should be able to retrieve field type")
 		assert.Equal(t, fieldType, retrievedType, "Retrieved field type should match")
 	})
@@ -904,7 +904,7 @@ func TestMappingCacheConcurrency(t *testing.T) {
 	mock.Init()
 	ctx := metadata.InitHashID(context.Background())
 
-	ins, err := NewInstance(ctx, &InstanceOption{
+	_, err := NewInstance(ctx, &InstanceOption{
 		Connects: []Connect{
 			{
 				Address: mock.EsUrl,
@@ -924,10 +924,10 @@ func TestMappingCacheConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// 清空缓存
-	ins.fieldTypesCache.Clear()
+	fieldTypesCache.Clear()
 
 	t.Run("concurrent read and write operations", func(t *testing.T) {
-		ins.fieldTypesCache.Clear()
+		fieldTypesCache.Clear()
 
 		for i := 0; i < numGoroutines; i++ {
 			wg.Add(1)
@@ -943,10 +943,10 @@ func TestMappingCacheConcurrency(t *testing.T) {
 						fieldTypes := map[string]string{
 							field: "keyword",
 						}
-						ins.fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
+						fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
 					} else {
 						// 读取操作
-						_, _ = ins.fieldTypesCache.GetFieldType(tableID, field)
+						_, _ = fieldTypesCache.GetFieldType(tableID, field)
 					}
 
 					time.Sleep(1 * time.Millisecond)
@@ -962,7 +962,7 @@ func TestMappingCacheConcurrency(t *testing.T) {
 				tableID := fmt.Sprintf("table_%d", i)
 				field := fmt.Sprintf("field_%d", j)
 
-				fieldType, exists := ins.fieldTypesCache.GetFieldType(tableID, field)
+				fieldType, exists := fieldTypesCache.GetFieldType(tableID, field)
 				if exists {
 					cacheEntries++
 					assert.Equal(t, "keyword", fieldType, "Unexpected field type for tableID=%s field=%s", tableID, field)
@@ -974,7 +974,7 @@ func TestMappingCacheConcurrency(t *testing.T) {
 	})
 
 	t.Run("concurrent operations with TTL expiration", func(t *testing.T) {
-		ins.fieldTypesCache.Clear()
+		fieldTypesCache.Clear()
 
 		for i := 0; i < numTables; i++ {
 			tableID := fmt.Sprintf("exp_table_%d", i)
@@ -983,24 +983,24 @@ func TestMappingCacheConcurrency(t *testing.T) {
 				field: "keyword",
 			}
 
-			ins.fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
+			fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
 		}
 
 		var expireWg sync.WaitGroup
-		halfTTL := ins.fieldTypesCache.GetTTL() / 2
+		halfTTL := fieldTypesCache.GetTTL() / 2
 
 		for i := 0; i < 3; i++ {
 			expireWg.Add(1)
 			go func(id int) {
 				defer expireWg.Done()
 
-				end := time.Now().Add(ins.fieldTypesCache.GetTTL() + 50*time.Millisecond)
+				end := time.Now().Add(fieldTypesCache.GetTTL() + 50*time.Millisecond)
 				for time.Now().Before(end) {
 					for j := 0; j < numTables; j++ {
 						tableID := fmt.Sprintf("exp_table_%d", j)
 						field := "exp_field"
 
-						_, _ = ins.fieldTypesCache.GetFieldType(tableID, field)
+						_, _ = fieldTypesCache.GetFieldType(tableID, field)
 
 						time.Sleep(2 * time.Millisecond)
 					}
@@ -1018,7 +1018,7 @@ func TestMappingCacheConcurrency(t *testing.T) {
 				field: "keyword",
 			}
 
-			ins.fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
+			fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
 		}
 
 		expireWg.Wait()
@@ -1030,7 +1030,7 @@ func TestMappingCacheConcurrency(t *testing.T) {
 			tableID := fmt.Sprintf("exp_table_%d", i)
 			field := "exp_field"
 
-			_, exists := ins.fieldTypesCache.GetFieldType(tableID, field)
+			_, exists := fieldTypesCache.GetFieldType(tableID, field)
 			if exists {
 				updatedEntries++
 			} else {

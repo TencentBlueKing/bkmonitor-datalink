@@ -201,8 +201,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			}
-			fieldTypeFactory := &MockFieldTypeFactory{}
-			fact := NewFormatFactory(ctx).WithMappings(defaultTableID, fieldTypeFactory, mappings...)
+			fact := NewFormatFactory(ctx).WithMappings(defaultTableID, mappings...)
 			ss := elastic.NewSearchSource()
 			query, err := fact.Query(c.conditions)
 			assert.Nil(t, err)
@@ -214,30 +213,6 @@ func TestFormatFactory_Query(t *testing.T) {
 			assert.JSONEq(t, c.expected, bodyString)
 		})
 	}
-}
-
-type MockFieldTypeFactory struct {
-	// map[tableID]map[fieldStr]type
-	fieldTypes map[string]map[string]string
-}
-
-func (m *MockFieldTypeFactory) GetFieldType(tableID, field string) (string, bool) {
-	fieldType, ok := m.fieldTypes[tableID][field]
-	return fieldType, ok
-}
-
-func (m *MockFieldTypeFactory) AppendFieldTypesCache(tableID string, mapping map[string]string) {
-	if m.fieldTypes == nil {
-		m.fieldTypes = make(map[string]map[string]string)
-	}
-	tableFieldMap := m.fieldTypes[tableID]
-	if tableFieldMap == nil {
-		tableFieldMap = make(map[string]string)
-	}
-	for k, v := range mapping {
-		tableFieldMap[k] = v
-	}
-	m.fieldTypes[tableID] = tableFieldMap
 }
 
 func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
@@ -429,8 +404,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 						},
 					},
 				}
-				fieldTypeFactory := &MockFieldTypeFactory{}
-				fact = fact.WithMappings("test", fieldTypeFactory, mappings...)
+				fact = fact.WithMappings("test", mappings...)
 			}
 
 			ss := elastic.NewSearchSource()
@@ -496,8 +470,7 @@ func TestFormatFactory_AggDataFormat(t *testing.T) {
 					},
 				},
 			}
-			fieldTypeFactory := &MockFieldTypeFactory{}
-			fact = fact.WithMappings("test", fieldTypeFactory, mappings...)
+			fact = fact.WithMappings("test", mappings...)
 
 			_, _, err := fact.EsAgg(c.aggregates)
 			assert.NoError(t, err)

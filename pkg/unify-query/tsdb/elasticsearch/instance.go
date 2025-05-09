@@ -37,10 +37,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
-const (
-	DefaultMappingCacheTTL = 5 * time.Minute
-)
-
 var _ tsdb.Instance = (*Instance)(nil)
 
 type Instance struct {
@@ -57,8 +53,6 @@ type Instance struct {
 
 	timeout time.Duration
 	maxSize int
-
-	fieldTypesCache *MappingCache
 }
 
 type Connects []Connect
@@ -126,8 +120,6 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 		headers:     opt.Headers,
 		healthCheck: opt.HealthCheck,
 		timeout:     opt.Timeout,
-
-		fieldTypesCache: NewMappingCache(mappingTTL),
 	}
 
 	if len(ins.connects) == 0 {
@@ -565,7 +557,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			fact := NewFormatFactory(ctx).
 				WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 				WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.Size).
-				WithMappings(query.TableID, i.fieldTypesCache, mappings...).
+				WithMappings(query.TableID, mappings...).
 				WithOrders(query.Orders)
 
 			sr, queryErr := i.esQuery(ctx, qo, fact)
@@ -752,7 +744,7 @@ func (i *Instance) QuerySeriesSet(
 				fact := NewFormatFactory(ctx).
 					WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 					WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
-					WithMappings(query.TableID, i.fieldTypesCache, mappings...).
+					WithMappings(query.TableID, mappings...).
 					WithOrders(query.Orders).
 					WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
 

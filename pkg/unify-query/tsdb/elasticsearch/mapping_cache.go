@@ -14,6 +14,18 @@ import (
 	"time"
 )
 
+var (
+	fieldTypesCache MappingCache
+)
+
+var (
+	DefaultMappingCacheTTL = 5 * time.Minute
+)
+
+func init() {
+	fieldTypesCache = *NewMappingCache(DefaultMappingCacheTTL)
+}
+
 // MappingEntry 保存缓存映射类型和最后更新时间
 type MappingEntry struct {
 	fieldType   string

@@ -143,22 +143,22 @@ func TestFormatFactory_Query(t *testing.T) {
 			conditions: metadata.AllConditions{
 				{
 					{
-						DimensionName: "nested.key",
+						DimensionName: "nested1.key",
 						Value:         []string{"val-1", "val-2"},
 						Operator:      structured.ConditionContains,
 					},
 					{
-						DimensionName: "nested.key",
+						DimensionName: "nested1.key",
 						Value:         []string{"val-3"},
 						Operator:      structured.ConditionEqual,
 					},
 					{
-						DimensionName: "nested.key",
+						DimensionName: "nested1.key",
 						Operator:      structured.ConditionExisted,
 					},
 				},
 			},
-			expected: `{"query":{"nested":{"path":"nested","query":{"bool":{"must":[{"bool":{"should":[{"wildcard":{"nested.key":{"value":"val-1"}}},{"wildcard":{"nested.key":{"value":"val-2"}}}]}},{"match_phrase":{"nested.key":{"query":"val-3"}}},{"exists":{"field":"nested.key"}}]}}}}}`,
+			expected: `{"query":{"nested":{"query":{"bool":{"must":[{"bool":{"should":[{"wildcard":{"nested1.key":{"value":"*val-1*"}}},{"wildcard":{"nested1.key":{"value":"*val-2*"}}}]}},{"match_phrase":{"nested1.key":{"query":"val-3"}}},{"exists":{"field":"nested1.key"}}]}},"path":"nested1"}}}`,
 		},
 		"keyword and text check wildcard": {
 			conditions: metadata.AllConditions{
@@ -206,14 +206,177 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"exists":{"field":"key-1"}}}},{"exists":{"field":"key-2"}}]}}}`,
 		},
+		"combine nested and normal query in one group": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"test"},
+						Operator:      structured.ConditionEqual,
+					},
+					{
+						DimensionName: "nested1.key",
+						Value:         []string{"val-1"},
+						Operator:      structured.ConditionEqual,
+					},
+				},
+				{
+					{
+						DimensionName: "text",
+						Value:         []string{"test"},
+						Operator:      structured.ConditionContains,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"keyword":{"query":"test"}}},{"nested":{"query":{"match_phrase":{"nested1.key":{"query":"val-1"}}},"path":"nested1"}}]}},{"match_phrase":{"text":{"query":"test"}}}]}}}`,
+		},
+		"multiple nested fields in same condition group": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "nested1.name",
+						Value:         []string{"test-user"},
+						Operator:      structured.ConditionEqual,
+					},
+					{
+						DimensionName: "nested2.city",
+						Value:         []string{"Shanghai"},
+						Operator:      structured.ConditionEqual,
+					},
+					{
+						DimensionName: "keyword",
+						Value:         []string{"normal-field"},
+						Operator:      structured.ConditionEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":[{"match_phrase":{"keyword":{"query":"normal-field"}}},{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.name":{"query":"test-user"}}}}},{"nested":{"path":"nested2","query":{"match_phrase":{"nested2.city":{"query":"Shanghai"}}}}}]}}}`,
+		},
+		"nested fields in different condition groups": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "nested1.name",
+						Value:         []string{"test-user"},
+						Operator:      structured.ConditionEqual,
+					},
+					{
+						DimensionName: "keyword",
+						Value:         []string{"group1"},
+						Operator:      structured.ConditionEqual,
+					},
+				},
+				{
+					{
+						DimensionName: "nested2.city",
+						Value:         []string{"Shanghai"},
+						Operator:      structured.ConditionEqual,
+					},
+					{
+						DimensionName: "text",
+						Value:         []string{"group2"},
+						Operator:      structured.ConditionContains,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"keyword":{"query":"group1"}}},{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.name":{"query":"test-user"}}}}}]}},{"bool":{"must":[{"match_phrase":{"text":{"query":"group2"}}},{"nested":{"path":"nested2","query":{"match_phrase":{"nested2.city":{"query":"Shanghai"}}}}}]}}]}}}`,
+		},
+		"nested fields with different levels": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "nested3.nestedChild.key",
+						Value:         []string{"value"},
+						Operator:      structured.ConditionEqual,
+					},
+					{
+						DimensionName: "nested3.annotations",
+						Operator:      structured.ConditionExisted,
+					},
+					{
+						DimensionName: "keyword",
+						Value:         []string{"test"},
+						Operator:      structured.ConditionEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":[{"match_phrase":{"keyword":{"query":"test"}}},{"nested":{"query":{"match_phrase":{"nested3.nestedChild.key":{"query":"value"}}},"path":"nested3.nestedChild"}},{"nested":{"path":"nested3","query":{"exists":{"field":"nested3.annotations"}}}}]}}}`,
+		},
+		"mixed nested and normal queries with different operators": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "nested1.age",
+						Value:         []string{"18"},
+						Operator:      structured.ConditionGte,
+					},
+					{
+						DimensionName: "nested1.active",
+						Operator:      structured.ConditionExisted,
+					},
+					{
+						DimensionName: "keyword",
+						Value:         []string{"value1", "value2"},
+						Operator:      structured.ConditionNotEqual,
+					},
+					{
+						DimensionName: "text",
+						Value:         []string{"partial"},
+						Operator:      structured.ConditionContains,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":[{"match_phrase":{"keyword":{"query":"value1"}}},{"match_phrase":{"keyword":{"query":"value2"}}}]}},{"match_phrase":{"text":{"query":"partial"}}},{"nested":{"path":"nested1","query":{"bool":{"must":[{"range":{"nested1.age":{"from":"18","include_lower":true,"include_upper":true,"to":null}}},{"exists":{"field":"nested1.active"}}]}}}}]}}}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			mappings := []map[string]any{
 				{
 					"properties": map[string]any{
-						"nested": map[string]any{
+						"nested1": map[string]any{
 							"type": "nested",
+							"properties": map[string]any{
+								"key": map[string]any{
+									"type": "keyword",
+								},
+								"name": map[string]any{
+									"type": "keyword",
+								},
+								"age": map[string]any{
+									"type": "long",
+								},
+								"active": map[string]any{
+									"type": "boolean",
+								},
+							},
+						},
+						"nested2": map[string]any{
+							"type": "nested",
+							"properties": map[string]any{
+								"city": map[string]any{
+									"type": "keyword",
+								},
+								"street": map[string]any{
+									"type": "keyword",
+								},
+							},
+						},
+						"nested3": map[string]any{
+							"type": "nested",
+							"properties": map[string]any{
+								"annotations": map[string]any{
+									"type": "keyword",
+								},
+								"nestedChild": map[string]any{
+									"type": "nested",
+									"properties": map[string]any{
+										"key": map[string]any{
+											"type": "keyword",
+										},
+									},
+								},
+							},
 						},
 						"keyword": map[string]any{
 							"type": "keyword",

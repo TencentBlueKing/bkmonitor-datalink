@@ -771,20 +771,28 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 	bootQueries := make([]elastic.Query, 0)
 	orQuery := make([]elastic.Query, 0, len(allConditions))
 
-	nestedFields := make(map[string]struct{})
 	for _, conditions := range allConditions {
-		andQuery := make([]elastic.Query, 0, len(conditions))
+		// Track nested fields separately for each condition group
+		nestedFields := make(map[string]struct{})
+		nestedQueries := make(map[string][]elastic.Query)
+		nonNestedQueries := make([]elastic.Query, 0)
+
+		// First pass: process all conditions and separate nested from non-nested
 		for _, con := range conditions {
 			key := con.DimensionName
 			if f.decode != nil {
 				key = f.decode(key)
 			}
 
+			// Check if this dimension is in a nested field
+			nf := f.NestedField(con.DimensionName)
+
+			var q elastic.Query
 			switch con.Operator {
 			case structured.ConditionExisted:
-				andQuery = append(andQuery, elastic.NewExistsQuery(key))
+				q = elastic.NewExistsQuery(key)
 			case structured.ConditionNotExisted:
-				andQuery = append(andQuery, f.getQuery(MustNot, elastic.NewExistsQuery(key)))
+				q = f.getQuery(MustNot, elastic.NewExistsQuery(key))
 			default:
 				// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
 				fieldType, ok := f.mapping[key]
@@ -858,7 +866,6 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 				}
 
 				// 非空才进行验证
-				var q elastic.Query
 				switch con.Operator {
 				case structured.ConditionEqual, structured.ConditionContains, structured.ConditionRegEqual:
 					q = f.getQuery(Should, queries...)
@@ -869,21 +876,38 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 				default:
 					return nil, fmt.Errorf("operator is not support, %+v", con)
 				}
+			}
 
-				nf := f.NestedField(con.DimensionName)
-				if nf != "" {
-					nestedFields[nf] = struct{}{}
-				}
-
-				if q != nil {
-					andQuery = append(andQuery, q)
-				}
+			// Add to the appropriate query collection
+			if nf != "" {
+				nestedFields[nf] = struct{}{}
+				nestedQueries[nf] = append(nestedQueries[nf], q)
+			} else if q != nil {
+				nonNestedQueries = append(nonNestedQueries, q)
 			}
 		}
 
-		aq := f.getQuery(Must, andQuery...)
-		if aq != nil {
-			orQuery = append(orQuery, aq)
+		// Combine nested queries by field
+		nestedFieldQueries := make([]elastic.Query, 0)
+		for field, queries := range nestedQueries {
+			if len(queries) > 0 {
+				// Create a nested query for this field
+				nestedQuery := elastic.NewNestedQuery(field, f.getQuery(Must, queries...))
+				nestedFieldQueries = append(nestedFieldQueries, nestedQuery)
+			}
+		}
+
+		// Combine all queries (nested and non-nested)
+		var allQueries []elastic.Query
+		allQueries = append(allQueries, nonNestedQueries...)
+		allQueries = append(allQueries, nestedFieldQueries...)
+
+		// Add to OR query
+		if len(allQueries) > 0 {
+			aq := f.getQuery(Must, allQueries...)
+			if aq != nil {
+				orQuery = append(orQuery, aq)
+			}
 		}
 	}
 
@@ -897,13 +921,6 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 		resQuery = elastic.NewBoolQuery().Must(bootQueries...)
 	} else if len(bootQueries) == 1 {
 		resQuery = bootQueries[0]
-	}
-
-	// 拼接 nested query
-	if len(nestedFields) > 0 {
-		for k := range nestedFields {
-			resQuery = elastic.NewNestedQuery(k, resQuery)
-		}
 	}
 
 	return resQuery, nil

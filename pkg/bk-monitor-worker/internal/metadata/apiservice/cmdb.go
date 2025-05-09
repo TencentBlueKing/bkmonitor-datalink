@@ -17,6 +17,7 @@ import (
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -130,9 +131,13 @@ func (CMDBService) processGetHostByIpParams(bkBizId int, ips []GetHostByIpParams
 
 // GetHostByIp 通过IP查询主机信息
 func (s CMDBService) GetHostByIp(ipList []GetHostByIpParams, BkBizId int) ([]cmdb.ListBizHostsTopoDataInfo, error) {
-	cmdbApi, err := api.GetCmdbApi()
+	tenantId, err := tenant.GetTenantIdByBkBizId(BkBizId)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "GetTenantIdByBkBizId failed, BkBizID: %d", BkBizId)
+	}
+	cmdbApi, err := api.GetCmdbApi(tenantId)
+	if err != nil {
+		return nil, errors.Wrapf(err, "GetCmdbApi failed, BkBizID: %d", BkBizId)
 	}
 	params := s.processGetHostByIpParams(BkBizId, ipList)
 	var topoResp cmdb.ListBizHostsTopoResp
@@ -149,9 +154,10 @@ func (s CMDBService) GetHostByIp(ipList []GetHostByIpParams, BkBizId int) ([]cmd
 
 // GetHostWithoutBiz 通过IP跨业务查询主机信息
 func (s CMDBService) GetHostWithoutBiz(ips []string, bkCloudIds []int) ([]cmdb.ListHostsWithoutBizDataInfo, error) {
-	cmdbApi, err := api.GetCmdbApi()
+	// todo: tenant
+	cmdbApi, err := api.GetCmdbApi(tenant.DefaultTenantId)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "GetCmdbApi failed")
 	}
 	var filterRules []map[string]interface{}
 	var ipv4List []string
@@ -189,7 +195,8 @@ func (s CMDBService) GetHostWithoutBiz(ips []string, bkCloudIds []int) ([]cmdb.L
 }
 
 func (s CMDBService) SearchCloudArea() ([]cmdb.SearchCloudAreaDataInfo, error) {
-	cmdbApi, err := api.GetCmdbApi()
+	// todo: tenant
+	cmdbApi, err := api.GetCmdbApi(tenant.DefaultTenantId)
 	if err != nil {
 		return nil, errors.Wrap(err, "GetCmdbApi failed")
 	}
@@ -207,7 +214,8 @@ func (s CMDBService) SearchCloudArea() ([]cmdb.SearchCloudAreaDataInfo, error) {
 // FindHostBizRelationMap 查询主机业务关系信息
 func (s CMDBService) FindHostBizRelationMap(bkHostIds []int) (map[int]int, error) {
 	// 获取到所有业务id
-	cmdbApi, err := api.GetCmdbApi()
+	// todo: tenant
+	cmdbApi, err := api.GetCmdbApi(tenant.DefaultTenantId)
 	if err != nil {
 		return nil, errors.Wrap(err, "GetCmdbApi failed")
 	}
@@ -231,7 +239,8 @@ func (s CMDBService) FindHostBizRelationMap(bkHostIds []int) (map[int]int, error
 // GetAllHost 获取所有主机信息
 func (s CMDBService) GetAllHost() ([]Host, error) {
 	// 获取到所有业务id
-	cmdbApi, err := api.GetCmdbApi()
+	// todo: tenant
+	cmdbApi, err := api.GetCmdbApi(tenant.DefaultTenantId)
 	if err != nil {
 		return nil, errors.Wrap(err, "GetCmdbApi failed")
 	}

@@ -36,6 +36,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -85,7 +86,7 @@ func NewCmdbResourceWatcher(prefix string, rOpt *redis.Options) (*CmdbResourceWa
 	}
 
 	// 创建cmdb api client
-	cmdbApi := getCmdbApi()
+	cmdbApi := getCmdbApi(tenant.DefaultTenantId)
 
 	return &CmdbResourceWatcher{
 		prefix:      prefix,
@@ -244,6 +245,9 @@ func WatchCmdbResourceChangeEventTask(ctx context.Context, payload []byte) error
 
 // CmdbEventHandler cmdb资源变更事件处理器
 type CmdbEventHandler struct {
+	// 租户id
+	bkTenantId string
+
 	// 缓存key前缀
 	prefix string
 
@@ -261,7 +265,7 @@ type CmdbEventHandler struct {
 }
 
 // NewCmdbEventHandler 创建cmdb资源变更事件处理器
-func NewCmdbEventHandler(prefix string, rOpt *redis.Options, cacheType string, fullRefreshInterval time.Duration, concurrentLimit int) (*CmdbEventHandler, error) {
+func NewCmdbEventHandler(bkTenantId string, prefix string, rOpt *redis.Options, cacheType string, fullRefreshInterval time.Duration, concurrentLimit int) (*CmdbEventHandler, error) {
 	// 创建redis client
 	redisClient, err := redis.GetClient(rOpt)
 	if err != nil {
@@ -269,7 +273,7 @@ func NewCmdbEventHandler(prefix string, rOpt *redis.Options, cacheType string, f
 	}
 
 	// 创建缓存管理器
-	cacheManager, err := NewCacheManagerByType(rOpt, prefix, cacheType, concurrentLimit)
+	cacheManager, err := NewCacheManagerByType(bkTenantId, rOpt, prefix, cacheType, concurrentLimit)
 	if err != nil {
 		return nil, errors.Wrap(err, "new cache Manager failed")
 	}
@@ -281,6 +285,7 @@ func NewCmdbEventHandler(prefix string, rOpt *redis.Options, cacheType string, f
 	}
 
 	return &CmdbEventHandler{
+		bkTenantId:          bkTenantId,
 		prefix:              prefix,
 		redisClient:         redisClient,
 		cacheManager:        cacheManager,
@@ -443,6 +448,8 @@ var cmdbEventHandlerResourceTypeMap = map[string][]CmdbResourceType{
 
 // RefreshTaskParams cmdb缓存刷新任务参数
 type RefreshTaskParams struct {
+	// 租户id
+	BkTenantId string `json:"bk_tenant_id" mapstructure:"bk_tenant_id"`
 	// 缓存key前缀
 	Prefix string `json:"prefix" mapstructure:"prefix"`
 	// redis配置
@@ -472,6 +479,11 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	bizConcurrent := params.BizConcurrent
 	if bizConcurrent <= 0 {
 		bizConcurrent = 5
+	}
+
+	// 默认租户id
+	if params.BkTenantId == "" {
+		params.BkTenantId = tenant.DefaultTenantId
 	}
 
 	// 事件处理间隔时间，最低1分钟
@@ -551,7 +563,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 			defer wg.Done()
 
 			// 创建资源变更事件处理器
-			handler, err := NewCmdbEventHandler(params.Prefix, &params.Redis, cacheType, fullRefreshInterval, bizConcurrent)
+			handler, err := NewCmdbEventHandler(params.BkTenantId, params.Prefix, &params.Redis, cacheType, fullRefreshInterval, bizConcurrent)
 			if err != nil {
 				logger.Errorf("[cmdb_relation] new cmdb event handler failed: %v", err)
 				cancel()

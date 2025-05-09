@@ -32,6 +32,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
 
 var DemoServiceInstances = []*AlarmServiceInstanceInfo{
@@ -79,7 +80,7 @@ func TestServiceInstanceCacheManager(t *testing.T) {
 
 	t.Run("TestServiceInstanceCacheManager", func(t *testing.T) {
 		// 先准备主机缓存数据，用于测试服务实例缓存
-		hostCacheManager, err := NewHostAndTopoCacheManager(t.Name(), rOpts, 1)
+		hostCacheManager, err := NewHostAndTopoCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return
@@ -90,7 +91,7 @@ func TestServiceInstanceCacheManager(t *testing.T) {
 			return
 		}
 
-		cacheManager, err := NewServiceInstanceCacheManager(t.Name(), rOpts, 1)
+		cacheManager, err := NewServiceInstanceCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return

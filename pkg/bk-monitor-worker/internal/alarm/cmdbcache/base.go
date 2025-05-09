@@ -48,7 +48,7 @@ var (
 )
 
 // getCmdbApi Get cmdb api client instance with lock
-func getCmdbApi() *cmdb.Client {
+func getCmdbApi(tenantId string) *cmdb.Client {
 	cmdbApiClientOnce.Do(func() {
 		// 判断是否使用网关
 		var endpoint string
@@ -71,6 +71,7 @@ func getCmdbApi() *cmdb.Client {
 			config,
 			bkapi.OptJsonBodyProvider(),
 			OptRateLimitResultProvider(cfg.CmdbApiRateLimitQPS, cfg.CmdbApiRateLimitBurst, cfg.CmdbApiRateLimitTimeout),
+			api.NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}),
 		)
 		if err != nil {
 			panic(err)
@@ -96,6 +97,8 @@ type Manager interface {
 
 	// UseBiz 是否按业务执行
 	useBiz() bool
+	// GetBkTenantId 获取bk_tenant_id
+	GetBkTenantId() string
 	// GetConcurrentLimit 并发限制
 	GetConcurrentLimit() int
 
@@ -107,6 +110,7 @@ type Manager interface {
 
 // BaseCacheManager 基础缓存管理器
 type BaseCacheManager struct {
+	bkTenantId      string
 	Prefix          string
 	RedisClient     redis.UniversalClient
 	Expire          time.Duration
@@ -117,12 +121,13 @@ type BaseCacheManager struct {
 }
 
 // NewBaseCacheManager 创建缓存管理器
-func NewBaseCacheManager(prefix string, opt *redis.Options, concurrentLimit int) (*BaseCacheManager, error) {
+func NewBaseCacheManager(bkTenantId string, prefix string, opt *redis.Options, concurrentLimit int) (*BaseCacheManager, error) {
 	client, err := redis.GetClient(opt)
 	if err != nil {
 		return nil, err
 	}
 	return &BaseCacheManager{
+		bkTenantId:       bkTenantId,
 		Prefix:           prefix,
 		RedisClient:      client,
 		Expire:           time.Hour * 24 * 7,
@@ -265,23 +270,28 @@ func (c *BaseCacheManager) useBiz() bool {
 	return true
 }
 
+// GetBkTenantId 获取bk_tenant_id
+func (c *BaseCacheManager) GetBkTenantId() string {
+	return c.bkTenantId
+}
+
 // NewCacheManagerByType 创建缓存管理器
-func NewCacheManagerByType(opt *redis.Options, prefix string, cacheType string, concurrentLimit int) (Manager, error) {
+func NewCacheManagerByType(bkTenantId string, opt *redis.Options, prefix string, cacheType string, concurrentLimit int) (Manager, error) {
 	var cacheManager Manager
 	var err error
 	switch cacheType {
 	case "host_topo":
-		cacheManager, err = NewHostAndTopoCacheManager(prefix, opt, concurrentLimit)
+		cacheManager, err = NewHostAndTopoCacheManager(bkTenantId, prefix, opt, concurrentLimit)
 	case "business":
-		cacheManager, err = NewBusinessCacheManager(prefix, opt, concurrentLimit)
+		cacheManager, err = NewBusinessCacheManager(bkTenantId, prefix, opt, concurrentLimit)
 	case "module":
-		cacheManager, err = NewModuleCacheManager(prefix, opt, concurrentLimit)
+		cacheManager, err = NewModuleCacheManager(bkTenantId, prefix, opt, concurrentLimit)
 	case "set":
-		cacheManager, err = NewSetCacheManager(prefix, opt, concurrentLimit)
+		cacheManager, err = NewSetCacheManager(bkTenantId, prefix, opt, concurrentLimit)
 	case "service_instance":
-		cacheManager, err = NewServiceInstanceCacheManager(prefix, opt, concurrentLimit)
+		cacheManager, err = NewServiceInstanceCacheManager(bkTenantId, prefix, opt, concurrentLimit)
 	case "dynamic_group":
-		cacheManager, err = NewDynamicGroupCacheManager(prefix, opt, concurrentLimit)
+		cacheManager, err = NewDynamicGroupCacheManager(bkTenantId, prefix, opt, concurrentLimit)
 	default:
 		err = errors.Errorf("unsupported cache type: %s", cacheType)
 	}
@@ -293,7 +303,7 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 	// 判断是否启用业务缓存刷新
 	if cacheManager.useBiz() {
 		// 获取业务列表
-		cmdbApi := getCmdbApi()
+		cmdbApi := getCmdbApi(cacheManager.GetBkTenantId())
 		var result cmdb.SearchBusinessResp
 		_, err := cmdbApi.SearchBusiness().SetPathParams(map[string]string{"bk_supplier_account": "0"}).SetResult(&result).Request()
 		if err = api.HandleApiResultError(result.ApiCommonRespMeta, err, "search business failed"); err != nil {

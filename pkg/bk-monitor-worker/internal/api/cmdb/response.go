@@ -114,6 +114,7 @@ type BusinessData struct {
 }
 
 type BusinessDataInfo struct {
+	BkTenantId        string    `json:"bk_tenant_id" mapstructure:"bk_tenant_id"`
 	BkBizDeveloper    string    `json:"bk_biz_developer" mapstructure:"bk_biz_developer"`
 	BkBizId           int       `json:"bk_biz_id" mapstructure:"bk_biz_id"`
 	BkBizMaintainer   string    `json:"bk_biz_maintainer" mapstructure:"bk_biz_maintainer"`

@@ -28,6 +28,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
 
 //func TestResourceWatch(t *testing.T) {
@@ -97,7 +98,7 @@ func TestManager(t *testing.T) {
 	//	Addrs: []string{"127.0.0.1:6379"},
 	//}
 
-	cmdbApi, err := api.GetCmdbApi()
+	cmdbApi, err := api.GetCmdbApi(tenant.DefaultTenantId)
 	if err != nil {
 		t.Errorf("TestManager failed, err: %v", err)
 		return

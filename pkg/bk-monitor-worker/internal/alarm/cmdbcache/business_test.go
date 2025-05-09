@@ -33,6 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
 
 var DemoBusinesses = []map[string]interface{}{
@@ -166,7 +167,7 @@ func TestBusinessCacheManager(t *testing.T) {
 
 	t.Run("TestBusinessCacheManager", func(t *testing.T) {
 		// 创建业务缓存管理器
-		cacheManager, err := NewBusinessCacheManager(t.Name(), rOpts, 1)
+		cacheManager, err := NewBusinessCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return
@@ -226,7 +227,7 @@ func TestBusinessCacheManager(t *testing.T) {
 
 	t.Run("Event", func(t *testing.T) {
 		// 创建业务缓存管理器
-		cacheManager, err := NewBusinessCacheManager(t.Name(), rOpts, 1)
+		cacheManager, err := NewBusinessCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return

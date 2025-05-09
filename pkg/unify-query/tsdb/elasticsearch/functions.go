@@ -65,19 +65,21 @@ func parseSizeString(sizeStr string) (int64, error) {
 }
 
 func shortDur(d time.Duration) string {
-	nd := int(d.Seconds())
+	nd := d.Milliseconds()
 
 	if nd == 0 {
-		return "0s"
+		return "0ms"
 	}
 
-	if nd%(24*60*60) == 0 {
-		return fmt.Sprintf("%dd", nd/24/60/60)
-	} else if nd%(60*60) == 0 {
-		return fmt.Sprintf("%dh", nd/60/60)
-	} else if nd%60 == 0 {
-		return fmt.Sprintf("%dm", nd/60)
+	if nd%(time.Hour.Milliseconds()*24) == 0 {
+		return fmt.Sprintf("%dd", nd/time.Hour.Milliseconds()/24)
+	} else if nd%(time.Hour.Milliseconds()) == 0 {
+		return fmt.Sprintf("%dh", nd/time.Hour.Milliseconds())
+	} else if nd%(time.Minute.Milliseconds()) == 0 {
+		return fmt.Sprintf("%dm", nd/time.Minute.Milliseconds())
+	} else if nd%(time.Second.Milliseconds()) == 0 {
+		return fmt.Sprintf("%ds", nd/time.Second.Milliseconds())
 	} else {
-		return fmt.Sprintf("%ds", nd)
+		return fmt.Sprintf("%dms", nd)
 	}
 }

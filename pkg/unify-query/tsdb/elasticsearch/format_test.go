@@ -367,7 +367,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/ShangHai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1m","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"60ms","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 		"aggregate millisecond int field": {
 			timeField: metadata.TimeField{
@@ -472,6 +472,78 @@ func TestFormatFactory_AggDataFormat(t *testing.T) {
 			assert.NoError(t, err)
 
 			assert.JSONEq(t, string(outTs), c.expected)
+		})
+	}
+}
+
+func TestToFixInterval(t *testing.T) {
+	tests := []struct {
+		name      string
+		timeUnit  string
+		window    time.Duration
+		want      string
+		wantError bool
+	}{
+		{
+			name:     "second unit should error",
+			timeUnit: function.Second,
+			window:   time.Second,
+			want:     "1ms",
+		},
+		{
+			name:      "window less than 1 should error",
+			timeUnit:  function.Millisecond,
+			window:    time.Microsecond, // 0.001ms
+			wantError: true,
+		},
+		{
+			name:     "microsecond unit conversion",
+			timeUnit: function.Microsecond,
+			window:   time.Millisecond, // 1ms = 1000us
+			want:     "1s",
+		},
+		{
+			name:     "nanosecond unit conversion",
+			timeUnit: function.Nanosecond,
+			window:   time.Millisecond, // 1ms = 1000000ns
+			want:     "1000s",
+		},
+		{
+			name:     "microsecond unit no conversion",
+			timeUnit: function.Microsecond,
+			window:   time.Minute,
+			want:     "1000m",
+		},
+		{
+			name:     "microsecond unit no conversion",
+			timeUnit: function.Microsecond,
+			window:   time.Hour * 6,
+			want:     "250d", // 250d = 6000h
+		},
+		{
+			name:     "nanosecond unit no conversion",
+			timeUnit: function.Nanosecond,
+			window:   time.Minute,
+			want:     "1000000m",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &FormatFactory{
+				timeField: metadata.TimeField{
+					Unit: tt.timeUnit,
+				},
+			}
+
+			got, err := f.toFixInterval(tt.window)
+			if (err != nil) != tt.wantError {
+				t.Errorf("toFixInterval() error = %v, wantError %v", err, tt.wantError)
+				return
+			}
+			if !tt.wantError && got != tt.want {
+				t.Errorf("toFixInterval() = %v, want %v", got, tt.want)
+			}
 		})
 	}
 }

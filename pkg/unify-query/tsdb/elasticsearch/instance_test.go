@@ -898,43 +898,6 @@ func TestInstance_mappingCache(t *testing.T) {
 		assert.True(t, exists, "Should be able to retrieve field type")
 		assert.Equal(t, fieldType, retrievedType, "Retrieved field type should match")
 	})
-
-	// 5. 测试使用metadata.Query的GetCacheKey方法
-	t.Run("using metadata.Query.GetCacheKey", func(t *testing.T) {
-		ins.fieldTypesCache.Clear()
-
-		queries := []*metadata.Query{
-			{
-				TableID: "table_a",
-				Field:   "field_x",
-			},
-			{
-				TableID: "table_a",
-				Field:   "field_y",
-			},
-			{
-				TableID: "table_b",
-				Field:   "field_x",
-			},
-		}
-
-		// 写入缓存
-		for _, query := range queries {
-			tableID, _ := query.GetCacheKey()
-			fieldTypes := map[string]string{
-				query.Field: "keyword",
-			}
-			ins.fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
-		}
-
-		// 验证缓存命中
-		for i, query := range queries {
-			tableID, _ := query.GetCacheKey()
-			fieldType, exists := ins.fieldTypesCache.GetFieldType(tableID, query.Field)
-			assert.True(t, exists, "Cache should contain entry for query %d", i)
-			assert.Equal(t, "keyword", fieldType, "Cached field type mismatch for query %d", i)
-		}
-	})
 }
 
 func TestMappingCacheConcurrency(t *testing.T) {

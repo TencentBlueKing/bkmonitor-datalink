@@ -148,7 +148,7 @@ type ValueAgg struct {
 
 type TimeAgg struct {
 	Name     string
-	Window   string
+	Window   time.Duration
 	Timezone string
 }
 
@@ -209,6 +209,22 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 func (f *FormatFactory) WithIsReference(isReference bool) *FormatFactory {
 	f.isReference = isReference
 	return f
+}
+
+func (f *FormatFactory) toFixInterval(window time.Duration) (string, error) {
+	switch f.timeField.Unit {
+	case function.Second:
+		window /= 1e3
+	case function.Microsecond:
+		window *= 1e3
+	case function.Nanosecond:
+		window *= 1e6
+	}
+
+	if window.Milliseconds() < 1 {
+		return "", fmt.Errorf("date histogram aggregation interval must be greater than 0ms")
+	}
+	return shortDur(window), nil
 }
 
 func (f *FormatFactory) toMillisecond(i int64) int64 {
@@ -335,7 +351,7 @@ func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
 	return query, err
 }
 
-func (f *FormatFactory) timeAgg(name string, window, timezone string) {
+func (f *FormatFactory) timeAgg(name string, window time.Duration, timezone string) {
 	f.aggInfoList = append(
 		f.aggInfoList, TimeAgg{
 			Name: name, Window: window, Timezone: timezone,
@@ -583,9 +599,20 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		case TimeAgg:
 			curName := info.Name
 
+			var interval string
+
+			if f.timeField.Type == TimeFieldTypeInt {
+				interval, err = f.toFixInterval(info.Window)
+				if err != nil {
+					return
+				}
+			} else {
+				interval = shortDur(info.Window)
+			}
+
 			curAgg := elastic.NewDateHistogramAggregation().
-				Field(f.timeField.Name).Interval(info.Window).MinDocCount(0).
-				ExtendedBounds(f.TimeFieldUnix(f.start), f.TimeFieldUnix(f.end))
+				Field(f.timeField.Name).Interval(interval).MinDocCount(0).
+				ExtendedBounds(f.timeFieldUnix(f.start), f.timeFieldUnix(f.end))
 			// https://github.com/elastic/elasticsearch/issues/42270 非date类型不支持timezone, time format也无效
 			if f.timeField.Type == TimeFieldTypeTime {
 				curAgg = curAgg.TimeZone(info.Timezone)
@@ -654,14 +681,14 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 	for _, am := range aggregates {
 		switch am.Name {
 		case DateHistogram:
-			f.timeAgg(f.timeField.Name, shortDur(am.Window), am.TimeZone)
+			f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
 			f.valueAgg(FieldValue, am.Name, am.Args...)
 			f.nestedAgg(f.valueField)
 
 			if am.Window > 0 && !am.Without {
 				// 增加时间函数
-				f.timeAgg(f.timeField.Name, shortDur(am.Window), am.TimeZone)
+				f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
 			}
 
 			for idx, dim := range am.Dimensions {
@@ -700,7 +727,7 @@ func (f *FormatFactory) Orders() metadata.Orders {
 	return orders
 }
 
-func (f *FormatFactory) TimeFieldUnix(t time.Time) (u int64) {
+func (f *FormatFactory) timeFieldUnix(t time.Time) (u int64) {
 	switch f.timeField.Unit {
 	case function.Millisecond:
 		u = t.UnixMilli()

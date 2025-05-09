@@ -41,6 +41,15 @@ var (
 	)
 )
 
+var loadedPlatformConfig bool
+
+// LoadedPlatformConfig 返回是否已经加载过 platform 配置
+//
+// 作为判断服务是否就绪的一种方案
+func LoadedPlatformConfig() bool {
+	return loadedPlatformConfig
+}
+
 var DefaultMetricMonitor = &metricMonitor{}
 
 type metricMonitor struct{}
@@ -120,6 +129,9 @@ func LoadConfigPath(path string) (*Config, error) {
 	if token.Original != "" {
 		logger.Debugf("metacache set token: %+v", token)
 		metacache.Set(token.Original, token)
+	}
+	if token.Type == define.ConfigTypePlatform {
+		loadedPlatformConfig = true
 	}
 
 	logger.Debugf("load config file '%v'", path)

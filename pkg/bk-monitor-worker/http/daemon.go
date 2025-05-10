@@ -35,66 +35,76 @@ func ReloadDaemonTask(c *gin.Context) {
 		return
 	}
 
-	daemonTaskBytes, err := getDaemonTask(params.UniId)
+	taskInstance, _, err := getDaemonTaskBytes(params.UniId)
 	if err != nil {
 		BadReqResponse(c, "get daemonTask failed, error: %v", err)
 		return
 	}
-	if daemonTaskBytes == nil {
+	if taskInstance == nil {
 		BadReqResponse(c, "taskUniId: [%s] not found!", params.UniId)
 		return
 	}
 
-	broker := rdb.GetRDB()
-	// 检查是否已经存在于重载队列中
-	exist, err := broker.Client().SIsMember(context.Background(), common.DaemonReloadReqChannel(), params.UniId).Result()
-	if err != nil {
-		BadReqResponse(c, "found: %s if in queue failed, error: %s", params.UniId, err)
-		return
-	}
-	if exist {
-		Response(
-			c,
-			&gin.H{"data": fmt.Sprintf(
-				"task: %s already in %s queue", params.UniId, common.DaemonReloadReqChannel())},
-		)
-		return
-	}
-
-	// 推送重载请求到调度队队列中、并将此次 payload 更新存储在 hash 结构中等待消费
-	pipe := broker.Client().Pipeline()
-	pipe.Publish(context.Background(), common.DaemonReloadReqChannel(), params.UniId)
-	if len(params.Payload) > 0 {
-		payloadData, err := jsonx.Marshal(params.Payload)
-		if err != nil {
-			BadReqResponse(c, "failed to parse payload to bytes, error: %s", err)
-			return
-		}
-		pipe.HSetNX(context.Background(), common.DaemonReloadReqPayloadHash(), params.UniId, payloadData)
-	}
-	if _, err = pipe.Exec(context.Background()); err != nil {
-		BadReqResponse(c, "execute publish reload signal to broker failed, error: %v", err)
+	if err = updateDaemonTask(daemon.ComputeTaskUniId(*taskInstance), params.Payload); err != nil {
+		BadReqResponse(c, "failed to update daemonTask, error: %s", err)
 		return
 	}
 
 	Response(c, &gin.H{"data": fmt.Sprintf("send %s to channel: %s", params.UniId, common.DaemonReloadReqChannel())})
+	return
 }
 
-func getDaemonTask(taskUniId string) ([]byte, error) {
+func getDaemonTaskBytes(taskUniId string) (*task.SerializerTask, []byte, error) {
 	tasks, err := rdb.GetRDB().Client().SMembers(context.Background(), common.DaemonTaskKey()).Result()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	for _, i := range tasks {
 		var item task.SerializerTask
 		if err = jsonx.Unmarshal([]byte(i), &item); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		itemTaskUniId := daemon.ComputeTaskUniId(item)
 		if itemTaskUniId == taskUniId {
-			return []byte(i), nil
+			return &item, []byte(i), nil
 		}
 	}
-	return nil, nil
+	return nil, nil, nil
+}
+
+// isDaemonTaskExist 检查常驻任务是否已存在 (不确保运行正常 只是检查是否已被创建)
+func isDaemonTaskExist(taskUniId string) bool {
+	t, _, e := getDaemonTaskBytes(taskUniId)
+	if e != nil {
+		return false
+	}
+	return t != nil
+}
+
+func updateDaemonTask(taskUniId string, payload map[string]any) error {
+	broker := rdb.GetRDB()
+	// 检查是否已经存在于重载队列中
+	exist, err := broker.Client().SIsMember(context.Background(), common.DaemonReloadReqChannel(), taskUniId).Result()
+	if err != nil {
+		return fmt.Errorf("found: %s if in queue failed, error: %s", taskUniId, err)
+	}
+	if exist {
+		return fmt.Errorf(fmt.Sprintf("task: %s already in %s queue", taskUniId, common.DaemonReloadReqChannel()))
+	}
+
+	// 推送重载请求到调度队队列中、并将此次 payload 更新存储在 hash 结构中等待消费
+	pipe := broker.Client().Pipeline()
+	pipe.Publish(context.Background(), common.DaemonReloadReqChannel(), taskUniId)
+	if len(payload) > 0 {
+		payloadData, err := jsonx.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("failed to parse payload to bytes, error: %s", err)
+		}
+		pipe.HSetNX(context.Background(), common.DaemonReloadReqPayloadHash(), taskUniId, payloadData)
+	}
+	if _, err = pipe.Exec(context.Background()); err != nil {
+		return fmt.Errorf("execute publish reload signal to broker failed, error: %v", err)
+	}
+	return nil
 }

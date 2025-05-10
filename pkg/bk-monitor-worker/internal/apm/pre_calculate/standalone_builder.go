@@ -145,9 +145,15 @@ func (p *Precalculate) StartByConnection(conn Connection, _ ...PrecalculateOptio
 			},
 		},
 	)
-	config := p.MergeConfig(p.defaultConfig, PrecalculateOption{
-		storageConfig: []storage.ProxyOption{storage.CacheBackend(storage.CacheTypeMemory)},
-	})
+	config := p.defaultConfig
+	configP, err := mergeConfigs(&config, &PrecalculateOption{
+		StorageConfig: storage.ProxyOptions{CacheBackend: storage.CacheTypeMemory},
+	}, []string{"storageConfig.cacheBackend"})
+	config = *configP
+	if err != nil {
+		logger.Errorf("[Precalculate] Connection not started, cause by error config, error: %s", err)
+		return
+	}
 	c := make(chan error)
 	ctx, cancel := context.WithCancel(context.Background())
 	go p.checkError(conn.BkBizId, conn.AppName, c, cancel)

@@ -41,8 +41,7 @@ func (c CommonArgs) Copy() CommonArgs {
 // ESB :
 var (
 	ESB                   *Client
-	MaxWorkerConfig       int // 同时并发访问ESB的客户端个数
-	IsFilterCMDBV3Biz     bool
+	MaxWorkerConfig       int                            // 同时并发访问ESB的客户端个数
 	LocationResponseCache []CCSearchBusinessResponseInfo // LocationCache缓存，但是此处没有做持久化，考虑是transfer启动的时候如果CMDB也是挂的，服务失效也符合预期
 )
 

@@ -150,7 +150,7 @@ func (c *CCHostUpdater) checkAndSetData(hostTotal, instanceTotal utils.MapHelper
 
 	// 校验主机
 	if c.isRequestHost {
-		responseHost, err := c.cc.GetHostsByRange(bizID.BKBizID, 1, 0)
+		responseHost, err := c.cc.GetHostsByRange(bizID.BkTenantID, bizID.BKBizID, 1, 0)
 		// 检测出错，则不触发更新动作
 		if err != nil {
 			logging.Errorf("host cache update periodically failed: %v", err)
@@ -165,7 +165,7 @@ func (c *CCHostUpdater) checkAndSetData(hostTotal, instanceTotal utils.MapHelper
 
 	// 校验实例
 	if c.isRequestInst {
-		responseInstance, err := c.cc.GetServiceInstance(bizID.BKBizID, 1, 0, nil)
+		responseInstance, err := c.cc.GetServiceInstance(bizID.BkTenantID, bizID.BKBizID, 1, 0, nil)
 		// 检测出错，则不触发更新动作
 		if err != nil {
 			logging.Errorf("instance cache update periodically failed: %v", err)

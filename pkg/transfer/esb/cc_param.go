@@ -126,8 +126,9 @@ type CCSearchBusinessResponseData struct {
 
 // CCSearchBusinessResponseInfo
 type CCSearchBusinessResponseInfo struct {
-	BKBizID   int    `json:"bk_biz_id"`
-	BKBizName string `json:"bk_biz_name"`
+	BkTenantID string `json:"bk_tenant_id"`
+	BKBizID    int    `json:"bk_biz_id"`
+	BKBizName  string `json:"bk_biz_name"`
 }
 
 // CCSearchBusinessRequest
@@ -186,4 +187,11 @@ type CCGetBusinessLocationResponse struct {
 type CCGetBusinessLocationResponseInfo struct {
 	BkBizID    int    `json:"bk_biz_id"`
 	BkLocation string `json:"bk_location"`
+}
+
+// TenantResponseInfo
+type TenantResponseInfo struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }

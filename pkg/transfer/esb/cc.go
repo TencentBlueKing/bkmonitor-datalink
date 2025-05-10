@@ -27,14 +27,15 @@ import (
 )
 
 const (
-	authKey = "X-Bkapi-Authorization"
+	authKey   = "X-Bkapi-Authorization"
+	tenantKey = "X-Bk-Tenant-Id"
 )
 
 type APIClient interface {
 	GetSearchBusiness() ([]CCSearchBusinessResponseInfo, error)
-	GetServiceInstance(bizID, limit, start int, ServiceInstanceIds []int) (*CCSearchServiceInstanceResponseData, error)
-	GetSearchBizInstTopo(start, bizID, limit, level int) ([]CCSearchBizInstTopoResponseInfo, error)
-	GetHostsByRange(bizID, limit, start int) (*CCSearchHostResponseData, error)
+	GetServiceInstance(bkTenantID string, bizID, limit, start int, ServiceInstanceIds []int) (*CCSearchServiceInstanceResponseData, error)
+	GetSearchBizInstTopo(bkTenantID string, start, bizID, limit, level int) ([]CCSearchBizInstTopoResponseInfo, error)
+	GetHostsByRange(bkTenantID string, bizID, limit, start int) (*CCSearchHostResponseData, error)
 	VisitAllHost(ctx context.Context, batchSize int, ccInfo models.CCInfo, fn func(monitor CCSearchHostResponseDataV3Monitor, ccInfo models.CCInfo) error) error
 }
 
@@ -137,7 +138,7 @@ func (c *CCApiClient) Agent() *sling.Sling {
 	return agent
 }
 
-func (c *CCApiClient) GetHostsByRange(bizID, limit, start int) (*CCSearchHostResponseData, error) {
+func (c *CCApiClient) GetHostsByRange(bkTenantID string, bizID, limit, start int) (*CCSearchHostResponseData, error) {
 	defer c.SearchHostTimeObserver.Start().Finish()
 	// 返回结果的临时结构定义及声明
 	result := struct {
@@ -176,6 +177,7 @@ func (c *CCApiClient) GetHostsByRange(bizID, limit, start int) (*CCSearchHostRes
 
 	response, err := c.Agent().
 		Set(authKey, c.client.commonArgs.JSON()).
+		Set(tenantKey, bkTenantID).
 		Post(path).
 		BodyProvider(reqBody).Receive(&result /* success */, &result /* failed */)
 	if err != nil {
@@ -196,14 +198,14 @@ func (c *CCApiClient) GetHostsByRange(bizID, limit, start int) (*CCSearchHostRes
 }
 
 // GetSearchBizInstTopo :
-func (c *CCApiClient) GetSearchBizInstTopo(start, bizID, limit, level int) ([]CCSearchBizInstTopoResponseInfo, error) {
+func (c *CCApiClient) GetSearchBizInstTopo(bkTenantID string, start, bizID, limit, level int) ([]CCSearchBizInstTopoResponseInfo, error) {
 	defer c.SearchBizInstTopoTimeObserver.Start().Finish()
 	result := struct {
 		APIResponse
 		Data []CCSearchBizInstTopoResponseInfo `json:"data"`
 	}{}
 
-	sling := c.Agent().Set(authKey, c.client.commonArgs.JSON())
+	sling := c.Agent().Set(authKey, c.client.commonArgs.JSON()).Set(tenantKey, bkTenantID)
 
 	// use different path by esb or api gateway
 	var path string
@@ -239,64 +241,107 @@ func (c *CCApiClient) GetSearchBizInstTopo(start, bizID, limit, level int) ([]CC
 	return result.Data, nil
 }
 
+// GetTenantList: 获取租户列表
+func (c *CCApiClient) GetTenantList() ([]TenantResponseInfo, error) {
+	// 如果未开启多租户模式，则只返回system租户
+	if !c.client.conf.GetBool(ConfESBMultiTenantMode) {
+		return []TenantResponseInfo{
+			{
+				ID:     "system",
+				Name:   "System",
+				Status: "enabled",
+			},
+		}, nil
+	}
+
+	agent := c.Agent().Base(c.client.conf.GetString(ConfESBAddress))
+	userApiAddress := c.client.conf.GetString(ConfESBUserApiAddress)
+	if userApiAddress == "" {
+		agent = agent.Path("/api/bk-user/prod")
+	} else {
+		agent = agent.Base(userApiAddress)
+	}
+
+	result := struct {
+		Data []TenantResponseInfo `json:"data"`
+	}{}
+
+	response, err := agent.
+		Get("api/v3/open/tenants/").
+		Set(authKey, c.client.commonArgs.JSON()).
+		Set(tenantKey, "system").
+		Receive(&result, &result)
+
+	if err != nil {
+		logging.Errorf("get tenant list failed: %v", err)
+		return nil, errors.Wrapf(err, "get tenant list failed")
+	}
+
+	logging.Debugf("get tenant list response: %d", response.StatusCode)
+
+	return result.Data, nil
+}
+
 // GetSearchBusiness: 返回全业务,不使用page（目前接口无默认上限值限定，后续CMDB改造后，需要适配兼容）
 func (c *CCApiClient) GetSearchBusiness() ([]CCSearchBusinessResponseInfo, error) {
 	defer c.SearchBusinessTimeObserver.Start().Finish()
-	// 返回结果结构体声明并创建临时变量
-	result := struct {
-		APIResponse
-		Data *CCSearchBusinessResponseData `json:"data"`
-	}{}
 
-	// use different path by esb or api gateway
-	var path string
-	if c.useApiGateway() {
-		path = fmt.Sprintf("api/v3/biz/search/%s", c.client.commonArgs.BkSupplierAccount)
-	} else {
-		path = "search_business/"
-	}
-
-	// 请求并将结果写入到result中
-	response, err := c.Agent().
-		Post(path).
-		Set(authKey, c.client.commonArgs.JSON()).
-		BodyProvider(&json.Provider{Payload: &CCSearchBusinessRequest{Fields: []string{"bk_biz_id", "bk_biz_name"}}}).
-		Receive(&result /* success */, &result /* failed */)
+	tenantList, err := c.GetTenantList()
 	if err != nil {
-		c.SearchBusinessCounter.CounterFails.Inc()
-		logging.Errorf("get business failed: %v, %v", result, err)
-		return nil, err
+		logging.Errorf("get tenant list failed: %v", err)
+		return nil, errors.Wrapf(err, "get tenant list failed")
 	}
 
-	logging.Debugf("get business response: %d, %v", response.StatusCode, result.Message)
-	if result.Data == nil {
-		c.SearchBusinessCounter.CounterFails.Inc()
-		logging.Errorf("%s query from cc error %d: %v", result.RequestID, result.Code, result.Message)
-		return nil, errors.Wrapf(define.ErrOperationForbidden, result.Message)
+	businessList := make([]CCSearchBusinessResponseInfo, 0)
+	for _, tenant := range tenantList {
+		// 返回结果结构体声明并创建临时变量
+		result := struct {
+			APIResponse
+			Data *CCSearchBusinessResponseData `json:"data"`
+		}{}
+
+		// use different path by esb or api gateway
+		var path string
+		if c.useApiGateway() {
+			path = fmt.Sprintf("api/v3/biz/search/%s", c.client.commonArgs.BkSupplierAccount)
+		} else {
+			path = "search_business/"
+		}
+
+		// 请求并将结果写入到result中
+		response, err := c.Agent().
+			Post(path).
+			Set(authKey, c.client.commonArgs.JSON()).
+			Set(tenantKey, tenant.ID).
+			BodyProvider(&json.Provider{Payload: &CCSearchBusinessRequest{Fields: []string{"bk_biz_id", "bk_biz_name"}}}).
+			Receive(&result /* success */, &result /* failed */)
+		if err != nil {
+			c.SearchBusinessCounter.CounterFails.Inc()
+			logging.Errorf("get business failed: %v, %v", result, err)
+			return nil, err
+		}
+
+		logging.Debugf("get business response: %d, %v", response.StatusCode, result.Message)
+		if result.Data == nil {
+			c.SearchBusinessCounter.CounterFails.Inc()
+			logging.Errorf("%s query from cc error %d: %v", result.RequestID, result.Code, result.Message)
+			return nil, errors.Wrapf(define.ErrOperationForbidden, result.Message)
+		}
+
+		// fill bk_tenant_id
+		for i := range result.Data.Info {
+			result.Data.Info[i].BkTenantID = tenant.ID
+		}
+
+		c.SearchBusinessCounter.CounterSuccesses.Inc()
+		businessList = append(businessList, result.Data.Info...)
 	}
 
-	c.SearchBusinessCounter.CounterSuccesses.Inc()
-
-	// 判断是否需要进行CMDB v3的业务过滤，如果不需要，直接返回
-	if !IsFilterCMDBV3Biz {
-		logging.Infof("IsFilterCMDBV3Biz is set to->[%t], no biz will filter.", IsFilterCMDBV3Biz)
-		return result.Data.Info, nil
-	}
-
-	logging.Infof("IsFilterCMDBV3Biz is set to->[%t] will filter biz location.", IsFilterCMDBV3Biz)
-	filterResult, err := c.FilterCMDBV3Biz(result.Data.Info)
-	logging.Debugf("IsFilterCMDBV3Biz is set to->[%t] will after filter biz count->[%d].", IsFilterCMDBV3Biz, len(filterResult))
-
-	if err != nil {
-		logging.Warnf("filter CMDBV3 with error->[%s] will use original data.", err)
-		return result.Data.Info, nil
-	}
-
-	return filterResult, nil
+	return businessList, nil
 }
 
 // GetServiceInstance : 实例
-func (c *CCApiClient) GetServiceInstance(bizID, limit, start int, ServiceInstanceIds []int) (*CCSearchServiceInstanceResponseData, error) {
+func (c *CCApiClient) GetServiceInstance(bkTenantID string, bizID, limit, start int, ServiceInstanceIds []int) (*CCSearchServiceInstanceResponseData, error) {
 	defer c.SearchServiceInstanceTimeObserver.Start().Finish()
 	result := struct {
 		APIResponse
@@ -314,6 +359,7 @@ func (c *CCApiClient) GetServiceInstance(bizID, limit, start int, ServiceInstanc
 	response, err := c.Agent().
 		Post(path).
 		Set(authKey, c.client.commonArgs.JSON()).
+		Set(tenantKey, bkTenantID).
 		BodyProvider(&json.Provider{Payload: &CCSearchServiceInstanceRequest{
 			Page: CCSearchServiceInstanceRequestMetadataLabelPage{
 				Start: start,
@@ -349,16 +395,17 @@ func (c *CCApiClient) VisitAllHost(ctx context.Context, batchSize int, ccInfo mo
 	}
 	taskManager, err := NewTaskManage(ctx, MaxWorkerConfig, func(task Task) {
 		var ccHostMonitor *CCSearchHostResponseDataV3Monitor
-		switch ccInfo.(type) {
+		ccInfoCopy := ccInfo // 创建一个副本避免捕获循环变量
+		switch ccInfoCopy.(type) {
 		case *models.CCHostInfo:
-			hostRes, err := c.GetHostsByRange(task.BizID, task.Limit, task.Start)
+			hostRes, err := c.GetHostsByRange(task.BkTenantID, task.BizID, task.Limit, task.Start)
 			if err != nil {
 				logging.Errorf("unable to load host info to store by %v", err)
 				return
 			}
 			ccHostMonitor, _ = OpenHostResInMonitorAdapter(hostRes, task.BizID)
 		case *models.CCInstanceInfo:
-			instanceRes, err := c.GetServiceInstance(task.BizID, task.Limit, task.Start, []int{})
+			instanceRes, err := c.GetServiceInstance(task.BkTenantID, task.BizID, task.Limit, task.Start, []int{})
 			if err != nil {
 				logging.Errorf("unable to load instance info to store by %v", err)
 				return
@@ -369,7 +416,7 @@ func (c *CCApiClient) VisitAllHost(ctx context.Context, batchSize int, ccInfo mo
 		for _, topoInfo := range task.Topo {
 			MergeTopoHost(ccHostMonitor, TopoDataToCmdbLevelV3(&topoInfo))
 		}
-		err := fn(*ccHostMonitor, ccInfo)
+		err := fn(*ccHostMonitor, ccInfoCopy)
 		if err != nil {
 			logging.Errorf("unable to load store by %v", err)
 			return
@@ -505,9 +552,4 @@ func MergeTopoHost(hostInfo *CCSearchHostResponseDataV3Monitor, topoInfo []map[s
 			}
 		}
 	}
-}
-
-// FilterBizLocation: 将传入的业务信息进行过滤，仅剩余CMDBV3的业务信息（已弃用）
-func (c *CCApiClient) FilterCMDBV3Biz(originalResponse []CCSearchBusinessResponseInfo) ([]CCSearchBusinessResponseInfo, error) {
-	return originalResponse, nil
 }

@@ -62,48 +62,48 @@ func (mr *MockApiClientMockRecorder) GetSearchBusiness() *gomock.Call {
 }
 
 // GetServiceInstance mocks base method
-func (m *MockApiClient) GetServiceInstance(bizID, limit, start int, ServiceInstanceIds []int) (*esb.CCSearchServiceInstanceResponseData, error) {
+func (m *MockApiClient) GetServiceInstance(bkTenantID string, bizID, limit, start int, ServiceInstanceIds []int) (*esb.CCSearchServiceInstanceResponseData, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetServiceInstance", bizID, limit, start, ServiceInstanceIds)
+	ret := m.ctrl.Call(m, "GetServiceInstance", bkTenantID, bizID, limit, start, ServiceInstanceIds)
 	ret0, _ := ret[0].(*esb.CCSearchServiceInstanceResponseData)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetServiceInstance indicates an expected call of GetServiceInstance
-func (mr *MockApiClientMockRecorder) GetServiceInstance(bizID, limit, start, ServiceInstanceIds interface{}) *gomock.Call {
+func (mr *MockApiClientMockRecorder) GetServiceInstance(bkTenantID, bizID, limit, start, ServiceInstanceIds interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetServiceInstance", reflect.TypeOf((*MockApiClient)(nil).GetServiceInstance), bizID, limit, start, ServiceInstanceIds)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetServiceInstance", reflect.TypeOf((*MockApiClient)(nil).GetServiceInstance), bkTenantID, bizID, limit, start, ServiceInstanceIds)
 }
 
 // GetSearchBizInstTopo mocks base method
-func (m *MockApiClient) GetSearchBizInstTopo(start, bizID, limit, level int) ([]esb.CCSearchBizInstTopoResponseInfo, error) {
+func (m *MockApiClient) GetSearchBizInstTopo(bkTenantID string, start, bizID, limit, level int) ([]esb.CCSearchBizInstTopoResponseInfo, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetSearchBizInstTopo", start, bizID, limit, level)
+	ret := m.ctrl.Call(m, "GetSearchBizInstTopo", bkTenantID, start, bizID, limit, level)
 	ret0, _ := ret[0].([]esb.CCSearchBizInstTopoResponseInfo)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetSearchBizInstTopo indicates an expected call of GetSearchBizInstTopo
-func (mr *MockApiClientMockRecorder) GetSearchBizInstTopo(start, bizID, limit, level interface{}) *gomock.Call {
+func (mr *MockApiClientMockRecorder) GetSearchBizInstTopo(bkTenantID, start, bizID, limit, level interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSearchBizInstTopo", reflect.TypeOf((*MockApiClient)(nil).GetSearchBizInstTopo), start, bizID, limit, level)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSearchBizInstTopo", reflect.TypeOf((*MockApiClient)(nil).GetSearchBizInstTopo), bkTenantID, start, bizID, limit, level)
 }
 
 // GetHostsByRange mocks base method
-func (m *MockApiClient) GetHostsByRange(bizID, limit, start int) (*esb.CCSearchHostResponseData, error) {
+func (m *MockApiClient) GetHostsByRange(bkTenantID string, bizID, limit, start int) (*esb.CCSearchHostResponseData, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetHostsByRange", bizID, limit, start)
+	ret := m.ctrl.Call(m, "GetHostsByRange", bkTenantID, bizID, limit, start)
 	ret0, _ := ret[0].(*esb.CCSearchHostResponseData)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetHostsByRange indicates an expected call of GetHostsByRange
-func (mr *MockApiClientMockRecorder) GetHostsByRange(bizID, limit, start interface{}) *gomock.Call {
+func (mr *MockApiClientMockRecorder) GetHostsByRange(bkTenantID, bizID, limit, start interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetHostsByRange", reflect.TypeOf((*MockApiClient)(nil).GetHostsByRange), bizID, limit, start)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetHostsByRange", reflect.TypeOf((*MockApiClient)(nil).GetHostsByRange), bkTenantID, bizID, limit, start)
 }
 
 // VisitAllHost mocks base method

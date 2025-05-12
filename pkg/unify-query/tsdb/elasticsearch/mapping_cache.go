@@ -10,8 +10,6 @@
 package elasticsearch
 
 import (
-	"context"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"sync"
 	"time"
 )
@@ -34,10 +32,12 @@ type MappingEntry struct {
 	lastUpdated time.Time
 }
 
+// IsExpired 判断缓存是否过期
 func (m MappingEntry) IsExpired(ttl time.Duration) bool {
 	return time.Now().After(m.lastUpdated.Add(ttl))
 }
 
+// MappingEntryKey 保存缓存映射的键
 type MappingEntryKey struct {
 	tableID   string
 	fieldsStr string
@@ -86,6 +86,7 @@ func (m *MappingCache) GetTTL() time.Duration {
 	return m.ttl
 }
 
+// AppendFieldTypesCache 将字段类型添加到缓存
 func (m *MappingCache) AppendFieldTypesCache(tableID string, mapping map[string]string) {
 	m.withWriteLock(func() {
 		if m.data == nil {
@@ -104,9 +105,9 @@ func (m *MappingCache) AppendFieldTypesCache(tableID string, mapping map[string]
 	})
 }
 
+// GetFieldType 从缓存获取字段类型，自动处理过期条目
 func (m *MappingCache) GetFieldType(tableID string, fieldsStr string) (string, bool) {
 	entry, ok := m.get(tableID, fieldsStr)
-	log.Debugf(context.TODO(), "mapping cache get field type, tableID: %s, fieldsStr: %s, fieldType: %s, hit: %t", tableID, fieldsStr, entry.fieldType, ok)
 	return entry.fieldType, ok
 }
 

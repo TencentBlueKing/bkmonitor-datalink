@@ -10,6 +10,8 @@
 package elasticsearch
 
 import (
+	"context"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"sync"
 	"time"
 )
@@ -108,6 +110,7 @@ func (m *MappingCache) AppendFieldTypesCache(tableID string, mapping map[string]
 // GetFieldType 从缓存获取字段类型，自动处理过期条目
 func (m *MappingCache) GetFieldType(tableID string, fieldsStr string) (string, bool) {
 	entry, ok := m.get(tableID, fieldsStr)
+	log.Infof(context.TODO(), "GetFieldType tableID: %s, fieldsStr: %s, fieldType: %s, ok: %t", tableID, fieldsStr, entry.fieldType, ok)
 	return entry.fieldType, ok
 }
 

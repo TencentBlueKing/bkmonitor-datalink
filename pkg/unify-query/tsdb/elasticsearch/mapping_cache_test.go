@@ -330,10 +330,7 @@ func TestMappingCache_ConcurrentAccess(t *testing.T) {
 		}(i)
 	}
 
-	// Wait for all goroutines to complete
 	wg.Wait()
-
-	// If we reach here without deadlocks or panics, the test is successful
 }
 
 func TestFieldTypesCache_GlobalVariable(t *testing.T) {

@@ -377,8 +377,10 @@ type Query struct {
 	// Timezone 时区，会被外面的 Timezone 覆盖
 	Timezone string `json:"-" swaggerignore:"true"`
 
-	// QueryString es 专用关键字查询
+	// QueryString 关键字查询
 	QueryString string `json:"query_string"`
+	// IsPrefix 是否启用前缀匹配
+	IsPrefix bool `json:"is_prefix"`
 
 	// IsReference 是否使用非时间聚合查询
 	IsReference bool `json:"-" swaggerignore:"true"`
@@ -917,6 +919,7 @@ func (q *Query) BuildMetadataQuery(
 
 	// 写入 ES 所需内容
 	query.QueryString = q.QueryString
+	query.IsPrefix = q.IsPrefix
 	query.Source = q.KeepColumns
 
 	query.HighLight = q.HighLight

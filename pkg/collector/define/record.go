@@ -274,6 +274,7 @@ func (q *RecordQueue) Get() <-chan *Record {
 
 // Token 描述了 Record 校验的必要信息
 type Token struct {
+	Type           string `config:"type"`
 	Original       string `config:"token"`
 	BizId          int32  `config:"bk_biz_id"`
 	AppName        string `config:"bk_app_name"`

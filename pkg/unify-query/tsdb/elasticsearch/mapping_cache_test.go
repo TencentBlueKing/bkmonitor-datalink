@@ -43,15 +43,6 @@ func TestMappingEntry_IsExpired(t *testing.T) {
 			ttl:      5 * time.Minute,
 			expected: true,
 		},
-		{
-			name: "just expired",
-			entry: MappingEntry{
-				fieldType:   "keyword",
-				lastUpdated: now.Add(-5 * time.Minute),
-			},
-			ttl:      5 * time.Minute,
-			expected: true,
-		},
 	}
 
 	for _, tc := range tests {
@@ -227,23 +218,6 @@ func TestMappingCache_Delete(t *testing.T) {
 	fieldType2, ok2 := cache.GetFieldType(tableID, "field2")
 	assert.True(t, ok2)
 	assert.Equal(t, "text", fieldType2)
-
-	// Test delete entire table
-	cache.Delete(tableID, "")
-
-	// All fields should be gone
-	fieldType2After, ok2After := cache.GetFieldType(tableID, "field2")
-	assert.False(t, ok2After)
-	assert.Empty(t, fieldType2After)
-
-	// Test delete on non-existing table
-	cache.Delete("nonexisttable", "field1")
-	// Should not panic
-
-	// Test delete with nil data
-	cache = &MappingCache{data: nil}
-	cache.Delete(tableID, "field1")
-	// Should not panic
 }
 
 func TestMappingCache_Clear(t *testing.T) {

@@ -12,6 +12,7 @@ package otlp
 import (
 	"bytes"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -38,6 +39,7 @@ const (
 	routeV1Trace   = "/v1/trace"
 	routeV1Metrics = "/v1/metrics"
 	routeV1Logs    = "/v1/logs"
+	aegisLos       = "/aegis/v1/logs"
 )
 
 func init() {
@@ -68,6 +70,11 @@ func Ready(config receiver.ComponentConfig) {
 			Method:       http.MethodPost,
 			RelativePath: routeV1Logs,
 			HandlerFunc:  httpSvc.ExportLogs,
+		},
+		{
+			Method:       http.MethodPost,
+			RelativePath: aegisLos,
+			HandlerFunc:  httpSvc.PrintLogs,
 		},
 	})
 
@@ -193,6 +200,32 @@ func (s HttpService) getResponseHandler(contentType string) receiver.ResponseHan
 	}
 	// 缺省解析器为 contentTypeJson
 	return HttpJsonResponseHandler()
+}
+
+var request_printer RequestPrinter
+
+// RequestPrinter 是一个 HTTP 请求处理器，负责打印请求信息 Todo: debug内容
+type RequestPrinter struct {
+	// 可以在这里定义一些共享的配置或状态
+	logger *log.Logger
+}
+
+func (s HttpService) PrintLogs(w http.ResponseWriter, req *http.Request) {
+	s.PrintDebug(w, req, define.RecordAegis)
+}
+
+// ServeHTTP 处理 HTTP 请求并打印请求信息
+func (s HttpService) PrintDebug(w http.ResponseWriter, req *http.Request, rtype define.RecordType) {
+	// 1. 打印基本请求信息
+	rh := s.getResponseHandler(req.Header.Get(define.ContentType))
+	msg, err := rh.Response(rtype)
+	if err != nil {
+		metricMonitor.IncInternalErrorCounter(define.RequestHttp, rtype)
+		writeError(w, rh, err, http.StatusInternalServerError)
+		logger.Errorf("failed to unmarshal response, error: %s", err)
+		return
+	}
+	receiver.WriteResponse(w, rh.ContentType(), http.StatusOK, msg)
 }
 
 // HttpPbResponseHandler HTTP 协议 Protobuf 类型相应处理器

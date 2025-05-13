@@ -45,6 +45,8 @@ const (
 	SourceBeat        = "beat"
 	SourceTars        = "tars"
 
+	SourceAegis = "aegis"
+
 	KeyToken    = "X-BK-TOKEN"
 	KeyDataID   = "X-BK-DATA-ID"
 	KeyTenantID = "X-Tps-TenantID"
@@ -72,6 +74,8 @@ const (
 	RecordPingserver     RecordType = "pingserver"
 	RecordBeat           RecordType = "beat"
 	RecordTars           RecordType = "tars"
+
+	RecordAegis RecordType = "aegis"
 )
 
 // IntoRecordType 将字符串描述转换为 RecordType 并返回是否为 Derived 类型

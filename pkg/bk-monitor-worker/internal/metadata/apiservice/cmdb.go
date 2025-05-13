@@ -10,6 +10,8 @@
 package apiservice
 
 import (
+	"strconv"
+
 	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -134,7 +136,7 @@ func (s CMDBService) GetHostByIp(ipList []GetHostByIpParams, BkBizId int) ([]cmd
 	}
 	params := s.processGetHostByIpParams(BkBizId, ipList)
 	var topoResp cmdb.ListBizHostsTopoResp
-	if _, err = cmdbApi.ListBizHostsTopo().SetBody(params).SetResult(&topoResp).Request(); err != nil {
+	if _, err = cmdbApi.ListBizHostsTopo().SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(BkBizId)}).SetBody(params).SetResult(&topoResp).Request(); err != nil {
 		paramStr, _ := jsonx.MarshalString(params)
 		return nil, errors.Wrapf(err, "ListBizHostsTopo with params [%s] failed", paramStr)
 	}
@@ -234,7 +236,7 @@ func (s CMDBService) GetAllHost() ([]Host, error) {
 		return nil, errors.Wrap(err, "GetCmdbApi failed")
 	}
 	var bizResp cmdb.SearchBusinessResp
-	if _, err := cmdbApi.SearchBusiness().SetResult(&bizResp).Request(); err != nil {
+	if _, err := cmdbApi.SearchBusiness().SetPathParams(map[string]string{"bk_supplier_account": "0"}).SetResult(&bizResp).Request(); err != nil {
 		return nil, errors.Wrap(err, "SearchBusinessResp failed")
 	}
 	if err := bizResp.Err(); err != nil {
@@ -279,7 +281,7 @@ func (s CMDBService) GetAllHost() ([]Host, error) {
 			},
 		}
 		var topoResp cmdb.ListBizHostsTopoResp
-		_, err = cmdbApi.ListBizHostsTopo().SetBody(params).SetResult(&topoResp).Request()
+		_, err = cmdbApi.ListBizHostsTopo().SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(info.BkBizId)}).SetBody(params).SetResult(&topoResp).Request()
 		if err != nil {
 			logger.Errorf("ListBizHostsTopo with bk_biz_id [%v] failed, %v", info.BkBizId, err)
 			continue

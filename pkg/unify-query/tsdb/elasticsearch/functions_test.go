@@ -70,7 +70,7 @@ func TestShortDur(t *testing.T) {
 		{
 			name:     "0 seconds",
 			duration: 0 * time.Second,
-			expected: "0s",
+			expected: "0ms",
 		},
 		{
 			name:     "1 day",
@@ -87,7 +87,7 @@ func TestShortDur(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := shortDur(tt.duration)
-			assert.Equal(t, got, tt.expected)
+			assert.Equal(t, tt.expected, got)
 		})
 	}
 }

@@ -22,17 +22,14 @@
 
 package cmdbcache
 
-//import (
-//	"context"
-//	"encoding/json"
-//	"os"
-//	"os/signal"
-//	"sync"
-//	"testing"
-//
-//	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
-//)
-//
+import (
+	"fmt"
+	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+)
+
 //func TestResourceWatch(t *testing.T) {
 //	redisOptions := redis.Options{
 //		Mode:  "standalone",
@@ -93,3 +90,24 @@ package cmdbcache
 //
 //	wg.Wait()
 //}
+
+func TestManager(t *testing.T) {
+	//redisOptions := redis.Options{
+	//	Mode:  "standalone",
+	//	Addrs: []string{"127.0.0.1:6379"},
+	//}
+
+	cmdbApi, err := api.GetCmdbApi()
+	if err != nil {
+		t.Errorf("TestManager failed, err: %v", err)
+		return
+	}
+
+	var result cmdb.SearchBusinessResp
+	_, err = cmdbApi.SearchBusiness().SetPathParams(map[string]string{"bk_supplier_account": "0"}).SetResult(&result).Request()
+	if err != nil {
+		t.Errorf("TestManager failed, err: %v", err)
+		return
+	}
+	fmt.Printf("result: %v\n", result)
+}

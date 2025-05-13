@@ -148,7 +148,7 @@ type ValueAgg struct {
 
 type TimeAgg struct {
 	Name     string
-	Window   string
+	Window   time.Duration
 	Timezone string
 }
 
@@ -209,6 +209,22 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 func (f *FormatFactory) WithIsReference(isReference bool) *FormatFactory {
 	f.isReference = isReference
 	return f
+}
+
+func (f *FormatFactory) toFixInterval(window time.Duration) (string, error) {
+	switch f.timeField.Unit {
+	case function.Second:
+		window /= 1e3
+	case function.Microsecond:
+		window *= 1e3
+	case function.Nanosecond:
+		window *= 1e6
+	}
+
+	if window.Milliseconds() < 1 {
+		return "", fmt.Errorf("date histogram aggregation interval must be greater than 0ms")
+	}
+	return shortDur(window), nil
 }
 
 func (f *FormatFactory) toMillisecond(i int64) int64 {
@@ -335,7 +351,7 @@ func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
 	return query, err
 }
 
-func (f *FormatFactory) timeAgg(name string, window, timezone string) {
+func (f *FormatFactory) timeAgg(name string, window time.Duration, timezone string) {
 	f.aggInfoList = append(
 		f.aggInfoList, TimeAgg{
 			Name: name, Window: window, Timezone: timezone,
@@ -397,9 +413,11 @@ func (f *FormatFactory) nestedAgg(key string) {
 }
 
 // AggDataFormat 解析 es 的聚合计算
-func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *prompb.Label) (map[string]*prompb.TimeSeries, error) {
+func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *prompb.Label) (*prompb.QueryResult, error) {
 	if data == nil {
-		return nil, nil
+		return &prompb.QueryResult{
+			Timeseries: []*prompb.TimeSeries{},
+		}, nil
 	}
 
 	defer func() {
@@ -424,6 +442,8 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 	}
 
 	timeSeriesMap := make(map[string]*prompb.TimeSeries)
+	keySort := make([]string, 0)
+
 	for _, im := range af.items {
 		var (
 			tsLabels []prompb.Label
@@ -448,6 +468,7 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 
 		seriesKey := seriesNameBuilder.String()
 		if _, ok := timeSeriesMap[seriesKey]; !ok {
+			keySort = append(keySort, seriesKey)
 			timeSeriesMap[seriesKey] = &prompb.TimeSeries{
 				Samples: make([]prompb.Sample, 0),
 			}
@@ -464,7 +485,14 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 		})
 	}
 
-	return timeSeriesMap, nil
+	tss := make([]*prompb.TimeSeries, 0, len(timeSeriesMap))
+	for _, key := range keySort {
+		if ts, ok := timeSeriesMap[key]; ok {
+			tss = append(tss, ts)
+		}
+	}
+
+	return &prompb.QueryResult{Timeseries: tss}, nil
 }
 
 func (f *FormatFactory) SetData(data map[string]any) {
@@ -571,9 +599,20 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		case TimeAgg:
 			curName := info.Name
 
+			var interval string
+
+			if f.timeField.Type == TimeFieldTypeInt {
+				interval, err = f.toFixInterval(info.Window)
+				if err != nil {
+					return
+				}
+			} else {
+				interval = shortDur(info.Window)
+			}
+
 			curAgg := elastic.NewDateHistogramAggregation().
-				Field(f.timeField.Name).Interval(info.Window).MinDocCount(0).
-				ExtendedBounds(f.TimeFieldUnix(f.start), f.TimeFieldUnix(f.end))
+				Field(f.timeField.Name).Interval(interval).MinDocCount(0).
+				ExtendedBounds(f.timeFieldUnix(f.start), f.timeFieldUnix(f.end))
 			// https://github.com/elastic/elasticsearch/issues/42270 非date类型不支持timezone, time format也无效
 			if f.timeField.Type == TimeFieldTypeTime {
 				curAgg = curAgg.TimeZone(info.Timezone)
@@ -642,14 +681,14 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 	for _, am := range aggregates {
 		switch am.Name {
 		case DateHistogram:
-			f.timeAgg(f.timeField.Name, shortDur(am.Window), am.TimeZone)
+			f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
 			f.valueAgg(FieldValue, am.Name, am.Args...)
 			f.nestedAgg(f.valueField)
 
 			if am.Window > 0 && !am.Without {
 				// 增加时间函数
-				f.timeAgg(f.timeField.Name, shortDur(am.Window), am.TimeZone)
+				f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
 			}
 
 			for idx, dim := range am.Dimensions {
@@ -688,7 +727,7 @@ func (f *FormatFactory) Orders() metadata.Orders {
 	return orders
 }
 
-func (f *FormatFactory) TimeFieldUnix(t time.Time) (u int64) {
+func (f *FormatFactory) timeFieldUnix(t time.Time) (u int64) {
 	switch f.timeField.Unit {
 	case function.Millisecond:
 		u = t.UnixMilli()
@@ -732,20 +771,28 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 	bootQueries := make([]elastic.Query, 0)
 	orQuery := make([]elastic.Query, 0, len(allConditions))
 
-	nestedFields := make(map[string]struct{})
 	for _, conditions := range allConditions {
-		andQuery := make([]elastic.Query, 0, len(conditions))
+		// Track nested fields separately for each condition group
+		nestedFields := make(map[string]struct{})
+		nestedQueries := make(map[string][]elastic.Query)
+		nonNestedQueries := make([]elastic.Query, 0)
+
+		// First pass: process all conditions and separate nested from non-nested
 		for _, con := range conditions {
 			key := con.DimensionName
 			if f.decode != nil {
 				key = f.decode(key)
 			}
 
+			// Check if this dimension is in a nested field
+			nf := f.NestedField(con.DimensionName)
+
+			var q elastic.Query
 			switch con.Operator {
 			case structured.ConditionExisted:
-				andQuery = append(andQuery, elastic.NewExistsQuery(key))
+				q = elastic.NewExistsQuery(key)
 			case structured.ConditionNotExisted:
-				andQuery = append(andQuery, f.getQuery(MustNot, elastic.NewExistsQuery(key)))
+				q = f.getQuery(MustNot, elastic.NewExistsQuery(key))
 			default:
 				// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
 				fieldType, ok := f.mapping[key]
@@ -776,14 +823,22 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 							// 非空才进行验证
 							switch con.Operator {
 							case structured.ConditionEqual, structured.ConditionNotEqual:
-								query = elastic.NewMatchPhraseQuery(key, value)
+								if con.IsPrefix {
+									query = elastic.NewMatchPhrasePrefixQuery(key, value)
+								} else {
+									query = elastic.NewMatchPhraseQuery(key, value)
+								}
 							case structured.ConditionContains, structured.ConditionNotContains:
 								if fieldType == KeyWord {
 									value = fmt.Sprintf("*%s*", value)
 								}
 
 								if !con.IsWildcard && fieldType == Text {
-									query = elastic.NewMatchPhraseQuery(key, value)
+									if con.IsPrefix {
+										query = elastic.NewMatchPhrasePrefixQuery(key, value)
+									} else {
+										query = elastic.NewMatchPhraseQuery(key, value)
+									}
 								} else {
 									query = elastic.NewWildcardQuery(key, value)
 								}
@@ -811,7 +866,6 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 				}
 
 				// 非空才进行验证
-				var q elastic.Query
 				switch con.Operator {
 				case structured.ConditionEqual, structured.ConditionContains, structured.ConditionRegEqual:
 					q = f.getQuery(Should, queries...)
@@ -822,21 +876,38 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 				default:
 					return nil, fmt.Errorf("operator is not support, %+v", con)
 				}
+			}
 
-				nf := f.NestedField(con.DimensionName)
-				if nf != "" {
-					nestedFields[nf] = struct{}{}
-				}
-
-				if q != nil {
-					andQuery = append(andQuery, q)
-				}
+			// Add to the appropriate query collection
+			if nf != "" {
+				nestedFields[nf] = struct{}{}
+				nestedQueries[nf] = append(nestedQueries[nf], q)
+			} else if q != nil {
+				nonNestedQueries = append(nonNestedQueries, q)
 			}
 		}
 
-		aq := f.getQuery(Must, andQuery...)
-		if aq != nil {
-			orQuery = append(orQuery, aq)
+		// Combine nested queries by field
+		nestedFieldQueries := make([]elastic.Query, 0)
+		for field, queries := range nestedQueries {
+			if len(queries) > 0 {
+				// Create a nested query for this field
+				nestedQuery := elastic.NewNestedQuery(field, f.getQuery(Must, queries...))
+				nestedFieldQueries = append(nestedFieldQueries, nestedQuery)
+			}
+		}
+
+		// Combine all queries (nested and non-nested)
+		var allQueries []elastic.Query
+		allQueries = append(allQueries, nonNestedQueries...)
+		allQueries = append(allQueries, nestedFieldQueries...)
+
+		// Add to OR query
+		if len(allQueries) > 0 {
+			aq := f.getQuery(Must, allQueries...)
+			if aq != nil {
+				orQuery = append(orQuery, aq)
+			}
 		}
 	}
 
@@ -850,13 +921,6 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 		resQuery = elastic.NewBoolQuery().Must(bootQueries...)
 	} else if len(bootQueries) == 1 {
 		resQuery = bootQueries[0]
-	}
-
-	// 拼接 nested query
-	if len(nestedFields) > 0 {
-		for k := range nestedFields {
-			resQuery = elastic.NewNestedQuery(k, resQuery)
-		}
 	}
 
 	return resQuery, nil

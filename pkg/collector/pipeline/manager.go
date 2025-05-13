@@ -331,8 +331,8 @@ func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
 		return nil, err
 	}
 
-	// 解析合并：配置 = 主配置+子配置+平台配置（如果有的话）
-	platformConfig := confengine.LoadConfigFromType(apmConf.Patterns, define.ConfigTypePlatform)
+	// 解析合并配置 = 主配置+子配置+平台配置（如果有的话）
+	platformConfig := confengine.SelectConfigFromType(subConfigs, define.ConfigTypePlatform)
 	if platformConfig != nil {
 		if platformConfig.Has(define.ConfigFieldProcessor) {
 			platformProcessors, err := parseProcessors(PlatformType, platformConfig, processorSubConfigs)
@@ -350,8 +350,9 @@ func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
 			finalPipelines = mergePipelines(finalPipelines, platformPipelines)
 		}
 	}
-	// 解析合并：配置 = 主配置+子配置+平台配置+高优配置（如果有的话）
-	privilegedConfig := confengine.LoadConfigFromType(apmConf.Patterns, define.ConfigTypePrivileged)
+
+	// 解析合并配置 = 主配置+子配置+平台配置+高优配置（如果有的话）
+	privilegedConfig := confengine.SelectConfigFromType(subConfigs, define.ConfigTypePrivileged)
 	if privilegedConfig != nil {
 		if privilegedConfig.Has(define.ConfigFieldProcessor) {
 			privilegedProcessors, err := parseProcessors(PrivilegedType, privilegedConfig, processorSubConfigs)

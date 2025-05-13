@@ -21,7 +21,6 @@ import (
 
 	elastic "github.com/olivere/elastic/v7"
 	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/prompb"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
@@ -184,6 +183,10 @@ func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []stri
 		return nil, err
 	}
 	mappingMap, err := client.GetMapping().Index(aliases...).Type("").Do(ctx)
+	if err != nil {
+		log.Warnf(ctx, "get mapping error: %s", err.Error())
+		return nil, err
+	}
 
 	indexes := make([]string, 0, len(mappingMap))
 	for index := range mappingMap {
@@ -232,7 +235,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
 		qs := NewQueryString(qb.QueryString, fact.NestedField)
-		q, qsErr := qs.Parser()
+		q, qsErr := qs.ToDSL()
 		if qsErr != nil {
 			return nil, qsErr
 		}
@@ -377,16 +380,13 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	return res, err
 }
 
-func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *FormatFactory, rets chan<- *TimeSeriesResult) {
+func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *FormatFactory) storage.SeriesSet {
 	var (
-		ret = TimeSeriesResultPool.Get().(*TimeSeriesResult)
 		err error
 	)
 	ctx, span := trace.NewSpan(ctx, "query-with-aggregation")
 	defer func() {
 		span.End(&err)
-		ret.Error = err
-		rets <- ret
 	}()
 
 	span.Set("query-conn", qo.conn)
@@ -395,102 +395,20 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 
 	sr, err := i.esQuery(ctx, qo, fact)
 	if err != nil {
-		return
+		return storage.ErrSeriesSet(err)
+	}
+
+	if sr == nil || sr.Aggregations == nil {
+		return storage.EmptySeriesSet()
 	}
 
 	// 如果是非时间聚合计算，则无需进行指标名的拼接作用
-	ret.TimeSeriesMap, err = fact.AggDataFormat(sr.Aggregations, metricLabel)
+	qr, err := fact.AggDataFormat(sr.Aggregations, metricLabel)
 	if err != nil {
-		return
-	}
-	return
-}
-
-func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, fact *FormatFactory, rets chan<- *TimeSeriesResult) {
-	var (
-		ret = TimeSeriesResultPool.Get().(*TimeSeriesResult)
-		err error
-	)
-	ctx, span := trace.NewSpan(ctx, "query-without-aggregation")
-	defer func() {
-		span.End(&err)
-		ret.Error = err
-		rets <- ret
-	}()
-
-	sr, err := i.esQuery(ctx, qo, fact)
-	if err != nil {
-		return
+		return storage.ErrSeriesSet(err)
 	}
 
-	ret.TimeSeriesMap = make(map[string]*prompb.TimeSeries)
-	for _, d := range sr.Hits.Hits {
-		data := make(map[string]interface{})
-		if err = json.Unmarshal(d.Source, &data); err != nil {
-			return
-		}
-		fact.SetData(data)
-
-		lbs, vErr := fact.Labels()
-		if vErr != nil {
-			err = vErr
-			return
-		}
-
-		sample, vErr := fact.Sample()
-		if vErr != nil {
-			err = vErr
-			return
-		}
-
-		if _, ok := ret.TimeSeriesMap[lbs.String()]; !ok {
-			ret.TimeSeriesMap[lbs.String()] = &prompb.TimeSeries{
-				Labels:  lbs.GetLabels(),
-				Samples: make([]prompb.Sample, 0),
-			}
-		}
-		ret.TimeSeriesMap[lbs.String()].Samples = append(ret.TimeSeriesMap[lbs.String()].Samples, sample)
-	}
-
-	return
-}
-
-func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult, mergeFunc func(...[]prompb.Sample) []prompb.Sample) (*prompb.QueryResult, error) {
-	seriesMap := make(map[string]*prompb.TimeSeries)
-
-	for ret := range rets {
-		if ret.Error != nil {
-			return nil, ret.Error
-		}
-
-		if len(ret.TimeSeriesMap) == 0 {
-			continue
-		}
-
-		for key, ts := range ret.TimeSeriesMap {
-			if _, ok := seriesMap[key]; !ok {
-				seriesMap[key] = &prompb.TimeSeries{
-					Labels:  ts.GetLabels(),
-					Samples: make([]prompb.Sample, 0),
-				}
-			}
-
-			seriesMap[key].Samples = mergeFunc(seriesMap[key].Samples, ts.Samples)
-		}
-
-		ret.TimeSeriesMap = nil
-		ret.Error = nil
-		TimeSeriesResultPool.Put(ret)
-	}
-
-	qr := &prompb.QueryResult{
-		Timeseries: make([]*prompb.TimeSeries, 0, len(seriesMap)),
-	}
-	for _, ts := range seriesMap {
-		qr.Timeseries = append(qr.Timeseries, ts)
-	}
-
-	return qr, nil
+	return remote.FromQueryResult(false, qr)
 }
 
 func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time, timezone string) ([]string, error) {
@@ -734,7 +652,7 @@ func (i *Instance) QuerySeriesSet(
 		err error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-reference")
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-series-set")
 	defer span.End(&err)
 
 	if len(query.Aggregates) == 0 {
@@ -768,26 +686,21 @@ func (i *Instance) QuerySeriesSet(
 	span.Set("query-field", query.Field)
 	span.Set("query-fields", query.Fields)
 
-	rets := make(chan *TimeSeriesResult, 1)
+	setCh := make(chan storage.SeriesSet, len(i.connects))
 
 	go func() {
 		defer func() {
 			// es 查询有很多结构体无法判断的，会导致 panic
 			if r := recover(); r != nil {
-				rets <- &TimeSeriesResult{
-					Error: fmt.Errorf("es query error: %s", r),
-				}
+				setCh <- storage.ErrSeriesSet(fmt.Errorf("es query error: %s", r))
 			}
 
-			close(rets)
+			close(setCh)
 		}()
 
 		aliases, err1 := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
 		if err1 != nil {
-			rets <- &TimeSeriesResult{
-				Error: err1,
-			}
-			return
+			setCh <- storage.ErrSeriesSet(err1)
 		}
 
 		span.Set("query-aliases", aliases)
@@ -808,17 +721,15 @@ func (i *Instance) QuerySeriesSet(
 					conn:    conn,
 				}
 
-				mappings, err1 := i.getMappings(ctx, qo.conn, qo.indexes)
+				mappings, errMapping := i.getMappings(ctx, qo.conn, qo.indexes)
 				// index 不存在，mappings 获取异常直接返回空
 				if len(mappings) == 0 {
-					log.Warnf(ctx, "index is empty with %v", qo.indexes)
+					log.Warnf(ctx, "index is empty with %v with %s error %v", qo.indexes, qo.conn.String(), errMapping)
 					return
 				}
 
 				if err1 != nil {
-					rets <- &TimeSeriesResult{
-						Error: err1,
-					}
+					setCh <- storage.ErrSeriesSet(err1)
 					return
 				}
 				var size int
@@ -835,28 +746,26 @@ func (i *Instance) QuerySeriesSet(
 					WithOrders(query.Orders).
 					WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
 
-				if len(query.Aggregates) > 0 {
-					i.queryWithAgg(ctx, qo, fact, rets)
-				} else {
-					i.queryWithoutAgg(ctx, qo, fact, rets)
+				if len(query.Aggregates) == 0 {
+					setCh <- storage.ErrSeriesSet(fmt.Errorf("aggregates is empty"))
+					return
 				}
 
+				setCh <- i.queryWithAgg(ctx, qo, fact)
 			}()
 		}
 
 		wg.Wait()
 	}()
 
-	qr, err := i.mergeTimeSeries(rets, function.MergeSamplesWithFuncAndSort(query.Aggregates.LastAggName()))
-	if err != nil {
-		return storage.ErrSeriesSet(err)
+	var sets []storage.SeriesSet
+	for s := range setCh {
+		if s != nil {
+			sets = append(sets, s)
+		}
 	}
 
-	if qr == nil || len(qr.Timeseries) == 0 {
-		return storage.EmptySeriesSet()
-	}
-
-	return remote.FromQueryResult(true, qr)
+	return storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSort(query.Aggregates.LastAggName()))
 }
 
 // QueryRange 使用 es 直接查询引擎

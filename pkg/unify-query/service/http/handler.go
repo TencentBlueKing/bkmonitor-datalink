@@ -21,7 +21,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 )
 
 // HandlerPromQLToStruct
@@ -199,13 +198,12 @@ func HandlerQueryExemplar(c *gin.Context) {
 // @Router   /query/raw [post]
 func HandlerQueryRaw(c *gin.Context) {
 	var (
-		ctx              = c.Request.Context()
-		resp             = &response{c: c}
-		user             = metadata.GetUser(ctx)
-		err              error
-		span             *trace.Span
-		listData         ListData
-		ignoreDimensions = []string{elasticsearch.KeyAddress}
+		ctx      = c.Request.Context()
+		resp     = &response{c: c}
+		user     = metadata.GetUser(ctx)
+		err      error
+		span     *trace.Span
+		listData ListData
 	)
 
 	ctx, span = trace.NewSpan(ctx, "handler-query-raw")
@@ -241,7 +239,7 @@ func HandlerQueryRaw(c *gin.Context) {
 
 	listData.TraceID = span.TraceID()
 
-	total, list, resultTableOptions, err := queryRawWithInstance(ctx, queryTs)
+	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithInstance(ctx, queryTs)
 	if err != nil {
 		listData.Status = &metadata.Status{
 			Code:    metadata.QueryRawError,
@@ -249,19 +247,6 @@ func HandlerQueryRaw(c *gin.Context) {
 		}
 		return
 	}
-	listData.Total = total
-	listData.List = make([]map[string]any, 0, len(list))
-	for _, item := range list {
-		if item == nil {
-			continue
-		}
-
-		for _, ignoreDimension := range ignoreDimensions {
-			delete(item, ignoreDimension)
-		}
-		listData.List = append(listData.List, item)
-	}
-	listData.ResultTableOptions = resultTableOptions
 
 	resp.success(ctx, listData)
 }
@@ -306,6 +291,11 @@ func HandlerQueryTs(c *gin.Context) {
 		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
 		return
+	}
+
+	// metadata 中的 spaceUid 是从 header 头信息中获取，header 如果有的话，覆盖参数里的
+	if user.SpaceUid != "" {
+		query.SpaceUid = user.SpaceUid
 	}
 
 	queryStr, _ := json.Marshal(query)

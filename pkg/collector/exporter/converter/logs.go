@@ -58,7 +58,6 @@ func (c logsConverter) Convert(record *define.Record, f define.GatherFunc) {
 			for k := 0; k < logRecordSlice.Len(); k++ {
 				content, err := c.Extract(record.RequestClient.IP, logRecordSlice.At(k), rsAttrs)
 				if err != nil {
-					DefaultMetricMonitor.IncConverterFailedCounter(define.RecordLogs, dataId)
 					logger.Warnf("failed to extract content: %v", err)
 					continue
 				}

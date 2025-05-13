@@ -411,9 +411,9 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 
 	// QueryString to sql
 	if f.query.QueryString != "" && f.query.QueryString != "*" {
-		qs, qsErr := f.expr.ParserQueryString(f.query.QueryString)
-		if qsErr != nil {
-			return "", qsErr
+		qs, err := f.expr.ParserQueryString(f.query.QueryString)
+		if err != nil {
+			return "", err
 		}
 
 		if qs != "" {

@@ -57,7 +57,11 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather.Init()
 
 	taskConf := taskConfig.(*configs.TimeSyncConfig)
-	gather.cli = NewClient(taskConf.NtpdPath, taskConf.ChronyAddress, taskConf.QueryTimeout)
+	gather.cli = NewClient(&Option{
+		NtpdPath:   taskConf.NtpdPath,
+		ChronyAddr: taskConf.ChronyAddress,
+		Timeout:    taskConf.QueryTimeout,
+	})
 
 	return gather
 }
@@ -151,4 +155,20 @@ func (e *Event) AsMapStr() common.MapStr {
 		"time":      ts,
 		"timestamp": ts,
 	}
+}
+
+type Stat struct {
+	Source string
+	Min    float64
+	Max    float64
+	Avg    float64
+	Sum    float64
+	Err    int
+	Count  int
+}
+
+type Option struct {
+	NtpdPath   string
+	ChronyAddr string
+	Timeout    time.Duration
 }

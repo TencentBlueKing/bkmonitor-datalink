@@ -184,6 +184,13 @@ bkmonitorbeat:
 #    period: 1m
 #    dst_dir: '{{ plugin_path.subconfig_path }}'
 
+  # 时间同步服务采集
+  timesync_task:
+    dataid: 1100030
+    task_id: 98
+    period: 1m
+    env: host
+    query_timeout: 10s
   #### tcp_task child config #####
   # tcp任务全局设置
   #  tcp_task:

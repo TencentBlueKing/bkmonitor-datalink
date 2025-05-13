@@ -333,6 +333,17 @@ fi
 
 EOF
 fi
+  if [ "$system" = "windows" ]; then
+        cat <<EOF >> "$path"
+  # 时间同步服务采集
+  timesync_task:
+    dataid: 1100030
+    task_id: 98
+    period: 1m
+    env: host
+    query_timeout: 10s
+EOF
+fi
   cat <<EOF >> "$path"
   #### tcp_task child config #####
   # tcp任务全局设置

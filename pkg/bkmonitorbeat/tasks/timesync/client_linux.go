@@ -7,6 +7,8 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
+//go:build linux
+
 package timesync
 
 import (
@@ -25,41 +27,27 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-type Stat struct {
-	Source string
-	Min    float64
-	Max    float64
-	Avg    float64
-	Sum    float64
-	Err    int
-	Count  int
-}
-
 type Client struct {
-	NtpdPath   string
-	ChronyAddr string
-	Timeout    time.Duration
+	opt *Option
 }
 
-func NewClient(nptdPath, chronyAddr string, timeout time.Duration) *Client {
-	if timeout == 0 {
-		timeout = time.Second * 5
+func NewClient(opt *Option) *Client {
+	if opt.Timeout == 0 {
+		opt.Timeout = time.Second * 5
 	}
 	return &Client{
-		NtpdPath:   nptdPath,
-		ChronyAddr: chronyAddr,
-		Timeout:    timeout,
+		opt: opt,
 	}
 }
 
 func (c *Client) Query() (*Stat, error) {
-	if c.ChronyAddr == "" && c.NtpdPath == "" {
+	if c.opt.ChronyAddr == "" && c.opt.NtpdPath == "" {
 		return nil, errors.New("no source found")
 	}
 
 	var stat *Stat
 	var err error
-	if c.ChronyAddr != "" {
+	if c.opt.ChronyAddr != "" {
 		stat, err = c.queryChrony()
 		if err == nil {
 			return stat, nil
@@ -67,7 +55,7 @@ func (c *Client) Query() (*Stat, error) {
 		// 默认配置里 chrony / ntpd 都会存在
 		logger.Warnf("failed to query chrony: %v", err)
 	}
-	if c.NtpdPath != "" {
+	if c.opt.NtpdPath != "" {
 		stat, err = c.queryNtpd()
 		if err == nil {
 			return stat, nil
@@ -78,7 +66,7 @@ func (c *Client) Query() (*Stat, error) {
 }
 
 func (c *Client) queryNtpd() (*Stat, error) {
-	b, err := os.ReadFile(c.NtpdPath)
+	b, err := os.ReadFile(c.opt.NtpdPath)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +85,7 @@ func (c *Client) queryNtpd() (*Stat, error) {
 		if len(parts) != 3 {
 			continue
 		}
-		rsp, err := ntp.QueryWithOptions(parts[1], ntp.QueryOptions{Timeout: c.Timeout})
+		rsp, err := ntp.QueryWithOptions(parts[1], ntp.QueryOptions{Timeout: c.opt.Timeout})
 		if err != nil {
 			stat.Err++
 			continue
@@ -121,7 +109,7 @@ func (c *Client) queryNtpd() (*Stat, error) {
 }
 
 func (c *Client) queryChrony() (*Stat, error) {
-	conn, err := net.DialTimeout("udp", c.ChronyAddr, c.Timeout)
+	conn, err := net.DialTimeout("udp", c.opt.ChronyAddr, c.opt.Timeout)
 	if err != nil {
 		return nil, err
 	}

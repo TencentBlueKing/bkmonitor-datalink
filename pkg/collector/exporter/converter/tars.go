@@ -466,7 +466,6 @@ func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, d
 			default: // Policy -> Max / Min / Avg / Sum / Count
 				val, err := strconv.ParseFloat(info.Value, 64)
 				if err != nil {
-					DefaultMetricMonitor.IncConverterFailedCounter(define.RecordTars, dataID)
 					continue
 				}
 

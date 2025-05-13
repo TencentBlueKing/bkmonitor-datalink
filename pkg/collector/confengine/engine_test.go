@@ -75,9 +75,10 @@ func TestLoadConfigPatterns(t *testing.T) {
 	}
 }
 
-func TestLoadConfigFromType(t *testing.T) {
+func TestSelectConfigFromType(t *testing.T) {
 	t.Run("Platform", func(t *testing.T) {
-		config := LoadConfigFromType([]string{"../example/fixtures/platform.yml"}, define.ConfigTypePlatform)
+		subConfigs := LoadConfigPatterns([]string{"../example/fixtures/platform.yml"})
+		config := SelectConfigFromType(subConfigs, define.ConfigTypePlatform)
 		assert.NotNil(t, config)
 
 		conf := make(map[string]interface{})
@@ -85,7 +86,8 @@ func TestLoadConfigFromType(t *testing.T) {
 	})
 
 	t.Run("Privileged", func(t *testing.T) {
-		config := LoadConfigFromType([]string{"../example/fixtures/privileged.yml"}, define.ConfigTypePrivileged)
+		subConfigs := LoadConfigPatterns([]string{"../example/fixtures/privileged.yml"})
+		config := SelectConfigFromType(subConfigs, define.ConfigTypePrivileged)
 		assert.NotNil(t, config)
 
 		conf := make(map[string]interface{})

@@ -11,71 +11,39 @@ package elasticsearch
 
 import (
 	"context"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"sync"
+	"fmt"
 	"time"
+
+	"github.com/patrickmn/go-cache"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 var (
-	fieldTypesCache MappingCache
+	fieldTypesCache *MappingCache
 )
 
 var (
 	DefaultMappingCacheTTL = 5 * time.Minute
+	DefaultCleanupInterval = 10 * time.Minute
 )
 
 func init() {
 	fieldTypesCache = NewMappingCache(DefaultMappingCacheTTL)
 }
 
-// MappingEntry 保存缓存映射类型和最后更新时间
-type MappingEntry struct {
-	fieldType   string
-	lastUpdated time.Time
-}
-
-// IsExpired 判断缓存是否过期
-func (m MappingEntry) IsExpired(ttl time.Duration) bool {
-	return time.Now().After(m.lastUpdated.Add(ttl))
-}
-
-// MappingEntryKey 保存缓存映射的键
-type MappingEntryKey struct {
-	tableID   string
-	fieldsStr string
-}
-
-// MappingCache 保存缓存映射
-// 结构: map[MappingEntryKey]MappingEntry
+// MappingCache 用于缓存字段类型
 type MappingCache struct {
-	data map[MappingEntryKey]MappingEntry
-	lock sync.RWMutex
-	ttl  time.Duration
+	cache *cache.Cache
+	ttl   time.Duration
 }
 
-// NewMappingCache 创建一个新的映射缓存
-func NewMappingCache(ttl time.Duration) MappingCache {
-	return MappingCache{
-		data: make(map[MappingEntryKey]MappingEntry),
-		ttl:  ttl,
-		lock: sync.RWMutex{},
+// NewMappingCache 创建MappingCache
+func NewMappingCache(ttl time.Duration) *MappingCache {
+	return &MappingCache{
+		cache: cache.New(ttl, DefaultCleanupInterval),
+		ttl:   ttl,
 	}
-}
-
-// withReadLock 使用读锁执行函数
-func (m *MappingCache) withReadLock(fn func() (interface{}, bool)) (interface{}, bool) {
-	m.lock.RLock()
-	defer m.lock.RUnlock()
-
-	return fn()
-}
-
-// withWriteLock 使用写锁执行函数
-func (m *MappingCache) withWriteLock(fn func()) {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	fn()
 }
 
 // SetTTL 设置缓存的TTL
@@ -90,81 +58,37 @@ func (m *MappingCache) GetTTL() time.Duration {
 
 // AppendFieldTypesCache 将字段类型添加到缓存
 func (m *MappingCache) AppendFieldTypesCache(tableID string, mapping map[string]string) {
-	m.withWriteLock(func() {
-		if m.data == nil {
-			m.data = make(map[MappingEntryKey]MappingEntry)
-		}
-
-		for field, fieldType := range mapping {
-			m.data[MappingEntryKey{
-				tableID:   tableID,
-				fieldsStr: field,
-			}] = MappingEntry{
-				fieldType:   fieldType,
-				lastUpdated: time.Now(),
-			}
-		}
-	})
+	for field, fieldType := range mapping {
+		key := createCacheKey(tableID, field)
+		m.cache.Set(key, fieldType, m.ttl)
+	}
 }
 
-// GetFieldType 从缓存获取字段类型，自动处理过期条目
+// GetFieldType 从缓存获取字段类型
 func (m *MappingCache) GetFieldType(tableID string, fieldsStr string) (string, bool) {
-	entry, ok := m.get(tableID, fieldsStr)
-	log.Infof(context.TODO(), "GetFieldType tableID: %s, fieldsStr: %s, fieldType: %s, ok: %t", tableID, fieldsStr, entry.fieldType, ok)
-	return entry.fieldType, ok
-}
+	key := createCacheKey(tableID, fieldsStr)
+	value, found := m.cache.Get(key)
+	if !found {
+		log.Infof(context.TODO(), "GetFieldType tableID: %s, fieldsStr: %s, fieldType: not found", tableID, fieldsStr)
+		return "", false
+	}
 
-func (m *MappingCache) get(tableID string, fieldsStr string) (MappingEntry, bool) {
-	return m.cleanupOrGetEntry(tableID, fieldsStr)
-}
-
-// 辅助方法：使用写锁清理过期条目或获取有效条目
-func (m *MappingCache) cleanupOrGetEntry(tableID string, fieldsStr string) (MappingEntry, bool) {
-	var result MappingEntry
-	var found bool
-
-	m.withWriteLock(func() {
-		k := MappingEntryKey{
-			tableID:   tableID,
-			fieldsStr: fieldsStr,
-		}
-
-		entry, ok := m.data[k]
-		if !ok {
-			return
-		}
-
-		if entry.IsExpired(m.ttl) {
-			delete(m.data, k)
-			return
-		}
-
-		result = entry
-		found = true
-	})
-
-	return result, found
+	fieldType, ok := value.(string)
+	return fieldType, ok
 }
 
 // Delete 从缓存删除映射
 func (m *MappingCache) Delete(tableID string, field string) {
-	if m.data == nil {
-		return
-	}
-
-	m.withWriteLock(func() {
-		k := MappingEntryKey{
-			tableID:   tableID,
-			fieldsStr: field,
-		}
-
-		delete(m.data, k)
-	})
+	key := createCacheKey(tableID, field)
+	m.cache.Delete(key)
 }
 
 // Clear 清空缓存
 func (m *MappingCache) Clear() {
-	m.withWriteLock(func() {
-		m.data = make(map[MappingEntryKey]MappingEntry)
-	})
+	m.cache.Flush()
+}
+
+// createCacheKey 创建缓存键
+func createCacheKey(tableID string, field string) string {
+	return fmt.Sprintf("%s:%s", tableID, field)
 }

@@ -10,6 +10,7 @@
 package elasticsearch
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -17,50 +18,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMappingEntry_IsExpired(t *testing.T) {
-	now := time.Now()
-	tests := []struct {
-		name     string
-		entry    MappingEntry
-		ttl      time.Duration
-		expected bool
-	}{
-		{
-			name: "not expired",
-			entry: MappingEntry{
-				fieldType:   "keyword",
-				lastUpdated: now,
-			},
-			ttl:      5 * time.Minute,
-			expected: false,
-		},
-		{
-			name: "expired",
-			entry: MappingEntry{
-				fieldType:   "keyword",
-				lastUpdated: now.Add(-10 * time.Minute),
-			},
-			ttl:      5 * time.Minute,
-			expected: true,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			actual := tc.entry.IsExpired(tc.ttl)
-			assert.Equal(t, tc.expected, actual)
-		})
-	}
-}
-
 func TestNewMappingCache(t *testing.T) {
 	ttl := 10 * time.Minute
 	cache := NewMappingCache(ttl)
 
 	assert.NotNil(t, cache)
-	assert.NotNil(t, cache.data)
+	assert.NotNil(t, cache.cache)
 	assert.Equal(t, ttl, cache.ttl)
-	assert.Empty(t, cache.data)
 }
 
 func TestMappingCache_SetTTL(t *testing.T) {
@@ -181,7 +145,7 @@ func TestMappingCache_Expiration(t *testing.T) {
 	assert.Equal(t, "keyword", fieldType1)
 
 	// Wait for entry to expire
-	time.Sleep(15 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 
 	// Should be expired now
 	fieldTypeExpired, okExpired := cache.GetFieldType(tableID, "field1")
@@ -434,4 +398,41 @@ func TestFieldTypeCache_MultiQueryScenario(t *testing.T) {
 		assert.True(t, exists)
 		assert.Equal(t, "keyword", fieldType, "should return correct type")
 	})
+}
+
+func Test_createCacheKey(t *testing.T) {
+	tests := []struct {
+		tableID  string
+		field    string
+		expected string
+	}{
+		{
+			tableID:  "table1",
+			field:    "field1",
+			expected: "table1:field1",
+		},
+		{
+			tableID:  "table2",
+			field:    "field2",
+			expected: "table2:field2",
+		},
+		{
+			tableID:  "",
+			field:    "field3",
+			expected: ":field3",
+		},
+		{
+			tableID:  "table4",
+			field:    "",
+			expected: "table4:",
+		},
+	}
+
+	for _, tc := range tests {
+		name := fmt.Sprintf("tableID=%s,field=%s", tc.tableID, tc.field)
+		t.Run(name, func(t *testing.T) {
+			result := createCacheKey(tc.tableID, tc.field)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
 }

@@ -10,13 +10,9 @@
 package elasticsearch
 
 import (
-	"context"
 	"fmt"
+	"github.com/dgraph-io/ristretto/v2"
 	"time"
-
-	"github.com/patrickmn/go-cache"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 var (
@@ -24,8 +20,10 @@ var (
 )
 
 var (
-	DefaultMappingCacheTTL = 5 * time.Minute
-	DefaultCleanupInterval = 10 * time.Minute
+	DefaultMappingCacheTTL       = 5 * time.Minute
+	DefaultNumCounters     int64 = 1e6
+	DefaultMaxCost         int64 = 1e8 // 100MB
+	DefaultBufferItems     int64 = 64
 )
 
 func init() {
@@ -34,14 +32,24 @@ func init() {
 
 // MappingCache 用于缓存字段类型
 type MappingCache struct {
-	cache *cache.Cache
+	cache *ristretto.Cache[string, string]
 	ttl   time.Duration
 }
 
 // NewMappingCache 创建MappingCache
 func NewMappingCache(ttl time.Duration) *MappingCache {
+	cache, err := ristretto.NewCache(&ristretto.Config[string, string]{
+		NumCounters: DefaultNumCounters,
+		MaxCost:     DefaultMaxCost,
+		BufferItems: DefaultBufferItems,
+		Metrics:     true,
+	})
+	if err != nil {
+		panic(fmt.Errorf("NewMappingCache error: %v", err))
+	}
+
 	return &MappingCache{
-		cache: cache.New(ttl, DefaultCleanupInterval),
+		cache: cache,
 		ttl:   ttl,
 	}
 }
@@ -60,32 +68,33 @@ func (m *MappingCache) GetTTL() time.Duration {
 func (m *MappingCache) AppendFieldTypesCache(tableID string, mapping map[string]string) {
 	for field, fieldType := range mapping {
 		key := createCacheKey(tableID, field)
-		m.cache.Set(key, fieldType, m.ttl)
+		m.cache.SetWithTTL(key, fieldType, 1, m.ttl)
 	}
+
+	m.cache.Wait()
 }
 
 // GetFieldType 从缓存获取字段类型
 func (m *MappingCache) GetFieldType(tableID string, fieldsStr string) (string, bool) {
 	key := createCacheKey(tableID, fieldsStr)
-	value, found := m.cache.Get(key)
+
+	fieldType, found := m.cache.Get(key)
 	if !found {
-		log.Infof(context.TODO(), "GetFieldType tableID: %s, fieldsStr: %s, fieldType: not found", tableID, fieldsStr)
 		return "", false
 	}
 
-	fieldType, ok := value.(string)
-	return fieldType, ok
+	return fieldType, found
 }
 
 // Delete 从缓存删除映射
 func (m *MappingCache) Delete(tableID string, field string) {
 	key := createCacheKey(tableID, field)
-	m.cache.Delete(key)
+	m.cache.Del(key)
 }
 
 // Clear 清空缓存
 func (m *MappingCache) Clear() {
-	m.cache.Flush()
+	m.cache.Clear()
 }
 
 // createCacheKey 创建缓存键

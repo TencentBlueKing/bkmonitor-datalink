@@ -28,7 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sqlExpr"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
 
 const (
@@ -211,7 +211,7 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 	f := NewQueryFactory(ctx, query).WithRangeTime(start, end)
 
 	// 只有 Doris 才需要获取字段表结构
-	if query.Measurement == sqlExpr.Doris {
+	if query.Measurement == sql_expr.Doris {
 		fieldsMap, err := i.getFieldsMap(ctx, f.DescribeTableSQL())
 		if err != nil {
 			return f, err

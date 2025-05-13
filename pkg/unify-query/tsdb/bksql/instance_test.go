@@ -23,7 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sqlExpr"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
 
 func TestInstance_ShowCreateTable(t *testing.T) {
@@ -175,7 +175,7 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
 				DataSource:  datasource,
 				TableID:     tableID,
 				DB:          "2_bklog_bkunify_query_doris",
-				Measurement: sqlExpr.Doris,
+				Measurement: sql_expr.Doris,
 				MetricName:  field,
 				DataLabel:   db,
 				Aggregates: metadata.Aggregates{
@@ -469,7 +469,7 @@ func TestInstance_bkSql(t *testing.T) {
 			name: "conditions with or and",
 			query: &metadata.Query{
 				DB:          "132_lol_new_login_queue_login_1min",
-				Measurement: sqlExpr.Doris,
+				Measurement: sql_expr.Doris,
 				Field:       "login_rate",
 				AllConditions: metadata.AllConditions{
 					[]metadata.ConditionField{
@@ -833,10 +833,10 @@ func TestInstance_bkSql(t *testing.T) {
 			}
 
 			fieldsMap := map[string]string{
-				"text": sqlExpr.DorisTypeText,
+				"text": sql_expr.DorisTypeText,
 			}
 
-			condition, err := sqlExpr.NewSQLExpr(c.query.Measurement).WithFieldsMap(fieldsMap).ParserAllConditions(c.query.AllConditions)
+			condition, err := sql_expr.NewSQLExpr(c.query.Measurement).WithFieldsMap(fieldsMap).ParserAllConditions(c.query.AllConditions)
 			assert.Nil(t, err)
 			if err == nil {
 				assert.Equal(t, c.query.BkSqlCondition, condition)
@@ -1020,7 +1020,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			name: "doris default multiple order fields",
 			query: &metadata.Query{
 				DB:          "5000140_bklog_container_log_demo_analysis",
-				Measurement: sqlExpr.Doris,
+				Measurement: sql_expr.Doris,
 				Field:       "__ext.container_id",
 				Size:        3,
 				AllConditions: metadata.AllConditions{
@@ -1058,7 +1058,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			name: "doris default multiple order fields and time aggregate",
 			query: &metadata.Query{
 				DB:          "5000140_bklog_container_log_demo_analysis",
-				Measurement: sqlExpr.Doris,
+				Measurement: sql_expr.Doris,
 				Field:       "__ext.container_id",
 				Size:        3,
 				AllConditions: metadata.AllConditions{
@@ -1097,7 +1097,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			name: "doris default multiple order fields and time aggregate 5m",
 			query: &metadata.Query{
 				DB:            "5000140_bklog_container_log_demo_analysis",
-				Measurement:   sqlExpr.Doris,
+				Measurement:   sql_expr.Doris,
 				Field:         "__ext.container_id",
 				Size:          3,
 				AllConditions: metadata.AllConditions{},
@@ -1123,7 +1123,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			name: "doris default multiple order fields and time aggregate 15s",
 			query: &metadata.Query{
 				DB:            "5000140_bklog_container_log_demo_analysis",
-				Measurement:   sqlExpr.Doris,
+				Measurement:   sql_expr.Doris,
 				Field:         "__ext.container_id",
 				Size:          3,
 				AllConditions: metadata.AllConditions{},
@@ -1149,7 +1149,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			name: "doris default multiple order fields and time aggregate 1m",
 			query: &metadata.Query{
 				DB:          "2_bkapm_trace_bkop_doris",
-				Measurement: sqlExpr.Doris,
+				Measurement: sql_expr.Doris,
 				Field:       "attributes.http.host",
 				Size:        1,
 				AllConditions: metadata.AllConditions{
@@ -1196,7 +1196,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 
 			// SQL生成验证
 			fact := bksql.NewQueryFactory(ctx, tc.query).WithFieldsMap(map[string]string{
-				"text": sqlExpr.DorisTypeText,
+				"text": sql_expr.DorisTypeText,
 			}).WithRangeTime(start, end)
 			generatedSQL, err := fact.SQL()
 

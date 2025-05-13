@@ -280,8 +280,7 @@ func (qMetric *QueryMetric) ToJson(isSort bool) string {
 		sort.SliceStable(qMetric.QueryList, func(i, j int) bool {
 			a := qMetric.QueryList[i].TableID
 			b := qMetric.QueryList[j].TableID
-			c := a < b
-			return c
+			return a < b
 		})
 	}
 

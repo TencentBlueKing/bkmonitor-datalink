@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package sqlExpr_test
+package sql_expr_test
 
 import (
 	"testing"
@@ -15,12 +15,12 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sqlExpr"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
 
 // TestParserAllConditions 测试全条件解析的主测试函数
 func TestParserAllConditions(t *testing.T) {
-	d := sqlExpr.NewSQLExpr("")
+	d := sql_expr.NewSQLExpr("")
 
 	t.Run("空条件测试", func(t *testing.T) {
 		conditions := metadata.AllConditions{}

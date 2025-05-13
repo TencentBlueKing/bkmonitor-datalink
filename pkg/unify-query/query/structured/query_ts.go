@@ -559,7 +559,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 				asc := true
 				name := o
 
-				if strings.HasPrefix(o, "-") {
+				if strings.HasPrefix(name, "-") {
 					asc = false
 					name = name[1:]
 				}

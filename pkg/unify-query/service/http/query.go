@@ -252,15 +252,15 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	go func() {
 		defer receiveWg.Done()
 
-		var datas []map[string]any
+		var data []map[string]any
 		for d := range dataCh {
-			datas = append(datas, d)
+			data = append(data, d)
 		}
 
 		span.Set("query-list-num", len(queryList))
 
 		if len(queryList) > 1 {
-			queryTs.OrderBy.Orders().SortSliceList(datas)
+			queryTs.OrderBy.Orders().SortSliceList(data)
 
 			span.Set("query-scroll", queryTs.Scroll)
 			span.Set("query-result-table", queryTs.ResultTableOptions)
@@ -269,19 +269,19 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			if queryTs.Scroll == "" && queryTs.ResultTableOptions.IsCrop() {
 				// 判定是否启用 multi from 特性
 				span.Set("query-multi-from", queryTs.IsMultiFrom)
-				span.Set("datas-length", len(datas))
+				span.Set("data-length", len(data))
 				span.Set("query-ts-from", queryTs.From)
 				span.Set("query-ts-limit", queryTs.Limit)
 
-				if len(datas) > queryTs.Limit {
+				if len(data) > queryTs.Limit {
 					if queryTs.IsMultiFrom {
 						resultTableOptions = queryTs.ResultTableOptions
 						if resultTableOptions == nil {
 							resultTableOptions = make(metadata.ResultTableOptions)
 						}
 
-						datas = datas[0:queryTs.Limit]
-						for _, l := range datas {
+						data = data[0:queryTs.Limit]
+						for _, l := range data {
 							tableID := l[elasticsearch.KeyTableID].(string)
 							address := l[elasticsearch.KeyAddress].(string)
 
@@ -293,14 +293,14 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 							}
 						}
 					} else {
-						datas = datas[queryTs.From : queryTs.From+queryTs.Limit]
+						data = data[queryTs.From : queryTs.From+queryTs.Limit]
 					}
 				}
 			}
 
 		}
 
-		for _, item := range datas {
+		for _, item := range data {
 			if item == nil {
 				continue
 			}
@@ -421,9 +421,12 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	}
 
 	queryRef, err := queryTs.ToQueryReference(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	unit, startTime, endTime, err := function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
 

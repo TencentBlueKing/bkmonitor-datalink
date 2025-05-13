@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package sqlExpr_test
+package sql_expr_test
 
 import (
 	"fmt"
@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sqlExpr"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
 
 func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
@@ -101,8 +101,8 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := sqlExpr.NewSQLExpr(sqlExpr.Doris).WithFieldsMap(map[string]string{
-				"text": sqlExpr.DorisTypeText,
+			got, err := sql_expr.NewSQLExpr(sql_expr.Doris).WithFieldsMap(map[string]string{
+				"text": sql_expr.DorisTypeText,
 			}).ParserQueryString(tt.input)
 			if err != nil {
 				assert.Equal(t, err.Error(), tt.err)
@@ -242,8 +242,8 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 		},
 	}
 
-	e := sqlExpr.NewSQLExpr(sqlExpr.Doris).WithFieldsMap(map[string]string{
-		"object.field": sqlExpr.DorisTypeText,
+	e := sql_expr.NewSQLExpr(sql_expr.Doris).WithFieldsMap(map[string]string{
+		"object.field": sql_expr.DorisTypeText,
 	})
 
 	for _, tt := range tests {

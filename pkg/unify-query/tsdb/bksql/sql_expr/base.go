@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package sqlExpr
+package sql_expr
 
 import (
 	"fmt"
@@ -259,38 +259,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 //  1. 将多个AND条件组合成OR条件
 //  2. 当有多个OR条件时用括号包裹
 func (d *DefaultSQLExpr) ParserAllConditions(allConditions metadata.AllConditions) (string, error) {
-	var (
-		orConditions []string
-	)
-
-	// 遍历所有OR条件组
-	for _, conditions := range allConditions {
-		var andConditions []string
-		// 处理每个AND条件组
-		for _, cond := range conditions {
-			buildCondition, err := d.buildCondition(cond)
-			if err != nil {
-				return "", err
-			}
-			if buildCondition != "" {
-				andConditions = append(andConditions, buildCondition)
-			}
-		}
-		// 合并AND条件
-		if len(andConditions) > 0 {
-			orConditions = append(orConditions, strings.Join(andConditions, " AND "))
-		}
-	}
-
-	// 处理最终OR条件组合
-	if len(orConditions) > 0 {
-		if len(orConditions) == 1 {
-			return orConditions[0], nil
-		}
-		return fmt.Sprintf("(%s)", strings.Join(orConditions, " OR ")), nil
-	}
-
-	return "", nil
+	return parserAllConditions(allConditions, d.buildCondition)
 }
 
 func (d *DefaultSQLExpr) DescribeTableSQL(table string) string {
@@ -432,4 +401,39 @@ func (d *DefaultSQLExpr) dimTransform(s string) (string, error) {
 	}
 
 	return fmt.Sprintf("`%s`", s), nil
+}
+
+func parserAllConditions(allConditions metadata.AllConditions, bc func(c metadata.ConditionField) (string, error)) (string, error) {
+	var (
+		orConditions []string
+	)
+
+	// 遍历所有OR条件组
+	for _, conditions := range allConditions {
+		var andConditions []string
+		// 处理每个AND条件组
+		for _, cond := range conditions {
+			buildCondition, err := bc(cond)
+			if err != nil {
+				return "", err
+			}
+			if buildCondition != "" {
+				andConditions = append(andConditions, buildCondition)
+			}
+		}
+		// 合并AND条件
+		if len(andConditions) > 0 {
+			orConditions = append(orConditions, strings.Join(andConditions, " AND "))
+		}
+	}
+
+	// 处理最终OR条件组合
+	if len(orConditions) > 0 {
+		if len(orConditions) == 1 {
+			return orConditions[0], nil
+		}
+		return fmt.Sprintf("(%s)", strings.Join(orConditions, " OR ")), nil
+	}
+
+	return "", nil
 }

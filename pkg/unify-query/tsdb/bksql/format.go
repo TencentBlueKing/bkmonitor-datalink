@@ -24,7 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sqlExpr"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
 
 const (
@@ -47,8 +47,8 @@ var (
 		endTime:          {},
 		theDate:          {},
 
-		sqlExpr.TimeStamp: {},
-		sqlExpr.Value:     {},
+		sql_expr.TimeStamp: {},
+		sql_expr.Value:     {},
 	}
 )
 
@@ -61,13 +61,13 @@ type QueryFactory struct {
 	start time.Time
 	end   time.Time
 
-	timeAggregate sqlExpr.TimeAggregate
+	timeAggregate sql_expr.TimeAggregate
 
 	orders metadata.Orders
 
 	timeField string
 
-	expr sqlExpr.SQLExpr
+	expr sql_expr.SQLExpr
 
 	highlight *metadata.HighLight
 }
@@ -89,7 +89,7 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 		f.timeField = dtEventTimeStamp
 	}
 
-	f.expr = sqlExpr.NewSQLExpr(f.query.Measurement).
+	f.expr = sql_expr.NewSQLExpr(f.query.Measurement).
 		WithInternalFields(f.timeField, query.Field).
 		WithEncode(metadata.GetPromDataFormat(ctx).EncodeFunc())
 
@@ -216,7 +216,7 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 
 	tsMap := map[string]*prompb.TimeSeries{}
 	tsTimeMap := make(map[string]map[int64]float64)
-	isAddZero := f.timeAggregate.Window > 0 && f.expr.Type() == sqlExpr.Doris
+	isAddZero := f.timeAggregate.Window > 0 && f.expr.Type() == sql_expr.Doris
 
 	// 先获取维度的 key 保证顺序一致
 	keys := make([]string, 0)
@@ -247,11 +247,11 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 		lbl := make([]prompb.Label, 0)
 		for _, k := range keys {
 			switch k {
-			case sqlExpr.TimeStamp:
+			case sql_expr.TimeStamp:
 				if _, ok = nd[k]; ok {
 					vtLong = nd[k]
 				}
-			case sqlExpr.Value:
+			case sql_expr.Value:
 				if _, ok = nd[k]; ok {
 					vvDouble = nd[k]
 				}
@@ -297,7 +297,7 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 		case float64:
 			vv = vvDouble.(float64)
 		default:
-			return res, fmt.Errorf("%s type is error %T, %v", sqlExpr.Value, vvDouble, vvDouble)
+			return res, fmt.Errorf("%s type is error %T, %v", sql_expr.Value, vvDouble, vvDouble)
 		}
 
 		// 如果是非时间聚合计算，则无需进行指标名的拼接作用
@@ -344,7 +344,9 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 			end   time.Time
 		)
 
-		startMilli := (f.start.UnixMilli()+f.timeAggregate.OffsetMillis)/f.timeAggregate.Window.Milliseconds()*f.timeAggregate.Window.Milliseconds() - f.timeAggregate.OffsetMillis
+		ms := f.timeAggregate.Window.Milliseconds()
+
+		startMilli := (f.start.UnixMilli()+f.timeAggregate.OffsetMillis)/ms*ms - f.timeAggregate.OffsetMillis
 		start = time.UnixMilli(startMilli)
 		end = f.end
 
@@ -436,7 +438,8 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 
 func (f *QueryFactory) SQL() (sql string, err error) {
 	var (
-		span *trace.Span
+		span       *trace.Span
+		sqlBuilder strings.Builder
 	)
 
 	_, span = trace.NewSpan(f.ctx, "make-sql")
@@ -454,32 +457,40 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	span.Set("order-fields", orderFields)
 	span.Set("timeAggregate", timeAggregate)
 
-	sql += fmt.Sprintf("SELECT %s FROM %s", strings.Join(selectFields, ", "), f.Table())
-	whereString, err := f.BuildWhere()
+	sqlBuilder.WriteString("SELECT ")
+	sqlBuilder.WriteString(strings.Join(selectFields, ", "))
+	sqlBuilder.WriteString(" FROM ")
+	sqlBuilder.WriteString(f.Table())
 
+	whereString, err := f.BuildWhere()
 	span.Set("where-string", whereString)
 
 	if err != nil {
 		return
 	}
 	if whereString != "" {
-		sql += " WHERE " + whereString
+		sqlBuilder.WriteString(" WHERE ")
+		sqlBuilder.WriteString(whereString)
 	}
 	if len(groupFields) > 0 {
-		sql += " GROUP BY " + strings.Join(groupFields, ", ")
+		sqlBuilder.WriteString(" GROUP BY ")
+		sqlBuilder.WriteString(strings.Join(groupFields, ", "))
 	}
 
 	if len(orderFields) > 0 {
 		sort.Strings(orderFields)
-		sql += " ORDER BY " + strings.Join(orderFields, ", ")
+		sqlBuilder.WriteString(" ORDER BY ")
+		sqlBuilder.WriteString(strings.Join(orderFields, ", "))
 	}
 	if f.query.Size > 0 {
-		sql += fmt.Sprintf(" LIMIT %d", f.query.Size)
+		sqlBuilder.WriteString(" LIMIT ")
+		sqlBuilder.WriteString(fmt.Sprintf("%d", f.query.Size))
 	}
 	if f.query.From > 0 {
-		sql += fmt.Sprintf(" OFFSET %d", f.query.From)
+		sqlBuilder.WriteString(" OFFSET ")
+		sqlBuilder.WriteString(fmt.Sprintf("%d", f.query.From))
 	}
-
+	sql = sqlBuilder.String()
 	span.Set("sql", sql)
 	return
 }

@@ -199,23 +199,24 @@ func MergeConditionField(source, target AllConditions) AllConditions {
 }
 
 func (c AllConditions) MetaDataAllConditions() metadata.AllConditions {
-	var allConditions metadata.AllConditions
-	if len(c) > 0 {
-		allConditions = make(metadata.AllConditions, 0, len(c))
-		for _, conditions := range c {
-			conds := make([]metadata.ConditionField, 0, len(conditions))
-			for _, cond := range conditions {
-				conds = append(conds, metadata.ConditionField{
-					DimensionName: cond.DimensionName,
-					Value:         cond.Value,
-					Operator:      cond.Operator,
-					IsWildcard:    cond.IsWildcard,
-					IsPrefix:      cond.IsPrefix,
-					IsSuffix:      cond.IsSuffix,
-				})
-			}
-			allConditions = append(allConditions, conds)
+	if len(c) == 0 {
+		return nil
+	}
+
+	allConditions := make(metadata.AllConditions, 0, len(c))
+	for _, conditions := range c {
+		conds := make([]metadata.ConditionField, 0, len(conditions))
+		for _, cond := range conditions {
+			conds = append(conds, metadata.ConditionField{
+				DimensionName: cond.DimensionName,
+				Value:         cond.Value,
+				Operator:      cond.Operator,
+				IsWildcard:    cond.IsWildcard,
+				IsPrefix:      cond.IsPrefix,
+				IsSuffix:      cond.IsSuffix,
+			})
 		}
+		allConditions = append(allConditions, conds)
 	}
 	return allConditions
 }

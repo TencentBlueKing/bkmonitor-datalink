@@ -355,3 +355,83 @@ func TestFieldTypesCache_GlobalVariable(t *testing.T) {
 	// Clean up after test
 	fieldTypesCache.Delete(tableID, "globalField")
 }
+
+func TestFieldTypeCache_MultiQueryScenario(t *testing.T) {
+	// set a short TTL for testing
+	ttl := 10 * time.Millisecond
+	cache := NewMappingCache(ttl)
+
+	// 第一个场景：首次查询，缓存不存在
+	t.Run("First Query - Cache Miss", func(t *testing.T) {
+		tableID := "rt_1"
+		fieldName := "field_1"
+
+		fieldType, exists := cache.GetFieldType(tableID, fieldName)
+		assert.False(t, exists, "first query should return not exists")
+		assert.Empty(t, fieldType, "first query should return empty")
+
+		cache.AppendFieldTypesCache(tableID, map[string]string{
+			fieldName: "string",
+		})
+
+		fieldType, exists = cache.GetFieldType(tableID, fieldName)
+		assert.True(t, exists, "after adding, should return exists")
+		assert.Equal(t, "string", fieldType, "after adding, should return correct type")
+	})
+
+	// 第二个场景：重复查询，验证缓存命中
+	t.Run("Second Query - Cache Hit", func(t *testing.T) {
+		tableID := "rt_1"
+		fieldName := "field_1"
+
+		for i := 0; i < 3; i++ {
+			fieldType, exists := cache.GetFieldType(tableID, fieldName)
+			assert.True(t, exists, "second query should return exists")
+			assert.Equal(t, "string", fieldType, "second query should return correct type")
+		}
+	})
+
+	// 第三个场景：测试缓存过期
+	t.Run("Third Query - Cache Expiration", func(t *testing.T) {
+		tableID := "rt_2"
+		fieldName := "field_2"
+
+		cache.AppendFieldTypesCache(tableID, map[string]string{
+			fieldName: "integer",
+		})
+
+		fieldType, exists := cache.GetFieldType(tableID, fieldName)
+		assert.True(t, exists, "add to cache should return exists")
+		assert.Equal(t, "integer", fieldType, "should return correct type")
+
+		// wait for expiration
+		time.Sleep(ttl * 2)
+
+		fieldType, exists = cache.GetFieldType(tableID, fieldName)
+		assert.False(t, exists, "after expiration, should return not exists")
+		assert.Empty(t, fieldType, "after expiration, should return empty")
+	})
+
+	// 第四个场景：测试映射更新
+	t.Run("Fourth Query - Mapping Update", func(t *testing.T) {
+		tableID := "rt_3"
+		fieldName := "field_3"
+
+		cache.AppendFieldTypesCache(tableID, map[string]string{
+			fieldName: "text",
+		})
+
+		fieldType, exists := cache.GetFieldType(tableID, fieldName)
+		assert.True(t, exists)
+		assert.Equal(t, "text", fieldType)
+
+		// update mapping
+		cache.AppendFieldTypesCache(tableID, map[string]string{
+			fieldName: "keyword",
+		})
+
+		fieldType, exists = cache.GetFieldType(tableID, fieldName)
+		assert.True(t, exists)
+		assert.Equal(t, "keyword", fieldType, "should return correct type")
+	})
+}

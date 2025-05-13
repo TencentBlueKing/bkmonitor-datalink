@@ -11,12 +11,11 @@ package bksql
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/prompb"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
@@ -29,6 +28,20 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
+)
+
+const (
+	KeyHighLight = "__highlight"
+
+	KeyIndex     = "__index"
+	KeyTableID   = "__result_table"
+	KeyDataLabel = "__data_label"
+
+	TableFieldName = "Field"
+	TableFieldType = "Type"
+
+	TableTypeVariant = "variant"
 )
 
 type Instance struct {
@@ -46,11 +59,6 @@ type Instance struct {
 	tolerance int
 
 	client *Client
-}
-
-func (i *Instance) QueryReference(ctx context.Context, query *metadata.Query, start int64, end int64) (*prompb.QueryResult, error) {
-	//TODO implement me
-	panic("implement me")
 }
 
 var _ tsdb.Instance = (*Instance)(nil)
@@ -104,13 +112,21 @@ func (i *Instance) checkResult(res *Result) error {
 	return nil
 }
 
-func (i *Instance) sqlQuery(ctx context.Context, sql string, span *trace.Span) (*QuerySyncResultData, error) {
+func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultData, error) {
 	var (
 		data *QuerySyncResultData
 
-		ok  bool
-		err error
+		ok   bool
+		err  error
+		span *trace.Span
 	)
+
+	ctx, span = trace.NewSpan(ctx, "sql-query")
+	defer span.End(&err)
+
+	if sql == "" {
+		return data, nil
+	}
 
 	log.Infof(ctx, "%s: %s", i.InstanceType(), sql)
 	span.Set("query-sql", sql)
@@ -131,6 +147,7 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string, span *trace.Span) (
 		return data, fmt.Errorf("queryAsyncResult type is error: %T", res.Data)
 	}
 
+	span.Set("result-size", len(data.List))
 	return data, nil
 }
 
@@ -151,123 +168,73 @@ func (i *Instance) dims(dims []string, field string) []string {
 	return dimensions
 }
 
-func (i *Instance) formatData(ctx context.Context, start time.Time, query *metadata.Query, keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
-	res := &prompb.QueryResult{}
+func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]string, error) {
+	fieldsMap := make(map[string]string)
 
-	if len(list) == 0 {
-		return res, nil
-	}
-	// 维度结构体为空则任务异常
-	if len(keys) == 0 {
-		return res, fmt.Errorf("SelectFieldsOrder is empty")
+	if sql == "" {
+		return nil, nil
 	}
 
-	// 获取该指标的维度 key
-	dimensions := i.dims(keys, query.Field)
+	data, err := i.sqlQuery(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
 
-	// 获取 metricLabel
-	metricLabel := query.MetricLabels(ctx)
-
-	tsMap := make(map[string]*prompb.TimeSeries, 0)
-	for _, d := range list {
-		// 优先获取时间和值
+	for _, list := range data.List {
 		var (
-			vt int64
-			vv float64
-
-			vtLong   interface{}
-			vvDouble interface{}
-
+			k  string
+			v  string
 			ok bool
 		)
-
-		if d == nil {
+		k, ok = list[TableFieldName].(string)
+		if !ok {
 			continue
 		}
 
-		// 获取时间戳，单位是毫秒
-		if vtLong, ok = d[timeStamp]; !ok {
-			vtLong = start.UnixMilli()
-		}
-
-		if vtLong == nil {
+		v, ok = list[TableFieldType].(string)
+		if !ok {
 			continue
 		}
-		switch vtLong.(type) {
-		case int64:
-			vt = vtLong.(int64)
-		case float64:
-			vt = int64(vtLong.(float64))
-		default:
-			return res, fmt.Errorf("%s type is error %T, %v", dtEventTimeStamp, vtLong, vtLong)
-		}
 
-		// 获取值
-		if vvDouble, ok = d[value]; !ok {
-			return res, fmt.Errorf("dimension %s is emtpy", value)
-		}
-
-		if vvDouble == nil {
-			continue
-		}
-		switch vvDouble.(type) {
-		case int64:
-			vv = float64(vvDouble.(int64))
-		case float64:
-			vv = vvDouble.(float64)
-		default:
-			return res, fmt.Errorf("%s type is error %T, %v", value, vvDouble, vvDouble)
-		}
-
-		lbl := make([]prompb.Label, 0)
-		// 获取维度信息
-		for _, dimName := range dimensions {
-			val, err := getValue(dimName, d)
-			if err != nil {
-				return res, fmt.Errorf("dimensions %+v %s", dimensions, err.Error())
-			}
-
-			lbl = append(lbl, prompb.Label{
-				Name:  dimName,
-				Value: val,
-			})
-		}
-
-		// 如果是非时间聚合计算，则无需进行指标名的拼接作用
-		if metricLabel != nil {
-			lbl = append(lbl, *metricLabel)
-		}
-
-		var buf strings.Builder
-		for _, l := range lbl {
-			buf.WriteString(l.String())
-		}
-
-		// 同一个 series 进行合并分组
-		key := buf.String()
-		if _, ok := tsMap[key]; !ok {
-			tsMap[key] = &prompb.TimeSeries{
-				Labels:  lbl,
-				Samples: make([]prompb.Sample, 0),
-			}
-		}
-
-		tsMap[key].Samples = append(tsMap[key].Samples, prompb.Sample{
-			Value:     vv,
-			Timestamp: vt,
-		})
+		fieldsMap[k] = v
 	}
 
-	// 转换结构体
-	res.Timeseries = make([]*prompb.TimeSeries, 0, len(tsMap))
-	for _, ts := range tsMap {
-		res.Timeseries = append(res.Timeseries, ts)
-	}
-
-	return res, nil
+	return fieldsMap, nil
 }
 
-func (i *Instance) table(query *metadata.Query) string {
+func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, start, end time.Time) (*QueryFactory, error) {
+	var err error
+
+	ctx, span := trace.NewSpan(ctx, "instance-init-query-factory")
+	defer span.End(&err)
+
+	f := NewQueryFactory(ctx, query).WithRangeTime(start, end)
+
+	// 只有 Doris 才需要获取字段表结构
+	if query.Measurement == sql_expr.Doris {
+		fieldsMap, err := i.getFieldsMap(ctx, f.DescribeTableSQL())
+		if err != nil {
+			return f, err
+		}
+
+		// 只能使用在表结构的字段才能使用
+		var keepColumns []string
+		for _, k := range query.Source {
+			if _, ok := fieldsMap[k]; ok {
+				keepColumns = append(keepColumns, k)
+			}
+		}
+		out, _ := json.Marshal(fieldsMap)
+		span.Set("table_fields_map", string(out))
+
+		span.Set("keep-columns", keepColumns)
+		f.WithFieldsMap(fieldsMap).WithKeepColumns(keepColumns)
+	}
+
+	return f, nil
+}
+
+func (i *Instance) Table(query *metadata.Query) string {
 	table := fmt.Sprintf("`%s`", query.DB)
 	if query.Measurement != "" {
 		table += "." + query.Measurement
@@ -276,15 +243,87 @@ func (i *Instance) table(query *metadata.Query) string {
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
-	return 0, nil, nil
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, resultTableOptions metadata.ResultTableOptions, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("doris query panic: %s", r)
+		}
+	}()
+
+	ctx, span := trace.NewSpan(ctx, "bk-sql-query-raw")
+	defer span.End(&err)
+
+	span.Set("query-raw-start", start)
+	span.Set("query-raw-end", end)
+
+	if start.UnixMilli() > end.UnixMilli() || start.UnixMilli() == 0 {
+		err = fmt.Errorf("start time must less than end time")
+		return
+	}
+
+	rangeLeftTime := end.Sub(start)
+	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
+
+	if i.maxLimit > 0 {
+		maxLimit := i.maxLimit + i.tolerance
+		// 如果不传 size，则取最大的限制值
+		if query.Size == 0 || query.Size > i.maxLimit {
+			query.Size = maxLimit
+		}
+	}
+
+	if len(query.ResultTableOptions) > 0 {
+		option := query.ResultTableOptions.GetOption(query.TableID, "")
+		if option != nil {
+			if option.From != nil {
+				query.From = *option.From
+			}
+		}
+	}
+
+	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
+	if err != nil {
+		return
+	}
+	sql, err := queryFactory.SQL()
+	if err != nil {
+		return
+	}
+
+	data, err := i.sqlQuery(ctx, sql)
+	if err != nil {
+		return
+	}
+
+	if data == nil {
+		return
+	}
+
+	span.Set("label-map", queryFactory.GetLabelMap())
+	span.Set("data-total-records", data.TotalRecords)
+	span.Set("data-list-size", len(data.List))
+
+	for _, list := range data.List {
+		newData := queryFactory.ReloadListData(list)
+		newData[KeyIndex] = query.DB
+		newData[KeyTableID] = query.TableID
+		newData[KeyDataLabel] = query.DataLabel
+
+		if query.HighLight != nil && query.HighLight.Enable {
+			newData[KeyHighLight] = queryFactory.HighLight(newData)
+		}
+		dataCh <- newData
+	}
+
+	total = int64(data.TotalRecordSize)
+	return
 }
 
 func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	var (
 		err error
 	)
-	ctx, span := trace.NewSpan(ctx, "bk-sql-raw")
+	ctx, span := trace.NewSpan(ctx, "bk-sql-query-series-set")
 	defer span.End(&err)
 
 	span.Set("query-series-set-start", start)
@@ -305,14 +344,16 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 		}
 	}
 
-	queryFactory := NewQueryFactory(ctx, query).WithRangeTime(start, end)
-
+	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
+	if err != nil {
+		return storage.ErrSeriesSet(err)
+	}
 	sql, err := queryFactory.SQL()
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
 
-	data, err := i.sqlQuery(ctx, sql, span)
+	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
@@ -328,7 +369,7 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 		return storage.ErrSeriesSet(fmt.Errorf("记录数(%d)超过限制(%d)", data.TotalRecords, i.maxLimit))
 	}
 
-	qr, err := i.formatData(ctx, start, query, data.SelectFieldsOrder, data.List)
+	qr, err := queryFactory.FormatDataToQueryResult(ctx, data.List)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
@@ -337,18 +378,18 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 }
 
 func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
-	//TODO implement me
-	panic("implement me")
+	log.Warnf(ctx, "%s not support direct query range", i.InstanceType())
+	return nil, nil
 }
 
 func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
-	//TODO implement me
-	panic("implement me")
+	log.Warnf(ctx, "%s not support direct query", i.InstanceType())
+	return nil, nil
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
-	//TODO implement me
-	panic("implement me")
+	log.Warnf(ctx, "%s not support query exemplar", i.InstanceType())
+	return nil, nil
 }
 
 func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
@@ -359,13 +400,20 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 	ctx, span := trace.NewSpan(ctx, "bk-sql-label-name")
 	defer span.End(&err)
 
-	where := fmt.Sprintf("%s >= %d AND %s < %d", dtEventTimeStamp, start.UnixMilli(), dtEventTimeStamp, end.UnixMilli())
-	// 拼接过滤条件
-	if query.BkSqlCondition != "" {
-		where = fmt.Sprintf("%s AND (%s)", where, query.BkSqlCondition)
+	// 取字段名不需要返回数据，但是 size 不能使用 0，所以还是用 1
+	query.Size = 1
+
+	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
+	if err != nil {
+		return nil, err
 	}
-	sql := fmt.Sprintf("SELECT * FROM %s WHERE %s LIMIT 1", i.table(query), where)
-	data, err := i.sqlQuery(ctx, sql, span)
+
+	sql, err := queryFactory.SQL()
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -388,13 +436,24 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		return nil, fmt.Errorf("not support metric query with %s", name)
 	}
 
-	where := fmt.Sprintf("%s >= %d AND %s < %d", dtEventTimeStamp, start.UnixMilli(), dtEventTimeStamp, end.UnixMilli())
-	// 拼接过滤条件
-	if query.BkSqlCondition != "" {
-		where = fmt.Sprintf("%s AND (%s)", where, query.BkSqlCondition)
+	// 使用聚合的方式统计维度组合
+	query.Aggregates = metadata.Aggregates{
+		{
+			Dimensions: []string{name},
+			Name:       "count",
+		},
 	}
-	sql := fmt.Sprintf("SELECT COUNT(`%s`) AS `%s`, %s FROM %s WHERE %s GROUP BY %s", query.Field, query.Field, name, i.table(query), where, name)
-	data, err := i.sqlQuery(ctx, sql, span)
+
+	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
+	if err != nil {
+		return nil, err
+	}
+	sql, err := queryFactory.SQL()
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -419,18 +478,15 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 }
 
 func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, nil
 }
 
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, nil
 }
 
 func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, nil
 }
 
 func (i *Instance) InstanceType() string {

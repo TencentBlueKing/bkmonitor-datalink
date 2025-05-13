@@ -342,6 +342,8 @@ fi
     period: 1m
     env: host
     query_timeout: 10s
+    chrony_address: "[::1]:323"
+
 EOF
 fi
   cat <<EOF >> "$path"

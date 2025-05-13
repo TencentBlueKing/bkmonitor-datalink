@@ -191,6 +191,8 @@ bkmonitorbeat:
     period: 1m
     env: host
     query_timeout: 10s
+    chrony_address: "[::1]:323"
+
   #### tcp_task child config #####
   # tcp任务全局设置
   #  tcp_task:

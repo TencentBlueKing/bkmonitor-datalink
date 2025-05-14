@@ -27,6 +27,7 @@ func TestQsToDsl(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	for i, c := range []struct {
 		q        string
+		isPrefix bool
 		expected string
 		err      error
 	}{
@@ -59,8 +60,20 @@ func TestQsToDsl(t *testing.T) {
 			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"sync_spaces AND -keyword AND -BKLOGAPI"}}`,
 		},
 		{
+			q: `*`,
+		},
+		{
 			q:        `*`,
-			expected: `{"query_string":{"fields":["*","__*"],"analyze_wildcard":true,"lenient":true,"query":"*"}}`,
+			isPrefix: true,
+		},
+		{
+			q:        `demo`,
+			expected: `{"query_string":{"fields":["*","__*"],"analyze_wildcard":true,"lenient":true,"query":"demo"}}`,
+		},
+		{
+			q:        `demo`,
+			isPrefix: true,
+			expected: `{"query_string":{"fields":["*","__*"],"analyze_wildcard":true,"lenient":true,"query":"demo","type":"phrase_prefix"}}`,
 		},
 		{
 			q: ``,
@@ -72,7 +85,7 @@ func TestQsToDsl(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			qs := NewQueryString(c.q, func(s string) string {
+			qs := NewQueryString(c.q, c.isPrefix, func(s string) string {
 				if s == "nested.key" {
 					return s
 				}
@@ -88,10 +101,10 @@ func TestQsToDsl(t *testing.T) {
 						bodyJson, _ := json.Marshal(body)
 						bodyString := string(bodyJson)
 						assert.JSONEq(t, c.expected, bodyString)
-					} else {
-						assert.Empty(t, c.expected)
+						return
 					}
 				}
+				assert.Empty(t, c.expected)
 			} else {
 				assert.Equal(t, c.err, err)
 			}

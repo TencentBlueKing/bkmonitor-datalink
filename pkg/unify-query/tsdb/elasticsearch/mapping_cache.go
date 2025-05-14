@@ -71,7 +71,7 @@ func (m *MappingCache) GetTTL() time.Duration {
 func (m *MappingCache) AppendFieldTypesCache(ctx context.Context, tableID string, mapping map[string]string) {
 	var err error
 
-	ctx, span := trace.NewSpan(ctx, "mapping-cache-append-field-types")
+	_, span := trace.NewSpan(ctx, "mapping-cache-append-field-types")
 	defer span.End(&err)
 
 	span.Set("table-id", tableID)
@@ -93,7 +93,7 @@ func (m *MappingCache) GetFieldType(ctx context.Context, tableID string, fieldsS
 		err    error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "mapping-cache-get-field-type")
+	_, span := trace.NewSpan(ctx, "mapping-cache-get-field-type")
 	defer span.End(&err)
 
 	key := createCacheKey(tableID, fieldsStr)
@@ -102,7 +102,11 @@ func (m *MappingCache) GetFieldType(ctx context.Context, tableID string, fieldsS
 	span.Set("cache-key", key)
 
 	result, ok = m.cache.Get(key)
-	span.Set("cache-hit", ok)
+	if !ok {
+		span.Set("cache-hit", "miss")
+	} else {
+		span.Set("cache-hit", "hit")
+	}
 
 	return result, ok
 }
@@ -111,7 +115,7 @@ func (m *MappingCache) GetFieldType(ctx context.Context, tableID string, fieldsS
 func (m *MappingCache) Delete(ctx context.Context, tableID string, field string) {
 	var err error
 
-	ctx, span := trace.NewSpan(ctx, "mapping-cache-delete")
+	_, span := trace.NewSpan(ctx, "mapping-cache-delete")
 	defer span.End(&err)
 
 	key := createCacheKey(tableID, field)
@@ -126,7 +130,7 @@ func (m *MappingCache) Delete(ctx context.Context, tableID string, field string)
 func (m *MappingCache) Clear(ctx context.Context) {
 	var err error
 
-	ctx, span := trace.NewSpan(ctx, "mapping-cache-clear")
+	_, span := trace.NewSpan(ctx, "mapping-cache-clear")
 	defer span.End(&err)
 
 	m.cache.Clear()

@@ -51,6 +51,8 @@ type SQLExpr interface {
 	WithInternalFields(timeField, valueField string) SQLExpr
 	// IsSetLabels 是否保留查询标签
 	IsSetLabels(bool) SQLExpr
+	// ParserRangeTime 解析开始结束时间
+	ParserRangeTime(timeField string, start, end time.Time) string
 	// ParserQueryString 解析 es 特殊语法 queryString 生成SQL条件
 	ParserQueryString(qs string) (string, error)
 	// ParserAllConditions 解析全量条件生成SQL条件表达式
@@ -252,6 +254,10 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 	}
 
 	return
+}
+
+func (d *DefaultSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {
+	return fmt.Sprintf("`%s` >= %d AND `%s` < %d", timeField, start.UnixMilli(), timeField, end.UnixMilli())
 }
 
 // ParserAllConditions 解析全量条件生成SQL条件表达式

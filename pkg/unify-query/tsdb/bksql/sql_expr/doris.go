@@ -233,6 +233,10 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 	return
 }
 
+func (d *DorisSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {
+	return fmt.Sprintf("`%s` >= %d AND `%s` <= %d", timeField, start.UnixMilli(), timeField, end.UnixMilli())
+}
+
 func (d *DorisSQLExpr) ParserAllConditions(allConditions metadata.AllConditions) (string, error) {
 	return parserAllConditions(allConditions, d.buildCondition)
 }

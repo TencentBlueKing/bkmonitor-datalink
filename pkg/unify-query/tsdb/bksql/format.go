@@ -399,7 +399,8 @@ func (f *QueryFactory) getTheDateIndexFilters() (theDateFilter string, err error
 
 func (f *QueryFactory) BuildWhere() (string, error) {
 	var s []string
-	s = append(s, fmt.Sprintf("`%s` >= %d AND `%s` <= %d", f.timeField, f.start.UnixMilli(), f.timeField, f.end.UnixMilli()))
+
+	s = append(s, f.expr.ParserRangeTime(f.timeField, f.start, f.end))
 
 	theDateFilter, err := f.getTheDateIndexFilters()
 	if err != nil {

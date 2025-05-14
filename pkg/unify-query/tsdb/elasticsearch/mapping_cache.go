@@ -77,10 +77,14 @@ func (m *MappingCache) AppendFieldTypesCache(ctx context.Context, tableID string
 	span.Set("table-id", tableID)
 	span.Set("mapping-size", len(mapping))
 
+	fields := make([]string, 0, len(mapping))
 	for field, fieldType := range mapping {
 		key := createCacheKey(tableID, field)
+		fields = append(fields, key)
 		m.cache.SetWithTTL(key, fieldType, 1, m.ttl)
 	}
+
+	span.Set("mapping-keys", fields)
 
 	m.cache.Wait()
 }

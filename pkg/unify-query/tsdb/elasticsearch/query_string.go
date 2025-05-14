@@ -13,9 +13,9 @@ import (
 	"context"
 	"fmt"
 
-	parser "github.com/bytedance/go-querystring-parser"
 	elastic "github.com/olivere/elastic/v7"
 
+	qs "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
@@ -46,10 +46,10 @@ func (s *QueryString) queryString(str string) elastic.Query {
 	return elastic.NewQueryStringQuery(str).AnalyzeWildcard(true).Field("*").Field("__*").Lenient(true)
 }
 
-func (s *QueryString) Parser() (elastic.Query, error) {
+func (s *QueryString) ToDSL() (elastic.Query, error) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf(context.TODO(), "query string (%v) parser error", s.q)
+			log.Errorf(context.TODO(), "querystring(%s) todsl panic: %v", s.q, r)
 		}
 	}()
 
@@ -58,21 +58,20 @@ func (s *QueryString) Parser() (elastic.Query, error) {
 	}
 
 	// 解析失败，或者没有 nested 字段，则使用透传的方式查询
-	qs := s.queryString(s.q)
-
-	ast, err := parser.Parse(s.q)
+	q := s.queryString(s.q)
+	ast, err := qs.Parse(s.q)
 	if err != nil {
-		return qs, nil
+		return q, nil
 	}
 
 	conditionQuery, err := s.walk(ast)
 	if err != nil {
-		return qs, nil
+		return q, nil
 	}
 
 	// 如果 nestedFields 不存在则直接使用 queryString 透传
 	if len(s.nestedFields) == 0 {
-		return qs, nil
+		return q, nil
 	}
 
 	for nestedKey := range s.nestedFields {
@@ -90,20 +89,20 @@ func (s *QueryString) check(field string) {
 	}
 }
 
-func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
+func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 	var (
 		leftQ  elastic.Query
 		rightQ elastic.Query
 		err    error
 	)
-	switch c := condition.(type) {
-	case *parser.NotCondition:
-		leftQ, err = s.walk(c.Condition)
+	switch c := expr.(type) {
+	case *qs.NotExpr:
+		leftQ, err = s.walk(c.Expr)
 		if err != nil {
 			return nil, err
 		}
 		leftQ = elastic.NewBoolQuery().MustNot(leftQ)
-	case *parser.OrCondition:
+	case *qs.OrExpr:
 		leftQ, err = s.walk(c.Left)
 		if err != nil {
 			return nil, err
@@ -113,7 +112,7 @@ func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
 			return nil, err
 		}
 		leftQ = elastic.NewBoolQuery().Should(leftQ, rightQ)
-	case *parser.AndCondition:
+	case *qs.AndExpr:
 		leftQ, err = s.walk(c.Left)
 		if err != nil {
 			return nil, err
@@ -123,15 +122,19 @@ func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
 			return nil, err
 		}
 		leftQ = elastic.NewBoolQuery().Must(leftQ, rightQ)
-	case *parser.MatchCondition:
+	case *qs.MatchExpr:
 		if c.Field != "" {
 			leftQ = elastic.NewMatchPhraseQuery(c.Field, c.Value)
 			s.check(c.Field)
 		} else {
 			leftQ = s.queryString(fmt.Sprintf(`"%s"`, c.Value))
 		}
-	case *parser.NumberRangeCondition:
+	case *qs.NumberRangeExpr:
 		q := elastic.NewRangeQuery(c.Field)
+		if c.Start == nil && c.End == nil {
+			return nil, fmt.Errorf("start and end is nil")
+		}
+
 		if c.Start != nil {
 			if c.IncludeStart {
 				q.Gte(*c.Start)
@@ -139,7 +142,6 @@ func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
 				q.Gt(*c.Start)
 			}
 		}
-
 		if c.End != nil {
 			if c.IncludeEnd {
 				q.Lte(*c.End)
@@ -149,7 +151,7 @@ func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
 		}
 		s.check(c.Field)
 		leftQ = q
-	case *parser.WildcardCondition:
+	case *qs.WildcardExpr:
 		if c.Field != "" {
 			leftQ = elastic.NewWildcardQuery(c.Field, c.Value)
 			s.check(c.Field)
@@ -157,7 +159,7 @@ func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
 			leftQ = s.queryString(c.Value)
 		}
 	default:
-		err = fmt.Errorf("condition type is not match %T", condition)
+		err = fmt.Errorf("expr type is not match %T", expr)
 	}
 	return leftQ, err
 }

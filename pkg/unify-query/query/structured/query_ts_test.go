@@ -11,7 +11,6 @@ package structured
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -272,10 +271,7 @@ func TestQueryToMetric(t *testing.T) {
 			metric, err := c.query.ToQueryMetric(ctx, spaceUID)
 			assert.Nil(t, err)
 
-			a, _ := json.Marshal(c.metric)
-			b, _ := json.Marshal(metric)
-
-			assert.JSONEq(t, string(a), string(b))
+			assert.Equal(t, c.metric.ToJson(true), metric.ToJson(true))
 		})
 	}
 }
@@ -1141,7 +1137,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							{
 								DataSource:     BkLog,
 								Timezone:       "UTC",
-								SourceType:     "bkdata",
 								TableID:        "result_table.es",
 								DataLabel:      "es",
 								DB:             "es_index",
@@ -1160,6 +1155,81 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 										Dimensions: []string{"__ext.container"},
 										Window:     time.Minute,
 									},
+								},
+							},
+						},
+						MetricName:    "usage",
+						ReferenceName: "a",
+					},
+				},
+			},
+		},
+		"es 高亮查询": {
+			ts: &QueryTs{
+				QueryList: []*Query{
+					{
+						DataSource:    BkLog,
+						TableID:       "result_table.es",
+						FieldName:     "usage",
+						ReferenceName: "a",
+						TimeAggregation: TimeAggregation{
+							Function: "sum_over_time",
+							Window:   "1m",
+						},
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"__ext.container"},
+							},
+							{
+								Method: "topk",
+								VArgsList: []interface{}{
+									1,
+								},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+				HighLight: &md.HighLight{
+					Enable:            true,
+					MaxAnalyzedOffset: 100,
+				},
+			},
+			isDirectQuery: false,
+			promql:        `topk(1, sum by (__ext__bk_46__container) (last_over_time(a[1m])))`,
+			ref: md.QueryReference{
+				"a": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:     BkLog,
+								Timezone:       "UTC",
+								TableID:        "result_table.es",
+								DataLabel:      "es",
+								DB:             "es_index",
+								MetricName:     "usage",
+								VmConditionNum: 1,
+								VmCondition:    `__name__="usage_value"`,
+								StorageID:      "3",
+								StorageIDs: []string{
+									"3",
+								},
+								Field:       "usage",
+								StorageType: consul.ElasticsearchStorageType,
+								Aggregates: md.Aggregates{
+									{
+										Name:       "sum",
+										Dimensions: []string{"__ext.container"},
+										Window:     time.Minute,
+									},
+								},
+								HighLight: &md.HighLight{
+									Enable:            true,
+									MaxAnalyzedOffset: 100,
 								},
 							},
 						},

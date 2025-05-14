@@ -50,3 +50,7 @@ addlicense:
 .PHONY: imports
 imports: addlicense
 	goimports-reviser -rm-unused -set-alias -format -project-name "github.com/TencentBlueKing/bkmonitor-datalink/pkg" ./...
+
+.PHONY: race
+race:
+	go test -race -timeout 1m -parallel 8  ./...

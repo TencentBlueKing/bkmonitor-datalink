@@ -44,7 +44,6 @@ func TestGetCPUStatUsageWin(t *testing.T) {
 		assert.NotNil(t, report.Usage)
 		time.Sleep(1 * time.Second)
 	}
-
 }
 
 func TestQueryCpuInfoWin(t *testing.T) {

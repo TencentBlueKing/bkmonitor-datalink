@@ -10,6 +10,7 @@
 package elasticsearch
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -37,6 +38,7 @@ func TestMappingCache_SetTTL(t *testing.T) {
 
 func TestMappingCache_AppendFieldTypesCache(t *testing.T) {
 	cache := NewMappingCache(5 * time.Minute)
+	ctx := context.Background()
 
 	tableID1 := "table1"
 	tableID2 := "table2"
@@ -52,24 +54,24 @@ func TestMappingCache_AppendFieldTypesCache(t *testing.T) {
 	}
 
 	// Test first append
-	cache.AppendFieldTypesCache(tableID1, mapping1)
+	cache.AppendFieldTypesCache(ctx, tableID1, mapping1)
 
-	fieldType1, ok1 := cache.GetFieldType(tableID1, "field1")
+	fieldType1, ok1 := cache.GetFieldType(ctx, tableID1, "field1")
 	assert.True(t, ok1)
 	assert.Equal(t, "keyword", fieldType1)
 
-	fieldType2, ok2 := cache.GetFieldType(tableID1, "field2")
+	fieldType2, ok2 := cache.GetFieldType(ctx, tableID1, "field2")
 	assert.True(t, ok2)
 	assert.Equal(t, "text", fieldType2)
 
 	// Test second append to different table
-	cache.AppendFieldTypesCache(tableID2, mapping2)
+	cache.AppendFieldTypesCache(ctx, tableID2, mapping2)
 
-	fieldType3, ok3 := cache.GetFieldType(tableID2, "field3")
+	fieldType3, ok3 := cache.GetFieldType(ctx, tableID2, "field3")
 	assert.True(t, ok3)
 	assert.Equal(t, "integer", fieldType3)
 
-	fieldType4, ok4 := cache.GetFieldType(tableID2, "field4")
+	fieldType4, ok4 := cache.GetFieldType(ctx, tableID2, "field4")
 	assert.True(t, ok4)
 	assert.Equal(t, "float", fieldType4)
 
@@ -79,24 +81,25 @@ func TestMappingCache_AppendFieldTypesCache(t *testing.T) {
 		"field5": "boolean",
 	}
 
-	cache.AppendFieldTypesCache(tableID1, updatedMapping)
+	cache.AppendFieldTypesCache(ctx, tableID1, updatedMapping)
 
-	fieldType1Updated, ok1Updated := cache.GetFieldType(tableID1, "field1")
+	fieldType1Updated, ok1Updated := cache.GetFieldType(ctx, tableID1, "field1")
 	assert.True(t, ok1Updated)
 	assert.Equal(t, "date", fieldType1Updated)
 
-	fieldType5, ok5 := cache.GetFieldType(tableID1, "field5")
+	fieldType5, ok5 := cache.GetFieldType(ctx, tableID1, "field5")
 	assert.True(t, ok5)
 	assert.Equal(t, "boolean", fieldType5)
 
 	// Original field2 should still be there
-	fieldType2Again, ok2Again := cache.GetFieldType(tableID1, "field2")
+	fieldType2Again, ok2Again := cache.GetFieldType(ctx, tableID1, "field2")
 	assert.True(t, ok2Again)
 	assert.Equal(t, "text", fieldType2Again)
 }
 
 func TestMappingCache_GetFieldType(t *testing.T) {
 	cache := NewMappingCache(5 * time.Minute)
+	ctx := context.Background()
 
 	tableID := "table1"
 	mapping := map[string]string{
@@ -105,25 +108,25 @@ func TestMappingCache_GetFieldType(t *testing.T) {
 	}
 
 	// Test get on empty cache
-	fieldType, ok := cache.GetFieldType(tableID, "field1")
+	fieldType, ok := cache.GetFieldType(ctx, tableID, "field1")
 	assert.False(t, ok)
 	assert.Empty(t, fieldType)
 
 	// Add data to cache
-	cache.AppendFieldTypesCache(tableID, mapping)
+	cache.AppendFieldTypesCache(ctx, tableID, mapping)
 
 	// Test get on existing field
-	fieldType1, ok1 := cache.GetFieldType(tableID, "field1")
+	fieldType1, ok1 := cache.GetFieldType(ctx, tableID, "field1")
 	assert.True(t, ok1)
 	assert.Equal(t, "keyword", fieldType1)
 
 	// Test get on non-existing field
-	fieldTypeNonExist, okNonExist := cache.GetFieldType(tableID, "nonexistfield")
+	fieldTypeNonExist, okNonExist := cache.GetFieldType(ctx, tableID, "nonexistfield")
 	assert.False(t, okNonExist)
 	assert.Empty(t, fieldTypeNonExist)
 
 	// Test get on non-existing table
-	fieldTypeNonExistTable, okNonExistTable := cache.GetFieldType("nonexisttable", "field1")
+	fieldTypeNonExistTable, okNonExistTable := cache.GetFieldType(ctx, "nonexisttable", "field1")
 	assert.False(t, okNonExistTable)
 	assert.Empty(t, fieldTypeNonExistTable)
 }
@@ -131,16 +134,17 @@ func TestMappingCache_GetFieldType(t *testing.T) {
 func TestMappingCache_Expiration(t *testing.T) {
 	shortTTL := 10 * time.Millisecond
 	cache := NewMappingCache(shortTTL)
+	ctx := context.Background()
 
 	tableID := "table1"
 	mapping := map[string]string{
 		"field1": "keyword",
 	}
 
-	cache.AppendFieldTypesCache(tableID, mapping)
+	cache.AppendFieldTypesCache(ctx, tableID, mapping)
 
 	// Should be in cache initially
-	fieldType1, ok1 := cache.GetFieldType(tableID, "field1")
+	fieldType1, ok1 := cache.GetFieldType(ctx, tableID, "field1")
 	assert.True(t, ok1)
 	assert.Equal(t, "keyword", fieldType1)
 
@@ -148,13 +152,14 @@ func TestMappingCache_Expiration(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Should be expired now
-	fieldTypeExpired, okExpired := cache.GetFieldType(tableID, "field1")
+	fieldTypeExpired, okExpired := cache.GetFieldType(ctx, tableID, "field1")
 	assert.False(t, okExpired)
 	assert.Empty(t, fieldTypeExpired)
 }
 
 func TestMappingCache_Delete(t *testing.T) {
 	cache := NewMappingCache(5 * time.Minute)
+	ctx := context.Background()
 
 	tableID := "table1"
 	mapping := map[string]string{
@@ -163,29 +168,30 @@ func TestMappingCache_Delete(t *testing.T) {
 		"field3": "integer",
 	}
 
-	cache.AppendFieldTypesCache(tableID, mapping)
+	cache.AppendFieldTypesCache(ctx, tableID, mapping)
 
 	// Verify initial state
-	fieldType1, ok1 := cache.GetFieldType(tableID, "field1")
+	fieldType1, ok1 := cache.GetFieldType(ctx, tableID, "field1")
 	assert.True(t, ok1)
 	assert.Equal(t, "keyword", fieldType1)
 
 	// Test delete specific field
-	cache.Delete(tableID, "field1")
+	cache.Delete(ctx, tableID, "field1")
 
 	// field1 should be gone
-	fieldType1After, ok1After := cache.GetFieldType(tableID, "field1")
+	fieldType1After, ok1After := cache.GetFieldType(ctx, tableID, "field1")
 	assert.False(t, ok1After)
 	assert.Empty(t, fieldType1After)
 
 	// field2 should still be there
-	fieldType2, ok2 := cache.GetFieldType(tableID, "field2")
+	fieldType2, ok2 := cache.GetFieldType(ctx, tableID, "field2")
 	assert.True(t, ok2)
 	assert.Equal(t, "text", fieldType2)
 }
 
 func TestMappingCache_Clear(t *testing.T) {
 	cache := NewMappingCache(5 * time.Minute)
+	ctx := context.Background()
 
 	tableID1 := "table1"
 	tableID2 := "table2"
@@ -198,27 +204,28 @@ func TestMappingCache_Clear(t *testing.T) {
 		"field2": "text",
 	}
 
-	cache.AppendFieldTypesCache(tableID1, mapping1)
-	cache.AppendFieldTypesCache(tableID2, mapping2)
+	cache.AppendFieldTypesCache(ctx, tableID1, mapping1)
+	cache.AppendFieldTypesCache(ctx, tableID2, mapping2)
 
 	// Verify initial state
-	_, ok1 := cache.GetFieldType(tableID1, "field1")
-	_, ok2 := cache.GetFieldType(tableID2, "field2")
+	_, ok1 := cache.GetFieldType(ctx, tableID1, "field1")
+	_, ok2 := cache.GetFieldType(ctx, tableID2, "field2")
 	assert.True(t, ok1)
 	assert.True(t, ok2)
 
 	// Clear the cache
-	cache.Clear()
+	cache.Clear(ctx)
 
 	// All entries should be gone
-	_, ok1After := cache.GetFieldType(tableID1, "field1")
-	_, ok2After := cache.GetFieldType(tableID2, "field2")
+	_, ok1After := cache.GetFieldType(ctx, tableID1, "field1")
+	_, ok2After := cache.GetFieldType(ctx, tableID2, "field2")
 	assert.False(t, ok1After)
 	assert.False(t, ok2After)
 }
 
 func TestMappingCache_ConcurrentAccess(t *testing.T) {
 	cache := NewMappingCache(5 * time.Minute)
+	ctx := context.Background()
 
 	// Constants for the test
 	const (
@@ -250,14 +257,14 @@ func TestMappingCache_ConcurrentAccess(t *testing.T) {
 				switch j % 4 {
 				case 0:
 					// Append to cache
-					cache.AppendFieldTypesCache(tableID, mapping)
+					cache.AppendFieldTypesCache(ctx, tableID, mapping)
 				case 1:
 					// Get from cache
-					cache.GetFieldType(tableID, fieldName)
+					cache.GetFieldType(ctx, tableID, fieldName)
 				case 2:
 					// Delete field
 					if j > 0 && j%10 == 0 {
-						cache.Delete(tableID, fieldName)
+						cache.Delete(ctx, tableID, fieldName)
 					}
 				case 3:
 					// Set TTL
@@ -280,14 +287,14 @@ func TestMappingCache_ConcurrentAccess(t *testing.T) {
 				switch j % 3 {
 				case 0:
 					// Get field type
-					cache.GetFieldType(tableID, fieldName)
+					cache.GetFieldType(ctx, tableID, fieldName)
 				case 1:
 					// Get TTL
 					cache.GetTTL()
 				case 2:
 					// Occasionally clear if j is divisible by a large number
 					if j > 0 && j%50 == 0 {
-						cache.Clear()
+						cache.Clear(ctx)
 					}
 				}
 			}
@@ -298,6 +305,8 @@ func TestMappingCache_ConcurrentAccess(t *testing.T) {
 }
 
 func TestFieldTypesCache_GlobalVariable(t *testing.T) {
+	ctx := context.Background()
+
 	// The global variable should be initialized by init()
 	assert.NotNil(t, fieldTypesCache)
 	assert.Equal(t, DefaultMappingCacheTTL, fieldTypesCache.GetTTL())
@@ -309,18 +318,20 @@ func TestFieldTypesCache_GlobalVariable(t *testing.T) {
 	}
 
 	// Add to global cache
-	fieldTypesCache.AppendFieldTypesCache(tableID, mapping)
+	fieldTypesCache.AppendFieldTypesCache(ctx, tableID, mapping)
 
 	// Get from global cache
-	fieldType, ok := fieldTypesCache.GetFieldType(tableID, "globalField")
+	fieldType, ok := fieldTypesCache.GetFieldType(ctx, tableID, "globalField")
 	assert.True(t, ok)
 	assert.Equal(t, "globalType", fieldType)
 
 	// Clean up after test
-	fieldTypesCache.Delete(tableID, "globalField")
+	fieldTypesCache.Delete(ctx, tableID, "globalField")
 }
 
 func TestFieldTypeCache_MultiQueryScenario(t *testing.T) {
+	ctx := context.Background()
+
 	// set a short TTL for testing
 	ttl := 10 * time.Millisecond
 	cache := NewMappingCache(ttl)
@@ -330,15 +341,15 @@ func TestFieldTypeCache_MultiQueryScenario(t *testing.T) {
 		tableID := "rt_1"
 		fieldName := "field_1"
 
-		fieldType, exists := cache.GetFieldType(tableID, fieldName)
+		fieldType, exists := cache.GetFieldType(ctx, tableID, fieldName)
 		assert.False(t, exists, "first query should return not exists")
 		assert.Empty(t, fieldType, "first query should return empty")
 
-		cache.AppendFieldTypesCache(tableID, map[string]string{
+		cache.AppendFieldTypesCache(ctx, tableID, map[string]string{
 			fieldName: "string",
 		})
 
-		fieldType, exists = cache.GetFieldType(tableID, fieldName)
+		fieldType, exists = cache.GetFieldType(ctx, tableID, fieldName)
 		assert.True(t, exists, "after adding, should return exists")
 		assert.Equal(t, "string", fieldType, "after adding, should return correct type")
 	})
@@ -349,7 +360,7 @@ func TestFieldTypeCache_MultiQueryScenario(t *testing.T) {
 		fieldName := "field_1"
 
 		for i := 0; i < 3; i++ {
-			fieldType, exists := cache.GetFieldType(tableID, fieldName)
+			fieldType, exists := cache.GetFieldType(ctx, tableID, fieldName)
 			assert.True(t, exists, "second query should return exists")
 			assert.Equal(t, "string", fieldType, "second query should return correct type")
 		}
@@ -360,18 +371,18 @@ func TestFieldTypeCache_MultiQueryScenario(t *testing.T) {
 		tableID := "rt_2"
 		fieldName := "field_2"
 
-		cache.AppendFieldTypesCache(tableID, map[string]string{
+		cache.AppendFieldTypesCache(ctx, tableID, map[string]string{
 			fieldName: "integer",
 		})
 
-		fieldType, exists := cache.GetFieldType(tableID, fieldName)
+		fieldType, exists := cache.GetFieldType(ctx, tableID, fieldName)
 		assert.True(t, exists, "add to cache should return exists")
 		assert.Equal(t, "integer", fieldType, "should return correct type")
 
 		// wait for expiration
 		time.Sleep(ttl * 2)
 
-		fieldType, exists = cache.GetFieldType(tableID, fieldName)
+		fieldType, exists = cache.GetFieldType(ctx, tableID, fieldName)
 		assert.False(t, exists, "after expiration, should return not exists")
 		assert.Empty(t, fieldType, "after expiration, should return empty")
 	})
@@ -381,20 +392,20 @@ func TestFieldTypeCache_MultiQueryScenario(t *testing.T) {
 		tableID := "rt_3"
 		fieldName := "field_3"
 
-		cache.AppendFieldTypesCache(tableID, map[string]string{
+		cache.AppendFieldTypesCache(ctx, tableID, map[string]string{
 			fieldName: "text",
 		})
 
-		fieldType, exists := cache.GetFieldType(tableID, fieldName)
+		fieldType, exists := cache.GetFieldType(ctx, tableID, fieldName)
 		assert.True(t, exists)
 		assert.Equal(t, "text", fieldType)
 
 		// update mapping
-		cache.AppendFieldTypesCache(tableID, map[string]string{
+		cache.AppendFieldTypesCache(ctx, tableID, map[string]string{
 			fieldName: "keyword",
 		})
 
-		fieldType, exists = cache.GetFieldType(tableID, fieldName)
+		fieldType, exists = cache.GetFieldType(ctx, tableID, fieldName)
 		assert.True(t, exists)
 		assert.Equal(t, "keyword", fieldType, "should return correct type")
 	})

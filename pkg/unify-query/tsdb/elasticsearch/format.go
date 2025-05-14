@@ -208,9 +208,10 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 	return f
 }
 
+// FieldTypeFactory 提供字段类型缓存接口
 type FieldTypeFactory interface {
-	GetFieldType(tableID string, field string) (string, bool)
-	AppendFieldTypesCache(tableID string, mapping map[string]string)
+	GetFieldType(ctx context.Context, tableID string, field string) (string, bool)
+	AppendFieldTypesCache(ctx context.Context, tableID string, mapping map[string]string)
 }
 
 func (f *FormatFactory) WithIsReference(isReference bool) *FormatFactory {
@@ -325,12 +326,13 @@ func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
 
 // WithMappings 合并 mapping，后面的合并前面的
 func (f *FormatFactory) WithMappings(tableID string, mappings ...map[string]any) *FormatFactory {
+	// 通过 mappings 跟 data 保证索引关系，用于后续类型判断
 	fieldTypes := make(map[string]string)
 	for _, mapping := range mappings {
 		mapProperties("", mapping, fieldTypes)
 	}
 	f.tableID = tableID
-	fieldTypesCache.AppendFieldTypesCache(tableID, fieldTypes)
+	fieldTypesCache.AppendFieldTypesCache(f.ctx, tableID, fieldTypes)
 	return f
 }
 
@@ -400,7 +402,7 @@ func (f *FormatFactory) NestedField(field string) string {
 	lbs := strings.Split(field, ESStep)
 	for i := len(lbs) - 1; i >= 0; i-- {
 		checkKey := strings.Join(lbs[0:i], ESStep)
-		if v, ok := fieldTypesCache.GetFieldType(f.tableID, checkKey); ok {
+		if v, ok := fieldTypesCache.GetFieldType(f.ctx, f.tableID, checkKey); ok {
 			if v == Nested {
 				return checkKey
 			}
@@ -639,7 +641,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		case TermAgg:
 			curName := info.Name
 			curAgg := elastic.NewTermsAggregation().Field(info.Name)
-			fieldType, ok := fieldTypesCache.GetFieldType(f.tableID, info.Name)
+			fieldType, ok := fieldTypesCache.GetFieldType(f.ctx, f.tableID, info.Name)
 			if !ok || fieldType == Text || fieldType == KeyWord {
 				curAgg = curAgg.Missing(" ")
 			}
@@ -730,7 +732,7 @@ func (f *FormatFactory) Orders() metadata.Orders {
 			order.Name = f.timeField.Name
 		}
 
-		_, ok := fieldTypesCache.GetFieldType(f.tableID, order.Name)
+		_, ok := fieldTypesCache.GetFieldType(f.ctx, f.tableID, order.Name)
 		if ok {
 			orders = append(orders, order)
 		}
@@ -806,7 +808,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 				q = f.getQuery(MustNot, elastic.NewExistsQuery(key))
 			default:
 				// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
-				fieldType, ok := fieldTypesCache.GetFieldType(f.tableID, key)
+				fieldType, ok := fieldTypesCache.GetFieldType(f.ctx, f.tableID, key)
 				isExistsQuery := true
 				if ok {
 					if fieldType == Text || fieldType == KeyWord {

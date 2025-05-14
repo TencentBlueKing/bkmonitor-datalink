@@ -10,6 +10,7 @@
 package elasticsearch
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/memcache"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 var (
@@ -66,7 +68,15 @@ func (m *MappingCache) GetTTL() time.Duration {
 }
 
 // AppendFieldTypesCache 将字段类型添加到缓存
-func (m *MappingCache) AppendFieldTypesCache(tableID string, mapping map[string]string) {
+func (m *MappingCache) AppendFieldTypesCache(ctx context.Context, tableID string, mapping map[string]string) {
+	var err error
+
+	ctx, span := trace.NewSpan(ctx, "mapping-cache-append-field-types")
+	defer span.End(&err)
+
+	span.Set("table-id", tableID)
+	span.Set("mapping-size", len(mapping))
+
 	for field, fieldType := range mapping {
 		key := createCacheKey(tableID, field)
 		m.cache.SetWithTTL(key, fieldType, 1, m.ttl)
@@ -76,19 +86,49 @@ func (m *MappingCache) AppendFieldTypesCache(tableID string, mapping map[string]
 }
 
 // GetFieldType 从缓存获取字段类型
-func (m *MappingCache) GetFieldType(tableID string, fieldsStr string) (string, bool) {
+func (m *MappingCache) GetFieldType(ctx context.Context, tableID string, fieldsStr string) (string, bool) {
+	var (
+		result string
+		ok     bool
+		err    error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "mapping-cache-get-field-type")
+	defer span.End(&err)
+
 	key := createCacheKey(tableID, fieldsStr)
-	return m.cache.Get(key)
+	span.Set("table-id", tableID)
+	span.Set("field", fieldsStr)
+	span.Set("cache-key", key)
+
+	result, ok = m.cache.Get(key)
+	span.Set("cache-hit", ok)
+
+	return result, ok
 }
 
 // Delete 从缓存删除映射
-func (m *MappingCache) Delete(tableID string, field string) {
+func (m *MappingCache) Delete(ctx context.Context, tableID string, field string) {
+	var err error
+
+	ctx, span := trace.NewSpan(ctx, "mapping-cache-delete")
+	defer span.End(&err)
+
 	key := createCacheKey(tableID, field)
+	span.Set("table-id", tableID)
+	span.Set("field", field)
+	span.Set("cache-key", key)
+
 	m.cache.Del(key)
 }
 
 // Clear 清空缓存
-func (m *MappingCache) Clear() {
+func (m *MappingCache) Clear(ctx context.Context) {
+	var err error
+
+	ctx, span := trace.NewSpan(ctx, "mapping-cache-clear")
+	defer span.End(&err)
+
 	m.cache.Clear()
 }
 

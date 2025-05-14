@@ -909,12 +909,12 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 						{
 							DimensionName: "source_ip",
 							Operator:      metadata.ConditionNotContains,
-							Value:         []string{"192.168.1.1"},
+							Value:         []string{"127.0.0.1"},
 						},
 					},
 				},
 			},
-			expected: "SELECT *, `duration` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `security_logs` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `thedate` = '20240612' AND `severity` IN ('high', 'critical') AND `source_ip` != '192.168.1.1'",
+			expected: "SELECT *, `duration` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `security_logs` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `thedate` = '20240612' AND `severity` IN ('high', 'critical') AND `source_ip` != '127.0.0.1'",
 		},
 
 		// 测试用例4: 多字段排序

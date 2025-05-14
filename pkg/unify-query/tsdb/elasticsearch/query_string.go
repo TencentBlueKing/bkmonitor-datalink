@@ -20,18 +20,19 @@ import (
 )
 
 type QueryString struct {
-	q     string
-	query elastic.Query
+	q        string
+	query    elastic.Query
+	isPrefix bool
 
 	checkNestedField func(string) string
-
-	nestedFields map[string]struct{}
+	nestedFields     map[string]struct{}
 }
 
 // NewQueryString 解析 es query string，该逻辑暂时不使用，直接透传 query string 到 es 代替
-func NewQueryString(q string, checkNestedField func(string) string) *QueryString {
+func NewQueryString(q string, isPrefix bool, checkNestedField func(string) string) *QueryString {
 	return &QueryString{
 		q:                q,
+		isPrefix:         isPrefix,
 		query:            elastic.NewBoolQuery(),
 		checkNestedField: checkNestedField,
 		nestedFields:     make(map[string]struct{}),
@@ -43,7 +44,11 @@ func (s *QueryString) NestedFields() map[string]struct{} {
 }
 
 func (s *QueryString) queryString(str string) elastic.Query {
-	return elastic.NewQueryStringQuery(str).AnalyzeWildcard(true).Field("*").Field("__*").Lenient(true)
+	q := elastic.NewQueryStringQuery(str).AnalyzeWildcard(true).Field("*").Field("__*").Lenient(true)
+	if s.isPrefix {
+		q.Type("phrase_prefix")
+	}
+	return q
 }
 
 func (s *QueryString) ToDSL() (elastic.Query, error) {

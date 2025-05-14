@@ -67,6 +67,7 @@ const (
 	KeyAddress = "__address"
 
 	KeyDataLabel = "__data_label"
+	KeyCollapse  = "_collapse"
 )
 
 const (
@@ -159,6 +160,10 @@ type TermAgg struct {
 
 type NestedAgg struct {
 	Name string
+}
+
+type CollapseAgg struct {
+	Field string
 }
 
 type aggInfoList []any
@@ -500,6 +505,14 @@ func (f *FormatFactory) SetData(data map[string]any) {
 	mapData("", data, f.data)
 }
 
+func (f *FormatFactory) collapseAgg(field string) {
+	f.aggInfoList = append(
+		f.aggInfoList, CollapseAgg{
+			Field: field,
+		},
+	)
+}
+
 func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -646,6 +659,20 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 
 			agg = curAgg
 			name = curName
+		case CollapseAgg:
+			curName := KeyCollapse
+			curAgg := elastic.NewTermsAggregation().Field(info.Field).Size(1)
+			fieldType, ok := f.mapping[info.Field]
+			if !ok || fieldType == Text || fieldType == KeyWord {
+				curAgg = curAgg.Missing(" ")
+			}
+
+			if agg != nil {
+				curAgg = curAgg.SubAggregation(name, agg)
+			}
+
+			agg = curAgg
+			name = curName
 		default:
 			err = fmt.Errorf("aggInfoList aggregation is not support this type %T, info: %+v", info, info)
 			return
@@ -691,19 +718,55 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 				f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
 			}
 
-			for idx, dim := range am.Dimensions {
+			// 确定是否有折叠配置
+			var collapseFieldName string
+			// 优先使用新结构
+			if am.Collapse != nil && am.Collapse.Field != "" {
+				collapseFieldName = am.Collapse.Field
+			} else if am.CollapseField != "" {
+				// 兼容旧结构
+				collapseFieldName = am.CollapseField
+			}
+
+			hasCollapseField := collapseFieldName != ""
+			dimensions := make([]string, 0, len(am.Dimensions))
+
+			// 将所有非折叠字段的维度收集起来
+			for _, dim := range am.Dimensions {
 				if dim == labels.MetricName {
 					continue
 				}
+
 				if f.decode != nil {
 					dim = f.decode(dim)
 				}
 
-				f.termAgg(dim, idx == 0)
+				// 检查是否是折叠字段
+				if hasCollapseField && dim == collapseFieldName {
+					continue
+				}
+
+				// 不是折叠字段，添加到待处理维度列表
+				dimensions = append(dimensions, dim)
+			}
+
+			// 从Agg方法的实现可以看出，它是从内向外构建聚合
+			// 因此，我们需要反转处理顺序，使生成的JSON中gseIndex在外层
+
+			// 如果有折叠字段，先添加折叠聚合（会在最内层）
+			if hasCollapseField {
+				f.collapseAgg(collapseFieldName)
+				f.nestedAgg(collapseFieldName)
+			}
+
+			// 反转维度列表，以确保正确的嵌套顺序
+			for i := len(dimensions) - 1; i >= 0; i-- {
+				dim := dimensions[i]
+				f.termAgg(dim, i == 0)
 				f.nestedAgg(dim)
 			}
 		default:
-			err := fmt.Errorf("esAgg aggregation is not support with: %+v", am)
+			err := fmt.Errorf("not support this aggregate name: %s", am.Name)
 			return "", nil, err
 		}
 	}

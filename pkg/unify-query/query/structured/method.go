@@ -88,6 +88,9 @@ type AggregateMethod struct {
 	IsSubQuery bool `json:"is_sub_query,omitempty"`
 	// Step 子查询区间 step
 	Step string `json:"step,omitempty" swaggerignore:"true"`
+
+	// CollapseField 指定需要进行折叠的字段
+	CollapseField string `json:"collapse_field,omitempty" example:"hostname"`
 }
 
 // ToProm 将结果返回为一个promql的聚合表达式，但是注意：此时的Expr/Grouping为空，需要在外部进行补充

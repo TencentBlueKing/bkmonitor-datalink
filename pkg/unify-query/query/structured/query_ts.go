@@ -59,6 +59,8 @@ type QueryTs struct {
 	LookBackDelta string `json:"look_back_delta,omitempty"`
 	// Instant 瞬时数据
 	Instant bool `json:"instant"`
+	// Collapse 指定要折叠的配置，用于Elasticsearch聚合
+	Collapse *CollapseConfig `json:"collapse,omitempty"`
 
 	// 增加公共限制
 	// Limit 点数限制数量
@@ -75,6 +77,11 @@ type QueryTs struct {
 
 	// HighLight 是否开启高亮
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
+}
+
+// CollapseConfig 用于Elasticsearch折叠聚合的配置
+type CollapseConfig struct {
+	Field string `json:"field,omitempty" example:"trace_id"`
 }
 
 // StepParse 解析step
@@ -159,6 +166,11 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
 		if len(query.KeepColumns) == 0 && len(q.ResultColumns) != 0 {
 			query.KeepColumns = q.ResultColumns
+		}
+
+		// 复用 collapse 字段配置
+		if query.Collapse == nil && q.Collapse != nil {
+			query.Collapse = q.Collapse
 		}
 
 		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid)
@@ -356,6 +368,8 @@ type Query struct {
 	ReferenceName string `json:"reference_name,omitempty" example:"a"`
 	// Dimensions promQL 使用维度
 	Dimensions []string `json:"dimensions,omitempty" example:"bk_target_ip,bk_target_cloud_id"`
+	// Collapse 指定要折叠的配置，用于Elasticsearch聚合
+	Collapse *CollapseConfig `json:"collapse,omitempty"`
 	// Limit 点数限制数量
 	Limit int `json:"limit,omitempty" example:"0"`
 	// From 翻页开启数字
@@ -425,6 +439,15 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 	// 非时间聚合函数使用透传的方式
 	if q.IsReference {
 		aggs, err = q.AggregateMethodList.ToQry(q.Timezone)
+		// 如果有Collapse，添加到聚合中
+		if err == nil && q.Collapse != nil && q.Collapse.Field != "" {
+			for i := range aggs {
+				aggs[i].CollapseField = q.Collapse.Field
+				aggs[i].Collapse = &metadata.AggregateCollapse{
+					Field: q.Collapse.Field,
+				}
+			}
+		}
 		return
 	}
 
@@ -472,6 +495,15 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 			TimeZone:   q.Timezone,
 			Args:       am.VArgsList,
 		}
+
+		// 如果有Collapse配置，添加折叠字段
+		if q.Collapse != nil && q.Collapse.Field != "" {
+			agg.CollapseField = q.Collapse.Field
+			agg.Collapse = &metadata.AggregateCollapse{
+				Field: q.Collapse.Field,
+			}
+		}
+
 		aggs = append(aggs, agg)
 
 		// 是否命中降采样计算

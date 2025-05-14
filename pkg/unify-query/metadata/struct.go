@@ -47,6 +47,9 @@ type Aggregate struct {
 	TimeZone string
 
 	Args []interface{}
+
+	// CollapseField 指定要折叠的字段，用于Elasticsearch聚合
+	CollapseField string `json:"collapse_field,omitempty"`
 }
 
 // OffSetInfo Offset的信息存储，供promql查询转换为influxdb查询语句时使用

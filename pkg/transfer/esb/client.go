@@ -19,7 +19,7 @@ import (
 type Client struct {
 	commonArgs *CommonArgs
 	agent      *sling.Sling
-	conf	   define.Configuration
+	conf       define.Configuration
 }
 
 // CommonArgs :

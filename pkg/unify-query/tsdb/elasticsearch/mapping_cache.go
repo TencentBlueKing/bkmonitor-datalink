@@ -11,8 +11,9 @@ package elasticsearch
 
 import (
 	"fmt"
-	"github.com/dgraph-io/ristretto/v2"
 	"time"
+
+	"github.com/dgraph-io/ristretto/v2"
 )
 
 var (

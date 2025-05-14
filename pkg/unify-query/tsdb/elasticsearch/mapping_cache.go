@@ -14,6 +14,9 @@ import (
 	"time"
 
 	"github.com/dgraph-io/ristretto/v2"
+	"github.com/spf13/viper"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/memcache"
 )
 
 var (
@@ -21,10 +24,7 @@ var (
 )
 
 var (
-	DefaultMappingCacheTTL       = 5 * time.Minute
-	DefaultNumCounters     int64 = 1e6
-	DefaultMaxCost         int64 = 1e8 // 100MB
-	DefaultBufferItems     int64 = 64
+	DefaultMappingCacheTTL = 5 * time.Minute
 )
 
 func init() {
@@ -40,9 +40,9 @@ type MappingCache struct {
 // NewMappingCache 创建MappingCache
 func NewMappingCache(ttl time.Duration) *MappingCache {
 	cache, err := ristretto.NewCache(&ristretto.Config[string, string]{
-		NumCounters: DefaultNumCounters,
-		MaxCost:     DefaultMaxCost,
-		BufferItems: DefaultBufferItems,
+		NumCounters: viper.GetInt64(memcache.RistrettoNumCountersPath),
+		MaxCost:     viper.GetInt64(memcache.RistrettoMaxCostPath),
+		BufferItems: viper.GetInt64(memcache.RistrettoBufferItemsPath),
 		Metrics:     true,
 	})
 	if err != nil {

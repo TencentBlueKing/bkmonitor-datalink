@@ -78,13 +78,7 @@ func (m *MappingCache) AppendFieldTypesCache(tableID string, mapping map[string]
 // GetFieldType 从缓存获取字段类型
 func (m *MappingCache) GetFieldType(tableID string, fieldsStr string) (string, bool) {
 	key := createCacheKey(tableID, fieldsStr)
-
-	fieldType, found := m.cache.Get(key)
-	if !found {
-		return "", false
-	}
-
-	return fieldType, found
+	return m.cache.Get(key)
 }
 
 // Delete 从缓存删除映射

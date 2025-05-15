@@ -53,9 +53,8 @@ const (
 	Percentiles   = "percentiles"
 
 	Collapse = "collapse"
-
-	Nested = "nested"
-	Terms  = "terms"
+	Nested   = "nested"
+	Terms    = "terms"
 
 	ESStep = "."
 )

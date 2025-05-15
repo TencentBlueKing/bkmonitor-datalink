@@ -481,7 +481,6 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 			TimeZone:   q.Timezone,
 			Args:       am.VArgsList,
 		}
-
 		aggs = append(aggs, agg)
 
 		// 是否命中降采样计算

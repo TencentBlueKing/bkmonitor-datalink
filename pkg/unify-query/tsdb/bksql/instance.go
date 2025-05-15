@@ -401,7 +401,21 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 		return nil, err
 	}
 
-	lbs := queryFactory.Dims(data.SelectFieldsOrder, query.Field, sql_expr.TimeStamp, sql_expr.Value)
+	var lbs []string
+	for _, k := range data.SelectFieldsOrder {
+		// 忽略内置字段
+		if checkInternalDimension(k) {
+			continue
+		}
+
+		// 忽略内置值和时间字段
+		if k == sql_expr.TimeStamp || k == sql_expr.Value {
+			continue
+		}
+
+		lbs = append(lbs, k)
+	}
+
 	return lbs, err
 }
 

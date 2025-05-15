@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
@@ -100,20 +101,17 @@ func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
 }
 
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段
-func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, timeAggregate TimeAggregate, err error) {
+func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, dimensionSet *set.Set[string], timeAggregate TimeAggregate, err error) {
 	valueField, _ := d.dimTransform(d.valueField)
 
 	var (
 		window        time.Duration
 		offsetMinutes int64
 
-		timezone     string
-		dimensionMap = map[string]struct{}{
-			FieldValue: {},
-			FieldTime:  {},
-		}
+		timezone string
 	)
 
+	dimensionSet = set.New[string]([]string{FieldValue, FieldTime}...)
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
 			var (
@@ -122,6 +120,9 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 				newDim      string
 				selectAlias string
 			)
+
+			dimensionSet.Add(dim)
+
 			newDim, isObject = d.dimTransform(dim)
 			if isObject && d.encodeFunc != nil {
 				selectAlias = fmt.Sprintf("%s AS `%s`", newDim, d.encodeFunc(dim))
@@ -129,8 +130,6 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 			} else {
 				selectAlias = newDim
 			}
-
-			dimensionMap[dim] = struct{}{}
 
 			selectFields = append(selectFields, selectAlias)
 			groupByFields = append(groupByFields, newDim)
@@ -200,7 +199,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 	for _, order := range orders {
 		// 如果是聚合操作的话，只能使用维度进行排序
 		if len(aggregates) > 0 {
-			if _, ok := dimensionMap[order.Name]; !ok {
+			if !dimensionSet.Existed(order.Name) {
 				continue
 			}
 		}

@@ -225,8 +225,6 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
 			actual, err := json.Marshal(ts)
 			assert.Nil(t, err)
 
-			fmt.Println(string(actual))
-
 			assert.JSONEq(t, c.expected, string(actual))
 		})
 	}

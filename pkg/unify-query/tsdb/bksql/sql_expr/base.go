@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
@@ -58,7 +59,7 @@ type SQLExpr interface {
 	// ParserAllConditions 解析全量条件生成SQL条件表达式
 	ParserAllConditions(allConditions metadata.AllConditions) (string, error)
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
-	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, TimeAggregate, error)
+	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, *set.Set[string], TimeAggregate, error)
 	// DescribeTableSQL 返回当前表结构
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
@@ -145,7 +146,7 @@ func (d *DefaultSQLExpr) ParserQueryString(_ string) (string, error) {
 }
 
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段
-func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, timeAggregate TimeAggregate, err error) {
+func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, dimensionSet *set.Set[string], timeAggregate TimeAggregate, err error) {
 	valueField, err := d.dimTransform(d.valueField)
 	if err != nil {
 		return
@@ -155,18 +156,22 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		window       time.Duration
 		offsetMillis int64
 		timezone     string
-		dimensionMap = make(map[string]struct{})
 	)
+	dimensionSet = set.New[string]([]string{FieldValue, FieldTime}...)
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
-			dim, err = d.dimTransform(dim)
+			var (
+				newDim string
+			)
+
+			dimensionSet.Add(dim)
+			newDim, err = d.dimTransform(dim)
 			if err != nil {
 				return
 			}
-			dimensionMap[dim] = struct{}{}
 
-			selectFields = append(selectFields, dim)
-			groupByFields = append(groupByFields, dim)
+			selectFields = append(selectFields, newDim)
+			groupByFields = append(groupByFields, newDim)
 		}
 
 		if valueField == "" {
@@ -220,7 +225,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 	for _, order := range orders {
 		// 如果是聚合操作的话，只能使用维度进行排序
 		if len(aggregates) > 0 {
-			if _, ok := dimensionMap[order.Name]; !ok {
+			if !dimensionSet.Existed(order.Name) {
 				continue
 			}
 		}

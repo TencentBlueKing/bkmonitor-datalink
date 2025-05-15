@@ -719,13 +719,10 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 				f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
 			}
 
-			// 确定是否有折叠配置
 			var collapseFieldName string
-			// 优先使用新结构
-			if am.Collapse != nil && am.Collapse.Field != "" {
-				collapseFieldName = am.Collapse.Field
+			if am.CollapseField != "" {
+				collapseFieldName = am.CollapseField
 			} else if am.CollapseField != "" {
-				// 兼容旧结构
 				collapseFieldName = am.CollapseField
 			}
 

@@ -425,16 +425,6 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 	// 非时间聚合函数使用透传的方式
 	if q.IsReference {
 		aggs, err = q.AggregateMethodList.ToQry(q.Timezone)
-		// 如果有Collapse，添加到聚合中
-		if err == nil && q.Collapse != nil && q.Collapse.Field != "" {
-			for i := range aggs {
-				aggs[i].CollapseField = q.Collapse.Field
-				aggs[i].Collapse = &metadata.AggregateCollapse{
-					Field: q.Collapse.Field,
-				}
-			}
-		}
-		return
 	}
 
 	// PromQL 聚合方式需要找到 TimeAggregation 共同判断
@@ -486,9 +476,6 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 		// 如果有Collapse配置，添加折叠字段
 		if q.Collapse != nil && q.Collapse.Field != "" {
 			agg.CollapseField = q.Collapse.Field
-			agg.Collapse = &metadata.AggregateCollapse{
-				Field: q.Collapse.Field,
-			}
 		}
 
 		aggs = append(aggs, agg)
@@ -496,7 +483,6 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 		// 是否命中降采样计算
 		q.IsDomSampled = true
 	}
-
 	return
 }
 

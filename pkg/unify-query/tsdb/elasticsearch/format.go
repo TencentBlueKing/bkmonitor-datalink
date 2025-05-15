@@ -704,10 +704,12 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
 			f.valueAgg(FieldValue, am.Name, am.Args...)
 			f.nestedAgg(f.valueField)
+
 			if am.Window > 0 && !am.Without {
 				// 添加时间聚合
 				f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
 			}
+
 			for idx, dim := range am.Dimensions {
 				if dim == labels.MetricName {
 					continue
@@ -715,6 +717,7 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 				if f.decode != nil {
 					dim = f.decode(dim)
 				}
+
 				f.termAgg(dim, idx == 0)
 				f.nestedAgg(dim)
 			}
@@ -1070,9 +1073,4 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 
 func (f *FormatFactory) GetTimeField() metadata.TimeField {
 	return f.timeField
-}
-
-// 新增方法，获取 collapse 字段
-func (f *FormatFactory) GetCollapse() string {
-	return f.CollapseField
 }

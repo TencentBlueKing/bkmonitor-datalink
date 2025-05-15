@@ -663,19 +663,8 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			agg = curAgg
 			name = curName
 		case CollapseAgg:
-			curName := KeyCollapse
-			curAgg := elastic.NewTermsAggregation().Field(info.Field).Size(1)
-			fieldType, ok := f.mapping[info.Field]
-			if !ok || fieldType == Text || fieldType == KeyWord {
-				curAgg = curAgg.Missing(" ")
-			}
-
-			if agg != nil {
-				curAgg = curAgg.SubAggregation(name, agg)
-			}
-
-			agg = curAgg
-			name = curName
+			name = KeyCollapse
+			agg = elastic.NewCollapseBuilder(info.Field)
 		default:
 			err = fmt.Errorf("aggInfoList aggregation is not support this type %T, info: %+v", info, info)
 			return
@@ -1081,4 +1070,9 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 
 func (f *FormatFactory) GetTimeField() metadata.TimeField {
 	return f.timeField
+}
+
+// 新增方法，获取 collapse 字段
+func (f *FormatFactory) GetCollapse() string {
+	return f.CollapseField
 }

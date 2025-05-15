@@ -21,6 +21,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -47,10 +48,19 @@ var (
 		endTime:          {},
 		theDate:          {},
 
-		sql_expr.TimeStamp: {},
-		sql_expr.Value:     {},
+		sql_expr.ShardKey: {},
 	}
 )
+
+func checkInternalDimension(key string) bool {
+	key = strings.ToLower(key)
+	nd := set.New[string]()
+	for k := range internalDimension {
+		nd.Add(strings.ToLower(k))
+	}
+
+	return nd.Existed(key)
+}
 
 type QueryFactory struct {
 	ctx  context.Context
@@ -185,7 +195,7 @@ func (f *QueryFactory) ReloadListData(data map[string]any) (newData map[string]a
 
 	for k, d := range data {
 		// 判断是否是内置维度，内置维度不是用户上报的维度
-		if _, ok := internalDimension[k]; ok {
+		if checkInternalDimension(k) {
 			continue
 		}
 
@@ -501,15 +511,18 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	return
 }
 
-func (f *QueryFactory) Dims(dims []string, field string) []string {
+func (f *QueryFactory) Dims(dims []string, fields ...string) []string {
+	skipFields := set.New[string](fields...)
+
 	dimensions := make([]string, 0)
 	for _, dim := range dims {
 		// 判断是否是内置维度，内置维度不是用户上报的维度
-		if _, ok := internalDimension[dim]; ok {
+		if checkInternalDimension(dim) {
 			continue
 		}
+
 		// 如果是字段值也需要跳过
-		if dim == field {
+		if skipFields.Existed(dim) {
 			continue
 		}
 

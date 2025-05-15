@@ -401,7 +401,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 		return nil, err
 	}
 
-	lbs := queryFactory.Dims(data.SelectFieldsOrder, query.Field)
+	lbs := queryFactory.Dims(data.SelectFieldsOrder, query.Field, sql_expr.TimeStamp, sql_expr.Value)
 	return lbs, err
 }
 

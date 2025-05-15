@@ -425,6 +425,7 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 	// 非时间聚合函数使用透传的方式
 	if q.IsReference {
 		aggs, err = q.AggregateMethodList.ToQry(q.Timezone)
+		return
 	}
 
 	// PromQL 聚合方式需要找到 TimeAggregation 共同判断

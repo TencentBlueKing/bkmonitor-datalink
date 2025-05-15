@@ -45,6 +45,8 @@ func setDefaultConfig() {
 
 	viper.SetDefault(GrpcMaxCallRecvMsgSizeConfigPath, 1024*1024*10)
 	viper.SetDefault(GrpcMaxCallSendMsgSizeConfigPath, 1024*1024*10)
+
+	viper.SetDefault(IsCacheConfigPath, true)
 }
 
 // LoadConfig
@@ -71,6 +73,7 @@ func LoadConfig() {
 	SpaceRouterBboltPath = viper.GetString(SpaceRouterBboltPathConfigPath)
 	SpaceRouterBboltBucketName = viper.GetString(SpaceRouterBboltBucketNameConfigPath)
 	SpaceRouterBboltWriteBatchSize = viper.GetInt(SpaceRouterBboltWriteBatchSizeConfigPath)
+	IsCache = viper.GetBool(IsCacheConfigPath)
 
 	GrpcMaxCallRecvMsgSize = viper.GetInt(GrpcMaxCallRecvMsgSizeConfigPath)
 	GrpcMaxCallSendMsgSize = viper.GetInt(GrpcMaxCallSendMsgSizeConfigPath)

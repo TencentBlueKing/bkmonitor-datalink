@@ -300,7 +300,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"bool":{"must":[{"match_phrase":{"keyword":{"query":"test"}}},{"nested":{"query":{"match_phrase":{"nested3.nestedChild.key":{"query":"value"}}},"path":"nested3.nestedChild"}},{"nested":{"path":"nested3","query":{"exists":{"field":"nested3.annotations"}}}}]}}}`,
+			expected: `{"query":{"bool":{"must":[{"match_phrase":{"keyword":{"query":"test"}}},{"nested":{"path":"nested3","query":{"exists":{"field":"nested3.annotations"}}}},{"nested":{"query":{"match_phrase":{"nested3.nestedChild.key":{"query":"value"}}},"path":"nested3.nestedChild"}}]}}}`,
 		},
 		"mixed nested and normal queries with different operators": {
 			conditions: metadata.AllConditions{

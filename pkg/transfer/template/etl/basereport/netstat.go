@@ -76,6 +76,18 @@ func NewNetStatProcessor(ctx context.Context, name string) *template.RecordProce
 			"cur_udp_outdatagrams",
 			etl.ExtractByJMESPath("data.net.protocolstat.udp.outDatagrams"), etl.TransformNilFloat64,
 		),
+		etl.NewSimpleField(
+			"cur_tcp_activeopens",
+			etl.ExtractByJMESPath("data.net.protocolstat.tcp.activeOpens"), etl.TransformNilFloat64,
+		),
+		etl.NewSimpleField(
+			"cur_tcp_passiveopens",
+			etl.ExtractByJMESPath("data.net.protocolstat.tcp.passiveOpens"), etl.TransformNilFloat64,
+		),
+		etl.NewSimpleField(
+			"cur_tcp_retranssegs",
+			etl.ExtractByJMESPath("data.net.protocolstat.tcp.retransSegs"), etl.TransformNilFloat64,
+		),
 	).AddTime(etl.NewSimpleField(
 		"time", etl.ExtractByJMESPath("data.utctime"),
 		etl.TransformTimeStampWithUTCLayout("2006-01-02 15:04:05"),

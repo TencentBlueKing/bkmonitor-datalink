@@ -27,6 +27,7 @@ func TestQsToDsl(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	for i, c := range []struct {
 		q        string
+		isPrefix bool
 		expected string
 		err      error
 	}{
@@ -62,6 +63,19 @@ func TestQsToDsl(t *testing.T) {
 			q: `*`,
 		},
 		{
+			q:        `*`,
+			isPrefix: true,
+		},
+		{
+			q:        `demo`,
+			expected: `{"query_string":{"fields":["*","__*"],"analyze_wildcard":true,"lenient":true,"query":"demo"}}`,
+		},
+		{
+			q:        `demo`,
+			isPrefix: true,
+			expected: `{"query_string":{"fields":["*","__*"],"analyze_wildcard":true,"lenient":true,"query":"demo","type":"phrase_prefix"}}`,
+		},
+		{
 			q: ``,
 		},
 		{
@@ -71,20 +85,26 @@ func TestQsToDsl(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			qs := NewQueryString(c.q, func(s string) string {
+			qs := NewQueryString(c.q, c.isPrefix, func(s string) string {
 				if s == "nested.key" {
 					return s
 				}
 				return ""
 			})
-			query, err := qs.Parser()
+			query, err := qs.ToDSL()
 			if err == nil {
 				if query != nil {
-					body, _ := query.Source()
-					bodyJson, _ := json.Marshal(body)
-					bodyString := string(bodyJson)
-					assert.JSONEq(t, c.expected, bodyString)
+					body, err := query.Source()
+					assert.Nil(t, err)
+
+					if body != nil {
+						bodyJson, _ := json.Marshal(body)
+						bodyString := string(bodyJson)
+						assert.JSONEq(t, c.expected, bodyString)
+						return
+					}
 				}
+				assert.Empty(t, c.expected)
 			} else {
 				assert.Equal(t, c.err, err)
 			}

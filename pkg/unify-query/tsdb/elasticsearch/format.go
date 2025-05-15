@@ -706,7 +706,7 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 			f.nestedAgg(f.valueField)
 
 			if am.Window > 0 && !am.Without {
-				// 添加时间聚合
+				// 增加时间函数
 				f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
 			}
 

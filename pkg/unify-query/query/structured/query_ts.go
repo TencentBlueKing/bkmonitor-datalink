@@ -150,10 +150,8 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		}
 
 		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-		if query.HighLight != nil {
-			if !query.HighLight.Enable && q.HighLight.Enable {
-				query.HighLight = q.HighLight
-			}
+		if query.HighLight == nil && q.HighLight != nil {
+			query.HighLight = q.HighLight
 		}
 
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
@@ -187,26 +185,12 @@ func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClus
 		return nil, errors.Errorf("Only one query supported, now %d ", len(q.QueryList))
 	}
 
-	for _, qry = range q.QueryList {
-	}
+	qry = q.QueryList[0]
 
 	// 结构定义转换
 	allConditions, err := qry.Conditions.AnalysisConditions()
-	queryConditions := make([][]metadata.ConditionField, 0, len(allConditions))
-	for _, conds := range allConditions {
-		queryConds := make([]metadata.ConditionField, 0, len(conds))
-		for _, cond := range conds {
-			queryConds = append(queryConds, metadata.ConditionField{
-				DimensionName: cond.DimensionName,
-				Value:         cond.Value,
-				Operator:      cond.Operator,
-				IsWildcard:    cond.IsWildcard,
-				IsPrefix:      cond.IsPrefix,
-				IsSuffix:      cond.IsSuffix,
-			})
-		}
-		queryConditions = append(queryConditions, queryConds)
-	}
+	queryConditions := allConditions.MetaDataAllConditions()
+
 	if err != nil {
 		return nil, err
 	}
@@ -393,8 +377,10 @@ type Query struct {
 	// Timezone 时区，会被外面的 Timezone 覆盖
 	Timezone string `json:"-" swaggerignore:"true"`
 
-	// QueryString es 专用关键字查询
+	// QueryString 关键字查询
 	QueryString string `json:"query_string"`
+	// IsPrefix 是否启用前缀匹配
+	IsPrefix bool `json:"is_prefix"`
 
 	// IsReference 是否使用非时间聚合查询
 	IsReference bool `json:"-" swaggerignore:"true"`
@@ -466,7 +452,8 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 	if name, ok := domSampledFunc[am.Method+q.TimeAggregation.Function]; ok {
 		agg := metadata.Aggregate{
 			Name:       name,
-			Dimensions: am.Dimensions,
+			Field:      am.Field,
+			Dimensions: append([]string{}, am.Dimensions...),
 			Without:    am.Without,
 			Window:     time.Duration(window),
 			TimeZone:   q.Timezone,
@@ -504,6 +491,11 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		return nil, err
 	}
 
+	allConditions, err := q.Conditions.AnalysisConditions()
+	if err != nil {
+		return nil, err
+	}
+
 	// 如果 DataSource 为空，则自动补充
 	if q.DataSource == "" {
 		q.DataSource = BkMonitor
@@ -511,12 +503,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 	// 如果是 BkSql 查询无需获取 tsdb 路由关系
 	if q.DataSource == BkData {
-		allConditions, bkDataErr := q.Conditions.AnalysisConditions()
-		if bkDataErr != nil {
-			err = bkDataErr
-			return nil, bkDataErr
-		}
-
 		// 判断空间跟业务是否匹配
 		isMatchBizID := func() bool {
 			space := strings.Split(spaceUid, "__")
@@ -552,15 +538,39 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		}
 
 		qry := &metadata.Query{
-			StorageType:    consul.BkSqlStorageType,
-			TableID:        string(tableID),
-			DataSource:     q.DataSource,
-			DB:             route.DB(),
-			Measurement:    route.Measurement(),
-			Field:          q.FieldName,
-			MetricName:     metricName,
-			Aggregates:     aggregates,
-			BkSqlCondition: allConditions.BkSql(),
+			StorageType:   consul.BkSqlStorageType,
+			TableID:       string(tableID),
+			DataSource:    q.DataSource,
+			DB:            route.DB(),
+			Measurement:   route.Measurement(),
+			Field:         q.FieldName,
+			MetricName:    metricName,
+			Aggregates:    aggregates,
+			AllConditions: allConditions.MetaDataAllConditions(),
+			Size:          q.Limit,
+			From:          q.From,
+		}
+
+		if len(q.OrderBy) > 0 {
+			qry.Orders = make(metadata.Orders, 0, len(q.OrderBy))
+			for _, o := range q.OrderBy {
+				if len(o) == 0 {
+					continue
+				}
+
+				asc := true
+				name := o
+
+				if strings.HasPrefix(name, "-") {
+					asc = false
+					name = name[1:]
+				}
+
+				qry.Orders = append(qry.Orders, metadata.Order{
+					Name: name,
+					Ast:  asc,
+				})
+			}
 		}
 
 		metadata.GetQueryParams(ctx).SetStorageType(qry.StorageType)
@@ -578,11 +588,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	isSkipField := false
 	if metricName == "" || q.DataSource == BkLog || q.DataSource == BkApm {
 		isSkipField = true
-	}
-
-	allConditions, err := q.Conditions.AnalysisConditions()
-	if err != nil {
-		return nil, err
 	}
 
 	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
@@ -608,6 +613,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	span.Set("query-metric", metricName)
 	span.Set("query-is-regexp", q.IsRegexp)
 	span.Set("tsdb-num", len(tsDBs))
+	span.Set("query-aggregate", aggregates)
 
 	for _, tsDB := range tsDBs {
 		query, buildErr := q.BuildMetadataQuery(ctx, tsDB, allConditions, queryLabelsMatcher)
@@ -875,19 +881,17 @@ func (q *Query) BuildMetadataQuery(
 		return nil, err
 	}
 
-	// 在 metadata 还没有补充 storageType 字段之前
-	// 使用 sourceType 来判断是否是 es 查询
-	//  等后面支持了之后可以删除该段逻辑
-	if tsDB.SourceType == BkData {
-		query.StorageType = consul.ElasticsearchStorageType
-	}
-
 	// 兼容原逻辑，storageType 通过 storageMap 获取
 	if query.StorageType == "" {
+		log.Warnf(ctx, "storageType is empty with %s", tsDB.TableID)
 		stg, _ := tsdb.GetStorage(query.StorageID)
 		if stg != nil {
 			query.StorageType = stg.Type
 		}
+	}
+
+	if query.StorageType == "" {
+		return nil, fmt.Errorf("storageType is empty with %v", query.StorageID)
 	}
 
 	query.Measurement = measurement
@@ -909,12 +913,15 @@ func (q *Query) BuildMetadataQuery(
 	query.NeedAddTime = tsDB.NeedAddTime
 	query.SourceType = tsDB.SourceType
 
+	query.AllConditions = allCondition.MetaDataAllConditions()
 	query.Condition = whereList.String()
 	query.VmCondition, query.VmConditionNum = allCondition.VMString(query.VmRt, vmMetric, q.IsRegexp)
 
 	// 写入 ES 所需内容
 	query.QueryString = q.QueryString
+	query.IsPrefix = q.IsPrefix
 	query.Source = q.KeepColumns
+
 	query.HighLight = q.HighLight
 
 	query.Scroll = q.Scroll
@@ -922,24 +929,6 @@ func (q *Query) BuildMetadataQuery(
 
 	query.Size = q.Limit
 	query.From = q.From
-
-	if len(allCondition) > 0 {
-		query.AllConditions = make(metadata.AllConditions, len(allCondition))
-		for i, conditions := range allCondition {
-			conds := make([]metadata.ConditionField, len(conditions))
-			for j, c := range conditions {
-				conds[j] = metadata.ConditionField{
-					DimensionName: c.DimensionName,
-					Value:         c.Value,
-					Operator:      c.Operator,
-					IsWildcard:    c.IsWildcard,
-					IsPrefix:      c.IsPrefix,
-					IsSuffix:      c.IsSuffix,
-				}
-			}
-			query.AllConditions[i] = conds
-		}
-	}
 
 	if len(q.OrderBy) > 0 {
 		query.Orders = q.OrderBy.Orders()

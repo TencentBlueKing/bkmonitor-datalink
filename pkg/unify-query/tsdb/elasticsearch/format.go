@@ -716,10 +716,9 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 			f.valueAgg(FieldValue, am.Name, am.Args...)
 			f.nestedAgg(f.valueField)
 			if am.Window > 0 && !am.Without {
-				// 增加时间函数
+				// 添加时间聚合
 				f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
 			}
-
 			for idx, dim := range am.Dimensions {
 				if dim == labels.MetricName {
 					continue
@@ -727,7 +726,6 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 				if f.decode != nil {
 					dim = f.decode(dim)
 				}
-
 				f.termAgg(dim, idx == 0)
 				f.nestedAgg(dim)
 			}
@@ -738,6 +736,7 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 			return "", nil, err
 		}
 	}
+
 	return f.Agg()
 }
 

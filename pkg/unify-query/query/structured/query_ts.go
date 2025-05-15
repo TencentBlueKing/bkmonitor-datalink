@@ -428,6 +428,14 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 		return
 	}
 
+	if q.Collapse != nil && q.Collapse.Field != "" {
+		collapseAgg := metadata.Aggregate{
+			Name:  "collapse",
+			Field: q.Collapse.Field,
+		}
+		aggs = append(aggs, collapseAgg)
+	}
+
 	// PromQL 聚合方式需要找到 TimeAggregation 共同判断
 	if q.TimeAggregation.Function == "" {
 		return
@@ -472,11 +480,6 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 			Window:     time.Duration(window),
 			TimeZone:   q.Timezone,
 			Args:       am.VArgsList,
-		}
-
-		// 如果有Collapse配置，添加折叠字段
-		if q.Collapse != nil && q.Collapse.Field != "" {
-			agg.CollapseField = q.Collapse.Field
 		}
 
 		aggs = append(aggs, agg)

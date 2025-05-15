@@ -39,7 +39,18 @@ const (
 	routeV1Trace   = "/v1/trace"
 	routeV1Metrics = "/v1/metrics"
 	routeV1Logs    = "/v1/logs"
-	aegisLos       = "/aegis/v1/logs"
+
+	aegisCollect          = "/aegis/v1/collect"
+	aegisOffline          = "/aegis/v1/offline"
+	aegisWhitelist        = "/aegis/v1/collect/whitelist"
+	aegisPV               = "/aegis/v1/collect/pv"
+	aegisEvents           = "/aegis/v1/collect/events"
+	aegisSpeed            = "/aegis/v1/speed"
+	aegisCustom           = "/aegis/v1/speed/custom"
+	aegisPerformance      = "/aegis/v1/speed/performance"
+	aegisHippyPerformance = "/aegis/v1/speed/hippy_performance"
+	aegisWebVitals        = "/aegis/v1/speed/web_vitals"
+	aegisMiniProgramData  = "/aegis/v1/speed/mini_program_data"
 )
 
 func init() {
@@ -71,9 +82,60 @@ func Ready(config receiver.ComponentConfig) {
 			RelativePath: routeV1Logs,
 			HandlerFunc:  httpSvc.ExportLogs,
 		},
+
 		{
 			Method:       http.MethodPost,
-			RelativePath: aegisLos,
+			RelativePath: aegisCollect,
+			HandlerFunc:  httpSvc.PrintLogs,
+		},
+		{
+			Method:       http.MethodPost,
+			RelativePath: aegisOffline,
+			HandlerFunc:  httpSvc.PrintLogs,
+		},
+		{
+			Method:       http.MethodPost,
+			RelativePath: aegisWhitelist,
+			HandlerFunc:  httpSvc.PrintLogs,
+		},
+		{
+			Method:       http.MethodPost,
+			RelativePath: aegisPV,
+			HandlerFunc:  httpSvc.PrintLogs,
+		},
+		{
+			Method:       http.MethodPost,
+			RelativePath: aegisEvents,
+			HandlerFunc:  httpSvc.PrintLogs,
+		},
+		{
+			Method:       http.MethodPost,
+			RelativePath: aegisSpeed,
+			HandlerFunc:  httpSvc.PrintLogs,
+		},
+		{
+			Method:       http.MethodPost,
+			RelativePath: aegisCustom,
+			HandlerFunc:  httpSvc.PrintLogs,
+		},
+		{
+			Method:       http.MethodPost,
+			RelativePath: aegisPerformance,
+			HandlerFunc:  httpSvc.PrintLogs,
+		},
+		{
+			Method:       http.MethodPost,
+			RelativePath: aegisHippyPerformance,
+			HandlerFunc:  httpSvc.PrintLogs,
+		},
+		{
+			Method:       http.MethodPost,
+			RelativePath: aegisWebVitals,
+			HandlerFunc:  httpSvc.PrintLogs,
+		},
+		{
+			Method:       http.MethodPost,
+			RelativePath: aegisMiniProgramData,
 			HandlerFunc:  httpSvc.PrintLogs,
 		},
 	})

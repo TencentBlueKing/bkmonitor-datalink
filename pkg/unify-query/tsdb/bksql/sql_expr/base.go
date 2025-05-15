@@ -200,10 +200,10 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 			offsetMillis = int64(offset) * 1e3
 		}
 
-		timeField := fmt.Sprintf("(%s + %d) / %d * %d - %d", d.timeField, offsetMillis, window.Milliseconds(), window.Milliseconds(), offsetMillis)
+		timeField := fmt.Sprintf("(FLOOR((%s + %d) / %d) * %d - %d)", d.timeField, offsetMillis, window.Milliseconds(), window.Milliseconds(), offsetMillis)
 
 		groupByFields = append(groupByFields, timeField)
-		selectFields = append(selectFields, fmt.Sprintf("MAX(%s) AS `%s`", timeField, TimeStamp))
+		selectFields = append(selectFields, fmt.Sprintf("MAX%s AS `%s`", timeField, TimeStamp))
 		orderByFields = append(orderByFields, fmt.Sprintf("`%s` ASC", TimeStamp))
 	}
 

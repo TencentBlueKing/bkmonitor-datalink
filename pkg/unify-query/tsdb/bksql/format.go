@@ -184,6 +184,11 @@ func (f *QueryFactory) ReloadListData(data map[string]any) (newData map[string]a
 	fieldMap := f.FieldMap()
 
 	for k, d := range data {
+		// 判断是否是内置维度，内置维度不是用户上报的维度
+		if _, ok := internalDimension[k]; ok {
+			continue
+		}
+
 		if v, ok := fieldMap[k]; ok {
 			if v == TableTypeVariant {
 				objectData, err := json.ParseObject(k, d.(string))
@@ -496,7 +501,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	return
 }
 
-func (f *QueryFactory) dims(dims []string, field string) []string {
+func (f *QueryFactory) Dims(dims []string, field string) []string {
 	dimensions := make([]string, 0)
 	for _, dim := range dims {
 		// 判断是否是内置维度，内置维度不是用户上报的维度

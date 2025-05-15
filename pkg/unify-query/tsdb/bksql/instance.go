@@ -151,23 +151,6 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	return data, nil
 }
 
-func (i *Instance) dims(dims []string, field string) []string {
-	dimensions := make([]string, 0)
-	for _, dim := range dims {
-		// 判断是否是内置维度，内置维度不是用户上报的维度
-		if _, ok := internalDimension[dim]; ok {
-			continue
-		}
-		// 如果是字段值也需要跳过
-		if dim == field {
-			continue
-		}
-
-		dimensions = append(dimensions, dim)
-	}
-	return dimensions
-}
-
 func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]string, error) {
 	fieldsMap := make(map[string]string)
 
@@ -418,7 +401,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 		return nil, err
 	}
 
-	lbs := i.dims(data.SelectFieldsOrder, query.Field)
+	lbs := queryFactory.Dims(data.SelectFieldsOrder, query.Field)
 	return lbs, err
 }
 

@@ -653,9 +653,6 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 
 			agg = curAgg
 			name = curName
-		case CollapseAgg:
-			name = KeyCollapse
-			agg = elastic.NewCollapseBuilder(info.Field)
 		default:
 			err = fmt.Errorf("aggInfoList aggregation is not support this type %T, info: %+v", info, info)
 			return

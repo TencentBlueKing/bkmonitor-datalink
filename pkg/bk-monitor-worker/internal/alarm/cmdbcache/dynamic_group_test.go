@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
 
 var demoDynamicGroupListStr = `
@@ -62,7 +63,7 @@ func TestDynamicGroup(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("TestDynamicGroupCacheManager", func(t *testing.T) {
-		m, err := NewDynamicGroupCacheManager("test", rOpts, 10)
+		m, err := NewDynamicGroupCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 10)
 		if err != nil {
 			t.Errorf("NewDynamicGroupCacheManager failed, err: %v", err)
 		}

@@ -26,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
@@ -159,7 +160,8 @@ func (s *SpaceSvc) RefreshBkccSpace(allowDelete bool) error {
 
 // 获取bkcc业务cmdb数据信息
 func (*SpaceSvc) getBkccBizIdNameMap() (map[string]string, error) {
-	cmdbApi, err := api.GetCmdbApi()
+	// todo: tenant
+	cmdbApi, err := api.GetCmdbApi(tenant.DefaultTenantId)
 	if err != nil {
 		return nil, errors.Wrap(err, "get cmdb api failed")
 	}

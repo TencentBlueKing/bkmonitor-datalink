@@ -50,8 +50,8 @@ type SetCacheManager struct {
 }
 
 // NewSetCacheManager 创建模块缓存管理器
-func NewSetCacheManager(prefix string, opt *redis.Options, concurrentLimit int) (*SetCacheManager, error) {
-	base, err := NewBaseCacheManager(prefix, opt, concurrentLimit)
+func NewSetCacheManager(bkTenantId string, prefix string, opt *redis.Options, concurrentLimit int) (*SetCacheManager, error) {
+	base, err := NewBaseCacheManager(bkTenantId, prefix, opt, concurrentLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -63,8 +63,8 @@ func NewSetCacheManager(prefix string, opt *redis.Options, concurrentLimit int) 
 }
 
 // getSetListByBizID 通过业务ID获取集群列表
-func getSetListByBizID(ctx context.Context, bizID int) ([]map[string]interface{}, error) {
-	cmdbApi := getCmdbApi()
+func getSetListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]map[string]interface{}, error) {
+	cmdbApi := getCmdbApi(bkTenantId)
 
 	// 请求集群信息
 	result, err := api.BatchApiRequest(
@@ -120,7 +120,7 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 	}
 
 	// 请求集群信息
-	result, err := getSetListByBizID(ctx, bizID)
+	result, err := getSetListByBizID(ctx, m.GetBkTenantId(), bizID)
 	if err != nil {
 		return errors.Wrapf(err, "failed to get set list by biz: %d", bizID)
 	}

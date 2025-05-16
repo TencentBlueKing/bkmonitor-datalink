@@ -344,8 +344,6 @@ type Query struct {
 	ReferenceName string `json:"reference_name,omitempty" example:"a"`
 	// Dimensions promQL 使用维度
 	Dimensions []string `json:"dimensions,omitempty" example:"bk_target_ip,bk_target_cloud_id"`
-	// Collapse 指定要折叠的配置，用于Elasticsearch聚合
-	Collapse *CollapseConfig `json:"collapse,omitempty"`
 	// Limit 点数限制数量
 	Limit int `json:"limit,omitempty" example:"0"`
 	// From 翻页开启数字

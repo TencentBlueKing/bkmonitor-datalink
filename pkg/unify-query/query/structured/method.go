@@ -51,6 +51,7 @@ func (a AggregateMethodList) ToQry(timezone string) (metadata.Aggregates, error)
 			Dimensions: append([]string{}, aggr.Dimensions...),
 			Without:    aggr.Without,
 			Args:       aggr.VArgsList,
+			Field:      aggr.Field,
 		}
 
 		if aggr.Window != "" {

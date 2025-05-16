@@ -59,9 +59,6 @@ type QueryTs struct {
 	LookBackDelta string `json:"look_back_delta,omitempty"`
 	// Instant 瞬时数据
 	Instant bool `json:"instant"`
-	// Collapse 指定要折叠的配置，用于Elasticsearch聚合
-	Collapse *CollapseConfig `json:"collapse,omitempty"`
-
 	// 增加公共限制
 	// Limit 点数限制数量
 	Limit int `json:"limit,omitempty" example:"0"`
@@ -164,11 +161,6 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
 		if len(query.KeepColumns) == 0 && len(q.ResultColumns) != 0 {
 			query.KeepColumns = q.ResultColumns
-		}
-
-		// 复用 collapse 字段配置
-		if query.Collapse == nil && q.Collapse != nil {
-			query.Collapse = q.Collapse
 		}
 
 		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid)
@@ -426,14 +418,6 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 	if q.IsReference {
 		aggs, err = q.AggregateMethodList.ToQry(q.Timezone)
 		return
-	}
-
-	if q.Collapse != nil && q.Collapse.Field != "" {
-		collapseAgg := metadata.Aggregate{
-			Name:  "collapse",
-			Field: q.Collapse.Field,
-		}
-		aggs = append(aggs, collapseAgg)
 	}
 
 	// PromQL 聚合方式需要找到 TimeAggregation 共同判断

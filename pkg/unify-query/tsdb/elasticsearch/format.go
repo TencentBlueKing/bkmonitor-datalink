@@ -507,14 +507,6 @@ func (f *FormatFactory) SetData(data map[string]any) {
 	mapData("", data, f.data)
 }
 
-func (f *FormatFactory) collapseAgg(field string) {
-	f.aggInfoList = append(
-		f.aggInfoList, CollapseAgg{
-			Field: field,
-		},
-	)
-}
-
 func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -720,8 +712,6 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 				f.termAgg(dim, idx == 0)
 				f.nestedAgg(dim)
 			}
-		case Collapse:
-			f.collapseAgg(am.Field)
 		default:
 			err := fmt.Errorf("esAgg aggregation is not support with: %+v", am)
 			return "", nil, err

@@ -21,8 +21,9 @@ import (
 )
 
 type Task struct {
-	BizID int                               // 业务id
-	Topo  []CCSearchBizInstTopoResponseInfo //
+	BkTenantID string                            // 租户id
+	BizID      int                               // 业务id
+	Topo       []CCSearchBizInstTopoResponseInfo //
 
 	Start int // 当次需要开始查询的内容
 	Limit int
@@ -245,7 +246,7 @@ func GetAllTaskInfo(c APIClient, limit int, ccInfo models.CCInfo, fn func(monito
 	wg.Add(len(allBiz))
 	// 遍历获取所有的业务，计算拆分每个业务需要获取的任务
 	for _, bizInfo := range allBiz {
-		go func(bizID int, taskCh chan Task) {
+		go func(bkTenantID string, bizID int, taskCh chan Task) {
 			defer wg.Done()
 			// 限制最大goroutine数量
 			defer func() {
@@ -262,7 +263,7 @@ func GetAllTaskInfo(c APIClient, limit int, ccInfo models.CCInfo, fn func(monito
 			switch ccInfo.(type) {
 			case *models.CCHostInfo:
 
-				hostRes, err := c.GetHostsByRange(bizID, limit, currentStart)
+				hostRes, err := c.GetHostsByRange(bkTenantID, bizID, limit, currentStart)
 				if err != nil {
 					subTaskErr = err
 					logging.Warnf("cc search host err by %v", err)
@@ -270,7 +271,7 @@ func GetAllTaskInfo(c APIClient, limit int, ccInfo models.CCInfo, fn func(monito
 				}
 				ccHostMonitor, _ = OpenHostResInMonitorAdapter(hostRes, bizID)
 			case *models.CCInstanceInfo:
-				instanceRes, err := c.GetServiceInstance(bizID, limit, currentStart, nil)
+				instanceRes, err := c.GetServiceInstance(bkTenantID, bizID, limit, currentStart, nil)
 				if err != nil {
 					subTaskErr = err
 					logging.Warnf("cc search instance err by %v", err)
@@ -285,7 +286,7 @@ func GetAllTaskInfo(c APIClient, limit int, ccInfo models.CCInfo, fn func(monito
 				return
 			}
 
-			ccTopo, _ := c.GetSearchBizInstTopo(0, bizID, 0, -1)
+			ccTopo, _ := c.GetSearchBizInstTopo(bkTenantID, 0, bizID, 0, -1)
 			// 每个业务开始的时候，当前的启动需要重置为limit的值
 			currentStart = limit
 			bizTotalCount = ccHostMonitor.Count
@@ -302,10 +303,11 @@ func GetAllTaskInfo(c APIClient, limit int, ccInfo models.CCInfo, fn func(monito
 				logging.Debugf("currentStart less than total->[%d] will add Task start->[%d] limit->[%d]", bizTotalCount, currentStart, limit)
 				// 增加一个新的任务内容，在当前的请求量增加limit值
 				taskCh <- Task{
-					BizID: bizID,
-					Start: currentStart,
-					Limit: limit,
-					Topo:  ccTopo,
+					BkTenantID: bkTenantID,
+					BizID:      bizID,
+					Start:      currentStart,
+					Limit:      limit,
+					Topo:       ccTopo,
 				}
 
 				// 转移到下一个阶段
@@ -328,7 +330,7 @@ func GetAllTaskInfo(c APIClient, limit int, ccInfo models.CCInfo, fn func(monito
 				return
 			}
 			logging.Infof("biz->[%d] is process done with task->[%d] now.", bizID, todoTaskCount*limit)
-		}(bizInfo.BKBizID, taskCh)
+		}(bizInfo.BkTenantID, bizInfo.BKBizID, taskCh)
 	}
 	wg.Wait()
 	close(taskCh)

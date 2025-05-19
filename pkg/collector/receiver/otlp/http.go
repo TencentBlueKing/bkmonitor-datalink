@@ -94,12 +94,12 @@ func Ready(config receiver.ComponentConfig) {
 			HandlerFunc:  httpSvc.PrintLogs,
 		},
 		{
-			Method:       http.MethodPost,
+			Method:       http.MethodGet,
 			RelativePath: aegisWhitelist,
 			HandlerFunc:  httpSvc.PrintLogs,
 		},
 		{
-			Method:       http.MethodPost,
+			Method:       http.MethodGet,
 			RelativePath: aegisPV,
 			HandlerFunc:  httpSvc.PrintLogs,
 		},

@@ -358,6 +358,8 @@ func (h httpJsonResponseHandler) Response(rtype define.RecordType) ([]byte, erro
 		return pmetricotlp.NewResponse().MarshalJSON()
 	case define.RecordLogs:
 		return plogotlp.NewResponse().MarshalJSON()
+	case define.RecordAegis:
+		return plogotlp.NewResponse().MarshalProto()
 	}
 	return nil, define.ErrUnknownRecordType
 }

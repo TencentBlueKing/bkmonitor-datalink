@@ -287,7 +287,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	span.Set("data-list-size", len(data.List))
 
 	for _, list := range data.List {
-		newData := queryFactory.ReloadListData(list)
+		newData := queryFactory.ReloadListData(list, false)
 		newData[KeyIndex] = query.DB
 		newData[KeyTableID] = query.TableID
 		newData[KeyDataLabel] = query.DataLabel

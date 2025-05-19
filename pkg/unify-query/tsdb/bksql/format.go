@@ -189,13 +189,13 @@ func (f *QueryFactory) HighLight(data map[string]any) (newData map[string]any) {
 	return
 }
 
-func (f *QueryFactory) ReloadListData(data map[string]any) (newData map[string]any) {
+func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimension bool) (newData map[string]any) {
 	newData = make(map[string]any)
 	fieldMap := f.FieldMap()
 
 	for k, d := range data {
 		// 忽略内置字段
-		if checkInternalDimension(k) {
+		if ignoreInternalDimension && checkInternalDimension(k) {
 			continue
 		}
 
@@ -251,7 +251,7 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 			continue
 		}
 
-		nd := f.ReloadListData(d)
+		nd := f.ReloadListData(d, true)
 		if len(keys) == 0 {
 			for k := range nd {
 				// 如果维度使用了该字段，则无需跳过

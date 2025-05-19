@@ -313,6 +313,8 @@ func (h httpPbResponseHandler) Response(rtype define.RecordType) ([]byte, error)
 		return pmetricotlp.NewResponse().MarshalProto()
 	case define.RecordLogs:
 		return plogotlp.NewResponse().MarshalProto()
+	case define.RecordAegis:
+		return plogotlp.NewResponse().MarshalProto()
 	}
 	return nil, define.ErrUnknownRecordType
 }

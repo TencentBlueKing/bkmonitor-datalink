@@ -106,11 +106,7 @@ func (m *MappingCache) GetFieldType(ctx context.Context, tableID string, fieldsS
 	span.Set("cache-key", key)
 
 	result, ok = m.cache.Get(key)
-	if !ok {
-		span.Set("cache-hit", "miss")
-	} else {
-		span.Set("cache-hit", "hit")
-	}
+	span.Set("cache-hit", fmt.Sprintf("%t", ok))
 
 	return result, ok
 }

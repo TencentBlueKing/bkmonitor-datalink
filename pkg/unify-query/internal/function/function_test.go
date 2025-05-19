@@ -170,6 +170,7 @@ func TestQueryTimestamp(t *testing.T) {
 			s:          "",
 			e:          "1609459200",
 			wantFormat: function.Second,
+			wantStart:  refTime,
 			wantEnd:    refTime,
 		},
 		{
@@ -201,9 +202,6 @@ func TestQueryTimestamp(t *testing.T) {
 			case tt.s == "" && tt.e == "":
 				assert.WithinDuration(t, defaultStart, start, time.Second)
 				assert.WithinDuration(t, defaultEnd, end, time.Second)
-			case tt.s == "":
-				assert.WithinDuration(t, defaultStart, start, time.Second)
-				assert.Equal(t, tt.wantEnd, end)
 			case tt.e == "":
 				assert.Equal(t, tt.wantStart, start)
 				assert.WithinDuration(t, defaultEnd, end, time.Second)

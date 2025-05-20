@@ -23,11 +23,13 @@ import (
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater/schedulerfactory"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater/taskfactory"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/fetcher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/http"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
@@ -49,6 +51,7 @@ type beaterState struct {
 	ctx             context.Context
 	cancelFunc      context.CancelFunc
 	heartBeatTicker *time.Ticker
+	fc              *fetcher.Client
 
 	Scheduler        define.Scheduler
 	KeywordScheduler define.Scheduler
@@ -169,6 +172,18 @@ func New(cfg *common.Config, name, version string) (*MonitorBeater, error) {
 		bt.tempDir, err = utils.InitTempDir(true)
 		if err != nil {
 			return nil, fmt.Errorf("InitTempDir with error: %w", err)
+		}
+	}
+
+	// 多租户模式下才需要开启新的通信管道拉取配置
+	if bt.config.EnableMultiTenant {
+		bt.fc, err = fetcher.NewClient(fetcher.Option{
+			Version: version,
+			IPC:     bt.config.GseMessageEndpoint,
+			Tasks:   bt.config.MultiTenantTasks,
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create gse message client")
 		}
 	}
 
@@ -480,6 +495,12 @@ func (bt *MonitorBeater) Run() error {
 	}
 	logger.Info("MonitorBeater is running! Hit CTRL-C to stop it")
 
+	if bt.fc != nil {
+		if err := bt.fc.Start(); err != nil {
+			return err
+		}
+	}
+
 	var err error
 	err = bt.PreRun()
 	if err != nil {
@@ -559,6 +580,12 @@ func (bt *MonitorBeater) Stop() {
 	}
 	bt.stopAdminServerReloader()
 	logger.Info("shutting down")
+
+	if bt.fc != nil {
+		if err := bt.fc.Close(); err != nil {
+			logger.Errorf("close gse message client failed: %v", err)
+		}
+	}
 }
 
 // Reload : reload conf

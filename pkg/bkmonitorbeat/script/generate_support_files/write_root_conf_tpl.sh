@@ -97,6 +97,14 @@ bkmonitorbeat:
   mode: daemon
   disable_netlink: false
   metrics_batch_size: 1024
+
+  # 是否为多租户模式（默认不开启）
+  enable_multi_tenant: false
+  # 多租户场景下需要映射的 dataids 列表
+  multi_tenant_tasks: ["basereport","processbeat_perf","processbeat_port","global_heartbeat","gather_up_beat","timesync","dmesg"]
+  # 多租户场景下 gse 新的通信管道 ipc 地址
+  gse_message_endpoint: '{{ step_data.control_info.pluginipc }}'
+
   # 管理服务，包含指标和调试接口, 可动态reload开关或变更监听地址（unix使用SIGUSR2,windows发送bkreload2）
   # admin_addr: localhost:56060
   # 并发限制，按照任务类型区分(http, tcp, udp, ping)，分为per_instance单实例限制和per_task单任务限制

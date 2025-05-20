@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/fetcher"
 )
 
 type CpuConfig struct {
@@ -96,6 +97,11 @@ func (c *BasereportConfig) GetTaskConfigList() []define.TaskConfig {
 	// 说明没有任务 有且仅有一个任务
 	if c.DataID == 0 {
 		return tasks
+	}
+
+	dataID := fetcher.FetchTaskDataID(define.ModuleBasereport)
+	if dataID > 0 {
+		c.DataID = dataID
 	}
 
 	tasks = append(tasks, c)

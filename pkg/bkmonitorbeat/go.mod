@@ -48,6 +48,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+require github.com/TencentBlueKing/bk-gse-sdk/go v0.0.1
+
 require (
 	github.com/Shopify/sarama v1.27.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect

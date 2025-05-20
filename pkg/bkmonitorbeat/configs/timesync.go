@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/fetcher"
 )
 
 const (
@@ -35,6 +36,10 @@ func (c *TimeSyncConfig) GetTaskConfigList() []define.TaskConfig {
 		return tasks
 	}
 
+	dataID := fetcher.FetchTaskDataID(ConfigTypeTimeSync)
+	if dataID > 0 {
+		c.DataID = dataID
+	}
 	tasks = append(tasks, c)
 	return tasks
 }

@@ -11,6 +11,7 @@ package configs
 
 import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/fetcher"
 )
 
 const (
@@ -28,6 +29,10 @@ func (c *DmesgConfig) GetTaskConfigList() []define.TaskConfig {
 		return tasks
 	}
 
+	dataID := fetcher.FetchTaskDataID(ConfigTypeDmesg)
+	if dataID > 0 {
+		c.DataID = dataID
+	}
 	tasks = append(tasks, c)
 	return tasks
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/elastic/beats/libbeat/common"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/fetcher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 )
 
@@ -194,8 +195,15 @@ func NewGlobalHeartBeatEvent(bt *MonitorBeater) define.Event {
 	if !hasChildPath {
 		errCode = define.GetErrorCodeByError(define.ErrNoChildPath)
 	}
+
+	dataID := beatConfig.HeartBeat.GlobalDataID
+	newDataID := fetcher.FetchTaskDataID(define.ModuleGlobalHeartBeat)
+	if newDataID > 0 {
+		dataID = newDataID
+	}
+
 	return &GlobalHeartBeatEvent{
-		DataID:          beatConfig.HeartBeat.GlobalDataID,
+		DataID:          dataID,
 		Status:          0,
 		Uptime:          int(now.Sub(status.startAt).Seconds()),
 		Tasks:           int32(correctNum),

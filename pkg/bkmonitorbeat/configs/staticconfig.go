@@ -31,6 +31,8 @@ type StaticTaskConfig struct {
 
 // InitIdent :
 func (c *StaticTaskConfig) InitIdent() error {
+	// TODO(mando): 待 CC 信息同步
+	// c.DataID = loader.DefaultLoader.FetchTaskDataID(c.DataID)
 	return c.initIdent(c)
 }
 

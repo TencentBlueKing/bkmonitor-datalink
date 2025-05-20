@@ -144,8 +144,6 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 			selectFields = append(selectFields, fmt.Sprintf("COUNT(DISTINCT %s) AS `%s`", valueField, Value))
 		// date_histogram 不支持无需进行函数聚合
 		case "date_histogram":
-		case "collapse":
-			groupByFields = append(groupByFields, fmt.Sprintf("`%s`", valueField))
 		default:
 			selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, Value))
 		}

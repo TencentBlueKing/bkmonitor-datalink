@@ -576,7 +576,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 			assert.Nil(t, err)
 			ss.Query(rangeQuery)
 			if len(c.aggregates) > 0 {
-				aggName, agg, aggErr := fact.EsAgg(c.aggregates)
+				aggName, agg, aggErr := fact.EsAgg(c.aggregates, ss)
 				assert.Nil(t, aggErr)
 				if aggErr == nil {
 					ss.Aggregation(aggName, agg)
@@ -621,7 +621,7 @@ func TestFormatFactory_AggDataFormat(t *testing.T) {
 					Unit: DefaultTimeFieldUnit,
 				}, time.Time{}, time.Time{}, "", 0)
 
-			_, _, err := fact.EsAgg(c.aggregates)
+			_, _, err := fact.EsAgg(c.aggregates, nil)
 			assert.NoError(t, err)
 
 			var sr *elastic.SearchResult
@@ -757,9 +757,9 @@ func TestBuildQuery(t *testing.T) {
 				Type: TimeFieldTypeTime,
 				Unit: function.Second,
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1h","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"collapse":{"field":"gseIndex"},"query":{"bool":{"filter":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}},"size":0}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1h","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"collapse":{"field":"gseIndex"},"from":0,"query":{"bool":{"filter":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}},"size":0}`,
 		},
-		"multiple collapse should use first one": {
+		"multiple collapse should use last one": {
 			query: &metadata.Query{
 				Aggregates: metadata.Aggregates{
 					{
@@ -777,7 +777,7 @@ func TestBuildQuery(t *testing.T) {
 				Type: TimeFieldTypeTime,
 				Unit: function.Second,
 			},
-			expected: `{"collapse":{"field":"gseIndex"},"from":0,"query":{"bool":{"filter":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}},"size":0}`,
+			expected: `{"collapse":{"field":"otherField"},"from":0,"query":{"bool":{"filter":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}},"size":0}`,
 		},
 		"no aggregations": {
 			query: &metadata.Query{
@@ -806,12 +806,42 @@ func TestBuildQuery(t *testing.T) {
 					IncludeUpper(true),
 			}
 
-			_, body, shouldReturn, result, err := buildQuery(fact, filterQueries, c.query)
-			assert.False(t, shouldReturn)
-			assert.Nil(t, err)
-			assert.Nil(t, result)
+			source := elastic.NewSearchSource()
+			esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
+			source.Query(esQuery)
 
-			bodyJson, _ := json.Marshal(body)
+			if len(c.query.Aggregates) > 0 {
+				var collapseField string
+				for _, agg := range c.query.Aggregates {
+					if agg.Name == Collapse {
+						collapseField = agg.Field
+						break
+					}
+				}
+
+				name, agg, err := fact.EsAgg(c.query.Aggregates, source)
+				assert.Nil(t, err)
+
+				if collapseField != "" {
+					source.Size(0)
+					source.From(0)
+				}
+
+				if err == nil && agg != nil {
+					source.Size(0)
+					source.Aggregation(name, agg)
+				}
+			} else {
+				source.Size(c.query.Size)
+				source.From(c.query.From)
+			}
+
+			body, err := source.Source()
+			assert.Nil(t, err)
+
+			bodyJson, err := json.Marshal(body)
+			assert.Nil(t, err)
+
 			bodyString := string(bodyJson)
 			assert.JSONEq(t, c.expected, bodyString)
 		})

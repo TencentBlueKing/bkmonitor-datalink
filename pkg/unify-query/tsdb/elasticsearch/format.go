@@ -507,7 +507,7 @@ func (f *FormatFactory) SetData(data map[string]any) {
 	mapData("", data, f.data)
 }
 
-func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) {
+func (f *FormatFactory) Agg(source *elastic.SearchSource) (name string, agg elastic.Aggregation, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Errorf(f.ctx, fmt.Sprintf("get mapping error: %s", r))
@@ -653,6 +653,9 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 
 			agg = curAgg
 			name = curName
+		case CollapseAgg:
+			collapseClause := elastic.NewCollapseBuilder(info.Field)
+			source.Collapse(collapseClause)
 		default:
 			err = fmt.Errorf("aggInfoList aggregation is not support this type %T, info: %+v", info, info)
 			return
@@ -679,7 +682,11 @@ func (f *FormatFactory) HighLight(queryString string, maxAnalyzedOffset int) *el
 	return hl
 }
 
-func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
+func (f *FormatFactory) collapseAgg(field string) {
+	f.aggInfoList = append(f.aggInfoList, CollapseAgg{Field: field})
+}
+
+func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates, source *elastic.SearchSource) (string, elastic.Aggregation, error) {
 	if len(aggregates) == 0 {
 		err := errors.New("aggregate_method_list is empty")
 		return "", nil, err
@@ -709,13 +716,15 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 				f.termAgg(dim, idx == 0)
 				f.nestedAgg(dim)
 			}
+		case Collapse:
+			f.collapseAgg(am.Field)
 		default:
 			err := fmt.Errorf("esAgg aggregation is not support with: %+v", am)
 			return "", nil, err
 		}
 	}
 
-	return f.Agg()
+	return f.Agg(source)
 }
 
 func (f *FormatFactory) Orders() metadata.Orders {

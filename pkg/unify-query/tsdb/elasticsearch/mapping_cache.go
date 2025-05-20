@@ -11,7 +11,10 @@ package elasticsearch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/dgraph-io/ristretto/v2"
@@ -111,6 +114,61 @@ func (m *MappingCache) GetFieldType(ctx context.Context, tableID string, fieldsS
 	return result, ok
 }
 
+// SetMapping 将完整的mapping添加到缓存
+func (m *MappingCache) SetMapping(ctx context.Context, indexes []string, mappingMap map[string]any) {
+	var err error
+
+	ctx, span := trace.NewSpan(ctx, "mapping-cache-set-mapping")
+	defer span.End(&err)
+
+	span.Set("indexes", indexes)
+
+	key := createMappingCacheKey(indexes)
+	span.Set("cache-key", key)
+
+	data, err := json.Marshal(mappingMap)
+	if err != nil {
+		span.Set("error", err.Error())
+		return
+	}
+
+	m.cache.SetWithTTL(key, string(data), 1, m.ttl)
+	m.cache.Wait()
+}
+
+// GetMapping 从缓存获取完整的mapping
+func (m *MappingCache) GetMapping(ctx context.Context, indexes []string) (map[string]any, bool) {
+	var (
+		result map[string]any
+		data   string
+		ok     bool
+		err    error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "mapping-cache-get-mapping")
+	defer span.End(&err)
+
+	key := createMappingCacheKey(indexes)
+	span.Set("indexes", indexes)
+	span.Set("cache-key", key)
+
+	data, ok = m.cache.Get(key)
+	if !ok {
+		span.Set("cache-hit", "false")
+		return nil, false
+	}
+
+	span.Set("cache-hit", "true")
+
+	err = json.Unmarshal([]byte(data), &result)
+	if err != nil {
+		span.Set("error", err.Error())
+		return nil, false
+	}
+
+	return result, true
+}
+
 // Delete 从缓存删除映射
 func (m *MappingCache) Delete(ctx context.Context, tableID string, field string) {
 	var err error
@@ -121,6 +179,20 @@ func (m *MappingCache) Delete(ctx context.Context, tableID string, field string)
 	key := createCacheKey(tableID, field)
 	span.Set("table-id", tableID)
 	span.Set("field", field)
+	span.Set("cache-key", key)
+
+	m.cache.Del(key)
+}
+
+// DeleteMapping 从缓存删除完整mapping
+func (m *MappingCache) DeleteMapping(ctx context.Context, indexes []string) {
+	var err error
+
+	ctx, span := trace.NewSpan(ctx, "mapping-cache-delete-mapping")
+	defer span.End(&err)
+
+	key := createMappingCacheKey(indexes)
+	span.Set("indexes", indexes)
 	span.Set("cache-key", key)
 
 	m.cache.Del(key)
@@ -139,4 +211,12 @@ func (m *MappingCache) Clear(ctx context.Context) {
 // createCacheKey 创建缓存键
 func createCacheKey(tableID string, field string) string {
 	return fmt.Sprintf("%s:%s", tableID, field)
+}
+
+func createMappingCacheKey(indexes []string) string {
+	sortedIndexes := make([]string, len(indexes))
+	copy(sortedIndexes, indexes)
+
+	sort.Strings(sortedIndexes)
+	return fmt.Sprintf("mapping:%s", strings.Join(sortedIndexes, ","))
 }

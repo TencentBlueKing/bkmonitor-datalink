@@ -179,6 +179,29 @@ func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []stri
 	}()
 
 	span.Set("alias", aliases)
+
+	cachedMappingMap, ok := fieldTypesCache.GetMapping(ctx, aliases)
+	if ok {
+		span.Set("cache-hit", "true")
+
+		indexes := make([]string, 0, len(cachedMappingMap))
+		for index := range cachedMappingMap {
+			indexes = append(indexes, index)
+		}
+		sort.Strings(indexes)
+		span.Set("indexes", indexes)
+
+		mappings := make([]map[string]any, 0, len(cachedMappingMap))
+		for _, index := range indexes {
+			if mapping, ok := cachedMappingMap[index].(map[string]any)["mappings"].(map[string]any); ok {
+				mappings = append(mappings, mapping)
+			}
+		}
+
+		return mappings, nil
+	}
+
+	span.Set("cache-hit", "false")
 	client, err := i.getClient(ctx, conn)
 	if err != nil {
 		return nil, err
@@ -188,6 +211,8 @@ func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []stri
 		log.Warnf(ctx, "get mapping error: %s", err.Error())
 		return nil, err
 	}
+
+	fieldTypesCache.SetMapping(ctx, aliases, mappingMap)
 
 	indexes := make([]string, 0, len(mappingMap))
 	for index := range mappingMap {

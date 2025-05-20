@@ -574,7 +574,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			fact := NewFormatFactory(ctx).
 				WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 				WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.Size).
-				WithMappings(mappings...).
+				WithMappings(query.TableID, mappings...).
 				WithOrders(query.Orders)
 
 			sr, queryErr := i.esQuery(ctx, qo, fact)
@@ -761,7 +761,7 @@ func (i *Instance) QuerySeriesSet(
 				fact := NewFormatFactory(ctx).
 					WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 					WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
-					WithMappings(mappings...).
+					WithMappings(query.TableID, mappings...).
 					WithOrders(query.Orders).
 					WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
 

@@ -748,3 +748,110 @@ func TestToFixInterval(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildQuery(t *testing.T) {
+	var start = time.Unix(1721024820, 0)
+	var end = time.Unix(1721046420, 0)
+	var timeFormat = function.Second
+
+	for name, c := range map[string]struct {
+		query     *metadata.Query
+		timeField metadata.TimeField
+		expected  string
+	}{
+		"only collapse": {
+			query: &metadata.Query{
+				Aggregates: metadata.Aggregates{
+					{
+						Name:  Collapse,
+						Field: "gseIndex",
+					},
+				},
+			},
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: TimeFieldTypeTime,
+				Unit: function.Second,
+			},
+			expected: `{"collapse":{"field":"gseIndex"},"from":0,"query":{"bool":{"filter":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}},"size":0}`,
+		},
+		"collapse with other aggregations": {
+			query: &metadata.Query{
+				Aggregates: metadata.Aggregates{
+					{
+						Name:  Collapse,
+						Field: "gseIndex",
+					},
+					{
+						Name:       "count",
+						Dimensions: []string{"gseIndex"},
+						Window:     time.Hour,
+						TimeZone:   "Asia/ShangHai",
+					},
+				},
+			},
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: TimeFieldTypeTime,
+				Unit: function.Second,
+			},
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1h","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"collapse":{"field":"gseIndex"},"query":{"bool":{"filter":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}},"size":0}`,
+		},
+		"multiple collapse should use first one": {
+			query: &metadata.Query{
+				Aggregates: metadata.Aggregates{
+					{
+						Name:  Collapse,
+						Field: "gseIndex",
+					},
+					{
+						Name:  Collapse,
+						Field: "otherField",
+					},
+				},
+			},
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: TimeFieldTypeTime,
+				Unit: function.Second,
+			},
+			expected: `{"collapse":{"field":"gseIndex"},"from":0,"query":{"bool":{"filter":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}},"size":0}`,
+		},
+		"no aggregations": {
+			query: &metadata.Query{
+				Size: 10,
+				From: 0,
+			},
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: TimeFieldTypeTime,
+				Unit: function.Second,
+			},
+			expected: `{"from":0,"query":{"bool":{"filter":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}},"size":10}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := metadata.InitHashID(context.Background())
+			fact := NewFormatFactory(ctx).
+				WithQuery("value", c.timeField, start, end, timeFormat, 0).
+				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
+
+			filterQueries := []elastic.Query{
+				elastic.NewRangeQuery(c.timeField.Name).
+					From(start.Unix()).
+					To(end.Unix()).
+					IncludeLower(true).
+					IncludeUpper(true),
+			}
+
+			_, body, shouldReturn, result, err := buildQuery(fact, filterQueries, c.query)
+			assert.False(t, shouldReturn)
+			assert.Nil(t, err)
+			assert.Nil(t, result)
+
+			bodyJson, _ := json.Marshal(body)
+			bodyString := string(bodyJson)
+			assert.JSONEq(t, c.expected, bodyString)
+		})
+	}
+}

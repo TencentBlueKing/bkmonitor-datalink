@@ -59,7 +59,6 @@ type QueryTs struct {
 	LookBackDelta string `json:"look_back_delta,omitempty"`
 	// Instant 瞬时数据
 	Instant bool `json:"instant"`
-
 	// 增加公共限制
 	// Limit 点数限制数量
 	Limit int `json:"limit,omitempty" example:"0"`
@@ -75,6 +74,11 @@ type QueryTs struct {
 
 	// HighLight 是否开启高亮
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
+}
+
+// CollapseConfig 用于Elasticsearch折叠聚合的配置
+type CollapseConfig struct {
+	Field string `json:"field,omitempty" example:"trace_id"`
 }
 
 // StepParse 解析step
@@ -464,7 +468,6 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 		// 是否命中降采样计算
 		q.IsDomSampled = true
 	}
-
 	return
 }
 

@@ -24,6 +24,7 @@ import (
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
+	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
@@ -244,48 +245,9 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 	}
 
-	source := elastic.NewSearchSource()
-	for _, order := range fact.Orders() {
-		source.Sort(order.Name, order.Ast)
-	}
-
-	if len(filterQueries) > 0 {
-		esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
-		source.Query(esQuery)
-	}
-
-	if len(qb.Source) > 0 {
-		fetchSource := elastic.NewFetchSourceContext(true)
-		fetchSource.Include(qb.Source...)
-		source.FetchSourceContext(fetchSource)
-	}
-
-	// 判断是否有聚合
-	if len(qb.Aggregates) > 0 {
-		name, agg, aggErr := fact.EsAgg(qb.Aggregates)
-		if aggErr != nil {
-			return nil, aggErr
-		}
-		source.Size(0)
-		source.Aggregation(name, agg)
-	} else {
-		source.Size(qb.Size)
-		if qb.Scroll == "" {
-			source.From(qb.From)
-		}
-	}
-
-	if qb.HighLight != nil && qb.HighLight.Enable {
-		source.Highlight(fact.HighLight(qb.QueryString, qb.HighLight.MaxAnalyzedOffset))
-	}
-
-	if source == nil {
-		return nil, fmt.Errorf("empty es query source")
-	}
-
-	body, _ := source.Source()
-	if body == nil {
-		return nil, fmt.Errorf("empty query body")
+	source, body, shouldReturn, result, err := buildQuery(fact, filterQueries, qb)
+	if shouldReturn {
+		return result, err
 	}
 
 	bodyJson, _ := json.Marshal(body)
@@ -378,6 +340,63 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	)
 
 	return res, err
+}
+
+func buildQuery(fact *FormatFactory, filterQueries []elastic.Query, qb *metadata.Query) (*elastic.SearchSource, interface{}, bool, *elastic.SearchResult, error) {
+	source := elastic.NewSearchSource()
+	for _, order := range fact.Orders() {
+		source.Sort(order.Name, order.Ast)
+	}
+
+	if len(filterQueries) > 0 {
+		esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
+		source.Query(esQuery)
+	}
+
+	if len(qb.Source) > 0 {
+		fetchSource := elastic.NewFetchSourceContext(true)
+		fetchSource.Include(qb.Source...)
+		source.FetchSourceContext(fetchSource)
+	}
+	// 因为collapse和aggregate需要在同级，所以需要先判断是否存在collapse
+	isExistCollapse := lo.Filter(qb.Aggregates, func(item metadata.Aggregate, _ int) bool {
+		return item.Name == Collapse
+	})
+	if len(isExistCollapse) > 0 {
+		collapseClause := elastic.NewCollapseBuilder(isExistCollapse[0].Field)
+		source.Collapse(collapseClause)
+	}
+	aggWithoutCollapse := lo.Filter(qb.Aggregates, func(item metadata.Aggregate, _ int) bool {
+		return item.Name != Collapse
+	})
+	// 判断是否有聚合
+	if len(aggWithoutCollapse) > 0 {
+		name, agg, aggErr := fact.EsAgg(aggWithoutCollapse)
+		if aggErr != nil {
+			return nil, nil, true, nil, aggErr
+		}
+		source.Size(0)
+		source.Aggregation(name, agg)
+	} else {
+		source.Size(qb.Size)
+		if qb.Scroll == "" {
+			source.From(qb.From)
+		}
+	}
+
+	if qb.HighLight != nil && qb.HighLight.Enable {
+		source.Highlight(fact.HighLight(qb.QueryString, qb.HighLight.MaxAnalyzedOffset))
+	}
+
+	if source == nil {
+		return nil, nil, true, nil, fmt.Errorf("empty es query source")
+	}
+
+	body, _ := source.Source()
+	if body == nil {
+		return nil, nil, true, nil, fmt.Errorf("empty query body")
+	}
+	return source, body, false, nil, nil
 }
 
 func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *FormatFactory) storage.SeriesSet {

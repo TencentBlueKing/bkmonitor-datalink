@@ -52,8 +52,9 @@ const (
 	DateHistogram = "date_histogram"
 	Percentiles   = "percentiles"
 
-	Nested = "nested"
-	Terms  = "terms"
+	Collapse = "collapse"
+	Nested   = "nested"
+	Terms    = "terms"
 
 	ESStep = "."
 )
@@ -68,6 +69,7 @@ const (
 	KeyAddress = "__address"
 
 	KeyDataLabel = "__data_label"
+	KeyCollapse  = "_collapse"
 )
 
 const (
@@ -160,6 +162,10 @@ type TermAgg struct {
 
 type NestedAgg struct {
 	Name string
+}
+
+type CollapseAgg struct {
+	Field string
 }
 
 type aggInfoList []any

@@ -151,23 +151,6 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	return data, nil
 }
 
-func (i *Instance) dims(dims []string, field string) []string {
-	dimensions := make([]string, 0)
-	for _, dim := range dims {
-		// 判断是否是内置维度，内置维度不是用户上报的维度
-		if _, ok := internalDimension[dim]; ok {
-			continue
-		}
-		// 如果是字段值也需要跳过
-		if dim == field {
-			continue
-		}
-
-		dimensions = append(dimensions, dim)
-	}
-	return dimensions
-}
-
 func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]string, error) {
 	fieldsMap := make(map[string]string)
 
@@ -304,7 +287,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	span.Set("data-list-size", len(data.List))
 
 	for _, list := range data.List {
-		newData := queryFactory.ReloadListData(list)
+		newData := queryFactory.ReloadListData(list, false)
 		newData[KeyIndex] = query.DB
 		newData[KeyTableID] = query.TableID
 		newData[KeyDataLabel] = query.DataLabel
@@ -418,7 +401,21 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 		return nil, err
 	}
 
-	lbs := i.dims(data.SelectFieldsOrder, query.Field)
+	var lbs []string
+	for _, k := range data.SelectFieldsOrder {
+		// 忽略内置字段
+		if checkInternalDimension(k) {
+			continue
+		}
+
+		// 忽略内置值和时间字段
+		if k == sql_expr.TimeStamp || k == sql_expr.Value {
+			continue
+		}
+
+		lbs = append(lbs, k)
+	}
+
 	return lbs, err
 }
 

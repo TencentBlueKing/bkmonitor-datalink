@@ -40,7 +40,34 @@ const (
 	relationDataSourceWithPod         = "datasource_with_pod_relation"
 	relationDataSourceWithNode        = "datasource_with_node_relation"
 	relationBkLogConfigWithDataSource = "bklogconfig_with_datasource_relation"
+
+	relationAppVersionWithPod = "appversion_with_pod_relation"
 )
+
+func (oc *ObjectsController) WriteAppVersionRelation(w io.Writer) {
+	for _, pod := range oc.podObjs.GetAll() {
+		for _, container := range pod.Containers {
+			if container.ID == "" {
+				continue
+			}
+
+			image := strings.Split(container.Image, ":")
+			if len(image) != 2 {
+				continue
+			}
+
+			promfmt.FmtBytes(w, promfmt.Metric{
+				Name: relationAppVersionWithPod,
+				Labels: []promfmt.Label{
+					{Name: "version", Value: image[1]},
+					{Name: "pod", Value: pod.ID.Name},
+					{Name: "namespace", Value: pod.ID.Namespace},
+					{Name: "container", Value: container.Name},
+				},
+			})
+		}
+	}
+}
 
 func (oc *ObjectsController) WriteNodeRelations(w io.Writer) {
 	for node, ip := range oc.nodeObjs.Addrs() {

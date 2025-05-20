@@ -286,7 +286,7 @@ func (bt *MonitorBeater) PreRun() error {
 		switch t {
 		case configs.ConfigTypeKeyword:
 			bt.KeywordScheduler.Add(task)
-		case configs.ConfigTypeTrap, configs.ConfigTypeMetric, configs.ConfigTypeKubeevent:
+		case configs.ConfigTypeTrap, configs.ConfigTypeMetric, configs.ConfigTypeKubeevent, configs.ConfigTypeDmesg:
 			bt.ListenScheduler.Add(task)
 		default:
 			bt.Scheduler.Add(task)

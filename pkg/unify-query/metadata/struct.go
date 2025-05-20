@@ -133,8 +133,10 @@ type Query struct {
 
 	SegmentedEnable bool `json:"segmented_enable,omitempty"` // 是否开启分段查询
 
-	// Es 查询扩展
-	QueryString   string        `json:"query_string,omitempty"`
+	// 查询扩展
+	QueryString string `json:"query_string,omitempty"`
+	IsPrefix    bool   `json:"is_prefix,omitempty"`
+
 	AllConditions AllConditions `json:"all_conditions,omitempty"`
 
 	HighLight *HighLight `json:"high_light,omitempty"`

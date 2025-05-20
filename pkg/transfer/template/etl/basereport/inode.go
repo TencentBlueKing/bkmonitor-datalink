@@ -87,6 +87,10 @@ func NewPerformanceInodeProcessor(ctx context.Context, name string) *Performance
 				etl.ExtractByJMESPath("usage.device"), etl.TransformNilString,
 			),
 			etl.NewSimpleField(
+				"mountpoint",
+				etl.ExtractByJMESPath("usage.mountpoint"), etl.TransformNilString,
+			),
+			etl.NewSimpleField(
 				"bk_cmdb_level",
 				etl.ExtractByJMESPath("root.bk_cmdb_level"), etl.TransformJSON,
 			),

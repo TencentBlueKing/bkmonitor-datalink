@@ -24,6 +24,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -773,7 +774,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 
 	for _, conditions := range allConditions {
 		// Track nested fields separately for each condition group
-		nestedFields := make(map[string]struct{})
+		nestedFields := set.New[string]()
 		nestedQueries := make(map[string][]elastic.Query)
 		nonNestedQueries := make([]elastic.Query, 0)
 
@@ -880,7 +881,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 
 			// Add to the appropriate query collection
 			if nf != "" {
-				nestedFields[nf] = struct{}{}
+				nestedFields.Add(nf)
 				nestedQueries[nf] = append(nestedQueries[nf], q)
 			} else if q != nil {
 				nonNestedQueries = append(nonNestedQueries, q)
@@ -888,9 +889,14 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 		}
 
 		// Combine nested queries by field
-		nestedFieldQueries := make([]elastic.Query, 0)
-		for field, queries := range nestedQueries {
-			if len(queries) > 0 {
+		nestedFieldQueries := make([]elastic.Query, 0, nestedFields.Size())
+		nestedFieldsArray := nestedFields.ToArray()
+
+		// 排序输出
+		sort.Strings(nestedFieldsArray)
+
+		for _, field := range nestedFieldsArray {
+			if queries, ok := nestedQueries[field]; ok && len(queries) > 0 {
 				// Create a nested query for this field
 				nestedQuery := elastic.NewNestedQuery(field, f.getQuery(Must, queries...))
 				nestedFieldQueries = append(nestedFieldQueries, nestedQuery)

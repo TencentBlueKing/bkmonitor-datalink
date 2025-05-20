@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
@@ -51,12 +52,14 @@ type SQLExpr interface {
 	WithInternalFields(timeField, valueField string) SQLExpr
 	// IsSetLabels 是否保留查询标签
 	IsSetLabels(bool) SQLExpr
+	// ParserRangeTime 解析开始结束时间
+	ParserRangeTime(timeField string, start, end time.Time) string
 	// ParserQueryString 解析 es 特殊语法 queryString 生成SQL条件
 	ParserQueryString(qs string) (string, error)
 	// ParserAllConditions 解析全量条件生成SQL条件表达式
 	ParserAllConditions(allConditions metadata.AllConditions) (string, error)
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
-	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, TimeAggregate, error)
+	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, *set.Set[string], TimeAggregate, error)
 	// DescribeTableSQL 返回当前表结构
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
@@ -143,7 +146,7 @@ func (d *DefaultSQLExpr) ParserQueryString(_ string) (string, error) {
 }
 
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段
-func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, timeAggregate TimeAggregate, err error) {
+func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, dimensionSet *set.Set[string], timeAggregate TimeAggregate, err error) {
 	valueField, err := d.dimTransform(d.valueField)
 	if err != nil {
 		return
@@ -153,18 +156,22 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		window       time.Duration
 		offsetMillis int64
 		timezone     string
-		dimensionMap = make(map[string]struct{})
 	)
+	dimensionSet = set.New[string]([]string{FieldValue, FieldTime}...)
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
-			dim, err = d.dimTransform(dim)
+			var (
+				newDim string
+			)
+
+			dimensionSet.Add(dim)
+			newDim, err = d.dimTransform(dim)
 			if err != nil {
 				return
 			}
-			dimensionMap[dim] = struct{}{}
 
-			selectFields = append(selectFields, dim)
-			groupByFields = append(groupByFields, dim)
+			selectFields = append(selectFields, newDim)
+			groupByFields = append(groupByFields, newDim)
 		}
 
 		if valueField == "" {
@@ -198,10 +205,10 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 			offsetMillis = int64(offset) * 1e3
 		}
 
-		timeField := fmt.Sprintf("(%s + %d) / %d * %d - %d", d.timeField, offsetMillis, window.Milliseconds(), window.Milliseconds(), offsetMillis)
+		timeField := fmt.Sprintf("(FLOOR((%s + %d) / %d) * %d - %d)", d.timeField, offsetMillis, window.Milliseconds(), window.Milliseconds(), offsetMillis)
 
 		groupByFields = append(groupByFields, timeField)
-		selectFields = append(selectFields, fmt.Sprintf("MAX(%s) AS `%s`", timeField, TimeStamp))
+		selectFields = append(selectFields, fmt.Sprintf("MAX%s AS `%s`", timeField, TimeStamp))
 		orderByFields = append(orderByFields, fmt.Sprintf("`%s` ASC", TimeStamp))
 	}
 
@@ -218,7 +225,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 	for _, order := range orders {
 		// 如果是聚合操作的话，只能使用维度进行排序
 		if len(aggregates) > 0 {
-			if _, ok := dimensionMap[order.Name]; !ok {
+			if !dimensionSet.Existed(order.Name) {
 				continue
 			}
 		}
@@ -252,6 +259,10 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 	}
 
 	return
+}
+
+func (d *DefaultSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {
+	return fmt.Sprintf("`%s` >= %d AND `%s` < %d", timeField, start.UnixMilli(), timeField, end.UnixMilli())
 }
 
 // ParserAllConditions 解析全量条件生成SQL条件表达式

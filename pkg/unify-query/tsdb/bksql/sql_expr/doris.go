@@ -27,8 +27,6 @@ const (
 	ShardKey = "__shard_key__"
 
 	DefaultKey = "log"
-
-	RowNumberField = "row_number"
 )
 
 type DorisSQLExpr struct {
@@ -147,12 +145,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		// date_histogram 不支持无需进行函数聚合
 		case "date_histogram":
 		case "collapse":
-			valueFieldWithoutQuote := strings.Trim(valueField, "`")
-			rowsNumberField := fmt.Sprintf("%s_%s", valueFieldWithoutQuote, RowNumberField)
-			// 文档 https://doris.apache.org/docs/dev/sql-reference/sql-functions/window-functions/row_number
-			rowNumberClause := fmt.Sprintf("row_number() over (partition by %s order by %s desc) as %s", valueField, d.timeField, rowsNumberField)
-			selectFields = append(selectFields, rowNumberClause)
-			orderByFields = append(orderByFields, fmt.Sprintf("`%s` DESC", rowsNumberField))
+			groupByFields = append(groupByFields, fmt.Sprintf("`%s`", valueField))
 		default:
 			selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, Value))
 		}

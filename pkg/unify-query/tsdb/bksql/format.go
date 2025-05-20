@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
-	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -457,21 +456,7 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 			s = append(s, qs)
 		}
 	}
-	isDoris := f.expr.Type() == sql_expr.Doris
-	if isDoris {
-		collapseAggregates := lo.Filter(f.query.Aggregates, func(agg metadata.Aggregate, _ int) bool {
-			return agg.Name == "collapse"
-		})
-		isIncludeCollapse := len(collapseAggregates) > 0
-		if isIncludeCollapse {
-			collapseField := collapseAggregates[0].Field
-			if collapseField == "" {
-				collapseField = f.query.Field
-			}
-			rowNumberField := fmt.Sprintf("%s_row_number", collapseField)
-			s = append(s, fmt.Sprintf("%s = 1", rowNumberField))
-		}
-	}
+
 	return strings.Join(s, " AND "), nil
 }
 

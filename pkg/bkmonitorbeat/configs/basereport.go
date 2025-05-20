@@ -99,9 +99,8 @@ func (c *BasereportConfig) GetTaskConfigList() []define.TaskConfig {
 		return tasks
 	}
 
-	dataID := fetcher.FetchTaskDataID(define.ModuleBasereport)
-	if dataID > 0 {
-		c.DataID = dataID
+	if v, ok := fetcher.FetchTaskDataID(define.ModuleBasereport); ok {
+		c.DataID = v
 	}
 
 	tasks = append(tasks, c)

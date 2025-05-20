@@ -29,9 +29,8 @@ func (c *DmesgConfig) GetTaskConfigList() []define.TaskConfig {
 		return tasks
 	}
 
-	dataID := fetcher.FetchTaskDataID(ConfigTypeDmesg)
-	if dataID > 0 {
-		c.DataID = dataID
+	if v, ok := fetcher.FetchTaskDataID(ConfigTypeDmesg); ok {
+		c.DataID = v
 	}
 	tasks = append(tasks, c)
 	return tasks

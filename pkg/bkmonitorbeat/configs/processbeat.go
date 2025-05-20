@@ -77,19 +77,14 @@ func (c *ProcessbeatConfig) GetPeriod() time.Duration { return c.Period }
 
 func (c *ProcessbeatConfig) InitIdent() error {
 	// 需要在计算 indent 之前进行 dataid 替换 否则 reload 不会生效
-	portDataID := fetcher.FetchTaskDataID(define.ModuleProcessbeat + "_port")
-	if portDataID > 0 {
-		c.PortDataId = portDataID
+	if v, ok := fetcher.FetchTaskDataID(define.ModuleProcessbeat + "_port"); ok {
+		c.PortDataId = v
 	}
-
-	topDataID := fetcher.FetchTaskDataID(define.ModuleProcessbeat + "_top")
-	if topDataID > 0 {
-		c.TopDataId = topDataID
+	if v, ok := fetcher.FetchTaskDataID(define.ModuleProcessbeat + "_top"); ok {
+		c.TopDataId = v
 	}
-
-	perfDataID := fetcher.FetchTaskDataID(define.ModuleProcessbeat + "_perf")
-	if perfDataID > 0 {
-		c.PerfDataId = perfDataID
+	if v, ok := fetcher.FetchTaskDataID(define.ModuleProcessbeat + "_perf"); ok {
+		c.PerfDataId = v
 	}
 
 	return c.initIdent(c)

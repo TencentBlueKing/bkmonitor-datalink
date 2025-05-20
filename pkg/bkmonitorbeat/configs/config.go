@@ -224,9 +224,8 @@ func (c *Config) GetTaskConfigList() []define.TaskConfig {
 }
 
 func (c *Config) GetGatherUpDataID() int32 {
-	dataID := fetcher.FetchTaskDataID(define.ModuleGatherUpBeat)
-	if dataID > 0 {
-		return dataID
+	if v, ok := fetcher.FetchTaskDataID(define.ModuleGatherUpBeat); ok {
+		return v
 	}
 	return c.GatherUpBeat.DataID
 }

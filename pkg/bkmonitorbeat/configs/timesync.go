@@ -36,9 +36,8 @@ func (c *TimeSyncConfig) GetTaskConfigList() []define.TaskConfig {
 		return tasks
 	}
 
-	dataID := fetcher.FetchTaskDataID(ConfigTypeTimeSync)
-	if dataID > 0 {
-		c.DataID = dataID
+	if v, ok := fetcher.FetchTaskDataID(ConfigTypeTimeSync); ok {
+		c.DataID = v
 	}
 	tasks = append(tasks, c)
 	return tasks

@@ -197,9 +197,8 @@ func NewGlobalHeartBeatEvent(bt *MonitorBeater) define.Event {
 	}
 
 	dataID := beatConfig.HeartBeat.GlobalDataID
-	newDataID := fetcher.FetchTaskDataID(define.ModuleGlobalHeartBeat)
-	if newDataID > 0 {
-		dataID = newDataID
+	if v, ok := fetcher.FetchTaskDataID(define.ModuleGlobalHeartBeat); ok {
+		dataID = v
 	}
 
 	return &GlobalHeartBeatEvent{

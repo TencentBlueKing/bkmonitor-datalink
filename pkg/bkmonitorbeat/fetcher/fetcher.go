@@ -25,15 +25,12 @@ func NewFetcher() *Fetcher {
 	}
 }
 
-func (l *Fetcher) FetchTaskDataID(task string) int32 {
+func (l *Fetcher) FetchTaskDataID(task string) (int32, bool) {
 	l.mut.Lock()
 	defer l.mut.Unlock()
 
 	dst, ok := l.tasks[task]
-	if !ok {
-		return -1 // 不存在则返回 -1
-	}
-	return dst
+	return dst, ok
 }
 
 func (l *Fetcher) UpdateTaskDataIDs(tasks map[string]int32) bool {
@@ -49,7 +46,7 @@ func (l *Fetcher) UpdateTaskDataIDs(tasks map[string]int32) bool {
 
 var DefaultFetcher = NewFetcher()
 
-func FetchTaskDataID(task string) int32 {
+func FetchTaskDataID(task string) (int32, bool) {
 	return DefaultFetcher.FetchTaskDataID(task)
 }
 

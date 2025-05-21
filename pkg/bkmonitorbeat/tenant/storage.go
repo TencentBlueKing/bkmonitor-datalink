@@ -7,49 +7,45 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package fetcher
+package tenant
 
 import (
 	"reflect"
 	"sync"
 )
 
-type Fetcher struct {
+type Storage struct {
 	mut   sync.Mutex
-	tasks map[string]int32
+	tasks map[string]int32 // 与 gse 通信获取
 }
 
-func NewFetcher() *Fetcher {
-	return &Fetcher{
+func NewStorage() *Storage {
+	return &Storage{
 		tasks: make(map[string]int32),
 	}
 }
 
-func (l *Fetcher) FetchTaskDataID(task string) (int32, bool) {
-	l.mut.Lock()
-	defer l.mut.Unlock()
+func (s *Storage) GetTaskDataID(task string) (int32, bool) {
+	s.mut.Lock()
+	defer s.mut.Unlock()
 
-	dst, ok := l.tasks[task]
+	dst, ok := s.tasks[task]
 	return dst, ok
 }
 
-func (l *Fetcher) UpdateTaskDataIDs(tasks map[string]int32) bool {
-	l.mut.Lock()
-	defer l.mut.Unlock()
+func (s *Storage) UpdateTaskDataIDs(tasks map[string]int32) bool {
+	s.mut.Lock()
+	defer s.mut.Unlock()
 
-	if reflect.DeepEqual(tasks, l.tasks) {
+	if reflect.DeepEqual(tasks, s.tasks) {
 		return false
 	}
-	l.tasks = tasks
+	s.tasks = tasks
 	return true
 }
 
-var DefaultFetcher = NewFetcher()
+var defaultStorage = NewStorage()
 
-func FetchTaskDataID(task string) (int32, bool) {
-	return DefaultFetcher.FetchTaskDataID(task)
-}
-
-func UpdateTaskDataIDs(tasks map[string]int32) bool {
-	return DefaultFetcher.UpdateTaskDataIDs(tasks)
+func DefaultStorage() *Storage {
+	return defaultStorage
 }

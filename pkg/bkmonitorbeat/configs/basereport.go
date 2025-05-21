@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/fetcher"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tenant"
 )
 
 type CpuConfig struct {
@@ -99,7 +99,8 @@ func (c *BasereportConfig) GetTaskConfigList() []define.TaskConfig {
 		return tasks
 	}
 
-	if v, ok := fetcher.FetchTaskDataID(define.ModuleBasereport); ok {
+	storage := tenant.DefaultStorage()
+	if v, ok := storage.GetTaskDataID(define.ModuleBasereport); ok {
 		c.DataID = v
 	}
 

@@ -22,7 +22,7 @@ import (
 	"github.com/elastic/beats/libbeat/common"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/fetcher"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tenant"
 )
 
 type ProcessbeatConfig struct {
@@ -77,13 +77,15 @@ func (c *ProcessbeatConfig) GetPeriod() time.Duration { return c.Period }
 
 func (c *ProcessbeatConfig) InitIdent() error {
 	// 需要在计算 indent 之前进行 dataid 替换 否则 reload 不会生效
-	if v, ok := fetcher.FetchTaskDataID(define.ModuleProcessbeat + "_port"); ok {
+
+	storage := tenant.DefaultStorage()
+	if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_port"); ok {
 		c.PortDataId = v
 	}
-	if v, ok := fetcher.FetchTaskDataID(define.ModuleProcessbeat + "_top"); ok {
+	if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_top"); ok {
 		c.TopDataId = v
 	}
-	if v, ok := fetcher.FetchTaskDataID(define.ModuleProcessbeat + "_perf"); ok {
+	if v, ok := storage.GetTaskDataID(define.ModuleProcessbeat + "_perf"); ok {
 		c.PerfDataId = v
 	}
 

@@ -29,8 +29,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater/taskfactory"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/fetcher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/http"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
@@ -51,7 +51,7 @@ type beaterState struct {
 	ctx             context.Context
 	cancelFunc      context.CancelFunc
 	heartBeatTicker *time.Ticker
-	fc              *fetcher.Client
+	tcli            *tenant.Client
 
 	Scheduler        define.Scheduler
 	KeywordScheduler define.Scheduler
@@ -177,7 +177,7 @@ func New(cfg *common.Config, name, version string) (*MonitorBeater, error) {
 
 	// 多租户模式下才需要开启新的通信管道拉取配置
 	if bt.config.EnableMultiTenant {
-		bt.fc, err = fetcher.NewClient(fetcher.Option{
+		bt.tcli, err = tenant.NewClient(tenant.Option{
 			Version: version,
 			IPC:     bt.config.GseMessageEndpoint,
 			Tasks:   bt.config.MultiTenantTasks,
@@ -495,8 +495,8 @@ func (bt *MonitorBeater) Run() error {
 	}
 	logger.Info("MonitorBeater is running! Hit CTRL-C to stop it")
 
-	if bt.fc != nil {
-		if err := bt.fc.Start(); err != nil {
+	if bt.tcli != nil {
+		if err := bt.tcli.Start(); err != nil {
 			return err
 		}
 	}
@@ -581,8 +581,8 @@ func (bt *MonitorBeater) Stop() {
 	bt.stopAdminServerReloader()
 	logger.Info("shutting down")
 
-	if bt.fc != nil {
-		if err := bt.fc.Close(); err != nil {
+	if bt.tcli != nil {
+		if err := bt.tcli.Close(); err != nil {
 			logger.Errorf("close gse message client failed: %v", err)
 		}
 	}

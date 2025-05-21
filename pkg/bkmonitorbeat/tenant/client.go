@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package fetcher
+package tenant
 
 import (
 	"context"
@@ -80,7 +80,7 @@ func NewClient(opt Option) (*Client, error) {
 			}
 
 			// 如果触发了更新 则需要通知采集器进行 reload
-			updated := UpdateTaskDataIDs(tasks)
+			updated := DefaultStorage().UpdateTaskDataIDs(tasks)
 			if updated {
 				beat.ReloadChan <- true
 			}
@@ -118,11 +118,12 @@ type FetchHostDataIDData struct {
 }
 
 type AgentMsgRequest struct {
-	Type    string      `json:"type"` // 后续可能会有其他的请求类型
-	CloudID int         `json:"cloudid"`
-	AgentID string      `json:"bk_agent_id"`
-	IP      string      `json:"ip"`
-	Params  interface{} `json:"params"`
+	Type     string      `json:"type"` // 后续可能会有其他的请求类型
+	CloudID  int         `json:"cloudid"`
+	AgentID  string      `json:"bk_agent_id"`
+	TenantID string      `json:"bk_tenant_id"`
+	IP       string      `json:"ip"`
+	Params   interface{} `json:"params"`
 }
 
 func (c *Client) SendMsg(messageID string, content []byte) error {
@@ -149,10 +150,11 @@ func (c *Client) loop() {
 		// msgID 规则为 {插件名称}.{查询类型}.{UnixTimestamp}
 		messageID := fmt.Sprintf("bkmonitorbeat.%s.%d", TypeFetchHostDataID, time.Now().Unix())
 		content, _ := json.Marshal(AgentMsgRequest{
-			Type:    TypeFetchHostDataID,
-			CloudID: int(info.Cloudid),
-			AgentID: info.BKAgentID,
-			IP:      info.IP,
+			Type:     TypeFetchHostDataID,
+			CloudID:  int(info.Cloudid),
+			AgentID:  info.BKAgentID,
+			IP:       info.IP,
+			TenantID: info.BKTenantID,
 			Params: FetchHostDataIDParams{
 				Tasks: c.opt.Tasks,
 			},

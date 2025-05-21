@@ -48,13 +48,15 @@ var errNoConnection = errors.New("connection not inited")
 // AgentInfo : get info from agent
 // now can get bizid, cloudid, ip
 type AgentInfo struct {
-	Bizid     int32  `json:"bizid"`
-	BKBizID   int32  `json:"bk_biz_id"`
-	Cloudid   int32  `json:"cloudid"`
-	IP        string `json:"ip"`
-	BKAgentID string `json:"bk_agent_id"`
-	HostID    int32
-	Hostname  string
+	Bizid        int32  `json:"bizid"`
+	BKBizID      int32  `json:"bk_biz_id"`
+	Cloudid      int32  `json:"cloudid"`
+	IP           string `json:"ip"`
+	BKAgentID    string `json:"bk_agent_id"`
+	BKTenantID   string `json:"bk_tenant_id"`
+	StaticDataID int32  `json:"static_dataid"`
+	HostID       int32
+	Hostname     string
 }
 
 // String

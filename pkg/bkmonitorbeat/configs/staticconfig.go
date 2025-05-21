@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 )
 
 // config类型定义
@@ -31,8 +32,10 @@ type StaticTaskConfig struct {
 
 // InitIdent :
 func (c *StaticTaskConfig) InitIdent() error {
-	// TODO(mando): 待 CC 信息同步
-	// c.DataID = loader.DefaultLoader.FetchTaskDataID(c.DataID)
+	info, _ := gse.GetAgentInfo()
+	if info.StaticDataID != 0 {
+		c.DataID = info.StaticDataID
+	}
 	return c.initIdent(c)
 }
 

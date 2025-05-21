@@ -16,7 +16,7 @@ import (
 	"github.com/elastic/beats/libbeat/common"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/fetcher"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 )
 
@@ -197,7 +197,8 @@ func NewGlobalHeartBeatEvent(bt *MonitorBeater) define.Event {
 	}
 
 	dataID := beatConfig.HeartBeat.GlobalDataID
-	if v, ok := fetcher.FetchTaskDataID(define.ModuleGlobalHeartBeat); ok {
+	storage := tenant.DefaultStorage()
+	if v, ok := storage.GetTaskDataID(define.ModuleGlobalHeartBeat); ok {
 		dataID = v
 	}
 

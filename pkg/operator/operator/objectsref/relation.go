@@ -51,15 +51,10 @@ func (oc *ObjectsController) WriteAppVersionRelation(w io.Writer) {
 				continue
 			}
 
-			image := strings.Split(container.Image, ":")
-			if len(image) != 2 {
-				continue
-			}
-
 			promfmt.FmtBytes(w, promfmt.Metric{
 				Name: relationContainerWithVersion,
 				Labels: []promfmt.Label{
-					{Name: "version", Value: image[1]},
+					{Name: "version", Value: container.Tag},
 
 					{Name: "pod", Value: pod.ID.Name},
 					{Name: "namespace", Value: pod.ID.Namespace},

@@ -228,6 +228,11 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			ql.HighLight = queryTs.HighLight
 		}
 
+		// 复用collapse配置，没有特殊配置的情况下使用公共配置
+		if ql.Collapse == nil && queryTs.Collapse != nil {
+			ql.Collapse = queryTs.Collapse
+		}
+
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
 		if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
 			ql.KeepColumns = queryTs.ResultColumns

@@ -226,6 +226,13 @@ func (bt *MonitorBeater) initHostIDWatcher() error {
 func (bt *MonitorBeater) ParseConfig(cfg *common.Config) error {
 	var err error
 	ctx := bt.ctx
+
+	// 加载任务前先初始化 hostid watcher
+	err = bt.initHostIDWatcher()
+	if err != nil {
+		return fmt.Errorf("init hostid failed,error:%s", err)
+	}
+
 	bt.configEngine = NewBaseConfigEngine(ctx)
 
 	err = bt.configEngine.Init(cfg, bt)
@@ -244,10 +251,6 @@ func (bt *MonitorBeater) ParseConfig(cfg *common.Config) error {
 	}
 	configs.DisableNetlink = globalConfig.DisableNetLink
 	bt.config = globalConfig
-	err = bt.initHostIDWatcher()
-	if err != nil {
-		return fmt.Errorf("init hostid failed,error:%s", err)
-	}
 
 	// 使用hostid文件中的ip和云区域cloudId信息，替换掉全局配置中的ip和云区域cloudId
 	if bt.hostIDWatcher != nil {

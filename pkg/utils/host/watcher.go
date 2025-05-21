@@ -454,12 +454,12 @@ func (w *idWatcher) updateInfo() error {
 	}
 	w.bkTenantID = bkTenantID
 
-	bkDataID, ok := hostIdInfo[BkDataIDKey].(int32)
+	bkDataID, ok := hostIdInfo[BkDataIDKey].(int64)
 	if !ok {
 		logger.Warnf("find dataid data failed, info value:%v", hostIdInfo)
 		bkDataID = 0
 	}
-	w.bkDataID = bkDataID
+	w.bkDataID = int32(bkDataID)
 
 	// 获取associations，这里存放的就是拓扑
 	associations, ok := hostIdInfo[AssociationsKey].(map[string]interface{})

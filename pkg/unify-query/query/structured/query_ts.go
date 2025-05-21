@@ -76,6 +76,11 @@ type QueryTs struct {
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
+// CollapseConfig 用于Elasticsearch折叠聚合的配置
+type CollapseConfig struct {
+	Field string `json:"field,omitempty" example:"trace_id"`
+}
+
 // StepParse 解析step
 func StepParse(step string) time.Duration {
 	if step == "" {

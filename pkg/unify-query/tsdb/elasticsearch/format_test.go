@@ -711,6 +711,7 @@ func TestToFixInterval(t *testing.T) {
 	}
 }
 
+
 func setupCollapseQuerySource(fact *FormatFactory, query *metadata.Query, filterQueries []elastic.Query) (*elastic.SearchSource, error) {
 	source := elastic.NewSearchSource()
 	esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
@@ -794,6 +795,7 @@ func TestBuildQuery(t *testing.T) {
 				Type: TimeFieldTypeTime,
 				Unit: function.Second,
 			},
+
 			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1h","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"collapse":{"field":"gseIndex"},"from":0,"query":{"bool":{"filter":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}},"size":0}`,
 		},
 		"multiple collapse should use first one": {
@@ -851,6 +853,7 @@ func TestBuildQuery(t *testing.T) {
 
 			bodyJson, err := json.Marshal(body)
 			assert.Nil(t, err)
+
 
 			bodyString := string(bodyJson)
 			assert.JSONEq(t, c.expected, bodyString)

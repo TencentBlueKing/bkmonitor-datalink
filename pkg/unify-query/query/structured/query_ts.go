@@ -75,8 +75,6 @@ type QueryTs struct {
 
 	// HighLight 是否开启高亮
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
-
-	Collapse *metadata.Collapse `json:"collapse,omitempty"`
 }
 
 // StepParse 解析step
@@ -161,9 +159,6 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 			query.KeepColumns = q.ResultColumns
 		}
 
-		if q.Collapse != nil {
-			query.Collapse = q.Collapse
-		}
 		queryMetric, err := query.ToQueryMetric(ctx, q.SpaceUid)
 		if err != nil {
 			return nil, err

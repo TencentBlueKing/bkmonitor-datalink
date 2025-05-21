@@ -18,6 +18,7 @@ import (
 
 	agentmessage "github.com/TencentBlueKing/bk-gse-sdk/go/service/agent-message"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -83,6 +84,10 @@ func NewClient(opt Option) (*Client, error) {
 			updated := DefaultStorage().UpdateTaskDataIDs(tasks)
 			if updated {
 				beat.ReloadChan <- true
+				define.RecordLog("update tenant dataid", []define.LogKV{{
+					K: "tasks",
+					V: tasks,
+				}})
 			}
 		}),
 		agentmessage.WithLogger(innerLogger{}),

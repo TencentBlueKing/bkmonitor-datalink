@@ -100,7 +100,7 @@ bkmonitorbeat:
 
   # 是否为多租户模式（默认不开启）
   enable_multi_tenant: false
-  # 多租户场景下需要映射的 dataids 列表
+  # 多租户场景下需要映射的 tasks 列表
   multi_tenant_tasks: ["basereport","processbeat_perf","processbeat_port","global_heartbeat","gather_up_beat","timesync","dmesg"]
   # 多租户场景下 gse 新的通信管道 ipc 地址
   {%- if step_data is defined and step_data.control_info is defined and step_data.control_info.pluginipc is defined %}

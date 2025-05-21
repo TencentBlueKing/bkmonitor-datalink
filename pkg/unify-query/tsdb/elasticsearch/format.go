@@ -679,17 +679,36 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 		return "", nil, err
 	}
 
+	f.aggInfoList = make(aggInfoList, 0)
+
+	tempPrimaryAggs := make(aggInfoList, 0)
+	requiredNestedPaths := set.New[string]()
+
 	for _, am := range aggregates {
 		switch am.Name {
 		case DateHistogram:
-			f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
+			tempPrimaryAggs = append(tempPrimaryAggs, TimeAgg{
+				Name:     f.timeField.Name,
+				Window:   am.Window,
+				Timezone: am.TimeZone,
+			})
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
-			f.valueAgg(FieldValue, am.Name, am.Args...)
-			f.nestedAgg(f.valueField)
+			tempPrimaryAggs = append(tempPrimaryAggs, ValueAgg{
+				Name:     FieldValue,
+				FuncType: am.Name,
+				Args:     am.Args,
+			})
+			if np := f.NestedField(f.valueField); np != "" {
+				requiredNestedPaths.Add(np)
+			}
 
 			if am.Window > 0 && !am.Without {
-				// 增加时间函数
-				f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
+				tempPrimaryAggs = append(tempPrimaryAggs, TimeAgg{
+					Name:     f.timeField.Name,
+					Window:   am.Window,
+					Timezone: am.TimeZone,
+				})
+
 			}
 
 			for idx, dim := range am.Dimensions {
@@ -700,12 +719,76 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 					dim = f.decode(dim)
 				}
 
-				f.termAgg(dim, idx == 0)
-				f.nestedAgg(dim)
+				termOrders := metadata.Orders{}
+				for _, order := range f.orders {
+					decodedOrderName := dim
+					if f.decode != nil {
+						decodedOrderName = f.decode(order.Name)
+					}
+
+					if dim == decodedOrderName {
+						termOrders = append(termOrders, metadata.Order{Name: KeyValue, Ast: order.Ast})
+					} else if idx == 0 && order.Name == FieldValue {
+						termOrders = append(termOrders, order)
+					}
+				}
+
+				tempPrimaryAggs = append(tempPrimaryAggs, TermAgg{Name: dim, Orders: termOrders})
+				if np := f.NestedField(dim); np != "" {
+					requiredNestedPaths.Add(np)
+				}
 			}
 		default:
-			err := fmt.Errorf("esAgg aggregation is not support with: %+v", am)
-			return "", nil, err
+			return "", nil, fmt.Errorf("esAgg aggregation is not supported with: %+v", am)
+		}
+	}
+
+	f.aggInfoList = make(aggInfoList, len(tempPrimaryAggs))
+	copy(f.aggInfoList, tempPrimaryAggs)
+
+	sortedPaths := requiredNestedPaths.ToArray()
+	sort.Slice(sortedPaths, func(i, j int) bool {
+		return len(sortedPaths[i]) > len(sortedPaths[j])
+	})
+
+	getFieldFromInfo := func(info any) string {
+		switch v := info.(type) {
+		case ValueAgg:
+			return f.valueField
+		case TimeAgg:
+			return v.Name
+		case TermAgg:
+			return v.Name
+		default:
+			return ""
+		}
+	}
+
+	for _, p := range sortedPaths {
+		lastChildIdx := -1
+		for i := 0; i < len(f.aggInfoList); i++ {
+			if _, ok := f.aggInfoList[i].(NestedAgg); ok {
+				continue
+			}
+
+			fieldName := getFieldFromInfo(f.aggInfoList[i])
+			if fieldName == "" {
+				continue
+			}
+
+			itemNestedPath := f.NestedField(fieldName)
+			if itemNestedPath == p || (itemNestedPath != "" && strings.HasPrefix(itemNestedPath, p+ESStep)) {
+				lastChildIdx = i
+			}
+		}
+
+		if lastChildIdx != -1 {
+			insertPosition := lastChildIdx + 1
+			newAggList := make(aggInfoList, 0, len(f.aggInfoList)+1)
+			newAggList = append(newAggList, f.aggInfoList[:insertPosition]...)
+			newAggList = append(newAggList, NestedAgg{Name: p})
+			newAggList = append(newAggList, f.aggInfoList[insertPosition:]...)
+			f.aggInfoList = newAggList
 		}
 	}
 

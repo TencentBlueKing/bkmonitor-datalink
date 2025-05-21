@@ -411,6 +411,8 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 		timeField  metadata.TimeField
 		aggregates metadata.Aggregates
 		expected   string
+		valueField string
+		mappings   []map[string]any
 	}{
 		"second date field": {
 			timeField: metadata.TimeField{
@@ -564,12 +566,55 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 			},
 			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","interval":"1m","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"dtEventTime":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
+		"aggregate with shared nested path for valueField and dimensions": {
+			valueField: "events.latency",
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: TimeFieldTypeTime,
+				Unit: function.Second,
+			},
+			aggregates: metadata.Aggregates{
+				{
+					Name:       Count,
+					Dimensions: []string{"events.type", "events.code", "source_ip"},
+					Window:     time.Minute,
+					TimeZone:   "Asia/Shanghai",
+				},
+			},
+			mappings: []map[string]any{
+				{
+					"properties": map[string]any{
+						"events": map[string]any{
+							"type": "nested",
+							"properties": map[string]any{
+								"latency": map[string]any{"type": "long"},
+								"code":    map[string]any{"type": "keyword"},
+								"type":    map[string]any{"type": "keyword"},
+							},
+						},
+						"source_ip": map[string]any{"type": "ip"},
+						"time":      map[string]any{"type": "date"},
+					},
+				},
+			},
+			expected: `{"aggregations":{"source_ip":{"terms":{"field":"source_ip"},"aggregations":{"events":{"nested":{"path":"events"},"aggregations":{"events.code":{"terms":{"field":"events.code","missing":" "},"aggregations":{"events.type":{"terms":{"field":"events.type","missing":" "},"aggregations":{"time":{"date_histogram":{"field":"time","interval":"1m","min_doc_count":0,"time_zone":"Asia/Shanghai","extended_bounds":{"min":1721024820,"max":1721046420}},"aggregations":{"_value":{"value_count":{"field":"events.latency"}}}}}}}}}}}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
+			queryValueField := "value"
+			if c.valueField != "" {
+				queryValueField = c.valueField
+			}
+
 			fact := NewFormatFactory(ctx).
-				WithQuery("value", c.timeField, start, end, timeFormat, 0).
-				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
+				WithQuery(queryValueField, c.timeField, start, end, timeFormat, 0)
+
+			if c.mappings != nil {
+				fact.WithMappings(c.mappings...)
+			}
+
+			fact.WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
 
 			ss := elastic.NewSearchSource()
 			rangeQuery, err := fact.RangeQuery()

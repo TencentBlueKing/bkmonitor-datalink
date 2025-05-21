@@ -24,7 +24,6 @@ import (
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
-	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
@@ -361,12 +360,11 @@ func buildQuery(fact *FormatFactory, filterQueries []elastic.Query, qb *metadata
 
 	// 判断是否有聚合
 	if len(qb.Aggregates) > 0 {
-		name, agg, aggErr := fact.EsAgg(qb.Aggregates, source)
-		if aggErr != nil {
-			return nil, nil, true, nil, aggErr
+		err := fact.EsAgg(qb.Aggregates, source)
+		if err != nil {
+			return nil, nil, true, nil, err
 		}
 		source.Size(0)
-		source.Aggregation(name, agg)
 	} else {
 		source.Size(qb.Size)
 		if qb.Scroll == "" {

@@ -11,7 +11,6 @@ package elasticsearch
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -507,12 +506,18 @@ func (f *FormatFactory) SetData(data map[string]any) {
 	mapData("", data, f.data)
 }
 
-func (f *FormatFactory) Agg(source *elastic.SearchSource) (name string, agg elastic.Aggregation, err error) {
+func (f *FormatFactory) Agg(source *elastic.SearchSource) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Errorf(f.ctx, fmt.Sprintf("get mapping error: %s", r))
 		}
 	}()
+
+	var (
+		name       string
+		agg        elastic.Aggregation
+		isCollapse bool
+	)
 
 	for _, aggInfo := range f.aggInfoList {
 		switch info := aggInfo.(type) {
@@ -654,12 +659,20 @@ func (f *FormatFactory) Agg(source *elastic.SearchSource) (name string, agg elas
 			agg = curAgg
 			name = curName
 		case CollapseAgg:
-			collapseClause := elastic.NewCollapseBuilder(info.Field)
-			source.Collapse(collapseClause)
+			if isCollapse {
+				err = fmt.Errorf("collapse 聚合方式不支持多字段")
+				return
+			}
+			isCollapse = true
+			source.Collapse(elastic.NewCollapseBuilder(info.Field))
 		default:
 			err = fmt.Errorf("aggInfoList aggregation is not support this type %T, info: %+v", info, info)
 			return
 		}
+	}
+
+	if name != "" {
+		source.Aggregation(name, agg)
 	}
 
 	return
@@ -686,10 +699,12 @@ func (f *FormatFactory) collapseAgg(field string) {
 	f.aggInfoList = append(f.aggInfoList, CollapseAgg{Field: field})
 }
 
-func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates, source *elastic.SearchSource) (string, elastic.Aggregation, error) {
+func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates, source *elastic.SearchSource) error {
 	if len(aggregates) == 0 {
-		err := errors.New("aggregate_method_list is empty")
-		return "", nil, err
+		return nil
+	}
+	if source == nil {
+		source = elastic.NewSearchSource()
 	}
 
 	for _, am := range aggregates {
@@ -720,7 +735,7 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates, source *elastic.Se
 			f.collapseAgg(am.Field)
 		default:
 			err := fmt.Errorf("esAgg aggregation is not support with: %+v", am)
-			return "", nil, err
+			return err
 		}
 	}
 

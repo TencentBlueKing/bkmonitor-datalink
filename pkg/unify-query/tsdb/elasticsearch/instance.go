@@ -24,6 +24,7 @@ import (
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
+	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
@@ -357,14 +358,25 @@ func buildQuery(fact *FormatFactory, filterQueries []elastic.Query, qb *metadata
 		fetchSource.Include(qb.Source...)
 		source.FetchSourceContext(fetchSource)
 	}
-
+	// 因为collapse和aggregate需要在同级，所以需要先判断是否存在collapse
+	isExistCollapse := lo.Filter(qb.Aggregates, func(item metadata.Aggregate, _ int) bool {
+		return item.Name == Collapse
+	})
+	if len(isExistCollapse) > 0 {
+		collapseClause := elastic.NewCollapseBuilder(isExistCollapse[0].Field)
+		source.Collapse(collapseClause)
+	}
+	aggWithoutCollapse := lo.Filter(qb.Aggregates, func(item metadata.Aggregate, _ int) bool {
+		return item.Name != Collapse
+	})
 	// 判断是否有聚合
-	if len(qb.Aggregates) > 0 {
-		err := fact.EsAgg(qb.Aggregates, source)
-		if err != nil {
-			return nil, nil, true, nil, err
+	if len(aggWithoutCollapse) > 0 {
+		name, agg, aggErr := fact.EsAgg(aggWithoutCollapse)
+		if aggErr != nil {
+			return nil, nil, true, nil, aggErr
 		}
 		source.Size(0)
+		source.Aggregation(name, agg)
 	} else {
 		source.Size(qb.Size)
 		if qb.Scroll == "" {

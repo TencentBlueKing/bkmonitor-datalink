@@ -11,6 +11,7 @@ package elasticsearch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -506,18 +507,12 @@ func (f *FormatFactory) SetData(data map[string]any) {
 	mapData("", data, f.data)
 }
 
-func (f *FormatFactory) Agg(source *elastic.SearchSource) (err error) {
+func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Errorf(f.ctx, fmt.Sprintf("get mapping error: %s", r))
 		}
 	}()
-
-	var (
-		name       string
-		agg        elastic.Aggregation
-		isCollapse bool
-	)
 
 	for _, aggInfo := range f.aggInfoList {
 		switch info := aggInfo.(type) {
@@ -658,21 +653,10 @@ func (f *FormatFactory) Agg(source *elastic.SearchSource) (err error) {
 
 			agg = curAgg
 			name = curName
-		case CollapseAgg:
-			if isCollapse {
-				err = fmt.Errorf("collapse 聚合方式不支持多字段")
-				return
-			}
-			isCollapse = true
-			source.Collapse(elastic.NewCollapseBuilder(info.Field))
 		default:
 			err = fmt.Errorf("aggInfoList aggregation is not support this type %T, info: %+v", info, info)
 			return
 		}
-	}
-
-	if name != "" {
-		source.Aggregation(name, agg)
 	}
 
 	return
@@ -695,16 +679,10 @@ func (f *FormatFactory) HighLight(queryString string, maxAnalyzedOffset int) *el
 	return hl
 }
 
-func (f *FormatFactory) collapseAgg(field string) {
-	f.aggInfoList = append(f.aggInfoList, CollapseAgg{Field: field})
-}
-
-func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates, source *elastic.SearchSource) error {
+func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
 	if len(aggregates) == 0 {
-		return nil
-	}
-	if source == nil {
-		source = elastic.NewSearchSource()
+		err := errors.New("aggregate_method_list is empty")
+		return "", nil, err
 	}
 
 	for _, am := range aggregates {
@@ -731,15 +709,13 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates, source *elastic.Se
 				f.termAgg(dim, idx == 0)
 				f.nestedAgg(dim)
 			}
-		case Collapse:
-			f.collapseAgg(am.Field)
 		default:
 			err := fmt.Errorf("esAgg aggregation is not support with: %+v", am)
-			return err
+			return "", nil, err
 		}
 	}
 
-	return f.Agg(source)
+	return f.Agg()
 }
 
 func (f *FormatFactory) Orders() metadata.Orders {

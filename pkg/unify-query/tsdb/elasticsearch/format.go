@@ -868,106 +868,176 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 				key = f.decode(key)
 			}
 
-			// Check if this dimension is in a nested field
-			nf := f.NestedField(con.DimensionName)
+			// 获取字段的嵌套路径，例如 "events.attributes.exception.message" 会检查 "events.attributes.exception", "events.attributes", "events" 是否为嵌套类型
+			nf := f.NestedField(con.DimensionName) // 使用原始 con.DimensionName 来确定嵌套路径
 
 			var q elastic.Query
-			switch con.Operator {
-			case structured.ConditionExisted:
-				q = elastic.NewExistsQuery(key)
-			case structured.ConditionNotExisted:
-				q = f.getQuery(MustNot, elastic.NewExistsQuery(key))
-			default:
-				// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
-				fieldType, ok := f.mapping[key]
+			isSpecialNestedNotEmptyCase := false // 标记是否为特殊的"嵌套字段不为空字符串"场景(需要把must_not 置于 nested 外部)
+
+			// 需要让must_not 置于 nested 外部:
+			// 当条件是针对嵌套字段 (nf != "")，
+			// 并且操作符是表示否定 (NotEqual, NotContains, NotRegEqual)，
+			// 并且比较值是单个空字符串 (con.Value[0] == "")，
+			// 则可能需要特殊处理。
+			isNegativeQuery := con.Operator == structured.ConditionNotEqual ||
+				con.Operator == structured.ConditionNotContains ||
+				con.Operator == structured.ConditionNotRegEqual
+			isEmptyQueryValue := isNegativeQuery && len(con.Value) == 1 && con.Value[0] == ""
+			if nf != "" &&
+				isNegativeQuery &&
+				isEmptyQueryValue {
+
+				fieldType, fieldOk := f.mapping[key] // 获取字段的映射类型
 				isExistsQuery := true
-				if ok {
-					if fieldType == Text || fieldType == KeyWord {
-						isExistsQuery = false
-					}
+				// 如果字段类型是 text 或 keyword，则空字符串 "" 是一个字面值，而不是检查存在性
+				if fieldOk && (fieldType == Text || fieldType == KeyWord) {
+					isExistsQuery = false
 				}
 
-				queries := make([]elastic.Query, 0)
-				for _, value := range con.Value {
-					var query elastic.Query
-					if con.DimensionName != "" {
-						// 如果是字符串类型，则需要使用 match_phrase 进行非空判断
-						if value == "" && isExistsQuery {
-							query = elastic.NewExistsQuery(key)
-							switch con.Operator {
-							case structured.ConditionEqual, structured.Contains:
-								query = f.getQuery(MustNot, query)
-							case structured.ConditionNotEqual, structured.Ncontains:
-								query = f.getQuery(Must, query)
-							default:
-								return nil, fmt.Errorf("operator is not support with empty, %+v", con)
-							}
-							continue
-						} else {
-							// 非空才进行验证
-							switch con.Operator {
-							case structured.ConditionEqual, structured.ConditionNotEqual:
-								if con.IsPrefix {
-									query = elastic.NewMatchPhrasePrefixQuery(key, value)
-								} else {
-									query = elastic.NewMatchPhraseQuery(key, value)
-								}
-							case structured.ConditionContains, structured.ConditionNotContains:
-								if fieldType == KeyWord {
-									value = fmt.Sprintf("*%s*", value)
-								}
+				// 仅当字段是 text/keyword 类型时（即 isExistsQuery 为 false），才应用此特殊处理
+				// 目的是将 must_not 置于 nested 外部: must_not(nested(match_phrase(field, "")))
+				if !isExistsQuery {
+					isSpecialNestedNotEmptyCase = true
+					var positiveInnerQuery elastic.Query // 用于构建内部的"肯定"查询
 
-								if !con.IsWildcard && fieldType == Text {
+					// 根据原始的否定操作符，构建其对应的"肯定"操作的查询
+					// 例如，如果原始是 NotEqual ""，则这里构建 Equal ""
+					switch con.Operator {
+					case structured.ConditionNotEqual: // 原始: != ""，对应肯定: == ""
+						if con.IsPrefix {
+							positiveInnerQuery = elastic.NewMatchPhrasePrefixQuery(key, "")
+						} else {
+							positiveInnerQuery = elastic.NewMatchPhraseQuery(key, "")
+						}
+					case structured.ConditionNotContains: // 原始: NCONTAINS ""，对应肯定: CONTAINS "" (用 MatchPhrase 实现对空串的精确匹配)
+						if con.IsPrefix { // 尽管对空字符串用前缀匹配不常见，但仍尊重原始意图
+							positiveInnerQuery = elastic.NewMatchPhrasePrefixQuery(key, "")
+						} else {
+							positiveInnerQuery = elastic.NewMatchPhraseQuery(key, "")
+						}
+					case structured.ConditionNotRegEqual: // 原始: REG_NE ""，对应肯定: REG_EQ "" (匹配空字符串的正则)
+						positiveInnerQuery = elastic.NewRegexpQuery(key, "")
+					}
+
+					if positiveInnerQuery != nil {
+						// 将"肯定"的内部查询包装在 nested 查询中
+						nestedPositiveQuery := elastic.NewNestedQuery(nf, positiveInnerQuery)
+						// 然后将整个 nestedPositiveQuery 用 must_not 包裹
+						q = elastic.NewBoolQuery().MustNot(nestedPositiveQuery)
+					} else {
+						// 如果无法构成 positiveInnerQuery（理论上不应发生），则退回常规逻辑
+						isSpecialNestedNotEmptyCase = false
+					}
+				}
+			}
+
+			// 如果不是上述的需要把match_not 置于nested外部，否则继续处理
+			if !isSpecialNestedNotEmptyCase {
+				switch con.Operator {
+				case structured.ConditionExisted:
+					q = elastic.NewExistsQuery(key)
+				case structured.ConditionNotExisted:
+					q = f.getQuery(MustNot, elastic.NewExistsQuery(key))
+				default:
+					// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
+					fieldType, ok := f.mapping[key]
+					isExistsQuery := true
+					if ok {
+						if fieldType == Text || fieldType == KeyWord {
+							isExistsQuery = false
+						}
+					}
+
+					queries := make([]elastic.Query, 0)
+					for _, value := range con.Value {
+						var query elastic.Query
+						if con.DimensionName != "" {
+							// 如果是字符串类型，则需要使用 match_phrase 进行非空判断
+							if value == "" && isExistsQuery {
+								query = elastic.NewExistsQuery(key)
+								switch con.Operator {
+								case structured.ConditionEqual, structured.Contains:
+									query = f.getQuery(MustNot, query)
+								case structured.ConditionNotEqual, structured.Ncontains:
+									query = f.getQuery(Must, query)
+								default:
+									return nil, fmt.Errorf("operator is not support with empty, %+v", con)
+								}
+								continue
+							} else {
+								// 非空才进行验证
+								switch con.Operator {
+								case structured.ConditionEqual, structured.ConditionNotEqual:
 									if con.IsPrefix {
 										query = elastic.NewMatchPhrasePrefixQuery(key, value)
 									} else {
 										query = elastic.NewMatchPhraseQuery(key, value)
 									}
-								} else {
-									query = elastic.NewWildcardQuery(key, value)
+								case structured.ConditionContains, structured.ConditionNotContains:
+									if fieldType == KeyWord {
+										value = fmt.Sprintf("*%s*", value)
+									}
+
+									if !con.IsWildcard && fieldType == Text {
+										if con.IsPrefix {
+											query = elastic.NewMatchPhrasePrefixQuery(key, value)
+										} else {
+											query = elastic.NewMatchPhraseQuery(key, value)
+										}
+									} else {
+										query = elastic.NewWildcardQuery(key, value)
+									}
+								case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
+									query = elastic.NewRegexpQuery(key, value)
+								case structured.ConditionGt:
+									query = elastic.NewRangeQuery(key).Gt(value)
+								case structured.ConditionGte:
+									query = elastic.NewRangeQuery(key).Gte(value)
+								case structured.ConditionLt:
+									query = elastic.NewRangeQuery(key).Lt(value)
+								case structured.ConditionLte:
+									query = elastic.NewRangeQuery(key).Lte(value)
+								default:
+									return nil, fmt.Errorf("operator is not support, %+v", con)
 								}
-							case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
-								query = elastic.NewRegexpQuery(key, value)
-							case structured.ConditionGt:
-								query = elastic.NewRangeQuery(key).Gt(value)
-							case structured.ConditionGte:
-								query = elastic.NewRangeQuery(key).Gte(value)
-							case structured.ConditionLt:
-								query = elastic.NewRangeQuery(key).Lt(value)
-							case structured.ConditionLte:
-								query = elastic.NewRangeQuery(key).Lte(value)
-							default:
-								return nil, fmt.Errorf("operator is not support, %+v", con)
 							}
+						} else {
+							query = elastic.NewQueryStringQuery(value)
 						}
-					} else {
-						query = elastic.NewQueryStringQuery(value)
+
+						if query != nil {
+							queries = append(queries, query)
+						}
 					}
 
-					if query != nil {
-						queries = append(queries, query)
+					// 非空才进行验证
+					switch con.Operator {
+					case structured.ConditionEqual, structured.ConditionContains, structured.ConditionRegEqual:
+						q = f.getQuery(Should, queries...)
+					case structured.ConditionNotEqual, structured.ConditionNotContains, structured.ConditionNotRegEqual:
+						q = f.getQuery(MustNot, queries...)
+					case structured.ConditionGt, structured.ConditionGte, structured.ConditionLt, structured.ConditionLte:
+						q = f.getQuery(Must, queries...)
+					default:
+						return nil, fmt.Errorf("operator is not support, %+v", con)
 					}
-				}
-
-				// 非空才进行验证
-				switch con.Operator {
-				case structured.ConditionEqual, structured.ConditionContains, structured.ConditionRegEqual:
-					q = f.getQuery(Should, queries...)
-				case structured.ConditionNotEqual, structured.ConditionNotContains, structured.ConditionNotRegEqual:
-					q = f.getQuery(MustNot, queries...)
-				case structured.ConditionGt, structured.ConditionGte, structured.ConditionLt, structured.ConditionLte:
-					q = f.getQuery(Must, queries...)
-				default:
-					return nil, fmt.Errorf("operator is not support, %+v", con)
 				}
 			}
 
-			// Add to the appropriate query collection
-			if nf != "" {
-				nestedFields.Add(nf)
-				nestedQueries[nf] = append(nestedQueries[nf], q)
-			} else if q != nil {
-				nonNestedQueries = append(nonNestedQueries, q)
+			// 将构建好的查询 q 添加到相应的查询集合中
+			if q != nil {
+				if isSpecialNestedNotEmptyCase {
+					// 对于特殊处理的场景，q 已经是 must_not(nested(...)) 结构，
+					// 它应作为当前 AND 条件组的一个顶级条件，因此加入 nonNestedQueries。
+					nonNestedQueries = append(nonNestedQueries, q)
+				} else if nf != "" {
+					// 普通的嵌套查询
+					nestedFields.Add(nf)
+					nestedQueries[nf] = append(nestedQueries[nf], q)
+				} else {
+					// 普通的非嵌套查询
+					nonNestedQueries = append(nonNestedQueries, q)
+				}
 			}
 		}
 

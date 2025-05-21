@@ -328,6 +328,47 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":[{"match_phrase":{"keyword":{"query":"value1"}}},{"match_phrase":{"keyword":{"query":"value2"}}}]}},{"match_phrase":{"text":{"query":"partial"}}},{"nested":{"path":"nested1","query":{"bool":{"must":[{"range":{"nested1.age":{"from":"18","include_lower":true,"include_upper":true,"to":null}}},{"exists":{"field":"nested1.active"}}]}}}}]}}}`,
 		},
+		"special nested not empty": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "events.attributes.exception.message",
+						Value:         []string{""},
+						Operator:      structured.ConditionNotEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must_not":{"nested":{"path":"events","query":{"match_phrase":{"events.attributes.exception.message":{"query":""}}}}}}}}`,
+		},
+		"special nested not empty with other condition": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "events.attributes.exception.message",
+						Value:         []string{""},
+						Operator:      structured.ConditionNotEqual,
+					},
+					{
+						DimensionName: "other_field",
+						Value:         []string{"some_value"},
+						Operator:      structured.ConditionEqual,
+					},
+				},
+			},
+			expected: "{\"query\":{\"bool\":{\"must\":[{\"bool\":{\"must_not\":{\"nested\":{\"path\":\"events\",\"query\":{\"match_phrase\":{\"events.attributes.exception.message\":{\"query\":\"\"}}}}}}},{\"match_phrase\":{\"other_field\":{\"query\":\"some_value\"}}}]}}}",
+		},
+		"special nested empty (should not use special case)": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "events.attributes.exception.message",
+						Value:         []string{""},
+						Operator:      structured.ConditionEqual,
+					},
+				},
+			},
+			expected: "{\"query\":{\"nested\":{\"path\":\"events\",\"query\":{\"match_phrase\":{\"events.attributes.exception.message\":{\"query\":\"\"}}}}}}",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
@@ -348,6 +389,17 @@ func TestFormatFactory_Query(t *testing.T) {
 								},
 								"active": map[string]any{
 									"type": "boolean",
+								},
+								"attributes": map[string]any{
+									"properties": map[string]any{
+										"exception": map[string]any{
+											"properties": map[string]any{
+												"message": map[string]any{
+													"type": "text",
+												},
+											},
+										},
+									},
 								},
 							},
 						},
@@ -383,6 +435,28 @@ func TestFormatFactory_Query(t *testing.T) {
 						},
 						"text": map[string]any{
 							"type": "text",
+						},
+						"other_field": map[string]any{
+							"type": "keyword",
+						},
+						"events": map[string]any{
+							"type": "nested",
+							"properties": map[string]any{
+								"attributes": map[string]any{
+									"properties": map[string]any{
+										"exception": map[string]any{
+											"properties": map[string]any{
+												"message": map[string]any{
+													"type": "text",
+												},
+											},
+										},
+									},
+								},
+								"level": map[string]any{
+									"type": "keyword",
+								},
+							},
 						},
 					},
 				},

@@ -11,6 +11,7 @@ package otlp
 
 import (
 	"bytes"
+	"go.uber.org/zap"
 	"io"
 	"log"
 	"net/http"
@@ -287,6 +288,22 @@ func (s HttpService) PrintDebug(w http.ResponseWriter, req *http.Request, rtype 
 		logger.Errorf("failed to unmarshal response, error: %s", err)
 		return
 	}
+	// 复制请求体读取而不消耗它
+	body, rErr := io.ReadAll(req.Body)
+	if rErr != nil {
+		logger.Error("Error reading request body", zap.Error(rErr))
+		return
+	}
+	req.Body = io.NopCloser(bytes.NewBuffer(body))
+
+	// 结构化日志记录
+	logger.Info("Incoming HTTP Request",
+		zap.String("method", req.Method),
+		zap.String("path", req.URL.Path),
+		zap.String("proto", req.Proto),
+		zap.Any("headers", req.Header),
+		zap.String("body", string(body)),
+	)
 	receiver.WriteResponse(w, rh.ContentType(), http.StatusOK, msg)
 }
 

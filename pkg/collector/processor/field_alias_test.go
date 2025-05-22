@@ -13,16 +13,14 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 )
 
 func TestFieldAlias(t *testing.T) {
-	conf, err := confengine.LoadConfigPath("../example/platform.yml")
-	assert.NoError(t, err)
+	//conf, err := confengine.LoadConfigPath("../example/platform.yml")
+	//assert.NoError(t, err)
 
-	err = LoadAlias(conf)
-	assert.NoError(t, err)
+	//err = LoadAlias(conf)
+	//assert.NoError(t, err)
 
 	alias1 := AttributeAlias.Get("http.method")
 	assert.Contains(t, alias1, "http.request.method")

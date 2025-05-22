@@ -22,16 +22,16 @@ const (
 	ConfigTypeReportV2   = "report_v2"
 	ConfigTypeReportV1   = "report"
 
-	ConfigFieldApmConfig       = "apm"
-	ConfigFieldProcessor       = "processor"
-	ConfigFieldPipeline        = "pipeline"
-	ConfigFieldReceiver        = "receiver"
-	ConfigFieldPusher          = "bk_metrics_pusher"
-	ConfigFieldExporter        = "exporter"
-	ConfigFieldProxy           = "proxy"
-	ConfigFieldPingserver      = "pingserver"
-	ConfigFieldCluster         = "cluster"
-	ConfigFieldDimensionMapper = "field_alias"
+	ConfigFieldApmConfig  = "apm"
+	ConfigFieldProcessor  = "processor"
+	ConfigFieldPipeline   = "pipeline"
+	ConfigFieldReceiver   = "receiver"
+	ConfigFieldPusher     = "bk_metrics_pusher"
+	ConfigFieldExporter   = "exporter"
+	ConfigFieldProxy      = "proxy"
+	ConfigFieldPingserver = "pingserver"
+	ConfigFieldCluster    = "cluster"
+	ConfigFieldAlias      = "field_alias"
 )
 
 type ApmConfig struct {

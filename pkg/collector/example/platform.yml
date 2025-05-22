@@ -33,7 +33,3 @@ field_alias:
   - field: "resource.telemetry.sdk.language"
     alias:
       - "resource.telemetry.sdk.lang"
-
-
-
-

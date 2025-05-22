@@ -11,6 +11,7 @@ package elasticsearch
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -328,6 +329,18 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":[{"match_phrase":{"keyword":{"query":"value1"}}},{"match_phrase":{"keyword":{"query":"value2"}}}]}},{"match_phrase":{"text":{"query":"partial"}}},{"nested":{"path":"nested1","query":{"bool":{"must":[{"range":{"nested1.age":{"from":"18","include_lower":true,"include_upper":true,"to":null}}},{"exists":{"field":"nested1.active"}}]}}}}]}}}`,
 		},
+		"nested_must_not_query": {
+			conditions: metadata.AllConditions{
+				[]metadata.ConditionField{
+					metadata.ConditionField{
+						DimensionName: "events.attributes.exception.message",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must_not":{"nested":{"path":"events","query":{"match_phrase":{"events.attributes.exception.message":{"query":""}}}}}}}}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
@@ -378,6 +391,20 @@ func TestFormatFactory_Query(t *testing.T) {
 								},
 							},
 						},
+						"events": map[string]any{
+							"type": "nested",
+							"properties": map[string]any{
+								"attributes": map[string]any{
+									"properties": map[string]any{
+										"exception": map[string]any{
+											"properties": map[string]any{
+												"message": map[string]any{"type": "keyword"},
+											},
+										},
+									},
+								},
+							},
+						},
 						"keyword": map[string]any{
 							"type": "keyword",
 						},
@@ -411,6 +438,8 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 		timeField  metadata.TimeField
 		aggregates metadata.Aggregates
 		expected   string
+		valueField string
+		mappings   []map[string]any
 	}{
 		"second date field": {
 			timeField: metadata.TimeField{
@@ -450,7 +479,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/ShangHai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1d","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1d","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" ","size":0}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 		"aggregate 1h": {
 			timeField: metadata.TimeField{
@@ -466,7 +495,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/ShangHai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1h","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1h","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" ","size":0}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 		"aggregate 1h2m": {
 			timeField: metadata.TimeField{
@@ -482,7 +511,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/ShangHai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"62m","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"62m","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" ","size":0}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 		"aggregate 1h12s": {
 			timeField: metadata.TimeField{
@@ -498,7 +527,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/ShangHai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"3612s","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"3612s","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" ","size":0}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 		"aggregate second time field": {
 			timeField: metadata.TimeField{
@@ -514,7 +543,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/ShangHai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1m","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1m","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" ","size":0}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 		"aggregate second int field": {
 			timeField: metadata.TimeField{
@@ -530,7 +559,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/ShangHai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"60ms","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"60ms","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" ","size":0}}},"query":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 		"aggregate millisecond int field": {
 			timeField: metadata.TimeField{
@@ -546,7 +575,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/ShangHai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","interval":"1m","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"dtEventTime":{"from":1721024820000,"include_lower":true,"include_upper":true,"to":1721046420000}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","interval":"1m","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" ","size":0}}},"query":{"range":{"dtEventTime":{"from":1721024820000,"include_lower":true,"include_upper":true,"to":1721046420000}}}}`,
 		},
 		"aggregate millisecond time field": {
 			timeField: metadata.TimeField{
@@ -562,14 +591,62 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/ShangHai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","interval":"1m","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"dtEventTime":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","interval":"1m","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" ","size":0}}},"query":{"range":{"dtEventTime":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+		},
+		"aggregate with same nested path for dimensions and mapping": {
+			valueField: "events.attributes.exception.type",
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: TimeFieldTypeTime,
+				Unit: function.Second,
+			},
+			aggregates: metadata.Aggregates{
+				{
+					Name:       Count,
+					Dimensions: []string{"events.attributes.exception.type"},
+					Window:     time.Minute,
+					TimeZone:   "Asia/Shanghai",
+				},
+			},
+			mappings: []map[string]any{
+				{
+					"properties": map[string]any{
+						"events": map[string]any{
+							"type": "nested",
+							"properties": map[string]any{
+								"attributes": map[string]any{
+									"properties": map[string]any{
+										"exception": map[string]any{
+											"properties": map[string]any{
+												"type": map[string]any{"type": "keyword"},
+											},
+										},
+									},
+								},
+							},
+						},
+						"time": map[string]any{"type": "date"},
+					},
+				},
+			},
+			expected: `{"aggregations":{"events":{"aggregations":{"events.attributes.exception.type":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"events.attributes.exception.type"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1m","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"events.attributes.exception.type","missing":" ","size":0}}},"nested":{"path":"events"}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
+			queryValueField := "value"
+			if c.valueField != "" {
+				queryValueField = c.valueField
+			}
+
 			fact := NewFormatFactory(ctx).
-				WithQuery("value", c.timeField, start, end, timeFormat, 0).
-				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
+				WithQuery(queryValueField, c.timeField, start, end, timeFormat, 0)
+
+			if c.mappings != nil {
+				fact.WithMappings(c.mappings...)
+			}
+
+			fact.WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
 
 			ss := elastic.NewSearchSource()
 			rangeQuery, err := fact.RangeQuery()
@@ -582,11 +659,513 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					ss.Aggregation(aggName, agg)
 				}
 			}
-
 			body, _ := ss.Source()
 			bodyJson, _ := json.Marshal(body)
 			bodyString := string(bodyJson)
 			assert.JSONEq(t, c.expected, bodyString)
+		})
+	}
+}
+
+func TestFormatFactory_EsAgg(t *testing.T) {
+	type fields struct {
+		ctx         context.Context
+		valueField  string
+		timeField   metadata.TimeField
+		decode      func(k string) string
+		encode      func(k string) string
+		mapping     map[string]string
+		data        map[string]any
+		aggInfoList aggInfoList
+		orders      metadata.Orders
+		size        int
+		timezone    string
+		start       time.Time
+		end         time.Time
+		timeFormat  string
+		isReference bool
+	}
+	type args struct {
+		aggregates metadata.Aggregates
+	}
+	tests := []struct {
+		name       string
+		fields     fields
+		args       args
+		wantName   string
+		wantAggStr string
+		wantErr    bool
+	}{
+		{
+			name: "scene_1_events.name_by_events.name",
+			fields: fields{
+				ctx: context.Background(),
+				mapping: map[string]string{
+					"name":             "keyword",
+					"age":              "integer",
+					"events":           "nested",
+					"events.name":      "keyword",
+					"value_field":      "keyword",
+					"dtEventTimeStamp": "long",
+				},
+				valueField: "value_field",
+				timeField: metadata.TimeField{
+					Name: DefaultTimeFieldName,
+					Type: DefaultTimeFieldType,
+					Unit: DefaultTimeFieldUnit,
+				},
+			},
+			args: args{
+				aggregates: metadata.Aggregates{
+					{Name: Count, Dimensions: []string{"events.name"}, Field: "events.name"},
+				},
+			},
+			wantName: "events",
+			wantAggStr: `{
+				"nested": {
+					"path": "events"
+				},
+				"aggregations": {
+					"events.name": {
+						"terms": {
+							"field": "events.name",
+							"missing": " ",
+							"size": 0
+						},
+						"aggregations": {
+							"_value": {
+								"value_count": {
+									"field": "events.name"
+								}
+							}
+						}
+					}
+				}
+			}`,
+			wantErr: false,
+		},
+		{
+			name: "scene_2_events.name_by_name",
+			fields: fields{
+				ctx: context.Background(),
+				mapping: map[string]string{
+					"name":             "keyword",
+					"age":              "integer",
+					"events":           "nested",
+					"events.name":      "keyword",
+					"dtEventTimeStamp": "long",
+				},
+				valueField: "events.name",
+				timeField: metadata.TimeField{
+					Name: DefaultTimeFieldName,
+					Type: DefaultTimeFieldType,
+					Unit: DefaultTimeFieldUnit,
+				},
+			},
+			args: args{
+				aggregates: metadata.Aggregates{
+					{Name: Count, Dimensions: []string{"name"}, Field: "events.name"},
+				},
+			},
+			wantName: "name",
+			wantAggStr: `{
+				"terms": {
+					"field": "name",
+					"missing": " ",
+					"size": 0
+				},
+				"aggregations": {
+					"events": {
+						"nested": {
+							"path": "events"
+						},
+						"aggregations": {
+							"_value": {
+								"value_count": {
+									"field": "events.name"
+								}
+							}
+						}
+					}
+				}
+			}`,
+			wantErr: false,
+		},
+		{
+			name: "scene_3_name_by_events.name",
+			fields: fields{
+				ctx: context.Background(),
+				mapping: map[string]string{
+					"name":             "keyword",
+					"age":              "integer",
+					"events":           "nested",
+					"events.name":      "keyword",
+					"dtEventTimeStamp": "long",
+				},
+				valueField: "name",
+				timeField: metadata.TimeField{
+					Name: DefaultTimeFieldName,
+					Type: DefaultTimeFieldType,
+					Unit: DefaultTimeFieldUnit,
+				},
+			},
+			args: args{
+				aggregates: metadata.Aggregates{
+					{Name: Count, Dimensions: []string{"events.name"}, Field: "name"},
+				},
+			},
+			wantName: "events",
+			wantAggStr: `{
+				"nested": {
+					"path": "events"
+				},
+				"aggregations": {
+					"events.name": {
+						"terms": {
+							"field": "events.name",
+							"missing": " ",
+							"size": 0
+						},
+						"aggregations": {
+							"reverse_nested": {
+								"reverse_nested": {},
+								"aggregations": {
+									"_value": {
+										"value_count": {
+											"field": "name"
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}`,
+			wantErr: false,
+		},
+		{
+			name: "scene_4_name_by_events.name_then_name",
+			fields: fields{
+				ctx: context.Background(),
+				mapping: map[string]string{
+					"name":             "keyword",
+					"age":              "integer",
+					"events":           "nested",
+					"events.name":      "keyword",
+					"dtEventTimeStamp": "long",
+				},
+				valueField: "name",
+				timeField: metadata.TimeField{
+					Name: DefaultTimeFieldName,
+					Type: DefaultTimeFieldType,
+					Unit: DefaultTimeFieldUnit,
+				},
+			},
+			args: args{
+				aggregates: metadata.Aggregates{
+					{Name: Count, Dimensions: []string{"events.name", "name"}, Field: "name"},
+				},
+			},
+			wantName: "events",
+			wantAggStr: `{
+				"nested": {
+					"path": "events"
+				},
+				"aggregations": {
+					"events.name": {
+						"terms": {
+							"field": "events.name",
+							"missing": " ",
+							"size": 0
+						},
+						"aggregations": {
+							"reverse_nested": {
+								"reverse_nested": {},
+								"aggregations": {
+									"name": {
+										"terms": {
+											"field": "name",
+											"missing": " ",
+											"size": 0
+										},
+										"aggregations": {
+											"_value": {
+												"value_count": {
+													"field": "name"
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}`,
+			wantErr: false,
+		},
+		{
+			name: "scene_5_name_by_name_then_events.name",
+			fields: fields{
+				ctx: context.Background(),
+				mapping: map[string]string{
+					"name":             "keyword",
+					"age":              "integer",
+					"events":           "nested",
+					"events.name":      "keyword",
+					"dtEventTimeStamp": "long",
+				},
+				valueField: "name",
+				timeField: metadata.TimeField{
+					Name: DefaultTimeFieldName,
+					Type: DefaultTimeFieldType,
+					Unit: DefaultTimeFieldUnit,
+				},
+			},
+			args: args{
+				aggregates: metadata.Aggregates{
+					{Name: Count, Dimensions: []string{"name", "events.name"}, Field: "name"},
+				},
+			},
+			wantName: "name",
+			wantAggStr: `{
+				"terms": {
+					"field": "name",
+					"missing": " ",
+					"size": 0
+				},
+				"aggregations": {
+					"events": {
+						"nested": {
+							"path": "events"
+						},
+						"aggregations": {
+							"events.name": {
+								"terms": {
+									"field": "events.name",
+									"missing": " ",
+									"size": 0
+								},
+								"aggregations": {
+									"reverse_nested": {
+										"reverse_nested": {},
+										"aggregations": {
+											"_value": {
+												"value_count": {
+													"field": "name"
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}`,
+			wantErr: false,
+		},
+		{
+			name: "scene_6_name_by_name_events.name_age",
+			fields: fields{
+				ctx: context.Background(),
+				mapping: map[string]string{
+					"name":             "keyword",
+					"age":              "integer",
+					"events":           "nested",
+					"events.name":      "keyword",
+					"dtEventTimeStamp": "long",
+				},
+				valueField: "name",
+				timeField: metadata.TimeField{
+					Name: DefaultTimeFieldName,
+					Type: DefaultTimeFieldType,
+					Unit: DefaultTimeFieldUnit,
+				},
+			},
+			args: args{
+				aggregates: metadata.Aggregates{
+					{Name: Count, Dimensions: []string{"name", "events.name", "age"}, Field: "name"},
+				},
+			},
+			wantName: "name",
+			wantAggStr: `{
+				"terms": {
+					"field": "name",
+					"missing": " ",
+					"size": 0
+				},
+				"aggregations": {
+					"events": {
+						"nested": {
+							"path": "events"
+						},
+						"aggregations": {
+							"events.name": {
+								"terms": {
+									"field": "events.name",
+									"missing": " ",
+									"size": 0
+								},
+								"aggregations": {
+									"reverse_nested": {
+										"reverse_nested": {},
+										"aggregations": {
+											"age": {
+												"terms": {
+													"field": "age",
+													"size": 0
+												},
+												"aggregations": {
+													"_value": {
+														"value_count": {
+															"field": "name"
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}`,
+			wantErr: false,
+		},
+		{
+			name: "scene_7_events.name_by_name_events.name_age",
+			fields: fields{
+				ctx: context.Background(),
+				mapping: map[string]string{
+					"name":             "keyword",
+					"age":              "integer",
+					"events":           "nested",
+					"events.name":      "keyword",
+					"dtEventTimeStamp": "long",
+				},
+				valueField: "events.name",
+				timeField: metadata.TimeField{
+					Name: DefaultTimeFieldName,
+					Type: DefaultTimeFieldType,
+					Unit: DefaultTimeFieldUnit,
+				},
+			},
+			args: args{
+				aggregates: metadata.Aggregates{
+					{Name: Count, Dimensions: []string{"name", "events.name", "age"}, Field: "events.name"},
+				},
+			},
+			wantName: "name",
+			wantAggStr: `{
+				"terms": {
+					"field": "name",
+					"missing": " ",
+					"size": 0
+				},
+				"aggregations": {
+					"events": {
+						"nested": {
+							"path": "events"
+						},
+						"aggregations": {
+							"events.name": {
+								"terms": {
+									"field": "events.name",
+									"missing": " ",
+									"size": 0
+								},
+								"aggregations": {
+									"_value": {
+										"value_count": {
+											"field": "events.name"
+										}
+									},
+									"reverse_nested": {
+										"reverse_nested": {},
+										"aggregations": {
+											"age": {
+												"terms": {
+													"field": "age",
+													"size": 0
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}`,
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &FormatFactory{
+				ctx:         tt.fields.ctx,
+				valueField:  tt.fields.valueField,
+				timeField:   tt.fields.timeField,
+				decode:      tt.fields.decode,
+				encode:      tt.fields.encode,
+				mapping:     tt.fields.mapping,
+				data:        tt.fields.data,
+				aggInfoList: tt.fields.aggInfoList,
+				orders:      tt.fields.orders,
+				size:        tt.fields.size,
+				timezone:    tt.fields.timezone,
+				start:       tt.fields.start,
+				end:         tt.fields.end,
+				timeFormat:  tt.fields.timeFormat,
+				isReference: tt.fields.isReference,
+			}
+			if f.decode == nil {
+				f.decode = func(k string) string { return k }
+			}
+			if f.encode == nil {
+				f.encode = func(k string) string { return k }
+			}
+
+			gotName, gotAgg, err := f.EsAgg(tt.args.aggregates)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("FormatFactory.EsAgg() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if gotName != tt.wantName {
+				t.Errorf("FormatFactory.EsAgg() gotName = %v, want %v", gotName, tt.wantName)
+			}
+
+			if gotAgg != nil {
+				gotAggSource, err := gotAgg.Source()
+				if err != nil {
+					t.Fatalf("Failed to get source from gotAgg: %v", err)
+				}
+				gotAggBytes, marshalErr := json.Marshal(gotAggSource)
+				if marshalErr != nil {
+					t.Fatalf("Failed to marshal gotAgg: %v", marshalErr)
+				}
+				var wantAggMap map[string]interface{}
+				if err := json.Unmarshal([]byte(tt.wantAggStr), &wantAggMap); err != nil {
+					t.Fatalf("Failed to unmarshal wantAggStr: %v", err)
+				}
+
+				var gotAggMap map[string]interface{}
+				if err := json.Unmarshal(gotAggBytes, &gotAggMap); err != nil {
+					t.Fatalf("Failed to unmarshal gotAggBytes: %v", err)
+				}
+
+				if !reflect.DeepEqual(gotAggMap, wantAggMap) {
+					t.Errorf("FormatFactory.EsAgg() gotAgg does not deeply equal wantAgg")
+
+					expectedJSON, _ := json.MarshalIndent(wantAggMap, "", "  ")
+					actualJSON, _ := json.MarshalIndent(gotAggMap, "", "  ")
+					t.Logf("Expected JSON:\n%s\nActual JSON:\n%s", string(expectedJSON), string(actualJSON))
+				}
+			} else if tt.wantAggStr != "" && tt.wantAggStr != "{}" {
+				t.Errorf("FormatFactory.EsAgg() gotAgg is nil, want %s", tt.wantAggStr)
+			}
 		})
 	}
 }
@@ -707,6 +1286,281 @@ func TestToFixInterval(t *testing.T) {
 			if !tt.wantError && got != tt.want {
 				t.Errorf("toFixInterval() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+func TestFormatFactory_handlePathTransition(t *testing.T) {
+	newFactory := func() *FormatFactory {
+		return &FormatFactory{
+			ctx:         context.Background(),
+			aggInfoList: make(aggInfoList, 0),
+		}
+	}
+
+	tests := []struct {
+		name                 string
+		currentLogicalPath   string
+		targetPath           string
+		targetIsNested       bool
+		expectedAggInfoList  aggInfoList
+		expectedReturnedPath string
+	}{
+		{
+			name:                 "target is nested, paths are same",
+			currentLogicalPath:   "events.data",
+			targetPath:           "events.data",
+			targetIsNested:       true,
+			expectedAggInfoList:  aggInfoList{},
+			expectedReturnedPath: "events.data",
+		},
+		{
+			name:                 "target is nested, current is empty",
+			currentLogicalPath:   "",
+			targetPath:           "events.data",
+			targetIsNested:       true,
+			expectedAggInfoList:  aggInfoList{NestedAgg{Name: "events"}, NestedAgg{Name: "events.data"}},
+			expectedReturnedPath: "events.data",
+		},
+		{
+			name:                 "target is nested, current to deeper nested",
+			currentLogicalPath:   "events",
+			targetPath:           "events.data.details",
+			targetIsNested:       true,
+			expectedAggInfoList:  aggInfoList{NestedAgg{Name: "events.data"}, NestedAgg{Name: "events.data.details"}},
+			expectedReturnedPath: "events.data.details",
+		},
+		{
+			name:                 "target is nested, current to shallower nested (common prefix)",
+			currentLogicalPath:   "events.data.details",
+			targetPath:           "events.data",
+			targetIsNested:       true,
+			expectedAggInfoList:  aggInfoList{ReverseNestedAgg{Name: "reverse_nested"}},
+			expectedReturnedPath: "events.data",
+		},
+		{
+			name:                 "target is nested, common prefix then diverge",
+			currentLogicalPath:   "events.data.details",
+			targetPath:           "events.summary.info",
+			targetIsNested:       true,
+			expectedAggInfoList:  aggInfoList{ReverseNestedAgg{Name: "reverse_nested"}, ReverseNestedAgg{Name: "reverse_nested"}, NestedAgg{Name: "events.summary"}, NestedAgg{Name: "events.summary.info"}},
+			expectedReturnedPath: "events.summary.info",
+		},
+		{
+			name:                 "target is nested, no common prefix (current is nested)",
+			currentLogicalPath:   "metrics.value",
+			targetPath:           "attributes.name",
+			targetIsNested:       true,
+			expectedAggInfoList:  aggInfoList{ReverseNestedAgg{Name: "reverse_nested"}, ReverseNestedAgg{Name: "reverse_nested"}, NestedAgg{Name: "attributes"}, NestedAgg{Name: "attributes.name"}},
+			expectedReturnedPath: "attributes.name",
+		},
+		{
+			name:                 "target is nested, no common prefix (current is empty, target starts fresh)",
+			currentLogicalPath:   "",
+			targetPath:           "attributes.name",
+			targetIsNested:       true,
+			expectedAggInfoList:  aggInfoList{NestedAgg{Name: "attributes"}, NestedAgg{Name: "attributes.name"}},
+			expectedReturnedPath: "attributes.name",
+		},
+		{
+			name:                "target is NOT nested, current IS nested",
+			currentLogicalPath:  "events.data",
+			targetPath:          "", // Target path for non-nested is typically empty
+			targetIsNested:      false,
+			expectedAggInfoList: aggInfoList{ReverseNestedAgg{Name: "reverse_nested"}}, // Should be two reverse nested, one for "data", one for "events" - wait, the current code only adds one.
+			// Let's adjust expected based on current code behavior, which is one ReverseNestedAgg if currentLogicalPath is not empty.
+			// expectedAggInfoList:  aggInfoList{ReverseNestedAgg{Name: "reverse_nested"}, ReverseNestedAgg{Name: "reverse_nested"}}, // This would be if it reversed all parts
+			expectedReturnedPath: "",
+		},
+		{
+			name:               "target is NOT nested, current IS deeply nested",
+			currentLogicalPath: "a.b.c.d",
+			targetPath:         "",
+			targetIsNested:     false,
+			// Based on current logic, only one reverse_nested is added if currentLogicalPath!="" when targetIsNotNested
+			expectedAggInfoList:  aggInfoList{ReverseNestedAgg{Name: "reverse_nested"}},
+			expectedReturnedPath: "",
+		},
+		{
+			name:                 "target is NOT nested, current is empty",
+			currentLogicalPath:   "",
+			targetPath:           "",
+			targetIsNested:       false,
+			expectedAggInfoList:  aggInfoList{},
+			expectedReturnedPath: "",
+		},
+		{
+			name:                 "target is nested, currentLogicalPath is 'events', targetPath is 'events.data'",
+			currentLogicalPath:   "events",
+			targetPath:           "events.data",
+			targetIsNested:       true,
+			expectedAggInfoList:  aggInfoList{NestedAgg{Name: "events.data"}},
+			expectedReturnedPath: "events.data",
+		},
+		{
+			name:               "target is nested, currentLogicalPath is 'events.data.details', targetPath is 'events'",
+			currentLogicalPath: "events.data.details",
+			targetPath:         "events",
+			targetIsNested:     true,
+			// Expect ReverseNestedAgg for 'details', then ReverseNestedAgg for 'data'
+			expectedAggInfoList:  aggInfoList{ReverseNestedAgg{Name: "reverse_nested"}, ReverseNestedAgg{Name: "reverse_nested"}},
+			expectedReturnedPath: "events",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFactory()
+			returnedPath := f.handlePathTransition(tt.currentLogicalPath, tt.targetPath, tt.targetIsNested)
+
+			if !reflect.DeepEqual(f.aggInfoList, tt.expectedAggInfoList) {
+				t.Errorf("handlePathTransition() aggInfoList got = %v, want %v", f.aggInfoList, tt.expectedAggInfoList)
+			}
+			if returnedPath != tt.expectedReturnedPath {
+				t.Errorf("handlePathTransition() returnedPath got = %v, want %v", returnedPath, tt.expectedReturnedPath)
+			}
+		})
+	}
+}
+
+func TestFormatFactory_getFieldPathInfo(t *testing.T) {
+	factoryWithMappings := func(mappings map[string]string) *FormatFactory {
+		f := NewFormatFactory(context.Background())
+		f.mapping = mappings
+		return f
+	}
+
+	tests := []struct {
+		name         string
+		field        string
+		mappings     map[string]string
+		expectedInfo FieldPathInfo
+	}{
+		{
+			name:         "empty field",
+			field:        "",
+			mappings:     map[string]string{},
+			expectedInfo: FieldPathInfo{OriginalField: "", Path: "", FieldName: "", IsNested: false},
+		},
+		{
+			name:         "non-nested field, no mappings",
+			field:        "name",
+			mappings:     map[string]string{},
+			expectedInfo: FieldPathInfo{OriginalField: "name", Path: "", FieldName: "name", IsNested: false},
+		},
+		{
+			name:  "simple nested field",
+			field: "events.name",
+			mappings: map[string]string{
+				"events": Nested,
+			},
+			expectedInfo: FieldPathInfo{OriginalField: "events.name", Path: "events", FieldName: "events.name", IsNested: true},
+		},
+		{
+			name:  "deeply nested field, longest prefix is nested",
+			field: "events.data.details.value",
+			mappings: map[string]string{
+				"events":              Nested,
+				"events.data":         Nested,
+				"events.data.details": Nested, // This is the longest one
+			},
+			expectedInfo: FieldPathInfo{OriginalField: "events.data.details.value", Path: "events.data.details", FieldName: "events.data.details.value", IsNested: true},
+		},
+		{
+			name:  "field itself is mapped as nested",
+			field: "obj", // a top-level field that is of type nested
+			mappings: map[string]string{
+				"obj": Nested,
+			},
+			expectedInfo: FieldPathInfo{OriginalField: "obj", Path: "obj", FieldName: "obj", IsNested: true},
+		},
+		{
+			name:  "field path has components, but no component prefix is mapped as nested",
+			field: "properties.color",
+			mappings: map[string]string{
+				"properties": "object", // "object" is not "nested"
+			},
+			expectedInfo: FieldPathInfo{OriginalField: "properties.color", Path: "", FieldName: "properties.color", IsNested: false},
+		},
+		{
+			name:  "longest valid nested prefix is chosen, even if shorter ones are also nested",
+			field: "a.b.c.d.e.f", // field is deeper than any nested mapping
+			mappings: map[string]string{
+				"a":          Nested,
+				"a.b":        Nested,
+				"a.b.c":      Nested, // This should be chosen as the Path
+				"other.path": Nested, // irrelevant mapping
+			},
+			expectedInfo: FieldPathInfo{OriginalField: "a.b.c.d.e.f", Path: "a.b.c", FieldName: "a.b.c.d.e.f", IsNested: true},
+		},
+		{
+			name:  "path component not in mapping at all",
+			field: "does.not.exist.field",
+			mappings: map[string]string{
+				"events": Nested, // an existing mapping to ensure it's not picking unrelated things
+			},
+			expectedInfo: FieldPathInfo{OriginalField: "does.not.exist.field", Path: "", FieldName: "does.not.exist.field", IsNested: false},
+		},
+		{
+			name:  "field is shorter than a defined nested path but is not part of it",
+			field: "event", // singular, while "events" is nested
+			mappings: map[string]string{
+				"events": Nested,
+			},
+			expectedInfo: FieldPathInfo{OriginalField: "event", Path: "", FieldName: "event", IsNested: false},
+		},
+		{
+			name:  "field is a prefix of a defined nested path, but field itself is not mapped as nested",
+			field: "events.data", // and "events.data.details" is nested, but "events.data" itself is not explicitly nested in this map
+			mappings: map[string]string{
+				// "events.data": Nested, // If this line were present, Path would be "events.data"
+				"events":              Nested,
+				"events.data.details": Nested,
+			},
+			// Since "events.data" is not directly mapped as Nested, but "events" is, "events" becomes the path.
+			expectedInfo: FieldPathInfo{OriginalField: "events.data", Path: "events", FieldName: "events.data", IsNested: true},
+		},
+		{
+			name:  "field is a prefix of a defined nested path, and field itself IS mapped as nested",
+			field: "events.data", // and "events.data.details" is also nested
+			mappings: map[string]string{
+				"events":              Nested,
+				"events.data":         Nested, // This makes "events.data" the longest valid prefix for itself
+				"events.data.details": Nested,
+			},
+			expectedInfo: FieldPathInfo{OriginalField: "events.data", Path: "events.data", FieldName: "events.data", IsNested: true},
+		},
+		{
+			name:         "no mappings defined at all",
+			field:        "any.field.path",
+			mappings:     map[string]string{},
+			expectedInfo: FieldPathInfo{OriginalField: "any.field.path", Path: "", FieldName: "any.field.path", IsNested: false},
+		},
+		{
+			name:  "mapping contains non-nested types for path prefixes",
+			field: "user.profile.name",
+			mappings: map[string]string{
+				"user":         "object",
+				"user.profile": "object",
+			},
+			expectedInfo: FieldPathInfo{OriginalField: "user.profile.name", Path: "", FieldName: "user.profile.name", IsNested: false},
+		},
+		{
+			name:  "exact field match is nested, but also a prefix of another field not relevant here",
+			field: "logs",
+			mappings: map[string]string{
+				"logs":       Nested,
+				"logs.level": "keyword", // This sub-field type is not 'nested'
+			},
+			expectedInfo: FieldPathInfo{OriginalField: "logs", Path: "logs", FieldName: "logs", IsNested: true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := factoryWithMappings(tt.mappings)
+			info := f.getFieldPathInfo(tt.field)
+			assert.Equal(t, tt.expectedInfo, info)
 		})
 	}
 }

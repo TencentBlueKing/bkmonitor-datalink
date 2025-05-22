@@ -673,6 +673,28 @@ func (f *FormatFactory) HighLight(queryString string, maxAnalyzedOffset int) *el
 	return hl
 }
 
+func (f *FormatFactory) isAggExistSameDimensionAndValueField(aggregates metadata.Aggregates) bool {
+	for _, am := range aggregates {
+		for _, dim := range am.Dimensions {
+			if f.decode != nil {
+				dim = f.decode(dim)
+			}
+			if dim == f.valueField {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sortSetDesc(s *set.Set[string]) []string {
+	sa := s.ToArray()
+	sort.Slice(sa, func(i, j int) bool {
+		return sa[i] > sa[j]
+	})
+	return sa
+}
+
 func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
 	if len(aggregates) == 0 {
 		err := errors.New("aggregate_method_list is empty")
@@ -683,6 +705,8 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 
 	tempPrimaryAggs := make(aggInfoList, 0)
 	requiredNestedPaths := set.New[string]()
+
+	isAggregatesExistSameDimensionAndValueField := f.isAggExistSameDimensionAndValueField(aggregates)
 
 	for _, am := range aggregates {
 		switch am.Name {
@@ -698,8 +722,11 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 				FuncType: am.Name,
 				Args:     am.Args,
 			})
-			if np := f.NestedField(f.valueField); np != "" {
-				requiredNestedPaths.Add(np)
+
+			if !isAggregatesExistSameDimensionAndValueField {
+				if np := f.NestedField(f.valueField); np != "" {
+					requiredNestedPaths.Add(np)
+				}
 			}
 
 			if am.Window > 0 && !am.Without {
@@ -734,8 +761,11 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 				}
 
 				tempPrimaryAggs = append(tempPrimaryAggs, TermAgg{Name: dim, Orders: termOrders})
-				if np := f.NestedField(dim); np != "" {
-					requiredNestedPaths.Add(np)
+
+				if !isAggregatesExistSameDimensionAndValueField {
+					if np := f.NestedField(dim); np != "" {
+						requiredNestedPaths.Add(np)
+					}
 				}
 			}
 		default:
@@ -746,10 +776,11 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 	f.aggInfoList = make(aggInfoList, len(tempPrimaryAggs))
 	copy(f.aggInfoList, tempPrimaryAggs)
 
-	sortedPaths := requiredNestedPaths.ToArray()
-	sort.Slice(sortedPaths, func(i, j int) bool {
-		return len(sortedPaths[i]) > len(sortedPaths[j])
-	})
+	if isAggregatesExistSameDimensionAndValueField {
+		return f.Agg()
+	}
+
+	sortedPaths := sortSetDesc(requiredNestedPaths)
 
 	getFieldFromInfo := func(info any) string {
 		switch v := info.(type) {
@@ -764,35 +795,60 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 		}
 	}
 
+	addedNestedPaths := set.New[string]()
+
 	for _, p := range sortedPaths {
-		lastChildIdx := -1
-		for i := 0; i < len(f.aggInfoList); i++ {
-			if _, ok := f.aggInfoList[i].(NestedAgg); ok {
-				continue
-			}
-
-			fieldName := getFieldFromInfo(f.aggInfoList[i])
-			if fieldName == "" {
-				continue
-			}
-
-			itemNestedPath := f.NestedField(fieldName)
-			if itemNestedPath == p || (itemNestedPath != "" && strings.HasPrefix(itemNestedPath, p+ESStep)) {
-				lastChildIdx = i
-			}
+		if addedNestedPaths.Existed(p) {
+			continue
 		}
 
-		if lastChildIdx != -1 {
-			insertPosition := lastChildIdx + 1
-			newAggList := make(aggInfoList, 0, len(f.aggInfoList)+1)
-			newAggList = append(newAggList, f.aggInfoList[:insertPosition]...)
-			newAggList = append(newAggList, NestedAgg{Name: p})
-			newAggList = append(newAggList, f.aggInfoList[insertPosition:]...)
-			f.aggInfoList = newAggList
+		lastChildIdx, covered := f.isPathCoveredByExistingAgg(p, addedNestedPaths, getFieldFromInfo)
+		if covered {
+			f.appendAggListByIndex(lastChildIdx, NestedAgg{Name: p})
+			addedNestedPaths.Add(p)
 		}
 	}
 
 	return f.Agg()
+}
+
+func (f *FormatFactory) appendAggListByIndex(idx int, newAgg any) {
+	if idx < 0 || idx >= len(f.aggInfoList) {
+		return
+	}
+
+	newAggList := make(aggInfoList, 0, len(f.aggInfoList)+1)
+	newAggList = append(newAggList, f.aggInfoList[:idx]...)
+	newAggList = append(newAggList, newAgg)
+	newAggList = append(newAggList, f.aggInfoList[idx:]...)
+	f.aggInfoList = newAggList
+}
+
+func (f *FormatFactory) isPathCoveredByExistingAgg(p string, addedNestedPaths *set.Set[string], getFieldFromInfo func(info any) string) (int, bool) {
+	lastChildIdx := -1
+	for i := 0; i < len(f.aggInfoList); i++ {
+		// 如果当前元素已经是嵌套聚合，检查它是否与当前路径相同或者是当前路径的父路径
+		if nestedAgg, ok := f.aggInfoList[i].(NestedAgg); ok {
+			if nestedAgg.Name == p || strings.HasPrefix(p, nestedAgg.Name+ESStep) {
+				// 当前路径已经被某个嵌套聚合覆盖，标记为已添加并跳过
+				addedNestedPaths.Add(p)
+				lastChildIdx = -1 // 重置为-1表示不需要添加
+				break
+			}
+			continue
+		}
+
+		fieldName := getFieldFromInfo(f.aggInfoList[i])
+		if fieldName == "" {
+			continue
+		}
+
+		itemNestedPath := f.NestedField(fieldName)
+		if itemNestedPath == p || (itemNestedPath != "" && strings.HasPrefix(itemNestedPath, p+ESStep)) {
+			lastChildIdx = i
+		}
+	}
+	return lastChildIdx, lastChildIdx != -1
 }
 
 func (f *FormatFactory) Orders() metadata.Orders {
@@ -850,216 +906,83 @@ func (f *FormatFactory) getQuery(key string, qs ...elastic.Query) (q elastic.Que
 	return q
 }
 
+// processNestedField 处理嵌套字段查询
+func (f *FormatFactory) processNestedField(con metadata.ConditionField, key string, nestedFieldName string,
+	nestedFields *set.Set[string], nestedQueries map[string][]elastic.Query) error {
+
+	isNestedFieldExistenceCheck := f.isNestedFieldExistenceCheck(nestedFieldName, con, key)
+	if isNestedFieldExistenceCheck {
+		q, ok := f.buildNestedFieldExistenceCheckQuery(nestedFieldName, con, key)
+		if !ok {
+			return fmt.Errorf("buildNestedFieldExistenceCheckQuery failed for field %s", key)
+		}
+
+		return &processNestedError{SpecialQuery: q}
+	}
+
+	q, err := f.buildQueryForCondition(con, key)
+	if err != nil {
+		return err
+	}
+
+	if q != nil {
+		nestedFields.Add(nestedFieldName)
+		nestedQueries[nestedFieldName] = append(nestedQueries[nestedFieldName], q)
+	}
+
+	return nil
+}
+
+type processNestedError struct {
+	SpecialQuery elastic.Query
+}
+
+func (e *processNestedError) Error() string {
+	return "processNestedError"
+}
+
 // Query 把 ts 的 conditions 转换成 es 查询
 func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Query, error) {
 	bootQueries := make([]elastic.Query, 0)
 	orQuery := make([]elastic.Query, 0, len(allConditions))
 
 	for _, conditions := range allConditions {
-		// Track nested fields separately for each condition group
 		nestedFields := set.New[string]()
 		nestedQueries := make(map[string][]elastic.Query)
 		nonNestedQueries := make([]elastic.Query, 0)
 
-		// First pass: process all conditions and separate nested from non-nested
 		for _, con := range conditions {
 			key := con.DimensionName
 			if f.decode != nil {
 				key = f.decode(key)
 			}
 
-			// 获取字段的嵌套路径，例如 "events.attributes.exception.message" 会检查 "events.attributes.exception", "events.attributes", "events" 是否为嵌套类型
-			nf := f.NestedField(con.DimensionName) // 使用原始 con.DimensionName 来确定嵌套路径
+			nestedFieldName := f.NestedField(key)
+			isNestedField := nestedFieldName != ""
 
-			var q elastic.Query
-			isSpecialNestedNotEmptyCase := false // 标记是否为特殊的"嵌套字段不为空字符串"场景(需要把must_not 置于 nested 外部)
-
-			// 需要让must_not 置于 nested 外部:
-			// 当条件是针对嵌套字段 (nf != "")，
-			// 并且操作符是表示否定 (NotEqual, NotContains, NotRegEqual)，
-			// 并且比较值是单个空字符串 (con.Value[0] == "")，
-			// 则可能需要特殊处理。
-			isNegativeQuery := con.Operator == structured.ConditionNotEqual ||
-				con.Operator == structured.ConditionNotContains ||
-				con.Operator == structured.ConditionNotRegEqual
-			isEmptyQueryValue := isNegativeQuery && len(con.Value) == 1 && con.Value[0] == ""
-			if nf != "" &&
-				isNegativeQuery &&
-				isEmptyQueryValue {
-
-				fieldType, fieldOk := f.mapping[key] // 获取字段的映射类型
-				isExistsQuery := true
-				// 如果字段类型是 text 或 keyword，则空字符串 "" 是一个字面值，而不是检查存在性
-				if fieldOk && (fieldType == Text || fieldType == KeyWord) {
-					isExistsQuery = false
+			if isNestedField {
+				err := f.processNestedField(con, key, nestedFieldName, nestedFields, nestedQueries)
+				if err != nil {
+					if specialErr, ok := err.(*processNestedError); ok {
+						nonNestedQueries = append(nonNestedQueries, specialErr.SpecialQuery)
+						continue
+					}
+					return nil, err
 				}
-
-				// 仅当字段是 text/keyword 类型时（即 isExistsQuery 为 false），才应用此特殊处理
-				// 目的是将 must_not 置于 nested 外部: must_not(nested(match_phrase(field, "")))
-				if !isExistsQuery {
-					isSpecialNestedNotEmptyCase = true
-					var positiveInnerQuery elastic.Query // 用于构建内部的"肯定"查询
-
-					// 根据原始的否定操作符，构建其对应的"肯定"操作的查询
-					// 例如，如果原始是 NotEqual ""，则这里构建 Equal ""
-					switch con.Operator {
-					case structured.ConditionNotEqual: // 原始: != ""，对应肯定: == ""
-						if con.IsPrefix {
-							positiveInnerQuery = elastic.NewMatchPhrasePrefixQuery(key, "")
-						} else {
-							positiveInnerQuery = elastic.NewMatchPhraseQuery(key, "")
-						}
-					case structured.ConditionNotContains: // 原始: NCONTAINS ""，对应肯定: CONTAINS "" (用 MatchPhrase 实现对空串的精确匹配)
-						if con.IsPrefix { // 尽管对空字符串用前缀匹配不常见，但仍尊重原始意图
-							positiveInnerQuery = elastic.NewMatchPhrasePrefixQuery(key, "")
-						} else {
-							positiveInnerQuery = elastic.NewMatchPhraseQuery(key, "")
-						}
-					case structured.ConditionNotRegEqual: // 原始: REG_NE ""，对应肯定: REG_EQ "" (匹配空字符串的正则)
-						positiveInnerQuery = elastic.NewRegexpQuery(key, "")
-					}
-
-					if positiveInnerQuery != nil {
-						// 将"肯定"的内部查询包装在 nested 查询中
-						nestedPositiveQuery := elastic.NewNestedQuery(nf, positiveInnerQuery)
-						// 然后将整个 nestedPositiveQuery 用 must_not 包裹
-						q = elastic.NewBoolQuery().MustNot(nestedPositiveQuery)
-					} else {
-						// 如果无法构成 positiveInnerQuery（理论上不应发生），则退回常规逻辑
-						isSpecialNestedNotEmptyCase = false
-					}
-				}
-			}
-
-			// 如果不是上述的需要把match_not 置于nested外部，否则继续处理
-			if !isSpecialNestedNotEmptyCase {
-				switch con.Operator {
-				case structured.ConditionExisted:
-					q = elastic.NewExistsQuery(key)
-				case structured.ConditionNotExisted:
-					q = f.getQuery(MustNot, elastic.NewExistsQuery(key))
-				default:
-					// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
-					fieldType, ok := f.mapping[key]
-					isExistsQuery := true
-					if ok {
-						if fieldType == Text || fieldType == KeyWord {
-							isExistsQuery = false
-						}
-					}
-
-					queries := make([]elastic.Query, 0)
-					for _, value := range con.Value {
-						var query elastic.Query
-						if con.DimensionName != "" {
-							// 如果是字符串类型，则需要使用 match_phrase 进行非空判断
-							if value == "" && isExistsQuery {
-								query = elastic.NewExistsQuery(key)
-								switch con.Operator {
-								case structured.ConditionEqual, structured.Contains:
-									query = f.getQuery(MustNot, query)
-								case structured.ConditionNotEqual, structured.Ncontains:
-									query = f.getQuery(Must, query)
-								default:
-									return nil, fmt.Errorf("operator is not support with empty, %+v", con)
-								}
-								continue
-							} else {
-								// 非空才进行验证
-								switch con.Operator {
-								case structured.ConditionEqual, structured.ConditionNotEqual:
-									if con.IsPrefix {
-										query = elastic.NewMatchPhrasePrefixQuery(key, value)
-									} else {
-										query = elastic.NewMatchPhraseQuery(key, value)
-									}
-								case structured.ConditionContains, structured.ConditionNotContains:
-									if fieldType == KeyWord {
-										value = fmt.Sprintf("*%s*", value)
-									}
-
-									if !con.IsWildcard && fieldType == Text {
-										if con.IsPrefix {
-											query = elastic.NewMatchPhrasePrefixQuery(key, value)
-										} else {
-											query = elastic.NewMatchPhraseQuery(key, value)
-										}
-									} else {
-										query = elastic.NewWildcardQuery(key, value)
-									}
-								case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
-									query = elastic.NewRegexpQuery(key, value)
-								case structured.ConditionGt:
-									query = elastic.NewRangeQuery(key).Gt(value)
-								case structured.ConditionGte:
-									query = elastic.NewRangeQuery(key).Gte(value)
-								case structured.ConditionLt:
-									query = elastic.NewRangeQuery(key).Lt(value)
-								case structured.ConditionLte:
-									query = elastic.NewRangeQuery(key).Lte(value)
-								default:
-									return nil, fmt.Errorf("operator is not support, %+v", con)
-								}
-							}
-						} else {
-							query = elastic.NewQueryStringQuery(value)
-						}
-
-						if query != nil {
-							queries = append(queries, query)
-						}
-					}
-
-					// 非空才进行验证
-					switch con.Operator {
-					case structured.ConditionEqual, structured.ConditionContains, structured.ConditionRegEqual:
-						q = f.getQuery(Should, queries...)
-					case structured.ConditionNotEqual, structured.ConditionNotContains, structured.ConditionNotRegEqual:
-						q = f.getQuery(MustNot, queries...)
-					case structured.ConditionGt, structured.ConditionGte, structured.ConditionLt, structured.ConditionLte:
-						q = f.getQuery(Must, queries...)
-					default:
-						return nil, fmt.Errorf("operator is not support, %+v", con)
-					}
-				}
-			}
-
-			// 将构建好的查询 q 添加到相应的查询集合中
-			if q != nil {
-				if isSpecialNestedNotEmptyCase {
-					// 对于特殊处理的场景，q 已经是 must_not(nested(...)) 结构，
-					// 它应作为当前 AND 条件组的一个顶级条件，因此加入 nonNestedQueries。
-					nonNestedQueries = append(nonNestedQueries, q)
-				} else if nf != "" {
-					// 普通的嵌套查询
-					nestedFields.Add(nf)
-					nestedQueries[nf] = append(nestedQueries[nf], q)
-				} else {
-					// 普通的非嵌套查询
-					nonNestedQueries = append(nonNestedQueries, q)
+			} else {
+				err := f.processNonNestedField(con, key, &nonNestedQueries)
+				if err != nil {
+					return nil, err
 				}
 			}
 		}
 
-		// Combine nested queries by field
-		nestedFieldQueries := make([]elastic.Query, 0, nestedFields.Size())
-		nestedFieldsArray := nestedFields.ToArray()
-
-		// 排序输出
-		sort.Strings(nestedFieldsArray)
-
-		for _, field := range nestedFieldsArray {
-			if queries, ok := nestedQueries[field]; ok && len(queries) > 0 {
-				// Create a nested query for this field
-				nestedQuery := elastic.NewNestedQuery(field, f.getQuery(Must, queries...))
-				nestedFieldQueries = append(nestedFieldQueries, nestedQuery)
-			}
-		}
+		sortedNestedFieldQueries := f.buildSortedNestedQueries(nestedFields, nestedQueries)
 
 		// Combine all queries (nested and non-nested)
 		var allQueries []elastic.Query
 		allQueries = append(allQueries, nonNestedQueries...)
-		allQueries = append(allQueries, nestedFieldQueries...)
+		allQueries = append(allQueries, sortedNestedFieldQueries...)
 
 		// Add to OR query
 		if len(allQueries) > 0 {
@@ -1083,6 +1006,197 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 	}
 
 	return resQuery, nil
+}
+
+// processNonNestedField 处理非嵌套字段查询
+func (f *FormatFactory) processNonNestedField(con metadata.ConditionField, key string,
+	nonNestedQueries *[]elastic.Query) error {
+
+	q, err := f.buildQueryForCondition(con, key)
+	if err != nil {
+		return err
+	}
+
+	if q != nil {
+		*nonNestedQueries = append(*nonNestedQueries, q)
+	}
+
+	return nil
+}
+
+func (f *FormatFactory) isNestedFieldExistenceCheck(nestedFieldName string, con metadata.ConditionField, key string) bool {
+	isNegativeQuery := con.Operator == structured.ConditionNotEqual ||
+		con.Operator == structured.ConditionNotContains ||
+		con.Operator == structured.ConditionNotRegEqual
+	isEmptyQueryValue := isNegativeQuery && len(con.Value) == 1 && con.Value[0] == ""
+
+	if !isNegativeQuery || !isEmptyQueryValue {
+		return false
+	}
+
+	fieldType, fieldOk := f.mapping[key]
+	if fieldOk && (fieldType == Text || fieldType == KeyWord) {
+		return true
+	}
+
+	return false
+}
+
+// buildNestedFieldExistenceCheckQuery 构建嵌套字段不为空字符串检查的查询
+func (f *FormatFactory) buildNestedFieldExistenceCheckQuery(nestedFieldName string, con metadata.ConditionField, key string) (elastic.Query, bool) {
+	var positiveInnerQuery elastic.Query
+
+	// 根据原始的否定操作符，构建其对应的"肯定"操作的查询
+	switch con.Operator {
+	case structured.ConditionNotEqual:
+		if con.IsPrefix {
+			positiveInnerQuery = elastic.NewMatchPhrasePrefixQuery(key, "")
+		} else {
+			positiveInnerQuery = elastic.NewMatchPhraseQuery(key, "")
+		}
+	case structured.ConditionNotContains:
+		if con.IsPrefix {
+			positiveInnerQuery = elastic.NewMatchPhrasePrefixQuery(key, "")
+		} else {
+			positiveInnerQuery = elastic.NewMatchPhraseQuery(key, "")
+		}
+	case structured.ConditionNotRegEqual:
+		positiveInnerQuery = elastic.NewRegexpQuery(key, "")
+	}
+
+	if positiveInnerQuery == nil {
+		return nil, false
+	}
+
+	nestedPositiveQuery := elastic.NewNestedQuery(nestedFieldName, positiveInnerQuery)
+	// 然后将整个 nestedPositiveQuery 用 must_not 包裹
+	return elastic.NewBoolQuery().MustNot(nestedPositiveQuery), true
+}
+
+// buildSortedNestedQueries 构建排序后的嵌套查询
+func (f *FormatFactory) buildSortedNestedQueries(nestedFields *set.Set[string], nestedQueries map[string][]elastic.Query) []elastic.Query {
+	nestedFieldQueries := make([]elastic.Query, 0, nestedFields.Size())
+	nestedFieldsArray := nestedFields.ToArray()
+
+	// 排序输出
+	sort.Strings(nestedFieldsArray)
+
+	for _, field := range nestedFieldsArray {
+		if queries, ok := nestedQueries[field]; ok && len(queries) > 0 {
+			// Create a nested query for this field
+			nestedQuery := elastic.NewNestedQuery(field, f.getQuery(Must, queries...))
+			nestedFieldQueries = append(nestedFieldQueries, nestedQuery)
+		}
+	}
+
+	return nestedFieldQueries
+}
+
+// buildQueryForCondition 根据条件构建查询
+func (f *FormatFactory) buildQueryForCondition(con metadata.ConditionField, key string) (elastic.Query, error) {
+	switch con.Operator {
+	case structured.ConditionExisted:
+		return elastic.NewExistsQuery(key), nil
+	case structured.ConditionNotExisted:
+		return f.getQuery(MustNot, elastic.NewExistsQuery(key)), nil
+	default:
+		// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
+		fieldType, ok := f.mapping[key]
+		isExistsQuery := true
+		if ok {
+			if fieldType == Text || fieldType == KeyWord {
+				isExistsQuery = false
+			}
+		}
+
+		queries := make([]elastic.Query, 0)
+		for _, value := range con.Value {
+			var query elastic.Query
+			if con.DimensionName != "" {
+				// 如果是字符串类型，则需要使用 match_phrase 进行非空判断
+				if value == "" && isExistsQuery {
+					query = elastic.NewExistsQuery(key)
+					switch con.Operator {
+					case structured.ConditionEqual, structured.Contains:
+						query = f.getQuery(MustNot, query)
+					case structured.ConditionNotEqual, structured.Ncontains:
+						query = f.getQuery(Must, query)
+					default:
+						return nil, fmt.Errorf("operator is not support with empty, %+v", con)
+					}
+					continue
+				} else {
+					// 非空才进行验证
+					query = f.buildQueryForValue(con, key, value, fieldType)
+				}
+			} else {
+				query = elastic.NewQueryStringQuery(value)
+			}
+
+			if query != nil {
+				queries = append(queries, query)
+			}
+		}
+
+		// 根据操作符组合查询
+		return f.combineQueriesByOperator(con.Operator, queries)
+	}
+}
+
+// buildQueryForValue 为特定值构建查询
+func (f *FormatFactory) buildQueryForValue(con metadata.ConditionField, key string, value string, fieldType string) elastic.Query {
+	switch con.Operator {
+	case structured.ConditionEqual, structured.ConditionNotEqual:
+		if con.IsPrefix {
+			return elastic.NewMatchPhrasePrefixQuery(key, value)
+		} else {
+			return elastic.NewMatchPhraseQuery(key, value)
+		}
+	case structured.ConditionContains, structured.ConditionNotContains:
+		if fieldType == KeyWord {
+			value = fmt.Sprintf("*%s*", value)
+		}
+
+		if !con.IsWildcard && fieldType == Text {
+			if con.IsPrefix {
+				return elastic.NewMatchPhrasePrefixQuery(key, value)
+			} else {
+				return elastic.NewMatchPhraseQuery(key, value)
+			}
+		} else {
+			return elastic.NewWildcardQuery(key, value)
+		}
+	case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
+		return elastic.NewRegexpQuery(key, value)
+	case structured.ConditionGt:
+		return elastic.NewRangeQuery(key).Gt(value)
+	case structured.ConditionGte:
+		return elastic.NewRangeQuery(key).Gte(value)
+	case structured.ConditionLt:
+		return elastic.NewRangeQuery(key).Lt(value)
+	case structured.ConditionLte:
+		return elastic.NewRangeQuery(key).Lte(value)
+	default:
+		return nil
+	}
+}
+
+// combineQueriesByOperator 根据操作符组合多个查询
+func (f *FormatFactory) combineQueriesByOperator(operator string, queries []elastic.Query) (elastic.Query, error) {
+	if len(queries) == 0 {
+		return nil, nil
+	}
+
+	switch operator {
+	case structured.ConditionEqual, structured.ConditionContains, structured.ConditionRegEqual:
+		return f.getQuery(Should, queries...), nil
+	case structured.ConditionNotEqual, structured.ConditionNotContains, structured.ConditionNotRegEqual:
+		return f.getQuery(MustNot, queries...), nil
+	case structured.ConditionGt, structured.ConditionGte, structured.ConditionLt, structured.ConditionLte:
+		return f.getQuery(Must, queries...), nil
+	default:
+		return nil, fmt.Errorf("operator is not supported: %s", operator)
+	}
 }
 
 func (f *FormatFactory) Sample() (prompb.Sample, error) {

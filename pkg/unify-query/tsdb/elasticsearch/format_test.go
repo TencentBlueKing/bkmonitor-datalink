@@ -673,6 +673,44 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 			},
 			expected: `{"aggregations":{"source_ip":{"terms":{"field":"source_ip"},"aggregations":{"events":{"nested":{"path":"events"},"aggregations":{"events.code":{"terms":{"field":"events.code","missing":" "},"aggregations":{"events.type":{"terms":{"field":"events.type","missing":" "},"aggregations":{"time":{"date_histogram":{"field":"time","interval":"1m","min_doc_count":0,"time_zone":"Asia/Shanghai","extended_bounds":{"min":1721024820,"max":1721046420}},"aggregations":{"_value":{"value_count":{"field":"events.latency"}}}}}}}}}}}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
+		"aggregate with same nested path for dimensions and mapping": {
+			valueField: "events.attributes.exception.type",
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: TimeFieldTypeTime,
+				Unit: function.Second,
+			},
+			aggregates: metadata.Aggregates{
+				{
+					Name:       Count,
+					Dimensions: []string{"events.attributes.exception.type"},
+					Window:     time.Minute,
+					TimeZone:   "Asia/Shanghai",
+				},
+			},
+			mappings: []map[string]any{
+				{
+					"properties": map[string]any{
+						"events": map[string]any{
+							"type": "nested",
+							"properties": map[string]any{
+								"attributes": map[string]any{
+									"properties": map[string]any{
+										"exception": map[string]any{
+											"properties": map[string]any{
+												"type": map[string]any{"type": "keyword"},
+											},
+										},
+									},
+								},
+							},
+						},
+						"time": map[string]any{"type": "date"},
+					},
+				},
+			},
+			expected: `{"aggregations":{"events.attributes.exception.type":{"terms":{"field":"events.attributes.exception.type","missing":" "},"aggregations":{"time":{"date_histogram":{"field":"time","interval":"1m","min_doc_count":0,"time_zone":"Asia/Shanghai","extended_bounds":{"min":1721024820,"max":1721046420}},"aggregations":{"_value":{"value_count":{"field":"events.attributes.exception.type"}}}}}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())

@@ -30,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/monitor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/user"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
@@ -44,6 +45,7 @@ var (
 	muForBkdataApi         sync.Mutex
 	muForMetadataApi       sync.Mutex
 	muForMonitorApi        sync.Mutex
+	muForUserApi           sync.Mutex
 )
 
 var (
@@ -57,8 +59,10 @@ var (
 	bkdataApi         *bkdata.Client
 	metadataApi       *metadata.Client
 	monitorApi        *monitor.Client
+	userApi           *user.Client
 )
 
+// todo: tenant
 // GetGseApi 获取GseApi客户端
 func GetGseApi() (*bkgse.Client, error) {
 	muForGseApi.Lock()
@@ -94,6 +98,7 @@ func GetGseApi() (*bkgse.Client, error) {
 	return gseApi, nil
 }
 
+// todo: tenant
 // GetBcsApi 获取BcsApi客户端
 func GetBcsApi() (*bcs.Client, error) {
 	muForBcsApi.Lock()
@@ -118,6 +123,7 @@ func GetBcsApi() (*bcs.Client, error) {
 	return bcsApi, nil
 }
 
+// todo: tenant
 // GetBcsStorageApi 获取BcsStorageApi客户端
 func GetBcsStorageApi() (*bcsstorage.Client, error) {
 	muForBcsStorage.Lock()
@@ -137,6 +143,7 @@ func GetBcsStorageApi() (*bcsstorage.Client, error) {
 	return bcsStorage, nil
 }
 
+// todo: tenant
 // GetBcsClusterManagerApi 获取BcsClusterManagerApi客户端
 func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
 	muForBcsClusterManager.Lock()
@@ -156,6 +163,7 @@ func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
 	return bcsClusterManager, nil
 }
 
+// todo: tenant
 // GetBcsProjectApi 获取GetBcsProjectApi客户端
 func GetBcsProjectApi() (*bcsproject.Client, error) {
 	muForBcsProjectApi.Lock()
@@ -176,7 +184,7 @@ func GetBcsProjectApi() (*bcsproject.Client, error) {
 }
 
 // GetCmdbApi 获取CmdbApi客户端
-func GetCmdbApi() (*cmdb.Client, error) {
+func GetCmdbApi(tenantId string) (*cmdb.Client, error) {
 	muForCmdbApi.Lock()
 	defer muForCmdbApi.Unlock()
 	if cmdbApi != nil {
@@ -200,13 +208,14 @@ func GetCmdbApi() (*cmdb.Client, error) {
 	}
 
 	var err error
-	cmdbApi, err = cmdb.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	cmdbApi, err = cmdb.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}))
 	if err != nil {
 		return nil, err
 	}
 	return cmdbApi, nil
 }
 
+// todo: tenant
 // GetNodemanApi NodemanApi
 func GetNodemanApi() (*nodeman.Client, error) {
 	muForNodemanApi.Lock()
@@ -234,6 +243,7 @@ func GetNodemanApi() (*nodeman.Client, error) {
 	return nodemanApi, nil
 }
 
+// todo: tenant
 // GetBkdataApi BkdataApi
 func GetBkdataApi() (*bkdata.Client, error) {
 	muForBkdataApi.Lock()
@@ -261,6 +271,7 @@ func GetBkdataApi() (*bkdata.Client, error) {
 	return bkdataApi, nil
 }
 
+// todo: tenant
 // GetMetadataApi 获取metadataApi客户端
 func GetMetadataApi() (*metadata.Client, error) {
 	muForMetadataApi.Lock()
@@ -285,7 +296,7 @@ func GetMetadataApi() (*metadata.Client, error) {
 }
 
 // GetMonitorApi 获取metadataApi客户端
-func GetMonitorApi() (*monitor.Client, error) {
+func GetMonitorApi(tenantId string) (*monitor.Client, error) {
 	muForMonitorApi.Lock()
 	defer muForMonitorApi.Unlock()
 	if monitorApi != nil {
@@ -312,11 +323,33 @@ func GetMonitorApi() (*monitor.Client, error) {
 		}
 	}
 	var err error
-	monitorApi, err = monitor.New(useBkMonitorApigw, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	monitorApi, err = monitor.New(useBkMonitorApigw, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}))
 	if err != nil {
 		return nil, err
 	}
 	return monitorApi, nil
+}
+
+// GetUserApi 获取userApi客户端
+func GetUserApi(tenantId string) (*user.Client, error) {
+	muForUserApi.Lock()
+	defer muForUserApi.Unlock()
+	if userApi != nil {
+		return userApi, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint:            fmt.Sprintf("%s/api/bk-user/prod/", cfg.BkApiUrl),
+		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
+		AppCode:             cfg.BkApiAppCode,
+		AppSecret:           cfg.BkApiAppSecret,
+		JsonMarshaler:       jsonx.Marshal,
+	}
+
+	userApi, err := user.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}))
+	if err != nil {
+		return nil, err
+	}
+	return userApi, nil
 }
 
 // HeaderProvider provide request header.

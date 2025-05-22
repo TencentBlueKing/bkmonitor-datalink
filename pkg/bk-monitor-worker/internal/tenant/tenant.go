@@ -1,0 +1,86 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package tenant
+
+import (
+	"sync"
+	"time"
+
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/user"
+)
+
+const (
+	DefaultTenantId           = "system"
+	TenantListRefreshInterval = 5 * time.Minute // 缓存刷新间隔，可根据需要调整
+)
+
+var (
+	tenantList           []user.ListTenantData
+	tenantListRWMutex    sync.RWMutex
+	lastTenantListUpdate time.Time
+)
+
+// GetTenantIdByBkBizId
+func GetTenantIdByBkBizId(bkBizId int) (string, error) {
+	if !cfg.EnableMultiTenantMode {
+		return DefaultTenantId, nil
+	}
+
+	// TODO: 从 Space 表中获取租户id
+	return DefaultTenantId, nil
+}
+
+// GetTenantList
+func GetTenantList() ([]user.ListTenantData, error) {
+	now := time.Now()
+	tenantListRWMutex.RLock()
+	// check cache expired
+	if len(tenantList) > 0 && now.Sub(lastTenantListUpdate) < TenantListRefreshInterval {
+		defer tenantListRWMutex.RUnlock()
+		return tenantList, nil
+	}
+	tenantListRWMutex.RUnlock()
+
+	tenantListRWMutex.Lock()
+	defer tenantListRWMutex.Unlock()
+
+	// double check, prevent duplicate refresh
+	if len(tenantList) > 0 && time.Since(lastTenantListUpdate) < TenantListRefreshInterval {
+		return tenantList, nil
+	}
+
+	if !cfg.EnableMultiTenantMode {
+		// single tenant mode
+		tenantList = []user.ListTenantData{
+			{
+				Id:   DefaultTenantId,
+				Name: "System",
+			},
+		}
+		lastTenantListUpdate = time.Now()
+		return tenantList, nil
+	} else {
+		// multi tenant mode
+		userApi, _ := api.GetUserApi(DefaultTenantId)
+
+		// query tenant list
+		var result user.ListTenantResp
+		_, err := userApi.ListTenant().SetResult(&result).Request()
+		if err != nil {
+			return nil, err
+		}
+
+		tenantList = result.Data
+		lastTenantListUpdate = time.Now()
+		return tenantList, nil
+	}
+}

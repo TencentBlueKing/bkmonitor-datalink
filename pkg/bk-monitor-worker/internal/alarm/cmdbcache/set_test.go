@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
 
 var demoSetStr = `
@@ -88,7 +89,7 @@ func TestSetCacheManager(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("TestSetCacheManager", func(t *testing.T) {
-		cacheManager, err := NewSetCacheManager(t.Name(), rOpts, 1)
+		cacheManager, err := NewSetCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return
@@ -115,7 +116,7 @@ func TestSetCacheManager(t *testing.T) {
 	})
 
 	t.Run("TestSetCacheManager_Events", func(t *testing.T) {
-		cacheManager, err := NewSetCacheManager(t.Name(), rOpts, 1)
+		cacheManager, err := NewSetCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return

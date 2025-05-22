@@ -202,6 +202,8 @@ var (
 	// BkdataAESKey bkdata AES Key
 	BkdataAESKey string
 
+	// enable multi-tenant mode
+	EnableMultiTenantMode bool
 	// BkApiEnabled enabled bk-apigw
 	BkApiEnabled bool
 	// BkApiUrl bk-apigw host
@@ -386,6 +388,7 @@ func initVariables() {
 	BkdataAESIv = GetValue("aes.bkdataAESIv", "bkbkbkbkbkbkbkbk")
 	BkdataAESKey = GetValue("aes.bkdataAESKey", "")
 
+	EnableMultiTenantMode = GetValue("taskConfig.common.enableMultiTenantMode", false)
 	BkApiEnabled = GetValue("taskConfig.common.bkapi.enabled", false)
 	BkApiUrl = GetValue("taskConfig.common.bkapi.host", "http://127.0.0.1")
 	BkApiStage = GetValue("taskConfig.common.bkapi.stage", "stag")

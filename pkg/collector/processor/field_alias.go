@@ -72,7 +72,7 @@ func (d *FieldAliasMapper) Get(key string) []string {
 	if v, ok := d.m[key]; ok && len(v) > 0 {
 		return v
 	}
-	// 不存在映射配置则返回key本身
+	// 不存在映射配置则返回 key 本身
 	return []string{key}
 }
 

@@ -58,8 +58,12 @@ func (sdf SpanDimensionFetcher) FetchResources(resourceSpans ptrace.ResourceSpan
 	attrs := resourceSpans.Resource().Attributes()
 	dimensions := make(map[string]string)
 	for _, key := range keys {
-		if v, ok := attrs.Get(key); ok {
-			dimensions[key] = v.AsString()
+		attrKeys := ResourceAlias.Get(key)
+		for _, attrKey := range attrKeys {
+			if v, ok := attrs.Get(attrKey); ok {
+				dimensions[key] = v.AsString()
+				break
+			}
 		}
 	}
 	return dimensions
@@ -76,8 +80,12 @@ func (sdf SpanDimensionFetcher) FetchAttribute(span ptrace.Span, key string) str
 func (sdf SpanDimensionFetcher) FetchAttributes(span ptrace.Span, dimensions map[string]string, keys ...string) {
 	attrs := span.Attributes()
 	for _, key := range keys {
-		if v, ok := attrs.Get(key); ok {
-			dimensions[key] = v.AsString()
+		attrKeys := AttributeAlias.Get(key)
+		for _, attrKey := range attrKeys {
+			if v, ok := attrs.Get(attrKey); ok {
+				dimensions[key] = v.AsString()
+				break
+			}
 		}
 	}
 }

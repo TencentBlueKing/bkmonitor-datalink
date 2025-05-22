@@ -18,15 +18,14 @@ import (
 )
 
 func TestFieldAlias(t *testing.T) {
-	conf, err := confengine.LoadConfigPath("../example/platform.yml")
+	conf, err := confengine.LoadConfigPath("../example/fixtures/platform.yml")
 	assert.NoError(t, err)
 
 	err = LoadAlias(conf)
 	assert.NoError(t, err)
 
 	alias1 := AttributeAlias.Get("http.method")
-	assert.Contains(t, alias1, "http.request.method")
-	assert.Contains(t, alias1, "http.method")
+	assert.Equal(t, []string{"http.method", "http.request.method"}, alias1)
 
 	alias2 := AttributeAlias.Get("test")
 	assert.Contains(t, alias2, "test")

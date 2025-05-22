@@ -25,11 +25,3 @@ processor:
       drop:
         keys:
           - "resource.bk.data.token"
-
-field_alias:
-  - field: "attributes.http.method"
-    alias:
-      - "attributes.http.request.method"
-  - field: "resource.telemetry.sdk.language"
-    alias:
-      - "resource.telemetry.sdk.lang"

@@ -23,3 +23,11 @@ pipeline:
       - "token_checker/fixed"
       - "attribute_filter/as_string"
       - "apdex_calculator/standard"
+
+field_alias:
+  - field: "attributes.http.method"
+    alias:
+      - "attributes.http.request.method"
+  - field: "resource.telemetry.sdk.language"
+    alias:
+      - "resource.telemetry.sdk.lang"

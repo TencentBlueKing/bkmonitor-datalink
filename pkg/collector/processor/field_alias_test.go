@@ -28,10 +28,11 @@ func TestFieldAlias(t *testing.T) {
 	assert.Equal(t, []string{"http.method", "http.request.method"}, alias1)
 
 	alias2 := AttributeAlias.Get("test")
-	assert.Contains(t, alias2, "test")
-	assert.Len(t, alias2, 1)
+	assert.Equal(t, []string{"test"}, alias2)
 
 	alias3 := ResourceAlias.Get("test")
-	assert.Contains(t, alias3, "test")
-	assert.Len(t, alias3, 1)
+	assert.Equal(t, []string{"test"}, alias3)
+
+	alias4 := ResourceAlias.Get("telemetry.sdk.language")
+	assert.Equal(t, []string{"telemetry.sdk.language", "telemetry.sdk.lang"}, alias4)
 }

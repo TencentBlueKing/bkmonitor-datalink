@@ -14,12 +14,20 @@ package collector
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/shirou/gopsutil/v3/cpu"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+)
+
+var (
+	modNtDll                       = syscall.NewLazyDLL("ntdll.dll")
+	procNtQuerySystemInformationEx = modNtDll.NewProc("NtQuerySystemInformationEx")
 )
 
 // 全局通用的cpu信息获取
@@ -31,24 +39,199 @@ var updateLock sync.RWMutex
 
 var minPeriod = 1 * time.Minute
 
+type LOGICAL_PROCESSOR_RELATIONSHIP uint32
+
+const (
+	ClocksPerSec = 10000000.0
+
+	RelationGroup             LOGICAL_PROCESSOR_RELATIONSHIP = 4
+	ERROR_INSUFFICIENT_BUFFER                                = syscall.Errno(122)
+)
+
+const (
+	SystemLogicalProcessorAndGroupInformation = 0x73 // 对应EnumerateProcessorInformation
+	SystemProcessorPerformanceInformation     = 0x08
+	STATUS_SUCCESS                            = 0x00000000
+	STATUS_INFO_LENGTH_MISMATCH               = 0xC0000004
+)
+
 type lastTimeSlice struct {
 	sync.Mutex
 	lastCPUTimes    []cpu.TimesStat
 	lastPerCPUTimes []cpu.TimesStat
 }
 
+type SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION struct {
+	IdleTime       int64
+	KernelTime     int64
+	UserTime       int64
+	DpcTime        int64
+	InterruptTime  int64
+	InterruptCount uint32
+}
+
+type SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX struct {
+	Relationship uint32
+	Size         uint32
+	// 这里为了示例简化了结构体，实际代码需要根据实际情况扩展
+	Group struct {
+		MaximumGroupCount uint16
+		ActiveGroupCount  uint16
+		Reserved          [20]byte
+		GroupInfo         [256]struct {
+			MaximumProcessorCount uint8
+			ActiveProcessorCount  uint8
+			Reserved              [38]byte
+			ActiveProcessorMask   uint64 // 32为下为uint32
+		}
+	}
+}
+
 var lastCPUTimeSlice lastTimeSlice
+var numberOfProcessorGroups uint16
+var activeProcessorCounts []uint8
 
 func init() {
+	// 初始调用以确定缓冲区大小
+	var bufferSize uint32
+	r, _, _ := syscall.NewLazyDLL("kernel32.dll").NewProc("GetLogicalProcessorInformationEx").Call(
+		uintptr(RelationGroup),
+		uintptr(0),
+		uintptr(unsafe.Pointer(&bufferSize)),
+	)
+	fmt.Println(bufferSize)
+	if r != 0 && syscall.Errno(r) != ERROR_INSUFFICIENT_BUFFER {
+		logger.Fatal("无法确定缓冲区大小")
+		return
+	}
+
+	buffer := make([]byte, bufferSize)
+	r, _, err := syscall.NewLazyDLL("kernel32.dll").NewProc("GetLogicalProcessorInformationEx").Call(
+		uintptr(RelationGroup),
+		uintptr(unsafe.Pointer(&buffer[0])),
+		uintptr(unsafe.Pointer(&bufferSize)),
+	)
+	if r == 0 {
+		logger.Fatal("无法获取逻辑处理器信息:", err)
+		return
+	}
+
+	info := (*SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)(unsafe.Pointer(&buffer[0]))
+	numberOfProcessorGroups = info.Group.ActiveGroupCount
+	for uintptr(unsafe.Pointer(info)) < uintptr(unsafe.Pointer(&buffer[0]))+uintptr(bufferSize) {
+		if info.Relationship == 4 {
+			for i := uint16(0); i < numberOfProcessorGroups; i++ {
+				activeProcessorCounts = append(activeProcessorCounts, uint8(info.Group.GroupInfo[i].ActiveProcessorCount))
+			}
+			break
+		}
+		info = (*SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)(unsafe.Pointer(uintptr(unsafe.Pointer(info)) + uintptr(info.Size)))
+	}
+	logger.Debugf("处理器组数量: %d \n", numberOfProcessorGroups)
+	for i := uint16(0); i < numberOfProcessorGroups; i++ {
+		logger.Debugf("处理器组 %d 活动处理器数量: %d\n", i, activeProcessorCounts[i])
+	}
 	lastCPUTimeSlice.Lock()
-	lastCPUTimeSlice.lastCPUTimes, _ = cpu.Times(false)
-	lastCPUTimeSlice.lastPerCPUTimes, _ = cpu.Times(true)
+	lastCPUTimeSlice.lastCPUTimes, _ = perCPUTimes()
+	lastCPUTimeSlice.lastPerCPUTimes, _ = totalTimes(lastCPUTimeSlice.lastPerCPUTimes)
 	lastCPUTimeSlice.Unlock()
+}
+
+func perCPUTimes() ([]cpu.TimesStat, error) {
+	var ret []cpu.TimesStat
+	stats, err := perfInfo()
+	if err != nil {
+		return nil, err
+	}
+	for core, v := range stats {
+		c := cpu.TimesStat{
+			CPU:    fmt.Sprintf("cpu%d", core),
+			User:   float64(v.UserTime) / ClocksPerSec,
+			System: float64(v.KernelTime-v.IdleTime) / ClocksPerSec,
+			Idle:   float64(v.IdleTime) / ClocksPerSec,
+			Irq:    float64(v.InterruptTime) / ClocksPerSec,
+		}
+		ret = append(ret, c)
+	}
+	return ret, nil
+}
+
+// cpuPercent:计算的是差值后的使用率百分比
+func cpuUsagePercent(calcTimeStat []cpu.TimesStat) ([]float64, error) {
+	var ret []float64
+	for _, v := range calcTimeStat {
+		if v.Total() == 0 {
+			ret = append(ret, 0)
+			continue
+		}
+		c := math.Min(100, math.Max(0, (1-(v.Idle/v.Total()))*100))
+		ret = append(ret, c)
+	}
+	return ret, nil
+}
+
+// Times: 每个cpu的状态
+func perfInfo() ([]SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION, error) {
+
+	totalProcessors := uint8(0)
+	processorCount := uint8(0)
+	var bufferTotal []SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION
+	for i := uint16(0); i < numberOfProcessorGroups; i++ {
+		activeProcessorCount := activeProcessorCounts[i]
+		totalProcessors += activeProcessorCount
+
+		buffer := make([]SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION, activeProcessorCount)
+		bufferSize := uint32(int(activeProcessorCount) * int(unsafe.Sizeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION{})))
+
+		r, _, err := procNtQuerySystemInformationEx.Call(
+			uintptr(SystemProcessorPerformanceInformation),
+			uintptr(unsafe.Pointer(&i)),
+			unsafe.Sizeof(uint16(1)),
+			uintptr((unsafe.Pointer(&buffer[0]))),
+			uintptr(bufferSize),
+			uintptr(unsafe.Pointer(nil)),
+		)
+		if err != nil {
+			//fmt.Printf("err%v", err)
+		}
+		status := syscall.Errno(r)
+
+		if status != STATUS_SUCCESS {
+			for j := range buffer {
+				buffer[j] = SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION{}
+			}
+		}
+
+		for s, info := range buffer {
+			fmt.Printf("当前处于cpu组【%d】的cpu【%d】KernelTime: %v, UserTime: %v, IdleTime: %v\n", i, s, info.KernelTime, info.UserTime, info.IdleTime)
+		}
+		bufferTotal = append(bufferTotal, buffer...)
+		processorCount += activeProcessorCount
+	}
+
+	return bufferTotal, nil
+}
+func totalTimes(perTimeStat []cpu.TimesStat) ([]cpu.TimesStat, error) {
+	var lastCPUTimes []cpu.TimesStat
+	lastCPUTimes = append(lastCPUTimes, cpu.TimesStat{
+		CPU:    "cpu-total",
+		Idle:   float64(0),
+		User:   float64(0),
+		System: float64(0),
+		Irq:    float64(0),
+	})
+	for _, stat := range perTimeStat {
+		lastCPUTimes[0].Idle += stat.Idle
+		lastCPUTimes[0].User += stat.User
+		lastCPUTimes[0].System += stat.System
+		lastCPUTimes[0].Irq += stat.Irq
+	}
+	return lastCPUTimes, nil
 }
 
 func getCPUStatUsage(report *CpuReport) error {
 	// per stat
-	perStat, err := cpu.Times(true)
+	perStat, err := perCPUTimes()
 	if err != nil {
 		logger.Error("get CPU Stat fail")
 		return err
@@ -58,7 +241,7 @@ func getCPUStatUsage(report *CpuReport) error {
 	defer lastCPUTimeSlice.Unlock()
 	// 判断lastPerCPUTimes长度，增加重写避免init方法失效的情况
 	if len(lastCPUTimeSlice.lastPerCPUTimes) <= 0 || len(perStat) != len(lastCPUTimeSlice.lastPerCPUTimes) {
-		lastCPUTimeSlice.lastPerCPUTimes, err = cpu.Times(true)
+		lastCPUTimeSlice.lastPerCPUTimes, err = perCPUTimes()
 		if err != nil {
 			return err
 		}
@@ -76,7 +259,7 @@ func getCPUStatUsage(report *CpuReport) error {
 		report.Stat = append(report.Stat, tmp)
 	}
 	// total stat
-	totalstat, err := cpu.Times(false)
+	totalstat, err := totalTimes(perStat)
 	if err != nil {
 		logger.Error("get CPU Total Stat fail")
 		return err
@@ -94,7 +277,8 @@ func getCPUStatUsage(report *CpuReport) error {
 	// 将此次获取的timeState重新写入公共变量
 	lastCPUTimeSlice.lastCPUTimes = totalstat
 	lastCPUTimeSlice.lastPerCPUTimes = perStat
-	perUsage, err := cpu.Percent(0, true)
+	// 手动计算 Percent 通过上报的report.TotalStat report.Stat
+	perUsage, err := cpuUsagePercent(report.Stat)
 	if err != nil {
 		logger.Error("get CPU Percent fail")
 		return err
@@ -102,7 +286,7 @@ func getCPUStatUsage(report *CpuReport) error {
 
 	report.Usage = perUsage
 	// get total cpu percent
-	total, err := cpu.Percent(0, false)
+	total, err := cpuUsagePercent([]cpu.TimesStat{report.TotalStat})
 	if err != nil {
 		logger.Error("get CPU Total Percent fail")
 		return err

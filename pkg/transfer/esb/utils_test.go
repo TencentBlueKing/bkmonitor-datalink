@@ -118,7 +118,7 @@ func (t *TestCCTaskSuite) TestGetAllTaskInfo() {
 		}[0].Info[0].Topo[0]["test"], monitorInfo.Info[0].Topo[0]["test"])
 		return nil
 	}
-	t.client.EXPECT().GetHostsByRange(gomock.Any(), gomock.Any(), gomock.Any()).Return(&esb.CCSearchHostResponseData{
+	t.client.EXPECT().GetHostsByRange(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(&esb.CCSearchHostResponseData{
 		Count: 100,
 		Info: []esb.CCSearchHostResponseInfo{
 			{
@@ -140,7 +140,7 @@ func (t *TestCCTaskSuite) TestGetAllTaskInfo() {
 			},
 		},
 	}, nil).AnyTimes()
-	t.client.EXPECT().GetSearchBizInstTopo(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]esb.CCSearchBizInstTopoResponseInfo{
+	t.client.EXPECT().GetSearchBizInstTopo(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]esb.CCSearchBizInstTopoResponseInfo{
 		{
 			Inst:      12,
 			InstName:  "moduleTest",
@@ -195,7 +195,7 @@ func (t *TestCCTaskSuite) TestGetAllTaskInfoMultiTask() {
 		{BKBizID: 5, BKBizName: "BKBizID"},
 		{BKBizID: 6, BKBizName: "BKBizID"},
 	}, nil).AnyTimes()
-	t.client.EXPECT().GetSearchBizInstTopo(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]esb.CCSearchBizInstTopoResponseInfo{
+	t.client.EXPECT().GetSearchBizInstTopo(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]esb.CCSearchBizInstTopoResponseInfo{
 		{
 			Inst:      12,
 			InstName:  "moduleTest",
@@ -224,7 +224,7 @@ func (t *TestCCTaskSuite) TestGetAllTaskInfoMultiTask() {
 			},
 		},
 	}, nil).AnyTimes()
-	t.client.EXPECT().GetHostsByRange(gomock.Any(), 1, gomock.Any()).Return(&esb.CCSearchHostResponseData{
+	t.client.EXPECT().GetHostsByRange(gomock.Any(), 1, gomock.Any(), gomock.Any()).Return(&esb.CCSearchHostResponseData{
 		Count: 100,
 		Info: []esb.CCSearchHostResponseInfo{
 			{

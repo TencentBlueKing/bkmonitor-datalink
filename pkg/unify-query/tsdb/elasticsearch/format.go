@@ -678,6 +678,7 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 		err := errors.New("aggregate_method_list is empty")
 		return "", nil, err
 	}
+	nestedAggSet := set.New[string]()
 
 	for _, am := range aggregates {
 		switch am.Name {
@@ -685,7 +686,7 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 			f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
 			f.valueAgg(FieldValue, am.Name, am.Args...)
-			f.nestedAgg(f.valueField)
+			nestedAggSet.Add(f.valueField)
 
 			if am.Window > 0 && !am.Without {
 				// 增加时间函数
@@ -701,12 +702,16 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 				}
 
 				f.termAgg(dim, idx == 0)
-				f.nestedAgg(dim)
+				nestedAggSet.Add(dim)
 			}
 		default:
 			err := fmt.Errorf("esAgg aggregation is not support with: %+v", am)
 			return "", nil, err
 		}
+	}
+
+	for _, nestedAgg := range nestedAggSet.ToArray() {
+		f.nestedAgg(nestedAgg)
 	}
 
 	return f.Agg()

@@ -316,6 +316,14 @@ func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
 	patterns := stealConfigs(apmConf.Patterns)
 	subConfigs := confengine.LoadConfigPatterns(patterns)
 
+	// 加载字段映射
+	if conf.Has(define.ConfigFieldDimensionMapper) {
+		err := processor.LoadAlias(conf)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// 解析合并：配置 = 主配置+子配置
 	processorSubConfigs := mergeSubConfigs(
 		parseProcessorSubConfigs(subConfigs),
@@ -334,6 +342,15 @@ func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
 	// 解析合并配置 = 主配置+子配置+平台配置（如果有的话）
 	platformConfig := confengine.SelectConfigFromType(subConfigs, define.ConfigTypePlatform)
 	if platformConfig != nil {
+
+		// 使用平台配置覆盖字段映射
+		if platformConfig.Has(define.ConfigFieldDimensionMapper) {
+			err := processor.LoadAlias(platformConfig)
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		if platformConfig.Has(define.ConfigFieldProcessor) {
 			platformProcessors, err := parseProcessors(PlatformType, platformConfig, processorSubConfigs)
 			if err != nil {

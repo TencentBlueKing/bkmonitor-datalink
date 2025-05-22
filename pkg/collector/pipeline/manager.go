@@ -317,7 +317,7 @@ func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
 	subConfigs := confengine.LoadConfigPatterns(patterns)
 
 	// 加载字段映射
-	if conf.Has(define.ConfigFieldDimensionMapper) {
+	if conf.Has(define.ConfigFieldAlias) {
 		err := processor.LoadAlias(conf)
 		if err != nil {
 			return nil, err
@@ -344,7 +344,7 @@ func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
 	if platformConfig != nil {
 
 		// 使用平台配置覆盖字段映射
-		if platformConfig.Has(define.ConfigFieldDimensionMapper) {
+		if platformConfig.Has(define.ConfigFieldAlias) {
 			err := processor.LoadAlias(platformConfig)
 			if err != nil {
 				return nil, err

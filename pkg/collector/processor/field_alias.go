@@ -34,7 +34,7 @@ func newMapper() *FieldAliasMapper {
 // LoadAlias 从 field_alias 项加载配置
 func LoadAlias(conf *confengine.Config) error {
 	var cfgs []AliasConfig
-	err := conf.UnpackChild(define.ConfigFieldDimensionMapper, &cfgs)
+	err := conf.UnpackChild(define.ConfigFieldAlias, &cfgs)
 	if err != nil {
 		return err
 	}
@@ -69,10 +69,8 @@ func LoadAlias(conf *confengine.Config) error {
 
 // Get 获取包含原字段的字段别名，未配置则返回原字段
 func (d *FieldAliasMapper) Get(key string) []string {
-	if d.m != nil && len(d.m) > 0 {
-		if v, ok := d.m[key]; ok && len(v) > 0 {
-			return v
-		}
+	if v, ok := d.m[key]; ok && len(v) > 0 {
+		return v
 	}
 	// 不存在映射配置则返回key本身
 	return []string{key}

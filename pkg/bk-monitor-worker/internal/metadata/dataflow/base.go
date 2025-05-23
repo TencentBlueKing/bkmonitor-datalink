@@ -171,10 +171,10 @@ func (b *BaseNode) GetApiParams(flowId int) map[string]interface{} {
 }
 
 // Update 更新node
-func (b *BaseNode) Update(flowId, NodeId int) error {
+func (b *BaseNode) Update(flowId, nodeId int) error {
 	apiParams := b.Instance.GetApiParams(flowId)
 	var params bkdata.UpdateDataFlowNodeParams
-	params.NodeId = NodeId
+	params.NodeId = nodeId
 	params.FromLinks, _ = apiParams["from_links"].([]map[string]interface{})
 	params.NodeType, _ = apiParams["node_type"].(string)
 	params.Config, _ = apiParams["config"].(map[string]interface{})
@@ -183,7 +183,7 @@ func (b *BaseNode) Update(flowId, NodeId int) error {
 	if err != nil {
 		return errors.Wrapf(err, "update node [%s] to flow [%d] failed", b.Name(), flowId)
 	}
-	b.nodeId = NodeId
+	b.nodeId = nodeId
 	logger.Infof("update node [%s] to flow [%d] success, result [%v]", b.Name(), flowId, resp)
 	return nil
 }

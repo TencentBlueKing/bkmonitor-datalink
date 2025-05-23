@@ -101,8 +101,8 @@ var (
 )
 
 // 注册指标
-func InitGauge(Registry *prometheus.Registry) {
-	Registry.MustRegister(
+func InitGauge(registry *prometheus.Registry) {
+	registry.MustRegister(
 		sloErrorTimeInfo,
 		sloInfo,
 		mttr,
@@ -209,9 +209,9 @@ func RecordSloErrorEventTimeInfo(value float64, bk_biz_id string, range_time str
 	metric.Set(value)
 }
 
-func PushRes(Registry *prometheus.Registry) {
+func PushRes(registry *prometheus.Registry) {
 	// 创建一个新的 Pusher
-	pusher := push.New(config.SloPushGatewayEndpoint, "slo").Gatherer(Registry)
+	pusher := push.New(config.SloPushGatewayEndpoint, "slo").Gatherer(registry)
 
 	// 设置自定义客户端
 	pusher.Client(&bkClient{})

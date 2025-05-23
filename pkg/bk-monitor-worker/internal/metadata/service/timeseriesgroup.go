@@ -233,17 +233,17 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 }
 
 // UpdateMetrics update ts metrics
-func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]interface{}) (bool, error) {
+func (s *TimeSeriesGroupSvc) UpdateMetrics(MetricInfoList []map[string]interface{}) (bool, error) {
 	isAutoDiscovery, err := s.IsAutoDiscovery()
 	tsmSvc := NewTimeSeriesMetricSvcSvc(nil)
 	logger.Infof("UpdateMetrics: TimeSeriesGroupId: %v,table_id: %v,isAutoDiscovery: %v", s.TimeSeriesGroupID, s.TableID, isAutoDiscovery)
 	// 刷新 ts 表中的指标和维度
-	updated, err := tsmSvc.BulkRefreshTSMetrics(s.TimeSeriesGroupID, s.TableID, metricInfoList, isAutoDiscovery)
+	updated, err := tsmSvc.BulkRefreshTSMetrics(s.TimeSeriesGroupID, s.TableID, MetricInfoList, isAutoDiscovery)
 	if err != nil {
-		return false, errors.Wrapf(err, "BulkRefreshRtFields for table id [%s] with metric info [%v] failed", s.TableID, metricInfoList)
+		return false, errors.Wrapf(err, "BulkRefreshRtFields for table id [%s] with metric info [%v] failed", s.TableID, MetricInfoList)
 	}
 	// 刷新 rt 表中的指标和维度
-	err = s.BulkRefreshRtFields(s.TableID, metricInfoList)
+	err = s.BulkRefreshRtFields(s.TableID, MetricInfoList)
 	if err != nil {
 		return false, errors.Wrapf(err, "refresh rt fields for [%s] failed", s.TableID)
 	}

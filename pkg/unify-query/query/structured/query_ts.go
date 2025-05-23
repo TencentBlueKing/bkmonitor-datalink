@@ -856,7 +856,7 @@ func (q *Query) BuildMetadataQuery(
 		return nil, err
 	}
 
-	query.StorageIDs, err = func() (StorageIDs []string, err error) {
+	query.StorageIDs, err = func() (storageIDs []string, err error) {
 		if len(tsDB.StorageClusterRecords) == 0 {
 			return
 		}

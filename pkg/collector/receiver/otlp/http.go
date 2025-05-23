@@ -50,7 +50,7 @@ const (
 	aegisCustom           = "/aegis/v1/speed/custom"
 	aegisPerformance      = "/aegis/v1/speed/performance"
 	aegisHippyPerformance = "/aegis/v1/speed/hippy_performance"
-	aegisWebVitals        = "/aegis/v1/speed/web_vitals"
+	aegisWebVitals        = "/aegis/v1/speed/webvitals"
 	aegisMiniProgramData  = "/aegis/v1/speed/mini_program_data"
 )
 
@@ -120,7 +120,7 @@ func Ready(config receiver.ComponentConfig) {
 			HandlerFunc:  httpSvc.PrintLogs,
 		},
 		{
-			Method:       http.MethodPost,
+			Method:       http.MethodGet,
 			RelativePath: aegisPerformance,
 			HandlerFunc:  httpSvc.PrintLogs,
 		},

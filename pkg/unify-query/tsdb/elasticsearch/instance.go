@@ -275,6 +275,10 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 	}
 
+	if qb.Collapse != nil && qb.Collapse.Field != "" {
+		source.Collapse(elastic.NewCollapseBuilder(qb.Collapse.Field))
+	}
+
 	if qb.HighLight != nil && qb.HighLight.Enable {
 		source.Highlight(fact.HighLight(qb.QueryString, qb.HighLight.MaxAnalyzedOffset))
 	}

@@ -148,13 +148,18 @@ type Query struct {
 	Scroll             string             `json:"scroll,omitempty"`
 	ResultTableOptions ResultTableOptions `json:"result_table_options,omitempty"`
 
-	Orders      Orders `json:"orders,omitempty"`
-	NeedAddTime bool   `json:"need_add_time,omitempty"`
+	Orders      Orders    `json:"orders,omitempty"`
+	NeedAddTime bool      `json:"need_add_time,omitempty"`
+	Collapse    *Collapse `json:"collapse,omitempty"`
 }
 
 type HighLight struct {
 	MaxAnalyzedOffset int  `json:"max_analyzed_offset,omitempty"`
 	Enable            bool `json:"enable,omitempty"`
+}
+
+type Collapse struct {
+	Field string `json:"field,omitempty"`
 }
 
 type Order struct {

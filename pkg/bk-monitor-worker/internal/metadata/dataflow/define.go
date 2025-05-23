@@ -23,7 +23,7 @@ type Node interface {
 	NeedRestartFromTail(map[string]interface{}) bool
 	GetNodeType() string
 	GetApiParams(flowId int) map[string]interface{}
-	Update(flowId, NodeId int) error
+	Update(flowId, nodeId int) error
 	Create(flowId int) error
 	Equal(map[string]interface{}) bool
 	SetNodeId(nodeId int)

@@ -32,7 +32,7 @@ const (
 
 type APIClient interface {
 	GetSearchBusiness() ([]CCSearchBusinessResponseInfo, error)
-	GetServiceInstance(bizID, limit, start int, ServiceInstanceIds []int) (*CCSearchServiceInstanceResponseData, error)
+	GetServiceInstance(bizID, limit, start int, serviceInstanceIds []int) (*CCSearchServiceInstanceResponseData, error)
 	GetSearchBizInstTopo(start, bizID, limit, level int) ([]CCSearchBizInstTopoResponseInfo, error)
 	GetHostsByRange(bizID, limit, start int) (*CCSearchHostResponseData, error)
 	VisitAllHost(ctx context.Context, batchSize int, ccInfo models.CCInfo, fn func(monitor CCSearchHostResponseDataV3Monitor, ccInfo models.CCInfo) error) error
@@ -296,7 +296,7 @@ func (c *CCApiClient) GetSearchBusiness() ([]CCSearchBusinessResponseInfo, error
 }
 
 // GetServiceInstance : 实例
-func (c *CCApiClient) GetServiceInstance(bizID, limit, start int, ServiceInstanceIds []int) (*CCSearchServiceInstanceResponseData, error) {
+func (c *CCApiClient) GetServiceInstance(bizID, limit, start int, serviceInstanceIds []int) (*CCSearchServiceInstanceResponseData, error) {
 	defer c.SearchServiceInstanceTimeObserver.Start().Finish()
 	result := struct {
 		APIResponse

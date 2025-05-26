@@ -290,6 +290,8 @@ func (s HttpService) PrintDebug(w http.ResponseWriter, req *http.Request, rtype 
 	}
 	// 复制请求体读取而不消耗它
 	body, rErr := io.ReadAll(req.Body)
+	// 1. 获取查询参数
+	queryParams := req.URL.Query()
 	if rErr != nil {
 		logger.Error("Error reading request body", zap.Error(rErr))
 		return
@@ -302,6 +304,7 @@ func (s HttpService) PrintDebug(w http.ResponseWriter, req *http.Request, rtype 
 		zap.String("path", req.URL.Path),
 		zap.String("proto", req.Proto),
 		zap.Any("headers", req.Header),
+		zap.Any("query_params", queryParams),
 		zap.String("body", string(body)),
 	)
 	receiver.WriteResponse(w, rh.ContentType(), http.StatusOK, msg)

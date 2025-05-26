@@ -389,6 +389,8 @@ type Query struct {
 	ResultTableOptions metadata.ResultTableOptions `json:"-"`
 	// Scroll
 	Scroll string `json:"-"`
+	// Collapse
+	Collapse *metadata.Collapse `json:"collapse,omitempty"`
 
 	// HighLight 是否打开高亮，只对原始数据接口生效
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
@@ -549,6 +551,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			AllConditions: allConditions.MetaDataAllConditions(),
 			Size:          q.Limit,
 			From:          q.From,
+			Collapse:      q.Collapse,
 		}
 
 		if len(q.OrderBy) > 0 {
@@ -580,6 +583,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		span.Set("query-field", qry.Field)
 		span.Set("query-aggr-method-list", qry.Aggregates)
 		span.Set("query-bk-sql-condition", qry.BkSqlCondition)
+		span.Set("query-collapse", qry.Collapse)
 
 		queryMetric.QueryList = []*metadata.Query{qry}
 		return queryMetric, nil
@@ -923,6 +927,7 @@ func (q *Query) BuildMetadataQuery(
 	query.Source = q.KeepColumns
 
 	query.HighLight = q.HighLight
+	query.Collapse = q.Collapse
 
 	query.Scroll = q.Scroll
 	query.ResultTableOptions = q.ResultTableOptions

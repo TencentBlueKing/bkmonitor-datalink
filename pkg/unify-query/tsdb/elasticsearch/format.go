@@ -796,46 +796,66 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 				q = f.getQuery(MustNot, elastic.NewExistsQuery(key))
 			default:
 				// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
-				fieldType, _ := f.mapping[key]
+				fieldType, ok := f.mapping[key]
+				isExistsQuery := true
+				if ok {
+					if fieldType == Text || fieldType == KeyWord {
+						isExistsQuery = false
+					}
+				}
 
 				queries := make([]elastic.Query, 0)
 				for _, value := range con.Value {
 					var query elastic.Query
 					if con.DimensionName != "" {
-						// 非空才进行验证
-						switch con.Operator {
-						case structured.ConditionEqual, structured.ConditionNotEqual:
-							if con.IsPrefix {
-								query = elastic.NewMatchPhrasePrefixQuery(key, value)
-							} else {
-								query = elastic.NewMatchPhraseQuery(key, value)
+						// 如果是字符串类型，则需要使用 match_phrase 进行非空判断
+						if value == "" && isExistsQuery {
+							query = elastic.NewExistsQuery(key)
+							switch con.Operator {
+							case structured.ConditionEqual, structured.Contains:
+								q = f.getQuery(MustNot, query)
+							case structured.ConditionNotEqual, structured.Ncontains:
+								q = f.getQuery(Must, query)
+							default:
+								return nil, fmt.Errorf("operator is not support with empty, %+v", con)
 							}
-						case structured.ConditionContains, structured.ConditionNotContains:
-							if fieldType == KeyWord {
-								value = fmt.Sprintf("*%s*", value)
-							}
-
-							if !con.IsWildcard && fieldType == Text {
+							goto QE
+						} else {
+							// 非空才进行验证
+							switch con.Operator {
+							case structured.ConditionEqual, structured.ConditionNotEqual:
 								if con.IsPrefix {
 									query = elastic.NewMatchPhrasePrefixQuery(key, value)
 								} else {
 									query = elastic.NewMatchPhraseQuery(key, value)
 								}
-							} else {
-								query = elastic.NewWildcardQuery(key, value)
+							case structured.ConditionContains, structured.ConditionNotContains:
+								if fieldType == KeyWord {
+									value = fmt.Sprintf("*%s*", value)
+								}
+
+								if !con.IsWildcard && fieldType == Text {
+									if con.IsPrefix {
+										query = elastic.NewMatchPhrasePrefixQuery(key, value)
+									} else {
+										query = elastic.NewMatchPhraseQuery(key, value)
+									}
+								} else {
+									query = elastic.NewWildcardQuery(key, value)
+								}
+							case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
+								query = elastic.NewRegexpQuery(key, value)
+							case structured.ConditionGt:
+								query = elastic.NewRangeQuery(key).Gt(value)
+							case structured.ConditionGte:
+								query = elastic.NewRangeQuery(key).Gte(value)
+							case structured.ConditionLt:
+								query = elastic.NewRangeQuery(key).Lt(value)
+							case structured.ConditionLte:
+								query = elastic.NewRangeQuery(key).Lte(value)
+							default:
+								return nil, fmt.Errorf("operator is not support, %+v", con)
 							}
-						case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
-							query = elastic.NewRegexpQuery(key, value)
-						case structured.ConditionGt:
-							query = elastic.NewRangeQuery(key).Gt(value)
-						case structured.ConditionGte:
-							query = elastic.NewRangeQuery(key).Gte(value)
-						case structured.ConditionLt:
-							query = elastic.NewRangeQuery(key).Lt(value)
-						case structured.ConditionLte:
-							query = elastic.NewRangeQuery(key).Lte(value)
-						default:
-							return nil, fmt.Errorf("operator is not support, %+v", con)
 						}
 					} else {
 						query = elastic.NewQueryStringQuery(value)
@@ -859,6 +879,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 				}
 			}
 
+		QE:
 			// Add to the appropriate query collection
 			if q != nil {
 				if nf != "" {

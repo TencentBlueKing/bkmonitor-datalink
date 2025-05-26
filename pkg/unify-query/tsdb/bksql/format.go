@@ -21,6 +21,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -39,18 +40,26 @@ const (
 )
 
 var (
-	internalDimension = map[string]struct{}{
-		dtEventTimeStamp: {},
-		dtEventTime:      {},
-		localTime:        {},
-		startTime:        {},
-		endTime:          {},
-		theDate:          {},
-
-		sql_expr.TimeStamp: {},
-		sql_expr.Value:     {},
-	}
+	internalDimensionSet = func() *set.Set[string] {
+		s := set.New[string]()
+		for _, k := range []string{
+			dtEventTimeStamp,
+			dtEventTime,
+			localTime,
+			startTime,
+			endTime,
+			theDate,
+			sql_expr.ShardKey,
+		} {
+			s.Add(strings.ToLower(k))
+		}
+		return s
+	}()
 )
+
+func checkInternalDimension(key string) bool {
+	return internalDimensionSet.Existed(strings.ToLower(key))
+}
 
 type QueryFactory struct {
 	ctx  context.Context
@@ -62,6 +71,7 @@ type QueryFactory struct {
 	end   time.Time
 
 	timeAggregate sql_expr.TimeAggregate
+	dimensionSet  *set.Set[string]
 
 	orders metadata.Orders
 
@@ -74,9 +84,10 @@ type QueryFactory struct {
 
 func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	f := &QueryFactory{
-		ctx:       ctx,
-		query:     query,
-		highlight: query.HighLight,
+		ctx:          ctx,
+		query:        query,
+		highlight:    query.HighLight,
+		dimensionSet: set.New[string](),
 	}
 
 	if query.Orders != nil {
@@ -178,12 +189,16 @@ func (f *QueryFactory) HighLight(data map[string]any) (newData map[string]any) {
 	return
 }
 
-func (f *QueryFactory) ReloadListData(data map[string]any) (newData map[string]any) {
+func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimension bool) (newData map[string]any) {
 	newData = make(map[string]any)
-
 	fieldMap := f.FieldMap()
 
 	for k, d := range data {
+		// 忽略内置字段
+		if ignoreInternalDimension && checkInternalDimension(k) {
+			continue
+		}
+
 		if v, ok := fieldMap[k]; ok {
 			if v == TableTypeVariant {
 				objectData, err := json.ParseObject(k, d.(string))
@@ -219,7 +234,7 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 	isAddZero := f.timeAggregate.Window > 0 && f.expr.Type() == sql_expr.Doris
 
 	// 先获取维度的 key 保证顺序一致
-	keys := make([]string, 0)
+	var keys []string
 	for _, d := range list {
 		// 优先获取时间和值
 		var (
@@ -236,9 +251,17 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 			continue
 		}
 
-		nd := f.ReloadListData(d)
+		nd := f.ReloadListData(d, true)
 		if len(keys) == 0 {
 			for k := range nd {
+				// 如果维度使用了该字段，则无需跳过
+				if !f.dimensionSet.Existed(f.query.Field) && k == f.query.Field {
+					continue
+				}
+				if !f.dimensionSet.Existed(f.timeField) && k == f.timeField {
+					continue
+				}
+
 				keys = append(keys, k)
 			}
 			sort.Strings(keys)
@@ -399,7 +422,8 @@ func (f *QueryFactory) getTheDateIndexFilters() (theDateFilter string, err error
 
 func (f *QueryFactory) BuildWhere() (string, error) {
 	var s []string
-	s = append(s, fmt.Sprintf("`%s` >= %d AND `%s` <= %d", f.timeField, f.start.UnixMilli(), f.timeField, f.end.UnixMilli()))
+
+	s = append(s, f.expr.ParserRangeTime(f.timeField, f.start, f.end))
 
 	theDateFilter, err := f.getTheDateIndexFilters()
 	if err != nil {
@@ -445,11 +469,12 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	_, span = trace.NewSpan(f.ctx, "make-sql")
 	defer span.End(&err)
 
-	selectFields, groupFields, orderFields, timeAggregate, err := f.expr.ParserAggregatesAndOrders(f.query.Aggregates, f.orders)
+	selectFields, groupFields, orderFields, dimensionSet, timeAggregate, err := f.expr.ParserAggregatesAndOrders(f.query.Aggregates, f.orders)
 	if err != nil {
 		return
 	}
 
+	f.dimensionSet = dimensionSet
 	f.timeAggregate = timeAggregate
 
 	span.Set("select-fields", selectFields)
@@ -493,21 +518,4 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	sql = sqlBuilder.String()
 	span.Set("sql", sql)
 	return
-}
-
-func (f *QueryFactory) dims(dims []string, field string) []string {
-	dimensions := make([]string, 0)
-	for _, dim := range dims {
-		// 判断是否是内置维度，内置维度不是用户上报的维度
-		if _, ok := internalDimension[dim]; ok {
-			continue
-		}
-		// 如果是字段值也需要跳过
-		if dim == field {
-			continue
-		}
-
-		dimensions = append(dimensions, dim)
-	}
-	return dimensions
 }

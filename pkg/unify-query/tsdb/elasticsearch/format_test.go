@@ -328,6 +328,29 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":[{"match_phrase":{"keyword":{"query":"value1"}}},{"match_phrase":{"keyword":{"query":"value2"}}}]}},{"match_phrase":{"text":{"query":"partial"}}},{"nested":{"path":"nested1","query":{"bool":{"must":[{"range":{"nested1.age":{"from":"18","include_lower":true,"include_upper":true,"to":null}}},{"exists":{"field":"nested1.active"}}]}}}}]}}}`,
 		},
+		"nested + must_not": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "nested1.age",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+				},
+			},
+			expected: `{
+  "query" : {
+    "nested" : {
+      "path" : "nested1",
+      "query" : {
+        "exists" : {
+          "field" : "nested1.age"
+        }
+      }
+    }
+  }
+}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())

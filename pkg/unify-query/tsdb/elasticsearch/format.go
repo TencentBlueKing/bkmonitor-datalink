@@ -819,7 +819,6 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 							default:
 								return nil, fmt.Errorf("operator is not support with empty, %+v", con)
 							}
-							continue
 						} else {
 							// 非空才进行验证
 							switch con.Operator {
@@ -880,7 +879,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 			}
 
 			// Add to the appropriate query collection
-			if nf != "" {
+			if nf != "" && q != nil {
 				nestedFields.Add(nf)
 				nestedQueries[nf] = append(nestedQueries[nf], q)
 			} else if q != nil {

@@ -338,18 +338,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{
-  "query" : {
-    "nested" : {
-      "path" : "nested1",
-      "query" : {
-        "exists" : {
-          "field" : "nested1.age"
-        }
-      }
-    }
-  }
-}`,
+			expected: `{"query":{"nested":{"path":"nested1","query":{"bool":{"must_not":{"match_phrase":{"nested1.age":{"query":""}}}}}}}}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

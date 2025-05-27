@@ -697,8 +697,16 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 		return "", nil, err
 	}
 
-	am := aggregates[0]
+	for _, a := range aggregates {
+		err := f.buildAggList(a)
+		if err != nil {
+			return "", nil, err
+		}
+	}
+	return f.Agg()
+}
 
+func (f *FormatFactory) buildAggList(am metadata.Aggregate) error {
 	switch am.Name {
 	case DateHistogram:
 		targetTimePath := f.determineEffectiveNestedPath(f.timeField.Name)
@@ -742,10 +750,9 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 
 	default:
 		err := fmt.Errorf("esAgg aggregation is not support with: %+v", am)
-		return "", nil, err
+		return err
 	}
-
-	return f.Agg()
+	return nil
 }
 
 func (f *FormatFactory) Orders() metadata.Orders {

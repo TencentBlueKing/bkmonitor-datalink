@@ -502,21 +502,17 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		}
 	}()
 
-	// aggInfoList is now ordered from outermost to innermost logical aggregation
-	// We will iterate it, and 'agg' will hold the result of the *previous* (inner) aggregation.
-	// 'name' will hold the *name/key* for that previous (inner) aggregation.
+	var currentAgg elastic.Aggregation
+	var innerAggName string
 
-	var currentAgg elastic.Aggregation // This will be built from innermost to outermost
-	var innerAggName string            // Name/key for the currentAgg when it becomes an inner agg
-
-	for i := len(f.aggInfoList) - 1; i >= 0; i-- { // Iterate from innermost to outermost from aggInfoList
+	for i := len(f.aggInfoList) - 1; i >= 0; i-- {
 		aggInfo := f.aggInfoList[i]
-		var nextAgg elastic.Aggregation // The aggregation generated in this iteration
-		var nextAggName string          // The name/key for nextAgg
+		var nextAgg elastic.Aggregation
+		var nextAggName string
 
 		switch info := aggInfo.(type) {
-		case ValueAgg: // This case handles standalone ValueAggs (not attached ones)
-			nextAggName = info.Name // Typically FieldValue
+		case ValueAgg:
+			nextAggName = info.Name
 			var buildErr error
 			nextAgg, buildErr = buildElasticValueAgg(info)
 			if buildErr != nil {
@@ -540,20 +536,20 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			if f.timeField.Type == TimeFieldTypeTime {
 				ta = ta.TimeZone(info.Timezone)
 			}
-			if currentAgg != nil { // Embed previously built (inner) aggregation
+			if currentAgg != nil {
 				ta = ta.SubAggregation(innerAggName, currentAgg)
 			}
 			nextAgg = ta
 		case NestedAgg:
-			nextAggName = info.Name // Path of the nested field
+			nextAggName = info.Name
 			na := elastic.NewNestedAggregation().Path(info.Name)
 			if currentAgg != nil {
 				na = na.SubAggregation(innerAggName, currentAgg)
 			}
 			nextAgg = na
 		case ReverseNestedAgg:
-			nextAggName = info.Name // Name for the reverse_nested block itself (e.g. "reverse_nested_aggregation")
-			if info.Name == "" {    // Default name if not specified
+			nextAggName = info.Name
+			if info.Name == "" {
 				nextAggName = "reverse_nested"
 			}
 			rna := elastic.NewReverseNestedAggregation()
@@ -562,7 +558,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			}
 			nextAgg = rna
 		case TermAgg:
-			nextAggName = info.Name // Field name, becomes the key for this terms agg
+			nextAggName = info.Name
 			ta := elastic.NewTermsAggregation().Field(info.Name)
 			fieldType, ok := f.mapping[info.Name]
 			if !ok || fieldType == Text || fieldType == KeyWord {
@@ -577,19 +573,18 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				ta = ta.Order(order.Name, order.Ast)
 			}
 
-			// Handle attached metric aggregation
 			if info.AttachedValueAgg != nil {
 				metricAgg, buildErr := buildElasticValueAgg(*info.AttachedValueAgg)
 				if buildErr != nil {
 					err = buildErr
-					return // Propagate error
+					return
 				}
 				if metricAgg != nil {
-					ta = ta.SubAggregation(info.AttachedValueAgg.Name /* typically FieldValue */, metricAgg)
+					ta = ta.SubAggregation(info.AttachedValueAgg.Name, metricAgg)
 				}
 			}
 
-			if currentAgg != nil { // This is for the chained (e.g., further nested) aggregation
+			if currentAgg != nil {
 				ta = ta.SubAggregation(innerAggName, currentAgg)
 			}
 			nextAgg = ta
@@ -600,7 +595,6 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		currentAgg = nextAgg
 		innerAggName = nextAggName
 	}
-	// After loop, currentAgg is the outermost aggregation, innerAggName is its name
 	agg = currentAgg
 	name = innerAggName
 	return
@@ -624,9 +618,9 @@ func (f *FormatFactory) HighLight(queryString string, maxAnalyzedOffset int) *el
 }
 
 type FieldPathInfo struct {
-	OriginalField string // e.g., "events.name" or "name"
-	Path          string // e.g., "events" or "" (empty if not nested or path not in mapping)
-	FieldName     string // Always the OriginalField, used in terms/metric aggregations
+	OriginalField string
+	Path          string
+	FieldName     string
 	IsNested      bool
 }
 

@@ -1290,7 +1290,6 @@ func TestToFixInterval(t *testing.T) {
 	}
 }
 
-
 func TestFormatFactory_handlePathTransition(t *testing.T) {
 	newFactory := func() *FormatFactory {
 		return &FormatFactory{
@@ -1562,8 +1561,10 @@ func TestFormatFactory_getFieldPathInfo(t *testing.T) {
 			f := factoryWithMappings(tt.mappings)
 			info := f.getFieldPathInfo(tt.field)
 			assert.Equal(t, tt.expectedInfo, info)
+		})
+	}
+}
 
-      
 func TestBuildQuery(t *testing.T) {
 	var start = time.Unix(1721024820, 0)
 	var end = time.Unix(1721046420, 0)

@@ -30,10 +30,6 @@ func Marshal(v interface{}) ([]byte, error) {
 	return sonicAPI.Marshal(v)
 }
 
-func MarshalIndent(v interface{}, prefix, indent string) ([]byte, error) {
-	return sonicAPI.MarshalIndent(v, prefix, indent)
-}
-
 func Unmarshal(data []byte, v interface{}) error {
 	return sonicAPI.Unmarshal(data, v)
 }

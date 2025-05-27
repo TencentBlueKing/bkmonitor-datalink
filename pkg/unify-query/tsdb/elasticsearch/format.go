@@ -158,6 +158,9 @@ type TermAgg struct {
 	Orders metadata.Orders
 }
 
+type ReverseNestedAgg struct {
+}
+
 type NestedAgg struct {
 	Name string
 }
@@ -187,13 +190,16 @@ type FormatFactory struct {
 	timeFormat string
 
 	isReference bool
+
+	currentLogicalPath string
 }
 
 func NewFormatFactory(ctx context.Context) *FormatFactory {
 	f := &FormatFactory{
-		ctx:         ctx,
-		mapping:     make(map[string]string),
-		aggInfoList: make(aggInfoList, 0),
+		ctx:                ctx,
+		mapping:            make(map[string]string),
+		aggInfoList:        make(aggInfoList, 0),
+		currentLogicalPath: "",
 
 		// default encode / decode
 		encode: func(k string) string {
@@ -647,6 +653,18 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 
 			agg = curAgg
 			name = curName
+		case ReverseNestedAgg:
+			if agg == nil {
+				err = fmt.Errorf("ReverseNestedAgg: previous aggregation is nil, but reverse_nested requires a sub-aggregation. Previous name: '%s'", name)
+				return
+			}
+
+			curName := "parent_documents"
+			curAgg := elastic.NewReverseNestedAggregation()
+			curAgg = curAgg.SubAggregation(name, agg)
+
+			agg = curAgg
+			name = curName
 		default:
 			err = fmt.Errorf("aggInfoList aggregation is not support this type %T, info: %+v", info, info)
 			return
@@ -679,34 +697,52 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 		return "", nil, err
 	}
 
-	for _, am := range aggregates {
-		switch am.Name {
-		case DateHistogram:
-			f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
-		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
-			f.valueAgg(FieldValue, am.Name, am.Args...)
-			f.nestedAgg(f.valueField)
+	am := aggregates[0]
 
-			if am.Window > 0 && !am.Without {
-				// 增加时间函数
-				f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
-			}
+	switch am.Name {
+	case DateHistogram:
+		targetTimePath := f.determineEffectiveNestedPath(f.timeField.Name)
+		f.applyPathTransitions(targetTimePath)
+		f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
 
-			for idx, dim := range am.Dimensions {
-				if dim == labels.MetricName {
-					continue
-				}
-				if f.decode != nil {
-					dim = f.decode(dim)
-				}
-
-				f.termAgg(dim, idx == 0)
-				f.nestedAgg(dim)
-			}
-		default:
-			err := fmt.Errorf("esAgg aggregation is not support with: %+v", am)
-			return "", nil, err
+	case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
+		valueAggOverField := am.Field
+		if valueAggOverField == "" {
+			valueAggOverField = f.valueField
 		}
+
+		originalQueryValueField := f.valueField
+		f.valueField = valueAggOverField
+
+		valuePath := f.determineEffectiveNestedPath(valueAggOverField)
+		f.applyPathTransitions(valuePath)
+		f.valueAgg(FieldValue, am.Name, am.Args...)
+
+		if am.Window > 0 && !am.Without {
+			targetTimePath := f.determineEffectiveNestedPath(f.timeField.Name)
+			f.applyPathTransitions(targetTimePath)
+			f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
+		}
+
+		for idx, dimKey := range am.Dimensions {
+			if dimKey == labels.MetricName {
+				continue
+			}
+			actualDimField := dimKey
+			if f.decode != nil {
+				actualDimField = f.decode(dimKey)
+			}
+
+			dimPath := f.determineEffectiveNestedPath(actualDimField)
+			f.applyPathTransitions(dimPath)
+			f.termAgg(actualDimField, idx == 0)
+		}
+
+		f.valueField = originalQueryValueField
+
+	default:
+		err := fmt.Errorf("esAgg aggregation is not support with: %+v", am)
+		return "", nil, err
 	}
 
 	return f.Agg()
@@ -1056,4 +1092,54 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 
 func (f *FormatFactory) GetTimeField() metadata.TimeField {
 	return f.timeField
+}
+
+// determineEffectiveNestedPath 用于找到在mapping中，最长的嵌套路径
+func (f *FormatFactory) determineEffectiveNestedPath(field string) string {
+	parts := strings.Split(field, ESStep)
+	if len(parts) <= 1 {
+		return ""
+	}
+	for i := len(parts) - 1; i > 0; i-- {
+		potentialPath := strings.Join(parts[:i], ESStep)
+		if metaType, ok := f.mapping[potentialPath]; ok && metaType == Nested {
+			return potentialPath
+		}
+	}
+	return ""
+}
+
+// applyPathTransitions 用于将当前路径(f.logicalPath) 转换为 targetPath
+func (f *FormatFactory) applyPathTransitions(targetPath string) {
+	if f.currentLogicalPath == targetPath {
+		return // 如果一致不需要进行转换
+	}
+
+	cpParts := []string{}
+	if f.currentLogicalPath != "" {
+		cpParts = strings.Split(f.currentLogicalPath, ESStep)
+	}
+	tpParts := []string{}
+	if targetPath != "" {
+		tpParts = strings.Split(targetPath, ESStep)
+	}
+
+	// 找到最长的公共路径
+	lcpLen := 0
+	for lcpLen < len(cpParts) && lcpLen < len(tpParts) && cpParts[lcpLen] == tpParts[lcpLen] {
+		lcpLen++
+	}
+
+	// 如果当前路径比目标路径长，则需要添加 ReverseNestedAgg
+	for i := len(cpParts); i > lcpLen; i-- {
+		f.aggInfoList = append(f.aggInfoList, ReverseNestedAgg{})
+	}
+
+	// 从公共路径开始，向下遍历目标路径，添加 NestedAgg
+	for i := lcpLen; i < len(tpParts); i++ {
+		pathToEnter := strings.Join(tpParts[:i+1], ESStep)
+		f.aggInfoList = append(f.aggInfoList, NestedAgg{Name: pathToEnter})
+	}
+
+	f.currentLogicalPath = targetPath
 }

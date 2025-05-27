@@ -856,3 +856,311 @@ func TestBuildQuery(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatFactory_EsAgg(t *testing.T) {
+	type fields struct {
+		ctx         context.Context
+		valueField  string
+		timeField   metadata.TimeField
+		decode      func(k string) string
+		encode      func(k string) string
+		mapping     map[string]string
+		data        map[string]any
+		aggInfoList aggInfoList
+		orders      metadata.Orders
+		size        int
+		timezone    string
+		start       time.Time
+		end         time.Time
+		timeFormat  string
+		isReference bool
+	}
+	type args struct {
+		aggregates metadata.Aggregates
+	}
+	tests := []struct {
+		name            string
+		fields          fields
+		args            args
+		wantName        string
+		wantErr         bool
+		expectedAggList aggInfoList
+		// aggList         aggInfoList // This field seems unused in the test struct
+	}{
+		{
+			name: "scene_1_events.name_by_events.name",
+			fields: fields{
+				ctx: context.Background(),
+				mapping: map[string]string{
+					"name":             "keyword",
+					"age":              "integer",
+					"events":           "nested",
+					"events.name":      "keyword",
+					"value_field":      "keyword",
+					"dtEventTimeStamp": "long",
+				},
+				valueField: "value_field",
+				timeField: metadata.TimeField{
+					Name: DefaultTimeFieldName,
+					Type: DefaultTimeFieldType,
+					Unit: DefaultTimeFieldUnit,
+				},
+			},
+			args: args{
+				aggregates: metadata.Aggregates{
+					{Name: Count, Dimensions: []string{"events.name"}, Field: "events.name"},
+				},
+			},
+			// Actual from previous run: elasticsearch.aggInfoList{elasticsearch.NestedAgg{Name:"events"}, elasticsearch.ValueAgg{Name:"_value", FuncType:"count"}, elasticsearch.TermAgg{Name:"events.name"}}
+			expectedAggList: aggInfoList{
+				NestedAgg{Name: "events"},
+				ValueAgg{Name: FieldValue, FuncType: Count, Args: nil, KwArgs: nil},
+				TermAgg{Name: "events.name", Orders: nil},
+			},
+			wantName: "events.name", // Last agg in list is TermAgg("events.name")
+			wantErr:  false,
+		},
+		{
+			name: "scene_2_events.name_by_name",
+			fields: fields{
+				ctx: context.Background(),
+				mapping: map[string]string{
+					"name":             "keyword",
+					"age":              "integer",
+					"events":           "nested",
+					"events.name":      "keyword",
+					"dtEventTimeStamp": "long",
+				},
+				valueField: "events.name", // query value field
+				timeField: metadata.TimeField{
+					Name: DefaultTimeFieldName,
+					Type: DefaultTimeFieldType,
+					Unit: DefaultTimeFieldUnit,
+				},
+			},
+			args: args{
+				aggregates: metadata.Aggregates{
+					{Name: Count, Dimensions: []string{"name"}, Field: "events.name"}, // metric field "events.name"
+				},
+			},
+			// Actual from previous run: elasticsearch.aggInfoList{elasticsearch.NestedAgg{Name:"events"}, elasticsearch.ValueAgg{Name:"_value", FuncType:"count"}, elasticsearch.ReverseNestedAgg{}, elasticsearch.TermAgg{Name:"name"}}
+			expectedAggList: aggInfoList{
+				NestedAgg{Name: "events"},
+				ValueAgg{Name: FieldValue, FuncType: Count, Args: nil, KwArgs: nil},
+				ReverseNestedAgg{},
+				TermAgg{Name: "name", Orders: nil},
+			},
+			wantName: "name", // Last agg in list is TermAgg("name")
+			wantErr:  false,
+		},
+		{
+			name: "scene_3_name_by_events.name",
+			fields: fields{
+				ctx: context.Background(),
+				mapping: map[string]string{
+					"name":             "keyword",
+					"age":              "integer",
+					"events":           "nested",
+					"events.name":      "keyword",
+					"dtEventTimeStamp": "long",
+				},
+				valueField: "name", // query value field, metric field is "name"
+				timeField: metadata.TimeField{
+					Name: DefaultTimeFieldName,
+					Type: DefaultTimeFieldType,
+					Unit: DefaultTimeFieldUnit,
+				},
+			},
+			args: args{
+				aggregates: metadata.Aggregates{
+					{Name: Count, Dimensions: []string{"events.name"}, Field: "name"},
+				},
+			},
+			// Actual from previous run: elasticsearch.aggInfoList{elasticsearch.ValueAgg{Name:"_value", FuncType:"count"}, elasticsearch.NestedAgg{Name:"events"}, elasticsearch.TermAgg{Name:"events.name"}}
+			expectedAggList: aggInfoList{
+				ValueAgg{Name: FieldValue, FuncType: Count, Args: nil, KwArgs: nil},
+				NestedAgg{Name: "events"},
+				TermAgg{Name: "events.name", Orders: nil},
+			},
+			wantName: "events.name", // Last agg in list is TermAgg("events.name")
+			wantErr:  false,
+		},
+		{
+			name: "scene_4_name_by_events.name_then_name",
+			fields: fields{
+				ctx: context.Background(),
+				mapping: map[string]string{
+					"name":             "keyword",
+					"age":              "integer",
+					"events":           "nested",
+					"events.name":      "keyword",
+					"dtEventTimeStamp": "long",
+				},
+				valueField: "name",
+				timeField: metadata.TimeField{
+					Name: DefaultTimeFieldName,
+					Type: DefaultTimeFieldType,
+					Unit: DefaultTimeFieldUnit,
+				},
+			},
+			args: args{
+				aggregates: metadata.Aggregates{
+					{Name: Count, Dimensions: []string{"events.name", "name"}, Field: "name"},
+				},
+			},
+			// Actual from previous run: elasticsearch.aggInfoList{elasticsearch.ValueAgg{Name:"_value", FuncType:"count"}, elasticsearch.NestedAgg{Name:"events"}, elasticsearch.TermAgg{Name:"events.name"}, elasticsearch.ReverseNestedAgg{}, elasticsearch.TermAgg{Name:"name"}}
+			expectedAggList: aggInfoList{
+				ValueAgg{Name: FieldValue, FuncType: Count, Args: nil, KwArgs: nil},
+				NestedAgg{Name: "events"},
+				TermAgg{Name: "events.name", Orders: nil},
+				ReverseNestedAgg{},
+				TermAgg{Name: "name", Orders: nil},
+			},
+			wantName: "name", // Last agg in list is TermAgg("name")
+			wantErr:  false,
+		},
+		{
+			name: "scene_5_name_by_name_then_events.name",
+			fields: fields{
+				ctx: context.Background(),
+				mapping: map[string]string{
+					"name":             "keyword",
+					"age":              "integer",
+					"events":           "nested",
+					"events.name":      "keyword",
+					"dtEventTimeStamp": "long",
+				},
+				valueField: "name",
+				timeField: metadata.TimeField{
+					Name: DefaultTimeFieldName,
+					Type: DefaultTimeFieldType,
+					Unit: DefaultTimeFieldUnit,
+				},
+			},
+			args: args{
+				aggregates: metadata.Aggregates{
+					{Name: Count, Dimensions: []string{"name", "events.name"}, Field: "name"},
+				},
+			},
+			// Actual from previous run: elasticsearch.aggInfoList{elasticsearch.ValueAgg{Name:"_value", FuncType:"count"}, elasticsearch.TermAgg{Name:"name"}, elasticsearch.NestedAgg{Name:"events"}, elasticsearch.TermAgg{Name:"events.name"}}
+			expectedAggList: aggInfoList{
+				ValueAgg{Name: FieldValue, FuncType: Count, Args: nil, KwArgs: nil},
+				TermAgg{Name: "name", Orders: nil},
+				NestedAgg{Name: "events"},
+				TermAgg{Name: "events.name", Orders: nil},
+			},
+			wantName: "events.name", // Last agg in list is TermAgg("events.name")
+			wantErr:  false,
+		},
+		{
+			name: "scene_6_name_by_name_events.name_age",
+			fields: fields{
+				ctx: context.Background(),
+				mapping: map[string]string{
+					"name":             "keyword",
+					"age":              "integer",
+					"events":           "nested",
+					"events.name":      "keyword",
+					"dtEventTimeStamp": "long",
+				},
+				valueField: "name",
+				timeField: metadata.TimeField{
+					Name: DefaultTimeFieldName,
+					Type: DefaultTimeFieldType,
+					Unit: DefaultTimeFieldUnit,
+				},
+			},
+			args: args{
+				aggregates: metadata.Aggregates{
+					{Name: Count, Dimensions: []string{"name", "events.name", "age"}, Field: "name"},
+				},
+			},
+			// Actual from previous run: elasticsearch.aggInfoList{elasticsearch.ValueAgg{Name:"_value", FuncType:"count"}, elasticsearch.TermAgg{Name:"name"}, elasticsearch.NestedAgg{Name:"events"}, elasticsearch.TermAgg{Name:"events.name"}, elasticsearch.ReverseNestedAgg{}, elasticsearch.TermAgg{Name:"age"}}
+			expectedAggList: aggInfoList{
+				ValueAgg{Name: FieldValue, FuncType: Count, Args: nil, KwArgs: nil},
+				TermAgg{Name: "name", Orders: nil},
+				NestedAgg{Name: "events"},
+				TermAgg{Name: "events.name", Orders: nil},
+				ReverseNestedAgg{},
+				TermAgg{Name: "age", Orders: nil},
+			},
+			wantName: "age", // Last agg in list is TermAgg("age")
+			wantErr:  false,
+		},
+		{
+			name: "scene_7_events.name_by_name_events.name_age",
+			fields: fields{
+				ctx: context.Background(),
+				mapping: map[string]string{
+					"name":             "keyword",
+					"age":              "integer",
+					"events":           "nested",
+					"events.name":      "keyword",
+					"dtEventTimeStamp": "long",
+				},
+				valueField: "events.name", // query value field, metric field is "events.name"
+				timeField: metadata.TimeField{
+					Name: DefaultTimeFieldName,
+					Type: DefaultTimeFieldType,
+					Unit: DefaultTimeFieldUnit,
+				},
+			},
+			args: args{
+				aggregates: metadata.Aggregates{
+					{Name: Count, Dimensions: []string{"name", "events.name", "age"}, Field: "events.name"},
+				},
+			},
+			// Actual from previous run: elasticsearch.aggInfoList{elasticsearch.NestedAgg{Name:"events"}, elasticsearch.ValueAgg{Name:"_value", FuncType:"count"}, elasticsearch.ReverseNestedAgg{}, elasticsearch.TermAgg{Name:"name"}, elasticsearch.NestedAgg{Name:"events"}, elasticsearch.TermAgg{Name:"events.name"}, elasticsearch.ReverseNestedAgg{}, elasticsearch.TermAgg{Name:"age"}}
+			expectedAggList: aggInfoList{
+				NestedAgg{Name: "events"},
+				ValueAgg{Name: FieldValue, FuncType: Count, Args: nil, KwArgs: nil},
+				ReverseNestedAgg{},
+				TermAgg{Name: "name", Orders: nil},
+				NestedAgg{Name: "events"},
+				TermAgg{Name: "events.name", Orders: nil},
+				ReverseNestedAgg{},
+				TermAgg{Name: "age", Orders: nil},
+			},
+			wantName: "age", // Last agg in list is TermAgg("age")
+			wantErr:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &FormatFactory{
+				ctx:         tt.fields.ctx,
+				valueField:  tt.fields.valueField,
+				timeField:   tt.fields.timeField,
+				decode:      tt.fields.decode,
+				encode:      tt.fields.encode,
+				mapping:     tt.fields.mapping,
+				data:        tt.fields.data,
+				aggInfoList: tt.fields.aggInfoList,
+				orders:      tt.fields.orders,
+				size:        tt.fields.size,
+				timezone:    tt.fields.timezone,
+				start:       tt.fields.start,
+				end:         tt.fields.end,
+				timeFormat:  tt.fields.timeFormat,
+				isReference: tt.fields.isReference,
+			}
+			if f.decode == nil {
+				f.decode = func(k string) string { return k }
+			}
+			if f.encode == nil {
+				f.encode = func(k string) string { return k }
+			}
+			f.aggInfoList = aggInfoList{}
+
+			_, _, err := f.EsAgg(tt.args.aggregates)
+			if err != nil {
+				assert.Equal(t, tt.wantErr, err != nil)
+			}
+			gotAggList := f.aggInfoList
+			if !assert.Equal(t, tt.expectedAggList, gotAggList) {
+				t.Errorf("FormatFactory.EsAgg() = %v, want %v", gotAggList, tt.expectedAggList)
+			}
+
+		})
+	}
+}

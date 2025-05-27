@@ -375,8 +375,17 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		err = fmt.Errorf("es query %v error: %s", qo.indexes, res.Error.Reason)
 	}
 
+	if res.Hits != nil {
+		span.Set("total_hits", res.Hits.TotalHits)
+		span.Set("hits_length", len(res.Hits.Hits))
+	}
+	if res.Aggregations != nil {
+		span.Set("aggregations_length", len(res.Aggregations))
+	}
+
 	queryCost := time.Since(startAnalyze)
 	span.Set("query-cost", queryCost.String())
+
 	metric.TsDBRequestSecond(
 		ctx, queryCost, consul.ElasticsearchStorageType, qo.conn.Address,
 	)
@@ -411,6 +420,8 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
+
+	span.Set("time-series-length", len(qr.Timeseries))
 
 	return remote.FromQueryResult(false, qr)
 }

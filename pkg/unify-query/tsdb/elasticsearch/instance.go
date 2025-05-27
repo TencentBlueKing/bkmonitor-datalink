@@ -422,6 +422,9 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 	}
 
 	span.Set("time-series-length", len(qr.Timeseries))
+	if len(qr.Timeseries) > 0 {
+		span.Set("time-series-one-sample", qr.Timeseries[0].String())
+	}
 
 	return remote.FromQueryResult(false, qr)
 }

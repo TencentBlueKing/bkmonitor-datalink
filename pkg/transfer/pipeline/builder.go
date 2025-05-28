@@ -641,7 +641,7 @@ func (b *ConfigBuilder) getBackendFields(rtOpts map[string]interface{}) BackendF
 		return conf
 	}
 
-	_ = mapstructure.Decode(obj["backend_fields"], &conf)
+	_ = mapstructure.Decode(obj[config.PipelineConfigOptBackendFields], &conf)
 	return conf
 }
 

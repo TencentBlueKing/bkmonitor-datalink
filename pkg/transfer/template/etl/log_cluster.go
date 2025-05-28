@@ -84,7 +84,7 @@ func (c LogClusterConfig) GetRetryInterval() time.Duration {
 
 func (c LogClusterConfig) GetBatchSize() int {
 	if c.BatchSize <= 0 {
-		return 1000
+		return 5000
 	}
 	return c.BatchSize
 }
@@ -122,9 +122,9 @@ type LogClusterRequest struct {
 }
 
 type LogClusterResponse struct {
-	LogSignature string `json:"signature"`
-	Pattern      string `json:"pattern"`
-	IsNew        int    `json:"is_new"`
+	Signature string `json:"signature"`
+	Pattern   string `json:"pattern"`
+	IsNew     int    `json:"is_new"`
 }
 
 func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
@@ -138,9 +138,12 @@ func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload,
 	defer p.mut.Unlock()
 
 	handle := func() {
+		// 避免 send closed channel
+		// 入参设计如此 ┓(-´∀`-)┏
 		defer utils.RecoverError(func(err error) {
 			logging.Errorf("%v process recover: %v", p, err)
 		})
+
 		batch := p.queue.Pop()
 		if len(batch) == 0 {
 			return // 队列无数据 放弃执行
@@ -150,7 +153,7 @@ func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload,
 		// 至少保证原始数据不丢弃
 		rsp, err := p.doRequestWithRetry(batch)
 		if err != nil {
-			logging.MinuteErrorfSampling(p.String(), "log_cluster request failed: %v", err)
+			logging.Errorf("%v log_cluster request failed: %v", p.String(), err)
 			rsp = batch
 		}
 
@@ -166,7 +169,7 @@ func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload,
 				output, err = define.DerivePayload(d, &record)
 			}
 			if err != nil {
-				logging.Errorf("%v create payload from %v error: %+v", p, d, err)
+				logging.Errorf("%v create payload from %v error: %v", p, d, err)
 				continue
 			}
 			outputChan <- output
@@ -264,12 +267,14 @@ func (p *LogCluster) doRequest(records []*define.ETLRecord) ([]*define.ETLRecord
 		return nil, err
 	}
 
+	// 聚类服务端保证数据是按序返回的
+	// 这里假定已经是一一对应
 	if len(r.Data) != len(records) {
 		return nil, errors.Errorf("records length not match, want %d but got %d", len(records), len(r.Data))
 	}
 
 	for i := 0; i < len(records); i++ {
-		records[i].Dimensions["signature"] = r.Data[i].LogSignature
+		records[i].Dimensions["signature"] = r.Data[i].Signature
 		records[i].Dimensions["pattern"] = r.Data[i].Pattern
 		records[i].Dimensions["is_new"] = r.Data[i].IsNew
 	}
@@ -303,6 +308,7 @@ func NewLogCluster(ctx context.Context, name string) (*LogCluster, error) {
 
 	conf, err := unmarshal()
 	if err != nil || conf == nil {
+		// 创建失败即忽略本 processor 数据直接导向下一节点
 		logging.Errorf("failed to unmarshal log_cluster config: %v", err)
 		return &LogCluster{
 			BaseDataProcessor: define.NewBaseDataProcessor(name),

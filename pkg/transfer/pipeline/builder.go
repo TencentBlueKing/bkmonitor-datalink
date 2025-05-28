@@ -737,7 +737,7 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	}
 
 	ctx0 := config.ResultTableConfigIntoContext(ctx, pipeConfig.ResultTableList[0])
-	backend0, err := buildBackend(ctx0, nil)
+	backend0, err := buildBackend(ctx0, &fields.RawES)
 	if err != nil {
 		return nil, err
 	}

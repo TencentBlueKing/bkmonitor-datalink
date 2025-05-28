@@ -631,8 +631,10 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			agg = curAgg
 			name = curName
 		case NestedAgg:
-			agg = elastic.NewNestedAggregation().Path(info.Name).SubAggregation(name, agg)
-			name = info.Name
+			if agg != nil {
+				agg = elastic.NewNestedAggregation().Path(info.Name).SubAggregation(name, agg)
+				name = info.Name
+			}
 		case TermAgg:
 			curName := info.Name
 			curAgg := elastic.NewTermsAggregation().Field(info.Name)

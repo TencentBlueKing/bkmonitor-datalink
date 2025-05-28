@@ -74,7 +74,7 @@ type AggregateMethod struct {
 	// Field 聚合字段，默认为指标字段，指定则会进行覆盖
 	Field string `json:"field,omitempty" example:"field"`
 	// Without
-	Without bool `json:"without" example:false`
+	Without bool `json:"without,omitempty"`
 	// Dimensions 聚合维度
 	Dimensions Dimensions `json:"dimensions,omitempty" example:"bk_target_ip,bk_target_cloud_id"`
 	// Position 函数参数位置，结合 VArgsList 一起使用，类似 topk, histogram_quantile 需要用到

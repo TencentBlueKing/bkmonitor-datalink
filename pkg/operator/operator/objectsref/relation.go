@@ -41,7 +41,7 @@ const (
 	relationDataSourceWithNode        = "datasource_with_node_relation"
 	relationBkLogConfigWithDataSource = "bklogconfig_with_datasource_relation"
 
-	relationContainerWithVersion = "container_with_version_relation"
+	relationContainerExpand = "container_expand_relation"
 )
 
 func (oc *ObjectsController) WriteAppVersionRelation(w io.Writer) {
@@ -52,13 +52,15 @@ func (oc *ObjectsController) WriteAppVersionRelation(w io.Writer) {
 			}
 
 			promfmt.FmtBytes(w, promfmt.Metric{
-				Name: relationContainerWithVersion,
+				Name: relationContainerExpand,
 				Labels: []promfmt.Label{
-					{Name: "version", Value: container.Tag},
-
+					// indexes dimension
 					{Name: "pod", Value: pod.ID.Name},
 					{Name: "namespace", Value: pod.ID.Namespace},
 					{Name: "container", Value: container.Name},
+
+					// expand dimension
+					{Name: "version", Value: container.Tag},
 				},
 			})
 		}

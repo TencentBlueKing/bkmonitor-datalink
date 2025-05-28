@@ -736,13 +736,16 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 		return nil
 	}
 
-	ctx0 := config.ResultTableConfigIntoContext(ctx, pipeConfig.ResultTableList[0])
+	rt0 := pipeConfig.ResultTableList[0]
+	ctx0 := config.ResultTableConfigIntoContext(ctx, rt0)
 	backend0, err := buildBackend(ctx0, &fields.RawES)
 	if err != nil {
 		return nil, err
 	}
 
-	ctx1 := config.ResultTableConfigIntoContext(ctx, pipeConfig.ResultTableList[1])
+	rt1 := pipeConfig.ResultTableList[1]
+	rt1.FieldList = rt0.FieldList // 复用 rt0 的 fieldslist 因为 pattern 是依附于 raw 而存在的
+	ctx1 := config.ResultTableConfigIntoContext(ctx, rt1)
 	backend1, err := buildBackend(ctx1, &fields.PatternES)
 	if err != nil {
 		return nil, err

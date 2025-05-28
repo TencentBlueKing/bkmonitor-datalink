@@ -351,6 +351,18 @@ func TestFormatFactory_Query(t *testing.T) {
   }
 }`,
 		},
+		//"nested_must_not_empty_value": {
+		//	conditions: metadata.AllConditions{
+		//		{
+		//			{
+		//				DimensionName: "events.attributes.exception.message",
+		//				Operator:      structured.ConditionNotEqual,
+		//				Value:         []string{""},
+		//			},
+		//		},
+		//	},
+		//	expected: `{"query":{"bool":{"must_not":{"nested":{"path":"events","query":{"match_phrase":{"events.attributes.exception.message":{"query":""}}}}}}}}`,
+		//},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
@@ -396,6 +408,22 @@ func TestFormatFactory_Query(t *testing.T) {
 									"properties": map[string]any{
 										"key": map[string]any{
 											"type": "keyword",
+										},
+									},
+								},
+							},
+						},
+						"events": map[string]any{
+							"type": "nested",
+							"properties": map[string]any{
+								"attributes": map[string]any{
+									"properties": map[string]any{
+										"exception": map[string]any{
+											"properties": map[string]any{
+												"message": map[string]any{
+													"type": "keyword",
+												},
+											},
 										},
 									},
 								},

@@ -631,10 +631,8 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			agg = curAgg
 			name = curName
 		case NestedAgg:
-			if agg != nil {
-				agg = elastic.NewNestedAggregation().Path(info.Name).SubAggregation(name, agg)
-				name = info.Name
-			}
+			agg = elastic.NewNestedAggregation().Path(info.Name).SubAggregation(name, agg)
+			name = info.Name
 		case TermAgg:
 			curName := info.Name
 			curAgg := elastic.NewTermsAggregation().Field(info.Name)
@@ -656,12 +654,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			agg = curAgg
 			name = curName
 		case ReverseNestedAgg:
-			if agg == nil {
-				err = fmt.Errorf("ReverseNestedAgg: previous aggregation is nil, but reverse_nested requires a sub-aggregation. Previous name: '%s'", name)
-				return
-			}
-
-			curName := "parent_documents"
+			curName := "reverse_nested"
 			curAgg := elastic.NewReverseNestedAggregation()
 			curAgg = curAgg.SubAggregation(name, agg)
 

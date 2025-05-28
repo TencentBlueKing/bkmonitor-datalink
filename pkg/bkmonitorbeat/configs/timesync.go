@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tenant"
 )
 
 const (
@@ -35,6 +36,10 @@ func (c *TimeSyncConfig) GetTaskConfigList() []define.TaskConfig {
 		return tasks
 	}
 
+	storage := tenant.DefaultStorage()
+	if v, ok := storage.GetTaskDataID(ConfigTypeTimeSync); ok {
+		c.DataID = v
+	}
 	tasks = append(tasks, c)
 	return tasks
 }

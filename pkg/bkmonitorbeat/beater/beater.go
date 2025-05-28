@@ -23,12 +23,14 @@ import (
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater/schedulerfactory"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater/taskfactory"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/http"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
@@ -49,6 +51,7 @@ type beaterState struct {
 	ctx             context.Context
 	cancelFunc      context.CancelFunc
 	heartBeatTicker *time.Ticker
+	tcli            *tenant.Client
 
 	Scheduler        define.Scheduler
 	KeywordScheduler define.Scheduler
@@ -172,6 +175,18 @@ func New(cfg *common.Config, name, version string) (*MonitorBeater, error) {
 		}
 	}
 
+	// 多租户模式下才需要开启新的通信管道拉取配置
+	if bt.config.EnableMultiTenant {
+		bt.tcli, err = tenant.NewClient(tenant.Option{
+			Version: version,
+			IPC:     bt.config.GseMessageEndpoint,
+			Tasks:   bt.config.MultiTenantTasks,
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create gse message client")
+		}
+	}
+
 	return &bt, nil
 }
 
@@ -211,6 +226,13 @@ func (bt *MonitorBeater) initHostIDWatcher() error {
 func (bt *MonitorBeater) ParseConfig(cfg *common.Config) error {
 	var err error
 	ctx := bt.ctx
+
+	// 加载任务前先初始化 hostid watcher
+	err = bt.initHostIDWatcher()
+	if err != nil {
+		return fmt.Errorf("init hostid failed,error:%s", err)
+	}
+
 	bt.configEngine = NewBaseConfigEngine(ctx)
 
 	err = bt.configEngine.Init(cfg, bt)
@@ -229,10 +251,6 @@ func (bt *MonitorBeater) ParseConfig(cfg *common.Config) error {
 	}
 	configs.DisableNetlink = globalConfig.DisableNetLink
 	bt.config = globalConfig
-	err = bt.initHostIDWatcher()
-	if err != nil {
-		return fmt.Errorf("init hostid failed,error:%s", err)
-	}
 
 	// 使用hostid文件中的ip和云区域cloudId信息，替换掉全局配置中的ip和云区域cloudId
 	if bt.hostIDWatcher != nil {
@@ -480,6 +498,12 @@ func (bt *MonitorBeater) Run() error {
 	}
 	logger.Info("MonitorBeater is running! Hit CTRL-C to stop it")
 
+	if bt.tcli != nil {
+		if err := bt.tcli.Start(); err != nil {
+			return err
+		}
+	}
+
 	var err error
 	err = bt.PreRun()
 	if err != nil {
@@ -559,6 +583,12 @@ func (bt *MonitorBeater) Stop() {
 	}
 	bt.stopAdminServerReloader()
 	logger.Info("shutting down")
+
+	if bt.tcli != nil {
+		if err := bt.tcli.Close(); err != nil {
+			logger.Errorf("close gse message client failed: %v", err)
+		}
+	}
 }
 
 // Reload : reload conf

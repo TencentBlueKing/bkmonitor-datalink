@@ -146,7 +146,6 @@ func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload,
 
 		batch := p.queue.Pop()
 		if len(batch) == 0 {
-			p.CounterSuccesses.Inc()
 			return // 队列无数据 放弃执行
 		}
 

@@ -813,13 +813,13 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 							query = elastic.NewExistsQuery(key)
 							switch con.Operator {
 							case structured.ConditionEqual, structured.Contains:
-								query = f.getQuery(MustNot, query)
+								q = f.getQuery(MustNot, query)
 							case structured.ConditionNotEqual, structured.Ncontains:
-								query = f.getQuery(Must, query)
+								q = f.getQuery(Must, query)
 							default:
 								return nil, fmt.Errorf("operator is not support with empty, %+v", con)
 							}
-							continue
+							goto QE
 						} else {
 							// 非空才进行验证
 							switch con.Operator {
@@ -879,12 +879,15 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 				}
 			}
 
+		QE:
 			// Add to the appropriate query collection
-			if nf != "" {
-				nestedFields.Add(nf)
-				nestedQueries[nf] = append(nestedQueries[nf], q)
-			} else if q != nil {
-				nonNestedQueries = append(nonNestedQueries, q)
+			if q != nil {
+				if nf != "" {
+					nestedFields.Add(nf)
+					nestedQueries[nf] = append(nestedQueries[nf], q)
+				} else {
+					nonNestedQueries = append(nonNestedQueries, q)
+				}
 			}
 		}
 

@@ -456,8 +456,14 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	)
 
 	// 只有聚合场景需要对齐
-	if window, windowErr := queryTs.GetMaxWindow(); windowErr == nil && window.Seconds() > 0 {
-		startTime, endTime, step, _, err = structured.AlignTime(startTime, endTime, queryTs.Step, queryTs.Timezone)
+	if window, windowErr := queryTs.GetMaxWindow(); windowErr == nil && window.Hours() > 0 {
+		timezone := "UTC"
+		// 只有按天聚合的时候才启用时区对齐偏移量，否则一律使用 UTC
+		if window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
+			timezone = queryTs.Timezone
+		}
+
+		startTime, endTime, step, _, err = structured.AlignTime(startTime, endTime, queryTs.Step, timezone)
 		if err != nil {
 			return nil, err
 		}

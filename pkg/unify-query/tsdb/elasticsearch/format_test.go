@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	elastic "github.com/olivere/elastic/v7"
+	"github.com/olivere/elastic/v7"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
@@ -327,6 +327,29 @@ func TestFormatFactory_Query(t *testing.T) {
 				},
 			},
 			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":[{"match_phrase":{"keyword":{"query":"value1"}}},{"match_phrase":{"keyword":{"query":"value2"}}}]}},{"match_phrase":{"text":{"query":"partial"}}},{"nested":{"path":"nested1","query":{"bool":{"must":[{"range":{"nested1.age":{"from":"18","include_lower":true,"include_upper":true,"to":null}}},{"exists":{"field":"nested1.active"}}]}}}}]}}}`,
+		},
+		"nested + must_not": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "nested1.age",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+				},
+			},
+			expected: `{
+  "query" : {
+    "nested" : {
+      "path" : "nested1",
+      "query" : {
+        "exists" : {
+          "field" : "nested1.age"
+        }
+      }
+    }
+  }
+}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -707,6 +730,129 @@ func TestToFixInterval(t *testing.T) {
 			if !tt.wantError && got != tt.want {
 				t.Errorf("toFixInterval() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+func TestBuildQuery(t *testing.T) {
+	var start = time.Unix(1721024820, 0)
+	var end = time.Unix(1721046420, 0)
+	var timeFormat = function.Second
+
+	for name, c := range map[string]struct {
+		query     *metadata.Query
+		timeField metadata.TimeField
+		expected  string
+		err       error
+	}{
+		"collapse with other aggregations": {
+			query: &metadata.Query{
+				Aggregates: metadata.Aggregates{
+					{
+						Name:       "count",
+						Dimensions: []string{"gseIndex"},
+						Window:     time.Hour,
+						TimeZone:   "Asia/ShangHai",
+					},
+				},
+				Collapse: &metadata.Collapse{
+					Field: "gseIndex",
+				},
+			},
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: TimeFieldTypeTime,
+				Unit: function.Second,
+			},
+
+			expected: `{
+	"aggregations": {
+		"gseIndex": {
+			"aggregations": {
+				"time": {
+					"aggregations": {
+						"_value": {
+							"value_count": {
+								"field": "value"
+							}
+						}
+					},
+					"date_histogram": {
+						"extended_bounds": {
+							"max": 1721046420,
+							"min": 1721024820
+						},
+						"field": "time",
+						"interval": "1h",
+						"min_doc_count": 0,
+						"time_zone": "Asia/ShangHai"
+					}
+				}
+			},
+			"terms": {
+				"field": "gseIndex",
+				"missing": " "
+			}
+		}
+	},
+	"collapse": {
+		"field": "gseIndex"
+	},
+	"query": {
+		"bool": {
+			"filter": {
+				"range": {
+					"time": {
+						"from": 1721024820,
+						"include_lower": true,
+						"include_upper": true,
+						"to": 1721046420
+					}
+				}
+			}
+		}
+	},
+	"size": 0
+}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := metadata.InitHashID(context.Background())
+			fact := NewFormatFactory(ctx).
+				WithQuery("value", c.timeField, start, end, timeFormat, 0).
+				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
+
+			filterQueries := []elastic.Query{
+				elastic.NewRangeQuery(c.timeField.Name).
+					From(start.Unix()).
+					To(end.Unix()).
+					IncludeLower(true).
+					IncludeUpper(true),
+			}
+
+			ss := elastic.NewSearchSource()
+			esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
+			ss.Query(esQuery).Size(c.query.Size)
+			if c.query.Collapse != nil {
+				ss.Collapse(elastic.NewCollapseBuilder(c.query.Collapse.Field))
+			}
+
+			name, agg, err := fact.EsAgg(c.query.Aggregates)
+			if err != nil {
+				assert.Equal(t, c.err, err)
+				return
+			}
+			ss.Aggregation(name, agg)
+			ss.Size(0)
+
+			body, err := ss.Source()
+			assert.Nil(t, err)
+
+			bodyJson, err := json.Marshal(body)
+			assert.Nil(t, err)
+
+			bodyString := string(bodyJson)
+			assert.JSONEq(t, c.expected, bodyString)
 		})
 	}
 }

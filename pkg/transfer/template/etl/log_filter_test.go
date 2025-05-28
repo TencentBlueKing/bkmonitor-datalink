@@ -13,9 +13,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestLogFilter(t *testing.T) {

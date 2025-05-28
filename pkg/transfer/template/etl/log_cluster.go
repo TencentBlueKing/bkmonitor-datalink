@@ -29,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
 const (
@@ -137,6 +138,9 @@ func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload,
 	defer p.mut.Unlock()
 
 	handle := func() {
+		defer utils.RecoverError(func(err error) {
+			logging.Errorf("%v process recover: %v", p, err)
+		})
 		batch := p.queue.Pop()
 		if len(batch) == 0 {
 			return // 队列无数据 放弃执行

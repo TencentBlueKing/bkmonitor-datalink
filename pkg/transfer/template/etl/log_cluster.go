@@ -146,6 +146,7 @@ func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload,
 
 		batch := p.queue.Pop()
 		if len(batch) == 0 {
+			p.CounterSuccesses.Inc()
 			return // 队列无数据 放弃执行
 		}
 
@@ -155,6 +156,9 @@ func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload,
 		if err != nil {
 			logging.Errorf("%v log_cluster request failed: %v", p.String(), err)
 			rsp = batch
+			p.CounterFails.Inc()
+		} else {
+			p.CounterSuccesses.Inc()
 		}
 
 		// 批处理之后需要逐个回放给到下一个 processor
@@ -179,7 +183,6 @@ func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload,
 	// 虚拟 Process 充当信号使用
 	if d == nil {
 		handle()
-		p.CounterSuccesses.Inc() // 只许成功
 		return
 	}
 
@@ -195,9 +198,7 @@ func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload,
 	if !full {
 		return
 	}
-
 	handle()
-	p.CounterSuccesses.Inc()
 }
 
 func (p *LogCluster) getLogField(metrics map[string]interface{}) string {

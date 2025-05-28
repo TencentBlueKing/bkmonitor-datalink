@@ -36,33 +36,15 @@ func (b *FlatBatchClusterConfigBuilder) GetStandardProcessors(pipe *config.Pipel
 	return processors
 }
 
-// ConnectLogProcessor 兼容原先的日志清洗逻辑
-func (b *FlatBatchClusterConfigBuilder) ConnectLogProcessor(ctx context.Context, from Node, to Node) error {
+func (b *FlatBatchClusterConfigBuilder) ConnectProcessor(ctx context.Context, from Node, to Node, names ...string) error {
 	nodes := []Node{from}
 
 	pipe := config.PipelineConfigFromContext(ctx)
 	rt := config.ResultTableConfigFromContext(ctx)
 
 	ps := b.GetStandardProcessors(pipe, rt)
-	ps = append(ps, "log_filter", "log_cluster")
+	ps = append(ps, names...)
 	standards, err := b.GetDataProcessors(ctx, ps...)
-	if err != nil {
-		return err
-	}
-
-	nodes = append(nodes, standards...)
-	nodes = append(nodes, to)
-	b.ConnectNodes(nodes...)
-	return nil
-}
-
-// ConnectLogClusterProcessor 处理日志聚类逻辑
-func (b *FlatBatchClusterConfigBuilder) ConnectLogClusterProcessor(ctx context.Context, from Node, to Node) error {
-	nodes := []Node{from}
-
-	pipe := config.PipelineConfigFromContext(ctx)
-	rt := config.ResultTableConfigFromContext(ctx)
-	standards, err := b.GetDataProcessors(ctx, b.GetStandardProcessors(pipe, rt)...)
 	if err != nil {
 		return err
 	}

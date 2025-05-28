@@ -11,12 +11,13 @@ package define
 
 import (
 	"fmt"
+	"maps"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/bufferpool"
 	"github.com/cespare/xxhash/v2"
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/bufferpool"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/types"
 )
 
@@ -69,38 +70,77 @@ type ETLRecord struct {
 }
 
 type ETLRecordFields struct {
-	Metrics    []string `json:"metrics" mapstructure:"metrics"`
-	Dimensions []string `json:"dimensions" mapstructure:"dimensions"`
-	GroupKeys  []string `json:"group_keys" mapstructure:"group_keys"`
+	KeepMetrics    []string `json:"keep_metrics" mapstructure:"keep_metrics"`
+	DropMetrics    []string `json:"drop_metrics" mapstructure:"drop_metrics"`
+	KeepDimensions []string `json:"keep_dimensions" mapstructure:"keep_dimensions"`
+	DropDimensions []string `json:"drop_dimensions" mapstructure:"drop_dimensions"`
+	GroupKeys      []string `json:"group_keys" mapstructure:"group_keys"`
 }
 
+// Filter 过滤 ELTRecord
+//
+// 白名单规则优先与黑名单规则 当且仅当没有白名单时黑名单才会生效
 func (f *ETLRecordFields) Filter(record ETLRecord) ETLRecord {
 	newRecord := ETLRecord{
-		Time:     record.Time,
-		Exemplar: record.Exemplar,
+		Time:       record.Time,
+		Exemplar:   record.Exemplar,
+		Dimensions: record.Dimensions,
+		Metrics:    record.Metrics,
 	}
 
-	for _, k := range f.Metrics {
-		v, ok := record.Metrics[k]
-		if ok {
-			newRecord.Metrics[k] = v
+	if len(f.KeepMetrics) > 0 {
+		// 指标白名单
+		newMetrics := make(map[string]interface{})
+		for _, k := range f.KeepMetrics {
+			if v, ok := record.Metrics[k]; ok {
+				newMetrics[k] = v
+			}
+		}
+		newRecord.Metrics = newMetrics
+	} else {
+		// 指标黑名单
+		if len(f.DropMetrics) > 0 {
+			cloned := maps.Clone(record.Metrics)
+			for _, k := range f.DropMetrics {
+				if _, ok := cloned[k]; ok {
+					delete(cloned, k)
+				}
+			}
+			newRecord.Metrics = cloned
 		}
 	}
-	for _, k := range f.Dimensions {
-		v, ok := record.Dimensions[k]
-		if ok {
-			newRecord.Dimensions[k] = v
+
+	if len(f.KeepDimensions) > 0 {
+		// 维度白名单
+		newDimensions := make(map[string]interface{})
+		for _, k := range f.KeepDimensions {
+			v, ok := record.Dimensions[k]
+			if ok {
+				newDimensions[k] = v
+			}
+		}
+		newRecord.Dimensions = newDimensions
+	} else {
+		// 维度黑名单
+		if len(f.DropDimensions) > 0 {
+			cloned := maps.Clone(record.Dimensions)
+			for _, k := range f.DropDimensions {
+				if _, ok := cloned[k]; ok {
+					delete(cloned, k)
+				}
+			}
+			newRecord.Dimensions = cloned
 		}
 	}
 	return newRecord
 }
 
-func (f *ETLRecordFields) GroupID(dims map[string]interface{}) uint64 {
+func (f *ETLRecordFields) GroupID(document map[string]interface{}) uint64 {
 	buf := bufferpool.Get()
 	defer bufferpool.Put(buf)
 
 	for _, key := range f.GroupKeys {
-		v, ok := dims[key]
+		v, ok := document[key]
 		if !ok {
 			continue
 		}

@@ -26,10 +26,10 @@ func NewFlatBatchClusterPipeline(ctx context.Context, name string) (define.Pipel
 	}
 
 	cb0 := func(subCtx context.Context, from pipeline.Node, to pipeline.Node) error {
-		return builder.ConnectLogProcessor(subCtx, from, to)
+		return builder.ConnectProcessor(subCtx, from, to)
 	}
 	cb1 := func(subCtx context.Context, from pipeline.Node, to pipeline.Node) error {
-		return builder.ConnectLogClusterProcessor(subCtx, from, to)
+		return builder.ConnectProcessor(subCtx, from, to, "log_filter", "log_cluster")
 	}
 	return builder.BuildBranchingForLogCluster(nil, cb0, cb1)
 }

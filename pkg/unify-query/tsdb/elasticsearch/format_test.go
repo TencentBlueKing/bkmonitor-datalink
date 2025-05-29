@@ -1152,14 +1152,20 @@ func TestFormatFactory_EsAgg(t *testing.T) {
 			}
 			f.aggInfoList = aggInfoList{}
 
-			_, _, err := f.EsAgg(tt.args.aggregates)
-			if err != nil {
-				assert.Equal(t, tt.wantErr, err != nil)
-			}
-			gotAggList := f.aggInfoList
-			if !assert.Equal(t, tt.expectedAggList, gotAggList) {
-				t.Errorf("FormatFactory.EsAgg() = %v, want %v", gotAggList, tt.expectedAggList)
-			}
+			_, agg, err := f.EsAgg(tt.args.aggregates)
+			assert.Nil(t, err)
+
+			assert.Equal(t, tt.expectedAggList, f.aggInfoList)
+
+			body, err := agg.Source()
+			assert.Nil(t, err)
+
+			bodyJson, err := json.Marshal(body)
+			assert.Nil(t, err)
+
+			bodyString := string(bodyJson)
+			t.Logf(bodyString)
+			//assert.JSONEq(t,
 
 		})
 	}

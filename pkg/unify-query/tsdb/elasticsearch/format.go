@@ -513,7 +513,8 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			log.Errorf(f.ctx, fmt.Sprintf("get mapping error: %s", r))
 		}
 	}()
-
+	var lastNested *elastic.NestedAggregation
+	var lastNestedName string
 	for _, aggInfo := range f.aggInfoList {
 		switch info := aggInfo.(type) {
 		case ValueAgg:
@@ -631,8 +632,13 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			agg = curAgg
 			name = curName
 		case NestedAgg:
-			agg = elastic.NewNestedAggregation().Path(info.Name).SubAggregation(name, agg)
-			name = info.Name
+			if agg == nil {
+				lastNested = elastic.NewNestedAggregation().Path(info.Name)
+				lastNestedName = info.Name
+			} else {
+				agg = elastic.NewNestedAggregation().Path(info.Name).SubAggregation(name, agg)
+				name = info.Name
+			}
 		case TermAgg:
 			curName := info.Name
 			curAgg := elastic.NewTermsAggregation().Field(info.Name)
@@ -669,6 +675,10 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			err = fmt.Errorf("aggInfoList aggregation is not support this type %T, info: %+v", info, info)
 			return
 		}
+	}
+	if lastNested != nil && agg != nil {
+		agg = lastNested.SubAggregation(name, agg)
+		name = lastNestedName
 	}
 
 	return

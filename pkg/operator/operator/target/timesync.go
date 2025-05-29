@@ -35,7 +35,7 @@ func (t *TimeSyncTarget) YamlBytes() ([]byte, error) {
 	cfg = append(cfg, yaml.MapItem{Key: "task_id", Value: "2"})
 	cfg = append(cfg, yaml.MapItem{Key: "dataid", Value: t.DataID})
 	cfg = append(cfg, yaml.MapItem{Key: "period", Value: "1m"})
-	cfg = append(cfg, yaml.MapItem{Key: "metric_prefix", Value: "kube"})
+	cfg = append(cfg, yaml.MapItem{Key: "env", Value: "kube"})
 	cfg = append(cfg, yaml.MapItem{Key: "ntpd_path", Value: timesync.NtpdPath})
 	cfg = append(cfg, yaml.MapItem{Key: "query_timeout", Value: timesync.QueryTimeout})
 	cfg = append(cfg, yaml.MapItem{Key: "chrony_address", Value: timesync.ChronyAddress})

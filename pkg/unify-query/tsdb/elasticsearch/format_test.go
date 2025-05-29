@@ -1382,7 +1382,6 @@ func TestFormatFactory_AggWithMapping(t *testing.T) {
 			assert.NoError(t, err)
 			customSS := elastic.NewSearchSource()
 			customSS.Aggregation(customName, customAgg)
-
 			customSource, err := customSS.Source()
 			assert.NoError(t, err)
 			customActual, err := json.Marshal(customSource)

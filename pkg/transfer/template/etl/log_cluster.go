@@ -249,6 +249,7 @@ func (p *LogCluster) doRequest(records []*define.ETLRecord) ([]*define.ETLRecord
 
 	rsp, err := p.cli.Post(p.conf.Address, "application/json", bytes.NewBuffer(b))
 	if err != nil {
+		logging.Errorf("mandotest: cli post failed: %v, body: (%s)", err, string(b))
 		return nil, err
 	}
 	defer rsp.Body.Close()

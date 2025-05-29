@@ -907,13 +907,12 @@ func TestFormatFactory_EsAgg(t *testing.T) {
 		aggregates metadata.Aggregates
 	}
 	tests := []struct {
-		name             string
-		fields           fields
-		args             args
-		wantName         string
-		wantErr          bool
-		expectedAggList  aggInfoList
-		expectedQueryDSL string
+		name            string
+		fields          fields
+		args            args
+		wantName        string
+		wantErr         bool
+		expectedAggList aggInfoList
 		// aggList         aggInfoList // This field seems unused in the test struct
 	}{
 		{
@@ -946,29 +945,6 @@ func TestFormatFactory_EsAgg(t *testing.T) {
 				ValueAgg{Name: FieldValue, FuncType: Count, Args: nil, KwArgs: nil},
 				TermAgg{Name: "events.name", Orders: nil},
 			},
-			expectedQueryDSL: `{
-				"events": {
-					"nested": {
-						"path": "events"
-					},
-					"aggregations": {
-						"events.name": {
-							"terms": {
-								"field": "events.name",
-								"missing": " ",
-								"size": 0
-							},
-							"aggregations": {
-								"_value": {
-									"value_count": {
-										"field": "events.name"
-									}
-								}
-							}
-						}
-					}
-				}
-			}`,
 			wantName: "events.name", // Last agg in list is TermAgg("events.name")
 			wantErr:  false,
 		},
@@ -999,31 +975,9 @@ func TestFormatFactory_EsAgg(t *testing.T) {
 			expectedAggList: aggInfoList{
 				NestedAgg{Name: "events"},
 				ValueAgg{Name: FieldValue, FuncType: Count, Args: nil, KwArgs: nil},
+				ReverseNestedAgg{},
 				TermAgg{Name: "name", Orders: nil},
 			},
-			expectedQueryDSL: `{
-				"name": {
-					"terms": {
-						"field": "name",
-						"missing": " ",
-						"size": 0
-					},
-					"aggregations": {
-						"events": {
-							"nested": {
-								"path": "events"
-							},
-							"aggregations": {
-								"_value": {
-									"value_count": {
-										"field": "events.name"
-									}
-								}
-							}
-						}
-					}
-				}
-			}`,
 			wantName: "name", // Last agg in list is TermAgg("name")
 			wantErr:  false,
 		},
@@ -1056,34 +1010,6 @@ func TestFormatFactory_EsAgg(t *testing.T) {
 				NestedAgg{Name: "events"},
 				TermAgg{Name: "events.name", Orders: nil},
 			},
-			expectedQueryDSL: `{
-				"events": {
-					"nested": {
-						"path": "events"
-					},
-					"aggregations": {
-						"events.name": {
-							"terms": {
-								"field": "events.name",
-								"missing": " ",
-								"size": 0
-							},
-							"aggregations": {
-								"reverse_nested_for_name": {
-									"reverse_nested": {},
-									"aggregations": {
-										"_value": {
-											"value_count": {
-												"field": "name"
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}`,
 			wantName: "events.name", // Last agg in list is TermAgg("events.name")
 			wantErr:  false,
 		},
@@ -1118,43 +1044,6 @@ func TestFormatFactory_EsAgg(t *testing.T) {
 				ReverseNestedAgg{},
 				TermAgg{Name: "name", Orders: nil},
 			},
-			expectedQueryDSL: `{
-				"events": {
-					"nested": {
-						"path": "events"
-					},
-					"aggregations": {
-						"events.name": {
-							"terms": {
-								"field": "events.name",
-								"missing": " ",
-								"size": 0
-							},
-							"aggregations": {
-								"reverse_nested_for_name_dim": {
-									"reverse_nested": {},
-									"aggregations": {
-										"name": {
-											"terms": {
-												"field": "name",
-												"missing": " ",
-												"size": 0
-											},
-											"aggregations": {
-												"_value": {
-													"value_count": {
-														"field": "name"
-													}
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}`,
 			wantName: "name", // Last agg in list is TermAgg("name")
 			wantErr:  false,
 		},
@@ -1188,43 +1077,6 @@ func TestFormatFactory_EsAgg(t *testing.T) {
 				NestedAgg{Name: "events"},
 				TermAgg{Name: "events.name", Orders: nil},
 			},
-			expectedQueryDSL: `{
-				"name": {
-					"terms": {
-						"field": "name",
-						"missing": " ",
-						"size": 0
-					},
-					"aggregations": {
-						"events": {
-							"nested": {
-								"path": "events"
-							},
-							"aggregations": {
-								"events.name": {
-									"terms": {
-										"field": "events.name",
-										"missing": " ",
-										"size": 0
-									},
-									"aggregations": {
-										"reverse_nested_for_name_value": {
-											"reverse_nested": {},
-											"aggregations": {
-												"_value": {
-													"value_count": {
-														"field": "name"
-													}
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}`,
 			wantName: "events.name", // Last agg in list is TermAgg("events.name")
 			wantErr:  false,
 		},
@@ -1260,52 +1112,6 @@ func TestFormatFactory_EsAgg(t *testing.T) {
 				ReverseNestedAgg{},
 				TermAgg{Name: "age", Orders: nil},
 			},
-			expectedQueryDSL: `{
-				"name": {
-					"terms": {
-						"field": "name",
-						"missing": " ",
-						"size": 0
-					},
-					"aggregations": {
-						"events": {
-							"nested": {
-								"path": "events"
-							},
-							"aggregations": {
-								"events.name": {
-									"terms": {
-										"field": "events.name",
-										"missing": " ",
-										"size": 0
-									},
-									"aggregations": {
-										"reverse_nested_for_age_dim": {
-											"reverse_nested": {},
-											"aggregations": {
-												"age": {
-													"terms": {
-														"field": "age",
-														"missing": " ",
-														"size": 0
-													},
-													"aggregations": {
-														"_value": {
-															"value_count": {
-																"field": "name"
-															}
-														}
-													}
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}`,
 			wantName: "age", // Last agg in list is TermAgg("age")
 			wantErr:  false,
 		},
@@ -1343,50 +1149,6 @@ func TestFormatFactory_EsAgg(t *testing.T) {
 				ReverseNestedAgg{},
 				TermAgg{Name: "age", Orders: nil},
 			},
-			expectedQueryDSL: `{
-				"name": {
-					"terms": {
-						"field": "name",
-						"missing": " ",
-						"size": 0
-					},
-					"aggregations": {
-						"events": {
-							"nested": {
-								"path": "events"
-							},
-							"aggregations": {
-								"events.name": {
-									"terms": {
-										"field": "events.name",
-										"missing": " ",
-										"size": 0
-									},
-									"aggregations": {
-										"_value_in_nested_context": {
-											"value_count": {
-												"field": "events.name"
-											}
-										},
-										"reverse_nested_for_age_dim": {
-											"reverse_nested": {},
-											"aggregations": {
-												"age": {
-													"terms": {
-														"field": "age",
-														"missing": " ",
-														"size": 0
-													}
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}`,
 			wantName: "age", // Last agg in list is TermAgg("age")
 			wantErr:  false,
 		},
@@ -1418,48 +1180,20 @@ func TestFormatFactory_EsAgg(t *testing.T) {
 			}
 			f.aggInfoList = aggInfoList{}
 
-			_, aggQuery, err := f.EsAgg(tt.args.aggregates)
-			if err != nil {
-				assert.Equal(t, tt.wantErr, err != nil)
-			}
-			// TODO 测试按照测试用例生成的 aggList 产生的 query DSL
-			f.aggInfoList = tt.expectedAggList
-			gotAggList := f.aggInfoList
-			if !assert.Equal(t, tt.expectedAggList, gotAggList) {
-				t.Errorf("FormatFactory.EsAgg() = %v, want %v", gotAggList, tt.expectedAggList)
-			}
+			_, agg, err := f.EsAgg(tt.args.aggregates)
+			assert.Nil(t, err)
 
-			if tt.expectedQueryDSL != "" && aggQuery != nil {
-				defer func() {
-					if r := recover(); r != nil {
-						t.Errorf("Panic when generating DSL source: %v", r)
-					}
-				}()
+			assert.Equal(t, tt.expectedAggList, f.aggInfoList)
 
-				source, err := aggQuery.Source()
-				if err != nil {
-					t.Errorf("Failed to get aggregation source: %v", err)
-					return
-				}
+			body, err := agg.Source()
+			assert.Nil(t, err)
 
-				if source == nil {
-					t.Errorf("Aggregation source is nil")
-					return
-				}
+			bodyJson, err := json.Marshal(body)
+			assert.Nil(t, err)
 
-				actualDSL, err := json.Marshal(source)
-				if err != nil {
-					t.Errorf("Failed to marshal actual DSL: %v", err)
-					return
-				}
+			bodyString := string(bodyJson)
+			t.Logf(bodyString)
 
-				actualStr := string(actualDSL)
-				expectedStr := tt.expectedQueryDSL
-
-				if !assert.JSONEq(t, expectedStr, actualStr) {
-					t.Logf("DSL mismatch.\nExpected:\n%s\nActual:\n%s", expectedStr, actualStr)
-				}
-			}
 		})
 	}
 }

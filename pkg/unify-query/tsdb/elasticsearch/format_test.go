@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	elastic "github.com/olivere/elastic/v7"
+	"github.com/olivere/elastic/v7"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
@@ -115,26 +115,50 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"must":[{"match_phrase":{"key-1":{"query":"val-1"}}},{"match_phrase":{"key-2":{"query":"val-2"}}},{"match_phrase":{"key-3":{"query":"val-3"}}}]}}}`,
 		},
+		"query with prefix and suffix": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "key-1",
+						Value:         []string{"val-1"},
+						Operator:      structured.ConditionEqual,
+						IsPrefix:      true,
+					},
+					{
+						DimensionName: "key-2",
+						Value:         []string{"val-2"},
+						Operator:      structured.ConditionEqual,
+						IsSuffix:      true,
+					},
+					{
+						DimensionName: "key-3",
+						Value:         []string{"val-3"},
+						Operator:      structured.ConditionEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":[{"match_phrase_prefix":{"key-1":{"query":"val-1"}}},{"match_phrase":{"key-2":{"query":"val-2"}}},{"match_phrase":{"key-3":{"query":"val-3"}}}]}}}`,
+		},
 		"nested query": {
 			conditions: metadata.AllConditions{
 				{
 					{
-						DimensionName: "nested.key",
+						DimensionName: "nested1.key",
 						Value:         []string{"val-1", "val-2"},
 						Operator:      structured.ConditionContains,
 					},
 					{
-						DimensionName: "nested.key",
+						DimensionName: "nested1.key",
 						Value:         []string{"val-3"},
 						Operator:      structured.ConditionEqual,
 					},
 					{
-						DimensionName: "nested.key",
+						DimensionName: "nested1.key",
 						Operator:      structured.ConditionExisted,
 					},
 				},
 			},
-			expected: `{"query":{"nested":{"path":"nested","query":{"bool":{"must":[{"bool":{"should":[{"wildcard":{"nested.key":{"value":"val-1"}}},{"wildcard":{"nested.key":{"value":"val-2"}}}]}},{"match_phrase":{"nested.key":{"query":"val-3"}}},{"exists":{"field":"nested.key"}}]}}}}}`,
+			expected: `{"query":{"nested":{"query":{"bool":{"must":[{"bool":{"should":[{"wildcard":{"nested1.key":{"value":"*val-1*"}}},{"wildcard":{"nested1.key":{"value":"*val-2*"}}}]}},{"match_phrase":{"nested1.key":{"query":"val-3"}}},{"exists":{"field":"nested1.key"}}]}},"path":"nested1"}}}`,
 		},
 		"keyword and text check wildcard": {
 			conditions: metadata.AllConditions{
@@ -182,14 +206,200 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"exists":{"field":"key-1"}}}},{"exists":{"field":"key-2"}}]}}}`,
 		},
+		"combine nested and normal query in one group": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"test"},
+						Operator:      structured.ConditionEqual,
+					},
+					{
+						DimensionName: "nested1.key",
+						Value:         []string{"val-1"},
+						Operator:      structured.ConditionEqual,
+					},
+				},
+				{
+					{
+						DimensionName: "text",
+						Value:         []string{"test"},
+						Operator:      structured.ConditionContains,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"keyword":{"query":"test"}}},{"nested":{"query":{"match_phrase":{"nested1.key":{"query":"val-1"}}},"path":"nested1"}}]}},{"match_phrase":{"text":{"query":"test"}}}]}}}`,
+		},
+		"multiple nested fields in same condition group": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "nested1.name",
+						Value:         []string{"test-user"},
+						Operator:      structured.ConditionEqual,
+					},
+					{
+						DimensionName: "nested2.city",
+						Value:         []string{"Shanghai"},
+						Operator:      structured.ConditionEqual,
+					},
+					{
+						DimensionName: "keyword",
+						Value:         []string{"normal-field"},
+						Operator:      structured.ConditionEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":[{"match_phrase":{"keyword":{"query":"normal-field"}}},{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.name":{"query":"test-user"}}}}},{"nested":{"path":"nested2","query":{"match_phrase":{"nested2.city":{"query":"Shanghai"}}}}}]}}}`,
+		},
+		"nested fields in different condition groups": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "nested1.name",
+						Value:         []string{"test-user"},
+						Operator:      structured.ConditionEqual,
+					},
+					{
+						DimensionName: "keyword",
+						Value:         []string{"group1"},
+						Operator:      structured.ConditionEqual,
+					},
+				},
+				{
+					{
+						DimensionName: "nested2.city",
+						Value:         []string{"Shanghai"},
+						Operator:      structured.ConditionEqual,
+					},
+					{
+						DimensionName: "text",
+						Value:         []string{"group2"},
+						Operator:      structured.ConditionContains,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"keyword":{"query":"group1"}}},{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.name":{"query":"test-user"}}}}}]}},{"bool":{"must":[{"match_phrase":{"text":{"query":"group2"}}},{"nested":{"path":"nested2","query":{"match_phrase":{"nested2.city":{"query":"Shanghai"}}}}}]}}]}}}`,
+		},
+		"nested fields with different levels": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "nested3.nestedChild.key",
+						Value:         []string{"value"},
+						Operator:      structured.ConditionEqual,
+					},
+					{
+						DimensionName: "nested3.annotations",
+						Operator:      structured.ConditionExisted,
+					},
+					{
+						DimensionName: "keyword",
+						Value:         []string{"test"},
+						Operator:      structured.ConditionEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":[{"match_phrase":{"keyword":{"query":"test"}}},{"nested":{"path":"nested3","query":{"exists":{"field":"nested3.annotations"}}}},{"nested":{"query":{"match_phrase":{"nested3.nestedChild.key":{"query":"value"}}},"path":"nested3.nestedChild"}}]}}}`,
+		},
+		"mixed nested and normal queries with different operators": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "nested1.age",
+						Value:         []string{"18"},
+						Operator:      structured.ConditionGte,
+					},
+					{
+						DimensionName: "nested1.active",
+						Operator:      structured.ConditionExisted,
+					},
+					{
+						DimensionName: "keyword",
+						Value:         []string{"value1", "value2"},
+						Operator:      structured.ConditionNotEqual,
+					},
+					{
+						DimensionName: "text",
+						Value:         []string{"partial"},
+						Operator:      structured.ConditionContains,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":[{"match_phrase":{"keyword":{"query":"value1"}}},{"match_phrase":{"keyword":{"query":"value2"}}}]}},{"match_phrase":{"text":{"query":"partial"}}},{"nested":{"path":"nested1","query":{"bool":{"must":[{"range":{"nested1.age":{"from":"18","include_lower":true,"include_upper":true,"to":null}}},{"exists":{"field":"nested1.active"}}]}}}}]}}}`,
+		},
+		"nested + must_not": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "nested1.age",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+				},
+			},
+			expected: `{
+  "query" : {
+    "nested" : {
+      "path" : "nested1",
+      "query" : {
+        "exists" : {
+          "field" : "nested1.age"
+        }
+      }
+    }
+  }
+}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			mappings := []map[string]any{
 				{
 					"properties": map[string]any{
-						"nested": map[string]any{
+						"nested1": map[string]any{
 							"type": "nested",
+							"properties": map[string]any{
+								"key": map[string]any{
+									"type": "keyword",
+								},
+								"name": map[string]any{
+									"type": "keyword",
+								},
+								"age": map[string]any{
+									"type": "long",
+								},
+								"active": map[string]any{
+									"type": "boolean",
+								},
+							},
+						},
+						"nested2": map[string]any{
+							"type": "nested",
+							"properties": map[string]any{
+								"city": map[string]any{
+									"type": "keyword",
+								},
+								"street": map[string]any{
+									"type": "keyword",
+								},
+							},
+						},
+						"nested3": map[string]any{
+							"type": "nested",
+							"properties": map[string]any{
+								"annotations": map[string]any{
+									"type": "keyword",
+								},
+								"nestedChild": map[string]any{
+									"type": "nested",
+									"properties": map[string]any{
+										"key": map[string]any{
+											"type": "keyword",
+										},
+									},
+								},
+							},
 						},
 						"keyword": map[string]any{
 							"type": "keyword",
@@ -343,7 +553,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					TimeZone:   "Asia/ShangHai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1m","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"60ms","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 		"aggregate millisecond int field": {
 			timeField: metadata.TimeField{
@@ -448,6 +658,201 @@ func TestFormatFactory_AggDataFormat(t *testing.T) {
 			assert.NoError(t, err)
 
 			assert.JSONEq(t, string(outTs), c.expected)
+		})
+	}
+}
+
+func TestToFixInterval(t *testing.T) {
+	tests := []struct {
+		name      string
+		timeUnit  string
+		window    time.Duration
+		want      string
+		wantError bool
+	}{
+		{
+			name:     "second unit should error",
+			timeUnit: function.Second,
+			window:   time.Second,
+			want:     "1ms",
+		},
+		{
+			name:      "window less than 1 should error",
+			timeUnit:  function.Millisecond,
+			window:    time.Microsecond, // 0.001ms
+			wantError: true,
+		},
+		{
+			name:     "microsecond unit conversion",
+			timeUnit: function.Microsecond,
+			window:   time.Millisecond, // 1ms = 1000us
+			want:     "1s",
+		},
+		{
+			name:     "nanosecond unit conversion",
+			timeUnit: function.Nanosecond,
+			window:   time.Millisecond, // 1ms = 1000000ns
+			want:     "1000s",
+		},
+		{
+			name:     "microsecond unit no conversion",
+			timeUnit: function.Microsecond,
+			window:   time.Minute,
+			want:     "1000m",
+		},
+		{
+			name:     "microsecond unit no conversion",
+			timeUnit: function.Microsecond,
+			window:   time.Hour * 6,
+			want:     "250d", // 250d = 6000h
+		},
+		{
+			name:     "nanosecond unit no conversion",
+			timeUnit: function.Nanosecond,
+			window:   time.Minute,
+			want:     "1000000m",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &FormatFactory{
+				timeField: metadata.TimeField{
+					Unit: tt.timeUnit,
+				},
+			}
+
+			got, err := f.toFixInterval(tt.window)
+			if (err != nil) != tt.wantError {
+				t.Errorf("toFixInterval() error = %v, wantError %v", err, tt.wantError)
+				return
+			}
+			if !tt.wantError && got != tt.want {
+				t.Errorf("toFixInterval() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildQuery(t *testing.T) {
+	var start = time.Unix(1721024820, 0)
+	var end = time.Unix(1721046420, 0)
+	var timeFormat = function.Second
+
+	for name, c := range map[string]struct {
+		query     *metadata.Query
+		timeField metadata.TimeField
+		expected  string
+		err       error
+	}{
+		"collapse with other aggregations": {
+			query: &metadata.Query{
+				Aggregates: metadata.Aggregates{
+					{
+						Name:       "count",
+						Dimensions: []string{"gseIndex"},
+						Window:     time.Hour,
+						TimeZone:   "Asia/ShangHai",
+					},
+				},
+				Collapse: &metadata.Collapse{
+					Field: "gseIndex",
+				},
+			},
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: TimeFieldTypeTime,
+				Unit: function.Second,
+			},
+
+			expected: `{
+	"aggregations": {
+		"gseIndex": {
+			"aggregations": {
+				"time": {
+					"aggregations": {
+						"_value": {
+							"value_count": {
+								"field": "value"
+							}
+						}
+					},
+					"date_histogram": {
+						"extended_bounds": {
+							"max": 1721046420,
+							"min": 1721024820
+						},
+						"field": "time",
+						"interval": "1h",
+						"min_doc_count": 0,
+						"time_zone": "Asia/ShangHai"
+					}
+				}
+			},
+			"terms": {
+				"field": "gseIndex",
+				"missing": " "
+			}
+		}
+	},
+	"collapse": {
+		"field": "gseIndex"
+	},
+	"query": {
+		"bool": {
+			"filter": {
+				"range": {
+					"time": {
+						"from": 1721024820,
+						"include_lower": true,
+						"include_upper": true,
+						"to": 1721046420
+					}
+				}
+			}
+		}
+	},
+	"size": 0
+}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := metadata.InitHashID(context.Background())
+			fact := NewFormatFactory(ctx).
+				WithQuery("value", c.timeField, start, end, timeFormat, 0).
+				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
+
+			filterQueries := []elastic.Query{
+				elastic.NewRangeQuery(c.timeField.Name).
+					From(start.Unix()).
+					To(end.Unix()).
+					IncludeLower(true).
+					IncludeUpper(true),
+			}
+
+			ss := elastic.NewSearchSource()
+			esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
+			ss.Query(esQuery).Size(c.query.Size)
+			if c.query.Collapse != nil {
+				ss.Collapse(elastic.NewCollapseBuilder(c.query.Collapse.Field))
+			}
+
+			name, agg, err := fact.EsAgg(c.query.Aggregates)
+			if err != nil {
+				assert.Equal(t, c.err, err)
+				return
+			}
+			ss.Aggregation(name, agg)
+			ss.Size(0)
+
+			body, err := ss.Source()
+			assert.Nil(t, err)
+
+			bodyJson, err := json.Marshal(body)
+			assert.Nil(t, err)
+
+			bodyString := string(bodyJson)
+			assert.JSONEq(t, c.expected, bodyString)
 		})
 	}
 }

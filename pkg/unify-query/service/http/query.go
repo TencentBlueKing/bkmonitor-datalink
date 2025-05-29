@@ -158,6 +158,8 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 }
 
 func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
+	ignoreDimensions := []string{elasticsearch.KeyAddress}
+
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
 
@@ -176,6 +178,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		queryList []*metadata.Query
 		lock      sync.Mutex
 	)
+
+	list = make([]map[string]any, 0)
 
 	// 构建查询路由列表
 	if queryTs.SpaceUid == "" {
@@ -220,10 +224,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		}
 
 		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-		if ql.HighLight != nil {
-			if !ql.HighLight.Enable && queryTs.HighLight.Enable {
-				ql.HighLight = queryTs.HighLight
-			}
+		if ql.HighLight == nil && queryTs.HighLight != nil {
+			ql.HighLight = queryTs.HighLight
 		}
 
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
@@ -250,14 +252,15 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	go func() {
 		defer receiveWg.Done()
 
+		var data []map[string]any
 		for d := range dataCh {
-			list = append(list, d)
+			data = append(data, d)
 		}
 
 		span.Set("query-list-num", len(queryList))
 
 		if len(queryList) > 1 {
-			queryTs.OrderBy.Orders().SortSliceList(list)
+			queryTs.OrderBy.Orders().SortSliceList(data)
 
 			span.Set("query-scroll", queryTs.Scroll)
 			span.Set("query-result-table", queryTs.ResultTableOptions)
@@ -266,19 +269,19 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			if queryTs.Scroll == "" && queryTs.ResultTableOptions.IsCrop() {
 				// 判定是否启用 multi from 特性
 				span.Set("query-multi-from", queryTs.IsMultiFrom)
-				span.Set("list-length", len(list))
+				span.Set("data-length", len(data))
 				span.Set("query-ts-from", queryTs.From)
 				span.Set("query-ts-limit", queryTs.Limit)
 
-				if len(list) > queryTs.Limit {
+				if len(data) > queryTs.Limit {
 					if queryTs.IsMultiFrom {
 						resultTableOptions = queryTs.ResultTableOptions
 						if resultTableOptions == nil {
 							resultTableOptions = make(metadata.ResultTableOptions)
 						}
 
-						list = list[0:queryTs.Limit]
-						for _, l := range list {
+						data = data[0:queryTs.Limit]
+						for _, l := range data {
 							tableID := l[elasticsearch.KeyTableID].(string)
 							address := l[elasticsearch.KeyAddress].(string)
 
@@ -290,10 +293,22 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 							}
 						}
 					} else {
-						list = list[queryTs.From : queryTs.From+queryTs.Limit]
+						data = data[queryTs.From : queryTs.From+queryTs.Limit]
 					}
 				}
 			}
+
+		}
+
+		for _, item := range data {
+			if item == nil {
+				continue
+			}
+
+			for _, ignoreDimension := range ignoreDimensions {
+				delete(item, ignoreDimension)
+			}
+			list = append(list, item)
 		}
 	}()
 
@@ -336,6 +351,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				size, options, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
 				if queryErr != nil {
 					message.WriteString(fmt.Sprintf("query %s:%s is error: %s ", qry.TableID, qry.Fields, queryErr.Error()))
+					return
 				}
 
 				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
@@ -362,11 +378,11 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	return
 }
 
-func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs) (*PromData, error) {
+func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.QueryTs) (*PromData, error) {
 	var (
 		res  any
 		err  error
-		resp = NewPromData(query.ResultColumns)
+		resp = NewPromData(queryTs.ResultColumns)
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-reference")
@@ -376,21 +392,41 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 		span.End(&err)
 	}()
 
-	qStr, _ := json.Marshal(query)
+	qStr, _ := json.Marshal(queryTs)
 	span.Set("query-ts", string(qStr))
 
-	for _, q := range query.QueryList {
-		q.IsReference = true
-		if q.TableID == "" {
+	for _, ql := range queryTs.QueryList {
+		ql.IsReference = true
+
+		// 排序复用
+		ql.OrderBy = queryTs.OrderBy
+
+		// 如果 qry.Step 不存在去外部统一的 step
+		if ql.Step == "" {
+			ql.Step = queryTs.Step
+		}
+
+		// 如果 Limit / From 没有单独指定的话，同时外部指定了的话，使用外部的
+		if ql.Limit == 0 && queryTs.Limit > 0 {
+			ql.Limit = queryTs.Limit
+		}
+		if ql.From == 0 && queryTs.From > 0 {
+			ql.From = queryTs.From
+		}
+
+		if ql.TableID == "" {
 			err = fmt.Errorf("tableID is empty")
 			return nil, err
 		}
 	}
 
-	queryRef, err := query.ToQueryReference(ctx)
-	unit, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
+	queryRef, err := queryTs.ToQueryReference(ctx)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		return nil, err
+	}
+
+	unit, startTime, endTime, err := function.QueryTimestamp(queryTs.Start, queryTs.End)
+	if err != nil {
 		return nil, err
 	}
 
@@ -399,11 +435,14 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	metadata.SetQueryReference(ctx, queryRef)
 
 	var lookBackDelta time.Duration
-	if query.LookBackDelta != "" {
-		lookBackDelta, err = time.ParseDuration(query.LookBackDelta)
+	if queryTs.LookBackDelta != "" {
+		lookBackDelta, err = time.ParseDuration(queryTs.LookBackDelta)
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		// reference 接口背后都使用了存储引擎计算，所以在不特殊指定的情况下，使用 1s 补点逻辑，防止出的数据异常
+		lookBackDelta = time.Second
 	}
 
 	instance := prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
@@ -417,19 +456,25 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	)
 
 	// 只有聚合场景需要对齐
-	if window, windowErr := query.GetMaxWindow(); windowErr == nil && window.Seconds() > 0 {
-		startTime, endTime, step, _, err = structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
+	if window, windowErr := queryTs.GetMaxWindow(); windowErr == nil && window.Hours() > 0 {
+		timezone := "UTC"
+		// 只有按天聚合的时候才启用时区对齐偏移量，否则一律使用 UTC
+		if window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
+			timezone = queryTs.Timezone
+		}
+
+		startTime, endTime, step, _, err = structured.AlignTime(startTime, endTime, queryTs.Step, timezone)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		step = structured.StepParse(query.Step)
+		step = structured.StepParse(queryTs.Step)
 	}
 
-	if query.Instant {
-		res, err = instance.DirectQuery(ctx, query.MetricMerge, startTime)
+	if queryTs.Instant {
+		res, err = instance.DirectQuery(ctx, queryTs.MetricMerge, startTime)
 	} else {
-		res, err = instance.DirectQueryRange(ctx, query.MetricMerge, startTime, endTime, step)
+		res, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, endTime, step)
 	}
 	if err != nil {
 		return nil, err
@@ -474,7 +519,7 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 }
 
 // queryTsToInstanceAndStmt query 结构体转换为 instance 以及 stmt
-func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (instance tsdb.Instance, stmt string, err error) {
+func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) (instance tsdb.Instance, stmt string, err error) {
 	var (
 		lookBackDelta time.Duration
 		promExprOpt   = &structured.PromExprOption{}
@@ -485,37 +530,53 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 		span.End(&err)
 	}()
 
-	queryString, _ := json.Marshal(query)
+	queryString, _ := json.Marshal(queryTs)
 	span.Set("query-ts", queryString)
 
 	// 限制 queryList 是否过长
 	if DefaultQueryListLimit > 0 {
-		if len(query.QueryList) > DefaultQueryListLimit {
+		if len(queryTs.QueryList) > DefaultQueryListLimit {
 			err = fmt.Errorf("the number of query lists cannot be greater than %d", DefaultQueryListLimit)
 		}
 	}
 
 	// 判断是否打开对齐
-	for _, q := range query.QueryList {
-		q.IsReference = false
-		q.AlignInfluxdbResult = AlignInfluxdbResult
+	for _, ql := range queryTs.QueryList {
+		ql.IsReference = false
+		ql.AlignInfluxdbResult = AlignInfluxdbResult
+
+		// 排序复用
+		ql.OrderBy = queryTs.OrderBy
+
+		// 如果 qry.Step 不存在去外部统一的 step
+		if ql.Step == "" {
+			ql.Step = queryTs.Step
+		}
+
+		// 如果 Limit / From 没有单独指定的话，同时外部指定了的话，使用外部的
+		if ql.Limit == 0 && queryTs.Limit > 0 {
+			ql.Limit = queryTs.Limit
+		}
+		if ql.From == 0 && queryTs.From > 0 {
+			ql.From = queryTs.From
+		}
 	}
 
 	// 判断是否指定 LookBackDelta
-	if query.LookBackDelta != "" {
-		lookBackDelta, err = time.ParseDuration(query.LookBackDelta)
+	if queryTs.LookBackDelta != "" {
+		lookBackDelta, err = time.ParseDuration(queryTs.LookBackDelta)
 		if err != nil {
 			return
 		}
 	}
 
 	// 如果 step 为空，则补充默认 step
-	if query.Step == "" {
-		query.Step = promql.GetDefaultStep().String()
+	if queryTs.Step == "" {
+		queryTs.Step = promql.GetDefaultStep().String()
 	}
 
 	// 转换成 queryRef
-	queryRef, err := query.ToQueryReference(ctx)
+	queryRef, err := queryTs.ToQueryReference(ctx)
 	if err != nil {
 		return
 	}
@@ -544,7 +605,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 		}, lookBackDelta, QueryMaxRouting)
 	}
 
-	expr, err := query.ToPromExpr(ctx, promExprOpt)
+	expr, err := queryTs.ToPromExpr(ctx, promExprOpt)
 	if err != nil {
 		return
 	}

@@ -84,6 +84,10 @@ type ConditionField struct {
 	Operator string `json:"op" example:"contains"`
 	// IsWildcard 是否是通配符
 	IsWildcard bool `json:"is_wildcard,omitempty"`
+	// IsPrefix 是否是前缀
+	IsPrefix bool `json:"is_prefix,omitempty"`
+	// IsSuffix 是否是后缀
+	IsSuffix bool `json:"is_suffix,omitempty"`
 }
 
 // String

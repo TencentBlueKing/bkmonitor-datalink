@@ -35,7 +35,7 @@ tasks: {% for task in tasks %}
       target_type: {{ host.target_type | default("ip", true)}}
       {%- if host.labels %}
       labels:{% for k, v in host.labels.items()%}
-        {{ k }}: {{ v }}{% endfor %}{% endif %}{% endfor %}
+        {{ k }}: "{{ v }}"{% endfor %}{% endif %}{% endfor %}
    {% for host in task.target_hosts or get_hosts_by_node(config_hosts) %}
     - target: {{ host.ip}}
       target_type: {{ host.target_type | default('ip', true)}}{% endfor %}

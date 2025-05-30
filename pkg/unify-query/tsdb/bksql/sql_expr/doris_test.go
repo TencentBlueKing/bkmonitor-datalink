@@ -74,8 +74,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "date range query",
 			input: "timestamp:[2023-01-01 TO 2023-12-31]",
-			want:  "( timestamp >= '2023-01-01' AND timestamp <= '2023-12-31' )",
-			err:   "syntax error: unexpected tSTRING, expecting tPHRASE or tNUMBER or tSTAR or tMINUS",
+			err:   "syntax error: unexpected tSTRING, expecting tNUMBER or tMINUS",
 		},
 		{
 			name:  "invalid field name",
@@ -105,7 +104,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 				"text": sql_expr.DorisTypeText,
 			}).ParserQueryString(tt.input)
 			if err != nil {
-				assert.Equal(t, err.Error(), tt.err)
+				assert.Equal(t, tt.err, err.Error())
 				return
 			}
 

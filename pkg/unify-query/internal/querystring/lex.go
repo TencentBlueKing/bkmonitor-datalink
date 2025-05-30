@@ -16,7 +16,6 @@ package querystring
 
 import (
 	"bufio"
-	"bytes"
 	"io"
 	"strings"
 	"unicode"
@@ -109,7 +108,7 @@ func startState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
 	switch next {
 	case '"', '/':
 		return inPhraseState, true
-	case '+', '-', ':', '>', '<', '=', '(', ')', '[', ']', '{', '}', '*':
+	case '+', '-', ':', '>', '<', '=', '(', ')', '[', ']', '{', '}':
 		l.buf += string(next)
 		return singleCharOpState, true
 	}
@@ -169,57 +168,39 @@ func inPhraseState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
 func singleCharOpState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
 	l.nextToken = &yySymType{}
 
-	var msg bytes.Buffer
-	msg.WriteString(l.buf)
-	msg.WriteString(" => ")
 	switch l.buf {
 	case "+":
 		l.nextTokenType = tPLUS
-		msg.WriteString("tPLUS")
 	case "-":
 		l.nextTokenType = tMINUS
-		msg.WriteString("tMINUS")
 	case ":":
 		l.nextTokenType = tCOLON
-		msg.WriteString("tCOLON")
 	case ">":
 		l.nextTokenType = tGREATER
-		msg.WriteString("tGREATER")
 	case "<":
 		l.nextTokenType = tLESS
-		msg.WriteString("tLESS")
 	case "=":
 		l.nextTokenType = tEQUAL
-		msg.WriteString("tEQUAL")
 	case "(":
 		l.nextTokenType = tLEFTBRACKET
-		msg.WriteString("tLEFTBRACKET")
 	case ")":
 		l.nextTokenType = tRIGHTBRACKET
-		msg.WriteString("tRIGHTBRACKET")
 	case "[":
 		l.nextTokenType = tLEFTRANGE
-		msg.WriteString("tLEFTRANGE")
 	case "]":
 		l.nextTokenType = tRIGHTRANGE
-		msg.WriteString("tRIGHTRANGE")
 	case "{":
 		l.nextTokenType = tLEFTBRACES
-		msg.WriteString("tLEFTBRACES")
 	case "}":
 		l.nextTokenType = tRIGHTBRACES
-		msg.WriteString("tRIGHTBRACES")
-	case "*":
-		l.nextTokenType = tSTAR
-		msg.WriteString("tSTAR")
 	}
-	//log.Debugf(context.TODO(), msg.String())
 
 	l.reset()
 	return startState, false
 }
 
 func inNumOrStrState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
+
 	// only a non-escaped space ends the tilde (or eof)
 	if eof || (!l.inEscape && next == ' ' || next == ':' || next == ')' || next == ']' || next == '}') {
 		// end number
@@ -265,10 +246,10 @@ func inNumOrStrState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
 
 func inStrState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
 	// end on non-escped space, colon, tilde, boost (or eof)
-	if eof || (!l.inEscape && (next == ' ' || next == ':' || next == ')' || next == ']')) {
+	if eof || (!l.inEscape && (next == ' ' || next == ':' || next == ')' || next == ']' || next == '}')) {
 		// end string
 		consumed := true
-		if !eof && (next == ':' || next == ')' || next == ']') {
+		if !eof && (next == ':' || next == ')' || next == ']' || next == '}') {
 			consumed = false
 		}
 

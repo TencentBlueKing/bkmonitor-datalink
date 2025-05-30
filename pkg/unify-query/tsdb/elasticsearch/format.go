@@ -842,7 +842,6 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 			nf := f.NestedField(con.DimensionName)
 
 			var q elastic.Query
-			isNestedBefore := false
 			switch con.Operator {
 			case structured.ConditionExisted:
 				q = elastic.NewExistsQuery(key)
@@ -925,16 +924,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 				case structured.ConditionEqual, structured.ConditionContains, structured.ConditionRegEqual:
 					q = f.getQuery(Should, queries...)
 				case structured.ConditionNotEqual, structured.ConditionNotContains, structured.ConditionNotRegEqual:
-					if nf != "" {
-						// 对于嵌套字段，将MustNot放在嵌套查询外层
-						nestedQuery := elastic.NewNestedQuery(nf, f.getQuery(Must, queries...))
-						isNestedBefore = true
-						nestedFields.Add(nf)
-						q = f.getQuery(MustNot, nestedQuery)
-					} else {
-						// 非嵌套字段直接使用MustNot
-						q = f.getQuery(MustNot, queries...)
-					}
+					q = f.getQuery(MustNot, queries...)
 				case structured.ConditionGt, structured.ConditionGte, structured.ConditionLt, structured.ConditionLte:
 					q = f.getQuery(Must, queries...)
 				default:
@@ -945,7 +935,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 		QE:
 			// Add to the appropriate query collection
 			if q != nil {
-				if nf != "" && !isNestedBefore {
+				if nf != "" {
 					nestedFields.Add(nf)
 					nestedQueries[nf] = append(nestedQueries[nf], q)
 				} else {

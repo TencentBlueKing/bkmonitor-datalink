@@ -353,18 +353,6 @@ func TestFormatFactory_Query(t *testing.T) {
   }
 }`,
 		},
-		"nested_must_not_query": {
-			conditions: metadata.AllConditions{
-				[]metadata.ConditionField{
-					{
-						DimensionName: "nested1.key",
-						Operator:      structured.ConditionNotEqual,
-						Value:         []string{""},
-					},
-				},
-			},
-			expected: `{"query":{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":""}}}}}}}}`,
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())

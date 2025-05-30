@@ -17,7 +17,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	// cfg.FilePath = "../../../dist/bmw.yaml"
+	// cfg.FilePath = "../../../bmw_test.yaml"
 	// cfg.InitConfig()
 
 	// m.Run()

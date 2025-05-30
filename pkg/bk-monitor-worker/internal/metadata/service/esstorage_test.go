@@ -23,7 +23,7 @@ import (
 )
 
 func TestEsStorageSvc_ConsulConfig(t *testing.T) {
-	mocker.InitTestDBConfig("../../../dist/bmw.yaml")
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	version := "7.2"
 	schema := "http"
 	clusterInfo := storage.ClusterInfo{

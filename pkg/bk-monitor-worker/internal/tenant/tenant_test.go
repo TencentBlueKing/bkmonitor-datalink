@@ -15,8 +15,16 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
+
+func TestMain(m *testing.M) {
+	mocker.InitTestDBConfig("../../bmw_test.yaml")
+	m.Run()
+}
 
 func TestGetTenantList(t *testing.T) {
 	cfg.EnableMultiTenantMode = false
@@ -29,8 +37,45 @@ func TestGetTenantList(t *testing.T) {
 }
 
 func TestBkBizIdToTenantId(t *testing.T) {
+	db := mysql.GetDBSession().DB
+
+	db.Create(&space.Space{
+		Id:          1,
+		SpaceTypeId: "bkcc",
+		SpaceId:     "1",
+		SpaceName:   "test_space_1",
+		BkTenantId:  "test_tenant_id_1",
+	})
+	db.Create(&space.Space{
+		Id:          2,
+		SpaceTypeId: "bkcc",
+		SpaceId:     "2",
+		SpaceName:   "test_space_2",
+		BkTenantId:  "test_tenant_id_2",
+	})
+	db.Create(&space.Space{
+		Id:          3,
+		SpaceTypeId: "bkci",
+		SpaceId:     "aaa",
+		SpaceName:   "test_space_3",
+		BkTenantId:  "test_tenant_id_3",
+	})
+
 	cfg.EnableMultiTenantMode = false
 	tenantId, err := tenant.GetTenantIdByBkBizId(1)
 	assert.NoError(t, err)
 	assert.Equal(t, tenant.DefaultTenantId, tenantId)
+
+	cfg.EnableMultiTenantMode = true
+	tenantId, err = tenant.GetTenantIdByBkBizId(1)
+	assert.NoError(t, err)
+	assert.Equal(t, "test_tenant_id_1", tenantId)
+
+	tenantId, err = tenant.GetTenantIdByBkBizId(2)
+	assert.NoError(t, err)
+	assert.Equal(t, "test_tenant_id_2", tenantId)
+
+	tenantId, err = tenant.GetTenantIdByBkBizId(-3)
+	assert.NoError(t, err)
+	assert.Equal(t, "test_tenant_id_3", tenantId)
 }

@@ -10,12 +10,15 @@
 package tenant
 
 import (
+	"errors"
 	"sync"
 	"time"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/user"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
 
 const (
@@ -35,8 +38,22 @@ func GetTenantIdByBkBizId(bkBizId int) (string, error) {
 		return DefaultTenantId, nil
 	}
 
-	// TODO: 从 Space 表中获取租户id
-	return DefaultTenantId, nil
+	// 当业务 id 为负数是，业务 ID 取正等于space.id
+	// 当业务 id 为正数是，空间类型为 bkcc, space.space_id 等于业务 id
+	spaces := make([]space.Space, 0)
+	db := mysql.GetDBSession().DB
+	if bkBizId < 0 {
+		db.Where("id = ?", -bkBizId).Find(&spaces)
+	} else {
+		db.Where("space_id = ?", bkBizId).Where("space_type_id = ?", "bkcc").Find(&spaces)
+	}
+	if len(spaces) == 0 {
+		return DefaultTenantId, nil
+	}
+	if len(spaces) > 1 {
+		return DefaultTenantId, errors.New("multiple spaces found")
+	}
+	return spaces[0].BkTenantId, nil
 }
 
 // GetTenantList

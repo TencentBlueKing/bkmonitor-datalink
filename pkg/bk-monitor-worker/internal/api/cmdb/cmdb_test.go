@@ -20,7 +20,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	// config.FilePath = "../../../dist/bmw.yaml"
+	// config.FilePath = "../../../bmw_test.yaml"
 	// config.InitConfig()
 
 	// m.Run()

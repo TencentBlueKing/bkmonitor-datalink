@@ -167,7 +167,7 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 	}
 
 	// 更新模块缓存
-	if moduleCacheData != nil {
+	if len(moduleCacheData) > 0 {
 		err = m.UpdateHashMapCache(ctx, m.GetCacheKey(moduleCacheKey), moduleCacheData)
 		if err != nil {
 			return errors.Wrapf(err, "refresh module cache by biz: %d failed", bizID)
@@ -176,7 +176,7 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 	}
 
 	// 更新服务模板关联的模块缓存
-	if templateToModules != nil {
+	if len(templateToModules) > 0 {
 		serviceTemplateCacheData := make(map[string]string)
 		for templateID, moduleIDs := range templateToModules {
 			serviceTemplateCacheData[templateID] = fmt.Sprintf("[%s]", strings.Join(moduleIDs, ","))

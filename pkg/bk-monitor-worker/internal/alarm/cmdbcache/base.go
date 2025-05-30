@@ -174,11 +174,8 @@ func (c *BaseCacheManager) UpdateHashMapCache(ctx context.Context, key string, d
 	client := c.RedisClient
 
 	// 初始化更新字段集合
-	updatedFieldSet, ok := c.updatedFieldSet[key]
-	if !ok {
-		return errors.Errorf("key %s not found in updatedFieldSet", key)
-	}
-	lock, _ := c.updateFieldLocks[key]
+	updatedFieldSet := c.updatedFieldSet[key]
+	lock := c.updateFieldLocks[key]
 
 	// 执行更新
 	pipeline := client.Pipeline()
@@ -210,8 +207,8 @@ func (c *BaseCacheManager) DeleteMissingHashMapFields(ctx context.Context, key s
 	client := c.RedisClient
 
 	// 获取已更新的字段，如果不存在则删除
-	updatedFieldSet, ok := c.updatedFieldSet[key]
-	if !ok || len(updatedFieldSet) == 0 {
+	updatedFieldSet := c.updatedFieldSet[key]
+	if len(updatedFieldSet) == 0 {
 		client.Del(ctx, key)
 		return nil
 	}

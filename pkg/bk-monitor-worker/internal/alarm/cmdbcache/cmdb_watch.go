@@ -199,8 +199,8 @@ func (w *CmdbResourceWatcher) Run(ctx context.Context) {
 					return
 				default:
 					// 如果上次监听时间小于5秒且监听无事件，则等待到5秒
-					if !haveEvent && time.Now().Sub(lastTime) < time.Second*5 {
-						time.Sleep(time.Second*5 - time.Now().Sub(lastTime))
+					if !haveEvent && time.Since(lastTime) < time.Second*5 {
+						time.Sleep(time.Second*5 - time.Since(lastTime))
 					}
 
 					haveEvent, err = w.Watch(ctx, resourceType)
@@ -356,7 +356,7 @@ func (h *CmdbEventHandler) ifRunRefreshAll(ctx context.Context, cacheType string
 	}
 	var lastUpdateTimestamp int64
 	if lastUpdateTime != "" {
-		lastUpdateTimestamp, err = strconv.ParseInt(lastUpdateTime, 10, 64)
+		lastUpdateTimestamp, _ = strconv.ParseInt(lastUpdateTime, 10, 64)
 	} else {
 		lastUpdateTimestamp = 0
 	}

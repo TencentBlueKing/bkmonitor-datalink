@@ -211,6 +211,9 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 
 	// 空间查询
 	spaces, err := getSpaceList()
+	if err != nil {
+		return errors.Wrap(err, "failed to get spaces")
+	}
 
 	// 将空间信息转换为业务信息
 	var bkBizId int

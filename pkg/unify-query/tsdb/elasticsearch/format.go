@@ -675,8 +675,9 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			curAgg := elastic.NewDateHistogramAggregation().
 				Field(f.timeField.Name).Interval(interval).MinDocCount(0).
 				ExtendedBounds(f.timeFieldUnix(f.start), f.timeFieldUnix(f.end))
+
 			// https://github.com/elastic/elasticsearch/issues/42270 非date类型不支持timezone, time format也无效
-			if f.timeField.Type == TimeFieldTypeTime {
+			if f.timeField.Type == TimeFieldTypeTime && function.IsAlignTime(info.Window) {
 				curAgg = curAgg.TimeZone(info.Timezone)
 			}
 			if agg != nil {

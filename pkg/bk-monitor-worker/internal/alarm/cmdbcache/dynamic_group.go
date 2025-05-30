@@ -46,8 +46,8 @@ type DynamicGroupCacheManager struct {
 }
 
 // NewDynamicGroupCacheManager 创建动态分组缓存管理器
-func NewDynamicGroupCacheManager(prefix string, opt *redis.Options, concurrentLimit int) (*DynamicGroupCacheManager, error) {
-	base, err := NewBaseCacheManager(prefix, opt, concurrentLimit)
+func NewDynamicGroupCacheManager(bkTenantId string, prefix string, opt *redis.Options, concurrentLimit int) (*DynamicGroupCacheManager, error) {
+	base, err := NewBaseCacheManager(bkTenantId, prefix, opt, concurrentLimit)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create base cache Manager")
 	}
@@ -74,10 +74,10 @@ func getDynamicGroupTypeFields(dynamicGroupType string) string {
 }
 
 // getDynamicGroup 获取动态分组
-func getDynamicGroupRelatedIds(ctx context.Context, bizID int, dynamicGroupID string, dynamicGroupType string) ([]int, error) {
-	cmdbApi, err := api.GetCmdbApi()
+func getDynamicGroupRelatedIds(ctx context.Context, bkTenantId string, bizID int, dynamicGroupID string, dynamicGroupType string) ([]int, error) {
+	cmdbApi, err := api.GetCmdbApi(bkTenantId)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "GetCmdbApi failed, bkTenantId: %s", bkTenantId)
 	}
 
 	// 根据动态分组类型获取对应的资源ID字段
@@ -132,10 +132,10 @@ func getDynamicGroupRelatedIds(ctx context.Context, bizID int, dynamicGroupID st
 }
 
 // getDynamicGroupList 获取动态分组列表
-func getDynamicGroupList(ctx context.Context, bizID int) (map[string]map[string]interface{}, error) {
-	cmdbApi, err := api.GetCmdbApi()
+func getDynamicGroupList(ctx context.Context, bkTenantId string, bizID int) (map[string]map[string]interface{}, error) {
+	cmdbApi, err := api.GetCmdbApi(bkTenantId)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "GetCmdbApi failed, bkTenantId: %s", bkTenantId)
 	}
 
 	result, err := api.BatchApiRequest(
@@ -175,7 +175,7 @@ func getDynamicGroupList(ctx context.Context, bizID int) (map[string]map[string]
 		}
 
 		for _, dg := range res.Data.Info {
-			relatedIDs, err := getDynamicGroupRelatedIds(ctx, bizID, dg.ID, dg.BkObjId)
+			relatedIDs, err := getDynamicGroupRelatedIds(ctx, bkTenantId, bizID, dg.ID, dg.BkObjId)
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to get dynamic group related ids")
 			}
@@ -195,7 +195,7 @@ func getDynamicGroupList(ctx context.Context, bizID int) (map[string]map[string]
 
 // RefreshByBiz 更新业务下的动态分组缓存
 func (m *DynamicGroupCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
-	dynamicGroupToRelatedIDs, err := getDynamicGroupList(ctx, bizID)
+	dynamicGroupToRelatedIDs, err := getDynamicGroupList(ctx, m.GetBkTenantId(), bizID)
 	if err != nil {
 		return errors.Wrap(err, "failed to get dynamic group list")
 	}

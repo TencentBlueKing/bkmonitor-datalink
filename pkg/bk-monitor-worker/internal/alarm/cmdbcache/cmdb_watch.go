@@ -82,7 +82,7 @@ func buildRedisKey(bkTenantId, prefix string, keyType redisKeyPrefix, suffix str
 		return fmt.Sprintf("%s.%s.%s", prefix, keyType, suffix)
 	}
 	// 其他租户包含租户ID
-	return fmt.Sprintf("%s.%s.%s.%s", prefix, keyType, bkTenantId, suffix)
+	return fmt.Sprintf("%s.%s.%s.%s", bkTenantId, prefix, keyType, suffix)
 }
 
 // CmdbResourceWatcher cmdb资源监听器

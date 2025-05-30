@@ -66,8 +66,29 @@ var CmdbResourceTypeFields = map[CmdbResourceType][]string{
 	CmdbResourceTypeProcess:          {"bk_biz_id"},
 }
 
+// Redis Key 前缀
+type redisKeyPrefix string
+
+const (
+	RedisKeyPrefixCmdbResourceWatchCursor redisKeyPrefix = "cmdb_resource_watch_cursor"
+	RedisKeyPrefixCmdbResourceWatchEvent  redisKeyPrefix = "cmdb_resource_watch_event"
+	RedisKeyPrefixCmdbLastRefreshAllTime  redisKeyPrefix = "cmdb_last_refresh_all_time"
+)
+
+// buildRedisKey 构建带租户ID的Redis key，默认租户保持向前兼容
+func buildRedisKey(bkTenantId, prefix string, keyType redisKeyPrefix, suffix string) string {
+	if bkTenantId == "" || bkTenantId == tenant.DefaultTenantId {
+		// 默认租户向前兼容，保持原有key格式
+		return fmt.Sprintf("%s.%s.%s", prefix, keyType, suffix)
+	}
+	// 其他租户包含租户ID
+	return fmt.Sprintf("%s.%s.%s.%s", prefix, keyType, bkTenantId, suffix)
+}
+
 // CmdbResourceWatcher cmdb资源监听器
 type CmdbResourceWatcher struct {
+	// 租户ID
+	bkTenantId string
 	// 缓存key前缀
 	prefix string
 	// cmdb api client
@@ -89,6 +110,7 @@ func NewCmdbResourceWatcher(bkTenantId string, prefix string, rOpt *redis.Option
 	cmdbApi := getCmdbApi(bkTenantId)
 
 	return &CmdbResourceWatcher{
+		bkTenantId:  bkTenantId,
 		prefix:      prefix,
 		redisClient: redisClient,
 		cmdbApi:     cmdbApi,
@@ -99,7 +121,7 @@ func NewCmdbResourceWatcher(bkTenantId string, prefix string, rOpt *redis.Option
 // getBkCursor 获取cmdb资源变更事件游标
 func (w *CmdbResourceWatcher) getBkCursor(ctx context.Context, resourceType CmdbResourceType) string {
 	// 从redis中获取cmdb资源变更游标
-	bkCursorKey := fmt.Sprintf("%s.cmdb_resource_watch_cursor.%s", w.prefix, resourceType)
+	bkCursorKey := buildRedisKey(w.bkTenantId, w.prefix, RedisKeyPrefixCmdbResourceWatchCursor, string(resourceType))
 	bkCursorResult := w.redisClient.Get(ctx, bkCursorKey)
 	if bkCursorResult.Err() != nil {
 		if !errors.Is(bkCursorResult.Err(), redis.Nil) {
@@ -113,7 +135,7 @@ func (w *CmdbResourceWatcher) getBkCursor(ctx context.Context, resourceType Cmdb
 // setBkCursor 记录cmdb资源变更事件游标
 func (w *CmdbResourceWatcher) setBkCursor(ctx context.Context, resourceType CmdbResourceType, cursor string) error {
 	// 设置cmdb资源变更游标
-	bkCursorKey := fmt.Sprintf("%s.cmdb_resource_watch_cursor.%s", w.prefix, resourceType)
+	bkCursorKey := buildRedisKey(w.bkTenantId, w.prefix, RedisKeyPrefixCmdbResourceWatchCursor, string(resourceType))
 	if _, err := w.redisClient.Set(ctx, bkCursorKey, cursor, time.Hour).Result(); err != nil {
 		return errors.Wrap(err, "set cmdb resource watch cursor error")
 	}
@@ -165,7 +187,7 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 		val, _ := json.Marshal(event)
 		events = append(events, string(val))
 	}
-	bkEventKey := fmt.Sprintf("%s.cmdb_resource_watch_event.%s", w.prefix, resourceType)
+	bkEventKey := buildRedisKey(w.bkTenantId, w.prefix, RedisKeyPrefixCmdbResourceWatchEvent, string(resourceType))
 	w.redisClient.RPush(ctx, bkEventKey, events)
 
 	// 记录最后一个cmdb资源变更事件游标
@@ -308,7 +330,7 @@ func (h *CmdbEventHandler) Close() {
 // getBkEvents 获取全部资源变更事件
 func (h *CmdbEventHandler) getBkEvents(ctx context.Context, resourceType CmdbResourceType) ([]cmdb.ResourceWatchEvent, error) {
 	// 获取资源变更事件
-	bkEventKey := fmt.Sprintf("%s.cmdb_resource_watch_event.%s", h.prefix, resourceType)
+	bkEventKey := buildRedisKey(h.bkTenantId, h.prefix, RedisKeyPrefixCmdbResourceWatchEvent, string(resourceType))
 
 	// 从redis中获取该资源类型的所有事件
 	eventStrings := make([]string, 0)
@@ -346,7 +368,7 @@ func (h *CmdbEventHandler) getBkEvents(ctx context.Context, resourceType CmdbRes
 // ifRunRefreshAll 判断是否执行全量刷新
 func (h *CmdbEventHandler) ifRunRefreshAll(ctx context.Context, cacheType string) bool {
 	// 获取最后一次全量刷新时间
-	lastUpdateTimeKey := fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, cacheType)
+	lastUpdateTimeKey := buildRedisKey(h.bkTenantId, h.prefix, RedisKeyPrefixCmdbLastRefreshAllTime, cacheType)
 	lastUpdateTime, err := h.redisClient.Get(ctx, lastUpdateTimeKey).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
@@ -382,7 +404,7 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 		logger.Infof("refresh all cmdb resource(%s) cache", h.cacheManager.Type())
 
 		// 记录全量刷新时间
-		lastUpdateTimeKey := fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, h.cacheManager.Type())
+		lastUpdateTimeKey := buildRedisKey(h.bkTenantId, h.prefix, RedisKeyPrefixCmdbLastRefreshAllTime, h.cacheManager.Type())
 		_, err = h.redisClient.Set(ctx, lastUpdateTimeKey, strconv.FormatInt(time.Now().Unix(), 10), 24*time.Hour).Result()
 		if err != nil {
 			logger.Errorf("set last update time error: %v", err)

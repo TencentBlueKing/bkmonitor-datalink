@@ -39,6 +39,8 @@ const (
 	DefaultTimeFieldType = TimeFieldTypeTime
 	DefaultTimeFieldUnit = function.Millisecond
 
+	DefaultReverseAggName = "reverse_nested"
+
 	Type       = "type"
 	Properties = "properties"
 
@@ -158,6 +160,10 @@ type TermAgg struct {
 	Orders metadata.Orders
 }
 
+type ReverNested struct {
+	Name string
+}
+
 type NestedAgg struct {
 	Name string
 }
@@ -176,6 +182,8 @@ type FormatFactory struct {
 	mapping map[string]string
 	data    map[string]any
 
+	nestedPathSet *set.Set[string]
+
 	aggInfoList aggInfoList
 	orders      metadata.Orders
 
@@ -191,9 +199,10 @@ type FormatFactory struct {
 
 func NewFormatFactory(ctx context.Context) *FormatFactory {
 	f := &FormatFactory{
-		ctx:         ctx,
-		mapping:     make(map[string]string),
-		aggInfoList: make(aggInfoList, 0),
+		ctx:           ctx,
+		mapping:       make(map[string]string),
+		aggInfoList:   make(aggInfoList, 0),
+		nestedPathSet: set.New[string](),
 
 		// default encode / decode
 		encode: func(k string) string {
@@ -402,14 +411,15 @@ func (f *FormatFactory) NestedField(field string) string {
 
 func (f *FormatFactory) nestedAgg(key string) {
 	nf := f.NestedField(key)
+
+	var agg any
 	if nf != "" {
-		f.aggInfoList = append(
-			f.aggInfoList, NestedAgg{
-				Name: nf,
-			},
-		)
+		agg = NestedAgg{Name: nf}
+	} else {
+		agg = ReverNested{Name: DefaultReverseAggName}
 	}
 
+	f.aggInfoList = append(f.aggInfoList, agg)
 	return
 }
 
@@ -501,6 +511,49 @@ func (f *FormatFactory) SetData(data map[string]any) {
 	mapData("", data, f.data)
 }
 
+// isNestedPath 检查 path 是否是嵌套路径
+// - 用于对外暴露操作nestedPathSet的方法
+// - 如果是嵌套路径，则返回 true，并且不添加到 nestedPathSet 中
+// - 如果不是嵌套路径，则添加到 nestedPathSet 中，并返回 false
+func (f *FormatFactory) isNestedPath(path string) bool {
+	for _, k := range f.nestedPathSet.ToArray() {
+		if path == k {
+			return true
+		}
+		if strings.HasPrefix(fmt.Sprintf("%s.", k), path) {
+			return true
+		}
+	}
+
+	f.nestedPathSet.Add(path)
+	return false
+}
+
+// aggInfoListWithNested 反向过滤aggInfoList
+// - 如果是 NestedAgg，则检查是否是嵌套路径，如果是，则跳过
+// - 如果是 ReverNested, 则检查外围是否有 NestedAgg，如果没有，则跳过
+func (f *FormatFactory) aggInfoListWithNested() (newAggInfoList aggInfoList) {
+	// 因为我们在生成aggInfoList的时候是从整个ES查询DSL的最内层开始的(如果要AggSubAggregation要保证子聚合在父聚合之前)，
+	// 而且在这个过程我们是没有关心nestedPath的(如果当前操作的字段是嵌套的会直接添加一个NestedAgg否则直接添加ReverNested)，
+	// 所以在这里需要反向过滤掉那些不需要的NestedAgg和ReverNested
+	for i := len(f.aggInfoList) - 1; i >= 0; i-- {
+		aggInfo := f.aggInfoList[i]
+		switch info := aggInfo.(type) {
+		case NestedAgg:
+			if f.isNestedPath(info.Name) {
+				continue
+			}
+		case ReverNested:
+			if f.nestedPathSet.Size() == 0 {
+				continue
+			}
+		}
+		newAggInfoList = append([]any{aggInfo}, newAggInfoList...)
+	}
+
+	return
+}
+
 func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -508,7 +561,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		}
 	}()
 
-	for _, aggInfo := range f.aggInfoList {
+	for _, aggInfo := range f.aggInfoListWithNested() {
 		switch info := aggInfo.(type) {
 		case ValueAgg:
 			switch info.FuncType {
@@ -597,6 +650,14 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				err = fmt.Errorf("valueagg aggregation is not support this type %s, info: %+v", info.FuncType, info)
 				return
 			}
+		case ReverNested:
+			curName := info.Name
+			curAgg := elastic.NewReverseNestedAggregation()
+			if agg != nil {
+				curAgg = curAgg.SubAggregation(name, agg)
+			}
+			agg = curAgg
+			name = curName
 		case TimeAgg:
 			curName := info.Name
 

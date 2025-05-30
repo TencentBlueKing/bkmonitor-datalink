@@ -44,41 +44,61 @@ const (
 )
 
 var (
-	cmdbApiClient     *cmdb.Client
-	cmdbApiClientOnce sync.Once
+	cmdbApiClients     map[string]*cmdb.Client
+	cmdbApiClientMutex sync.RWMutex
 )
+
+func init() {
+	cmdbApiClients = make(map[string]*cmdb.Client)
+}
 
 // getCmdbApi Get cmdb api client instance with lock
 func getCmdbApi(tenantId string) *cmdb.Client {
-	cmdbApiClientOnce.Do(func() {
-		// 判断是否使用网关
-		var endpoint string
-		if cfg.BkApiCmdbApiGatewayUrl != "" {
-			endpoint = cfg.BkApiCmdbApiGatewayUrl
-		} else {
-			endpoint = fmt.Sprintf("%s/api/c/compapi/v2/cc/", cfg.BkApiUrl)
-		}
+	// 首先尝试读锁获取已存在的客户端
+	cmdbApiClientMutex.RLock()
+	if client, exists := cmdbApiClients[tenantId]; exists {
+		cmdbApiClientMutex.RUnlock()
+		return client
+	}
+	cmdbApiClientMutex.RUnlock()
 
-		config := bkapi.ClientConfig{
-			Endpoint:            endpoint,
-			AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
-			AppCode:             cfg.BkApiAppCode,
-			AppSecret:           cfg.BkApiAppSecret,
-			JsonMarshaler:       jsonx.Marshal,
-		}
+	// 如果不存在，获取写锁创建新客户端
+	cmdbApiClientMutex.Lock()
+	defer cmdbApiClientMutex.Unlock()
 
-		var err error
-		cmdbApiClient, err = cmdb.New(
-			config,
-			bkapi.OptJsonBodyProvider(),
-			OptRateLimitResultProvider(cfg.CmdbApiRateLimitQPS, cfg.CmdbApiRateLimitBurst, cfg.CmdbApiRateLimitTimeout),
-			api.NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}),
-		)
-		if err != nil {
-			panic(err)
-		}
-	})
-	return cmdbApiClient
+	// 双重检查，防止在等待写锁期间其他goroutine已经创建了客户端
+	if client, exists := cmdbApiClients[tenantId]; exists {
+		return client
+	}
+
+	// 判断是否使用网关
+	var endpoint string
+	if cfg.BkApiCmdbApiGatewayUrl != "" {
+		endpoint = cfg.BkApiCmdbApiGatewayUrl
+	} else {
+		endpoint = fmt.Sprintf("%s/api/c/compapi/v2/cc/", cfg.BkApiUrl)
+	}
+
+	config := bkapi.ClientConfig{
+		Endpoint:            endpoint,
+		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
+		AppCode:             cfg.BkApiAppCode,
+		AppSecret:           cfg.BkApiAppSecret,
+		JsonMarshaler:       jsonx.Marshal,
+	}
+
+	client, err := cmdb.New(
+		config,
+		bkapi.OptJsonBodyProvider(),
+		OptRateLimitResultProvider(cfg.CmdbApiRateLimitQPS, cfg.CmdbApiRateLimitBurst, cfg.CmdbApiRateLimitTimeout),
+		api.NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	cmdbApiClients[tenantId] = client
+	return client
 }
 
 // Manager 缓存管理器接口

@@ -16,17 +16,20 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
 
 func TestMain(m *testing.M) {
-	// config.FilePath = "../../../dist/bmw.yaml"
+	// config.FilePath = "../../../bmw_test.yaml"
 	// config.InitConfig()
 
 	// m.Run()
 }
 
+var tenantId = tenant.DefaultTenantId
+
 func TestSearchBusiness(t *testing.T) {
-	cmdbApi, err := api.GetCmdbApi()
+	cmdbApi, err := api.GetCmdbApi(tenantId)
 	if err != nil {
 		t.Errorf("TestSearchBusiness failed, err: %v", err)
 		return
@@ -42,7 +45,7 @@ func TestSearchBusiness(t *testing.T) {
 }
 
 func TestSearchCloudArea(t *testing.T) {
-	cmdbApi, err := api.GetCmdbApi()
+	cmdbApi, err := api.GetCmdbApi(tenantId)
 	if err != nil {
 		t.Errorf("TestSearchCloudArea failed, err: %v", err)
 		return
@@ -58,7 +61,7 @@ func TestSearchCloudArea(t *testing.T) {
 }
 
 func TestListBizHostsTopo(t *testing.T) {
-	cmdbApi, err := api.GetCmdbApi()
+	cmdbApi, err := api.GetCmdbApi(tenantId)
 	if err != nil {
 		t.Errorf("TestListBizHostsTopo failed, err: %v", err)
 		return
@@ -82,7 +85,7 @@ func TestListBizHostsTopo(t *testing.T) {
 }
 
 func TestListHostsWithoutBiz(t *testing.T) {
-	cmdbApi, err := api.GetCmdbApi()
+	cmdbApi, err := api.GetCmdbApi(tenantId)
 	if err != nil {
 		t.Errorf("TestListHostsWithoutBiz failed, err: %v", err)
 		return
@@ -106,7 +109,7 @@ func TestListHostsWithoutBiz(t *testing.T) {
 }
 
 func TestFindHostBizRelation(t *testing.T) {
-	cmdbApi, err := api.GetCmdbApi()
+	cmdbApi, err := api.GetCmdbApi(tenantId)
 	if err != nil {
 		t.Errorf("TestFindHostBizRelation failed, err: %v", err)
 		return
@@ -127,7 +130,7 @@ func TestFindHostBizRelation(t *testing.T) {
 }
 
 func TestSearchBizInstTopo(t *testing.T) {
-	cmdbApi, err := api.GetCmdbApi()
+	cmdbApi, err := api.GetCmdbApi(tenantId)
 	if err != nil {
 		t.Errorf("TestSearchBizInstTopo failed, err: %v", err)
 		return
@@ -144,7 +147,7 @@ func TestSearchBizInstTopo(t *testing.T) {
 }
 
 func TestGetBizInternalModule(t *testing.T) {
-	cmdbApi, err := api.GetCmdbApi()
+	cmdbApi, err := api.GetCmdbApi(tenantId)
 	if err != nil {
 		t.Errorf("TestGetBizInternalModule failed, err: %v", err)
 		return
@@ -165,7 +168,7 @@ func TestGetBizInternalModule(t *testing.T) {
 }
 
 func TestSearchObjectAttribute(t *testing.T) {
-	cmdbApi, err := api.GetCmdbApi()
+	cmdbApi, err := api.GetCmdbApi(tenantId)
 	if err != nil {
 		t.Errorf("TestSearchObjectAttribute failed, err: %v", err)
 		return
@@ -186,7 +189,7 @@ func TestSearchObjectAttribute(t *testing.T) {
 }
 
 func TestSearchModule(t *testing.T) {
-	cmdbApi, err := api.GetCmdbApi()
+	cmdbApi, err := api.GetCmdbApi(tenantId)
 	if err != nil {
 		t.Errorf("TestSearchModule failed, err: %v", err)
 		return
@@ -219,7 +222,7 @@ func TestSearchModule(t *testing.T) {
 }
 
 func TestSearchSet(t *testing.T) {
-	cmdbApi, err := api.GetCmdbApi()
+	cmdbApi, err := api.GetCmdbApi(tenantId)
 	if err != nil {
 		t.Errorf("TestSearchSet failed, err: %v", err)
 		return
@@ -241,7 +244,7 @@ func TestSearchSet(t *testing.T) {
 }
 
 func TestListServiceInstanceDetail(t *testing.T) {
-	cmdbApi, err := api.GetCmdbApi()
+	cmdbApi, err := api.GetCmdbApi(tenantId)
 	if err != nil {
 		t.Errorf("TestListServiceInstanceDetail failed, err: %v", err)
 		return
@@ -266,7 +269,7 @@ func TestListServiceInstanceDetail(t *testing.T) {
 }
 
 func TestDynamicGroup(t *testing.T) {
-	cmdbApi, err := api.GetCmdbApi()
+	cmdbApi, err := api.GetCmdbApi(tenantId)
 	if err != nil {
 		t.Errorf("TestSearchDynamicGroup failed, err: %v", err)
 		return

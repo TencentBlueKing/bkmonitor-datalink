@@ -511,26 +511,33 @@ func (f *FormatFactory) SetData(data map[string]any) {
 	mapData("", data, f.data)
 }
 
-func (f *FormatFactory) nestedFieldCheckAgg() (newAggInfoList aggInfoList) {
-	nestedPathCheck := func(path string) bool {
-		for _, k := range f.nestedPathSet.ToArray() {
-			if path == k {
-				return true
-			}
-			if strings.HasPrefix(fmt.Sprintf("%s.", k), path) {
-				return true
-			}
+// isNestedPath 检查 path 是否是嵌套路径
+// - 用于对外暴露操作nestedPathSet的方法
+// - 如果是嵌套路径，则返回 true，并且不添加到 nestedPathSet 中
+// - 如果不是嵌套路径，则添加到 nestedPathSet 中，并返回 false
+func (f *FormatFactory) isNestedPath(path string) bool {
+	for _, k := range f.nestedPathSet.ToArray() {
+		if path == k {
+			return true
 		}
-
-		f.nestedPathSet.Add(path)
-		return false
+		if strings.HasPrefix(fmt.Sprintf("%s.", k), path) {
+			return true
+		}
 	}
 
+	f.nestedPathSet.Add(path)
+	return false
+}
+
+// aggInfoListWithNested 反向过滤aggInfoList
+// - 如果是 NestedAgg，则检查是否是嵌套路径，如果是，则跳过
+// - 如果是 ReverNested, 则检查外围是否有 NestedAgg，如果没有，则跳过
+func (f *FormatFactory) aggInfoListWithNested() (newAggInfoList aggInfoList) {
 	for i := len(f.aggInfoList) - 1; i >= 0; i-- {
 		aggInfo := f.aggInfoList[i]
 		switch info := aggInfo.(type) {
 		case NestedAgg:
-			if nestedPathCheck(info.Name) {
+			if f.isNestedPath(info.Name) {
 				continue
 			}
 		case ReverNested:
@@ -551,9 +558,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		}
 	}()
 
-	newAggInfoList := f.nestedFieldCheckAgg()
-
-	for _, aggInfo := range newAggInfoList {
+	for _, aggInfo := range f.aggInfoListWithNested() {
 		switch info := aggInfo.(type) {
 		case ValueAgg:
 			switch info.FuncType {

@@ -70,7 +70,7 @@ var demoSetStr = `
 `
 
 func TestSetCacheManager(t *testing.T) {
-	patch := gomonkey.ApplyFunc(getSetListByBizID, func(ctx context.Context, bizID int) ([]map[string]interface{}, error) {
+	patch := gomonkey.ApplyFunc(getSetListByBizID, func(ctx context.Context, bkTenantId string, bizID int) ([]map[string]interface{}, error) {
 		demoSets := make([]map[string]interface{}, 0)
 		err := json.Unmarshal([]byte(demoSetStr), &demoSets)
 		if err != nil {

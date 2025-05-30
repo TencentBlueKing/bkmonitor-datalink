@@ -27,10 +27,12 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
@@ -38,30 +40,36 @@ import (
 
 var DemoBusinesses = []map[string]interface{}{
 	{
-		"bk_biz_id":         2.0,
-		"bk_biz_name":       "BlueKing",
-		"bk_biz_developer":  "admin",
-		"bk_biz_productor":  "admin,user1",
-		"bk_biz_tester":     "admin,user1",
-		"bk_biz_maintainer": "admin,user2",
-		"operator":          "admin",
-		"time_zone":         "Asia/Shanghai",
-		"language":          "1",
-		"life_cycle":        "2",
-		"bk_pmp_qa":         "user1,user2",
-		"bk_pmp_qa2":        "user1,user2",
-	},
-	{
-		"bk_biz_id":         3.0,
-		"bk_biz_name":       "Test",
-		"bk_biz_developer":  "user1",
-		"bk_biz_productor":  "user1",
-		"bk_biz_tester":     "user1,user2",
-		"bk_biz_maintainer": "",
-		"operator":          "user1",
-		"time_zone":         "Asia/Shanghai",
-		"language":          "1",
-		"life_cycle":        "2",
+		"data": map[string]interface{}{
+			"info": []interface{}{
+				map[string]interface{}{
+					"bk_biz_id":         2.0,
+					"bk_biz_name":       "BlueKing",
+					"bk_biz_developer":  "admin",
+					"bk_biz_productor":  "admin,user1",
+					"bk_biz_tester":     "admin,user1",
+					"bk_biz_maintainer": "admin,user2",
+					"operator":          "admin",
+					"time_zone":         "Asia/Shanghai",
+					"language":          "1",
+					"life_cycle":        "2",
+					"bk_pmp_qa":         "user1,user2",
+					"bk_pmp_qa2":        "user1,user2",
+				},
+				map[string]interface{}{
+					"bk_biz_id":         3.0,
+					"bk_biz_name":       "Test",
+					"bk_biz_developer":  "user1",
+					"bk_biz_productor":  "user1",
+					"bk_biz_tester":     "user1,user2",
+					"bk_biz_maintainer": "",
+					"operator":          "user1",
+					"time_zone":         "Asia/Shanghai",
+					"language":          "1",
+					"life_cycle":        "2",
+				},
+			},
+		},
 	},
 }
 
@@ -128,6 +136,7 @@ var DemoSpaces = []space.Space{
 		TimeZone:    "Asia/Shanghai",
 		Language:    "zh-hans",
 		IsBcsValid:  false,
+		BkTenantId:  "system",
 	},
 	{
 		Id:          2,
@@ -139,15 +148,20 @@ var DemoSpaces = []space.Space{
 		TimeZone:    "Asia/Shanghai",
 		Language:    "zh-hans",
 		IsBcsValid:  true,
+		BkTenantId:  "system",
 	},
 }
 
 func TestBusinessCacheManager(t *testing.T) {
 	// mock相关接口调用与数据库查询
-	getBusinessListPatch := gomonkey.ApplyFunc(getBusinessList, func(ctx context.Context) ([]map[string]interface{}, error) {
-		return DemoBusinesses, nil
+	batchApiRequestPatch := gomonkey.ApplyFunc(api.BatchApiRequest, func(pageSize int, getTotalFunc func(interface{}) (int, error), getReqFunc func(page int) define.Operation, concurrency int) ([]interface{}, error) {
+		result := make([]interface{}, len(DemoBusinesses))
+		for i, v := range DemoBusinesses {
+			result[i] = v
+		}
+		return result, nil
 	})
-	defer getBusinessListPatch.Reset()
+	defer batchApiRequestPatch.Reset()
 	getBusinessAttributePatch := gomonkey.ApplyFunc(getBusinessAttribute, func(ctx context.Context) ([]cmdb.SearchObjectAttributeData, error) {
 		return BusinessAttrs, nil
 	})

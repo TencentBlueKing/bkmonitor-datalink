@@ -71,7 +71,7 @@ var demoModuleStr = `
 `
 
 func TestModuleCacheManager(t *testing.T) {
-	patch := gomonkey.ApplyFunc(getModuleListByBizID, func(ctx context.Context, bizID int) ([]map[string]interface{}, error) {
+	patch := gomonkey.ApplyFunc(getModuleListByBizID, func(ctx context.Context, bkTenantId string, bizID int) ([]map[string]interface{}, error) {
 		var demoModules []map[string]interface{}
 		err := json.Unmarshal([]byte(demoModuleStr), &demoModules)
 		if err != nil {

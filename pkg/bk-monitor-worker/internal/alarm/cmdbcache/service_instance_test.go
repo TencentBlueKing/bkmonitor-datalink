@@ -60,12 +60,12 @@ var DemoServiceInstances = []*AlarmServiceInstanceInfo{
 
 func TestServiceInstanceCacheManager(t *testing.T) {
 	// mock cmdb api
-	cmdbPatches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bizId int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
+	cmdbPatches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bkTenantId string, bizId int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
 		return DemoHosts, DemoTopoTree, nil
 	})
 	defer cmdbPatches.Reset()
 
-	patches := gomonkey.ApplyFunc(getServiceInstances, func(ctx context.Context, bizID int) ([]*AlarmServiceInstanceInfo, error) {
+	patches := gomonkey.ApplyFunc(getServiceInstances, func(ctx context.Context, bkTenantId string, bizID int) ([]*AlarmServiceInstanceInfo, error) {
 		return DemoServiceInstances, nil
 	})
 	defer patches.Reset()

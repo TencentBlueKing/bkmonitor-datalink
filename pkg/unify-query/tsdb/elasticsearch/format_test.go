@@ -353,6 +353,18 @@ func TestFormatFactory_Query(t *testing.T) {
   }
 }`,
 		},
+		"nested_must_not_query": {
+			conditions: metadata.AllConditions{
+				[]metadata.ConditionField{
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":""}}}}}}}}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
@@ -870,7 +882,7 @@ func TestFactory_Agg(t *testing.T) {
 		"test-1": {
 			aggInfoList: []any{
 				ValueAgg{
-					Name: "_value", FuncType: Count,
+					Name: FieldValue, FuncType: Count,
 				},
 				ReverNested{},
 			},
@@ -988,12 +1000,33 @@ func TestFactory_Agg(t *testing.T) {
 			expected: `{"aggregations":{"country":{"aggregations":{"city":{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"reverse_nested":{"aggregations":{"town":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"terms":{"field":"town","missing":" "}}},"reverse_nested":{}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"terms":{"field":"city","missing":" "}}},"terms":{"field":"country","missing":" "}}}}`,
 		},
 	}
-
+	commonMapping := []map[string]any{
+		{
+			"properties": map[string]any{
+				"name": map[string]any{
+					"type": "keyword",
+				},
+				"age": map[string]any{
+					"type": "integer",
+				},
+				"events": map[string]any{
+					"type": "nested",
+					"properties": map[string]any{
+						"name": map[string]any{
+							"type": "keyword",
+						},
+					},
+				},
+			},
+		},
+	}
 	for idx, c := range testCases {
 		t.Run(idx, func(t *testing.T) {
 			mock.Init()
 			ctx := metadata.InitHashID(context.Background())
-			fact := NewFormatFactory(ctx)
+			fact := NewFormatFactory(ctx).
+				WithMappings(commonMapping...).
+				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
 			fact.valueField = "value"
 			fact.aggInfoList = c.aggInfoList
 			name, agg, err := fact.Agg()
@@ -1046,7 +1079,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 				},
 			},
 			valueField: "events.name",
-			expected:   `{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"_value":{"value_count":{"field":"events.name"}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"query":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":-62135596800,"include_lower":true,"include_upper":true,"to":-62135596800}}}}`,
+			expected:   `{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"_value":{"value_count":{"field":"events.name"}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"size":0}`,
 		},
 		"value nested but dim nonnested": {
 			aggregates: metadata.Aggregates{
@@ -1056,7 +1089,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 				},
 			},
 			valueField: "events.name",
-			expected:   `{"aggregations":{"name":{"aggregations":{"events":{"aggregations":{"_value":{"value_count":{"field":"events.name"}}},"nested":{"path":"events"}}},"terms":{"field":"name","missing":" "}}},"query":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":-62135596800,"include_lower":true,"include_upper":true,"to":-62135596800}}}}`,
+			expected:   `{"aggregations":{"name":{"aggregations":{"events":{"aggregations":{"_value":{"value_count":{"field":"events.name"}}},"nested":{"path":"events"}}},"terms":{"field":"name","missing":" "}}},"size":0}`,
 		},
 		"dims nested but value nonnested": {
 			aggregates: metadata.Aggregates{
@@ -1065,8 +1098,8 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 					Dimensions: []string{"events.name"},
 				},
 			},
-			valueField: "value",
-			expected:   `{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"reverse_nested":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"reverse_nested":{}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"query":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":-62135596800,"include_lower":true,"include_upper":true,"to":-62135596800}}}}`,
+			valueField: "name",
+			expected:   `{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"reverse_nested":{"aggregations":{"_value":{"value_count":{"field":"name"}}},"reverse_nested":{}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"size":0}`,
 		},
 		"dims and value both nonnested": {
 			aggregates: metadata.Aggregates{
@@ -1076,7 +1109,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 				},
 			},
 			valueField: "name",
-			expected:   `{"aggregations":{"name":{"aggregations":{"_value":{"value_count":{"field":"name"}}},"terms":{"field":"name","missing":" "}}},"query":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":-62135596800,"include_lower":true,"include_upper":true,"to":-62135596800}}}}`,
+			expected:   `{"aggregations":{"name":{"aggregations":{"_value":{"value_count":{"field":"name"}}},"terms":{"field":"name","missing":" "}}},"size":0}`,
 		},
 		"dims seq: nested-> nonnested value: nonnested": {
 			aggregates: metadata.Aggregates{
@@ -1086,7 +1119,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 				},
 			},
 			valueField: "name",
-			expected:   `{"aggregations":{"name":{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"reverse_nested":{"aggregations":{"_value":{"value_count":{"field":"name"}}},"reverse_nested":{}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"terms":{"field":"name","missing":" "}}},"query":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":-62135596800,"include_lower":true,"include_upper":true,"to":-62135596800}}}}`,
+			expected:   `{"aggregations":{"name":{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"reverse_nested":{"aggregations":{"_value":{"value_count":{"field":"name"}}},"reverse_nested":{}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"terms":{"field":"name","missing":" "}}},"size":0}`,
 		},
 		"dims seq: nonnested-> nested value: nonnested": {
 			aggregates: metadata.Aggregates{
@@ -1096,7 +1129,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 				},
 			},
 			valueField: "name",
-			expected:   `{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"reverse_nested":{"aggregations":{"name":{"aggregations":{"reverse_nested":{"aggregations":{"_value":{"value_count":{"field":"name"}}},"reverse_nested":{}}},"terms":{"field":"name","missing":" "}}},"reverse_nested":{}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"query":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":-62135596800,"include_lower":true,"include_upper":true,"to":-62135596800}}}}`,
+			expected:   `{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"reverse_nested":{"aggregations":{"name":{"aggregations":{"reverse_nested":{"aggregations":{"_value":{"value_count":{"field":"name"}}},"reverse_nested":{}}},"terms":{"field":"name","missing":" "}}},"reverse_nested":{}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"size":0}`,
 		},
 		"dims seq: nonnested -> nested -> nonnested value: nested": {
 			aggregates: metadata.Aggregates{
@@ -1106,7 +1139,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 				},
 			},
 			valueField: "events.name",
-			expected:   `{"aggregations":{"age":{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"reverse_nested":{"aggregations":{"name":{"aggregations":{"_value":{"value_count":{"field":"events.name"}}},"terms":{"field":"name","missing":" "}}},"reverse_nested":{}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"terms":{"field":"age"}}},"query":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":-62135596800,"include_lower":true,"include_upper":true,"to":-62135596800}}}}`,
+			expected:   `{"aggregations":{"age":{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"reverse_nested":{"aggregations":{"name":{"aggregations":{"_value":{"value_count":{"field":"events.name"}}},"terms":{"field":"name","missing":" "}}},"reverse_nested":{}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"terms":{"field":"age"}}},"size":0}`,
 		},
 		"dims seq: nested -> nonnested -> nested value: nested": {
 			aggregates: metadata.Aggregates{
@@ -1116,7 +1149,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 				},
 			},
 			valueField: "events.name",
-			expected:   `{"aggregations":{"age":{"aggregations":{"name":{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"_value":{"value_count":{"field":"events.name"}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"terms":{"field":"name","missing":" "}}},"terms":{"field":"age"}}},"query":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":-62135596800,"include_lower":true,"include_upper":true,"to":-62135596800}}}}`,
+			expected:   `{"aggregations":{"age":{"aggregations":{"name":{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"_value":{"value_count":{"field":"events.name"}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"terms":{"field":"name","missing":" "}}},"terms":{"field":"age"}}},"size":0}`,
 		},
 	} {
 
@@ -1132,10 +1165,6 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
 			fact.valueField = c.valueField
 			ss := elastic.NewSearchSource()
-			rangeQuery, err := fact.RangeQuery()
-			assert.Nil(t, err)
-			ss.Query(rangeQuery)
-
 			aggName, agg, aggErr := fact.EsAgg(c.aggregates)
 			if c.shouldError {
 				assert.Error(t, aggErr)
@@ -1146,7 +1175,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 			if agg != nil {
 				ss.Aggregation(aggName, agg)
 			}
-
+			ss.Size(0)
 			body, _ := ss.Source()
 			bodyJson, _ := json.Marshal(body)
 			bodyString := string(bodyJson)

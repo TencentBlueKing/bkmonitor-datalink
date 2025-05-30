@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -157,7 +158,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 	if window > 0 {
 		// 获取时区偏移量
 		// 如果是按天聚合，则增加时区偏移量
-		if window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
+		if function.IsAlignTime(window) {
 			// 时间聚合函数兼容时区
 			loc, locErr := time.LoadLocation(timezone)
 			if locErr != nil {

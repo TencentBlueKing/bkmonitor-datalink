@@ -153,7 +153,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 
 	span.Set("query-source", user.Key)
-	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-space-uid", user.SpaceUID)
 
 	// 解析请求 body
 	query := &structured.QueryTs{}
@@ -165,8 +165,8 @@ func HandlerQueryExemplar(c *gin.Context) {
 	}
 
 	// metadata 中的 spaceUid 是从 header 头信息中获取
-	if user.SpaceUid != "" {
-		query.SpaceUid = user.SpaceUid
+	if user.SpaceUID != "" {
+		query.SpaceUid = user.SpaceUID
 	}
 
 	queryStr, _ := json.Marshal(query)
@@ -220,7 +220,8 @@ func HandlerQueryRaw(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 
 	span.Set("query-source", user.Key)
-	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-tenant-id", user.TenantID)
+	span.Set("query-space-uid", user.SpaceUID)
 
 	// 解析请求 body
 	queryTs := &structured.QueryTs{}
@@ -230,8 +231,8 @@ func HandlerQueryRaw(c *gin.Context) {
 	}
 
 	// metadata 中的 spaceUid 是从 header 头信息中获取
-	if user.SpaceUid != "" {
-		queryTs.SpaceUid = user.SpaceUid
+	if user.SpaceUID != "" {
+		queryTs.SpaceUid = user.SpaceUID
 	}
 
 	queryStr, _ := json.Marshal(queryTs)
@@ -282,7 +283,8 @@ func HandlerQueryTs(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 
 	span.Set("query-source", user.Key)
-	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-space-uid", user.SpaceUID)
+	span.Set("query-tenant-id", user.TenantID)
 
 	// 解析请求 body
 	query := &structured.QueryTs{}
@@ -294,8 +296,8 @@ func HandlerQueryTs(c *gin.Context) {
 	}
 
 	// metadata 中的 spaceUid 是从 header 头信息中获取，header 如果有的话，覆盖参数里的
-	if user.SpaceUid != "" {
-		query.SpaceUid = user.SpaceUid
+	if user.SpaceUID != "" {
+		query.SpaceUid = user.SpaceUID
 	}
 
 	queryStr, _ := json.Marshal(query)
@@ -344,7 +346,8 @@ func HandlerQueryPromQL(c *gin.Context) {
 
 	span.Set("headers", c.Request.Header)
 	span.Set("query-source", user.Key)
-	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-space-uid", user.SpaceUID)
+	span.Set("query-tenant-id", user.TenantID)
 
 	// 解析请求 body
 	queryPromQL := &structured.QueryPromQL{}
@@ -412,7 +415,8 @@ func HandlerQueryReference(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 
 	span.Set("query-source", user.Key)
-	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-space-uid", user.SpaceUID)
+	span.Set("query-tenant-id", user.TenantID)
 
 	// 解析请求 body
 	query := &structured.QueryTs{}
@@ -424,8 +428,8 @@ func HandlerQueryReference(c *gin.Context) {
 	}
 
 	// metadata 中的 spaceUid 是从 header 头信息中获取
-	if user.SpaceUid != "" {
-		query.SpaceUid = user.SpaceUid
+	if user.SpaceUID != "" {
+		query.SpaceUid = user.SpaceUID
 	}
 
 	queryStr, _ := json.Marshal(query)

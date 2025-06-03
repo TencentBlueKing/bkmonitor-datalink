@@ -32,6 +32,7 @@ import (
 )
 
 type ProcessResult struct {
+	BkTenantId            string                        `json:"bk_tenant_id"`
 	BizId                 string                        `json:"biz_id"`
 	BizName               string                        `json:"biz_name"`
 	AppId                 string                        `json:"app_id"`
@@ -366,6 +367,7 @@ func (p *Processor) ToTraceInfo(receiver chan<- storage.SaveRequest, event Event
 	}
 
 	res := ProcessResult{
+		BkTenantId:          p.baseInfo.BkTenantId,
 		BizId:               p.baseInfo.BkBizId,
 		BizName:             p.baseInfo.BkBizName,
 		AppId:               p.baseInfo.AppId,

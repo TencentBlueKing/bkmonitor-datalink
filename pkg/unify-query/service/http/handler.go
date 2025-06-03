@@ -220,6 +220,7 @@ func HandlerQueryRaw(c *gin.Context) {
 	span.Set("request-header", c.Request.Header)
 
 	span.Set("query-source", user.Key)
+	span.Set("query-tenant-id", user.TenantID)
 	span.Set("query-space-uid", user.SpaceUID)
 
 	// 解析请求 body
@@ -283,6 +284,7 @@ func HandlerQueryTs(c *gin.Context) {
 
 	span.Set("query-source", user.Key)
 	span.Set("query-space-uid", user.SpaceUID)
+	span.Set("query-tenant-id", user.TenantID)
 
 	// 解析请求 body
 	query := &structured.QueryTs{}
@@ -345,6 +347,7 @@ func HandlerQueryPromQL(c *gin.Context) {
 	span.Set("headers", c.Request.Header)
 	span.Set("query-source", user.Key)
 	span.Set("query-space-uid", user.SpaceUID)
+	span.Set("query-tenant-id", user.TenantID)
 
 	// 解析请求 body
 	queryPromQL := &structured.QueryPromQL{}
@@ -413,6 +416,7 @@ func HandlerQueryReference(c *gin.Context) {
 
 	span.Set("query-source", user.Key)
 	span.Set("query-space-uid", user.SpaceUID)
+	span.Set("query-tenant-id", user.TenantID)
 
 	// 解析请求 body
 	query := &structured.QueryTs{}

@@ -57,23 +57,23 @@ func TestGetBkDataTableIDCheck(t *testing.T) {
 		actual bool
 	)
 
-	SetUser(ctx, "", "bkdata_1", "")
+	SetUser(ctx, &User{SpaceUID: "bkdata_1"})
 	actual = GetBkDataTableIDCheck(ctx, "")
 	assert.Equal(t, false, actual)
 
-	SetUser(ctx, "", "bkmonitor", "")
+	SetUser(ctx, &User{SpaceUID: "bkmonitor"})
 	actual = GetBkDataTableIDCheck(ctx, "")
 	assert.Equal(t, true, actual)
 
-	SetUser(ctx, "", "bkmonitor", "")
+	SetUser(ctx, &User{SpaceUID: "bkmonitor"})
 	actual = GetBkDataTableIDCheck(ctx, "10000_demo")
 	assert.Equal(t, false, actual)
 
-	SetUser(ctx, "", "bkdata_1_1", "")
+	SetUser(ctx, &User{SpaceUID: "bkdata_1_1"})
 	actual = GetBkDataTableIDCheck(ctx, "")
 	assert.Equal(t, true, actual)
 
-	SetUser(ctx, "", "bkdata", "")
+	SetUser(ctx, &User{SpaceUID: "bkdata"})
 	actual = GetBkDataTableIDCheck(ctx, "")
 	assert.Equal(t, false, actual)
 }

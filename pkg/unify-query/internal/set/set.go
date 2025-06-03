@@ -106,6 +106,8 @@ func (s *Set[T]) ToArray() []T {
 }
 
 func (s *Set[T]) Range(fn func(T)) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
 	for item := range s.m {
 		fn(item)
 	}

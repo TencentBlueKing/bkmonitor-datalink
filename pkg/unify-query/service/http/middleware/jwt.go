@@ -126,7 +126,7 @@ func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]strin
 			payLoad = make(JwtPayLoad)
 
 			appCode  string
-			spaceUID = user.SpaceUid
+			spaceUID = user.SpaceUID
 		)
 
 		ctx, span := trace.NewSpan(ctx, "jwt-auth")
@@ -142,7 +142,7 @@ func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]strin
 			}
 
 			if err != nil {
-				metric.JWTRequestInc(ctx, userAgent, c.ClientIP(), c.Request.URL.Path, appCode, payLoad.UserName(), user.SpaceUid, metric.StatusFailed)
+				metric.JWTRequestInc(ctx, userAgent, c.ClientIP(), c.Request.URL.Path, appCode, payLoad.UserName(), user.SpaceUID, metric.StatusFailed)
 
 				// 通过特性开关判断是否开启验证，如果未开启验证则不进行 504 校验，但是错误指标还正常处理
 				ffStatus := metadata.GetJwtAuthFeatureFlag(ctx)
@@ -164,7 +164,7 @@ func JwtAuthMiddleware(publicKey string, defaultAppCodeSpaces map[string][]strin
 				c.JSON(http.StatusUnauthorized, res)
 				c.Abort()
 			} else {
-				metric.JWTRequestInc(ctx, userAgent, c.ClientIP(), c.Request.URL.Path, appCode, payLoad.UserName(), user.SpaceUid, metric.StatusSuccess)
+				metric.JWTRequestInc(ctx, userAgent, c.ClientIP(), c.Request.URL.Path, appCode, payLoad.UserName(), user.SpaceUID, metric.StatusSuccess)
 
 				c.Next()
 			}

@@ -104,3 +104,15 @@ func (s *Set[T]) ToArray() []T {
 	}
 	return array
 }
+
+func (s *Set[T]) Range(fn func(T)) {
+	for item := range s.m {
+		fn(item)
+	}
+}
+
+func (s *Set[T]) Clean() {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.m = make(map[T]struct{})
+}

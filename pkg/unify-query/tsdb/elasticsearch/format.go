@@ -142,8 +142,9 @@ func mapProperties(prefix string, data map[string]any, res map[string]string) {
 }
 
 type ValueAgg struct {
-	Name     string
-	FuncType string
+	FieldName string
+	Name      string
+	FuncType  string
 
 	Args   []any
 	KwArgs map[string]any
@@ -182,8 +183,6 @@ type FormatFactory struct {
 	mapping map[string]string
 	data    map[string]any
 
-	nestedPathSet *set.Set[string]
-
 	aggInfoList aggInfoList
 	orders      metadata.Orders
 
@@ -199,10 +198,9 @@ type FormatFactory struct {
 
 func NewFormatFactory(ctx context.Context) *FormatFactory {
 	f := &FormatFactory{
-		ctx:           ctx,
-		mapping:       make(map[string]string),
-		aggInfoList:   make(aggInfoList, 0),
-		nestedPathSet: set.New[string](),
+		ctx:         ctx,
+		mapping:     make(map[string]string),
+		aggInfoList: make(aggInfoList, 0),
 
 		// default encode / decode
 		encode: func(k string) string {
@@ -367,6 +365,7 @@ func (f *FormatFactory) timeAgg(name string, window time.Duration, timezone stri
 			Name: name, Window: window, Timezone: timezone,
 		},
 	)
+	f.nestedAgg(name)
 }
 
 func (f *FormatFactory) termAgg(name string, isFirst bool) {
@@ -386,14 +385,16 @@ func (f *FormatFactory) termAgg(name string, isFirst bool) {
 	}
 
 	f.aggInfoList = append(f.aggInfoList, info)
+	f.nestedAgg(name)
 }
 
-func (f *FormatFactory) valueAgg(name, funcType string, args ...any) {
+func (f *FormatFactory) valueAgg(fieldName, name, funcType string, args ...any) {
 	f.aggInfoList = append(
 		f.aggInfoList, ValueAgg{
-			Name: name, FuncType: funcType, Args: args,
+			FieldName: fieldName, Name: name, FuncType: funcType, Args: args,
 		},
 	)
+	f.nestedAgg(fieldName)
 }
 
 func (f *FormatFactory) NestedField(field string) string {
@@ -515,18 +516,22 @@ func (f *FormatFactory) SetData(data map[string]any) {
 // - 用于对外暴露操作nestedPathSet的方法
 // - 如果是嵌套路径，则返回 true，并且不添加到 nestedPathSet 中
 // - 如果不是嵌套路径，则添加到 nestedPathSet 中，并返回 false
-func (f *FormatFactory) isNestedPath(path string) bool {
-	for _, k := range f.nestedPathSet.ToArray() {
-		if path == k {
-			return true
+func (f *FormatFactory) isNestedPath(path string, nestedPathSet *set.Set[string]) bool {
+	var isNested bool
+	nestedPathSet.Range(func(s string) {
+		if path == s {
+			isNested = true
+			return
 		}
-		if strings.HasPrefix(fmt.Sprintf("%s.", k), path) {
-			return true
-		}
-	}
 
-	f.nestedPathSet.Add(path)
-	return false
+		if strings.Contains(fmt.Sprintf("%s.", s), path) {
+			isNested = true
+			return
+		}
+		nestedPathSet.Add(s)
+	})
+
+	return isNested
 }
 
 // resetAggInfoListWithNested 反向过滤aggInfoList
@@ -536,18 +541,24 @@ func (f *FormatFactory) resetAggInfoListWithNested() {
 	// 因为我们在生成aggInfoList的时候是从整个ES查询DSL的最内层开始的(如果要AggSubAggregation要保证子聚合在父聚合之前)，
 	// 而且在这个过程我们是没有关心nestedPath的(如果当前操作的字段是嵌套的会直接添加一个NestedAgg否则直接添加ReverNested)，
 	// 所以在这里需要反向过滤掉那些不需要的NestedAgg和ReverNested
-	var newAggInfoList []any
+	var (
+		newAggInfoList []any
+		nestedPathSet  = set.New[string]()
+	)
+
 	for i := len(f.aggInfoList) - 1; i >= 0; i-- {
 		aggInfo := f.aggInfoList[i]
 		switch info := aggInfo.(type) {
 		case NestedAgg:
-			if f.isNestedPath(info.Name) {
+			if f.isNestedPath(info.Name, nestedPathSet) {
 				continue
 			}
+			nestedPathSet.Add(info.Name)
 		case ReverNested:
-			if f.nestedPathSet.Size() == 0 {
+			if nestedPathSet.Size() == 0 {
 				continue
 			}
+			nestedPathSet.Clean()
 		}
 		newAggInfoList = append([]any{aggInfo}, newAggInfoList...)
 	}
@@ -569,7 +580,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			switch info.FuncType {
 			case Min:
 				curName := FieldValue
-				curAgg := elastic.NewMinAggregation().Field(f.valueField)
+				curAgg := elastic.NewMinAggregation().Field(info.FieldName)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -578,7 +589,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			case Max:
 				curName := FieldValue
-				curAgg := elastic.NewMaxAggregation().Field(f.valueField)
+				curAgg := elastic.NewMaxAggregation().Field(info.FieldName)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -587,7 +598,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			case Avg:
 				curName := FieldValue
-				curAgg := elastic.NewAvgAggregation().Field(f.valueField)
+				curAgg := elastic.NewAvgAggregation().Field(info.FieldName)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -596,7 +607,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			case Sum:
 				curName := FieldValue
-				curAgg := elastic.NewSumAggregation().Field(f.valueField)
+				curAgg := elastic.NewSumAggregation().Field(info.FieldName)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -605,7 +616,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			case Count:
 				curName := FieldValue
-				curAgg := elastic.NewValueCountAggregation().Field(f.valueField)
+				curAgg := elastic.NewValueCountAggregation().Field(info.FieldName)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -614,7 +625,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			case Cardinality:
 				curName := FieldValue
-				curAgg := elastic.NewCardinalityAggregation().Field(f.valueField)
+				curAgg := elastic.NewCardinalityAggregation().Field(info.FieldName)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -640,7 +651,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 					percents = append(percents, percent)
 				}
 
-				curAgg := elastic.NewPercentilesAggregation().Field(f.valueField).Percentiles(percents...)
+				curAgg := elastic.NewPercentilesAggregation().Field(info.FieldName).Percentiles(percents...)
 				curName := FieldValue
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
@@ -748,8 +759,7 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 		case DateHistogram:
 			f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
-			f.valueAgg(FieldValue, am.Name, am.Args...)
-			f.nestedAgg(f.valueField)
+			f.valueAgg(f.valueField, FieldValue, am.Name, am.Args...)
 
 			if am.Window > 0 && !am.Without {
 				// 增加时间函数
@@ -765,7 +775,6 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 				}
 
 				f.termAgg(dim, idx == 0)
-				f.nestedAgg(dim)
 			}
 		default:
 			err := fmt.Errorf("esAgg aggregation is not support with: %+v", am)

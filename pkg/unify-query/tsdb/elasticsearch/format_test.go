@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/olivere/elastic/v7"
+	elastic "github.com/olivere/elastic/v7"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
@@ -939,7 +939,7 @@ func TestFactory_Agg(t *testing.T) {
 		"test-1": {
 			aggInfoList: []any{
 				ValueAgg{
-					Name: FieldValue, FuncType: Count,
+					FieldName: "value", Name: FieldValue, FuncType: Count,
 				},
 				ReverNested{},
 			},
@@ -948,7 +948,7 @@ func TestFactory_Agg(t *testing.T) {
 		"test-2": {
 			aggInfoList: []any{
 				ValueAgg{
-					Name: FieldValue, FuncType: Count,
+					FieldName: "value", Name: FieldValue, FuncType: Count,
 				},
 				ReverNested{},
 				TermAgg{
@@ -961,7 +961,7 @@ func TestFactory_Agg(t *testing.T) {
 		"test-3": {
 			aggInfoList: []any{
 				ValueAgg{
-					Name: FieldValue, FuncType: Count,
+					FieldName: "value", Name: FieldValue, FuncType: Count,
 				},
 				ReverNested{
 					Name: DefaultReverseAggName,
@@ -978,7 +978,7 @@ func TestFactory_Agg(t *testing.T) {
 		"test-4": {
 			aggInfoList: []any{
 				ValueAgg{
-					Name: "events.name", FuncType: Count,
+					FieldName: "value", Name: "events.name", FuncType: Count,
 				},
 				NestedAgg{
 					Name: "events",
@@ -995,7 +995,7 @@ func TestFactory_Agg(t *testing.T) {
 		"test-5": {
 			aggInfoList: []any{
 				ValueAgg{
-					Name: "events.name", FuncType: Count,
+					FieldName: "value", Name: "events.name", FuncType: Count,
 				},
 				NestedAgg{
 					Name: "events",
@@ -1024,7 +1024,7 @@ func TestFactory_Agg(t *testing.T) {
 		"test-6": {
 			aggInfoList: []any{
 				ValueAgg{
-					Name: "events.name", FuncType: Count,
+					FieldName: "events.name", Name: "_value", FuncType: Count,
 				},
 				NestedAgg{
 					Name: "events",
@@ -1054,7 +1054,7 @@ func TestFactory_Agg(t *testing.T) {
 					Name: DefaultReverseAggName,
 				},
 			},
-			expected: `{"aggregations":{"country":{"aggregations":{"city":{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"reverse_nested":{"aggregations":{"town":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"terms":{"field":"town","missing":" "}}},"reverse_nested":{}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"terms":{"field":"city","missing":" "}}},"terms":{"field":"country","missing":" "}}}}`,
+			expected: `{"aggregations":{"country":{"aggregations":{"city":{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"reverse_nested":{"aggregations":{"town":{"aggregations":{"events":{"aggregations":{"_value":{"value_count":{"field":"events.name"}}},"nested":{"path":"events"}}},"terms":{"field":"town","missing":" "}}},"reverse_nested":{}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"terms":{"field":"city","missing":" "}}},"terms":{"field":"country","missing":" "}}}}`,
 		},
 	}
 	commonMapping := []map[string]any{
@@ -1187,7 +1187,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 				},
 			},
 			valueField: "name",
-			expected:   `{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"reverse_nested":{"aggregations":{"name":{"aggregations":{"reverse_nested":{"aggregations":{"_value":{"value_count":{"field":"name"}}},"reverse_nested":{}}},"terms":{"field":"name","missing":" "}}},"reverse_nested":{}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"size":0}`,
+			expected:   `{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"reverse_nested":{"aggregations":{"name":{"aggregations":{"_value":{"value_count":{"field":"name"}}},"terms":{"field":"name","missing":" "}}},"reverse_nested":{}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"size":0}`,
 		},
 		"dims seq: nonnested -> nested -> nonnested value: nested": {
 			aggregates: metadata.Aggregates{
@@ -1197,7 +1197,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 				},
 			},
 			valueField: "events.name",
-			expected:   `{"aggregations":{"age":{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"reverse_nested":{"aggregations":{"name":{"aggregations":{"_value":{"value_count":{"field":"events.name"}}},"terms":{"field":"name","missing":" "}}},"reverse_nested":{}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"terms":{"field":"age"}}},"size":0}`,
+			expected:   `{"aggregations":{"age":{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"reverse_nested":{"aggregations":{"name":{"aggregations":{"events":{"aggregations":{"_value":{"value_count":{"field":"events.name"}}},"nested":{"path":"events"}}},"terms":{"field":"name","missing":" "}}},"reverse_nested":{}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"terms":{"field":"age"}}},"size":0}`,
 		},
 		"dims seq: nested -> nonnested -> nested value: nested": {
 			aggregates: metadata.Aggregates{

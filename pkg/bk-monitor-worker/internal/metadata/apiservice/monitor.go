@@ -22,10 +22,10 @@ var Monitor MonitorService
 type MonitorService struct{}
 
 // SearchAlert 获取告警数据
-func (MonitorService) SearchAlert(conditions []map[string]interface{}, startTime int64, endTime int64, page int, pageSize int, BkBizID int32) (*monitor.SearchAlertData, error) {
-	tenantId, err := tenant.GetTenantIdByBkBizId(int(BkBizID))
+func (MonitorService) SearchAlert(conditions []map[string]interface{}, startTime int64, endTime int64, page int, pageSize int, bkBizID int32) (*monitor.SearchAlertData, error) {
+	tenantId, err := tenant.GetTenantIdByBkBizId(int(bkBizID))
 	if err != nil {
-		return nil, errors.Wrapf(err, "GetTenantIdByBkBizId failed, BkBizID: %d", BkBizID)
+		return nil, errors.Wrapf(err, "GetTenantIdByBkBizId failed, bkBizID: %d", bkBizID)
 	}
 
 	monitorApi, err := api.GetMonitorApi(tenantId)
@@ -34,7 +34,7 @@ func (MonitorService) SearchAlert(conditions []map[string]interface{}, startTime
 	}
 	var resp monitor.SearchAlertResp
 	var params = map[string]interface{}{
-		"bk_biz_ids": []int{int(BkBizID)},
+		"bk_biz_ids": []int{int(bkBizID)},
 		"start_time": startTime,
 		"end_time":   endTime,
 		"page":       page,

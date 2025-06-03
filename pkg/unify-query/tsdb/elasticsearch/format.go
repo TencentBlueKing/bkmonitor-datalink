@@ -517,21 +517,18 @@ func (f *FormatFactory) SetData(data map[string]any) {
 // - 如果是嵌套路径，则返回 true，并且不添加到 nestedPathSet 中
 // - 如果不是嵌套路径，则添加到 nestedPathSet 中，并返回 false
 func (f *FormatFactory) isNestedPath(path string, nestedPathSet *set.Set[string]) bool {
-	var isNested bool
-	nestedPathSet.Range(func(s string) {
+	for _, s := range nestedPathSet.ToArray() {
 		if path == s {
-			isNested = true
-			return
+			return true
 		}
 
 		if strings.Contains(fmt.Sprintf("%s.", s), path) {
-			isNested = true
-			return
+			return true
 		}
 		nestedPathSet.Add(s)
-	})
+	}
 
-	return isNested
+	return false
 }
 
 // resetAggInfoListWithNested 反向过滤aggInfoList

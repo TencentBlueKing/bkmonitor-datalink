@@ -105,14 +105,6 @@ func (s *Set[T]) ToArray() []T {
 	return array
 }
 
-func (s *Set[T]) Range(fn func(T)) {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
-	for item := range s.m {
-		fn(item)
-	}
-}
-
 func (s *Set[T]) Clean() {
 	s.lock.Lock()
 	defer s.lock.Unlock()

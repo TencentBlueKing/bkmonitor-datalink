@@ -657,10 +657,7 @@ func TestFormatFactory_AggDataFormat(t *testing.T) {
 			assert.NoError(t, err)
 
 			outTs, err := json.Marshal(ts)
-			outTsStr := string(outTs)
-			t.Logf(outTsStr)
 			assert.NoError(t, err)
-
 			assert.JSONEq(t, string(outTs), c.expected)
 		})
 	}

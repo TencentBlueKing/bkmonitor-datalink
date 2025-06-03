@@ -35,6 +35,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
 
 var DemoHosts = []*AlarmHostInfo{
@@ -154,7 +155,7 @@ var DemoTopoTree = &cmdb.SearchBizInstTopoData{
 
 func TestHostAndTopoCacheManager(t *testing.T) {
 	// mock 主机和拓扑查询
-	patches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bizId int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
+	patches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bkTenantId string, bizId int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
 		return DemoHosts, DemoTopoTree, nil
 	})
 	defer patches.Reset()
@@ -168,7 +169,7 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("RefreshAndEventHandler", func(t *testing.T) {
-		cacheManager, err := NewHostAndTopoCacheManager(t.Name(), rOpts, 1)
+		cacheManager, err := NewHostAndTopoCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return
@@ -290,7 +291,7 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 	})
 
 	t.Run("Clean", func(t *testing.T) {
-		cacheManager, err := NewHostAndTopoCacheManager(t.Name(), rOpts, 1)
+		cacheManager, err := NewHostAndTopoCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return

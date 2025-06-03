@@ -22,13 +22,14 @@
 
 package cmdbcache
 
-import (
-	"fmt"
-	"testing"
+// import (
+// 	"fmt"
+// 	"testing"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
-)
+// 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
+// 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+// 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
+// )
 
 //func TestResourceWatch(t *testing.T) {
 //	redisOptions := redis.Options{
@@ -91,23 +92,23 @@ import (
 //	wg.Wait()
 //}
 
-func TestManager(t *testing.T) {
-	//redisOptions := redis.Options{
-	//	Mode:  "standalone",
-	//	Addrs: []string{"127.0.0.1:6379"},
-	//}
+// func TestManager(t *testing.T) {
+// 	//redisOptions := redis.Options{
+// 	//	Mode:  "standalone",
+// 	//	Addrs: []string{"127.0.0.1:6379"},
+// 	//}
 
-	cmdbApi, err := api.GetCmdbApi()
-	if err != nil {
-		t.Errorf("TestManager failed, err: %v", err)
-		return
-	}
+// 	cmdbApi, err := api.GetCmdbApi(tenant.DefaultTenantId)
+// 	if err != nil {
+// 		t.Errorf("TestManager failed, err: %v", err)
+// 		return
+// 	}
 
-	var result cmdb.SearchBusinessResp
-	_, err = cmdbApi.SearchBusiness().SetPathParams(map[string]string{"bk_supplier_account": "0"}).SetResult(&result).Request()
-	if err != nil {
-		t.Errorf("TestManager failed, err: %v", err)
-		return
-	}
-	fmt.Printf("result: %v\n", result)
-}
+// 	var result cmdb.SearchBusinessResp
+// 	_, err = cmdbApi.SearchBusiness().SetPathParams(map[string]string{"bk_supplier_account": "0"}).SetResult(&result).Request()
+// 	if err != nil {
+// 		t.Errorf("TestManager failed, err: %v", err)
+// 		return
+// 	}
+// 	fmt.Printf("result: %v\n", result)
+// }

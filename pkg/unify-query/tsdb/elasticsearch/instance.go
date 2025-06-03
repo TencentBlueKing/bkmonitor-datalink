@@ -686,7 +686,7 @@ func (i *Instance) QuerySeriesSet(
 	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
 
 	user := metadata.GetUser(ctx)
-	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-space-uid", user.SpaceUID)
 	span.Set("query-source", user.Source)
 	span.Set("query-username", user.Name)
 	span.Set("query-connects", i.connects.String())

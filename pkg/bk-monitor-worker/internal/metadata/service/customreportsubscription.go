@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
@@ -133,7 +134,8 @@ func (s CustomReportSubscriptionSvc) RefreshCollectorCustomConf(bkBizId *int, pl
 	if bkBizId == nil {
 		isAllBizRefresh = true
 	}
-	cmdbApi, err := api.GetCmdbApi()
+	// todo: tenant
+	cmdbApi, err := api.GetCmdbApi(tenant.DefaultTenantId)
 	if err != nil {
 		return errors.Wrap(err, "GetCmdbApi failed")
 	}

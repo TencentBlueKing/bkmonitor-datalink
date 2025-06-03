@@ -7,28 +7,34 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package backend
+package user_test
 
 import (
-	"context"
+	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/user"
 )
 
-// NewBackendFunc Backend生成方法，生成一个指定类型的Backend
-type NewBackendFunc func(ctx context.Context, config *BasicConfig) (Backend, chan *Status, error)
+func TestMain(m *testing.M) {
+	// cfg.FilePath = "../../../bmw_test.yaml"
+	// cfg.InitConfig()
 
-// 存储所有生成方法
-var backendFactory map[string]NewBackendFunc
-
-func init() {
-	backendFactory = make(map[string]NewBackendFunc)
+	// m.Run()
 }
 
-// RegisterBackend 注册指定类型的backend
-func RegisterBackend(name string, backendFunc NewBackendFunc) {
-	backendFactory[name] = backendFunc
-}
+func TestListTenant(t *testing.T) {
+	userApi, err := api.GetUserApi("system")
+	if err != nil {
+		t.Errorf("TestListTenant failed, err: %v", err)
+		return
+	}
 
-// GetBackendFunc 获取指定类型的backend
-func GetBackendFunc(name string) NewBackendFunc {
-	return backendFactory[name]
+	var result user.ListTenantResp
+	_, err = userApi.ListTenant().SetResult(&result).Request()
+	if err != nil {
+		t.Errorf("TestListTenant failed, err: %v", err)
+		return
+	}
+	t.Logf("TestListTenant success, result: %v", result)
 }

@@ -7,28 +7,19 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package backend
+package user
 
 import (
-	"context"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
 )
 
-// NewBackendFunc Backend生成方法，生成一个指定类型的Backend
-type NewBackendFunc func(ctx context.Context, config *BasicConfig) (Backend, chan *Status, error)
-
-// 存储所有生成方法
-var backendFactory map[string]NewBackendFunc
-
-func init() {
-	backendFactory = make(map[string]NewBackendFunc)
+type ListTenantResp struct {
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     []ListTenantData `json:"data"`
 }
 
-// RegisterBackend 注册指定类型的backend
-func RegisterBackend(name string, backendFunc NewBackendFunc) {
-	backendFactory[name] = backendFunc
-}
-
-// GetBackendFunc 获取指定类型的backend
-func GetBackendFunc(name string) NewBackendFunc {
-	return backendFactory[name]
+type ListTenantData struct {
+	Id     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }

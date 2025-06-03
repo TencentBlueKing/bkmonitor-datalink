@@ -17,3 +17,9 @@ go.work.sum
 /.gtm.yaml
 .python-version
 bkcodeai.json
+
+.env.access
+.env.leave
+
+.venv
+

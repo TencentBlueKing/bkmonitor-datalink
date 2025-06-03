@@ -7,28 +7,31 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package backend
+package user
 
 import (
-	"context"
+	"github.com/TencentBlueKing/bk-apigateway-sdks/core/bkapi"
+	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 )
 
-// NewBackendFunc Backend生成方法，生成一个指定类型的Backend
-type NewBackendFunc func(ctx context.Context, config *BasicConfig) (Backend, chan *Status, error)
-
-// 存储所有生成方法
-var backendFactory map[string]NewBackendFunc
-
-func init() {
-	backendFactory = make(map[string]NewBackendFunc)
+type Client struct {
+	define.BkApiClient
 }
 
-// RegisterBackend 注册指定类型的backend
-func RegisterBackend(name string, backendFunc NewBackendFunc) {
-	backendFactory[name] = backendFunc
+func New(configProvider define.ClientConfigProvider, opts ...define.BkApiClientOption) (*Client, error) {
+	client, err := bkapi.NewBkApiClient("user", configProvider, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	c := &Client{BkApiClient: client}
+	return c, nil
 }
 
-// GetBackendFunc 获取指定类型的backend
-func GetBackendFunc(name string) NewBackendFunc {
-	return backendFactory[name]
+func (c *Client) ListTenant(opts ...define.OperationOption) define.Operation {
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "list_tenant",
+		Method: "GET",
+		Path:   "/api/v3/open/tenants/",
+	}, opts...)
 }

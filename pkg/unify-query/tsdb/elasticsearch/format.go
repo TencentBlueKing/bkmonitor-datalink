@@ -529,13 +529,14 @@ func (f *FormatFactory) isNestedPath(path string) bool {
 	return false
 }
 
-// aggInfoListWithNested 反向过滤aggInfoList
+// resetAggInfoListWithNested 反向过滤aggInfoList
 // - 如果是 NestedAgg，则检查是否是嵌套路径，如果是，则跳过
 // - 如果是 ReverNested, 则检查外围是否有 NestedAgg，如果没有，则跳过
-func (f *FormatFactory) aggInfoListWithNested() (newAggInfoList aggInfoList) {
+func (f *FormatFactory) resetAggInfoListWithNested() {
 	// 因为我们在生成aggInfoList的时候是从整个ES查询DSL的最内层开始的(如果要AggSubAggregation要保证子聚合在父聚合之前)，
 	// 而且在这个过程我们是没有关心nestedPath的(如果当前操作的字段是嵌套的会直接添加一个NestedAgg否则直接添加ReverNested)，
 	// 所以在这里需要反向过滤掉那些不需要的NestedAgg和ReverNested
+	var newAggInfoList []any
 	for i := len(f.aggInfoList) - 1; i >= 0; i-- {
 		aggInfo := f.aggInfoList[i]
 		switch info := aggInfo.(type) {
@@ -550,6 +551,7 @@ func (f *FormatFactory) aggInfoListWithNested() (newAggInfoList aggInfoList) {
 		}
 		newAggInfoList = append([]any{aggInfo}, newAggInfoList...)
 	}
+	f.aggInfoList = newAggInfoList
 
 	return
 }
@@ -561,7 +563,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		}
 	}()
 
-	for _, aggInfo := range f.aggInfoListWithNested() {
+	for _, aggInfo := range f.aggInfoList {
 		switch info := aggInfo.(type) {
 		case ValueAgg:
 			switch info.FuncType {
@@ -771,6 +773,7 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 		}
 	}
 
+	f.resetAggInfoListWithNested()
 	return f.Agg()
 }
 

@@ -129,6 +129,10 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 					}
 				}
 			}
+		case ReverNested:
+			if err := a.ts(idx, data); err != nil {
+				return err
+			}
 		case NestedAgg:
 			if singleBucket, ok := data.Nested(info.Name); ok {
 				if err := a.ts(idx, singleBucket.Aggregations); err != nil {

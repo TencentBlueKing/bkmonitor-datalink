@@ -1086,6 +1086,7 @@ func TestFactory_Agg(t *testing.T) {
 				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
 			fact.valueField = "value"
 			fact.aggInfoList = c.aggInfoList
+			fact.resetAggInfoListWithNested()
 			name, agg, err := fact.Agg()
 			assert.Nil(t, err)
 

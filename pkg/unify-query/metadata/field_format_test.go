@@ -18,8 +18,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
-func TestPromDataFormat_EncodeAndDecode(t *testing.T) {
+func TestFieldFormat_EncodeAndDecode(t *testing.T) {
+	fieldAliasTableID := "table_id"
+
 	testCase := map[string]struct {
+		tableID  string
 		q        []string
 		expected []string
 	}{
@@ -43,20 +46,46 @@ func TestPromDataFormat_EncodeAndDecode(t *testing.T) {
 				"__bk_33___ext__bk_46____bk_46____bk_46__",
 			},
 		},
+		// 命中有配置别名的 tableID
+		"q-3": {
+			tableID: fieldAliasTableID,
+			q: []string{
+				"ext_container",
+			},
+			expected: []string{
+				"__ext__bk_46__container",
+			},
+		},
+		// 命中没有配置别名的 tableID
+		"q-4": {
+			tableID: "table_id_1",
+			q: []string{
+				"ext_container",
+			},
+			expected: []string{
+				"ext_container",
+			},
+		},
 	}
 
+	InitMetadata()
 	ctx := InitHashID(context.Background())
 	log.InitTestLogger()
 
 	for name, c := range testCase {
 		t.Run(name, func(t *testing.T) {
 			ctx = InitHashID(ctx)
-			pdf := GetPromDataFormat(ctx)
+
+			GetQueryParams(ctx).SetFieldAlias(fieldAliasTableID, map[string]string{
+				"ext_container": "__ext.container",
+			})
+			pdf := GetFieldFormat(ctx)
 
 			assert.Equal(t, len(c.expected), len(c.q))
 
 			for idx, q := range c.q {
-				r := pdf.EncodeFunc()(q)
+
+				r := pdf.EncodeFunc(c.tableID)(q)
 
 				log.Infof(ctx, "encode: %s => %s", q, r)
 
@@ -64,7 +93,7 @@ func TestPromDataFormat_EncodeAndDecode(t *testing.T) {
 					assert.Equal(t, c.expected[idx], r)
 				}
 
-				nr := pdf.DecodeFunc()(r)
+				nr := pdf.DecodeFunc("")(r)
 				log.Infof(ctx, "decode: %s => %s", r, nr)
 
 				assert.Equal(t, q, nr)

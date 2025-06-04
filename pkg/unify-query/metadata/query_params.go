@@ -17,6 +17,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
+type TableFieldAlias map[string]FieldAlias
+
+type FieldAlias map[string]string
+
 // QueryParams 查询信息
 type QueryParams struct {
 	ctx context.Context
@@ -26,6 +30,9 @@ type QueryParams struct {
 	TimeUnit string
 
 	StorageType *set.Set[string]
+
+	TableFieldAlias   TableFieldAlias
+	ReverseFieldAlias FieldAlias
 
 	IsReference bool
 	IsSkipK8s   bool
@@ -47,6 +54,24 @@ func (q *QueryParams) IsDirectQuery() bool {
 
 func (q *QueryParams) SetStorageType(ds string) *QueryParams {
 	q.StorageType.Add(ds)
+	return q
+}
+
+func (q *QueryParams) SetFieldAlias(tableID string, fieldAlias FieldAlias) *QueryParams {
+	if len(fieldAlias) == 0 || tableID == "" {
+		return q
+	}
+	if q.TableFieldAlias == nil {
+		q.TableFieldAlias = make(map[string]FieldAlias)
+	}
+	q.TableFieldAlias[tableID] = fieldAlias
+	if q.ReverseFieldAlias == nil {
+		q.ReverseFieldAlias = make(FieldAlias)
+	}
+
+	for k, v := range fieldAlias {
+		q.ReverseFieldAlias[v] = k
+	}
 	return q
 }
 

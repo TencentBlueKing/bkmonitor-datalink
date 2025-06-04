@@ -19,27 +19,46 @@ import (
 	"unicode"
 )
 
-type PromDataFormat struct {
+type FieldFormat struct {
 	ctx  context.Context
 	lock sync.RWMutex
 
-	transformFormat string
+	// 存放进行别名转换的字段，用于逆向
+	reverseTableFieldAlias FieldAlias
 }
 
-func (f *PromDataFormat) format(s string) string {
+func (f *FieldFormat) format(s string) string {
 	return fmt.Sprintf("__bk_%s__", s)
 }
 
-func (f *PromDataFormat) isAlphaNumericUnderscore(r rune) bool {
+func (f *FieldFormat) isAlphaNumericUnderscore(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == ':' || r == '_'
 }
 
-func (f *PromDataFormat) EncodeFunc() func(q string) string {
+func (f *FieldFormat) EncodeFunc(tableID string) func(q string) string {
+	preFunc := func(s string) string {
+		if ns, ok := GetQueryParams(f.ctx).TableFieldAlias[tableID][s]; ok {
+			if ns == "" {
+				return s
+			}
+
+			f.lock.Lock()
+			f.reverseTableFieldAlias[ns] = s
+			f.lock.Unlock()
+			return ns
+		}
+		return s
+	}
+
 	return func(q string) string {
 		var (
 			result       strings.Builder
 			invalidChars []rune
 		)
+		if preFunc != nil {
+			q = preFunc(q)
+		}
+
 		format := f.format(`%d`)
 		for _, r := range q {
 			if !f.isAlphaNumericUnderscore(r) {
@@ -54,7 +73,16 @@ func (f *PromDataFormat) EncodeFunc() func(q string) string {
 	}
 }
 
-func (f *PromDataFormat) DecodeFunc() func(q string) string {
+func (f *FieldFormat) DecodeFunc(_ string) func(q string) string {
+	afterFunc := func(s string) string {
+		f.lock.RLock()
+		if ns, ok := f.reverseTableFieldAlias[s]; ok {
+			return ns
+		}
+		f.lock.RUnlock()
+		return s
+	}
+
 	return func(q string) string {
 		format := f.format(`([\d]+)`)
 		re := regexp.MustCompile(format)
@@ -68,28 +96,33 @@ func (f *PromDataFormat) DecodeFunc() func(q string) string {
 				q = strings.ReplaceAll(q, match[0], string(rune(num)))
 			}
 		}
+
+		if afterFunc != nil {
+			q = afterFunc(q)
+		}
 		return q
 	}
 }
 
-func (f *PromDataFormat) set() *PromDataFormat {
+func (f *FieldFormat) set() *FieldFormat {
 	if md != nil {
-		md.set(f.ctx, PromDataFormatKey, f)
+		md.set(f.ctx, FieldFormatKey, f)
 	}
 	return f
 }
 
-func GetPromDataFormat(ctx context.Context) *PromDataFormat {
+func GetFieldFormat(ctx context.Context) *FieldFormat {
 	if md != nil {
-		r, ok := md.get(ctx, PromDataFormatKey)
+		r, ok := md.get(ctx, FieldFormatKey)
 		if ok {
-			if f, ok := r.(*PromDataFormat); ok {
+			if f, ok := r.(*FieldFormat); ok {
 				return f
 			}
 		}
 	}
 
-	return (&PromDataFormat{
-		ctx: ctx,
+	return (&FieldFormat{
+		ctx:                    ctx,
+		reverseTableFieldAlias: make(FieldAlias),
 	}).set()
 }

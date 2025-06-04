@@ -887,11 +887,15 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 							case structured.ConditionEqual, structured.Contains:
 								q = f.getQuery(MustNot, query)
 							case structured.ConditionNotEqual, structured.Ncontains:
+								// 813行已经把isExistsQuery 设为 false。所以在这里处理的是非KeyWord和Text类型的字段
+								// 如果是非KeyWord和Text类型字段: nested -> exist -> field
 								if nf != "" {
-									isNestedBefore = true
 									query = elastic.NewNestedQuery(nf, query)
+									q = query
+									isNestedBefore = true
+								} else {
+									q = f.getQuery(MustNot, query)
 								}
-								q = f.getQuery(MustNot, query)
 							default:
 								return nil, fmt.Errorf("operator is not support with empty, %+v", con)
 							}
@@ -948,8 +952,11 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 					q = f.getQuery(Should, queries...)
 				case structured.ConditionNotEqual, structured.ConditionNotContains, structured.ConditionNotRegEqual:
 					if nf != "" {
-						// 对于嵌套字段，将MustNot放在嵌套查询外层
-						q = f.getQuery(MustNot, queries...)
+						// 如果是 keyword 或者 text 类型的字段: MustNot -> nested -> field
+						innerQuery := f.getQuery(Should, queries...)
+						nestedQuery := elastic.NewNestedQuery(nf, innerQuery)
+						q = f.getQuery(MustNot, nestedQuery)
+						isNestedBefore = true // Mark as already nested to avoid double wrapping
 					} else {
 						// 非嵌套字段直接使用MustNot
 						q = f.getQuery(MustNot, queries...)

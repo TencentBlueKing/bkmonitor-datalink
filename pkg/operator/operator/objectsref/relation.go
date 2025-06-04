@@ -23,6 +23,10 @@ import (
 )
 
 const (
+	relationContainerInfoPath = "bkm.woa.com/relation/info/container/"
+)
+
+const (
 	relationNodeSystem           = "node_with_system_relation"
 	relationNodePod              = "node_with_pod_relation"
 	relationJobPod               = "job_with_pod_relation"
@@ -41,27 +45,40 @@ const (
 	relationDataSourceWithNode        = "datasource_with_node_relation"
 	relationBkLogConfigWithDataSource = "bklogconfig_with_datasource_relation"
 
-	relationContainerExpand = "container_expand_relation"
+	relationContainerInfo = "container_info_relation"
 )
 
 func (oc *ObjectsController) WriteAppVersionRelation(w io.Writer) {
 	for _, pod := range oc.podObjs.GetAll() {
+		var customLables []promfmt.Label
+		for k, v := range pod.Annotations {
+			if strings.HasPrefix(k, relationContainerInfoPath) {
+				name := strings.TrimPrefix(k, relationContainerInfoPath)
+				if name == "" || v == "" {
+					continue
+				}
+				customLables = append(customLables, promfmt.Label{
+					Name:  name,
+					Value: v,
+				})
+			}
+		}
+
 		for _, container := range pod.Containers {
-			if container.ID == "" {
+			if container.Tag == "" || container.Name == "" {
 				continue
 			}
 
-			promfmt.FmtBytes(w, promfmt.Metric{
-				Name: relationContainerExpand,
-				Labels: []promfmt.Label{
-					// indexes dimension
-					{Name: "pod", Value: pod.ID.Name},
-					{Name: "namespace", Value: pod.ID.Namespace},
-					{Name: "container", Value: container.Name},
+			labels := append([]promfmt.Label{
+				{Name: "pod", Value: pod.ID.Name},
+				{Name: "namespace", Value: pod.ID.Namespace},
+				{Name: "container", Value: container.Name},
+				{Name: "version", Value: container.Tag},
+			}, customLables...)
 
-					// expand dimension
-					{Name: "version", Value: container.Tag},
-				},
+			promfmt.FmtBytes(w, promfmt.Metric{
+				Name:   relationContainerInfo,
+				Labels: labels,
 			})
 		}
 	}

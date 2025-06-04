@@ -138,7 +138,7 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 			query.Step = q.Step
 		}
 		if q.SpaceUid == "" {
-			q.SpaceUid = metadata.GetUser(ctx).SpaceUid
+			q.SpaceUid = metadata.GetUser(ctx).SpaceUID
 		}
 
 		if q.ResultTableOptions != nil {

@@ -41,11 +41,11 @@ func NewSpaceDataSourceSvc(obj *space.SpaceDataSource) SpaceDataSourceSvc {
 }
 
 // BulkCreateRecords 批量创建记录
-func (SpaceDataSourceSvc) BulkCreateRecords(spaceType string, SpaceDataIdMap map[string][]uint, fromAuthorization bool) ([]string, error) {
+func (SpaceDataSourceSvc) BulkCreateRecords(spaceType string, spaceDataIdMap map[string][]uint, fromAuthorization bool) ([]string, error) {
 	// NOTE: 当共享集群项目时，返回的数据中，共享集群即使这个项目下的专用集群，也是这个项目的共享集群, 因此，分开创建，避免相同的数据写入
 	var changedSpaceIdList []string
 	db := mysql.GetDBSession().DB
-	for spaceId, dataids := range SpaceDataIdMap {
+	for spaceId, dataids := range spaceDataIdMap {
 		var sdsList []space.SpaceDataSource
 		if len(dataids) != 0 {
 			if err := space.NewSpaceDataSourceQuerySet(db).Select(space.SpaceDataSourceDBSchema.BkDataId).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId).BkDataIdIn(dataids...).All(&sdsList); err != nil {

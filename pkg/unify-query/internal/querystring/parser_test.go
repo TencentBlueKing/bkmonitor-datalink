@@ -105,13 +105,44 @@ func TestParser(t *testing.T) {
 				IncludeEnd:   true,
 			},
 		},
+		"范围匹配（无下限） - 1": {
+			q: `count:{* TO 10]`,
+			e: &NumberRangeExpr{
+				Field:        "count",
+				Start:        pointer("*"),
+				End:          pointer("10"),
+				IncludeStart: false,
+				IncludeEnd:   true,
+			},
+		},
+		"范围匹配（无下限）": {
+			q: `count:[* TO 10]`,
+			e: &NumberRangeExpr{
+				Field:        "count",
+				Start:        pointer("*"),
+				End:          pointer("10"),
+				IncludeStart: true,
+				IncludeEnd:   true,
+			},
+		},
 		"范围匹配（无上限）": {
 			q: `count:[10 TO *]`,
 			e: &NumberRangeExpr{
 				Field:        "count",
 				Start:        pointer("10"),
+				End:          pointer("*"),
 				IncludeStart: true,
 				IncludeEnd:   true,
+			},
+		},
+		"范围匹配（无上限）- 1": {
+			q: `count:[10 TO *}`,
+			e: &NumberRangeExpr{
+				Field:        "count",
+				Start:        pointer("10"),
+				End:          pointer("*"),
+				IncludeStart: true,
+				IncludeEnd:   false,
 			},
 		},
 		"字段匹配": {
@@ -272,6 +303,37 @@ func TestParser(t *testing.T) {
 			e: &NumberRangeExpr{
 				Field: "a",
 				Start: pointer("100"),
+			},
+		},
+		"one word left star": {
+			q: "*test",
+			e: &WildcardExpr{
+				Value: "*test",
+			},
+		},
+		"one word right star": {
+			q: "test*",
+			e: &WildcardExpr{
+				Value: "test*",
+			},
+		},
+		"one word double star": {
+			q: "*test*",
+			e: &WildcardExpr{
+				Value: "*test*",
+			},
+		},
+		"one int double star": {
+			q: "*123*",
+			e: &WildcardExpr{
+				Value: "*123*",
+			},
+		},
+		"key value with star": {
+			q: "events.attributes.message.detail: *66036*",
+			e: &WildcardExpr{
+				Field: "events.attributes.message.detail",
+				Value: "*66036*",
 			},
 		},
 	}

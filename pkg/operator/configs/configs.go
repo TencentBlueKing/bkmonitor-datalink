@@ -209,9 +209,6 @@ type Config struct {
 	// EnableDaemonSetWorker 是否启用 daemonset worker 调度
 	EnableDaemonSetWorker bool `yaml:"enable_daemonset_worker"`
 
-	// EnableTimeSyncTask 是否启用时间同步采集任务
-	EnableTimeSyncTask bool `yaml:"enable_timesync_task"`
-
 	// DaemonSetWorkerIgnoreNodeLabels 部分 nodes 不允许被调度到 daemonset 时指定
 	DaemonSetWorkerIgnoreNodeLabels map[string]string `yaml:"daemonset_worker_ignore_node_labels"`
 

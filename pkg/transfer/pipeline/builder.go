@@ -18,6 +18,7 @@ import (
 
 	"github.com/emirpasic/gods/lists/doublylinkedlist"
 	"github.com/emirpasic/gods/sets/hashset"
+	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
@@ -460,8 +461,8 @@ func (b *ConfigBuilder) SetupFrontend() *ConfigBuilder {
 	return b
 }
 
-// GetBackendByContext : 按照context中的结果表shipper配置，得到该结果表的写入后端processor
-func (b *ConfigBuilder) GetBackendByContext(ctx context.Context) (Node, error) {
+// GetBackendByContextFields : 按照context中的结果表shipper配置，得到该结果表的写入后端processor
+func (b *ConfigBuilder) GetBackendByContextFields(ctx context.Context, f *define.ETLRecordFields) (Node, error) {
 	rt := config.ResultTableConfigFromContext(ctx)
 	processors := make([]Node, 0, len(rt.ShipperList))
 	for _, s := range rt.ShipperList {
@@ -473,6 +474,9 @@ func (b *ConfigBuilder) GetBackendByContext(ctx context.Context) (Node, error) {
 		backend, err := define.NewBackend(shipperCtx, s.ClusterType)
 		if err != nil {
 			return nil, errors.Wrapf(err, "create backend by type %v", s.ClusterType)
+		}
+		if f != nil {
+			backend.SetETLRecordFields(f)
 		}
 
 		ctx, cancel := context.WithCancel(ctx)
@@ -488,6 +492,11 @@ func (b *ConfigBuilder) GetBackendByContext(ctx context.Context) (Node, error) {
 	default:
 		return NewChainConnector(ctx, processors), nil
 	}
+}
+
+// GetBackendByContext : 按照context中的结果表shipper配置，得到该结果表的写入后端processor
+func (b *ConfigBuilder) GetBackendByContext(ctx context.Context) (Node, error) {
+	return b.GetBackendByContextFields(ctx, nil)
 }
 
 // DataProcessor :
@@ -615,35 +624,26 @@ func (b *ConfigBuilder) BuildBranching(from Node, allowGluttonous bool, callback
 	return b.Finish() // 返回一个 NewPipeline(b.context, b.name, exists)
 }
 
-/*
-is_log_cluster: true|false
+type BackendFields struct {
+	RawES     define.ETLRecordFields `json:"raw_es" mapstructure:"raw_es"`
+	PatternES define.ETLRecordFields `json:"pattern_es" mapstructure:"pattern_es"`
+}
 
-log_cluster_config:
-  log_filter:
-    conditions:
-    - key: log_type
-      op: eq
-      value: ["foo", "bar"]
-    - key: log_category
-      op: nq
-      value: ["foo", "bar"]
-    - key: log_name
-      op: contains
-      value: ["foo", "bar"]
+// getBackendFields 调用方需要自行判断其属性是否为空
+func (b *ConfigBuilder) getBackendFields(rtOpts map[string]interface{}) BackendFields {
+	var conf BackendFields
+	v, ok := rtOpts[config.PipelineConfigOptLogClusterConfig]
+	if !ok {
+		return conf
+	}
+	obj, ok := v.(map[string]interface{})
+	if !ok {
+		return conf
+	}
 
-   log_cluster:
-     address: 127.0.0.1:8080/foo/bar
-     timeout: 10s
-     retry: 3
-
-   backend_filter:
-     raw_es:
-       dimensions: ["my_dim1", "my_dim2"]
-       metrics: ["log"]
-     pattern_es:
-       dimensions: ["my_dim1", "my_dim2"]
-	   metrics: ["log"]
-*/
+	_ = mapstructure.Decode(obj[config.PipelineConfigOptBackendFields], &conf)
+	return conf
+}
 
 func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...ContextBuilderBranchingCallback) (*Pipeline, error) {
 	ctx := b.ctx
@@ -655,13 +655,14 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	pipeOpts := utils.NewMapHelper(pipeConfig.Option)
 	isLogCluster, _ := pipeOpts.GetBool(config.PipelineConfigOptIsLogCluster)
 	if !isLogCluster {
-		pipeConfig.ResultTableList = pipeConfig.ResultTableList[:1]
+		pipeConfig.ResultTableList = pipeConfig.ResultTableList[:1] // 避免写入两个 ES
 		config.PipelineConfigIntoContext(b.ctx, pipeConfig)
 		return b.BuildBranching(from, true, callbacks[0])
 	}
 
 	conf := config.FromContext(ctx)
 	strictMode := conf.GetBool(define.ConfPipelineStrictMode)
+	fields := b.getBackendFields(pipeConfig.Option)
 
 	// 日志聚类会从单个数据源派生出多个分支
 	// 但此流程只会在内部处理 共用同一个数据源
@@ -686,8 +687,9 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 		b.PipeConfigInitFn(pipeConfig)
 	}
 
-	buildBackend := func(subCtx context.Context, rt *config.MetaResultTableConfig) (Node, error) {
-		backend, err := b.GetBackendByContext(subCtx)
+	buildBackend := func(subCtx context.Context, f *define.ETLRecordFields) (Node, error) {
+		rt := config.ResultTableConfigFromContext(subCtx)
+		backend, err := b.GetBackendByContextFields(subCtx, f)
 		if err != nil {
 			if strictMode {
 				return nil, errors.Wrapf(err, "get result table %s backend failed", rt.ResultTable)
@@ -698,79 +700,68 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 		return backend, nil
 	}
 
-	chainNode := func(subCtx context.Context, rt *config.MetaResultTableConfig, cb ContextBuilderBranchingCallback, backends ...Node) error {
-		for i := 0; i < len(backends); i++ {
-			backend := backends[i]
-			var passer Node
-			var err error
+	chainNode := func(subCtx context.Context, cb ContextBuilderBranchingCallback, backend Node) error {
+		var passer Node
+		var err error
 
-			multiNum := rt.MultiNum
-			multiNum = GetPipeLineNum(pipeConfig.DataID)
-			if multiNum > 1 {
-				passer, err = b.DataProcessor(subCtx, "passer")
-				if err != nil {
-					return err
-				}
-				passer.SetNoCopy(true)
-				b.Connect(from, passer)
-				backend = NewFanInConnector(ctx, backend)
-			} else {
-				passer = from
+		rt := config.ResultTableConfigFromContext(subCtx)
+		multiNum := defaultPipelineNums
+		opts := utils.NewMapHelper(rt.Option)
+		n, _ := opts.GetInt("multi_num")
+		if n > 0 {
+			multiNum = n
+		}
+
+		if multiNum > 1 {
+			passer, err = b.DataProcessor(subCtx, "passer")
+			if err != nil {
+				return err
 			}
+			passer.SetNoCopy(true)
+			b.Connect(from, passer)
+			backend = NewFanInConnector(subCtx, backend)
+		} else {
+			passer = from
+		}
 
-			for index := 0; index < multiNum; index++ {
-				runtimeConfig := new(config.RuntimeConfig)
-				runtimeConfig.PipelineCount = index
-				runtimeCtx := config.RuntimeConfigIntoContext(subCtx, runtimeConfig)
+		for index := 0; index < multiNum; index++ {
+			runtimeConfig := new(config.RuntimeConfig)
+			runtimeConfig.PipelineCount = index
+			runtimeCtx := config.RuntimeConfigIntoContext(subCtx, runtimeConfig)
 
-				err = cb(runtimeCtx, passer, backend)
-				if err != nil {
-					if strictMode {
-						return errors.Wrapf(err, "create branching by %s failed", rt.ResultTable)
-					}
-					// 非严格模式下忽略此错误
-					logging.Warnf("create etl data processor %s error %v", rt.ResultTable, err)
+			err = cb(runtimeCtx, passer, backend)
+			if err != nil {
+				if strictMode {
+					return errors.Wrapf(err, "create branching by %s failed", rt.ResultTable)
 				}
+				// 非严格模式下忽略此错误
+				logging.Warnf("create etl data processor %s error %v", rt.ResultTable, err)
 			}
 		}
 		return nil
 	}
 
-	// [0]: bk_flat_batch
-	//
-	// 兼容原先的 flat_batch 处理逻辑
 	rt0 := pipeConfig.ResultTableList[0]
 	ctx0 := config.ResultTableConfigIntoContext(ctx, rt0)
-	cb0 := callbacks[0]
-
-	backend0, err := buildBackend(ctx0, rt0)
+	backend0, err := buildBackend(ctx0, &fields.RawES)
 	if err != nil {
 		return nil, err
 	}
-	if err := chainNode(ctx0, rt0, cb0, backend0); err != nil {
-		return nil, err
-	}
 
-	// [1]: bk_log_cluster
-	//
-	// 日志聚类处理逻辑 需要构造一个虚拟的 fanout 后端 同时写入两个 ES
-	// TODO(mando): 此后端需要有过滤字段的能力
 	rt1 := pipeConfig.ResultTableList[1]
-	cb1 := callbacks[1]
+	rt1.FieldList = rt0.FieldList // 复用 rt0 的 fieldslist 因为 pattern 是依附于 raw 而存在的
 	ctx1 := config.ResultTableConfigIntoContext(ctx, rt1)
-	backend0, err = buildBackend(ctx1, rt0) // 聚类结构与原始日志数据共享同一个后端 ES
-	if err != nil {
-		return nil, err
-	}
-	backend1, err := buildBackend(ctx1, rt1)
+	backend1, err := buildBackend(ctx1, &fields.PatternES)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := chainNode(ctx1, rt1, cb1, backend0, backend1); err != nil {
+	// 统一使用 rt0 的配置
+	// 使用 chainConnector 构建成多端 backend 具体处理差异由 backend 自行处理 不在 processor 体现
+	if err := chainNode(ctx0, callbacks[1], NewChainConnector(ctx, []Node{backend0, backend1})); err != nil {
 		return nil, err
 	}
 
 	logging.Debugf("pipeline %v layout: %v", pipeConfig.DataID, b)
-	return b.Finish() // 返回一个 NewPipeline(b.context, b.name, exists)
+	return b.Finish()
 }

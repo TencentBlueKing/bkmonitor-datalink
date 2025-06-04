@@ -11,12 +11,19 @@ package pipeline
 
 import (
 	"context"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 )
 
 // Gluttonous :
 type Gluttonous struct{}
+
+func (g *Gluttonous) Poll() time.Duration { return 0 }
+
+func (g *Gluttonous) SetPoll(t time.Duration) {}
+
+func (g *Gluttonous) SetETLRecordFields(f *define.ETLRecordFields) {}
 
 // Process : process data
 func (g *Gluttonous) Process(p define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
@@ -42,7 +49,8 @@ func (g *Gluttonous) Reset() error {
 }
 
 func (g *Gluttonous) SetIndex(i int) {}
-func (g *Gluttonous) Index() int     { return 0 }
+
+func (g *Gluttonous) Index() int { return 0 }
 
 // Finish : process finished
 func (g *Gluttonous) Finish(outputChan chan<- define.Payload, killChan chan<- error) {

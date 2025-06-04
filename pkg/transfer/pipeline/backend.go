@@ -91,6 +91,7 @@ type BulkHandler interface {
 	SetManager(manager BulkManager)
 	Handle(ctx context.Context, payload define.Payload, killChan chan<- error) (result interface{}, at time.Time, ok bool)
 	Flush(ctx context.Context, results []interface{}) (int, error)
+	SetETLRecordFields(f *define.ETLRecordFields)
 	Close() error
 }
 
@@ -155,33 +156,6 @@ type BulkBackendAdapter struct {
 	buffer              []interface{}
 	pushSem             utils.Semaphore
 }
-
-//type ETLRecordFilter struct {
-//	metrics    map[string]struct{}
-//	dimensions map[string]struct{}
-//}
-//
-//func NewETLRecordFilter(opts map[string]interface{}) {
-//	filter := &ETLRecordFilter{
-//		metrics:    make(map[string]struct{}),
-//		dimensions: make(map[string]struct{}),
-//	}
-//
-//	/*
-//	log_cluster_config:
-//	  log_filter:
-//
-//	*/
-//
-//	//opts["dimensions"]
-//	//for _, metric := range config.MQConfigFromContext(ctx).Metrics {
-//	//	filter.metrics[metric] = struct{}{}
-//	//}
-//	//for _, dimension := range config.MQConfigFromContext(ctx).Dimensions {
-//	//	filter.dimensions[dimension] = struct{}{}
-//	//}
-//	//opts["filter"] = filter
-//}
 
 func getBufferSizeAndFlushInterval(ctx context.Context, name string) (int, time.Duration) {
 	bufferSize := BulkDefaultBufferSize
@@ -258,10 +232,6 @@ func NewBulkBackendAdapter(ctx context.Context, name string, handler BulkHandler
 	return adapter
 }
 
-func (b *BulkBackendAdapter) SetFilter(opts map[string]interface{}) {
-
-}
-
 func (b *BulkBackendAdapter) isEmpty() bool {
 	return len(b.buffer) == 0
 }
@@ -274,6 +244,12 @@ func (b *BulkBackendAdapter) add(result interface{}) {
 	b.buffer = append(b.buffer, result)
 	if b.isFull() {
 		b.flush()
+	}
+}
+
+func (b *BulkBackendAdapter) SetETLRecordFields(f *define.ETLRecordFields) {
+	if b.handler != nil {
+		b.handler.SetETLRecordFields(f)
 	}
 }
 

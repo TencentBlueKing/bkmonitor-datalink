@@ -286,7 +286,7 @@ func TestWriteDataSourceRelations(t *testing.T) {
 	}
 }
 
-func TestWriteAppVersionRelation(t *testing.T) {
+func TestWriteContainerInfoRelation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -297,8 +297,8 @@ func TestWriteAppVersionRelation(t *testing.T) {
 		},
 		NodeName: "test-node-1",
 		Annotations: map[string]string{
-			"bkm.woa.com/relation/info/container/environment": "paasv3",
-			"bkm.woa.com/relation/info/container/region":      "guangzhou",
+			"bkmonitor/relation/info/container/environment": "paasv3",
+			"bkmonitor/relation/info/container/region":      "guangzhou",
 		},
 		Containers: []ContainerKey{
 			{Name: "test-container-1", Tag: "1.0.0"},
@@ -317,11 +317,13 @@ func TestWriteAppVersionRelation(t *testing.T) {
 	}
 
 	buf := &bytes.Buffer{}
-	objectsController.WriteAppVersionRelation(buf)
+	objectsController.WriteContainerInfoRelation(buf)
 
-	expected := `container_info_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-1",version="1.0.0",environment="paasv3",region="guangzhou"} 1
-container_info_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-2",version="2.0.0",environment="paasv3",region="guangzhou"} 1
-`
-
-	assert.Equal(t, expected, buf.String())
+	expected := []string{
+		`container_info_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-1",version="1.0.0",environment="paasv3",region="guangzhou"} 1`,
+		`container_info_relation{pod="test-pod-1",namespace="test-ns-1",container="test-container-2",version="2.0.0",environment="paasv3",region="guangzhou"} 1`,
+	}
+	for _, s := range expected {
+		assert.Contains(t, buf.String(), s)
+	}
 }

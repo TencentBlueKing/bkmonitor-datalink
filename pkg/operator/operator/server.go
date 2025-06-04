@@ -576,7 +576,7 @@ func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) 
 	c.objectsController.WritePodRelations(w)
 	c.objectsController.WriteReplicasetRelations(w)
 	c.objectsController.WriteDataSourceRelations(w)
-	c.objectsController.WriteAppVersionRelation(w)
+	c.objectsController.WriteContainerInfoRelation(w)
 }
 
 func (c *Operator) RuleMetricsRoute(w http.ResponseWriter, _ *http.Request) {

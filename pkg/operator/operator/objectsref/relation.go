@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	relationContainerInfoPath = "bkm.woa.com/relation/info/container/"
+	relationContainerInfoPath = "bkmonitor/relation/info/container/"
 )
 
 const (
@@ -48,16 +48,16 @@ const (
 	relationContainerInfo = "container_info_relation"
 )
 
-func (oc *ObjectsController) WriteAppVersionRelation(w io.Writer) {
+func (oc *ObjectsController) WriteContainerInfoRelation(w io.Writer) {
 	for _, pod := range oc.podObjs.GetAll() {
-		var customLables []promfmt.Label
+		var customLabels []promfmt.Label
 		for k, v := range pod.Annotations {
 			if strings.HasPrefix(k, relationContainerInfoPath) {
 				name := strings.TrimPrefix(k, relationContainerInfoPath)
 				if name == "" || v == "" {
 					continue
 				}
-				customLables = append(customLables, promfmt.Label{
+				customLabels = append(customLabels, promfmt.Label{
 					Name:  name,
 					Value: v,
 				})
@@ -74,7 +74,7 @@ func (oc *ObjectsController) WriteAppVersionRelation(w io.Writer) {
 				{Name: "namespace", Value: pod.ID.Namespace},
 				{Name: "container", Value: container.Name},
 				{Name: "version", Value: container.Tag},
-			}, customLables...)
+			}, customLabels...)
 
 			promfmt.FmtBytes(w, promfmt.Metric{
 				Name:   relationContainerInfo,

@@ -24,6 +24,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	qs "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -187,6 +188,72 @@ type FormatFactory struct {
 	timeFormat string
 
 	isReference bool
+
+	labelMap   map[string][]string
+	labelCheck map[string]struct{}
+}
+
+func (f *FormatFactory) addLabel(key, value string) {
+
+	if f.labelCheck == nil {
+		f.labelCheck = make(map[string]struct{})
+	}
+	if f.labelMap == nil {
+		f.labelMap = make(map[string][]string)
+	}
+
+	checkKey := key + ":" + value
+	if _, ok := f.labelCheck[checkKey]; !ok {
+		f.labelCheck[checkKey] = struct{}{}
+		f.labelMap[key] = append(f.labelMap[key], value)
+	}
+}
+
+// GetLabelMap 获取标签映射
+func (f *FormatFactory) GetLabelMap() map[string][]string {
+	return f.labelMap
+}
+
+// SetLabelMapForTest 用于测试时设置labelMap
+func (f *FormatFactory) SetLabelMapForTest(labelMap map[string][]string) {
+	f.labelMap = labelMap
+}
+
+func (f *FormatFactory) ProcessQueryString(queryString string) error {
+	if queryString == "" {
+		return nil
+	}
+
+	if ast, err := qs.Parse(queryString); err == nil {
+		f.walkQueryString(ast)
+	} else {
+		return fmt.Errorf("failed to parse query string: %w", err)
+	}
+	return nil
+}
+
+// walkQueryString 遍历 QueryString AST 并添加标签
+func (f *FormatFactory) walkQueryString(expr qs.Expr) {
+	switch e := expr.(type) {
+	case *qs.MatchExpr:
+		if e.Field != "" && e.Value != "" {
+			f.addLabel(e.Field, e.Value)
+		}
+	case *qs.WildcardExpr:
+		if e.Field != "" && e.Value != "" {
+			f.addLabel(e.Field, e.Value)
+		}
+	case *qs.NumberRangeExpr:
+		// 范围查询不添加到高亮
+	case *qs.AndExpr:
+		f.walkQueryString(e.Left)
+		f.walkQueryString(e.Right)
+	case *qs.OrExpr:
+		f.walkQueryString(e.Left)
+		f.walkQueryString(e.Right)
+	case *qs.NotExpr:
+		// NOT 查询不添加到高亮
+	}
 }
 
 func NewFormatFactory(ctx context.Context) *FormatFactory {
@@ -657,23 +724,6 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 	return
 }
 
-func (f *FormatFactory) HighLight(queryString string, maxAnalyzedOffset int) *elastic.Highlight {
-	requireFieldMatch := false
-	if strings.Contains(queryString, ":") {
-		requireFieldMatch = true
-	}
-	hl := elastic.NewHighlight().
-		Field("*").NumOfFragments(0).
-		RequireFieldMatch(requireFieldMatch).
-		PreTags("<mark>").PostTags("</mark>")
-
-	if maxAnalyzedOffset > 0 {
-		hl = hl.MaxAnalyzedOffset(maxAnalyzedOffset)
-	}
-
-	return hl
-}
-
 func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
 	if len(aggregates) == 0 {
 		err := errors.New("aggregate_method_list is empty")
@@ -807,6 +857,10 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 
 				queries := make([]elastic.Query, 0)
 				for _, value := range con.Value {
+					if value != "" {
+						f.addLabel(con.DimensionName, value)
+					}
+
 					var query elastic.Query
 					if con.DimensionName != "" {
 						// 如果是字符串类型，则需要使用 match_phrase 进行非空判断
@@ -1057,4 +1111,61 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 
 func (f *FormatFactory) GetTimeField() metadata.TimeField {
 	return f.timeField
+}
+
+// Highlight 处理高亮功能
+func (f *FormatFactory) Highlight(query *metadata.Query, data map[string]any) map[string]any {
+	isHighlightEnable := query.HighLight != nil && query.HighLight.Enable
+	isExistMaxAnalyzedOffset := query.HighLight != nil && query.HighLight.MaxAnalyzedOffset > 0
+
+	if !isHighlightEnable {
+		return nil
+	}
+
+	labelMap := f.GetLabelMap()
+	if len(labelMap) == 0 {
+		return nil
+	}
+
+	highlightData := f.createHighlightData(data, labelMap)
+	if len(highlightData) == 0 {
+		return nil
+	}
+
+	options := []function.HighLightOption{
+		function.WithLabelMap(labelMap),
+	}
+	if isExistMaxAnalyzedOffset {
+		options = append(options, function.WithMaxAnalyzedOffset(query.HighLight.MaxAnalyzedOffset))
+	}
+
+	return function.HighLight(highlightData, options...)
+}
+
+func (f *FormatFactory) createHighlightData(data map[string]any, labelMap map[string][]string) map[string]any {
+	result := make(map[string]any)
+
+	flattenedData := make(map[string]any)
+	mapData("", data, flattenedData)
+
+	for fieldName, fieldValue := range flattenedData {
+		stringValue, isString := fieldValue.(string)
+		if !isString {
+			continue
+		}
+
+		expectedValues, shouldHighlight := labelMap[fieldName]
+		if !shouldHighlight {
+			continue
+		}
+
+		for _, expectedValue := range expectedValues {
+			if stringValue == expectedValue {
+				result[fieldName] = []string{stringValue}
+				break
+			}
+		}
+	}
+
+	return result
 }

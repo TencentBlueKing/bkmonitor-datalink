@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -291,9 +292,11 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		newData[KeyIndex] = query.DB
 		newData[KeyTableID] = query.TableID
 		newData[KeyDataLabel] = query.DataLabel
-
 		if query.HighLight != nil && query.HighLight.Enable {
-			newData[KeyHighLight] = queryFactory.HighLight(newData)
+			newData[KeyHighLight] = function.HighLight(newData,
+				function.WithLabelMap(queryFactory.GetLabelMap()),
+				function.WithMaxAnalyzedOffset(query.HighLight.MaxAnalyzedOffset),
+			)
 		}
 		dataCh <- newData
 	}

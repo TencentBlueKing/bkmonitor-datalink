@@ -232,8 +232,12 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}
 	filterQueries = append(filterQueries, rangeQuery)
 
-	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
+		err := fact.ProcessQueryString(qb.QueryString)
+		if err != nil {
+			return nil, fmt.Errorf("process query string error: %w", err)
+		}
+
 		qs := NewQueryString(qb.QueryString, qb.IsPrefix, fact.NestedField)
 		q, qsErr := qs.ToDSL()
 		if qsErr != nil {
@@ -277,10 +281,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	if qb.Collapse != nil && qb.Collapse.Field != "" {
 		source.Collapse(elastic.NewCollapseBuilder(qb.Collapse.Field))
-	}
-
-	if qb.HighLight != nil && qb.HighLight.Enable {
-		source.Highlight(fact.HighLight(qb.QueryString, qb.HighLight.MaxAnalyzedOffset))
 	}
 
 	if source == nil {
@@ -382,6 +382,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	if res.Aggregations != nil {
 		span.Set("aggregations_length", len(res.Aggregations))
 	}
+
+	span.Set("label-map", fact.labelMap)
 
 	queryCost := time.Since(startAnalyze)
 	span.Set("query-cost", queryCost.String())
@@ -604,8 +606,12 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 							fact.data[FieldTime] = timeValue
 						}
 
-						if len(d.Highlight) > 0 {
-							fact.data[KeyHighLight] = d.Highlight
+						if highlightResult := fact.Highlight(query, data); highlightResult != nil {
+							fact.data[KeyHighLight] = highlightResult
+							span.Set("highlight-result", highlightResult)
+						} else {
+							span.Set("highlight-result", "empty")
+							span.Set("highlight-labels", fact.labelMap)
 						}
 
 						if idx == len(sr.Hits.Hits)-1 && d.Sort != nil {

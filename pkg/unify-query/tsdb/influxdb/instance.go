@@ -359,7 +359,7 @@ func (i *Instance) makeSQL(
 		if len(agg.Dimensions) > 0 {
 			for _, dim := range agg.Dimensions {
 				group := dim
-				if group == labels.MetricName {
+				if group == "" || group == labels.MetricName {
 					continue
 				}
 

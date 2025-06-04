@@ -764,7 +764,7 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 			}
 
 			for idx, dim := range am.Dimensions {
-				if dim == labels.MetricName {
+				if dim == "" || dim == labels.MetricName {
 					continue
 				}
 				if f.decode != nil {

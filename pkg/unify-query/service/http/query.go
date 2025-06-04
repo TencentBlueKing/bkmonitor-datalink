@@ -183,7 +183,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 	// 构建查询路由列表
 	if queryTs.SpaceUid == "" {
-		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUid
+		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
 	}
 	for _, ql := range queryTs.QueryList {
 		// 时间复用

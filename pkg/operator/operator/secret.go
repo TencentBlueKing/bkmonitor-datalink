@@ -250,7 +250,7 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 			logger.Debugf("daemonset secret %s add file %s", secret.Name, config.FileName)
 		}
 
-		if configs.G().EnableTimeSyncTask {
+		if configs.G().TimeSync.Enabled {
 			tsFile, tsContent, err := c.createTimeSyncTask(node)
 			if err != nil {
 				logger.Errorf("failed to crate timesync task, err: %v", err)

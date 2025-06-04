@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	relationContainerInfoPath = "bkmonitor/relation/info/container/"
+	relationContainerInfoPath = "monitor.bk.tencent.com/relation/info/container/"
 )
 
 const (

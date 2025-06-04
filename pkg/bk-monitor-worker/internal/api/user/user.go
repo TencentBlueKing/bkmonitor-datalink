@@ -7,19 +7,31 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package metadata
+package user
 
-import "context"
+import (
+	"github.com/TencentBlueKing/bk-apigateway-sdks/core/bkapi"
+	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
+)
 
-// Headers 统一注入请求 header 头信息
-func Headers(ctx context.Context, headers map[string]string) map[string]string {
-	if headers == nil {
-		headers = make(map[string]string)
+type Client struct {
+	define.BkApiClient
+}
+
+func New(configProvider define.ClientConfigProvider, opts ...define.BkApiClientOption) (*Client, error) {
+	client, err := bkapi.NewBkApiClient("user", configProvider, opts...)
+	if err != nil {
+		return nil, err
 	}
 
-	user := GetUser(ctx)
-	headers[BkQuerySourceHeader] = user.Key
-	headers[SpaceUIDHeader] = user.SpaceUID
-	headers[TenantIDHeader] = user.TenantID
-	return headers
+	c := &Client{BkApiClient: client}
+	return c, nil
+}
+
+func (c *Client) ListTenant(opts ...define.OperationOption) define.Operation {
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "list_tenant",
+		Method: "GET",
+		Path:   "/api/v3/open/tenants/",
+	}, opts...)
 }

@@ -161,6 +161,17 @@ func MsIntMergeNs(ms int64, ns time.Time) time.Time {
 	return time.Unix(0, (ms-ns.UnixMilli())*1e6+ns.UnixNano())
 }
 
+// IsAlignTime 判断该聚合是否需要进行对齐
+func IsAlignTime(t time.Duration) bool {
+	if t == 0 {
+		return false
+	}
+
+	// 只有按天的聚合才需要对齐时间
+	day := 24 * time.Hour
+	return t.Milliseconds()%day.Milliseconds() == 0
+}
+
 // TimeOffset 根据 timezone 偏移对齐
 func TimeOffset(t time.Time, timezone string, step time.Duration) (string, time.Time) {
 	loc, err := time.LoadLocation(timezone)

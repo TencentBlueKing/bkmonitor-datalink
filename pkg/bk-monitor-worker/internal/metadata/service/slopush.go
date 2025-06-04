@@ -150,9 +150,9 @@ func getAllAlerts(startTime int64, strategyIDs []BkBizStrategy, allStrategyAggIn
 	return alertList, nil
 }
 
-func getFatalAlerts(conditions []map[string]interface{}, startTime int64, page, pageSize int, BkBizID int32) (int, []Alert, error) {
+func getFatalAlerts(conditions []map[string]interface{}, startTime int64, page, pageSize int, bkBizID int32) (int, []Alert, error) {
 	// 调用外部服务以获取告警数据
-	alertData, err := apiservice.Monitor.SearchAlert(conditions, startTime, Now, page, pageSize, BkBizID)
+	alertData, err := apiservice.Monitor.SearchAlert(conditions, startTime, Now, page, pageSize, bkBizID)
 	if err != nil {
 		// 处理调用错误
 		return 0, nil, errors.Wrapf(err, "failed to search alerts")

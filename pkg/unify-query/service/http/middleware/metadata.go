@@ -32,7 +32,8 @@ func MetaData(p *Params) gin.HandlerFunc {
 		var (
 			start     = time.Now()
 			source    = c.Request.Header.Get(metadata.BkQuerySourceHeader)
-			spaceUid  = c.Request.Header.Get(metadata.SpaceUIDHeader)
+			tenantID  = c.Request.Header.Get(metadata.TenantIDHeader)
+			spaceUID  = c.Request.Header.Get(metadata.SpaceUIDHeader)
 			skipSpace = c.Request.Header.Get(metadata.SkipSpaceHeader)
 
 			hostName, ip = metadata.GetLocalHost()
@@ -47,9 +48,14 @@ func MetaData(p *Params) gin.HandlerFunc {
 		ctx, span := trace.NewSpan(ctx, "http-api-metadata")
 
 		// 把用户名注入到 metadata 中
-		metadata.SetUser(ctx, source, spaceUid, skipSpace)
+		metadata.SetUser(ctx, &metadata.User{
+			Key:       source,
+			TenantID:  tenantID,
+			SpaceUID:  spaceUID,
+			SkipSpace: skipSpace,
+		})
 		user := metadata.GetUser(ctx)
-		metric.APIRequestInc(ctx, c.Request.URL.Path, metric.StatusReceived, spaceUid, user.Source)
+		metric.APIRequestInc(ctx, c.Request.URL.Path, metric.StatusReceived, spaceUID, user.Source)
 
 		if span != nil {
 			defer func() {
@@ -58,7 +64,7 @@ func MetaData(p *Params) gin.HandlerFunc {
 				span.Set("local-host-name", hostName)
 
 				sub := time.Since(start)
-				metric.APIRequestSecond(ctx, sub, c.Request.URL.Path, spaceUid)
+				metric.APIRequestSecond(ctx, sub, c.Request.URL.Path, spaceUID)
 
 				// 记录慢查询
 				if p != nil {

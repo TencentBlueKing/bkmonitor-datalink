@@ -13,6 +13,7 @@ const (
 	BkQuerySourceHeader = "Bk-Query-Source"
 	SpaceUIDHeader      = "X-Bk-Scope-Space-Uid"
 	SkipSpaceHeader     = "X-Bk-Scope-Skip-Space"
+	TenantIDHeader      = "X-Bk-Tenant-Id"
 
 	UserKey               = "user"
 	StatusKey             = "message"

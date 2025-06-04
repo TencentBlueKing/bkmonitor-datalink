@@ -8,7 +8,7 @@ package querystring
 	e 	Expr
 }
 
-%token tSTRING tPHRASE tNUMBER tSLASH tSTAR
+%token tSTRING tPHRASE tNUMBER tSLASH
 %token tOR tAND tNOT tTO tPLUS tMINUS tCOLON
 %token tLEFTBRACKET tRIGHTBRACKET tLEFTRANGE tRIGHTRANGE tLEFTBRACES tRIGHTBRACES
 %token tGREATER tLESS tEQUAL
@@ -16,7 +16,6 @@ package querystring
 %type <s>                tSTRING
 %type <s>                tPHRASE
 %type <s>                tNUMBER
-%type <s>                tSTAR
 %type <s>		 tSLASH
 %type <s>                posOrNegNumber
 %type <e>                searchBase searchLogicParts searchPart searchLogicPart searchLogicSimplePart
@@ -198,19 +197,52 @@ tSTRING tCOLON tLESS tEQUAL tPHRASE {
 	$$ = q
 }
 |
-tSTRING tCOLON tLEFTRANGE tSTAR tTO posOrNegNumber tRIGHTRANGE {
+tSTRING tCOLON tLEFTRANGE tSTRING tTO posOrNegNumber tRIGHTRANGE {
+	min := $4
 	max := $6
-	q := NewNumberRangeExpr(nil, &max, true, true)
+	q := NewNumberRangeExpr(&min, &max, true, true)
 	q.SetField($1)
 	$$ = q
 }
 |
-tSTRING tCOLON tLEFTRANGE posOrNegNumber tTO tSTAR tRIGHTRANGE {
+tSTRING tCOLON tLEFTRANGE posOrNegNumber tTO tSTRING tRIGHTRANGE {
 	min := $4
-	q := NewNumberRangeExpr(&min, nil, true, true)
+	max := $6
+	q := NewNumberRangeExpr(&min, &max, true, true)
 	q.SetField($1)
 	$$ = q
 }
+|
+tSTRING tCOLON tLEFTBRACES tSTRING tTO posOrNegNumber tRIGHTRANGE {
+	min := $4
+	max := $6
+	q := NewNumberRangeExpr(&min, &max, false, true)
+	q.SetField($1)
+	$$ = q
+}
+|
+tSTRING tCOLON tLEFTBRACES posOrNegNumber tTO tSTRING tRIGHTRANGE {
+	min := $4
+	max := $6
+	q := NewNumberRangeExpr(&min, &max, false, true)
+	q.SetField($1)
+	$$ = q
+}|
+ tSTRING tCOLON tLEFTRANGE tSTRING tTO posOrNegNumber tRIGHTBRACES {
+ 	min := $4
+ 	max := $6
+ 	q := NewNumberRangeExpr(&min, &max, true, false)
+ 	q.SetField($1)
+ 	$$ = q
+ }
+ |
+ tSTRING tCOLON tLEFTRANGE posOrNegNumber tTO tSTRING tRIGHTBRACES {
+ 	min := $4
+ 	max := $6
+ 	q := NewNumberRangeExpr(&min, &max, true, false)
+ 	q.SetField($1)
+ 	$$ = q
+ }
 |
 tSTRING tCOLON tLEFTRANGE posOrNegNumber tTO posOrNegNumber tRIGHTBRACES {
 	min := $4

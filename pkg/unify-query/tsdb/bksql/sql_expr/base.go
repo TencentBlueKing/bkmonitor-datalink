@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -194,7 +195,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 	}
 
 	if window > 0 {
-		if window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
+		if function.IsAlignTime(window) {
 			// 时间聚合函数兼容时区
 			loc, locErr := time.LoadLocation(timezone)
 			if locErr != nil {

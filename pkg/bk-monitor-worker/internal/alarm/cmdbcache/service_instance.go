@@ -68,8 +68,8 @@ type ServiceInstanceCacheManager struct {
 }
 
 // NewServiceInstanceCacheManager 创建服务实例缓存管理器
-func NewServiceInstanceCacheManager(prefix string, opt *redis.Options, concurrentLimit int) (*ServiceInstanceCacheManager, error) {
-	manager, err := NewBaseCacheManager(prefix, opt, concurrentLimit)
+func NewServiceInstanceCacheManager(bkTenantId string, prefix string, opt *redis.Options, concurrentLimit int) (*ServiceInstanceCacheManager, error) {
+	manager, err := NewBaseCacheManager(bkTenantId, prefix, opt, concurrentLimit)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create base cache Manager")
 	}
@@ -91,8 +91,8 @@ func (m *ServiceInstanceCacheManager) useBiz() bool {
 }
 
 // getServiceInstances 获取服务实例列表
-func getServiceInstances(ctx context.Context, bkBizId int) ([]*AlarmServiceInstanceInfo, error) {
-	cmdbApi := getCmdbApi()
+func getServiceInstances(ctx context.Context, bkTenantId string, bkBizId int) ([]*AlarmServiceInstanceInfo, error) {
+	cmdbApi := getCmdbApi(bkTenantId)
 	// 设置超时时间
 	_ = cmdbApi.AddOperationOptions()
 
@@ -143,7 +143,7 @@ func getServiceInstances(ctx context.Context, bkBizId int) ([]*AlarmServiceInsta
 
 // RefreshByBiz 按业务刷新缓存
 func (m *ServiceInstanceCacheManager) RefreshByBiz(ctx context.Context, bkBizId int) error {
-	serviceInstances, err := getServiceInstances(ctx, bkBizId)
+	serviceInstances, err := getServiceInstances(ctx, m.GetBkTenantId(), bkBizId)
 	if err != nil {
 		return errors.Wrap(err, "get service instances failed")
 

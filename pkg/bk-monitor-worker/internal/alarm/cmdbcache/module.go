@@ -50,8 +50,8 @@ type ModuleCacheManager struct {
 }
 
 // NewModuleCacheManager 创建模块缓存管理器
-func NewModuleCacheManager(prefix string, opt *redis.Options, concurrentLimit int) (*ModuleCacheManager, error) {
-	base, err := NewBaseCacheManager(prefix, opt, concurrentLimit)
+func NewModuleCacheManager(bkTenantId string, prefix string, opt *redis.Options, concurrentLimit int) (*ModuleCacheManager, error) {
+	base, err := NewBaseCacheManager(bkTenantId, prefix, opt, concurrentLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -63,8 +63,8 @@ func NewModuleCacheManager(prefix string, opt *redis.Options, concurrentLimit in
 }
 
 // getModuleListByBizID 通过业务ID获取模块列表
-func getModuleListByBizID(ctx context.Context, bizID int) ([]map[string]interface{}, error) {
-	cmdbApi := getCmdbApi()
+func getModuleListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]map[string]interface{}, error) {
+	cmdbApi := getCmdbApi(bkTenantId)
 	result, err := api.BatchApiRequest(
 		cmdbApiPageSize,
 		func(resp interface{}) (int, error) {
@@ -122,7 +122,7 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 	}
 
 	// 请求模块信息
-	moduleList, err := getModuleListByBizID(ctx, bizID)
+	moduleList, err := getModuleListByBizID(ctx, m.GetBkTenantId(), bizID)
 	if err != nil {
 		return errors.Wrapf(err, "failed to get module list by biz: %d", bizID)
 	}
@@ -167,7 +167,7 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 	}
 
 	// 更新模块缓存
-	if moduleCacheData != nil {
+	if len(moduleCacheData) > 0 {
 		err = m.UpdateHashMapCache(ctx, m.GetCacheKey(moduleCacheKey), moduleCacheData)
 		if err != nil {
 			return errors.Wrapf(err, "refresh module cache by biz: %d failed", bizID)
@@ -176,7 +176,7 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 	}
 
 	// 更新服务模板关联的模块缓存
-	if templateToModules != nil {
+	if len(templateToModules) > 0 {
 		serviceTemplateCacheData := make(map[string]string)
 		for templateID, moduleIDs := range templateToModules {
 			serviceTemplateCacheData[templateID] = fmt.Sprintf("[%s]", strings.Join(moduleIDs, ","))

@@ -945,7 +945,7 @@ func TestClearRtDetail(t *testing.T) {
 }
 
 func TestComposeEsTableIdOptions(t *testing.T) {
-	mocker.InitTestDBConfig("../../../dist/bmw.yaml")
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	//mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	// 初始数据
 	db := mysql.GetDBSession().DB
@@ -991,7 +991,7 @@ func TestComposeEsTableIdOptions(t *testing.T) {
 }
 
 func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
-	mocker.InitTestDBConfig("../../../dist/bmw.yaml")
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 
 	db := mysql.GetDBSession().DB
 	data := space.BkAppSpaces{

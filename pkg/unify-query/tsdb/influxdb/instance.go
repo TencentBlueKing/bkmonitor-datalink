@@ -162,7 +162,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 	defer cancel()
 
 	user := metadata.GetUser(ctx)
-	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-space-uid", user.SpaceUID)
 	span.Set("query-source", user.Source)
 	span.Set("query-username", user.Name)
 	span.Set("query-url-path", urlPath)
@@ -464,7 +464,7 @@ func (i *Instance) query(
 	startAnaylize = time.Now()
 
 	user := metadata.GetUser(ctx)
-	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-space-uid", user.SpaceUID)
 	span.Set("query-source", user.Source)
 	span.Set("query-username", user.Name)
 	span.Set("query-url-path", urlPath)
@@ -591,7 +591,7 @@ func (i *Instance) grpcStream(
 	urlPath := fmt.Sprintf("%s:%d", i.host, i.grpcPort)
 
 	user := metadata.GetUser(ctx)
-	span.Set("grpc-query-space-uid", user.SpaceUid)
+	span.Set("grpc-query-space-uid", user.SpaceUID)
 	span.Set("grpc-query-source", user.Source)
 	span.Set("grpc-query-username", user.Name)
 	span.Set("grpc-query-url-path", urlPath)
@@ -675,7 +675,7 @@ func (i *Instance) QuerySeriesSet(
 	limit, slimit := i.getLimitAndSlimit(query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
 
 	user := metadata.GetUser(ctx)
-	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-space-uid", user.SpaceUID)
 	span.Set("query-source", user.Source)
 	span.Set("query-username", user.Name)
 
@@ -805,7 +805,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 		startAnaylize := time.Now()
 
 		user := metadata.GetUser(ctx)
-		span.Set("query-space-uid", user.SpaceUid)
+		span.Set("query-space-uid", user.SpaceUID)
 		span.Set("query-source", user.Source)
 		span.Set("query-username", user.Name)
 		span.Set("query-url-path", urlPath)
@@ -917,7 +917,7 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 	startAnaylize := time.Now()
 
 	user := metadata.GetUser(ctx)
-	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-space-uid", user.SpaceUID)
 	span.Set("query-source", user.Source)
 	span.Set("query-username", user.Name)
 	span.Set("query-url-path", urlPath)
@@ -1057,7 +1057,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 
 		user := metadata.GetUser(ctx)
 
-		span.Set("query-space-uid", user.SpaceUid)
+		span.Set("query-space-uid", user.SpaceUID)
 		span.Set("query-source", user.Source)
 		span.Set("query-username", user.Name)
 		span.Set("query-url-path", urlPath)

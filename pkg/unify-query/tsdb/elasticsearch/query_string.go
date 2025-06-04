@@ -140,14 +140,14 @@ func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 			return nil, fmt.Errorf("start and end is nil")
 		}
 
-		if c.Start != nil {
+		if c.Start != nil && *c.Start != "*" {
 			if c.IncludeStart {
 				q.Gte(*c.Start)
 			} else {
 				q.Gt(*c.Start)
 			}
 		}
-		if c.End != nil {
+		if c.End != nil && *c.End != "*" {
 			if c.IncludeEnd {
 				q.Lte(*c.End)
 			} else {

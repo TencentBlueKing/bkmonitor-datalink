@@ -12,6 +12,7 @@ package elasticsearch
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,7 +54,7 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        `nested.key: test AND demo`,
-			expected: `{"nested":{"path":"nested.key","query":{"bool":{"must":[{"match_phrase":{"nested.key":{"query":"test"}}},{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"\"demo\""}}]}}}}`,
+			expected: `{"nested":{"path":"nested","query":{"bool":{"must":[{"match_phrase":{"nested.key":{"query":"test"}}},{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"\"demo\""}}]}}}}`,
 		},
 		{
 			q:        `sync_spaces AND -keyword AND -BKLOGAPI`,
@@ -82,13 +83,29 @@ func TestQsToDsl(t *testing.T) {
 			q:        "ms: \u003e500 AND \"/fs-server\" AND NOT \"heartbeat\"",
 			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"ms: \u003e500 AND \"/fs-server\" AND NOT \"heartbeat\""}}`,
 		},
+		{
+			q:        `events.attributes.message.detail: "*66036*"`,
+			expected: `{"nested":{"path":"events","query":{"match_phrase":{"events.attributes.message.detail":{"query":"*66036*"}}}}}`,
+		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			qs := NewQueryString(c.q, c.isPrefix, func(s string) string {
-				if s == "nested.key" {
-					return s
+				mapping := map[string]string{
+					"nested": Nested,
+					"events": Nested,
 				}
+
+				lbs := strings.Split(s, ESStep)
+				for i := len(lbs) - 1; i >= 0; i-- {
+					checkKey := strings.Join(lbs[0:i], ESStep)
+					if v, ok := mapping[checkKey]; ok {
+						if v == Nested {
+							return checkKey
+						}
+					}
+				}
+
 				return ""
 			})
 			query, err := qs.ToDSL()

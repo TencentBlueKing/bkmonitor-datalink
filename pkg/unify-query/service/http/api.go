@@ -527,7 +527,7 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 	)
 
 	queryTs := &structured.QueryTs{
-		SpaceUid: user.SpaceUid,
+		SpaceUid: user.SpaceUID,
 		QueryList: []*structured.Query{
 			{
 				DataSource:    params.DataSource,

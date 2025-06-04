@@ -512,7 +512,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 	for n, c := range testCases {
 		t.Run(n, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			metadata.SetUser(ctx, "", influxdb.SpaceUid, "skip")
+			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
 			source, matcher, _, rets, err := testModel.QueryResourceMatcher(ctx, "", influxdb.SpaceUid, timestamp, c.target, c.source, c.matcher, c.pathResource)
 			assert.Nil(t, err)
 			if err != nil {

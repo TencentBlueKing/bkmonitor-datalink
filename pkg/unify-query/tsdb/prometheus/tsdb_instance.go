@@ -96,7 +96,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		}
 
 		if qry.SourceType == structured.BkData {
-			opt.Connects = append(opt.Connects, elasticsearch.Connect{Address: bkapi.GetBkDataAPI().QueryUrlForES(user.SpaceUid)})
+			opt.Connects = append(opt.Connects, elasticsearch.Connect{Address: bkapi.GetBkDataAPI().QueryUrlForES(user.SpaceUID)})
 			opt.Headers = bkapi.GetBkDataAPI().Headers(nil)
 			opt.HealthCheck = false
 		} else {
@@ -123,7 +123,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		instance, err = elasticsearch.NewInstance(ctx, opt)
 	case consul.BkSqlStorageType:
 		instance, err = bksql.NewInstance(ctx, &bksql.Options{
-			Address: bkapi.GetBkDataAPI().QueryUrl(user.SpaceUid),
+			Address: bkapi.GetBkDataAPI().QueryUrl(user.SpaceUID),
 			Headers: bkapi.GetBkDataAPI().Headers(map[string]string{
 				bksql.ContentType: tsDBService.BkSqlContentType,
 			}),
@@ -134,7 +134,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		})
 	case consul.VictoriaMetricsStorageType:
 		instance, err = victoriaMetrics.NewInstance(ctx, &victoriaMetrics.Options{
-			Address: bkapi.GetBkDataAPI().QueryUrl(user.SpaceUid),
+			Address: bkapi.GetBkDataAPI().QueryUrl(user.SpaceUID),
 			Headers: bkapi.GetBkDataAPI().Headers(map[string]string{
 				victoriaMetrics.ContentType: tsDBService.VmContentType,
 			}),

@@ -34,7 +34,7 @@ type response struct {
 func (r *response) failed(ctx context.Context, err error) {
 	log.Errorf(ctx, err.Error())
 	user := metadata.GetUser(ctx)
-	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUid, user.Source)
+	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUID, user.Source)
 	r.c.JSON(http.StatusBadRequest, ErrResponse{
 		Err: err.Error(),
 	})
@@ -43,6 +43,6 @@ func (r *response) failed(ctx context.Context, err error) {
 func (r *response) success(ctx context.Context, data interface{}) {
 	log.Debugf(ctx, "query data size is %s", fmt.Sprint(unsafe.Sizeof(data)))
 	user := metadata.GetUser(ctx)
-	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUid, user.Source)
+	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUID, user.Source)
 	r.c.JSON(http.StatusOK, data)
 }

@@ -33,7 +33,7 @@ import (
 var testRedisAddr string
 
 func TestMain(m *testing.M) {
-	config.FilePath = "../../../dist/bmw.yaml"
+	config.FilePath = "../../../bmw_test.yaml"
 	config.InitConfig()
 
 	run, err := miniredis.Run()

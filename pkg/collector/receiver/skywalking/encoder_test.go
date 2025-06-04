@@ -348,7 +348,7 @@ func TestSwTransformIP(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func mockSwSpanWithAttr(opName string, SpanType agentv3.SpanType, SpanLayer agentv3.SpanLayer, Peer string, Refs []*agentv3.SegmentReference) *agentv3.SpanObject {
+func mockSwSpanWithAttr(opName string, spanType agentv3.SpanType, spanLayer agentv3.SpanLayer, peer string, refs []*agentv3.SegmentReference) *agentv3.SpanObject {
 	// opName: span.OperationName 对于不同的 SpanLayer 级别有不同格式的 opName 格式 HttpLayer：/api/user/list 类型
 	// DatabaseLayer：Mysql/mysqlClient/Execute
 	span := &agentv3.SpanObject{
@@ -357,15 +357,15 @@ func mockSwSpanWithAttr(opName string, SpanType agentv3.SpanType, SpanLayer agen
 		StartTime:     time.Now().Unix(),
 		EndTime:       time.Now().Unix() + 10,
 		OperationName: opName,
-		SpanType:      SpanType,
-		SpanLayer:     SpanLayer,
+		SpanType:      spanType,
+		SpanLayer:     spanLayer,
 		ComponentId:   1,
 		IsError:       false,
 		SkipAnalysis:  false,
 		Tags:          []*commonv3.KeyStringValuePair{},
 		Logs:          []*agentv3.Log{},
-		Refs:          Refs,
-		Peer:          Peer,
+		Refs:          refs,
+		Peer:          peer,
 	}
 	return span
 }

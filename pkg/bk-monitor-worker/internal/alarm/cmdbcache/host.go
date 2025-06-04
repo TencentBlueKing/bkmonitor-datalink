@@ -247,8 +247,8 @@ type HostAndTopoCacheManager struct {
 }
 
 // NewHostAndTopoCacheManager 创建主机及拓扑缓存管理器
-func NewHostAndTopoCacheManager(prefix string, opt *redis.Options, concurrentLimit int) (*HostAndTopoCacheManager, error) {
-	manager, err := NewBaseCacheManager(prefix, opt, concurrentLimit)
+func NewHostAndTopoCacheManager(bkTenantId string, prefix string, opt *redis.Options, concurrentLimit int) (*HostAndTopoCacheManager, error) {
+	manager, err := NewBaseCacheManager(bkTenantId, prefix, opt, concurrentLimit)
 	if err != nil {
 		return nil, errors.Wrap(err, "new cache Manager failed")
 	}
@@ -279,7 +279,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 	}()
 
 	// 获取业务下的主机及拓扑信息
-	hosts, topo, err := getHostAndTopoByBiz(ctx, bkBizId)
+	hosts, topo, err := getHostAndTopoByBiz(ctx, m.GetBkTenantId(), bkBizId)
 	if err != nil {
 		return errors.Wrap(err, "get host by biz failed")
 	}
@@ -460,8 +460,8 @@ func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context, b
 }
 
 // getHostAndTopoByBiz 查询业务下的主机及拓扑信息
-func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
-	cmdbApi := getCmdbApi()
+func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
+	cmdbApi := getCmdbApi(bkTenantId)
 
 	// 设置超时时间
 	_ = cmdbApi.AddOperationOptions()

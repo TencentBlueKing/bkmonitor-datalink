@@ -7,19 +7,34 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package metadata
+package user_test
 
-import "context"
+import (
+	"testing"
 
-// Headers 统一注入请求 header 头信息
-func Headers(ctx context.Context, headers map[string]string) map[string]string {
-	if headers == nil {
-		headers = make(map[string]string)
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/user"
+)
+
+func TestMain(m *testing.M) {
+	// cfg.FilePath = "../../../bmw_test.yaml"
+	// cfg.InitConfig()
+
+	// m.Run()
+}
+
+func TestListTenant(t *testing.T) {
+	userApi, err := api.GetUserApi("system")
+	if err != nil {
+		t.Errorf("TestListTenant failed, err: %v", err)
+		return
 	}
 
-	user := GetUser(ctx)
-	headers[BkQuerySourceHeader] = user.Key
-	headers[SpaceUIDHeader] = user.SpaceUID
-	headers[TenantIDHeader] = user.TenantID
-	return headers
+	var result user.ListTenantResp
+	_, err = userApi.ListTenant().SetResult(&result).Request()
+	if err != nil {
+		t.Errorf("TestListTenant failed, err: %v", err)
+		return
+	}
+	t.Logf("TestListTenant success, result: %v", result)
 }

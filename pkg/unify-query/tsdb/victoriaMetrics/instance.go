@@ -374,7 +374,7 @@ func (i *Instance) vmQuery(
 	startAnaylize = time.Now()
 
 	span.Set("query-source", user.Source)
-	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-space-uid", user.SpaceUID)
 	span.Set("query-username", user.Name)
 
 	span.Set("query-address", i.url)

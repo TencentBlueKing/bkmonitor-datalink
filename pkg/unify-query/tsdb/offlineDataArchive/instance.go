@@ -128,7 +128,7 @@ func (i Instance) QuerySeriesSet(
 	ctx, span := trace.NewSpan(ctx, "offline-data-archive-query-raw-grpc-stream")
 
 	user := metadata.GetUser(ctx)
-	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-space-uid", user.SpaceUID)
 	span.Set("query-source", user.Source)
 	span.Set("query-username", user.Name)
 	span.Set("query-url-path", i.Address)

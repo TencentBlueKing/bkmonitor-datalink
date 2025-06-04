@@ -1247,7 +1247,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			)
 			ctx = md.InitHashID(ctx)
 
-			md.SetUser(ctx, "", influxdb.SpaceUid, "")
+			md.SetUser(ctx, &md.User{SpaceUID: influxdb.SpaceUid})
 			ref, err := tc.ts.ToQueryReference(ctx)
 			assert.Nil(t, err)
 			assert.Equal(t, tc.ref, ref)

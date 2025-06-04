@@ -366,15 +366,15 @@ func HandleExpr(m map[string]*PromExpr, expr parser.Expr) (parser.Expr, error) {
 }
 
 // 判断A是B的子集
-func isSubset(A []string, B []string) bool {
-	BMap := make(map[string]bool)
-	for _, childItem := range B {
-		BMap[childItem] = true
+func isSubset(a []string, b []string) bool {
+	bMap := make(map[string]bool)
+	for _, childItem := range b {
+		bMap[childItem] = true
 	}
 
-	for _, childItem := range A {
+	for _, childItem := range a {
 		// B里不存在A，说明A不是B的子集
-		if _, ok := BMap[childItem]; !ok {
+		if _, ok := bMap[childItem]; !ok {
 			return false
 		}
 	}

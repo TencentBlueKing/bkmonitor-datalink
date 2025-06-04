@@ -27,14 +27,15 @@ import (
 )
 
 const (
-	BkAppCode           = "default_app_code"
-	SpaceUid            = "bkcc__2"
-	ResultTableVM       = "result_table.vm"
-	ResultTableInfluxDB = "result_table.influxdb"
-	ResultTableEs       = "result_table.es"
-	ResultTableBkBaseEs = "result_table.bk_base_es"
-	ResultTableBkSQL    = "result_table.bk_sql"
-	ResultTableDoris    = "result_table.doris"
+	BkAppCode                  = "default_app_code"
+	SpaceUid                   = "bkcc__2"
+	ResultTableVM              = "result_table.vm"
+	ResultTableInfluxDB        = "result_table.influxdb"
+	ResultTableEs              = "result_table.es"
+	ResultTableEsWithTimeFiled = "result_table.es_with_time_filed"
+	ResultTableBkBaseEs        = "result_table.bk_base_es"
+	ResultTableBkSQL           = "result_table.bk_sql"
+	ResultTableDoris           = "result_table.doris"
 )
 
 var (
@@ -178,6 +179,9 @@ func MockSpaceRouter(ctx context.Context) {
 					ResultTableEs: &ir.SpaceResultTable{
 						TableId: ResultTableEs,
 					},
+					ResultTableEsWithTimeFiled: &ir.SpaceResultTable{
+						TableId: ResultTableEsWithTimeFiled,
+					},
 					ResultTableBkSQL: &ir.SpaceResultTable{
 						TableId: ResultTableBkSQL,
 					},
@@ -273,6 +277,36 @@ func MockSpaceRouter(ctx context.Context) {
 						},
 					},
 					DataLabel: "es",
+				},
+				ResultTableEsWithTimeFiled: &ir.ResultTableDetail{
+					StorageId:   3,
+					TableId:     ResultTableEsWithTimeFiled,
+					DB:          "es_index",
+					SourceType:  "",
+					StorageType: consul.ElasticsearchStorageType,
+					StorageClusterRecords: []ir.Record{
+						{
+							StorageID: 3,
+							// 2019-12-02 08:00:00
+							EnableTime: 1575244800,
+						},
+						{
+							StorageID: 4,
+							// 2019-11-02 08:00:00
+							EnableTime: 1572652800,
+						},
+					},
+					DataLabel: "es",
+					Options: struct {
+						TimeField   ir.TimeField `json:"time_field"`
+						NeedAddTime bool         `json:"need_add_time"`
+					}{
+						TimeField: ir.TimeField{
+							Name: "end_time",
+							Type: "long",
+							Unit: "microsecond",
+						}, NeedAddTime: false,
+					},
 				},
 				ResultTableBkSQL: &ir.ResultTableDetail{
 					StorageId:   4,

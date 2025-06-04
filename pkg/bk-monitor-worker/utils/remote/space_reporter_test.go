@@ -27,7 +27,7 @@ import (
 func TestSpaceReporter__Do(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	mocker.InitTestDBConfig("../../dist/bmw.yaml")
+	mocker.InitTestDBConfig("../../bmw_test.yaml")
 
 	rp, err := NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
 	if err != nil {

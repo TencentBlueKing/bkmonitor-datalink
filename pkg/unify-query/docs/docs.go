@@ -1401,7 +1401,7 @@ const docTemplate = `{
                     }
                 },
                 "space_uid": {
-                    "description": "SpaceUid 空间ID",
+                    "description": "SpaceUID 空间ID",
                     "type": "string"
                 },
                 "start_time": {

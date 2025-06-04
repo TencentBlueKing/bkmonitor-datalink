@@ -506,7 +506,7 @@ func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 	span.Set("info-request-data", string(queryStmt))
 
 	// 如果header中有bkbizid，则以header中的值为最优先
-	spaceUid := user.SpaceUid
+	spaceUid := user.SpaceUID
 
 	span.Set("request-space-uid", spaceUid)
 

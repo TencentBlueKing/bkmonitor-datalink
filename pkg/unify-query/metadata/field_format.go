@@ -15,31 +15,41 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"unicode"
 )
 
-type PromDataFormat struct {
-	ctx  context.Context
-	lock sync.RWMutex
-
-	transformFormat string
+type FieldFormat struct {
+	ctx context.Context
 }
 
-func (f *PromDataFormat) format(s string) string {
+func (f *FieldFormat) format(s string) string {
 	return fmt.Sprintf("__bk_%s__", s)
 }
 
-func (f *PromDataFormat) isAlphaNumericUnderscore(r rune) bool {
+func (f *FieldFormat) isAlphaNumericUnderscore(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == ':' || r == '_'
 }
 
-func (f *PromDataFormat) EncodeFunc() func(q string) string {
+// EncodeFunc 对字段进行别名以及 Prom 引擎计算转换
+func (f *FieldFormat) EncodeFunc(tableID string) func(q string) string {
+	preFunc := func(s string) string {
+		if ns, ok := GetQueryParams(f.ctx).TableFieldAlias[tableID][s]; ok {
+			if ns != "" {
+				return ns
+			}
+		}
+		return s
+	}
+
 	return func(q string) string {
 		var (
 			result       strings.Builder
 			invalidChars []rune
 		)
+		if preFunc != nil {
+			q = preFunc(q)
+		}
+
 		format := f.format(`%d`)
 		for _, r := range q {
 			if !f.isAlphaNumericUnderscore(r) {
@@ -54,7 +64,8 @@ func (f *PromDataFormat) EncodeFunc() func(q string) string {
 	}
 }
 
-func (f *PromDataFormat) DecodeFunc() func(q string) string {
+// DecodeFunc 对字段进行还原，别名无需还原，保留原字段
+func (f *FieldFormat) DecodeFunc(_ string) func(q string) string {
 	return func(q string) string {
 		format := f.format(`([\d]+)`)
 		re := regexp.MustCompile(format)
@@ -72,24 +83,24 @@ func (f *PromDataFormat) DecodeFunc() func(q string) string {
 	}
 }
 
-func (f *PromDataFormat) set() *PromDataFormat {
+func (f *FieldFormat) set() *FieldFormat {
 	if md != nil {
-		md.set(f.ctx, PromDataFormatKey, f)
+		md.set(f.ctx, FieldFormatKey, f)
 	}
 	return f
 }
 
-func GetPromDataFormat(ctx context.Context) *PromDataFormat {
+func GetFieldFormat(ctx context.Context) *FieldFormat {
 	if md != nil {
-		r, ok := md.get(ctx, PromDataFormatKey)
+		r, ok := md.get(ctx, FieldFormatKey)
 		if ok {
-			if f, ok := r.(*PromDataFormat); ok {
+			if f, ok := r.(*FieldFormat); ok {
 				return f
 			}
 		}
 	}
 
-	return (&PromDataFormat{
+	return (&FieldFormat{
 		ctx: ctx,
 	}).set()
 }

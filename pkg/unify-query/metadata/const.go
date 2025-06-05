@@ -13,6 +13,7 @@ const (
 	BkQuerySourceHeader = "Bk-Query-Source"
 	SpaceUIDHeader      = "X-Bk-Scope-Space-Uid"
 	SkipSpaceHeader     = "X-Bk-Scope-Skip-Space"
+	TenantIDHeader      = "X-Bk-Tenant-Id"
 
 	UserKey               = "user"
 	StatusKey             = "message"
@@ -23,7 +24,7 @@ const (
 	QueryClusterMetricKey = "query_cluster_metric"
 	JwtPayLoadKey         = "jwt_payload"
 
-	PromDataFormatKey = "prom_data_format"
+	FieldFormatKey = "field_format"
 
 	ExceedsMaximumLimit  = "EXCEEDS_MAXIMUM_LIMIT"
 	ExceedsMaximumSlimit = "EXCEEDS_MAXIMUM_SLIMIT"

@@ -29,7 +29,7 @@ func GetBkDataTableIDCheck(ctx context.Context, tableID string) bool {
 	u := featureFlag.FFUser(user.HashID, map[string]interface{}{
 		"name":     user.Name,
 		"source":   user.Source,
-		"spaceUid": user.SpaceUid,
+		"spaceUid": user.SpaceUID,
 		"tableID":  tableID,
 	})
 
@@ -53,7 +53,7 @@ func GetJwtAuthFeatureFlag(ctx context.Context) bool {
 	u := featureFlag.FFUser(user.HashID, map[string]interface{}{
 		"name":     user.Name,
 		"source":   user.Source,
-		"spaceUid": user.SpaceUid,
+		"spaceUid": user.SpaceUID,
 	})
 
 	span.Set("ff-user-custom", u.GetCustom())
@@ -78,7 +78,7 @@ func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 	ffUser := featureFlag.FFUser(user.HashID, map[string]interface{}{
 		"name":     user.Name,
 		"source":   user.Source,
-		"spaceUid": user.SpaceUid,
+		"spaceUid": user.SpaceUID,
 		"tableID":  tableID,
 	})
 
@@ -111,7 +111,7 @@ func GetIsK8sFeatureFlag(ctx context.Context) bool {
 	ffUser := featureFlag.FFUser(user.HashID, map[string]interface{}{
 		"name":     user.Name,
 		"source":   user.Source,
-		"spaceUid": user.SpaceUid,
+		"spaceUid": user.SpaceUID,
 	})
 
 	status := featureFlag.BoolVariation(ctx, ffUser, "is-k8s", false)

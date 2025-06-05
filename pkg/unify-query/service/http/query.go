@@ -183,7 +183,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 	// 构建查询路由列表
 	if queryTs.SpaceUid == "" {
-		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUid
+		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
 	}
 	for _, ql := range queryTs.QueryList {
 		// 时间复用
@@ -484,7 +484,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	seriesNum := 0
 	pointsNum := 0
 
-	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc("")
 
 	switch v := res.(type) {
 	case promPromql.Matrix:
@@ -679,7 +679,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	seriesNum := 0
 	pointsNum := 0
 
-	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc("")
 
 	switch v := res.(type) {
 	case promPromql.Matrix:
@@ -861,7 +861,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	seriesNum := 0
 	pointsNum := 0
 
-	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc("")
 
 	switch v := res.(type) {
 	case promPromql.Matrix:

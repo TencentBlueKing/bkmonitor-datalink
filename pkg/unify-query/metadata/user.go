@@ -17,24 +17,20 @@ import (
 // User
 type User struct {
 	Key       string
-	Source    string
-	Name      string
-	Role      string
-	SpaceUid  string
+	TenantID  string
+	SpaceUID  string
 	SkipSpace string
-	HashID    string
+
+	Source string
+	Name   string
+	HashID string
 }
 
 // SetUser
-func SetUser(ctx context.Context, key, spaceUid, skipSpace string) {
+func SetUser(ctx context.Context, user *User) {
 	if md != nil {
-		user := &User{
-			Key:       key,
-			SpaceUid:  spaceUid,
-			SkipSpace: skipSpace,
-			HashID:    hashID(ctx),
-		}
-		arr := strings.Split(key, ":")
+		user.HashID = hashID(ctx)
+		arr := strings.Split(user.Key, ":")
 		if len(arr) > 0 {
 			user.Source = arr[0]
 			if len(arr) > 1 {

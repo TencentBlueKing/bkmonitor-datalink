@@ -130,18 +130,18 @@ func (CMDBService) processGetHostByIpParams(bkBizId int, ips []GetHostByIpParams
 }
 
 // GetHostByIp 通过IP查询主机信息
-func (s CMDBService) GetHostByIp(ipList []GetHostByIpParams, BkBizId int) ([]cmdb.ListBizHostsTopoDataInfo, error) {
-	tenantId, err := tenant.GetTenantIdByBkBizId(BkBizId)
+func (s CMDBService) GetHostByIp(ipList []GetHostByIpParams, bkBizId int) ([]cmdb.ListBizHostsTopoDataInfo, error) {
+	tenantId, err := tenant.GetTenantIdByBkBizId(bkBizId)
 	if err != nil {
-		return nil, errors.Wrapf(err, "GetTenantIdByBkBizId failed, BkBizID: %d", BkBizId)
+		return nil, errors.Wrapf(err, "GetTenantIdByBkBizId failed, BkBizID: %d", bkBizId)
 	}
 	cmdbApi, err := api.GetCmdbApi(tenantId)
 	if err != nil {
-		return nil, errors.Wrapf(err, "GetCmdbApi failed, BkBizID: %d", BkBizId)
+		return nil, errors.Wrapf(err, "GetCmdbApi failed, BkBizID: %d", bkBizId)
 	}
-	params := s.processGetHostByIpParams(BkBizId, ipList)
+	params := s.processGetHostByIpParams(bkBizId, ipList)
 	var topoResp cmdb.ListBizHostsTopoResp
-	if _, err = cmdbApi.ListBizHostsTopo().SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(BkBizId)}).SetBody(params).SetResult(&topoResp).Request(); err != nil {
+	if _, err = cmdbApi.ListBizHostsTopo().SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizId)}).SetBody(params).SetResult(&topoResp).Request(); err != nil {
 		paramStr, _ := jsonx.MarshalString(params)
 		return nil, errors.Wrapf(err, "ListBizHostsTopo with params [%s] failed", paramStr)
 	}

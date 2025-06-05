@@ -686,7 +686,7 @@ func (i *Instance) QuerySeriesSet(
 	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
 
 	user := metadata.GetUser(ctx)
-	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-space-uid", user.SpaceUID)
 	span.Set("query-source", user.Source)
 	span.Set("query-username", user.Name)
 	span.Set("query-connects", i.connects.String())
@@ -759,7 +759,7 @@ func (i *Instance) QuerySeriesSet(
 					WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
 					WithMappings(mappings...).
 					WithOrders(query.Orders).
-					WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
+					WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(query.TableID), metadata.GetFieldFormat(ctx).DecodeFunc(query.TableID))
 
 				if len(query.Aggregates) == 0 {
 					setCh <- storage.ErrSeriesSet(fmt.Errorf("aggregates is empty"))

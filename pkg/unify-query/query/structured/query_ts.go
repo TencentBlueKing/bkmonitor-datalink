@@ -705,7 +705,8 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			}
 		}
 
-		metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
+		metadata.GetQueryParams(ctx).SetStorageType(query.StorageType).SetFieldAlias(query.TableID, query.FieldAlias)
+
 		queryMetric.QueryList = append(queryMetric.QueryList, query)
 	}
 
@@ -725,8 +726,7 @@ func (q *Query) BuildMetadataQuery(
 		measurements []string
 
 		whereList = promql.NewWhereList()
-
-		query = &metadata.Query{
+		query     = &metadata.Query{
 			SegmentedEnable: tsDB.SegmentedEnable,
 			OffsetInfo: metadata.OffSetInfo{
 				Limit:   q.Limit,
@@ -735,8 +735,7 @@ func (q *Query) BuildMetadataQuery(
 			},
 		}
 		allCondition AllConditions
-
-		err error
+		err          error
 	)
 
 	ctx, span := trace.NewSpan(ctx, "build-metadata-query")
@@ -957,6 +956,9 @@ func (q *Query) BuildMetadataQuery(
 	query.Measurements = measurements
 	query.Field = field
 	query.Fields = fields
+	if len(tsDB.FieldAlias) > 0 {
+		query.FieldAlias = tsDB.FieldAlias
+	}
 	query.Timezone = timezone
 
 	query.DataSource = q.DataSource
@@ -1145,7 +1147,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		}
 	}
 
-	encodeFunc := metadata.GetPromDataFormat(ctx).EncodeFunc()
+	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc("")
 
 	for idx := 0; idx < funcNums; idx++ {
 		if idx == timeIdx {

@@ -52,7 +52,7 @@ func (q *Query) MetricLabels(ctx context.Context) *prompb.Label {
 
 	var (
 		metrics    []string
-		encodeFunc = GetPromDataFormat(ctx).EncodeFunc()
+		encodeFunc = GetFieldFormat(ctx).EncodeFunc(q.TableID)
 	)
 
 	if q.DataSource != "" {

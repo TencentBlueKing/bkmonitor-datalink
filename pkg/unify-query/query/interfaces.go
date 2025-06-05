@@ -27,12 +27,13 @@ type StorageClusterRecords []Record
 
 // TsDBV2 适配查询语句的结构体，以 TableID + MetricName 为条件，检索出 RT 基本信息和存储信息
 type TsDBV2 struct {
-	TableID         string   `json:"table_id"`
-	Field           []string `json:"field,omitempty"`
-	MeasurementType string   `json:"measurement_type,omitempty"`
-	Filters         []Filter `json:"filters,omitempty"`
-	SegmentedEnable bool     `json:"segmented_enable,omitempty"`
-	DataLabel       string   `json:"data_label,omitempty"`
+	TableID         string              `json:"table_id"`
+	Field           []string            `json:"field,omitempty"`
+	FieldAlias      metadata.FieldAlias `json:"field_alias,omitempty"`
+	MeasurementType string              `json:"measurement_type,omitempty"`
+	Filters         []Filter            `json:"filters,omitempty"`
+	SegmentedEnable bool                `json:"segmented_enable,omitempty"`
+	DataLabel       string              `json:"data_label,omitempty"`
 	// 将存储信息合并在 TsDB 中
 	StorageID   string `json:"storage_id,omitempty"`
 	StorageName string `json:"storage_name,omitempty"`

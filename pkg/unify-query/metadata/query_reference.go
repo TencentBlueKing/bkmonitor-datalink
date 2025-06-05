@@ -17,7 +17,9 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 func SetQueryReference(ctx context.Context, reference QueryReference) {
@@ -36,13 +38,23 @@ func GetQueryReference(ctx context.Context) QueryReference {
 }
 
 // ConfigureAlias 根据别名把 query 里面涉及到的字段都转换成别名查询
-func (q *Query) ConfigureAlias() {
+func (q *Query) ConfigureAlias(ctx context.Context) {
 	if len(q.FieldAlias) == 0 {
 		return
 	}
 
+	var (
+		err          error
+		isConfigured = false
+	)
+	ctx, span := trace.NewSpan(ctx, "configure-alias")
+	defer span.End(&err)
+
+	span.Set("field-alias", q.FieldAlias)
+
 	aliasToField := func(s string) string {
 		if v, ok := q.FieldAlias[s]; ok {
+			isConfigured = true
 			return v
 		}
 		return s
@@ -79,6 +91,12 @@ func (q *Query) ConfigureAlias() {
 	// 替换折叠字段
 	if q.Collapse != nil {
 		q.Collapse.Field = aliasToField(q.Collapse.Field)
+	}
+
+	span.Set("is-configured", isConfigured)
+	if isConfigured {
+		qStr, _ := json.Marshal(q)
+		span.Set("query-json", string(qStr))
 	}
 }
 

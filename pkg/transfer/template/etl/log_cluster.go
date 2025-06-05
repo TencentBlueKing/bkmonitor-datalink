@@ -44,6 +44,7 @@ type LogClusterConfig struct {
 	RetryInterval string `mapstructure:"retry_interval" json:"retry_interval"`
 	BatchSize     int    `mapstructure:"batch_size" json:"batch_size"`
 	PollInterval  string `mapstructure:"poll_interval" json:"poll_interval"` // ms 单位
+	MinGap        string `mapstructure:"min_gap" json:"min_gap"`             // ticker 触发时最小相邻发送间隔
 }
 
 func (c LogClusterConfig) GetTimeout() time.Duration {
@@ -54,6 +55,18 @@ func (c LogClusterConfig) GetTimeout() time.Duration {
 	v, err := time.ParseDuration(c.Timeout)
 	if err != nil || v <= 0 {
 		return time.Minute
+	}
+	return v
+}
+
+func (c LogClusterConfig) GetMinGap() time.Duration {
+	if c.MinGap == "" {
+		return time.Second
+	}
+
+	v, err := time.ParseDuration(c.MinGap)
+	if err != nil || v <= 0 {
+		return time.Second
 	}
 	return v
 }
@@ -120,6 +133,8 @@ type LogCluster struct {
 	queue *innerQueue
 	cli   *http.Client
 	mut   sync.Mutex
+
+	lastTickerRequestUnix int64
 }
 
 type innerQueue struct {
@@ -204,7 +219,11 @@ func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload,
 
 	// 虚拟 Process 充当信号使用
 	if d == nil {
-		handle()
+		now := time.Now().Unix()
+		if float64(now-p.lastTickerRequestUnix) > p.conf.GetPollInterval().Seconds() {
+			handle()
+			p.lastTickerRequestUnix = now
+		}
 		return
 	}
 

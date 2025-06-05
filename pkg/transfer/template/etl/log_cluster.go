@@ -59,6 +59,13 @@ func (c LogClusterConfig) GetTimeout() time.Duration {
 }
 
 func (c LogClusterConfig) GetPollInterval() time.Duration {
+	var l, r int
+	if c.PollInterval == "" {
+		l, r = 1000, 5000
+		n := (l + (rand.Int() % (r - l))) / 100 * 100 // 取整数毫秒
+		return time.Duration(n) * time.Millisecond
+	}
+
 	var s1, s2 string
 	if strings.Contains(c.PollInterval, "-") {
 		parts := strings.Split(c.PollInterval, "-")
@@ -69,8 +76,8 @@ func (c LogClusterConfig) GetPollInterval() time.Duration {
 		s1, s2 = c.PollInterval, c.PollInterval
 	}
 
-	l, _ := strconv.Atoi(s1)
-	r, _ := strconv.Atoi(s2)
+	l, _ = strconv.Atoi(s1)
+	r, _ = strconv.Atoi(s2)
 
 	if l <= 1000 {
 		l = 1000 // ticker 最小周期为 1s
@@ -82,7 +89,8 @@ func (c LogClusterConfig) GetPollInterval() time.Duration {
 		return time.Duration(l) * time.Millisecond
 	}
 
-	return time.Duration(l+(rand.Int()%(r-l))) * time.Millisecond
+	n := (l + (rand.Int() % (r - l))) / 100 * 100 // 取整数毫秒
+	return time.Duration(n) * time.Millisecond
 }
 
 func (c LogClusterConfig) GetRetryInterval() time.Duration {

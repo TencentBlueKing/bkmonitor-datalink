@@ -348,7 +348,11 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 		}
 		labelMap := queryTs.LabelMap()
-		hlF := function.NewHighLightFactory(labelMap, queryTs.HighLight.MaxAnalyzedOffset)
+		var maxAnalyzedOffset int
+		if queryTs.HighLight != nil {
+			maxAnalyzedOffset = queryTs.HighLight.MaxAnalyzedOffset
+		}
+		hlF := function.NewHighLightFactory(labelMap, maxAnalyzedOffset)
 		for _, item := range data {
 			if item == nil {
 				continue
@@ -359,10 +363,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			}
 
 			if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(labelMap) > 0 {
-				flattenedData := make(map[string]any)
-				flattenData("", item, flattenedData)
-
-				if highlightResult := hlF.Process(flattenedData); len(highlightResult) > 0 {
+				if highlightResult := hlF.Process(item); len(highlightResult) > 0 {
 					item[elasticsearch.KeyHighLight] = highlightResult
 				}
 			}

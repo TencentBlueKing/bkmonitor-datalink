@@ -14,15 +14,26 @@ import (
 	"strings"
 )
 
-// HighLight 处理高亮功能，直接接受labelMap和maxAnalyzedOffset参数
-func HighLight(data map[string]any, labelMap map[string][]string, maxAnalyzedOffset int) (newData map[string]any) {
-	if len(labelMap) == 0 {
+type HighLightFactory struct {
+	labelMap          map[string][]string
+	maxAnalyzedOffset int
+}
+
+func NewHighLightFactory(labelMap map[string][]string, maxAnalyzedOffset int) *HighLightFactory {
+	return &HighLightFactory{
+		labelMap:          labelMap,
+		maxAnalyzedOffset: maxAnalyzedOffset,
+	}
+}
+
+func (h *HighLightFactory) Process(data map[string]any) (newData map[string]any) {
+	if len(h.labelMap) == 0 {
 		return nil
 	}
 
 	newData = make(map[string]any)
-
-	for k, vs := range labelMap {
+	maxAnalyzedOffset := h.maxAnalyzedOffset
+	for k, vs := range h.labelMap {
 		if vs == nil {
 			continue
 		}
@@ -35,7 +46,7 @@ func HighLight(data map[string]any, labelMap map[string][]string, maxAnalyzedOff
 
 			switch s := d.(type) {
 			case string:
-				if maxAnalyzedOffset > 0 && len(s) > maxAnalyzedOffset {
+				if h.maxAnalyzedOffset > 0 && len(s) > maxAnalyzedOffset {
 					mark1 = s[0:maxAnalyzedOffset]
 					mark2 = s[maxAnalyzedOffset:]
 				} else {

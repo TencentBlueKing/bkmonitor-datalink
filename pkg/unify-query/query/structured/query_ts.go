@@ -417,63 +417,6 @@ type Query struct {
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
-func (q Query) queryStringLabelMap() map[string][]string {
-	if q.QueryString == "" || q.QueryString == "*" {
-		return nil
-	}
-
-	labelMap := make(map[string][]string)
-	labelCheck := make(map[string]struct{})
-
-	addLabel := func(key, value string) {
-		checkKey := key + ":" + value
-		if _, ok := labelCheck[checkKey]; !ok {
-			labelCheck[checkKey] = struct{}{}
-			labelMap[key] = append(labelMap[key], value)
-		}
-	}
-
-	expr, err := querystring.Parse(q.QueryString)
-	if err != nil || expr == nil {
-		return labelMap
-	}
-
-	q.walkQueryStringExpr(expr, addLabel)
-
-	return labelMap
-}
-
-func (q Query) walkQueryStringExpr(expr querystring.Expr, addLabel func(string, string)) {
-	if expr == nil {
-		return
-	}
-
-	switch e := expr.(type) {
-	case *querystring.NotExpr:
-		q.walkQueryStringExpr(e.Expr, addLabel)
-	case *querystring.OrExpr:
-		q.walkQueryStringExpr(e.Left, addLabel)
-		q.walkQueryStringExpr(e.Right, addLabel)
-	case *querystring.AndExpr:
-		q.walkQueryStringExpr(e.Left, addLabel)
-		q.walkQueryStringExpr(e.Right, addLabel)
-	case *querystring.WildcardExpr:
-		field := e.Field
-		if field == "" {
-			field = "log" // 默认字段，与 Doris 的 DefaultKey 一致
-		}
-		addLabel(field, e.Value)
-	case *querystring.MatchExpr:
-		field := e.Field
-		if field == "" {
-			field = "log" // 默认字段，与 Doris 的 DefaultKey 一致
-		}
-		addLabel(field, e.Value)
-	case *querystring.NumberRangeExpr:
-		// NumberRangeExpr 通常用于数值范围查询，不提取为标签
-	}
-}
-
 func (q Query) LabelMap() map[string][]string {
 	labelMap := make(map[string][]string)
 	labelCheck := make(map[string]struct{})
@@ -497,7 +440,7 @@ func (q Query) LabelMap() map[string][]string {
 		}
 	}
 	if q.QueryString != "" {
-		qLabelMap := q.queryStringLabelMap()
+		qLabelMap := querystring.LabelMap(q.QueryString)
 		for key, values := range qLabelMap {
 			for _, value := range values {
 				addLabel(key, value)

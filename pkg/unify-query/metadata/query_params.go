@@ -17,10 +17,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
-type TableFieldAlias map[string]FieldAlias
-
-type FieldAlias map[string]string
-
 // QueryParams 查询信息
 type QueryParams struct {
 	ctx context.Context

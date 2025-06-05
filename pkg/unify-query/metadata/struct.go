@@ -49,6 +49,8 @@ const (
 
 type VmCondition string
 
+type FieldAlias map[string]string
+
 type TimeField struct {
 	Name string `json:"name,omitempty"`
 	Type string `json:"type,omitempty"`

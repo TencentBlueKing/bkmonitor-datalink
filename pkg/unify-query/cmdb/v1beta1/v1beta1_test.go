@@ -398,12 +398,9 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 		matcher      cmdb.Matcher
 		pathResource []cmdb.Resource
 
-		expected struct {
-			source     cmdb.Resource
-			sourceInfo cmdb.Matcher
-			targetList cmdb.Matchers
-		}
-		error error
+		expectedTargetList cmdb.Matchers
+		expectedPath       []string
+		error              error
 	}{
 		"vm node to system": {
 			target: "system",
@@ -412,20 +409,10 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 				"node":           "node-127-0-0-1",
 				"demo":           "1",
 			},
-			expected: struct {
-				source     cmdb.Resource
-				sourceInfo cmdb.Matcher
-				targetList cmdb.Matchers
-			}{
-				source: "node",
-				sourceInfo: cmdb.Matcher{
-					"bcs_cluster_id": "BCS-K8S-00000",
-					"node":           "node-127-0-0-1",
-				},
-				targetList: cmdb.Matchers{
-					cmdb.Matcher{
-						"bk_target_ip": "127.0.0.1",
-					},
+			expectedPath: []string{"node", "system"},
+			expectedTargetList: cmdb.Matchers{
+				{
+					"bk_target_ip": "127.0.0.1",
 				},
 			},
 		},
@@ -436,20 +423,10 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 				"node":           "node-127-0-0-1",
 				"demo":           "1",
 			},
-			expected: struct {
-				source     cmdb.Resource
-				sourceInfo cmdb.Matcher
-				targetList cmdb.Matchers
-			}{
-				source: "node",
-				sourceInfo: cmdb.Matcher{
-					"bcs_cluster_id": "BCS-K8S-00000",
-					"node":           "node-127-0-0-1",
-				},
-				targetList: cmdb.Matchers{
-					cmdb.Matcher{
-						"bk_target_ip": "127.0.0.1",
-					},
+			expectedPath: []string{"node", "system"},
+			expectedTargetList: cmdb.Matchers{
+				{
+					"bk_target_ip": "127.0.0.1",
 				},
 			},
 		},
@@ -459,51 +436,31 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 				"bk_target_ip":   "127.0.0.1",
 				"bcs_cluster_id": "BCS-K8S-00000",
 			},
-			expected: struct {
-				source     cmdb.Resource
-				sourceInfo cmdb.Matcher
-				targetList cmdb.Matchers
-			}{
-				source: "system",
-				sourceInfo: cmdb.Matcher{
-					"bk_target_ip": "127.0.0.1",
+			expectedPath: []string{"system", "node", "pod"},
+			expectedTargetList: cmdb.Matchers{
+				{
+					"bcs_cluster_id": "BCS-K8S-00000",
+					"namespace":      "bkmonitor-operator",
+					"pod":            "bkm-pod-1",
 				},
-				targetList: cmdb.Matchers{
-					cmdb.Matcher{
-						"bcs_cluster_id": "BCS-K8S-00000",
-						"namespace":      "bkmonitor-operator",
-						"pod":            "bkm-pod-1",
-					},
-					cmdb.Matcher{
-						"bcs_cluster_id": "BCS-K8S-00000",
-						"namespace":      "bkmonitor-operator",
-						"pod":            "bkm-pod-2",
-					},
+				{
+					"bcs_cluster_id": "BCS-K8S-00000",
+					"namespace":      "bkmonitor-operator",
+					"pod":            "bkm-pod-2",
 				},
 			},
 		},
-		"pod_name to system": {
+		"pod_name to system through apm service instance": {
 			target: "system",
 			matcher: cmdb.Matcher{
 				"bcs_cluster_id": "BCS-K8S-00000",
 				"namespace":      "bkmonitor-operator",
 				"pod_name":       "bkm-pod-1",
 			},
-			expected: struct {
-				source     cmdb.Resource
-				sourceInfo cmdb.Matcher
-				targetList cmdb.Matchers
-			}{
-				source: "pod",
-				sourceInfo: cmdb.Matcher{
-					"bcs_cluster_id": "BCS-K8S-00000",
-					"namespace":      "bkmonitor-operator",
-					"pod":            "bkm-pod-1",
-				},
-				targetList: cmdb.Matchers{
-					cmdb.Matcher{
-						"bk_target_ip": "127.0.0.1",
-					},
+			expectedPath: []string{"pod", "apm_service_instance", "system"},
+			expectedTargetList: cmdb.Matchers{
+				{
+					"bk_target_ip": "127.0.0.1",
 				},
 			},
 		},
@@ -513,14 +470,13 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
-			source, matcher, _, rets, err := testModel.QueryResourceMatcher(ctx, "", influxdb.SpaceUid, timestamp, c.target, c.source, c.matcher, c.pathResource)
+			path, rets, err := testModel.QueryResourceMatcher(ctx, "", influxdb.SpaceUid, timestamp, c.target, c.source, c.matcher, c.pathResource)
 			assert.Nil(t, err)
 			if err != nil {
 				log.Errorf(ctx, err.Error())
 			} else {
-				assert.Equal(t, c.expected.source, source)
-				assert.Equal(t, c.expected.sourceInfo, matcher)
-				assert.Equal(t, c.expected.targetList, rets)
+				assert.Equal(t, c.expectedPath, path)
+				assert.Equal(t, c.expectedTargetList, rets)
 			}
 		})
 	}

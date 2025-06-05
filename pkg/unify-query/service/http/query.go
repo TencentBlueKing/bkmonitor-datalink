@@ -308,6 +308,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			for _, ignoreDimension := range ignoreDimensions {
 				delete(item, ignoreDimension)
 			}
+
 			list = append(list, item)
 		}
 	}()

@@ -53,9 +53,6 @@ type RelationMultiResourceRequest struct {
 // RelationMultiResourceResponseData 响应数据
 type RelationMultiResourceResponseData struct {
 	Code       int      `json:"code"`
-	SourceType Resource `json:"source_type"`
-	SourceInfo Matcher  `json:"source_info"`
-	TargetType Resource `json:"target_type"`
 	TargetList Matchers `json:"target_list"`
 	Path       []string `json:"path"`
 	Message    string   `json:"message"`
@@ -84,9 +81,6 @@ type RelationMultiResourceRangeRequest struct {
 // RelationMultiResourceRangeResponseData 响应数据
 type RelationMultiResourceRangeResponseData struct {
 	Code       int                     `json:"code"`
-	SourceType Resource                `json:"source_type"`
-	SourceInfo Matcher                 `json:"source_info"`
-	TargetType Resource                `json:"target_type"`
 	TargetList []MatchersWithTimestamp `json:"target_list"`
 	Path       []string                `json:"path"`
 	Message    string                  `json:"message"`

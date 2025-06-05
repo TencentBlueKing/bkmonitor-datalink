@@ -24,7 +24,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	qs "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -195,72 +194,6 @@ type FormatFactory struct {
 	timeFormat string
 
 	isReference bool
-
-	labelMap   map[string][]string
-	labelCheck map[string]struct{}
-}
-
-func (f *FormatFactory) addLabel(key, value string) {
-
-	if f.labelCheck == nil {
-		f.labelCheck = make(map[string]struct{})
-	}
-	if f.labelMap == nil {
-		f.labelMap = make(map[string][]string)
-	}
-
-	checkKey := key + ":" + value
-	if _, ok := f.labelCheck[checkKey]; !ok {
-		f.labelCheck[checkKey] = struct{}{}
-		f.labelMap[key] = append(f.labelMap[key], value)
-	}
-}
-
-// GetLabelMap 获取标签映射
-func (f *FormatFactory) GetLabelMap() map[string][]string {
-	return f.labelMap
-}
-
-// SetLabelMapForTest 用于测试时设置labelMap
-func (f *FormatFactory) SetLabelMapForTest(labelMap map[string][]string) {
-	f.labelMap = labelMap
-}
-
-func (f *FormatFactory) ProcessQueryString(queryString string) error {
-	if queryString == "" {
-		return nil
-	}
-
-	if ast, err := qs.Parse(queryString); err == nil {
-		f.walkQueryString(ast)
-	} else {
-		return fmt.Errorf("failed to parse query string: %w", err)
-	}
-	return nil
-}
-
-// walkQueryString 遍历 QueryString AST 并添加标签
-func (f *FormatFactory) walkQueryString(expr qs.Expr) {
-	switch e := expr.(type) {
-	case *qs.MatchExpr:
-		if e.Field != "" && e.Value != "" {
-			f.addLabel(e.Field, e.Value)
-		}
-	case *qs.WildcardExpr:
-		if e.Field != "" && e.Value != "" {
-			f.addLabel(e.Field, e.Value)
-		}
-	case *qs.NumberRangeExpr:
-		// 范围查询不添加到高亮
-	case *qs.AndExpr:
-		f.walkQueryString(e.Left)
-		f.walkQueryString(e.Right)
-	case *qs.OrExpr:
-		f.walkQueryString(e.Left)
-		f.walkQueryString(e.Right)
-	case *qs.NotExpr:
-		// NOT 查询不添加到高亮
-	}
 }
 
 func NewFormatFactory(ctx context.Context) *FormatFactory {
@@ -927,9 +860,6 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 
 				queries := make([]elastic.Query, 0)
 				for _, value := range con.Value {
-					if value != "" {
-						f.addLabel(con.DimensionName, value)
-					}
 
 					var query elastic.Query
 					if con.DimensionName != "" {
@@ -1181,32 +1111,4 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 
 func (f *FormatFactory) GetTimeField() metadata.TimeField {
 	return f.timeField
-}
-
-func (f *FormatFactory) createHighlightData(data map[string]any, labelMap map[string][]string) map[string]any {
-	result := make(map[string]any)
-
-	flattenedData := make(map[string]any)
-	mapData("", data, flattenedData)
-
-	for fieldName, fieldValue := range flattenedData {
-		stringValue, isString := fieldValue.(string)
-		if !isString {
-			continue
-		}
-
-		expectedValues, shouldHighlight := labelMap[fieldName]
-		if !shouldHighlight {
-			continue
-		}
-
-		for _, expectedValue := range expectedValues {
-			if stringValue == expectedValue {
-				result[fieldName] = []string{stringValue}
-				break
-			}
-		}
-	}
-
-	return result
 }

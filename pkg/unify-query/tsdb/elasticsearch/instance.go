@@ -232,12 +232,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}
 	filterQueries = append(filterQueries, rangeQuery)
 
+	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
-		err := fact.ProcessQueryString(qb.QueryString)
-		if err != nil {
-			return nil, fmt.Errorf("process query string error: %w", err)
-		}
-
 		qs := NewQueryString(qb.QueryString, qb.IsPrefix, fact.NestedField)
 		q, qsErr := qs.ToDSL()
 		if qsErr != nil {
@@ -382,8 +378,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	if res.Aggregations != nil {
 		span.Set("aggregations_length", len(res.Aggregations))
 	}
-
-	span.Set("label-map", fact.labelMap)
 
 	queryCost := time.Since(startAnalyze)
 	span.Set("query-cost", queryCost.String())

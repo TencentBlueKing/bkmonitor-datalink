@@ -69,6 +69,7 @@ func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) 
 
 func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfluxdb.ResultTableDetail) query.TsDBV2 {
 	t.Field = d.Fields
+	t.FieldAlias = d.FieldAlias
 	t.MeasurementType = d.MeasurementType
 	t.DataLabel = d.DataLabel
 	t.StorageType = d.StorageType

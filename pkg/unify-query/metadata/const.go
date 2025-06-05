@@ -24,7 +24,7 @@ const (
 	QueryClusterMetricKey = "query_cluster_metric"
 	JwtPayLoadKey         = "jwt_payload"
 
-	PromDataFormatKey = "prom_data_format"
+	FieldFormatKey = "field_format"
 
 	ExceedsMaximumLimit  = "EXCEEDS_MAXIMUM_LIMIT"
 	ExceedsMaximumSlimit = "EXCEEDS_MAXIMUM_SLIMIT"

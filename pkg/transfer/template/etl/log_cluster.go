@@ -134,7 +134,7 @@ type LogCluster struct {
 	cli   *http.Client
 	mut   sync.Mutex
 
-	lastTickerRequestUnix int64
+	lastRequestUnix int64
 }
 
 type innerQueue struct {
@@ -182,6 +182,7 @@ func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload,
 			logging.Errorf("%v process recover: %v", p, err)
 		})
 
+		p.lastRequestUnix = time.Now().Unix()
 		batch := p.queue.Pop()
 		if len(batch) == 0 {
 			return // 队列无数据 放弃执行
@@ -219,10 +220,8 @@ func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload,
 
 	// 虚拟 Process 充当信号使用
 	if d == nil {
-		now := time.Now().Unix()
-		if float64(now-p.lastTickerRequestUnix) > p.conf.GetPollInterval().Seconds() {
+		if float64(time.Now().Unix()-p.lastRequestUnix) > p.conf.GetPollInterval().Seconds() {
 			handle()
-			p.lastTickerRequestUnix = now
 		}
 		return
 	}

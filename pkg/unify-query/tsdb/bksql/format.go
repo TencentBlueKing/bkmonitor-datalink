@@ -102,7 +102,7 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 
 	f.expr = sql_expr.NewSQLExpr(query.Measurement).
 		WithInternalFields(f.timeField, query.Field).
-		WithEncode(metadata.GetFieldFormat(ctx).EncodeFunc(query.TableID))
+		WithEncode(metadata.GetFieldFormat(ctx).EncodeFunc())
 
 	if f.highlight != nil && f.highlight.Enable {
 		f.expr.IsSetLabels(true)
@@ -225,7 +225,7 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 		return res, nil
 	}
 
-	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc(f.query.TableID)
+	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
 	// 获取 metricLabel
 	metricLabel := f.query.MetricLabels(ctx)
 

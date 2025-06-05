@@ -19,10 +19,7 @@ import (
 )
 
 func TestFieldFormat_EncodeAndDecode(t *testing.T) {
-	fieldAliasTableID := "table_id"
-
 	testCase := map[string]struct {
-		tableID  string
 		q        []string
 		expected []string
 	}{
@@ -46,19 +43,8 @@ func TestFieldFormat_EncodeAndDecode(t *testing.T) {
 				"__bk_33___ext__bk_46____bk_46____bk_46__",
 			},
 		},
-		// 命中有配置别名的 tableID
-		"q-3": {
-			tableID: fieldAliasTableID,
-			q: []string{
-				"ext_container",
-			},
-			expected: []string{
-				"__ext__bk_46__container",
-			},
-		},
 		// 命中没有配置别名的 tableID
 		"q-4": {
-			tableID: "table_id_1",
 			q: []string{
 				"ext_container",
 			},
@@ -76,16 +62,13 @@ func TestFieldFormat_EncodeAndDecode(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx = InitHashID(ctx)
 
-			GetQueryParams(ctx).SetFieldAlias(fieldAliasTableID, map[string]string{
-				"ext_container": "__ext.container",
-			})
 			pdf := GetFieldFormat(ctx)
 
 			assert.Equal(t, len(c.expected), len(c.q))
 
 			for idx, q := range c.q {
 
-				r := pdf.EncodeFunc(c.tableID)(q)
+				r := pdf.EncodeFunc()(q)
 
 				log.Infof(ctx, "encode: %s => %s", q, r)
 
@@ -94,12 +77,10 @@ func TestFieldFormat_EncodeAndDecode(t *testing.T) {
 				}
 
 				// 别名转换无需还原
-				if c.tableID == "" {
-					nr := pdf.DecodeFunc(c.tableID)(r)
-					log.Infof(ctx, "decode: %s => %s", r, nr)
+				nr := pdf.DecodeFunc()(r)
+				log.Infof(ctx, "decode: %s => %s", r, nr)
 
-					assert.Equal(t, q, nr)
-				}
+				assert.Equal(t, q, nr)
 
 			}
 		})

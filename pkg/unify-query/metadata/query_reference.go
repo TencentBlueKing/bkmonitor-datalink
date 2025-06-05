@@ -35,6 +35,53 @@ func GetQueryReference(ctx context.Context) QueryReference {
 	return nil
 }
 
+// ConfigureAlias 根据别名把 query 里面涉及到的字段都转换成别名查询
+func (q *Query) ConfigureAlias() {
+	if len(q.FieldAlias) == 0 {
+		return
+	}
+
+	aliasToField := func(s string) string {
+		if v, ok := q.FieldAlias[s]; ok {
+			return v
+		}
+		return s
+	}
+
+	// 替换 Field
+	q.Field = aliasToField(q.Field)
+
+	// 替换维度
+	for aggIdx, agg := range q.Aggregates {
+		q.Aggregates[aggIdx].Field = aliasToField(agg.Field)
+		for dimIdx, dim := range agg.Dimensions {
+			q.Aggregates[aggIdx].Dimensions[dimIdx] = aliasToField(dim)
+		}
+	}
+
+	// 替换过滤条件
+	for conIdx, con := range q.AllConditions {
+		for dimIdx, dim := range con {
+			q.AllConditions[conIdx][dimIdx].DimensionName = aliasToField(dim.DimensionName)
+		}
+	}
+
+	// 替换保留字段
+	for idx, s := range q.Source {
+		q.Source[idx] = aliasToField(s)
+	}
+
+	// 替换排序字段
+	for idx, o := range q.Orders {
+		q.Orders[idx].Name = aliasToField(o.Name)
+	}
+
+	// 替换折叠字段
+	if q.Collapse != nil {
+		q.Collapse.Field = aliasToField(q.Collapse.Field)
+	}
+}
+
 // UUID 获取唯一性
 func (q *Query) UUID(prefix string) string {
 	str := fmt.Sprintf("%s%s%s%s%s%s%s%s%s%s",
@@ -52,7 +99,7 @@ func (q *Query) MetricLabels(ctx context.Context) *prompb.Label {
 
 	var (
 		metrics    []string
-		encodeFunc = GetFieldFormat(ctx).EncodeFunc(q.TableID)
+		encodeFunc = GetFieldFormat(ctx).EncodeFunc()
 	)
 
 	if q.DataSource != "" {

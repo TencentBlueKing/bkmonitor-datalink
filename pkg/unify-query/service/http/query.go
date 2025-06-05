@@ -484,7 +484,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	seriesNum := 0
 	pointsNum := 0
 
-	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc("")
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
 	switch v := res.(type) {
 	case promPromql.Matrix:
@@ -679,7 +679,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	seriesNum := 0
 	pointsNum := 0
 
-	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc("")
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
 	switch v := res.(type) {
 	case promPromql.Matrix:
@@ -861,7 +861,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	seriesNum := 0
 	pointsNum := 0
 
-	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc("")
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
 	switch v := res.(type) {
 	case promPromql.Matrix:

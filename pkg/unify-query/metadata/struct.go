@@ -121,9 +121,6 @@ type Query struct {
 
 	Condition string `json:"condition,omitempty"` // 过滤条件
 
-	// BkSql 过滤条件
-	BkSqlCondition string `json:"bk_sql_condition,omitempty"`
-
 	// Vm 过滤条件
 	VmCondition    VmCondition `json:"vm_condition,omitempty"`
 	VmConditionNum int         `json:"vm_condition_num,omitempty"`

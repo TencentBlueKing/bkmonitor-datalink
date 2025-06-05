@@ -594,7 +594,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).
 				WithQuery("value", c.timeField, start, end, timeFormat, 0).
-				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(""), metadata.GetFieldFormat(ctx).DecodeFunc(""))
+				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 
 			ss := elastic.NewSearchSource()
 			rangeQuery, err := fact.RangeQuery()
@@ -890,7 +890,7 @@ func TestBuildQuery(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).
 				WithQuery("value", c.timeField, start, end, timeFormat, 0).
-				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(""), metadata.GetFieldFormat(ctx).DecodeFunc(""))
+				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 
 			filterQueries := []elastic.Query{
 				elastic.NewRangeQuery(c.timeField.Name).
@@ -1080,7 +1080,7 @@ func TestFactory_Agg(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).
 				WithMappings(commonMapping...).
-				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(""), metadata.GetFieldFormat(ctx).DecodeFunc(""))
+				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 			fact.valueField = "value"
 			fact.aggInfoList = c.aggInfoList
 			fact.resetAggInfoListWithNested()
@@ -1217,7 +1217,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 					Unit: DefaultTimeFieldUnit,
 				}, time.Time{}, time.Time{}, "", 0).
 				WithMappings(commonMapping...).
-				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(""), metadata.GetFieldFormat(ctx).DecodeFunc(""))
+				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 			fact.valueField = c.valueField
 			ss := elastic.NewSearchSource()
 			aggName, agg, aggErr := fact.EsAgg(c.aggregates)

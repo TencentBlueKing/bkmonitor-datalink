@@ -31,8 +31,6 @@ type QueryParams struct {
 
 	StorageType *set.Set[string]
 
-	TableFieldAlias TableFieldAlias
-
 	IsReference bool
 	IsSkipK8s   bool
 }
@@ -53,17 +51,6 @@ func (q *QueryParams) IsDirectQuery() bool {
 
 func (q *QueryParams) SetStorageType(ds string) *QueryParams {
 	q.StorageType.Add(ds)
-	return q
-}
-
-func (q *QueryParams) SetFieldAlias(tableID string, fieldAlias FieldAlias) *QueryParams {
-	if len(fieldAlias) == 0 || tableID == "" {
-		return q
-	}
-	if q.TableFieldAlias == nil {
-		q.TableFieldAlias = make(map[string]FieldAlias)
-	}
-	q.TableFieldAlias[tableID] = fieldAlias
 	return q
 }
 

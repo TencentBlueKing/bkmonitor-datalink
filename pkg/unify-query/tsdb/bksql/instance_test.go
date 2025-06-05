@@ -267,13 +267,12 @@ func TestInstance_QueryRaw(t *testing.T) {
 	}{
 		"query with in": {
 			query: &metadata.Query{
-				DataSource:     datasource,
-				TableID:        tableID,
-				DB:             db,
-				DataLabel:      db,
-				MetricName:     field,
-				BkSqlCondition: "`namespace` IN ('gz100', 'bgp2\\-new')",
-				OffsetInfo:     metadata.OffSetInfo{Limit: 10},
+				DataSource: datasource,
+				TableID:    tableID,
+				DB:         db,
+				DataLabel:  db,
+				MetricName: field,
+				OffsetInfo: metadata.OffSetInfo{Limit: 10},
 				AllConditions: metadata.AllConditions{
 					{
 						{
@@ -822,9 +821,8 @@ func TestInstance_bkSql(t *testing.T) {
 		{
 			name: "namespace in and aggregate count",
 			query: &metadata.Query{
-				DB:             "132_lol_new_login_queue_login_1min",
-				Field:          "login_rate",
-				BkSqlCondition: "`namespace` IN ('bgp2-new', 'gz100')",
+				DB:    "132_lol_new_login_queue_login_1min",
+				Field: "login_rate",
 				Aggregates: metadata.Aggregates{
 					{
 						Name:       "count",
@@ -875,7 +873,6 @@ func TestInstance_bkSql(t *testing.T) {
 						},
 					},
 				},
-				BkSqlCondition: "(`namespace` NOT LIKE '%test%' AND `namespace` NOT LIKE '%test2%') AND `namespace` NOT IN ('test', 'test2') AND `namespace` NOT LIKE '%test%' AND `namespace` != 'test'",
 			},
 			expected: "SELECT *, `login_rate` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' AND (`namespace` NOT LIKE '%test%' AND `namespace` NOT LIKE '%test2%') AND `namespace` NOT IN ('test', 'test2') AND `namespace` NOT LIKE '%test%' AND `namespace` != 'test'",
 		},
@@ -933,7 +930,6 @@ func TestInstance_bkSql(t *testing.T) {
 						},
 					},
 				},
-				BkSqlCondition: "(`namespace` NOT LIKE '%test%' AND `namespace` NOT LIKE '%test2%') AND `namespace` NOT IN ('test', 'test2') AND `namespace` NOT LIKE '%test%' AND `namespace` != 'test' AND (`text` NOT LIKE '%test%' AND `text` NOT LIKE '%test2%') AND (`text` NOT MATCH_PHRASE_PREFIX 'test' AND `text` NOT MATCH_PHRASE_PREFIX 'test2') AND `text` NOT LIKE '%test%' AND `text` NOT MATCH_PHRASE_PREFIX 'test'",
 			},
 			expected: "SELECT *, `login_rate` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `thedate` = '20240612' AND (`namespace` NOT LIKE '%test%' AND `namespace` NOT LIKE '%test2%') AND `namespace` NOT IN ('test', 'test2') AND `namespace` NOT LIKE '%test%' AND `namespace` != 'test' AND (`text` NOT LIKE '%test%' AND `text` NOT LIKE '%test2%') AND (`text` NOT MATCH_PHRASE_PREFIX 'test' AND `text` NOT MATCH_PHRASE_PREFIX 'test2') AND `text` NOT LIKE '%test%' AND `text` NOT MATCH_PHRASE_PREFIX 'test'",
 		},
@@ -968,7 +964,6 @@ func TestInstance_bkSql(t *testing.T) {
 						},
 					},
 				},
-				BkSqlCondition: "(`namespace` LIKE '%test%' OR `namespace` LIKE '%test2%') AND `namespace` IN ('test', 'test2') AND `namespace` LIKE '%test%' AND `namespace` = 'test'",
 			},
 			expected: "SELECT *, `login_rate` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' AND (`namespace` LIKE '%test%' OR `namespace` LIKE '%test2%') AND `namespace` IN ('test', 'test2') AND `namespace` LIKE '%test%' AND `namespace` = 'test'",
 		},
@@ -1248,12 +1243,6 @@ func TestInstance_bkSql(t *testing.T) {
 
 			fieldsMap := map[string]string{
 				"text": sql_expr.DorisTypeText,
-			}
-
-			condition, err := sql_expr.NewSQLExpr(c.query.Measurement).WithFieldsMap(fieldsMap).ParserAllConditions(c.query.AllConditions)
-			assert.Nil(t, err)
-			if err == nil {
-				assert.Equal(t, c.query.BkSqlCondition, condition)
 			}
 
 			fact := bksql.NewQueryFactory(ctx, c.query).WithFieldsMap(fieldsMap).WithRangeTime(c.start, c.end)

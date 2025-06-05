@@ -310,7 +310,7 @@ func (oc *ObjectsController) getContainerRelabelConfigs(nodeName string) []Relab
 			containerRefs = append(containerRefs, ContainerInfoRef{
 				ContainerID:     container.ID,
 				ContainerName:   container.Name,
-				ContainerImage:  container.Image,
+				ContainerImage:  container.ImageID,
 				RefPodName:      pod.ID.Name,
 				RefPodNamespace: pod.ID.Namespace,
 			})

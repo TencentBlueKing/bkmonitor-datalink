@@ -10,6 +10,7 @@
 package objectsref
 
 import (
+	"strings"
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
@@ -25,9 +26,10 @@ type PodEvent struct {
 }
 
 type ContainerKey struct {
-	Name  string
-	ID    string
-	Image string
+	Name    string
+	ID      string
+	ImageID string
+	Tag     string
 }
 
 type PodObject struct {
@@ -183,11 +185,17 @@ func (m *PodMap) GetRefs(oid ObjectID) ([]OwnerRef, bool) {
 func toContainerKey(pod *corev1.Pod) []ContainerKey {
 	var containers []ContainerKey
 	for _, sc := range pod.Status.ContainerStatuses {
-		containers = append(containers, ContainerKey{
-			Name:  sc.Name,
-			ID:    sc.ContainerID,
-			Image: sc.ImageID,
-		})
+		ck := ContainerKey{
+			Name:    sc.Name,
+			ID:      sc.ContainerID,
+			ImageID: sc.ImageID,
+		}
+
+		img := strings.Split(sc.Image, ":")
+		if len(img) > 0 {
+			ck.Tag = img[len(img)-1]
+		}
+		containers = append(containers, ck)
 	}
 	return containers
 }

@@ -689,6 +689,7 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	span.Set("tsdb-table-id", tsDB.TableID)
+	span.Set("tsdb-field-alias", tsDB.FieldAlias)
 	span.Set("tsdb-measurement-type", tsDB.MeasurementType)
 	span.Set("tsdb-filters", tsDB.Filters)
 	span.Set("tsdb-data-label", tsDB.DataLabel)

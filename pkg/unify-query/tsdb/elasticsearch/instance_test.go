@@ -583,44 +583,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			start: defaultStart,
 			end:   defaultEnd,
 			size:  1,
-			list:  `[{"__address":"http://127.0.0.1:93002","__data_label":"es_index","__doc_id":"aS3KjpEBbwEm76LbcH1G","__highlight":{"group":["\u003cmark\u003efans\u003c/mark\u003e"]},"__index":"bk_unify_query_demo_2","__result_table":"es_index","group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]}]`,
-		},
-		"high light from condition": {
-			query: &metadata.Query{
-				DB:          db,
-				Field:       "status",
-				From:        0,
-				Size:        5,
-				DataSource:  structured.BkLog,
-				TableID:     "es_index",
-				DataLabel:   "es_index",
-				MetricName:  "status",
-				StorageType: consul.ElasticsearchStorageType,
-				Source:      []string{"status", "message"},
-				Orders: metadata.Orders{
-					{
-						Name: FieldTime,
-						Ast:  false,
-					},
-				},
-				AllConditions: metadata.AllConditions{
-					{
-						{
-							DimensionName: "status",
-							Operator:      "eq",
-							Value:         []string{"error"},
-						},
-					},
-				},
-				HighLight: &metadata.HighLight{
-					Enable: true,
-				},
-			},
-			start: defaultStart,
-			end:   defaultEnd,
-			size:  1,
-			list:  `[{"__address":"http://127.0.0.1:93002","__data_label":"es_index","__doc_id":"bT4KjpEBbwEm76LbdH2H","__highlight":{"status":["\u003cmark\u003eerror\u003c/mark\u003e"]},"__index":"bk_unify_query_demo_2","__result_table":"es_index","message":"Something went wrong","status":"error"}]`,
-		},
+			list:  `[{"__address":"http://127.0.0.1:93002","__data_label":"es_index","__doc_id":"aS3KjpEBbwEm76LbcH1G","__index":"bk_unify_query_demo_2","__result_table":"es_index","group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]}]`},
 		"获取 10条 不 field 为空的原始数据": {
 			query: &metadata.Query{
 				DB:         db,
@@ -774,34 +737,6 @@ func TestInstance_queryRawData(t *testing.T) {
 					SearchAfter: []any{1743465616224.0, "kibana_stats", "es-os60crz7-kibana"},
 				},
 			},
-		},
-		"debug_highlight": {
-			query: &metadata.Query{
-				DB:          db,
-				Field:       field,
-				DataSource:  structured.BkLog,
-				TableID:     "bk_log_index_set_10",
-				StorageType: consul.ElasticsearchStorageType,
-				AllConditions: metadata.AllConditions{
-					{
-						{
-							DimensionName: "resource.k8s.bcs.cluster.id",
-							Operator:      metadata.ConditionEqual,
-							Value:         []string{"BCS-K8S-00000"},
-						},
-					},
-				},
-				HighLight: &metadata.HighLight{
-					Enable: true,
-				},
-			},
-			list: `[{"attributes.req-http-method":"POST","__highlight":{"resource.k8s.bcs.cluster.id":["\u003cmark\u003eBCS-K8S-00000\u003c/mark\u003e"]},"parent_span_id":"6f15efc54fedfebe","resource.k8s.namespace.name":"blueking","attributes.apdex_type":"satisfied","kind":1,"span_name":"http-curl","status.message":"","resource.service.name":"unify-query","__result_table":"bk_log_index_set_10","events":[],"trace_state":"","start_time":1749006596981268,"elapsed_time":38027,"__data_label":"","resource.net.host.ip":"192.168.1.100","resource.k8s.bcs.cluster.id":"BCS-K8S-00000","time":"1749006604000","attributes.req-http-path":"https://bkapi.paas3-dev.bktencent.com/api/bk-base/prod/v3/queryengine/query_sync","resource.bk.instance.id":":unify-query::192.168.1.100:","__doc_id":"14712105480911733430","trace_id":"5c999893cdbc41390c5ff8f3be5f62a9","resource.k8s.pod.ip":"192.168.1.100","__address":"http://127.0.0.1:93002","links":[],"end_time":1749006597019296,"span_id":"4a5f6170ae000a3f","__index":"v2_2_bkapm_trace_bk_monitor_20250604_0","status.code":0,"resource.k8s.pod.name":"bk-monitor-unify-query-5c685b56f-n4b6d"}]`,
-			resultTableOptions: map[string]*metadata.ResultTableOption{
-				"bk_log_index_set_10|http://127.0.0.1:93002": {
-					SearchAfter: []any{"1749006604000"},
-				},
-			},
-			size: 10000,
 		},
 	} {
 		t.Run(fmt.Sprintf("testing run: %s", idx), func(t *testing.T) {

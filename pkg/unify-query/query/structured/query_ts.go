@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -75,6 +76,26 @@ type QueryTs struct {
 
 	// HighLight 是否开启高亮
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
+}
+
+func (q *QueryTs) LabelMap() map[string][]string {
+	labelMap := make(map[string][]string)
+	labelCheck := make(map[string]struct{})
+
+	for _, query := range q.QueryList {
+		m := query.LabelMap()
+		for key, values := range m {
+			for _, value := range values {
+				checkKey := key + ":" + value
+				if _, ok := labelCheck[checkKey]; !ok {
+					labelCheck[checkKey] = struct{}{}
+					labelMap[key] = append(labelMap[key], value)
+				}
+			}
+		}
+	}
+
+	return labelMap
 }
 
 // StepParse 解析step
@@ -394,6 +415,97 @@ type Query struct {
 
 	// HighLight 是否打开高亮，只对原始数据接口生效
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
+}
+
+func (q Query) queryStringLabelMap() map[string][]string {
+	if q.QueryString == "" || q.QueryString == "*" {
+		return nil
+	}
+
+	labelMap := make(map[string][]string)
+	labelCheck := make(map[string]struct{})
+
+	addLabel := func(key, value string) {
+		checkKey := key + ":" + value
+		if _, ok := labelCheck[checkKey]; !ok {
+			labelCheck[checkKey] = struct{}{}
+			labelMap[key] = append(labelMap[key], value)
+		}
+	}
+
+	expr, err := querystring.Parse(q.QueryString)
+	if err != nil || expr == nil {
+		return labelMap
+	}
+
+	q.walkQueryStringExpr(expr, addLabel)
+
+	return labelMap
+}
+
+func (q Query) walkQueryStringExpr(expr querystring.Expr, addLabel func(string, string)) {
+	if expr == nil {
+		return
+	}
+
+	switch e := expr.(type) {
+	case *querystring.NotExpr:
+		q.walkQueryStringExpr(e.Expr, addLabel)
+	case *querystring.OrExpr:
+		q.walkQueryStringExpr(e.Left, addLabel)
+		q.walkQueryStringExpr(e.Right, addLabel)
+	case *querystring.AndExpr:
+		q.walkQueryStringExpr(e.Left, addLabel)
+		q.walkQueryStringExpr(e.Right, addLabel)
+	case *querystring.WildcardExpr:
+		field := e.Field
+		if field == "" {
+			field = "log" // 默认字段，与 Doris 的 DefaultKey 一致
+		}
+		addLabel(field, e.Value)
+	case *querystring.MatchExpr:
+		field := e.Field
+		if field == "" {
+			field = "log" // 默认字段，与 Doris 的 DefaultKey 一致
+		}
+		addLabel(field, e.Value)
+	case *querystring.NumberRangeExpr:
+		// NumberRangeExpr 通常用于数值范围查询，不提取为标签
+	}
+}
+
+func (q Query) LabelMap() map[string][]string {
+	labelMap := make(map[string][]string)
+	labelCheck := make(map[string]struct{})
+
+	addLabel := func(key, value string) {
+		checkKey := key + ":" + value
+		if _, ok := labelCheck[checkKey]; !ok {
+			labelCheck[checkKey] = struct{}{}
+			labelMap[key] = append(labelMap[key], value)
+		}
+	}
+
+	for _, condition := range q.Conditions.FieldList {
+		switch condition.Operator {
+		case ConditionEqual, ConditionExact, ConditionContains, ConditionNotEqual, ConditionNotContains, ConditionRegEqual, ConditionNotRegEqual, ConditionGt, ConditionGte, ConditionLt, ConditionLte:
+			for _, value := range condition.Value {
+				if value != "" {
+					addLabel(condition.DimensionName, value)
+				}
+			}
+		}
+	}
+	if q.QueryString != "" {
+		qLabelMap := q.queryStringLabelMap()
+		for key, values := range qLabelMap {
+			for _, value := range values {
+				addLabel(key, value)
+			}
+		}
+	}
+
+	return labelMap
 }
 
 func (q *Query) ToRouter() (*Route, error) {

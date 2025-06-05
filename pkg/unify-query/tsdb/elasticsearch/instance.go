@@ -606,14 +606,6 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 							fact.data[FieldTime] = timeValue
 						}
 
-						if highlightResult := fact.Highlight(query, data); highlightResult != nil {
-							fact.data[KeyHighLight] = highlightResult
-							span.Set("highlight-result", highlightResult)
-						} else {
-							span.Set("highlight-result", "empty")
-							span.Set("highlight-labels", fact.labelMap)
-						}
-
 						if idx == len(sr.Hits.Hits)-1 && d.Sort != nil {
 							option = &metadata.ResultTableOption{
 								SearchAfter: d.Sort,

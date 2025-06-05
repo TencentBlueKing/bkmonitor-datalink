@@ -14,54 +14,15 @@ import (
 	"strings"
 )
 
-type HighLightStruct struct {
-	LabelMap          map[string][]string `json:"label_map,omitempty"`
-	MaxAnalyzedOffset int                 `json:"max_analyzed_offset,omitempty"`
-}
-
-type HighLightOption func(h *HighLightStruct)
-
-func WithLabelMap(labelMap map[string][]string) HighLightOption {
-	return func(h *HighLightStruct) {
-		if h.LabelMap == nil {
-			h.LabelMap = make(map[string][]string)
-		}
-		for k, v := range labelMap {
-			h.LabelMap[k] = v
-		}
+// HighLight 处理高亮功能，直接接受labelMap和maxAnalyzedOffset参数
+func HighLight(data map[string]any, labelMap map[string][]string, maxAnalyzedOffset int) (newData map[string]any) {
+	if len(labelMap) == 0 {
+		return nil
 	}
-}
-
-func WithMaxAnalyzedOffset(maxAnalyzedOffset int) HighLightOption {
-	return func(h *HighLightStruct) {
-		h.MaxAnalyzedOffset = maxAnalyzedOffset
-	}
-}
-
-func NewHighLightStruct(options ...HighLightOption) *HighLightStruct {
-	h := &HighLightStruct{
-		LabelMap:          make(map[string][]string),
-		MaxAnalyzedOffset: 0,
-	}
-	for _, opt := range options {
-		opt(h)
-	}
-	return h
-}
-
-func HighLight(data map[string]any, options ...HighLightOption) (newData map[string]any) {
-	if len(options) == 0 {
-		return data
-	}
-
-	h := NewHighLightStruct(options...)
 
 	newData = make(map[string]any)
-	processedCount := 0
 
-	for k, vs := range h.LabelMap {
-		processedCount++
-
+	for k, vs := range labelMap {
 		if vs == nil {
 			continue
 		}
@@ -74,9 +35,9 @@ func HighLight(data map[string]any, options ...HighLightOption) (newData map[str
 
 			switch s := d.(type) {
 			case string:
-				if h.MaxAnalyzedOffset > 0 && len(s) > h.MaxAnalyzedOffset {
-					mark1 = s[0:h.MaxAnalyzedOffset]
-					mark2 = s[h.MaxAnalyzedOffset:]
+				if maxAnalyzedOffset > 0 && len(s) > maxAnalyzedOffset {
+					mark1 = s[0:maxAnalyzedOffset]
+					mark2 = s[maxAnalyzedOffset:]
 				} else {
 					mark1 = s
 				}
@@ -92,9 +53,9 @@ func HighLight(data map[string]any, options ...HighLightOption) (newData map[str
 			case []string:
 				newArrData := make([]string, 0, len(s))
 				for _, v := range s {
-					if h.MaxAnalyzedOffset > 0 && len(v) > h.MaxAnalyzedOffset {
-						mark1 = v[0:h.MaxAnalyzedOffset]
-						mark2 = v[h.MaxAnalyzedOffset:]
+					if maxAnalyzedOffset > 0 && len(v) > maxAnalyzedOffset {
+						mark1 = v[0:maxAnalyzedOffset]
+						mark2 = v[maxAnalyzedOffset:]
 					} else {
 						mark1 = v
 					}
@@ -112,7 +73,6 @@ func HighLight(data map[string]any, options ...HighLightOption) (newData map[str
 					newData[k] = newArrData
 				}
 			}
-
 		}
 	}
 

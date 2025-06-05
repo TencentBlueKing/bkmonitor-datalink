@@ -1183,35 +1183,6 @@ func (f *FormatFactory) GetTimeField() metadata.TimeField {
 	return f.timeField
 }
 
-// Highlight 处理高亮功能
-func (f *FormatFactory) Highlight(query *metadata.Query, data map[string]any) map[string]any {
-	isHighlightEnable := query.HighLight != nil && query.HighLight.Enable
-	isExistMaxAnalyzedOffset := query.HighLight != nil && query.HighLight.MaxAnalyzedOffset > 0
-
-	if !isHighlightEnable {
-		return nil
-	}
-
-	labelMap := f.GetLabelMap()
-	if len(labelMap) == 0 {
-		return nil
-	}
-
-	highlightData := f.createHighlightData(data, labelMap)
-	if len(highlightData) == 0 {
-		return nil
-	}
-
-	options := []function.HighLightOption{
-		function.WithLabelMap(labelMap),
-	}
-	if isExistMaxAnalyzedOffset {
-		options = append(options, function.WithMaxAnalyzedOffset(query.HighLight.MaxAnalyzedOffset))
-	}
-
-	return function.HighLight(highlightData, options...)
-}
-
 func (f *FormatFactory) createHighlightData(data map[string]any, labelMap map[string][]string) map[string]any {
 	result := make(map[string]any)
 

@@ -31,8 +31,7 @@ type QueryParams struct {
 
 	StorageType *set.Set[string]
 
-	TableFieldAlias   TableFieldAlias
-	ReverseFieldAlias FieldAlias
+	TableFieldAlias TableFieldAlias
 
 	IsReference bool
 	IsSkipK8s   bool
@@ -65,13 +64,6 @@ func (q *QueryParams) SetFieldAlias(tableID string, fieldAlias FieldAlias) *Quer
 		q.TableFieldAlias = make(map[string]FieldAlias)
 	}
 	q.TableFieldAlias[tableID] = fieldAlias
-	if q.ReverseFieldAlias == nil {
-		q.ReverseFieldAlias = make(FieldAlias)
-	}
-
-	for k, v := range fieldAlias {
-		q.ReverseFieldAlias[v] = k
-	}
 	return q
 }
 

@@ -15,16 +15,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"unicode"
 )
 
 type FieldFormat struct {
-	ctx  context.Context
-	lock sync.RWMutex
-
-	// 存放进行别名转换的字段，用于逆向
-	reverseTableFieldAlias FieldAlias
+	ctx context.Context
 }
 
 func (f *FieldFormat) format(s string) string {
@@ -35,17 +30,13 @@ func (f *FieldFormat) isAlphaNumericUnderscore(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == ':' || r == '_'
 }
 
+// EncodeFunc 对字段进行别名以及 Prom 引擎计算转换
 func (f *FieldFormat) EncodeFunc(tableID string) func(q string) string {
 	preFunc := func(s string) string {
 		if ns, ok := GetQueryParams(f.ctx).TableFieldAlias[tableID][s]; ok {
-			if ns == "" {
-				return s
+			if ns != "" {
+				return ns
 			}
-
-			f.lock.Lock()
-			f.reverseTableFieldAlias[ns] = s
-			f.lock.Unlock()
-			return ns
 		}
 		return s
 	}
@@ -73,16 +64,8 @@ func (f *FieldFormat) EncodeFunc(tableID string) func(q string) string {
 	}
 }
 
+// DecodeFunc 对字段进行还原，别名无需还原，保留原字段
 func (f *FieldFormat) DecodeFunc(_ string) func(q string) string {
-	afterFunc := func(s string) string {
-		f.lock.RLock()
-		if ns, ok := f.reverseTableFieldAlias[s]; ok {
-			return ns
-		}
-		f.lock.RUnlock()
-		return s
-	}
-
 	return func(q string) string {
 		format := f.format(`([\d]+)`)
 		re := regexp.MustCompile(format)
@@ -95,10 +78,6 @@ func (f *FieldFormat) DecodeFunc(_ string) func(q string) string {
 				}
 				q = strings.ReplaceAll(q, match[0], string(rune(num)))
 			}
-		}
-
-		if afterFunc != nil {
-			q = afterFunc(q)
 		}
 		return q
 	}
@@ -122,7 +101,6 @@ func GetFieldFormat(ctx context.Context) *FieldFormat {
 	}
 
 	return (&FieldFormat{
-		ctx:                    ctx,
-		reverseTableFieldAlias: make(FieldAlias),
+		ctx: ctx,
 	}).set()
 }

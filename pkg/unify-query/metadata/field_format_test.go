@@ -93,10 +93,14 @@ func TestFieldFormat_EncodeAndDecode(t *testing.T) {
 					assert.Equal(t, c.expected[idx], r)
 				}
 
-				nr := pdf.DecodeFunc("")(r)
-				log.Infof(ctx, "decode: %s => %s", r, nr)
+				// 别名转换无需还原
+				if c.tableID == "" {
+					nr := pdf.DecodeFunc(c.tableID)(r)
+					log.Infof(ctx, "decode: %s => %s", r, nr)
 
-				assert.Equal(t, q, nr)
+					assert.Equal(t, q, nr)
+				}
+
 			}
 		})
 	}

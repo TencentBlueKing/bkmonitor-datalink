@@ -30,26 +30,13 @@ func (f *FieldFormat) isAlphaNumericUnderscore(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == ':' || r == '_'
 }
 
-// EncodeFunc 对字段进行别名以及 Prom 引擎计算转换
-func (f *FieldFormat) EncodeFunc(tableID string) func(q string) string {
-	preFunc := func(s string) string {
-		if ns, ok := GetQueryParams(f.ctx).TableFieldAlias[tableID][s]; ok {
-			if ns != "" {
-				return ns
-			}
-		}
-		return s
-	}
-
+// EncodeFunc 对字段进行 Prom 引擎计算规则转换
+func (f *FieldFormat) EncodeFunc() func(q string) string {
 	return func(q string) string {
 		var (
 			result       strings.Builder
 			invalidChars []rune
 		)
-		if preFunc != nil {
-			q = preFunc(q)
-		}
-
 		format := f.format(`%d`)
 		for _, r := range q {
 			if !f.isAlphaNumericUnderscore(r) {
@@ -65,7 +52,7 @@ func (f *FieldFormat) EncodeFunc(tableID string) func(q string) string {
 }
 
 // DecodeFunc 对字段进行还原，别名无需还原，保留原字段
-func (f *FieldFormat) DecodeFunc(_ string) func(q string) string {
+func (f *FieldFormat) DecodeFunc() func(q string) string {
 	return func(q string) string {
 		format := f.format(`([\d]+)`)
 		re := regexp.MustCompile(format)

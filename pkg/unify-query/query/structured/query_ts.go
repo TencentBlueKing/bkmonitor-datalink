@@ -602,7 +602,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			return nil, bkDataErr
 		}
 
-		qry := &metadata.Query{
+		query := &metadata.Query{
 			StorageType:   consul.BkSqlStorageType,
 			TableID:       string(tableID),
 			DataSource:    q.DataSource,
@@ -618,7 +618,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		}
 
 		if len(q.OrderBy) > 0 {
-			qry.Orders = make(metadata.Orders, 0, len(q.OrderBy))
+			query.Orders = make(metadata.Orders, 0, len(q.OrderBy))
 			for _, o := range q.OrderBy {
 				if len(o) == 0 {
 					continue
@@ -632,23 +632,19 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 					name = name[1:]
 				}
 
-				qry.Orders = append(qry.Orders, metadata.Order{
+				query.Orders = append(query.Orders, metadata.Order{
 					Name: name,
 					Ast:  asc,
 				})
 			}
 		}
 
-		metadata.GetQueryParams(ctx).SetStorageType(qry.StorageType)
+		metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 
-		span.Set("query-storage-id", qry.StorageID)
-		span.Set("query-measurement", qry.Measurement)
-		span.Set("query-field", qry.Field)
-		span.Set("query-aggr-method-list", qry.Aggregates)
-		span.Set("query-bk-sql-condition", qry.BkSqlCondition)
-		span.Set("query-collapse", qry.Collapse)
+		// 配置别名
+		query.ConfigureAlias(ctx)
 
-		queryMetric.QueryList = []*metadata.Query{qry}
+		queryMetric.QueryList = []*metadata.Query{query}
 		return queryMetric, nil
 	}
 
@@ -673,17 +669,10 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 	queryMetric.QueryList = make([]*metadata.Query, 0, len(tsDBs))
 
-	queryLabelsMatcher, _, _ := q.Conditions.ToProm()
-
-	span.Set("query-space-uid", spaceUid)
-	span.Set("query-table-id", string(tableID))
-	span.Set("query-metric", metricName)
-	span.Set("query-is-regexp", q.IsRegexp)
 	span.Set("tsdb-num", len(tsDBs))
-	span.Set("query-aggregate", aggregates)
 
 	for _, tsDB := range tsDBs {
-		query, buildErr := q.BuildMetadataQuery(ctx, tsDB, allConditions, queryLabelsMatcher)
+		query, buildErr := q.BuildMetadataQuery(ctx, tsDB, allConditions)
 		if buildErr != nil {
 			return nil, buildErr
 		}
@@ -713,7 +702,10 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			}
 		}
 
-		metadata.GetQueryParams(ctx).SetStorageType(query.StorageType).SetFieldAlias(query.TableID, query.FieldAlias)
+		metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
+
+		// 配置别名
+		query.ConfigureAlias(ctx)
 
 		queryMetric.QueryList = append(queryMetric.QueryList, query)
 	}
@@ -725,7 +717,6 @@ func (q *Query) BuildMetadataQuery(
 	ctx context.Context,
 	tsDB *queryMod.TsDBV2,
 	queryConditions [][]ConditionField,
-	queryLabelsMatcher []*labels.Matcher,
 ) (*metadata.Query, error) {
 	var (
 		field        string
@@ -757,6 +748,7 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	span.Set("tsdb-table-id", tsDB.TableID)
+	span.Set("tsdb-field-alias", tsDB.FieldAlias)
 	span.Set("tsdb-measurement-type", tsDB.MeasurementType)
 	span.Set("tsdb-filters", tsDB.Filters)
 	span.Set("tsdb-data-label", tsDB.DataLabel)
@@ -826,8 +818,6 @@ func (q *Query) BuildMetadataQuery(
 	default:
 		field, fields = metricName, expandMetricNames
 	}
-
-	span.Set("tsdb-fields", fields)
 
 	filterConditions := make([][]ConditionField, 0)
 	satisfy, tKeys := judgeFilter(tsDB.Filters)
@@ -1004,31 +994,6 @@ func (q *Query) BuildMetadataQuery(
 		query.Orders = q.OrderBy.Orders()
 	}
 
-	span.Set("query-source-type", query.SourceType)
-	span.Set("query-table-id", query.TableID)
-	span.Set("query-db", query.DB)
-	span.Set("query-metric-name", query.MetricName)
-	span.Set("query-measurement", query.Measurement)
-	span.Set("query-measurements", query.Measurements)
-	span.Set("query-field", query.Field)
-	span.Set("query-fields", query.Fields)
-	span.Set("query-offset-info", query.OffsetInfo)
-	span.Set("query-timezone", query.Timezone)
-	span.Set("query-condition", query.Condition)
-	span.Set("query-vm-condition", query.VmCondition)
-	span.Set("query-vm-condition-num", query.VmConditionNum)
-	span.Set("query-is-regexp", q.IsRegexp)
-
-	span.Set("query-storage-ids", query.StorageIDs)
-	span.Set("query-storage-id", query.StorageID)
-	span.Set("query-storage-type", query.StorageType)
-	span.Set("query-storage-name", query.StorageName)
-
-	span.Set("query-cluster-name", query.ClusterName)
-	span.Set("query-tag-keys", query.TagsKey)
-	span.Set("query-vm-rt", query.VmRt)
-	span.Set("query-need-add-time", query.NeedAddTime)
-
 	jsonString, _ := json.Marshal(query)
 	span.Set("query-json", jsonString)
 
@@ -1155,7 +1120,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		}
 	}
 
-	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc("")
+	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
 
 	for idx := 0; idx < funcNums; idx++ {
 		if idx == timeIdx {

@@ -279,10 +279,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		source.Collapse(elastic.NewCollapseBuilder(qb.Collapse.Field))
 	}
 
-	if qb.HighLight != nil && qb.HighLight.Enable {
-		source.Highlight(fact.HighLight(qb.QueryString, qb.HighLight.MaxAnalyzedOffset))
-	}
-
 	if source == nil {
 		return nil, fmt.Errorf("empty es query source")
 	}
@@ -602,10 +598,6 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 						if timeValue, ok := data[fact.GetTimeField().Name]; ok {
 							fact.data[FieldTime] = timeValue
-						}
-
-						if len(d.Highlight) > 0 {
-							fact.data[KeyHighLight] = d.Highlight
 						}
 
 						if idx == len(sr.Hits.Hits)-1 && d.Sort != nil {

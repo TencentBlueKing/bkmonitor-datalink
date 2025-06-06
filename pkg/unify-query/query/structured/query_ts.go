@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -75,6 +76,29 @@ type QueryTs struct {
 
 	// HighLight 是否开启高亮
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
+}
+
+func (q *QueryTs) LabelMap() (map[string][]string, error) {
+	labelMap := make(map[string][]string)
+	labelCheck := make(map[string]struct{})
+
+	for _, query := range q.QueryList {
+		m, err := query.LabelMap()
+		if err != nil {
+			return nil, err
+		}
+		for key, values := range m {
+			for _, value := range values {
+				checkKey := key + ":" + value
+				if _, ok := labelCheck[checkKey]; !ok {
+					labelCheck[checkKey] = struct{}{}
+					labelMap[key] = append(labelMap[key], value)
+				}
+			}
+		}
+	}
+
+	return labelMap, nil
 }
 
 // StepParse 解析step
@@ -394,6 +418,45 @@ type Query struct {
 
 	// HighLight 是否打开高亮，只对原始数据接口生效
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
+}
+
+func (q Query) LabelMap() (map[string][]string, error) {
+	labelMap := make(map[string][]string)
+	labelCheck := make(map[string]struct{})
+
+	addLabel := func(key, value string) {
+		if key == "" || value == "" {
+			return
+		}
+		checkKey := key + ":" + value
+		if _, ok := labelCheck[checkKey]; !ok {
+			labelCheck[checkKey] = struct{}{}
+			labelMap[key] = append(labelMap[key], value)
+		}
+	}
+
+	for _, condition := range q.Conditions.FieldList {
+		for _, value := range condition.Value {
+			if value != "" {
+				addLabel(condition.DimensionName, value)
+			}
+		}
+	}
+	if q.QueryString != "" {
+		qLabelMap, err := querystring.LabelMap(q.QueryString)
+		if err != nil {
+			return nil, err
+		}
+		for key, values := range qLabelMap {
+			for _, value := range values {
+				if key != "" && value != "" {
+					addLabel(key, value)
+				}
+			}
+		}
+	}
+
+	return labelMap, nil
 }
 
 func (q *Query) ToRouter() (*Route, error) {

@@ -32,8 +32,6 @@ import (
 )
 
 const (
-	KeyHighLight = "__highlight"
-
 	KeyIndex     = "__index"
 	KeyTableID   = "__result_table"
 	KeyDataLabel = "__data_label"
@@ -282,7 +280,6 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		return
 	}
 
-	span.Set("label-map", queryFactory.GetLabelMap())
 	span.Set("data-total-records", data.TotalRecords)
 	span.Set("data-list-size", len(data.List))
 
@@ -291,10 +288,6 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		newData[KeyIndex] = query.DB
 		newData[KeyTableID] = query.TableID
 		newData[KeyDataLabel] = query.DataLabel
-
-		if query.HighLight != nil && query.HighLight.Enable {
-			newData[KeyHighLight] = queryFactory.HighLight(newData)
-		}
 		dataCh <- newData
 	}
 

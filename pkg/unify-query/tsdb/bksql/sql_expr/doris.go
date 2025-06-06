@@ -41,8 +41,6 @@ type DorisSQLExpr struct {
 
 	isSetLabels bool
 	lock        sync.Mutex
-	labelCheck  map[string]struct{}
-	labelMap    map[string][]string
 }
 
 var _ SQLExpr = (*DorisSQLExpr)(nil)
@@ -79,10 +77,6 @@ func (d *DorisSQLExpr) WithKeepColumns(cols []string) SQLExpr {
 
 func (d *DorisSQLExpr) FieldMap() map[string]string {
 	return d.fieldsMap
-}
-
-func (d *DorisSQLExpr) GetLabelMap() map[string][]string {
-	return d.labelMap
 }
 
 func (d *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
@@ -291,7 +285,6 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 		var filter []string
 		for _, v := range c.Value {
-			d.addLabel(oldKey, v)
 			filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
 		}
 		key = ""
@@ -328,9 +321,6 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 		var filter []string
 		for _, v := range c.Value {
-			if v != "" {
-				d.addLabel(key, v)
-			}
 			filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
 		}
 		key = ""
@@ -378,7 +368,6 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	if key != "" {
 		condition := fmt.Sprintf("%s %s", key, op)
 		if val != "" {
-			d.addLabel(oldKey, val)
 			condition = fmt.Sprintf("%s %s", condition, val)
 		}
 		return condition, nil
@@ -395,27 +384,6 @@ func (d *DorisSQLExpr) checkMatchALL(k string) bool {
 		}
 	}
 	return false
-}
-
-func (d *DorisSQLExpr) addLabel(key, value string) {
-	if !d.isSetLabels {
-		return
-	}
-
-	d.lock.Lock()
-	defer d.lock.Unlock()
-
-	if d.labelCheck == nil {
-		d.labelCheck = make(map[string]struct{})
-	}
-	if d.labelMap == nil {
-		d.labelMap = make(map[string][]string)
-	}
-
-	if _, ok := d.labelCheck[key+value]; !ok {
-		d.labelCheck[key+value] = struct{}{}
-		d.labelMap[key] = append(d.labelMap[key], value)
-	}
 }
 
 func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
@@ -457,14 +425,12 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 			c.Field = DefaultKey
 		}
 
-		d.addLabel(c.Field, c.Value)
 		field, _ := d.dimTransform(c.Field)
 		return fmt.Sprintf("%s LIKE '%%%s%%'", field, c.Value), nil
 	case *querystring.MatchExpr:
 		if c.Field == "" {
 			c.Field = DefaultKey
 		}
-		d.addLabel(c.Field, c.Value)
 		field, _ := d.dimTransform(c.Field)
 		if d.checkMatchALL(c.Field) {
 			return fmt.Sprintf("%s MATCH_PHRASE_PREFIX '%s'", field, c.Value), nil

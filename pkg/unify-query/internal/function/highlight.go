@@ -14,6 +14,10 @@ import (
 	"strings"
 )
 
+const (
+	KeyHighLight = "__highlight"
+)
+
 type HighLightFactory struct {
 	labelMap          map[string][]string
 	maxAnalyzedOffset int
@@ -53,16 +57,6 @@ func (h *HighLightFactory) processField(fieldValue any, keywords []string) any {
 	case string:
 		if highlighted := h.highlightString(value, keywords); highlighted != value {
 			return []string{highlighted}
-		}
-	case []string:
-		highlightedArray := make([]string, 0, len(value))
-		for _, str := range value {
-			if highlighted := h.highlightString(str, keywords); highlighted != str {
-				highlightedArray = append(highlightedArray, highlighted)
-			}
-		}
-		if len(highlightedArray) > 0 {
-			return highlightedArray
 		}
 	}
 	return nil

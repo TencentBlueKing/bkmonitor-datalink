@@ -10,10 +10,7 @@
 package querystring
 
 import (
-	"context"
 	"fmt"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 var (
@@ -35,7 +32,6 @@ func LabelMap(query string) (map[string][]string, error) {
 }
 
 func parseExprToKeyValue(query string, expr Expr, kv map[string][]string) error {
-	ctx := context.TODO()
 	if expr == nil {
 		return fmt.Errorf("expression is nil for query: %s", query)
 	}
@@ -76,7 +72,6 @@ func parseExprToKeyValue(query string, expr Expr, kv map[string][]string) error 
 			return fmt.Errorf("failed to add value to map: %w", err)
 		}
 	default:
-		log.Debugf(ctx, "unknown expression type: %T for query: %s", e, query)
 		return nil
 	}
 	return nil

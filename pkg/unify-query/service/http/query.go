@@ -319,7 +319,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 			if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(labelMap) > 0 {
 				if highlightResult := hlF.Process(item); len(highlightResult) > 0 {
-					item[elasticsearch.KeyHighLight] = highlightResult
+					item[function.KeyHighLight] = highlightResult
 				}
 			}
 

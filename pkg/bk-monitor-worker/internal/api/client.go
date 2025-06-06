@@ -32,6 +32,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/user"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 var (
@@ -475,6 +476,7 @@ func BatchApiRequest(pageSize int, getTotalFunc func(interface{}) (int, error), 
 	// 检查是否有错误
 	for _, err := range errs {
 		if err != nil {
+			logger.Errorf("failed to send the rest requests, err: %v", err)
 			return nil, errors.New("failed to send the rest requests")
 		}
 	}

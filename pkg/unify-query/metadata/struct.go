@@ -139,8 +139,6 @@ type Query struct {
 
 	AllConditions AllConditions `json:"all_conditions,omitempty"`
 
-	HighLight *HighLight `json:"high_light,omitempty"`
-
 	Source []string `json:"source,omitempty"`
 	From   int      `json:"from,omitempty"`
 	Size   int      `json:"size,omitempty"`

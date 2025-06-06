@@ -159,10 +159,10 @@ func TestNewSqlFactory(t *testing.T) {
 		},
 		"doris count-with-count-promql-2": {
 			// 2024-12-07 21:36:40	UTC
-			// 2024-12-08 05:36:40  Asia/ShangHai
+			// 2024-12-08 05:36:40  Asia/Shanghai
 			start: time.Unix(1733607400, 0),
 			// 2024-12-11 17:49:35 	UTC
-			// 2024-12-12 01:49:35  Asia/ShangHai
+			// 2024-12-12 01:49:35  Asia/Shanghai
 			end: time.Unix(1733939375, 0),
 			query: &metadata.Query{
 				DB:          "100133_ieod_logsearch4_errorlog_p",
@@ -190,9 +190,9 @@ func TestNewSqlFactory(t *testing.T) {
 			expected: "SELECT `ip`, COUNT(`gseIndex`) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1733607400000 AND `dtEventTimeStamp` <= 1733939375000 AND `thedate` >= '20241208' AND `thedate` <= '20241212' AND `gseIndex` > 0 GROUP BY `ip`, _timestamp_ ORDER BY `_timestamp_` ASC",
 		},
 		"doris count by day with UTC": {
-			// 2025-03-14 15:05:45  Asia/ShangHai
+			// 2025-03-14 15:05:45  Asia/Shanghai
 			start: time.UnixMilli(1741935945000),
-			// 2025-03-20 15:35:45 Asia/ShangHai
+			// 2025-03-20 15:35:45 Asia/Shanghai
 			end: time.UnixMilli(1742456145000),
 			query: &metadata.Query{
 				DB:          "5000140_bklog_container_log_demo_analysis",
@@ -208,9 +208,9 @@ func TestNewSqlFactory(t *testing.T) {
 			expected: "SELECT COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1440 AS INT) * 1440 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741935945000 AND `dtEventTimeStamp` <= 1742456145000 AND `thedate` >= '20250314' AND `thedate` <= '20250320' GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC",
 		},
 		"doris count by day with Asia/Shanghai": {
-			// 2025-03-14 15:05:45  Asia/ShangHai
+			// 2025-03-14 15:05:45  Asia/Shanghai
 			start: time.UnixMilli(1741935945000),
-			// 2025-03-20 15:35:45 Asia/ShangHai
+			// 2025-03-20 15:35:45 Asia/Shanghai
 			end: time.UnixMilli(1742456145000),
 			query: &metadata.Query{
 				DB:          "5000140_bklog_container_log_demo_analysis",
@@ -220,16 +220,16 @@ func TestNewSqlFactory(t *testing.T) {
 					{
 						Name:     "count",
 						Window:   time.Hour * 24,
-						TimeZone: "Asia/ShangHai",
+						TimeZone: "Asia/Shanghai",
 					},
 				},
 			},
 			expected: "SELECT COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 480) / 1440 AS INT) * 1440 - 480) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741935945000 AND `dtEventTimeStamp` <= 1742456145000 AND `thedate` >= '20250314' AND `thedate` <= '20250320' GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC",
 		},
 		"doris count by dimension with object": {
-			// 2025-03-14 15:05:45  Asia/ShangHai
+			// 2025-03-14 15:05:45  Asia/Shanghai
 			start: time.UnixMilli(1741935945000),
-			// 2025-03-20 15:35:45 Asia/ShangHai
+			// 2025-03-20 15:35:45 Asia/Shanghai
 			end: time.UnixMilli(1742456145000),
 			query: &metadata.Query{
 				DB:          "5000140_bklog_container_log_demo_analysis",
@@ -278,7 +278,7 @@ func TestWindowWithTimezone(t *testing.T) {
 		{
 			name:     "test window 1m - 1",
 			start:    time.UnixMilli(1742267704000),
-			timezone: "Asia/ShangHai",
+			timezone: "Asia/Shanghai",
 			window:   time.Minute,
 
 			expected: time.UnixMilli(1742267700000),
@@ -309,7 +309,7 @@ func TestWindowWithTimezone(t *testing.T) {
 		{
 			name:     "test window 1d +8 - 1",
 			start:    time.UnixMilli(1742267704000),
-			timezone: "Asia/ShangHai",
+			timezone: "Asia/Shanghai",
 			window:   time.Hour * 24,
 
 			expected: time.UnixMilli(1742227200000),
@@ -317,7 +317,7 @@ func TestWindowWithTimezone(t *testing.T) {
 		{
 			name:     "test window 1d +8 - 2",
 			start:    time.UnixMilli(1741885200000),
-			timezone: "Asia/ShangHai",
+			timezone: "Asia/Shanghai",
 			window:   time.Hour * 24,
 
 			expected: time.UnixMilli(1741881600000),
@@ -325,7 +325,7 @@ func TestWindowWithTimezone(t *testing.T) {
 		{
 			name:     "test window 26h +8 - 1",
 			start:    time.UnixMilli(1742267704000),
-			timezone: "Asia/ShangHai",
+			timezone: "Asia/Shanghai",
 			window:   time.Hour*24 + time.Hour*2,
 
 			expected: time.UnixMilli(1742176800000),
@@ -333,7 +333,7 @@ func TestWindowWithTimezone(t *testing.T) {
 		{
 			name:     "test window 3d +8 - 1",
 			start:    time.UnixMilli(1742267704000),
-			timezone: "Asia/ShangHai",
+			timezone: "Asia/Shanghai",
 			window:   time.Hour * 24 * 3,
 
 			expected: time.UnixMilli(1742054400000),
@@ -341,7 +341,7 @@ func TestWindowWithTimezone(t *testing.T) {
 		{
 			name:     "test window 1m +8 - 2",
 			start:    time.UnixMilli(1742266099000),
-			timezone: "Asia/ShangHai",
+			timezone: "Asia/Shanghai",
 			window:   time.Minute,
 
 			expected: time.UnixMilli(1742266080000),
@@ -349,7 +349,7 @@ func TestWindowWithTimezone(t *testing.T) {
 		{
 			name:     "test window 6h +8 - 2",
 			start:    time.UnixMilli(1742266099000), // 2025-03-18 10:48:19 +0800
-			timezone: "Asia/ShangHai",
+			timezone: "Asia/Shanghai",
 			window:   time.Hour * 6,
 
 			expected: time.UnixMilli(1742256000000), // 2025-03-18 08:00:00 +0800 CST
@@ -362,7 +362,18 @@ func TestWindowWithTimezone(t *testing.T) {
 			window := tc.window.Milliseconds()
 
 			var offset int64
-			loc, _ := time.LoadLocation(tc.timezone)
+			var loc *time.Location
+			var err error
+
+			if tc.timezone != "" {
+				loc, err = time.LoadLocation(tc.timezone)
+				if err != nil {
+					t.Fatalf("Failed to load timezone %s: %v", tc.timezone, err)
+				}
+			} else {
+				loc = time.UTC
+			}
+
 			if window%(time.Hour*24).Milliseconds() == 0 {
 				_, z := time.Now().In(loc).Zone()
 				offset = int64(z) * 1000

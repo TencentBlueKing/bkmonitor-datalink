@@ -60,11 +60,6 @@ func (d *DorisSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 	return d
 }
 
-func (d *DorisSQLExpr) IsSetLabels(isSetLabels bool) SQLExpr {
-	d.isSetLabels = isSetLabels
-	return d
-}
-
 func (d *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]string) SQLExpr {
 	d.fieldsMap = fieldsMap
 	return d

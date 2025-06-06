@@ -57,53 +57,53 @@ func TestInstance_getAlias(t *testing.T) {
 			needAddTime: true,
 			expected:    []string{"db_test_20240101*", "db_test_20240102*", "db_test_20240103*"},
 		},
-		"change month with Asia/ShangHai": {
+		"change month with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 25, 7, 10, 5, 0, time.UTC),
 			end:         time.Date(2024, 2, 2, 6, 1, 4, 10, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/ShangHai",
+			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_20240125*", "db_test_20240126*", "db_test_20240127*", "db_test_20240128*", "db_test_20240129*", "db_test_20240130*", "db_test_20240131*", "db_test_20240201*", "db_test_20240202*"},
 		},
-		"2d with Asia/ShangHai": {
+		"2d with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 1, 3, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/ShangHai",
+			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_20240102*", "db_test_20240103*", "db_test_20240104*"},
 		},
-		"14d with Asia/ShangHai": {
+		"14d with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 1, 15, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/ShangHai",
+			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_20240102*", "db_test_20240103*", "db_test_20240104*", "db_test_20240105*", "db_test_20240106*", "db_test_20240107*", "db_test_20240108*", "db_test_20240109*", "db_test_20240110*", "db_test_20240111*", "db_test_20240112*", "db_test_20240113*", "db_test_20240114*", "db_test_20240115*", "db_test_20240116*"},
 		},
-		"16d with Asia/ShangHai": {
+		"16d with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 15, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 2, 10, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/ShangHai",
+			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_202401*", "db_test_202402*"},
 		},
-		"15d with Asia/ShangHai": {
+		"15d with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 1, 16, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/ShangHai",
+			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_202401*"},
 		},
-		"6m with Asia/ShangHai": {
+		"6m with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 7, 1, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/ShangHai",
+			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_202401*", "db_test_202402*", "db_test_202403*", "db_test_202404*", "db_test_202405*", "db_test_202406*", "db_test_202407*"},
 		},
-		"7m with Asia/ShangHai": {
+		"7m with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 8, 1, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/ShangHai",
+			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_202402*", "db_test_202403*", "db_test_202404*", "db_test_202405*", "db_test_202406*", "db_test_202407*", "db_test_202408*"},
 		},
 		"2m and db": {
@@ -576,9 +576,6 @@ func TestInstance_queryRawData(t *testing.T) {
 					},
 				},
 				QueryString: "group: fans",
-				HighLight: &metadata.HighLight{
-					Enable: true,
-				},
 			},
 			start: defaultStart,
 			end:   defaultEnd,
@@ -645,18 +642,6 @@ func TestInstance_queryRawData(t *testing.T) {
 			end:   defaultEnd,
 			size:  1e4,
 			list:  `[{"__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"8defd23f1c2599e70f3ace3a042b2b5f","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002"},{"__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"ba0a6e66f01d6cb77ae25b13ddf4ad1b","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002"},{"__doc_id":"74ea55e7397582b101f0e21efbc876c6","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"},{"__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__ext.container_name":"unify-query","__doc_id":"084792484f943e314e31ef2b2e878115"},{"__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"0a3f47a7c57d0af7d40d82c729c37155","__index":"v2_2_bklog_bk_unify_query_20240814_0"},{"__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__ext.container_name":"unify-query","__doc_id":"85981293cca7102b9560b49a7f089737","__index":"v2_2_bklog_bk_unify_query_20240814_0"},{"__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"b429dc6611efafc4d02b90f882271dea","__index":"v2_2_bklog_bk_unify_query_20240814_0"},{"__doc_id":"01213026ae064c6726fd99dc8276e842","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"},{"__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"93027432b40ccb01b1be8f4ea06a6853","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002"},{"__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"bc31babcb5d1075fc421bd641199d3aa","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10"}]`,
-		},
-		"query error with highlight max_analyzed_offset": {
-			query: &metadata.Query{
-				DB:          db,
-				Field:       "error",
-				DataSource:  structured.BkLog,
-				TableID:     "check_error",
-				StorageType: consul.ElasticsearchStorageType,
-			},
-			start: defaultStart,
-			end:   defaultEnd,
-			err:   fmt.Errorf("es query [es_index] error: [1:138] [highlight] unknown field [max_analyzed_offset]"),
 		},
 		"query with scroll id 1": {
 			query: &metadata.Query{

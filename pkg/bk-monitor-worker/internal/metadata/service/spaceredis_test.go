@@ -1135,11 +1135,35 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 			DeleteTime:  nil,
 		},
 	}
+
 	// 执行插入
 	for _, record := range testRecords {
 		db.Delete(&storage.ClusterRecord{}, "table_id = ? AND cluster_id = ?", tableID, record.ClusterID)
 		err := db.Create(&record).Error
 		assert.NoError(t, err, "Failed to insert StorageClusterRecord")
+	}
+
+	fieldAliasRecords := []resulttable.ESFieldQueryAliasOption{
+		{
+			TableID:    tableID,
+			FieldPath:  "__ext.pod_name",
+			PathType:   "keyword",
+			QueryAlias: "pod_name",
+			IsDeleted:  false,
+		},
+		{
+			TableID:    tableID,
+			FieldPath:  "__ext.pod_id",
+			PathType:   "keyword",
+			QueryAlias: "pod_id",
+			IsDeleted:  false,
+		},
+	}
+	// 执行插入
+	for _, record := range fieldAliasRecords {
+		db.Delete(&resulttable.ESFieldQueryAliasOption{}, "table_id = ? AND field_path = ?", tableID, record.FieldPath)
+		err := db.Create(&record).Error
+		assert.NoError(t, err, "Failed to insert ESFieldQueryAliasOption")
 	}
 
 	// 捕获日志输出
@@ -1362,6 +1386,8 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
 
+	fieldAliasSettings := make(map[string]string)
+
 	// 调用测试方法
 	tableID, detailStr, err := spacePusher.composeEsTableIdDetail(
 		tableID1,
@@ -1369,6 +1395,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 		1,
 		"sourceType1",
 		"indexSet1",
+		fieldAliasSettings,
 	)
 
 	// 断言返回结果无错误
@@ -1394,7 +1421,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 
 	// 比较预期值和实际值
 	assert.Equal(t, expectedDetail, actualDetail, "detailStr should match expected JSON")
-
+	fieldAliasSettings = make(map[string]string)
 	// 调用测试方法
 	resTid, detailStr2, err := spacePusher.composeEsTableIdDetail(
 		tableID2,
@@ -1402,6 +1429,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 		1,
 		"sourceType1",
 		"indexSet1",
+		fieldAliasSettings,
 	)
 
 	expectedDetail2 := map[string]interface{}{

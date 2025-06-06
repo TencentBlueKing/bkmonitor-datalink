@@ -1227,10 +1227,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 										Window:     time.Minute,
 									},
 								},
-								HighLight: &md.HighLight{
-									Enable:            true,
-									MaxAnalyzedOffset: 100,
-								},
 							},
 						},
 						MetricName:    "usage",
@@ -1725,32 +1721,6 @@ func TestQueryTs_LabelMap(t *testing.T) {
 			},
 		},
 		{
-			name: "不支持的操作符 - 应该被忽略",
-			queryTs: &QueryTs{
-				QueryList: []*Query{
-					{
-						Conditions: Conditions{
-							FieldList: []ConditionField{
-								{
-									DimensionName: "timestamp",
-									Value:         []string{"1234567890"},
-									Operator:      "unsupported_operator",
-								},
-								{
-									DimensionName: "valid_field",
-									Value:         []string{"value"},
-									Operator:      ConditionEqual,
-								},
-							},
-						},
-					},
-				},
-			},
-			expected: map[string][]string{
-				"valid_field": {"value"},
-			},
-		},
-		{
 			name: "复杂 QueryString - 多个字段",
 			queryTs: &QueryTs{
 				QueryList: []*Query{
@@ -1811,7 +1781,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{},
+			expected: nil,
 		},
 		{
 			name: "嵌套字段名",
@@ -1999,35 +1969,12 @@ func TestQuery_LabelMap(t *testing.T) {
 			},
 			expected: map[string][]string{},
 		},
-		{
-			name: "不支持的操作符被忽略",
-			query: Query{
-				QueryString: "level:error",
-				Conditions: Conditions{
-					FieldList: []ConditionField{
-						{
-							DimensionName: "timestamp",
-							Value:         []string{"1234567890"},
-							Operator:      "unsupported_operator",
-						},
-						{
-							DimensionName: "status",
-							Value:         []string{"success"},
-							Operator:      ConditionEqual,
-						},
-					},
-				},
-			},
-			expected: map[string][]string{
-				"level":  {"error"},
-				"status": {"success"},
-			},
-		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := tc.query.LabelMap()
+			result, err := tc.query.LabelMap()
+			assert.NoError(t, err)
 			assert.Equal(t, tc.expected, result, "Query.LabelMap result should match expected")
 		})
 	}

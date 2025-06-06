@@ -1282,14 +1282,14 @@ func TestAggregations(t *testing.T) {
 					Window:   "1m",
 				},
 				Step:     "1m",
-				Timezone: "Asia/ShangHai",
+				Timezone: "Asia/Shanghai",
 			},
 			aggs: md.Aggregates{
 				{
 					Name:       "count",
 					Dimensions: []string{"dim-1"},
 					Window:     time.Minute,
-					TimeZone:   "Asia/ShangHai",
+					TimeZone:   "Asia/Shanghai",
 				},
 			},
 		},

@@ -17,7 +17,9 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 func SetQueryReference(ctx context.Context, reference QueryReference) {
@@ -33,6 +35,69 @@ func GetQueryReference(ctx context.Context) QueryReference {
 		}
 	}
 	return nil
+}
+
+// ConfigureAlias 根据别名把 query 里面涉及到的字段都转换成别名查询
+func (q *Query) ConfigureAlias(ctx context.Context) {
+	if len(q.FieldAlias) == 0 {
+		return
+	}
+
+	var (
+		err          error
+		isConfigured = false
+	)
+	ctx, span := trace.NewSpan(ctx, "configure-alias")
+	defer span.End(&err)
+
+	span.Set("field-alias", q.FieldAlias)
+
+	aliasToField := func(s string) string {
+		if v, ok := q.FieldAlias[s]; ok {
+			isConfigured = true
+			return v
+		}
+		return s
+	}
+
+	// 替换 Field
+	q.Field = aliasToField(q.Field)
+
+	// 替换维度
+	for aggIdx, agg := range q.Aggregates {
+		q.Aggregates[aggIdx].Field = aliasToField(agg.Field)
+		for dimIdx, dim := range agg.Dimensions {
+			q.Aggregates[aggIdx].Dimensions[dimIdx] = aliasToField(dim)
+		}
+	}
+
+	// 替换过滤条件
+	for conIdx, con := range q.AllConditions {
+		for dimIdx, dim := range con {
+			q.AllConditions[conIdx][dimIdx].DimensionName = aliasToField(dim.DimensionName)
+		}
+	}
+
+	// 替换保留字段
+	for idx, s := range q.Source {
+		q.Source[idx] = aliasToField(s)
+	}
+
+	// 替换排序字段
+	for idx, o := range q.Orders {
+		q.Orders[idx].Name = aliasToField(o.Name)
+	}
+
+	// 替换折叠字段
+	if q.Collapse != nil {
+		q.Collapse.Field = aliasToField(q.Collapse.Field)
+	}
+
+	span.Set("is-configured", isConfigured)
+	if isConfigured {
+		qStr, _ := json.Marshal(q)
+		span.Set("query-json", string(qStr))
+	}
 }
 
 // UUID 获取唯一性
@@ -52,7 +117,7 @@ func (q *Query) MetricLabels(ctx context.Context) *prompb.Label {
 
 	var (
 		metrics    []string
-		encodeFunc = GetFieldFormat(ctx).EncodeFunc(q.TableID)
+		encodeFunc = GetFieldFormat(ctx).EncodeFunc()
 	)
 
 	if q.DataSource != "" {

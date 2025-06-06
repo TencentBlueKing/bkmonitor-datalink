@@ -759,7 +759,7 @@ func (i *Instance) QuerySeriesSet(
 					WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
 					WithMappings(mappings...).
 					WithOrders(query.Orders).
-					WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(query.TableID), metadata.GetFieldFormat(ctx).DecodeFunc(query.TableID))
+					WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 
 				if len(query.Aggregates) == 0 {
 					setCh <- storage.ErrSeriesSet(fmt.Errorf("aggregates is empty"))

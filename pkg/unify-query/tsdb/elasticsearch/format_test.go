@@ -208,6 +208,21 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"exists":{"field":"key-1"}}}},{"exists":{"field":"key-2"}}]}}}`,
 		},
+		"nested not existed query": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotExisted,
+					},
+					{
+						DimensionName: "nested1.name",
+						Operator:      structured.ConditionExisted,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"nested":{"path":"nested1","query":{"exists":{"field":"nested1.key"}}}}}},{"nested":{"path":"nested1","query":{"exists":{"field":"nested1.name"}}}}]}}}`,
+		},
 		"combine nested and normal query in one group": {
 			conditions: metadata.AllConditions{
 				{

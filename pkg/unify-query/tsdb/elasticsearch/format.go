@@ -865,7 +865,16 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 			case structured.ConditionExisted:
 				q = elastic.NewExistsQuery(key)
 			case structured.ConditionNotExisted:
-				q = f.getQuery(MustNot, elastic.NewExistsQuery(key))
+				if nf != "" {
+					// 如果是嵌套字段: MustNot -> nested -> exists -> field
+					existsQuery := elastic.NewExistsQuery(key)
+					nestedQuery := elastic.NewNestedQuery(nf, existsQuery)
+					q = f.getQuery(MustNot, nestedQuery)
+					isNestedBefore = true
+				} else {
+					// 非嵌套字段直接使用MustNot -> exists -> field
+					q = f.getQuery(MustNot, elastic.NewExistsQuery(key))
+				}
 			default:
 				// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
 				fieldType, ok := f.mapping[key]

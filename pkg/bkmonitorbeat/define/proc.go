@@ -38,6 +38,13 @@ type IOStat struct {
 	WriteSpeed float64
 }
 
+type ProcTime struct {
+	StartTime uint64
+	User      uint64
+	Sys       uint64
+	Total     uint64
+}
+
 type CPUStat struct {
 	Ts            time.Time
 	StartTime     uint64

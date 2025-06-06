@@ -361,6 +361,24 @@ func (n *ProcessNode) Start(killChan chan<- error) {
 		n.processor.Finish(n.outputCh, killChan)
 		logging.Infof("processor %v finished", n.processor)
 	}()
+
+	if n.processor.Poll() > 0 {
+		go func() {
+			ticker := time.NewTicker(n.processor.Poll())
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ticker.C:
+					n.processor.Process(nil, n.outputCh, killChan)
+
+				case <-n.ctx.Done():
+					n.processor.Process(nil, n.outputCh, killChan) // 结束前清空
+					return
+				}
+			}
+		}()
+	}
 }
 
 // NewProcessNode :

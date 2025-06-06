@@ -857,7 +857,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 			}
 
 			// Check if this dimension is in a nested field
-			nf := f.NestedField(con.DimensionName)
+			nestedPath := f.NestedField(con.DimensionName)
 
 			var q elastic.Query
 			isNestedBefore := false
@@ -865,10 +865,10 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 			case structured.ConditionExisted:
 				q = elastic.NewExistsQuery(key)
 			case structured.ConditionNotExisted:
-				if nf != "" {
+				if nestedPath != "" {
 					// 如果是嵌套字段: MustNot -> nested -> exists -> field
 					existsQuery := elastic.NewExistsQuery(key)
-					nestedQuery := elastic.NewNestedQuery(nf, existsQuery)
+					nestedQuery := elastic.NewNestedQuery(nestedPath, existsQuery)
 					q = f.getQuery(MustNot, nestedQuery)
 					isNestedBefore = true
 				} else {
@@ -898,8 +898,8 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 							case structured.ConditionNotEqual, structured.Ncontains:
 								// 813行已经把isExistsQuery 设为 false。所以在这里处理的是非KeyWord和Text类型的字段
 								// 如果是非KeyWord和Text类型字段: nested -> exist -> field
-								if nf != "" {
-									query = elastic.NewNestedQuery(nf, query)
+								if nestedPath != "" {
+									query = elastic.NewNestedQuery(nestedPath, query)
 									q = query
 									isNestedBefore = true
 								} else {
@@ -960,10 +960,10 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 				case structured.ConditionEqual, structured.ConditionContains, structured.ConditionRegEqual:
 					q = f.getQuery(Should, queries...)
 				case structured.ConditionNotEqual, structured.ConditionNotContains, structured.ConditionNotRegEqual:
-					if nf != "" {
+					if nestedPath != "" {
 						// 如果是 keyword 或者 text 类型的字段: MustNot -> nested -> field
 						innerQuery := f.getQuery(Should, queries...)
-						nestedQuery := elastic.NewNestedQuery(nf, innerQuery)
+						nestedQuery := elastic.NewNestedQuery(nestedPath, innerQuery)
 						q = f.getQuery(MustNot, nestedQuery)
 						isNestedBefore = true // Mark as already nested to avoid double wrapping
 					} else {
@@ -980,9 +980,9 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 		QE:
 			// Add to the appropriate query collection
 			if q != nil {
-				if nf != "" && !isNestedBefore {
-					nestedFields.Add(nf)
-					nestedQueries[nf] = append(nestedQueries[nf], q)
+				if nestedPath != "" && !isNestedBefore {
+					nestedFields.Add(nestedPath)
+					nestedQueries[nestedPath] = append(nestedQueries[nestedPath], q)
 				} else {
 					nonNestedQueries = append(nonNestedQueries, q)
 				}

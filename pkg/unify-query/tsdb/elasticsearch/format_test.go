@@ -208,6 +208,21 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"exists":{"field":"key-1"}}}},{"exists":{"field":"key-2"}}]}}}`,
 		},
+		"nested not existed query": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotExisted,
+					},
+					{
+						DimensionName: "nested1.name",
+						Operator:      structured.ConditionExisted,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"nested":{"path":"nested1","query":{"exists":{"field":"nested1.key"}}}}}},{"nested":{"path":"nested1","query":{"exists":{"field":"nested1.name"}}}}]}}}`,
+		},
 		"combine nested and normal query in one group": {
 			conditions: metadata.AllConditions{
 				{
@@ -352,6 +367,102 @@ func TestFormatFactory_Query(t *testing.T) {
     }
   }
 }`,
+		},
+
+		"nested_must_not_query_empty_value": {
+			conditions: metadata.AllConditions{
+				[]metadata.ConditionField{
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":""}}}}}}}}`,
+		},
+		"nested_must_not_query_not_empty_value": {
+			conditions: metadata.AllConditions{
+				[]metadata.ConditionField{
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{"11"},
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"11"}}}}}}}}`,
+		},
+		"nested_must_not_query_mix": {
+			conditions: metadata.AllConditions{
+				[]metadata.ConditionField{
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{"11"},
+					},
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"11"}}}}}}},{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":""}}}}}}}]}}}`,
+		},
+		"nested_must_not_query_type_mix": {
+			conditions: metadata.AllConditions{
+				[]metadata.ConditionField{
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{"11"},
+					},
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+					{
+						DimensionName: "nested1.active",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+				}},
+			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"11"}}}}}}},{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":""}}}}}}},{"nested":{"path":"nested1","query":{"exists":{"field":"nested1.active"}}}}]}}}`,
+		},
+		"nested_must_not_query_type_mix_2": {
+			conditions: metadata.AllConditions{
+				[]metadata.ConditionField{
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{"11"},
+					},
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionEqual,
+						Value:         []string{"22"},
+					},
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+				}},
+			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"11"}}}}}}},{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":""}}}}}}},{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"22"}}}}}]}}}`,
+		},
+		"nested_must_not_query_key_is_not_keyword_or_text": {
+			conditions: metadata.AllConditions{
+				[]metadata.ConditionField{
+					{
+						DimensionName: "nested1.active",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+				},
+			},
+			expected: `{"query":{"nested":{"path":"nested1","query":{"exists":{"field":"nested1.active"}}}}}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

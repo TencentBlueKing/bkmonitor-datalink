@@ -9,64 +9,93 @@
 
 package querystring
 
-func LabelMap(query string) map[string][]string {
-	if query == "" || query == "*" {
-		return nil
-	}
+import (
+	"context"
+	"fmt"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+)
+
+var (
+	DefaultKey = "log" // 默认字段名，与 Doris 的 DefaultKey 一致
+)
+
+func LabelMap(query string) (map[string][]string, error) {
 	labelMap := make(map[string][]string)
-
 	expr, err := Parse(query)
-	if err != nil || expr == nil {
-		return labelMap
+	if err != nil {
+		return nil, err
 	}
 
-	parseExprToKeyValue(query, expr, labelMap)
+	if err := parseExprToKeyValue(query, expr, labelMap); err != nil {
+		return nil, err
+	}
 
-	return labelMap
+	return labelMap, nil
 }
 
-func parseExprToKeyValue(query string, expr Expr, kv map[string][]string) {
+func parseExprToKeyValue(query string, expr Expr, kv map[string][]string) error {
+	ctx := context.TODO()
 	if expr == nil {
-		return
+		return fmt.Errorf("expression is nil for query: %s", query)
 	}
 
 	switch e := expr.(type) {
 	case *NotExpr:
-		parseExprToKeyValue(query, e.Expr, kv)
+		if err := parseExprToKeyValue(query, e.Expr, kv); err != nil {
+			return err
+		}
 	case *OrExpr:
-		parseExprToKeyValue(query, e.Left, kv)
-		parseExprToKeyValue(query, e.Right, kv)
+		if err := parseExprToKeyValue(query, e.Left, kv); err != nil {
+			return err
+		}
+		if err := parseExprToKeyValue(query, e.Right, kv); err != nil {
+			return err
+		}
 	case *AndExpr:
-		parseExprToKeyValue(query, e.Left, kv)
-		parseExprToKeyValue(query, e.Right, kv)
+		if err := parseExprToKeyValue(query, e.Left, kv); err != nil {
+			return err
+		}
+		if err := parseExprToKeyValue(query, e.Right, kv); err != nil {
+			return err
+		}
 	case *WildcardExpr:
 		field := e.Field
 		if field == "" {
-			field = "log" // 默认字段，与 Doris 的 DefaultKey 一致
+			field = DefaultKey
 		}
-		addValueToMap(kv, field, e.Value)
+		if err := addValueToMap(kv, field, e.Value); err != nil {
+			return fmt.Errorf("failed to add value to map: %w", err)
+		}
 	case *MatchExpr:
 		field := e.Field
 		if field == "" {
-			field = "log" // 默认字段，与 Doris 的 DefaultKey 一致
+			field = DefaultKey
 		}
-		addValueToMap(kv, field, e.Value)
-	case *NumberRangeExpr:
-		// NumberRangeExpr 通常用于数值范围查询，不提取为标签
+		if err := addValueToMap(kv, field, e.Value); err != nil {
+			return fmt.Errorf("failed to add value to map: %w", err)
+		}
+	default:
+		log.Debugf(ctx, "unknown expression type: %T for query: %s", e, query)
+		return nil
 	}
+	return nil
 }
 
-func addValueToMap(kv map[string][]string, field, value string) {
+func addValueToMap(kv map[string][]string, field, value string) error {
+	if kv == nil {
+		return fmt.Errorf("kv map is nil")
+	}
 	if value == "" {
-		return
+		return fmt.Errorf("value cannot be empty")
 	}
 
 	for _, v := range kv[field] {
 		if v == value {
-			return
+			return nil
 		}
 	}
 
 	kv[field] = append(kv[field], value)
+	return nil
 }

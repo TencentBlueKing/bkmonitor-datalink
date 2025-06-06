@@ -1871,7 +1871,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := tc.queryTs.LabelMap()
+			result, _ := tc.queryTs.LabelMap()
 			assert.Equal(t, tc.expected, result, "LabelMap result should match expected")
 		})
 	}

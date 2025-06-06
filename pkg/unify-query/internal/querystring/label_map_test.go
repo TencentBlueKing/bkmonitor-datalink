@@ -10,6 +10,7 @@
 package querystring
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,6 +21,7 @@ func Test_LabelMap(t *testing.T) {
 		name        string
 		queryString string
 		expected    map[string][]string
+		expectedErr error
 	}{
 		{
 			name:        "空 QueryString",
@@ -165,13 +167,19 @@ func Test_LabelMap(t *testing.T) {
 			name:        "无效的 QueryString（解析失败）",
 			queryString: "level:error AND (",
 			expected:    map[string][]string{},
+			expectedErr: fmt.Errorf("syntax error: unexpected $end"),
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := LabelMap(tc.queryString)
-			assert.Equal(t, tc.expected, result, "queryStringLabelMap result should match expected")
+			result, err := LabelMap(tc.queryString)
+			if tc.expectedErr != nil {
+				assert.NotNil(t, err, "expected an error but got nil")
+				assert.EqualError(t, err, tc.expectedErr.Error(), "error message should match expected")
+			} else {
+				assert.Equal(t, tc.expected, result, "queryStringLabelMap result should match expected")
+			}
 		})
 	}
 }

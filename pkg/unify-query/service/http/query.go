@@ -39,54 +39,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
 
-// flattenData 将嵌套的map数据打平，用于处理嵌套字段
-func flattenData(prefix string, data map[string]any, res map[string]any) {
-	for k, v := range data {
-		if prefix != "" {
-			k = prefix + "." + k
-		}
-		switch v.(type) {
-		case map[string]any:
-			flattenData(k, v.(map[string]any), res)
-		case []any:
-			// 处理数组类型，将数组中的每个元素都打平
-			// 对于数组，我们需要将所有元素的字段都收集起来
-			arrayValues := make(map[string][]any)
-			for _, item := range v.([]any) {
-				if itemMap, ok := item.(map[string]any); ok {
-					tempRes := make(map[string]any)
-					flattenData(k, itemMap, tempRes)
-					// 收集所有字段的值
-					for field, value := range tempRes {
-						arrayValues[field] = append(arrayValues[field], value)
-					}
-				} else {
-					// 如果数组元素不是map，直接设置值
-					arrayValues[k] = append(arrayValues[k], item)
-				}
-			}
-			// 将收集到的值设置到结果中，保留所有值的数组
-			for field, values := range arrayValues {
-				if len(values) > 0 {
-					if len(values) == 1 {
-						// 如果只有一个值，直接设置
-						res[field] = values[0]
-					} else {
-						// 如果有多个值，转换为字符串数组
-						stringValues := make([]string, len(values))
-						for i, v := range values {
-							stringValues[i] = fmt.Sprintf("%v", v)
-						}
-						res[field] = stringValues
-					}
-				}
-			}
-		default:
-			res[k] = v
-		}
-	}
-}
-
 func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
 	var (
 		err error
@@ -347,7 +299,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			}
 
 		}
-		labelMap := queryTs.LabelMap()
+		labelMap, err := queryTs.LabelMap()
+		if err != nil {
+			return
+		}
 		var maxAnalyzedOffset int
 		if queryTs.HighLight != nil {
 			maxAnalyzedOffset = queryTs.HighLight.MaxAnalyzedOffset

@@ -32,60 +32,59 @@ func (h *HighLightFactory) Process(data map[string]any) (newData map[string]any)
 	}
 
 	newData = make(map[string]any)
-	maxAnalyzedOffset := h.maxAnalyzedOffset
-	for k, vs := range h.labelMap {
-		if vs == nil {
+
+	for k, keywords := range h.labelMap {
+		if keywords == nil {
 			continue
 		}
 
-		if d, ok := data[k]; ok {
-			var (
-				mark1 string
-				mark2 string
-			)
-
-			switch s := d.(type) {
-			case string:
-				if h.maxAnalyzedOffset > 0 && len(s) > maxAnalyzedOffset {
-					mark1 = s[0:maxAnalyzedOffset]
-					mark2 = s[maxAnalyzedOffset:]
-				} else {
-					mark1 = s
-				}
-
-				for _, v := range vs {
-					mark1 = strings.ReplaceAll(mark1, v, fmt.Sprintf("<mark>%s</mark>", v))
-				}
-
-				res := fmt.Sprintf("%s%s", mark1, mark2)
-				if res != d {
-					newData[k] = []string{res}
-				}
-			case []string:
-				newArrData := make([]string, 0, len(s))
-				for _, v := range s {
-					if maxAnalyzedOffset > 0 && len(v) > maxAnalyzedOffset {
-						mark1 = v[0:maxAnalyzedOffset]
-						mark2 = v[maxAnalyzedOffset:]
-					} else {
-						mark1 = v
-					}
-
-					for _, highlight := range vs {
-						mark1 = strings.ReplaceAll(mark1, highlight, fmt.Sprintf("<mark>%s</mark>", highlight))
-					}
-
-					res := fmt.Sprintf("%s%s", mark1, mark2)
-					if res != v {
-						newArrData = append(newArrData, res)
-					}
-				}
-				if len(newArrData) > 0 {
-					newData[k] = newArrData
-				}
+		if fieldValue, exists := data[k]; exists {
+			if highlightedValue := h.processField(fieldValue, keywords); highlightedValue != nil {
+				newData[k] = highlightedValue
 			}
 		}
 	}
 
-	return
+	return newData
+}
+
+func (h *HighLightFactory) processField(fieldValue any, keywords []string) any {
+	switch value := fieldValue.(type) {
+	case string:
+		if highlighted := h.highlightString(value, keywords); highlighted != value {
+			return []string{highlighted}
+		}
+	case []string:
+		highlightedArray := make([]string, 0, len(value))
+		for _, str := range value {
+			if highlighted := h.highlightString(str, keywords); highlighted != str {
+				highlightedArray = append(highlightedArray, highlighted)
+			}
+		}
+		if len(highlightedArray) > 0 {
+			return highlightedArray
+		}
+	}
+	return nil
+}
+
+func (h *HighLightFactory) highlightString(text string, keywords []string) string {
+	if text == "" || len(keywords) == 0 {
+		return text
+	}
+
+	analyzablePart, remainingPart := h.splitTextForAnalysis(text)
+
+	for _, keyword := range keywords {
+		analyzablePart = strings.ReplaceAll(analyzablePart, keyword, fmt.Sprintf("<mark>%s</mark>", keyword))
+	}
+
+	return analyzablePart + remainingPart
+}
+
+func (h *HighLightFactory) splitTextForAnalysis(text string) (analyzable, remaining string) {
+	if h.maxAnalyzedOffset > 0 && len(text) > h.maxAnalyzedOffset {
+		return text[:h.maxAnalyzedOffset], text[h.maxAnalyzedOffset:]
+	}
+	return text, ""
 }

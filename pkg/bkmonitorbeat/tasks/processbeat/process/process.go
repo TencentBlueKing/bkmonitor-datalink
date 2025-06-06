@@ -99,7 +99,7 @@ func (pc *ProcCollector) AsOneCmdbConfMapStr(stat define.ProcStat) common.MapStr
 	}
 
 	if stat.CPU != nil {
-		startTime := time.Unix(0, int64(stat.CPU.StartTime*1000000))
+		startTime := time.Unix(0, int64(stat.CPU.StartTime*1000000)) // ms -> ns
 
 		mstr.Put("cpu", common.MapStr{
 			"total": common.MapStr{

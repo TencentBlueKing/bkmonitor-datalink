@@ -99,7 +99,7 @@ func (pc *ProcCollector) AsOneCmdbConfMapStr(stat define.ProcStat) common.MapStr
 	}
 
 	if stat.CPU != nil {
-		startTime := time.Unix(0, int64(stat.CPU.StartTime*1000000))
+		startTime := time.Unix(0, int64(stat.CPU.StartTime*1000000)) // ms -> ns
 
 		mstr.Put("cpu", common.MapStr{
 			"total": common.MapStr{
@@ -112,7 +112,6 @@ func (pc *ProcCollector) AsOneCmdbConfMapStr(stat define.ProcStat) common.MapStr
 			"start_time": startTime,
 		})
 
-		mstr.Put("uptime", time.Now().Unix()-startTime.Unix())
 		mstr.Put("cpu.user.ticks", stat.CPU.User)
 		mstr.Put("cpu.system.ticks", stat.CPU.Sys)
 		mstr.Put("cpu.total.ticks", stat.CPU.Total)

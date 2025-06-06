@@ -143,10 +143,6 @@ func (f *QueryFactory) FieldMap() map[string]string {
 	return f.expr.FieldMap()
 }
 
-func (f *QueryFactory) GetLabelMap() map[string][]string {
-	return f.expr.GetLabelMap()
-}
-
 func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimension bool) (newData map[string]any) {
 	newData = make(map[string]any)
 	fieldMap := f.FieldMap()

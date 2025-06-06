@@ -370,7 +370,7 @@ func NewLogCluster(ctx context.Context, name string) (*LogCluster, error) {
 		cli: &http.Client{
 			Timeout: conf.GetTimeout(),
 			Transport: &http.Transport{
-				MaxIdleConnsPerHost: 10,
+				MaxIdleConnsPerHost: 64,
 				IdleConnTimeout:     time.Minute * 5,
 			},
 		},

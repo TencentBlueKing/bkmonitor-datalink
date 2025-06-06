@@ -321,8 +321,7 @@ var httpClient = &http.Client{
 		DialContext: (&net.Dialer{
 			Timeout: time.Minute,
 		}).DialContext,
-		MaxIdleConns:        200,
-		MaxIdleConnsPerHost: 100,
+		MaxIdleConnsPerHost: 64,
 		IdleConnTimeout:     2 * time.Minute,
 	},
 }

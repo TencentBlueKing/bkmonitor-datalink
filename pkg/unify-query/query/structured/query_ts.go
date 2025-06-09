@@ -1012,6 +1012,8 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		matchers []*labels.Matcher
 	)
 
+	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
+
 	// 判断是否使用别名作为指标
 	metricName = q.ReferenceName
 	if promExprOpt != nil {
@@ -1039,6 +1041,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 
 		// 增加 Matchers
 		for _, m := range promExprOpt.ReferenceNameLabelMatcher[q.ReferenceName] {
+			m.Name = encodeFunc(m.Name)
 			matchers = append(matchers, m)
 		}
 
@@ -1048,9 +1051,13 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		}
 
 		// 替换函数名
-		for aggIdx, aggrVal := range q.AggregateMethodList {
+		for _, aggrVal := range q.AggregateMethodList {
+			for idx, m := range aggrVal.Dimensions {
+				aggrVal.Dimensions[idx] = encodeFunc(m)
+			}
+
 			if nf, ok := promExprOpt.FunctionReplace[aggrVal.Method]; ok {
-				q.AggregateMethodList[aggIdx].Method = nf
+				aggrVal.Method = nf
 			}
 		}
 	}
@@ -1119,8 +1126,6 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		}
 	}
 
-	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
-
 	for idx := 0; idx < funcNums; idx++ {
 		if idx == timeIdx {
 			result, err = q.TimeAggregation.ToProm(result)
@@ -1133,12 +1138,6 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 				methodIdx -= 1
 			}
 			method := q.AggregateMethodList[methodIdx]
-			if encodeFunc != nil {
-				for di, dv := range method.Dimensions {
-					method.Dimensions[di] = encodeFunc(dv)
-				}
-			}
-
 			if result, err = method.ToProm(result); err != nil {
 				log.Errorf(ctx, "failed to translate function for->[%s]", err)
 				return nil, err

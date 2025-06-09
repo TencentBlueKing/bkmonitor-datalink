@@ -2840,6 +2840,44 @@ func TestStructAndPromQLConvert(t *testing.T) {
 				MetricMerge: `a / on(bcs_cluster_id, namespace, pod_name) group_left() b or c`,
 			},
 		},
+		"promql with 特殊字符": {
+			queryStruct: false,
+			promql: &structured.QueryPromQL{
+				PromQL: `sum by (http__bk_46____bk_45____bk_37__1) (rate({__name__=~"bkapm:apm-10001:test:http.status",test__bk_46____bk_45____bk_94__1="test.-^1"}[1m]))`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkapm",
+						TableID:    "apm-10001.test",
+						IsRegexp:   true,
+						FieldName:  "http.status",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"http.-%1"},
+							},
+						},
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "rate",
+							Window:    "1m0s",
+							NodeIndex: 2,
+						},
+						ReferenceName: "a",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "test.-^1",
+									Operator:      "eq",
+									Value:         []string{"test.-^1"},
+								},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+			},
+		},
 	}
 
 	for n, c := range testCase {

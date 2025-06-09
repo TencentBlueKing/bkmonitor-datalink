@@ -776,56 +776,67 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 	query.Instant = queryPromQL.Instant
 	query.DownSampleRange = queryPromQL.DownSampleRange
 
-	// 补充业务ID
-	if len(queryPromQL.BKBizIDs) > 0 {
-		for _, q := range query.QueryList {
+	if queryPromQL.Match != "" {
+		matchers, err = parser.ParseMetricSelector(queryPromQL.Match)
+		if err != nil {
+			return
+		}
+	}
+
+	encodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
+
+	for _, q := range query.QueryList {
+		// decode table id and field name
+		q.TableID = structured.TableID(encodeFunc(string(q.TableID)))
+
+		// decode condition
+		for i, d := range q.Conditions.FieldList {
+			q.Conditions.FieldList[i].DimensionName = encodeFunc(d.DimensionName)
+		}
+
+		// decode agg
+		for _, agg := range q.AggregateMethodList {
+			for i, d := range agg.Dimensions {
+				agg.Dimensions[i] = encodeFunc(d)
+			}
+		}
+
+		// 补充业务ID
+		if len(queryPromQL.BKBizIDs) > 0 {
 			q.Conditions.Append(structured.ConditionField{
 				DimensionName: structured.BizID,
 				Value:         queryPromQL.BKBizIDs,
 				Operator:      structured.Contains,
 			}, structured.ConditionAnd)
 		}
-	}
 
-	if queryPromQL.Match == "" {
-		return
-	}
-
-	matchers, err = parser.ParseMetricSelector(queryPromQL.Match)
-	if err != nil {
-		return
-	}
-
-	if len(matchers) == 0 {
-		return
-	}
-
-	for _, q := range query.QueryList {
+		// 补充 Match
 		var verifyDimensions = func(key string) bool {
 			return true
 		}
+		if len(matchers) > 0 {
+			if queryPromQL.IsVerifyDimensions {
+				dimSet := set.New[string]()
+				for _, a := range q.AggregateMethodList {
+					dimSet.Add(a.Dimensions...)
+				}
 
-		if queryPromQL.IsVerifyDimensions {
-			dimSet := set.New[string]()
-			for _, a := range q.AggregateMethodList {
-				dimSet.Add(a.Dimensions...)
+				verifyDimensions = func(key string) bool {
+					return dimSet.Existed(key)
+				}
 			}
 
-			verifyDimensions = func(key string) bool {
-				return dimSet.Existed(key)
-			}
-		}
+			for _, m := range matchers {
+				if !verifyDimensions(m.Name) {
+					continue
+				}
 
-		for _, m := range matchers {
-			if !verifyDimensions(m.Name) {
-				continue
+				q.Conditions.Append(structured.ConditionField{
+					DimensionName: m.Name,
+					Value:         []string{m.Value},
+					Operator:      structured.PromOperatorToConditions(m.Type),
+				}, structured.ConditionAnd)
 			}
-
-			q.Conditions.Append(structured.ConditionField{
-				DimensionName: m.Name,
-				Value:         []string{m.Value},
-				Operator:      structured.PromOperatorToConditions(m.Type),
-			}, structured.ConditionAnd)
 		}
 	}
 

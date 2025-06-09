@@ -130,6 +130,15 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 		}
 	}
 
+	if fieldTypesCache == nil {
+		c, err := NewMappingCache()
+		if err != nil {
+			return ins, err
+		} else {
+			fieldTypesCache = c
+		}
+	}
+
 	return ins, nil
 }
 
@@ -169,9 +178,13 @@ func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []stri
 	var (
 		err error
 	)
-
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-get-mapping")
 	defer span.End(&err)
+	mapping, exist := fieldTypesCache.GetAliasMappings(ctx, aliases)
+	span.Set("mapping-cache-hit", exist)
+	if exist {
+		return mapping, nil
+	}
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -207,7 +220,7 @@ func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []stri
 			mappings = append(mappings, mapping)
 		}
 	}
-
+	fieldTypesCache.SetAliasMappings(ctx, aliases, mappings)
 	return mappings, nil
 }
 

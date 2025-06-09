@@ -1386,3 +1386,649 @@ func TestGetMaxWindow(t *testing.T) {
 		})
 	}
 }
+
+// TestQueryTs_LabelMap 测试 LabelMap 函数在各种条件操作符下的行为
+func TestQueryTs_LabelMap(t *testing.T) {
+	testCases := []struct {
+		name     string
+		queryTs  *QueryTs
+		expected map[string][]string
+	}{
+		{
+			name: "ConditionEqual - 单个值",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "status",
+									Value:         []string{"error"},
+									Operator:      ConditionEqual,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"status": {"error"},
+			},
+		},
+		{
+			name: "ConditionEqual - 多个值",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "level",
+									Value:         []string{"error", "warning", "info"},
+									Operator:      ConditionEqual,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"level": {"error", "warning", "info"},
+			},
+		},
+		{
+			name: "ConditionNotEqual - 应该被包含",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "status",
+									Value:         []string{"success"},
+									Operator:      ConditionNotEqual,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"status": {"success"},
+			},
+		},
+		{
+			name: "ConditionNotContains - 应该被包含",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "message",
+									Value:         []string{"debug"},
+									Operator:      ConditionNotContains,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"message": {"debug"},
+			},
+		},
+		{
+			name: "ConditionContains - 应该被包含",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "content",
+									Value:         []string{"keyword"},
+									Operator:      ConditionContains,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"content": {"keyword"},
+			},
+		},
+		{
+			name: "ConditionExact - 应该被包含",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "id",
+									Value:         []string{"12345"},
+									Operator:      ConditionExact,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"id": {"12345"},
+			},
+		},
+		{
+			name: "ConditionRegEqual - 应该被包含",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "pattern",
+									Value:         []string{".*error.*"},
+									Operator:      ConditionRegEqual,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"pattern": {".*error.*"},
+			},
+		},
+		{
+			name: "ConditionNotRegEqual - 应该被包含",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "exclude_pattern",
+									Value:         []string{".*debug.*"},
+									Operator:      ConditionNotRegEqual,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"exclude_pattern": {".*debug.*"},
+			},
+		},
+		{
+			name: "数值比较操作符 - 应该被包含",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "cpu_usage",
+									Value:         []string{"80"},
+									Operator:      ConditionGt,
+								},
+								{
+									DimensionName: "memory_usage",
+									Value:         []string{"90"},
+									Operator:      ConditionGte,
+								},
+								{
+									DimensionName: "disk_usage",
+									Value:         []string{"50"},
+									Operator:      ConditionLt,
+								},
+								{
+									DimensionName: "network_usage",
+									Value:         []string{"60"},
+									Operator:      ConditionLte,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"cpu_usage":     {"80"},
+				"memory_usage":  {"90"},
+				"disk_usage":    {"50"},
+				"network_usage": {"60"},
+			},
+		},
+		{
+			name: "QueryString 解析",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						QueryString: "level: error",
+					},
+				},
+			},
+			expected: map[string][]string{
+				"level": {"error"},
+			},
+		},
+		{
+			name: "QueryString 和 Conditions 组合",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						QueryString: "service: web-server",
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "status",
+									Value:         []string{"500"},
+									Operator:      ConditionEqual,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"service": {"web-server"},
+				"status":  {"500"},
+			},
+		},
+		{
+			name: "多个查询组合",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						QueryString: "app: frontend",
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "level",
+									Value:         []string{"error"},
+									Operator:      ConditionEqual,
+								},
+							},
+						},
+					},
+					{
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "component",
+									Value:         []string{"database"},
+									Operator:      ConditionNotEqual,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"app":       {"frontend"},
+				"level":     {"error"},
+				"component": {"database"},
+			},
+		},
+		{
+			name: "空值过滤",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "empty_field",
+									Value:         []string{""},
+									Operator:      ConditionEqual,
+								},
+								{
+									DimensionName: "valid_field",
+									Value:         []string{"value"},
+									Operator:      ConditionEqual,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"valid_field": {"value"},
+			},
+		},
+		{
+			name: "重复值去重",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "status",
+									Value:         []string{"error"},
+									Operator:      ConditionEqual,
+								},
+								{
+									DimensionName: "status",
+									Value:         []string{"error"},
+									Operator:      ConditionNotEqual,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"status": {"error"},
+			},
+		},
+		{
+			name: "不支持的操作符 - 应该被忽略",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "timestamp",
+									Value:         []string{"1234567890"},
+									Operator:      "unsupported_operator",
+								},
+								{
+									DimensionName: "valid_field",
+									Value:         []string{"value"},
+									Operator:      ConditionEqual,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"valid_field": {"value"},
+			},
+		},
+		{
+			name: "复杂 QueryString - 多个字段",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						QueryString: "level: error AND service: web",
+					},
+				},
+			},
+			expected: map[string][]string{
+				"level":   {"error"},
+				"service": {"web"},
+			},
+		},
+		{
+			name: "QueryString 带引号",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						QueryString: `message: "error occurred"`,
+					},
+				},
+			},
+			expected: map[string][]string{
+				"message": {"error occurred"},
+			},
+		},
+		{
+			name: "QueryString 带单引号",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						QueryString: `status: 'failed'`,
+					},
+				},
+			},
+			expected: map[string][]string{
+				"status": {"'failed'"},
+			},
+		},
+		{
+			name: "空 QueryString 和空 Conditions",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						QueryString: "",
+						Conditions:  Conditions{},
+					},
+				},
+			},
+			expected: map[string][]string{},
+		},
+		{
+			name: "通配符 QueryString",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						QueryString: "*",
+					},
+				},
+			},
+			expected: map[string][]string{},
+		},
+		{
+			name: "嵌套字段名",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "user.profile.name",
+									Value:         []string{"john"},
+									Operator:      ConditionEqual,
+								},
+								{
+									DimensionName: "resource.k8s.pod.name",
+									Value:         []string{"web-pod-123"},
+									Operator:      ConditionContains,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"user.profile.name":     {"john"},
+				"resource.k8s.pod.name": {"web-pod-123"},
+			},
+		},
+		{
+			name: "特殊字符在值中",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "url",
+									Value:         []string{"https://example.com/api?param=value&other=123"},
+									Operator:      ConditionEqual,
+								},
+								{
+									DimensionName: "regex_pattern",
+									Value:         []string{"^[a-zA-Z0-9]+$"},
+									Operator:      ConditionRegEqual,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"url":           {"https://example.com/api?param=value&other=123"},
+				"regex_pattern": {"^[a-zA-Z0-9]+$"},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, _ := tc.queryTs.LabelMap()
+			assert.Equal(t, tc.expected, result, "LabelMap result should match expected")
+		})
+	}
+}
+
+// TestQuery_LabelMap 测试 Query.LabelMap 函数（包含 QueryString 和 Conditions 的组合）
+func TestQuery_LabelMap(t *testing.T) {
+	testCases := []struct {
+		name     string
+		query    Query
+		expected map[string][]string
+	}{
+		{
+			name: "只有 Conditions",
+			query: Query{
+				Conditions: Conditions{
+					FieldList: []ConditionField{
+						{
+							DimensionName: "status",
+							Value:         []string{"error"},
+							Operator:      ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"status": {"error"},
+			},
+		},
+		{
+			name: "只有 QueryString",
+			query: Query{
+				QueryString: "level:warning",
+			},
+			expected: map[string][]string{
+				"level": {"warning"},
+			},
+		},
+		{
+			name: "QueryString 和 Conditions 组合",
+			query: Query{
+				QueryString: "service:web",
+				Conditions: Conditions{
+					FieldList: []ConditionField{
+						{
+							DimensionName: "status",
+							Value:         []string{"error"},
+							Operator:      ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"service": {"web"},
+				"status":  {"error"},
+			},
+		},
+		{
+			name: "QueryString 和 Conditions 有重复字段",
+			query: Query{
+				QueryString: "level:error",
+				Conditions: Conditions{
+					FieldList: []ConditionField{
+						{
+							DimensionName: "level",
+							Value:         []string{"warning"},
+							Operator:      ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"level": {"warning", "error"},
+			},
+		},
+		{
+			name: "QueryString 和 Conditions 有重复字段和值（去重）",
+			query: Query{
+				QueryString: "level:error",
+				Conditions: Conditions{
+					FieldList: []ConditionField{
+						{
+							DimensionName: "level",
+							Value:         []string{"error"},
+							Operator:      ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"level": {"error"},
+			},
+		},
+		{
+			name: "复杂 QueryString 和多个 Conditions",
+			query: Query{
+				QueryString: "service:web AND component:database",
+				Conditions: Conditions{
+					FieldList: []ConditionField{
+						{
+							DimensionName: "status",
+							Value:         []string{"error", "warning"},
+							Operator:      ConditionEqual,
+						},
+						{
+							DimensionName: "region",
+							Value:         []string{"us-east-1"},
+							Operator:      ConditionNotEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"service":   {"web"},
+				"component": {"database"},
+				"status":    {"error", "warning"},
+				"region":    {"us-east-1"},
+			},
+		},
+		{
+			name: "空 QueryString 和空 Conditions",
+			query: Query{
+				QueryString: "",
+				Conditions:  Conditions{},
+			},
+			expected: map[string][]string{},
+		},
+		{
+			name: "不支持的操作符被忽略",
+			query: Query{
+				QueryString: "level:error",
+				Conditions: Conditions{
+					FieldList: []ConditionField{
+						{
+							DimensionName: "timestamp",
+							Value:         []string{"1234567890"},
+							Operator:      "unsupported_operator",
+						},
+						{
+							DimensionName: "status",
+							Value:         []string{"success"},
+							Operator:      ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"level":  {"error"},
+				"status": {"success"},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := tc.query.LabelMap()
+			assert.Equal(t, tc.expected, result, "Query.LabelMap result should match expected")
+		})
+	}
+}

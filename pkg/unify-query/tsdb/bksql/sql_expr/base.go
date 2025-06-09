@@ -65,8 +65,6 @@ type SQLExpr interface {
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
 	FieldMap() map[string]string
-	// GetLabelMap 返回当前查询值
-	GetLabelMap() map[string][]string
 	// Type 返回表达式类型
 	Type() string
 }

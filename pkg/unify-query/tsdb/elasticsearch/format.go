@@ -728,23 +728,6 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 	return
 }
 
-func (f *FormatFactory) HighLight(queryString string, maxAnalyzedOffset int) *elastic.Highlight {
-	requireFieldMatch := false
-	if strings.Contains(queryString, ":") {
-		requireFieldMatch = true
-	}
-	hl := elastic.NewHighlight().
-		Field("*").NumOfFragments(0).
-		RequireFieldMatch(requireFieldMatch).
-		PreTags("<mark>").PostTags("</mark>")
-
-	if maxAnalyzedOffset > 0 {
-		hl = hl.MaxAnalyzedOffset(maxAnalyzedOffset)
-	}
-
-	return hl
-}
-
 func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
 	if len(aggregates) == 0 {
 		err := errors.New("aggregate_method_list is empty")
@@ -857,14 +840,24 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 			}
 
 			// Check if this dimension is in a nested field
-			nf := f.NestedField(con.DimensionName)
+			nestedPath := f.NestedField(con.DimensionName)
 
 			var q elastic.Query
+			isNestedBefore := false
 			switch con.Operator {
 			case structured.ConditionExisted:
 				q = elastic.NewExistsQuery(key)
 			case structured.ConditionNotExisted:
-				q = f.getQuery(MustNot, elastic.NewExistsQuery(key))
+				if nestedPath != "" {
+					// 如果是嵌套字段: MustNot -> nested -> exists -> field
+					existsQuery := elastic.NewExistsQuery(key)
+					nestedQuery := elastic.NewNestedQuery(nestedPath, existsQuery)
+					q = f.getQuery(MustNot, nestedQuery)
+					isNestedBefore = true
+				} else {
+					// 非嵌套字段直接使用MustNot -> exists -> field
+					q = f.getQuery(MustNot, elastic.NewExistsQuery(key))
+				}
 			default:
 				// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
 				fieldType, ok := f.mapping[key]
@@ -877,6 +870,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 
 				queries := make([]elastic.Query, 0)
 				for _, value := range con.Value {
+
 					var query elastic.Query
 					if con.DimensionName != "" {
 						// 如果是字符串类型，则需要使用 match_phrase 进行非空判断
@@ -886,7 +880,15 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 							case structured.ConditionEqual, structured.Contains:
 								q = f.getQuery(MustNot, query)
 							case structured.ConditionNotEqual, structured.Ncontains:
-								q = f.getQuery(Must, query)
+								// 813行已经把isExistsQuery 设为 false。所以在这里处理的是非KeyWord和Text类型的字段
+								// 如果是非KeyWord和Text类型字段: nested -> exist -> field
+								if nestedPath != "" {
+									query = elastic.NewNestedQuery(nestedPath, query)
+									q = query
+									isNestedBefore = true
+								} else {
+									q = f.getQuery(MustNot, query)
+								}
 							default:
 								return nil, fmt.Errorf("operator is not support with empty, %+v", con)
 							}
@@ -942,7 +944,16 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 				case structured.ConditionEqual, structured.ConditionContains, structured.ConditionRegEqual:
 					q = f.getQuery(Should, queries...)
 				case structured.ConditionNotEqual, structured.ConditionNotContains, structured.ConditionNotRegEqual:
-					q = f.getQuery(MustNot, queries...)
+					if nestedPath != "" {
+						// 如果是 keyword 或者 text 类型的字段: MustNot -> nested -> field
+						innerQuery := f.getQuery(Should, queries...)
+						nestedQuery := elastic.NewNestedQuery(nestedPath, innerQuery)
+						q = f.getQuery(MustNot, nestedQuery)
+						isNestedBefore = true // Mark as already nested to avoid double wrapping
+					} else {
+						// 非嵌套字段直接使用MustNot
+						q = f.getQuery(MustNot, queries...)
+					}
 				case structured.ConditionGt, structured.ConditionGte, structured.ConditionLt, structured.ConditionLte:
 					q = f.getQuery(Must, queries...)
 				default:
@@ -953,9 +964,9 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 		QE:
 			// Add to the appropriate query collection
 			if q != nil {
-				if nf != "" {
-					nestedFields.Add(nf)
-					nestedQueries[nf] = append(nestedQueries[nf], q)
+				if nestedPath != "" && !isNestedBefore {
+					nestedFields.Add(nestedPath)
+					nestedQueries[nestedPath] = append(nestedQueries[nestedPath], q)
 				} else {
 					nonNestedQueries = append(nonNestedQueries, q)
 				}

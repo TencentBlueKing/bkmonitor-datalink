@@ -299,7 +299,15 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			}
 
 		}
-
+		labelMap, err := queryTs.LabelMap()
+		if err != nil {
+			return
+		}
+		var maxAnalyzedOffset int
+		if queryTs.HighLight != nil {
+			maxAnalyzedOffset = queryTs.HighLight.MaxAnalyzedOffset
+		}
+		hlF := function.NewHighLightFactory(labelMap, maxAnalyzedOffset)
 		for _, item := range data {
 			if item == nil {
 				continue
@@ -308,6 +316,13 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			for _, ignoreDimension := range ignoreDimensions {
 				delete(item, ignoreDimension)
 			}
+
+			if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(labelMap) > 0 {
+				if highlightResult := hlF.Process(item); len(highlightResult) > 0 {
+					item[function.KeyHighLight] = highlightResult
+				}
+			}
+
 			list = append(list, item)
 		}
 	}()
@@ -484,7 +499,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	seriesNum := 0
 	pointsNum := 0
 
-	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc("")
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
 	switch v := res.(type) {
 	case promPromql.Matrix:
@@ -679,7 +694,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	seriesNum := 0
 	pointsNum := 0
 
-	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc("")
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
 	switch v := res.(type) {
 	case promPromql.Matrix:
@@ -861,7 +876,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	seriesNum := 0
 	pointsNum := 0
 
-	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc("")
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
 	switch v := res.(type) {
 	case promPromql.Matrix:

@@ -10,6 +10,7 @@
 package json
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -67,7 +68,30 @@ func MarshalListMap(data []map[string]interface{}) string {
 
 		var m []string
 		for _, k := range ks {
-			m = append(m, fmt.Sprintf(`"%s":"%v"`, k, d[k]))
+			value := d[k]
+			var valueStr string
+
+			// 处理不同类型的值
+			switch v := value.(type) {
+			case string:
+				valueStr = fmt.Sprintf(`"%s"`, v)
+			case map[string]interface{}, []interface{}:
+				// 对于复杂类型，使用 JSON 序列化，不转义 HTML
+				var buf bytes.Buffer
+				encoder := json.NewEncoder(&buf)
+				encoder.SetEscapeHTML(false)
+				if err := encoder.Encode(v); err == nil {
+					// 移除编码器添加的换行符
+					valueStr = strings.TrimSpace(buf.String())
+				} else {
+					valueStr = fmt.Sprintf(`"%v"`, v)
+				}
+			default:
+				// 对于其他类型（数字、布尔值等），直接转换
+				valueStr = fmt.Sprintf(`%v`, v)
+			}
+
+			m = append(m, fmt.Sprintf(`"%s":%s`, k, valueStr))
 		}
 		s = append(s, strings.Join(m, ","))
 	}

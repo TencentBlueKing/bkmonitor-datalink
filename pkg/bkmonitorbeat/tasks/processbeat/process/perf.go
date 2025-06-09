@@ -180,9 +180,25 @@ func (p *procPerfMgr) getCPU(pid int32) (*define.CPUStat, error) {
 	}, nil
 }
 
-func (p *procPerfMgr) cpu(pid int32) (gosigar.ProcTime, error) {
-	g := gosigar.ProcTime{}
-	return g, g.Get(int(pid))
+func (p *procPerfMgr) cpu(pid int32) (define.ProcTime, error) {
+	proc, err := shiroups.NewProcess(pid)
+	if err != nil {
+		return define.ProcTime{}, err
+	}
+
+	t, err := proc.Times()
+	if err != nil {
+		return define.ProcTime{}, err
+	}
+
+	// 单位均为 ms
+	ct, _ := proc.CreateTime()
+	return define.ProcTime{
+		StartTime: uint64(ct),
+		User:      uint64(t.User) * 1000,
+		Sys:       uint64(t.System) * 1000,
+		Total:     (uint64(t.User) + uint64(t.System)) * 1000,
+	}, nil
 }
 
 func (p *procPerfMgr) getIO(pid int32) (*define.IOStat, error) {

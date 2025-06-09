@@ -508,7 +508,9 @@ func TestInstance_queryRawData(t *testing.T) {
 	mock.Es.Set(map[string]any{
 
 		// nested query + query string 测试 + highlight
-		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"highlight":{"fields":{"*":{}},"number_of_fragments":0,"post_tags":["\u003c/mark\u003e"],"pre_tags":["\u003cmark\u003e"],"require_field_match":true},"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"group: fans"}}]}},"size":5,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":4,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"user":[{"last":"Smith","first":"John"},{"last":"White","first":"Alice"}],"group":"fans"},"highlight":{"user.new_group_user_first":["<mark>John</mark>"],"user.first":["<mark>John</mark>"],"user.new_first":["<mark>John</mark>"],"group":["<mark>fans</mark>"]}}]}}`,
+		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"group: fans"}}]}},"size":5,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]},"highlight":{"group":["<mark>fans</mark>"],"user.first":["<mark>John</mark>"]}}]}}`,
+		// high light from condition
+		`{"_source":{"includes":["status","message"]},"from":0,"query":{"bool":{"filter":[{"match_phrase":{"status":{"query":"error"}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}]}},"size":5,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"bT4KjpEBbwEm76LbdH2H","_score":0.0,"_source":{"status":"error","message":"Something went wrong"},"highlight":{"status":["<mark>error</mark>"]}}]}}`,
 
 		// "nested aggregate + query 测试
 		`{"_source":{"includes":["group","user.first","user.last"]},"aggregations":{"user":{"aggregations":{"_value":{"value_count":{"field":"user.first"}}},"nested":{"path":"user"}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":17,"relation":"eq"},"max_score":null,"hits":[]},"aggregations":{"user":{"doc_count":18,"_value":{"value":18}}}}`,
@@ -529,6 +531,9 @@ func TestInstance_queryRawData(t *testing.T) {
 
 		// search after
 		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"search_after":[1743465646224,"kibana_settings",null],"size":5,"sort":[{"timestamp":{"order":"desc"}},{"type":{"order":"desc"}},{"kibana_stats.kibana.name":{"order":"desc"}}]}`: `{"took":13,"timed_out":false,"_shards":{"total":7,"successful":7,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[{"_index":".monitoring-kibana-7-2025.04.01","_id":"rYSm7pUBxj8-27WaYRCB","_score":null,"_source":{"timestamp":"2025-04-01T00:00:36.224Z","type":"kibana_stats","kibana_stats":{"kibana":{"name":"es-os60crz7-kibana"}}},"sort":[1743465636224,"kibana_stats","es-os60crz7-kibana"]},{"_index":".monitoring-kibana-7-2025.04.01","_id":"roSm7pUBxj8-27WaYRCB","_score":null,"_source":{"timestamp":"2025-04-01T00:00:36.224Z","type":"kibana_settings"},"sort":[1743465636224,"kibana_settings",null]},{"_index":".monitoring-kibana-7-2025.04.01","_id":"q4Sm7pUBxj8-27WaOhBx","_score":null,"_source":{"timestamp":"2025-04-01T00:00:26.225Z","type":"kibana_stats","kibana_stats":{"kibana":{"name":"es-os60crz7-kibana"}}},"sort":[1743465626225,"kibana_stats","es-os60crz7-kibana"]},{"_index":".monitoring-kibana-7-2025.04.01","_id":"rISm7pUBxj8-27WaOhBx","_score":null,"_source":{"timestamp":"2025-04-01T00:00:26.225Z","type":"kibana_settings"},"sort":[1743465626225,"kibana_settings",null]},{"_index":".monitoring-kibana-7-2025.04.01","_id":"8DSm7pUBipSLyy3IEwRg","_score":null,"_source":{"timestamp":"2025-04-01T00:00:16.224Z","type":"kibana_stats","kibana_stats":{"kibana":{"name":"es-os60crz7-kibana"}}},"sort":[1743465616224,"kibana_stats","es-os60crz7-kibana"]}]}}`,
+
+		// debug highlight
+		`{"from":0,"query":{"bool":{"filter":[{"match_phrase":{"resource.k8s.bcs.cluster.id":{"query":"BCS-K8S-00000"}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":-62135596800,"include_lower":true,"include_upper":true,"to":-62135596800}}}]}},"size":0}`: `{"took":15,"timed_out":false,"_shards":{"total":6,"successful":6,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[{"_index":"v2_2_bkapm_trace_bk_monitor_20250604_0","_type":"_doc","_id":"14712105480911733430","_score":null,"_source":{"links":[],"trace_state":"","elapsed_time":38027,"status":{"message":"","code":0},"resource":{"k8s.pod.ip":"192.168.1.100","bk.instance.id":":unify-query::192.168.1.100:","service.name":"unify-query","net.host.ip":"192.168.1.100","k8s.bcs.cluster.id":"BCS-K8S-00000","k8s.pod.name":"bk-monitor-unify-query-5c685b56f-n4b6d","k8s.namespace.name":"blueking"},"span_name":"http-curl","attributes":{"apdex_type":"satisfied","req-http-method":"POST","req-http-path":"https://bkapi.paas3-dev.bktencent.com/api/bk-base/prod/v3/queryengine/query_sync"},"end_time":1749006597019296,"parent_span_id":"6f15efc54fedfebe","events":[],"span_id":"4a5f6170ae000a3f","trace_id":"5c999893cdbc41390c5ff8f3be5f62a9","kind":1,"start_time":1749006596981268,"time":"1749006604000"},"sort":["1749006604000"]}]}}`,
 	})
 
 	for idx, c := range map[string]struct {
@@ -578,8 +583,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			start: defaultStart,
 			end:   defaultEnd,
 			size:  1,
-			list:  `[{"__address":"http://127.0.0.1:93002","__highlight":{"group":["<mark>fans</mark>"],"user.new_group_user_first":["<mark>John</mark>"],"user.first":["<mark>John</mark>"],"user.new_first":["<mark>John</mark>"]},"user":[{"last":"Smith","first":"John"},{"last":"White","first":"Alice"}],"group":"fans","__doc_id":"aS3KjpEBbwEm76LbcH1G","__index":"bk_unify_query_demo_2","__result_table":"es_index","__data_label":"es_index"}]`,
-		},
+			list:  `[{"__address":"http://127.0.0.1:93002","__data_label":"es_index","__doc_id":"aS3KjpEBbwEm76LbcH1G","__index":"bk_unify_query_demo_2","__result_table":"es_index","group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]}]`},
 		"获取 10条 不 field 为空的原始数据": {
 			query: &metadata.Query{
 				DB:         db,
@@ -761,7 +765,8 @@ func TestInstance_queryRawData(t *testing.T) {
 				assert.Nil(t, err)
 				if len(list) > 0 {
 					res, _ := json.Marshal(list)
-					assert.JSONEq(t, c.list, string(res))
+					resStr := string(res)
+					assert.JSONEq(t, c.list, resStr)
 				} else {
 					assert.Nil(t, list)
 				}

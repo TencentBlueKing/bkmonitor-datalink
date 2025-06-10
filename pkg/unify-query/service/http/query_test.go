@@ -981,6 +981,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 								Window:     "120s",
 							},
 						},
+						QueryString:   "*",
 						ReferenceName: "a",
 						Dimensions:    []string{"collections.attributes.db.statement"},
 						Limit:         1,

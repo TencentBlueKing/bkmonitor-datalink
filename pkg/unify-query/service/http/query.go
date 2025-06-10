@@ -300,8 +300,9 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			}
 
 		}
-		labelMap, err := queryTs.LabelMap()
-		if err != nil {
+		labelMap, lbErr := queryTs.LabelMap()
+		if lbErr != nil {
+			err = lbErr
 			return
 		}
 		var maxAnalyzedOffset int

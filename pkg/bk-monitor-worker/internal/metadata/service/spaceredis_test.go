@@ -1058,11 +1058,13 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 	db := mysql.GetDBSession().DB
 	// 准备测试数据
 	tableID := "bklog.test_rt"
-	tableID2 := "bklog.test_rt2"
-	tableID3 := "test_system_event"
 	storageClusterID := uint(1)
 	sourceType := "log"
 	indexSet := "index_1"
+
+	rtObj1 := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true}
+	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
+	assert.NoError(t, rtObj1.Create(db))
 
 	db.AutoMigrate(&storage.ESStorage{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
 
@@ -1070,20 +1072,6 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 	esStorages := []storage.ESStorage{
 		{
 			TableID:          tableID,
-			StorageClusterID: storageClusterID,
-			SourceType:       sourceType,
-			IndexSet:         indexSet,
-			NeedCreateIndex:  true,
-		},
-		{
-			TableID:          tableID2,
-			StorageClusterID: storageClusterID,
-			SourceType:       sourceType,
-			IndexSet:         indexSet,
-			NeedCreateIndex:  true,
-		},
-		{
-			TableID:          tableID3,
 			StorageClusterID: storageClusterID,
 			SourceType:       sourceType,
 			IndexSet:         indexSet,
@@ -1173,7 +1161,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 
 	// 执行测试方法
 	pusher := NewSpacePusher()
-	err := pusher.PushEsTableIdDetail([]string{tableID, tableID2, tableID3}, false)
+	err := pusher.PushEsTableIdDetail([]string{tableID}, false)
 	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
 
 }

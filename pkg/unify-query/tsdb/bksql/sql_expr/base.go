@@ -47,6 +47,8 @@ type TimeAggregate struct {
 type SQLExpr interface {
 	// WithKeepColumns 设置保留字段
 	WithKeepColumns([]string) SQLExpr
+	// WithFieldAlias 设置字段别名
+	WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr
 	// WithFieldsMap 设置字段类型
 	WithFieldsMap(fieldsMap map[string]string) SQLExpr
 	// WithEncode 字段转换方法
@@ -97,6 +99,7 @@ type DefaultSQLExpr struct {
 
 	keepColumns []string
 	fieldMap    map[string]string
+	fieldAlias  metadata.FieldAlias
 
 	timeField  string
 	valueField string
@@ -111,6 +114,11 @@ func (d *DefaultSQLExpr) Type() string {
 func (d *DefaultSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {
 	d.timeField = timeField
 	d.valueField = valueField
+	return d
+}
+
+func (d *DefaultSQLExpr) WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr {
+	d.fieldAlias = fieldAlias
 	return d
 }
 

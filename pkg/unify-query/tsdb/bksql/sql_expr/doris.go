@@ -38,6 +38,7 @@ type DorisSQLExpr struct {
 
 	keepColumns []string
 	fieldsMap   map[string]string
+	fieldAlias  metadata.FieldAlias
 
 	isSetLabels bool
 	lock        sync.Mutex
@@ -52,6 +53,11 @@ func (d *DorisSQLExpr) Type() string {
 func (d *DorisSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {
 	d.timeField = timeField
 	d.valueField = valueField
+	return d
+}
+
+func (d *DorisSQLExpr) WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr {
+	d.fieldAlias = fieldAlias
 	return d
 }
 
@@ -419,6 +425,7 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		if c.Field == "" {
 			c.Field = DefaultKey
 		}
+		c.Field = d.fieldAlias.Alias(c.Field)
 
 		field, _ := d.dimTransform(c.Field)
 		return fmt.Sprintf("%s LIKE '%%%s%%'", field, c.Value), nil
@@ -426,6 +433,8 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		if c.Field == "" {
 			c.Field = DefaultKey
 		}
+		c.Field = d.fieldAlias.Alias(c.Field)
+
 		field, _ := d.dimTransform(c.Field)
 		if d.checkMatchALL(c.Field) {
 			return fmt.Sprintf("%s MATCH_PHRASE_PREFIX '%s'", field, c.Value), nil
@@ -436,6 +445,8 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		if c.Field == "" {
 			c.Field = DefaultKey
 		}
+		c.Field = d.fieldAlias.Alias(c.Field)
+
 		field, _ := d.dimTransform(c.Field)
 		var timeFilter []string
 		if c.Start != nil && *c.Start != "*" {

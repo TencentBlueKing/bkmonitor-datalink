@@ -28,6 +28,8 @@ const (
 	FieldTime  = "_time"
 
 	theDate = "thedate"
+
+	HDFS = "hdfs"
 )
 
 // ErrorMatchAll 定义全字段检索错误提示信息
@@ -85,7 +87,7 @@ func NewSQLExpr(key string) SQLExpr {
 	case Doris:
 		return &DorisSQLExpr{}
 	default:
-		return &DefaultSQLExpr{}
+		return &DefaultSQLExpr{key: key}
 	}
 }
 
@@ -98,6 +100,8 @@ type DefaultSQLExpr struct {
 
 	timeField  string
 	valueField string
+
+	key string
 }
 
 func (d *DefaultSQLExpr) Type() string {
@@ -347,12 +351,28 @@ func (d *DefaultSQLExpr) buildCondition(c metadata.ConditionField) (string, erro
 			}
 		}
 	// 处理正则表达式匹配
+	// 根据数据库类型选择不同的正则语法：
+	// - HDFS 使用 regexp_like() 函数
+	// - 其他数据库使用 REGEXP 操作符
 	case metadata.ConditionRegEqual:
-		op = "REGEXP"
-		val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|")) // 多个值用|连接
+		if d.key == HDFS {
+			pattern := strings.Join(c.Value, "|") // 多个值用|连接
+			val = fmt.Sprintf("regexp_like(%s, '%s')", key, pattern)
+			key = ""
+		} else {
+			op = "REGEXP"
+			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|"))
+		}
 	case metadata.ConditionNotRegEqual:
-		op = "NOT REGEXP"
-		val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|"))
+		if d.key == HDFS {
+			pattern := strings.Join(c.Value, "|")
+			val = fmt.Sprintf("NOT regexp_like(%s, '%s')", key, pattern)
+			key = ""
+		} else {
+			op = "NOT REGEXP"
+			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|"))
+		}
+
 	// 处理数值比较操作符（>, >=, <, <=）
 	case metadata.ConditionGt:
 		op = ">"

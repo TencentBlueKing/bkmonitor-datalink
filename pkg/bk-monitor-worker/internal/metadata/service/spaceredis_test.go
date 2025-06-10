@@ -1310,8 +1310,8 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 	assert.NoError(t, err, "composeData should not return an error")
 
 	expectedForOthers := map[string]map[string]interface{}{
-		tableID1: {"filters": []map[string]interface{}{{"dimensions.bk_biz_id": "1003"}}},
-		"1001_bkmonitor_time_series_50011.__default__": {"filters": []map[string]interface{}{{"dimensions.bk_biz_id": "1003"}}},
+		tableID1: {"filters": []map[string]interface{}{{"appid": "1003"}}},
+		"1001_bkmonitor_time_series_50011.__default__": {"filters": []map[string]interface{}{{"bk_biz_id": "1003"}}},
 	}
 	assert.Equal(t, expectedForOthers, valuesForOthers, "Unexpected result for space 1003")
 }
@@ -1727,10 +1727,9 @@ func TestBuildFiltersByUsage(t *testing.T) {
 		{
 			name: "UsageComposeBkciLevelTableIds",
 			ctx: FilterBuildContext{
-				SpaceType:       "bkci",
-				SpaceId:         "1001",
-				TableId:         "table_1",
-				originFilterKey: "projectId",
+				SpaceType: "bkci",
+				SpaceId:   "1001",
+				TableId:   "table_1",
 			},
 			usage: UsageComposeBkciLevelTableIds,
 			expectedResult: []map[string]interface{}{

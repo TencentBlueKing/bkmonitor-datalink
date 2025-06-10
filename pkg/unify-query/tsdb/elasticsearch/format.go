@@ -193,6 +193,9 @@ type FormatFactory struct {
 	timeFormat string
 
 	isReference bool
+
+	// labelMap 用于ES聚合优化，包含include/exclude信息
+	labelMap map[string]*structured.LabelMapEntry
 }
 
 func NewFormatFactory(ctx context.Context) *FormatFactory {
@@ -328,6 +331,12 @@ func (f *FormatFactory) WithMappings(mappings ...map[string]any) *FormatFactory 
 	for _, mapping := range mappings {
 		mapProperties("", mapping, f.mapping)
 	}
+	return f
+}
+
+// WithLabelMap 设置labelMap用于ES聚合优化
+func (f *FormatFactory) WithLabelMap(labelMap map[string]*structured.LabelMapEntry) *FormatFactory {
+	f.labelMap = labelMap
 	return f
 }
 
@@ -709,6 +718,9 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			if f.size > 0 {
 				curAgg = curAgg.Size(f.size)
 			}
+
+			f.applyTermsAggregationOptimization(curAgg, info.Name)
+
 			for _, order := range info.Orders {
 				curAgg = curAgg.Order(order.Name, order.Ast)
 			}
@@ -1077,6 +1089,89 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 	}
 
 	return sample, nil
+}
+
+func (f *FormatFactory) applyTermsAggregationOptimization(termsAgg *elastic.TermsAggregation, fieldName string) {
+	if f.labelMap == nil {
+		return
+	}
+
+	includeValues, excludeValues := f.extractIncludeExcludeValues(fieldName)
+	if len(includeValues) > 0 {
+		termsAgg.IncludeValues(includeValues...)
+	}
+
+	if len(excludeValues) > 0 {
+		termsAgg.ExcludeValues(excludeValues...)
+	}
+}
+
+func (f *FormatFactory) extractIncludeExcludeValues(fieldName string) ([]interface{}, []interface{}) {
+	var allInclude []string
+	var allExclude []string
+
+	for key, entry := range f.labelMap {
+		keyFieldName, keyType := f.parseLabelMapKey(key)
+		if keyFieldName == "" {
+			continue
+		}
+
+		if f.isFieldMatch(keyFieldName, fieldName) {
+			switch keyType {
+			case "include":
+				allInclude = append(allInclude, entry.Values...)
+			case "exclude":
+				allExclude = append(allExclude, entry.Values...)
+			}
+		}
+	}
+
+	includeValues := f.stringSliceToInterfaceSlice(allInclude)
+	excludeValues := f.stringSliceToInterfaceSlice(allExclude)
+
+	return includeValues, excludeValues
+}
+
+func (f *FormatFactory) parseLabelMapKey(key string) (fieldName, keyType string) {
+	if strings.HasPrefix(key, "es_inc:") {
+		// key格式：es_inc:fieldName:hash
+		parts := strings.Split(key[7:], ":") // 去掉"es_inc:"前缀
+		if len(parts) >= 2 {
+			return parts[0], "include"
+		}
+	} else if strings.HasPrefix(key, "es_exc:") {
+		// key格式：es_exc:fieldName:hash
+		parts := strings.Split(key[7:], ":") // 去掉"es_exc:"前缀
+		if len(parts) >= 2 {
+			return parts[0], "exclude"
+		}
+	}
+	return "", ""
+}
+
+func (f *FormatFactory) isFieldMatch(keyFieldName, targetFieldName string) bool {
+	if keyFieldName == targetFieldName {
+		return true
+	}
+	if f.encode != nil && keyFieldName == f.encode(targetFieldName) {
+		return true
+	}
+	if f.decode != nil && keyFieldName == f.decode(targetFieldName) {
+		return true
+	}
+	return false
+}
+
+func (f *FormatFactory) stringSliceToInterfaceSlice(strSlice []string) []interface{} {
+	if len(strSlice) == 0 {
+		return nil
+	}
+
+	interfaceSlice := make([]interface{}, len(strSlice))
+	for i, v := range strSlice {
+		interfaceSlice[i] = v
+	}
+	return interfaceSlice
 }
 
 func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {

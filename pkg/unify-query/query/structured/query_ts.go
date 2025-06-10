@@ -11,7 +11,9 @@ package structured
 
 import (
 	"context"
+	"crypto/sha1"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -78,27 +80,86 @@ type QueryTs struct {
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
-func (q *QueryTs) LabelMap() (map[string][]string, error) {
-	labelMap := make(map[string][]string)
-	labelCheck := make(map[string]struct{})
+// LabelMapEntry 存储标签值，根据key前缀确定用途
+type LabelMapEntry struct {
+	Values []string `json:"values"` // 存储值列表，用途由key前缀决定：es_inc/es_exc/hl
+}
+
+// isPositiveOperator 判断操作符是否为positive类型
+// positive操作符包括: eq, exact, contains, req (正则匹配)
+// negative操作符包括: ne, ncontains, nreq (正则不匹配)
+func isPositiveOperator(operator string) bool {
+	switch operator {
+	case ConditionEqual, ConditionExact, ConditionContains, ConditionRegEqual:
+		return true
+	case ConditionNotEqual, ConditionNotContains, ConditionNotRegEqual:
+		return false
+	default:
+		// 对于其他操作符(如gt, gte, lt, lte等)，默认认为是positive
+		return true
+	}
+}
+
+// generateLabelMapKey 生成labelMap的唯一key
+// 使用 fieldName + operator + values 的组合生成SHA1哈希
+func generateLabelMapKey(fieldName, operator string, values []string) string {
+	// 对values进行排序以确保一致性
+	sortedValues := make([]string, len(values))
+	copy(sortedValues, values)
+	sort.Strings(sortedValues)
+
+	// 构建唯一字符串
+	keyStr := fmt.Sprintf("%s|%s|%s", fieldName, operator, strings.Join(sortedValues, ","))
+
+	// 生成SHA1哈希
+	h := sha1.New()
+	h.Write([]byte(keyStr))
+	hash := fmt.Sprintf("%x", h.Sum(nil))
+
+	// 返回 fieldName:hash 格式，便于在ES聚合中按字段名查找
+	return fmt.Sprintf("%s:%s", fieldName, hash[:8]) // 只取前8位避免key过长
+}
+
+func (q *QueryTs) LabelMap() (map[string]*LabelMapEntry, error) {
+	labelMap := make(map[string]*LabelMapEntry)
 
 	for _, query := range q.QueryList {
 		m, err := query.LabelMap()
 		if err != nil {
 			return nil, err
 		}
-		for key, values := range m {
-			for _, value := range values {
-				checkKey := key + ":" + value
-				if _, ok := labelCheck[checkKey]; !ok {
-					labelCheck[checkKey] = struct{}{}
-					labelMap[key] = append(labelMap[key], value)
+		for key, entry := range m {
+			if labelMap[key] == nil {
+				labelMap[key] = &LabelMapEntry{
+					Values: make([]string, 0),
 				}
 			}
+
+			labelMap[key].Values = mergeUniqueStrings(labelMap[key].Values, entry.Values)
 		}
 	}
 
 	return labelMap, nil
+}
+
+func mergeUniqueStrings(slice1, slice2 []string) []string {
+	seen := make(map[string]bool)
+	result := make([]string, 0)
+
+	for _, s := range slice1 {
+		if !seen[s] && s != "" {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
+	for _, s := range slice2 {
+		if !seen[s] && s != "" {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
+
+	return result
 }
 
 // StepParse 解析step
@@ -420,43 +481,137 @@ type Query struct {
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
-func (q *Query) LabelMap() (map[string][]string, error) {
-	labelMap := make(map[string][]string)
-	labelCheck := make(map[string]struct{})
+// addLabelToMap 添加标签到labelMap中，使用前缀区分不同用途
+func addLabelToMap(labelMap map[string]*LabelMapEntry, fieldName, operator string, values []string) {
+	if len(values) == 0 {
+		return
+	}
 
-	addLabel := func(key, value string) {
-		if key == "" || value == "" {
-			return
-		}
-		checkKey := key + ":" + value
-		if _, ok := labelCheck[checkKey]; !ok {
-			labelCheck[checkKey] = struct{}{}
-			labelMap[key] = append(labelMap[key], value)
+	// 1. 生成ES聚合key，根据操作符类型使用不同前缀
+	isPositive := isPositiveOperator(operator)
+	var esKey string
+	if isPositive {
+		esKey = "es_inc:" + generateLabelMapKey(fieldName, operator, values)
+	} else {
+		esKey = "es_exc:" + generateLabelMapKey(fieldName, operator, values)
+	}
+
+	if labelMap[esKey] == nil {
+		labelMap[esKey] = &LabelMapEntry{
+			Values: make([]string, 0),
 		}
 	}
 
+	// ES key只存储对应的值
+	for _, value := range values {
+		if !contains(labelMap[esKey].Values, value) {
+			labelMap[esKey].Values = append(labelMap[esKey].Values, value)
+		}
+	}
+
+	// 2. 生成highlight key：hl:fieldName
+	hlKey := "hl:" + fieldName
+	if labelMap[hlKey] == nil {
+		labelMap[hlKey] = &LabelMapEntry{
+			Values: make([]string, 0),
+		}
+	}
+
+	// highlight key只用于highlight
+	for _, value := range values {
+		if !contains(labelMap[hlKey].Values, value) {
+			labelMap[hlKey].Values = append(labelMap[hlKey].Values, value)
+		}
+	}
+	// 对highlight值进行排序以确保一致性
+	sort.Strings(labelMap[hlKey].Values)
+}
+
+func (q *Query) LabelMap() (map[string]*LabelMapEntry, error) {
+	labelMap := make(map[string]*LabelMapEntry)
+
+	// 处理Conditions中的字段
 	for _, condition := range q.Conditions.FieldList {
+		if condition.DimensionName == "" || len(condition.Value) == 0 {
+			continue
+		}
+
+		// 过滤空值
+		nonEmptyValues := make([]string, 0)
 		for _, value := range condition.Value {
 			if value != "" {
-				addLabel(condition.DimensionName, value)
+				nonEmptyValues = append(nonEmptyValues, value)
 			}
 		}
+
+		if len(nonEmptyValues) == 0 {
+			continue
+		}
+
+		// 同时生成两个key：精确key（用于ES聚合）和字段key（用于highlight）
+		addLabelToMap(labelMap, condition.DimensionName, condition.Operator, nonEmptyValues)
 	}
+
+	// 处理QueryString
 	if q.QueryString != "" {
 		qLabelMap, err := querystring.LabelMap(q.QueryString)
 		if err != nil {
 			return nil, err
 		}
-		for key, values := range qLabelMap {
+		for fieldName, values := range qLabelMap {
+			if fieldName == "" || len(values) == 0 {
+				continue
+			}
+
+			// 过滤空值
+			nonEmptyValues := make([]string, 0)
 			for _, value := range values {
-				if key != "" && value != "" {
-					addLabel(key, value)
+				if value != "" {
+					nonEmptyValues = append(nonEmptyValues, value)
 				}
 			}
+
+			if len(nonEmptyValues) == 0 {
+				continue
+			}
+
+			// QueryString默认使用equal操作符，同时生成精确key和字段key
+			addLabelToMap(labelMap, fieldName, ConditionEqual, nonEmptyValues)
 		}
 	}
 
 	return labelMap, nil
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+func (q *QueryTs) ToHighlightMap() (map[string][]string, error) {
+	labelMap, err := q.LabelMap()
+	if err != nil {
+		return nil, err
+	}
+
+	highlightMap := make(map[string][]string)
+	for key, entry := range labelMap {
+		// 只处理highlight key（hl:前缀）
+		if strings.HasPrefix(key, "hl:") && len(entry.Values) > 0 {
+			// 提取字段名（去掉hl:前缀）
+			fieldName := key[3:] // 去掉"hl:"前缀
+			highlightMap[fieldName] = make([]string, len(entry.Values))
+			copy(highlightMap[fieldName], entry.Values)
+			// 排序以确保一致性
+			sort.Strings(highlightMap[fieldName])
+		}
+	}
+
+	return highlightMap, nil
 }
 
 func (q *Query) ToRouter() (*Route, error) {

@@ -1429,7 +1429,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 				},
 			},
 			expected: map[string][]string{
-				"level": {"error", "warning", "info"},
+				"level": {"error", "info", "warning"},
 			},
 		},
 		{
@@ -1841,8 +1841,8 @@ func TestQueryTs_LabelMap(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result, _ := tc.queryTs.LabelMap()
-			assert.Equal(t, tc.expected, result, "LabelMap result should match expected")
+			result, _ := tc.queryTs.ToHighlightMap()
+			assert.Equal(t, tc.expected, result, "ToHighlightMap result should match expected")
 		})
 	}
 }
@@ -1852,7 +1852,7 @@ func TestQuery_LabelMap(t *testing.T) {
 	testCases := []struct {
 		name     string
 		query    Query
-		expected map[string][]string
+		expected map[string]*LabelMapEntry
 	}{
 		{
 			name: "只有 Conditions",
@@ -1867,8 +1867,13 @@ func TestQuery_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"status": {"error"},
+			expected: map[string]*LabelMapEntry{
+				"es_inc:status:ae41e896": {
+					Values: []string{"error"},
+				},
+				"hl:status": {
+					Values: []string{"error"},
+				},
 			},
 		},
 		{
@@ -1876,8 +1881,13 @@ func TestQuery_LabelMap(t *testing.T) {
 			query: Query{
 				QueryString: "level:warning",
 			},
-			expected: map[string][]string{
-				"level": {"warning"},
+			expected: map[string]*LabelMapEntry{
+				"es_inc:level:a60f9796": {
+					Values: []string{"warning"},
+				},
+				"hl:level": {
+					Values: []string{"warning"},
+				},
 			},
 		},
 		{
@@ -1894,9 +1904,19 @@ func TestQuery_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"service": {"web"},
-				"status":  {"error"},
+			expected: map[string]*LabelMapEntry{
+				"es_inc:status:ae41e896": {
+					Values: []string{"error"},
+				},
+				"hl:status": {
+					Values: []string{"error"},
+				},
+				"es_inc:service:5577a3d3": {
+					Values: []string{"web"},
+				},
+				"hl:service": {
+					Values: []string{"web"},
+				},
 			},
 		},
 		{
@@ -1913,8 +1933,16 @@ func TestQuery_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"level": {"warning", "error"},
+			expected: map[string]*LabelMapEntry{
+				"es_inc:level:a60f9796": {
+					Values: []string{"warning"},
+				},
+				"hl:level": {
+					Values: []string{"error", "warning"}, // 按字母顺序排序
+				},
+				"es_inc:level:9dc94448": {
+					Values: []string{"error"},
+				},
 			},
 		},
 		{
@@ -1931,8 +1959,13 @@ func TestQuery_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"level": {"error"},
+			expected: map[string]*LabelMapEntry{
+				"es_inc:level:9dc94448": {
+					Values: []string{"error"},
+				},
+				"hl:level": {
+					Values: []string{"error"},
+				},
 			},
 		},
 		{
@@ -1954,11 +1987,31 @@ func TestQuery_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"service":   {"web"},
-				"component": {"database"},
-				"status":    {"error", "warning"},
-				"region":    {"us-east-1"},
+			expected: map[string]*LabelMapEntry{
+				"es_inc:status:646437d3": {
+					Values: []string{"error", "warning"},
+				},
+				"hl:status": {
+					Values: []string{"error", "warning"},
+				},
+				"es_exc:region:c99b9d82": {
+					Values: []string{"us-east-1"},
+				},
+				"hl:region": {
+					Values: []string{"us-east-1"},
+				},
+				"es_inc:service:5577a3d3": {
+					Values: []string{"web"},
+				},
+				"hl:service": {
+					Values: []string{"web"},
+				},
+				"es_inc:component:c6afa7d8": {
+					Values: []string{"database"},
+				},
+				"hl:component": {
+					Values: []string{"database"},
+				},
 			},
 		},
 		{
@@ -1967,7 +2020,7 @@ func TestQuery_LabelMap(t *testing.T) {
 				QueryString: "",
 				Conditions:  Conditions{},
 			},
-			expected: map[string][]string{},
+			expected: map[string]*LabelMapEntry{},
 		},
 	}
 

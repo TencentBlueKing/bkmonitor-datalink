@@ -299,7 +299,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			}
 
 		}
-		labelMap, err := queryTs.LabelMap()
+		labelMap, err := queryTs.ToHighlightMap()
 		if err != nil {
 			return
 		}

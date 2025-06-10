@@ -33,6 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/pool"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
@@ -746,12 +747,18 @@ func (i *Instance) QuerySeriesSet(
 					size = i.maxSize
 				}
 
+				labelMap, err := buildLabelMapFromQuery(query)
+				if err != nil {
+					log.Warnf(ctx, "failed to build labelMap: %v", err)
+				}
+
 				fact := NewFormatFactory(ctx).
 					WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 					WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
 					WithMappings(mappings...).
 					WithOrders(query.Orders).
-					WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
+					WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc()).
+					WithLabelMap(labelMap)
 
 				if len(query.Aggregates) == 0 {
 					setCh <- storage.ErrSeriesSet(fmt.Errorf("aggregates is empty"))
@@ -814,6 +821,35 @@ func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, m
 func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
 	//TODO implement me
 	panic("implement me")
+}
+
+func buildLabelMapFromQuery(query *metadata.Query) (map[string]*structured.LabelMapEntry, error) {
+	if query == nil {
+		return nil, nil
+	}
+
+	structuredQuery := &structured.Query{
+		QueryString: query.QueryString,
+		Conditions: structured.Conditions{
+			FieldList: make([]structured.ConditionField, 0),
+		},
+	}
+
+	for _, conditions := range query.AllConditions {
+		for _, condition := range conditions {
+			structuredCondition := structured.ConditionField{
+				DimensionName: condition.DimensionName,
+				Value:         condition.Value,
+				Operator:      condition.Operator,
+				IsWildcard:    condition.IsWildcard,
+				IsPrefix:      condition.IsPrefix,
+				IsSuffix:      condition.IsSuffix,
+			}
+			structuredQuery.Conditions.FieldList = append(structuredQuery.Conditions.FieldList, structuredCondition)
+		}
+	}
+
+	return structuredQuery.LabelMap()
 }
 
 func (i *Instance) InstanceType() string {

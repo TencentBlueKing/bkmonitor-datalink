@@ -563,12 +563,17 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				query:   query,
 				conn:    conn,
 			}
+			labelMap, err := buildLabelMapFromQuery(query)
+			if err != nil {
+				log.Warnf(ctx, "failed to build labelMap: %v", err)
+			}
 
 			fact := NewFormatFactory(ctx).
 				WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 				WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.Size).
 				WithMappings(mappings...).
-				WithOrders(query.Orders)
+				WithOrders(query.Orders).
+				WithLabelMap(labelMap)
 
 			sr, queryErr := i.esQuery(ctx, qo, fact)
 			if queryErr != nil {

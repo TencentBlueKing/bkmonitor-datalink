@@ -56,7 +56,6 @@ func (h *HighLightFactory) processField(fieldValue any, keywords []string) any {
 	case int:
 		newValue = fmt.Sprintf("%d", value)
 	default:
-		newValue = ""
 		return nil
 	}
 

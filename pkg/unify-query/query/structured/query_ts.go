@@ -1042,14 +1042,13 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 			q.TimeAggregation.Function = nf
 		}
 
-		// 替换函数名
-		for _, aggrVal := range q.AggregateMethodList {
-			for idx, m := range aggrVal.Dimensions {
-				aggrVal.Dimensions[idx] = encodeFunc(m)
+		for aggIdx, aggrVal := range q.AggregateMethodList {
+			for mIdx, m := range aggrVal.Dimensions {
+				q.AggregateMethodList[aggIdx].Dimensions[mIdx] = encodeFunc(m)
 			}
 
 			if nf, ok := promExprOpt.FunctionReplace[aggrVal.Method]; ok {
-				aggrVal.Method = nf
+				q.AggregateMethodList[aggIdx].Method = nf
 			}
 		}
 	}

@@ -127,7 +127,11 @@ func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 		leftQ = elastic.NewBoolQuery().Must(leftQ, rightQ)
 	case *qs.MatchExpr:
 		if c.Field != "" {
-			leftQ = elastic.NewMatchPhraseQuery(c.Field, c.Value)
+			if s.isPrefix {
+				leftQ = elastic.NewMatchPhrasePrefixQuery(c.Field, c.Value)
+			} else {
+				leftQ = elastic.NewMatchPhraseQuery(c.Field, c.Value)
+			}
 			s.check(c.Field)
 		} else {
 			val := c.Value

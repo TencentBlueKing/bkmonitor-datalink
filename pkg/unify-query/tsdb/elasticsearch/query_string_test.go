@@ -117,7 +117,7 @@ func TestQsToDsl(t *testing.T) {
 
 				return ""
 			})
-			query, err := qs.ToDSL(metadata.FieldAlias{
+			query, err := qs.ToDSL(ctx, metadata.FieldAlias{
 				"event_detail": "events.attributes.message.detail",
 			})
 			if err == nil {

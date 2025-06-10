@@ -52,10 +52,10 @@ func (s *QueryString) queryString(str string) elastic.Query {
 	return q
 }
 
-func (s *QueryString) ToDSL(fieldAlias metadata.FieldAlias) (elastic.Query, error) {
+func (s *QueryString) ToDSL(ctx context.Context, fieldAlias metadata.FieldAlias) (elastic.Query, error) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf(context.TODO(), "querystring(%s) todsl panic: %v", s.q, r)
+			log.Errorf(ctx, "querystring(%s) todsl panic: %v", s.q, r)
 		}
 	}()
 
@@ -67,11 +67,13 @@ func (s *QueryString) ToDSL(fieldAlias metadata.FieldAlias) (elastic.Query, erro
 	q := s.queryString(s.q)
 	ast, err := qs.ParseWithFieldAlias(s.q, fieldAlias)
 	if err != nil {
+		log.Errorf(ctx, "querystring(%s) parse error: %v", s.q, err)
 		return q, nil
 	}
 
 	conditionQuery, err := s.walk(ast)
 	if err != nil {
+		log.Errorf(ctx, "querystring(%s) walk error: %v", s.q, err)
 		return q, nil
 	}
 

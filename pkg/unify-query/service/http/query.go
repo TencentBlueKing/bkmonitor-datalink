@@ -798,9 +798,9 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 		}
 
 		// decode agg
-		for _, agg := range q.AggregateMethodList {
+		for aggIdx, agg := range q.AggregateMethodList {
 			for i, d := range agg.Dimensions {
-				agg.Dimensions[i] = encodeFunc(d)
+				q.AggregateMethodList[aggIdx].Dimensions[i] = encodeFunc(d)
 			}
 		}
 

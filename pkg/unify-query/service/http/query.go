@@ -786,21 +786,21 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 		}
 	}
 
-	encodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
 	for _, q := range query.QueryList {
 		// decode table id and field name
-		q.TableID = structured.TableID(encodeFunc(string(q.TableID)))
+		q.TableID = structured.TableID(decodeFunc(string(q.TableID)))
 
 		// decode condition
 		for i, d := range q.Conditions.FieldList {
-			q.Conditions.FieldList[i].DimensionName = encodeFunc(d.DimensionName)
+			q.Conditions.FieldList[i].DimensionName = decodeFunc(d.DimensionName)
 		}
 
 		// decode agg
 		for aggIdx, agg := range q.AggregateMethodList {
 			for i, d := range agg.Dimensions {
-				q.AggregateMethodList[aggIdx].Dimensions[i] = encodeFunc(d)
+				q.AggregateMethodList[aggIdx].Dimensions[i] = decodeFunc(d)
 			}
 		}
 

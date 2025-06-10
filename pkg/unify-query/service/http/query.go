@@ -258,6 +258,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		}
 
 		span.Set("query-list-num", len(queryList))
+		span.Set("result-data-num", len(data))
 
 		if len(queryList) > 1 {
 			queryTs.OrderBy.Orders().SortSliceList(data)
@@ -325,6 +326,9 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 			list = append(list, item)
 		}
+
+		span.Set("result-list-num", len(list))
+		span.Set("result-option", resultTableOptions)
 	}()
 
 	// 多协程查询数据

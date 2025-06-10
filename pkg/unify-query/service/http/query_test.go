@@ -956,6 +956,8 @@ func TestQueryRawWithInstance(t *testing.T) {
 
 		// scroll id
 		`{"scroll":"5m","scroll_id":"one"}`: `{"_scroll_id":"two","hits":{"total":{"value":123},"hits":[{"_index":"result_table_index","_id":"6","_source":{"a":"2","b":"1"}},{"_index":"result_table_index","_id":"7","_source":{"a":"2","b":"2"}},{"_index":"result_table_index","_id":"8","_source":{"a":"2","b":"3"}},{"_index":"result_table_index","_id":"9","_source":{"a":"2","b":"4"}},{"_index":"result_table_index","_id":"10","_source":{"a":"2","b":"5"}}]}}`,
+
+		`{"from":0,"query":{"bool":{"filter":[{"bool":{"must":[{"exists":{"field":"collections.attributes.db.statement"}},{"match_phrase":{"app_name":{"query":"bkop"}}},{"match_phrase":{"bkz_id":{"query":"2"}}}]}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1749456412,"include_lower":true,"include_upper":true,"to":1749460022}}}]}},"size":1}`: `{"took":77,"timed_out":false,"_shards":{"total":9,"successful":9,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[{"_index":"v2_apm_global_precalculate_storage_new_1_20250609_0","_type":"_doc","_id":"bf6477880e7abd183119c150ea1447db","_score":null,"_source":{"biz_id":"2","biz_name":"蓝鲸","app_id":"3","app_name":"bkop","trace_id":"bf6477880e7abd183119c150ea1447db","hierarchy_count":9,"service_count":1,"span_count":1746,"min_start_time":1749460013638577,"max_end_time":1749460055300683,"trace_duration":41662106,"span_max_duration":316009,"span_min_duration":0,"root_service":"unify-query","root_service_span_id":"0db6f409a4b7b759","root_service_span_name":"/query/ts/promql","root_service_status_code":200,"root_service_category":"http","root_service_kind":2,"root_span_id":"0db6f409a4b7b759","root_span_name":"/query/ts/promql","root_span_service":"unify-query","root_span_kind":2,"error":false,"error_count":0,"time":1749460179462463,"category_statistics":{"db":0,"messaging":0,"async_backend":0,"other":0,"http":120,"rpc":0},"kind_statistics":{"unspecified":0,"interval":1626,"sync":120,"async":0},"collections":{"resource.k8s.bcs.cluster.id":["BCS-K8S-00000"],"attributes.http.host":["bk-monitor-unify-query-http:10205"],"attributes.http.status_code":["200"],"attributes.net.peer.name":["bkapi.bkop.woa.com"],"resource.service.name":["unify-query"],"resource.k8s.namespace.name":["blueking"],"span_name":["jwt-auth","query-ts-to-query-metric","query-ts-to-instance","querier-get-query-list","prometheus-querier-select-fn","prometheus-query-range","query-ts","handler-query-promql","http-api-metadata","promqlExecQueue","promqlPrepare","promqlInnerEval eval *parser.VectorSelector","promqlInnerEval eval *parser.AggregateExpr","promqlInnerEval","promqlSort","promqlEval","promqlExec","/query/ts/promql","build-metadata-query","check-must-query-feature-flag","get-ts-db-instance","http-curl","victoria-metrics-query-range","HTTP POST"],"resource.bk.instance.id":[":unify-query::9.166.36.135:",":unify-query::9.166.56.96:",":unify-query::9.166.7.251:",":unify-query::9.166.50.219:"],"kind":["1","2","3"],"resource.k8s.pod.ip":["9.166.36.135","9.166.56.96","9.166.7.251","9.166.50.219"],"attributes.http.flavor":["1.1"],"attributes.net.peer.ip":["9.166.44.33","9.166.33.143","9.166.33.140","9.166.44.25","9.166.7.204","9.166.31.251"],"attributes.http.url":["http://bkapi.bkop.woa.com/api/bkbase-query/prod/v3/queryengine/query_sync"],"resource.net.host.ip":["9.166.36.135","9.166.56.96","9.166.7.251","9.166.50.219"],"attributes.http.scheme":["http"],"attributes.http.method":["POST"],"resource.k8s.pod.name":["bk-datalink-unify-query-6595d74cbf-mzl4x","bk-datalink-unify-query-6595d74cbf-g2q2p","bk-datalink-unify-query-6595d74cbf-zbg52","bk-datalink-unify-query-6595d74cbf-klqkz"],"attributes.net.peer.port":["44024","46284","46272","44026","44020","44048","46290","37374","37442","46360","44088","44114","37490","44152","37504","46278","44034","46288","37424","46358","44072","46366","44100","44138","46408","37526","37542","52822","52854","37616","52878","46286","37410","46356","46364","44098","37498","44136","44158","46432","46448","52850","37612","52872","52898","44056","37386","37446","46362","44094","44120","46404","44154","46414","37536","52846","37608","37620","52866","52892","46442","52834","52862","37606","37618","52882","43598","43938","43354","43816","44934","45806","45906","43642","44884","44974","45858","43788","44894","45020","45888","44948","45808","45950","48902","48944","48994","49058","49068","48922","48990","49012","49062","48918","48970","49008","49060","49070","48942","48992","49014","49064"]}},"sort":[1749460179462463]}]}}`,
 	})
 
 	tcs := map[string]struct {
@@ -964,6 +966,61 @@ func TestQueryRawWithInstance(t *testing.T) {
 		expected string
 		options  string
 	}{
+		"query collections.attributes.db.statement": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource: structured.BkApm,
+						TableID:    structured.TableID(influxdb.ResultTableEs),
+						FieldName:  "collections.attributes.db.statement",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method:     "count",
+								Dimensions: []string{"collections.attributes.db.statement"},
+								Window:     "120s",
+							},
+						},
+						ReferenceName: "a",
+						Dimensions:    []string{"collections.attributes.db.statement"},
+						Limit:         1,
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "collections.attributes.db.statement",
+									Value:         []string{""},
+									Operator:      "ne",
+								},
+								{
+									DimensionName: "app_name",
+									Value:         []string{"bkop"},
+									Operator:      "eq",
+								},
+								{
+									DimensionName: "bkz_id",
+									Value:         []string{"2"},
+									Operator:      "eq",
+								},
+							},
+							ConditionList: []string{"and", "and"},
+						},
+					},
+				},
+				MetricMerge:   "a",
+				OrderBy:       []string{"-time"},
+				Timezone:      "Asia/Shanghai",
+				LookBackDelta: "1m",
+				Start:         "1749456412",
+				End:           "1749460022",
+			},
+			total:    1e4,
+			expected: `[{"__data_label":"es","__doc_id":"bf6477880e7abd183119c150ea1447db","__index":"v2_apm_global_precalculate_storage_new_1_20250609_0","__result_table":"result_table.es","app_id":"3","app_name":"bkop","biz_id":"2","biz_name":"蓝鲸","category_statistics.async_backend":0,"category_statistics.db":0,"category_statistics.http":120,"category_statistics.messaging":0,"category_statistics.other":0,"category_statistics.rpc":0,"collections.attributes.http.flavor":["1.1"],"collections.attributes.http.host":["bk-monitor-unify-query-http:10205"],"collections.attributes.http.method":["POST"],"collections.attributes.http.scheme":["http"],"collections.attributes.http.status_code":["200"],"collections.attributes.http.url":["http://bkapi.bkop.woa.com/api/bkbase-query/prod/v3/queryengine/query_sync"],"collections.attributes.net.peer.ip":["9.166.44.33","9.166.33.143","9.166.33.140","9.166.44.25","9.166.7.204","9.166.31.251"],"collections.attributes.net.peer.name":["bkapi.bkop.woa.com"],"collections.attributes.net.peer.port":["44024","46284","46272","44026","44020","44048","46290","37374","37442","46360","44088","44114","37490","44152","37504","46278","44034","46288","37424","46358","44072","46366","44100","44138","46408","37526","37542","52822","52854","37616","52878","46286","37410","46356","46364","44098","37498","44136","44158","46432","46448","52850","37612","52872","52898","44056","37386","37446","46362","44094","44120","46404","44154","46414","37536","52846","37608","37620","52866","52892","46442","52834","52862","37606","37618","52882","43598","43938","43354","43816","44934","45806","45906","43642","44884","44974","45858","43788","44894","45020","45888","44948","45808","45950","48902","48944","48994","49058","49068","48922","48990","49012","49062","48918","48970","49008","49060","49070","48942","48992","49014","49064"],"collections.kind":["1","2","3"],"collections.resource.bk.instance.id":[":unify-query::9.166.36.135:",":unify-query::9.166.56.96:",":unify-query::9.166.7.251:",":unify-query::9.166.50.219:"],"collections.resource.k8s.bcs.cluster.id":["BCS-K8S-00000"],"collections.resource.k8s.namespace.name":["blueking"],"collections.resource.k8s.pod.ip":["9.166.36.135","9.166.56.96","9.166.7.251","9.166.50.219"],"collections.resource.k8s.pod.name":["bk-datalink-unify-query-6595d74cbf-mzl4x","bk-datalink-unify-query-6595d74cbf-g2q2p","bk-datalink-unify-query-6595d74cbf-zbg52","bk-datalink-unify-query-6595d74cbf-klqkz"],"collections.resource.net.host.ip":["9.166.36.135","9.166.56.96","9.166.7.251","9.166.50.219"],"collections.resource.service.name":["unify-query"],"collections.span_name":["jwt-auth","query-ts-to-query-metric","query-ts-to-instance","querier-get-query-list","prometheus-querier-select-fn","prometheus-query-range","query-ts","handler-query-promql","http-api-metadata","promqlExecQueue","promqlPrepare","promqlInnerEval eval *parser.VectorSelector","promqlInnerEval eval *parser.AggregateExpr","promqlInnerEval","promqlSort","promqlEval","promqlExec","/query/ts/promql","build-metadata-query","check-must-query-feature-flag","get-ts-db-instance","http-curl","victoria-metrics-query-range","HTTP POST"],"error":false,"error_count":0,"hierarchy_count":9,"kind_statistics.async":0,"kind_statistics.interval":1626,"kind_statistics.sync":120,"kind_statistics.unspecified":0,"max_end_time":1.749460055300683e+15,"min_start_time":1.749460013638577e+15,"root_service":"unify-query","root_service_category":"http","root_service_kind":2,"root_service_span_id":"0db6f409a4b7b759","root_service_span_name":"/query/ts/promql","root_service_status_code":200,"root_span_id":"0db6f409a4b7b759","root_span_kind":2,"root_span_name":"/query/ts/promql","root_span_service":"unify-query","service_count":1,"span_count":1746,"span_max_duration":316009,"span_min_duration":0,"time":1.749460179462463e+15,"trace_duration":4.1662106e+07,"trace_id":"bf6477880e7abd183119c150ea1447db"}]`,
+			options: `{
+  "result_table.es|http://127.0.0.1:93002" : {
+    "search_after" : [ 1749460179462463 ]
+  }
+}`,
+		},
 		"query with EpochMillis": {
 			queryTs: &structured.QueryTs{
 				SpaceUid: spaceUid,

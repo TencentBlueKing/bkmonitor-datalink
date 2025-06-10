@@ -31,10 +31,6 @@ func NewHighLightFactory(labelMap map[string][]string, maxAnalyzedOffset int) *H
 }
 
 func (h *HighLightFactory) Process(data map[string]any) (newData map[string]any) {
-	if len(h.labelMap) == 0 {
-		return nil
-	}
-
 	newData = make(map[string]any)
 
 	for k, keywords := range h.labelMap {
@@ -53,11 +49,19 @@ func (h *HighLightFactory) Process(data map[string]any) (newData map[string]any)
 }
 
 func (h *HighLightFactory) processField(fieldValue any, keywords []string) any {
+	var newValue string
 	switch value := fieldValue.(type) {
 	case string:
-		if highlighted := h.highlightString(value, keywords); highlighted != value {
-			return []string{highlighted}
-		}
+		newValue = value
+	case int:
+		newValue = fmt.Sprintf("%d", value)
+	default:
+		newValue = ""
+		return nil
+	}
+
+	if highlighted := h.highlightString(newValue, keywords); highlighted != newValue {
+		return []string{highlighted}
 	}
 	return nil
 }

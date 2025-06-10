@@ -173,11 +173,6 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 			query.Scroll = q.Scroll
 		}
 
-		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-		if query.HighLight == nil && q.HighLight != nil {
-			query.HighLight = q.HighLight
-		}
-
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
 		if len(query.KeepColumns) == 0 && len(q.ResultColumns) != 0 {
 			query.KeepColumns = q.ResultColumns
@@ -415,9 +410,6 @@ type Query struct {
 	Scroll string `json:"-"`
 	// Collapse
 	Collapse *metadata.Collapse `json:"collapse,omitempty"`
-
-	// HighLight 是否打开高亮，只对原始数据接口生效
-	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
 func (q *Query) LabelMap() (map[string][]string, error) {

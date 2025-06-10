@@ -223,11 +223,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			queryTs.IsMultiFrom = false
 		}
 
-		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-		if ql.HighLight == nil && queryTs.HighLight != nil {
-			ql.HighLight = queryTs.HighLight
-		}
-
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
 		if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
 			ql.KeepColumns = queryTs.ResultColumns
@@ -298,18 +293,21 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					}
 				}
 			}
-
 		}
+
 		labelMap, lbErr := queryTs.LabelMap()
 		if lbErr != nil {
 			err = lbErr
 			return
 		}
-		var maxAnalyzedOffset int
-		if queryTs.HighLight != nil {
-			maxAnalyzedOffset = queryTs.HighLight.MaxAnalyzedOffset
+
+		span.Set("query-label-map", labelMap)
+		span.Set("query-highlight", queryTs.HighLight)
+
+		var hlF *function.HighLightFactory
+		if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(labelMap) > 0 {
+			hlF = function.NewHighLightFactory(labelMap, queryTs.HighLight.MaxAnalyzedOffset)
 		}
-		hlF := function.NewHighLightFactory(labelMap, maxAnalyzedOffset)
 		for _, item := range data {
 			if item == nil {
 				continue
@@ -319,7 +317,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				delete(item, ignoreDimension)
 			}
 
-			if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(labelMap) > 0 {
+			if hlF != nil {
 				if highlightResult := hlF.Process(item); len(highlightResult) > 0 {
 					item[function.KeyHighLight] = highlightResult
 				}

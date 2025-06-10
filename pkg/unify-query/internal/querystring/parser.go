@@ -14,8 +14,6 @@ package querystring
 import (
 	"fmt"
 	"strings"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 // Parse querystring and return Expr
@@ -34,7 +32,14 @@ func Parse(query string) (Expr, error) {
 }
 
 type walkParse struct {
-	fieldAlias metadata.FieldAlias
+	fieldAlias map[string]string
+}
+
+func (w *walkParse) alias(k string) string {
+	if alias, ok := w.fieldAlias[k]; ok {
+		return alias
+	}
+	return k
 }
 
 func (w *walkParse) do(e Expr) Expr {
@@ -55,21 +60,23 @@ func (w *walkParse) do(e Expr) Expr {
 		}
 	case *NumberRangeExpr:
 		if c.Field != "" {
-			c.Field = w.fieldAlias.Alias(c.Field)
+			c.Field = w.alias(c.Field)
 		}
 	case *MatchExpr:
 		if c.Field != "" {
-			c.Field = w.fieldAlias.Alias(c.Field)
+			c.Field = w.alias(c.Field)
 		}
 	case *WildcardExpr:
 		if c.Field != "" {
-			c.Field = w.fieldAlias.Alias(c.Field)
+			c.Field = w.alias(c.Field)
 		}
+	case *RegexpExpr:
+		c.Field = w.alias(c.Field)
 	}
 	return e
 }
 
-func ParseWithFieldAlias(query string, fieldAlias metadata.FieldAlias) (Expr, error) {
+func ParseWithFieldAlias(query string, fieldAlias map[string]string) (Expr, error) {
 	expr, err := Parse(query)
 	if err != nil {
 		return nil, err

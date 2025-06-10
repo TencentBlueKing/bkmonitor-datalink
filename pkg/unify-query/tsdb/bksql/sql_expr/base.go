@@ -51,8 +51,6 @@ type SQLExpr interface {
 	WithEncode(func(string) string) SQLExpr
 	// WithInternalFields 设置内部字段
 	WithInternalFields(timeField, valueField string) SQLExpr
-	// IsSetLabels 是否保留查询标签
-	IsSetLabels(bool) SQLExpr
 	// ParserRangeTime 解析开始结束时间
 	ParserRangeTime(timeField string, start, end time.Time) string
 	// ParserQueryString 解析 es 特殊语法 queryString 生成SQL条件
@@ -104,10 +102,6 @@ type DefaultSQLExpr struct {
 
 func (d *DefaultSQLExpr) Type() string {
 	return "default"
-}
-
-func (d *DefaultSQLExpr) IsSetLabels(_ bool) SQLExpr {
-	return d
 }
 
 func (d *DefaultSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {

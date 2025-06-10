@@ -78,15 +78,12 @@ type QueryFactory struct {
 	timeField string
 
 	expr sql_expr.SQLExpr
-
-	highlight *metadata.HighLight
 }
 
 func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	f := &QueryFactory{
 		ctx:          ctx,
 		query:        query,
-		highlight:    query.HighLight,
 		dimensionSet: set.New[string](),
 	}
 
@@ -103,10 +100,6 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	f.expr = sql_expr.NewSQLExpr(query.Measurement).
 		WithInternalFields(f.timeField, query.Field).
 		WithEncode(metadata.GetFieldFormat(ctx).EncodeFunc())
-
-	if f.highlight != nil && f.highlight.Enable {
-		f.expr.IsSetLabels(true)
-	}
 
 	return f
 }

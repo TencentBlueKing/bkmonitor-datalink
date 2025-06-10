@@ -420,7 +420,7 @@ type Query struct {
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
-func (q Query) LabelMap() (map[string][]string, error) {
+func (q *Query) LabelMap() (map[string][]string, error) {
 	labelMap := make(map[string][]string)
 	labelCheck := make(map[string]struct{})
 
@@ -981,7 +981,6 @@ func (q *Query) BuildMetadataQuery(
 	query.IsPrefix = q.IsPrefix
 	query.Source = q.KeepColumns
 
-	query.HighLight = q.HighLight
 	query.Collapse = q.Collapse
 
 	query.Scroll = q.Scroll

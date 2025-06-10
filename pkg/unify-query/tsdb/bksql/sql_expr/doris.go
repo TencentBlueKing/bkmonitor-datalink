@@ -81,7 +81,7 @@ func (d *DorisSQLExpr) FieldMap() map[string]string {
 }
 
 func (d *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
-	expr, err := querystring.Parse(qs)
+	expr, err := querystring.ParseWithFieldAlias(qs, d.fieldAlias)
 	if err != nil {
 		return "", err
 	}
@@ -425,16 +425,12 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		if c.Field == "" {
 			c.Field = DefaultKey
 		}
-		c.Field = d.fieldAlias.Alias(c.Field)
-
 		field, _ := d.dimTransform(c.Field)
 		return fmt.Sprintf("%s LIKE '%%%s%%'", field, c.Value), nil
 	case *querystring.MatchExpr:
 		if c.Field == "" {
 			c.Field = DefaultKey
 		}
-		c.Field = d.fieldAlias.Alias(c.Field)
-
 		field, _ := d.dimTransform(c.Field)
 		if d.checkMatchALL(c.Field) {
 			return fmt.Sprintf("%s MATCH_PHRASE_PREFIX '%s'", field, c.Value), nil
@@ -445,8 +441,6 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		if c.Field == "" {
 			c.Field = DefaultKey
 		}
-		c.Field = d.fieldAlias.Alias(c.Field)
-
 		field, _ := d.dimTransform(c.Field)
 		var timeFilter []string
 		if c.Start != nil && *c.Start != "*" {

@@ -14,6 +14,8 @@ package querystring
 import (
 	"fmt"
 	"strings"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 // Parse querystring and return Expr
@@ -29,6 +31,51 @@ func Parse(query string) (Expr, error) {
 		return nil, fmt.Errorf(strings.Join(lex.errs, "\n"))
 	}
 	return lex.expr, nil
+}
+
+type walkParse struct {
+	fieldAlias metadata.FieldAlias
+}
+
+func (w *walkParse) do(e Expr) Expr {
+	switch c := e.(type) {
+	case *NotExpr:
+		return &NotExpr{
+			Expr: w.do(c.Expr),
+		}
+	case *AndExpr:
+		return &AndExpr{
+			Left:  w.do(c.Left),
+			Right: w.do(c.Right),
+		}
+	case *OrExpr:
+		return &OrExpr{
+			Left:  w.do(c.Left),
+			Right: w.do(c.Right),
+		}
+	case *NumberRangeExpr:
+		if c.Field != "" {
+			c.Field = w.fieldAlias.Alias(c.Field)
+		}
+	case *MatchExpr:
+		if c.Field != "" {
+			c.Field = w.fieldAlias.Alias(c.Field)
+		}
+	case *WildcardExpr:
+		if c.Field != "" {
+			c.Field = w.fieldAlias.Alias(c.Field)
+		}
+	}
+	return e
+}
+
+func ParseWithFieldAlias(query string, fieldAlias metadata.FieldAlias) (Expr, error) {
+	expr, err := Parse(query)
+	if err != nil {
+		return nil, err
+	}
+	wp := &walkParse{fieldAlias: fieldAlias}
+	return wp.do(expr), nil
 }
 
 func doParse(lex *lexerWrapper) {

@@ -234,8 +234,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
-		qs := NewQueryString(qb.QueryString, qb.IsPrefix, qb.FieldAlias, fact.NestedField)
-		q, qsErr := qs.ToDSL()
+		qs := NewQueryString(qb.QueryString, qb.IsPrefix, fact.NestedField)
+		q, qsErr := qs.ToDSL(qb.FieldAlias)
 		if qsErr != nil {
 			return nil, qsErr
 		}

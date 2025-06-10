@@ -91,6 +91,7 @@ func TestQsToDsl(t *testing.T) {
 			q:        `events.attributes.message.detail: "*66036*"`,
 			expected: `{"nested":{"path":"events","query":{"match_phrase":{"events.attributes.message.detail":{"query":"*66036*"}}}}}`,
 		},
+		// 测试别名
 		{
 			q:        `event_detail: "*66036*"`,
 			expected: `{"nested":{"path":"events","query":{"match_phrase":{"events.attributes.message.detail":{"query":"*66036*"}}}}}`,
@@ -98,9 +99,7 @@ func TestQsToDsl(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			qs := NewQueryString(c.q, c.isPrefix, metadata.FieldAlias{
-				"event_detail": "events.attributes.message.detail",
-			}, func(s string) string {
+			qs := NewQueryString(c.q, c.isPrefix, func(s string) string {
 				mapping := map[string]string{
 					"nested": Nested,
 					"events": Nested,
@@ -118,7 +117,9 @@ func TestQsToDsl(t *testing.T) {
 
 				return ""
 			})
-			query, err := qs.ToDSL()
+			query, err := qs.ToDSL(metadata.FieldAlias{
+				"event_detail": "events.attributes.message.detail",
+			})
 			if err == nil {
 				if query != nil {
 					body, err := query.Source()

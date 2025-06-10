@@ -17,6 +17,7 @@ import (
 
 	qs "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 type QueryString struct {
@@ -26,15 +27,18 @@ type QueryString struct {
 
 	checkNestedField func(string) string
 	nestedFields     map[string]struct{}
+
+	fieldAlias metadata.FieldAlias
 }
 
 // NewQueryString 解析 es query string，该逻辑暂时不使用，直接透传 query string 到 es 代替
-func NewQueryString(q string, isPrefix bool, checkNestedField func(string) string) *QueryString {
+func NewQueryString(q string, isPrefix bool, fieldAlias metadata.FieldAlias, checkNestedField func(string) string) *QueryString {
 	return &QueryString{
 		q:                q,
 		isPrefix:         isPrefix,
 		query:            elastic.NewBoolQuery(),
 		checkNestedField: checkNestedField,
+		fieldAlias:       fieldAlias,
 		nestedFields:     make(map[string]struct{}),
 	}
 }
@@ -71,11 +75,6 @@ func (s *QueryString) ToDSL() (elastic.Query, error) {
 
 	conditionQuery, err := s.walk(ast)
 	if err != nil {
-		return q, nil
-	}
-
-	// 如果 nestedFields 不存在则直接使用 queryString 透传
-	if len(s.nestedFields) == 0 {
 		return q, nil
 	}
 
@@ -129,12 +128,22 @@ func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 		leftQ = elastic.NewBoolQuery().Must(leftQ, rightQ)
 	case *qs.MatchExpr:
 		if c.Field != "" {
+			// 把别名转换为真实字段
+			c.Field = s.fieldAlias.Alias(c.Field)
+
 			leftQ = elastic.NewMatchPhraseQuery(c.Field, c.Value)
 			s.check(c.Field)
 		} else {
-			leftQ = s.queryString(fmt.Sprintf(`"%s"`, c.Value))
+			val := c.Value
+			if !s.isPrefix {
+				val = fmt.Sprintf(`"%s"`, val)
+			}
+			leftQ = s.queryString(val)
 		}
 	case *qs.NumberRangeExpr:
+		// 把别名转换为真实字段
+		c.Field = s.fieldAlias.Alias(c.Field)
+
 		q := elastic.NewRangeQuery(c.Field)
 		if c.Start == nil && c.End == nil {
 			return nil, fmt.Errorf("start and end is nil")
@@ -158,6 +167,9 @@ func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 		leftQ = q
 	case *qs.WildcardExpr:
 		if c.Field != "" {
+			// 把别名转换为真实字段
+			c.Field = s.fieldAlias.Alias(c.Field)
+
 			leftQ = elastic.NewWildcardQuery(c.Field, c.Value)
 			s.check(c.Field)
 		} else {

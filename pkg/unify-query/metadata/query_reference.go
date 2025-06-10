@@ -44,60 +44,48 @@ func (q *Query) ConfigureAlias(ctx context.Context) {
 	}
 
 	var (
-		err          error
-		isConfigured = false
+		err error
 	)
 	ctx, span := trace.NewSpan(ctx, "configure-alias")
 	defer span.End(&err)
 
 	span.Set("field-alias", q.FieldAlias)
 
-	aliasToField := func(s string) string {
-		if v, ok := q.FieldAlias[s]; ok {
-			isConfigured = true
-			return v
-		}
-		return s
-	}
-
 	// 替换 Field
-	q.Field = aliasToField(q.Field)
+	q.Field = q.FieldAlias.Alias(q.Field)
 
 	// 替换维度
 	for aggIdx, agg := range q.Aggregates {
-		q.Aggregates[aggIdx].Field = aliasToField(agg.Field)
+		q.Aggregates[aggIdx].Field = q.FieldAlias.Alias(agg.Field)
 		for dimIdx, dim := range agg.Dimensions {
-			q.Aggregates[aggIdx].Dimensions[dimIdx] = aliasToField(dim)
+			q.Aggregates[aggIdx].Dimensions[dimIdx] = q.FieldAlias.Alias(dim)
 		}
 	}
 
 	// 替换过滤条件
 	for conIdx, con := range q.AllConditions {
 		for dimIdx, dim := range con {
-			q.AllConditions[conIdx][dimIdx].DimensionName = aliasToField(dim.DimensionName)
+			q.AllConditions[conIdx][dimIdx].DimensionName = q.FieldAlias.Alias(dim.DimensionName)
 		}
 	}
 
 	// 替换保留字段
 	for idx, s := range q.Source {
-		q.Source[idx] = aliasToField(s)
+		q.Source[idx] = q.FieldAlias.Alias(s)
 	}
 
 	// 替换排序字段
 	for idx, o := range q.Orders {
-		q.Orders[idx].Name = aliasToField(o.Name)
+		q.Orders[idx].Name = q.FieldAlias.Alias(o.Name)
 	}
 
 	// 替换折叠字段
 	if q.Collapse != nil {
-		q.Collapse.Field = aliasToField(q.Collapse.Field)
+		q.Collapse.Field = q.FieldAlias.Alias(q.Collapse.Field)
 	}
 
-	span.Set("is-configured", isConfigured)
-	if isConfigured {
-		qStr, _ := json.Marshal(q)
-		span.Set("query-json", string(qStr))
-	}
+	qStr, _ := json.Marshal(q)
+	span.Set("query-json", string(qStr))
 }
 
 // UUID 获取唯一性

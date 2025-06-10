@@ -34,15 +34,15 @@ func TestQsToDsl(t *testing.T) {
 	}{
 		{
 			q:        `log: "ERROR MSG"`,
-			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"log: \"ERROR MSG\""}}`,
+			expected: `{"match_phrase":{"log":{"query":"ERROR MSG"}}}`,
 		},
 		{
 			q:        `quick brown fox`,
-			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"quick brown fox"}}`,
+			expected: `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"quick\""}},{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"brown\""}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"fox\""}}]}}]}}`,
 		},
 		{
 			q:        `word.key: qu?ck`,
-			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"word.key: qu?ck"}}`,
+			expected: `{"wildcard":{"word.key":{"value":"qu?ck"}}}`,
 		},
 		{
 			q:        "\"message queue conflict\"",
@@ -58,7 +58,7 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        `sync_spaces AND -keyword AND -BKLOGAPI`,
-			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"sync_spaces AND -keyword AND -BKLOGAPI"}}`,
+			expected: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"sync_spaces\""}},{"bool":{"must":[{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"keyword\""}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"BKLOGAPI\""}}}}]}}]}}`,
 		},
 		{
 			q: `*`,
@@ -68,8 +68,16 @@ func TestQsToDsl(t *testing.T) {
 			isPrefix: true,
 		},
 		{
+			q:        `demo*`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"demo*"}}`,
+		},
+		{
 			q:        `demo`,
-			expected: `{"query_string":{"fields":["*","__*"],"analyze_wildcard":true,"lenient":true,"query":"demo"}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"demo\""}}`,
+		},
+		{
+			q:        `"demo"`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"demo\""}}`,
 		},
 		{
 			q:        `demo`,
@@ -87,10 +95,16 @@ func TestQsToDsl(t *testing.T) {
 			q:        `events.attributes.message.detail: "*66036*"`,
 			expected: `{"nested":{"path":"events","query":{"match_phrase":{"events.attributes.message.detail":{"query":"*66036*"}}}}}`,
 		},
+		{
+			q:        `event_detail: "*66036*"`,
+			expected: `{"nested":{"path":"events","query":{"match_phrase":{"events.attributes.message.detail":{"query":"*66036*"}}}}}`,
+		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			qs := NewQueryString(c.q, c.isPrefix, func(s string) string {
+			qs := NewQueryString(c.q, c.isPrefix, metadata.FieldAlias{
+				"event_detail": "events.attributes.message.detail",
+			}, func(s string) string {
 				mapping := map[string]string{
 					"nested": Nested,
 					"events": Nested,

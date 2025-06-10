@@ -234,11 +234,6 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 			query.Scroll = q.Scroll
 		}
 
-		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-		if query.HighLight == nil && q.HighLight != nil {
-			query.HighLight = q.HighLight
-		}
-
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
 		if len(query.KeepColumns) == 0 && len(q.ResultColumns) != 0 {
 			query.KeepColumns = q.ResultColumns
@@ -476,9 +471,6 @@ type Query struct {
 	Scroll string `json:"-"`
 	// Collapse
 	Collapse *metadata.Collapse `json:"collapse,omitempty"`
-
-	// HighLight 是否打开高亮，只对原始数据接口生效
-	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
 // addLabelToMap 添加标签到labelMap中，使用前缀区分不同用途
@@ -1167,6 +1159,8 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		matchers []*labels.Matcher
 	)
 
+	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
+
 	// 判断是否使用别名作为指标
 	metricName = q.ReferenceName
 	if promExprOpt != nil {
@@ -1194,6 +1188,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 
 		// 增加 Matchers
 		for _, m := range promExprOpt.ReferenceNameLabelMatcher[q.ReferenceName] {
+			m.Name = encodeFunc(m.Name)
 			matchers = append(matchers, m)
 		}
 
@@ -1202,8 +1197,11 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 			q.TimeAggregation.Function = nf
 		}
 
-		// 替换函数名
 		for aggIdx, aggrVal := range q.AggregateMethodList {
+			for mIdx, m := range aggrVal.Dimensions {
+				q.AggregateMethodList[aggIdx].Dimensions[mIdx] = encodeFunc(m)
+			}
+
 			if nf, ok := promExprOpt.FunctionReplace[aggrVal.Method]; ok {
 				q.AggregateMethodList[aggIdx].Method = nf
 			}
@@ -1274,8 +1272,6 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		}
 	}
 
-	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
-
 	for idx := 0; idx < funcNums; idx++ {
 		if idx == timeIdx {
 			result, err = q.TimeAggregation.ToProm(result)
@@ -1288,12 +1284,6 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 				methodIdx -= 1
 			}
 			method := q.AggregateMethodList[methodIdx]
-			if encodeFunc != nil {
-				for di, dv := range method.Dimensions {
-					method.Dimensions[di] = encodeFunc(dv)
-				}
-			}
-
 			if result, err = method.ToProm(result); err != nil {
 				log.Errorf(ctx, "failed to translate function for->[%s]", err)
 				return nil, err

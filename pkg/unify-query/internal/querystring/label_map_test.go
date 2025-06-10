@@ -26,12 +26,12 @@ func Test_LabelMap(t *testing.T) {
 		{
 			name:        "空 QueryString",
 			queryString: "",
-			expected:    nil,
+			expected:    map[string][]string{},
 		},
 		{
 			name:        "通配符 QueryString",
 			queryString: "*",
-			expected:    nil,
+			expected:    map[string][]string{},
 		},
 		{
 			name:        "简单字段匹配",

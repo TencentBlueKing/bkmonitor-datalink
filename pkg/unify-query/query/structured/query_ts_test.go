@@ -1781,7 +1781,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: nil,
+			expected: map[string][]string{},
 		},
 		{
 			name: "嵌套字段名",

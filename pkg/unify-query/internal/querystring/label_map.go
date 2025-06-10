@@ -18,12 +18,12 @@ var (
 )
 
 func LabelMap(query string) (map[string][]string, error) {
-	labelMap := make(map[string][]string)
 	expr, err := Parse(query)
 	if err != nil {
 		return nil, err
 	}
 
+	labelMap := make(map[string][]string)
 	if err := parseExprToKeyValue(query, expr, labelMap); err != nil {
 		return nil, err
 	}
@@ -33,7 +33,7 @@ func LabelMap(query string) (map[string][]string, error) {
 
 func parseExprToKeyValue(query string, expr Expr, kv map[string][]string) error {
 	if expr == nil {
-		return fmt.Errorf("expression is nil for query: %s", query)
+		return nil
 	}
 
 	switch e := expr.(type) {

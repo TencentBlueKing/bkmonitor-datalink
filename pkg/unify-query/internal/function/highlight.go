@@ -31,8 +31,8 @@ func NewHighLightFactory(labelMap map[string][]string, maxAnalyzedOffset int) *H
 	}
 }
 
-func (h *HighLightFactory) Process(data map[string]any) (newData map[string]any) {
-	newData = make(map[string]any)
+func (h *HighLightFactory) Process(data map[string]any) map[string]any {
+	newData := make(map[string]any)
 
 	for key, value := range data {
 		// 获取全字段匹配，字段名为空

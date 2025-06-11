@@ -1310,8 +1310,8 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 	assert.NoError(t, err, "composeData should not return an error")
 
 	expectedForOthers := map[string]map[string]interface{}{
-		tableID1: {"filters": []map[string]interface{}{{"dimensions.bk_biz_id": "1003"}}},
-		"1001_bkmonitor_time_series_50011.__default__": {"filters": []map[string]interface{}{{"dimensions.bk_biz_id": "1003"}}},
+		tableID1: {"filters": []map[string]interface{}{{"appid": "1003"}}},
+		"1001_bkmonitor_time_series_50011.__default__": {"filters": []map[string]interface{}{{"bk_biz_id": "1003"}}},
 	}
 	assert.Equal(t, expectedForOthers, valuesForOthers, "Unexpected result for space 1003")
 }
@@ -1702,9 +1702,10 @@ func TestBuildFiltersByUsage(t *testing.T) {
 		{
 			name: "UsageComposeData",
 			ctx: FilterBuildContext{
-				SpaceType: "bkcc",
-				SpaceId:   "1001",
-				TableId:   "table_1",
+				SpaceType:   "bkcc",
+				SpaceId:     "1001",
+				TableId:     "table_1",
+				FilterAlias: "bk_biz_id",
 			},
 			usage: UsageComposeData,
 			expectedResult: []map[string]interface{}{
@@ -1714,10 +1715,11 @@ func TestBuildFiltersByUsage(t *testing.T) {
 		{
 			name: "UsageComposeBcsSpaceBizTableIds",
 			ctx: FilterBuildContext{
-				SpaceType: "bkci",
-				SpaceId:   "1001",
-				TableId:   "table_1",
-				BkBizId:   "2001",
+				SpaceType:   "bkci",
+				SpaceId:     "1001",
+				TableId:     "table_1",
+				BkBizId:     "2001",
+				FilterAlias: "bk_biz_id",
 			},
 			usage: UsageComposeBcsSpaceBizTableIds,
 			expectedResult: []map[string]interface{}{
@@ -1727,10 +1729,10 @@ func TestBuildFiltersByUsage(t *testing.T) {
 		{
 			name: "UsageComposeBkciLevelTableIds",
 			ctx: FilterBuildContext{
-				SpaceType:       "bkci",
-				SpaceId:         "1001",
-				TableId:         "table_1",
-				originFilterKey: "projectId",
+				SpaceType:   "bkci",
+				SpaceId:     "1001",
+				TableId:     "table_1",
+				FilterAlias: "projectId",
 			},
 			usage: UsageComposeBkciLevelTableIds,
 			expectedResult: []map[string]interface{}{
@@ -1744,6 +1746,7 @@ func TestBuildFiltersByUsage(t *testing.T) {
 				SpaceId:        "1001",
 				TableId:        "table_1",
 				ExtraStringVal: "-1001",
+				FilterAlias:    "bk_biz_id",
 			},
 			usage: UsageComposeAllTypeTableIds,
 			expectedResult: []map[string]interface{}{

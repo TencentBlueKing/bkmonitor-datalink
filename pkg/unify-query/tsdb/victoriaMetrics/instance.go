@@ -583,6 +583,10 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 		ClusterName:     query.StorageName,
 	}
 
+	if i.forceStorageName != "" {
+		paramsQuery.ClusterName = i.forceStorageName
+	}
+
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
 		return
@@ -632,6 +636,10 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 		ClusterName:     query.StorageName,
 	}
 
+	if i.forceStorageName != "" {
+		paramsQuery.ClusterName = i.forceStorageName
+	}
+
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
 		return nil, err
@@ -674,6 +682,10 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	queryString = fmt.Sprintf(`count(%s) by (%s)`, queryString, name)
 	if query.Size > 0 {
 		queryString = fmt.Sprintf(`topk(%d, %s)`, query.Size, queryString)
+	}
+
+	if i.forceStorageName != "" {
+		query.StorageName = i.forceStorageName
 	}
 
 	paramsQueryRange := &ParamsQueryRange{
@@ -791,6 +803,10 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	if vmExpand.ClusterName != "" {
 		paramsQuery.ClusterName = vmExpand.ClusterName
+	}
+	// instance forceStorageName优先级高于 vmExpand.ClusterName
+	if i.forceStorageName != "" {
+		paramsQuery.ClusterName = i.forceStorageName
 	}
 
 	sql, err := json.Marshal(paramsQuery)

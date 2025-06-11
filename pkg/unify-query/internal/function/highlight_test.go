@@ -258,6 +258,17 @@ func TestHighLightFactory_processField(t *testing.T) {
 			want: []string{"<mark>123</mark>"},
 		},
 		{
+			name: "muti contains string type with highlight",
+			fields: fields{
+				maxAnalyzedOffset: 100,
+			},
+			args: args{
+				fieldValue: "hello world",
+				keywords:   []string{"he", "hello", "hello", "hel"},
+			},
+			want: []string{"<mark>hello</mark> world"},
+		},
+		{
 			name: "unsupported type returns nil",
 			args: args{
 				fieldValue: true,

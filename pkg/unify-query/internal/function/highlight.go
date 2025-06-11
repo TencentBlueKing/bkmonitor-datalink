@@ -11,6 +11,7 @@ package function
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -71,7 +72,27 @@ func (h *HighLightFactory) highlightString(text string, keywords []string) strin
 
 	analyzablePart, remainingPart := h.splitTextForAnalysis(text)
 
+	// 移除 keywords 中存在叠加的数据，例如: ["a", "abc"]，则只保留 ["abc"]
+	// 排序后，长的关键词在前面
+	sort.SliceStable(keywords, func(i, j int) bool {
+		return len(keywords[i]) > len(keywords[j])
+	})
+	var newKeywords []string
 	for _, keyword := range keywords {
+		isContains := func() bool {
+			for _, newKeyword := range newKeywords {
+				if strings.Contains(newKeyword, keyword) {
+					return true
+				}
+			}
+			return false
+		}()
+		if !isContains {
+			newKeywords = append(newKeywords, keyword)
+		}
+	}
+
+	for _, keyword := range newKeywords {
 		analyzablePart = strings.ReplaceAll(analyzablePart, keyword, fmt.Sprintf("<mark>%s</mark>", keyword))
 	}
 

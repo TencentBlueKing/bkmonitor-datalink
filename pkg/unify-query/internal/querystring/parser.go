@@ -86,12 +86,12 @@ func ParseWithFieldAlias(query string, fieldAlias map[string]string) (Expr, erro
 }
 
 func doParse(lex *lexerWrapper) {
-	defer func() {
-		r := recover()
-		if r != nil {
-			lex.errs = append(lex.errs, fmt.Sprintf("parse error: %v", r))
-		}
-	}()
+	//defer func() {
+	//	r := recover()
+	//	if r != nil {
+	//		lex.errs = append(lex.errs, fmt.Sprintf("parse error: %v", r))
+	//	}
+	//}()
 
 	yyParse(lex)
 }

@@ -304,6 +304,36 @@ func TestParser(t *testing.T) {
 				},
 			},
 		},
+		"start without tCOLON": {
+			q: "a > 100",
+			e: &NumberRangeExpr{
+				Field: "a",
+				Start: pointer("100"),
+			},
+		},
+		"end without tCOLON": {
+			q: "a < 100",
+			e: &NumberRangeExpr{
+				Field: "a",
+				End:   pointer("100"),
+			},
+		},
+		"start and eq without tCOLON": {
+			q: "a >= 100",
+			e: &NumberRangeExpr{
+				Field:        "a",
+				Start:        pointer("100"),
+				IncludeStart: true,
+			},
+		},
+		"end and eq without tCOLON": {
+			q: "a <= 100",
+			e: &NumberRangeExpr{
+				Field:      "a",
+				End:        pointer("100"),
+				IncludeEnd: true,
+			},
+		},
 		"start": {
 			q: "a: >100",
 			e: &NumberRangeExpr{

@@ -153,6 +153,34 @@ tSTRING tCOLON tPHRASE {
 	$$ = q
 }
 |
+tSTRING tLESS posOrNegNumber {
+	val := $3
+	q := NewNumberRangeExpr(nil, &val, false, false)
+	q.SetField($1)
+	$$ = q
+}
+|
+tSTRING tGREATER posOrNegNumber {
+	val := $3
+	q := NewNumberRangeExpr(&val, nil, false, false)
+	q.SetField($1)
+	$$ = q
+}
+|
+tSTRING tLESS tEQUAL posOrNegNumber {
+	val := $4
+	q := NewNumberRangeExpr(nil, &val, false, true)
+	q.SetField($1)
+	$$ = q
+}
+|
+tSTRING tGREATER tEQUAL posOrNegNumber {
+	val := $4
+	q := NewNumberRangeExpr(&val, nil, true, false)
+	q.SetField($1)
+	$$ = q
+}
+|
 tSTRING tCOLON tGREATER posOrNegNumber {
 	val := $4
 	q := NewNumberRangeExpr(&val, nil, false, false)

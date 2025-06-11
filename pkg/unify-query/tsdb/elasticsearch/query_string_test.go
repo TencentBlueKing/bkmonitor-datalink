@@ -78,7 +78,7 @@ func TestQsToDsl(t *testing.T) {
 		{
 			q:        `demo`,
 			isPrefix: true,
-			expected: `{"query_string":{"fields":["*","__*"],"analyze_wildcard":true,"lenient":true,"query":"demo","type":"phrase_prefix"}}`,
+			expected: `{"query_string":{"fields":["*","__*"],"analyze_wildcard":true,"lenient":true,"query":"\"demo\"","type":"phrase_prefix"}}`,
 		},
 		{
 			q: ``,

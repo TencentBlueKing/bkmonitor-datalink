@@ -417,9 +417,10 @@ func (q *Query) LabelMap() (map[string][]string, error) {
 	labelCheck := make(map[string]struct{})
 
 	addLabel := func(key, value string) {
-		if key == "" || value == "" {
+		if value == "" {
 			return
 		}
+
 		checkKey := key + ":" + value
 		if _, ok := labelCheck[checkKey]; !ok {
 			labelCheck[checkKey] = struct{}{}
@@ -441,9 +442,7 @@ func (q *Query) LabelMap() (map[string][]string, error) {
 		}
 		for key, values := range qLabelMap {
 			for _, value := range values {
-				if key != "" && value != "" {
-					addLabel(key, value)
-				}
+				addLabel(key, value)
 			}
 		}
 	}

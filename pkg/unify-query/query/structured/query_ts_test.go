@@ -1773,6 +1773,20 @@ func TestQueryTs_LabelMap(t *testing.T) {
 			expected: map[string][]string{},
 		},
 		{
+			name: "全字段匹配",
+			queryTs: &QueryTs{
+				QueryList: []*Query{
+					{
+						QueryString: "test",
+						Conditions:  Conditions{},
+					},
+				},
+			},
+			expected: map[string][]string{
+				"": {"test"},
+			},
+		},
+		{
 			name: "通配符 QueryString",
 			queryTs: &QueryTs{
 				QueryList: []*Query{

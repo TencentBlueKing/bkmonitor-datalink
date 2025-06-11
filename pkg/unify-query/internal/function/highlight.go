@@ -33,15 +33,14 @@ func NewHighLightFactory(labelMap map[string][]string, maxAnalyzedOffset int) *H
 func (h *HighLightFactory) Process(data map[string]any) (newData map[string]any) {
 	newData = make(map[string]any)
 
-	for k, keywords := range h.labelMap {
-		if keywords == nil {
-			continue
-		}
+	for key, value := range data {
+		// 获取全字段匹配，字段名为空
+		keywords := append([]string{}, h.labelMap[""]...)
+		// 获取使用字段查询的值
+		keywords = append(keywords, h.labelMap[key]...)
 
-		if fieldValue, exists := data[k]; exists {
-			if highlightedValue := h.processField(fieldValue, keywords); highlightedValue != nil {
-				newData[k] = highlightedValue
-			}
+		if highlightedValue := h.processField(value, keywords); highlightedValue != nil {
+			newData[key] = highlightedValue
 		}
 	}
 

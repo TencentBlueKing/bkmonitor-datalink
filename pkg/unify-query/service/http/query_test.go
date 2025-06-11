@@ -947,6 +947,12 @@ func TestQueryRawWithInstance(t *testing.T) {
 		// array highlight test
 		`{"_source":{"includes":["tags","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}},{"match_phrase":{"tags":{"query":"important"}}}]}},"size":5}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"cT5KjpEBbwEm76LbeH3I","_score":0.0,"_source":{"tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}}]}}`,
 
+		// array highlight with match all
+		`{"_source":{"includes":["tags","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"Smi\""}}]}},"size":5}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"cT5KjpEBbwEm76LbeH3I","_score":0.0,"_source":{"tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}}]}}`,
+
+		// array highlight with wildcard all
+		`{"_source":{"includes":["tags","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"*Smi*"}}]}},"size":5}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"cT5KjpEBbwEm76LbeH3I","_score":0.0,"_source":{"tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}}]}}`,
+
 		`{"_source":{"includes":["__ext.io_kubernetes_pod","dtEventTimeStamp"]},"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":20,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":468,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"e058129ae18bff87c95e83f24584e654","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c124dae69af9b86a7128ee4281820158","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c7f73abf7e865a4b4d7fc608387d01cf","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"39c3ec662881e44bf26d2a6bfc0e35c3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"58e03ce0b9754bf0657d49a5513adcb5","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"43a36f412886bf30b0746562513638d3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"218ceafd04f89b39cda7954e51f4a48a","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8d9abe9b782fe3a1272c93f0af6b39e1","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"0826407be7f04f19086774ed68eac8dd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"d56b4120194eb37f53410780da777d43","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}}]}}`,
 		`{"_source":{"includes":["__ext.container_id","dtEventTimeStamp"]},"from":1,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":1}`:                                                      `{"took":17,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"4f3a5e9c167097c9658e88b2f32364b2","_score":0.0,"_source":{"dtEventTimeStamp":"1723594209000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}}]}}`,
 		`{"_source":{"includes":["__ext.container_id","dtEventTimeStamp"]},"from":1,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":1723594000123,"include_lower":true,"include_upper":true,"to":1723595000234}}}}},"size":10}`:                                               `{"took":468,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"e058129ae18bff87c95e83f24584e654","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c124dae69af9b86a7128ee4281820158","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c7f73abf7e865a4b4d7fc608387d01cf","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"39c3ec662881e44bf26d2a6bfc0e35c3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"58e03ce0b9754bf0657d49a5513adcb5","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"43a36f412886bf30b0746562513638d3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"218ceafd04f89b39cda7954e51f4a48a","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8d9abe9b782fe3a1272c93f0af6b39e1","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"0826407be7f04f19086774ed68eac8dd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"d56b4120194eb37f53410780da777d43","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}}]}}`,
@@ -1400,6 +1406,66 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    1,
 			expected: `[{"__data_label":"es","__doc_id":"cT5KjpEBbwEm76LbeH3I","__highlight":{"user.first":["<mark>John</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}]`,
+		},
+		"array highlight with match all": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(influxdb.ResultTableEs),
+						KeepColumns: []string{"tags", "user.first", "user.last"},
+						QueryString: "Smi",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "user.first",
+									Value:         []string{"John"},
+									Operator:      structured.ConditionEqual,
+								},
+							},
+						},
+					},
+				},
+				Limit: 5,
+				Start: start,
+				End:   end,
+				HighLight: &metadata.HighLight{
+					Enable: true,
+				},
+			},
+			total:    1,
+			expected: `[{"__data_label":"es","__doc_id":"cT5KjpEBbwEm76LbeH3I","__highlight":{"user.first":["<mark>John</mark>"],"user.last":["<mark>Smi</mark>th"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}]`,
+		},
+		"array highlight with wildcard all": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(influxdb.ResultTableEs),
+						KeepColumns: []string{"tags", "user.first", "user.last"},
+						QueryString: "*Smi*",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "user.first",
+									Value:         []string{"John"},
+									Operator:      structured.ConditionEqual,
+								},
+							},
+						},
+					},
+				},
+				Limit: 5,
+				Start: start,
+				End:   end,
+				HighLight: &metadata.HighLight{
+					Enable: true,
+				},
+			},
+			total:    1,
+			expected: `[{"__data_label":"es","__doc_id":"cT5KjpEBbwEm76LbeH3I","__highlight":{"user.first":["<mark>John</mark>"],"user.last":["<mark>Smi</mark>th"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}]`,
 		},
 	}
 

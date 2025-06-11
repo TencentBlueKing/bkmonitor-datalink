@@ -412,3 +412,10 @@ func (os Orders) SortSliceList(list []map[string]any) {
 		return true
 	})
 }
+
+func (fa FieldAlias) Alias(f string) string {
+	if v, ok := fa[f]; ok {
+		return v
+	}
+	return f
+}

@@ -17,6 +17,7 @@ import (
 
 	qs "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 type QueryString struct {
@@ -51,10 +52,10 @@ func (s *QueryString) queryString(str string) elastic.Query {
 	return q
 }
 
-func (s *QueryString) ToDSL() (elastic.Query, error) {
+func (s *QueryString) ToDSL(ctx context.Context, fieldAlias metadata.FieldAlias) (elastic.Query, error) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf(context.TODO(), "querystring(%s) todsl panic: %v", s.q, r)
+			log.Errorf(ctx, "querystring(%s) todsl panic: %v", s.q, r)
 		}
 	}()
 
@@ -64,18 +65,15 @@ func (s *QueryString) ToDSL() (elastic.Query, error) {
 
 	// 解析失败，或者没有 nested 字段，则使用透传的方式查询
 	q := s.queryString(s.q)
-	ast, err := qs.Parse(s.q)
+	ast, err := qs.ParseWithFieldAlias(s.q, fieldAlias)
 	if err != nil {
+		log.Errorf(ctx, "querystring(%s) parse error: %v", s.q, err)
 		return q, nil
 	}
 
 	conditionQuery, err := s.walk(ast)
 	if err != nil {
-		return q, nil
-	}
-
-	// 如果 nestedFields 不存在则直接使用 queryString 透传
-	if len(s.nestedFields) == 0 {
+		log.Errorf(ctx, "querystring(%s) walk error: %v", s.q, err)
 		return q, nil
 	}
 
@@ -129,10 +127,18 @@ func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 		leftQ = elastic.NewBoolQuery().Must(leftQ, rightQ)
 	case *qs.MatchExpr:
 		if c.Field != "" {
-			leftQ = elastic.NewMatchPhraseQuery(c.Field, c.Value)
+			if s.isPrefix {
+				leftQ = elastic.NewMatchPhrasePrefixQuery(c.Field, c.Value)
+			} else {
+				leftQ = elastic.NewMatchPhraseQuery(c.Field, c.Value)
+			}
 			s.check(c.Field)
 		} else {
-			leftQ = s.queryString(fmt.Sprintf(`"%s"`, c.Value))
+			val := c.Value
+			if !s.isPrefix {
+				val = fmt.Sprintf(`"%s"`, val)
+			}
+			leftQ = s.queryString(val)
 		}
 	case *qs.NumberRangeExpr:
 		q := elastic.NewRangeQuery(c.Field)

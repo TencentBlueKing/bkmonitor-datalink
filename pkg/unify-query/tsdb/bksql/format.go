@@ -99,7 +99,8 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 
 	f.expr = sql_expr.NewSQLExpr(query.Measurement).
 		WithInternalFields(f.timeField, query.Field).
-		WithEncode(metadata.GetFieldFormat(ctx).EncodeFunc())
+		WithEncode(metadata.GetFieldFormat(ctx).EncodeFunc()).
+		WithFieldAlias(query.FieldAlias)
 
 	return f
 }

@@ -47,6 +47,7 @@ func setDefaultConfig() {
 	// vm 支持 influxdb 的查询配置
 	viper.SetDefault(VmInfluxCompatibleConfigPath, true)
 	viper.SetDefault(VmUseNativeOrConfigPath, true)
+	viper.SetDefault(VmForceQueryStorageNameConfigPath, "")
 
 	viper.SetDefault(BkSqlTimeoutConfigPath, "30s")
 	viper.SetDefault(BkSqlLimitConfigPath, 2e6)
@@ -81,6 +82,7 @@ func initConfig() {
 
 	VmInfluxCompatible = viper.GetBool(VmInfluxCompatibleConfigPath)
 	VmUseNativeOr = viper.GetBool(VmUseNativeOrConfigPath)
+	VmForceQueryStorageName = viper.GetString(VmForceQueryStorageNameConfigPath)
 
 	// bksql 配置
 	BkSqlTimeout = viper.GetDuration(BkSqlTimeoutConfigPath)

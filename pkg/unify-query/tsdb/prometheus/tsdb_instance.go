@@ -143,6 +143,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			InfluxCompatible: tsDBService.VmInfluxCompatible,
 			UseNativeOr:      tsDBService.VmUseNativeOr,
 			Curl:             curlGet,
+			ForceStorageName: tsDBService.VmForceQueryStorageName,
 		})
 	default:
 		err = fmt.Errorf("storage type is error %+v", qry)

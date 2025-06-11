@@ -62,6 +62,7 @@ type Options struct {
 
 	InfluxCompatible bool
 	UseNativeOr      bool
+	ForceStorageName string
 }
 
 // Instance vm 查询实例
@@ -78,6 +79,8 @@ type Instance struct {
 
 	timeout time.Duration
 	curl    curl.Curl
+
+	forceStorageName string
 }
 
 var _ tsdb.Instance = (*Instance)(nil)
@@ -95,6 +98,7 @@ func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 		useNativeOr:      opt.UseNativeOr,
 		timeout:          opt.Timeout,
 		curl:             opt.Curl,
+		forceStorageName: opt.ForceStorageName,
 	}
 	return instance, nil
 }
@@ -525,6 +529,10 @@ func (i *Instance) DirectQuery(
 
 	if vmExpand.ClusterName != "" {
 		paramsQuery.ClusterName = vmExpand.ClusterName
+	}
+
+	if i.forceStorageName != "" {
+		paramsQuery.ClusterName = i.forceStorageName
 	}
 
 	sql, err := json.Marshal(paramsQuery)

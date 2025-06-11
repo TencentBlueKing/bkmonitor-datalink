@@ -112,14 +112,19 @@ func IntPoint(d int) *int {
 }
 
 // QueryTimestamp 将开始时间和结束时间的时间戳从 string 转换为 time.Time，根据长度判定单位
-func QueryTimestamp(s, e string) (format string, start time.Time, end time.Time, err error) {
+func QueryTimestamp(startTime, endTime string) (format string, start time.Time, end time.Time, err error) {
 	var (
 		startUnit string
 		endUnit   string
 	)
 
-	if s != "" {
-		startUnit, start, err = ParseTimestamp(s)
+	// 兼容 instant 模式下，只有结束时间的情况
+	if startTime == "" && endTime != "" {
+		startTime = endTime
+	}
+
+	if startTime != "" {
+		startUnit, start, err = ParseTimestamp(startTime)
 		if err != nil {
 			err = fmt.Errorf("invalid start time: %v", err)
 			return
@@ -130,8 +135,8 @@ func QueryTimestamp(s, e string) (format string, start time.Time, end time.Time,
 		startUnit = Second
 	}
 
-	if e != "" {
-		endUnit, end, err = ParseTimestamp(e)
+	if endTime != "" {
+		endUnit, end, err = ParseTimestamp(endTime)
 		if err != nil {
 			err = fmt.Errorf("invalid end time: %v", err)
 			return
@@ -154,6 +159,17 @@ func QueryTimestamp(s, e string) (format string, start time.Time, end time.Time,
 // MsIntMergeNs 将毫秒时间和纳秒时间戳合并为新的时间
 func MsIntMergeNs(ms int64, ns time.Time) time.Time {
 	return time.Unix(0, (ms-ns.UnixMilli())*1e6+ns.UnixNano())
+}
+
+// IsAlignTime 判断该聚合是否需要进行对齐
+func IsAlignTime(t time.Duration) bool {
+	if t == 0 {
+		return false
+	}
+
+	// 只有按天的聚合才需要对齐时间
+	day := 24 * time.Hour
+	return t.Milliseconds()%day.Milliseconds() == 0
 }
 
 // TimeOffset 根据 timezone 偏移对齐

@@ -36,6 +36,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -44,27 +45,15 @@ const (
 	businessCacheKey = "cmdb.business"
 )
 
-type AlarmBusinessInfo struct {
-	BkBizId         int      `json:"bk_biz_id"`
-	BkBizName       string   `json:"bk_biz_name"`
-	BkBizDeveloper  []string `json:"bk_biz_developer"`
-	BkBizProductor  []string `json:"bk_biz_productor"`
-	BkBizTester     []string `json:"bk_biz_tester"`
-	BkBizMaintainer []string `json:"bk_biz_maintainer"`
-	Operator        []string `json:"operator"`
-	TimeZone        string   `json:"time_zone"`
-	Language        string   `json:"language"`
-	LifeCycle       string   `json:"life_cycle"`
-}
-
 // BusinessCacheManager 业务缓存管理器
+// 业务缓存不分租户进行存储
 type BusinessCacheManager struct {
 	*BaseCacheManager
 }
 
 // NewBusinessCacheManager 创建业务缓存管理器
-func NewBusinessCacheManager(prefix string, opt *redis.Options, concurrentLimit int) (*BusinessCacheManager, error) {
-	manager, err := NewBaseCacheManager(prefix, opt, concurrentLimit)
+func NewBusinessCacheManager(bkTenantId string, prefix string, opt *redis.Options, concurrentLimit int) (*BusinessCacheManager, error) {
+	manager, err := NewBaseCacheManager(bkTenantId, prefix, opt, concurrentLimit)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create base cache Manager")
 	}
@@ -76,8 +65,9 @@ func NewBusinessCacheManager(prefix string, opt *redis.Options, concurrentLimit 
 }
 
 // getBusinessList 获取业务列表
-func getBusinessList(ctx context.Context) ([]map[string]interface{}, error) {
-	cmdbApi := getCmdbApi()
+func getBusinessList(ctx context.Context, bkTenantId string) ([]map[string]interface{}, error) {
+	bizList := make([]map[string]interface{}, 0)
+	cmdbApi := getCmdbApi(bkTenantId)
 	// 并发请求获取业务列表
 	result, err := api.BatchApiRequest(
 		cmdbApiPageSize,
@@ -103,8 +93,18 @@ func getBusinessList(ctx context.Context) ([]map[string]interface{}, error) {
 		return nil, err
 	}
 
-	// 提取业务信息
-	bizList := make([]map[string]interface{}, 0)
+	// 获取业务对象字段说明，并提取用户类型字段
+	bizAttrs, err := getBusinessAttribute(ctx, bkTenantId)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get business attribute, tenantId: %s", bkTenantId)
+	}
+	userAttrs := make([]string, 0)
+	for _, attr := range bizAttrs {
+		if attr.BkPropertyType == "objuser" {
+			userAttrs = append(userAttrs, attr.BkPropertyId)
+		}
+	}
+
 	for _, item := range result {
 		bizResp := item.(map[string]interface{})
 		bizData := bizResp["data"].(map[string]interface{})
@@ -112,6 +112,23 @@ func getBusinessList(ctx context.Context) ([]map[string]interface{}, error) {
 
 		for _, info := range bizInfo {
 			biz := info.(map[string]interface{})
+			biz["bk_tenant_id"] = bkTenantId
+
+			// 处理用户类型字段
+			for _, attr := range userAttrs {
+				userStr, ok := biz[attr].(string)
+				if !ok {
+					continue
+				}
+
+				// 转换为数组
+				if userStr == "" {
+					biz[attr] = []string{}
+				} else {
+					biz[attr] = strings.Split(userStr, ",")
+				}
+			}
+
 			bizList = append(bizList, biz)
 		}
 	}
@@ -120,8 +137,8 @@ func getBusinessList(ctx context.Context) ([]map[string]interface{}, error) {
 }
 
 // getBusinessAttribute 获取业务对象字段说明
-func getBusinessAttribute(ctx context.Context) ([]cmdb.SearchObjectAttributeData, error) {
-	cmdbApi := getCmdbApi()
+func getBusinessAttribute(ctx context.Context, tenantId string) ([]cmdb.SearchObjectAttributeData, error) {
+	cmdbApi := getCmdbApi(tenantId)
 
 	// 获取业务对象字段说明
 	var attrResult cmdb.SearchObjectAttributeResp
@@ -157,63 +174,55 @@ func (m *BusinessCacheManager) useBiz() bool {
 
 // RefreshGlobal 刷新全局缓存
 func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
+	// 业务缓存不分租户进行存储，只有系统租户需要刷新缓存
+	// 如果租户不是系统租户，则不刷新缓存
+	if m.GetBkTenantId() != tenant.DefaultTenantId {
+		return nil
+	}
+
 	logger.Infof("start refresh business cache")
 	defer logger.Infof("end refresh business cache")
 
 	// 获取业务列表
-	bizList, err := getBusinessList(ctx)
-	if err != nil {
-		return errors.Wrap(err, "failed to get business list")
-	}
-
-	// 获取业务对象字段说明
-	bizAttrs, err := getBusinessAttribute(ctx)
-	if err != nil {
-		return errors.Wrap(err, "failed to get business attribute")
-	}
-
-	// 业务缓存数据准备
 	bizCacheData := make(map[string]string)
-
-	// 业务信息处理
-	for _, biz := range bizList {
-		bizID := strconv.Itoa(int(biz["bk_biz_id"].(float64)))
-
-		// 处理用户类型字段
-		for _, attr := range bizAttrs {
-			// 跳过非用户类型字段
-			if attr.BkPropertyType != "objuser" {
-				continue
-			}
-
-			// 跳过不存在的字段
-			userStr, ok := biz[attr.BkPropertyId].(string)
-			if !ok {
-				continue
-			}
-
-			// 转换为数组
-			if userStr == "" {
-				biz[attr.BkPropertyId] = []string{}
-			} else {
-				biz[attr.BkPropertyId] = strings.Split(userStr, ",")
-			}
-		}
-
-		// 转换为json字符串
-		bizStr, err := json.Marshal(biz)
+	tenants, err := tenant.GetTenantList()
+	if err != nil {
+		return errors.Wrap(err, "failed to get tenant list")
+	}
+	for _, tenant := range tenants {
+		bizList, err := getBusinessList(ctx, tenant.Id)
 		if err != nil {
-			continue
+			return errors.Wrap(err, "failed to get business list")
 		}
-		bizCacheData[bizID] = string(bizStr)
+
+		// 业务信息处理
+		for _, biz := range bizList {
+			bizID := strconv.Itoa(int(biz["bk_biz_id"].(float64)))
+			biz["bk_tenant_id"] = tenant.Id
+
+			// 转换为json字符串
+			bizStr, err := json.Marshal(biz)
+			if err != nil {
+				continue
+			}
+			bizCacheData[bizID] = string(bizStr)
+		}
 	}
 
 	// 空间查询
 	spaces, err := getSpaceList()
+	if err != nil {
+		return errors.Wrap(err, "failed to get spaces")
+	}
 
 	// 将空间信息转换为业务信息
 	var bkBizId int
 	for _, s := range spaces {
+		// 跳过非当前租户的空间
+		if s.BkTenantId != m.GetBkTenantId() {
+			continue
+		}
+
 		// 业务ID，非bkcc空间为负数
 		if s.SpaceTypeId == "bkcc" {
 			continue
@@ -223,6 +232,7 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 
 		// 构造业务信息
 		biz := map[string]interface{}{
+			"bk_tenant_id":      s.BkTenantId,
 			"bk_biz_id":         bkBizId,
 			"bk_biz_name":       fmt.Sprintf("[%s]%s", s.SpaceId, s.SpaceName),
 			"bk_biz_developer":  []string{},

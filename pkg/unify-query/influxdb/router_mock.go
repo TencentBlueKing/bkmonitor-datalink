@@ -27,13 +27,15 @@ import (
 )
 
 const (
-	BkAppCode           = "default_app_code"
-	SpaceUid            = "bkcc__2"
-	ResultTableVM       = "result_table.vm"
-	ResultTableInfluxDB = "result_table.influxdb"
-	ResultTableEs       = "result_table.es"
-	ResultTableBkBaseEs = "result_table.bk_base_es"
-	ResultTableBkSQL    = "result_table.bk_sql"
+	BkAppCode                  = "default_app_code"
+	SpaceUid                   = "bkcc__2"
+	ResultTableVM              = "result_table.vm"
+	ResultTableInfluxDB        = "result_table.influxdb"
+	ResultTableEs              = "result_table.es"
+	ResultTableEsWithTimeFiled = "result_table.es_with_time_filed"
+	ResultTableBkBaseEs        = "result_table.bk_base_es"
+	ResultTableBkSQL           = "result_table.bk_sql"
+	ResultTableDoris           = "result_table.doris"
 )
 
 var (
@@ -123,7 +125,7 @@ func MockSpaceRouter(ctx context.Context) {
 		)
 		tsdb.SetStorage("2", &tsdb.Storage{Type: consul.InfluxDBStorageType})
 		tsdb.SetStorage("3", &tsdb.Storage{Type: consul.ElasticsearchStorageType, Address: mock.EsUrl})
-		tsdb.SetStorage("4", &tsdb.Storage{Type: consul.BkSqlStorageType, Address: mock.BkSQLUrl})
+		tsdb.SetStorage("4", &tsdb.Storage{Type: consul.BkSqlStorageType, Address: mock.BkBaseUrl})
 
 		r := GetInfluxDBRouter()
 		r.clusterInfo = ir.ClusterInfo{
@@ -177,11 +179,17 @@ func MockSpaceRouter(ctx context.Context) {
 					ResultTableEs: &ir.SpaceResultTable{
 						TableId: ResultTableEs,
 					},
+					ResultTableEsWithTimeFiled: &ir.SpaceResultTable{
+						TableId: ResultTableEsWithTimeFiled,
+					},
 					ResultTableBkSQL: &ir.SpaceResultTable{
 						TableId: ResultTableBkSQL,
 					},
 					ResultTableBkBaseEs: &ir.SpaceResultTable{
 						TableId: ResultTableBkBaseEs,
+					},
+					ResultTableDoris: &ir.SpaceResultTable{
+						TableId: ResultTableDoris,
 					},
 				},
 			},
@@ -195,6 +203,7 @@ func MockSpaceRouter(ctx context.Context) {
 					Measurement:     "kubelet_info",
 					BcsClusterID:    "BCS-K8S-00000",
 					MeasurementType: redis.BkSplitMeasurement,
+					StorageType:     consul.VictoriaMetricsStorageType,
 					DataLabel:       "kubelet_info",
 				},
 				"system.cpu_summary": &ir.ResultTableDetail{
@@ -206,6 +215,7 @@ func MockSpaceRouter(ctx context.Context) {
 					VmRt:            "",
 					Fields:          []string{"usage", "free"},
 					MeasurementType: redis.BKTraditionalMeasurement,
+					StorageType:     consul.InfluxDBStorageType,
 					DataLabel:       "cpu_summary",
 				},
 				"system.cpu_detail": &ir.ResultTableDetail{
@@ -214,6 +224,7 @@ func MockSpaceRouter(ctx context.Context) {
 					VmRt:            "100147_ieod_system_cpu_detail_raw",
 					Fields:          []string{"usage", "free"},
 					MeasurementType: redis.BKTraditionalMeasurement,
+					StorageType:     consul.InfluxDBStorageType,
 					DataLabel:       "cpu_detail",
 				},
 				"system.disk": &ir.ResultTableDetail{
@@ -222,6 +233,7 @@ func MockSpaceRouter(ctx context.Context) {
 					VmRt:            "100147_ieod_system_disk_raw",
 					Fields:          []string{"usage", "free"},
 					MeasurementType: redis.BKTraditionalMeasurement,
+					StorageType:     consul.InfluxDBStorageType,
 					DataLabel:       "disk",
 				},
 				ResultTableVM: &ir.ResultTableDetail{
@@ -231,6 +243,7 @@ func MockSpaceRouter(ctx context.Context) {
 					Fields:          vmFiedls,
 					BcsClusterID:    "BCS-K8S-00000",
 					MeasurementType: redis.BkSplitMeasurement,
+					StorageType:     consul.VictoriaMetricsStorageType,
 					DataLabel:       "vm",
 				},
 				ResultTableInfluxDB: &ir.ResultTableDetail{
@@ -243,12 +256,14 @@ func MockSpaceRouter(ctx context.Context) {
 					MeasurementType: redis.BkSplitMeasurement,
 					ClusterName:     "default",
 					DataLabel:       "influxdb",
+					StorageType:     consul.InfluxDBStorageType,
 				},
 				ResultTableEs: &ir.ResultTableDetail{
-					StorageId:  3,
-					TableId:    ResultTableEs,
-					DB:         "es_index",
-					SourceType: "bkdata",
+					StorageId:   3,
+					TableId:     ResultTableEs,
+					DB:          "es_index",
+					SourceType:  "",
+					StorageType: consul.ElasticsearchStorageType,
 					StorageClusterRecords: []ir.Record{
 						{
 							StorageID: 3,
@@ -263,15 +278,56 @@ func MockSpaceRouter(ctx context.Context) {
 					},
 					DataLabel: "es",
 				},
+				ResultTableEsWithTimeFiled: &ir.ResultTableDetail{
+					StorageId:   3,
+					TableId:     ResultTableEsWithTimeFiled,
+					DB:          "es_index",
+					SourceType:  "",
+					StorageType: consul.ElasticsearchStorageType,
+					StorageClusterRecords: []ir.Record{
+						{
+							StorageID: 3,
+							// 2019-12-02 08:00:00
+							EnableTime: 1575244800,
+						},
+						{
+							StorageID: 4,
+							// 2019-11-02 08:00:00
+							EnableTime: 1572652800,
+						},
+					},
+					DataLabel: "es",
+					Options: struct {
+						TimeField   ir.TimeField `json:"time_field"`
+						NeedAddTime bool         `json:"need_add_time"`
+					}{
+						TimeField: ir.TimeField{
+							Name: "end_time",
+							Type: "long",
+							Unit: "microsecond",
+						}, NeedAddTime: false,
+					},
+				},
 				ResultTableBkSQL: &ir.ResultTableDetail{
-					StorageId: 4,
-					TableId:   ResultTableBkSQL,
-					DataLabel: "bksql",
+					StorageId:   4,
+					TableId:     ResultTableBkSQL,
+					DataLabel:   "bksql",
+					DB:          "2_bklog_bkunify_query_doris",
+					StorageType: consul.BkSqlStorageType,
+				},
+				ResultTableDoris: &ir.ResultTableDetail{
+					StorageId:   4,
+					TableId:     ResultTableDoris,
+					DB:          "2_bklog_bkunify_query_doris",
+					Measurement: "doris",
+					DataLabel:   "bksql",
+					StorageType: consul.BkSqlStorageType,
 				},
 				ResultTableBkBaseEs: &ir.ResultTableDetail{
-					SourceType: "bkdata",
-					DB:         "es_index",
-					DataLabel:  "bkbase_es",
+					SourceType:  "bkdata",
+					DB:          "es_index",
+					DataLabel:   "bkbase_es",
+					StorageType: consul.ElasticsearchStorageType,
 				},
 			}, nil,
 			ir.DataLabelToResultTable{

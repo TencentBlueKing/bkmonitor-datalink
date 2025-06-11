@@ -104,3 +104,9 @@ func (s *Set[T]) ToArray() []T {
 	}
 	return array
 }
+
+func (s *Set[T]) Clean() {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.m = make(map[T]struct{})
+}

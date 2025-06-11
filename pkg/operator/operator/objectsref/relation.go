@@ -23,6 +23,10 @@ import (
 )
 
 const (
+	relationContainerInfoPath = "monitor.bk.tencent.com/relation/info/container/"
+)
+
+const (
 	relationNodeSystem           = "node_with_system_relation"
 	relationNodePod              = "node_with_pod_relation"
 	relationJobPod               = "job_with_pod_relation"
@@ -40,7 +44,45 @@ const (
 	relationDataSourceWithPod         = "datasource_with_pod_relation"
 	relationDataSourceWithNode        = "datasource_with_node_relation"
 	relationBkLogConfigWithDataSource = "bklogconfig_with_datasource_relation"
+
+	relationContainerInfo = "container_info_relation"
 )
+
+func (oc *ObjectsController) WriteContainerInfoRelation(w io.Writer) {
+	for _, pod := range oc.podObjs.GetAll() {
+		var customLabels []promfmt.Label
+		for k, v := range pod.Annotations {
+			if strings.HasPrefix(k, relationContainerInfoPath) {
+				name := strings.TrimPrefix(k, relationContainerInfoPath)
+				if name == "" || v == "" {
+					continue
+				}
+				customLabels = append(customLabels, promfmt.Label{
+					Name:  name,
+					Value: v,
+				})
+			}
+		}
+
+		for _, container := range pod.Containers {
+			if container.Tag == "" || container.Name == "" {
+				continue
+			}
+
+			labels := append([]promfmt.Label{
+				{Name: "pod", Value: pod.ID.Name},
+				{Name: "namespace", Value: pod.ID.Namespace},
+				{Name: "container", Value: container.Name},
+				{Name: "version", Value: container.Tag},
+			}, customLabels...)
+
+			promfmt.FmtBytes(w, promfmt.Metric{
+				Name:   relationContainerInfo,
+				Labels: labels,
+			})
+		}
+	}
+}
 
 func (oc *ObjectsController) WriteNodeRelations(w io.Writer) {
 	for node, ip := range oc.nodeObjs.Addrs() {

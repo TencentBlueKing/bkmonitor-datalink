@@ -12,6 +12,7 @@ package elasticsearch
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,24 +28,21 @@ func TestQsToDsl(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	for i, c := range []struct {
 		q        string
+		isPrefix bool
 		expected string
 		err      error
 	}{
 		{
 			q:        `log: "ERROR MSG"`,
-			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"log: \"ERROR MSG\""}}`,
+			expected: `{"match_phrase":{"log":{"query":"ERROR MSG"}}}`,
 		},
 		{
 			q:        `quick brown fox`,
-			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"quick brown fox"}}`,
+			expected: `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"quick\""}},{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"brown\""}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"fox\""}}]}}]}}`,
 		},
 		{
 			q:        `word.key: qu?ck`,
-			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"word.key: qu?ck"}}`,
-		},
-		{
-			q:        "\"message queue conflict\"",
-			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"\"message queue conflict\""}}`,
+			expected: `{"wildcard":{"word.key":{"value":"qu?ck"}}}`,
 		},
 		{
 			q:        "\"message queue conflict\"",
@@ -52,14 +50,35 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        `nested.key: test AND demo`,
-			expected: `{"nested":{"path":"nested.key","query":{"bool":{"must":[{"match_phrase":{"nested.key":{"query":"test"}}},{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"\"demo\""}}]}}}}`,
+			expected: `{"nested":{"path":"nested","query":{"bool":{"must":[{"match_phrase":{"nested.key":{"query":"test"}}},{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"\"demo\""}}]}}}}`,
 		},
 		{
 			q:        `sync_spaces AND -keyword AND -BKLOGAPI`,
-			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"sync_spaces AND -keyword AND -BKLOGAPI"}}`,
+			expected: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"sync_spaces\""}},{"bool":{"must":[{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"keyword\""}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"BKLOGAPI\""}}}}]}}]}}`,
 		},
 		{
 			q: `*`,
+		},
+		{
+			q:        `*`,
+			isPrefix: true,
+		},
+		{
+			q:        `demo*`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"demo*"}}`,
+		},
+		{
+			q:        `demo`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"demo\""}}`,
+		},
+		{
+			q:        `"demo"`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"demo\""}}`,
+		},
+		{
+			q:        `demo`,
+			isPrefix: true,
+			expected: `{"query_string":{"fields":["*","__*"],"analyze_wildcard":true,"lenient":true,"query":"demo","type":"phrase_prefix"}}`,
 		},
 		{
 			q: ``,
@@ -68,23 +87,52 @@ func TestQsToDsl(t *testing.T) {
 			q:        "ms: \u003e500 AND \"/fs-server\" AND NOT \"heartbeat\"",
 			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"ms: \u003e500 AND \"/fs-server\" AND NOT \"heartbeat\""}}`,
 		},
+		{
+			q:        `events.attributes.message.detail: "*66036*"`,
+			expected: `{"nested":{"path":"events","query":{"match_phrase":{"events.attributes.message.detail":{"query":"*66036*"}}}}}`,
+		},
+		// 测试别名
+		{
+			q:        `event_detail: "*66036*"`,
+			expected: `{"nested":{"path":"events","query":{"match_phrase":{"events.attributes.message.detail":{"query":"*66036*"}}}}}`,
+		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			qs := NewQueryString(c.q, func(s string) string {
-				if s == "nested.key" {
-					return s
+			qs := NewQueryString(c.q, c.isPrefix, func(s string) string {
+				mapping := map[string]string{
+					"nested": Nested,
+					"events": Nested,
 				}
+
+				lbs := strings.Split(s, ESStep)
+				for i := len(lbs) - 1; i >= 0; i-- {
+					checkKey := strings.Join(lbs[0:i], ESStep)
+					if v, ok := mapping[checkKey]; ok {
+						if v == Nested {
+							return checkKey
+						}
+					}
+				}
+
 				return ""
 			})
-			query, err := qs.Parser()
+			query, err := qs.ToDSL(ctx, metadata.FieldAlias{
+				"event_detail": "events.attributes.message.detail",
+			})
 			if err == nil {
 				if query != nil {
-					body, _ := query.Source()
-					bodyJson, _ := json.Marshal(body)
-					bodyString := string(bodyJson)
-					assert.JSONEq(t, c.expected, bodyString)
+					body, err := query.Source()
+					assert.Nil(t, err)
+
+					if body != nil {
+						bodyJson, _ := json.Marshal(body)
+						bodyString := string(bodyJson)
+						assert.JSONEq(t, c.expected, bodyString)
+						return
+					}
 				}
+				assert.Empty(t, c.expected)
 			} else {
 				assert.Equal(t, c.err, err)
 			}

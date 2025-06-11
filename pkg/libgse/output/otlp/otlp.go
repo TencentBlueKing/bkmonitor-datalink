@@ -77,10 +77,10 @@ func (c *Output) Close() error {
 	return c.exporter.Shutdown(context.Background())
 }
 
-func NewExporter(GrpcHost string) (*otlptrace.Exporter, error) {
+func NewExporter(grpcHost string) (*otlptrace.Exporter, error) {
 	opts := []otlptracegrpc.Option{
 		otlptracegrpc.WithInsecure(),
-		otlptracegrpc.WithEndpoint(GrpcHost),
+		otlptracegrpc.WithEndpoint(grpcHost),
 		otlptracegrpc.WithReconnectionPeriod(50 * time.Millisecond),
 	}
 	client := otlptracegrpc.NewClient(opts...)

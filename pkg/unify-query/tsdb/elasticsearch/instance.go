@@ -183,6 +183,10 @@ func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []stri
 		return nil, err
 	}
 	mappingMap, err := client.GetMapping().Index(aliases...).Type("").Do(ctx)
+	if err != nil {
+		log.Warnf(ctx, "get mapping error: %s", err.Error())
+		return nil, err
+	}
 
 	indexes := make([]string, 0, len(mappingMap))
 	for index := range mappingMap {
@@ -230,8 +234,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
-		qs := NewQueryString(qb.QueryString, fact.NestedField)
-		q, qsErr := qs.Parser()
+		qs := NewQueryString(qb.QueryString, qb.IsPrefix, fact.NestedField)
+		q, qsErr := qs.ToDSL(ctx, qb.FieldAlias)
 		if qsErr != nil {
 			return nil, qsErr
 		}
@@ -271,8 +275,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 	}
 
-	if qb.HighLight != nil && qb.HighLight.Enable {
-		source.Highlight(fact.HighLight(qb.QueryString, qb.HighLight.MaxAnalyzedOffset))
+	if qb.Collapse != nil && qb.Collapse.Field != "" {
+		source.Collapse(elastic.NewCollapseBuilder(qb.Collapse.Field))
 	}
 
 	if source == nil {
@@ -367,8 +371,17 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		err = fmt.Errorf("es query %v error: %s", qo.indexes, res.Error.Reason)
 	}
 
+	if res.Hits != nil {
+		span.Set("total_hits", res.Hits.TotalHits)
+		span.Set("hits_length", len(res.Hits.Hits))
+	}
+	if res.Aggregations != nil {
+		span.Set("aggregations_length", len(res.Aggregations))
+	}
+
 	queryCost := time.Since(startAnalyze)
 	span.Set("query-cost", queryCost.String())
+
 	metric.TsDBRequestSecond(
 		ctx, queryCost, consul.ElasticsearchStorageType, qo.conn.Address,
 	)
@@ -403,6 +416,8 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
+
+	span.Set("time-series-length", len(qr.Timeseries))
 
 	return remote.FromQueryResult(false, qr)
 }
@@ -585,10 +600,6 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 							fact.data[FieldTime] = timeValue
 						}
 
-						if len(d.Highlight) > 0 {
-							fact.data[KeyHighLight] = d.Highlight
-						}
-
 						if idx == len(sr.Hits.Hits)-1 && d.Sort != nil {
 							option = &metadata.ResultTableOption{
 								SearchAfter: d.Sort,
@@ -648,7 +659,7 @@ func (i *Instance) QuerySeriesSet(
 		err error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-reference")
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-series-set")
 	defer span.End(&err)
 
 	if len(query.Aggregates) == 0 {
@@ -667,7 +678,7 @@ func (i *Instance) QuerySeriesSet(
 	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
 
 	user := metadata.GetUser(ctx)
-	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-space-uid", user.SpaceUID)
 	span.Set("query-source", user.Source)
 	span.Set("query-username", user.Name)
 	span.Set("query-connects", i.connects.String())
@@ -717,10 +728,10 @@ func (i *Instance) QuerySeriesSet(
 					conn:    conn,
 				}
 
-				mappings, err1 := i.getMappings(ctx, qo.conn, qo.indexes)
+				mappings, errMapping := i.getMappings(ctx, qo.conn, qo.indexes)
 				// index 不存在，mappings 获取异常直接返回空
 				if len(mappings) == 0 {
-					log.Warnf(ctx, "index is empty with %v", qo.indexes)
+					log.Warnf(ctx, "index is empty with %v with %s error %v", qo.indexes, qo.conn.String(), errMapping)
 					return
 				}
 
@@ -740,7 +751,7 @@ func (i *Instance) QuerySeriesSet(
 					WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
 					WithMappings(mappings...).
 					WithOrders(query.Orders).
-					WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
+					WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 
 				if len(query.Aggregates) == 0 {
 					setCh <- storage.ErrSeriesSet(fmt.Errorf("aggregates is empty"))

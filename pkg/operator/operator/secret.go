@@ -177,6 +177,30 @@ func (c *Operator) createOrUpdateEventTaskSecrets() {
 	logger.Infof("create or update event secret %s", secret.Name)
 }
 
+func (c *Operator) createTimeSyncTask(nodeName string) (string, []byte, error) {
+	dataID, err := c.dw.MatchMetricDataID(define.MonitorMeta{}, true)
+	if err != nil {
+		return "", nil, err
+	}
+
+	lbs := make(map[string]string)
+	for k, v := range dataID.Spec.Labels {
+		lbs[k] = v
+	}
+	lbs["node"] = nodeName
+
+	t := target.TimeSyncTarget{
+		DataID: dataID.Spec.DataID,
+		Labels: lbs,
+	}
+	b, _ := t.YamlBytes()
+	compressed, err := gzip.Compress(b)
+	if err != nil {
+		return "", nil, err
+	}
+	return t.FileName(), compressed, nil
+}
+
 // createOrUpdateDaemonSetTaskSecrets 创建 daemonset secrets
 // damonset worker 将内部采集按照 node 划分调度到集群的节点中
 func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.ChildConfig) {
@@ -224,6 +248,16 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 			bytesTotal += len(compressed)
 			secret.Data[config.FileName] = compressed
 			logger.Debugf("daemonset secret %s add file %s", secret.Name, config.FileName)
+		}
+
+		if configs.G().TimeSync.Enabled {
+			tsFile, tsContent, err := c.createTimeSyncTask(node)
+			if err != nil {
+				logger.Errorf("failed to crate timesync task, err: %v", err)
+			} else {
+				secret.Data[tsFile] = tsContent
+				logger.Debugf("daemonset secret %s add file %s", secret.Name, tsFile)
+			}
 		}
 
 		logger.Infof("daemonset secret %s contains %d files, size=%dB", secret.Name, len(secret.Data), bytesTotal)

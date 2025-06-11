@@ -27,37 +27,94 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/user"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
 
 var DemoBusinesses = []map[string]interface{}{
 	{
+		"data": map[string]interface{}{
+			"info": []interface{}{
+				map[string]interface{}{
+					"bk_biz_id":         2.0,
+					"bk_biz_name":       "BlueKing",
+					"bk_biz_developer":  "admin",
+					"bk_biz_productor":  "admin,user1",
+					"bk_biz_tester":     "admin,user1",
+					"bk_biz_maintainer": "admin,user2",
+					"operator":          "admin",
+					"time_zone":         "Asia/Shanghai",
+					"language":          "1",
+					"life_cycle":        "2",
+					"bk_pmp_qa":         "user1,user2",
+					"bk_pmp_qa2":        "user1,user2",
+				},
+				map[string]interface{}{
+					"bk_biz_id":         3.0,
+					"bk_biz_name":       "Test",
+					"bk_biz_developer":  "user1",
+					"bk_biz_productor":  "user1",
+					"bk_biz_tester":     "user1,user2",
+					"bk_biz_maintainer": "",
+					"operator":          "user1",
+					"time_zone":         "Asia/Shanghai",
+					"language":          "1",
+					"life_cycle":        "2",
+				},
+			},
+		},
+	},
+}
+
+var DefaultTenantBusinesses = []map[string]interface{}{
+	{
+		"bk_tenant_id":      tenant.DefaultTenantId,
 		"bk_biz_id":         2.0,
 		"bk_biz_name":       "BlueKing",
-		"bk_biz_developer":  "admin",
-		"bk_biz_productor":  "admin,user1",
-		"bk_biz_tester":     "admin,user1",
-		"bk_biz_maintainer": "admin,user2",
+		"bk_biz_developer":  []string{"admin"},
+		"bk_biz_productor":  []string{"admin", "user1"},
+		"bk_biz_tester":     []string{"admin", "user1"},
+		"bk_biz_maintainer": []string{"admin", "user2"},
 		"operator":          "admin",
 		"time_zone":         "Asia/Shanghai",
 		"language":          "1",
 		"life_cycle":        "2",
-		"bk_pmp_qa":         "user1,user2",
+		"bk_pmp_qa":         []string{"user1", "user2"},
 		"bk_pmp_qa2":        "user1,user2",
 	},
 	{
+		"bk_tenant_id":      tenant.DefaultTenantId,
 		"bk_biz_id":         3.0,
 		"bk_biz_name":       "Test",
-		"bk_biz_developer":  "user1",
-		"bk_biz_productor":  "user1",
-		"bk_biz_tester":     "user1,user2",
-		"bk_biz_maintainer": "",
-		"operator":          "user1",
+		"bk_biz_developer":  []string{"user1"},
+		"bk_biz_productor":  []string{"user1"},
+		"bk_biz_tester":     []string{"user1", "user2"},
+		"bk_biz_maintainer": []string{},
+		"operator":          []string{"user1"},
+		"time_zone":         "Asia/Shanghai",
+		"language":          "1",
+		"life_cycle":        "2",
+	},
+}
+
+var Tenant1Businesses = []map[string]interface{}{
+	{
+		"bk_tenant_id":      "tenant1",
+		"bk_biz_id":         4.0,
+		"bk_biz_name":       "Test2",
+		"bk_biz_developer":  []string{"user1"},
+		"bk_biz_productor":  []string{"user1"},
+		"bk_biz_tester":     []string{"user1", "user2"},
+		"bk_biz_maintainer": []string{},
+		"operator":          []string{"user1"},
 		"time_zone":         "Asia/Shanghai",
 		"language":          "1",
 		"life_cycle":        "2",
@@ -127,6 +184,7 @@ var DemoSpaces = []space.Space{
 		TimeZone:    "Asia/Shanghai",
 		Language:    "zh-hans",
 		IsBcsValid:  false,
+		BkTenantId:  "system",
 	},
 	{
 		Id:          2,
@@ -138,15 +196,20 @@ var DemoSpaces = []space.Space{
 		TimeZone:    "Asia/Shanghai",
 		Language:    "zh-hans",
 		IsBcsValid:  true,
+		BkTenantId:  "system",
 	},
 }
 
 func TestBusinessCacheManager(t *testing.T) {
 	// mock相关接口调用与数据库查询
-	getBusinessListPatch := gomonkey.ApplyFunc(getBusinessList, func(ctx context.Context) ([]map[string]interface{}, error) {
-		return DemoBusinesses, nil
+	batchApiRequestPatch := gomonkey.ApplyFunc(api.BatchApiRequest, func(pageSize int, getTotalFunc func(interface{}) (int, error), getReqFunc func(page int) define.Operation, concurrency int) ([]interface{}, error) {
+		result := make([]interface{}, len(DemoBusinesses))
+		for i, v := range DemoBusinesses {
+			result[i] = v
+		}
+		return result, nil
 	})
-	defer getBusinessListPatch.Reset()
+	defer batchApiRequestPatch.Reset()
 	getBusinessAttributePatch := gomonkey.ApplyFunc(getBusinessAttribute, func(ctx context.Context) ([]cmdb.SearchObjectAttributeData, error) {
 		return BusinessAttrs, nil
 	})
@@ -166,7 +229,7 @@ func TestBusinessCacheManager(t *testing.T) {
 
 	t.Run("TestBusinessCacheManager", func(t *testing.T) {
 		// 创建业务缓存管理器
-		cacheManager, err := NewBusinessCacheManager(t.Name(), rOpts, 1)
+		cacheManager, err := NewBusinessCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return
@@ -206,6 +269,7 @@ func TestBusinessCacheManager(t *testing.T) {
 		for _, biz := range businesses {
 			_, ok := biz["operator"].([]interface{})
 			assert.Truef(t, ok, "operator type error, %v", biz["operator"])
+			assert.EqualValues(t, biz["bk_tenant_id"], tenant.DefaultTenantId)
 		}
 
 		assert.EqualValues(t, businesses["2"]["bk_pmp_qa"], []interface{}{"user1", "user2"})
@@ -226,7 +290,7 @@ func TestBusinessCacheManager(t *testing.T) {
 
 	t.Run("Event", func(t *testing.T) {
 		// 创建业务缓存管理器
-		cacheManager, err := NewBusinessCacheManager(t.Name(), rOpts, 1)
+		cacheManager, err := NewBusinessCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return
@@ -254,4 +318,71 @@ func TestBusinessCacheManager(t *testing.T) {
 
 		assert.Len(t, client.HKeys(ctx, cacheManager.GetCacheKey(businessCacheKey)).Val(), 2)
 	})
+}
+
+func TestMultiTenantBusinessCacheManager(t *testing.T) {
+	getBusinessListPatch := gomonkey.ApplyFunc(getBusinessList, func(ctx context.Context, bkTenantId string) ([]map[string]interface{}, error) {
+		if bkTenantId == tenant.DefaultTenantId {
+			return DefaultTenantBusinesses, nil
+		}
+		return Tenant1Businesses, nil
+	})
+	defer getBusinessListPatch.Reset()
+
+	getSpaceListPatch := gomonkey.ApplyFunc(getSpaceList, func() ([]space.Space, error) {
+		return DemoSpaces, nil
+	})
+	defer getSpaceListPatch.Reset()
+
+	listTenantPatch := gomonkey.ApplyFunc(tenant.GetTenantList, func() ([]user.ListTenantData, error) {
+		return []user.ListTenantData{
+			{Id: tenant.DefaultTenantId, Name: "System", Status: "normal"},
+			{Id: "tenant1", Name: "Tenant1", Status: "normal"},
+		}, nil
+	})
+	defer listTenantPatch.Reset()
+
+	rOpts := &redis.Options{
+		Mode:  "standalone",
+		Addrs: []string{testRedisAddr},
+	}
+
+	client, _ := redis.GetClient(rOpts)
+	ctx := context.Background()
+
+	cacheManager, err := NewBusinessCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 1)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	err = cacheManager.RefreshGlobal(ctx)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	result := client.HGetAll(ctx, cacheManager.GetCacheKey(businessCacheKey))
+	if result.Err() != nil {
+		t.Error(result.Err())
+		return
+	}
+
+	businesses := make(map[string]map[string]interface{})
+	for k, v := range result.Val() {
+		var business map[string]interface{}
+		err := json.Unmarshal([]byte(v), &business)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		businesses[k] = business
+	}
+
+	assert.Len(t, businesses, 4)
+	assert.EqualValues(t, businesses["2"]["bk_biz_name"], "BlueKing")
+	assert.EqualValues(t, businesses["3"]["bk_biz_name"], "Test")
+	assert.EqualValues(t, businesses["-2"]["bk_biz_name"], "[test]Test")
+	assert.EqualValues(t, businesses["4"]["bk_biz_name"], "Test2")
 }

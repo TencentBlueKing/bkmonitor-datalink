@@ -158,6 +158,8 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 }
 
 func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
+	ignoreDimensions := []string{elasticsearch.KeyAddress}
+
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
 
@@ -177,9 +179,11 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		lock      sync.Mutex
 	)
 
+	list = make([]map[string]any, 0)
+
 	// 构建查询路由列表
 	if queryTs.SpaceUid == "" {
-		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUid
+		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
 	}
 	for _, ql := range queryTs.QueryList {
 		// 时间复用
@@ -219,13 +223,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			queryTs.IsMultiFrom = false
 		}
 
-		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-		if ql.HighLight != nil {
-			if !ql.HighLight.Enable && queryTs.HighLight.Enable {
-				ql.HighLight = queryTs.HighLight
-			}
-		}
-
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
 		if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
 			ql.KeepColumns = queryTs.ResultColumns
@@ -250,14 +247,16 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	go func() {
 		defer receiveWg.Done()
 
+		var data []map[string]any
 		for d := range dataCh {
-			list = append(list, d)
+			data = append(data, d)
 		}
 
 		span.Set("query-list-num", len(queryList))
+		span.Set("result-data-num", len(data))
 
 		if len(queryList) > 1 {
-			queryTs.OrderBy.Orders().SortSliceList(list)
+			queryTs.OrderBy.Orders().SortSliceList(data)
 
 			span.Set("query-scroll", queryTs.Scroll)
 			span.Set("query-result-table", queryTs.ResultTableOptions)
@@ -266,19 +265,19 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			if queryTs.Scroll == "" && queryTs.ResultTableOptions.IsCrop() {
 				// 判定是否启用 multi from 特性
 				span.Set("query-multi-from", queryTs.IsMultiFrom)
-				span.Set("list-length", len(list))
+				span.Set("data-length", len(data))
 				span.Set("query-ts-from", queryTs.From)
 				span.Set("query-ts-limit", queryTs.Limit)
 
-				if len(list) > queryTs.Limit {
+				if len(data) > queryTs.Limit {
 					if queryTs.IsMultiFrom {
 						resultTableOptions = queryTs.ResultTableOptions
 						if resultTableOptions == nil {
 							resultTableOptions = make(metadata.ResultTableOptions)
 						}
 
-						list = list[0:queryTs.Limit]
-						for _, l := range list {
+						data = data[0:queryTs.Limit]
+						for _, l := range data {
 							tableID := l[elasticsearch.KeyTableID].(string)
 							address := l[elasticsearch.KeyAddress].(string)
 
@@ -290,11 +289,45 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 							}
 						}
 					} else {
-						list = list[queryTs.From : queryTs.From+queryTs.Limit]
+						data = data[queryTs.From : queryTs.From+queryTs.Limit]
 					}
 				}
 			}
 		}
+
+		labelMap, lbErr := queryTs.LabelMap()
+		if lbErr != nil {
+			err = lbErr
+			return
+		}
+
+		span.Set("query-label-map", labelMap)
+		span.Set("query-highlight", queryTs.HighLight)
+
+		var hlF *function.HighLightFactory
+		if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(labelMap) > 0 {
+			hlF = function.NewHighLightFactory(labelMap, queryTs.HighLight.MaxAnalyzedOffset)
+		}
+		for _, item := range data {
+			if item == nil {
+				continue
+			}
+
+			for _, ignoreDimension := range ignoreDimensions {
+				delete(item, ignoreDimension)
+			}
+
+			if hlF != nil {
+				if highlightResult := hlF.Process(item); len(highlightResult) > 0 {
+					item[function.KeyHighLight] = highlightResult
+				}
+			}
+
+			list = append(list, item)
+		}
+
+		span.Set("result-list-num", len(list))
+		span.Set("result-option", resultTableOptions)
 	}()
 
 	// 多协程查询数据
@@ -336,6 +369,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				size, options, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
 				if queryErr != nil {
 					message.WriteString(fmt.Sprintf("query %s:%s is error: %s ", qry.TableID, qry.Fields, queryErr.Error()))
+					return
 				}
 
 				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
@@ -362,11 +396,11 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	return
 }
 
-func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs) (*PromData, error) {
+func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.QueryTs) (*PromData, error) {
 	var (
 		res  any
 		err  error
-		resp = NewPromData(query.ResultColumns)
+		resp = NewPromData(queryTs.ResultColumns)
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-reference")
@@ -376,21 +410,41 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 		span.End(&err)
 	}()
 
-	qStr, _ := json.Marshal(query)
+	qStr, _ := json.Marshal(queryTs)
 	span.Set("query-ts", string(qStr))
 
-	for _, q := range query.QueryList {
-		q.IsReference = true
-		if q.TableID == "" {
+	for _, ql := range queryTs.QueryList {
+		ql.IsReference = true
+
+		// 排序复用
+		ql.OrderBy = queryTs.OrderBy
+
+		// 如果 qry.Step 不存在去外部统一的 step
+		if ql.Step == "" {
+			ql.Step = queryTs.Step
+		}
+
+		// 如果 Limit / From 没有单独指定的话，同时外部指定了的话，使用外部的
+		if ql.Limit == 0 && queryTs.Limit > 0 {
+			ql.Limit = queryTs.Limit
+		}
+		if ql.From == 0 && queryTs.From > 0 {
+			ql.From = queryTs.From
+		}
+
+		if ql.TableID == "" {
 			err = fmt.Errorf("tableID is empty")
 			return nil, err
 		}
 	}
 
-	queryRef, err := query.ToQueryReference(ctx)
-	unit, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
+	queryRef, err := queryTs.ToQueryReference(ctx)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		return nil, err
+	}
+
+	unit, startTime, endTime, err := function.QueryTimestamp(queryTs.Start, queryTs.End)
+	if err != nil {
 		return nil, err
 	}
 
@@ -399,11 +453,14 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	metadata.SetQueryReference(ctx, queryRef)
 
 	var lookBackDelta time.Duration
-	if query.LookBackDelta != "" {
-		lookBackDelta, err = time.ParseDuration(query.LookBackDelta)
+	if queryTs.LookBackDelta != "" {
+		lookBackDelta, err = time.ParseDuration(queryTs.LookBackDelta)
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		// reference 接口背后都使用了存储引擎计算，所以在不特殊指定的情况下，使用 1s 补点逻辑，防止出的数据异常
+		lookBackDelta = time.Second
 	}
 
 	instance := prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
@@ -417,19 +474,25 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	)
 
 	// 只有聚合场景需要对齐
-	if window, windowErr := query.GetMaxWindow(); windowErr == nil && window.Seconds() > 0 {
-		startTime, endTime, step, _, err = structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
+	if window, windowErr := queryTs.GetMaxWindow(); windowErr == nil && window.Hours() > 0 {
+		timezone := "UTC"
+		// 只有按天聚合的时候才启用时区对齐偏移量，否则一律使用 UTC
+		if window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
+			timezone = queryTs.Timezone
+		}
+
+		startTime, endTime, step, _, err = structured.AlignTime(startTime, endTime, queryTs.Step, timezone)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		step = structured.StepParse(query.Step)
+		step = structured.StepParse(queryTs.Step)
 	}
 
-	if query.Instant {
-		res, err = instance.DirectQuery(ctx, query.MetricMerge, startTime)
+	if queryTs.Instant {
+		res, err = instance.DirectQuery(ctx, queryTs.MetricMerge, startTime)
 	} else {
-		res, err = instance.DirectQueryRange(ctx, query.MetricMerge, startTime, endTime, step)
+		res, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, endTime, step)
 	}
 	if err != nil {
 		return nil, err
@@ -439,7 +502,7 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	seriesNum := 0
 	pointsNum := 0
 
-	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
 	switch v := res.(type) {
 	case promPromql.Matrix:
@@ -474,7 +537,7 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 }
 
 // queryTsToInstanceAndStmt query 结构体转换为 instance 以及 stmt
-func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (instance tsdb.Instance, stmt string, err error) {
+func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) (instance tsdb.Instance, stmt string, err error) {
 	var (
 		lookBackDelta time.Duration
 		promExprOpt   = &structured.PromExprOption{}
@@ -485,37 +548,53 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 		span.End(&err)
 	}()
 
-	queryString, _ := json.Marshal(query)
+	queryString, _ := json.Marshal(queryTs)
 	span.Set("query-ts", queryString)
 
 	// 限制 queryList 是否过长
 	if DefaultQueryListLimit > 0 {
-		if len(query.QueryList) > DefaultQueryListLimit {
+		if len(queryTs.QueryList) > DefaultQueryListLimit {
 			err = fmt.Errorf("the number of query lists cannot be greater than %d", DefaultQueryListLimit)
 		}
 	}
 
 	// 判断是否打开对齐
-	for _, q := range query.QueryList {
-		q.IsReference = false
-		q.AlignInfluxdbResult = AlignInfluxdbResult
+	for _, ql := range queryTs.QueryList {
+		ql.IsReference = false
+		ql.AlignInfluxdbResult = AlignInfluxdbResult
+
+		// 排序复用
+		ql.OrderBy = queryTs.OrderBy
+
+		// 如果 qry.Step 不存在去外部统一的 step
+		if ql.Step == "" {
+			ql.Step = queryTs.Step
+		}
+
+		// 如果 Limit / From 没有单独指定的话，同时外部指定了的话，使用外部的
+		if ql.Limit == 0 && queryTs.Limit > 0 {
+			ql.Limit = queryTs.Limit
+		}
+		if ql.From == 0 && queryTs.From > 0 {
+			ql.From = queryTs.From
+		}
 	}
 
 	// 判断是否指定 LookBackDelta
-	if query.LookBackDelta != "" {
-		lookBackDelta, err = time.ParseDuration(query.LookBackDelta)
+	if queryTs.LookBackDelta != "" {
+		lookBackDelta, err = time.ParseDuration(queryTs.LookBackDelta)
 		if err != nil {
 			return
 		}
 	}
 
 	// 如果 step 为空，则补充默认 step
-	if query.Step == "" {
-		query.Step = promql.GetDefaultStep().String()
+	if queryTs.Step == "" {
+		queryTs.Step = promql.GetDefaultStep().String()
 	}
 
 	// 转换成 queryRef
-	queryRef, err := query.ToQueryReference(ctx)
+	queryRef, err := queryTs.ToQueryReference(ctx)
 	if err != nil {
 		return
 	}
@@ -544,7 +623,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, query *structured.QueryTs) (i
 		}, lookBackDelta, QueryMaxRouting)
 	}
 
-	expr, err := query.ToPromExpr(ctx, promExprOpt)
+	expr, err := queryTs.ToPromExpr(ctx, promExprOpt)
 	if err != nil {
 		return
 	}
@@ -618,7 +697,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	seriesNum := 0
 	pointsNum := 0
 
-	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
 	switch v := res.(type) {
 	case promPromql.Matrix:
@@ -700,56 +779,67 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 	query.Instant = queryPromQL.Instant
 	query.DownSampleRange = queryPromQL.DownSampleRange
 
-	// 补充业务ID
-	if len(queryPromQL.BKBizIDs) > 0 {
-		for _, q := range query.QueryList {
+	if queryPromQL.Match != "" {
+		matchers, err = parser.ParseMetricSelector(queryPromQL.Match)
+		if err != nil {
+			return
+		}
+	}
+
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
+
+	for _, q := range query.QueryList {
+		// decode table id and field name
+		q.TableID = structured.TableID(decodeFunc(string(q.TableID)))
+
+		// decode condition
+		for i, d := range q.Conditions.FieldList {
+			q.Conditions.FieldList[i].DimensionName = decodeFunc(d.DimensionName)
+		}
+
+		// decode agg
+		for aggIdx, agg := range q.AggregateMethodList {
+			for i, d := range agg.Dimensions {
+				q.AggregateMethodList[aggIdx].Dimensions[i] = decodeFunc(d)
+			}
+		}
+
+		// 补充业务ID
+		if len(queryPromQL.BKBizIDs) > 0 {
 			q.Conditions.Append(structured.ConditionField{
 				DimensionName: structured.BizID,
 				Value:         queryPromQL.BKBizIDs,
 				Operator:      structured.Contains,
 			}, structured.ConditionAnd)
 		}
-	}
 
-	if queryPromQL.Match == "" {
-		return
-	}
-
-	matchers, err = parser.ParseMetricSelector(queryPromQL.Match)
-	if err != nil {
-		return
-	}
-
-	if len(matchers) == 0 {
-		return
-	}
-
-	for _, q := range query.QueryList {
+		// 补充 Match
 		var verifyDimensions = func(key string) bool {
 			return true
 		}
+		if len(matchers) > 0 {
+			if queryPromQL.IsVerifyDimensions {
+				dimSet := set.New[string]()
+				for _, a := range q.AggregateMethodList {
+					dimSet.Add(a.Dimensions...)
+				}
 
-		if queryPromQL.IsVerifyDimensions {
-			dimSet := set.New[string]()
-			for _, a := range q.AggregateMethodList {
-				dimSet.Add(a.Dimensions...)
+				verifyDimensions = func(key string) bool {
+					return dimSet.Existed(key)
+				}
 			}
 
-			verifyDimensions = func(key string) bool {
-				return dimSet.Existed(key)
-			}
-		}
+			for _, m := range matchers {
+				if !verifyDimensions(m.Name) {
+					continue
+				}
 
-		for _, m := range matchers {
-			if !verifyDimensions(m.Name) {
-				continue
+				q.Conditions.Append(structured.ConditionField{
+					DimensionName: m.Name,
+					Value:         []string{m.Value},
+					Operator:      structured.PromOperatorToConditions(m.Type),
+				}, structured.ConditionAnd)
 			}
-
-			q.Conditions.Append(structured.ConditionField{
-				DimensionName: m.Name,
-				Value:         []string{m.Value},
-				Operator:      structured.PromOperatorToConditions(m.Type),
-			}, structured.ConditionAnd)
 		}
 	}
 
@@ -800,7 +890,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	seriesNum := 0
 	pointsNum := 0
 
-	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
 	switch v := res.(type) {
 	case promPromql.Matrix:

@@ -35,6 +35,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
@@ -247,8 +248,8 @@ type HostAndTopoCacheManager struct {
 }
 
 // NewHostAndTopoCacheManager 创建主机及拓扑缓存管理器
-func NewHostAndTopoCacheManager(prefix string, opt *redis.Options, concurrentLimit int) (*HostAndTopoCacheManager, error) {
-	manager, err := NewBaseCacheManager(prefix, opt, concurrentLimit)
+func NewHostAndTopoCacheManager(bkTenantId string, prefix string, opt *redis.Options, concurrentLimit int) (*HostAndTopoCacheManager, error) {
+	manager, err := NewBaseCacheManager(bkTenantId, prefix, opt, concurrentLimit)
 	if err != nil {
 		return nil, errors.Wrap(err, "new cache Manager failed")
 	}
@@ -267,9 +268,15 @@ func (m *HostAndTopoCacheManager) Type() string {
 
 // RefreshByBiz 按业务刷新缓存
 func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int) error {
-	// 业务ID为1的是资源池，不需要刷新
-	if bkBizId == 1 {
-		return nil
+	// 业务是资源池时，不需要刷新
+	if cfg.EnableMultiTenantMode {
+		if bkBizId == 2 {
+			return nil
+		}
+	} else {
+		if bkBizId == 1 {
+			return nil
+		}
 	}
 
 	logger.Infof("start refresh cmdb cache by biz: %d", bkBizId)
@@ -279,7 +286,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 	}()
 
 	// 获取业务下的主机及拓扑信息
-	hosts, topo, err := getHostAndTopoByBiz(ctx, bkBizId)
+	hosts, topo, err := getHostAndTopoByBiz(ctx, m.GetBkTenantId(), bkBizId)
 	if err != nil {
 		return errors.Wrap(err, "get host by biz failed")
 	}
@@ -460,8 +467,8 @@ func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context, b
 }
 
 // getHostAndTopoByBiz 查询业务下的主机及拓扑信息
-func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
-	cmdbApi := getCmdbApi()
+func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
+	cmdbApi := getCmdbApi(bkTenantId)
 
 	// 设置超时时间
 	_ = cmdbApi.AddOperationOptions()

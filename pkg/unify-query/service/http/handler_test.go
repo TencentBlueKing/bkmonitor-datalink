@@ -420,7 +420,7 @@ func TestAPIHandler(t *testing.T) {
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			metadata.SetUser(ctx, "", influxdb.SpaceUid, "")
+			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid})
 			url := fmt.Sprintf("http://127.0.0.1/%s", c.url)
 			res, _ := json.Marshal(c.infoParams)
 			body := bytes.NewReader(res)
@@ -521,7 +521,7 @@ func TestQueryHandler(t *testing.T) {
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			metadata.SetUser(ctx, "", influxdb.SpaceUid, "")
+			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid})
 			queryPromQL := &structured.QueryPromQL{
 				PromQL:  c.promql,
 				Start:   fmt.Sprintf("%d", start.Unix()),

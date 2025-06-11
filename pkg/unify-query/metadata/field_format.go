@@ -15,26 +15,23 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"unicode"
 )
 
-type PromDataFormat struct {
-	ctx  context.Context
-	lock sync.RWMutex
-
-	transformFormat string
+type FieldFormat struct {
+	ctx context.Context
 }
 
-func (f *PromDataFormat) format(s string) string {
+func (f *FieldFormat) format(s string) string {
 	return fmt.Sprintf("__bk_%s__", s)
 }
 
-func (f *PromDataFormat) isAlphaNumericUnderscore(r rune) bool {
+func (f *FieldFormat) isAlphaNumericUnderscore(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == ':' || r == '_'
 }
 
-func (f *PromDataFormat) EncodeFunc() func(q string) string {
+// EncodeFunc 对字段进行 Prom 引擎计算规则转换
+func (f *FieldFormat) EncodeFunc() func(q string) string {
 	return func(q string) string {
 		var (
 			result       strings.Builder
@@ -54,7 +51,8 @@ func (f *PromDataFormat) EncodeFunc() func(q string) string {
 	}
 }
 
-func (f *PromDataFormat) DecodeFunc() func(q string) string {
+// DecodeFunc 对字段进行还原，别名无需还原，保留原字段
+func (f *FieldFormat) DecodeFunc() func(q string) string {
 	return func(q string) string {
 		format := f.format(`([\d]+)`)
 		re := regexp.MustCompile(format)
@@ -72,24 +70,24 @@ func (f *PromDataFormat) DecodeFunc() func(q string) string {
 	}
 }
 
-func (f *PromDataFormat) set() *PromDataFormat {
+func (f *FieldFormat) set() *FieldFormat {
 	if md != nil {
-		md.set(f.ctx, PromDataFormatKey, f)
+		md.set(f.ctx, FieldFormatKey, f)
 	}
 	return f
 }
 
-func GetPromDataFormat(ctx context.Context) *PromDataFormat {
+func GetFieldFormat(ctx context.Context) *FieldFormat {
 	if md != nil {
-		r, ok := md.get(ctx, PromDataFormatKey)
+		r, ok := md.get(ctx, FieldFormatKey)
 		if ok {
-			if f, ok := r.(*PromDataFormat); ok {
+			if f, ok := r.(*FieldFormat); ok {
 				return f
 			}
 		}
 	}
 
-	return (&PromDataFormat{
+	return (&FieldFormat{
 		ctx: ctx,
 	}).set()
 }

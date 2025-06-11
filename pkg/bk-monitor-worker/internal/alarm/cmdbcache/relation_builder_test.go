@@ -22,7 +22,7 @@ import (
 )
 
 func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
-	mocker.InitTestDBConfig("../../../dist/bmw.yaml")
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 
 	for name, c := range map[string]struct {
 		bkBizIDHosts []struct {
@@ -145,7 +145,7 @@ host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.1.0.1",host_id="3100
 }
 
 func TestBuildMetrics(t *testing.T) {
-	mocker.InitTestDBConfig("../../../dist/bmw.yaml")
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 
 	for name, c := range map[string]struct {
 		bkBizID    int

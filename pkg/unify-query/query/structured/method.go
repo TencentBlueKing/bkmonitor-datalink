@@ -48,10 +48,9 @@ func (a AggregateMethodList) ToQry(timezone string) (metadata.Aggregates, error)
 	for _, aggr := range a {
 		agg := metadata.Aggregate{
 			Name:       aggr.Method,
-			Dimensions: aggr.Dimensions,
+			Dimensions: append([]string{}, aggr.Dimensions...),
 			Without:    aggr.Without,
 			Args:       aggr.VArgsList,
-			TimeZone:   timezone,
 		}
 
 		if aggr.Window != "" {
@@ -61,6 +60,7 @@ func (a AggregateMethodList) ToQry(timezone string) (metadata.Aggregates, error)
 			}
 
 			agg.Window = time.Duration(window)
+			agg.TimeZone = timezone
 		}
 		aggs = append(aggs, agg)
 	}
@@ -71,8 +71,10 @@ func (a AggregateMethodList) ToQry(timezone string) (metadata.Aggregates, error)
 type AggregateMethod struct {
 	// Method 聚合方法
 	Method string `json:"method,omitempty" example:"mean"`
+	// Field 聚合字段，默认为指标字段，指定则会进行覆盖
+	Field string `json:"field,omitempty" example:"field"`
 	// Without
-	Without bool `json:"without" example:false`
+	Without bool `json:"without,omitempty"`
 	// Dimensions 聚合维度
 	Dimensions Dimensions `json:"dimensions,omitempty" example:"bk_target_ip,bk_target_cloud_id"`
 	// Position 函数参数位置，结合 VArgsList 一起使用，类似 topk, histogram_quantile 需要用到

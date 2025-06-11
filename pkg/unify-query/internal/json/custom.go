@@ -10,10 +10,44 @@
 package json
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 )
+
+const (
+	StepString = "."
+)
+
+func mapData(prefix string, data map[string]any, res map[string]any) {
+	for k, v := range data {
+		if prefix != "" {
+			k = prefix + StepString + k
+		}
+		switch v.(type) {
+		case map[string]any:
+			mapData(k, v.(map[string]any), res)
+		default:
+			res[k] = v
+		}
+	}
+}
+
+// ParseObject 解析 json，按照层级打平
+func ParseObject(prefix, intput string) (map[string]any, error) {
+	oldData := make(map[string]any)
+	newData := make(map[string]any)
+
+	err := json.Unmarshal([]byte(intput), &oldData)
+	if err != nil {
+		return newData, err
+	}
+
+	mapData(prefix, oldData, newData)
+	return newData, nil
+}
 
 func MarshalListMap(data []map[string]interface{}) string {
 	if len(data) == 0 {
@@ -34,7 +68,30 @@ func MarshalListMap(data []map[string]interface{}) string {
 
 		var m []string
 		for _, k := range ks {
-			m = append(m, fmt.Sprintf(`"%s":"%v"`, k, d[k]))
+			value := d[k]
+			var valueStr string
+
+			// 处理不同类型的值
+			switch v := value.(type) {
+			case string:
+				valueStr = fmt.Sprintf(`"%s"`, v)
+			case map[string]interface{}, []interface{}:
+				// 对于复杂类型，使用 JSON 序列化，不转义 HTML
+				var buf bytes.Buffer
+				encoder := json.NewEncoder(&buf)
+				encoder.SetEscapeHTML(false)
+				if err := encoder.Encode(v); err == nil {
+					// 移除编码器添加的换行符
+					valueStr = strings.TrimSpace(buf.String())
+				} else {
+					valueStr = fmt.Sprintf(`"%v"`, v)
+				}
+			default:
+				// 对于其他类型（数字、布尔值等），直接转换
+				valueStr = fmt.Sprintf(`%v`, v)
+			}
+
+			m = append(m, fmt.Sprintf(`"%s":%s`, k, valueStr))
 		}
 		s = append(s, strings.Join(m, ","))
 	}

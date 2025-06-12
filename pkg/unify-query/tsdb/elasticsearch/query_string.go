@@ -135,9 +135,8 @@ func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 			s.check(c.Field)
 		} else {
 			val := c.Value
-			if !s.isPrefix {
-				val = fmt.Sprintf(`"%s"`, val)
-			}
+			// 为了保证保留传递的双引号，所以进来必须拼接一个，保证字符串的完整
+			val = fmt.Sprintf(`"%s"`, val)
 			leftQ = s.queryString(val)
 		}
 	case *qs.NumberRangeExpr:

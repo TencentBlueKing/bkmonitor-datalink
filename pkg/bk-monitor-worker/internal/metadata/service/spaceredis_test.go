@@ -1373,9 +1373,6 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
-
-	fieldAliasSettings := make(map[string]string)
-
 	// 调用测试方法
 	tableID, detailStr, err := spacePusher.composeEsTableIdDetail(
 		tableID1,
@@ -1383,7 +1380,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 		1,
 		"sourceType1",
 		"indexSet1",
-		fieldAliasSettings,
+		nil,
 	)
 
 	// 断言返回结果无错误
@@ -1400,6 +1397,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 		"storage_type":            "elasticsearch",
 		"storage_id":              float64(1), // 修改为 float64
 		"db":                      "indexSet1",
+		"field_alias":             map[string]interface{}{},
 	}
 
 	// 将 detailStr 转换为 map 以便比较
@@ -1409,7 +1407,6 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 
 	// 比较预期值和实际值
 	assert.Equal(t, expectedDetail, actualDetail, "detailStr should match expected JSON")
-	fieldAliasSettings = make(map[string]string)
 	// 调用测试方法
 	resTid, detailStr2, err := spacePusher.composeEsTableIdDetail(
 		tableID2,
@@ -1417,7 +1414,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 		1,
 		"sourceType1",
 		"indexSet1",
-		fieldAliasSettings,
+		nil,
 	)
 
 	expectedDetail2 := map[string]interface{}{
@@ -1429,6 +1426,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 		"storage_type":            "elasticsearch",
 		"storage_id":              float64(1), // 修改为 float64
 		"db":                      "indexSet1",
+		"field_alias":             map[string]interface{}{},
 	}
 
 	// 将 detailStr 转换为 map 以便比较

@@ -690,6 +690,8 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 			if isVmQuery {
 				query.StorageType = consul.VictoriaMetricsStorageType
+			} else {
+				query.StorageType = consul.InfluxDBStorageType
 			}
 		}
 

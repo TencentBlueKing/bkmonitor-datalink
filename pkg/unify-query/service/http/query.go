@@ -304,9 +304,9 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		span.Set("query-label-map", labelMap)
 		span.Set("query-highlight", queryTs.HighLight)
 
-		var hlF *function.HighLightFactory
+		var hlF *function.LabelMapFactory
 		if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(labelMap) > 0 {
-			hlF = function.NewHighLightFactory(labelMap, queryTs.HighLight.MaxAnalyzedOffset)
+			hlF = function.NewLabelMapFactory(labelMap, queryTs.HighLight.MaxAnalyzedOffset)
 		}
 		for _, item := range data {
 			if item == nil {
@@ -318,7 +318,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			}
 
 			if hlF != nil {
-				if highlightResult := hlF.Process(item); len(highlightResult) > 0 {
+				if highlightResult := hlF.ProcessHighlight(item); len(highlightResult) > 0 {
 					item[function.KeyHighLight] = highlightResult
 				}
 			}

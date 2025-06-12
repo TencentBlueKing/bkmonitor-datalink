@@ -12,6 +12,8 @@ package function
 import (
 	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestHighLightFactory_splitTextForAnalysis(t *testing.T) {
@@ -98,8 +100,8 @@ func TestHighLightFactory_splitTextForAnalysis(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := &HighLightFactory{
-				maxAnalyzedOffset: tt.fields.maxAnalyzedOffset,
+			h := &LabelMapFactory{
+				highlightMaxAnalyzedOffset: tt.fields.maxAnalyzedOffset,
 			}
 			gotAnalyzable, gotRemaining := h.splitTextForAnalysis(tt.args.text)
 			if gotAnalyzable != tt.wantAnalyzable {
@@ -120,7 +122,7 @@ func TestNewHighLightFactory(t *testing.T) {
 	tests := []struct {
 		name string
 		args args
-		want *HighLightFactory
+		want *LabelMapFactory
 	}{
 		{
 			name: "normal initialization",
@@ -132,13 +134,13 @@ func TestNewHighLightFactory(t *testing.T) {
 				},
 				maxAnalyzedOffset: 1024,
 			},
-			want: &HighLightFactory{
+			want: &LabelMapFactory{
 				labelMap: map[string][]string{
 					"service":  {"api", "backend"},
 					"env":      {"prod"},
 					"response": {"2xx", "5xx"},
 				},
-				maxAnalyzedOffset: 1024,
+				highlightMaxAnalyzedOffset: 1024,
 			},
 		},
 		{
@@ -147,9 +149,9 @@ func TestNewHighLightFactory(t *testing.T) {
 				labelMap:          map[string][]string{"status": {"active"}},
 				maxAnalyzedOffset: 0,
 			},
-			want: &HighLightFactory{
-				labelMap:          map[string][]string{"status": {"active"}},
-				maxAnalyzedOffset: 0,
+			want: &LabelMapFactory{
+				labelMap:                   map[string][]string{"status": {"active"}},
+				highlightMaxAnalyzedOffset: 0,
 			},
 		},
 		{
@@ -158,9 +160,9 @@ func TestNewHighLightFactory(t *testing.T) {
 				labelMap:          map[string][]string{"error": {"timeout"}},
 				maxAnalyzedOffset: -1,
 			},
-			want: &HighLightFactory{
-				labelMap:          map[string][]string{"error": {"timeout"}},
-				maxAnalyzedOffset: -1,
+			want: &LabelMapFactory{
+				labelMap:                   map[string][]string{"error": {"timeout"}},
+				highlightMaxAnalyzedOffset: -1,
 			},
 		},
 		{
@@ -169,9 +171,9 @@ func TestNewHighLightFactory(t *testing.T) {
 				labelMap:          nil,
 				maxAnalyzedOffset: 2048,
 			},
-			want: &HighLightFactory{
-				labelMap:          nil,
-				maxAnalyzedOffset: 2048,
+			want: &LabelMapFactory{
+				labelMap:                   nil,
+				highlightMaxAnalyzedOffset: 2048,
 			},
 		},
 		{
@@ -180,9 +182,9 @@ func TestNewHighLightFactory(t *testing.T) {
 				labelMap:          map[string][]string{"tags": {}},
 				maxAnalyzedOffset: 512,
 			},
-			want: &HighLightFactory{
-				labelMap:          map[string][]string{"tags": {}},
-				maxAnalyzedOffset: 512,
+			want: &LabelMapFactory{
+				labelMap:                   map[string][]string{"tags": {}},
+				highlightMaxAnalyzedOffset: 512,
 			},
 		},
 		{
@@ -194,19 +196,19 @@ func TestNewHighLightFactory(t *testing.T) {
 				},
 				maxAnalyzedOffset: 4096,
 			},
-			want: &HighLightFactory{
+			want: &LabelMapFactory{
 				labelMap: map[string][]string{
 					"metrics": {"cpu", "mem", "disk"},
 					"alerts":  {"critical"},
 				},
-				maxAnalyzedOffset: 4096,
+				highlightMaxAnalyzedOffset: 4096,
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewHighLightFactory(tt.args.labelMap, tt.args.maxAnalyzedOffset)
+			got := NewLabelMapFactory(tt.args.labelMap, tt.args.maxAnalyzedOffset)
 
 			if tt.want.labelMap == nil && got.labelMap != nil {
 				t.Errorf("labelMap should be nil, got %v", got.labelMap)
@@ -214,8 +216,8 @@ func TestNewHighLightFactory(t *testing.T) {
 				t.Errorf("labelMap mismatch\ngot:  %v\nwant: %v", got.labelMap, tt.want.labelMap)
 			}
 
-			if got.maxAnalyzedOffset != tt.want.maxAnalyzedOffset {
-				t.Errorf("maxAnalyzedOffset = %v, want %v", got.maxAnalyzedOffset, tt.want.maxAnalyzedOffset)
+			if got.highlightMaxAnalyzedOffset != tt.want.highlightMaxAnalyzedOffset {
+				t.Errorf("maxAnalyzedOffset = %v, want %v", got.highlightMaxAnalyzedOffset, tt.want.highlightMaxAnalyzedOffset)
 			}
 		})
 	}
@@ -313,12 +315,74 @@ func TestHighLightFactory_processField(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := &HighLightFactory{
-				maxAnalyzedOffset: tt.fields.maxAnalyzedOffset,
+			h := &LabelMapFactory{
+				highlightMaxAnalyzedOffset: tt.fields.maxAnalyzedOffset,
 			}
-			if got := h.processField(tt.args.fieldValue, tt.args.keywords); !reflect.DeepEqual(got, tt.want) {
+			if got := h.processHighlightField(tt.args.fieldValue, tt.args.keywords); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("HighLightFactory.processField() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+func TestLabelMapFactory_FetchIncludeFieldValues(t *testing.T) {
+	type fields struct {
+		labelMap                   map[string][]string
+		highlightMaxAnalyzedOffset int
+	}
+	type args struct {
+		fieldName string
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		args   args
+		want   []string
+		want1  bool
+	}{
+		{
+			name: "should include field values",
+			fields: fields{
+				labelMap: map[string][]string{
+					"service":  {"api", "backend"},
+					"env":      {"prod"},
+					"response": {"2xx", "5xx"},
+				},
+				highlightMaxAnalyzedOffset: 1024,
+			},
+			args: args{
+				fieldName: "service",
+			},
+			want:  []string{"api", "backend"},
+			want1: true,
+		},
+		{
+			name: "should not include empty_string indexed values",
+			fields: fields{
+				labelMap: map[string][]string{
+					"service":  {"api", "backend"},
+					"env":      {"prod"},
+					"response": {"2xx", "5xx"},
+					"":         {"empty_string"}, // 空串用来作为高亮时会单独返回，在include时不需要返回
+				},
+				highlightMaxAnalyzedOffset: 1024,
+			},
+			args: args{
+				fieldName: "service",
+			},
+			want:  []string{"api", "backend"},
+			want1: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &LabelMapFactory{
+				labelMap:                   tt.fields.labelMap,
+				highlightMaxAnalyzedOffset: tt.fields.highlightMaxAnalyzedOffset,
+			}
+			got, got1 := h.FetchIncludeFieldValues(tt.args.fieldName)
+			assert.Equalf(t, tt.want, got, "FetchIncludeFieldValues(%v)", tt.args.fieldName)
+			assert.Equalf(t, tt.want1, got1, "FetchIncludeFieldValues(%v)", tt.args.fieldName)
 		})
 	}
 }

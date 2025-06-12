@@ -19,19 +19,19 @@ const (
 	KeyHighLight = "__highlight"
 )
 
-type HighLightFactory struct {
-	labelMap          map[string][]string
-	maxAnalyzedOffset int
+type LabelMapFactory struct {
+	labelMap                   map[string][]string
+	highlightMaxAnalyzedOffset int
 }
 
-func NewHighLightFactory(labelMap map[string][]string, maxAnalyzedOffset int) *HighLightFactory {
-	return &HighLightFactory{
-		labelMap:          labelMap,
-		maxAnalyzedOffset: maxAnalyzedOffset,
+func NewLabelMapFactory(labelMap map[string][]string, highlightMaxAnalyzedOffset int) *LabelMapFactory {
+	return &LabelMapFactory{
+		labelMap:                   labelMap,
+		highlightMaxAnalyzedOffset: highlightMaxAnalyzedOffset,
 	}
 }
 
-func (h *HighLightFactory) Process(data map[string]any) map[string]any {
+func (h *LabelMapFactory) ProcessHighlight(data map[string]any) map[string]any {
 	newData := make(map[string]any)
 
 	for key, value := range data {
@@ -40,7 +40,7 @@ func (h *HighLightFactory) Process(data map[string]any) map[string]any {
 		// 获取使用字段查询的值
 		keywords = append(keywords, h.labelMap[key]...)
 
-		if highlightedValue := h.processField(value, keywords); highlightedValue != nil {
+		if highlightedValue := h.processHighlightField(value, keywords); highlightedValue != nil {
 			newData[key] = highlightedValue
 		}
 	}
@@ -48,7 +48,7 @@ func (h *HighLightFactory) Process(data map[string]any) map[string]any {
 	return newData
 }
 
-func (h *HighLightFactory) processField(fieldValue any, keywords []string) any {
+func (h *LabelMapFactory) processHighlightField(fieldValue any, keywords []string) any {
 	var newValue string
 	switch value := fieldValue.(type) {
 	case string:
@@ -65,7 +65,15 @@ func (h *HighLightFactory) processField(fieldValue any, keywords []string) any {
 	return nil
 }
 
-func (h *HighLightFactory) highlightString(text string, keywords []string) string {
+func (h *LabelMapFactory) FetchIncludeFieldValues(fieldName string) ([]string, bool) {
+	if values, ok := h.labelMap[fieldName]; ok {
+		return values, true
+	} else {
+		return nil, false
+	}
+}
+
+func (h *LabelMapFactory) highlightString(text string, keywords []string) string {
 	if text == "" || len(keywords) == 0 {
 		return text
 	}
@@ -99,9 +107,9 @@ func (h *HighLightFactory) highlightString(text string, keywords []string) strin
 	return analyzablePart + remainingPart
 }
 
-func (h *HighLightFactory) splitTextForAnalysis(text string) (analyzable, remaining string) {
-	if h.maxAnalyzedOffset > 0 && len(text) > h.maxAnalyzedOffset {
-		return text[:h.maxAnalyzedOffset], text[h.maxAnalyzedOffset:]
+func (h *LabelMapFactory) splitTextForAnalysis(text string) (analyzable, remaining string) {
+	if h.highlightMaxAnalyzedOffset > 0 && len(text) > h.highlightMaxAnalyzedOffset {
+		return text[:h.highlightMaxAnalyzedOffset], text[h.highlightMaxAnalyzedOffset:]
 	}
 	return text, ""
 }

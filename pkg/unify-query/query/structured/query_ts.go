@@ -35,6 +35,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
+const (
+	// Error messages
+	ErrUnknownOperatorMsg = "unknown operator: %s"
+)
+
 type QueryTs struct {
 	// SpaceUid 空间ID
 	SpaceUid string `json:"space_uid,omitempty"`
@@ -431,10 +436,17 @@ func (q *Query) LabelMap() (map[string][]string, error) {
 	for _, condition := range q.Conditions.FieldList {
 		for _, value := range condition.Value {
 			if value != "" {
-				addLabel(condition.DimensionName, value)
+				isPositive, err := IsPositiveOperator(condition.Operator)
+				if err != nil {
+					return nil, err
+				}
+				if isPositive {
+					addLabel(condition.DimensionName, value)
+				}
 			}
 		}
 	}
+
 	if q.QueryString != "" {
 		qLabelMap, err := querystring.LabelMap(q.QueryString)
 		if err != nil {

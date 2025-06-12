@@ -8,7 +8,7 @@ package querystring
 	e 	Expr
 }
 
-%token tSTRING tPHRASE tNUMBER tSLASH
+%token tSTRING tPHRASE tNUMBER tSLASH tREGEX
 %token tOR tAND tNOT tTO tPLUS tMINUS tCOLON
 %token tLEFTBRACKET tRIGHTBRACKET tLEFTRANGE tRIGHTRANGE tLEFTBRACES tRIGHTBRACES
 %token tGREATER tLESS tEQUAL
@@ -16,7 +16,7 @@ package querystring
 %type <s>                tSTRING
 %type <s>                tPHRASE
 %type <s>                tNUMBER
-%type <s>		 tSLASH
+%type <s>		 tSLASH tREGEX
 %type <s>                posOrNegNumber
 %type <e>                searchBase searchLogicParts searchPart searchLogicPart searchLogicSimplePart
 %type <n>                searchPrefix
@@ -105,9 +105,27 @@ tPHRASE {
 	$$ = q
 }
 |
-tSLASH{
+tSTRING tCOLON tSLASH {
+	q := NewMatchExpr($3)
+	q.SetField($1)
+	$$ = q
+}
+|
+tSLASH {
+	phrase := $1
+	q := newStringExpr(phrase)
+	$$ = q
+}
+|
+tREGEX {
 	phrase := $1
 	q := NewRegexpExpr(phrase)
+	$$ = q
+}
+|
+tSTRING tCOLON tREGEX {
+	q := NewRegexpExpr($3)
+	q.SetField($1)
 	$$ = q
 }
 |
@@ -135,8 +153,30 @@ tSTRING tCOLON tPHRASE {
 	$$ = q
 }
 |
-tSTRING tCOLON tSLASH {
-	q := NewRegexpExpr($3)
+tSTRING tLESS posOrNegNumber {
+	val := $3
+	q := NewNumberRangeExpr(nil, &val, false, false)
+	q.SetField($1)
+	$$ = q
+}
+|
+tSTRING tGREATER posOrNegNumber {
+	val := $3
+	q := NewNumberRangeExpr(&val, nil, false, false)
+	q.SetField($1)
+	$$ = q
+}
+|
+tSTRING tLESS tEQUAL posOrNegNumber {
+	val := $4
+	q := NewNumberRangeExpr(nil, &val, false, true)
+	q.SetField($1)
+	$$ = q
+}
+|
+tSTRING tGREATER tEQUAL posOrNegNumber {
+	val := $4
+	q := NewNumberRangeExpr(&val, nil, true, false)
 	q.SetField($1)
 	$$ = q
 }

@@ -106,8 +106,32 @@ func startState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
 	}
 
 	switch next {
-	case '"', '/':
+	case '"':
 		return inPhraseState, true
+	case '/':
+		// 检查下一个字符是否是EOF或空格，如果是则返回tSLASH
+		peekRune, _, err := l.in.ReadRune()
+		if err != nil {
+			if err == io.EOF {
+				l.nextTokenType = tSLASH
+				l.nextToken = &yySymType{s: "/"}
+				l.reset()
+				return startState, true
+			}
+			return nil, false
+		}
+		// 回退读取的字符
+		l.in.UnreadRune()
+
+		// 如果是单独的/符号
+		if unicode.IsSpace(peekRune) {
+			l.nextTokenType = tSLASH
+			l.nextToken = &yySymType{s: "/"}
+			l.reset()
+			return startState, true
+		}
+		// 否则进入正则表达式状态
+		return inRegexState, true
 	case '+', '-', ':', '>', '<', '=', '(', ')', '[', ']', '{', '}':
 		l.buf += string(next)
 		return singleCharOpState, true
@@ -138,14 +162,8 @@ func inPhraseState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
 	}
 
 	// only a non-escaped " ends the phrase
-	if !l.inEscape && (next == '"' || next == '/') {
-		// end phrase
-		switch next {
-		case '"':
-			l.nextTokenType = tPHRASE
-		case '/':
-			l.nextTokenType = tSLASH
-		}
+	if !l.inEscape && next == '"' {
+		l.nextTokenType = tPHRASE
 		l.nextToken = &yySymType{
 			s: l.buf,
 		}
@@ -197,6 +215,30 @@ func singleCharOpState(l *queryStringLex, next rune, eof bool) (lexState, bool) 
 
 	l.reset()
 	return startState, false
+}
+
+func inRegexState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
+	if eof {
+		l.Error("unterminated regex")
+		return nil, false
+	}
+
+	// 非转义的/结束正则表达式
+	if !l.inEscape && next == '/' {
+		l.nextTokenType = tREGEX
+		l.nextToken = &yySymType{s: l.buf}
+		l.reset()
+		return startState, true
+	} else if !l.inEscape && next == '\\' {
+		l.inEscape = true
+	} else if l.inEscape {
+		l.inEscape = false
+		l.buf += unescape(string(next))
+	} else {
+		l.buf += string(next)
+	}
+
+	return inRegexState, true
 }
 
 func inNumOrStrState(l *queryStringLex, next rune, eof bool) (lexState, bool) {

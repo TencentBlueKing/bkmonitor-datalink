@@ -685,8 +685,6 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 	fieldAliasMap, err := s.getFieldAliasMap(tidList)
 	if err != nil {
 		logger.Errorf("PushEsTableIdDetail: failed to get field alias map, error: %s", err)
-		// 不要因为别名获取失败就终止整个流程，使用空map继续
-		fieldAliasMap = make(map[string]map[string]string)
 	}
 
 	// 组装数据
@@ -714,10 +712,9 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 			indexSet := es.IndexSet
 			logger.Infof("PushEsTableIdDetail:start to compose es table id detail, table_id->[%s],source_type->[%s],index_set->[%s]", tableId, sourceType, indexSet)
 
-			// 获取字段别名设置，确保不为nil
-			fieldAliasSettings := fieldAliasMap[tableId]
-			if fieldAliasSettings == nil {
-				fieldAliasSettings = make(map[string]string)
+			var fieldAliasSettings map[string]string
+			if fieldAliasMap != nil {
+				fieldAliasSettings = fieldAliasMap[tableId]
 			}
 
 			_tableId, detailStr, err := s.composeEsTableIdDetail(tableId, options, es.StorageClusterID, sourceType, indexSet, fieldAliasSettings)
@@ -798,7 +795,7 @@ func (s *SpacePusher) getFieldAliasMap(tableIDList []string) (map[string]map[str
 	err := fieldAliasQuerySet.TableIDIn(tableIDList...).IsDeletedEq(false).All(&aliasRecords)
 	if err != nil {
 		logger.Errorf("getFieldAliasMap: Error getting field alias map for table_ids: %v, error: %v", tableIDList, err)
-		return make(map[string]map[string]string), err // 返回错误而不是nil
+		return nil, err
 	}
 
 	// 按table_id分组构建别名映射
@@ -840,6 +837,10 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 	var rt resulttable.ResultTable
 	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).TableIdEq(tableId).One(&rt); err != nil {
 		return tableId, "", err
+	}
+
+	if fieldAliasSettings == nil {
+		fieldAliasSettings = make(map[string]string)
 	}
 
 	// 组装数据

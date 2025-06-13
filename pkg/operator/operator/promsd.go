@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/etcdsd"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/config"
@@ -218,6 +219,12 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 			SDConfig:         sdConfig.(*polarissd.SDConfig),
 			HTTPClientConfig: httpClientConfig,
 		})
+	case monitorKindEtcdSd:
+		dis = etcdsd.New(c.ctx, &etcdsd.Options{
+			CommonOptions:    commonOpts,
+			SDConfig:         sdConfig.(*etcdsd.SDConfig),
+			HTTPClientConfig: httpClientConfig,
+		})
 	default:
 		return nil, fmt.Errorf("unsupported kind '%s'", kind)
 	}
@@ -373,7 +380,6 @@ func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resou
 				if !kinds.Allow(monitorKindHttpSd) {
 					continue
 				}
-
 				sd, err := c.createHttpLikeSdDiscover(rsc, obj, monitorKindHttpSd, idx)
 				if err != nil {
 					logger.Errorf("failed to create http_sd discover: %v", err)
@@ -385,10 +391,20 @@ func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resou
 				if !kinds.Allow(monitorKindPolarisSd) {
 					continue
 				}
-
 				sd, err := c.createHttpLikeSdDiscover(rsc, obj, monitorKindPolarisSd, idx)
 				if err != nil {
 					logger.Errorf("failed to create polaris_sd discover: %v", err)
+					continue
+				}
+				discovers = append(discovers, sd)
+
+			case *etcdsd.SDConfig:
+				if !kinds.Allow(monitorKindEtcdSd) {
+					continue
+				}
+				sd, err := c.createHttpLikeSdDiscover(rsc, obj, monitorKindEtcdSd, idx)
+				if err != nil {
+					logger.Errorf("failed to create etcd_sd discover: %v", err)
 					continue
 				}
 				discovers = append(discovers, sd)
@@ -397,7 +413,6 @@ func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resou
 				if !kinds.Allow(monitorKindKubernetesSd) {
 					continue
 				}
-
 				sd, err := c.createKubernetesSdDiscover(rsc, obj, idx)
 				if err != nil {
 					logger.Errorf("failed to create kubernetes_sd discover: %v", err)

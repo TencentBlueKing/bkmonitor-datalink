@@ -103,6 +103,7 @@ func castTg(tg *targetgroup.Group) *WrapTargetGroup {
 
 type Discovery interface {
 	Run(ctx context.Context, ch chan<- []*targetgroup.Group)
+	Stop()
 }
 
 type SharedDiscovery struct {

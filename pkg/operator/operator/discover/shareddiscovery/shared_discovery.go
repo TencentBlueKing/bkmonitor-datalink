@@ -217,6 +217,7 @@ func (sd *SharedDiscovery) watch() {
 
 func (sd *SharedDiscovery) stop() {
 	sd.cancel()
+	sd.discovery.Stop()
 }
 
 func (sd *SharedDiscovery) start() {

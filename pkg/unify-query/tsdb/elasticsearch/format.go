@@ -193,6 +193,8 @@ type FormatFactory struct {
 	timeFormat string
 
 	isReference bool
+
+	tableID string
 }
 
 func NewFormatFactory(ctx context.Context) *FormatFactory {
@@ -324,9 +326,10 @@ func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
 }
 
 // WithMappings 合并 mapping，后面的合并前面的
-func (f *FormatFactory) WithMappings(mappings ...map[string]any) *FormatFactory {
-	for _, mapping := range mappings {
-		mapProperties("", mapping, f.mapping)
+func (f *FormatFactory) WithMappings(tableID string, mappings ...map[string]any) *FormatFactory {
+	f.tableID = tableID
+	if len(mappings) > 0 && !fieldTypesCache.HasTableCache(f.ctx, tableID) {
+		fieldTypesCache.SetFieldTypesFromMappings(f.ctx, tableID, mappings)
 	}
 	return f
 }
@@ -400,7 +403,7 @@ func (f *FormatFactory) NestedField(field string) string {
 	lbs := strings.Split(field, ESStep)
 	for i := len(lbs) - 1; i >= 0; i-- {
 		checkKey := strings.Join(lbs[0:i], ESStep)
-		if v, ok := f.mapping[checkKey]; ok {
+		if v, ok := fieldTypesCache.GetFieldType(f.ctx, f.tableID, checkKey); ok {
 			if v == Nested {
 				return checkKey
 			}
@@ -701,7 +704,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		case TermAgg:
 			curName := info.Name
 			curAgg := elastic.NewTermsAggregation().Field(info.Name)
-			fieldType, ok := f.mapping[info.Name]
+			fieldType, ok := fieldTypesCache.GetFieldType(f.ctx, f.tableID, info.Name)
 			if !ok || fieldType == Text || fieldType == KeyWord {
 				curAgg = curAgg.Missing(" ")
 			}
@@ -774,7 +777,8 @@ func (f *FormatFactory) Orders() metadata.Orders {
 			order.Name = f.timeField.Name
 		}
 
-		if _, ok := f.mapping[order.Name]; ok {
+		_, ok := fieldTypesCache.GetFieldType(f.ctx, f.tableID, order.Name)
+		if ok {
 			orders = append(orders, order)
 		}
 	}
@@ -860,7 +864,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 					q = f.getQuery(MustNot, q)
 				default:
 					// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
-					fieldType, ok := f.mapping[key]
+					fieldType, ok := fieldTypesCache.GetFieldType(f.ctx, f.tableID, key)
 					isExistsQuery := true
 					if ok {
 						if fieldType == Text || fieldType == KeyWord {

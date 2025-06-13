@@ -466,6 +466,11 @@ func TestFormatFactory_Query(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			err := InitFieldTypesCache()
+			if err != nil {
+				t.Fatalf("Failed to initialize field types cache: %v", err)
+			}
+
 			ctx := metadata.InitHashID(context.Background())
 			mappings := []map[string]any{
 				{
@@ -523,7 +528,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			}
-			fact := NewFormatFactory(ctx).WithMappings(mappings...)
+			fact := NewFormatFactory(ctx).WithMappings("test_table", mappings...)
 			ss := elastic.NewSearchSource()
 			query, err := fact.Query(c.conditions)
 			assert.Nil(t, err)
@@ -1190,7 +1195,7 @@ func TestFactory_Agg(t *testing.T) {
 			mock.Init()
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).
-				WithMappings(commonMapping...).
+				WithMappings("test_table", commonMapping...).
 				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 			fact.valueField = "value"
 			fact.aggInfoList = c.aggInfoList
@@ -1210,6 +1215,11 @@ func TestFactory_Agg(t *testing.T) {
 }
 
 func TestFormatFactory_AggregateCases(t *testing.T) {
+	err := InitFieldTypesCache()
+	if err != nil {
+		t.Fatalf("Failed to initialize field types cache: %v", err)
+	}
+
 	commonMapping := []map[string]any{
 		{
 			"properties": map[string]any{
@@ -1327,7 +1337,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 					Type: DefaultTimeFieldType,
 					Unit: DefaultTimeFieldUnit,
 				}, time.Time{}, time.Time{}, "", 0).
-				WithMappings(commonMapping...).
+				WithMappings("test_table", commonMapping...).
 				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 			fact.valueField = c.valueField
 			ss := elastic.NewSearchSource()

@@ -69,9 +69,7 @@ type Operator struct {
 
 	serviceMonitorInformer *prominformers.ForResource
 	podMonitorInformer     *prominformers.ForResource
-
-	promRuleInformer     *prominformers.ForResource
-	helmchartsController *helmcharts.Controller
+	helmchartsController   *helmcharts.Controller
 
 	statefulSetWorkerScaled time.Time
 	statefulSetWorker       int
@@ -419,7 +417,6 @@ func (c *Operator) waitForCacheSync(ctx context.Context) error {
 	}{
 		{"ServiceMonitor", c.serviceMonitorInformer},
 		{"PodMonitor", c.podMonitorInformer},
-		{"PrometheusRule", c.promRuleInformer},
 	} {
 		// 跳过没有初始化的 informers
 		if infs.informersForResource == nil {

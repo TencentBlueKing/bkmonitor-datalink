@@ -14,7 +14,6 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/etcdsd"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/config"
@@ -26,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/etcdsd"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/httpsd"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/kubernetesd"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/polarissd"

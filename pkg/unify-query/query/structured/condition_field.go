@@ -236,3 +236,16 @@ func LabelMatcherToConditions(lm []*labels.Matcher) (string, []ConditionField, e
 	}
 	return metricName, conds, nil
 }
+
+func IsPositiveOperator(operator string) (bool, error) {
+	switch operator {
+	case ConditionEqual, ConditionExact, ConditionContains, ConditionRegEqual,
+		ConditionGt, ConditionGte, ConditionLt, ConditionLte, ConditionExisted:
+		// positive 操作符不包含:ConditionExisted
+		return true, nil
+	case ConditionNotEqual, ConditionNotContains, ConditionNotRegEqual, ConditionNotExisted:
+		return false, nil
+	default:
+		return false, fmt.Errorf(ErrUnknownOperatorMsg, operator)
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	influxdbRouter "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -239,6 +240,12 @@ func HandlerQueryRaw(c *gin.Context) {
 	span.Set("query-body", string(queryStr))
 
 	listData.TraceID = span.TraceID()
+	labelMap, leer := queryTs.LabelMap()
+	if leer != nil {
+		return
+	}
+
+	ctx = function.InjectLabelMap(ctx, labelMap)
 
 	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithInstance(ctx, queryTs)
 	if err != nil {

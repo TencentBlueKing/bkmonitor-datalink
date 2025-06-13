@@ -970,6 +970,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 
 		// query collections.attributes.db.statement
 		`{"from":0,"query":{"bool":{"filter":[{"bool":{"must":[{"exists":{"field":"collections.attributes.db.statement"}},{"match_phrase":{"app_name":{"query":"bkop"}}},{"match_phrase":{"biz_id":{"query":"2"}}}]}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1749456412,"include_lower":true,"include_upper":true,"to":1749460022}}}]}},"size":1}`: `{"took":77,"timed_out":false,"_shards":{"total":9,"successful":9,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[{"_index":"v2_apm_global_precalculate_storage_new_1_20250609_0","_type":"_doc","_id":"bf6477880e7abd183119c150ea1447db","_score":null,"_source":{"biz_id":"2","biz_name":"蓝鲸","app_id":"3","app_name":"bkop","trace_id":"bf6477880e7abd183119c150ea1447db","hierarchy_count":9,"service_count":1,"span_count":1746,"span_max_duration":316009,"span_min_duration":0,"root_service":"unify-query","root_service_span_id":"0db6f409a4b7b759","root_service_span_name":"/query/ts/promql","root_service_status_code":200,"root_service_category":"http","root_service_kind":2,"root_span_id":"0db6f409a4b7b759","root_span_name":"/query/ts/promql","root_span_service":"unify-query","root_span_kind":2,"error":false,"error_count":0,"category_statistics":{"db":0,"messaging":0,"async_backend":0,"other":0,"http":120,"rpc":0},"kind_statistics":{"unspecified":0,"interval":1626,"sync":120,"async":0},"collections":{"attributes.http.scheme":["http"],"attributes.http.method":["POST"],"resource.k8s.pod.name":["bk-datalink-unify-query-6595d74cbf-mzl4x","bk-datalink-unify-query-6595d74cbf-g2q2p","bk-datalink-unify-query-6595d74cbf-zbg52","bk-datalink-unify-query-6595d74cbf-klqkz"],"attributes.net.peer.port":["44024","46284","46272","44026","44020","44048","46290","37374","37442","46360","44088","44114","37490","44152","37504","46278","44034","46288","37424","46358","44072","46366","44100","44138","46408","37526","37542","52822","52854","37616","52878","46286","37410","46356","46364","44098","37498","44136","44158","46432","46448","52850","37612","52872","52898","44056","37386","37446","46362","44094","44120","46404","44154","46414","37536","52846","37608","37620","52866","52892","46442","52834","52862","37606","37618","52882","43598","43938","43354","43816","44934","45806","45906","43642","44884","44974","45858","43788","44894","45020","45888","44948","45808","45950","48902","48944","48994","49058","49068","48922","48990","49012","49062","48918","48970","49008","49060","49070","48942","48992","49014","49064"]}},"sort":[1749460179462463]}]}}`,
+		`{"_source":{"includes":["tags","user.first","user.last"]},"aggregations":{"user":{"aggregations":{"user.last":{"aggregations":{"user.first":{"aggregations":{"reverse_nested":{"aggregations":{"dtEventTimeStamp":{"aggregations":{"user":{"aggregations":{"_value":{"max":{"field":"user.first"}}},"nested":{"path":"user"}}},"date_histogram":{"extended_bounds":{"max":1723595000000,"min":1723594000000},"field":"dtEventTimeStamp","interval":"1m","min_doc_count":0}}},"reverse_nested":{}}},"terms":{"field":"user.first","include":["John"],"missing":" ","size":5}}},"terms":{"field":"user.last","missing":" ","size":5}}},"nested":{"path":"user"}}},"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"*Smi*"}}]}},"size":0}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"user":{"doc_count":1,"user.last":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":" ","doc_count":1,"user.first":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"John","doc_count":1,"reverse_nested":{"doc_count":1,"dtEventTimeStamp":{"buckets":[{"key_as_string":"2024-08-14T01:00:00.000Z","key":1723594000000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:01:00.000Z","key":1723594060000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:02:00.000Z","key":1723594120000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:03:00.000Z","key":1723594180000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:04:00.000Z","key":1723594240000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:05:00.000Z","key":1723594300000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:06:00.000Z","key":1723594360000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:07:00.000Z","key":1723594420000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:08:00.000Z","key":1723594480000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:09:00.000Z","key":1723594540000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:10:00.000Z","key":1723594600000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:11:00.000Z","key":1723594660000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:12:00.000Z","key":1723594720000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:13:00.000Z","key":1723594780000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:14:00.000Z","key":1723594840000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:15:00.000Z","key":1723594900000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}},{"key_as_string":"2024-08-14T01:16:00.000Z","key":1723594960000,"doc_count":0,"user":{"doc_count":0,"_value":{"value":null}}}]}}}]}}]}}}}`,
 	})
 
 	tcs := map[string]struct {
@@ -1467,10 +1468,60 @@ func TestQueryRawWithInstance(t *testing.T) {
 			total:    1,
 			expected: `[{"__data_label":"es","__doc_id":"cT5KjpEBbwEm76LbeH3I","__highlight":{"user.first":["<mark>John</mark>"],"user.last":["<mark>Smi</mark>th"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}]`,
 		},
+		"include debug": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				Step:     "60s",
+				QueryList: []*structured.Query{
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(influxdb.ResultTableEs),
+						KeepColumns: []string{"tags", "user.first", "user.last"},
+						QueryString: "*Smi*",
+						FieldName:   "user.first",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "user.first",
+									Value:         []string{"John"},
+									Operator:      structured.ConditionEqual,
+								},
+							},
+						},
+						AggregateMethodList: structured.AggregateMethodList{
+							structured.AggregateMethod{
+								Method:     structured.MAX,
+								Field:      "user.first",
+								Window:     "60s",
+								Dimensions: []string{"user.first", "user.last"},
+							},
+						},
+						TimeAggregation: structured.TimeAggregation{
+							Function: "max_over_time",
+							Window:   "60s",
+							Position: 0,
+						},
+					},
+				},
+				Limit: 0,
+				Start: start,
+				End:   end,
+				HighLight: &metadata.HighLight{
+					Enable: true,
+				},
+			},
+			total:    10000,
+			expected: `{"series":[{"name":"_value","columns":["_time","_value"],"types":["float","float"],"group_keys":["user.first","user.last"],"group_values":["John"," "],"values":[[1723594020000,null],[1723594080000,null],[1723594140000,null],[1723594200000,null],[1723594260000,null],[1723594320000,null],[1723594380000,null],[1723594440000,null],[1723594500000,null],[1723594560000,null],[1723594620000,null],[1723594680000,null],[1723594740000,null],[1723594800000,null],[1723594860000,null],[1723594920000,null],[1723594980000,null]]}]}`,
+		},
 	}
 
 	for name, c := range tcs {
 		t.Run(name, func(t *testing.T) {
+			lm, err := c.queryTs.LabelMap()
+			if err != nil {
+				t.Fatalf("failed to get label map: %v", err)
+			}
+			ctx = function.InjectLabelMap(ctx, lm)
 			total, list, options, err := queryRawWithInstance(ctx, c.queryTs)
 			assert.Nil(t, err)
 			if err != nil {

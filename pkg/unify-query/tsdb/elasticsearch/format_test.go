@@ -712,7 +712,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 			assert.Nil(t, err)
 			ss.Query(rangeQuery)
 			if len(c.aggregates) > 0 {
-				aggName, agg, aggErr := fact.EsAgg(c.aggregates)
+				aggName, agg, aggErr := fact.EsAgg(ctx, c.aggregates)
 				assert.Nil(t, aggErr)
 				if aggErr == nil {
 					ss.Aggregation(aggName, agg)
@@ -757,7 +757,7 @@ func TestFormatFactory_AggDataFormat(t *testing.T) {
 					Unit: DefaultTimeFieldUnit,
 				}, time.Time{}, time.Time{}, "", 0)
 
-			_, _, err := fact.EsAgg(c.aggregates)
+			_, _, err := fact.EsAgg(ctx, c.aggregates)
 			assert.NoError(t, err)
 
 			var sr *elastic.SearchResult
@@ -1018,7 +1018,7 @@ func TestBuildQuery(t *testing.T) {
 				ss.Collapse(elastic.NewCollapseBuilder(c.query.Collapse.Field))
 			}
 
-			name, agg, err := fact.EsAgg(c.query.Aggregates)
+			name, agg, err := fact.EsAgg(ctx, c.query.Aggregates)
 			if err != nil {
 				assert.Equal(t, c.err, err)
 				return
@@ -1195,7 +1195,7 @@ func TestFactory_Agg(t *testing.T) {
 			fact.valueField = "value"
 			fact.aggInfoList = c.aggInfoList
 			fact.resetAggInfoListWithNested()
-			name, agg, err := fact.Agg()
+			name, agg, err := fact.Agg(ctx)
 			assert.Nil(t, err)
 
 			sourceAgg := elastic.NewSearchSource().Aggregation(name, agg)
@@ -1331,7 +1331,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 			fact.valueField = c.valueField
 			ss := elastic.NewSearchSource()
-			aggName, agg, aggErr := fact.EsAgg(c.aggregates)
+			aggName, agg, aggErr := fact.EsAgg(ctx, c.aggregates)
 			if c.shouldError {
 				assert.Error(t, aggErr)
 				return

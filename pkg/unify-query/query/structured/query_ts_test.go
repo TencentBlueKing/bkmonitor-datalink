@@ -1433,7 +1433,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 			},
 		},
 		{
-			name: "ConditionNotEqual - 应该被包含",
+			name: "ConditionNotEqual - 因为是negative的操作符会被忽略",
 			queryTs: &QueryTs{
 				QueryList: []*Query{
 					{
@@ -1449,12 +1449,10 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"status": {"success"},
-			},
+			expected: map[string][]string{},
 		},
 		{
-			name: "ConditionNotContains - 应该被包含",
+			name: "ConditionNotContains - 因为是negative的操作符会被忽略",
 			queryTs: &QueryTs{
 				QueryList: []*Query{
 					{
@@ -1470,9 +1468,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"message": {"debug"},
-			},
+			expected: map[string][]string{},
 		},
 		{
 			name: "ConditionContains - 应该被包含",
@@ -1538,7 +1534,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 			},
 		},
 		{
-			name: "ConditionNotRegEqual - 应该被包含",
+			name: "ConditionNotRegEqual - 因为是negative的操作符会被忽略",
 			queryTs: &QueryTs{
 				QueryList: []*Query{
 					{
@@ -1554,9 +1550,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"exclude_pattern": {".*debug.*"},
-			},
+			expected: map[string][]string{},
 		},
 		{
 			name: "数值比较操作符 - 应该被包含",
@@ -1644,7 +1638,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 								{
 									DimensionName: "level",
 									Value:         []string{"error"},
-									Operator:      ConditionEqual,
+									Operator:      ConditionEqual, //会被包含
 								},
 							},
 						},
@@ -1655,7 +1649,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 								{
 									DimensionName: "component",
 									Value:         []string{"database"},
-									Operator:      ConditionNotEqual,
+									Operator:      ConditionNotEqual, // 会被忽略
 								},
 							},
 						},
@@ -1663,9 +1657,8 @@ func TestQueryTs_LabelMap(t *testing.T) {
 				},
 			},
 			expected: map[string][]string{
-				"app":       {"frontend"},
-				"level":     {"error"},
-				"component": {"database"},
+				"app":   {"frontend"},
+				"level": {"error"},
 			},
 		},
 		{
@@ -1958,12 +1951,12 @@ func TestQuery_LabelMap(t *testing.T) {
 						{
 							DimensionName: "status",
 							Value:         []string{"error", "warning"},
-							Operator:      ConditionEqual,
+							Operator:      ConditionEqual, // 会被包含
 						},
 						{
 							DimensionName: "region",
 							Value:         []string{"us-east-1"},
-							Operator:      ConditionNotEqual,
+							Operator:      ConditionNotEqual, // 会被忽略
 						},
 					},
 				},
@@ -1972,7 +1965,6 @@ func TestQuery_LabelMap(t *testing.T) {
 				"service":   {"web"},
 				"component": {"database"},
 				"status":    {"error", "warning"},
-				"region":    {"us-east-1"},
 			},
 		},
 		{

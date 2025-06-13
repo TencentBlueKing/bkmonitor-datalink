@@ -303,10 +303,11 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 		span.Set("query-label-map", labelMap)
 		span.Set("query-highlight", queryTs.HighLight)
-
-		var hlF *function.LabelMapFactory
-		if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(labelMap) > 0 {
-			hlF = function.NewLabelMapFactory(labelMap, queryTs.HighLight.MaxAnalyzedOffset)
+		skipHighlight := false
+		lmf, exist := function.LabelMapFactory(ctx)
+		if !exist {
+			log.Warnf(ctx, "label map factory not found in context")
+			skipHighlight = true
 		}
 		for _, item := range data {
 			if item == nil {
@@ -317,8 +318,12 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				delete(item, ignoreDimension)
 			}
 
-			if hlF != nil {
-				if highlightResult := hlF.ProcessHighlight(item); len(highlightResult) > 0 {
+			if !skipHighlight && lmf != nil {
+				var maxAnalyzedOffset int
+				if queryTs.HighLight != nil && queryTs.HighLight.MaxAnalyzedOffset > 0 {
+					maxAnalyzedOffset = queryTs.HighLight.MaxAnalyzedOffset
+				}
+				if highlightResult := lmf.ProcessHighlight(item, maxAnalyzedOffset); len(highlightResult) > 0 {
 					item[function.KeyHighLight] = highlightResult
 				}
 			}

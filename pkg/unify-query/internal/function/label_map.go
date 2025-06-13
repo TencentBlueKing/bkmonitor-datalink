@@ -10,6 +10,7 @@
 package function
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -17,21 +18,39 @@ import (
 
 const (
 	KeyHighLight = "__highlight"
+
+	KeyLabelMap = "__label_map"
 )
 
-type LabelMapFactory struct {
-	labelMap                   map[string][]string
-	highlightMaxAnalyzedOffset int
+type labelMapFactory struct {
+	labelMap map[string][]string
 }
 
-func NewLabelMapFactory(labelMap map[string][]string, highlightMaxAnalyzedOffset int) *LabelMapFactory {
-	return &LabelMapFactory{
-		labelMap:                   labelMap,
-		highlightMaxAnalyzedOffset: highlightMaxAnalyzedOffset,
+type LabelMapInterface interface {
+	ProcessHighlight(data map[string]any, maxAnalyzedOffset int) map[string]any
+	FetchIncludeFieldValues(fieldName string) ([]string, bool)
+}
+
+func LabelMapFactory(ctx context.Context) (LabelMapInterface, bool) {
+	if f, ok := ctx.Value(KeyLabelMap).(*labelMapFactory); ok {
+		return f, true
 	}
+	return nil, false
 }
 
-func (h *LabelMapFactory) ProcessHighlight(data map[string]any) map[string]any {
+func InjectLabelMap(ctx context.Context, labelMap map[string][]string) context.Context {
+	if labelMap == nil {
+		labelMap = make(map[string][]string)
+	}
+
+	factory := &labelMapFactory{
+		labelMap: labelMap,
+	}
+
+	return context.WithValue(ctx, KeyLabelMap, factory)
+}
+
+func (h *labelMapFactory) ProcessHighlight(data map[string]any, maxAnalyzedOffset int) map[string]any {
 	newData := make(map[string]any)
 
 	for key, value := range data {
@@ -40,7 +59,7 @@ func (h *LabelMapFactory) ProcessHighlight(data map[string]any) map[string]any {
 		// 获取使用字段查询的值
 		keywords = append(keywords, h.labelMap[key]...)
 
-		if highlightedValue := h.processHighlightField(value, keywords); highlightedValue != nil {
+		if highlightedValue := h.processHighlightField(value, keywords, maxAnalyzedOffset); highlightedValue != nil {
 			newData[key] = highlightedValue
 		}
 	}
@@ -48,7 +67,7 @@ func (h *LabelMapFactory) ProcessHighlight(data map[string]any) map[string]any {
 	return newData
 }
 
-func (h *LabelMapFactory) processHighlightField(fieldValue any, keywords []string) any {
+func (h *labelMapFactory) processHighlightField(fieldValue any, keywords []string, maxAnalyzedOffset int) any {
 	var newValue string
 	switch value := fieldValue.(type) {
 	case string:
@@ -59,13 +78,13 @@ func (h *LabelMapFactory) processHighlightField(fieldValue any, keywords []strin
 		return nil
 	}
 
-	if highlighted := h.highlightString(newValue, keywords); highlighted != newValue {
+	if highlighted := h.highlightString(newValue, keywords, maxAnalyzedOffset); highlighted != newValue {
 		return []string{highlighted}
 	}
 	return nil
 }
 
-func (h *LabelMapFactory) FetchIncludeFieldValues(fieldName string) ([]string, bool) {
+func (h *labelMapFactory) FetchIncludeFieldValues(fieldName string) ([]string, bool) {
 	if values, ok := h.labelMap[fieldName]; ok {
 		return values, true
 	} else {
@@ -73,12 +92,12 @@ func (h *LabelMapFactory) FetchIncludeFieldValues(fieldName string) ([]string, b
 	}
 }
 
-func (h *LabelMapFactory) highlightString(text string, keywords []string) string {
+func (h *labelMapFactory) highlightString(text string, keywords []string, maxAnalyzedOffset int) string {
 	if text == "" || len(keywords) == 0 {
 		return text
 	}
 
-	analyzablePart, remainingPart := h.splitTextForAnalysis(text)
+	analyzablePart, remainingPart := splitTextForAnalysis(text, maxAnalyzedOffset)
 
 	// 移除 keywords 中存在叠加的数据，例如: ["a", "abc"]，则只保留 ["abc"]
 	// 排序后，长的关键词在前面
@@ -107,9 +126,9 @@ func (h *LabelMapFactory) highlightString(text string, keywords []string) string
 	return analyzablePart + remainingPart
 }
 
-func (h *LabelMapFactory) splitTextForAnalysis(text string) (analyzable, remaining string) {
-	if h.highlightMaxAnalyzedOffset > 0 && len(text) > h.highlightMaxAnalyzedOffset {
-		return text[:h.highlightMaxAnalyzedOffset], text[h.highlightMaxAnalyzedOffset:]
+func splitTextForAnalysis(text string, maxAnalyzedOffset int) (analyzable, remaining string) {
+	if maxAnalyzedOffset > 0 && len(text) > maxAnalyzedOffset {
+		return text[:maxAnalyzedOffset], text[maxAnalyzedOffset:]
 	}
 	return text, ""
 }

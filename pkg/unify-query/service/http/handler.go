@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	influxdbRouter "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -105,7 +106,11 @@ func HandlerStructToPromQL(c *gin.Context) {
 		resp.failed(ctx, err)
 		return
 	}
-
+	labelMap, leer := query.LabelMap()
+	if leer != nil {
+		return
+	}
+	ctx = function.InjectLabelMap(ctx, labelMap)
 	queryStr, _ := json.Marshal(query)
 	span.Set("query-body", string(queryStr))
 
@@ -168,7 +173,11 @@ func HandlerQueryExemplar(c *gin.Context) {
 	if user.SpaceUID != "" {
 		query.SpaceUid = user.SpaceUID
 	}
-
+	labelMap, leer := query.LabelMap()
+	if leer != nil {
+		return
+	}
+	ctx = function.InjectLabelMap(ctx, labelMap)
 	queryStr, _ := json.Marshal(query)
 	span.Set("query-body", string(queryStr))
 
@@ -239,6 +248,12 @@ func HandlerQueryRaw(c *gin.Context) {
 	span.Set("query-body", string(queryStr))
 
 	listData.TraceID = span.TraceID()
+	labelMap, leer := queryTs.LabelMap()
+	if leer != nil {
+		return
+	}
+
+	ctx = function.InjectLabelMap(ctx, labelMap)
 
 	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithInstance(ctx, queryTs)
 	if err != nil {
@@ -299,7 +314,11 @@ func HandlerQueryTs(c *gin.Context) {
 	if user.SpaceUID != "" {
 		query.SpaceUid = user.SpaceUID
 	}
-
+	labelMap, leer := query.LabelMap()
+	if leer != nil {
+		return
+	}
+	ctx = function.InjectLabelMap(ctx, labelMap)
 	queryStr, _ := json.Marshal(query)
 	span.Set("query-body", string(queryStr))
 	span.Set("query-body-size", len(queryStr))
@@ -437,6 +456,11 @@ func HandlerQueryReference(c *gin.Context) {
 	span.Set("query-body-size", len(queryStr))
 
 	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+	labelMap, leer := query.LabelMap()
+	if leer != nil {
+		return
+	}
+	ctx = function.InjectLabelMap(ctx, labelMap)
 
 	res, err := queryReferenceWithPromEngine(ctx, query)
 	span.Set("resp-table-length", len(res.Tables))

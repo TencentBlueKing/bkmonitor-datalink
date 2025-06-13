@@ -436,12 +436,17 @@ func (q *Query) LabelMap() (map[string][]string, error) {
 	for _, condition := range q.Conditions.FieldList {
 		for _, value := range condition.Value {
 			if value != "" {
-				isPositive, err := IsPositiveOperator(condition.Operator)
-				if err != nil {
-					return nil, err
-				}
-				if isPositive {
+				switch condition.Operator {
+				case ConditionEqual, ConditionExact, ConditionContains, ConditionRegEqual,
+					ConditionGt, ConditionGte, ConditionLt, ConditionLte:
+					// positive 操作符不包含:ConditionExisted
 					addLabel(condition.DimensionName, value)
+				case ConditionNotEqual, ConditionNotContains, ConditionNotRegEqual, ConditionNotExisted:
+					// negative do nothing
+				case ConditionExisted:
+					// 跳过
+				default:
+					return nil, errors.Errorf(ErrUnknownOperatorMsg, condition.Operator)
 				}
 			}
 		}
@@ -516,8 +521,8 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 	if step < window {
 		return
 	}
-
-	if name, ok := domSampledFunc[am.Method+q.TimeAggregation.Function]; ok {
+	key := fmt.Sprintf("%s%s", am.Method, q.TimeAggregation.Function)
+	if name, ok := domSampledFunc[key]; ok {
 		agg := metadata.Aggregate{
 			Name:       name,
 			Field:      am.Field,

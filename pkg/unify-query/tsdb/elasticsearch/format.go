@@ -563,7 +563,7 @@ func (f *FormatFactory) resetAggInfoListWithNested() {
 	return
 }
 
-func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) {
+func (f *FormatFactory) Agg(ctx context.Context) (name string, agg elastic.Aggregation, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Errorf(f.ctx, fmt.Sprintf("get mapping error: %s", r))
@@ -709,6 +709,25 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			if f.size > 0 {
 				curAgg = curAgg.Size(f.size)
 			}
+
+			lmf, exist := function.LabelMapFactory(ctx)
+			if exist {
+				fieldValues, valuesExist := lmf.FetchIncludeFieldValues(info.Name)
+				if valuesExist && len(fieldValues) > 0 {
+					structValues := make([]any, 0, len(fieldValues))
+					for _, v := range fieldValues {
+						if v == "" {
+							continue
+						}
+						if f.decode != nil {
+							v = f.decode(v)
+						}
+						structValues = append(structValues, v)
+					}
+					curAgg = curAgg.IncludeValues(structValues...)
+				}
+			}
+
 			for _, order := range info.Orders {
 				curAgg = curAgg.Order(order.Name, order.Ast)
 			}
@@ -727,7 +746,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 	return
 }
 
-func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
+func (f *FormatFactory) EsAgg(ctx context.Context, aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
 	if len(aggregates) == 0 {
 		err := errors.New("aggregate_method_list is empty")
 		return "", nil, err
@@ -762,7 +781,7 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 	}
 
 	f.resetAggInfoListWithNested()
-	return f.Agg()
+	return f.Agg(ctx)
 }
 
 func (f *FormatFactory) Orders() metadata.Orders {

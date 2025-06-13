@@ -262,7 +262,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	// 判断是否有聚合
 	if len(qb.Aggregates) > 0 {
-		name, agg, aggErr := fact.EsAgg(qb.Aggregates)
+		name, agg, aggErr := fact.EsAgg(ctx, qb.Aggregates)
 		if aggErr != nil {
 			return nil, aggErr
 		}

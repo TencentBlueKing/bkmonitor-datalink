@@ -17,9 +17,11 @@ import (
 	"time"
 
 	"github.com/VictoriaMetrics/metricsql"
+	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
@@ -149,6 +151,58 @@ type Query struct {
 	Orders      Orders    `json:"orders,omitempty"`
 	NeedAddTime bool      `json:"need_add_time,omitempty"`
 	Collapse    *Collapse `json:"collapse,omitempty"`
+}
+
+func (q *Query) LabelMap() (map[string][]string, error) {
+	labelMap := make(map[string][]string)
+	labelCheck := make(map[string]struct{})
+
+	addLabel := func(key string, values ...string) {
+		if len(values) == 0 {
+			return
+		}
+
+		for _, value := range values {
+			checkKey := key + ":" + value
+			if _, ok := labelCheck[checkKey]; !ok {
+				labelCheck[checkKey] = struct{}{}
+				labelMap[key] = append(labelMap[key], value)
+			}
+		}
+	}
+
+	for _, condition := range q.AllConditions {
+		for _, cond := range condition {
+			if cond.Value != nil && len(cond.Value) > 0 {
+				switch cond.Operator {
+				case ConditionEqual, ConditionExact, ConditionContains, ConditionRegEqual,
+					ConditionGt, ConditionGte, ConditionLt, ConditionLte:
+					// positive 操作符不包含:ConditionExisted
+					addLabel(cond.DimensionName, cond.Value...)
+				case ConditionNotEqual, ConditionNotContains, ConditionNotRegEqual, ConditionNotExisted:
+					// negative do nothing
+				case ConditionExisted:
+					// 跳过
+				default:
+					errors.Errorf("unknown operator %s for condition %s", cond.Operator, cond.DimensionName)
+				}
+			}
+		}
+	}
+
+	if q.QueryString != "" {
+		qLabelMap, err := querystring.LabelMap(q.QueryString)
+		if err != nil {
+			return nil, err
+		}
+		for key, values := range qLabelMap {
+			for _, value := range values {
+				addLabel(key, value)
+			}
+		}
+	}
+
+	return labelMap, nil
 }
 
 type HighLight struct {

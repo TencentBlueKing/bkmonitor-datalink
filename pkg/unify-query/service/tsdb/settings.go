@@ -38,8 +38,9 @@ const (
 
 	VmMaxConditionNumConfigPath = "victoria_metrics.max_condition_num"
 
-	VmInfluxCompatibleConfigPath = "victoria_metrics.influx_compatible"
-	VmUseNativeOrConfigPath      = "victoria_metrics.use_native_or"
+	VmInfluxCompatibleConfigPath      = "victoria_metrics.influx_compatible"
+	VmUseNativeOrConfigPath           = "victoria_metrics.use_native_or"
+	VmForceQueryStorageNameConfigPath = "victoria_metrics.force_query_storage_name"
 
 	// BkSql 配置
 	BkSqlTimeoutConfigPath     = "bk_sql.timeout"
@@ -81,8 +82,9 @@ var (
 	VmContentType     string
 	VmMaxConditionNum int
 
-	VmInfluxCompatible bool
-	VmUseNativeOr      bool
+	VmInfluxCompatible      bool
+	VmUseNativeOr           bool
+	VmForceQueryStorageName string
 
 	EsTimeout    time.Duration
 	EsMaxRouting int

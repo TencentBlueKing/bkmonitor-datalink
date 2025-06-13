@@ -152,13 +152,13 @@ func (d *Discovery) resolveInstances() ([]string, error) {
 	req.Namespace = d.sdConfig.Namespace
 	req.Service = d.sdConfig.Service
 
-	response, err := consumer.GetAllInstances(req)
+	rsp, err := consumer.GetAllInstances(req)
 	if err != nil {
 		return nil, err
 	}
 
 	var instances []string
-	for _, inst := range response.Instances {
+	for _, inst := range rsp.Instances {
 		hostPort := fmt.Sprintf("%s:%d", inst.GetHost(), inst.GetPort())
 
 		// 只取健康的实例
@@ -192,27 +192,27 @@ func (d *Discovery) refresh(ctx context.Context, url string) ([]*targetgroup.Gro
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Prometheus-Refresh-Interval-Seconds", strconv.FormatFloat(d.refreshInterval.Seconds(), 'f', -1, 64))
 
-	resp, err := d.client.Do(req.WithContext(ctx))
+	rsp, err := d.client.Do(req.WithContext(ctx))
 	if err != nil {
 		failuresCount.Inc()
 		return nil, err
 	}
 	defer func() {
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		io.Copy(io.Discard, rsp.Body)
+		rsp.Body.Close()
 	}()
 
-	if resp.StatusCode != http.StatusOK {
+	if rsp.StatusCode != http.StatusOK {
 		failuresCount.Inc()
-		return nil, fmt.Errorf("server returned HTTP status %s", resp.Status)
+		return nil, fmt.Errorf("server returned HTTP status %s", rsp.Status)
 	}
 
-	if !matchContentType.MatchString(strings.TrimSpace(resp.Header.Get("Content-Type"))) {
+	if !matchContentType.MatchString(strings.TrimSpace(rsp.Header.Get("Content-Type"))) {
 		failuresCount.Inc()
-		return nil, fmt.Errorf("unsupported content type %q", resp.Header.Get("Content-Type"))
+		return nil, fmt.Errorf("unsupported content type %q", rsp.Header.Get("Content-Type"))
 	}
 
-	b, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(rsp.Body)
 	if err != nil {
 		failuresCount.Inc()
 		return nil, err

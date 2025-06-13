@@ -153,6 +153,7 @@ func (d *Discovery) resolveServices(ctx context.Context, prefixKey string) ([]Se
 			continue
 		}
 
+		// 必须检查 IP
 		if d.sdConfig.IPMatcher != nil {
 			if d.sdConfig.IPMatcher(host) {
 				keys = append(keys, key)

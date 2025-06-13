@@ -201,7 +201,7 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 		UrlValues:              rsc.Config.Params,
 		ExtraLabels:            specLabels,
 		MetricRelabelConfigs:   metricRelabelings,
-		NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+		CheckNodeNameFunc:      c.objectsController.CheckNodeName,
 		NodeLabelsFunc:         c.objectsController.NodeLabels,
 	}
 
@@ -220,9 +220,11 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 			HTTPClientConfig: httpClientConfig,
 		})
 	case monitorKindEtcdSd:
+		sdc := sdConfig.(*etcdsd.SDConfig)
+		sdc.IPMatcher = c.objectsController.CheckPodIP
 		dis = etcdsd.New(c.ctx, &etcdsd.Options{
 			CommonOptions:    commonOpts,
-			SDConfig:         sdConfig.(*etcdsd.SDConfig),
+			SDConfig:         sdc,
 			HTTPClientConfig: httpClientConfig,
 		})
 	default:
@@ -291,7 +293,7 @@ func (c *Operator) createKubernetesSdDiscover(rsc resourceScrapConfig, sdConfig 
 			UrlValues:              rsc.Config.Params,
 			ExtraLabels:            specLabels,
 			MetricRelabelConfigs:   metricRelabelings,
-			NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+			CheckNodeNameFunc:      c.objectsController.CheckNodeName,
 			NodeLabelsFunc:         c.objectsController.NodeLabels,
 		},
 		KubeConfig: configs.G().KubeConfig,

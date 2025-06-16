@@ -213,7 +213,7 @@ func TestHighLightFactory_processField(t *testing.T) {
 
 func TestLabelMapFactory_FetchIncludeFieldValues(t *testing.T) {
 	type fields struct {
-		labelMap map[string][]string
+		labelMap map[string][]LabelMapValue
 	}
 	type args struct {
 		fieldName string
@@ -228,10 +228,18 @@ func TestLabelMapFactory_FetchIncludeFieldValues(t *testing.T) {
 		{
 			name: "should include field values",
 			fields: fields{
-				labelMap: map[string][]string{
-					"service":  {"api", "backend"},
-					"env":      {"prod"},
-					"response": {"2xx", "5xx"},
+				labelMap: map[string][]LabelMapValue{
+					"service": {
+						{Value: "api", Operator: "eq"},
+						{Value: "backend", Operator: "eq"},
+					},
+					"env": {
+						{Value: "prod", Operator: "eq"},
+					},
+					"response": {
+						{Value: "2xx", Operator: "eq"},
+						{Value: "5xx", Operator: "eq"},
+					},
 				},
 			},
 			args: args{
@@ -241,13 +249,39 @@ func TestLabelMapFactory_FetchIncludeFieldValues(t *testing.T) {
 			want1: true,
 		},
 		{
+			name: "should include field values with contains operator adding wildcards",
+			fields: fields{
+				labelMap: map[string][]LabelMapValue{
+					"service": {
+						{Value: "api", Operator: "contains"},
+						{Value: "backend", Operator: "eq"},
+					},
+				},
+			},
+			args: args{
+				fieldName: "service",
+			},
+			want:  []string{"*api*", "backend"},
+			want1: true,
+		},
+		{
 			name: "should not include empty_string indexed values",
 			fields: fields{
-				labelMap: map[string][]string{
-					"service":  {"api", "backend"},
-					"env":      {"prod"},
-					"response": {"2xx", "5xx"},
-					"":         {"empty_string"}, // 空串用来作为高亮时会单独返回，在include时不需要返回
+				labelMap: map[string][]LabelMapValue{
+					"service": {
+						{Value: "api", Operator: "eq"},
+						{Value: "backend", Operator: "eq"},
+					},
+					"env": {
+						{Value: "prod", Operator: "eq"},
+					},
+					"response": {
+						{Value: "2xx", Operator: "eq"},
+						{Value: "5xx", Operator: "eq"},
+					},
+					"": {
+						{Value: "empty_string", Operator: "eq"}, // 空串用来作为高亮时会单独返回，在include时不需要返回
+					},
 				},
 			},
 			args: args{

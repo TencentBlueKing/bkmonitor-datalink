@@ -18,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	md "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
@@ -1383,12 +1384,12 @@ func TestGetMaxWindow(t *testing.T) {
 	}
 }
 
-// TestQueryTs_LabelMap 测试 LabelMap 函数在各种条件操作符下的行为
+// TestQueryTs_LabelMap 测试 QueryTs.LabelMap 函数
 func TestQueryTs_LabelMap(t *testing.T) {
 	testCases := []struct {
 		name     string
 		queryTs  *QueryTs
-		expected map[string][]string
+		expected map[string][]function.LabelMapValue
 	}{
 		{
 			name: "ConditionEqual - 单个值",
@@ -1407,8 +1408,8 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"status": {"error"},
+			expected: map[string][]function.LabelMapValue{
+				"status": {{Value: "error", Operator: "eq"}},
 			},
 		},
 		{
@@ -1428,8 +1429,12 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"level": {"error", "warning", "info"},
+			expected: map[string][]function.LabelMapValue{
+				"level": {
+					{Value: "error", Operator: "eq"},
+					{Value: "warning", Operator: "eq"},
+					{Value: "info", Operator: "eq"},
+				},
 			},
 		},
 		{
@@ -1440,8 +1445,8 @@ func TestQueryTs_LabelMap(t *testing.T) {
 						Conditions: Conditions{
 							FieldList: []ConditionField{
 								{
-									DimensionName: "status",
-									Value:         []string{"success"},
+									DimensionName: "level",
+									Value:         []string{"error"},
 									Operator:      ConditionNotEqual,
 								},
 							},
@@ -1449,7 +1454,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{},
+			expected: map[string][]function.LabelMapValue{},
 		},
 		{
 			name: "ConditionNotContains - 因为是negative的操作符会被忽略",
@@ -1459,8 +1464,8 @@ func TestQueryTs_LabelMap(t *testing.T) {
 						Conditions: Conditions{
 							FieldList: []ConditionField{
 								{
-									DimensionName: "message",
-									Value:         []string{"debug"},
+									DimensionName: "content",
+									Value:         []string{"keyword"},
 									Operator:      ConditionNotContains,
 								},
 							},
@@ -1468,7 +1473,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{},
+			expected: map[string][]function.LabelMapValue{},
 		},
 		{
 			name: "ConditionContains - 应该被包含",
@@ -1487,8 +1492,8 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"content": {"keyword"},
+			expected: map[string][]function.LabelMapValue{
+				"content": {{Value: "keyword", Operator: "contains"}},
 			},
 		},
 		{
@@ -1508,8 +1513,8 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"id": {"12345"},
+			expected: map[string][]function.LabelMapValue{
+				"id": {{Value: "12345", Operator: "eq"}},
 			},
 		},
 		{
@@ -1529,8 +1534,8 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"pattern": {".*error.*"},
+			expected: map[string][]function.LabelMapValue{
+				"pattern": {{Value: ".*error.*", Operator: "regexp"}},
 			},
 		},
 		{
@@ -1541,8 +1546,8 @@ func TestQueryTs_LabelMap(t *testing.T) {
 						Conditions: Conditions{
 							FieldList: []ConditionField{
 								{
-									DimensionName: "exclude_pattern",
-									Value:         []string{".*debug.*"},
+									DimensionName: "pattern",
+									Value:         []string{".*error.*"},
 									Operator:      ConditionNotRegEqual,
 								},
 							},
@@ -1550,7 +1555,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{},
+			expected: map[string][]function.LabelMapValue{},
 		},
 		{
 			name: "数值比较操作符 - 应该被包含",
@@ -1584,11 +1589,11 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"cpu_usage":     {"80"},
-				"memory_usage":  {"90"},
-				"disk_usage":    {"50"},
-				"network_usage": {"60"},
+			expected: map[string][]function.LabelMapValue{
+				"cpu_usage":     {{Value: "80", Operator: "gt"}},
+				"memory_usage":  {{Value: "90", Operator: "gte"}},
+				"disk_usage":    {{Value: "50", Operator: "lt"}},
+				"network_usage": {{Value: "60", Operator: "lte"}},
 			},
 		},
 		{
@@ -1596,12 +1601,12 @@ func TestQueryTs_LabelMap(t *testing.T) {
 			queryTs: &QueryTs{
 				QueryList: []*Query{
 					{
-						QueryString: "level: error",
+						QueryString: "level:error",
 					},
 				},
 			},
-			expected: map[string][]string{
-				"level": {"error"},
+			expected: map[string][]function.LabelMapValue{
+				"level": {{Value: "error", Operator: "eq"}},
 			},
 		},
 		{
@@ -1609,7 +1614,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 			queryTs: &QueryTs{
 				QueryList: []*Query{
 					{
-						QueryString: "service: web-server",
+						QueryString: "service:web-server",
 						Conditions: Conditions{
 							FieldList: []ConditionField{
 								{
@@ -1622,9 +1627,9 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"service": {"web-server"},
-				"status":  {"500"},
+			expected: map[string][]function.LabelMapValue{
+				"service": {{Value: "web-server", Operator: "eq"}},
+				"status":  {{Value: "500", Operator: "eq"}},
 			},
 		},
 		{
@@ -1632,33 +1637,24 @@ func TestQueryTs_LabelMap(t *testing.T) {
 			queryTs: &QueryTs{
 				QueryList: []*Query{
 					{
-						QueryString: "app: frontend",
-						Conditions: Conditions{
-							FieldList: []ConditionField{
-								{
-									DimensionName: "level",
-									Value:         []string{"error"},
-									Operator:      ConditionEqual, //会被包含
-								},
-							},
-						},
+						QueryString: "app:frontend",
 					},
 					{
 						Conditions: Conditions{
 							FieldList: []ConditionField{
 								{
-									DimensionName: "component",
-									Value:         []string{"database"},
-									Operator:      ConditionNotEqual, // 会被忽略
+									DimensionName: "level",
+									Value:         []string{"error"},
+									Operator:      ConditionEqual,
 								},
 							},
 						},
 					},
 				},
 			},
-			expected: map[string][]string{
-				"app":   {"frontend"},
-				"level": {"error"},
+			expected: map[string][]function.LabelMapValue{
+				"app":   {{Value: "frontend", Operator: "eq"}},
+				"level": {{Value: "error", Operator: "eq"}},
 			},
 		},
 		{
@@ -1670,7 +1666,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 							FieldList: []ConditionField{
 								{
 									DimensionName: "empty_field",
-									Value:         []string{""},
+									Value:         []string{},
 									Operator:      ConditionEqual,
 								},
 								{
@@ -1683,8 +1679,8 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"valid_field": {"value"},
+			expected: map[string][]function.LabelMapValue{
+				"valid_field": {{Value: "value", Operator: "eq"}},
 			},
 		},
 		{
@@ -1696,21 +1692,16 @@ func TestQueryTs_LabelMap(t *testing.T) {
 							FieldList: []ConditionField{
 								{
 									DimensionName: "status",
-									Value:         []string{"error"},
+									Value:         []string{"error", "error"},
 									Operator:      ConditionEqual,
-								},
-								{
-									DimensionName: "status",
-									Value:         []string{"error"},
-									Operator:      ConditionNotEqual,
 								},
 							},
 						},
 					},
 				},
 			},
-			expected: map[string][]string{
-				"status": {"error"},
+			expected: map[string][]function.LabelMapValue{
+				"status": {{Value: "error", Operator: "eq"}},
 			},
 		},
 		{
@@ -1718,13 +1709,13 @@ func TestQueryTs_LabelMap(t *testing.T) {
 			queryTs: &QueryTs{
 				QueryList: []*Query{
 					{
-						QueryString: "level: error AND service: web",
+						QueryString: "level:error AND service:web",
 					},
 				},
 			},
-			expected: map[string][]string{
-				"level":   {"error"},
-				"service": {"web"},
+			expected: map[string][]function.LabelMapValue{
+				"level":   {{Value: "error", Operator: "eq"}},
+				"service": {{Value: "web", Operator: "eq"}},
 			},
 		},
 		{
@@ -1732,12 +1723,12 @@ func TestQueryTs_LabelMap(t *testing.T) {
 			queryTs: &QueryTs{
 				QueryList: []*Query{
 					{
-						QueryString: `message: "error occurred"`,
+						QueryString: `message:"error occurred"`,
 					},
 				},
 			},
-			expected: map[string][]string{
-				"message": {"error occurred"},
+			expected: map[string][]function.LabelMapValue{
+				"message": {{Value: "error occurred", Operator: "eq"}},
 			},
 		},
 		{
@@ -1745,12 +1736,12 @@ func TestQueryTs_LabelMap(t *testing.T) {
 			queryTs: &QueryTs{
 				QueryList: []*Query{
 					{
-						QueryString: `status: 'failed'`,
+						QueryString: "status:'failed'",
 					},
 				},
 			},
-			expected: map[string][]string{
-				"status": {"'failed'"},
+			expected: map[string][]function.LabelMapValue{
+				"status": {{Value: "'failed'", Operator: "eq"}},
 			},
 		},
 		{
@@ -1763,7 +1754,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{},
+			expected: map[string][]function.LabelMapValue{},
 		},
 		{
 			name: "全字段匹配",
@@ -1771,12 +1762,11 @@ func TestQueryTs_LabelMap(t *testing.T) {
 				QueryList: []*Query{
 					{
 						QueryString: "test",
-						Conditions:  Conditions{},
 					},
 				},
 			},
-			expected: map[string][]string{
-				"": {"test"},
+			expected: map[string][]function.LabelMapValue{
+				"": {{Value: "test", Operator: "eq"}},
 			},
 		},
 		{
@@ -1788,7 +1778,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{},
+			expected: map[string][]function.LabelMapValue{},
 		},
 		{
 			name: "嵌套字段名",
@@ -1812,9 +1802,9 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"user.profile.name":     {"john"},
-				"resource.k8s.pod.name": {"web-pod-123"},
+			expected: map[string][]function.LabelMapValue{
+				"user.profile.name":     {{Value: "john", Operator: "eq"}},
+				"resource.k8s.pod.name": {{Value: "web-pod-123", Operator: "contains"}},
 			},
 		},
 		{
@@ -1839,9 +1829,9 @@ func TestQueryTs_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"url":           {"https://example.com/api?param=value&other=123"},
-				"regex_pattern": {"^[a-zA-Z0-9]+$"},
+			expected: map[string][]function.LabelMapValue{
+				"url":           {{Value: "https://example.com/api?param=value&other=123", Operator: "eq"}},
+				"regex_pattern": {{Value: "^[a-zA-Z0-9]+$", Operator: "regexp"}},
 			},
 		},
 	}
@@ -1859,7 +1849,7 @@ func TestQuery_LabelMap(t *testing.T) {
 	testCases := []struct {
 		name     string
 		query    Query
-		expected map[string][]string
+		expected map[string][]function.LabelMapValue
 	}{
 		{
 			name: "只有 Conditions",
@@ -1874,8 +1864,8 @@ func TestQuery_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"status": {"error"},
+			expected: map[string][]function.LabelMapValue{
+				"status": {{Value: "error", Operator: "eq"}},
 			},
 		},
 		{
@@ -1883,8 +1873,8 @@ func TestQuery_LabelMap(t *testing.T) {
 			query: Query{
 				QueryString: "level:warning",
 			},
-			expected: map[string][]string{
-				"level": {"warning"},
+			expected: map[string][]function.LabelMapValue{
+				"level": {{Value: "warning", Operator: "eq"}},
 			},
 		},
 		{
@@ -1901,9 +1891,9 @@ func TestQuery_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"service": {"web"},
-				"status":  {"error"},
+			expected: map[string][]function.LabelMapValue{
+				"service": {{Value: "web", Operator: "eq"}},
+				"status":  {{Value: "error", Operator: "eq"}},
 			},
 		},
 		{
@@ -1920,8 +1910,8 @@ func TestQuery_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"level": {"warning", "error"},
+			expected: map[string][]function.LabelMapValue{
+				"level": {{Value: "warning", Operator: "eq"}, {Value: "error", Operator: "eq"}},
 			},
 		},
 		{
@@ -1938,8 +1928,8 @@ func TestQuery_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"level": {"error"},
+			expected: map[string][]function.LabelMapValue{
+				"level": {{Value: "error", Operator: "eq"}},
 			},
 		},
 		{
@@ -1961,10 +1951,10 @@ func TestQuery_LabelMap(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]string{
-				"service":   {"web"},
-				"component": {"database"},
-				"status":    {"error", "warning"},
+			expected: map[string][]function.LabelMapValue{
+				"service":   {{Value: "web", Operator: "eq"}},
+				"component": {{Value: "database", Operator: "eq"}},
+				"status":    {{Value: "error", Operator: "eq"}, {Value: "warning", Operator: "eq"}},
 			},
 		},
 		{
@@ -1973,7 +1963,7 @@ func TestQuery_LabelMap(t *testing.T) {
 				QueryString: "",
 				Conditions:  Conditions{},
 			},
-			expected: map[string][]string{},
+			expected: map[string][]function.LabelMapValue{},
 		},
 	}
 

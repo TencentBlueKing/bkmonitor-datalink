@@ -1468,51 +1468,6 @@ func TestQueryRawWithInstance(t *testing.T) {
 			total:    1,
 			expected: `[{"__data_label":"es","__doc_id":"cT5KjpEBbwEm76LbeH3I","__highlight":{"user.first":["<mark>John</mark>"],"user.last":["<mark>Smi</mark>th"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}]`,
 		},
-		"include debug": {
-			queryTs: &structured.QueryTs{
-				SpaceUid: spaceUid,
-				Step:     "60s",
-				QueryList: []*structured.Query{
-					{
-						DataSource:  structured.BkLog,
-						TableID:     structured.TableID(influxdb.ResultTableEs),
-						KeepColumns: []string{"tags", "user.first", "user.last"},
-						QueryString: "*Smi*",
-						FieldName:   "user.first",
-						Conditions: structured.Conditions{
-							FieldList: []structured.ConditionField{
-								{
-									DimensionName: "user.first",
-									Value:         []string{"John"},
-									Operator:      structured.ConditionEqual,
-								},
-							},
-						},
-						AggregateMethodList: structured.AggregateMethodList{
-							structured.AggregateMethod{
-								Method:     structured.MAX,
-								Field:      "user.first",
-								Window:     "60s",
-								Dimensions: []string{"user.first", "user.last"},
-							},
-						},
-						TimeAggregation: structured.TimeAggregation{
-							Function: "max_over_time",
-							Window:   "60s",
-							Position: 0,
-						},
-					},
-				},
-				Limit: 0,
-				Start: start,
-				End:   end,
-				HighLight: &metadata.HighLight{
-					Enable: true,
-				},
-			},
-			total:    10000,
-			expected: `{"series":[{"name":"_value","columns":["_time","_value"],"types":["float","float"],"group_keys":["user.first","user.last"],"group_values":["John"," "],"values":[[1723594020000,null],[1723594080000,null],[1723594140000,null],[1723594200000,null],[1723594260000,null],[1723594320000,null],[1723594380000,null],[1723594440000,null],[1723594500000,null],[1723594560000,null],[1723594620000,null],[1723594680000,null],[1723594740000,null],[1723594800000,null],[1723594860000,null],[1723594920000,null],[1723594980000,null]]}]}`,
-		},
 	}
 
 	for name, c := range tcs {

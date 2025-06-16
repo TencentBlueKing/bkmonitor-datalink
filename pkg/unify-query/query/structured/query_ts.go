@@ -83,8 +83,8 @@ type QueryTs struct {
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
-func (q *QueryTs) LabelMap() (map[string][]string, error) {
-	labelMap := make(map[string][]string)
+func (q *QueryTs) LabelMap() (map[string][]function.LabelMapValue, error) {
+	labelMap := make(map[string][]function.LabelMapValue)
 	labelCheck := make(map[string]struct{})
 
 	for _, query := range q.QueryList {
@@ -93,11 +93,11 @@ func (q *QueryTs) LabelMap() (map[string][]string, error) {
 			return nil, err
 		}
 		for key, values := range m {
-			for _, value := range values {
-				checkKey := key + ":" + value
+			for _, labelValue := range values {
+				checkKey := key + ":" + labelValue.Value + ":" + labelValue.Operator
 				if _, ok := labelCheck[checkKey]; !ok {
 					labelCheck[checkKey] = struct{}{}
-					labelMap[key] = append(labelMap[key], value)
+					labelMap[key] = append(labelMap[key], labelValue)
 				}
 			}
 		}
@@ -417,19 +417,26 @@ type Query struct {
 	Collapse *metadata.Collapse `json:"collapse,omitempty"`
 }
 
-func (q *Query) LabelMap() (map[string][]string, error) {
-	labelMap := make(map[string][]string)
+const (
+	defaultQueryStringOperator = "eq"
+)
+
+func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
+	labelMap := make(map[string][]function.LabelMapValue)
 	labelCheck := make(map[string]struct{})
 
-	addLabel := func(key, value string) {
+	addLabel := func(key, value, operator string) {
 		if value == "" {
 			return
 		}
 
-		checkKey := key + ":" + value
+		checkKey := key + ":" + value + ":" + operator
 		if _, ok := labelCheck[checkKey]; !ok {
 			labelCheck[checkKey] = struct{}{}
-			labelMap[key] = append(labelMap[key], value)
+			labelMap[key] = append(labelMap[key], function.LabelMapValue{
+				Value:    value,
+				Operator: operator,
+			})
 		}
 	}
 
@@ -437,10 +444,20 @@ func (q *Query) LabelMap() (map[string][]string, error) {
 		for _, value := range condition.Value {
 			if value != "" {
 				switch condition.Operator {
-				case ConditionEqual, ConditionExact, ConditionContains, ConditionRegEqual,
-					ConditionGt, ConditionGte, ConditionLt, ConditionLte:
-					// positive 操作符不包含:ConditionExisted
-					addLabel(condition.DimensionName, value)
+				case ConditionEqual, ConditionExact:
+					addLabel(condition.DimensionName, value, "eq")
+				case ConditionContains:
+					addLabel(condition.DimensionName, value, "contains")
+				case ConditionRegEqual:
+					addLabel(condition.DimensionName, value, "regexp")
+				case ConditionGt:
+					addLabel(condition.DimensionName, value, "gt")
+				case ConditionGte:
+					addLabel(condition.DimensionName, value, "gte")
+				case ConditionLt:
+					addLabel(condition.DimensionName, value, "lt")
+				case ConditionLte:
+					addLabel(condition.DimensionName, value, "lte")
 				case ConditionNotEqual, ConditionNotContains, ConditionNotRegEqual, ConditionNotExisted:
 					// negative do nothing
 				case ConditionExisted:
@@ -459,7 +476,7 @@ func (q *Query) LabelMap() (map[string][]string, error) {
 		}
 		for key, values := range qLabelMap {
 			for _, value := range values {
-				addLabel(key, value)
+				addLabel(key, value, defaultQueryStringOperator)
 			}
 		}
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -153,20 +154,23 @@ type Query struct {
 	Collapse    *Collapse `json:"collapse,omitempty"`
 }
 
-func (q *Query) LabelMap() (map[string][]string, error) {
-	labelMap := make(map[string][]string)
+func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
+	labelMap := make(map[string][]function.LabelMapValue)
 	labelCheck := make(map[string]struct{})
 
-	addLabel := func(key string, values ...string) {
+	addLabel := func(key string, operator string, values ...string) {
 		if len(values) == 0 {
 			return
 		}
 
 		for _, value := range values {
-			checkKey := key + ":" + value
+			checkKey := key + ":" + value + ":" + operator
 			if _, ok := labelCheck[checkKey]; !ok {
 				labelCheck[checkKey] = struct{}{}
-				labelMap[key] = append(labelMap[key], value)
+				labelMap[key] = append(labelMap[key], function.LabelMapValue{
+					Value:    value,
+					Operator: operator,
+				})
 			}
 		}
 	}
@@ -175,10 +179,20 @@ func (q *Query) LabelMap() (map[string][]string, error) {
 		for _, cond := range condition {
 			if cond.Value != nil && len(cond.Value) > 0 {
 				switch cond.Operator {
-				case ConditionEqual, ConditionExact, ConditionContains, ConditionRegEqual,
-					ConditionGt, ConditionGte, ConditionLt, ConditionLte:
-					// positive 操作符不包含:ConditionExisted
-					addLabel(cond.DimensionName, cond.Value...)
+				case ConditionEqual, ConditionExact:
+					addLabel(cond.DimensionName, "eq", cond.Value...)
+				case ConditionContains:
+					addLabel(cond.DimensionName, "contains", cond.Value...)
+				case ConditionRegEqual:
+					addLabel(cond.DimensionName, "req", cond.Value...)
+				case ConditionGt:
+					addLabel(cond.DimensionName, "gt", cond.Value...)
+				case ConditionGte:
+					addLabel(cond.DimensionName, "gte", cond.Value...)
+				case ConditionLt:
+					addLabel(cond.DimensionName, "lt", cond.Value...)
+				case ConditionLte:
+					addLabel(cond.DimensionName, "lte", cond.Value...)
 				case ConditionNotEqual, ConditionNotContains, ConditionNotRegEqual, ConditionNotExisted:
 					// negative do nothing
 				case ConditionExisted:
@@ -197,7 +211,7 @@ func (q *Query) LabelMap() (map[string][]string, error) {
 		}
 		for key, values := range qLabelMap {
 			for _, value := range values {
-				addLabel(key, value)
+				addLabel(key, "eq", value)
 			}
 		}
 	}

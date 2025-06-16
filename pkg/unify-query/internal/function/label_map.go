@@ -22,8 +22,13 @@ const (
 	KeyLabelMap = "__label_map"
 )
 
+type LabelMapValue struct {
+	Value    string `json:"value"`
+	Operator string `json:"operator"`
+}
+
 type labelMapFactory struct {
-	labelMap map[string][]string
+	labelMap map[string][]LabelMapValue
 }
 
 type LabelMapInterface interface {
@@ -38,9 +43,9 @@ func LabelMapFactory(ctx context.Context) (LabelMapInterface, bool) {
 	return nil, false
 }
 
-func InjectLabelMap(ctx context.Context, labelMap map[string][]string) context.Context {
+func InjectLabelMap(ctx context.Context, labelMap map[string][]LabelMapValue) context.Context {
 	if labelMap == nil {
-		labelMap = make(map[string][]string)
+		labelMap = make(map[string][]LabelMapValue)
 	}
 
 	factory := &labelMapFactory{
@@ -55,9 +60,14 @@ func (h *labelMapFactory) ProcessHighlight(data map[string]any, maxAnalyzedOffse
 
 	for key, value := range data {
 		// 获取全字段匹配，字段名为空
-		keywords := append([]string{}, h.labelMap[""]...)
+		keywords := make([]string, 0)
+		for _, labelValue := range h.labelMap[""] {
+			keywords = append(keywords, labelValue.Value)
+		}
 		// 获取使用字段查询的值
-		keywords = append(keywords, h.labelMap[key]...)
+		for _, labelValue := range h.labelMap[key] {
+			keywords = append(keywords, labelValue.Value)
+		}
 
 		if highlightedValue := h.processHighlightField(value, keywords, maxAnalyzedOffset); highlightedValue != nil {
 			newData[key] = highlightedValue
@@ -85,7 +95,16 @@ func (h *labelMapFactory) processHighlightField(fieldValue any, keywords []strin
 }
 
 func (h *labelMapFactory) FetchIncludeFieldValues(fieldName string) ([]string, bool) {
-	if values, ok := h.labelMap[fieldName]; ok {
+	if labelValues, ok := h.labelMap[fieldName]; ok {
+		values := make([]string, 0, len(labelValues))
+		for _, labelValue := range labelValues {
+			value := labelValue.Value
+			// 如果是contains操作符，需要添加通配符
+			if labelValue.Operator == "contains" {
+				value = "*" + value + "*"
+			}
+			values = append(values, value)
+		}
 		return values, true
 	} else {
 		return nil, false

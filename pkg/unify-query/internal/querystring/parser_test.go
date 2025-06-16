@@ -13,9 +13,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 /*
@@ -390,9 +387,6 @@ func TestParser(t *testing.T) {
 			},
 		},
 	}
-
-	metadata.InitMetadata()
-	mock.Init()
 
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {

@@ -140,7 +140,7 @@ func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype 
 
 	tk := tokenparser.FromHttpRequest(req)
 	if len(tk) > 0 {
-		r.Token.Original = tk
+		r.Token = define.Token{Original: tk}
 	}
 	r.Metadata = tokenparser.FromHttpUserMetadata(req)
 

@@ -58,6 +58,7 @@ type SDConfig struct {
 	PrefixKeys       []string                    `yaml:"prefix_keys"`
 	Endpoints        []string                    `yaml:"endpoints"`
 	EnableIPFilter   bool                        `yaml:"enable_ip_filter"`
+	FetchInterval    time.Duration               `yamk:"fetch_interval"`
 	IPFilter         func(string) bool           `yaml:"-"`
 }
 
@@ -166,11 +167,15 @@ func (d *Discovery) resolveServices(ctx context.Context, prefixKey string) ([]Se
 	// 获取 key 具体 values 解析 labels
 	var services []Service
 	for _, key := range keys {
+		// 避免高频访问 etcd
+		if d.sdConfig.FetchInterval > 0 {
+			time.Sleep(d.sdConfig.FetchInterval)
+		}
 		rsp, err := cli.Get(ctx, key)
 		if err != nil {
 			return nil, err
 		}
-		if len(rsp.Kvs) == 0 {
+		if len(rsp.Kvs) == 0 || rsp.Kvs[0] == nil {
 			logger.Debugf("etcdsd skip emtpty kv, key=%v", key)
 			continue
 		}

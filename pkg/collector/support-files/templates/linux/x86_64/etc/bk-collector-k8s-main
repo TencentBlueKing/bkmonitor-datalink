@@ -131,8 +131,8 @@
         # ResourceFilter: 资源过滤处理器
         - name: "resource_filter/user_metadata"
           config:
-            from_token:
-              - metadata
+            from_metadata:
+              keys: ["*"]
 
         # ResourceFilter: 资源过滤处理器
         - name: "resource_filter/logs"

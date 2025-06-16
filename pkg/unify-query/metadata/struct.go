@@ -100,7 +100,6 @@ type Query struct {
 	DataSource string `json:"data_source,omitempty"`
 	DataLabel  string `json:"data_label,omitempty"`
 	TableID    string `json:"table_id,omitempty"`
-	MetricName string `json:"metric_name,omitempty"`
 
 	// vm 的 rt
 	VmRt string `json:"vm_rt,omitempty"`
@@ -109,12 +108,14 @@ type Query struct {
 	RetentionPolicy string     `json:"retention_policy,omitempty"` // 存储 RP
 	DB              string     `json:"db,omitempty"`               // 存储 DB
 	Measurement     string     `json:"measurement,omitempty"`      // 存储 Measurement
+	MeasurementType string     `json:"measurement_type,omitempty"` // 存储类型
 	Field           string     `json:"field,omitempty"`            // 存储 Field
 	TimeField       TimeField  `json:"time_field,omitempty"`       // 时间字段
 	Timezone        string     `json:"timezone,omitempty"`         // 存储 Timezone
 	Fields          []string   `json:"fields,omitempty"`           // 存储命中的 Field 列表，一般情况下为一个，当 Field 为模糊匹配时，解析为多个
 	FieldAlias      FieldAlias `json:"field_alias,omitempty"`
 	Measurements    []string   `json:"measurements,omitempty"` // 存储命中的 Measurement 列表，一般情况下为一个，当 Measurement 为模糊匹配时，解析为多个
+	MetricNames     []string   `json:"metric_names,omitempty"`
 
 	// 用于 promql 查询
 	IsHasOr bool `json:"is_has_or,omitempty"` // 标记是否有 or 条件

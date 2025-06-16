@@ -208,7 +208,6 @@ func TestInstance_queryReference(t *testing.T) {
 				},
 				DataSource:    structured.BkLog,
 				TableID:       "es_index",
-				MetricName:    "user.first",
 				Source:        []string{"group", "user.first", "user.last"},
 				StorageType:   consul.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{},
@@ -230,7 +229,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:       10,
 				DataSource: structured.BkLog,
 				TableID:    "bk_log_index_set_10",
-				MetricName: "__ext.io_kubernetes_pod",
 				Orders: metadata.Orders{
 					{
 						Name: FieldTime,
@@ -265,7 +263,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:       10,
 				DataSource: structured.BkLog,
 				TableID:    "bk_log_index_set_10",
-				MetricName: "__ext.io_kubernetes_pod",
 				Orders: metadata.Orders{
 					{
 						Name: FieldTime,
@@ -290,7 +287,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":4,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":4,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
 		},
 		"使用 promql 计算平均值 sum(count_over_time(field[12h]))": {
 			query: &metadata.Query{
@@ -300,7 +297,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -315,7 +311,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__ext__bk_46__container_name","value":"sync-apigw"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-apigw-sync-1178-cl8k8"},{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":24,"timestamp":1723593600000},{"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"sync-apigw"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-apigw-sync-1179-9h9xv"},{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":24,"timestamp":1723593600000},{"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"unify-query"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-64bd4f5df4-599f9"},{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":375064,"timestamp":1723593600000},{"value":392679,"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"unify-query"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-64bd4f5df4-llp94"},{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":381173,"timestamp":1723593600000},{"value":374338,"timestamp":1723636800000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__ext__bk_46__container_name","value":"sync-apigw"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-apigw-sync-1178-cl8k8"},{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":24,"timestamp":1723593600000},{"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"sync-apigw"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-apigw-sync-1179-9h9xv"},{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":24,"timestamp":1723593600000},{"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"unify-query"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-64bd4f5df4-599f9"},{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":375064,"timestamp":1723593600000},{"value":392679,"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"unify-query"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-64bd4f5df4-llp94"},{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":381173,"timestamp":1723593600000},{"value":374338,"timestamp":1723636800000}],"exemplars":null,"histograms":null}]`,
 		},
 		"使用非时间聚合统计数量": {
 			query: &metadata.Query{
@@ -325,7 +321,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        3,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -335,7 +330,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":1523302,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":1523302,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
 		},
 		"获取 50 分位值": {
 			query: &metadata.Query{
@@ -345,7 +340,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -358,7 +352,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"le","value":"50.0"}],"samples":[{"value":1723637132806.3303,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"le","value":"50.0"}],"samples":[{"value":1723637132806.3303,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
 		},
 		"获取 50, 90 分支值，同时按 6h 时间聚合": {
 			query: &metadata.Query{
@@ -368,7 +362,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -385,7 +378,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"le","value":"50.0"}],"samples":[{"value":1723604380350.2532,"timestamp":1723593600000},{"value":1723625838006.1033,"timestamp":1723615200000},{"value":1723647585882.9739,"timestamp":1723636800000},{"value":1723669177640.7131,"timestamp":1723658400000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"le","value":"90.0"}],"samples":[{"value":1723612956128.9934,"timestamp":1723593600000},{"value":1723634678721.5513,"timestamp":1723615200000},{"value":1723656196499.344,"timestamp":1723636800000},{"value":1723677836133.885,"timestamp":1723658400000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"le","value":"50.0"}],"samples":[{"value":1723604380350.2532,"timestamp":1723593600000},{"value":1723625838006.1033,"timestamp":1723615200000},{"value":1723647585882.9739,"timestamp":1723636800000},{"value":1723669177640.7131,"timestamp":1723658400000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"le","value":"90.0"}],"samples":[{"value":1723612956128.9934,"timestamp":1723593600000},{"value":1723634678721.5513,"timestamp":1723615200000},{"value":1723656196499.344,"timestamp":1723636800000},{"value":1723677836133.885,"timestamp":1723658400000}],"exemplars":null,"histograms":null}]`,
 		},
 		"根据 field 字段聚合计算数量，同时根据值排序": {
 			query: &metadata.Query{
@@ -395,7 +388,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        10,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -424,7 +416,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        10,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -563,7 +554,6 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "es_index",
 				DataLabel:   "es_index",
-				MetricName:  "group",
 				StorageType: consul.ElasticsearchStorageType,
 				Source:      []string{"group", "user.first", "user.last"},
 				AllConditions: metadata.AllConditions{
@@ -590,7 +580,6 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource: structured.BkLog,
 				TableID:    "bk_log_index_set_10",
 				DataLabel:  "set_10",
-				MetricName: "__ext.io_kubernetes_pod",
 				Orders: metadata.Orders{
 					{
 						Name: FieldTime,
@@ -624,7 +613,6 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				DataLabel:   "bk_log",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				TimeField: metadata.TimeField{
 					Name: "dtEventTimeStamp",

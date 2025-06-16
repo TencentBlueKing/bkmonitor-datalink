@@ -34,11 +34,13 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
@@ -385,6 +387,9 @@ func (i *Instance) makeSQL(
 		selectList = append(selectList, "*::tag")
 	}
 	selectList = append(selectList, fmt.Sprintf(`"time" AS %s`, influxdb.TimeColumnName))
+	if query.MeasurementType == redis.BkExporter {
+		selectList = append(selectList, fmt.Sprintf(`"metric_name" AS %s`, labels.MetricName))
+	}
 
 	sqlBuilder.WriteString("SELECT ")
 	sqlBuilder.WriteString(strings.Join(selectList, ", ") + " ")
@@ -414,6 +419,7 @@ func (i *Instance) makeSQL(
 func (i *Instance) query(
 	ctx context.Context,
 	query *metadata.Query,
+	metricName string,
 	start time.Time,
 	end time.Time,
 	withFieldTag bool,
@@ -527,22 +533,30 @@ func (i *Instance) query(
 		Timeseries: make([]*prompb.TimeSeries, 0, len(series)),
 	}
 
-	metricLabel := query.MetricLabels(ctx)
-
 	for _, s := range series {
 		pointNum += len(s.Values)
 
 		lbs := make([]prompb.Label, 0, len(s.Tags)+1)
+
+		// 拼接指标名
+		if metricName != "" {
+			lbs = append(lbs, prompb.Label{
+				Name:  labels.MetricName,
+				Value: metricName,
+			})
+		}
+
 		for k, v := range s.Tags {
+			// 如果查询直接能够获取到指标名，则拼接最终指标
+			if k == labels.MetricName {
+				v = function.GetRealMetricName(query.DataSource, query.TableID, v)
+			}
+
 			lbs = append(lbs, prompb.Label{
 				Name:  k,
 				Value: v,
 			})
-		}
 
-		// 拼接指标名
-		if metricLabel != nil {
-			lbs = append(lbs, *metricLabel)
 		}
 
 		samples := make([]prompb.Sample, 0, len(s.Values))
@@ -577,7 +591,7 @@ func (i *Instance) query(
 
 func (i *Instance) grpcStream(
 	ctx context.Context,
-	db, rp, measurement, field, where string,
+	db, rp, measurement, field, where, metricName string,
 	slimit, limit int64,
 ) storage.SeriesSet {
 	var (
@@ -599,6 +613,7 @@ func (i *Instance) grpcStream(
 	span.Set("grpc-query-rp", rp)
 	span.Set("grpc-query-measurement", measurement)
 	span.Set("grpc-query-field", field)
+	span.Set("grpc-query-metric-name", metricName)
 	span.Set("grpc-query-where", where)
 	span.Set("grpc-query-slimit", int(slimit))
 	span.Set("grpc-query-limit", int(limit))
@@ -633,15 +648,13 @@ func (i *Instance) grpcStream(
 
 	span.Set("grpc-start-stream-series-set", name)
 
-	qry := &metadata.Query{TableID: fmt.Sprintf("%s.%s", db, measurement), MetricName: field}
-
 	seriesSet := StartStreamSeriesSet(
 		ctx, name, &StreamSeriesSetOption{
-			Span:        span,
-			Stream:      stream,
-			Limiter:     limiter,
-			Timeout:     i.timeout,
-			MetricLabel: qry.MetricLabels(ctx),
+			Span:       span,
+			Stream:     stream,
+			Limiter:    limiter,
+			Timeout:    i.timeout,
+			MetricName: metricName,
 		},
 	)
 
@@ -700,22 +713,29 @@ func (i *Instance) QuerySeriesSet(
 	var sets []storage.SeriesSet
 	// 在指标模糊匹配的情况下，需要检索符合条件的 Measures + Fields，这时候会有多个，最后合并结果输出
 	multiFieldsFlag := len(query.Measurements) > 1 || len(query.Fields) > 1
-	for _, measurement := range query.Measurements {
-		for _, field := range query.Fields {
-			var set storage.SeriesSet
+	for mi, measurement := range query.Measurements {
+		for fi, field := range query.Fields {
+			var (
+				set        storage.SeriesSet
+				metricName string
+			)
+			if len(query.MetricNames) > mi+fi {
+				metricName = query.MetricNames[mi+fi]
+			}
+
 			// 判断是否进入降采样逻辑：sum(sum_over_time), count(count_over_time) 等等
 			if len(query.Aggregates) == 0 && i.protocol == influxdb.GRPC {
-				set = i.grpcStream(ctx, query.DB, query.RetentionPolicy, measurement, field, where, slimit, limit)
+				set = i.grpcStream(ctx, query.DB, query.RetentionPolicy, measurement, field, where, metricName, slimit, limit)
 			} else {
 				// 复制 ToVmExpand 对象，简化 field、measure 取值，传入查询方法
 				mq := &metadata.Query{
 					DataSource:      query.DataSource,
 					TableID:         query.TableID,
-					MetricName:      query.MetricName,
 					RetentionPolicy: query.RetentionPolicy,
 					DB:              query.DB,
 					Measurement:     measurement,
 					Field:           field,
+					MeasurementType: query.MeasurementType,
 					Timezone:        query.Timezone,
 					IsHasOr:         query.IsHasOr,
 					Aggregates:      query.Aggregates,
@@ -724,7 +744,7 @@ func (i *Instance) QuerySeriesSet(
 					OffsetInfo:      query.OffsetInfo,
 					SegmentedEnable: query.SegmentedEnable,
 				}
-				res, err := i.query(ctx, mq, start, end, multiFieldsFlag)
+				res, err := i.query(ctx, mq, metricName, start, end, multiFieldsFlag)
 				if err != nil {
 					log.Errorf(ctx, err.Error())
 					continue

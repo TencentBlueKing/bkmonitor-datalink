@@ -57,7 +57,8 @@ type SDConfig struct {
 	RefreshInterval  model.Duration              `yaml:"refresh_interval,omitempty"`
 	PrefixKeys       []string                    `yaml:"prefix_keys"`
 	Endpoints        []string                    `yaml:"endpoints"`
-	IPMatcher        func(string) bool           `yaml:"-"`
+	EnableIPFilter   bool                        `yaml:"enable_ip_filter"`
+	IPFilter         func(string) bool           `yaml:"-"`
 }
 
 func (*SDConfig) Name() string {
@@ -153,11 +154,12 @@ func (d *Discovery) resolveServices(ctx context.Context, prefixKey string) ([]Se
 			continue
 		}
 
-		// 必须检查 IP
-		if d.sdConfig.IPMatcher != nil {
-			if d.sdConfig.IPMatcher(host) {
+		if d.sdConfig.EnableIPFilter && d.sdConfig.IPFilter != nil {
+			if d.sdConfig.IPFilter(host) {
 				keys = append(keys, key)
 			}
+		} else {
+			keys = append(keys, key)
 		}
 	}
 

@@ -221,7 +221,7 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 		})
 	case monitorKindEtcdSd:
 		sdc := sdConfig.(*etcdsd.SDConfig)
-		sdc.IPMatcher = c.objectsController.CheckPodIP
+		sdc.IPFilter = c.objectsController.CheckPodIP
 		dis = etcdsd.New(c.ctx, &etcdsd.Options{
 			CommonOptions:    commonOpts,
 			SDConfig:         sdc,

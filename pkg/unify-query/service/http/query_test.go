@@ -953,6 +953,15 @@ func TestQueryRawWithInstance(t *testing.T) {
 		// array highlight with wildcard all
 		`{"_source":{"includes":["tags","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"*Smi*"}}]}},"size":5}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"cT5KjpEBbwEm76LbeH3I","_score":0.0,"_source":{"tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}}]}}`,
 
+		// include basic test with contains operator
+		`{"_source":{"includes":["level","message"]},"from":0,"query":{"bool":{"filter":[{"bool":{"should":[{"wildcard":{"level":{"value":"error"}}},{"wildcard":{"level":{"value":"warn"}}},{"wildcard":{"level":{"value":"info"}}}]}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}]}},"size":10}`: `{"took":5,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":3,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"test1","_score":0.0,"_source":{"level":"error","message":"Error occurred"},"highlight":{"level":["<mark>error</mark>"]}},{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"test2","_score":0.0,"_source":{"level":"warn","message":"Warning message"},"highlight":{"level":["<mark>warn</mark>"]}},{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"test3","_score":0.0,"_source":{"level":"info","message":"Info message"},"highlight":{"level":["<mark>info</mark>"]}}]}}`,
+
+		// include with nested field and contains
+		`{"_source":{"includes":["user.role","user.department"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"bool":{"should":[{"wildcard":{"user.role":{"value":"admin"}}},{"wildcard":{"user.role":{"value":"user"}}},{"wildcard":{"user.role":{"value":"guest"}}}]}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}]}},"size":5}`: `{"took":3,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":2,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"nested1","_score":0.0,"_source":{"user.role":"admin","user.department":"IT"},"highlight":{"user.role":["<mark>admin</mark>"]}},{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"nested2","_score":0.0,"_source":{"user.role":"user","user.department":"Sales"},"highlight":{"user.role":["<mark>user</mark>"]}}]}}`,
+
+		// include with contains and exclude pattern
+		`{"_source":{"includes":["application","log_level","message"]},"from":0,"query":{"bool":{"filter":[{"bool":{"must":[{"bool":{"should":[{"wildcard":{"application":{"value":"web-app"}}},{"wildcard":{"application":{"value":"mobile-app"}}},{"wildcard":{"application":{"value":"desktop-app"}}}]}},{"bool":{"must_not":[{"wildcard":{"log_level":{"value":"debug"}}},{"wildcard":{"log_level":{"value":"trace"}}}]}}]}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}]}},"size":3}`: `{"took":4,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":3,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"app1","_score":0.0,"_source":{"application":"web-app","log_level":"info","message":"User login successful"},"highlight":{"application":["<mark>web-app</mark>"]}},{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"app2","_score":0.0,"_source":{"application":"mobile-app","log_level":"warn","message":"Low battery warning"},"highlight":{"application":["<mark>mobile-app</mark>"]}},{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"app3","_score":0.0,"_source":{"application":"desktop-app","log_level":"error","message":"File not found"},"highlight":{"application":["<mark>desktop-app</mark>"]}}]}}`,
+
 		`{"_source":{"includes":["__ext.io_kubernetes_pod","dtEventTimeStamp"]},"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":20,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":468,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"e058129ae18bff87c95e83f24584e654","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c124dae69af9b86a7128ee4281820158","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c7f73abf7e865a4b4d7fc608387d01cf","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"39c3ec662881e44bf26d2a6bfc0e35c3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"58e03ce0b9754bf0657d49a5513adcb5","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"43a36f412886bf30b0746562513638d3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"218ceafd04f89b39cda7954e51f4a48a","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8d9abe9b782fe3a1272c93f0af6b39e1","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"0826407be7f04f19086774ed68eac8dd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"d56b4120194eb37f53410780da777d43","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}}]}}`,
 		`{"_source":{"includes":["__ext.container_id","dtEventTimeStamp"]},"from":1,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":1}`:                                                      `{"took":17,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"4f3a5e9c167097c9658e88b2f32364b2","_score":0.0,"_source":{"dtEventTimeStamp":"1723594209000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}}]}}`,
 		`{"_source":{"includes":["__ext.container_id","dtEventTimeStamp"]},"from":1,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":1723594000123,"include_lower":true,"include_upper":true,"to":1723595000234}}}}},"size":10}`:                                               `{"took":468,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"e058129ae18bff87c95e83f24584e654","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c124dae69af9b86a7128ee4281820158","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c7f73abf7e865a4b4d7fc608387d01cf","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"39c3ec662881e44bf26d2a6bfc0e35c3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"58e03ce0b9754bf0657d49a5513adcb5","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"43a36f412886bf30b0746562513638d3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"218ceafd04f89b39cda7954e51f4a48a","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8d9abe9b782fe3a1272c93f0af6b39e1","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"0826407be7f04f19086774ed68eac8dd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"d56b4120194eb37f53410780da777d43","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}}]}}`,
@@ -1467,6 +1476,99 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    1,
 			expected: `[{"__data_label":"es","__doc_id":"cT5KjpEBbwEm76LbeH3I","__highlight":{"user.first":["<mark>John</mark>"],"user.last":["<mark>Smi</mark>th"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}]`,
+		},
+		"include basic test with contains operator": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(influxdb.ResultTableEs),
+						FieldName:   "level",
+						KeepColumns: []string{"level", "message"},
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method:     "count",
+								Dimensions: []string{"level"},
+							},
+						},
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "level",
+									Value:         []string{"error", "warn", "info"},
+									Operator:      structured.Contains,
+								},
+							},
+						},
+					},
+				},
+				Limit: 10,
+				Start: start,
+				End:   end,
+			},
+			total:    3,
+			expected: `[{"__data_label":"es","__doc_id":"test1","__highlight":{"level":["<mark>error</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","level":"error","message":"Error occurred"},{"__data_label":"es","__doc_id":"test2","__highlight":{"level":["<mark>warn</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","level":"warn","message":"Warning message"},{"__data_label":"es","__doc_id":"test3","__highlight":{"level":["<mark>info</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","level":"info","message":"Info message"}]`,
+		},
+
+		"include with nested field and contains": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(influxdb.ResultTableEs),
+						KeepColumns: []string{"user.role", "user.department"},
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "user.role",
+									Value:         []string{"admin", "user", "guest"},
+									Operator:      structured.Contains,
+								},
+							},
+						},
+					},
+				},
+				Limit: 5,
+				Start: start,
+				End:   end,
+			},
+			total:    2,
+			expected: `[{"__data_label":"es","__doc_id":"nested1","__highlight":{"user.role":["<mark>admin</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","user.department":"IT","user.role":"admin"},{"__data_label":"es","__doc_id":"nested2","__highlight":{"user.role":["<mark>user</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","user.department":"Sales","user.role":"user"}]`,
+		},
+
+		"include with contains and exclude pattern": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(influxdb.ResultTableEs),
+						KeepColumns: []string{"application", "log_level", "message"},
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "application",
+									Value:         []string{"web-app", "mobile-app", "desktop-app"},
+									Operator:      structured.Contains,
+								},
+								{
+									DimensionName: "log_level",
+									Value:         []string{"debug", "trace"},
+									Operator:      structured.Ncontains,
+								},
+							},
+							ConditionList: []string{"and"},
+						},
+					},
+				},
+				Limit: 3,
+				Start: start,
+				End:   end,
+			},
+			total:    3,
+			expected: `[{"__data_label":"es","__doc_id":"app1","__highlight":{"application":["<mark>web-app</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","application":"web-app","log_level":"info","message":"User login successful"},{"__data_label":"es","__doc_id":"app2","__highlight":{"application":["<mark>mobile-app</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","application":"mobile-app","log_level":"warn","message":"Low battery warning"},{"__data_label":"es","__doc_id":"app3","__highlight":{"application":["<mark>desktop-app</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","application":"desktop-app","log_level":"error","message":"File not found"}]`,
 		},
 	}
 

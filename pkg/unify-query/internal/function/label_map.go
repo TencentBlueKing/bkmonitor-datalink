@@ -99,9 +99,9 @@ func (h *labelMapFactory) FetchIncludeFieldValues(fieldName string) ([]string, b
 		values := make([]string, 0, len(labelValues))
 		for _, labelValue := range labelValues {
 			value := labelValue.Value
-			// 如果是contains操作符，直接跳过。不需要添加到结果中
+			// 如果是contains操作符，需要添加通配符
 			if labelValue.Operator == "contains" {
-				continue
+				value = "*" + value + "*"
 			}
 			values = append(values, value)
 		}

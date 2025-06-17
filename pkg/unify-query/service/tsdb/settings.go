@@ -40,7 +40,7 @@ const (
 
 	VmInfluxCompatibleConfigPath      = "victoria_metrics.influx_compatible"
 	VmUseNativeOrConfigPath           = "victoria_metrics.use_native_or"
-	VmForceQueryStorageNameConfigPath = "victoria_metrics.force_query_storage_name"
+	VmForceQueryStorageNameConfigPath = "query_router.force_query_storage_name"
 
 	// BkSql 配置
 	BkSqlTimeoutConfigPath     = "bk_sql.timeout"

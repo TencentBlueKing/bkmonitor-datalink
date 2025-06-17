@@ -12,6 +12,7 @@ package utils
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/cstockton/go-conv"
 	"github.com/jmespath/go-jmespath"
@@ -23,9 +24,12 @@ import (
 const (
 	RuleConditionOr = "or"
 
-	RuleMethodEq    = "eq"
-	RuleMethodNeq   = "neq"
-	RuleMethodRegex = "reg"
+	RuleMethodEq      = "eq"
+	RuleMethodNeq     = "neq"
+	RuleMethodRegex   = "reg"
+	RuleMethodNReg    = "nreg"
+	RuleMethodInclude = "include"
+	RuleMethodExclude = "exclude"
 )
 
 // MatchRule 单条匹配规则
@@ -106,6 +110,12 @@ func NewMatcher(method string, excepted []string) (Matcher, error) {
 		matcher = new(NotEqualMatcher)
 	case RuleMethodRegex:
 		matcher = new(RegexMatcher)
+	case RuleMethodNReg:
+		matcher = &RegexMatcher{negative: true}
+	case RuleMethodInclude:
+		matcher = &ContainMatcher{}
+	case RuleMethodExclude:
+		matcher = &ContainMatcher{negative: true}
 	default:
 		return nil, fmt.Errorf("unsupported rule method type->(%s)", method)
 	}
@@ -159,13 +169,18 @@ func (m *NotEqualMatcher) IsMatch(actual interface{}) (bool, error) {
 // RegexMatcher 正则条件匹配器
 type RegexMatcher struct {
 	BaseMatcher
-	regexps []*regexp.Regexp
+	regexps  []*regexp.Regexp
+	negative bool // 是否为取反
 }
 
 func (m *RegexMatcher) IsMatch(actual interface{}) (bool, error) {
 	actualString := []byte(conv.String(actual))
 	for _, regex := range m.regexps {
-		if regex.Match(actualString) {
+		matched := regex.Match(actualString)
+		if m.negative {
+			matched = !matched
+		}
+		if matched {
 			return true, nil
 		}
 	}
@@ -182,5 +197,29 @@ func (m *RegexMatcher) SetExcepted(excepted []string) error {
 		}
 		m.regexps = append(m.regexps, regex)
 	}
+	return nil
+}
+
+type ContainMatcher struct {
+	BaseMatcher
+	negative bool // 是否为取反
+}
+
+func (m *ContainMatcher) IsMatch(actual interface{}) (bool, error) {
+	actualString := conv.String(actual)
+	for _, exceptedString := range m.Excepted {
+		matched := strings.Contains(actualString, exceptedString)
+		if m.negative {
+			matched = !matched
+		}
+		if matched {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (m *ContainMatcher) SetExcepted(excepted []string) error {
+	m.Excepted = excepted
 	return nil
 }

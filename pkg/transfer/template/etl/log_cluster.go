@@ -43,8 +43,16 @@ type LogClusterConfig struct {
 	Retry         int    `mapstructure:"retry" json:"retry"`
 	RetryInterval string `mapstructure:"retry_interval" json:"retry_interval"`
 	BatchSize     int    `mapstructure:"batch_size" json:"batch_size"`
-	PollInterval  string `mapstructure:"poll_interval" json:"poll_interval"` // ms 单位
-	MinGap        string `mapstructure:"min_gap" json:"min_gap"`             // ticker 触发时最小相邻发送间隔
+	PollInterval  string `mapstructure:"poll_interval" json:"poll_interval"`       // ms 单位
+	MinGap        string `mapstructure:"min_gap" json:"min_gap"`                   // ticker 触发时最小相邻发送间隔
+	Field         string `mapstructure:"clustering_field" json:"clustering_field"` // 聚类的字段
+}
+
+func (c LogClusterConfig) GetField() string {
+	if c.Field == "" {
+		return "log"
+	}
+	return c.Field
 }
 
 func (c LogClusterConfig) GetTimeout() time.Duration {
@@ -241,21 +249,20 @@ func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload,
 	handle()
 }
 
-func (p *LogCluster) getLogField(metrics map[string]interface{}) string {
-	if metrics == nil {
-		return ""
+func (p *LogCluster) getClusteringField(record *define.ETLRecord) string {
+	if len(record.Metrics) > 0 {
+		v, ok := record.Metrics[p.conf.GetField()]
+		if ok && v != nil {
+			return fmt.Sprintf("%s", v)
+		}
 	}
-
-	log, ok := metrics["log"]
-	if !ok {
-		return ""
+	if len(record.Dimensions) > 0 {
+		v, ok := record.Dimensions[p.conf.GetField()]
+		if ok && v != nil {
+			return fmt.Sprintf("%s", v)
+		}
 	}
-
-	s, ok := log.(string)
-	if !ok {
-		return ""
-	}
-	return s
+	return ""
 }
 
 func (p *LogCluster) doRequestWithRetry(records []*define.ETLRecord) ([]*define.ETLRecord, error) {
@@ -276,9 +283,13 @@ func (p *LogCluster) doRequestWithRetry(records []*define.ETLRecord) ([]*define.
 func (p *LogCluster) doRequest(records []*define.ETLRecord) ([]*define.ETLRecord, error) {
 	items := make([]LogClusterRequest, 0, len(records))
 	for i, record := range records {
+		field := p.getClusteringField(record)
+		if len(field) == 0 {
+			continue
+		}
 		items = append(items, LogClusterRequest{
 			Index:     strconv.Itoa(i),
-			Log:       p.getLogField(record.Metrics),
+			Log:       field,
 			Timestamp: *record.Time,
 		})
 	}

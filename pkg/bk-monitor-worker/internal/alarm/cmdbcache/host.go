@@ -542,7 +542,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([
 
 	// 查询业务下的内置节点
 	var bizInternalModuleResp cmdb.GetBizInternalModuleResp
-	_, err = cmdbApi.GetBizInternalModule().SetPathParams(map[string]string{"bk_supplier_account": "0", "bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]interface{}{"bk_supplier_account": 0, "bk_biz_id": bkBizID}).SetResult(&bizInternalModuleResp).Request()
+	_, err = cmdbApi.GetBizInternalModule().SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]interface{}{"bk_biz_id": bkBizID}).SetResult(&bizInternalModuleResp).Request()
 	err = api.HandleApiResultError(bizInternalModuleResp.ApiCommonRespMeta, err, "get biz internal module failed")
 	if err != nil {
 		logger.Errorf("get biz internal module failed, bk_biz_id: %d, err: %v", bkBizID, err)

@@ -46,10 +46,14 @@ func (p *LogFilter) Process(d define.Payload, outputChan chan<- define.Payload, 
 		return
 	}
 
-	matched := utils.IsRulesMatch(p.rules, map[string]interface{}{
-		"dimensions": dst.Dimensions,
-		"metrics":    dst.Metrics,
-	})
+	merged := make(map[string]interface{})
+	for k, v := range dst.Dimensions {
+		merged[k] = v
+	}
+	for k, v := range dst.Metrics {
+		merged[k] = v
+	}
+	matched := utils.IsRulesMatch(p.rules, merged)
 
 	// 符合匹配规则才需要向后传递
 	if matched {

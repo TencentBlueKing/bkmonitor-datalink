@@ -1535,7 +1535,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 				},
 			},
 			expected: map[string][]function.LabelMapValue{
-				"pattern": {{Value: ".*error.*", Operator: "regexp"}},
+				"pattern": {{Value: ".*error.*", Operator: "req"}},
 			},
 		},
 		{
@@ -1831,7 +1831,7 @@ func TestQueryTs_LabelMap(t *testing.T) {
 			},
 			expected: map[string][]function.LabelMapValue{
 				"url":           {{Value: "https://example.com/api?param=value&other=123", Operator: "eq"}},
-				"regex_pattern": {{Value: "^[a-zA-Z0-9]+$", Operator: "regexp"}},
+				"regex_pattern": {{Value: "^[a-zA-Z0-9]+$", Operator: "req"}},
 			},
 		},
 	}

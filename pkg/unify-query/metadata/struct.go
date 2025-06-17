@@ -154,6 +154,66 @@ type Query struct {
 	Collapse    *Collapse `json:"collapse,omitempty"`
 }
 
+type OperatorMapping struct {
+	LabelOperator string
+	ShouldSkip    bool
+}
+
+func MapConditionOperator(operator string) (OperatorMapping, error) {
+	switch operator {
+	case ConditionEqual, ConditionExact:
+		return OperatorMapping{LabelOperator: "eq", ShouldSkip: false}, nil
+	case ConditionContains:
+		return OperatorMapping{LabelOperator: "contains", ShouldSkip: false}, nil
+	case ConditionRegEqual:
+		return OperatorMapping{LabelOperator: "req", ShouldSkip: false}, nil
+	case ConditionGt:
+		return OperatorMapping{LabelOperator: "gt", ShouldSkip: false}, nil
+	case ConditionGte:
+		return OperatorMapping{LabelOperator: "gte", ShouldSkip: false}, nil
+	case ConditionLt:
+		return OperatorMapping{LabelOperator: "lt", ShouldSkip: false}, nil
+	case ConditionLte:
+		return OperatorMapping{LabelOperator: "lte", ShouldSkip: false}, nil
+	case ConditionNotEqual, ConditionNotContains, ConditionNotRegEqual, ConditionNotExisted:
+		// 负向条件不处理
+		return OperatorMapping{ShouldSkip: true}, nil
+	case ConditionExisted:
+		// 存在性检查跳过
+		return OperatorMapping{ShouldSkip: true}, nil
+	default:
+		return OperatorMapping{}, errors.Errorf("unknown operator: %s", operator)
+	}
+}
+
+func ProcessConditionForLabelMap(
+	dimensionName string,
+	values []string,
+	operator string,
+	addLabelFunc func(key, value, operator string),
+) error {
+	if len(values) == 0 {
+		return nil
+	}
+
+	mapping, err := MapConditionOperator(operator)
+	if err != nil {
+		return err
+	}
+
+	if mapping.ShouldSkip {
+		return nil
+	}
+
+	for _, value := range values {
+		if value != "" {
+			addLabelFunc(dimensionName, value, mapping.LabelOperator)
+		}
+	}
+
+	return nil
+}
+
 func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
 	labelMap := make(map[string][]function.LabelMapValue)
 	labelCheck := make(map[string]struct{})
@@ -178,27 +238,16 @@ func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
 	for _, condition := range q.AllConditions {
 		for _, cond := range condition {
 			if cond.Value != nil && len(cond.Value) > 0 {
-				switch cond.Operator {
-				case ConditionEqual, ConditionExact:
-					addLabel(cond.DimensionName, "eq", cond.Value...)
-				case ConditionContains:
-					addLabel(cond.DimensionName, "contains", cond.Value...)
-				case ConditionRegEqual:
-					addLabel(cond.DimensionName, "req", cond.Value...)
-				case ConditionGt:
-					addLabel(cond.DimensionName, "gt", cond.Value...)
-				case ConditionGte:
-					addLabel(cond.DimensionName, "gte", cond.Value...)
-				case ConditionLt:
-					addLabel(cond.DimensionName, "lt", cond.Value...)
-				case ConditionLte:
-					addLabel(cond.DimensionName, "lte", cond.Value...)
-				case ConditionNotEqual, ConditionNotContains, ConditionNotRegEqual, ConditionNotExisted:
-					// negative do nothing
-				case ConditionExisted:
-					// 跳过
-				default:
-					errors.Errorf("unknown operator %s for condition %s", cond.Operator, cond.DimensionName)
+				err := ProcessConditionForLabelMap(
+					cond.DimensionName,
+					cond.Value,
+					cond.Operator,
+					func(key, value, operator string) {
+						addLabel(key, operator, value)
+					},
+				)
+				if err != nil {
+					return nil, errors.Wrapf(err, "failed to process condition for dimension %s", cond.DimensionName)
 				}
 			}
 		}

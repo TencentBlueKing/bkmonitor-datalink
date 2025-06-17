@@ -245,3 +245,221 @@ func TestOrders_SortSliceList(t *testing.T) {
 		})
 	}
 }
+
+func TestMapConditionOperator(t *testing.T) {
+	testCases := []struct {
+		name           string
+		operator       string
+		expectedResult OperatorMapping
+		expectError    bool
+	}{
+		{
+			name:           "equal operator",
+			operator:       ConditionEqual,
+			expectedResult: OperatorMapping{LabelOperator: "eq", ShouldSkip: false},
+			expectError:    false,
+		},
+		{
+			name:           "exact operator",
+			operator:       ConditionExact,
+			expectedResult: OperatorMapping{LabelOperator: "eq", ShouldSkip: false},
+			expectError:    false,
+		},
+		{
+			name:           "contains operator",
+			operator:       ConditionContains,
+			expectedResult: OperatorMapping{LabelOperator: "contains", ShouldSkip: false},
+			expectError:    false,
+		},
+		{
+			name:           "regex equal operator",
+			operator:       ConditionRegEqual,
+			expectedResult: OperatorMapping{LabelOperator: "req", ShouldSkip: false},
+			expectError:    false,
+		},
+		{
+			name:           "greater than operator",
+			operator:       ConditionGt,
+			expectedResult: OperatorMapping{LabelOperator: "gt", ShouldSkip: false},
+			expectError:    false,
+		},
+		{
+			name:           "greater than or equal operator",
+			operator:       ConditionGte,
+			expectedResult: OperatorMapping{LabelOperator: "gte", ShouldSkip: false},
+			expectError:    false,
+		},
+		{
+			name:           "less than operator",
+			operator:       ConditionLt,
+			expectedResult: OperatorMapping{LabelOperator: "lt", ShouldSkip: false},
+			expectError:    false,
+		},
+		{
+			name:           "less than or equal operator",
+			operator:       ConditionLte,
+			expectedResult: OperatorMapping{LabelOperator: "lte", ShouldSkip: false},
+			expectError:    false,
+		},
+		{
+			name:           "not equal operator should skip",
+			operator:       ConditionNotEqual,
+			expectedResult: OperatorMapping{ShouldSkip: true},
+			expectError:    false,
+		},
+		{
+			name:           "not contains operator should skip",
+			operator:       ConditionNotContains,
+			expectedResult: OperatorMapping{ShouldSkip: true},
+			expectError:    false,
+		},
+		{
+			name:           "not regex equal operator should skip",
+			operator:       ConditionNotRegEqual,
+			expectedResult: OperatorMapping{ShouldSkip: true},
+			expectError:    false,
+		},
+		{
+			name:           "not existed operator should skip",
+			operator:       ConditionNotExisted,
+			expectedResult: OperatorMapping{ShouldSkip: true},
+			expectError:    false,
+		},
+		{
+			name:           "existed operator should skip",
+			operator:       ConditionExisted,
+			expectedResult: OperatorMapping{ShouldSkip: true},
+			expectError:    false,
+		},
+		{
+			name:        "unknown operator should error",
+			operator:    "unknown",
+			expectError: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := MapConditionOperator(tc.operator)
+
+			if tc.expectError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "unknown operator")
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tc.expectedResult, result)
+			}
+		})
+	}
+}
+
+func TestProcessConditionForLabelMap(t *testing.T) {
+	testCases := []struct {
+		name          string
+		dimensionName string
+		values        []string
+		operator      string
+		expectError   bool
+		expectedCalls []struct {
+			key      string
+			value    string
+			operator string
+		}
+	}{
+		{
+			name:          "process equal condition",
+			dimensionName: "level",
+			values:        []string{"error", "warn"},
+			operator:      ConditionEqual,
+			expectError:   false,
+			expectedCalls: []struct {
+				key      string
+				value    string
+				operator string
+			}{
+				{key: "level", value: "error", operator: "eq"},
+				{key: "level", value: "warn", operator: "eq"},
+			},
+		},
+		{
+			name:          "process contains condition",
+			dimensionName: "status",
+			values:        []string{"success", "failed"},
+			operator:      ConditionContains,
+			expectError:   false,
+			expectedCalls: []struct {
+				key      string
+				value    string
+				operator string
+			}{
+				{key: "status", value: "success", operator: "contains"},
+				{key: "status", value: "failed", operator: "contains"},
+			},
+		},
+		{
+			name:          "skip negative condition",
+			dimensionName: "level",
+			values:        []string{"debug"},
+			operator:      ConditionNotEqual,
+			expectError:   false,
+			expectedCalls: nil, // should not call addLabelFunc
+		},
+		{
+			name:          "skip empty values",
+			dimensionName: "level",
+			values:        []string{},
+			operator:      ConditionEqual,
+			expectError:   false,
+			expectedCalls: nil,
+		},
+		{
+			name:          "skip empty string values",
+			dimensionName: "level",
+			values:        []string{"", "warn"},
+			operator:      ConditionEqual,
+			expectError:   false,
+			expectedCalls: []struct {
+				key      string
+				value    string
+				operator string
+			}{
+				{key: "level", value: "warn", operator: "eq"},
+			},
+		},
+		{
+			name:          "unknown operator should error",
+			dimensionName: "level",
+			values:        []string{"error"},
+			operator:      "unknown",
+			expectError:   true,
+			expectedCalls: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var actualCalls []struct {
+				key      string
+				value    string
+				operator string
+			}
+
+			addLabelFunc := func(key, value, operator string) {
+				actualCalls = append(actualCalls, struct {
+					key      string
+					value    string
+					operator string
+				}{key: key, value: value, operator: operator})
+			}
+
+			err := ProcessConditionForLabelMap(tc.dimensionName, tc.values, tc.operator, addLabelFunc)
+
+			if tc.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tc.expectedCalls, actualCalls)
+			}
+		})
+	}
+}

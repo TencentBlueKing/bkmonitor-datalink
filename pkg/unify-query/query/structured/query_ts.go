@@ -441,31 +441,16 @@ func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
 	}
 
 	for _, condition := range q.Conditions.FieldList {
-		for _, value := range condition.Value {
-			if value != "" {
-				switch condition.Operator {
-				case ConditionEqual, ConditionExact:
-					addLabel(condition.DimensionName, value, "eq")
-				case ConditionContains:
-					addLabel(condition.DimensionName, value, "contains")
-				case ConditionRegEqual:
-					addLabel(condition.DimensionName, value, "regexp")
-				case ConditionGt:
-					addLabel(condition.DimensionName, value, "gt")
-				case ConditionGte:
-					addLabel(condition.DimensionName, value, "gte")
-				case ConditionLt:
-					addLabel(condition.DimensionName, value, "lt")
-				case ConditionLte:
-					addLabel(condition.DimensionName, value, "lte")
-				case ConditionNotEqual, ConditionNotContains, ConditionNotRegEqual, ConditionNotExisted:
-					// negative do nothing
-				case ConditionExisted:
-					// 跳过
-				default:
-					return nil, errors.Errorf(ErrUnknownOperatorMsg, condition.Operator)
-				}
-			}
+		err := metadata.ProcessConditionForLabelMap(
+			condition.DimensionName,
+			condition.Value,
+			condition.Operator,
+			func(key, value, operator string) {
+				addLabel(key, value, operator)
+			},
+		)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to process condition for dimension %s", condition.DimensionName)
 		}
 	}
 

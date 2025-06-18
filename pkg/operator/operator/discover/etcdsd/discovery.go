@@ -58,7 +58,6 @@ type SDConfig struct {
 	PrefixKeys       []string                    `yaml:"prefix_keys"`
 	Endpoints        []string                    `yaml:"endpoints"`
 	EnableIPFilter   bool                        `yaml:"enable_ip_filter"`
-	FetchInterval    time.Duration               `yamk:"fetch_interval"`
 	IPFilter         func(string) bool           `yaml:"-"`
 }
 
@@ -141,51 +140,43 @@ func (d *Discovery) resolveServices(ctx context.Context, prefixKey string) ([]Se
 		return nil, err
 	}
 
-	// 先遍历 prefixKey 列出所有的示例
+	// 先遍历 prefixKey 列出所有的实例
 	// 再通过 IP 过滤具体的 service
-	rsp, err := cli.Get(ctx, prefixKey, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+	rsp, err := cli.Get(ctx, prefixKey, clientv3.WithPrefix())
 	if err != nil {
 		return nil, err
 	}
 
 	// 获取所有的 key 并判断 ip 是否为需要采集
-	var keys []string
+	var values []string
 	for i := 0; i < len(rsp.Kvs); i++ {
-		key := string(rsp.Kvs[i].Key)
+		kv := rsp.Kvs[i]
+		if kv == nil {
+			continue
+		}
+
+		key := string(kv.Key)
 		host, _, err := net.SplitHostPort(path.Base(key))
 		if err != nil {
 			continue
 		}
 
+		val := string(kv.Value)
 		if d.sdConfig.EnableIPFilter && d.sdConfig.IPFilter != nil {
 			if d.sdConfig.IPFilter(host) {
-				keys = append(keys, key)
+				values = append(values, val)
 			}
 		} else {
-			keys = append(keys, key)
+			values = append(values, val)
 		}
 	}
 
 	// 获取 key 具体 values 解析 labels
 	var services []Service
-	for _, key := range keys {
-		// 避免高频访问 etcd
-		if d.sdConfig.FetchInterval > 0 {
-			time.Sleep(d.sdConfig.FetchInterval)
-		}
-		rsp, err := cli.Get(ctx, key)
-		if err != nil {
-			return nil, err
-		}
-		if len(rsp.Kvs) == 0 || rsp.Kvs[0] == nil {
-			logger.Debugf("etcdsd skip emtpty kv, key=%v", key)
-			continue
-		}
-
-		kv := rsp.Kvs[0]
+	for _, val := range values {
 		var svc Service
-		if err := json.Unmarshal(kv.Value, &svc); err != nil {
-			logger.Warnf("etcdsd unmarshal failed, key=%v, err: %v", key, err)
+		if err := json.Unmarshal([]byte(val), &svc); err != nil {
+			logger.Warnf("etcdsd unmarshal failed: %v", err)
 			continue
 		}
 		services = append(services, svc)

@@ -11,6 +11,7 @@ package tsdb
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/spf13/viper"
 
@@ -83,6 +84,7 @@ func initConfig() {
 	VmInfluxCompatible = viper.GetBool(VmInfluxCompatibleConfigPath)
 	VmUseNativeOr = viper.GetBool(VmUseNativeOrConfigPath)
 	VmForceQueryStorageName = viper.GetString(VmForceQueryStorageNameConfigPath)
+	log.Printf("force query storage name: %s", VmForceQueryStorageName)
 
 	// bksql 配置
 	BkSqlTimeout = viper.GetDuration(BkSqlTimeoutConfigPath)

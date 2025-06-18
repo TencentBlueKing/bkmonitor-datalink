@@ -389,6 +389,13 @@ func TestParser(t *testing.T) {
 				},
 			},
 		},
+		"双引号转义符号支持": {
+			q: `log: "(reading \"remove\")"`,
+			e: &MatchExpr{
+				Field: "log",
+				Value: `(reading "remove")`,
+			},
+		},
 	}
 
 	metadata.InitMetadata()

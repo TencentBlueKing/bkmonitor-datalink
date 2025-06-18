@@ -448,6 +448,8 @@ func (i *Instance) query(
 		return nil, err
 	}
 
+	log.Infof(ctx, "influxdb query sql:%s", sql)
+
 	values := &url.Values{}
 	values.Set("db", query.DB)
 	values.Set("q", sql)
@@ -520,7 +522,7 @@ func (i *Instance) query(
 	series := make([]*decoder.Row, 0)
 	for _, r := range res.Results {
 		if r.Err != "" {
-			return nil, err
+			return nil, errors.New(r.Err)
 		}
 		series = append(series, r.Series...)
 	}

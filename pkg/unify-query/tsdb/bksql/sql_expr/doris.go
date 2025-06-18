@@ -27,6 +27,8 @@ const (
 
 	ShardKey = "__shard_key__"
 
+	SelectIndex = "_index"
+
 	DefaultKey = "log"
 )
 
@@ -131,7 +133,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 			groupByFields = append(groupByFields, newDim)
 		}
 
-		if valueField == "" {
+		if valueField == "" || valueField == SelectIndex {
 			valueField = SelectAll
 		}
 

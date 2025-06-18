@@ -262,7 +262,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	// 判断是否有聚合
 	if len(qb.Aggregates) > 0 {
-		name, agg, aggErr := fact.EsAgg(ctx, qb.Aggregates)
+		name, agg, aggErr := fact.EsAgg(qb.Aggregates)
 		if aggErr != nil {
 			return nil, aggErr
 		}
@@ -562,12 +562,18 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				query:   query,
 				conn:    conn,
 			}
+			queryLabelMaps, err := query.LabelMap()
+			if err != nil {
+				err = fmt.Errorf("query label map error: %w", err)
+				return
+			}
 
 			fact := NewFormatFactory(ctx).
 				WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 				WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.Size).
 				WithMappings(mappings...).
-				WithOrders(query.Orders)
+				WithOrders(query.Orders).
+				WithIncludeValues(queryLabelMaps)
 
 			sr, queryErr := i.esQuery(ctx, qo, fact)
 			if queryErr != nil {
@@ -745,13 +751,19 @@ func (i *Instance) QuerySeriesSet(
 				} else {
 					size = i.maxSize
 				}
+				queryLabelMap, err := query.LabelMap()
+				if err != nil {
+					setCh <- storage.ErrSeriesSet(fmt.Errorf("query label map error: %w", err))
+					return
+				}
 
 				fact := NewFormatFactory(ctx).
 					WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 					WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
 					WithMappings(mappings...).
 					WithOrders(query.Orders).
-					WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
+					WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc()).
+					WithIncludeValues(queryLabelMap)
 
 				if len(query.Aggregates) == 0 {
 					setCh <- storage.ErrSeriesSet(fmt.Errorf("aggregates is empty"))

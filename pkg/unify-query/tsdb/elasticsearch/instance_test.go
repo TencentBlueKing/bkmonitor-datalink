@@ -468,12 +468,6 @@ func TestInstance_queryReference(t *testing.T) {
 		},
 	} {
 		t.Run(fmt.Sprintf("testing run: %s", idx), func(t *testing.T) {
-			labelMap, leer := c.query.LabelMap()
-			if leer != nil {
-				return
-			}
-			ctx = function.InjectLabelMap(ctx, labelMap)
-
 			ss := ins.QuerySeriesSet(ctx, c.query, c.start, c.end)
 			timeSeries, err := mock.SeriesSetToTimeSeries(ss)
 			if err != nil {

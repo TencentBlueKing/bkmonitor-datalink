@@ -193,6 +193,8 @@ type FormatFactory struct {
 	timeFormat string
 
 	isReference bool
+
+	labelMap map[string][]function.LabelMapValue
 }
 
 func NewFormatFactory(ctx context.Context) *FormatFactory {
@@ -210,6 +212,17 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 		},
 	}
 
+	return f
+}
+
+func (f *FormatFactory) WithIncludeValues(value map[string][]function.LabelMapValue) *FormatFactory {
+	f.labelMap = make(map[string][]function.LabelMapValue, len(value))
+	for k, v := range value {
+		if f.decode != nil {
+			k = f.decode(k)
+		}
+		f.labelMap[k] = v
+	}
 	return f
 }
 
@@ -563,7 +576,7 @@ func (f *FormatFactory) resetAggInfoListWithNested() {
 	return
 }
 
-func (f *FormatFactory) Agg(ctx context.Context) (name string, agg elastic.Aggregation, err error) {
+func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Errorf(f.ctx, fmt.Sprintf("get mapping error: %s", r))
@@ -709,22 +722,19 @@ func (f *FormatFactory) Agg(ctx context.Context) (name string, agg elastic.Aggre
 			if f.size > 0 {
 				curAgg = curAgg.Size(f.size)
 			}
-
-			lmf, exist := function.LabelMapFactory(ctx)
-			if exist {
-				fieldValues, valuesExist := lmf.FetchIncludeFieldValues(info.Name)
-				if valuesExist && len(fieldValues) > 0 {
-					structValues := make([]any, 0, len(fieldValues))
-					for _, v := range fieldValues {
-						if v == "" {
-							continue
-						}
-						if f.decode != nil {
-							v = f.decode(v)
-						}
-						structValues = append(structValues, v)
+			fieldLabelValues, ok := f.labelMap[info.Name]
+			if ok && len(fieldLabelValues) > 0 {
+				var filteredFieldLabelValues []any
+				for _, labelMapValue := range fieldLabelValues {
+					// 只有为非空的值并且操作符为等于时才添加到include子句
+					value := labelMapValue.Value
+					operator := labelMapValue.Operator
+					if value != "" && operator == "eq" {
+						filteredFieldLabelValues = append(filteredFieldLabelValues, value)
 					}
-					curAgg = curAgg.IncludeValues(structValues...)
+				}
+				if len(filteredFieldLabelValues) > 0 {
+					curAgg = curAgg.IncludeValues(filteredFieldLabelValues...)
 				}
 			}
 
@@ -746,7 +756,7 @@ func (f *FormatFactory) Agg(ctx context.Context) (name string, agg elastic.Aggre
 	return
 }
 
-func (f *FormatFactory) EsAgg(ctx context.Context, aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
+func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
 	if len(aggregates) == 0 {
 		err := errors.New("aggregate_method_list is empty")
 		return "", nil, err
@@ -781,7 +791,7 @@ func (f *FormatFactory) EsAgg(ctx context.Context, aggregates metadata.Aggregate
 	}
 
 	f.resetAggInfoListWithNested()
-	return f.Agg(ctx)
+	return f.Agg()
 }
 
 func (f *FormatFactory) Orders() metadata.Orders {

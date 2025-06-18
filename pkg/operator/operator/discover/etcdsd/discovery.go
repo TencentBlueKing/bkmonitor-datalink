@@ -141,6 +141,8 @@ func (d *Discovery) resolveServices(ctx context.Context, prefixKey string) ([]Se
 		return nil, err
 	}
 
+	// 先遍历 prefixKey 列出所有的示例
+	// 再通过 IP 过滤具体的 service
 	rsp, err := cli.Get(ctx, prefixKey, clientv3.WithPrefix(), clientv3.WithKeysOnly())
 	if err != nil {
 		return nil, err
@@ -244,7 +246,6 @@ func (d *Discovery) Stop() {
 	}
 }
 
-// urlSource returns a source ID for the i-th target group per URL.
 func urlSource(url string, i int) string {
 	return fmt.Sprintf("%s:%d", url, i)
 }

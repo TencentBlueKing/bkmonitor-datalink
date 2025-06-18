@@ -280,7 +280,6 @@ func (d *Discovery) uid() string {
 	return fmt.Sprintf("polaris:%s/%s", d.sdConfig.Namespace, d.sdConfig.Service)
 }
 
-// urlSource returns a source ID for the i-th target group per URL.
 func urlSource(url string, i int) string {
 	return fmt.Sprintf("%s:%d", url, i)
 }

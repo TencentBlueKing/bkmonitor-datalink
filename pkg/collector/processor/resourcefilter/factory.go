@@ -145,6 +145,9 @@ func (p *resourceFilter) Process(record *define.Record) (*define.Record, error) 
 	if len(config.FromRecord) > 0 {
 		p.fromRecordAction(record, config)
 	}
+	if len(config.FromMetadata.Keys) > 0 {
+		p.fromTokenAction(record, config)
+	}
 
 	if config.FromCache.Cache.Validate() {
 		p.fromCacheAction(record, config)
@@ -349,6 +352,32 @@ func (p *resourceFilter) fromRecordAction(record *define.Record, config Config) 
 			switch action.Source {
 			case "request.client.ip":
 				resourceSpans.Resource().Attributes().InsertString(action.Destination, record.RequestClient.IP)
+			}
+		}
+	}
+
+	switch record.RecordType {
+	case define.RecordTraces:
+		pdTraces := record.Data.(ptrace.Traces)
+		resourceSpansSlice := pdTraces.ResourceSpans()
+		for i := 0; i < resourceSpansSlice.Len(); i++ {
+			handleTraces(resourceSpansSlice.At(i))
+		}
+	}
+}
+
+func (p *resourceFilter) fromTokenAction(record *define.Record, config Config) {
+	handleTraces := func(resourceSpans ptrace.ResourceSpans) {
+		for _, field := range config.FromMetadata.Keys {
+			switch field {
+			case "*": // 补充所有 metadata 维度
+				for k, v := range record.Metadata {
+					resourceSpans.Resource().Attributes().InsertString(k, v)
+				}
+			default:
+				if v, ok := record.Metadata[field]; ok {
+					resourceSpans.Resource().Attributes().InsertString(field, v)
+				}
 			}
 		}
 	}

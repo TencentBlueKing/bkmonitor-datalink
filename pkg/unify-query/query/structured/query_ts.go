@@ -437,12 +437,11 @@ func (q *Query) LabelMap() (map[string][]string, error) {
 	}
 	if q.QueryString != "" {
 		qLabelMap, err := querystring.LabelMap(q.QueryString)
-		if err != nil {
-			return nil, err
-		}
-		for key, values := range qLabelMap {
-			for _, value := range values {
-				addLabel(key, value)
+		if err == nil {
+			for key, values := range qLabelMap {
+				for _, value := range values {
+					addLabel(key, value)
+				}
 			}
 		}
 	}
@@ -1004,6 +1003,11 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 	)
 
 	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
+	if encodeFunc == nil {
+		encodeFunc = func(q string) string {
+			return q
+		}
+	}
 
 	// 判断是否使用别名作为指标
 	metricName = q.ReferenceName
@@ -1027,7 +1031,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 
 		// 替换指标名
 		if m, ok := promExprOpt.ReferenceNameMetric[q.ReferenceName]; ok {
-			metricName = m
+			metricName = encodeFunc(m)
 		}
 
 		// 增加 Matchers

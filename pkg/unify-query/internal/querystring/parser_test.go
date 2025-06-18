@@ -390,10 +390,17 @@ func TestParser(t *testing.T) {
 			},
 		},
 		"双引号转义符号支持": {
-			q: `log: "(reading \"remove\")"`,
+			q: `log: "(reading \\\"remove\\\")"`,
 			e: &MatchExpr{
 				Field: "log",
-				Value: `(reading "remove")`,
+				Value: `(reading \"remove\")`,
+			},
+		},
+		"test": {
+			q: `path: "/proz/logds/ds-5910974792526317*"`,
+			e: &WildcardExpr{
+				Field: "path",
+				Value: "/proz/logds/ds-5910974792526317*",
 			},
 		},
 	}

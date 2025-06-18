@@ -23,7 +23,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
-	"github.com/prometheus/prometheus/promql"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	promRemote "github.com/prometheus/prometheus/storage/remote"
@@ -39,6 +38,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -387,9 +387,6 @@ func (i *Instance) makeSQL(
 		selectList = append(selectList, "*::tag")
 	}
 	selectList = append(selectList, fmt.Sprintf(`"time" AS %s`, influxdb.TimeColumnName))
-	if query.MeasurementType == redis.BkExporter {
-		selectList = append(selectList, fmt.Sprintf(`"metric_name" AS %s`, labels.MetricName))
-	}
 
 	sqlBuilder.WriteString("SELECT ")
 	sqlBuilder.WriteString(strings.Join(selectList, ", ") + " ")
@@ -549,8 +546,9 @@ func (i *Instance) query(
 		}
 
 		for k, v := range s.Tags {
-			// 如果查询直接能够获取到指标名，则拼接最终指标
-			if k == labels.MetricName {
+			// BkExporter 静态指标名需要替换为真实指标名
+			if query.MeasurementType == redis.BkExporter && k == promql.StaticMetricName {
+				k = labels.MetricName
 				v = function.GetRealMetricName(query.DataSource, query.TableID, v)
 			}
 
@@ -775,7 +773,7 @@ func (i *Instance) DirectQueryRange(
 func (i *Instance) DirectQuery(
 	ctx context.Context, promql string,
 	end time.Time,
-) (promql.Vector, error) {
+) (promPromql.Vector, error) {
 	return nil, nil
 }
 

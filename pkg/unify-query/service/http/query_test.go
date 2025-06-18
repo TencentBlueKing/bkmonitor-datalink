@@ -950,15 +950,15 @@ func TestQueryTs(t *testing.T) {
 		},
 
 		// test query  __name__ with raw 多指标单表 exporter
-		`SELECT "metric_value" AS _value, *::tag, "time" AS _time, "metric_name" AS __name__ FROM exporter WHERE time > 1677081300000000000 and time < 1677085600000000000 AND (metric_name =~ /.*/) LIMIT 100000005 SLIMIT 100005 TZ('UTC')`: &decoder.Response{
+		`SELECT "metric_value" AS _value, *::tag, "time" AS _time FROM exporter WHERE time > 1677081300000000000 and time < 1677085600000000000 AND (metric_name =~ /.*/) LIMIT 100000005 SLIMIT 100005 TZ('UTC')`: &decoder.Response{
 			Results: []decoder.Result{
 				{
 					Series: []*decoder.Row{
 						{
 							Name: "",
 							Tags: map[string]string{
-								"__name__": "usage",
-								"name":     "buzzy",
+								"metric_name": "usage",
+								"name":        "buzzy",
 							},
 							Columns: []string{
 								influxdb.TimeColumnName,
@@ -973,8 +973,8 @@ func TestQueryTs(t *testing.T) {
 						{
 							Name: "",
 							Tags: map[string]string{
-								"__name__": "free",
-								"name":     "buzzy",
+								"metric_name": "free",
+								"name":        "buzzy",
 							},
 							Columns: []string{
 								influxdb.TimeColumnName,
@@ -1047,7 +1047,7 @@ func TestQueryTs(t *testing.T) {
 		},
 		"test regx with __name__ 单指标单表": {
 			query:  `{"query_list":[{"data_source":"","field_name":"merltrics_rest_request_status_.+_count","is_regexp":true,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","container","namespace"],"group_values":["bkmonitor:merltrics_rest_request_status_200_count","message-history","lolstage"],"values":[[1677082080000,68],[1677082140000,68],[1677082200000,68],[1677082260000,68],[1677082320000,68],[1677082380000,68]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","container","namespace"],"group_values":["merltrics_rest_request_status_200_count","message-history","lolstage"],"values":[[1677082080000,68],[1677082140000,68],[1677082200000,68],[1677082260000,68],[1677082320000,68],[1677082380000,68]]}]}`,
 		},
 	}
 

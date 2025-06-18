@@ -192,7 +192,8 @@ func TimeOffset(t time.Time, timezone string, step time.Duration) (string, time.
 // GetRealMetricName 获取真实指标名
 func GetRealMetricName(datasource, tableID, metricName string) string {
 	var m []string
-	if datasource != "" {
+	// 如果是单指标查询，不用拼接 datasource
+	if datasource != "" && tableID != "" {
 		m = append(m, datasource)
 	}
 	if tableID != "" {

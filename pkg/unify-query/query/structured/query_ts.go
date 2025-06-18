@@ -866,31 +866,33 @@ func (q *Query) BuildMetadataQuery(
 		vmMetric = fmt.Sprintf("%s_%s", metricName, promql.StaticField)
 	}
 
+	// 不能使用这种用法，不然会影响 influxdb 等非 vm 指标的查询，暂时先注释，后续看情况打开
+
 	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的函数都进行替换，例如 label_replace
-	for _, a := range q.AggregateMethodList {
-		switch a.Method {
-		// label_replace(v instant-vector, dst_label string, replacement string, src_label string, regex string)
-		case "label_replace":
-			if len(a.VArgsList) == 4 && a.VArgsList[2] == promql.MetricLabelName {
-				if strings.LastIndex(fmt.Sprintf("%s", a.VArgsList[3]), field) < 0 {
-					a.VArgsList[3] = fmt.Sprintf("%s_%s", a.VArgsList[3], field)
-				}
-			}
-		}
-	}
+	//for _, a := range q.AggregateMethodList {
+	//	switch a.Method {
+	//	// label_replace(v instant-vector, dst_label string, replacement string, src_label string, regex string)
+	//	case "label_replace":
+	//		if len(a.VArgsList) == 4 && a.VArgsList[2] == promql.MetricLabelName {
+	//			if strings.LastIndex(fmt.Sprintf("%s", a.VArgsList[3]), ".*") < 0 {
+	//				a.VArgsList[3] = fmt.Sprintf("%s.*", a.VArgsList[3])
+	//			}
+	//		}
+	//	}
+	//}
 
 	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的条件都进行替换，也就是条件中使用 __name__ 的
-	for _, qc := range queryConditions {
-		for _, c := range qc {
-			if c.DimensionName == promql.MetricLabelName {
-				for ci, cv := range c.Value {
-					if strings.LastIndex(cv, field) < 0 {
-						c.Value[ci] = fmt.Sprintf("%s_%s", cv, field)
-					}
-				}
-			}
-		}
-	}
+	//for _, qc := range queryConditions {
+	//	for _, c := range qc {
+	//		if c.DimensionName == promql.MetricLabelName {
+	//			for ci, cv := range c.Value {
+	//				if strings.LastIndex(cv, ".*") < 0 {
+	//					c.Value[ci] = fmt.Sprintf("%s.*", cv)
+	//				}
+	//			}
+	//		}
+	//	}
+	//}
 
 	// 合并查询以及空间过滤条件到 condition 里面
 	allCondition = MergeConditionField(queryConditions, filterConditions)

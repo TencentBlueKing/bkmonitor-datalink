@@ -1003,6 +1003,11 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 	)
 
 	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
+	if encodeFunc == nil {
+		encodeFunc = func(q string) string {
+			return q
+		}
+	}
 
 	// 判断是否使用别名作为指标
 	metricName = q.ReferenceName
@@ -1026,7 +1031,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 
 		// 替换指标名
 		if m, ok := promExprOpt.ReferenceNameMetric[q.ReferenceName]; ok {
-			metricName = m
+			metricName = encodeFunc(m)
 		}
 
 		// 增加 Matchers

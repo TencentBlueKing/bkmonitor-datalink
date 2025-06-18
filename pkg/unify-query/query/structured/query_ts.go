@@ -437,12 +437,11 @@ func (q *Query) LabelMap() (map[string][]string, error) {
 	}
 	if q.QueryString != "" {
 		qLabelMap, err := querystring.LabelMap(q.QueryString)
-		if err != nil {
-			return nil, err
-		}
-		for key, values := range qLabelMap {
-			for _, value := range values {
-				addLabel(key, value)
+		if err == nil {
+			for key, values := range qLabelMap {
+				for _, value := range values {
+					addLabel(key, value)
+				}
 			}
 		}
 	}

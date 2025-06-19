@@ -599,7 +599,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			DB:            route.DB(),
 			Measurement:   route.Measurement(),
 			Field:         q.FieldName,
-			MetricName:    metricName,
 			Aggregates:    aggregates,
 			AllConditions: allConditions.MetaDataAllConditions(),
 			Size:          q.Limit,
@@ -689,6 +688,8 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 			if isVmQuery {
 				query.StorageType = consul.VictoriaMetricsStorageType
+			} else {
+				query.StorageType = consul.InfluxDBStorageType
 			}
 		}
 
@@ -782,6 +783,10 @@ func (q *Query) BuildMetadataQuery(
 	case redis.BKTraditionalMeasurement:
 		// measurement: cpu_detail, field: usage  =>  cpu_detail_usage
 		field, fields = metricName, expandMetricNames
+		// 拼接指标
+		for _, m := range expandMetricNames {
+			query.MetricNames = append(query.MetricNames, function.GetRealMetricName(q.DataSource, tsDB.TableID, m))
+		}
 	// 多指标单表，单列多指标，维度: metric_name 为指标名，metric_value 为指标值
 	case redis.BkExporter:
 		field, fields = promql.StaticMetricValue, []string{promql.StaticMetricValue}
@@ -800,13 +805,25 @@ func (q *Query) BuildMetadataQuery(
 	// 多指标单表，字段名为指标名
 	case redis.BkStandardV2TimeSeries:
 		field, fields = metricName, expandMetricNames
+		// 拼接指标
+		for _, m := range expandMetricNames {
+			query.MetricNames = append(query.MetricNames, function.GetRealMetricName(q.DataSource, tsDB.TableID, m))
+		}
 	// 单指标单表，指标名为表名，值为指定字段 value
 	case redis.BkSplitMeasurement:
 		// measurement: usage, field: value  => usage_value
 		measurement, measurements = metricName, expandMetricNames
 		field, fields = promql.StaticField, []string{promql.StaticField}
+		// 拼接指标
+		for _, m := range expandMetricNames {
+			query.MetricNames = append(query.MetricNames, function.GetRealMetricName(q.DataSource, "", m))
+		}
 	default:
 		field, fields = metricName, expandMetricNames
+		// 拼接指标
+		for _, m := range expandMetricNames {
+			query.MetricNames = append(query.MetricNames, function.GetRealMetricName(q.DataSource, tsDB.TableID, m))
+		}
 	}
 
 	filterConditions := make([][]ConditionField, 0)
@@ -847,32 +864,6 @@ func (q *Query) BuildMetadataQuery(
 	var vmMetric string
 	if metricName != "" {
 		vmMetric = fmt.Sprintf("%s_%s", metricName, promql.StaticField)
-	}
-
-	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的函数都进行替换，例如 label_replace
-	for _, a := range q.AggregateMethodList {
-		switch a.Method {
-		// label_replace(v instant-vector, dst_label string, replacement string, src_label string, regex string)
-		case "label_replace":
-			if len(a.VArgsList) == 4 && a.VArgsList[2] == promql.MetricLabelName {
-				if strings.LastIndex(fmt.Sprintf("%s", a.VArgsList[3]), field) < 0 {
-					a.VArgsList[3] = fmt.Sprintf("%s_%s", a.VArgsList[3], field)
-				}
-			}
-		}
-	}
-
-	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的条件都进行替换，也就是条件中使用 __name__ 的
-	for _, qc := range queryConditions {
-		for _, c := range qc {
-			if c.DimensionName == promql.MetricLabelName {
-				for ci, cv := range c.Value {
-					if strings.LastIndex(cv, field) < 0 {
-						c.Value[ci] = fmt.Sprintf("%s_%s", cv, field)
-					}
-				}
-			}
-		}
 	}
 
 	// 合并查询以及空间过滤条件到 condition 里面
@@ -949,10 +940,10 @@ func (q *Query) BuildMetadataQuery(
 	}
 	query.Timezone = timezone
 
+	query.MeasurementType = tsDB.MeasurementType
 	query.DataSource = q.DataSource
 	query.TableID = tsDB.TableID
 	query.DataLabel = tsDB.DataLabel
-	query.MetricName = metricName
 	query.ClusterName = tsDB.ClusterName
 	query.TagsKey = tsDB.TagsKey
 	query.DB = tsDB.DB
@@ -981,6 +972,35 @@ func (q *Query) BuildMetadataQuery(
 
 	if len(q.OrderBy) > 0 {
 		query.Orders = q.OrderBy.Orders()
+	}
+
+	// 只有 vm 类型才需要进行处理
+	if query.StorageType == consul.VictoriaMetricsStorageType {
+		// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的函数都进行替换，例如 label_replace
+		for _, a := range q.AggregateMethodList {
+			switch a.Method {
+			// label_replace(v instant-vector, dst_label string, replacement string, src_label string, regex string)
+			case "label_replace":
+				if len(a.VArgsList) == 4 && a.VArgsList[2] == promql.MetricLabelName {
+					if strings.LastIndex(fmt.Sprintf("%s", a.VArgsList[3]), field) < 0 {
+						a.VArgsList[3] = fmt.Sprintf("%s_%s", a.VArgsList[3], field)
+					}
+				}
+			}
+		}
+
+		// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的条件都进行替换，也就是条件中使用 __name__ 的
+		for _, qc := range queryConditions {
+			for _, c := range qc {
+				if c.DimensionName == promql.MetricLabelName {
+					for ci, cv := range c.Value {
+						if strings.LastIndex(cv, field) < 0 {
+							c.Value[ci] = fmt.Sprintf("%s_%s", cv, field)
+						}
+					}
+				}
+			}
+		}
 	}
 
 	jsonString, _ := json.Marshal(query)

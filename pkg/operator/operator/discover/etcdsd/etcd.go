@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package httpsd
+package etcdsd
 
 import (
 	"context"
@@ -15,7 +15,6 @@ import (
 
 	"github.com/pkg/errors"
 	promconfig "github.com/prometheus/common/config"
-	promhttpsd "github.com/prometheus/prometheus/discovery/http"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
@@ -24,13 +23,13 @@ import (
 )
 
 const (
-	TypeHttpSd = "httpsd"
+	TypeEtcdSd = "etcdsd"
 )
 
 type Options struct {
 	*discover.CommonOptions
 
-	SDConfig         *promhttpsd.SDConfig
+	SDConfig         *SDConfig
 	HTTPClientConfig promconfig.HTTPClientConfig
 }
 
@@ -58,7 +57,7 @@ func New(ctx context.Context, opts *Options) *Discover {
 }
 
 func (d *Discover) Type() string {
-	return TypeHttpSd
+	return TypeEtcdSd
 }
 
 func (d *Discover) Reload() error {
@@ -71,21 +70,15 @@ func (d *Discover) Stop() {
 	shareddiscovery.Unregister(d.UK())
 }
 
-type WrapDiscovery struct {
-	*promhttpsd.Discovery
-}
-
-func (WrapDiscovery) Stop() {}
-
 func (d *Discover) Start() error {
 	d.PreStart()
 
 	err := shareddiscovery.Register(d.UK(), func() (*shareddiscovery.SharedDiscovery, error) {
-		discovery, err := promhttpsd.NewDiscovery(d.opts.SDConfig, logx.New(TypeHttpSd), nil)
+		discovery, err := NewDiscovery(d.opts.SDConfig, logx.New(TypeEtcdSd), nil)
 		if err != nil {
 			return nil, errors.Wrap(err, d.Type())
 		}
-		return shareddiscovery.New(d.UK(), &WrapDiscovery{discovery}), nil
+		return shareddiscovery.New(d.UK(), discovery), nil
 	})
 	if err != nil {
 		return err

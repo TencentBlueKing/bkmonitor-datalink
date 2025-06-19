@@ -10,12 +10,13 @@
 package tsdb
 
 import (
+	"context"
 	"fmt"
-	"log"
 
 	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/eventbus"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 // setDefaultConfig 配置初始化参数
@@ -84,8 +85,7 @@ func initConfig() {
 	VmInfluxCompatible = viper.GetBool(VmInfluxCompatibleConfigPath)
 	VmUseNativeOr = viper.GetBool(VmUseNativeOrConfigPath)
 	VmForceQueryStorageName = viper.GetString(VmForceQueryStorageNameConfigPath)
-	log.Printf("force query storage name: %s", VmForceQueryStorageName)
-
+	log.Infof(context.TODO(), "force query storage name: %s", VmForceQueryStorageName)
 	// bksql 配置
 	BkSqlTimeout = viper.GetDuration(BkSqlTimeoutConfigPath)
 	BkSqlLimit = viper.GetInt(BkSqlLimitConfigPath)

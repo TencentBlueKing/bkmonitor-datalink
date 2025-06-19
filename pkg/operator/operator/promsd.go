@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/etcdsd"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/httpsd"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/kubernetesd"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/polarissd"
@@ -200,7 +201,7 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 		UrlValues:              rsc.Config.Params,
 		ExtraLabels:            specLabels,
 		MetricRelabelConfigs:   metricRelabelings,
-		NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+		CheckNodeNameFunc:      c.objectsController.CheckNodeName,
 		NodeLabelsFunc:         c.objectsController.NodeLabels,
 	}
 
@@ -216,6 +217,14 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 		dis = polarissd.New(c.ctx, &polarissd.Options{
 			CommonOptions:    commonOpts,
 			SDConfig:         sdConfig.(*polarissd.SDConfig),
+			HTTPClientConfig: httpClientConfig,
+		})
+	case monitorKindEtcdSd:
+		sdc := sdConfig.(*etcdsd.SDConfig)
+		sdc.IPFilter = c.objectsController.CheckPodIP
+		dis = etcdsd.New(c.ctx, &etcdsd.Options{
+			CommonOptions:    commonOpts,
+			SDConfig:         sdc,
 			HTTPClientConfig: httpClientConfig,
 		})
 	default:
@@ -284,7 +293,7 @@ func (c *Operator) createKubernetesSdDiscover(rsc resourceScrapConfig, sdConfig 
 			UrlValues:              rsc.Config.Params,
 			ExtraLabels:            specLabels,
 			MetricRelabelConfigs:   metricRelabelings,
-			NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+			CheckNodeNameFunc:      c.objectsController.CheckNodeName,
 			NodeLabelsFunc:         c.objectsController.NodeLabels,
 		},
 		KubeConfig: configs.G().KubeConfig,
@@ -373,7 +382,6 @@ func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resou
 				if !kinds.Allow(monitorKindHttpSd) {
 					continue
 				}
-
 				sd, err := c.createHttpLikeSdDiscover(rsc, obj, monitorKindHttpSd, idx)
 				if err != nil {
 					logger.Errorf("failed to create http_sd discover: %v", err)
@@ -385,10 +393,20 @@ func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resou
 				if !kinds.Allow(monitorKindPolarisSd) {
 					continue
 				}
-
 				sd, err := c.createHttpLikeSdDiscover(rsc, obj, monitorKindPolarisSd, idx)
 				if err != nil {
 					logger.Errorf("failed to create polaris_sd discover: %v", err)
+					continue
+				}
+				discovers = append(discovers, sd)
+
+			case *etcdsd.SDConfig:
+				if !kinds.Allow(monitorKindEtcdSd) {
+					continue
+				}
+				sd, err := c.createHttpLikeSdDiscover(rsc, obj, monitorKindEtcdSd, idx)
+				if err != nil {
+					logger.Errorf("failed to create etcd_sd discover: %v", err)
 					continue
 				}
 				discovers = append(discovers, sd)
@@ -397,7 +415,6 @@ func (c *Operator) handlePromScrapeConfigDiscovers(resourceScrapeConfigs []resou
 				if !kinds.Allow(monitorKindKubernetesSd) {
 					continue
 				}
-
 				sd, err := c.createKubernetesSdDiscover(rsc, obj, idx)
 				if err != nil {
 					logger.Errorf("failed to create kubernetes_sd discover: %v", err)

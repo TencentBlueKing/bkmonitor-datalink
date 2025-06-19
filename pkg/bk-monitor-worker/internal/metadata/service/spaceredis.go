@@ -681,6 +681,12 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 	// 组装结果表对应的选项
 	tidOptionMap := s.composeEsTableIdOptions(tidList)
 
+	// 获取查询别名映射关系
+	fieldAliasMap, err := s.getFieldAliasMap(tidList)
+	if err != nil {
+		logger.Errorf("PushEsTableIdDetail: failed to get field alias map, error: %s", err)
+	}
+
 	// 组装数据
 	client := redis.GetStorageRedisInstance()
 	wg := &sync.WaitGroup{}
@@ -705,15 +711,22 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 			sourceType := es.SourceType
 			indexSet := es.IndexSet
 			logger.Infof("PushEsTableIdDetail:start to compose es table id detail, table_id->[%s],source_type->[%s],index_set->[%s]", tableId, sourceType, indexSet)
-			_tableId, detailStr, err := s.composeEsTableIdDetail(tableId, options, es.StorageClusterID, sourceType, indexSet)
+
+			var fieldAliasSettings map[string]string
+			if fieldAliasMap != nil {
+				fieldAliasSettings = fieldAliasMap[tableId]
+			}
+
+			composedTableId, detailStr, err := s.composeEsTableIdDetail(tableId, options, es.StorageClusterID, sourceType, indexSet, fieldAliasSettings)
+
 			if err != nil {
 				logger.Errorf("PushEsTableIdDetail:compose es table id detail error, table_id: %s, error: %s", tableId, err)
 				return
 			}
 			// 推送数据
 			// NOTE: HSetWithCompareAndPublish 判定新老值是否存在差异，若存在差异，则进行 Publish 操作
-			logger.Infof("PushEsTableIdDetail:start push and publish es table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", _tableId, cfg.ResultTableDetailChannel, _tableId, detailStr)
-			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, _tableId, detailStr, cfg.ResultTableDetailChannel, _tableId)
+			logger.Infof("PushEsTableIdDetail:start push and publish es table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", composedTableId, cfg.ResultTableDetailChannel, composedTableId, detailStr)
+			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, composedTableId, detailStr, cfg.ResultTableDetailChannel, composedTableId)
 			if err != nil {
 				logger.Errorf("PushEsTableIdDetail:push and publish es table id detail error, table_id->[%s], error->[%s]", tableId, err)
 				return
@@ -759,7 +772,58 @@ func (s *SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]m
 	return tidOptionMap
 }
 
-func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]interface{}, storageClusterId uint, sourceType, indexSet string) (string, string, error) {
+// getFieldAliasMap 构建字段别名映射map
+func (s *SpacePusher) getFieldAliasMap(tableIDList []string) (map[string]map[string]string, error) {
+	logger.Infof("getFieldAliasMap: try to get field alias map, table_id_list->[%v]", tableIDList)
+
+	db := mysql.GetDBSession().DB
+
+	if len(tableIDList) == 0 {
+		return make(map[string]map[string]string), nil
+	}
+
+	// 获取指定table_id列表的未删除别名记录
+	var aliasRecords []resulttable.ESFieldQueryAliasOption
+
+	fieldAliasQuerySet := resulttable.NewESFieldQueryAliasOptionQuerySet(db).Select(
+		resulttable.ESFieldQueryAliasOptionDBSchema.TableID,
+		resulttable.ESFieldQueryAliasOptionDBSchema.FieldPath,
+		resulttable.ESFieldQueryAliasOptionDBSchema.QueryAlias,
+		resulttable.ESFieldQueryAliasOptionDBSchema.IsDeleted,
+	)
+
+	err := fieldAliasQuerySet.TableIDIn(tableIDList...).IsDeletedEq(false).All(&aliasRecords)
+	if err != nil {
+		logger.Errorf("getFieldAliasMap: Error getting field alias map for table_ids: %v, error: %v", tableIDList, err)
+		return nil, err
+	}
+
+	// 按table_id分组构建别名映射
+	fieldAliasMap := make(map[string]map[string]string)
+	for _, record := range aliasRecords {
+		tableID := record.TableID
+		queryAlias := record.QueryAlias
+		fieldPath := record.FieldPath
+
+		// 验证数据完整性
+		if tableID == "" || queryAlias == "" || fieldPath == "" {
+			logger.Warnf("getFieldAliasMap: invalid alias record, skipping - table_id: %s, query_alias: %s, field_path: %s",
+				tableID, queryAlias, fieldPath)
+			continue
+		}
+
+		if fieldAliasMap[tableID] == nil {
+			fieldAliasMap[tableID] = make(map[string]string)
+		}
+
+		fieldAliasMap[tableID][queryAlias] = fieldPath
+	}
+
+	logger.Infof("getFieldAliasMap: Field alias map generated: %+v", fieldAliasMap)
+	return fieldAliasMap, nil
+}
+
+func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]interface{}, storageClusterId uint, sourceType, indexSet string, fieldAliasSettings map[string]string) (string, string, error) {
 	logger.Infof("compose es table id detail, table_id [%s], options [%+v], storage_cluster_id [%d], source_type [%s], index_set [%s]", tableId, options, storageClusterId, sourceType, indexSet)
 
 	// 获取历史存储集群记录
@@ -774,6 +838,11 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).TableIdEq(tableId).One(&rt); err != nil {
 		return tableId, "", err
 	}
+
+	if fieldAliasSettings == nil {
+		fieldAliasSettings = make(map[string]string)
+	}
+
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
 		"storage_type":            models.StorageTypeES,
@@ -784,6 +853,7 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		"options":                 options,
 		"storage_cluster_records": clusterRecords,
 		"data_label":              rt.DataLabel,
+		"field_alias":             fieldAliasSettings, // 添加字段别名
 	})
 	if err != nil {
 		return tableId, "", err

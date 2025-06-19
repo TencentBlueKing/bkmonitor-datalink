@@ -549,7 +549,10 @@ func (i *Instance) query(
 			// BkExporter 静态指标名需要替换为真实指标名
 			if query.MeasurementType == redis.BkExporter && k == promql.StaticMetricName {
 				k = labels.MetricName
-				v = function.GetRealMetricName(query.DataSource, query.TableID, v)
+				metrics := function.GetRealMetricName(query.DataSource, query.TableID, v)
+				if len(metrics) > 0 {
+					v = metrics[0]
+				}
 			}
 
 			lbs = append(lbs, prompb.Label{
@@ -713,15 +716,19 @@ func (i *Instance) QuerySeriesSet(
 	var sets []storage.SeriesSet
 	// 在指标模糊匹配的情况下，需要检索符合条件的 Measures + Fields，这时候会有多个，最后合并结果输出
 	multiFieldsFlag := len(query.Measurements) > 1 || len(query.Fields) > 1
-	for mi, measurement := range query.Measurements {
-		for fi, field := range query.Fields {
+
+	var metricIdx int
+	for _, measurement := range query.Measurements {
+		for _, field := range query.Fields {
 			var (
 				set        storage.SeriesSet
 				metricName string
 			)
-			if len(query.MetricNames) > mi+fi {
-				metricName = query.MetricNames[mi+fi]
+
+			if len(query.MetricNames) > metricIdx {
+				metricName = query.MetricNames[metricIdx]
 			}
+			metricIdx++
 
 			// 判断是否进入降采样逻辑：sum(sum_over_time), count(count_over_time) 等等
 			if len(query.Aggregates) == 0 && i.protocol == influxdb.GRPC {

@@ -784,9 +784,7 @@ func (q *Query) BuildMetadataQuery(
 		// measurement: cpu_detail, field: usage  =>  cpu_detail_usage
 		field, fields = metricName, expandMetricNames
 		// 拼接指标
-		for _, m := range expandMetricNames {
-			query.MetricNames = append(query.MetricNames, function.GetRealMetricName(q.DataSource, tsDB.TableID, m))
-		}
+		query.MetricNames = function.GetRealMetricName(q.DataSource, tsDB.TableID, expandMetricNames...)
 	// 多指标单表，单列多指标，维度: metric_name 为指标名，metric_value 为指标值
 	case redis.BkExporter:
 		field, fields = promql.StaticMetricValue, []string{promql.StaticMetricValue}
@@ -806,24 +804,18 @@ func (q *Query) BuildMetadataQuery(
 	case redis.BkStandardV2TimeSeries:
 		field, fields = metricName, expandMetricNames
 		// 拼接指标
-		for _, m := range expandMetricNames {
-			query.MetricNames = append(query.MetricNames, function.GetRealMetricName(q.DataSource, tsDB.TableID, m))
-		}
+		query.MetricNames = function.GetRealMetricName(q.DataSource, tsDB.TableID, expandMetricNames...)
 	// 单指标单表，指标名为表名，值为指定字段 value
 	case redis.BkSplitMeasurement:
 		// measurement: usage, field: value  => usage_value
 		measurement, measurements = metricName, expandMetricNames
 		field, fields = promql.StaticField, []string{promql.StaticField}
 		// 拼接指标
-		for _, m := range expandMetricNames {
-			query.MetricNames = append(query.MetricNames, function.GetRealMetricName(q.DataSource, "", m))
-		}
+		query.MetricNames = function.GetRealMetricName("", "", expandMetricNames...)
 	default:
 		field, fields = metricName, expandMetricNames
 		// 拼接指标
-		for _, m := range expandMetricNames {
-			query.MetricNames = append(query.MetricNames, function.GetRealMetricName(q.DataSource, tsDB.TableID, m))
-		}
+		query.MetricNames = function.GetRealMetricName(q.DataSource, tsDB.TableID, expandMetricNames...)
 	}
 
 	filterConditions := make([][]ConditionField, 0)
@@ -1051,7 +1043,12 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 
 		// 替换指标名
 		if m, ok := promExprOpt.ReferenceNameMetric[q.ReferenceName]; ok {
-			metricName = encodeFunc(m)
+			// 如果是正则，证明里面存在特殊字符，所以不能转换
+			if q.IsRegexp {
+				metricName = m
+			} else {
+				metricName = encodeFunc(m)
+			}
 		}
 
 		// 增加 Matchers

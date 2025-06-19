@@ -3128,9 +3128,9 @@ func TestStructAndPromQLConvert(t *testing.T) {
 			},
 		},
 		"promql with 特殊字符": {
-			queryStruct: true,
+			queryStruct: false,
 			promql: &structured.QueryPromQL{
-				PromQL: `sum by (http__bk_46____bk_45____bk_37__1) (rate({__name__=~"bkapm:apm-10001:test:http.status",test__bk_46____bk_45____bk_94__1="test.-^1"}[1m]))`,
+				PromQL: `sum by (http__bk_46____bk_45____bk_37__1) (rate({__name__=~"bkapm:apm__bk_45__10001:test:http__bk_46__status",test__bk_46____bk_45____bk_94__1="test.-^1"}[1m]))`,
 			},
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{

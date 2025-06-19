@@ -116,10 +116,6 @@ func getPeriodicTasks() map[string]PeriodicTask {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.CleanExpiredRestore,
 		},
-		RefreshBcsMetricsLabel: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.RefreshBcsMetricsLabel,
-		},
 		RefreshBkccSpace: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshBkccSpace,

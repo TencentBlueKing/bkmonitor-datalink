@@ -18,7 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
-func TestPromDataFormat_EncodeAndDecode(t *testing.T) {
+func TestFieldFormat_EncodeAndDecode(t *testing.T) {
 	testCase := map[string]struct {
 		q        []string
 		expected []string
@@ -43,19 +43,31 @@ func TestPromDataFormat_EncodeAndDecode(t *testing.T) {
 				"__bk_33___ext__bk_46____bk_46____bk_46__",
 			},
 		},
+		// 命中没有配置别名的 tableID
+		"q-4": {
+			q: []string{
+				"ext_container",
+			},
+			expected: []string{
+				"ext_container",
+			},
+		},
 	}
 
+	InitMetadata()
 	ctx := InitHashID(context.Background())
 	log.InitTestLogger()
 
 	for name, c := range testCase {
 		t.Run(name, func(t *testing.T) {
 			ctx = InitHashID(ctx)
-			pdf := GetPromDataFormat(ctx)
+
+			pdf := GetFieldFormat(ctx)
 
 			assert.Equal(t, len(c.expected), len(c.q))
 
 			for idx, q := range c.q {
+
 				r := pdf.EncodeFunc()(q)
 
 				log.Infof(ctx, "encode: %s => %s", q, r)
@@ -64,10 +76,12 @@ func TestPromDataFormat_EncodeAndDecode(t *testing.T) {
 					assert.Equal(t, c.expected[idx], r)
 				}
 
+				// 别名转换无需还原
 				nr := pdf.DecodeFunc()(r)
 				log.Infof(ctx, "decode: %s => %s", r, nr)
 
 				assert.Equal(t, q, nr)
+
 			}
 		})
 	}

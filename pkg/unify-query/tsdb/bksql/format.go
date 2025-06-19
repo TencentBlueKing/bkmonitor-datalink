@@ -78,15 +78,12 @@ type QueryFactory struct {
 	timeField string
 
 	expr sql_expr.SQLExpr
-
-	highlight *metadata.HighLight
 }
 
 func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 	f := &QueryFactory{
 		ctx:          ctx,
 		query:        query,
-		highlight:    query.HighLight,
 		dimensionSet: set.New[string](),
 	}
 
@@ -100,13 +97,10 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 		f.timeField = dtEventTimeStamp
 	}
 
-	f.expr = sql_expr.NewSQLExpr(f.query.Measurement).
+	f.expr = sql_expr.NewSQLExpr(query.Measurement).
 		WithInternalFields(f.timeField, query.Field).
-		WithEncode(metadata.GetPromDataFormat(ctx).EncodeFunc())
-
-	if f.highlight != nil && f.highlight.Enable {
-		f.expr.IsSetLabels(true)
-	}
+		WithEncode(metadata.GetFieldFormat(ctx).EncodeFunc()).
+		WithFieldAlias(query.FieldAlias)
 
 	return f
 }
@@ -141,52 +135,6 @@ func (f *QueryFactory) DescribeTableSQL() string {
 
 func (f *QueryFactory) FieldMap() map[string]string {
 	return f.expr.FieldMap()
-}
-
-func (f *QueryFactory) GetLabelMap() map[string][]string {
-	return f.expr.GetLabelMap()
-}
-
-func (f *QueryFactory) HighLight(data map[string]any) (newData map[string]any) {
-	if f.query.HighLight == nil || !f.query.HighLight.Enable {
-		return
-	}
-
-	newData = make(map[string]any)
-	for k, vs := range f.GetLabelMap() {
-		if vs == nil {
-			return
-		}
-
-		if d, ok := data[k]; ok {
-			var (
-				mark1 string
-				mark2 string
-			)
-
-			switch s := d.(type) {
-			case string:
-				if f.query.HighLight.MaxAnalyzedOffset > 0 && len(s) > f.query.HighLight.MaxAnalyzedOffset {
-					mark1 = s[0:f.query.HighLight.MaxAnalyzedOffset]
-					mark2 = s[f.query.HighLight.MaxAnalyzedOffset:]
-				} else {
-					mark1 = s
-				}
-
-				for _, v := range vs {
-					mark1 = strings.ReplaceAll(mark1, v, fmt.Sprintf("<mark>%s</mark>", v))
-				}
-
-				res := fmt.Sprintf("%s%s", mark1, mark2)
-				if res != d {
-					newData[k] = []string{res}
-				}
-			}
-
-		}
-	}
-
-	return
 }
 
 func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimension bool) (newData map[string]any) {
@@ -225,7 +173,7 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 		return res, nil
 	}
 
-	encodeFunc := metadata.GetPromDataFormat(ctx).EncodeFunc()
+	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
 	// 获取 metricLabel
 	metricLabel := f.query.MetricLabels(ctx)
 

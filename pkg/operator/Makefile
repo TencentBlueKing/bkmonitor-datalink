@@ -23,29 +23,29 @@ help:
 	@echo " build: Build Go package"
 	@echo " image: Build and push docker image"
 
-.PHONY: lint
-lint: mod
-	diff -u <(echo -n) <(gofumpt -w .)
-	diff -u <(echo -n) <(goimports-reviser -project-name "github.com/TencentBlueKing/bkmonitor-datalink/pkg" ./...)
-
-.PHONY: test
-test: mod
-	$(GO) test ./... -buildmode=pie -parallel=4 -cover
-
 .PHONY: mod
 mod:
 	$(GO) mod download
 	$(GO) mod tidy
 
+.PHONY: lint
+lint:
+	diff -u <(echo -n) <(gofumpt -w .)
+	diff -u <(echo -n) <(goimports-reviser -project-name "github.com/TencentBlueKing/bkmonitor-datalink/pkg" ./...)
+
+.PHONY: test
+test:
+	$(GO) test ./... -buildmode=pie -parallel=4 -cover
+
 .PHONY: build
-build: mod
+build:
 	cd $(RELEASE_PATH) && ls -lh && rm -rf *
-	GOOS=linux GOARCH=amd64 \
-	go build -ldflags " \
+	$(GO) build -ldflags " \
 	-s -w \
 	-X $(PKG)/cmd.Version=$(VERSION) \
 	-X $(PKG)/cmd.BuildTime=$(shell date -u '+%Y-%m-%d_%I:%M:%S%p') \
-	-X $(PKG)/cmd.GitHash=$(shell git rev-parse HEAD)" \
+	-X $(PKG)/cmd.GitHash=$(shell git rev-parse HEAD) \
+	-X google.golang.org/protobuf/reflect/protoregistry.conflictPolicy=ignore" \
 	-o $(BIN) .
 
 .PHONY: image

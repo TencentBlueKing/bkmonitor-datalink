@@ -28,6 +28,8 @@ const (
 	FieldTime  = "_time"
 
 	theDate = "thedate"
+
+	HDFS = "hdfs"
 )
 
 // ErrorMatchAll 定义全字段检索错误提示信息
@@ -45,14 +47,14 @@ type TimeAggregate struct {
 type SQLExpr interface {
 	// WithKeepColumns 设置保留字段
 	WithKeepColumns([]string) SQLExpr
+	// WithFieldAlias 设置字段别名
+	WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr
 	// WithFieldsMap 设置字段类型
 	WithFieldsMap(fieldsMap map[string]string) SQLExpr
 	// WithEncode 字段转换方法
 	WithEncode(func(string) string) SQLExpr
 	// WithInternalFields 设置内部字段
 	WithInternalFields(timeField, valueField string) SQLExpr
-	// IsSetLabels 是否保留查询标签
-	IsSetLabels(bool) SQLExpr
 	// ParserRangeTime 解析开始结束时间
 	ParserRangeTime(timeField string, start, end time.Time) string
 	// ParserQueryString 解析 es 特殊语法 queryString 生成SQL条件
@@ -65,8 +67,6 @@ type SQLExpr interface {
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
 	FieldMap() map[string]string
-	// GetLabelMap 返回当前查询值
-	GetLabelMap() map[string][]string
 	// Type 返回表达式类型
 	Type() string
 }
@@ -89,7 +89,7 @@ func NewSQLExpr(key string) SQLExpr {
 	case Doris:
 		return &DorisSQLExpr{}
 	default:
-		return &DefaultSQLExpr{}
+		return &DefaultSQLExpr{key: key}
 	}
 }
 
@@ -99,22 +99,26 @@ type DefaultSQLExpr struct {
 
 	keepColumns []string
 	fieldMap    map[string]string
+	fieldAlias  metadata.FieldAlias
 
 	timeField  string
 	valueField string
+
+	key string
 }
 
 func (d *DefaultSQLExpr) Type() string {
 	return "default"
 }
 
-func (d *DefaultSQLExpr) IsSetLabels(_ bool) SQLExpr {
-	return d
-}
-
 func (d *DefaultSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {
 	d.timeField = timeField
 	d.valueField = valueField
+	return d
+}
+
+func (d *DefaultSQLExpr) WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr {
+	d.fieldAlias = fieldAlias
 	return d
 }
 
@@ -355,12 +359,28 @@ func (d *DefaultSQLExpr) buildCondition(c metadata.ConditionField) (string, erro
 			}
 		}
 	// 处理正则表达式匹配
+	// 根据数据库类型选择不同的正则语法：
+	// - HDFS 使用 regexp_like() 函数
+	// - 其他数据库使用 REGEXP 操作符
 	case metadata.ConditionRegEqual:
-		op = "REGEXP"
-		val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|")) // 多个值用|连接
+		if d.key == HDFS {
+			pattern := strings.Join(c.Value, "|") // 多个值用|连接
+			val = fmt.Sprintf("regexp_like(%s, '%s')", key, pattern)
+			key = ""
+		} else {
+			op = "REGEXP"
+			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|"))
+		}
 	case metadata.ConditionNotRegEqual:
-		op = "NOT REGEXP"
-		val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|"))
+		if d.key == HDFS {
+			pattern := strings.Join(c.Value, "|")
+			val = fmt.Sprintf("NOT regexp_like(%s, '%s')", key, pattern)
+			key = ""
+		} else {
+			op = "NOT REGEXP"
+			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|"))
+		}
+
 	// 处理数值比较操作符（>, >=, <, <=）
 	case metadata.ConditionGt:
 		op = ">"

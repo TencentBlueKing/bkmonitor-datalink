@@ -208,6 +208,21 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"exists":{"field":"key-1"}}}},{"exists":{"field":"key-2"}}]}}}`,
 		},
+		"nested not existed query": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotExisted,
+					},
+					{
+						DimensionName: "nested1.name",
+						Operator:      structured.ConditionExisted,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"nested":{"path":"nested1","query":{"exists":{"field":"nested1.key"}}}}}},{"nested":{"path":"nested1","query":{"exists":{"field":"nested1.name"}}}}]}}}`,
+		},
 		"combine nested and normal query in one group": {
 			conditions: metadata.AllConditions{
 				{
@@ -353,6 +368,102 @@ func TestFormatFactory_Query(t *testing.T) {
   }
 }`,
 		},
+
+		"nested_must_not_query_empty_value": {
+			conditions: metadata.AllConditions{
+				[]metadata.ConditionField{
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":""}}}}}}}}`,
+		},
+		"nested_must_not_query_not_empty_value": {
+			conditions: metadata.AllConditions{
+				[]metadata.ConditionField{
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{"11"},
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"11"}}}}}}}}`,
+		},
+		"nested_must_not_query_mix": {
+			conditions: metadata.AllConditions{
+				[]metadata.ConditionField{
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{"11"},
+					},
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"11"}}}}}}},{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":""}}}}}}}]}}}`,
+		},
+		"nested_must_not_query_type_mix": {
+			conditions: metadata.AllConditions{
+				[]metadata.ConditionField{
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{"11"},
+					},
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+					{
+						DimensionName: "nested1.active",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+				}},
+			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"11"}}}}}}},{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":""}}}}}}},{"nested":{"path":"nested1","query":{"exists":{"field":"nested1.active"}}}}]}}}`,
+		},
+		"nested_must_not_query_type_mix_2": {
+			conditions: metadata.AllConditions{
+				[]metadata.ConditionField{
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{"11"},
+					},
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionEqual,
+						Value:         []string{"22"},
+					},
+					{
+						DimensionName: "nested1.key",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+				}},
+			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"11"}}}}}}},{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":""}}}}}}},{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"22"}}}}}]}}}`,
+		},
+		"nested_must_not_query_key_is_not_keyword_or_text": {
+			conditions: metadata.AllConditions{
+				[]metadata.ConditionField{
+					{
+						DimensionName: "nested1.active",
+						Operator:      structured.ConditionNotEqual,
+						Value:         []string{""},
+					},
+				},
+			},
+			expected: `{"query":{"nested":{"path":"nested1","query":{"exists":{"field":"nested1.active"}}}}}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
@@ -472,10 +583,10 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					Name:       "count",
 					Dimensions: []string{"gseIndex"},
 					Window:     time.Hour * 24,
-					TimeZone:   "Asia/ShangHai",
+					TimeZone:   "Asia/Shanghai",
 				},
 			},
-			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1d","min_doc_count":0,"time_zone":"Asia/ShangHai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
+			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1d","min_doc_count":0,"time_zone":"Asia/Shanghai"}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
 		},
 		"aggregate 1h": {
 			timeField: metadata.TimeField{
@@ -488,7 +599,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					Name:       "count",
 					Dimensions: []string{"gseIndex"},
 					Window:     time.Hour,
-					TimeZone:   "Asia/ShangHai",
+					TimeZone:   "Asia/Shanghai",
 				},
 			},
 			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1h","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
@@ -504,7 +615,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					Name:       "count",
 					Dimensions: []string{"gseIndex"},
 					Window:     time.Hour + 2*time.Minute,
-					TimeZone:   "Asia/ShangHai",
+					TimeZone:   "Asia/Shanghai",
 				},
 			},
 			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"62m","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
@@ -520,7 +631,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					Name:       "count",
 					Dimensions: []string{"gseIndex"},
 					Window:     time.Hour + 12*time.Second,
-					TimeZone:   "Asia/ShangHai",
+					TimeZone:   "Asia/Shanghai",
 				},
 			},
 			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"3612s","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
@@ -536,7 +647,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					Name:       "count",
 					Dimensions: []string{"gseIndex"},
 					Window:     time.Minute,
-					TimeZone:   "Asia/ShangHai",
+					TimeZone:   "Asia/Shanghai",
 				},
 			},
 			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"1m","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
@@ -552,7 +663,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					Name:       "count",
 					Dimensions: []string{"gseIndex"},
 					Window:     time.Minute,
-					TimeZone:   "Asia/ShangHai",
+					TimeZone:   "Asia/Shanghai",
 				},
 			},
 			expected: `{"aggregations":{"gseIndex":{"aggregations":{"time":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420,"min":1721024820},"field":"time","interval":"60ms","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"time":{"from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
@@ -568,7 +679,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					Name:       "count",
 					Dimensions: []string{"gseIndex"},
 					Window:     time.Minute,
-					TimeZone:   "Asia/ShangHai",
+					TimeZone:   "Asia/Shanghai",
 				},
 			},
 			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","interval":"1m","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"dtEventTime":{"from":1721024820000,"include_lower":true,"include_upper":true,"to":1721046420000}}}}`,
@@ -584,7 +695,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 					Name:       "count",
 					Dimensions: []string{"gseIndex"},
 					Window:     time.Minute,
-					TimeZone:   "Asia/ShangHai",
+					TimeZone:   "Asia/Shanghai",
 				},
 			},
 			expected: `{"aggregations":{"gseIndex":{"aggregations":{"dtEventTime":{"aggregations":{"_value":{"value_count":{"field":"value"}}},"date_histogram":{"extended_bounds":{"max":1721046420000,"min":1721024820000},"field":"dtEventTime","interval":"1m","min_doc_count":0}}},"terms":{"field":"gseIndex","missing":" "}}},"query":{"range":{"dtEventTime":{"format":"epoch_second","from":1721024820,"include_lower":true,"include_upper":true,"to":1721046420}}}}`,
@@ -594,7 +705,7 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).
 				WithQuery("value", c.timeField, start, end, timeFormat, 0).
-				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
+				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 
 			ss := elastic.NewSearchSource()
 			rangeQuery, err := fact.RangeQuery()
@@ -753,7 +864,7 @@ func TestBuildQuery(t *testing.T) {
 						Name:       "count",
 						Dimensions: []string{"gseIndex"},
 						Window:     time.Hour,
-						TimeZone:   "Asia/ShangHai",
+						TimeZone:   "Asia/Shanghai",
 					},
 				},
 				Collapse: &metadata.Collapse{
@@ -822,7 +933,7 @@ func TestBuildQuery(t *testing.T) {
 						Name:       "count",
 						Dimensions: []string{"gseIndex"},
 						Window:     time.Hour * 24 * 2,
-						TimeZone:   "Asia/ShangHai",
+						TimeZone:   "Asia/Shanghai",
 					},
 				},
 				Collapse: &metadata.Collapse{
@@ -855,7 +966,7 @@ func TestBuildQuery(t *testing.T) {
 						"field": "time",
 						"interval": "2d",
 						"min_doc_count": 0,
-						"time_zone": "Asia/ShangHai"
+						"time_zone": "Asia/Shanghai"
 					}
 				}
 			},
@@ -890,7 +1001,7 @@ func TestBuildQuery(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).
 				WithQuery("value", c.timeField, start, end, timeFormat, 0).
-				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
+				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 
 			filterQueries := []elastic.Query{
 				elastic.NewRangeQuery(c.timeField.Name).
@@ -1080,7 +1191,7 @@ func TestFactory_Agg(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).
 				WithMappings(commonMapping...).
-				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
+				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 			fact.valueField = "value"
 			fact.aggInfoList = c.aggInfoList
 			fact.resetAggInfoListWithNested()
@@ -1217,7 +1328,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 					Unit: DefaultTimeFieldUnit,
 				}, time.Time{}, time.Time{}, "", 0).
 				WithMappings(commonMapping...).
-				WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
+				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 			fact.valueField = c.valueField
 			ss := elastic.NewSearchSource()
 			aggName, agg, aggErr := fact.EsAgg(c.aggregates)

@@ -57,53 +57,53 @@ func TestInstance_getAlias(t *testing.T) {
 			needAddTime: true,
 			expected:    []string{"db_test_20240101*", "db_test_20240102*", "db_test_20240103*"},
 		},
-		"change month with Asia/ShangHai": {
+		"change month with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 25, 7, 10, 5, 0, time.UTC),
 			end:         time.Date(2024, 2, 2, 6, 1, 4, 10, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/ShangHai",
+			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_20240125*", "db_test_20240126*", "db_test_20240127*", "db_test_20240128*", "db_test_20240129*", "db_test_20240130*", "db_test_20240131*", "db_test_20240201*", "db_test_20240202*"},
 		},
-		"2d with Asia/ShangHai": {
+		"2d with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 1, 3, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/ShangHai",
+			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_20240102*", "db_test_20240103*", "db_test_20240104*"},
 		},
-		"14d with Asia/ShangHai": {
+		"14d with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 1, 15, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/ShangHai",
+			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_20240102*", "db_test_20240103*", "db_test_20240104*", "db_test_20240105*", "db_test_20240106*", "db_test_20240107*", "db_test_20240108*", "db_test_20240109*", "db_test_20240110*", "db_test_20240111*", "db_test_20240112*", "db_test_20240113*", "db_test_20240114*", "db_test_20240115*", "db_test_20240116*"},
 		},
-		"16d with Asia/ShangHai": {
+		"16d with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 15, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 2, 10, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/ShangHai",
+			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_202401*", "db_test_202402*"},
 		},
-		"15d with Asia/ShangHai": {
+		"15d with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 1, 16, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/ShangHai",
+			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_202401*"},
 		},
-		"6m with Asia/ShangHai": {
+		"6m with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 7, 1, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/ShangHai",
+			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_202401*", "db_test_202402*", "db_test_202403*", "db_test_202404*", "db_test_202405*", "db_test_202406*", "db_test_202407*"},
 		},
-		"7m with Asia/ShangHai": {
+		"7m with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 8, 1, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/ShangHai",
+			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_202402*", "db_test_202403*", "db_test_202404*", "db_test_202405*", "db_test_202406*", "db_test_202407*", "db_test_202408*"},
 		},
 		"2m and db": {
@@ -208,7 +208,6 @@ func TestInstance_queryReference(t *testing.T) {
 				},
 				DataSource:    structured.BkLog,
 				TableID:       "es_index",
-				MetricName:    "user.first",
 				Source:        []string{"group", "user.first", "user.last"},
 				StorageType:   consul.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{},
@@ -230,7 +229,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:       10,
 				DataSource: structured.BkLog,
 				TableID:    "bk_log_index_set_10",
-				MetricName: "__ext.io_kubernetes_pod",
 				Orders: metadata.Orders{
 					{
 						Name: FieldTime,
@@ -265,7 +263,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:       10,
 				DataSource: structured.BkLog,
 				TableID:    "bk_log_index_set_10",
-				MetricName: "__ext.io_kubernetes_pod",
 				Orders: metadata.Orders{
 					{
 						Name: FieldTime,
@@ -290,7 +287,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":4,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":4,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
 		},
 		"使用 promql 计算平均值 sum(count_over_time(field[12h]))": {
 			query: &metadata.Query{
@@ -300,7 +297,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -315,7 +311,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__ext__bk_46__container_name","value":"sync-apigw"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-apigw-sync-1178-cl8k8"},{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":24,"timestamp":1723593600000},{"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"sync-apigw"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-apigw-sync-1179-9h9xv"},{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":24,"timestamp":1723593600000},{"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"unify-query"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-64bd4f5df4-599f9"},{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":375064,"timestamp":1723593600000},{"value":392679,"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"unify-query"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-64bd4f5df4-llp94"},{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":381173,"timestamp":1723593600000},{"value":374338,"timestamp":1723636800000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__ext__bk_46__container_name","value":"sync-apigw"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-apigw-sync-1178-cl8k8"},{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":24,"timestamp":1723593600000},{"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"sync-apigw"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-apigw-sync-1179-9h9xv"},{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":24,"timestamp":1723593600000},{"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"unify-query"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-64bd4f5df4-599f9"},{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":375064,"timestamp":1723593600000},{"value":392679,"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"unify-query"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-64bd4f5df4-llp94"},{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":381173,"timestamp":1723593600000},{"value":374338,"timestamp":1723636800000}],"exemplars":null,"histograms":null}]`,
 		},
 		"使用非时间聚合统计数量": {
 			query: &metadata.Query{
@@ -325,7 +321,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        3,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -335,7 +330,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":1523302,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":1523302,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
 		},
 		"获取 50 分位值": {
 			query: &metadata.Query{
@@ -345,7 +340,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -358,7 +352,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"le","value":"50.0"}],"samples":[{"value":1723637132806.3303,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"le","value":"50.0"}],"samples":[{"value":1723637132806.3303,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
 		},
 		"获取 50, 90 分支值，同时按 6h 时间聚合": {
 			query: &metadata.Query{
@@ -368,7 +362,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -385,7 +378,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"le","value":"50.0"}],"samples":[{"value":1723604380350.2532,"timestamp":1723593600000},{"value":1723625838006.1033,"timestamp":1723615200000},{"value":1723647585882.9739,"timestamp":1723636800000},{"value":1723669177640.7131,"timestamp":1723658400000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"le","value":"90.0"}],"samples":[{"value":1723612956128.9934,"timestamp":1723593600000},{"value":1723634678721.5513,"timestamp":1723615200000},{"value":1723656196499.344,"timestamp":1723636800000},{"value":1723677836133.885,"timestamp":1723658400000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"le","value":"50.0"}],"samples":[{"value":1723604380350.2532,"timestamp":1723593600000},{"value":1723625838006.1033,"timestamp":1723615200000},{"value":1723647585882.9739,"timestamp":1723636800000},{"value":1723669177640.7131,"timestamp":1723658400000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"le","value":"90.0"}],"samples":[{"value":1723612956128.9934,"timestamp":1723593600000},{"value":1723634678721.5513,"timestamp":1723615200000},{"value":1723656196499.344,"timestamp":1723636800000},{"value":1723677836133.885,"timestamp":1723658400000}],"exemplars":null,"histograms":null}]`,
 		},
 		"根据 field 字段聚合计算数量，同时根据值排序": {
 			query: &metadata.Query{
@@ -395,7 +388,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        10,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -424,7 +416,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        10,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -508,7 +499,9 @@ func TestInstance_queryRawData(t *testing.T) {
 	mock.Es.Set(map[string]any{
 
 		// nested query + query string 测试 + highlight
-		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"highlight":{"fields":{"*":{}},"number_of_fragments":0,"post_tags":["\u003c/mark\u003e"],"pre_tags":["\u003cmark\u003e"],"require_field_match":true},"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"group: fans"}}]}},"size":5,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":4,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"user":[{"last":"Smith","first":"John"},{"last":"White","first":"Alice"}],"group":"fans"},"highlight":{"user.new_group_user_first":["<mark>John</mark>"],"user.first":["<mark>John</mark>"],"user.new_first":["<mark>John</mark>"],"group":["<mark>fans</mark>"]}}]}}`,
+		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"match_phrase":{"group":{"query":"fans"}}}]}},"size":5,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]},"highlight":{"group":["<mark>fans</mark>"],"user.first":["<mark>John</mark>"]}}]}}`,
+		// high light from condition
+		`{"_source":{"includes":["status","message"]},"from":0,"query":{"bool":{"filter":[{"match_phrase":{"status":{"query":"error"}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}]}},"size":5,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"bT4KjpEBbwEm76LbdH2H","_score":0.0,"_source":{"status":"error","message":"Something went wrong"},"highlight":{"status":["<mark>error</mark>"]}}]}}`,
 
 		// "nested aggregate + query 测试
 		`{"_source":{"includes":["group","user.first","user.last"]},"aggregations":{"user":{"aggregations":{"_value":{"value_count":{"field":"user.first"}}},"nested":{"path":"user"}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":17,"relation":"eq"},"max_score":null,"hits":[]},"aggregations":{"user":{"doc_count":18,"_value":{"value":18}}}}`,
@@ -529,6 +522,9 @@ func TestInstance_queryRawData(t *testing.T) {
 
 		// search after
 		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"search_after":[1743465646224,"kibana_settings",null],"size":5,"sort":[{"timestamp":{"order":"desc"}},{"type":{"order":"desc"}},{"kibana_stats.kibana.name":{"order":"desc"}}]}`: `{"took":13,"timed_out":false,"_shards":{"total":7,"successful":7,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[{"_index":".monitoring-kibana-7-2025.04.01","_id":"rYSm7pUBxj8-27WaYRCB","_score":null,"_source":{"timestamp":"2025-04-01T00:00:36.224Z","type":"kibana_stats","kibana_stats":{"kibana":{"name":"es-os60crz7-kibana"}}},"sort":[1743465636224,"kibana_stats","es-os60crz7-kibana"]},{"_index":".monitoring-kibana-7-2025.04.01","_id":"roSm7pUBxj8-27WaYRCB","_score":null,"_source":{"timestamp":"2025-04-01T00:00:36.224Z","type":"kibana_settings"},"sort":[1743465636224,"kibana_settings",null]},{"_index":".monitoring-kibana-7-2025.04.01","_id":"q4Sm7pUBxj8-27WaOhBx","_score":null,"_source":{"timestamp":"2025-04-01T00:00:26.225Z","type":"kibana_stats","kibana_stats":{"kibana":{"name":"es-os60crz7-kibana"}}},"sort":[1743465626225,"kibana_stats","es-os60crz7-kibana"]},{"_index":".monitoring-kibana-7-2025.04.01","_id":"rISm7pUBxj8-27WaOhBx","_score":null,"_source":{"timestamp":"2025-04-01T00:00:26.225Z","type":"kibana_settings"},"sort":[1743465626225,"kibana_settings",null]},{"_index":".monitoring-kibana-7-2025.04.01","_id":"8DSm7pUBipSLyy3IEwRg","_score":null,"_source":{"timestamp":"2025-04-01T00:00:16.224Z","type":"kibana_stats","kibana_stats":{"kibana":{"name":"es-os60crz7-kibana"}}},"sort":[1743465616224,"kibana_stats","es-os60crz7-kibana"]}]}}`,
+
+		// debug highlight
+		`{"from":0,"query":{"bool":{"filter":[{"match_phrase":{"resource.k8s.bcs.cluster.id":{"query":"BCS-K8S-00000"}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":-62135596800,"include_lower":true,"include_upper":true,"to":-62135596800}}}]}},"size":0}`: `{"took":15,"timed_out":false,"_shards":{"total":6,"successful":6,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[{"_index":"v2_2_bkapm_trace_bk_monitor_20250604_0","_type":"_doc","_id":"14712105480911733430","_score":null,"_source":{"links":[],"trace_state":"","elapsed_time":38027,"status":{"message":"","code":0},"resource":{"k8s.pod.ip":"192.168.1.100","bk.instance.id":":unify-query::192.168.1.100:","service.name":"unify-query","net.host.ip":"192.168.1.100","k8s.bcs.cluster.id":"BCS-K8S-00000","k8s.pod.name":"bk-monitor-unify-query-5c685b56f-n4b6d","k8s.namespace.name":"blueking"},"span_name":"http-curl","attributes":{"apdex_type":"satisfied","req-http-method":"POST","req-http-path":"https://bkapi.paas3-dev.bktencent.com/api/bk-base/prod/v3/queryengine/query_sync"},"end_time":1749006597019296,"parent_span_id":"6f15efc54fedfebe","events":[],"span_id":"4a5f6170ae000a3f","trace_id":"5c999893cdbc41390c5ff8f3be5f62a9","kind":1,"start_time":1749006596981268,"time":"1749006604000"},"sort":["1749006604000"]}]}}`,
 	})
 
 	for idx, c := range map[string]struct {
@@ -558,7 +554,6 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "es_index",
 				DataLabel:   "es_index",
-				MetricName:  "group",
 				StorageType: consul.ElasticsearchStorageType,
 				Source:      []string{"group", "user.first", "user.last"},
 				AllConditions: metadata.AllConditions{
@@ -571,15 +566,11 @@ func TestInstance_queryRawData(t *testing.T) {
 					},
 				},
 				QueryString: "group: fans",
-				HighLight: &metadata.HighLight{
-					Enable: true,
-				},
 			},
 			start: defaultStart,
 			end:   defaultEnd,
 			size:  1,
-			list:  `[{"__address":"http://127.0.0.1:93002","__highlight":{"group":["<mark>fans</mark>"],"user.new_group_user_first":["<mark>John</mark>"],"user.first":["<mark>John</mark>"],"user.new_first":["<mark>John</mark>"]},"user":[{"last":"Smith","first":"John"},{"last":"White","first":"Alice"}],"group":"fans","__doc_id":"aS3KjpEBbwEm76LbcH1G","__index":"bk_unify_query_demo_2","__result_table":"es_index","__data_label":"es_index"}]`,
-		},
+			list:  `[{"__address":"http://127.0.0.1:93002","__data_label":"es_index","__doc_id":"aS3KjpEBbwEm76LbcH1G","__index":"bk_unify_query_demo_2","__result_table":"es_index","group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]}]`},
 		"获取 10条 不 field 为空的原始数据": {
 			query: &metadata.Query{
 				DB:         db,
@@ -589,7 +580,6 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource: structured.BkLog,
 				TableID:    "bk_log_index_set_10",
 				DataLabel:  "set_10",
-				MetricName: "__ext.io_kubernetes_pod",
 				Orders: metadata.Orders{
 					{
 						Name: FieldTime,
@@ -623,7 +613,6 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				DataLabel:   "bk_log",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				TimeField: metadata.TimeField{
 					Name: "dtEventTimeStamp",
@@ -641,18 +630,6 @@ func TestInstance_queryRawData(t *testing.T) {
 			end:   defaultEnd,
 			size:  1e4,
 			list:  `[{"__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"8defd23f1c2599e70f3ace3a042b2b5f","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002"},{"__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"ba0a6e66f01d6cb77ae25b13ddf4ad1b","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002"},{"__doc_id":"74ea55e7397582b101f0e21efbc876c6","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"},{"__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__ext.container_name":"unify-query","__doc_id":"084792484f943e314e31ef2b2e878115"},{"__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"0a3f47a7c57d0af7d40d82c729c37155","__index":"v2_2_bklog_bk_unify_query_20240814_0"},{"__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__ext.container_name":"unify-query","__doc_id":"85981293cca7102b9560b49a7f089737","__index":"v2_2_bklog_bk_unify_query_20240814_0"},{"__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"b429dc6611efafc4d02b90f882271dea","__index":"v2_2_bklog_bk_unify_query_20240814_0"},{"__doc_id":"01213026ae064c6726fd99dc8276e842","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"},{"__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"93027432b40ccb01b1be8f4ea06a6853","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002"},{"__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"bc31babcb5d1075fc421bd641199d3aa","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10"}]`,
-		},
-		"query error with highlight max_analyzed_offset": {
-			query: &metadata.Query{
-				DB:          db,
-				Field:       "error",
-				DataSource:  structured.BkLog,
-				TableID:     "check_error",
-				StorageType: consul.ElasticsearchStorageType,
-			},
-			start: defaultStart,
-			end:   defaultEnd,
-			err:   fmt.Errorf("es query [es_index] error: [1:138] [highlight] unknown field [max_analyzed_offset]"),
 		},
 		"query with scroll id 1": {
 			query: &metadata.Query{
@@ -761,7 +738,8 @@ func TestInstance_queryRawData(t *testing.T) {
 				assert.Nil(t, err)
 				if len(list) > 0 {
 					res, _ := json.Marshal(list)
-					assert.JSONEq(t, c.list, string(res))
+					resStr := string(res)
+					assert.JSONEq(t, c.list, resStr)
 				} else {
 					assert.Nil(t, list)
 				}

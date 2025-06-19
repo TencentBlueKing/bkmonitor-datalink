@@ -223,11 +223,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			queryTs.IsMultiFrom = false
 		}
 
-		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-		if ql.HighLight == nil && queryTs.HighLight != nil {
-			ql.HighLight = queryTs.HighLight
-		}
-
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
 		if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
 			ql.KeepColumns = queryTs.ResultColumns
@@ -258,6 +253,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		}
 
 		span.Set("query-list-num", len(queryList))
+		span.Set("result-data-num", len(data))
 
 		if len(queryList) > 1 {
 			queryTs.OrderBy.Orders().SortSliceList(data)
@@ -297,9 +293,21 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					}
 				}
 			}
-
 		}
 
+		labelMap, lbErr := queryTs.LabelMap()
+		if lbErr != nil {
+			err = lbErr
+			return
+		}
+
+		span.Set("query-label-map", labelMap)
+		span.Set("query-highlight", queryTs.HighLight)
+
+		var hlF *function.HighLightFactory
+		if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(labelMap) > 0 {
+			hlF = function.NewHighLightFactory(labelMap, queryTs.HighLight.MaxAnalyzedOffset)
+		}
 		for _, item := range data {
 			if item == nil {
 				continue
@@ -309,8 +317,17 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				delete(item, ignoreDimension)
 			}
 
+			if hlF != nil {
+				if highlightResult := hlF.Process(item); len(highlightResult) > 0 {
+					item[function.KeyHighLight] = highlightResult
+				}
+			}
+
 			list = append(list, item)
 		}
+
+		span.Set("result-list-num", len(list))
+		span.Set("result-option", resultTableOptions)
 	}()
 
 	// 多协程查询数据
@@ -485,7 +502,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	seriesNum := 0
 	pointsNum := 0
 
-	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
 	switch v := res.(type) {
 	case promPromql.Matrix:
@@ -680,7 +697,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	seriesNum := 0
 	pointsNum := 0
 
-	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
 	switch v := res.(type) {
 	case promPromql.Matrix:
@@ -762,56 +779,74 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 	query.Instant = queryPromQL.Instant
 	query.DownSampleRange = queryPromQL.DownSampleRange
 
-	// 补充业务ID
-	if len(queryPromQL.BKBizIDs) > 0 {
-		for _, q := range query.QueryList {
+	if queryPromQL.Match != "" {
+		matchers, err = parser.ParseMetricSelector(queryPromQL.Match)
+		if err != nil {
+			return
+		}
+	}
+
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
+	if decodeFunc == nil {
+		decodeFunc = func(q string) string {
+			return q
+		}
+	}
+
+	for _, q := range query.QueryList {
+		// decode table id and field name
+		q.TableID = structured.TableID(decodeFunc(string(q.TableID)))
+		q.FieldName = decodeFunc(q.FieldName)
+
+		// decode condition
+		for i, d := range q.Conditions.FieldList {
+			q.Conditions.FieldList[i].DimensionName = decodeFunc(d.DimensionName)
+		}
+
+		// decode agg
+		for aggIdx, agg := range q.AggregateMethodList {
+			for i, d := range agg.Dimensions {
+				q.AggregateMethodList[aggIdx].Dimensions[i] = decodeFunc(d)
+			}
+		}
+
+		// 补充业务ID
+		if len(queryPromQL.BKBizIDs) > 0 {
 			q.Conditions.Append(structured.ConditionField{
 				DimensionName: structured.BizID,
 				Value:         queryPromQL.BKBizIDs,
 				Operator:      structured.Contains,
 			}, structured.ConditionAnd)
 		}
-	}
 
-	if queryPromQL.Match == "" {
-		return
-	}
-
-	matchers, err = parser.ParseMetricSelector(queryPromQL.Match)
-	if err != nil {
-		return
-	}
-
-	if len(matchers) == 0 {
-		return
-	}
-
-	for _, q := range query.QueryList {
+		// 补充 Match
 		var verifyDimensions = func(key string) bool {
 			return true
 		}
 
-		if queryPromQL.IsVerifyDimensions {
-			dimSet := set.New[string]()
-			for _, a := range q.AggregateMethodList {
-				dimSet.Add(a.Dimensions...)
+		if len(matchers) > 0 {
+			if queryPromQL.IsVerifyDimensions {
+				dimSet := set.New[string]()
+				for _, a := range q.AggregateMethodList {
+					dimSet.Add(a.Dimensions...)
+				}
+
+				verifyDimensions = func(key string) bool {
+					return dimSet.Existed(key)
+				}
 			}
 
-			verifyDimensions = func(key string) bool {
-				return dimSet.Existed(key)
-			}
-		}
+			for _, m := range matchers {
+				if !verifyDimensions(m.Name) {
+					continue
+				}
 
-		for _, m := range matchers {
-			if !verifyDimensions(m.Name) {
-				continue
+				q.Conditions.Append(structured.ConditionField{
+					DimensionName: m.Name,
+					Value:         []string{m.Value},
+					Operator:      structured.PromOperatorToConditions(m.Type),
+				}, structured.ConditionAnd)
 			}
-
-			q.Conditions.Append(structured.ConditionField{
-				DimensionName: m.Name,
-				Value:         []string{m.Value},
-				Operator:      structured.PromOperatorToConditions(m.Type),
-			}, structured.ConditionAnd)
 		}
 	}
 
@@ -862,7 +897,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	seriesNum := 0
 	pointsNum := 0
 
-	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
 	switch v := res.(type) {
 	case promPromql.Matrix:

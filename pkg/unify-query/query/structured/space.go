@@ -69,6 +69,7 @@ func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) 
 
 func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfluxdb.ResultTableDetail) query.TsDBV2 {
 	t.Field = d.Fields
+	t.FieldAlias = d.FieldAlias
 	t.MeasurementType = d.MeasurementType
 	t.DataLabel = d.DataLabel
 	t.StorageType = d.StorageType
@@ -165,6 +166,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	// 字段为空时，需要返回结果表的信息，表示无需过滤字段过滤
 	// bklog 或者 bkapm 则不判断 field 是否存在
 	if isSkipField {
+		defaultTsDB.ExpandMetricNames = []string{fieldName}
 		tsDBs = append(tsDBs, &defaultTsDB)
 		return tsDBs
 	}

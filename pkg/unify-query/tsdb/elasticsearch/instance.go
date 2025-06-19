@@ -235,7 +235,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
 		qs := NewQueryString(qb.QueryString, qb.IsPrefix, fact.NestedField)
-		q, qsErr := qs.ToDSL()
+		q, qsErr := qs.ToDSL(ctx, qb.FieldAlias)
 		if qsErr != nil {
 			return nil, qsErr
 		}
@@ -277,10 +277,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	if qb.Collapse != nil && qb.Collapse.Field != "" {
 		source.Collapse(elastic.NewCollapseBuilder(qb.Collapse.Field))
-	}
-
-	if qb.HighLight != nil && qb.HighLight.Enable {
-		source.Highlight(fact.HighLight(qb.QueryString, qb.HighLight.MaxAnalyzedOffset))
 	}
 
 	if source == nil {
@@ -604,10 +600,6 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 							fact.data[FieldTime] = timeValue
 						}
 
-						if len(d.Highlight) > 0 {
-							fact.data[KeyHighLight] = d.Highlight
-						}
-
 						if idx == len(sr.Hits.Hits)-1 && d.Sort != nil {
 							option = &metadata.ResultTableOption{
 								SearchAfter: d.Sort,
@@ -759,7 +751,7 @@ func (i *Instance) QuerySeriesSet(
 					WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
 					WithMappings(mappings...).
 					WithOrders(query.Orders).
-					WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc(), metadata.GetPromDataFormat(ctx).DecodeFunc())
+					WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 
 				if len(query.Aggregates) == 0 {
 					setCh <- storage.ErrSeriesSet(fmt.Errorf("aggregates is empty"))

@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -75,6 +76,29 @@ type QueryTs struct {
 
 	// HighLight 是否开启高亮
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
+}
+
+func (q *QueryTs) LabelMap() (map[string][]string, error) {
+	labelMap := make(map[string][]string)
+	labelCheck := make(map[string]struct{})
+
+	for _, query := range q.QueryList {
+		m, err := query.LabelMap()
+		if err != nil {
+			return nil, err
+		}
+		for key, values := range m {
+			for _, value := range values {
+				checkKey := key + ":" + value
+				if _, ok := labelCheck[checkKey]; !ok {
+					labelCheck[checkKey] = struct{}{}
+					labelMap[key] = append(labelMap[key], value)
+				}
+			}
+		}
+	}
+
+	return labelMap, nil
 }
 
 // StepParse 解析step
@@ -147,11 +171,6 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 
 		if q.Scroll != "" {
 			query.Scroll = q.Scroll
-		}
-
-		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-		if query.HighLight == nil && q.HighLight != nil {
-			query.HighLight = q.HighLight
 		}
 
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
@@ -391,9 +410,43 @@ type Query struct {
 	Scroll string `json:"-"`
 	// Collapse
 	Collapse *metadata.Collapse `json:"collapse,omitempty"`
+}
 
-	// HighLight 是否打开高亮，只对原始数据接口生效
-	HighLight *metadata.HighLight `json:"highlight,omitempty"`
+func (q *Query) LabelMap() (map[string][]string, error) {
+	labelMap := make(map[string][]string)
+	labelCheck := make(map[string]struct{})
+
+	addLabel := func(key, value string) {
+		if value == "" {
+			return
+		}
+
+		checkKey := key + ":" + value
+		if _, ok := labelCheck[checkKey]; !ok {
+			labelCheck[checkKey] = struct{}{}
+			labelMap[key] = append(labelMap[key], value)
+		}
+	}
+
+	for _, condition := range q.Conditions.FieldList {
+		for _, value := range condition.Value {
+			if value != "" {
+				addLabel(condition.DimensionName, value)
+			}
+		}
+	}
+	if q.QueryString != "" {
+		qLabelMap, err := querystring.LabelMap(q.QueryString)
+		if err == nil {
+			for key, values := range qLabelMap {
+				for _, value := range values {
+					addLabel(key, value)
+				}
+			}
+		}
+	}
+
+	return labelMap, nil
 }
 
 func (q *Query) ToRouter() (*Route, error) {
@@ -539,14 +592,13 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			return nil, bkDataErr
 		}
 
-		qry := &metadata.Query{
+		query := &metadata.Query{
 			StorageType:   consul.BkSqlStorageType,
 			TableID:       string(tableID),
 			DataSource:    q.DataSource,
 			DB:            route.DB(),
 			Measurement:   route.Measurement(),
 			Field:         q.FieldName,
-			MetricName:    metricName,
 			Aggregates:    aggregates,
 			AllConditions: allConditions.MetaDataAllConditions(),
 			Size:          q.Limit,
@@ -555,7 +607,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		}
 
 		if len(q.OrderBy) > 0 {
-			qry.Orders = make(metadata.Orders, 0, len(q.OrderBy))
+			query.Orders = make(metadata.Orders, 0, len(q.OrderBy))
 			for _, o := range q.OrderBy {
 				if len(o) == 0 {
 					continue
@@ -569,23 +621,19 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 					name = name[1:]
 				}
 
-				qry.Orders = append(qry.Orders, metadata.Order{
+				query.Orders = append(query.Orders, metadata.Order{
 					Name: name,
 					Ast:  asc,
 				})
 			}
 		}
 
-		metadata.GetQueryParams(ctx).SetStorageType(qry.StorageType)
+		metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 
-		span.Set("query-storage-id", qry.StorageID)
-		span.Set("query-measurement", qry.Measurement)
-		span.Set("query-field", qry.Field)
-		span.Set("query-aggr-method-list", qry.Aggregates)
-		span.Set("query-bk-sql-condition", qry.BkSqlCondition)
-		span.Set("query-collapse", qry.Collapse)
+		// 配置别名
+		query.ConfigureAlias(ctx)
 
-		queryMetric.QueryList = []*metadata.Query{qry}
+		queryMetric.QueryList = []*metadata.Query{query}
 		return queryMetric, nil
 	}
 
@@ -610,17 +658,10 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 	queryMetric.QueryList = make([]*metadata.Query, 0, len(tsDBs))
 
-	queryLabelsMatcher, _, _ := q.Conditions.ToProm()
-
-	span.Set("query-space-uid", spaceUid)
-	span.Set("query-table-id", string(tableID))
-	span.Set("query-metric", metricName)
-	span.Set("query-is-regexp", q.IsRegexp)
 	span.Set("tsdb-num", len(tsDBs))
-	span.Set("query-aggregate", aggregates)
 
 	for _, tsDB := range tsDBs {
-		query, buildErr := q.BuildMetadataQuery(ctx, tsDB, allConditions, queryLabelsMatcher)
+		query, buildErr := q.BuildMetadataQuery(ctx, tsDB, allConditions)
 		if buildErr != nil {
 			return nil, buildErr
 		}
@@ -647,10 +688,16 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 			if isVmQuery {
 				query.StorageType = consul.VictoriaMetricsStorageType
+			} else {
+				query.StorageType = consul.InfluxDBStorageType
 			}
 		}
 
 		metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
+
+		// 配置别名
+		query.ConfigureAlias(ctx)
+
 		queryMetric.QueryList = append(queryMetric.QueryList, query)
 	}
 
@@ -661,7 +708,6 @@ func (q *Query) BuildMetadataQuery(
 	ctx context.Context,
 	tsDB *queryMod.TsDBV2,
 	queryConditions [][]ConditionField,
-	queryLabelsMatcher []*labels.Matcher,
 ) (*metadata.Query, error) {
 	var (
 		field        string
@@ -670,8 +716,7 @@ func (q *Query) BuildMetadataQuery(
 		measurements []string
 
 		whereList = promql.NewWhereList()
-
-		query = &metadata.Query{
+		query     = &metadata.Query{
 			SegmentedEnable: tsDB.SegmentedEnable,
 			OffsetInfo: metadata.OffSetInfo{
 				Limit:   q.Limit,
@@ -680,8 +725,7 @@ func (q *Query) BuildMetadataQuery(
 			},
 		}
 		allCondition AllConditions
-
-		err error
+		err          error
 	)
 
 	ctx, span := trace.NewSpan(ctx, "build-metadata-query")
@@ -695,6 +739,7 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	span.Set("tsdb-table-id", tsDB.TableID)
+	span.Set("tsdb-field-alias", tsDB.FieldAlias)
 	span.Set("tsdb-measurement-type", tsDB.MeasurementType)
 	span.Set("tsdb-filters", tsDB.Filters)
 	span.Set("tsdb-data-label", tsDB.DataLabel)
@@ -738,6 +783,8 @@ func (q *Query) BuildMetadataQuery(
 	case redis.BKTraditionalMeasurement:
 		// measurement: cpu_detail, field: usage  =>  cpu_detail_usage
 		field, fields = metricName, expandMetricNames
+		// 拼接指标
+		query.MetricNames = function.GetRealMetricName(q.DataSource, tsDB.TableID, expandMetricNames...)
 	// 多指标单表，单列多指标，维度: metric_name 为指标名，metric_value 为指标值
 	case redis.BkExporter:
 		field, fields = promql.StaticMetricValue, []string{promql.StaticMetricValue}
@@ -756,16 +803,20 @@ func (q *Query) BuildMetadataQuery(
 	// 多指标单表，字段名为指标名
 	case redis.BkStandardV2TimeSeries:
 		field, fields = metricName, expandMetricNames
+		// 拼接指标
+		query.MetricNames = function.GetRealMetricName(q.DataSource, tsDB.TableID, expandMetricNames...)
 	// 单指标单表，指标名为表名，值为指定字段 value
 	case redis.BkSplitMeasurement:
 		// measurement: usage, field: value  => usage_value
 		measurement, measurements = metricName, expandMetricNames
 		field, fields = promql.StaticField, []string{promql.StaticField}
+		// 拼接指标
+		query.MetricNames = function.GetRealMetricName("", "", expandMetricNames...)
 	default:
 		field, fields = metricName, expandMetricNames
+		// 拼接指标
+		query.MetricNames = function.GetRealMetricName(q.DataSource, tsDB.TableID, expandMetricNames...)
 	}
-
-	span.Set("tsdb-fields", fields)
 
 	filterConditions := make([][]ConditionField, 0)
 	satisfy, tKeys := judgeFilter(tsDB.Filters)
@@ -805,32 +856,6 @@ func (q *Query) BuildMetadataQuery(
 	var vmMetric string
 	if metricName != "" {
 		vmMetric = fmt.Sprintf("%s_%s", metricName, promql.StaticField)
-	}
-
-	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的函数都进行替换，例如 label_replace
-	for _, a := range q.AggregateMethodList {
-		switch a.Method {
-		// label_replace(v instant-vector, dst_label string, replacement string, src_label string, regex string)
-		case "label_replace":
-			if len(a.VArgsList) == 4 && a.VArgsList[2] == promql.MetricLabelName {
-				if strings.LastIndex(fmt.Sprintf("%s", a.VArgsList[3]), field) < 0 {
-					a.VArgsList[3] = fmt.Sprintf("%s_%s", a.VArgsList[3], field)
-				}
-			}
-		}
-	}
-
-	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的条件都进行替换，也就是条件中使用 __name__ 的
-	for _, qc := range queryConditions {
-		for _, c := range qc {
-			if c.DimensionName == promql.MetricLabelName {
-				for ci, cv := range c.Value {
-					if strings.LastIndex(cv, field) < 0 {
-						c.Value[ci] = fmt.Sprintf("%s_%s", cv, field)
-					}
-				}
-			}
-		}
 	}
 
 	// 合并查询以及空间过滤条件到 condition 里面
@@ -902,12 +927,15 @@ func (q *Query) BuildMetadataQuery(
 	query.Measurements = measurements
 	query.Field = field
 	query.Fields = fields
+	if len(tsDB.FieldAlias) > 0 {
+		query.FieldAlias = tsDB.FieldAlias
+	}
 	query.Timezone = timezone
 
+	query.MeasurementType = tsDB.MeasurementType
 	query.DataSource = q.DataSource
 	query.TableID = tsDB.TableID
 	query.DataLabel = tsDB.DataLabel
-	query.MetricName = metricName
 	query.ClusterName = tsDB.ClusterName
 	query.TagsKey = tsDB.TagsKey
 	query.DB = tsDB.DB
@@ -926,7 +954,6 @@ func (q *Query) BuildMetadataQuery(
 	query.IsPrefix = q.IsPrefix
 	query.Source = q.KeepColumns
 
-	query.HighLight = q.HighLight
 	query.Collapse = q.Collapse
 
 	query.Scroll = q.Scroll
@@ -939,30 +966,34 @@ func (q *Query) BuildMetadataQuery(
 		query.Orders = q.OrderBy.Orders()
 	}
 
-	span.Set("query-source-type", query.SourceType)
-	span.Set("query-table-id", query.TableID)
-	span.Set("query-db", query.DB)
-	span.Set("query-metric-name", query.MetricName)
-	span.Set("query-measurement", query.Measurement)
-	span.Set("query-measurements", query.Measurements)
-	span.Set("query-field", query.Field)
-	span.Set("query-fields", query.Fields)
-	span.Set("query-offset-info", query.OffsetInfo)
-	span.Set("query-timezone", query.Timezone)
-	span.Set("query-condition", query.Condition)
-	span.Set("query-vm-condition", query.VmCondition)
-	span.Set("query-vm-condition-num", query.VmConditionNum)
-	span.Set("query-is-regexp", q.IsRegexp)
+	// 只有 vm 类型才需要进行处理
+	if query.StorageType == consul.VictoriaMetricsStorageType {
+		// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的函数都进行替换，例如 label_replace
+		for _, a := range q.AggregateMethodList {
+			switch a.Method {
+			// label_replace(v instant-vector, dst_label string, replacement string, src_label string, regex string)
+			case "label_replace":
+				if len(a.VArgsList) == 4 && a.VArgsList[2] == promql.MetricLabelName {
+					if strings.LastIndex(fmt.Sprintf("%s", a.VArgsList[3]), field) < 0 {
+						a.VArgsList[3] = fmt.Sprintf("%s_%s", a.VArgsList[3], field)
+					}
+				}
+			}
+		}
 
-	span.Set("query-storage-ids", query.StorageIDs)
-	span.Set("query-storage-id", query.StorageID)
-	span.Set("query-storage-type", query.StorageType)
-	span.Set("query-storage-name", query.StorageName)
-
-	span.Set("query-cluster-name", query.ClusterName)
-	span.Set("query-tag-keys", query.TagsKey)
-	span.Set("query-vm-rt", query.VmRt)
-	span.Set("query-need-add-time", query.NeedAddTime)
+		// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的条件都进行替换，也就是条件中使用 __name__ 的
+		for _, qc := range queryConditions {
+			for _, c := range qc {
+				if c.DimensionName == promql.MetricLabelName {
+					for ci, cv := range c.Value {
+						if strings.LastIndex(cv, field) < 0 {
+							c.Value[ci] = fmt.Sprintf("%s_%s", cv, field)
+						}
+					}
+				}
+			}
+		}
+	}
 
 	jsonString, _ := json.Marshal(query)
 	span.Set("query-json", jsonString)
@@ -982,6 +1013,13 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		result   parser.Expr
 		matchers []*labels.Matcher
 	)
+
+	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
+	if encodeFunc == nil {
+		encodeFunc = func(q string) string {
+			return q
+		}
+	}
 
 	// 判断是否使用别名作为指标
 	metricName = q.ReferenceName
@@ -1005,11 +1043,17 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 
 		// 替换指标名
 		if m, ok := promExprOpt.ReferenceNameMetric[q.ReferenceName]; ok {
-			metricName = m
+			// 如果是正则，证明里面存在特殊字符，所以不能转换
+			if q.IsRegexp {
+				metricName = m
+			} else {
+				metricName = encodeFunc(m)
+			}
 		}
 
 		// 增加 Matchers
 		for _, m := range promExprOpt.ReferenceNameLabelMatcher[q.ReferenceName] {
+			m.Name = encodeFunc(m.Name)
 			matchers = append(matchers, m)
 		}
 
@@ -1018,8 +1062,11 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 			q.TimeAggregation.Function = nf
 		}
 
-		// 替换函数名
 		for aggIdx, aggrVal := range q.AggregateMethodList {
+			for mIdx, m := range aggrVal.Dimensions {
+				q.AggregateMethodList[aggIdx].Dimensions[mIdx] = encodeFunc(m)
+			}
+
 			if nf, ok := promExprOpt.FunctionReplace[aggrVal.Method]; ok {
 				q.AggregateMethodList[aggIdx].Method = nf
 			}
@@ -1090,8 +1137,6 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		}
 	}
 
-	encodeFunc := metadata.GetPromDataFormat(ctx).EncodeFunc()
-
 	for idx := 0; idx < funcNums; idx++ {
 		if idx == timeIdx {
 			result, err = q.TimeAggregation.ToProm(result)
@@ -1104,12 +1149,6 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 				methodIdx -= 1
 			}
 			method := q.AggregateMethodList[methodIdx]
-			if encodeFunc != nil {
-				for di, dv := range method.Dimensions {
-					method.Dimensions[di] = encodeFunc(dv)
-				}
-			}
-
 			if result, err = method.ToProm(result); err != nil {
 				log.Errorf(ctx, "failed to translate function for->[%s]", err)
 				return nil, err

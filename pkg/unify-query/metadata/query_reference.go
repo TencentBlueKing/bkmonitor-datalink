@@ -17,7 +17,9 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 func SetQueryReference(ctx context.Context, reference QueryReference) {
@@ -33,6 +35,57 @@ func GetQueryReference(ctx context.Context) QueryReference {
 		}
 	}
 	return nil
+}
+
+// ConfigureAlias 根据别名把 query 里面涉及到的字段都转换成别名查询
+func (q *Query) ConfigureAlias(ctx context.Context) {
+	if len(q.FieldAlias) == 0 {
+		return
+	}
+
+	var (
+		err error
+	)
+	ctx, span := trace.NewSpan(ctx, "configure-alias")
+	defer span.End(&err)
+
+	span.Set("field-alias", q.FieldAlias)
+
+	// 替换 Field
+	q.Field = q.FieldAlias.Alias(q.Field)
+
+	// 替换维度
+	for aggIdx, agg := range q.Aggregates {
+		q.Aggregates[aggIdx].Field = q.FieldAlias.Alias(agg.Field)
+		for dimIdx, dim := range agg.Dimensions {
+			q.Aggregates[aggIdx].Dimensions[dimIdx] = q.FieldAlias.Alias(dim)
+		}
+	}
+
+	// 替换过滤条件
+	for conIdx, con := range q.AllConditions {
+		for dimIdx, dim := range con {
+			q.AllConditions[conIdx][dimIdx].DimensionName = q.FieldAlias.Alias(dim.DimensionName)
+		}
+	}
+
+	// 替换保留字段
+	for idx, s := range q.Source {
+		q.Source[idx] = q.FieldAlias.Alias(s)
+	}
+
+	// 替换排序字段
+	for idx, o := range q.Orders {
+		q.Orders[idx].Name = q.FieldAlias.Alias(o.Name)
+	}
+
+	// 替换折叠字段
+	if q.Collapse != nil {
+		q.Collapse.Field = q.FieldAlias.Alias(q.Collapse.Field)
+	}
+
+	qStr, _ := json.Marshal(q)
+	span.Set("query-json", string(qStr))
 }
 
 // UUID 获取唯一性
@@ -52,7 +105,7 @@ func (q *Query) MetricLabels(ctx context.Context) *prompb.Label {
 
 	var (
 		metrics    []string
-		encodeFunc = GetPromDataFormat(ctx).EncodeFunc()
+		encodeFunc = GetFieldFormat(ctx).EncodeFunc()
 	)
 
 	if q.DataSource != "" {
@@ -62,7 +115,7 @@ func (q *Query) MetricLabels(ctx context.Context) *prompb.Label {
 	for _, n := range strings.Split(q.TableID, ".") {
 		metrics = append(metrics, n)
 	}
-	metrics = append(metrics, q.MetricName)
+	metrics = append(metrics, q.Field)
 
 	metricName := strings.Join(metrics, ":")
 	if encodeFunc != nil {

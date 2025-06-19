@@ -36,6 +36,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -44,20 +45,8 @@ const (
 	businessCacheKey = "cmdb.business"
 )
 
-type AlarmBusinessInfo struct {
-	BkBizId         int      `json:"bk_biz_id"`
-	BkBizName       string   `json:"bk_biz_name"`
-	BkBizDeveloper  []string `json:"bk_biz_developer"`
-	BkBizProductor  []string `json:"bk_biz_productor"`
-	BkBizTester     []string `json:"bk_biz_tester"`
-	BkBizMaintainer []string `json:"bk_biz_maintainer"`
-	Operator        []string `json:"operator"`
-	TimeZone        string   `json:"time_zone"`
-	Language        string   `json:"language"`
-	LifeCycle       string   `json:"life_cycle"`
-}
-
 // BusinessCacheManager 业务缓存管理器
+// 业务缓存不分租户进行存储
 type BusinessCacheManager struct {
 	*BaseCacheManager
 }
@@ -96,7 +85,7 @@ func getBusinessList(ctx context.Context, bkTenantId string) ([]map[string]inter
 		},
 		// 设置分页参数
 		func(page int) define.Operation {
-			return cmdbApi.SearchBusiness().SetContext(ctx).SetPathParams(map[string]string{"bk_supplier_account": "0"}).SetBody(map[string]interface{}{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.SearchBusiness().SetContext(ctx).SetBody(map[string]interface{}{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)
@@ -185,28 +174,39 @@ func (m *BusinessCacheManager) useBiz() bool {
 
 // RefreshGlobal 刷新全局缓存
 func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
+	// 业务缓存不分租户进行存储，只有系统租户需要刷新缓存
+	// 如果租户不是系统租户，则不刷新缓存
+	if m.GetBkTenantId() != tenant.DefaultTenantId {
+		return nil
+	}
+
 	logger.Infof("start refresh business cache")
 	defer logger.Infof("end refresh business cache")
 
 	// 获取业务列表
-	bizList, err := getBusinessList(ctx, m.GetBkTenantId())
-	if err != nil {
-		return errors.Wrap(err, "failed to get business list")
-	}
-
-	// 业务缓存数据准备
 	bizCacheData := make(map[string]string)
-
-	// 业务信息处理
-	for _, biz := range bizList {
-		bizID := strconv.Itoa(int(biz["bk_biz_id"].(float64)))
-
-		// 转换为json字符串
-		bizStr, err := json.Marshal(biz)
+	tenants, err := tenant.GetTenantList()
+	if err != nil {
+		return errors.Wrap(err, "failed to get tenant list")
+	}
+	for _, tenant := range tenants {
+		bizList, err := getBusinessList(ctx, tenant.Id)
 		if err != nil {
-			continue
+			return errors.Wrap(err, "failed to get business list")
 		}
-		bizCacheData[bizID] = string(bizStr)
+
+		// 业务信息处理
+		for _, biz := range bizList {
+			bizID := strconv.Itoa(int(biz["bk_biz_id"].(float64)))
+			biz["bk_tenant_id"] = tenant.Id
+
+			// 转换为json字符串
+			bizStr, err := json.Marshal(biz)
+			if err != nil {
+				continue
+			}
+			bizCacheData[bizID] = string(bizStr)
+		}
 	}
 
 	// 空间查询

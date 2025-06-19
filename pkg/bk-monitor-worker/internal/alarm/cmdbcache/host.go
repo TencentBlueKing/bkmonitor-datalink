@@ -35,6 +35,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
@@ -267,9 +268,15 @@ func (m *HostAndTopoCacheManager) Type() string {
 
 // RefreshByBiz 按业务刷新缓存
 func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int) error {
-	// 业务ID为1的是资源池，不需要刷新
-	if bkBizId == 1 {
-		return nil
+	// 业务是资源池时，不需要刷新
+	if cfg.EnableMultiTenantMode {
+		if bkBizId == 2 {
+			return nil
+		}
+	} else {
+		if bkBizId == 1 {
+			return nil
+		}
 	}
 
 	logger.Infof("start refresh cmdb cache by biz: %d", bkBizId)
@@ -535,7 +542,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([
 
 	// 查询业务下的内置节点
 	var bizInternalModuleResp cmdb.GetBizInternalModuleResp
-	_, err = cmdbApi.GetBizInternalModule().SetPathParams(map[string]string{"bk_supplier_account": "0", "bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]interface{}{"bk_supplier_account": 0, "bk_biz_id": bkBizID}).SetResult(&bizInternalModuleResp).Request()
+	_, err = cmdbApi.GetBizInternalModule().SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]interface{}{"bk_biz_id": bkBizID}).SetResult(&bizInternalModuleResp).Request()
 	err = api.HandleApiResultError(bizInternalModuleResp.ApiCommonRespMeta, err, "get biz internal module failed")
 	if err != nil {
 		logger.Errorf("get biz internal module failed, bk_biz_id: %d, err: %v", bkBizID, err)

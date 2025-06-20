@@ -35,6 +35,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
+const (
+	// Error messages
+	ErrUnknownOperatorMsg = "unknown operator: %s"
+)
+
 type QueryTs struct {
 	// SpaceUid 空间ID
 	SpaceUid string `json:"space_uid,omitempty"`
@@ -78,8 +83,8 @@ type QueryTs struct {
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
-func (q *QueryTs) LabelMap() (map[string][]string, error) {
-	labelMap := make(map[string][]string)
+func (q *QueryTs) LabelMap() (map[string][]function.LabelMapValue, error) {
+	labelMap := make(map[string][]function.LabelMapValue)
 	labelCheck := make(map[string]struct{})
 
 	for _, query := range q.QueryList {
@@ -88,11 +93,11 @@ func (q *QueryTs) LabelMap() (map[string][]string, error) {
 			return nil, err
 		}
 		for key, values := range m {
-			for _, value := range values {
-				checkKey := key + ":" + value
+			for _, labelValue := range values {
+				checkKey := key + ":" + labelValue.Value + ":" + labelValue.Operator
 				if _, ok := labelCheck[checkKey]; !ok {
 					labelCheck[checkKey] = struct{}{}
-					labelMap[key] = append(labelMap[key], value)
+					labelMap[key] = append(labelMap[key], labelValue)
 				}
 			}
 		}
@@ -412,36 +417,51 @@ type Query struct {
 	Collapse *metadata.Collapse `json:"collapse,omitempty"`
 }
 
-func (q *Query) LabelMap() (map[string][]string, error) {
-	labelMap := make(map[string][]string)
+const (
+	defaultQueryStringOperator = "eq"
+)
+
+func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
+	labelMap := make(map[string][]function.LabelMapValue)
 	labelCheck := make(map[string]struct{})
 
-	addLabel := func(key, value string) {
+	addLabel := func(key, value, operator string) {
 		if value == "" {
 			return
 		}
 
-		checkKey := key + ":" + value
+		checkKey := key + ":" + value + ":" + operator
 		if _, ok := labelCheck[checkKey]; !ok {
 			labelCheck[checkKey] = struct{}{}
-			labelMap[key] = append(labelMap[key], value)
+			labelMap[key] = append(labelMap[key], function.LabelMapValue{
+				Value:    value,
+				Operator: operator,
+			})
 		}
 	}
 
 	for _, condition := range q.Conditions.FieldList {
-		for _, value := range condition.Value {
-			if value != "" {
-				addLabel(condition.DimensionName, value)
-			}
+		err := metadata.ProcessConditionForLabelMap(
+			condition.DimensionName,
+			condition.Value,
+			condition.Operator,
+			func(key, value, operator string) {
+				addLabel(key, value, operator)
+			},
+		)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to process condition for dimension %s", condition.DimensionName)
 		}
 	}
+
 	if q.QueryString != "" {
 		qLabelMap, err := querystring.LabelMap(q.QueryString)
-		if err == nil {
-			for key, values := range qLabelMap {
-				for _, value := range values {
-					addLabel(key, value)
-				}
+		if err != nil {
+			return nil, err
+		}
+		for key, values := range qLabelMap {
+			for _, value := range values {
+				addLabel(key, value, defaultQueryStringOperator)
 			}
 		}
 	}
@@ -503,8 +523,8 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 	if step < window {
 		return
 	}
-
-	if name, ok := domSampledFunc[am.Method+q.TimeAggregation.Function]; ok {
+	key := fmt.Sprintf("%s%s", am.Method, q.TimeAggregation.Function)
+	if name, ok := domSampledFunc[key]; ok {
 		agg := metadata.Aggregate{
 			Name:       name,
 			Field:      am.Field,

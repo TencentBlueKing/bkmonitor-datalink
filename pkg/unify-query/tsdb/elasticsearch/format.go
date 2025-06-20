@@ -193,6 +193,8 @@ type FormatFactory struct {
 	timeFormat string
 
 	isReference bool
+
+	labelMap map[string][]function.LabelMapValue
 }
 
 func NewFormatFactory(ctx context.Context) *FormatFactory {
@@ -210,6 +212,17 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 		},
 	}
 
+	return f
+}
+
+func (f *FormatFactory) WithIncludeValues(value map[string][]function.LabelMapValue) *FormatFactory {
+	f.labelMap = make(map[string][]function.LabelMapValue, len(value))
+	for k, v := range value {
+		if f.decode != nil {
+			k = f.decode(k)
+		}
+		f.labelMap[k] = v
+	}
 	return f
 }
 
@@ -709,6 +722,22 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			if f.size > 0 {
 				curAgg = curAgg.Size(f.size)
 			}
+			fieldLabelValues, ok := f.labelMap[info.Name]
+			if ok && len(fieldLabelValues) > 0 {
+				var filteredFieldLabelValues []any
+				for _, labelMapValue := range fieldLabelValues {
+					// 只有为非空的值并且操作符为等于时才添加到include子句
+					value := labelMapValue.Value
+					operator := labelMapValue.Operator
+					if value != "" && operator == "eq" {
+						filteredFieldLabelValues = append(filteredFieldLabelValues, value)
+					}
+				}
+				if len(filteredFieldLabelValues) > 0 {
+					curAgg = curAgg.IncludeValues(filteredFieldLabelValues...)
+				}
+			}
+
 			for _, order := range info.Orders {
 				curAgg = curAgg.Order(order.Name, order.Ast)
 			}

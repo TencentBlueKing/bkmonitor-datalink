@@ -308,6 +308,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(labelMap) > 0 {
 			hlF = function.NewHighLightFactory(labelMap, queryTs.HighLight.MaxAnalyzedOffset)
 		}
+
 		for _, item := range data {
 			if item == nil {
 				continue
@@ -322,7 +323,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					item[function.KeyHighLight] = highlightResult
 				}
 			}
-
 			list = append(list, item)
 		}
 

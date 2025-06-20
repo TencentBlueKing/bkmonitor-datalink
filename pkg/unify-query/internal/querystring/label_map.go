@@ -28,6 +28,7 @@ func LabelMap(query string) (map[string][]string, error) {
 	return labelMap, nil
 }
 
+// parseExprToKeyValue 因为我们并不知道 queryString 中的表达式是否需要被include到 labelMap 中，所以没有是否为positive的判断
 func parseExprToKeyValue(query string, expr Expr, kv map[string][]string) error {
 	if expr == nil {
 		return nil

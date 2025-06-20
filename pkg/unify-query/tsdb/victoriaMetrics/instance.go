@@ -84,8 +84,6 @@ type Instance struct {
 }
 
 func (i *Instance) getVMClusterName(clusterName string) string {
-	return clusterName
-
 	// 如果配置了强制查询的 vm 集群，则取该集群
 	if i.forceStorageName != "" {
 		return i.forceStorageName

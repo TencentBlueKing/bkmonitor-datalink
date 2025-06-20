@@ -21,7 +21,6 @@ redis:
   service_name: bkmonitorv3:spaces
 victoria_metrics:
   timeout: 30s
-  cluster_name: abc
 influxdb:
   ping:
     count: 3

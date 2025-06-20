@@ -453,6 +453,8 @@ func (i *Instance) DirectQueryRange(
 		return promql.Matrix{}, nil
 	}
 
+	span.Set("query-vm-cluster-name", vmExpand.ClusterName)
+
 	rangeLeftTime := end.Sub(start)
 	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
 

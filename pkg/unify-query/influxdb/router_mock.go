@@ -117,6 +117,8 @@ func MockSpaceRouter(ctx context.Context) {
 			"kube_node_info",
 			"kube_node_status_condition",
 			"kubelet_cluster_request_total",
+			"merltrics_rest_request_status_200_count",
+			"merltrics_rest_request_status_500_count",
 		}
 
 		tsdb.SetStorage(
@@ -170,6 +172,12 @@ func MockSpaceRouter(ctx context.Context) {
 							{"bk_biz_id": "2"},
 						},
 					},
+					"bk.exporter": &ir.SpaceResultTable{
+						TableId: "bk.exporter",
+					},
+					"bk.standard_v2_time_series": &ir.SpaceResultTable{
+						TableId: "bk.standard_v2_time_series",
+					},
 					ResultTableVM: &ir.SpaceResultTable{
 						TableId: ResultTableVM,
 					},
@@ -205,6 +213,26 @@ func MockSpaceRouter(ctx context.Context) {
 					MeasurementType: redis.BkSplitMeasurement,
 					StorageType:     consul.VictoriaMetricsStorageType,
 					DataLabel:       "kubelet_info",
+				},
+				"bk.exporter": &ir.ResultTableDetail{
+					StorageId:       2,
+					TableId:         "bk.exporter",
+					DB:              "bk",
+					Measurement:     "exporter",
+					ClusterName:     "default",
+					Fields:          []string{"usage", "free"},
+					MeasurementType: redis.BkExporter,
+					StorageType:     consul.InfluxDBStorageType,
+				},
+				"bk.standard_v2_time_series": &ir.ResultTableDetail{
+					StorageId:       2,
+					TableId:         "bk.standard_v2_time_series",
+					DB:              "bk",
+					Measurement:     "standard_v2_time_series",
+					ClusterName:     "default",
+					Fields:          []string{"usage", "free"},
+					MeasurementType: redis.BkStandardV2TimeSeries,
+					StorageType:     consul.InfluxDBStorageType,
 				},
 				"system.cpu_summary": &ir.ResultTableDetail{
 					StorageId:       2,

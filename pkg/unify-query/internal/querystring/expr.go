@@ -162,7 +162,10 @@ func queryTimeFromString(t string) (time.Time, error) {
 }
 
 func newStringExpr(str string) FieldableExpr {
-	if strings.ContainsAny(str, "*?") {
+	aliasStr := strings.ReplaceAll(str, `\*`, "")
+	aliasStr = strings.ReplaceAll(aliasStr, `\?`, "")
+
+	if strings.ContainsAny(aliasStr, "*?") {
 		return NewWildcardExpr(str)
 	}
 

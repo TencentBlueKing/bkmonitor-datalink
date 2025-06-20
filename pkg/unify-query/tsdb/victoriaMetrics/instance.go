@@ -83,15 +83,13 @@ type Instance struct {
 	forceStorageName string
 }
 
-func (i *Instance) getClusterName(clusterName ...string) string {
+func (i *Instance) getVMClusterName(clusterName string) string {
+	// 如果配置了强制查询的 vm 集群，则取该集群
 	if i.forceStorageName != "" {
 		return i.forceStorageName
 	}
-	if len(clusterName) > 0 && clusterName[0] != "" {
-		return clusterName[0]
-	}
 
-	return ""
+	return clusterName
 }
 
 var _ tsdb.Instance = (*Instance)(nil)
@@ -453,7 +451,7 @@ func (i *Instance) DirectQueryRange(
 		return promql.Matrix{}, nil
 	}
 
-	span.Set("query-vm-cluster-name", vmExpand.ClusterName)
+	span.Set("vm-expand-cluster-name", vmExpand.ClusterName)
 
 	rangeLeftTime := end.Sub(start)
 	metric.TsDBRequestRangeMinute(ctx, rangeLeftTime, i.InstanceType())
@@ -477,8 +475,10 @@ func (i *Instance) DirectQueryRange(
 		UseNativeOr:           i.useNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
 		ResultTableList:       vmExpand.ResultTableList,
-		ClusterName:           i.getClusterName(vmExpand.ClusterName),
+		ClusterName:           i.getVMClusterName(vmExpand.ClusterName),
 	}
+
+	span.Set("query-cluster-name", paramsQueryRange.ClusterName)
 
 	sql, err := json.Marshal(paramsQueryRange)
 	if err != nil {
@@ -510,15 +510,15 @@ func (i *Instance) DirectQuery(
 
 	vmExpand = metadata.GetExpand(ctx)
 
-	span.Set("query-match", promqlStr)
 	span.Set("query-end", end)
+	span.Set("query-end-unix", end.Unix())
+	span.Set("query-match", promqlStr)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		return promql.Vector{}, nil
 	}
 
-	ves, _ := json.Marshal(vmExpand)
-	span.Set("vm-expand", string(ves))
+	span.Set("vm-expand-cluster-name", vmExpand.ClusterName)
 
 	paramsQuery := &ParamsQuery{
 		InfluxCompatible: i.influxCompatible,
@@ -535,8 +535,10 @@ func (i *Instance) DirectQuery(
 		UseNativeOr:           i.useNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
 		ResultTableList:       vmExpand.ResultTableList,
-		ClusterName:           i.getClusterName(vmExpand.ClusterName),
+		ClusterName:           i.getVMClusterName(vmExpand.ClusterName),
 	}
+
+	span.Set("query-cluster-name", paramsQuery.ClusterName)
 
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
@@ -563,6 +565,8 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 	span.Set("query-start", start)
 	span.Set("query-end", end)
 
+	span.Set("query-storage-name", query.StorageName)
+
 	if query.VmRt == "" {
 		return
 	}
@@ -583,8 +587,10 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 		},
 		UseNativeOr:     i.useNativeOr,
 		ResultTableList: []string{query.VmRt},
-		ClusterName:     i.getClusterName(query.ClusterName),
+		ClusterName:     i.getVMClusterName(query.StorageName),
 	}
+
+	span.Set("params-cluster-name", paramsQuery.ClusterName)
 
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
@@ -613,6 +619,8 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 	span.Set("query-start", start)
 	span.Set("query-end", end)
 
+	span.Set("query-storage-name", query.StorageName)
+
 	if query.VmRt == "" {
 		return nil, nil
 	}
@@ -632,8 +640,10 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 			Limit: query.Size,
 		},
 		ResultTableList: []string{query.VmRt},
-		ClusterName:     i.getClusterName(query.StorageName),
+		ClusterName:     i.getVMClusterName(query.StorageName),
 	}
+
+	span.Set("params-cluster-name", paramsQuery.ClusterName)
 
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
@@ -679,6 +689,8 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		queryString = fmt.Sprintf(`topk(%d, %s)`, query.Size, queryString)
 	}
 
+	span.Set("query-storage-name", query.StorageName)
+
 	paramsQueryRange := &ParamsQueryRange{
 		InfluxCompatible: i.influxCompatible,
 		APIType:          APIQueryRange,
@@ -695,8 +707,10 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 			Step:  step,
 		},
 		ResultTableList: []string{query.VmRt},
-		ClusterName:     i.getClusterName(query.StorageName),
+		ClusterName:     i.getVMClusterName(query.StorageName),
 	}
+
+	span.Set("params-cluster-name", paramsQueryRange.ClusterName)
 
 	sql, err := json.Marshal(paramsQueryRange)
 	if err != nil {
@@ -775,7 +789,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 			Limit: limit,
 		},
 		ResultTableList: vmExpand.ResultTableList,
-		ClusterName:     i.getClusterName(vmExpand.ClusterName),
+		ClusterName:     i.getVMClusterName(vmExpand.ClusterName),
 	}
 
 	span.Set("query-label", name)

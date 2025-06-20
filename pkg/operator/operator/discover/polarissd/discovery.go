@@ -41,7 +41,6 @@ import (
 )
 
 var (
-	// DefaultSDConfig is the default HTTP SD configuration.
 	DefaultSDConfig = SDConfig{
 		RefreshInterval:  model.Duration(60 * time.Second),
 		HTTPClientConfig: promconfig.DefaultHTTPClientConfig,
@@ -60,7 +59,6 @@ func init() {
 	discovery.RegisterConfig(&SDConfig{})
 }
 
-// SDConfig is the configuration for HTTP based discovery.
 type SDConfig struct {
 	HTTPClientConfig promconfig.HTTPClientConfig `yaml:",inline"`
 	RefreshInterval  model.Duration              `yaml:"refresh_interval,omitempty"`
@@ -69,30 +67,26 @@ type SDConfig struct {
 	MetadataSelector map[string]string           `yaml:"metadata_selector"`
 }
 
-// Name returns the name of the Config.
-func (*SDConfig) Name() string { return "polaris" }
+func (*SDConfig) Name() string {
+	return "polaris"
+}
 
-// SetDirectory joins any relative file paths with dir.
 func (c *SDConfig) SetDirectory(dir string) {
 	c.HTTPClientConfig.SetDirectory(dir)
 }
 
-// UnmarshalYAML implements the yaml.Unmarshaler interface.
 func (c *SDConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	*c = DefaultSDConfig
 	type plain SDConfig
 	return unmarshal((*plain)(c))
 }
 
-// NewDiscoverer returns a Discoverer for the Config.
 func (c *SDConfig) NewDiscoverer(opts discovery.DiscovererOptions) (discovery.Discoverer, error) {
 	return NewDiscovery(c, opts.Logger, opts.HTTPClientOptions)
 }
 
 const polarisSDURLLabel = model.MetaLabelPrefix + "url"
 
-// Discovery provides service discovery functionality based
-// on HTTP endpoints that return target groups in JSON format.
 type Discovery struct {
 	*refresh.Discovery
 	client          *http.Client
@@ -102,7 +96,6 @@ type Discovery struct {
 	consumer        polaris.ConsumerAPI
 }
 
-// NewDiscovery returns a new HTTP discovery for the given config.
 func NewDiscovery(conf *SDConfig, logger log.Logger, clientOpts []promconfig.HTTPClientOption) (*Discovery, error) {
 	if logger == nil {
 		logger = log.NewNopLogger()
@@ -117,9 +110,8 @@ func NewDiscovery(conf *SDConfig, logger log.Logger, clientOpts []promconfig.HTT
 	d := &Discovery{
 		sdConfig:        conf,
 		client:          client,
-		refreshInterval: time.Duration(conf.RefreshInterval), // Stored to be sent as headers.
+		refreshInterval: time.Duration(conf.RefreshInterval),
 	}
-
 	d.Discovery = refresh.NewDiscovery(
 		logger,
 		"polaris",
@@ -160,13 +152,13 @@ func (d *Discovery) resolveInstances() ([]string, error) {
 	req.Namespace = d.sdConfig.Namespace
 	req.Service = d.sdConfig.Service
 
-	response, err := consumer.GetAllInstances(req)
+	rsp, err := consumer.GetAllInstances(req)
 	if err != nil {
 		return nil, err
 	}
 
 	var instances []string
-	for _, inst := range response.Instances {
+	for _, inst := range rsp.Instances {
 		hostPort := fmt.Sprintf("%s:%d", inst.GetHost(), inst.GetPort())
 
 		// 只取健康的实例
@@ -200,27 +192,27 @@ func (d *Discovery) refresh(ctx context.Context, url string) ([]*targetgroup.Gro
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Prometheus-Refresh-Interval-Seconds", strconv.FormatFloat(d.refreshInterval.Seconds(), 'f', -1, 64))
 
-	resp, err := d.client.Do(req.WithContext(ctx))
+	rsp, err := d.client.Do(req.WithContext(ctx))
 	if err != nil {
 		failuresCount.Inc()
 		return nil, err
 	}
 	defer func() {
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		io.Copy(io.Discard, rsp.Body)
+		rsp.Body.Close()
 	}()
 
-	if resp.StatusCode != http.StatusOK {
+	if rsp.StatusCode != http.StatusOK {
 		failuresCount.Inc()
-		return nil, fmt.Errorf("server returned HTTP status %s", resp.Status)
+		return nil, fmt.Errorf("server returned HTTP status %s", rsp.Status)
 	}
 
-	if !matchContentType.MatchString(strings.TrimSpace(resp.Header.Get("Content-Type"))) {
+	if !matchContentType.MatchString(strings.TrimSpace(rsp.Header.Get("Content-Type"))) {
 		failuresCount.Inc()
-		return nil, fmt.Errorf("unsupported content type %q", resp.Header.Get("Content-Type"))
+		return nil, fmt.Errorf("unsupported content type %q", rsp.Header.Get("Content-Type"))
 	}
 
-	b, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(rsp.Body)
 	if err != nil {
 		failuresCount.Inc()
 		return nil, err
@@ -246,7 +238,7 @@ func (d *Discovery) refresh(ctx context.Context, url string) ([]*targetgroup.Gro
 		tg.Labels[polarisSDURLLabel] = model.LabelValue(url)
 	}
 
-	// Generate empty updates for sources that disappeared.
+	// 告知上层存在删除事件
 	l := len(targetGroups)
 	for i := l; i < d.tgLastLength; i++ {
 		targetGroups = append(targetGroups, &targetgroup.Group{Source: urlSource(url, i)})
@@ -278,11 +270,16 @@ func (d *Discovery) Refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 	return ret, nil
 }
 
+func (d *Discovery) Stop() {
+	if d.consumer != nil {
+		d.consumer.Destroy()
+	}
+}
+
 func (d *Discovery) uid() string {
 	return fmt.Sprintf("polaris:%s/%s", d.sdConfig.Namespace, d.sdConfig.Service)
 }
 
-// urlSource returns a source ID for the i-th target group per URL.
 func urlSource(url string, i int) string {
 	return fmt.Sprintf("%s:%d", url, i)
 }

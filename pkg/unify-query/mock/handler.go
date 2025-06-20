@@ -236,7 +236,7 @@ func mockInfluxDBHandler(ctx context.Context) {
 		key := params.Get("q")
 		d, ok := InfluxDB.Get(key)
 		if !ok {
-			err = fmt.Errorf(`bksql mock data is empty in "%s"`, key)
+			err = fmt.Errorf(`influxdb mock data is empty in "%s"`, key)
 			return
 		}
 

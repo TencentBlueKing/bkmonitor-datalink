@@ -601,21 +601,21 @@ yydefault:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line querystring.y:98
 		{
-			yyVAL.e = NewMatchExpr(yyDollar[1].s)
+			yyVAL.e = newStringExpr(yyDollar[1].s)
 		}
 	case 16:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line querystring.y:102
 		{
 			phrase := yyDollar[1].s
-			q := NewMatchExpr(phrase)
+			q := newStringExpr(phrase)
 			yyVAL.e = q
 		}
 	case 17:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line querystring.y:108
 		{
-			q := NewMatchExpr(yyDollar[3].s)
+			q := newStringExpr(yyDollar[3].s)
 			q.SetField(yyDollar[1].s)
 			yyVAL.e = q
 		}
@@ -663,7 +663,7 @@ yydefault:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line querystring.y:144
 		{
-			q := NewMatchExpr(yyDollar[3].s)
+			q := newStringExpr(yyDollar[3].s)
 			q.SetField(yyDollar[1].s)
 			yyVAL.e = q
 		}
@@ -671,7 +671,7 @@ yydefault:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line querystring.y:150
 		{
-			q := NewMatchExpr(yyDollar[3].s)
+			q := newStringExpr(yyDollar[3].s)
 			q.SetField(yyDollar[1].s)
 			yyVAL.e = q
 		}

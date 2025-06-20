@@ -877,6 +877,143 @@ func TestQueryTs(t *testing.T) {
 				},
 			},
 		},
+		// test query  __name__ with raw 多指标单表
+		`SELECT "usage" AS _value, *::tag, "time" AS _time FROM cpu_summary WHERE time > 1677081300000000000 and time < 1677085600000000000 AND (bk_biz_id='2') LIMIT 100000005 SLIMIT 100005 TZ('UTC')`: &decoder.Response{
+			Results: []decoder.Result{
+				{
+					Series: []*decoder.Row{
+						{
+							Name: "",
+							Tags: map[string]string{
+								"status": "failed",
+							},
+							Columns: []string{
+								influxdb.TimeColumnName,
+								influxdb.ResultColumnName,
+							},
+							Values: [][]any{
+								{
+									1677082080000000000, 34,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		`SELECT "free" AS _value, *::tag, "time" AS _time FROM cpu_summary WHERE time > 1677081300000000000 and time < 1677085600000000000 AND (bk_biz_id='2') LIMIT 100000005 SLIMIT 100005 TZ('UTC')`: &decoder.Response{
+			Results: []decoder.Result{
+				{
+					Series: []*decoder.Row{
+						{
+							Name: "",
+							Tags: map[string]string{
+								"status": "failed",
+							},
+							Columns: []string{
+								influxdb.TimeColumnName,
+								influxdb.ResultColumnName,
+							},
+							Values: [][]any{
+								{
+									1677082080000000000, 68,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		`SELECT "value" AS _value, *::tag, "time" AS _time FROM merltrics_rest_request_status_200_count WHERE time > 1677081300000000000 and time < 1677085600000000000 LIMIT 100000005 SLIMIT 100005 TZ('UTC')`: &decoder.Response{
+			Results: []decoder.Result{
+				{
+					Series: []*decoder.Row{
+						{
+							Name: "",
+							Tags: map[string]string{
+								"namespace": "lolstage",
+								"container": "message-history",
+							},
+							Columns: []string{
+								influxdb.TimeColumnName,
+								influxdb.ResultColumnName,
+							},
+							Values: [][]any{
+								{
+									1677082080000000000, 68,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+
+		// test query  __name__ with raw 多指标单表 exporter
+		`SELECT "metric_value" AS _value, *::tag, "time" AS _time FROM exporter WHERE time > 1677081300000000000 and time < 1677085600000000000 AND (metric_name =~ /.*/) LIMIT 100000005 SLIMIT 100005 TZ('UTC')`: &decoder.Response{
+			Results: []decoder.Result{
+				{
+					Series: []*decoder.Row{
+						{
+							Name: "",
+							Tags: map[string]string{
+								"metric_name": "usage",
+								"name":        "buzzy",
+							},
+							Columns: []string{
+								influxdb.TimeColumnName,
+								influxdb.ResultColumnName,
+							},
+							Values: [][]any{
+								{
+									1677082080000000000, 68,
+								},
+							},
+						},
+						{
+							Name: "",
+							Tags: map[string]string{
+								"metric_name": "free",
+								"name":        "buzzy",
+							},
+							Columns: []string{
+								influxdb.TimeColumnName,
+								influxdb.ResultColumnName,
+							},
+							Values: [][]any{
+								{
+									1677082080000000000, 70,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		// test query  __name__ with raw 多指标单表 standard_v2_time_series
+		`SELECT "usage" AS _value, *::tag, "time" AS _time FROM standard_v2_time_series WHERE time > 1677081300000000000 and time < 1677085600000000000 LIMIT 100000005 SLIMIT 100005 TZ('UTC')`: &decoder.Response{
+			Results: []decoder.Result{
+				{
+					Series: []*decoder.Row{
+						{
+							Name: "",
+							Tags: map[string]string{
+								"name": "buzzy",
+							},
+							Columns: []string{
+								influxdb.TimeColumnName,
+								influxdb.ResultColumnName,
+							},
+							Values: [][]any{
+								{
+									1677082080000000000, 68,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	})
 
 	testCases := map[string]struct {
@@ -894,6 +1031,23 @@ func TestQueryTs(t *testing.T) {
 		"test query support fuzzy __name__ with count": {
 			query:  `{"query_list":[{"data_source":"","table_id":"system.cpu_summary","field_name":".*","is_regexp":true,"field_list":null,"function":[{"method":"sum","without":false,"dimensions":["status"],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"count_over_time","window":"60s","position":0,"vargs_list":null},"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
 			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["status"],"group_values":["failed"],"values":[[1677081600000,30],[1677081660000,21],[1677081720000,1],[1677081780000,7],[1677081840000,4],[1677081900000,2],[1677081960000,100],[1677082020000,94],[1677082080000,34]]}]}`,
+		},
+		"test query  __name__ with raw 多指标单表": {
+			query:  `{"query_list":[{"data_source":"","table_id":"system.cpu_summary","field_name":".*","is_regexp":true,"field_list":null,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"10m"}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","status"],"group_values":["bkmonitor:system:cpu_summary:free","failed"],"values":[[1677082200000,68]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","status"],"group_values":["bkmonitor:system:cpu_summary:usage","failed"],"values":[[1677082200000,34]]}]}`,
+		},
+
+		"test query  __name__ with raw 多指标单表 exporter": {
+			query:  `{"query_list":[{"data_source":"","table_id":"bk.exporter","field_name":".*","is_regexp":true,"field_list":null,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"10m"}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:exporter:free","buzzy"],"values":[[1677082200000,70]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:exporter:usage","buzzy"],"values":[[1677082200000,68]]}]}`,
+		},
+		"test query  __name__ with raw 多指标单表 standard_v2_time_series": {
+			query:  `{"query_list":[{"data_source":"","table_id":"bk.standard_v2_time_series","field_name":".*","is_regexp":true,"field_list":null,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"10m"}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:standard_v2_time_series:usage","buzzy"],"values":[[1677082200000,68]]}]}`,
+		},
+		"test regx with __name__ 单指标单表": {
+			query:  `{"query_list":[{"data_source":"","field_name":"merltrics_rest_request_status_.+_count","is_regexp":true,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","container","namespace"],"group_values":["merltrics_rest_request_status_200_count","message-history","lolstage"],"values":[[1677082080000,68],[1677082140000,68],[1677082200000,68],[1677082260000,68],[1677082320000,68],[1677082380000,68]]}]}`,
 		},
 	}
 
@@ -3086,9 +3240,9 @@ func TestStructAndPromQLConvert(t *testing.T) {
 			},
 		},
 		"promql with 特殊字符": {
-			queryStruct: true,
+			queryStruct: false,
 			promql: &structured.QueryPromQL{
-				PromQL: `sum by (http__bk_46____bk_45____bk_37__1) (rate({__name__=~"bkapm:apm-10001:test:http.status",test__bk_46____bk_45____bk_94__1="test.-^1"}[1m]))`,
+				PromQL: `sum by (http__bk_46____bk_45____bk_37__1) (rate({__name__=~"bkapm:apm__bk_45__10001:test:http__bk_46__status",test__bk_46____bk_45____bk_94__1="test.-^1"}[1m]))`,
 			},
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{

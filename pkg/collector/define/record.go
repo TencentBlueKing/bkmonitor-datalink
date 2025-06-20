@@ -41,9 +41,10 @@ const (
 	SourceBeat        = "beat"
 	SourceTars        = "tars"
 
-	KeyToken    = "X-BK-TOKEN"
-	KeyDataID   = "X-BK-DATA-ID"
-	KeyTenantID = "X-Tps-TenantID"
+	KeyToken        = "X-BK-TOKEN"
+	KeyDataID       = "X-BK-DATA-ID"
+	KeyUserMetadata = "X-BK-METADATA"
+	KeyTenantID     = "X-Tps-TenantID"
 )
 
 type RecordType string
@@ -131,6 +132,7 @@ type Record struct {
 	RequestType   RequestType
 	RequestClient RequestClient
 	Token         Token
+	Metadata      map[string]string
 	Data          interface{}
 }
 

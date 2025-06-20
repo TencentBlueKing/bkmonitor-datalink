@@ -323,16 +323,20 @@ func (oc *ObjectsController) NodeCount() int {
 	return oc.nodeObjs.Count()
 }
 
-func (oc *ObjectsController) NodeNameExists(s string) (string, bool) {
-	return oc.nodeObjs.NameExists(s)
-}
-
 func (oc *ObjectsController) NodeLabels(s string) map[string]string {
 	return oc.nodeObjs.NodeLabels(s)
 }
 
 func (oc *ObjectsController) SecretObjs() []Object {
 	return oc.secretObjs.GetAll()
+}
+
+func (oc *ObjectsController) CheckPodIP(ip string) bool {
+	return oc.podObjs.CheckIP(ip)
+}
+
+func (oc *ObjectsController) CheckNodeName(s string) (string, bool) {
+	return oc.nodeObjs.CheckName(s)
 }
 
 func (oc *ObjectsController) NodeObjs() []*corev1.Node {

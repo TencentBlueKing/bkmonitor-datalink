@@ -103,3 +103,39 @@ func FromString(s string) (string, string) {
 	}
 	return parts[2], parts[1]
 }
+
+func FromHttpUserMetadata(req *http.Request) map[string]string {
+	meta := req.Header.Get(define.KeyUserMetadata)
+	return splitKv(meta)
+}
+
+func FromGrpcUserMetadata(md metadata.MD) map[string]string {
+	meta := md.Get(define.KeyUserMetadata)
+	if len(meta) == 0 {
+		return nil
+	}
+	return splitKv(meta[0])
+}
+
+func splitKv(s string) map[string]string {
+	if s == "" {
+		return nil
+	}
+
+	ret := make(map[string]string)
+	kvs := strings.Split(s, ",")
+	for i := 0; i < len(kvs); i++ {
+		kv := strings.Split(kvs[i], "=")
+		if len(kv) != 2 {
+			continue
+		}
+
+		key := strings.TrimSpace(kv[0])
+		val := strings.TrimSpace(kv[1])
+		if key == "" || val == "" {
+			continue
+		}
+		ret[key] = val
+	}
+	return ret
+}

@@ -96,17 +96,17 @@ tSTRING {
 }
 |
 tNUMBER {
-	$$ = NewMatchExpr($1)
+	$$ = newStringExpr($1)
 }
 |
 tPHRASE {
 	phrase := $1
-	q := NewMatchExpr(phrase)
+	q := newStringExpr(phrase)
 	$$ = q
 }
 |
 tSTRING tCOLON tSLASH {
-	q := NewMatchExpr($3)
+	q := newStringExpr($3)
 	q.SetField($1)
 	$$ = q
 }
@@ -142,13 +142,13 @@ tSTRING tCOLON tLEFTBRACKET tSTRING tRIGHTBRACKET {
 }
 |
 tSTRING tCOLON posOrNegNumber {
-	q := NewMatchExpr($3)
+	q := newStringExpr($3)
 	q.SetField($1)
 	$$ = q
 }
 |
 tSTRING tCOLON tPHRASE {
-	q := NewMatchExpr($3)
+	q := newStringExpr($3)
 	q.SetField($1)
 	$$ = q
 }

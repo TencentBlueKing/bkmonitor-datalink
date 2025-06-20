@@ -12,6 +12,7 @@
 package collector
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"regexp"
@@ -25,15 +26,17 @@ import (
 )
 
 const (
-	FilePath    = "/proc/sys/fs/file-max"
+	FileMaxPath = "/proc/sys/fs/file-max"
+	FileNrPath  = "/proc/sys/fs/file-nr"
 	VersionPath = "/proc/version"
 	StatPath    = "/proc/stat"
 	PtsPath     = "/dev/pts"
 )
 
 // cat /proc/sys/fs/file-max
+
 func GetMaxFiles() (int, error) {
-	fileContent, err := os.ReadFile(FilePath)
+	fileContent, err := os.ReadFile(FileMaxPath)
 	if err != nil {
 		return 0, err
 	}
@@ -44,7 +47,29 @@ func GetMaxFiles() (int, error) {
 	return 0, fmt.Errorf("not found Max files in %s", string(fileContent))
 }
 
+// cat /proc/sys/fs/file-nr
+
+func GetAllocatedFiles() (int, error) {
+	fileContent, err := os.ReadFile(FileNrPath)
+	if err != nil {
+		return 0, err
+	}
+
+	// cat /proc/sys/fs/file-nr
+	// 3264    0       3261376
+	//
+	// - allocated
+	// - unused
+	// - max
+	parts := bytes.Split(bytes.TrimSpace(fileContent), []byte("\u0009"))
+	if len(parts) < 3 {
+		return 0, fmt.Errorf("unexpected number of file stats in (%s)", string(fileContent))
+	}
+	return strconv.Atoi(string(parts[0]))
+}
+
 // cat /proc/version
+
 func GetUname() (string, error) {
 	fileContent, err := os.ReadFile(VersionPath)
 	if err != nil {

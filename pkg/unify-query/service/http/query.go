@@ -787,10 +787,16 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 	}
 
 	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
+	if decodeFunc == nil {
+		decodeFunc = func(q string) string {
+			return q
+		}
+	}
 
 	for _, q := range query.QueryList {
 		// decode table id and field name
 		q.TableID = structured.TableID(decodeFunc(string(q.TableID)))
+		q.FieldName = decodeFunc(q.FieldName)
 
 		// decode condition
 		for i, d := range q.Conditions.FieldList {
@@ -817,6 +823,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 		var verifyDimensions = func(key string) bool {
 			return true
 		}
+
 		if len(matchers) > 0 {
 			if queryPromQL.IsVerifyDimensions {
 				dimSet := set.New[string]()

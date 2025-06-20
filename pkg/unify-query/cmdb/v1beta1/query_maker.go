@@ -184,9 +184,7 @@ func (q *QueryFactory) buildInfoQuery(resource cmdb.Resource, indexMatcher, expa
 		}
 	}
 
-	if len(expandMatcher) > 0 {
-		query.Conditions = q.buildConditionFields(allIndex, indexMatcher, expandMatcher)
-	}
+	query.Conditions = q.buildConditionFields(allIndex, indexMatcher, expandMatcher)
 	q.index++
 	return
 }

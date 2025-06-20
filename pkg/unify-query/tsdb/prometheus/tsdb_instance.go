@@ -143,9 +143,9 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			InfluxCompatible: tsDBService.VmInfluxCompatible,
 			UseNativeOr:      tsDBService.VmUseNativeOr,
 			Curl:             curlGet,
-			ForceStorageName: tsDBService.VmForceQueryStorageName,
+			ForceStorageName: tsDBService.QueryRouterForceVmClusterName,
 		})
-		span.Set("vm-force-storage-name", tsDBService.VmForceQueryStorageName)
+		span.Set("vm-force-storage-name", tsDBService.QueryRouterForceVmClusterName)
 	default:
 		err = fmt.Errorf("storage type is error %+v", qry)
 	}

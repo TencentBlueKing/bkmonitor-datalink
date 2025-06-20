@@ -325,7 +325,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 					return
 				}
 			}
-
 		}
 
 		if qb.Scroll != "" {

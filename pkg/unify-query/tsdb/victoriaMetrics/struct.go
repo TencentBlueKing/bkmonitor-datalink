@@ -115,6 +115,8 @@ func (f Value) Point() (t int64, v float64, err error) {
 			err = fmt.Errorf("%+v %s", f[1], err)
 			return
 		}
+	case int, int64, int32:
+		v = float64(v)
 	default:
 		err = fmt.Errorf("%+v type is not string", f[0])
 		return

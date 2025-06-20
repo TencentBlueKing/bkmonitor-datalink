@@ -41,10 +41,15 @@ type Paths []Path
 // RelationMultiResourceRequest 请求参数
 type RelationMultiResourceRequest struct {
 	QueryList []struct {
-		Timestamp     int64      `json:"timestamp"`
-		SourceType    Resource   `json:"source_type"`
-		TargetType    Resource   `json:"target_type"`
-		SourceInfo    Matcher    `json:"source_info"`
+		Timestamp int64 `json:"timestamp"`
+
+		SourceType       Resource `json:"source_type"`
+		SourceInfo       Matcher  `json:"source_info"`
+		SourceExpandInfo Matcher  `json:"source_expand_info"`
+
+		TargetType     Resource `json:"target_type"`
+		TargetInfoShow bool     `json:"target_info_show"`
+
 		PathResource  []Resource `json:"path_resource"`
 		LookBackDelta string     `json:"look_back_delta"`
 	} `json:"query_list"`
@@ -53,9 +58,6 @@ type RelationMultiResourceRequest struct {
 // RelationMultiResourceResponseData 响应数据
 type RelationMultiResourceResponseData struct {
 	Code       int      `json:"code"`
-	SourceType Resource `json:"source_type"`
-	SourceInfo Matcher  `json:"source_info"`
-	TargetType Resource `json:"target_type"`
 	TargetList Matchers `json:"target_list"`
 	Path       []string `json:"path"`
 	Message    string   `json:"message"`
@@ -70,12 +72,17 @@ type RelationMultiResourceResponse struct {
 // RelationMultiResourceRangeRequest 请求参数
 type RelationMultiResourceRangeRequest struct {
 	QueryList []struct {
-		StartTs       int64      `json:"start_time"`
-		EndTs         int64      `json:"end_time"`
-		Step          string     `json:"step"`
-		SourceType    Resource   `json:"source_type"`
-		TargetType    Resource   `json:"target_type"`
-		SourceInfo    Matcher    `json:"source_info"`
+		StartTs int64  `json:"start_time"`
+		EndTs   int64  `json:"end_time"`
+		Step    string `json:"step"`
+
+		SourceType       Resource `json:"source_type"`
+		SourceInfo       Matcher  `json:"source_info"`
+		SourceExpandInfo Matcher  `json:"source_expand_info"`
+
+		TargetType     Resource `json:"target_type"`
+		TargetInfoShow bool     `json:"target_info_show"`
+
 		PathResource  []Resource `json:"path_resource"`
 		LookBackDelta string     `json:"look_back_delta"`
 	} `json:"query_list"`
@@ -84,9 +91,6 @@ type RelationMultiResourceRangeRequest struct {
 // RelationMultiResourceRangeResponseData 响应数据
 type RelationMultiResourceRangeResponseData struct {
 	Code       int                     `json:"code"`
-	SourceType Resource                `json:"source_type"`
-	SourceInfo Matcher                 `json:"source_info"`
-	TargetType Resource                `json:"target_type"`
 	TargetList []MatchersWithTimestamp `json:"target_list"`
 	Path       []string                `json:"path"`
 	Message    string                  `json:"message"`

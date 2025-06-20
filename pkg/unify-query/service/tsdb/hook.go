@@ -82,6 +82,8 @@ func initConfig() {
 	VmInfluxCompatible = viper.GetBool(VmInfluxCompatibleConfigPath)
 	VmUseNativeOr = viper.GetBool(VmUseNativeOrConfigPath)
 
+	QueryRouterForceVmClusterName = viper.GetString(QueryRouterForceVmClusterNameConfigPath)
+
 	// bksql 配置
 	BkSqlTimeout = viper.GetDuration(BkSqlTimeoutConfigPath)
 	BkSqlLimit = viper.GetInt(BkSqlLimitConfigPath)

@@ -11,6 +11,7 @@ package function
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -30,22 +31,17 @@ func NewHighLightFactory(labelMap map[string][]string, maxAnalyzedOffset int) *H
 	}
 }
 
-func (h *HighLightFactory) Process(data map[string]any) (newData map[string]any) {
-	if len(h.labelMap) == 0 {
-		return nil
-	}
+func (h *HighLightFactory) Process(data map[string]any) map[string]any {
+	newData := make(map[string]any)
 
-	newData = make(map[string]any)
+	for key, value := range data {
+		// 获取全字段匹配，字段名为空
+		keywords := append([]string{}, h.labelMap[""]...)
+		// 获取使用字段查询的值
+		keywords = append(keywords, h.labelMap[key]...)
 
-	for k, keywords := range h.labelMap {
-		if keywords == nil {
-			continue
-		}
-
-		if fieldValue, exists := data[k]; exists {
-			if highlightedValue := h.processField(fieldValue, keywords); highlightedValue != nil {
-				newData[k] = highlightedValue
-			}
+		if highlightedValue := h.processField(value, keywords); highlightedValue != nil {
+			newData[key] = highlightedValue
 		}
 	}
 
@@ -53,11 +49,18 @@ func (h *HighLightFactory) Process(data map[string]any) (newData map[string]any)
 }
 
 func (h *HighLightFactory) processField(fieldValue any, keywords []string) any {
+	var newValue string
 	switch value := fieldValue.(type) {
 	case string:
-		if highlighted := h.highlightString(value, keywords); highlighted != value {
-			return []string{highlighted}
-		}
+		newValue = value
+	case int:
+		newValue = fmt.Sprintf("%d", value)
+	default:
+		return nil
+	}
+
+	if highlighted := h.highlightString(newValue, keywords); highlighted != newValue {
+		return []string{highlighted}
 	}
 	return nil
 }
@@ -69,7 +72,27 @@ func (h *HighLightFactory) highlightString(text string, keywords []string) strin
 
 	analyzablePart, remainingPart := h.splitTextForAnalysis(text)
 
+	// 移除 keywords 中存在叠加的数据，例如: ["a", "abc"]，则只保留 ["abc"]
+	// 排序后，长的关键词在前面
+	sort.SliceStable(keywords, func(i, j int) bool {
+		return len(keywords[i]) > len(keywords[j])
+	})
+	var newKeywords []string
 	for _, keyword := range keywords {
+		isContains := func() bool {
+			for _, newKeyword := range newKeywords {
+				if strings.Contains(newKeyword, keyword) {
+					return true
+				}
+			}
+			return false
+		}()
+		if !isContains {
+			newKeywords = append(newKeywords, keyword)
+		}
+	}
+
+	for _, keyword := range newKeywords {
 		analyzablePart = strings.ReplaceAll(analyzablePart, keyword, fmt.Sprintf("<mark>%s</mark>", keyword))
 	}
 

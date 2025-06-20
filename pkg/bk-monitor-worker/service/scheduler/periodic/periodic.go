@@ -47,7 +47,7 @@ func getPeriodicTasks() map[string]PeriodicTask {
 	RefreshKafkaTopicInfo := "periodic:metadata:refresh_kafka_topic_info"
 	CleanExpiredRestore := "periodic:metadata:clean_expired_restore"
 	RefreshESRestore := "periodic:metadata:refresh_es_restore"
-	RefreshBcsMetricsLabel := "periodic:metadata:refresh_bcs_metrics_label"
+	//RefreshBcsMetricsLabel := "periodic:metadata:refresh_bcs_metrics_label"
 	SyncBkccSpaceDataSource := "periodic:metadata:sync_bkcc_space_data_source"
 	RefreshBkccSpace := "periodic:metadata:refresh_bkcc_space"
 	RefreshClusterResource := "periodic:metadata:refresh_cluster_resource"
@@ -115,10 +115,6 @@ func getPeriodicTasks() map[string]PeriodicTask {
 		CleanExpiredRestore: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.CleanExpiredRestore,
-		},
-		RefreshBcsMetricsLabel: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.RefreshBcsMetricsLabel,
 		},
 		RefreshBkccSpace: {
 			Cron:    "*/10 * * * *",

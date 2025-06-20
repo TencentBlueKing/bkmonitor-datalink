@@ -235,6 +235,10 @@ bk-collector:
             destination: "apdex_type"
             apdex_t: 20 # ms
 
+    - name: "resource_filter/user_metadata"
+      config:
+        from_metadata:
+          keys: ["*"]
 
     # AttributeFilter: 属性过滤处理器
     # AsString: 将 attributes 字段里的某些维度类型转为 string
@@ -1021,6 +1025,7 @@ bk-collector:
         #- "sampler/status_code"
         - "resource_filter/common"
         - "attribute_filter/common"
+        - "resource_filter/user_metadata"
         - "db_filter/common"
         - "attribute_filter/app"
         - "probe_filter/common"

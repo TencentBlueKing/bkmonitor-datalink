@@ -122,7 +122,7 @@ func (c *Client) FindHostBizRelation(opts ...define.OperationOption) define.Oper
 func (c *Client) SearchBusiness(opts ...define.OperationOption) define.Operation {
 	var path string
 	if c.useApiGateway {
-		path = "/api/v3/biz/search/{bk_supplier_account}"
+		path = "/api/v3/biz/search/0"
 	} else {
 		path = "search_business"
 	}
@@ -156,7 +156,7 @@ func (c *Client) GetBizInternalModule(opts ...define.OperationOption) define.Ope
 	var path string
 	var method string
 	if c.useApiGateway {
-		path = "/api/v3/topo/internal/{bk_supplier_account}/{bk_biz_id}"
+		path = "/api/v3/topo/internal/0/{bk_biz_id}"
 		method = "GET"
 	} else {
 		path = "get_biz_internal_module"
@@ -207,7 +207,7 @@ func (c *Client) ResourceWatch(opts ...define.OperationOption) define.Operation 
 func (c *Client) SearchModule(opts ...define.OperationOption) define.Operation {
 	var path string
 	if c.useApiGateway {
-		path = "/api/v3/module/search/{bk_supplier_account}/{bk_biz_id}/{bk_set_id}"
+		path = "/api/v3/module/search/0/{bk_biz_id}/{bk_set_id}"
 	} else {
 		path = "search_module"
 	}
@@ -223,7 +223,7 @@ func (c *Client) SearchModule(opts ...define.OperationOption) define.Operation {
 func (c *Client) SearchSet(opts ...define.OperationOption) define.Operation {
 	var path string
 	if c.useApiGateway {
-		path = "/api/v3/set/search/{bk_supplier_account}/{bk_biz_id}"
+		path = "/api/v3/set/search/0/{bk_biz_id}"
 	} else {
 		path = "search_set"
 	}

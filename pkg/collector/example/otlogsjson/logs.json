@@ -1,0 +1,43 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "process.name",
+            "value": {
+              "stringValue": "logger-example"
+            }
+          }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {
+            "name": "otlp-logger"
+          },
+          "logRecords": [
+            {
+              "timeUnixNano": "1750323517832204000",
+              "observedTimeUnixNano": "1750323517832229000",
+              "severityNumber": "SEVERITY_NUMBER_INFO",
+              "body": {
+                "stringValue": "log from opentelemetry sdk"
+              },
+              "attributes": [
+                {
+                  "key": "count",
+                  "value": {
+                    "intValue": "6"
+                  }
+                }
+              ],
+              "traceId": "",
+              "spanId": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

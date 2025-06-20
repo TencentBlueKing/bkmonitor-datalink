@@ -102,6 +102,12 @@ func (d *Discover) Reload() error {
 	return d.Start()
 }
 
+type WrapDiscovery struct {
+	*promk8ssd.Discovery
+}
+
+func (WrapDiscovery) Stop() {}
+
 func (d *Discover) Start() error {
 	d.PreStart()
 
@@ -115,7 +121,7 @@ func (d *Discover) Start() error {
 		if err != nil {
 			return nil, errors.Wrap(err, d.Type())
 		}
-		return shareddiscovery.New(d.UK(), discovery), nil
+		return shareddiscovery.New(d.UK(), &WrapDiscovery{discovery}), nil
 	})
 	if err != nil {
 		return err

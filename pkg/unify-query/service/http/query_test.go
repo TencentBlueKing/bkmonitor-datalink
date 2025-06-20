@@ -877,6 +877,143 @@ func TestQueryTs(t *testing.T) {
 				},
 			},
 		},
+		// test query  __name__ with raw 多指标单表
+		`SELECT "usage" AS _value, *::tag, "time" AS _time FROM cpu_summary WHERE time > 1677081300000000000 and time < 1677085600000000000 AND (bk_biz_id='2') LIMIT 100000005 SLIMIT 100005 TZ('UTC')`: &decoder.Response{
+			Results: []decoder.Result{
+				{
+					Series: []*decoder.Row{
+						{
+							Name: "",
+							Tags: map[string]string{
+								"status": "failed",
+							},
+							Columns: []string{
+								influxdb.TimeColumnName,
+								influxdb.ResultColumnName,
+							},
+							Values: [][]any{
+								{
+									1677082080000000000, 34,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		`SELECT "free" AS _value, *::tag, "time" AS _time FROM cpu_summary WHERE time > 1677081300000000000 and time < 1677085600000000000 AND (bk_biz_id='2') LIMIT 100000005 SLIMIT 100005 TZ('UTC')`: &decoder.Response{
+			Results: []decoder.Result{
+				{
+					Series: []*decoder.Row{
+						{
+							Name: "",
+							Tags: map[string]string{
+								"status": "failed",
+							},
+							Columns: []string{
+								influxdb.TimeColumnName,
+								influxdb.ResultColumnName,
+							},
+							Values: [][]any{
+								{
+									1677082080000000000, 68,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		`SELECT "value" AS _value, *::tag, "time" AS _time FROM merltrics_rest_request_status_200_count WHERE time > 1677081300000000000 and time < 1677085600000000000 LIMIT 100000005 SLIMIT 100005 TZ('UTC')`: &decoder.Response{
+			Results: []decoder.Result{
+				{
+					Series: []*decoder.Row{
+						{
+							Name: "",
+							Tags: map[string]string{
+								"namespace": "lolstage",
+								"container": "message-history",
+							},
+							Columns: []string{
+								influxdb.TimeColumnName,
+								influxdb.ResultColumnName,
+							},
+							Values: [][]any{
+								{
+									1677082080000000000, 68,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+
+		// test query  __name__ with raw 多指标单表 exporter
+		`SELECT "metric_value" AS _value, *::tag, "time" AS _time FROM exporter WHERE time > 1677081300000000000 and time < 1677085600000000000 AND (metric_name =~ /.*/) LIMIT 100000005 SLIMIT 100005 TZ('UTC')`: &decoder.Response{
+			Results: []decoder.Result{
+				{
+					Series: []*decoder.Row{
+						{
+							Name: "",
+							Tags: map[string]string{
+								"metric_name": "usage",
+								"name":        "buzzy",
+							},
+							Columns: []string{
+								influxdb.TimeColumnName,
+								influxdb.ResultColumnName,
+							},
+							Values: [][]any{
+								{
+									1677082080000000000, 68,
+								},
+							},
+						},
+						{
+							Name: "",
+							Tags: map[string]string{
+								"metric_name": "free",
+								"name":        "buzzy",
+							},
+							Columns: []string{
+								influxdb.TimeColumnName,
+								influxdb.ResultColumnName,
+							},
+							Values: [][]any{
+								{
+									1677082080000000000, 70,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		// test query  __name__ with raw 多指标单表 standard_v2_time_series
+		`SELECT "usage" AS _value, *::tag, "time" AS _time FROM standard_v2_time_series WHERE time > 1677081300000000000 and time < 1677085600000000000 LIMIT 100000005 SLIMIT 100005 TZ('UTC')`: &decoder.Response{
+			Results: []decoder.Result{
+				{
+					Series: []*decoder.Row{
+						{
+							Name: "",
+							Tags: map[string]string{
+								"name": "buzzy",
+							},
+							Columns: []string{
+								influxdb.TimeColumnName,
+								influxdb.ResultColumnName,
+							},
+							Values: [][]any{
+								{
+									1677082080000000000, 68,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	})
 
 	testCases := map[string]struct {
@@ -894,6 +1031,23 @@ func TestQueryTs(t *testing.T) {
 		"test query support fuzzy __name__ with count": {
 			query:  `{"query_list":[{"data_source":"","table_id":"system.cpu_summary","field_name":".*","is_regexp":true,"field_list":null,"function":[{"method":"sum","without":false,"dimensions":["status"],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"count_over_time","window":"60s","position":0,"vargs_list":null},"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
 			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["status"],"group_values":["failed"],"values":[[1677081600000,30],[1677081660000,21],[1677081720000,1],[1677081780000,7],[1677081840000,4],[1677081900000,2],[1677081960000,100],[1677082020000,94],[1677082080000,34]]}]}`,
+		},
+		"test query  __name__ with raw 多指标单表": {
+			query:  `{"query_list":[{"data_source":"","table_id":"system.cpu_summary","field_name":".*","is_regexp":true,"field_list":null,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"10m"}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","status"],"group_values":["bkmonitor:system:cpu_summary:free","failed"],"values":[[1677082200000,68]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","status"],"group_values":["bkmonitor:system:cpu_summary:usage","failed"],"values":[[1677082200000,34]]}]}`,
+		},
+
+		"test query  __name__ with raw 多指标单表 exporter": {
+			query:  `{"query_list":[{"data_source":"","table_id":"bk.exporter","field_name":".*","is_regexp":true,"field_list":null,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"10m"}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:exporter:free","buzzy"],"values":[[1677082200000,70]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:exporter:usage","buzzy"],"values":[[1677082200000,68]]}]}`,
+		},
+		"test query  __name__ with raw 多指标单表 standard_v2_time_series": {
+			query:  `{"query_list":[{"data_source":"","table_id":"bk.standard_v2_time_series","field_name":".*","is_regexp":true,"field_list":null,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"10m"}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:standard_v2_time_series:usage","buzzy"],"values":[[1677082200000,68]]}]}`,
+		},
+		"test regx with __name__ 单指标单表": {
+			query:  `{"query_list":[{"data_source":"","field_name":"merltrics_rest_request_status_.+_count","is_regexp":true,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","container","namespace"],"group_values":["merltrics_rest_request_status_200_count","message-history","lolstage"],"values":[[1677082080000,68],[1677082140000,68],[1677082200000,68],[1677082260000,68],[1677082320000,68],[1677082380000,68]]}]}`,
 		},
 	}
 
@@ -937,14 +1091,25 @@ func TestQueryRawWithInstance(t *testing.T) {
 	mock.Es.Set(map[string]any{
 		`{"_source":{"includes":["__ext.container_id","dtEventTimeStamp"]},"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":20,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":301,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c726c895a380ba1a9df04ba4a977b29b","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"fa209967d4a8c5d21b3e4f67d2cd579e","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"dc888e9a3789976aa11483626fc61a4f","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c2dae031f095fa4b9deccf81964c7837","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8a916e558c71d4226f1d7f3279cf0fdd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"f6950fef394e813999d7316cdbf0de4d","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"328d487e284703b1d0bb8017dba46124","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"cb790ecb36bbaf02f6f0eb80ac2fd65c","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"bd8a8ef60e94ade63c55c8773170d458","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c8401bb4ec021b038cb374593b8adce3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594161000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}}]}}`,
 
-		// highlight test cases
-		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"group: fans"}}]}},"size":5}`:    `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"group":"fans","user.first":"John","user.last":"Smith"}}]}}`,
-		`{"_source":{"includes":["status","message"]},"from":0,"query":{"bool":{"filter":[{"match_phrase":{"status":{"query":"error"}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}]}},"size":5}`:                                                                                                                                                             `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"bT4KjpEBbwEm76LbdH2H","_score":0.0,"_source":{"status":"error","message":"Something went wrong"}}]}}`,
-		`{"from":0,"query":{"bool":{"filter":[{"match_phrase":{"resource.k8s.bcs.cluster.id":{"query":"BCS-K8S-00000"}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}]}},"size":0}`:                                                                                                                                                                            `{"took":15,"timed_out":false,"_shards":{"total":6,"successful":6,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[{"_index":"v2_2_bkapm_trace_bk_monitor_20250604_0","_type":"_doc","_id":"14712105480911733430","_score":null,"_source":{"links":[],"trace_state":"","elapsed_time":38027,"status":{"message":"","code":0},"resource":{"k8s.pod.ip":"192.168.1.100","bk.instance.id":":unify-query::192.168.1.100:","service.name":"unify-query","net.host.ip":"192.168.1.100","k8s.bcs.cluster.id":"BCS-K8S-00000","k8s.pod.name":"bk-monitor-unify-query-5c685b56f-n4b6d","k8s.namespace.name":"blueking"},"span_name":"http-curl","attributes":{"apdex_type":"satisfied","req-http-method":"POST","req-http-path":"https://bkapi.paas3-dev.bktencent.com/api/bk-base/prod/v3/queryengine/query_sync"},"end_time":1749006597019296,"parent_span_id":"6f15efc54fedfebe","events":[],"span_id":"4a5f6170ae000a3f","trace_id":"5c999893cdbc41390c5ff8f3be5f62a9","kind":1,"start_time":1749006596981268,"time":"1749006604000"}}]}}`,
-		`{"_source":{"includes":["tags","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"tags: important"}}]}},"size":5}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"cT5KjpEBbwEm76LbeH3I","_score":0.0,"_source":{"tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}}]}}`,
-		`{"_source":{"includes":["__ext.io_kubernetes_pod","dtEventTimeStamp"]},"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":20,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`:                                                                                                                                   `{"took":468,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"e058129ae18bff87c95e83f24584e654","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c124dae69af9b86a7128ee4281820158","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c7f73abf7e865a4b4d7fc608387d01cf","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"39c3ec662881e44bf26d2a6bfc0e35c3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"58e03ce0b9754bf0657d49a5513adcb5","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"43a36f412886bf30b0746562513638d3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"218ceafd04f89b39cda7954e51f4a48a","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8d9abe9b782fe3a1272c93f0af6b39e1","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"0826407be7f04f19086774ed68eac8dd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"d56b4120194eb37f53410780da777d43","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}}]}}`,
-		`{"_source":{"includes":["__ext.container_id","dtEventTimeStamp"]},"from":1,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":1}`:                                                                                                                                                                                        `{"took":17,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"4f3a5e9c167097c9658e88b2f32364b2","_score":0.0,"_source":{"dtEventTimeStamp":"1723594209000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}}]}}`,
-		`{"_source":{"includes":["__ext.container_id","dtEventTimeStamp"]},"from":1,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":1723594000123,"include_lower":true,"include_upper":true,"to":1723595000234}}}}},"size":10}`:                                                                                                                                                                                 `{"took":468,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"e058129ae18bff87c95e83f24584e654","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c124dae69af9b86a7128ee4281820158","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c7f73abf7e865a4b4d7fc608387d01cf","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"39c3ec662881e44bf26d2a6bfc0e35c3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"58e03ce0b9754bf0657d49a5513adcb5","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"43a36f412886bf30b0746562513638d3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"218ceafd04f89b39cda7954e51f4a48a","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8d9abe9b782fe3a1272c93f0af6b39e1","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"0826407be7f04f19086774ed68eac8dd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"d56b4120194eb37f53410780da777d43","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}}]}}`,
+		// nested query + query string 测试 + highlight
+		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}},{"match_phrase":{"group":{"query":"fans"}}}]}},"size":5}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"group":"fans","user.first":"John","user.last":"Smith"}}]}}`,
+
+		`{"_source":{"includes":["status","message"]},"from":0,"query":{"bool":{"filter":[{"match_phrase":{"status":{"query":"error"}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}]}},"size":5}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"bT4KjpEBbwEm76LbdH2H","_score":0.0,"_source":{"status":"error","message":"Something went wrong"}}]}}`,
+
+		`{"from":0,"query":{"bool":{"filter":[{"match_phrase":{"resource.k8s.bcs.cluster.id":{"query":"BCS-K8S-00000"}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}]}},"size":0}`: `{"took":15,"timed_out":false,"_shards":{"total":6,"successful":6,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[{"_index":"v2_2_bkapm_trace_bk_monitor_20250604_0","_type":"_doc","_id":"14712105480911733430","_score":null,"_source":{"links":[],"trace_state":"","elapsed_time":38027,"status":{"message":"","code":0},"resource":{"k8s.pod.ip":"192.168.1.100","bk.instance.id":":unify-query::192.168.1.100:","service.name":"unify-query","net.host.ip":"192.168.1.100","k8s.bcs.cluster.id":"BCS-K8S-00000","k8s.pod.name":"bk-monitor-unify-query-5c685b56f-n4b6d","k8s.namespace.name":"blueking"},"span_name":"http-curl","attributes":{"apdex_type":"satisfied","req-http-method":"POST","req-http-path":"https://bkapi.paas3-dev.bktencent.com/api/bk-base/prod/v3/queryengine/query_sync"},"end_time":1749006597019296,"parent_span_id":"6f15efc54fedfebe","events":[],"span_id":"4a5f6170ae000a3f","trace_id":"5c999893cdbc41390c5ff8f3be5f62a9","kind":1,"start_time":1749006596981268,"time":"1749006604000"}}]}}`,
+
+		// array highlight test
+		`{"_source":{"includes":["tags","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}},{"match_phrase":{"tags":{"query":"important"}}}]}},"size":5}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"cT5KjpEBbwEm76LbeH3I","_score":0.0,"_source":{"tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}}]}}`,
+
+		// array highlight with match all
+		`{"_source":{"includes":["tags","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"Smi\""}}]}},"size":5}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"cT5KjpEBbwEm76LbeH3I","_score":0.0,"_source":{"tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}}]}}`,
+
+		// array highlight with wildcard all
+		`{"_source":{"includes":["tags","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"*Smi*"}}]}},"size":5}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"cT5KjpEBbwEm76LbeH3I","_score":0.0,"_source":{"tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}}]}}`,
+
+		`{"_source":{"includes":["__ext.io_kubernetes_pod","dtEventTimeStamp"]},"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":20,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":468,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"e058129ae18bff87c95e83f24584e654","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c124dae69af9b86a7128ee4281820158","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c7f73abf7e865a4b4d7fc608387d01cf","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"39c3ec662881e44bf26d2a6bfc0e35c3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"58e03ce0b9754bf0657d49a5513adcb5","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"43a36f412886bf30b0746562513638d3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"218ceafd04f89b39cda7954e51f4a48a","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8d9abe9b782fe3a1272c93f0af6b39e1","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"0826407be7f04f19086774ed68eac8dd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"d56b4120194eb37f53410780da777d43","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}}]}}`,
+		`{"_source":{"includes":["__ext.container_id","dtEventTimeStamp"]},"from":1,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":1}`:                                                      `{"took":17,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"4f3a5e9c167097c9658e88b2f32364b2","_score":0.0,"_source":{"dtEventTimeStamp":"1723594209000","__ext":{"container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f"}}}]}}`,
+		`{"_source":{"includes":["__ext.container_id","dtEventTimeStamp"]},"from":1,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":1723594000123,"include_lower":true,"include_upper":true,"to":1723595000234}}}}},"size":10}`:                                               `{"took":468,"timed_out":false,"_shards":{"total":3,"successful":3,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":0.0,"hits":[{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"e058129ae18bff87c95e83f24584e654","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c124dae69af9b86a7128ee4281820158","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"c7f73abf7e865a4b4d7fc608387d01cf","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"39c3ec662881e44bf26d2a6bfc0e35c3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"58e03ce0b9754bf0657d49a5513adcb5","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"43a36f412886bf30b0746562513638d3","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"218ceafd04f89b39cda7954e51f4a48a","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"8d9abe9b782fe3a1272c93f0af6b39e1","_score":0.0,"_source":{"dtEventTimeStamp":"1723594211000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"0826407be7f04f19086774ed68eac8dd","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}},{"_index":"v2_2_bklog_bk_unify_query_20240814_0","_type":"_doc","_id":"d56b4120194eb37f53410780da777d43","_score":0.0,"_source":{"dtEventTimeStamp":"1723594224000","__ext":{"io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94"}}}]}}`,
 
 		// merge rt test mock data
 		`{"_source":{"includes":["a","b"]},"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":5,"sort":[{"a":{"order":"asc"}},{"b":{"order":"asc"}}]}`:  `{"hits":{"total":{"value":123},"hits":[{"_index":"result_table_index","_id":"1","_source":{"a":"1","b":"1"},"sort":["1","1"]},{"_index":"result_table_index","_id":"2","_source":{"a":"1","b":"2"},"sort":["1","2"]},{"_index":"result_table_index","_id":"3","_source":{"a":"1","b":"3"},"sort":["1","3"]},{"_index":"result_table_index","_id":"4","_source":{"a":"1","b":"4"},"sort":["1","4"]},{"_index":"result_table_index","_id":"5","_source":{"a":"1","b":"5"},"sort":["1","5"]}]}}`,
@@ -956,6 +1121,9 @@ func TestQueryRawWithInstance(t *testing.T) {
 
 		// scroll id
 		`{"scroll":"5m","scroll_id":"one"}`: `{"_scroll_id":"two","hits":{"total":{"value":123},"hits":[{"_index":"result_table_index","_id":"6","_source":{"a":"2","b":"1"}},{"_index":"result_table_index","_id":"7","_source":{"a":"2","b":"2"}},{"_index":"result_table_index","_id":"8","_source":{"a":"2","b":"3"}},{"_index":"result_table_index","_id":"9","_source":{"a":"2","b":"4"}},{"_index":"result_table_index","_id":"10","_source":{"a":"2","b":"5"}}]}}`,
+
+		// query collections.attributes.db.statement
+		`{"from":0,"query":{"bool":{"filter":[{"bool":{"must":[{"exists":{"field":"collections.attributes.db.statement"}},{"match_phrase":{"app_name":{"query":"bkop"}}},{"match_phrase":{"biz_id":{"query":"2"}}}]}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1749456412,"include_lower":true,"include_upper":true,"to":1749460022}}}]}},"size":1}`: `{"took":77,"timed_out":false,"_shards":{"total":9,"successful":9,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[{"_index":"v2_apm_global_precalculate_storage_new_1_20250609_0","_type":"_doc","_id":"bf6477880e7abd183119c150ea1447db","_score":null,"_source":{"biz_id":"2","biz_name":"蓝鲸","app_id":"3","app_name":"bkop","trace_id":"bf6477880e7abd183119c150ea1447db","hierarchy_count":9,"service_count":1,"span_count":1746,"span_max_duration":316009,"span_min_duration":0,"root_service":"unify-query","root_service_span_id":"0db6f409a4b7b759","root_service_span_name":"/query/ts/promql","root_service_status_code":200,"root_service_category":"http","root_service_kind":2,"root_span_id":"0db6f409a4b7b759","root_span_name":"/query/ts/promql","root_span_service":"unify-query","root_span_kind":2,"error":false,"error_count":0,"category_statistics":{"db":0,"messaging":0,"async_backend":0,"other":0,"http":120,"rpc":0},"kind_statistics":{"unspecified":0,"interval":1626,"sync":120,"async":0},"collections":{"attributes.http.scheme":["http"],"attributes.http.method":["POST"],"resource.k8s.pod.name":["bk-datalink-unify-query-6595d74cbf-mzl4x","bk-datalink-unify-query-6595d74cbf-g2q2p","bk-datalink-unify-query-6595d74cbf-zbg52","bk-datalink-unify-query-6595d74cbf-klqkz"],"attributes.net.peer.port":["44024","46284","46272","44026","44020","44048","46290","37374","37442","46360","44088","44114","37490","44152","37504","46278","44034","46288","37424","46358","44072","46366","44100","44138","46408","37526","37542","52822","52854","37616","52878","46286","37410","46356","46364","44098","37498","44136","44158","46432","46448","52850","37612","52872","52898","44056","37386","37446","46362","44094","44120","46404","44154","46414","37536","52846","37608","37620","52866","52892","46442","52834","52862","37606","37618","52882","43598","43938","43354","43816","44934","45806","45906","43642","44884","44974","45858","43788","44894","45020","45888","44948","45808","45950","48902","48944","48994","49058","49068","48922","48990","49012","49062","48918","48970","49008","49060","49070","48942","48992","49014","49064"]}},"sort":[1749460179462463]}]}}`,
 	})
 
 	tcs := map[string]struct {
@@ -964,6 +1132,65 @@ func TestQueryRawWithInstance(t *testing.T) {
 		expected string
 		options  string
 	}{
+		"query collections.attributes.db.statement": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource: structured.BkApm,
+						TableID:    structured.TableID(influxdb.ResultTableEs),
+						FieldName:  "collections.attributes.db.statement",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method:     "count",
+								Dimensions: []string{"collections.attributes.db.statement"},
+								Window:     "120s",
+							},
+						},
+						QueryString:   "*",
+						ReferenceName: "a",
+						Dimensions:    []string{"collections.attributes.db.statement"},
+						Limit:         1,
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "collections.attributes.db.statement",
+									Value:         []string{""},
+									Operator:      "ne",
+								},
+								{
+									DimensionName: "app_name",
+									Value:         []string{"bkop"},
+									Operator:      "eq",
+								},
+								{
+									DimensionName: "biz_id",
+									Value:         []string{"2"},
+									Operator:      "eq",
+								},
+							},
+							ConditionList: []string{"and", "and"},
+						},
+					},
+				},
+				MetricMerge:   "a",
+				OrderBy:       []string{"-time"},
+				Timezone:      "Asia/Shanghai",
+				LookBackDelta: "1m",
+				Start:         "1749456412",
+				End:           "1749460022",
+				HighLight: &metadata.HighLight{
+					Enable: true,
+				},
+			},
+			total:    1e4,
+			expected: `[{"__data_label":"es","__doc_id":"bf6477880e7abd183119c150ea1447db","__highlight":{"app_name":["<mark>bkop</mark>"],"biz_id":["<mark>2</mark>"]},"__index":"v2_apm_global_precalculate_storage_new_1_20250609_0","__result_table":"result_table.es","app_id":"3","app_name":"bkop","biz_id":"2","biz_name":"蓝鲸","category_statistics.async_backend":0,"category_statistics.db":0,"category_statistics.http":120,"category_statistics.messaging":0,"category_statistics.other":0,"category_statistics.rpc":0,"collections.attributes.http.method":["POST"],"collections.attributes.http.scheme":["http"],"collections.attributes.net.peer.port":["44024","46284","46272","44026","44020","44048","46290","37374","37442","46360","44088","44114","37490","44152","37504","46278","44034","46288","37424","46358","44072","46366","44100","44138","46408","37526","37542","52822","52854","37616","52878","46286","37410","46356","46364","44098","37498","44136","44158","46432","46448","52850","37612","52872","52898","44056","37386","37446","46362","44094","44120","46404","44154","46414","37536","52846","37608","37620","52866","52892","46442","52834","52862","37606","37618","52882","43598","43938","43354","43816","44934","45806","45906","43642","44884","44974","45858","43788","44894","45020","45888","44948","45808","45950","48902","48944","48994","49058","49068","48922","48990","49012","49062","48918","48970","49008","49060","49070","48942","48992","49014","49064"],"collections.resource.k8s.pod.name":["bk-datalink-unify-query-6595d74cbf-mzl4x","bk-datalink-unify-query-6595d74cbf-g2q2p","bk-datalink-unify-query-6595d74cbf-zbg52","bk-datalink-unify-query-6595d74cbf-klqkz"],"error":false,"error_count":0,"hierarchy_count":9,"kind_statistics.async":0,"kind_statistics.interval":1626,"kind_statistics.sync":120,"kind_statistics.unspecified":0,"root_service":"unify-query","root_service_category":"http","root_service_kind":2,"root_service_span_id":"0db6f409a4b7b759","root_service_span_name":"/query/ts/promql","root_service_status_code":200,"root_span_id":"0db6f409a4b7b759","root_span_kind":2,"root_span_name":"/query/ts/promql","root_span_service":"unify-query","service_count":1,"span_count":1746,"span_max_duration":316009,"span_min_duration":0,"trace_id":"bf6477880e7abd183119c150ea1447db"}]`,
+			options: `{
+  "result_table.es|http://127.0.0.1:93002" : {
+    "search_after" : [ 1749460179462463 ]
+  }
+}`,
+		},
 		"query with EpochMillis": {
 			queryTs: &structured.QueryTs{
 				SpaceUid: spaceUid,
@@ -1333,6 +1560,66 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    1,
 			expected: `[{"__data_label":"es","__doc_id":"cT5KjpEBbwEm76LbeH3I","__highlight":{"user.first":["<mark>John</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}]`,
+		},
+		"array highlight with match all": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(influxdb.ResultTableEs),
+						KeepColumns: []string{"tags", "user.first", "user.last"},
+						QueryString: "Smi",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "user.first",
+									Value:         []string{"John"},
+									Operator:      structured.ConditionEqual,
+								},
+							},
+						},
+					},
+				},
+				Limit: 5,
+				Start: start,
+				End:   end,
+				HighLight: &metadata.HighLight{
+					Enable: true,
+				},
+			},
+			total:    1,
+			expected: `[{"__data_label":"es","__doc_id":"cT5KjpEBbwEm76LbeH3I","__highlight":{"user.first":["<mark>John</mark>"],"user.last":["<mark>Smi</mark>th"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}]`,
+		},
+		"array highlight with wildcard all": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(influxdb.ResultTableEs),
+						KeepColumns: []string{"tags", "user.first", "user.last"},
+						QueryString: "*Smi*",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "user.first",
+									Value:         []string{"John"},
+									Operator:      structured.ConditionEqual,
+								},
+							},
+						},
+					},
+				},
+				Limit: 5,
+				Start: start,
+				End:   end,
+				HighLight: &metadata.HighLight{
+					Enable: true,
+				},
+			},
+			total:    1,
+			expected: `[{"__data_label":"es","__doc_id":"cT5KjpEBbwEm76LbeH3I","__highlight":{"user.first":["<mark>John</mark>"],"user.last":["<mark>Smi</mark>th"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}]`,
 		},
 	}
 
@@ -2838,6 +3125,44 @@ func TestStructAndPromQLConvert(t *testing.T) {
 					},
 				},
 				MetricMerge: `a / on(bcs_cluster_id, namespace, pod_name) group_left() b or c`,
+			},
+		},
+		"promql with 特殊字符": {
+			queryStruct: false,
+			promql: &structured.QueryPromQL{
+				PromQL: `sum by (http__bk_46____bk_45____bk_37__1) (rate({__name__=~"bkapm:apm__bk_45__10001:test:http__bk_46__status",test__bk_46____bk_45____bk_94__1="test.-^1"}[1m]))`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkapm",
+						TableID:    "apm-10001.test",
+						IsRegexp:   true,
+						FieldName:  "http.status",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"http.-%1"},
+							},
+						},
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "rate",
+							Window:    "1m0s",
+							NodeIndex: 2,
+						},
+						ReferenceName: "a",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "test.-^1",
+									Operator:      "eq",
+									Value:         []string{"test.-^1"},
+								},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
 			},
 		},
 	}

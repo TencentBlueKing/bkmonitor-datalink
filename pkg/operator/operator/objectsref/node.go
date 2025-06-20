@@ -98,7 +98,7 @@ func (n *NodeMap) NodeLabels(name string) map[string]string {
 	return cloned
 }
 
-func (n *NodeMap) NameExists(name string) (string, bool) {
+func (n *NodeMap) CheckName(name string) (string, bool) {
 	n.mut.Lock()
 	defer n.mut.Unlock()
 

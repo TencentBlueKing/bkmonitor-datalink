@@ -162,11 +162,10 @@ func queryTimeFromString(t string) (time.Time, error) {
 }
 
 func newStringExpr(str string) FieldableExpr {
-	if strings.HasPrefix(str, "/") && strings.HasSuffix(str, "/") {
-		return NewRegexpExpr(str[1 : len(str)-1])
-	}
+	aliasStr := strings.ReplaceAll(str, `\*`, "")
+	aliasStr = strings.ReplaceAll(aliasStr, `\?`, "")
 
-	if strings.ContainsAny(str, "*?") {
+	if strings.ContainsAny(aliasStr, "*?") {
 		return NewWildcardExpr(str)
 	}
 

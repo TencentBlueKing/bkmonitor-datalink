@@ -26,9 +26,9 @@ func TestNodeMap(t *testing.T) {
 	}
 
 	nodes := []Node{
-		{Name: "node1", Addr: "10.0.0.1"},
-		{Name: "node2", Addr: "10.0.0.2"},
-		{Name: "node3", Addr: "10.0.0.3"},
+		{Name: "node1", Addr: "127.0.0.1"},
+		{Name: "node2", Addr: "127.0.0.2"},
+		{Name: "node3", Addr: "127.0.0.3"},
 	}
 
 	for _, node := range nodes {
@@ -50,12 +50,12 @@ func TestNodeMap(t *testing.T) {
 
 	assert.Equal(t, 3, nm.Count())
 
-	_, ok := nm.NameExists("node1")
+	_, ok := nm.CheckName("node1")
 	assert.True(t, ok)
-	_, ok = nm.NameExists("node4")
+	_, ok = nm.CheckName("node4")
 	assert.False(t, ok)
 
 	nm.Del("node1")
-	_, ok = nm.NameExists("node1")
+	_, ok = nm.CheckName("node1")
 	assert.False(t, ok)
 }

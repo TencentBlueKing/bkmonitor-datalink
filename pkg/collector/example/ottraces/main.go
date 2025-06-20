@@ -62,6 +62,7 @@ func newHttpExporter(env string) (*otlptrace.Exporter, error) {
 		context.Background(),
 		otlptracehttp.WithEndpoint(fmt.Sprintf("%s:4318", env)),
 		otlptracehttp.WithInsecure(),
+		otlptracehttp.WithHeaders(map[string]string{"X-BK-METADATA": "my.pod=pod1,my.namespace=ns1"}),
 	)
 }
 

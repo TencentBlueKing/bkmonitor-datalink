@@ -35,7 +35,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/helmcharts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/promsli"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -44,6 +43,7 @@ const (
 	monitorKindPodMonitor     = "PodMonitor"
 	monitorKindHttpSd         = "HttpSd"
 	monitorKindPolarisSd      = "PolarisSd"
+	monitorKindEtcdSd         = "EtcdSd"
 	monitorKindKubernetesSd   = "KubernetesSd"
 )
 
@@ -69,11 +69,7 @@ type Operator struct {
 
 	serviceMonitorInformer *prominformers.ForResource
 	podMonitorInformer     *prominformers.ForResource
-
-	promRuleInformer  *prominformers.ForResource
-	promsliController *promsli.Controller
-
-	helmchartsController *helmcharts.Controller
+	helmchartsController   *helmcharts.Controller
 
 	statefulSetWorkerScaled time.Time
 	statefulSetWorker       int
@@ -191,23 +187,6 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		if err != nil {
 			return nil, errors.Wrap(err, "create PodMonitor informer failed")
 		}
-	}
-
-	if configs.G().EnablePromRule {
-		operator.promRuleInformer, err = prominformers.NewInformersForResource(
-			prominformers.NewMonitoringInformerFactories(
-				map[string]struct{}{corev1.NamespaceAll: {}},
-				map[string]struct{}{},
-				operator.promclient,
-				resyncPeriod,
-				nil,
-			),
-			promv1.SchemeGroupVersion.WithResource(promv1.PrometheusRuleName),
-		)
-		if err != nil {
-			return nil, errors.Wrap(err, "create PrometheusRule informer failed")
-		}
-		operator.promsliController = promsli.NewController(operator.ctx, operator.client, useEndpointslice)
 	}
 
 	operator.helmchartsController, err = helmcharts.NewController(operator.ctx, operator.client)
@@ -390,15 +369,6 @@ func (c *Operator) Run() error {
 		c.podMonitorInformer.Start(c.ctx.Done())
 	}
 
-	if configs.G().EnablePromRule {
-		c.promRuleInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-			AddFunc:    c.handlePrometheusRuleAdd,
-			UpdateFunc: c.handlePrometheusRuleUpdate,
-			DeleteFunc: c.handlePrometheusRuleDelete,
-		})
-		c.promRuleInformer.Start(c.ctx.Done())
-	}
-
 	if err := c.waitForCacheSync(c.ctx); err != nil {
 		return err
 	}
@@ -447,7 +417,6 @@ func (c *Operator) waitForCacheSync(ctx context.Context) error {
 	}{
 		{"ServiceMonitor", c.serviceMonitorInformer},
 		{"PodMonitor", c.podMonitorInformer},
-		{"PrometheusRule", c.promRuleInformer},
 	} {
 		// 跳过没有初始化的 informers
 		if infs.informersForResource == nil {

@@ -26,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 )
 
@@ -496,6 +497,7 @@ processor:
 		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.namespace.name", "my-ns1")
 		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.bcs.cluster.id", "K8S-BCS-00000")
 	})
+
 	t.Run("client.ip", func(t *testing.T) {
 		g := makeTracesGenerator(1, "bool")
 		data := g.Generate()
@@ -503,6 +505,40 @@ processor:
 		record := define.Record{
 			RecordType: define.RecordTraces,
 			Data:       data,
+		}
+
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+
+		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.pod.ip", "127.1.0.2")
+		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.pod.name", "myapp2")
+		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.namespace.name", "my-ns2")
+		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.bcs.cluster.id", "K8S-BCS-90000")
+	})
+}
+
+func TestTracesFromMetadataAction(t *testing.T) {
+	r, _ := http.NewRequest("GET", "/", nil)
+	r.Header.Set(define.KeyUserMetadata, "k8s.pod.ip=127.1.0.2,k8s.pod.name=myapp2,k8s.namespace.name=my-ns2,k8s.bcs.cluster.id=K8S-BCS-90000")
+
+	const content = `
+processor:
+    - name: "resource_filter/from_metadata"
+      config:
+        from_metadata:
+          keys: ["*"]
+`
+
+	factory := processor.MustCreateFactory(content, NewFactory)
+	t.Run("from_metadata", func(t *testing.T) {
+		g := makeTracesGenerator(1, "bool")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+			Metadata:   tokenparser.FromHttpUserMetadata(r),
 		}
 
 		_, err := factory.Process(&record)

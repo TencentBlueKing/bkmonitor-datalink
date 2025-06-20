@@ -579,13 +579,6 @@ func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) 
 	c.objectsController.WriteContainerInfoRelation(w)
 }
 
-func (c *Operator) RuleMetricsRoute(w http.ResponseWriter, _ *http.Request) {
-	if configs.G().EnablePromRule {
-		lines := c.promsliController.RuleMetrics()
-		w.Write(lines)
-	}
-}
-
 func (c *Operator) ConfigsRoute(w http.ResponseWriter, _ *http.Request) {
 	b, _ := yaml.Marshal(configs.G())
 
@@ -658,7 +651,6 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/pods", c.PodsRoute)
 	router.HandleFunc("/labeljoin", c.LabelJoinRoute)
 	router.HandleFunc("/relation/metrics", c.RelationMetricsRoute)
-	router.HandleFunc("/rule/metrics", c.RuleMetricsRoute)
 	router.HandleFunc("/configs", c.ConfigsRoute)
 
 	// check 路由

@@ -879,7 +879,7 @@ func (b BcsClusterInfoSvc) isSameMapConfig(source map[string]interface{}, target
 	return true
 }
 
-// RefreshMetricLabel 刷新bcs指标的label
+// RefreshMetricLabel 刷新bcs指标的label 任务已经移除
 func (b BcsClusterInfoSvc) RefreshMetricLabel() error {
 	// 获取所有bcs相关dataid
 	dataids, err := b.getBcsDataids(nil)

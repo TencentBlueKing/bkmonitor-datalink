@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -186,4 +187,24 @@ func TimeOffset(t time.Time, timezone string, step time.Duration) (string, time.
 	t2 := time.Unix(int64(math.Floor(float64(t1.Unix())/step.Seconds())*step.Seconds()), 0)
 	t3 := t2.Add(offsetDuration * -1).In(loc)
 	return outTimezone, t3
+}
+
+// GetRealMetricName 获取真实指标名
+func GetRealMetricName(datasource, tableID string, metricNames ...string) []string {
+	var metrics []string
+	for _, metricName := range metricNames {
+		var m []string
+		// 如果是单指标查询，不用拼接 datasource
+		if datasource != "" {
+			m = append(m, datasource)
+		}
+		if tableID != "" {
+			m = append(m, strings.Split(tableID, ".")...)
+		}
+		if metricName != "" {
+			m = append(m, metricName)
+		}
+		metrics = append(metrics, strings.Join(m, ":"))
+	}
+	return metrics
 }

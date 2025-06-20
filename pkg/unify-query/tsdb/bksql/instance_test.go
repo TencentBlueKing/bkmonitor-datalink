@@ -113,14 +113,14 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
 					},
 				},
 			},
-			expected: `[{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:"},{"name":"cloudId","value":"0"}],"samples":[{"value":6,"timestamp":1730118589181}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:cloudId"},{"name":"cloudId","value":"0"}],"samples":[{"value":6,"timestamp":1730118589181}],"exemplars":null,"histograms":null}]`,
 		},
 		"count by namespace with mysql": {
 			query: &metadata.Query{
 				DataSource: datasource,
 				TableID:    tableID,
 				DB:         db,
-				MetricName: field,
+				Field:      field,
 				DataLabel:  db,
 				Aggregates: metadata.Aggregates{
 					{
@@ -136,7 +136,7 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
 				DataSource: datasource,
 				TableID:    tableID,
 				DB:         db,
-				MetricName: field,
+				Field:      field,
 				DataLabel:  db,
 				Aggregates: metadata.Aggregates{
 					{
@@ -176,7 +176,7 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
 				TableID:     tableID,
 				DB:          "2_bklog_bkunify_query_doris",
 				Measurement: sql_expr.Doris,
-				MetricName:  field,
+				Field:       field,
 				DataLabel:   db,
 				Aggregates: metadata.Aggregates{
 					{
@@ -271,7 +271,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 				TableID:    tableID,
 				DB:         db,
 				DataLabel:  db,
-				MetricName: field,
+				Field:      field,
 				OffsetInfo: metadata.OffSetInfo{Limit: 10},
 				AllConditions: metadata.AllConditions{
 					{
@@ -360,7 +360,6 @@ func TestInstance_QueryRaw(t *testing.T) {
 				TableID:     "5000140_bklog_container_log_demo_analysis.doris",
 				DB:          "5000140_bklog_container_log_demo_analysis",
 				Measurement: "doris",
-				MetricName:  "bk_host_id",
 				Field:       "bk_host_id",
 				DataLabel:   "5000140_bklog_container_log_demo_analysis",
 				Size:        2,
@@ -440,7 +439,6 @@ func TestInstance_QueryRaw(t *testing.T) {
 				TableID:     "5000140_bklog_container_log_demo_analysis.doris",
 				DB:          "5000140_bklog_container_log_demo_analysis",
 				Measurement: "doris",
-				MetricName:  "bk_host_id",
 				Field:       "bk_host_id",
 				DataLabel:   "5000140_bklog_container_log_demo_analysis",
 				QueryString: "metricbeat_scrape metricbeat",
@@ -521,7 +519,6 @@ func TestInstance_QueryRaw(t *testing.T) {
 				TableID:     "5000140_bklog_container_log_demo_analysis.doris",
 				DB:          "5000140_bklog_container_log_demo_analysis",
 				Measurement: "doris",
-				MetricName:  "bk_host_id",
 				Field:       "bk_host_id",
 				DataLabel:   "5000140_bklog_container_log_demo_analysis",
 				QueryString: "metricbeat_scrape metricbeat",
@@ -602,7 +599,6 @@ func TestInstance_QueryRaw(t *testing.T) {
 				TableID:     "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
 				DB:          "2_bklog_pure_v4_log_doris_for_unify_query",
 				Measurement: "doris",
-				MetricName:  "dtEventTimeStamp",
 				Field:       "dtEventTimeStamp",
 				DataLabel:   "log_index_set_1183",
 				AllConditions: metadata.AllConditions{

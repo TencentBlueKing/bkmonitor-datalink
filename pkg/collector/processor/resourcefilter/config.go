@@ -16,12 +16,13 @@ import (
 )
 
 type Config struct {
-	Drop       DropAction       `config:"drop" mapstructure:"drop"`
-	FromCache  FromCacheAction  `config:"from_cache" mapstructure:"from_cache"`
-	Assemble   []AssembleAction `config:"assemble" mapstructure:"assemble"`
-	Replace    []ReplaceAction  `config:"replace" mapstructure:"replace"`
-	Add        []AddAction      `config:"add" mapstructure:"add"`
-	FromRecord []FromRecord     `config:"from_record" mapstructure:"from_record"`
+	Drop         DropAction       `config:"drop" mapstructure:"drop"`
+	FromCache    FromCacheAction  `config:"from_cache" mapstructure:"from_cache"`
+	FromMetadata FromMetadata     `config:"from_metadata" mapstructure:"from_metadata"`
+	Assemble     []AssembleAction `config:"assemble" mapstructure:"assemble"`
+	Replace      []ReplaceAction  `config:"replace" mapstructure:"replace"`
+	Add          []AddAction      `config:"add" mapstructure:"add"`
+	FromRecord   []FromRecord     `config:"from_record" mapstructure:"from_record"`
 }
 
 func (c *Config) Clean() {
@@ -74,6 +75,10 @@ func (a FromCacheAction) CombineKeys() []string {
 type FromRecord struct {
 	Source      string `config:"source" mapstructure:"source"`
 	Destination string `config:"destination" mapstructure:"destination"`
+}
+
+type FromMetadata struct {
+	Keys []string `config:"keys" mapstructure:"keys"`
 }
 
 func cleanResourcesPrefix(keys []string) []string {

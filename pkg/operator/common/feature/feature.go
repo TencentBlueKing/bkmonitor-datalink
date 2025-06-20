@@ -29,7 +29,6 @@ const (
 	keyMonitorMatchSelector = "monitorMatchSelector"
 	keyMonitorDropSelector  = "monitorDropSelector"
 	keyLabelJoinMatcher     = "labelJoinMatcher"
-	keySliMonitor           = "sliMonitor"
 )
 
 func isMapKeyExists(m map[string]string, key string) bool {
@@ -158,8 +157,4 @@ func MonitorDropSelector(m map[string]string) map[string]string {
 
 func LabelJoinMatcher(m map[string]string) *LabelJoinMatcherSpec {
 	return parseLabelJoinMatcher(m[keyLabelJoinMatcher])
-}
-
-func SliMonitor(m map[string]string) string {
-	return m[keySliMonitor]
 }

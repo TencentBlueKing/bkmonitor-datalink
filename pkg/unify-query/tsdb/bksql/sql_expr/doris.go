@@ -27,6 +27,8 @@ const (
 
 	ShardKey = "__shard_key__"
 
+	SelectIndex = "_index"
+
 	DefaultKey = "log"
 )
 
@@ -38,6 +40,7 @@ type DorisSQLExpr struct {
 
 	keepColumns []string
 	fieldsMap   map[string]string
+	fieldAlias  metadata.FieldAlias
 
 	isSetLabels bool
 	lock        sync.Mutex
@@ -52,6 +55,11 @@ func (d *DorisSQLExpr) Type() string {
 func (d *DorisSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {
 	d.timeField = timeField
 	d.valueField = valueField
+	return d
+}
+
+func (d *DorisSQLExpr) WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr {
+	d.fieldAlias = fieldAlias
 	return d
 }
 
@@ -75,7 +83,7 @@ func (d *DorisSQLExpr) FieldMap() map[string]string {
 }
 
 func (d *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
-	expr, err := querystring.Parse(qs)
+	expr, err := querystring.ParseWithFieldAlias(qs, d.fieldAlias)
 	if err != nil {
 		return "", err
 	}
@@ -125,7 +133,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 			groupByFields = append(groupByFields, newDim)
 		}
 
-		if valueField == "" {
+		if valueField == "" || valueField == SelectIndex {
 			valueField = SelectAll
 		}
 
@@ -419,7 +427,6 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		if c.Field == "" {
 			c.Field = DefaultKey
 		}
-
 		field, _ := d.dimTransform(c.Field)
 		return fmt.Sprintf("%s LIKE '%%%s%%'", field, c.Value), nil
 	case *querystring.MatchExpr:

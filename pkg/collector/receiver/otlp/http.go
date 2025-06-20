@@ -27,6 +27,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
@@ -104,15 +105,6 @@ func writeError(w http.ResponseWriter, rh receiver.ResponseHandler, err error, s
 	receiver.WriteResponse(w, rh.ContentType(), statusCode, msg)
 }
 
-// 允许从 Http Header 中读取 token
-func extractTokenFromHttpHeader(header http.Header) string {
-	token := header.Get(define.KeyToken)
-	if len(token) > 0 {
-		return token
-	}
-	return header.Get(define.KeyTenantID)
-}
-
 func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype define.RecordType) {
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr, req.Header)
@@ -146,10 +138,11 @@ func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype 
 		Data:          data,
 	}
 
-	tk := extractTokenFromHttpHeader(req.Header)
+	tk := tokenparser.FromHttpRequest(req)
 	if len(tk) > 0 {
 		r.Token = define.Token{Original: tk}
 	}
+	r.Metadata = tokenparser.FromHttpUserMetadata(req)
 
 	prettyprint.Pretty(rtype, data)
 

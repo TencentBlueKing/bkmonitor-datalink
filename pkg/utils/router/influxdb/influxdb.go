@@ -98,7 +98,8 @@ func (r *router) Close() error {
 
 // key get cache's key
 func (r *router) key(keys ...string) string {
-	return fmt.Sprintf("%s:%s", r.prefix, strings.Join(keys, ":"))
+	k := fmt.Sprintf("%s:%s", r.prefix, strings.Join(keys, ":"))
+	return k
 }
 
 // Subscribe sub all key

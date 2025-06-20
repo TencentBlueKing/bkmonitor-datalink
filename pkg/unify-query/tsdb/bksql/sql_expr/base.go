@@ -28,6 +28,8 @@ const (
 	FieldTime  = "_time"
 
 	theDate = "thedate"
+
+	HDFS = "hdfs"
 )
 
 // ErrorMatchAll 定义全字段检索错误提示信息
@@ -45,6 +47,8 @@ type TimeAggregate struct {
 type SQLExpr interface {
 	// WithKeepColumns 设置保留字段
 	WithKeepColumns([]string) SQLExpr
+	// WithFieldAlias 设置字段别名
+	WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr
 	// WithFieldsMap 设置字段类型
 	WithFieldsMap(fieldsMap map[string]string) SQLExpr
 	// WithEncode 字段转换方法
@@ -85,7 +89,7 @@ func NewSQLExpr(key string) SQLExpr {
 	case Doris:
 		return &DorisSQLExpr{}
 	default:
-		return &DefaultSQLExpr{}
+		return &DefaultSQLExpr{key: key}
 	}
 }
 
@@ -95,9 +99,12 @@ type DefaultSQLExpr struct {
 
 	keepColumns []string
 	fieldMap    map[string]string
+	fieldAlias  metadata.FieldAlias
 
 	timeField  string
 	valueField string
+
+	key string
 }
 
 func (d *DefaultSQLExpr) Type() string {
@@ -107,6 +114,11 @@ func (d *DefaultSQLExpr) Type() string {
 func (d *DefaultSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr {
 	d.timeField = timeField
 	d.valueField = valueField
+	return d
+}
+
+func (d *DefaultSQLExpr) WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr {
+	d.fieldAlias = fieldAlias
 	return d
 }
 
@@ -347,12 +359,28 @@ func (d *DefaultSQLExpr) buildCondition(c metadata.ConditionField) (string, erro
 			}
 		}
 	// 处理正则表达式匹配
+	// 根据数据库类型选择不同的正则语法：
+	// - HDFS 使用 regexp_like() 函数
+	// - 其他数据库使用 REGEXP 操作符
 	case metadata.ConditionRegEqual:
-		op = "REGEXP"
-		val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|")) // 多个值用|连接
+		if d.key == HDFS {
+			pattern := strings.Join(c.Value, "|") // 多个值用|连接
+			val = fmt.Sprintf("regexp_like(%s, '%s')", key, pattern)
+			key = ""
+		} else {
+			op = "REGEXP"
+			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|"))
+		}
 	case metadata.ConditionNotRegEqual:
-		op = "NOT REGEXP"
-		val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|"))
+		if d.key == HDFS {
+			pattern := strings.Join(c.Value, "|")
+			val = fmt.Sprintf("NOT regexp_like(%s, '%s')", key, pattern)
+			key = ""
+		} else {
+			op = "NOT REGEXP"
+			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|"))
+		}
+
 	// 处理数值比较操作符（>, >=, <, <=）
 	case metadata.ConditionGt:
 		op = ">"

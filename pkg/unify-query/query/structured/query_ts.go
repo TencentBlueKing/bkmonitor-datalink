@@ -173,11 +173,6 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 			query.Scroll = q.Scroll
 		}
 
-		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-		if query.HighLight == nil && q.HighLight != nil {
-			query.HighLight = q.HighLight
-		}
-
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
 		if len(query.KeepColumns) == 0 && len(q.ResultColumns) != 0 {
 			query.KeepColumns = q.ResultColumns
@@ -415,9 +410,6 @@ type Query struct {
 	Scroll string `json:"-"`
 	// Collapse
 	Collapse *metadata.Collapse `json:"collapse,omitempty"`
-
-	// HighLight 是否打开高亮，只对原始数据接口生效
-	HighLight *metadata.HighLight `json:"highlight,omitempty"`
 }
 
 func (q *Query) LabelMap() (map[string][]string, error) {
@@ -425,9 +417,10 @@ func (q *Query) LabelMap() (map[string][]string, error) {
 	labelCheck := make(map[string]struct{})
 
 	addLabel := func(key, value string) {
-		if key == "" || value == "" {
+		if value == "" {
 			return
 		}
+
 		checkKey := key + ":" + value
 		if _, ok := labelCheck[checkKey]; !ok {
 			labelCheck[checkKey] = struct{}{}
@@ -444,12 +437,9 @@ func (q *Query) LabelMap() (map[string][]string, error) {
 	}
 	if q.QueryString != "" {
 		qLabelMap, err := querystring.LabelMap(q.QueryString)
-		if err != nil {
-			return nil, err
-		}
-		for key, values := range qLabelMap {
-			for _, value := range values {
-				if key != "" && value != "" {
+		if err == nil {
+			for key, values := range qLabelMap {
+				for _, value := range values {
 					addLabel(key, value)
 				}
 			}
@@ -609,7 +599,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			DB:            route.DB(),
 			Measurement:   route.Measurement(),
 			Field:         q.FieldName,
-			MetricName:    metricName,
 			Aggregates:    aggregates,
 			AllConditions: allConditions.MetaDataAllConditions(),
 			Size:          q.Limit,
@@ -699,6 +688,8 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 			if isVmQuery {
 				query.StorageType = consul.VictoriaMetricsStorageType
+			} else {
+				query.StorageType = consul.InfluxDBStorageType
 			}
 		}
 
@@ -792,6 +783,8 @@ func (q *Query) BuildMetadataQuery(
 	case redis.BKTraditionalMeasurement:
 		// measurement: cpu_detail, field: usage  =>  cpu_detail_usage
 		field, fields = metricName, expandMetricNames
+		// 拼接指标
+		query.MetricNames = function.GetRealMetricName(q.DataSource, tsDB.TableID, expandMetricNames...)
 	// 多指标单表，单列多指标，维度: metric_name 为指标名，metric_value 为指标值
 	case redis.BkExporter:
 		field, fields = promql.StaticMetricValue, []string{promql.StaticMetricValue}
@@ -810,13 +803,19 @@ func (q *Query) BuildMetadataQuery(
 	// 多指标单表，字段名为指标名
 	case redis.BkStandardV2TimeSeries:
 		field, fields = metricName, expandMetricNames
+		// 拼接指标
+		query.MetricNames = function.GetRealMetricName(q.DataSource, tsDB.TableID, expandMetricNames...)
 	// 单指标单表，指标名为表名，值为指定字段 value
 	case redis.BkSplitMeasurement:
 		// measurement: usage, field: value  => usage_value
 		measurement, measurements = metricName, expandMetricNames
 		field, fields = promql.StaticField, []string{promql.StaticField}
+		// 拼接指标
+		query.MetricNames = function.GetRealMetricName("", "", expandMetricNames...)
 	default:
 		field, fields = metricName, expandMetricNames
+		// 拼接指标
+		query.MetricNames = function.GetRealMetricName(q.DataSource, tsDB.TableID, expandMetricNames...)
 	}
 
 	filterConditions := make([][]ConditionField, 0)
@@ -857,32 +856,6 @@ func (q *Query) BuildMetadataQuery(
 	var vmMetric string
 	if metricName != "" {
 		vmMetric = fmt.Sprintf("%s_%s", metricName, promql.StaticField)
-	}
-
-	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的函数都进行替换，例如 label_replace
-	for _, a := range q.AggregateMethodList {
-		switch a.Method {
-		// label_replace(v instant-vector, dst_label string, replacement string, src_label string, regex string)
-		case "label_replace":
-			if len(a.VArgsList) == 4 && a.VArgsList[2] == promql.MetricLabelName {
-				if strings.LastIndex(fmt.Sprintf("%s", a.VArgsList[3]), field) < 0 {
-					a.VArgsList[3] = fmt.Sprintf("%s_%s", a.VArgsList[3], field)
-				}
-			}
-		}
-	}
-
-	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的条件都进行替换，也就是条件中使用 __name__ 的
-	for _, qc := range queryConditions {
-		for _, c := range qc {
-			if c.DimensionName == promql.MetricLabelName {
-				for ci, cv := range c.Value {
-					if strings.LastIndex(cv, field) < 0 {
-						c.Value[ci] = fmt.Sprintf("%s_%s", cv, field)
-					}
-				}
-			}
-		}
 	}
 
 	// 合并查询以及空间过滤条件到 condition 里面
@@ -959,10 +932,10 @@ func (q *Query) BuildMetadataQuery(
 	}
 	query.Timezone = timezone
 
+	query.MeasurementType = tsDB.MeasurementType
 	query.DataSource = q.DataSource
 	query.TableID = tsDB.TableID
 	query.DataLabel = tsDB.DataLabel
-	query.MetricName = metricName
 	query.ClusterName = tsDB.ClusterName
 	query.TagsKey = tsDB.TagsKey
 	query.DB = tsDB.DB
@@ -993,6 +966,35 @@ func (q *Query) BuildMetadataQuery(
 		query.Orders = q.OrderBy.Orders()
 	}
 
+	// 只有 vm 类型才需要进行处理
+	if query.StorageType == consul.VictoriaMetricsStorageType {
+		// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的函数都进行替换，例如 label_replace
+		for _, a := range q.AggregateMethodList {
+			switch a.Method {
+			// label_replace(v instant-vector, dst_label string, replacement string, src_label string, regex string)
+			case "label_replace":
+				if len(a.VArgsList) == 4 && a.VArgsList[2] == promql.MetricLabelName {
+					if strings.LastIndex(fmt.Sprintf("%s", a.VArgsList[3]), field) < 0 {
+						a.VArgsList[3] = fmt.Sprintf("%s_%s", a.VArgsList[3], field)
+					}
+				}
+			}
+		}
+
+		// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的条件都进行替换，也就是条件中使用 __name__ 的
+		for _, qc := range queryConditions {
+			for _, c := range qc {
+				if c.DimensionName == promql.MetricLabelName {
+					for ci, cv := range c.Value {
+						if strings.LastIndex(cv, field) < 0 {
+							c.Value[ci] = fmt.Sprintf("%s_%s", cv, field)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	jsonString, _ := json.Marshal(query)
 	span.Set("query-json", jsonString)
 
@@ -1011,6 +1013,13 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		result   parser.Expr
 		matchers []*labels.Matcher
 	)
+
+	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
+	if encodeFunc == nil {
+		encodeFunc = func(q string) string {
+			return q
+		}
+	}
 
 	// 判断是否使用别名作为指标
 	metricName = q.ReferenceName
@@ -1034,11 +1043,17 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 
 		// 替换指标名
 		if m, ok := promExprOpt.ReferenceNameMetric[q.ReferenceName]; ok {
-			metricName = m
+			// 如果是正则，证明里面存在特殊字符，所以不能转换
+			if q.IsRegexp {
+				metricName = m
+			} else {
+				metricName = encodeFunc(m)
+			}
 		}
 
 		// 增加 Matchers
 		for _, m := range promExprOpt.ReferenceNameLabelMatcher[q.ReferenceName] {
+			m.Name = encodeFunc(m.Name)
 			matchers = append(matchers, m)
 		}
 
@@ -1047,8 +1062,11 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 			q.TimeAggregation.Function = nf
 		}
 
-		// 替换函数名
 		for aggIdx, aggrVal := range q.AggregateMethodList {
+			for mIdx, m := range aggrVal.Dimensions {
+				q.AggregateMethodList[aggIdx].Dimensions[mIdx] = encodeFunc(m)
+			}
+
 			if nf, ok := promExprOpt.FunctionReplace[aggrVal.Method]; ok {
 				q.AggregateMethodList[aggIdx].Method = nf
 			}
@@ -1119,8 +1137,6 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		}
 	}
 
-	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
-
 	for idx := 0; idx < funcNums; idx++ {
 		if idx == timeIdx {
 			result, err = q.TimeAggregation.ToProm(result)
@@ -1133,12 +1149,6 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 				methodIdx -= 1
 			}
 			method := q.AggregateMethodList[methodIdx]
-			if encodeFunc != nil {
-				for di, dv := range method.Dimensions {
-					method.Dimensions[di] = encodeFunc(dv)
-				}
-			}
-
 			if result, err = method.ToProm(result); err != nil {
 				log.Errorf(ctx, "failed to translate function for->[%s]", err)
 				return nil, err

@@ -11,19 +11,16 @@ package querystring
 
 import (
 	"fmt"
-)
-
-var (
-	DefaultKey = "log" // 默认字段名，与 Doris 的 DefaultKey 一致
+	"strings"
 )
 
 func LabelMap(query string) (map[string][]string, error) {
-	labelMap := make(map[string][]string)
 	expr, err := Parse(query)
 	if err != nil {
 		return nil, err
 	}
 
+	labelMap := make(map[string][]string)
 	if err := parseExprToKeyValue(query, expr, labelMap); err != nil {
 		return nil, err
 	}
@@ -33,7 +30,7 @@ func LabelMap(query string) (map[string][]string, error) {
 
 func parseExprToKeyValue(query string, expr Expr, kv map[string][]string) error {
 	if expr == nil {
-		return fmt.Errorf("expression is nil for query: %s", query)
+		return nil
 	}
 
 	switch e := expr.(type) {
@@ -56,19 +53,11 @@ func parseExprToKeyValue(query string, expr Expr, kv map[string][]string) error 
 			return err
 		}
 	case *WildcardExpr:
-		field := e.Field
-		if field == "" {
-			field = DefaultKey
-		}
-		if err := addValueToMap(kv, field, e.Value); err != nil {
+		if err := addValueToMap(kv, e.Field, e.Value); err != nil {
 			return fmt.Errorf("failed to add value to map: %w", err)
 		}
 	case *MatchExpr:
-		field := e.Field
-		if field == "" {
-			field = DefaultKey
-		}
-		if err := addValueToMap(kv, field, e.Value); err != nil {
+		if err := addValueToMap(kv, e.Field, e.Value); err != nil {
 			return fmt.Errorf("failed to add value to map: %w", err)
 		}
 	default:
@@ -81,9 +70,13 @@ func addValueToMap(kv map[string][]string, field, value string) error {
 	if kv == nil {
 		return fmt.Errorf("kv map is nil")
 	}
+
 	if value == "" {
-		return fmt.Errorf("value cannot be empty")
+		return nil
 	}
+
+	// value 遇到通配符需要移除前后的星号
+	value = strings.Trim(value, "*")
 
 	for _, v := range kv[field] {
 		if v == value {

@@ -64,6 +64,12 @@ processor:
         from_record:
           - source: "request.client.ip"
             destination: "resource.client.ip"
+
+    # FromMetadata Action
+    - name: "resource_filter/from_metadata"
+      config:
+        from_metadata:
+          keys: ["*"]
 */
 
 package resourcefilter

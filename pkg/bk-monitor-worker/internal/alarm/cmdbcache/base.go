@@ -327,7 +327,7 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 		// 获取业务列表
 		cmdbApi := getCmdbApi(cacheManager.GetBkTenantId())
 		var result cmdb.SearchBusinessResp
-		_, err := cmdbApi.SearchBusiness().SetPathParams(map[string]string{"bk_supplier_account": "0"}).SetResult(&result).Request()
+		_, err := cmdbApi.SearchBusiness().SetResult(&result).Request()
 		if err = api.HandleApiResultError(result.ApiCommonRespMeta, err, "search business failed"); err != nil {
 			return err
 		}

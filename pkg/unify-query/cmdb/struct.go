@@ -43,15 +43,15 @@ type RelationMultiResourceRequest struct {
 	QueryList []struct {
 		Timestamp int64 `json:"timestamp"`
 
-		SourceType       Resource `json:"source_type"`
-		SourceInfo       Matcher  `json:"source_info"`
-		SourceExpandInfo Matcher  `json:"source_expand_info"`
+		SourceType       Resource `json:"source_type,omitempty"`
+		SourceInfo       Matcher  `json:"source_info,omitempty"`
+		SourceExpandInfo Matcher  `json:"source_expand_info,omitempty"`
 
-		TargetType     Resource `json:"target_type"`
-		TargetInfoShow bool     `json:"target_info_show"`
+		TargetType     Resource `json:"target_type,omitempty"`
+		TargetInfoShow bool     `json:"target_info_show,omitempty"`
 
-		PathResource  []Resource `json:"path_resource"`
-		LookBackDelta string     `json:"look_back_delta"`
+		PathResource  []Resource `json:"path_resource,omitempty"`
+		LookBackDelta string     `json:"look_back_delta,omitempty"`
 	} `json:"query_list"`
 }
 
@@ -76,15 +76,15 @@ type RelationMultiResourceRangeRequest struct {
 		EndTs   int64  `json:"end_time"`
 		Step    string `json:"step"`
 
-		SourceType       Resource `json:"source_type"`
-		SourceInfo       Matcher  `json:"source_info"`
-		SourceExpandInfo Matcher  `json:"source_expand_info"`
+		SourceType       Resource `json:"source_type,omitempty"`
+		SourceInfo       Matcher  `json:"source_info,omitempty"`
+		SourceExpandInfo Matcher  `json:"source_expand_info,omitempty"`
 
-		TargetType     Resource `json:"target_type"`
-		TargetInfoShow bool     `json:"target_info_show"`
+		TargetType     Resource `json:"target_type,omitempty"`
+		TargetInfoShow bool     `json:"target_info_show,omitempty"`
 
-		PathResource  []Resource `json:"path_resource"`
-		LookBackDelta string     `json:"look_back_delta"`
+		PathResource  []Resource `json:"path_resource,omitempty"`
+		LookBackDelta string     `json:"look_back_delta,omitempty"`
 	} `json:"query_list"`
 }
 

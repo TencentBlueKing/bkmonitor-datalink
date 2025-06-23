@@ -84,14 +84,17 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 		_ = p.Submit(func() {
 			defer sendWg.Done()
 			d := cmdb.RelationMultiResourceResponseData{
-				Code:       http.StatusOK,
-				TargetList: make(cmdb.Matchers, 0),
+				Code: http.StatusOK,
 			}
 
 			d.Path, d.TargetList, err = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUID, qry.Timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
 			if err != nil {
 				d.Message = err.Error()
 				d.Code = http.StatusBadRequest
+			}
+
+			if d.TargetList == nil {
+				d.TargetList = make(cmdb.Matchers, 0)
 			}
 
 			lock.Lock()

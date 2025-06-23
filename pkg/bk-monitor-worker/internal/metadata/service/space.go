@@ -49,10 +49,21 @@ func NewSpaceSvc(obj *space.Space) SpaceSvc {
 // RefreshBkccSpaceName 刷新 bkcc 类型空间名称
 func (s *SpaceSvc) RefreshBkccSpaceName() error {
 	// 获取bkcc业务cmdb数据信息
-	bizIdNameMap, err := s.getBkccBizIdNameMap()
+	tenants, err := tenant.GetTenantList()
 	if err != nil {
-		return errors.Wrap(err, "getBkccBizIdNameMap failed")
+		return errors.Wrap(err, "get tenant list failed")
 	}
+	bizIdNameMap := make(map[string]string)
+	for _, tenant := range tenants {
+		tempMap, err := s.getBkccBizIdNameMap(tenant.Id)
+		if err != nil {
+			return errors.Wrap(err, "getBkccBizIdNameMap failed")
+		}
+		for k, v := range tempMap {
+			bizIdNameMap[k] = v
+		}
+	}
+
 	// 更新数据库中记录
 	db := mysql.GetDBSession().DB
 	var spaceList []space.Space
@@ -79,13 +90,15 @@ func (s *SpaceSvc) RefreshBkccSpaceName() error {
 		}
 		logger.Infof("update bkcc space name [%s] to [%s]", oldName, sp.SpaceName)
 	}
+
 	return nil
 }
 
 // RefreshBkccSpace 同步 bkcc 的业务，自动创建对应的空间
 func (s *SpaceSvc) RefreshBkccSpace(allowDelete bool) error {
 	// 获取bkcc业务cmdb数据信息
-	bizIdNameMap, err := s.getBkccBizIdNameMap()
+	// TODO: 多租户
+	bizIdNameMap, err := s.getBkccBizIdNameMap(tenant.DefaultTenantId)
 	if err != nil {
 		return errors.Wrap(err, "getBkccBizIdNameMap failed")
 	}
@@ -159,9 +172,8 @@ func (s *SpaceSvc) RefreshBkccSpace(allowDelete bool) error {
 }
 
 // 获取bkcc业务cmdb数据信息
-func (*SpaceSvc) getBkccBizIdNameMap() (map[string]string, error) {
-	// todo: tenant
-	cmdbApi, err := api.GetCmdbApi(tenant.DefaultTenantId)
+func (*SpaceSvc) getBkccBizIdNameMap(bkTenantId string) (map[string]string, error) {
+	cmdbApi, err := api.GetCmdbApi(bkTenantId)
 	if err != nil {
 		return nil, errors.Wrap(err, "get cmdb api failed")
 	}
@@ -591,7 +603,8 @@ func (s *SpaceSvc) RefreshBcsProjectBiz() error {
 
 // GetValidBcsProjects 获取可用的 BKCI(BCS) 项目空间
 func (s *SpaceSvc) GetValidBcsProjects() ([]map[string]string, error) {
-	bizIdNameMap, err := s.getBkccBizIdNameMap()
+	// TODO: 多租户
+	bizIdNameMap, err := s.getBkccBizIdNameMap(tenant.DefaultTenantId)
 	if err != nil {
 		return nil, errors.Wrap(err, "getBkccBizIdNameMap failed")
 	}

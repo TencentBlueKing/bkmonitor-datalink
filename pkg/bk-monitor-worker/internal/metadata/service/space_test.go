@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
@@ -32,7 +33,7 @@ import (
 
 func TestSpaceSvc_RefreshBkccSpaceName(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
+	patch := gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
 		data := `{"result":true,"code":0,"data":{"count":2,"info":[{"bk_biz_developer":"","bk_biz_id":121,"bk_biz_maintainer":"admin","bk_biz_name":"蓝鲸121","bk_biz_productor":"","bk_biz_tester":"test8","bk_supplier_account":"0","create_time":"2023-05-23T23:19:57.356+08:00","db_app_abbr":"blueking","default":0,"language":"1","last_time":"2023-11-28T10:45:12.201+08:00","life_cycle":"2","operator":"","time_zone":"Asia/Shanghai"},{"bk_biz_developer":"","bk_biz_id":122,"bk_biz_maintainer":"admin","bk_biz_name":"测试业务122","bk_biz_productor":"","bk_biz_tester":"","bk_supplier_account":"0","create_time":"2023-06-09T12:05:20.042+08:00","db_app_abbr":"abbr","default":0,"language":"1","last_time":"2023-11-14T11:40:40.7+08:00","life_cycle":"2","operator":"","time_zone":"Asia/Shanghai"}]},"message":"success","permission":null,"request_id":"74cf51a3628743e194af6996389790e5"}`
 		body := io.NopCloser(strings.NewReader(data))
 		return &http.Response{
@@ -43,8 +44,11 @@ func TestSpaceSvc_RefreshBkccSpaceName(t *testing.T) {
 			Request:       req,
 		}, nil
 	})
+	defer patch.Reset()
+
 	db := mysql.GetDBSession().DB
 	sp := space.Space{
+		BkTenantId:  tenant.DefaultTenantId,
 		SpaceTypeId: models.SpaceTypeBKCC,
 		SpaceId:     "121",
 		SpaceName:   "蓝鲸_dif_name",

@@ -10,6 +10,8 @@
 package define
 
 import (
+	"time"
+
 	"github.com/pkg/errors"
 )
 
@@ -18,6 +20,7 @@ type BaseDataProcessor struct {
 	Name           string
 	DisabledBizIDs map[string]struct{}
 	baseIndex      int
+	poll           time.Duration
 }
 
 // String : return frontend name
@@ -40,6 +43,14 @@ func (f *BaseDataProcessor) SetIndex(index int) {
 
 func (f *BaseDataProcessor) Index() int {
 	return f.baseIndex
+}
+
+func (f *BaseDataProcessor) SetPoll(poll time.Duration) {
+	f.poll = poll
+}
+
+func (f *BaseDataProcessor) Poll() time.Duration {
+	return f.poll
 }
 
 // NewBaseDataProcessor :

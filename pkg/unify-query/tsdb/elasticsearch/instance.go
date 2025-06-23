@@ -127,6 +127,13 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 		}
 	}
 
+	if fieldTypesCache == nil {
+		err := InitFieldTypesCache()
+		if err != nil {
+			return ins, fmt.Errorf("failed to initialize field types cache: %w", err)
+		}
+	}
+
 	return ins, nil
 }
 
@@ -203,6 +210,36 @@ func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []stri
 		}
 	}
 
+	return mappings, nil
+}
+
+func (i *Instance) getMappingsWithCache(ctx context.Context, conn Connect, aliases []string, tableID string) ([]map[string]any, error) {
+	var (
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-get-mapping-with-cache")
+	defer span.End(&err)
+
+	cacheKey := fmt.Sprintf("%s:%s", conn.Address, strings.Join(aliases, ","))
+	span.Set("cache-key", cacheKey)
+
+	if fieldTypesCache != nil && fieldTypesCache.HasTableCache(ctx, tableID) {
+		span.Set("cache-hit", "true")
+		return []map[string]any{}, nil
+	}
+
+	span.Set("cache-hit", "false")
+	mappings, err := i.getMappings(ctx, conn, aliases)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(mappings) == 0 {
+		return nil, fmt.Errorf("index is empty with %v", aliases)
+	}
+
+	fieldTypesCache.SetFieldTypesFromMappings(ctx, tableID, mappings)
 	return mappings, nil
 }
 
@@ -532,13 +569,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				wg.Done()
 			}()
 
-			mappings, mappingErr := i.getMappings(ctx, conn, aliases)
+			mappings, mappingErr := i.getMappingsWithCache(ctx, conn, aliases, query.TableID)
 			if mappingErr != nil {
 				err = mappingErr
-				return
-			}
-			if len(mappings) == 0 {
-				err = fmt.Errorf("index is empty with %v，url: %s", aliases, conn.Address)
 				return
 			}
 
@@ -566,7 +599,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			fact := NewFormatFactory(ctx).
 				WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 				WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.Size).
-				WithMappings(mappings...).
+				WithMappings(query.TableID, mappings...).
 				WithOrders(query.Orders)
 
 			sr, queryErr := i.esQuery(ctx, qo, fact)
@@ -728,10 +761,9 @@ func (i *Instance) QuerySeriesSet(
 					conn:    conn,
 				}
 
-				mappings, errMapping := i.getMappings(ctx, qo.conn, qo.indexes)
+				mappings, errMapping := i.getMappingsWithCache(ctx, qo.conn, qo.indexes, query.TableID)
 				// index 不存在，mappings 获取异常直接返回空
-				if len(mappings) == 0 {
-					log.Warnf(ctx, "index is empty with %v with %s error %v", qo.indexes, qo.conn.String(), errMapping)
+				if errMapping != nil {
 					return
 				}
 
@@ -749,7 +781,7 @@ func (i *Instance) QuerySeriesSet(
 				fact := NewFormatFactory(ctx).
 					WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 					WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
-					WithMappings(mappings...).
+					WithMappings(query.TableID, mappings...).
 					WithOrders(query.Orders).
 					WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 

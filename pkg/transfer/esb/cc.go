@@ -128,11 +128,11 @@ func (c *CCApiClient) Agent() *sling.Sling {
 			agent = agent.Base(customCmdbApi)
 		} else {
 			// use default cmdb apigw address
-			agent = agent.Path("/api/bk-cmdb/prod")
+			agent = agent.Path("/api/bk-cmdb/prod/")
 		}
 	} else {
 		// use esb cmdb address
-		agent = agent.Path("/api/c/compapi/v2/cc")
+		agent = agent.Path("/api/c/compapi/v2/cc/")
 	}
 	return agent
 }

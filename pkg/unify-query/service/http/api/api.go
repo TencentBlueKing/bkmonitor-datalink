@@ -93,6 +93,7 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 				d.Code = http.StatusBadRequest
 			}
 
+			// 返回给到 saas 的数据，不能为 null，必须要是 []，否则会报错
 			if d.TargetList == nil {
 				d.TargetList = make(cmdb.Matchers, 0)
 			}
@@ -178,6 +179,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 				d.Code = http.StatusBadRequest
 			}
 
+			// 返回给到 saas 的数据，不能为 null，必须要是 []，否则会报错
 			if d.TargetList == nil {
 				d.TargetList = make([]cmdb.MatchersWithTimestamp, 0)
 			}

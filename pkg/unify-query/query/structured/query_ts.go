@@ -11,6 +11,9 @@ package structured
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"strings"
 	"time"
@@ -1164,4 +1167,107 @@ func (c *Conditions) Append(field ConditionField, condition string) {
 		c.ConditionList = append(c.ConditionList, condition)
 	}
 	c.FieldList = append(c.FieldList, field)
+}
+
+type QueryUUIDInfo struct {
+	QueryHash string
+	ExpiresAt time.Time
+}
+
+func (q *QueryTs) GenerateQueryUUID(timeout time.Duration) (string, error) {
+	queryBody, err := json.Marshal(q)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal QueryTs: %v", err)
+	}
+
+	hasher := sha256.New()
+	hasher.Write(queryBody)
+	fullHash := hasher.Sum(nil)
+
+	expiresAt := time.Now().Add(timeout)
+	expiresTimestamp := expiresAt.Unix()
+
+	data := make([]byte, 40)
+	copy(data[0:32], fullHash)
+	binary.BigEndian.PutUint64(data[32:40], uint64(expiresTimestamp))
+
+	return base64.URLEncoding.EncodeToString(data), nil
+}
+
+func ParseQueryUUID(queryUUID string) (*QueryUUIDInfo, error) {
+	data, err := base64.URLEncoding.DecodeString(queryUUID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid queryUUID format: %v", err)
+	}
+
+	if len(data) != 40 {
+		return nil, fmt.Errorf("invalid queryUUID length: expected 40 bytes, got %d", len(data))
+	}
+
+	queryHash := fmt.Sprintf("%x", data[0:32])
+	expiresTimestamp := int64(binary.BigEndian.Uint64(data[32:40]))
+	expiresAt := time.Unix(expiresTimestamp, 0)
+
+	if time.Now().After(expiresAt) {
+		return nil, fmt.Errorf("queryUUID has expired at %v", expiresAt)
+	}
+
+	return &QueryUUIDInfo{
+		QueryHash: queryHash,
+		ExpiresAt: expiresAt,
+	}, nil
+}
+
+func ValidateQueryUUID(queryUUID string) error {
+	_, err := ParseQueryUUID(queryUUID)
+	return err
+}
+
+func IsQueryUUIDExpired(queryUUID string) bool {
+	info, err := ParseQueryUUID(queryUUID)
+	if err != nil {
+		return true
+	}
+	return time.Now().After(info.ExpiresAt)
+}
+
+func (q *QueryTs) VerifyQueryUUID(queryUUID string) error {
+	info, err := ParseQueryUUID(queryUUID)
+	if err != nil {
+		return err
+	}
+
+	queryBody, err := json.Marshal(q)
+	if err != nil {
+		return fmt.Errorf("failed to marshal QueryTs: %v", err)
+	}
+
+	hasher := sha256.New()
+	hasher.Write(queryBody)
+	currentHash := fmt.Sprintf("%x", hasher.Sum(nil))
+
+	if info.QueryHash != currentHash {
+		return fmt.Errorf("queryUUID does not match the current QueryTs")
+	}
+
+	return nil
+}
+
+// VerifyQueryBodyMatch 验证queryUUID是否与给定的查询体匹配
+func VerifyQueryBodyMatch(queryUUID, queryBody string) error {
+	info, err := ParseQueryUUID(queryUUID)
+	if err != nil {
+		return err
+	}
+
+	// 计算当前查询体的hash
+	hasher := sha256.New()
+	hasher.Write([]byte(queryBody))
+	currentHash := fmt.Sprintf("%x", hasher.Sum(nil))
+
+	if info.QueryHash != currentHash {
+		return fmt.Errorf("queryUUID does not match the provided query body")
+	}
+
+	return nil
 }

@@ -428,7 +428,7 @@ func RefreshKafkaTopicInfo(ctx context.Context, t *t.Task) error {
 	wg := &sync.WaitGroup{}
 	ch := make(chan struct{}, GetGoroutineLimit("refresh_kafka_topic_info"))
 	wg.Add(len(kafkaTopicInfoList))
-	// 遍历所有的ES存储并创建index, 并执行完整的es生命周期操作
+	// 遍历所有的Kafka主题信息并创建相关索引
 	for _, info := range kafkaTopicInfoList {
 		// 获取 cluster id
 		clusterId, ok := dataIdClusterId[info.BkDataId]

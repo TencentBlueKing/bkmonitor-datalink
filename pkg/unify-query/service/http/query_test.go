@@ -3165,6 +3165,51 @@ func TestStructAndPromQLConvert(t *testing.T) {
 				MetricMerge: "a",
 			},
 		},
+		"promql 多层时间聚合聚合函数": {
+			queryStruct: false,
+			promql: &structured.QueryPromQL{
+				PromQL: `quantile_over_time(0.95, sum(sum_over_time(bkmonitor:metric{tag!="abc"}[1m]))[1h:1m])`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						TableID:    "",
+						FieldName:  "metric",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method: "sum",
+							},
+							{
+								Method:     "quantile_over_time",
+								VArgsList:  []interface{}{0.95},
+								Position:   1,
+								Window:     "1h0m0s",
+								IsSubQuery: true,
+								Step:       "1m0s",
+							},
+						},
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "sum_over_time",
+							Window:    "1m0s",
+							NodeIndex: 2,
+						},
+						Offset:        "0s",
+						ReferenceName: "a",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "tag",
+									Operator:      "ne",
+									Value:         []string{"abc"},
+								},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+			},
+		},
 	}
 
 	for n, c := range testCase {

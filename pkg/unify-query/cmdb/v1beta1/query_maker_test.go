@@ -116,7 +116,7 @@ func TestMakeQuery(t *testing.T) {
 				"namespace":      "ns1",
 				"bcs_cluster_id": "cluster1",
 			},
-			promQL: `(count by (host_id) (bkmonitor:host_with_system_relation{bk_target_ip!="",host_id!=""} * on (bk_target_ip) group_left () (count by (bk_target_ip) (bkmonitor:node_with_system_relation{bcs_cluster_id="cluster1",bk_target_ip!="",node!=""} * on (bcs_cluster_id, node) group_left () (count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"})))))) * on (host_id) group_left (version, env_name, env_type, service_version, service_type) bkmonitor:host_info_relation`,
+			promQL: `(count by (host_id) (bkmonitor:host_with_system_relation{bk_target_ip!="",host_id!=""} * on (bk_target_ip) group_left () (count by (bk_target_ip) (bkmonitor:node_with_system_relation{bcs_cluster_id="cluster1",bk_target_ip!="",node!=""} * on (bcs_cluster_id, node) group_left () (count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"})))))) * on (host_id) group_left (version, env_name, env_type, service_version, service_type) bkmonitor:host_info_relation{host_id!=""}`,
 		},
 		{
 			name: "level 2 and 1m with expand info and expand show",
@@ -126,7 +126,7 @@ func TestMakeQuery(t *testing.T) {
 			},
 			expandShow: true,
 			step:       time.Minute,
-			promQL:     `(count by (bcs_cluster_id, namespace, pod, container) (count_over_time(bkmonitor:container_with_pod_relation{bcs_cluster_id!="",container!="",namespace!="",pod!=""}[1m]) * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (count_over_time(bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node="node_1",pod!=""}[1m]))))) * on (bcs_cluster_id, namespace, pod, container) group_left (version) count_over_time(bkmonitor:container_info_relation[1m])`,
+			promQL:     `(count by (bcs_cluster_id, namespace, pod, container) (count_over_time(bkmonitor:container_with_pod_relation{bcs_cluster_id!="",container!="",namespace!="",pod!=""}[1m]) * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (count_over_time(bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node="node_1",pod!=""}[1m]))))) * on (bcs_cluster_id, namespace, pod, container) group_left (version) count_over_time(bkmonitor:container_info_relation{bcs_cluster_id!="",container!="",namespace!="",pod!=""}[1m])`,
 		},
 		{
 			name: "level 2 with expand info",

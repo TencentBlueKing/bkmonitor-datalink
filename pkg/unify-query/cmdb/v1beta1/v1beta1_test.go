@@ -422,6 +422,9 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 		pathResource []cmdb.Resource
 
 		expectedTargetList cmdb.Matchers
+		expectedSource     cmdb.Resource
+		expectedSourceInfo cmdb.Matcher
+		expectedTarget     cmdb.Resource
 		expectedPath       []string
 		error              error
 	}{
@@ -438,6 +441,12 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 					"bk_target_ip": "127.0.0.1",
 				},
 			},
+			expectedSource: "node",
+			expectedSourceInfo: map[string]string{
+				"bcs_cluster_id": "BCS-K8S-00000",
+				"node":           "node-127-0-0-1",
+			},
+			expectedTarget: "system",
 		},
 		"node to system": {
 			target: "system",
@@ -452,7 +461,12 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 					"bk_target_ip": "127.0.0.1",
 				},
 			},
-		},
+			expectedSource: "node",
+			expectedSourceInfo: map[string]string{
+				"bcs_cluster_id": "BCS-K8S-00000",
+				"node":           "node-127-0-0-1",
+			},
+			expectedTarget: "system"},
 		"system to pod": {
 			target: "pod",
 			indexMatcher: cmdb.Matcher{
@@ -472,6 +486,11 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 					"pod":            "bkm-pod-2",
 				},
 			},
+			expectedSource: "system",
+			expectedSourceInfo: map[string]string{
+				"bk_target_ip": "127.0.0.1",
+			},
+			expectedTarget: "pod",
 		},
 		"pod_name to system through apm service instance": {
 			target: "system",
@@ -486,6 +505,13 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 					"bk_target_ip": "127.0.0.1",
 				},
 			},
+			expectedSource: "pod",
+			expectedSourceInfo: map[string]string{
+				"bcs_cluster_id": "BCS-K8S-00000",
+				"namespace":      "bkmonitor-operator",
+				"pod":            "bkm-pod-1",
+			},
+			expectedTarget: "system",
 		},
 		"container info": {
 			source: "container",
@@ -502,6 +528,11 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 					"version":        "1.2.3",
 				},
 			},
+			expectedSource: "container",
+			expectedSourceInfo: map[string]string{
+				"container": "container",
+			},
+			expectedTarget: "container",
 		},
 	}
 
@@ -509,13 +540,16 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
-			path, rets, err := testModel.QueryResourceMatcher(ctx, "", influxdb.SpaceUid, timestamp, c.target, c.source, c.indexMatcher, c.expandMatcher, c.targetInfoShow, c.pathResource)
+			source, sourceInfo, path, target, rets, err := testModel.QueryResourceMatcher(ctx, "", influxdb.SpaceUid, timestamp, c.target, c.source, c.indexMatcher, c.expandMatcher, c.targetInfoShow, c.pathResource)
 			assert.Nil(t, err)
 			if err != nil {
 				log.Errorf(ctx, err.Error())
 			} else {
 				assert.Equal(t, c.expectedPath, path)
 				assert.Equal(t, c.expectedTargetList, rets)
+				assert.Equal(t, c.expectedSource, source)
+				assert.Equal(t, c.expectedSourceInfo, sourceInfo)
+				assert.Equal(t, c.expectedTarget, target)
 			}
 		})
 	}
@@ -582,6 +616,9 @@ func TestModel_GetResourceMatcherRange(t *testing.T) {
 		pathResource []cmdb.Resource
 
 		expectedTargetList []cmdb.MatchersWithTimestamp
+		expectedSource     cmdb.Resource
+		expectedSourceInfo cmdb.Matcher
+		expectedTarget     cmdb.Resource
 		expectedPath       []string
 		error              error
 	}{
@@ -592,6 +629,11 @@ func TestModel_GetResourceMatcherRange(t *testing.T) {
 			},
 			targetInfoShow: true,
 			expectedPath:   []string{"host"},
+			expectedSource: "host",
+			expectedSourceInfo: map[string]string{
+				"host_id": "12345",
+			},
+			expectedTarget: "host",
 			expectedTargetList: []cmdb.MatchersWithTimestamp{
 				{
 					Timestamp: 1693973987000,
@@ -695,13 +737,16 @@ func TestModel_GetResourceMatcherRange(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
-			path, rets, err := testModel.QueryResourceMatcherRange(ctx, "", influxdb.SpaceUid, step, start, end, c.target, c.source, c.indexMatcher, c.expandMatcher, c.targetInfoShow, c.pathResource)
+			source, sourceInfo, path, target, rets, err := testModel.QueryResourceMatcherRange(ctx, "", influxdb.SpaceUid, step, start, end, c.target, c.source, c.indexMatcher, c.expandMatcher, c.targetInfoShow, c.pathResource)
 			assert.Nil(t, err)
 			if err != nil {
 				log.Errorf(ctx, err.Error())
 			} else {
 				assert.Equal(t, c.expectedPath, path)
 				assert.Equal(t, c.expectedTargetList, rets)
+				assert.Equal(t, c.expectedSource, source)
+				assert.Equal(t, c.expectedSourceInfo, sourceInfo)
+				assert.Equal(t, c.expectedTarget, target)
 			}
 		})
 	}

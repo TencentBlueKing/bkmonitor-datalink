@@ -696,7 +696,6 @@ func TestSpaceRedisSvc_ComposeEsTableIds(t *testing.T) {
 
 	expectedTableId2 := "-1051_space_test.__default__"
 	assert.Contains(t, data, expectedTableId2, "Expected table ID not found in the result")
-
 }
 
 // 通用数据插入函数
@@ -1812,4 +1811,72 @@ func TestBuildFiltersByUsage(t *testing.T) {
 			assert.Equal(t, tt.expectedResult, result)
 		})
 	}
+}
+
+func TestSpaceRedisSvc_ComposeApmAll(t *testing.T) {
+	// 初始化数据库配置
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 清理所有相关表数据
+	cleanTestData := func() {
+		db.Delete(&space.Space{})
+		db.Delete(&resulttable.ResultTable{})
+	}
+	cleanTestData()       // 测试开始前清理数据
+	defer cleanTestData() // 测试结束后清理数据
+
+	// 准备测试用数据
+
+	// 准备 Space 测试数据
+	spaceObjs := []space.Space{
+		{
+			SpaceTypeId: "bkci",
+			SpaceId:     "test_bkci_space",
+			SpaceName:   "testSpace6",
+			Id:          1050,
+		},
+		{
+			SpaceTypeId: "bksaas",
+			SpaceId:     "test_bksaas_space",
+			SpaceName:   "testSpace7",
+			Id:          1051,
+		},
+	}
+	insertTestData(t, db, spaceObjs)
+
+	// 准备 ResultTable 测试数据
+	resultTable := resulttable.ResultTable{
+		TableId:        "apm_global.precalculate_storage_1",
+		BkBizId:        0,
+		DefaultStorage: models.StorageTypeES,
+		IsDeleted:      false,
+		IsEnable:       true,
+		BkBizIdAlias:   "biz_id",
+	}
+	err := resultTable.Create(db)
+	assert.NoError(t, err)
+
+	resultTable2 := resulttable.ResultTable{
+		TableId:        "apm_global.precalculate_storage_2",
+		BkBizId:        0,
+		DefaultStorage: models.StorageTypeES,
+		IsDeleted:      false,
+		IsEnable:       true,
+		BkBizIdAlias:   "biz_id",
+	}
+	err = resultTable2.Create(db)
+	assert.NoError(t, err)
+
+	// 测试 composeApmAllTypeTableIds
+	bkciData, err := NewSpacePusher().composeApmAllTypeTableIds("bkci", "test_bkci_space")
+	expected := map[string]map[string]interface{}(map[string]map[string]interface{}{"apm_global.precalculate_storage_1": map[string]interface{}{"filters": []map[string]interface{}{map[string]interface{}{"biz_id": "-1050"}}}, "apm_global.precalculate_storage_2": map[string]interface{}{"filters": []map[string]interface{}{map[string]interface{}{"biz_id": "-1050"}}}})
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, bkciData, "Expected 2 table IDs for bkci space")
+
+	bksaasData, err := NewSpacePusher().composeApmAllTypeTableIds("bksaas", "test_bksaas_space")
+	expected = map[string]map[string]interface{}{"apm_global.precalculate_storage_1": map[string]interface{}{"filters": []map[string]interface{}{map[string]interface{}{"biz_id": "-1051"}}}, "apm_global.precalculate_storage_2": map[string]interface{}{"filters": []map[string]interface{}{map[string]interface{}{"biz_id": "-1051"}}}}
+	assert.Equal(t, expected, bksaasData, "Expected 2 table IDs for bkci space")
+
 }

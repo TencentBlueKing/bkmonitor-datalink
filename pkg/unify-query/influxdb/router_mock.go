@@ -110,6 +110,8 @@ func MockSpaceRouter(ctx context.Context) {
 			"pod_with_replicaset_relation",
 			"apm_service_instance_with_pod_relation",
 			"apm_service_instance_with_system_relation",
+			"container_info_relation",
+			"host_info_relation",
 			"kubelet_info",
 		}
 		influxdbFields := []string{

@@ -1476,7 +1476,7 @@ func (s *SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) (bool, er
 	// 追加APM全局结果表
 	apmAllTypeValues, errApmAllType := s.composeApmAllTypeTableIds(spaceType, spaceId)
 	if errApmAllType != nil {
-		logger.Warnf("pushBkciSpaceTableIds: compose apm all type space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errApmAllType)
+		logger.Errorf("pushBkciSpaceTableIds: compose apm all type space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errApmAllType)
 	}
 	logger.Infof("pushBkciSpaceTableIds: compose apm all type space table_id data successfully, space_type [%s], space_id [%s],data->[%v]", spaceType, spaceId, apmAllTypeValues)
 	s.composeValue(&values, &apmAllTypeValues)

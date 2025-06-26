@@ -22,14 +22,37 @@ import (
 )
 
 const (
-	Doris         = "doris"
-	DorisTypeText = "text"
+	Doris = "doris"
 
 	ShardKey = "__shard_key__"
 
 	SelectIndex = "_index"
 
 	DefaultKey = "log"
+)
+
+const (
+	DorisTypeInt       = "INT"
+	DorisTypeTinyInt   = "TINYINT"
+	DorisTypeSmallInt  = "SMALLINT"
+	DorisTypeLargeInt  = "LARGEINT"
+	DorisTypeBigInt    = "BIGINT"
+	DorisTypeFloat     = "FLOAT"
+	DorisTypeDouble    = "DOUBLE"
+	DorisTypeDecimal   = "DECIMAL"
+	DorisTypeDecimalV3 = "DECIMALV3"
+
+	DorisTypeDate      = "DATE"
+	DorisTypeDatetime  = "DATETIME"
+	DorisTypeTimestamp = "TIMESTAMP"
+
+	DorisTypeBoolean = "BOOLEAN"
+
+	DorisTypeString     = "STRING"
+	DorisTypeText       = "TEXT"
+	DorisTypeVarchar512 = "VARCHAR(512)"
+
+	DorisTypeArray = "%s ARRAY"
 )
 
 type DorisSQLExpr struct {
@@ -267,29 +290,45 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			break
 		}
 
-		if len(c.Value) > 1 && !c.IsWildcard && !d.checkMatchALL(c.DimensionName) {
+		if len(c.Value) > 1 && !c.IsWildcard && !d.isText(c.DimensionName) && !d.isArray(c.DimensionName) {
 			op = "IN"
 			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
 			break
 		}
 
-		var format string
-		if c.IsWildcard {
-			format = "'%%%s%%'"
-			op = "LIKE"
+		var (
+			filter []string
+		)
+
+		if d.isArray(c.DimensionName) {
+			for _, v := range c.Value {
+				var value string
+				if c.IsWildcard {
+					value = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x LIKE '%%%s%%', %s)", v, key)
+				} else {
+					value = fmt.Sprintf("ARRAY_CONTAINS(%s), '%s') == 1", key, v)
+				}
+				filter = append(filter, value)
+			}
 		} else {
-			format = "'%s'"
-			if d.checkMatchALL(c.DimensionName) {
-				op = "MATCH_PHRASE_PREFIX"
+			var format string
+			if c.IsWildcard {
+				format = "'%%%s%%'"
+				op = "LIKE"
 			} else {
-				op = "="
+				format = "'%s'"
+				if d.isText(c.DimensionName) {
+					op = "MATCH_PHRASE_PREFIX"
+				} else {
+					op = "="
+				}
+			}
+
+			for _, v := range c.Value {
+				filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
 			}
 		}
 
-		var filter []string
-		for _, v := range c.Value {
-			filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
-		}
 		key = ""
 		if len(filter) == 1 {
 			val = filter[0]
@@ -303,29 +342,43 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			break
 		}
 
-		if len(c.Value) > 1 && !c.IsWildcard && !d.checkMatchALL(c.DimensionName) {
+		if len(c.Value) > 1 && !c.IsWildcard && !d.isText(c.DimensionName) {
 			op = "NOT IN"
 			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
 			break
 		}
 
-		var format string
-		if c.IsWildcard {
-			format = "'%%%s%%'"
-			op = "NOT LIKE"
+		var filter []string
+
+		if d.isArray(c.DimensionName) {
+			for _, v := range c.Value {
+				var value string
+				if c.IsWildcard {
+					value = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x NOT LIKE '%%%s%%', %s)", v, key)
+				} else {
+					value = fmt.Sprintf("ARRAY_CONTAINS(%s, '%s') != 1", key, v)
+				}
+				filter = append(filter, value)
+			}
 		} else {
-			format = "'%s'"
-			if d.checkMatchALL(c.DimensionName) {
-				op = "NOT MATCH_PHRASE_PREFIX"
+			var format string
+			if c.IsWildcard {
+				format = "'%%%s%%'"
+				op = "NOT LIKE"
 			} else {
-				op = "!="
+				format = "'%s'"
+				if d.isText(c.DimensionName) {
+					op = "NOT MATCH_PHRASE_PREFIX"
+				} else {
+					op = "!="
+				}
+			}
+
+			for _, v := range c.Value {
+				filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
 			}
 		}
 
-		var filter []string
-		for _, v := range c.Value {
-			filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
-		}
 		key = ""
 		if len(filter) == 1 {
 			val = filter[0]
@@ -335,35 +388,65 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	// 处理正则表达式匹配
 	case metadata.ConditionRegEqual:
 		op = "REGEXP"
-		val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|")) // 多个值用|连接
+		if d.isArray(c.DimensionName) {
+			return "", fmt.Errorf("nested field %s is not support regexp", c.DimensionName)
+		}
+		if d.isArray(c.DimensionName) {
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", strings.Join(c.Value, "|"), op, key)
+			key = ""
+		} else {
+			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|")) // 多个值用|连接
+		}
 	case metadata.ConditionNotRegEqual:
 		op = "NOT REGEXP"
-		val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|"))
+		if d.isArray(c.DimensionName) {
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", strings.Join(c.Value, "|"), op, key)
+			key = ""
+		} else {
+			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|")) // 多个值用|连接
+		}
 	// 处理数值比较操作符（>, >=, <, <=）
 	case metadata.ConditionGt:
+		if len(c.Value) != 1 {
+			return "", fmt.Errorf("operator %s only support 1 value", op)
+		}
 		op = ">"
-		if len(c.Value) != 1 {
-			return "", fmt.Errorf("operator %s only support 1 value", op)
+		if d.isArray(c.DimensionName) {
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", val, op, key)
+			key = ""
+		} else {
+			val = c.Value[0]
 		}
-		val = c.Value[0]
 	case metadata.ConditionGte:
+		if len(c.Value) != 1 {
+			return "", fmt.Errorf("operator %s only support 1 value", op)
+		}
 		op = ">="
-		if len(c.Value) != 1 {
-			return "", fmt.Errorf("operator %s only support 1 value", op)
+		if d.isArray(c.DimensionName) {
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", val, op, key)
+			key = ""
+		} else {
+			val = c.Value[0]
 		}
-		val = c.Value[0]
 	case metadata.ConditionLt:
-		op = "<"
 		if len(c.Value) != 1 {
 			return "", fmt.Errorf("operator %s only support 1 value", op)
 		}
-		val = c.Value[0]
+		op = "<"
+		if d.isArray(c.DimensionName) {
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", val, op, key)
+			key = ""
+		} else {
+			val = c.Value[0]
+		}
 	case metadata.ConditionLte:
 		op = "<="
-		if len(c.Value) != 1 {
-			return "", fmt.Errorf("operator %s only support 1 value", op)
+		if d.isArray(c.DimensionName) {
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", val, op, key)
+			key = ""
+		} else {
+			val = c.Value[0]
 		}
-		val = c.Value[0]
 	default:
 		return "", fmt.Errorf("unknown operator %s", c.Operator)
 	}
@@ -378,15 +461,13 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	return val, nil
 }
 
-func (d *DorisSQLExpr) checkMatchALL(k string) bool {
-	if d.fieldsMap != nil {
-		if t, ok := d.fieldsMap[k]; ok {
-			if t == DorisTypeText {
-				return true
-			}
-		}
-	}
-	return false
+func (d *DorisSQLExpr) isArray(k string) bool {
+	fieldType := d.getFieldType(k)
+	return strings.Contains(fieldType, "ARRAY")
+}
+
+func (d *DorisSQLExpr) isText(k string) bool {
+	return d.getFieldType(k) == DorisTypeText
 }
 
 func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
@@ -434,7 +515,7 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 			c.Field = DefaultKey
 		}
 		field, _ := d.dimTransform(c.Field)
-		if d.checkMatchALL(c.Field) {
+		if d.isText(c.Field) {
 			return fmt.Sprintf("%s MATCH_PHRASE_PREFIX '%s'", field, c.Value), nil
 		}
 
@@ -473,14 +554,45 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 	return "", err
 }
 
+func (d *DorisSQLExpr) getFieldType(s string) (fieldType string) {
+	if d.fieldsMap == nil {
+		return
+	}
+
+	var ok bool
+	if fieldType, ok = d.fieldsMap[s]; ok {
+		fieldType = strings.ToUpper(fieldType)
+	}
+	return
+}
+
+func (d *DorisSQLExpr) getArrayType(s string) string {
+	return fmt.Sprintf(DorisTypeArray, s)
+}
+
 func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
 	if s == "" {
 		return "", false
 	}
 
+	var castType string
+	fieldType := d.getFieldType(s)
+	switch fieldType {
+	case DorisTypeTinyInt, DorisTypeSmallInt, DorisTypeInt, DorisTypeBigInt, DorisTypeLargeInt:
+		castType = DorisTypeInt
+	case DorisTypeFloat, DorisTypeDouble, DorisTypeDecimal, DorisTypeDecimalV3:
+		castType = DorisTypeDouble
+	case fmt.Sprintf(DorisTypeArray, DorisTypeText):
+		castType = d.getArrayType(DorisTypeText)
+	case d.getArrayType(DorisTypeTinyInt), d.getArrayType(DorisTypeSmallInt), d.getArrayType(DorisTypeInt), d.getArrayType(DorisTypeBigInt), d.getArrayType(DorisTypeLargeInt):
+		castType = d.getArrayType(DorisTypeInt)
+	default:
+		castType = DorisTypeString
+	}
+
 	fs := strings.Split(s, ".")
 	if len(fs) > 1 {
-		return fmt.Sprintf("CAST(%s[\"%s\"] AS STRING)", fs[0], strings.Join(fs[1:], `.`)), true
+		return fmt.Sprintf(`CAST(%s['%s'] AS %s)`, fs[0], strings.Join(fs[1:], `.`), castType), true
 	}
 	return fmt.Sprintf("`%s`", s), false
 }

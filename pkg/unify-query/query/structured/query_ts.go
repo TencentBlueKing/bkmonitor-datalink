@@ -425,33 +425,25 @@ func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
 	labelMap := make(map[string][]function.LabelMapValue)
 	labelCheck := make(map[string]struct{})
 
-	addLabel := func(key, value, operator string) {
-		if value == "" {
+	addLabel := func(key string, operator string, values ...string) {
+		if len(values) == 0 {
 			return
 		}
 
-		checkKey := key + ":" + value + ":" + operator
-		if _, ok := labelCheck[checkKey]; !ok {
-			labelCheck[checkKey] = struct{}{}
-			labelMap[key] = append(labelMap[key], function.LabelMapValue{
-				Value:    value,
-				Operator: operator,
-			})
+		for _, value := range values {
+			checkKey := key + ":" + value + ":" + operator
+			if _, ok := labelCheck[checkKey]; !ok {
+				labelCheck[checkKey] = struct{}{}
+				labelMap[key] = append(labelMap[key], function.LabelMapValue{
+					Value:    value,
+					Operator: operator,
+				})
+			}
 		}
 	}
 
 	for _, condition := range q.Conditions.FieldList {
-		err := metadata.ProcessConditionForLabelMap(
-			condition.DimensionName,
-			condition.Value,
-			condition.Operator,
-			func(key, value, operator string) {
-				addLabel(key, value, operator)
-			},
-		)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to process condition for dimension %s", condition.DimensionName)
-		}
+		addLabel(condition.DimensionName, condition.Operator, condition.Value...)
 	}
 
 	if q.QueryString != "" {

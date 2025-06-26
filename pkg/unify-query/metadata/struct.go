@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/VictoriaMetrics/metricsql"
-	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
@@ -155,66 +154,6 @@ type Query struct {
 	Collapse    *Collapse `json:"collapse,omitempty"`
 }
 
-type OperatorMapping struct {
-	LabelOperator string
-	ShouldSkip    bool
-}
-
-func MapConditionOperator(operator string) (OperatorMapping, error) {
-	switch operator {
-	case ConditionEqual, ConditionExact:
-		return OperatorMapping{LabelOperator: "eq", ShouldSkip: false}, nil
-	case ConditionContains:
-		return OperatorMapping{LabelOperator: "contains", ShouldSkip: false}, nil
-	case ConditionRegEqual:
-		return OperatorMapping{LabelOperator: "req", ShouldSkip: false}, nil
-	case ConditionGt:
-		return OperatorMapping{LabelOperator: "gt", ShouldSkip: false}, nil
-	case ConditionGte:
-		return OperatorMapping{LabelOperator: "gte", ShouldSkip: false}, nil
-	case ConditionLt:
-		return OperatorMapping{LabelOperator: "lt", ShouldSkip: false}, nil
-	case ConditionLte:
-		return OperatorMapping{LabelOperator: "lte", ShouldSkip: false}, nil
-	case ConditionNotEqual, ConditionNotContains, ConditionNotRegEqual, ConditionNotExisted:
-		// 负向条件不处理
-		return OperatorMapping{ShouldSkip: true}, nil
-	case ConditionExisted:
-		// 存在性检查跳过
-		return OperatorMapping{ShouldSkip: true}, nil
-	default:
-		return OperatorMapping{}, errors.Errorf("unknown operator: %s", operator)
-	}
-}
-
-func ProcessConditionForLabelMap(
-	dimensionName string,
-	values []string,
-	operator string,
-	addLabelFunc func(key, value, operator string),
-) error {
-	if len(values) == 0 {
-		return nil
-	}
-
-	mapping, err := MapConditionOperator(operator)
-	if err != nil {
-		return err
-	}
-
-	if mapping.ShouldSkip {
-		return nil
-	}
-
-	for _, value := range values {
-		if value != "" {
-			addLabelFunc(dimensionName, value, mapping.LabelOperator)
-		}
-	}
-
-	return nil
-}
-
 func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
 	labelMap := make(map[string][]function.LabelMapValue)
 	labelCheck := make(map[string]struct{})
@@ -239,16 +178,10 @@ func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
 	for _, condition := range q.AllConditions {
 		for _, cond := range condition {
 			if cond.Value != nil && len(cond.Value) > 0 {
-				err := ProcessConditionForLabelMap(
-					cond.DimensionName,
-					cond.Value,
-					cond.Operator,
-					func(key, value, operator string) {
-						addLabel(key, operator, value)
-					},
-				)
-				if err != nil {
-					return nil, errors.Wrapf(err, "failed to process condition for dimension %s", cond.DimensionName)
+				switch cond.Operator {
+				// 只保留等于和包含的用法，其他类型不用处理
+				case ConditionEqual, ConditionExact, ConditionContains:
+					addLabel(cond.DimensionName, cond.Operator, cond.Value...)
 				}
 			}
 		}
@@ -261,7 +194,7 @@ func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
 		}
 		for key, values := range qLabelMap {
 			for _, value := range values {
-				addLabel(key, "eq", value)
+				addLabel(key, ConditionEqual, value)
 			}
 		}
 	}

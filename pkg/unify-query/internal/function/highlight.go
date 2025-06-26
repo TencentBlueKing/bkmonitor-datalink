@@ -88,7 +88,8 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 	})
 	var newKeywords []string
 	for _, keyword := range keywords {
-		isContains := func() bool {
+		check := func() bool {
+			// 检查是否已经叠加
 			for _, newKeyword := range newKeywords {
 				if strings.Contains(newKeyword, keyword.Value) {
 					return true
@@ -96,7 +97,8 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 			}
 			return false
 		}()
-		if !isContains {
+
+		if !check {
 			newKeywords = append(newKeywords, keyword.Value)
 		}
 	}

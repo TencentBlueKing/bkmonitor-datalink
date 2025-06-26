@@ -215,14 +215,18 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 	return f
 }
 
-func (f *FormatFactory) WithIncludeValues(value map[string][]function.LabelMapValue) *FormatFactory {
-	f.labelMap = make(map[string][]function.LabelMapValue, len(value))
-	for k, v := range value {
-		if f.decode != nil {
-			k = f.decode(k)
+func (f *FormatFactory) WithIncludeValues(labelMap map[string][]function.LabelMapValue) *FormatFactory {
+	var newLabelMap map[string][]function.LabelMapValue
+	if f.decode == nil {
+		newLabelMap = labelMap
+	} else {
+		newLabelMap = make(map[string][]function.LabelMapValue, len(labelMap))
+		for k, v := range labelMap {
+			newLabelMap[f.decode(k)] = v
 		}
-		f.labelMap[k] = v
 	}
+
+	f.labelMap = newLabelMap
 	return f
 }
 
@@ -729,7 +733,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 					// 只有为非空的值并且操作符为等于时才添加到include子句
 					value := labelMapValue.Value
 					operator := labelMapValue.Operator
-					if value != "" && operator == "eq" {
+					if value != "" && operator == metadata.ConditionEqual {
 						filteredFieldLabelValues = append(filteredFieldLabelValues, value)
 					}
 				}

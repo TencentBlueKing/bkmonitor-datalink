@@ -178,24 +178,25 @@ func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
 	for _, condition := range q.AllConditions {
 		for _, cond := range condition {
 			if cond.Value != nil && len(cond.Value) > 0 {
-				switch cond.Operator {
-				// 只保留等于和包含的用法，其他类型不用处理
-				case ConditionEqual, ConditionExact, ConditionContains:
-					addLabel(cond.DimensionName, cond.Operator, cond.Value...)
+				// 处理通配符
+				if cond.IsWildcard {
+					addLabel(cond.DimensionName, ConditionContains, cond.Value...)
+				} else {
+					switch cond.Operator {
+					// 只保留等于和包含的用法，其他类型不用处理
+					case ConditionEqual, ConditionExact, ConditionContains:
+						addLabel(cond.DimensionName, cond.Operator, cond.Value...)
+					}
 				}
+
 			}
 		}
 	}
 
 	if q.QueryString != "" {
-		qLabelMap, err := querystring.LabelMap(q.QueryString)
+		err := querystring.LabelMap(q.QueryString, addLabel)
 		if err != nil {
 			return nil, err
-		}
-		for key, values := range qLabelMap {
-			for _, value := range values {
-				addLabel(key, ConditionEqual, value)
-			}
 		}
 	}
 

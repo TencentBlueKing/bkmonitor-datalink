@@ -9,82 +9,49 @@
 
 package querystring
 
-import (
-	"fmt"
-	"strings"
-)
-
-func LabelMap(query string) (map[string][]string, error) {
+func LabelMap(query string, addLabel func(key string, operator string, values ...string)) error {
 	expr, err := Parse(query)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	labelMap := make(map[string][]string)
-	if err := parseExprToKeyValue(query, expr, labelMap); err != nil {
-		return nil, err
+	if err = parseExprToKeyValue(expr, addLabel); err != nil {
+		return err
 	}
 
-	return labelMap, nil
+	return nil
 }
 
 // parseExprToKeyValue 因为我们并不知道 queryString 中的表达式是否需要被include到 labelMap 中，所以没有是否为positive的判断
-func parseExprToKeyValue(query string, expr Expr, kv map[string][]string) error {
+func parseExprToKeyValue(expr Expr, addLabel func(key string, operator string, values ...string)) error {
 	if expr == nil {
 		return nil
 	}
 
 	switch e := expr.(type) {
 	case *NotExpr:
-		if err := parseExprToKeyValue(query, e.Expr, kv); err != nil {
-			return err
-		}
+		// 如果是not表达式，直接返回
+		return nil
 	case *OrExpr:
-		if err := parseExprToKeyValue(query, e.Left, kv); err != nil {
+		if err := parseExprToKeyValue(e.Left, addLabel); err != nil {
 			return err
 		}
-		if err := parseExprToKeyValue(query, e.Right, kv); err != nil {
+		if err := parseExprToKeyValue(e.Right, addLabel); err != nil {
 			return err
 		}
 	case *AndExpr:
-		if err := parseExprToKeyValue(query, e.Left, kv); err != nil {
+		if err := parseExprToKeyValue(e.Left, addLabel); err != nil {
 			return err
 		}
-		if err := parseExprToKeyValue(query, e.Right, kv); err != nil {
+		if err := parseExprToKeyValue(e.Right, addLabel); err != nil {
 			return err
 		}
 	case *WildcardExpr:
-		if err := addValueToMap(kv, e.Field, e.Value); err != nil {
-			return fmt.Errorf("failed to add value to map: %w", err)
-		}
+		addLabel(e.Field, "contains", e.Value)
 	case *MatchExpr:
-		if err := addValueToMap(kv, e.Field, e.Value); err != nil {
-			return fmt.Errorf("failed to add value to map: %w", err)
-		}
+		addLabel(e.Field, "eq", e.Value)
 	default:
 		return nil
 	}
-	return nil
-}
-
-func addValueToMap(kv map[string][]string, field, value string) error {
-	if kv == nil {
-		return fmt.Errorf("kv map is nil")
-	}
-
-	if value == "" {
-		return nil
-	}
-
-	// value 遇到通配符需要移除前后的星号
-	value = strings.Trim(value, "*")
-
-	for _, v := range kv[field] {
-		if v == value {
-			return nil
-		}
-	}
-
-	kv[field] = append(kv[field], value)
 	return nil
 }

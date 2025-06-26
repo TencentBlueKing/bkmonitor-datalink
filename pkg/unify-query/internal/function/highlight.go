@@ -99,7 +99,8 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 		}()
 
 		if !check {
-			newKeywords = append(newKeywords, keyword.Value)
+			// 高亮替换需要把头尾的*去掉
+			newKeywords = append(newKeywords, strings.Trim(keyword.Value, "*"))
 		}
 	}
 

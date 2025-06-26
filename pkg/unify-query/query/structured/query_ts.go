@@ -23,7 +23,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -81,29 +80,6 @@ type QueryTs struct {
 
 	// HighLight 是否开启高亮
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
-}
-
-func (q *QueryTs) LabelMap() (map[string][]function.LabelMapValue, error) {
-	labelMap := make(map[string][]function.LabelMapValue)
-	labelCheck := make(map[string]struct{})
-
-	for _, query := range q.QueryList {
-		m, err := query.LabelMap()
-		if err != nil {
-			return nil, err
-		}
-		for key, values := range m {
-			for _, labelValue := range values {
-				checkKey := key + ":" + labelValue.Value + ":" + labelValue.Operator
-				if _, ok := labelCheck[checkKey]; !ok {
-					labelCheck[checkKey] = struct{}{}
-					labelMap[key] = append(labelMap[key], labelValue)
-				}
-			}
-		}
-	}
-
-	return labelMap, nil
 }
 
 // StepParse 解析step
@@ -415,50 +391,6 @@ type Query struct {
 	Scroll string `json:"-"`
 	// Collapse
 	Collapse *metadata.Collapse `json:"collapse,omitempty"`
-}
-
-const (
-	defaultQueryStringOperator = "eq"
-)
-
-func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
-	labelMap := make(map[string][]function.LabelMapValue)
-	labelCheck := make(map[string]struct{})
-
-	addLabel := func(key string, operator string, values ...string) {
-		if len(values) == 0 {
-			return
-		}
-
-		for _, value := range values {
-			checkKey := key + ":" + value + ":" + operator
-			if _, ok := labelCheck[checkKey]; !ok {
-				labelCheck[checkKey] = struct{}{}
-				labelMap[key] = append(labelMap[key], function.LabelMapValue{
-					Value:    value,
-					Operator: operator,
-				})
-			}
-		}
-	}
-
-	for _, condition := range q.Conditions.FieldList {
-		addLabel(condition.DimensionName, condition.Operator, condition.Value...)
-	}
-
-	if q.QueryString != "" {
-		qLabelMap, err := querystring.LabelMap(q.QueryString)
-		if err != nil {
-			return nil, err
-		}
-		for key, values := range qLabelMap {
-			for _, value := range values {
-				addLabel(key, value, defaultQueryStringOperator)
-			}
-		}
-	}
-
-	return labelMap, nil
 }
 
 func (q *Query) ToRouter() (*Route, error) {

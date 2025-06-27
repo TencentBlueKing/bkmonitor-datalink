@@ -26,54 +26,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// RefreshBkccSpaceName 刷新 bkcc 类型空间名称
-func RefreshBkccSpaceName(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("RefreshBkccSpaceName Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Info("start sync bkcc space name task")
-	svc := service.NewSpaceSvc(nil)
-	if err := svc.RefreshBkccSpaceName(); err != nil {
-		return errors.Wrap(err, "refresh bkcc space name failed")
-	}
-	logger.Info("refresh bkcc space name successfully")
-	return nil
-}
-
-// RefreshClusterResource 检测集群资源的变化,当绑定资源的集群信息变动时，刷新绑定的集群资源
-func RefreshClusterResource(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("RefreshClusterResource Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Infof("start sync bcs space cluster resource task")
-	if err := service.NewBcsClusterInfoSvc(nil).RefreshClusterResource(); err != nil {
-		logger.Errorf("sync bcs space cluster resource failed, %v", err)
-		return err
-	}
-	logger.Infof("sync bcs space cluster resource success")
-	return nil
-}
-
-// RefreshBkccSpace 同步 bkcc 的业务，自动创建对应的空间
-func RefreshBkccSpace(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("RefreshBkccSpace Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Info("start sync bkcc space task")
-	svc := service.NewSpaceSvc(nil)
-	if err := svc.RefreshBkccSpace(false); err != nil {
-		return errors.Wrap(err, "refresh bkcc space failed")
-	}
-	logger.Info("refresh bkcc space successfully")
-	return nil
-}
-
 // SyncBkccSpaceDataSource 同步bkcc数据源和空间的关系及数据源的所属类型
 func SyncBkccSpaceDataSource(ctx context.Context, t *t.Task) error {
 	defer func() {
@@ -87,54 +39,6 @@ func SyncBkccSpaceDataSource(ctx context.Context, t *t.Task) error {
 		return errors.Wrap(err, "sync bkcc space data source failed")
 	}
 	logger.Info("sync bkcc space data source successfully")
-	return nil
-}
-
-// RefreshBcsProjectBiz 检测 bcs 项目绑定的业务的变化
-func RefreshBcsProjectBiz(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("RefreshBcsProjectBiz Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Info("start check and update the bind biz of bcs project task")
-	svc := service.NewSpaceSvc(nil)
-	if err := svc.RefreshBcsProjectBiz(); err != nil {
-		return errors.Wrap(err, "refresh bcs project biz failed")
-	}
-	logger.Info("refresh bcs project biz successfully")
-	return nil
-}
-
-// SyncBcsSpace 同步 BCS 项目空间数据
-func SyncBcsSpace(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("SyncBcsSpace Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Info("start sync bcs space task")
-	svc := service.NewSpaceSvc(nil)
-	if err := svc.SyncBcsSpace(); err != nil {
-		return errors.Wrap(err, "sync bcs space task failed")
-	}
-	logger.Info("sync bcs space task successfully")
-	return nil
-}
-
-// RefreshBkciSpaceName 刷新 bkci 类型空间名称
-func RefreshBkciSpaceName(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("RefreshBkciSpaceName Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Info("start sync bkci space name task")
-	svc := service.NewSpaceSvc(nil)
-	if err := svc.RefreshBkciSpaceName(); err != nil {
-		return errors.Wrap(err, "refresh bkci space name failed")
-	}
-	logger.Info("refresh bkci space name successfully")
 	return nil
 }
 

@@ -326,6 +326,7 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 							Window:     timeAggregation.Window,
 							IsSubQuery: timeAggregation.IsSubQuery,
 							Step:       timeAggregation.Step,
+							Position:   timeAggregation.Position,
 						})
 					}
 				} else {

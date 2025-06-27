@@ -136,7 +136,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: `CAST(object['field.name'] AS STRING) = 'What''s UP' AND CAST(tag['city.town.age'] AS INT) != 'test'`,
+			want: `CAST(object['field']['name'] AS STRING) = 'What''s UP' AND CAST(tag['city']['town']['age'] AS INT) != 'test'`,
 		},
 		{
 			name: "doris test object field condition",
@@ -268,7 +268,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: `ARRAY_CONTAINS(CAST(events['attributes.exception.type'] AS TEXT ARRAY), 'errorString') != 1`,
+			want: `ARRAY_CONTAINS(CAST(events['attributes']['exception']['type'] AS TEXT ARRAY), 'errorString') != 1`,
 		},
 	}
 

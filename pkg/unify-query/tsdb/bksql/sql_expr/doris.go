@@ -592,7 +592,7 @@ func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
 
 	fs := strings.Split(s, ".")
 	if len(fs) > 1 {
-		return fmt.Sprintf(`CAST(%s['%s'] AS %s)`, fs[0], strings.Join(fs[1:], `.`), castType), true
+		return fmt.Sprintf(`CAST(%s['%s'] AS %s)`, fs[0], strings.Join(fs[1:], `']['`), castType), true
 	}
 	return fmt.Sprintf("`%s`", s), false
 }

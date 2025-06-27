@@ -20,11 +20,16 @@ const (
 )
 
 type HighLightFactory struct {
-	labelMap          map[string][]string
+	labelMap          map[string][]LabelMapValue
 	maxAnalyzedOffset int
 }
 
-func NewHighLightFactory(labelMap map[string][]string, maxAnalyzedOffset int) *HighLightFactory {
+type LabelMapValue struct {
+	Value    string `json:"value"`
+	Operator string `json:"operator"`
+}
+
+func NewHighLightFactory(labelMap map[string][]LabelMapValue, maxAnalyzedOffset int) *HighLightFactory {
 	return &HighLightFactory{
 		labelMap:          labelMap,
 		maxAnalyzedOffset: maxAnalyzedOffset,
@@ -34,9 +39,13 @@ func NewHighLightFactory(labelMap map[string][]string, maxAnalyzedOffset int) *H
 func (h *HighLightFactory) Process(data map[string]any) map[string]any {
 	newData := make(map[string]any)
 
+	if h.labelMap == nil {
+		return newData
+	}
+
 	for key, value := range data {
 		// 获取全字段匹配，字段名为空
-		keywords := append([]string{}, h.labelMap[""]...)
+		keywords := append([]LabelMapValue{}, h.labelMap[""]...)
 		// 获取使用字段查询的值
 		keywords = append(keywords, h.labelMap[key]...)
 
@@ -48,7 +57,7 @@ func (h *HighLightFactory) Process(data map[string]any) map[string]any {
 	return newData
 }
 
-func (h *HighLightFactory) processField(fieldValue any, keywords []string) any {
+func (h *HighLightFactory) processField(fieldValue any, keywords []LabelMapValue) any {
 	var newValue string
 	switch value := fieldValue.(type) {
 	case string:
@@ -65,7 +74,7 @@ func (h *HighLightFactory) processField(fieldValue any, keywords []string) any {
 	return nil
 }
 
-func (h *HighLightFactory) highlightString(text string, keywords []string) string {
+func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue) string {
 	if text == "" || len(keywords) == 0 {
 		return text
 	}
@@ -75,20 +84,23 @@ func (h *HighLightFactory) highlightString(text string, keywords []string) strin
 	// 移除 keywords 中存在叠加的数据，例如: ["a", "abc"]，则只保留 ["abc"]
 	// 排序后，长的关键词在前面
 	sort.SliceStable(keywords, func(i, j int) bool {
-		return len(keywords[i]) > len(keywords[j])
+		return len(keywords[i].Value) > len(keywords[j].Value)
 	})
 	var newKeywords []string
 	for _, keyword := range keywords {
-		isContains := func() bool {
+		check := func() bool {
+			// 检查是否已经叠加
 			for _, newKeyword := range newKeywords {
-				if strings.Contains(newKeyword, keyword) {
+				if strings.Contains(newKeyword, keyword.Value) {
 					return true
 				}
 			}
 			return false
 		}()
-		if !isContains {
-			newKeywords = append(newKeywords, keyword)
+
+		if !check {
+			// 高亮替换需要把头尾的*去掉
+			newKeywords = append(newKeywords, strings.Trim(keyword.Value, "*"))
 		}
 	}
 

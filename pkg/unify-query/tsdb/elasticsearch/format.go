@@ -193,6 +193,8 @@ type FormatFactory struct {
 	timeFormat string
 
 	isReference bool
+
+	labelMap map[string][]function.LabelMapValue
 }
 
 func NewFormatFactory(ctx context.Context) *FormatFactory {
@@ -210,6 +212,21 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 		},
 	}
 
+	return f
+}
+
+func (f *FormatFactory) WithIncludeValues(labelMap map[string][]function.LabelMapValue) *FormatFactory {
+	var newLabelMap map[string][]function.LabelMapValue
+	if f.decode == nil {
+		newLabelMap = labelMap
+	} else {
+		newLabelMap = make(map[string][]function.LabelMapValue, len(labelMap))
+		for k, v := range labelMap {
+			newLabelMap[f.decode(k)] = v
+		}
+	}
+
+	f.labelMap = newLabelMap
 	return f
 }
 
@@ -709,6 +726,22 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			if f.size > 0 {
 				curAgg = curAgg.Size(f.size)
 			}
+			fieldLabelValues, ok := f.labelMap[info.Name]
+			if ok && len(fieldLabelValues) > 0 {
+				var filteredFieldLabelValues []any
+				for _, labelMapValue := range fieldLabelValues {
+					// 只有为非空的值并且操作符为等于时才添加到include子句
+					value := labelMapValue.Value
+					operator := labelMapValue.Operator
+					if value != "" && operator == metadata.ConditionEqual {
+						filteredFieldLabelValues = append(filteredFieldLabelValues, value)
+					}
+				}
+				if len(filteredFieldLabelValues) > 0 {
+					curAgg = curAgg.IncludeValues(filteredFieldLabelValues...)
+				}
+			}
+
 			for _, order := range info.Orders {
 				curAgg = curAgg.Order(order.Name, order.Ast)
 			}
@@ -833,6 +866,11 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 
 		// First pass: process all conditions and separate nested from non-nested
 		for _, con := range conditions {
+			// 对于星号来说等于空
+			if con.DimensionName == "*" {
+				con.DimensionName = ""
+			}
+
 			key := con.DimensionName
 			if f.decode != nil {
 				key = f.decode(key)
@@ -926,7 +964,11 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 								}
 							}
 						} else {
-							query = elastic.NewQueryStringQuery(value)
+							if con.IsPrefix {
+								query = elastic.NewMultiMatchQuery(value, "*", "__*").Type("phrase").Lenient(true)
+							} else {
+								query = elastic.NewQueryStringQuery(value)
+							}
 						}
 
 						if query != nil {

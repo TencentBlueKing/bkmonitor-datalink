@@ -866,6 +866,11 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 
 		// First pass: process all conditions and separate nested from non-nested
 		for _, con := range conditions {
+			// 对于星号来说等于空
+			if con.DimensionName == "*" {
+				con.DimensionName = ""
+			}
+
 			key := con.DimensionName
 			if f.decode != nil {
 				key = f.decode(key)
@@ -959,7 +964,11 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 								}
 							}
 						} else {
-							query = elastic.NewQueryStringQuery(value)
+							if con.IsPrefix {
+								query = elastic.NewMultiMatchQuery(value, "*", "__*").Type("phrase").Lenient(true)
+							} else {
+								query = elastic.NewQueryStringQuery(value)
+							}
 						}
 
 						if query != nil {

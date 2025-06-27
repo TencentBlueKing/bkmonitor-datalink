@@ -75,8 +75,8 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 	tableIdChan := make(chan string, GetGoroutineLimit("refresh_time_series_metric"))
 	var updatedTableIds []string
 	wgReceive := sync.WaitGroup{}
+	wgReceive.Add(1)
 	go func(wg *sync.WaitGroup) {
-		wg.Add(1)
 		defer wg.Done()
 		for {
 			tableId, ok := <-tableIdChan

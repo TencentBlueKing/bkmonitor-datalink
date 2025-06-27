@@ -77,7 +77,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	_ = p.Submit(func() {
 		defer wg.Done()
 		t1 := time.Now()
-		name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo bk_app_to_space")
+		name := "[task] PushAndPublishSpaceRouterInfo bk_app_to_space"
 		if err = pusher.PushBkAppToSpace(); err != nil {
 			logger.Errorf("%s error %s", name, err)
 			return
@@ -106,7 +106,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	_ = p.Submit(func() {
 		defer wg.Done()
 		t1 := time.Now()
-		name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo data_label_to_result_table")
+		name := "[task] PushAndPublishSpaceRouterInfo data_label_to_result_table"
 		if err = pusher.PushDataLabelTableIds(nil, nil, true); err != nil {
 			logger.Errorf("%s error %s", name, err)
 			return
@@ -120,7 +120,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		defer wg.Done()
 		t1 := time.Now()
 
-		name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo result_table_detail")
+		name := "[task] PushAndPublishSpaceRouterInfo result_table_detail"
 		var tableIdList []string
 		var rtList []resulttable.ResultTable
 		if err = resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).DefaultStorageEq("influxdb").IsEnableEq(true).IsDeletedEq(false).All(&rtList); err != nil {
@@ -144,7 +144,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	_ = p.Submit(func() {
 		defer wg.Done()
 		t1 := time.Now()
-		name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo result_table_detail (elasticsearch)")
+		name := "[task] PushAndPublishSpaceRouterInfo result_table_detail (elasticsearch)"
 
 		var tableIdList []string
 		var rtList []resulttable.ResultTable

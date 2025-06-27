@@ -52,7 +52,8 @@ const (
 	DorisTypeText       = "TEXT"
 	DorisTypeVarchar512 = "VARCHAR(512)"
 
-	DorisTypeArray = "%s ARRAY"
+	DorisTypeArrayTransform = "%s ARRAY"
+	DorisTypeArray          = "ARRAY<%s>"
 )
 
 type DorisSQLExpr struct {
@@ -306,7 +307,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 				if c.IsWildcard {
 					value = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x LIKE '%%%s%%', %s)", v, key)
 				} else {
-					value = fmt.Sprintf("ARRAY_CONTAINS(%s), '%s') == 1", key, v)
+					value = fmt.Sprintf("ARRAY_CONTAINS(%s, '%s') == 1", key, v)
 				}
 				filter = append(filter, value)
 			}
@@ -389,10 +390,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	case metadata.ConditionRegEqual:
 		op = "REGEXP"
 		if d.isArray(c.DimensionName) {
-			return "", fmt.Errorf("nested field %s is not support regexp", c.DimensionName)
-		}
-		if d.isArray(c.DimensionName) {
-			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", strings.Join(c.Value, "|"), op, key)
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", op, strings.Join(c.Value, "|"), key)
 			key = ""
 		} else {
 			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|")) // 多个值用|连接
@@ -400,7 +398,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	case metadata.ConditionNotRegEqual:
 		op = "NOT REGEXP"
 		if d.isArray(c.DimensionName) {
-			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", strings.Join(c.Value, "|"), op, key)
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", op, strings.Join(c.Value, "|"), key)
 			key = ""
 		} else {
 			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|")) // 多个值用|连接
@@ -412,7 +410,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 		}
 		op = ">"
 		if d.isArray(c.DimensionName) {
-			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", val, op, key)
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s %s, %s)", op, c.Value[0], key)
 			key = ""
 		} else {
 			val = c.Value[0]
@@ -423,7 +421,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 		}
 		op = ">="
 		if d.isArray(c.DimensionName) {
-			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", val, op, key)
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s %s, %s)", op, c.Value[0], key)
 			key = ""
 		} else {
 			val = c.Value[0]
@@ -434,7 +432,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 		}
 		op = "<"
 		if d.isArray(c.DimensionName) {
-			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", val, op, key)
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s %s', %s)", op, val, key)
 			key = ""
 		} else {
 			val = c.Value[0]
@@ -442,7 +440,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	case metadata.ConditionLte:
 		op = "<="
 		if d.isArray(c.DimensionName) {
-			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", val, op, key)
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s %s, %s)", op, c.Value[0], key)
 			key = ""
 		} else {
 			val = c.Value[0]
@@ -570,6 +568,10 @@ func (d *DorisSQLExpr) getArrayType(s string) string {
 	return fmt.Sprintf(DorisTypeArray, s)
 }
 
+func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
+	return fmt.Sprintf(DorisTypeArrayTransform, s)
+}
+
 func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
 	if s == "" {
 		return "", false
@@ -582,10 +584,10 @@ func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
 		castType = DorisTypeInt
 	case DorisTypeFloat, DorisTypeDouble, DorisTypeDecimal, DorisTypeDecimalV3:
 		castType = DorisTypeDouble
-	case fmt.Sprintf(DorisTypeArray, DorisTypeText):
-		castType = d.getArrayType(DorisTypeText)
+	case d.getArrayType(DorisTypeText):
+		castType = d.arrayTypeTransform(DorisTypeText)
 	case d.getArrayType(DorisTypeTinyInt), d.getArrayType(DorisTypeSmallInt), d.getArrayType(DorisTypeInt), d.getArrayType(DorisTypeBigInt), d.getArrayType(DorisTypeLargeInt):
-		castType = d.getArrayType(DorisTypeInt)
+		castType = d.arrayTypeTransform(DorisTypeInt)
 	default:
 		castType = DorisTypeString
 	}

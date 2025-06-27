@@ -11,6 +11,7 @@ package sql_expr
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -461,7 +462,8 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 func (d *DorisSQLExpr) isArray(k string) bool {
 	fieldType := d.getFieldType(k)
-	return strings.Contains(fieldType, "ARRAY")
+	_, ok := d.caseAs(fieldType)
+	return ok
 }
 
 func (d *DorisSQLExpr) isText(k string) bool {
@@ -564,11 +566,26 @@ func (d *DorisSQLExpr) getFieldType(s string) (fieldType string) {
 	return
 }
 
+func (d *DorisSQLExpr) caseAs(s string) (string, bool) {
+	// 如果字段不存在则默认使用 string 类型
+	if s == "" {
+		return DorisTypeString, false
+	}
+
+	re := regexp.MustCompile(`ARRAY<([^>]+)>`) // 匹配 < 和 > 之间的非 > 字符
+	matches := re.FindStringSubmatch(s)
+	if len(matches) > 1 {
+		return fmt.Sprintf("%s ARRAY", matches[1]), true
+	}
+	return s, false
+}
+
 func (d *DorisSQLExpr) getArrayType(s string) string {
 	return fmt.Sprintf(DorisTypeArray, s)
 }
 
 func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
+
 	return fmt.Sprintf(DorisTypeArrayTransform, s)
 }
 
@@ -577,26 +594,35 @@ func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
 		return "", false
 	}
 
-	var castType string
 	fieldType := d.getFieldType(s)
-	switch fieldType {
-	case DorisTypeTinyInt, DorisTypeSmallInt, DorisTypeInt, DorisTypeBigInt, DorisTypeLargeInt:
-		castType = DorisTypeInt
-	case DorisTypeFloat, DorisTypeDouble, DorisTypeDecimal, DorisTypeDecimalV3:
-		castType = DorisTypeDouble
-	case d.getArrayType(DorisTypeText):
-		castType = d.arrayTypeTransform(DorisTypeText)
-	case d.getArrayType(DorisTypeTinyInt), d.getArrayType(DorisTypeSmallInt), d.getArrayType(DorisTypeInt), d.getArrayType(DorisTypeBigInt), d.getArrayType(DorisTypeLargeInt):
-		castType = d.arrayTypeTransform(DorisTypeInt)
-	default:
-		castType = DorisTypeString
-	}
+	castType, _ := d.caseAs(fieldType)
 
 	fs := strings.Split(s, ".")
-	if len(fs) > 1 {
-		return fmt.Sprintf(`CAST(%s['%s'] AS %s)`, fs[0], strings.Join(fs[1:], `']['`), castType), true
+	if len(fs) == 1 {
+		return fmt.Sprintf("`%s`", s), false
 	}
-	return fmt.Sprintf("`%s`", s), false
+
+	mapFieldSet := set.New[string]([]string{"resource", "attributes"}...)
+
+	var (
+		suffixFields strings.Builder
+		// 协议自定义是 map 结构
+		sep = `']['`
+	)
+	for index, f := range fs[1:] {
+		// 最后一个不需要补充
+		if index == len(fs)-2 {
+			sep = ""
+		}
+
+		suffixFields.WriteString(f + sep)
+		// 用户上报的分隔符为 .
+		if mapFieldSet.Existed(f) {
+			sep = "."
+		}
+	}
+
+	return fmt.Sprintf(`CAST(%s['%s'] AS %s)`, fs[0], suffixFields.String(), castType), true
 }
 
 func (d *DorisSQLExpr) valueTransform(s string) string {

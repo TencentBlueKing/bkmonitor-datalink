@@ -136,7 +136,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: `CAST(object['field']['name'] AS STRING) = 'What''s UP' AND CAST(tag['city']['town']['age'] AS INT) != 'test'`,
+			want: `CAST(object['field']['name'] AS STRING) = 'What''s UP' AND CAST(tag['city']['town']['age'] AS TINYINT) != 'test'`,
 		},
 		{
 			name: "doris test object field condition",
@@ -154,7 +154,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "CAST(object['field'] AS STRING) MATCH_PHRASE_PREFIX 'What''s UP' AND `tag` != 'test'",
+			want: "CAST(object['field'] AS TEXT) MATCH_PHRASE_PREFIX 'What''s UP' AND `tag` != 'test'",
 		},
 		{
 			name: "doris t8est text field wildcard",
@@ -168,7 +168,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "CAST(object['field'] AS STRING) LIKE '%partial%'",
+			want: "CAST(object['field'] AS TEXT) LIKE '%partial%'",
 		},
 		{
 			name: "doris test OR condition",
@@ -268,7 +268,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: `ARRAY_CONTAINS(CAST(events['attributes']['exception']['type'] AS TEXT ARRAY), 'errorString') != 1`,
+			want: `ARRAY_CONTAINS(CAST(events['attributes']['exception.type'] AS TEXT ARRAY), 'errorString') != 1`,
 		},
 	}
 

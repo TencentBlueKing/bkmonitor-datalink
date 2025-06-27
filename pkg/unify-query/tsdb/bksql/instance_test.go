@@ -1558,7 +1558,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.UnixMilli(1750953836000),
 			end:      time.UnixMilli(1750953838000),
-			expected: "SELECT *, CAST(events['attributes']['exception']['type'] AS TEXT ARRAY) AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_CONTAINS(CAST(events['attributes']['exception']['type'] AS TEXT ARRAY), '*errors.withMessage') == 1 AND `events` != '{}' LIMIT 1",
+			expected: "SELECT *, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_CONTAINS(CAST(events['attributes']['exception.type'] AS TEXT ARRAY), '*errors.withMessage') == 1 AND `events` != '{}' LIMIT 1",
 		},
 		{
 			name: "nested field existed",
@@ -1585,7 +1585,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.UnixMilli(1750953836000),
 			end:      time.UnixMilli(1750953838000),
-			expected: "SELECT *, CAST(events['attributes']['exception']['type'] AS TEXT ARRAY) AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND CAST(events['attributes']['exception']['type'] AS TEXT ARRAY) IS NOT NULL AND `events` != '{}' LIMIT 1",
+			expected: "SELECT *, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND CAST(events['attributes']['exception.type'] AS TEXT ARRAY) IS NOT NULL AND `events` != '{}' LIMIT 1",
 		},
 		{
 			name: "nested field like",
@@ -1612,7 +1612,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.UnixMilli(1750953836000),
 			end:      time.UnixMilli(1750953838000),
-			expected: "SELECT *, CAST(events['attributes']['exception']['type'] AS TEXT ARRAY) AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_MATCH_ANY(x -> x LIKE '%errors%', CAST(events['attributes']['exception']['type'] AS TEXT ARRAY)) AND `events` != '{}' LIMIT 1",
+			expected: "SELECT *, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_MATCH_ANY(x -> x LIKE '%errors%', CAST(events['attributes']['exception.type'] AS TEXT ARRAY)) AND `events` != '{}' LIMIT 1",
 		},
 		{
 			name: "nested field regex",
@@ -1639,14 +1639,14 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.UnixMilli(1750953836000),
 			end:      time.UnixMilli(1750953838000),
-			expected: "SELECT *, CAST(events['attributes']['exception']['type'] AS TEXT ARRAY) AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_MATCH_ANY(x -> x REGEXP '.*errors.*', CAST(events['attributes']['exception']['type'] AS TEXT ARRAY)) AND `events` != '{}' LIMIT 1",
+			expected: "SELECT *, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_MATCH_ANY(x -> x REGEXP '.*errors.*', CAST(events['attributes']['exception.type'] AS TEXT ARRAY)) AND `events` != '{}' LIMIT 1",
 		},
 		{
 			name: "nested field gt",
 			query: &metadata.Query{
 				DB:          "2_bkapm_trace_bkop_doris",
 				Measurement: sql_expr.Doris,
-				Field:       "events.attributes.exception.type",
+				Field:       "events.timestamp",
 				Size:        1,
 				AllConditions: metadata.AllConditions{
 					{
@@ -1665,7 +1665,39 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.UnixMilli(1750953836000),
 			end:      time.UnixMilli(1750953838000),
-			expected: "SELECT *, CAST(events['attributes']['exception']['type'] AS TEXT ARRAY) AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_MATCH_ANY(x -> x > 0, CAST(events['timestamp'] AS INT ARRAY)) AND `events` != '{}' LIMIT 1",
+			expected: "SELECT *, CAST(events['timestamp'] AS BIGINT ARRAY) AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_MATCH_ANY(x -> x > 0, CAST(events['timestamp'] AS BIGINT ARRAY)) AND `events` != '{}' LIMIT 1",
+		},
+		{
+			name: "nested field eq and aggregate",
+			query: &metadata.Query{
+				DB:          "2_bkapm_trace_bkop_doris",
+				Measurement: sql_expr.Doris,
+				Field:       "events.attributes.exception.type",
+				Size:        1,
+				Aggregates: metadata.Aggregates{
+					{
+						Name:   "count",
+						Window: time.Minute,
+					},
+				},
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "events.attributes.exception.type",
+							Operator:      metadata.ConditionEqual,
+							Value:         []string{"*errors.withMessage"},
+						},
+						{
+							DimensionName: "events",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"{}"},
+						},
+					},
+				},
+			},
+			start:    time.UnixMilli(1750953836000),
+			end:      time.UnixMilli(1750953838000),
+			expected: "SELECT COUNT(CAST(events['attributes']['exception.type'] AS TEXT ARRAY)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_CONTAINS(CAST(events['attributes']['exception.type'] AS TEXT ARRAY), '*errors.withMessage') == 1 AND `events` != '{}' GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC LIMIT 1",
 		},
 	}
 

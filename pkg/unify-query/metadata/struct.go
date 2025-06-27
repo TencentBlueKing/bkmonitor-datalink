@@ -19,7 +19,9 @@ import (
 	"github.com/VictoriaMetrics/metricsql"
 	"github.com/prometheus/prometheus/model/labels"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
@@ -150,6 +152,55 @@ type Query struct {
 	Orders      Orders    `json:"orders,omitempty"`
 	NeedAddTime bool      `json:"need_add_time,omitempty"`
 	Collapse    *Collapse `json:"collapse,omitempty"`
+}
+
+func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
+	labelMap := make(map[string][]function.LabelMapValue)
+	labelCheck := make(map[string]struct{})
+
+	addLabel := func(key string, operator string, values ...string) {
+		if len(values) == 0 {
+			return
+		}
+
+		for _, value := range values {
+			checkKey := key + ":" + value + ":" + operator
+			if _, ok := labelCheck[checkKey]; !ok {
+				labelCheck[checkKey] = struct{}{}
+				labelMap[key] = append(labelMap[key], function.LabelMapValue{
+					Value:    value,
+					Operator: operator,
+				})
+			}
+		}
+	}
+
+	for _, condition := range q.AllConditions {
+		for _, cond := range condition {
+			if cond.Value != nil && len(cond.Value) > 0 {
+				// 处理通配符
+				if cond.IsWildcard {
+					addLabel(cond.DimensionName, ConditionContains, cond.Value...)
+				} else {
+					switch cond.Operator {
+					// 只保留等于和包含的用法，其他类型不用处理
+					case ConditionEqual, ConditionExact, ConditionContains:
+						addLabel(cond.DimensionName, cond.Operator, cond.Value...)
+					}
+				}
+
+			}
+		}
+	}
+
+	if q.QueryString != "" {
+		err := querystring.LabelMap(q.QueryString, addLabel)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return labelMap, nil
 }
 
 type HighLight struct {

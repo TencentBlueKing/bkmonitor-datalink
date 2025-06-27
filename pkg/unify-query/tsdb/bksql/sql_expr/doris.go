@@ -275,6 +275,10 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 		val    string
 	)
 
+	if c.DimensionName == "*" || c.DimensionName == "" {
+		c.DimensionName = DefaultKey
+	}
+
 	oldKey = c.DimensionName
 	key, _ = d.dimTransform(oldKey)
 
@@ -433,7 +437,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 		}
 		op = "<"
 		if d.isArray(c.DimensionName) {
-			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s %s', %s)", op, val, key)
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s %s, %s)", op, c.Value[0], key)
 			key = ""
 		} else {
 			val = c.Value[0]
@@ -607,22 +611,27 @@ func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
 	var (
 		suffixFields strings.Builder
 		// 协议自定义是 map 结构
-		sep = `']['`
+		sep string
 	)
-	for index, f := range fs[1:] {
-		// 最后一个不需要补充
-		if index == len(fs)-2 {
-			sep = ""
+	for index, f := range fs {
+		// 第一个补充开头
+		if index == 0 {
+			sep = `['`
+		} else if index == len(fs)-1 {
+			// 最后一个不需要补充
+			sep = `']`
 		}
 
 		suffixFields.WriteString(f + sep)
 		// 用户上报的分隔符为 .
 		if mapFieldSet.Existed(f) {
 			sep = "."
+		} else if sep != "." {
+			sep = "']['"
 		}
 	}
 
-	return fmt.Sprintf(`CAST(%s['%s'] AS %s)`, fs[0], suffixFields.String(), castType), true
+	return fmt.Sprintf(`CAST(%s AS %s)`, suffixFields.String(), castType), true
 }
 
 func (d *DorisSQLExpr) valueTransform(s string) string {

@@ -724,20 +724,18 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		err = i.vmQuery(ctx, string(sql), resp, span)
 		if err == nil {
 			series, err := i.matrixFormat(ctx, resp, span)
-			if err != nil {
-				return nil, err
-			}
-
-			lbsMap := set.New[string]()
-			for _, s := range series {
-				for _, l := range s.Metric {
-					if l.Name == name {
-						lbsMap.Add(l.Value)
+			if err == nil {
+				lbsMap := set.New[string]()
+				for _, s := range series {
+					for _, l := range s.Metric {
+						if l.Name == name {
+							lbsMap.Add(l.Value)
+						}
 					}
 				}
-			}
 
-			return lbsMap.ToArray(), nil
+				return lbsMap.ToArray(), nil
+			}
 		}
 	}
 

@@ -624,12 +624,25 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 		// 添加结果表的指标数量
 		metadataMetrics.RtMetricNum(tableId, float64(metricNum))
 
+		// 多租户模式下，需要加上租户ID后缀
+		var redisKey string
+		if cfg.EnableMultiTenantMode {
+			redisKey = fmt.Sprintf("%s|%s", tableId, bkTenantId)
+		} else {
+			redisKey = tableId
+		}
+
 		// data_label
 		rt, ok := tableIdRtMap[tableId]
 		if !ok {
 			detail["data_label"] = ""
 		} else {
 			detail["data_label"] = rt.DataLabel
+
+			// 多租户模式下，需要加上租户ID后缀
+			if cfg.EnableMultiTenantMode {
+				detail["data_label"] = fmt.Sprintf("%s|%s", *rt.DataLabel, bkTenantId)
+			}
 		}
 		detail["measurement_type"] = measurementTypeMap[tableId]
 		detail["bcs_cluster_id"] = tableIdClusterIdMap[tableId]
@@ -638,14 +651,6 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 		if err != nil {
 			logger.Errorf("PushTableIdDetail:marshal result_table_detail failed, table_id: %s, err: %s", tableId, err.Error())
 			return err
-		}
-
-		// 多租户模式下，需要加上租户ID后缀
-		var redisKey string
-		if cfg.EnableMultiTenantMode {
-			redisKey = fmt.Sprintf("%s|%s", tableId, bkTenantId)
-		} else {
-			redisKey = tableId
 		}
 
 		// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Publish操作

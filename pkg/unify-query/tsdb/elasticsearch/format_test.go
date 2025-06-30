@@ -475,7 +475,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"bool":{"must_not":{"multi_match":{"fields":["*","__*"],"lenient":true,"query":"test","type":"phrase"}}}}}`,
+			expected: `{"query":{"bool":{"must_not":{"multi_match":{"fields":["*","__*"],"lenient":true,"query":"test","type":"phrase_prefix"}}}}}`,
 		},
 		"* with prefix use": {
 			conditions: metadata.AllConditions{
@@ -488,7 +488,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"bool":{"must_not":{"multi_match":{"fields":["*","__*"],"lenient":true,"query":"test","type":"phrase"}}}}}`,
+			expected: `{"query":{"bool":{"must_not":{"multi_match":{"fields":["*","__*"],"lenient":true,"query":"test","type":"phrase_prefix"}}}}}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

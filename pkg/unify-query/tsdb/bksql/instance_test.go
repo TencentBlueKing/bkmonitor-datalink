@@ -1753,6 +1753,33 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			end:      time.UnixMilli(1750953838000),
 			expected: "SELECT COUNT(CAST(resource['bk.instance.id'] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND CAST(resource['bk.instance.id'] AS STRING) IS NOT NULL GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC LIMIT 1",
 		},
+		{
+			name: "object field eq and aggregate",
+			query: &metadata.Query{
+				DB:          "2_bkapm_trace_bkop_doris",
+				Measurement: sql_expr.Doris,
+				Field:       "extra.queueDuration",
+				Size:        1,
+				Aggregates: metadata.Aggregates{
+					{
+						Name:   "count",
+						Window: time.Minute,
+					},
+				},
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "extra.queueDuration",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{""},
+						},
+					},
+				},
+			},
+			start:    time.UnixMilli(1750953836000),
+			end:      time.UnixMilli(1750953838000),
+			expected: "SELECT COUNT(CAST(extra['queueDuration'] AS INT)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND CAST(extra['queueDuration'] AS INT) IS NOT NULL GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC LIMIT 1",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1774,6 +1801,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 				"text":                             sql_expr.DorisTypeText,
 				"events.attributes.exception.type": fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText),
 				"events.timestamp":                 fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt),
+				"extra.queueDuration":              sql_expr.DorisTypeInt,
 			}).WithRangeTime(start, end)
 			generatedSQL, err := fact.SQL()
 

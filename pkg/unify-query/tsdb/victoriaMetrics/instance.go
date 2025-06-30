@@ -680,7 +680,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 
 	span.Set("query-left", left.String())
 
-	if left.Hours() <= 24 {
+	if left.Hours() < 24 {
 		step := int64(left.Seconds()) / 10
 		if step < 60 {
 			step = 60

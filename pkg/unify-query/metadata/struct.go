@@ -49,6 +49,10 @@ const (
 	ConditionLte   = "lte"
 )
 
+const (
+	DefaultReferenceName = "a"
+)
+
 type VmCondition string
 
 type FieldAlias map[string]string
@@ -152,6 +156,16 @@ type Query struct {
 	Orders      Orders    `json:"orders,omitempty"`
 	NeedAddTime bool      `json:"need_add_time,omitempty"`
 	Collapse    *Collapse `json:"collapse,omitempty"`
+}
+
+func (q *Query) VMExpand() *VmExpand {
+	return &VmExpand{
+		ResultTableList: []string{q.VmRt},
+		MetricFilterCondition: map[string]string{
+			DefaultReferenceName: q.VmCondition.String(),
+		},
+		ClusterName: q.StorageName,
+	}
 }
 
 func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {

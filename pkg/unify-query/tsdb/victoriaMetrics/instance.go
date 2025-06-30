@@ -676,67 +676,76 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	}
 
 	// 如果使用 end - start 作为 step，查询的时候会多查一个step的数据量，所以这里需要减少点数
-	step := (end.Unix() - start.Unix()) / 10
-	if step < 60 {
-		step = 60
-	}
+	left := end.Sub(start)
 
-	span.Set("query-step", step)
+	span.Set("query-left", left.String())
 
-	queryString := query.VmCondition.ToMatch()
-	queryString = fmt.Sprintf(`count(%s) by (%s)`, queryString, name)
-	if query.Size > 0 {
-		queryString = fmt.Sprintf(`topk(%d, %s)`, query.Size, queryString)
-	}
+	if left.Hours() <= 24 {
+		step := int64(left.Seconds()) / 10
+		if step < 60 {
+			step = 60
+		}
+		span.Set("query-step", step)
 
-	span.Set("query-storage-name", query.StorageName)
+		queryString := query.VmCondition.ToMatch()
+		queryString = fmt.Sprintf(`count(%s) by (%s)`, queryString, name)
+		if query.Size > 0 {
+			queryString = fmt.Sprintf(`topk(%d, %s)`, query.Size, queryString)
+		}
 
-	paramsQueryRange := &ParamsQueryRange{
-		InfluxCompatible: i.influxCompatible,
-		APIType:          APIQueryRange,
-		APIParams: struct {
-			Query   string `json:"query"`
-			Start   int64  `json:"start"`
-			End     int64  `json:"end"`
-			Step    int64  `json:"step"`
-			NoCache int    `json:"nocache"`
-		}{
-			Query: queryString,
-			Start: start.Unix(),
-			End:   end.Unix(),
-			Step:  step,
-		},
-		ResultTableList: []string{query.VmRt},
-		ClusterName:     i.getVMClusterName(query.StorageName),
-	}
+		span.Set("query-storage-name", query.StorageName)
 
-	span.Set("params-cluster-name", paramsQueryRange.ClusterName)
+		paramsQueryRange := &ParamsQueryRange{
+			InfluxCompatible: i.influxCompatible,
+			APIType:          APIQueryRange,
+			APIParams: struct {
+				Query   string `json:"query"`
+				Start   int64  `json:"start"`
+				End     int64  `json:"end"`
+				Step    int64  `json:"step"`
+				NoCache int    `json:"nocache"`
+			}{
+				Query: queryString,
+				Start: start.Unix(),
+				End:   end.Unix(),
+				Step:  step,
+			},
+			ResultTableList: []string{query.VmRt},
+			ClusterName:     i.getVMClusterName(query.StorageName),
+		}
 
-	sql, err := json.Marshal(paramsQueryRange)
-	if err != nil {
-		return nil, err
-	}
+		span.Set("params-cluster-name", paramsQueryRange.ClusterName)
 
-	err = i.vmQuery(ctx, string(sql), resp, span)
-	if err != nil {
-		return nil, err
-	}
+		sql, err := json.Marshal(paramsQueryRange)
+		if err != nil {
+			return nil, err
+		}
 
-	series, err := i.matrixFormat(ctx, resp, span)
-	if err != nil {
-		return nil, err
-	}
-
-	lbsMap := set.New[string]()
-	for _, s := range series {
-		for _, l := range s.Metric {
-			if l.Name == name {
-				lbsMap.Add(l.Value)
+		err = i.vmQuery(ctx, string(sql), resp, span)
+		if err == nil {
+			series, err := i.matrixFormat(ctx, resp, span)
+			if err != nil {
+				return nil, err
 			}
+
+			lbsMap := set.New[string]()
+			for _, s := range series {
+				for _, l := range s.Metric {
+					if l.Name == name {
+						lbsMap.Add(l.Value)
+					}
+				}
+			}
+
+			return lbsMap.ToArray(), nil
 		}
 	}
 
-	return lbsMap.ToArray(), nil
+	// 如果 tag values 超过 24h 或者报错的话，则跳转到 DirectLabelValues 查询
+	matcher, _ := labels.NewMatcher(labels.MatchEqual, labels.MetricName, metadata.DefaultReferenceName)
+	metadata.SetExpand(ctx, query.VMExpand())
+
+	return i.DirectLabelValues(ctx, name, start, end, query.Size, matcher)
 }
 
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {

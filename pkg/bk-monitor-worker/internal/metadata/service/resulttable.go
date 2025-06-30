@@ -86,12 +86,12 @@ func (r ResultTableSvc) RealStorageList() ([]Storage, error) {
 }
 
 // GetTableIdCutter 批量获取结果表是否禁用切分模块
-func (r ResultTableSvc) GetTableIdCutter(tableIdList []string) (map[string]bool, error) {
+func (r ResultTableSvc) GetTableIdCutter(bkTenantId string, tableIdList []string) (map[string]bool, error) {
 	db := mysql.GetDBSession().DB
 	var dsrtList []resulttable.DataSourceResultTable
 	for _, chunkTableIds := range slicex.ChunkSlice(tableIdList, 0) {
 		var tempList []resulttable.DataSourceResultTable
-		if err := resulttable.NewDataSourceResultTableQuerySet(db).Select(resulttable.DataSourceResultTableDBSchema.TableId, resulttable.DataSourceResultTableDBSchema.BkDataId).TableIdIn(chunkTableIds...).All(&tempList); err != nil {
+		if err := resulttable.NewDataSourceResultTableQuerySet(db).Select(resulttable.DataSourceResultTableDBSchema.TableId, resulttable.DataSourceResultTableDBSchema.BkDataId).BkTenantIdEq(bkTenantId).TableIdIn(chunkTableIds...).All(&tempList); err != nil {
 			return nil, err
 		}
 		dsrtList = append(dsrtList, tempList...)
@@ -107,7 +107,7 @@ func (r ResultTableSvc) GetTableIdCutter(tableIdList []string) (map[string]bool,
 	var dsoList []resulttable.DataSourceOption
 	for _, chunkDataIds := range slicex.ChunkSlice(dataIdList, 0) {
 		var tempList []resulttable.DataSourceOption
-		if err := resulttable.NewDataSourceOptionQuerySet(db).Select(resulttable.DataSourceOptionDBSchema.BkDataId, resulttable.DataSourceOptionDBSchema.Value).BkDataIdIn(chunkDataIds...).NameEq(models.OptionDisableMetricCutter).All(&tempList); err != nil {
+		if err := resulttable.NewDataSourceOptionQuerySet(db).Select(resulttable.DataSourceOptionDBSchema.BkDataId, resulttable.DataSourceOptionDBSchema.Value).BkTenantIdEq(bkTenantId).BkDataIdIn(chunkDataIds...).NameEq(models.OptionDisableMetricCutter).All(&tempList); err != nil {
 			return nil, err
 		}
 		dsoList = append(dsoList, tempList...)

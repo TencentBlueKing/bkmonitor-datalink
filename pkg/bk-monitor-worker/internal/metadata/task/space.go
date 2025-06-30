@@ -64,6 +64,14 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		return err
 	}
 
+	// 获取租户ID
+	bkTenantIdSet := make(map[string]struct{})
+	for _, sp := range spaceList {
+		if sp.BkTenantId != "" {
+			bkTenantIdSet[sp.BkTenantId] = struct{}{}
+		}
+	}
+
 	goroutineCount := GetGoroutineLimit("push_and_publish_space_router_info")
 	pusher := service.NewSpacePusher()
 	// 存放结果表数据
@@ -93,7 +101,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			defer wg.Done()
 			t1 := time.Now()
 			name := fmt.Sprintf("[task] PushAndPublishSpaceRouterInfo space_to_result_table [%s] ", sp.SpaceUid())
-			if err = pusher.PushSpaceTableIds(sp.SpaceTypeId, sp.SpaceId); err != nil {
+			if err = pusher.PushSpaceTableIds(sp.BkTenantId, sp.SpaceTypeId, sp.SpaceId); err != nil {
 				logger.Errorf("%s error %s", name, err)
 				return
 			}
@@ -102,42 +110,47 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	}
 
 	// 处理 data_label_to_result_table 关联路由
-	wg.Add(1)
-	_ = p.Submit(func() {
-		defer wg.Done()
-		t1 := time.Now()
-		name := "[task] PushAndPublishSpaceRouterInfo data_label_to_result_table"
-		if err = pusher.PushDataLabelTableIds(nil, nil, true); err != nil {
-			logger.Errorf("%s error %s", name, err)
-			return
-		}
-		logger.Infof("%s success, cost: %s", name, time.Since(t1))
-	})
+	for bkTenantId := range bkTenantIdSet {
+		wg.Add(1)
+		bkTenantId := bkTenantId
+		_ = p.Submit(func() {
+			defer wg.Done()
+			t1 := time.Now()
+			name := "[task] PushAndPublishSpaceRouterInfo data_label_to_result_table"
+			if err = pusher.PushDataLabelTableIds(bkTenantId, nil, nil, true); err != nil {
+				logger.Errorf("%s error %s", name, err)
+				return
+			}
+			logger.Infof("%s success, cost: %s", name, time.Since(t1))
+		})
+	}
 
 	// 处理 result_table_detail 路由
-	wg.Add(1)
-	_ = p.Submit(func() {
-		defer wg.Done()
-		t1 := time.Now()
+	for bkTenantId := range bkTenantIdSet {
+		wg.Add(1)
+		_ = p.Submit(func() {
+			defer wg.Done()
+			t1 := time.Now()
 
-		name := "[task] PushAndPublishSpaceRouterInfo result_table_detail"
-		var tableIdList []string
-		var rtList []resulttable.ResultTable
-		if err = resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).DefaultStorageEq("influxdb").IsEnableEq(true).IsDeletedEq(false).All(&rtList); err != nil {
-			logger.Errorf("%s error, %s", name, err)
-			return
-		}
-		// 获取结果表
-		for _, rt := range rtList {
-			tableIdList = append(tableIdList, rt.TableId)
-		}
+			name := "[task] PushAndPublishSpaceRouterInfo result_table_detail"
+			var tableIdList []string
+			var rtList []resulttable.ResultTable
+			if err = resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).DefaultStorageEq("influxdb").IsEnableEq(true).IsDeletedEq(false).All(&rtList); err != nil {
+				logger.Errorf("%s error, %s", name, err)
+				return
+			}
+			// 获取结果表
+			for _, rt := range rtList {
+				tableIdList = append(tableIdList, rt.TableId)
+			}
 
-		if err = pusher.PushTableIdDetail(tableIdList, true, true); err != nil {
-			logger.Errorf("%s error %s", name, err)
-			return
-		}
-		logger.Infof("%s success, cost: %s", name, time.Since(t1))
-	})
+			if err = pusher.PushTableIdDetail(bkTenantId, tableIdList, true, true); err != nil {
+				logger.Errorf("%s error %s", name, err)
+				return
+			}
+			logger.Infof("%s success, cost: %s", name, time.Since(t1))
+		})
+	}
 
 	// 处理 result_table_detail 路由: Elasticsearch 类型
 	wg.Add(1)

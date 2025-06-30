@@ -23,6 +23,7 @@ import (
 // ResultTableField: result table field model
 // gen:qs
 type ResultTableField struct {
+	BkTenantId     string    `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
 	Id             uint      `json:"id" gorm:"primary_key"`
 	TableID        string    `json:"table_id" gorm:"size:128;unique"`
 	FieldName      string    `json:"field_name" gorm:"size:255;unique"`
@@ -65,7 +66,7 @@ func (rtf *ResultTableField) UpdateMetricFieldFromTS() error {
 func (rtf *ResultTableField) GetOrCreate() (*ResultTableField, bool, error) {
 	dbSession := mysql.GetDBSession()
 	qs := NewResultTableFieldQuerySet(dbSession.DB)
-	qs = qs.TableIDEq(rtf.TableID).FieldNameEq(rtf.FieldName)
+	qs = qs.BkTenantIdEq(rtf.BkTenantId).TableIDEq(rtf.TableID).FieldNameEq(rtf.FieldName)
 
 	var rtfRecord ResultTableField
 	created := false

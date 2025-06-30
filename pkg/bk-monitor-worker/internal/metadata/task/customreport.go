@@ -72,8 +72,8 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 	}
 
 	// 收集需要更新推送redis的table_id
-	tableIdChan := make(chan string, GetGoroutineLimit("refresh_time_series_metric"))
-	var updatedTableIds []string
+	tableIdChan := make(chan [2]string, GetGoroutineLimit("refresh_time_series_metric"))
+	var updatedTableIds map[string][]string
 	wgReceive := sync.WaitGroup{}
 	wgReceive.Add(1)
 	go func(wg *sync.WaitGroup) {
@@ -83,7 +83,8 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 			if !ok {
 				break
 			}
-			updatedTableIds = append(updatedTableIds, tableId)
+			bkTenantId := tableId[0]
+			updatedTableIds[bkTenantId] = append(updatedTableIds[bkTenantId], tableId[1])
 		}
 	}(&wgReceive)
 	ch := make(chan struct{}, GetGoroutineLimit("refresh_time_series_metric"))
@@ -113,7 +114,7 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 			// 如果TSGroup的创建来源是计算平台，则需从计算平台获取相应的指标
 			queryFromBkdata = true
 		}
-		go func(ts customreport.TimeSeriesGroup, tableIdChan chan string, wg *sync.WaitGroup, ch chan struct{}, vmRt string, queryFromBkdata bool) {
+		go func(ts customreport.TimeSeriesGroup, tableIdChan chan [2]string, wg *sync.WaitGroup, ch chan struct{}, vmRt string, queryFromBkdata bool) {
 			defer func() {
 				<-ch
 				wg.Done()
@@ -127,7 +128,7 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 			}
 			logger.Infof("RefreshTimeSeriesMetric: time_series_group: [%s] metric update from bkdata or redis success, updated: %v", ts.TableID, updated)
 			if updated {
-				tableIdChan <- svc.TableID
+				tableIdChan <- [2]string{ts.BkTenantId, svc.TableID}
 			}
 		}(eg, tableIdChan, &wg, ch, vmRt, queryFromBkdata)
 	}
@@ -139,8 +140,10 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 	if len(updatedTableIds) != 0 {
 		logger.Info("RefreshTimeSeriesMetric,start to push table id to redis, updatedTableIds %v", updatedTableIds)
 		pusher := service.NewSpacePusher()
-		if err := pusher.PushTableIdDetail(updatedTableIds, true, false); err != nil {
-			return errors.Wrapf(err, "RefreshTimeSeriesMetric,metric update to push table id detaild for [%v] failed", updatedTableIds)
+		for bkTenantId, tableIds := range updatedTableIds {
+			if err := pusher.PushTableIdDetail(bkTenantId, tableIds, true, false); err != nil {
+				return errors.Wrapf(err, "RefreshTimeSeriesMetric,metric update to push table id detaild for [%v] failed", updatedTableIds)
+			}
 		}
 		logger.Infof("RefreshTimeSeriesMetric,metric updated of table_id  [%v]", updatedTableIds)
 	}

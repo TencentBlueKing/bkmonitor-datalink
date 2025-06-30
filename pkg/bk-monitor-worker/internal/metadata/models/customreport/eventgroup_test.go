@@ -72,6 +72,7 @@ func TestEventGroup_GetESData(t *testing.T) {
 	ess := storage.ESStorage{
 		TableID:          tableId,
 		StorageClusterID: clusterInfo.ClusterID,
+		NeedCreateIndex:  true,
 	}
 	db.Delete(&ess, "table_id = ?", ess.TableID)
 	err = ess.Create(db)

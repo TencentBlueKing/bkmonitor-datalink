@@ -33,6 +33,7 @@ import (
 // InfluxdbStorage influxdb storage model
 // gen:qs
 type InfluxdbStorage struct {
+	BkTenantId                string `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
 	TableID                   string `json:"table_id" gorm:"primary_key;size:128"`
 	StorageClusterID          uint   `gorm:"storage_cluster_id" json:"storage_cluster_id"`
 	RealTableName             string `gorm:"size:128" json:"real_table_id"`

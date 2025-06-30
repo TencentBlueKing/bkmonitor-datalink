@@ -42,7 +42,7 @@ func TestErrorString(t *testing.T) {
 		want string
 	}{
 		{
-			desc: "With Op, Code, and string",
+			desc: "With Op, Code and error",
 			err:  E(Op("rdb.DeleteTask"), NotFound, "cannot find task with id=123"),
 			want: "NOT_FOUND: cannot find task with id=123",
 		},

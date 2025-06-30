@@ -273,6 +273,10 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 		key    string
 		op     string
 		val    string
+
+		filter []string
+
+		err error
 	)
 
 	if c.DimensionName == "*" || c.DimensionName == "" {
@@ -285,6 +289,31 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	// 对值进行转义处理
 	for i, v := range c.Value {
 		c.Value[i] = d.valueTransform(v)
+	}
+
+	// doris 里面 array<int> 类型需要特殊处理
+	var checkArrayIntByOp = func(o string) (string, string, error) {
+		if len(c.Value) != 1 {
+			return "", "", fmt.Errorf("operator %s only support 1 value", o)
+		}
+		if d.isArray(c.DimensionName) {
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s %s, %s)", o, c.Value[0], key)
+			key = ""
+		} else {
+			val = c.Value[0]
+		}
+		return key, val, nil
+	}
+
+	// doris 里面 array<string> 类型需要特殊处理
+	var checkArrayStringByOp = func(op string) (string, string) {
+		if d.isArray(c.DimensionName) {
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", op, strings.Join(c.Value, "|"), key)
+			key = ""
+		} else {
+			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|")) // 多个值用|连接
+		}
+		return key, val
 	}
 
 	// 根据操作符类型生成不同的SQL表达式
@@ -301,10 +330,6 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
 			break
 		}
-
-		var (
-			filter []string
-		)
 
 		if d.isArray(c.DimensionName) {
 			for _, v := range c.Value {
@@ -354,8 +379,6 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			break
 		}
 
-		var filter []string
-
 		if d.isArray(c.DimensionName) {
 			for _, v := range c.Value {
 				var value string
@@ -394,61 +417,34 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	// 处理正则表达式匹配
 	case metadata.ConditionRegEqual:
 		op = "REGEXP"
-		if d.isArray(c.DimensionName) {
-			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", op, strings.Join(c.Value, "|"), key)
-			key = ""
-		} else {
-			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|")) // 多个值用|连接
-		}
+		key, val = checkArrayStringByOp(op)
 	case metadata.ConditionNotRegEqual:
 		op = "NOT REGEXP"
-		if d.isArray(c.DimensionName) {
-			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", op, strings.Join(c.Value, "|"), key)
-			key = ""
-		} else {
-			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|")) // 多个值用|连接
-		}
+		key, val = checkArrayStringByOp(op)
 	// 处理数值比较操作符（>, >=, <, <=）
 	case metadata.ConditionGt:
-		if len(c.Value) != 1 {
-			return "", fmt.Errorf("operator %s only support 1 value", op)
-		}
 		op = ">"
-		if d.isArray(c.DimensionName) {
-			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s %s, %s)", op, c.Value[0], key)
-			key = ""
-		} else {
-			val = c.Value[0]
+		key, val, err = checkArrayIntByOp(op)
+		if err != nil {
+			return "", err
 		}
 	case metadata.ConditionGte:
-		if len(c.Value) != 1 {
-			return "", fmt.Errorf("operator %s only support 1 value", op)
-		}
 		op = ">="
-		if d.isArray(c.DimensionName) {
-			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s %s, %s)", op, c.Value[0], key)
-			key = ""
-		} else {
-			val = c.Value[0]
+		key, val, err = checkArrayIntByOp(op)
+		if err != nil {
+			return "", err
 		}
 	case metadata.ConditionLt:
-		if len(c.Value) != 1 {
-			return "", fmt.Errorf("operator %s only support 1 value", op)
-		}
 		op = "<"
-		if d.isArray(c.DimensionName) {
-			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s %s, %s)", op, c.Value[0], key)
-			key = ""
-		} else {
-			val = c.Value[0]
+		key, val, err = checkArrayIntByOp(op)
+		if err != nil {
+			return "", err
 		}
 	case metadata.ConditionLte:
 		op = "<="
-		if d.isArray(c.DimensionName) {
-			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s %s, %s)", op, c.Value[0], key)
-			key = ""
-		} else {
-			val = c.Value[0]
+		key, val, err = checkArrayIntByOp(op)
+		if err != nil {
+			return "", err
 		}
 	default:
 		return "", fmt.Errorf("unknown operator %s", c.Operator)
@@ -606,6 +602,8 @@ func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
 		return fmt.Sprintf("`%s`", s), false
 	}
 
+	// 如果是 resource 或 attributes 字段里都是用户上报的内容，采用 . 作为 key 上报，所以这里增加了特殊处理
+	// 例如： events['attributes']['exception.type']
 	mapFieldSet := set.New[string]([]string{"resource", "attributes"}...)
 
 	var (

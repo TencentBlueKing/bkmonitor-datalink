@@ -331,9 +331,9 @@ func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, dataLabelList, ta
 			// 二段式补充
 			for idx, value := range rts {
 				rts[idx] = reformatTableId(value)
-				// 多租户模式下，需要加上租户ID前缀
+				// 多租户模式下，需要加上租户ID后缀
 				if cfg.EnableMultiTenantMode {
-					rts[idx] = fmt.Sprintf("%s|%s", bkTenantId, rts[idx])
+					rts[idx] = fmt.Sprintf("%s|%s", rts[idx], bkTenantId)
 				}
 			}
 
@@ -380,9 +380,9 @@ func (s *SpacePusher) getDataLabelTableIdMap(bkTenantId string, dataLabelList []
 	dlRtsMap := make(map[string][]string)
 	for _, rt := range rts {
 		var key string
-		// 多租户模式下，需要加上租户ID前缀
+		// 多租户模式下，需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
-			key = fmt.Sprintf("%s|%s", rt.BkTenantId, *rt.DataLabel)
+			key = fmt.Sprintf("%s|%s", *rt.DataLabel, rt.BkTenantId)
 		} else {
 			key = *rt.DataLabel
 		}
@@ -433,9 +433,9 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 	dataLabelTableIdMap := make(map[string][]string)
 	for _, rt := range rtList {
 		var key string
-		// 多租户模式下，需要加上租户ID前缀
+		// 多租户模式下，需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
-			key = fmt.Sprintf("%s|%s", rt.BkTenantId, *rt.DataLabel)
+			key = fmt.Sprintf("%s|%s", *rt.DataLabel, rt.BkTenantId)
 		} else {
 			key = *rt.DataLabel
 		}
@@ -640,10 +640,10 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 			return err
 		}
 
-		// 多租户模式下，需要加上租户ID前缀
+		// 多租户模式下，需要加上租户ID后缀
 		var redisKey string
 		if cfg.EnableMultiTenantMode {
-			redisKey = fmt.Sprintf("%s|%s", bkTenantId, tableId)
+			redisKey = fmt.Sprintf("%s|%s", tableId, bkTenantId)
 		} else {
 			redisKey = tableId
 		}
@@ -1199,7 +1199,7 @@ func (s *SpacePusher) filterTsInfo(bkTenantId string, tableIds []string) (*TsInf
 	beginTime := time.Now().UTC().Add(-time.Duration(cfg.GlobalTimeSeriesMetricExpiredSeconds) * time.Second)
 	var tsmList []customreport.TimeSeriesMetric
 	if len(tsGroupIdList) != 0 {
-		if err := customreport.NewTimeSeriesMetricQuerySet(db).Select(customreport.TimeSeriesMetricDBSchema.FieldName, customreport.TimeSeriesMetricDBSchema.GroupID).BkTenantIdEq(bkTenantId).GroupIDIn(tsGroupIdList...).LastModifyTimeGte(beginTime).All(&tsmList); err != nil {
+		if err := customreport.NewTimeSeriesMetricQuerySet(db).Select(customreport.TimeSeriesMetricDBSchema.FieldName, customreport.TimeSeriesMetricDBSchema.GroupID).GroupIDIn(tsGroupIdList...).LastModifyTimeGte(beginTime).All(&tsmList); err != nil {
 			return nil, err
 		}
 	}
@@ -1410,13 +1410,12 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	if len(values) != 0 {
 		var redisKey string
 
-		// 如果开启了多租户模式，则需要根据tenantId进行组装
+		// 如果开启了多租户模式，则需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
-			redisKey = fmt.Sprintf("%s|%s__%s", bkTenantId, spaceType, spaceId)
-			// value需要补充租户ID前缀
+			redisKey = fmt.Sprintf("%s__%s|%s", spaceType, spaceId, bkTenantId)
 			oldValue, values := values, make(map[string]map[string]interface{})
 			for tid, val := range oldValue {
-				values[fmt.Sprintf("%s|%s", bkTenantId, tid)] = val
+				values[fmt.Sprintf("%s|%s", tid, bkTenantId)] = val
 			}
 		} else {
 			redisKey = fmt.Sprintf("%s__%s", spaceType, spaceId)
@@ -1512,13 +1511,13 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		client := redis.GetStorageRedisInstance()
 
 		var redisKey string
-		// 如果开启了多租户模式，则需要根据tenantId进行组装
+		// 如果开启了多租户模式，则需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
-			redisKey = fmt.Sprintf("%s|%s__%s", bkTenantId, spaceType, spaceId)
+			redisKey = fmt.Sprintf("%s__%s|%s", spaceType, spaceId, bkTenantId)
 			// value需要补充租户ID前缀
 			oldValue, values := values, make(map[string]map[string]interface{})
 			for tid, val := range oldValue {
-				values[fmt.Sprintf("%s|%s", bkTenantId, tid)] = val
+				values[fmt.Sprintf("%s|%s", tid, bkTenantId)] = val
 			}
 		} else {
 			redisKey = fmt.Sprintf("%s__%s", spaceType, spaceId)
@@ -1589,13 +1588,13 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 		client := redis.GetStorageRedisInstance()
 
 		var redisKey string
-		// 如果开启了多租户模式，则需要根据tenantId进行组装
+		// 如果开启了多租户模式，则需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
-			redisKey = fmt.Sprintf("%s|%s__%s", bkTenantId, spaceType, spaceId)
-			// value需要补充租户ID前缀
+			redisKey = fmt.Sprintf("%s__%s|%s", spaceType, spaceId, bkTenantId)
+			// value需要补充租户ID后缀
 			oldValue, values := values, make(map[string]map[string]interface{})
 			for tid, val := range oldValue {
-				values[fmt.Sprintf("%s|%s", bkTenantId, tid)] = val
+				values[fmt.Sprintf("%s|%s", tid, bkTenantId)] = val
 			}
 		} else {
 			redisKey = fmt.Sprintf("%s__%s", spaceType, spaceId)

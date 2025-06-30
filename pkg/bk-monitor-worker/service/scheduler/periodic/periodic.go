@@ -36,7 +36,6 @@ type PeriodicTask struct {
 // NOTE: 后续增加针对不同的任务，使用不同的调度器
 func getPeriodicTasks() map[string]PeriodicTask {
 	refreshTsMetric := "periodic:metadata:refresh_ts_metric"
-	refreshEventDimension := "periodic:metadata:refresh_event_dimension"
 	refreshInfluxdbRoute := "periodic:metadata:refresh_influxdb_route"
 	refreshDatasource := "periodic:metadata:refresh_datasource"
 	RefreshKafkaTopicInfo := "periodic:metadata:refresh_kafka_topic_info"
@@ -54,10 +53,6 @@ func getPeriodicTasks() map[string]PeriodicTask {
 			Cron:    "*/5 * * * *",
 			Handler: metadataTask.RefreshTimeSeriesMetric,
 			Option:  []task.Option{task.Timeout(600 * time.Second)},
-		},
-		refreshEventDimension: {
-			Cron:    "*/3 * * * *",
-			Handler: metadataTask.RefreshEventDimension,
 		},
 		refreshInfluxdbRoute: {
 			Cron:    "*/10 * * * *",

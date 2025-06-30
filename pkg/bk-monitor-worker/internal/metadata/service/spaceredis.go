@@ -867,6 +867,13 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		fieldAliasSettings = make(map[string]string)
 	}
 
+	// 多租户模式下，需要加上租户ID后缀
+	dataLabel := rt.DataLabel
+	if cfg.EnableMultiTenantMode && dataLabel != nil {
+		newDataLabel := fmt.Sprintf("%s|%s", *dataLabel, rt.BkTenantId)
+		dataLabel = &newDataLabel
+	}
+
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
 		"storage_type":            models.StorageTypeES,
@@ -876,7 +883,7 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		"source_type":             sourceType,
 		"options":                 options,
 		"storage_cluster_records": clusterRecords,
-		"data_label":              rt.DataLabel,
+		"data_label":              dataLabel,
 		"field_alias":             fieldAliasSettings, // 添加字段别名
 	})
 	if err != nil {
@@ -1305,6 +1312,27 @@ func (s *SpacePusher) PushBkAppToSpace() (err error) {
 	}
 
 	for field, value := range appSpaces.HashData() {
+		// 多租户模式下，需要加上租户ID后缀
+		if cfg.EnableMultiTenantMode {
+			newValue := make([]string, 0)
+			for _, spaceUID := range value {
+
+				// 如果 spaceUID 为 *，则表示所有空间
+				if spaceUID == "*" {
+					newValue = append(newValue, spaceUID)
+					continue
+				}
+
+				bkTenantId, err := tenant.GetTenantIdBySpaceUID(spaceUID)
+				if err != nil {
+					logger.Errorf("PushBkAppToSpace:get tenant id by space uid failed, space_uid [%s], err: %s", spaceUID, err)
+					return err
+				}
+				newValue = append(newValue, fmt.Sprintf("%s|%s", spaceUID, bkTenantId))
+			}
+			value = newValue
+		}
+
 		valueStr, jsonErr := jsonx.MarshalString(value)
 		if err != nil {
 			logger.Errorf("%+v jsonMarshalString error %s", value, jsonErr)
@@ -2725,13 +2753,18 @@ func (s *SpaceRedisClearer) ClearSpaceToRt() {
 	}
 	// 获取真实存在的空间
 	var spaceList []space.Space
-	if err := space.NewSpaceQuerySet(s.dbClient).Select(space.SpaceDBSchema.SpaceTypeId, space.SpaceDBSchema.SpaceId).All(&spaceList); err != nil {
+	if err := space.NewSpaceQuerySet(s.dbClient).Select(space.SpaceDBSchema.SpaceTypeId, space.SpaceDBSchema.SpaceId, space.SpaceDBSchema.BkTenantId).All(&spaceList); err != nil {
 		logger.Errorf("clear space to rt router, get space list error, %s", err)
 		return
 	}
 	var spaceUidList []string
 	for _, spaceObj := range spaceList {
-		spaceUidList = append(spaceUidList, fmt.Sprintf("%s__%s", spaceObj.SpaceTypeId, spaceObj.SpaceId))
+		// 多租户模式下，需要加上租户ID后缀
+		if cfg.EnableMultiTenantMode {
+			spaceUidList = append(spaceUidList, fmt.Sprintf("%s__%s|%s", spaceObj.SpaceTypeId, spaceObj.SpaceId, spaceObj.BkTenantId))
+		} else {
+			spaceUidList = append(spaceUidList, fmt.Sprintf("%s__%s", spaceObj.SpaceTypeId, spaceObj.SpaceId))
+		}
 	}
 	// 获取存在于redis，而不在db中的数据，然后针对key进行删除
 	fieldSet := slicex.StringList2Set(fields)
@@ -2764,13 +2797,20 @@ func (s *SpaceRedisClearer) ClearDataLabelToRt() {
 	}
 	// 获取真实存在的数据标签
 	var rtList []resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(s.dbClient).Select(resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
+	if err := resulttable.NewResultTableQuerySet(s.dbClient).Select(resulttable.ResultTableDBSchema.DataLabel, resulttable.ResultTableDBSchema.BkTenantId).DataLabelNe("").DataLabelIsNotNull().IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
 		logger.Errorf("clear data label to rt router, get data label list error, %s", err)
 		return
 	}
 	var datalabelList []string
 	for _, rt := range rtList {
-		datalabelList = append(datalabelList, *rt.DataLabel)
+		if rt.DataLabel != nil && *rt.DataLabel != "" {
+			// 多租户模式下，需要加上租户ID后缀
+			if cfg.EnableMultiTenantMode {
+				datalabelList = append(datalabelList, fmt.Sprintf("%s|%s", *rt.DataLabel, rt.BkTenantId))
+			} else {
+				datalabelList = append(datalabelList, *rt.DataLabel)
+			}
+		}
 	}
 	// 获取存在于redis，而不在db中的数据，然后针对key进行删除
 	fieldSet := slicex.StringList2Set(fields)
@@ -2803,13 +2843,18 @@ func (s *SpaceRedisClearer) ClearRtDetail() {
 	}
 	// 获取真实存在的rt_id
 	var rtList []resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(s.dbClient).Select(resulttable.ResultTableDBSchema.TableId).IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
+	if err := resulttable.NewResultTableQuerySet(s.dbClient).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.BkTenantId).IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
 		logger.Errorf("clear rt detail, get rt list error, %s", err)
 		return
 	}
 	var rtIdList []string
 	for _, rt := range rtList {
-		rtIdList = append(rtIdList, rt.TableId)
+		// 多租户模式下，需要加上租户ID后缀
+		if cfg.EnableMultiTenantMode {
+			rtIdList = append(rtIdList, fmt.Sprintf("%s|%s", rt.TableId, rt.BkTenantId))
+		} else {
+			rtIdList = append(rtIdList, rt.TableId)
+		}
 	}
 	// 获取存在于redis，而不在db中的数据，然后针对key进行删除
 	fieldSet := slicex.StringList2Set(fields)

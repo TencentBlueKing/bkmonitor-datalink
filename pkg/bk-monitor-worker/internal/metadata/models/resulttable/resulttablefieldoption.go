@@ -24,9 +24,10 @@ import (
 // gen:qs
 type ResultTableFieldOption struct {
 	models.OptionBase
-	TableID   string `json:"table_id" gorm:"size:128;unique"`
-	FieldName string `json:"field_name" gorm:"size:255"`
-	Name      string `json:"name" gorm:"size:128"`
+	BkTenantId string `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
+	TableID    string `json:"table_id" gorm:"size:128;unique"`
+	FieldName  string `json:"field_name" gorm:"size:255"`
+	Name       string `json:"name" gorm:"size:128"`
 }
 
 // TableName table alias name

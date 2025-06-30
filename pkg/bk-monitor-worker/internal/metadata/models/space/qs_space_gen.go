@@ -1162,6 +1162,7 @@ func (f SpaceDBSchemaField) String() string {
 
 // SpaceDBSchema stores db field names of Space
 var SpaceDBSchema = struct {
+	BkTenantId  SpaceDBSchemaField
 	Id          SpaceDBSchemaField
 	SpaceTypeId SpaceDBSchemaField
 	SpaceId     SpaceDBSchemaField
@@ -1176,7 +1177,7 @@ var SpaceDBSchema = struct {
 	Updater     SpaceDBSchemaField
 	UpdateTime  SpaceDBSchemaField
 }{
-
+	BkTenantId:  SpaceDBSchemaField("bk_tenant_id"),
 	Id:          SpaceDBSchemaField("id"),
 	SpaceTypeId: SpaceDBSchemaField("space_type_id"),
 	SpaceId:     SpaceDBSchemaField("space_id"),
@@ -1196,6 +1197,7 @@ var SpaceDBSchema = struct {
 // nolint: dupl
 func (o *Space) Update(db *gorm.DB, fields ...SpaceDBSchemaField) error {
 	dbNameToFieldName := map[string]interface{}{
+		"bk_tenant_id":  o.BkTenantId,
 		"id":            o.Id,
 		"space_type_id": o.SpaceTypeId,
 		"space_id":      o.SpaceId,

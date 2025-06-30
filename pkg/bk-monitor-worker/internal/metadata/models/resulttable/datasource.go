@@ -20,28 +20,30 @@ import (
 // DataSource datasource model
 // gen:qs
 type DataSource struct {
-	BkDataId          uint      `gorm:"primary_key" json:"bk_data_id"`
-	Token             string    `gorm:"size:32" json:"token"`
-	DataName          string    `gorm:"size:128;index" json:"data_name"`
-	DataDescription   string    `gorm:"type:text;" json:"data_description"`
-	MqClusterId       uint      `gorm:"column:mq_cluster_id" json:"mq_cluster_id"`
-	MqConfigId        uint      `gorm:"column:mq_config_id" json:"mq_config_id"`
-	EtlConfig         string    `gorm:"type:text;" json:"etl_config"`
-	IsCustomSource    bool      `gorm:"is_custom_source" json:"is_custom_source"`
-	Creator           string    `gorm:"size:32" json:"creator"`
-	CreateTime        time.Time `gorm:"create_time;" json:"create_time"`
-	LastModifyUser    string    `gorm:"last_modify_user;size:32" json:"last_modify_user"`
-	LastModifyTime    time.Time `gorm:"last_modify_time" json:"last_modify_time"`
-	TypeLabel         string    `gorm:"size:128" json:"type_label"`
-	SourceLabel       string    `gorm:"size:128" json:"source_label"`
-	CustomLabel       *string   `gorm:"size:256" json:"custom_label"`
-	SourceSystem      string    `gorm:"size:256" json:"source_system"`
-	IsEnable          bool      `gorm:"is_enable" json:"is_enable"`
-	TransferClusterId string    `gorm:"size:50" json:"transfer_cluster_id"`
-	IsPlatformDataId  bool      `gorm:"column:is_platform_data_id" json:"is_platform_data_id"`
-	SpaceTypeId       string    `gorm:"size:64" json:"space_type_id"`
-	SpaceUid          string    `gorm:"size:256" json:"space_uid"`
-	CreatedFrom       string    `gorm:"size:16" json:"created_from"`
+	BkTenantId             string    `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
+	BkDataId               uint      `gorm:"primary_key" json:"bk_data_id"`
+	Token                  string    `gorm:"size:32" json:"token"`
+	DataName               string    `gorm:"size:128;index" json:"data_name"`
+	DataDescription        string    `gorm:"type:text;" json:"data_description"`
+	MqClusterId            uint      `gorm:"column:mq_cluster_id" json:"mq_cluster_id"`
+	MqConfigId             uint      `gorm:"column:mq_config_id" json:"mq_config_id"`
+	EtlConfig              string    `gorm:"type:text;" json:"etl_config"`
+	IsCustomSource         bool      `gorm:"is_custom_source" json:"is_custom_source"`
+	Creator                string    `gorm:"size:32" json:"creator"`
+	CreateTime             time.Time `gorm:"create_time;" json:"create_time"`
+	LastModifyUser         string    `gorm:"last_modify_user;size:32" json:"last_modify_user"`
+	LastModifyTime         time.Time `gorm:"last_modify_time" json:"last_modify_time"`
+	TypeLabel              string    `gorm:"size:128" json:"type_label"`
+	SourceLabel            string    `gorm:"size:128" json:"source_label"`
+	CustomLabel            *string   `gorm:"size:256" json:"custom_label"`
+	SourceSystem           string    `gorm:"size:256" json:"source_system"`
+	IsEnable               bool      `gorm:"is_enable" json:"is_enable"`
+	TransferClusterId      string    `gorm:"size:50" json:"transfer_cluster_id"`
+	IsPlatformDataId       bool      `gorm:"column:is_platform_data_id" json:"is_platform_data_id"`
+	SpaceTypeId            string    `gorm:"size:64" json:"space_type_id"`
+	SpaceUid               string    `gorm:"size:256" json:"space_uid"`
+	CreatedFrom            string    `gorm:"size:16" json:"created_from"`
+	IsTenantSpecificGlobal bool      `gorm:"column:is_tenant_specific_global" json:"is_tenant_specific_global"`
 }
 
 // BeforeCreate 新建前时间字段设置为当前时间

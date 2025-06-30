@@ -20,6 +20,7 @@ import (
 // TimeSeriesMetric: time series metric model
 // gen:qs
 type TimeSeriesMetric struct {
+	BkTenantId     string    `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
 	GroupID        uint      `json:"group_id" gorm:"unique"`
 	TableID        string    `json:"table_id" gorm:"size:255"`
 	FieldID        uint      `json:"field_id" gorm:"primary_key"`

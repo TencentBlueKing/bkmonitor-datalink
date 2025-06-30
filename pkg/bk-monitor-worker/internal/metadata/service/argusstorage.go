@@ -12,7 +12,6 @@ package service
 import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 )
 
 // ArgusStorageSvc argus storage service
@@ -54,9 +53,4 @@ func (a ArgusStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 		},
 	}
 	return consulConfig, nil
-}
-
-// CreateTable 创建存储
-func (a ArgusStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error {
-	return nil
 }

@@ -34,78 +34,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// RefreshESStorage : update es storage()
-func RefreshESStorage(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("RefreshESStorage Runtime panic caught: %v", err)
-		}
-	}()
-
-	dbSession := mysql.GetDBSession()
-	// 过滤满足条件的记录
-	var allEsStorageList []storage.ESStorage
-	if err := storage.NewESStorageQuerySet(dbSession.DB).All(&allEsStorageList); err != nil {
-		logger.Errorf("query all es storage record error, %v", err)
-		return err
-	}
-
-	var esStorageTableIdList []string
-	var tableIdEsStorageMap = make(map[string]storage.ESStorage)
-	for _, esStorage := range allEsStorageList {
-		esStorageTableIdList = append(esStorageTableIdList, esStorage.TableID)
-		tableIdEsStorageMap[esStorage.TableID] = esStorage
-	}
-	if len(esStorageTableIdList) == 0 {
-		logger.Infof("no es storage need update")
-		return nil
-	}
-
-	// 过滤到有效的table_id
-	var resultTableList []resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(dbSession.DB).IsEnableEq(true).IsDeletedEq(false).
-		TableIdIn(esStorageTableIdList...).All(&resultTableList); err != nil {
-		logger.Errorf("query result table record error, %v", err)
-		return err
-	}
-	// 需要刷新的es_storage
-	var needUpdateEsStorageList []storage.ESStorage
-	for _, rt := range resultTableList {
-		esStorage, ok := tableIdEsStorageMap[rt.TableId]
-		if ok {
-			needUpdateEsStorageList = append(needUpdateEsStorageList, esStorage)
-		}
-	}
-	if len(needUpdateEsStorageList) == 0 {
-		logger.Infof("no es storage need update")
-		return nil
-	}
-
-	wg := &sync.WaitGroup{}
-	ch := make(chan bool, GetGoroutineLimit("refresh_es_storage"))
-	wg.Add(len(needUpdateEsStorageList))
-	// 遍历所有的ES存储并创建index, 并执行完整的es生命周期操作
-	for _, esStorage := range needUpdateEsStorageList {
-		ch <- true
-		go func(ess storage.ESStorage, wg *sync.WaitGroup, ch chan bool) {
-			defer func() {
-				<-ch
-				wg.Done()
-			}()
-
-			if err := ess.ManageESStorage(ctx); err != nil {
-				logger.Errorf("es_storage: [%v] table_id [%s] try to refresh es failed, %v", ess.StorageClusterID, ess.TableID, err)
-			} else {
-				logger.Infof("es_storage: [%v] table_id [%s] refresh es success", ess.StorageClusterID, ess.TableID)
-			}
-		}(esStorage, wg, ch)
-
-	}
-	wg.Wait()
-
-	return nil
-}
-
 // RefreshInfluxdbRoute : update influxdb route
 func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 	defer func() {
@@ -156,17 +84,6 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 		logger.Errorf("refresh_influxdb_route refresh router version error, %v", err)
 	} else {
 		logger.Infof("influxdb router config refresh success")
-	}
-
-	// 更新TS结果表外部的依赖信息
-	if influxdbStorageList == nil {
-		if err := storage.NewInfluxdbStorageQuerySet(db).All(&influxdbStorageList); err != nil {
-			logger.Errorf("refresh_influxdb_route query influxdb storage error, %v", err)
-		} else {
-			storage.RefreshInfluxDBStorageOuterDependence(ctx, &influxdbStorageList, GetGoroutineLimit("refresh_influxdb_route"))
-		}
-	} else {
-		storage.RefreshInfluxDBStorageOuterDependence(ctx, &influxdbStorageList, GetGoroutineLimit("refresh_influxdb_route"))
 	}
 
 	// 更新tag路由信息
@@ -319,57 +236,6 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	return nil
 }
 
-// RefreshESRestore 刷新回溯状态
-func RefreshESRestore(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("RefreshEsRestore Runtime panic caught: %v", err)
-		}
-	}()
-
-	db := mysql.GetDBSession().DB
-	// 过滤满足条件的记录
-	var restoreList []storage.EsSnapshotRestore
-	if err := storage.NewEsSnapshotRestoreQuerySet(db).IsDeletedNe(true).All(&restoreList); err != nil {
-		logger.Errorf("query EsSnapshotRestore record error, %v", err)
-		return err
-	}
-	var notDoneRestores []storage.EsSnapshotRestore
-	for _, r := range restoreList {
-		if r.TotalDocCount != r.CompleteDocCount {
-			notDoneRestores = append(notDoneRestores, r)
-		}
-	}
-	if len(notDoneRestores) == 0 {
-		logger.Infof("no restore need refresh, skip")
-		return nil
-	}
-
-	wg := &sync.WaitGroup{}
-	ch := make(chan bool, GetGoroutineLimit("refresh_es_restore"))
-	wg.Add(len(notDoneRestores))
-	// 遍历所有的ES存储并创建index, 并执行完整的es生命周期操作
-	for _, restore := range notDoneRestores {
-		ch <- true
-		go func(r storage.EsSnapshotRestore, wg *sync.WaitGroup, ch chan bool) {
-			defer func() {
-				<-ch
-				wg.Done()
-			}()
-			svc := service.NewEsSnapshotRestoreSvc(&r)
-			if _, err := svc.GetCompleteDocCount(ctx); err != nil {
-				logger.Errorf("es_restore [%v] failed to cron task, %v", svc.RestoreID, err)
-			} else {
-				logger.Infof("es_restore [%v] refresh success", svc.RestoreID)
-			}
-		}(restore, wg, ch)
-
-	}
-	wg.Wait()
-
-	return nil
-}
-
 // RefreshKafkaTopicInfo 刷新kafka topic into的partitions
 func RefreshKafkaTopicInfo(ctx context.Context, t *t.Task) error {
 	defer func() {
@@ -428,7 +294,7 @@ func RefreshKafkaTopicInfo(ctx context.Context, t *t.Task) error {
 	wg := &sync.WaitGroup{}
 	ch := make(chan struct{}, GetGoroutineLimit("refresh_kafka_topic_info"))
 	wg.Add(len(kafkaTopicInfoList))
-	// 遍历所有的ES存储并创建index, 并执行完整的es生命周期操作
+	// 遍历所有的Kafka主题信息并创建相关索引
 	for _, info := range kafkaTopicInfoList {
 		// 获取 cluster id
 		clusterId, ok := dataIdClusterId[info.BkDataId]

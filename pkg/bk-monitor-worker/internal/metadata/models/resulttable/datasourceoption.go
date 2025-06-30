@@ -19,8 +19,9 @@ import (
 // gen:qs
 type DataSourceOption struct {
 	models.OptionBase
-	BkDataId uint   `gorm:"column:bk_data_id" json:"bk_data_id"`
-	Name     string `json:"name" gorm:"size:128"`
+	BkTenantId string `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
+	BkDataId   uint   `gorm:"column:bk_data_id" json:"bk_data_id"`
+	Name       string `json:"name" gorm:"size:128"`
 }
 
 // TableName table alias name

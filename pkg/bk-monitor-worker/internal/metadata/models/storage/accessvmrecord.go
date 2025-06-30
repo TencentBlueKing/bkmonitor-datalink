@@ -28,6 +28,7 @@ import (
 // AccessVMRecord access vm record model
 // gen:qs
 type AccessVMRecord struct {
+	BkTenantId       string `gorm:"column:bk_tenant_id;size:256" json:"bk_tenant_id"`
 	DataType         string `json:"data_type" gorm:"size:32"`
 	ResultTableId    string `gorm:"result_table_id;size:64" json:"result_table_id"`
 	BcsClusterId     string `gorm:"bcs_cluster_id;size:32" json:"bcs_cluster_id"`

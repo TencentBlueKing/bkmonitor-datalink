@@ -37,27 +37,10 @@ type PeriodicTask struct {
 func getPeriodicTasks() map[string]PeriodicTask {
 	refreshTsMetric := "periodic:metadata:refresh_ts_metric"
 	refreshEventDimension := "periodic:metadata:refresh_event_dimension"
-	refreshEsStorage := "periodic:metadata:refresh_es_storage"
 	refreshInfluxdbRoute := "periodic:metadata:refresh_influxdb_route"
 	refreshDatasource := "periodic:metadata:refresh_datasource"
-	DiscoverBcsClusters := "periodic:metadata:discover_bcs_clusters" // todo 涉及bkmonitor模型，暂时不启用
-	RefreshBcsMonitorInfo := "periodic:metadata:refresh_bcs_monitor_info"
-	RefreshDefaultRp := "periodic:metadata:refresh_default_rp"
-	RefreshBkccSpaceName := "periodic:metadata:refresh_bkcc_space_name"
 	RefreshKafkaTopicInfo := "periodic:metadata:refresh_kafka_topic_info"
-	CleanExpiredRestore := "periodic:metadata:clean_expired_restore"
-	RefreshESRestore := "periodic:metadata:refresh_es_restore"
-	//RefreshBcsMetricsLabel := "periodic:metadata:refresh_bcs_metrics_label"
 	SyncBkccSpaceDataSource := "periodic:metadata:sync_bkcc_space_data_source"
-	RefreshBkccSpace := "periodic:metadata:refresh_bkcc_space"
-	RefreshClusterResource := "periodic:metadata:refresh_cluster_resource"
-	RefreshBcsProjectBiz := "periodic:metadata:refresh_bcs_project_biz"
-	AutoDeployProxy := "periodic:metadata:auto_deploy_proxy"
-	SyncBcsSpace := "periodic:metadata:sync_bcs_space"
-	RefreshBkciSpaceName := "periodic:metadata:refresh_bkci_space_name"
-	RefreshCustomReport2Nodeman := "periodic:metadata:refresh_custom_report_2_node_man"
-	RefreshPingServer2Nodeman := "periodic:metadata:refresh_ping_server_2_node_man"
-
 	ReportInfluxdbClusterMetrics := "periodic:cluster_metrics:report_influxdb"
 	PushAndPublishSpaceRouterInfo := "periodic:cluster_metrics:push_and_publish_space_router_info"
 	ReportESClusterMetrics := "periodic:cluster_metrics:report_es"
@@ -76,10 +59,6 @@ func getPeriodicTasks() map[string]PeriodicTask {
 			Cron:    "*/3 * * * *",
 			Handler: metadataTask.RefreshEventDimension,
 		},
-		refreshEsStorage: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.RefreshESStorage,
-		},
 		refreshInfluxdbRoute: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshInfluxdbRoute,
@@ -88,69 +67,13 @@ func getPeriodicTasks() map[string]PeriodicTask {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshDatasource,
 		},
-		DiscoverBcsClusters: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.DiscoverBcsClusters,
-		},
-		RefreshBcsMonitorInfo: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.RefreshBcsMonitorInfo,
-		},
-		RefreshDefaultRp: {
-			Cron:    "0 22 * * *",
-			Handler: metadataTask.RefreshDefaultRp,
-		},
-		RefreshBkccSpaceName: {
-			Cron:    "30 3 * * *",
-			Handler: metadataTask.RefreshBkccSpaceName,
-		},
 		RefreshKafkaTopicInfo: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshKafkaTopicInfo,
 		},
-		RefreshESRestore: {
-			Cron:    "* * * * *",
-			Handler: metadataTask.RefreshESRestore,
-		},
-		CleanExpiredRestore: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.CleanExpiredRestore,
-		},
-		RefreshBkccSpace: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.RefreshBkccSpace,
-		},
 		SyncBkccSpaceDataSource: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.SyncBkccSpaceDataSource,
-		},
-		RefreshClusterResource: {
-			Cron:    "*/30 * * * *",
-			Handler: metadataTask.RefreshClusterResource,
-		},
-		RefreshBcsProjectBiz: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.RefreshBcsProjectBiz,
-		},
-		SyncBcsSpace: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.SyncBcsSpace,
-		},
-		AutoDeployProxy: {
-			Cron:    "30 */2 * * *",
-			Handler: metadataTask.AutoDeployProxy,
-		},
-		RefreshBkciSpaceName: {
-			Cron:    "0 3 * * *",
-			Handler: metadataTask.RefreshBkciSpaceName,
-		},
-		RefreshCustomReport2Nodeman: {
-			Cron:    "*/5 * * * *",
-			Handler: metadataTask.RefreshCustomReport2Nodeman,
-		},
-		RefreshPingServer2Nodeman: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.RefreshPingServer2Nodeman,
 		},
 		ReportInfluxdbClusterMetrics: {
 			Cron:    "*/1 * * * *",

@@ -10,8 +10,6 @@
 package service
 
 import (
-	"fmt"
-
 	"github.com/Shopify/sarama"
 	"github.com/pkg/errors"
 
@@ -32,49 +30,6 @@ func NewKafkaTopicInfoSvc(obj *storage.KafkaTopicInfo) KafkaTopicInfoSvc {
 	return KafkaTopicInfoSvc{
 		KafkaTopicInfo: obj,
 	}
-}
-
-// CreateInfo 创建一个新的Topic信息
-func (s KafkaTopicInfoSvc) CreateInfo(bkDataId uint, topic string, partition int, batchSize *int64, flushInterval *string, consumeRate *int64) (*storage.KafkaTopicInfo, error) {
-	db := mysql.GetDBSession().DB
-	count, err := storage.NewKafkaTopicInfoQuerySet(db).BkDataIdEq(bkDataId).Count()
-	if err != nil {
-		return nil, err
-	}
-	if count != 0 {
-		return nil, errors.Errorf("kafka topic for data_id [%v] already exists", bkDataId)
-	}
-	if topic == "" {
-		topic = fmt.Sprintf("%s%v0", "0bkmonitor_", bkDataId)
-	}
-	if partition == 0 {
-		partition = 1
-	}
-	info := storage.KafkaTopicInfo{
-		BkDataId:      bkDataId,
-		Topic:         topic,
-		Partition:     partition,
-		BatchSize:     batchSize,
-		FlushInterval: flushInterval,
-		ConsumeRate:   consumeRate,
-	}
-	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
-		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(info.TableName(), map[string]interface{}{
-			storage.KafkaTopicInfoDBSchema.BkDataId.String():      info.BkDataId,
-			storage.KafkaTopicInfoDBSchema.Topic.String():         info.Topic,
-			storage.KafkaTopicInfoDBSchema.Partition.String():     info.Partition,
-			storage.KafkaTopicInfoDBSchema.BatchSize.String():     info.BatchSize,
-			storage.KafkaTopicInfoDBSchema.FlushInterval.String(): info.FlushInterval,
-			storage.KafkaTopicInfoDBSchema.ConsumeRate.String():   info.ConsumeRate,
-		}), ""))
-	} else {
-		err = info.Create(db)
-		if err != nil {
-			return nil, err
-		}
-	}
-	logger.Infof("new kafka topic is set for data_id [%v] topic [%s] partition [%v]", info.BkDataId, info.Topic, info.Partition)
-	return &info, nil
 }
 
 func (s KafkaTopicInfoSvc) RefreshTopicInfo(clusterInfo storage.ClusterInfo, kafkaClient sarama.Client) error {

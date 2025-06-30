@@ -52,7 +52,11 @@ func TestEventGroup_GetESData(t *testing.T) {
 		return resp, nil
 	})
 	gomonkey.ApplyMethod(elasticsearch.Elasticsearch{}, "Ping", func(es elasticsearch.Elasticsearch) (*elasticsearch.Response, error) {
-		return nil, nil
+		resp := &elasticsearch.Response{
+			StatusCode: 200,
+			Body:       ioutils.NewReadCloserWrapper(strings.NewReader(""), func() error { return nil }),
+		}
+		return resp, nil
 	})
 	db := mysql.GetDBSession().DB
 	tableId := "gse_event_report_base"

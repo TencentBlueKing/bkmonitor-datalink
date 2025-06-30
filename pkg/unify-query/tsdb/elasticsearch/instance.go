@@ -665,7 +665,12 @@ func (i *Instance) QuerySeriesSet(
 	)
 
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-series-set")
-	defer span.End(&err)
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("es query panic error: %s", r)
+		}
+		span.End(&err)
+	}()
 
 	if len(query.Aggregates) == 0 {
 		err = fmt.Errorf("聚合函数不能为空以及聚合周期跟 Step 必须一样")

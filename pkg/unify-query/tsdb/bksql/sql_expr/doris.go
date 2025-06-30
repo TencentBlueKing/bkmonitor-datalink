@@ -11,6 +11,7 @@ package sql_expr
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -22,14 +23,38 @@ import (
 )
 
 const (
-	Doris         = "doris"
-	DorisTypeText = "text"
+	Doris = "doris"
 
 	ShardKey = "__shard_key__"
 
 	SelectIndex = "_index"
 
 	DefaultKey = "log"
+)
+
+const (
+	DorisTypeInt       = "INT"
+	DorisTypeTinyInt   = "TINYINT"
+	DorisTypeSmallInt  = "SMALLINT"
+	DorisTypeLargeInt  = "LARGEINT"
+	DorisTypeBigInt    = "BIGINT"
+	DorisTypeFloat     = "FLOAT"
+	DorisTypeDouble    = "DOUBLE"
+	DorisTypeDecimal   = "DECIMAL"
+	DorisTypeDecimalV3 = "DECIMALV3"
+
+	DorisTypeDate      = "DATE"
+	DorisTypeDatetime  = "DATETIME"
+	DorisTypeTimestamp = "TIMESTAMP"
+
+	DorisTypeBoolean = "BOOLEAN"
+
+	DorisTypeString     = "STRING"
+	DorisTypeText       = "TEXT"
+	DorisTypeVarchar512 = "VARCHAR(512)"
+
+	DorisTypeArrayTransform = "%s ARRAY"
+	DorisTypeArray          = "ARRAY<%s>"
 )
 
 type DorisSQLExpr struct {
@@ -248,7 +273,15 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 		key    string
 		op     string
 		val    string
+
+		filter []string
+
+		err error
 	)
+
+	if c.DimensionName == "*" || c.DimensionName == "" {
+		c.DimensionName = DefaultKey
+	}
 
 	oldKey = c.DimensionName
 	key, _ = d.dimTransform(oldKey)
@@ -256,6 +289,31 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	// 对值进行转义处理
 	for i, v := range c.Value {
 		c.Value[i] = d.valueTransform(v)
+	}
+
+	// doris 里面 array<int> 类型需要特殊处理
+	var checkArrayIntByOp = func(o string) (string, string, error) {
+		if len(c.Value) != 1 {
+			return "", "", fmt.Errorf("operator %s only support 1 value", o)
+		}
+		if d.isArray(c.DimensionName) {
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s %s, %s)", o, c.Value[0], key)
+			key = ""
+		} else {
+			val = c.Value[0]
+		}
+		return key, val, nil
+	}
+
+	// doris 里面 array<string> 类型需要特殊处理
+	var checkArrayStringByOp = func(op string) (string, string) {
+		if d.isArray(c.DimensionName) {
+			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", op, strings.Join(c.Value, "|"), key)
+			key = ""
+		} else {
+			val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|")) // 多个值用|连接
+		}
+		return key, val
 	}
 
 	// 根据操作符类型生成不同的SQL表达式
@@ -267,29 +325,41 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			break
 		}
 
-		if len(c.Value) > 1 && !c.IsWildcard && !d.checkMatchALL(c.DimensionName) {
+		if len(c.Value) > 1 && !c.IsWildcard && !d.isText(c.DimensionName) && !d.isArray(c.DimensionName) {
 			op = "IN"
 			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
 			break
 		}
 
-		var format string
-		if c.IsWildcard {
-			format = "'%%%s%%'"
-			op = "LIKE"
+		if d.isArray(c.DimensionName) {
+			for _, v := range c.Value {
+				var value string
+				if c.IsWildcard {
+					value = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x LIKE '%%%s%%', %s)", v, key)
+				} else {
+					value = fmt.Sprintf("ARRAY_CONTAINS(%s, '%s') == 1", key, v)
+				}
+				filter = append(filter, value)
+			}
 		} else {
-			format = "'%s'"
-			if d.checkMatchALL(c.DimensionName) {
-				op = "MATCH_PHRASE_PREFIX"
+			var format string
+			if c.IsWildcard {
+				format = "'%%%s%%'"
+				op = "LIKE"
 			} else {
-				op = "="
+				format = "'%s'"
+				if d.isText(c.DimensionName) {
+					op = "MATCH_PHRASE_PREFIX"
+				} else {
+					op = "="
+				}
+			}
+
+			for _, v := range c.Value {
+				filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
 			}
 		}
 
-		var filter []string
-		for _, v := range c.Value {
-			filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
-		}
 		key = ""
 		if len(filter) == 1 {
 			val = filter[0]
@@ -303,29 +373,41 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			break
 		}
 
-		if len(c.Value) > 1 && !c.IsWildcard && !d.checkMatchALL(c.DimensionName) {
+		if len(c.Value) > 1 && !c.IsWildcard && !d.isText(c.DimensionName) {
 			op = "NOT IN"
 			val = fmt.Sprintf("('%s')", strings.Join(c.Value, "', '"))
 			break
 		}
 
-		var format string
-		if c.IsWildcard {
-			format = "'%%%s%%'"
-			op = "NOT LIKE"
+		if d.isArray(c.DimensionName) {
+			for _, v := range c.Value {
+				var value string
+				if c.IsWildcard {
+					value = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x NOT LIKE '%%%s%%', %s)", v, key)
+				} else {
+					value = fmt.Sprintf("ARRAY_CONTAINS(%s, '%s') != 1", key, v)
+				}
+				filter = append(filter, value)
+			}
 		} else {
-			format = "'%s'"
-			if d.checkMatchALL(c.DimensionName) {
-				op = "NOT MATCH_PHRASE_PREFIX"
+			var format string
+			if c.IsWildcard {
+				format = "'%%%s%%'"
+				op = "NOT LIKE"
 			} else {
-				op = "!="
+				format = "'%s'"
+				if d.isText(c.DimensionName) {
+					op = "NOT MATCH_PHRASE_PREFIX"
+				} else {
+					op = "!="
+				}
+			}
+
+			for _, v := range c.Value {
+				filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
 			}
 		}
 
-		var filter []string
-		for _, v := range c.Value {
-			filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
-		}
 		key = ""
 		if len(filter) == 1 {
 			val = filter[0]
@@ -335,35 +417,35 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	// 处理正则表达式匹配
 	case metadata.ConditionRegEqual:
 		op = "REGEXP"
-		val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|")) // 多个值用|连接
+		key, val = checkArrayStringByOp(op)
 	case metadata.ConditionNotRegEqual:
 		op = "NOT REGEXP"
-		val = fmt.Sprintf("'%s'", strings.Join(c.Value, "|"))
+		key, val = checkArrayStringByOp(op)
 	// 处理数值比较操作符（>, >=, <, <=）
 	case metadata.ConditionGt:
 		op = ">"
-		if len(c.Value) != 1 {
-			return "", fmt.Errorf("operator %s only support 1 value", op)
+		key, val, err = checkArrayIntByOp(op)
+		if err != nil {
+			return "", err
 		}
-		val = c.Value[0]
 	case metadata.ConditionGte:
 		op = ">="
-		if len(c.Value) != 1 {
-			return "", fmt.Errorf("operator %s only support 1 value", op)
+		key, val, err = checkArrayIntByOp(op)
+		if err != nil {
+			return "", err
 		}
-		val = c.Value[0]
 	case metadata.ConditionLt:
 		op = "<"
-		if len(c.Value) != 1 {
-			return "", fmt.Errorf("operator %s only support 1 value", op)
+		key, val, err = checkArrayIntByOp(op)
+		if err != nil {
+			return "", err
 		}
-		val = c.Value[0]
 	case metadata.ConditionLte:
 		op = "<="
-		if len(c.Value) != 1 {
-			return "", fmt.Errorf("operator %s only support 1 value", op)
+		key, val, err = checkArrayIntByOp(op)
+		if err != nil {
+			return "", err
 		}
-		val = c.Value[0]
 	default:
 		return "", fmt.Errorf("unknown operator %s", c.Operator)
 	}
@@ -378,15 +460,14 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	return val, nil
 }
 
-func (d *DorisSQLExpr) checkMatchALL(k string) bool {
-	if d.fieldsMap != nil {
-		if t, ok := d.fieldsMap[k]; ok {
-			if t == DorisTypeText {
-				return true
-			}
-		}
-	}
-	return false
+func (d *DorisSQLExpr) isArray(k string) bool {
+	fieldType := d.getFieldType(k)
+	_, ok := d.caseAs(fieldType)
+	return ok
+}
+
+func (d *DorisSQLExpr) isText(k string) bool {
+	return d.getFieldType(k) == DorisTypeText
 }
 
 func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
@@ -434,7 +515,7 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 			c.Field = DefaultKey
 		}
 		field, _ := d.dimTransform(c.Field)
-		if d.checkMatchALL(c.Field) {
+		if d.isText(c.Field) {
 			return fmt.Sprintf("%s MATCH_PHRASE_PREFIX '%s'", field, c.Value), nil
 		}
 
@@ -473,16 +554,82 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 	return "", err
 }
 
+func (d *DorisSQLExpr) getFieldType(s string) (fieldType string) {
+	if d.fieldsMap == nil {
+		return
+	}
+
+	var ok bool
+	if fieldType, ok = d.fieldsMap[s]; ok {
+		fieldType = strings.ToUpper(fieldType)
+	}
+	return
+}
+
+func (d *DorisSQLExpr) caseAs(s string) (string, bool) {
+	// 如果字段不存在则默认使用 string 类型
+	if s == "" {
+		return DorisTypeString, false
+	}
+
+	re := regexp.MustCompile(`ARRAY<([^>]+)>`) // 匹配 < 和 > 之间的非 > 字符
+	matches := re.FindStringSubmatch(s)
+	if len(matches) > 1 {
+		return fmt.Sprintf("%s ARRAY", matches[1]), true
+	}
+	return s, false
+}
+
+func (d *DorisSQLExpr) getArrayType(s string) string {
+	return fmt.Sprintf(DorisTypeArray, s)
+}
+
+func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
+
+	return fmt.Sprintf(DorisTypeArrayTransform, s)
+}
+
 func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
 	if s == "" {
 		return "", false
 	}
 
+	fieldType := d.getFieldType(s)
+	castType, _ := d.caseAs(fieldType)
+
 	fs := strings.Split(s, ".")
-	if len(fs) > 1 {
-		return fmt.Sprintf("CAST(%s[\"%s\"] AS STRING)", fs[0], strings.Join(fs[1:], `.`)), true
+	if len(fs) == 1 {
+		return fmt.Sprintf("`%s`", s), false
 	}
-	return fmt.Sprintf("`%s`", s), false
+
+	// 如果是 resource 或 attributes 字段里都是用户上报的内容，采用 . 作为 key 上报，所以这里增加了特殊处理
+	// 例如： events['attributes']['exception.type']
+	mapFieldSet := set.New[string]([]string{"resource", "attributes"}...)
+
+	var (
+		suffixFields strings.Builder
+		// 协议自定义是 map 结构
+		sep string
+	)
+	for index, f := range fs {
+		// 第一个补充开头
+		if index == 0 {
+			sep = `['`
+		} else if index == len(fs)-1 {
+			// 最后一个不需要补充
+			sep = `']`
+		}
+
+		suffixFields.WriteString(f + sep)
+		// 用户上报的分隔符为 .
+		if mapFieldSet.Existed(f) {
+			sep = "."
+		} else if sep != "." {
+			sep = "']['"
+		}
+	}
+
+	return fmt.Sprintf(`CAST(%s AS %s)`, suffixFields.String(), castType), true
 }
 
 func (d *DorisSQLExpr) valueTransform(s string) string {

@@ -273,6 +273,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
+		err = fmt.Errorf("sql [%s] query err: %s", sql, err.Error())
 		return
 	}
 

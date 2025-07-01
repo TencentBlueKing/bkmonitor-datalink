@@ -49,6 +49,7 @@ func (r *response) success(ctx context.Context, data interface{}) {
 // ListData 数据返回格式
 type ListData struct {
 	Total              int64                       `json:"total,omitempty"`
+	Done               bool                        `json:"done"`
 	List               []map[string]any            `json:"list" json:"list,omitempty"`
 	TraceID            string                      `json:"trace_id,omitempty"`
 	Status             *metadata.Status            `json:"status,omitempty" json:"status,omitempty"`

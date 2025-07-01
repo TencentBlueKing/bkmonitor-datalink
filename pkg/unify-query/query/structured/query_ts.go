@@ -76,6 +76,9 @@ type QueryTs struct {
 	// IsMultiFrom 是否启用 MultiFrom 查询
 	IsMultiFrom bool `json:"is_multi_from,omitempty"`
 
+	// ClearCache 是否强制清理已存在的缓存会话
+	ClearCache bool `json:"clear_cache,omitempty"`
+
 	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`
 
 	// HighLight 是否开启高亮
@@ -609,7 +612,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		if buildErr != nil {
 			return nil, buildErr
 		}
-
 		query.Aggregates = aggregates
 
 		// 针对 vmRt 不为空的情况，进行 vm 判定

@@ -32,6 +32,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
@@ -942,4 +943,311 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 		return nil, err
 	}
 	return resp, nil
+}
+
+func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, done bool, err error) {
+	ignoreDimensions := []string{elasticsearch.KeyAddress}
+
+	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
+	defer span.End(&err)
+
+	user := metadata.GetUser(ctx)
+
+	if queryTs.Limit == 0 {
+		queryTs.Limit = ScrollSliceLimit
+	}
+	if queryTs.Scroll == "" {
+		queryTs.Scroll = ScrollWindow
+	}
+
+	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
+	if timeErr != nil {
+		err = timeErr
+		return
+	}
+	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
+
+	var (
+		receiveWg sync.WaitGroup
+		dataCh    = make(chan map[string]any)
+
+		message   strings.Builder
+		queryList []*metadata.Query
+		lock      sync.Mutex
+
+		allLabelMap = make(map[string][]function.LabelMapValue)
+
+		sessionLock sync.Mutex
+	)
+
+	list = make([]map[string]any, 0)
+
+	if queryTs.SpaceUid == "" {
+		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
+	}
+	for _, ql := range queryTs.QueryList {
+		ql.Timezone = queryTs.Timezone
+		ql.Start = queryTs.Start
+		ql.End = queryTs.End
+		ql.OrderBy = queryTs.OrderBy
+
+		if ql.Step == "" {
+			ql.Step = queryTs.Step
+		}
+
+		if queryTs.ResultTableOptions != nil {
+			ql.ResultTableOptions = queryTs.ResultTableOptions
+		}
+
+		if ql.Limit == 0 && queryTs.Limit > 0 {
+			ql.Limit = queryTs.Limit
+		}
+
+		if ql.From == 0 && queryTs.From > 0 {
+			ql.From = queryTs.From
+		}
+
+		if queryTs.Scroll != "" {
+			ql.Scroll = queryTs.Scroll
+		}
+
+		if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
+			ql.KeepColumns = queryTs.ResultColumns
+		}
+
+		qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
+		if qmErr != nil {
+			err = qmErr
+			return
+		}
+
+		for _, qry := range qm.QueryList {
+			if qry != nil {
+				queryList = append(queryList, qry)
+			}
+		}
+	}
+
+	queryTsKey, err := redisUtil.ScrollGenerateQueryTsKey(queryTs, user.Name)
+	if err != nil {
+		return 0, nil, nil, false, fmt.Errorf("failed to generate queryTs key: %v", err)
+	}
+	sessionKey := redisUtil.GetSessionKey(queryTsKey)
+	lockKey := redisUtil.GetLockKey(queryTsKey)
+	scrollWindowDuration, _ := time.ParseDuration(queryTs.Scroll)
+	lockTimeoutDuration := ScrollLockTimeout
+	scrollLock, err := redisUtil.ScrollAcquireRedisLock(ctx, lockKey, lockTimeoutDuration)
+	if err != nil {
+		return 0, nil, nil, false, fmt.Errorf("failed to acquire lock: %v", err)
+	}
+	defer func() {
+		if releaseErr := redisUtil.ScrollReleaseRedisLock(ctx, scrollLock); releaseErr != nil {
+			log.Warnf(ctx, "failed to release lock: %v", releaseErr)
+		}
+	}()
+
+	session, err := redisUtil.ScrollGetOrCreateSession(ctx, sessionKey, queryTs.ClearCache, scrollWindowDuration, ScrollMaxSlice, queryTs.Limit)
+	if err != nil {
+		return 0, nil, nil, false, fmt.Errorf("failed to get or create session: %v", err)
+	}
+
+	if session.Status == redisUtil.SessionStatusDone {
+		return 0, nil, nil, true, fmt.Errorf("session %s is already done", sessionKey)
+	}
+
+	storageQueryMap := make(map[string][]*metadata.Query)
+	for _, qry := range queryList {
+		storageIds := qry.CalcStorageIDs()
+		if storageIds == nil {
+			continue
+		}
+
+		for _, storageId := range storageIds {
+			if storageQueryMap[storageId] == nil {
+				storageQueryMap[storageId] = make([]*metadata.Query, 0)
+			}
+			storageQueryMap[storageId] = append(storageQueryMap[storageId], qry)
+		}
+	}
+
+	receiveWg.Add(1)
+
+	// 数据合并处理
+	go func() {
+		defer receiveWg.Done()
+
+		var data []map[string]any
+		for d := range dataCh {
+			data = append(data, d)
+		}
+
+		span.Set("query-list-num", len(queryList))
+		span.Set("result-data-num", len(data))
+
+		if len(queryList) > 1 {
+			queryTs.OrderBy.Orders().SortSliceList(data)
+		}
+
+		span.Set("query-label-map", allLabelMap)
+		span.Set("query-highlight", queryTs.HighLight)
+
+		var hlF *function.HighLightFactory
+		if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(allLabelMap) > 0 {
+			hlF = function.NewHighLightFactory(allLabelMap, queryTs.HighLight.MaxAnalyzedOffset)
+		}
+
+		for _, item := range data {
+			if item == nil {
+				continue
+			}
+
+			for _, ignoreDimension := range ignoreDimensions {
+				delete(item, ignoreDimension)
+			}
+
+			if hlF != nil {
+				if highlightResult := hlF.Process(item); len(highlightResult) > 0 {
+					item[function.KeyHighLight] = highlightResult
+				}
+			}
+			list = append(list, item)
+		}
+
+		span.Set("result-list-num", len(list))
+	}()
+
+	var sendWg sync.WaitGroup
+
+	p, _ := ants.NewPool(QueryMaxRouting)
+	defer p.Release()
+
+	go func() {
+		defer func() {
+			sendWg.Wait()
+			close(dataCh)
+		}()
+
+		for storageId, queries := range storageQueryMap {
+			storage, err := tsdb.GetStorage(storageId)
+			if err != nil {
+				message.WriteString(fmt.Sprintf("failed to get storage for %s: %v ", storageId, err))
+				continue
+			}
+
+			for _, qry := range queries {
+				connect := storage.Address
+				tableId := qry.TableID
+				instance := prometheus.GetTsDbInstance(ctx, qry)
+				if instance == nil {
+					continue
+				}
+
+				for sliceIndex := 0; sliceIndex < session.MaxSlice; sliceIndex++ {
+					sendWg.Add(1)
+
+					sliceQuery := *qry
+					currentSliceIndex := sliceIndex
+
+					err = p.Submit(func() {
+						defer sendWg.Done()
+
+						sessionLock.Lock()
+						scrollID, index, err := session.GetNextScrollID(ctx, instance.InstanceType(), connect, tableId, currentSliceIndex)
+						sessionLock.Unlock()
+						if err != nil {
+							message.WriteString(fmt.Sprintf("failed to get scroll info for %s: %v ", tableId, err))
+							return
+						}
+
+						if queryTs.Scroll != "" {
+							sliceQuery.Scroll = queryTs.Scroll
+						}
+
+						if sliceQuery.ResultTableOptions == nil {
+							sliceQuery.ResultTableOptions = make(metadata.ResultTableOptions)
+						}
+
+						var option *metadata.ResultTableOption
+						// ES scenario
+						if instance.InstanceType() == consul.ElasticsearchStorageType {
+							option = &metadata.ResultTableOption{
+								SliceID:  &currentSliceIndex,
+								SliceMax: &session.MaxSlice,
+								ScrollID: scrollID,
+							}
+						} else {
+							// other storage scenario
+							option = &metadata.ResultTableOption{
+								SliceID:  &currentSliceIndex,
+								SliceMax: &session.MaxSlice,
+								ScrollID: "",
+							}
+							sliceQuery.From = index * session.Limit
+							sliceQuery.Size = session.Limit
+						}
+						sliceQuery.ResultTableOptions.SetOption(sliceQuery.TableID, storage.Address, option)
+
+						labelMap, labelErr := sliceQuery.LabelMap()
+						if labelErr == nil {
+							lock.Lock()
+							for k, lm := range labelMap {
+								if _, ok := allLabelMap[k]; !ok {
+									allLabelMap[k] = make([]function.LabelMapValue, 0)
+								}
+								allLabelMap[k] = append(allLabelMap[k], lm...)
+							}
+							lock.Unlock()
+						}
+
+						if len(queryList) > 1 {
+							sliceQuery.Size += sliceQuery.From
+							sliceQuery.From = 0
+						}
+
+						size, options, queryErr := instance.QueryRawData(ctx, &sliceQuery, start, end, dataCh)
+						if queryErr != nil {
+							message.WriteString(fmt.Sprintf("query %s:%s slice %d is error: %s ", sliceQuery.TableID, sliceQuery.Fields, currentSliceIndex, queryErr.Error()))
+						} else {
+							if resultTableOptions == nil {
+								resultTableOptions = make(metadata.ResultTableOptions)
+							}
+
+							lock.Lock()
+							if options != nil {
+								resultTableOptions.MergeOptions(options)
+							}
+							total += size
+							lock.Unlock()
+
+							sessionLock.Lock()
+							if processErr := redisUtil.ScrollProcessSliceResult(ctx, &session, connect, tableId, scrollID, currentSliceIndex, instance.InstanceType(), size, options); processErr != nil {
+								log.Warnf(ctx, "Failed to process slice result: %v", processErr)
+							} else {
+								if updateErr := redisUtil.UpdateSession(ctx, sessionKey, session); updateErr != nil {
+									log.Warnf(ctx, "Failed to update session %s after processing slice %d: %v", sessionKey, currentSliceIndex, updateErr)
+								} else {
+									log.Debugf(ctx, "Successfully updated session %s after processing slice %d", sessionKey, currentSliceIndex)
+								}
+							}
+							sessionLock.Unlock()
+						}
+					})
+
+					if err != nil {
+						sendWg.Done()
+						message.WriteString(fmt.Sprintf("failed to submit slice %d task for %s: %v ", currentSliceIndex, tableId, err))
+					}
+				}
+			}
+		}
+	}()
+
+	receiveWg.Wait()
+	if message.Len() > 0 {
+		err = errors.New(message.String())
+	}
+
+	done = session.Status == redisUtil.SessionStatusDone
+
+	return
 }

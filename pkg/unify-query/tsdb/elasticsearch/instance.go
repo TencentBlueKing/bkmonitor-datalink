@@ -330,7 +330,22 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 		if qb.Scroll != "" {
 			span.Set("query-scroll", qb.Scroll)
-			res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source).Do(ctx)
+			scroll := client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source)
+			if qb.ResultTableOptions != nil {
+				option := qb.ResultTableOptions.GetOption(qb.TableID, qo.conn.Address)
+				if option != nil {
+					if option.ScrollID != "" {
+						span.Set("query-scroll-id", option.ScrollID)
+						scroll.ScrollId(option.ScrollID)
+					} else {
+						if option.SliceID != nil && option.SliceMax != nil {
+							span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", *option.SliceID, *option.SliceMax))
+							scroll.Slice(elastic.NewSliceQuery().Id(*option.SliceID).Max(*option.SliceMax))
+						}
+					}
+				}
+			}
+			res, err = scroll.Do(ctx)
 		} else {
 			span.Set("query-from", qb.From)
 			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)

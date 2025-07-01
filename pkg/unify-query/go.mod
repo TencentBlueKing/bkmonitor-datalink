@@ -7,6 +7,7 @@ require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive v0.0.0-00010101000000-000000000000
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
 	github.com/VictoriaMetrics/metricsql v0.69.0
+	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/asaskevich/EventBus v0.0.0-20200907212545-49d423059eef
 	github.com/bytedance/sonic v1.12.3
 	github.com/dgraph-io/ristretto v0.1.1
@@ -157,6 +158,7 @@ require (
 	github.com/valyala/histogram v1.2.0 // indirect
 	github.com/willf/bitset v1.1.3 // indirect
 	github.com/xlab/treeprint v1.1.0 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/internal/retry v1.16.0 // indirect
 	go.opentelemetry.io/otel/metric v1.16.0 // indirect
 	go.opentelemetry.io/proto/otlp v0.19.0 // indirect

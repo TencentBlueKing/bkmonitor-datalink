@@ -72,6 +72,10 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 	handlerPath = viper.GetString(TSQueryRawQueryHandlePathConfigPath)
 	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryRaw)
 
+	// query/ts/raw_with_scroll
+	handlerPath = viper.GetString(TSQueryRawWithScrollHandlePathConfigPath)
+	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryRawWithScroll)
+
 	// query/ts/exemplar
 	handlerPath = viper.GetString(TSQueryExemplarHandlePathConfigPath)
 	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryExemplar)

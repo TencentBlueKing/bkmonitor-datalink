@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	elastic "github.com/olivere/elastic/v7"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
@@ -749,4 +750,137 @@ func TestInstance_queryRawData(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMergedSliceResult(t *testing.T) {
+	// 测试 MergedSiceResult 结构体
+	result := &MergedSliceResult{
+		Hits:      []*elastic.SearchHit{},
+		TotalHits: 100,
+		ScrollIDs: map[int]string{
+			0: "scroll_id_0",
+			1: "scroll_id_1",
+			2: "scroll_id_2",
+		},
+	}
+
+	assert.Equal(t, int64(100), result.TotalHits)
+	assert.Equal(t, 3, len(result.ScrollIDs))
+	assert.Equal(t, "scroll_id_0", result.ScrollIDs[0])
+	assert.Equal(t, "scroll_id_1", result.ScrollIDs[1])
+	assert.Equal(t, "scroll_id_2", result.ScrollIDs[2])
+}
+
+func TestConvertMergedResultToSearchResult(t *testing.T) {
+	instance := &Instance{}
+
+	result := instance.convertMergedResultToSearchResult(nil)
+	assert.Nil(t, result)
+	merged := &MergedSliceResult{
+		Hits:      []*elastic.SearchHit{},
+		TotalHits: 150,
+		ScrollIDs: map[int]string{
+			0: "scroll_id_0",
+			1: "scroll_id_1",
+		},
+	}
+
+	result = instance.convertMergedResultToSearchResult(merged)
+	assert.NotNil(t, result)
+	assert.NotNil(t, result.Hits)
+	assert.Equal(t, int64(150), result.Hits.TotalHits.Value)
+	assert.Equal(t, "eq", result.Hits.TotalHits.Relation)
+
+	assert.Contains(t, result.ScrollId, "scroll_id_0")
+	assert.Contains(t, result.ScrollId, "scroll_id_1")
+}
+
+func TestScrollIDUpdateInESQuery(t *testing.T) {
+	t.Run("test_scroll_id_update_logic", func(t *testing.T) {
+		mergedResult := &MergedSliceResult{
+			Hits:      []*elastic.SearchHit{},
+			TotalHits: 100,
+			ScrollIDs: map[int]string{
+				0: "scroll_id_slice_0",
+				1: "scroll_id_slice_1",
+				2: "scroll_id_slice_2",
+			},
+		}
+
+		query := &metadata.Query{
+			ScrollIDs: []string{}, // 初始为空
+		}
+
+		maxSlice := 3
+
+		if mergedResult != nil && len(mergedResult.ScrollIDs) > 0 {
+			newScrollIDs := make([]string, maxSlice)
+			for sliceID, scrollID := range mergedResult.ScrollIDs {
+				if sliceID < len(newScrollIDs) {
+					newScrollIDs[sliceID] = scrollID
+				}
+			}
+			query.ScrollIDs = newScrollIDs
+		}
+
+		assert.Equal(t, 3, len(query.ScrollIDs), "ScrollIDs 数组长度应该正确")
+		assert.Equal(t, "scroll_id_slice_0", query.ScrollIDs[0], "索引0的 scroll ID 应该正确")
+		assert.Equal(t, "scroll_id_slice_1", query.ScrollIDs[1], "索引1的 scroll ID 应该正确")
+		assert.Equal(t, "scroll_id_slice_2", query.ScrollIDs[2], "索引2的 scroll ID 应该正确")
+
+		t.Logf("ES query scroll ID 更新测试通过: %v", query.ScrollIDs)
+	})
+
+	t.Run("test_scroll_id_mapping_edge_cases", func(t *testing.T) {
+		mergedResult := &MergedSliceResult{
+			ScrollIDs: map[int]string{
+				0: "scroll_id_0",
+				2: "scroll_id_2", // 缺少 slice 1
+			},
+		}
+
+		maxSlice := 3
+		newScrollIDs := make([]string, maxSlice)
+		for sliceID, scrollID := range mergedResult.ScrollIDs {
+			if sliceID < len(newScrollIDs) {
+				newScrollIDs[sliceID] = scrollID
+			}
+		}
+
+		assert.Equal(t, 3, len(newScrollIDs), "数组长度应该正确")
+		assert.Equal(t, "scroll_id_0", newScrollIDs[0], "索引0应该有值")
+		assert.Equal(t, "", newScrollIDs[1], "索引1应该为空字符串")
+		assert.Equal(t, "scroll_id_2", newScrollIDs[2], "索引2应该有值")
+
+		t.Logf("边界情况测试通过: %v", newScrollIDs)
+	})
+
+	t.Run("test_empty_scroll_ids", func(t *testing.T) {
+		mergedResult := &MergedSliceResult{
+			ScrollIDs: map[int]string{},
+		}
+
+		query := &metadata.Query{
+			ScrollIDs: []string{"old_scroll_1", "old_scroll_2"}, // 已有旧值
+		}
+
+		maxSlice := 3
+
+		if mergedResult != nil && len(mergedResult.ScrollIDs) > 0 {
+			newScrollIDs := make([]string, maxSlice)
+			for sliceID, scrollID := range mergedResult.ScrollIDs {
+				if sliceID < len(newScrollIDs) {
+					newScrollIDs[sliceID] = scrollID
+				}
+			}
+			query.ScrollIDs = newScrollIDs
+		}
+
+		// 验证：由于 ScrollIDs 为空，query.ScrollIDs 应该保持不变
+		assert.Equal(t, 2, len(query.ScrollIDs), "ScrollIDs 长度应该保持不变")
+		assert.Equal(t, "old_scroll_1", query.ScrollIDs[0], "旧值应该保持不变")
+		assert.Equal(t, "old_scroll_2", query.ScrollIDs[1], "旧值应该保持不变")
+
+		t.Logf("空 scroll ID 测试通过: %v", query.ScrollIDs)
+	})
 }

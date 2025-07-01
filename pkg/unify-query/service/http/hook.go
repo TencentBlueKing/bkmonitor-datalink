@@ -45,6 +45,7 @@ func setDefaultConfig() {
 	viper.SetDefault(TSQueryPromQLHandlePathConfigPath, "/query/ts/promql")
 	viper.SetDefault(TSQueryReferenceQueryHandlePathConfigPath, "/query/ts/reference")
 	viper.SetDefault(TSQueryRawQueryHandlePathConfigPath, "/query/ts/raw")
+	viper.SetDefault(TSQueryRawWithScrollHandlePathConfigPath, "/query/ts/raw_with_scroll")
 	viper.SetDefault(TSQueryRawMAXLimitConfigPath, 1e2)
 	viper.SetDefault(TSQueryInfoHandlePathConfigPath, "/query/ts/info")
 	viper.SetDefault(TSQueryStructToPromQLHandlePathConfigPath, "/query/ts/struct_to_promql")
@@ -76,6 +77,14 @@ func setDefaultConfig() {
 	viper.SetDefault(ClusterMetricQueryPrefixConfigPath, "bkmonitor")
 	viper.SetDefault(ClusterMetricQueryTimeoutConfigPath, "30s")
 
+	// Scroll配置
+	viper.SetDefault(ScrollMaxSliceConfigPath, 3)
+	viper.SetDefault(ScrollMaxFailedSliceThresholdConfigPath, 10)
+	viper.SetDefault(ScrollSliceDefaultLimitConfigPath, 10000)
+	viper.SetDefault(ScrollDefaultScrollWindowDurationConfigPath, "5m")
+	viper.SetDefault(ScrollDefaultLockTimeOutDurationConfigPath, "60s") // 二倍的请求超时时间
+	viper.SetDefault(ScrollSliceMaxRetryConfigPath, 3)
+
 }
 
 // LoadConfig
@@ -101,6 +110,12 @@ func LoadConfig() {
 
 	JwtPublicKey = viper.GetString(JwtPublicKeyConfigPath)
 	JwtBkAppCodeSpaces = viper.GetStringMapStringSlice(JwtBkAppCodeSpacesConfigPath)
+
+	ScrollMaxSlice = viper.GetInt(ScrollMaxSliceConfigPath)
+	ScrollSliceLimit = viper.GetInt(ScrollSliceDefaultLimitConfigPath)
+	ScrollWindow = viper.GetString(ScrollDefaultScrollWindowDurationConfigPath)
+	ScrollLockTimeout = viper.GetDuration(ScrollDefaultLockTimeOutDurationConfigPath)
+	ScrollSliceMaxRetry = viper.GetInt(ScrollSliceMaxRetryConfigPath)
 
 	promql.SetSegmented(&promql.Segmented{
 		Enable:      viper.GetBool(SegmentedEnable),

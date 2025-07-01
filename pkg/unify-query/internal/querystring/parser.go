@@ -12,12 +12,20 @@ package querystring
 //go:generate goyacc -o querystring.y.go querystring.y
 
 import (
+	"context"
 	"fmt"
 	"strings"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 // Parse querystring and return Expr
 func Parse(query string) (Expr, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf(context.TODO(), "parse querystring panic: %v", r)
+		}
+	}()
 	if query == "" || query == "*" {
 		return nil, nil
 	}

@@ -177,6 +177,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		message   strings.Builder
 		queryList []*metadata.Query
 		lock      sync.Mutex
+
+		allLabelMap = make(map[string][]function.LabelMapValue)
 	)
 
 	list = make([]map[string]any, 0)
@@ -295,19 +297,14 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			}
 		}
 
-		labelMap, lbErr := queryTs.LabelMap()
-		if lbErr != nil {
-			err = lbErr
-			return
-		}
-
-		span.Set("query-label-map", labelMap)
+		span.Set("query-label-map", allLabelMap)
 		span.Set("query-highlight", queryTs.HighLight)
 
 		var hlF *function.HighLightFactory
-		if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(labelMap) > 0 {
-			hlF = function.NewHighLightFactory(labelMap, queryTs.HighLight.MaxAnalyzedOffset)
+		if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(allLabelMap) > 0 {
+			hlF = function.NewHighLightFactory(allLabelMap, queryTs.HighLight.MaxAnalyzedOffset)
 		}
+
 		for _, item := range data {
 			if item == nil {
 				continue
@@ -322,7 +319,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					item[function.KeyHighLight] = highlightResult
 				}
 			}
-
 			list = append(list, item)
 		}
 
@@ -346,6 +342,18 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		for _, qry := range queryList {
 			sendWg.Add(1)
 			qry := qry
+
+			labelMap, err := qry.LabelMap()
+			if err == nil {
+				// 合并 labelMap
+				for k, lm := range labelMap {
+					if _, ok := allLabelMap[k]; !ok {
+						allLabelMap[k] = make([]function.LabelMapValue, 0)
+					}
+
+					allLabelMap[k] = append(allLabelMap[k], lm...)
+				}
+			}
 
 			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
 			if len(queryList) > 1 {

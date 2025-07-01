@@ -1539,9 +1539,17 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	// 追加es空间结果表
 	esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
 	if err != nil {
-		logger.Errorf("pushBkciSpaceTableIds： compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
+		logger.Errorf("pushBkciSpaceTableIds：compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
 	}
 	s.composeValue(&values, &esValues)
+
+	// 追加APM全局结果表
+	apmAllTypeValues, errApmAllType := s.composeApmAllTypeTableIds(spaceType, spaceId)
+	if errApmAllType != nil {
+		logger.Errorf("pushBkciSpaceTableIds: compose apm all type space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errApmAllType)
+	}
+	logger.Infof("pushBkciSpaceTableIds: compose apm all type space table_id data successfully, space_type [%s], space_id [%s],data->[%v]", spaceType, spaceId, apmAllTypeValues)
+	s.composeValue(&values, &apmAllTypeValues)
 
 	// 推送数据
 	if len(values) != 0 {
@@ -1619,6 +1627,14 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 		logger.Errorf("pushBksaasSpaceTableIds: compose all type table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, allTypeErr)
 	}
 	s.composeValue(&values, &allTypeTableIdValues)
+
+	// 追加APM全局结果表
+	apmAllTypeValues, errApmAllType := s.composeApmAllTypeTableIds(spaceType, spaceId)
+	if errApmAllType != nil {
+		logger.Errorf("pushBksaasSpaceTableIds:compose apm all type space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errApmAllType)
+	}
+	logger.Infof("pushBksaasSpaceTableIds:compose apm all type space table_id data successfully, space_type [%s], space_id [%s],data->[%v]", spaceType, spaceId, apmAllTypeValues)
+	s.composeValue(&values, &apmAllTypeValues)
 
 	// 推送数据
 	if len(values) != 0 {
@@ -2730,6 +2746,54 @@ func (s *SpacePusher) composeAllTypeTableIds(spaceType, spaceId string) (map[str
 		dataValuesToRedis[reformattedTid] = values
 	}
 	return dataValuesToRedis, nil
+}
+
+// composeApmAllTypeTableIds 组装 APM 特殊空间类型的结果表数据（仅限 bkci 和 bksaas）
+func (s *SpacePusher) composeApmAllTypeTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+	logger.Infof("start to push apm all space type table_id, space_type: %s, space_id: %s", spaceType, spaceId)
+
+	db := mysql.GetDBSession().DB
+
+	var spaceObj space.Space
+	dataValues := make(map[string]map[string]interface{})
+	if err := space.NewSpaceQuerySet(mysql.GetDBSession().DB).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId).One(&spaceObj); err != nil {
+		return dataValues, err
+	}
+
+	// 过滤包含特定字符串的结果表
+	var rtList []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).
+		Select(
+			resulttable.ResultTableDBSchema.TableId,
+			resulttable.ResultTableDBSchema.BkBizIdAlias,
+		).
+		TableIdLike("%apm_global.precalculate_storage%").
+		All(&rtList); err != nil {
+		return nil, err
+	}
+
+	// format: {"table_id": {"filters": [{"bk_biz_id": "-id"}]}}
+	for _, rt := range rtList {
+		options := FilterBuildContext{
+			SpaceType:      spaceType,
+			SpaceId:        spaceId,
+			TableId:        rt.TableId,
+			ExtraStringVal: strconv.Itoa(-spaceObj.Id),
+			FilterAlias:    rt.BkBizIdAlias,
+		}
+		filters := s.buildFiltersByUsage(options, UsageComposeAllTypeTableIds)
+		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
+	}
+
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]interface{})
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+	logger.Infof("compose apm all space type table_id, space_type: %s, space_id: %s, data: %v", spaceType, spaceId, dataValues)
+	return dataValuesToRedis, nil
+
 }
 
 // SpaceRedisClearer 清理空间路由缓存

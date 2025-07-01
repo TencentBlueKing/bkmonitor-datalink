@@ -16,9 +16,12 @@ package querystring
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"strings"
 	"unicode"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 const reservedChars = "+-=&|><!(){}[]^\"~*?:\\/ "
@@ -53,7 +56,7 @@ func (l *queryStringLex) reset() {
 }
 
 func (l *queryStringLex) Error(msg string) {
-	panic(msg)
+	log.Errorf(context.TODO(), msg)
 }
 
 func (l *queryStringLex) Lex(lval *yySymType) (rv int) {

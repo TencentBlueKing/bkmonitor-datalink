@@ -23,7 +23,6 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -260,24 +259,10 @@ func HandlerTagValues(c *gin.Context) {
 				}
 
 				var (
-					res     []string
-					matcher *labels.Matcher
+					res []string
 				)
 
-				// 优化 vm 查询，超过 1d 使用直查接口
-				if left >= 24*time.Hour && instance.InstanceType() == consul.VictoriaMetricsStorageType {
-					vmExpand := queryRef.ToVmExpand(ctx)
-					metadata.SetExpand(ctx, vmExpand)
-
-					matcher, _ = labels.NewMatcher(labels.MatchEqual, labels.MetricName, prometheus.ReferenceName)
-
-					span.Set("direct-label-values-matcher", matcher.String())
-					span.Set("direct-label-values-size", qry.Size)
-
-					res, err = instance.DirectLabelValues(ctx, name, start, end, qry.Size, matcher)
-				} else {
-					res, err = instance.QueryLabelValues(ctx, qry, name, start, end)
-				}
+				res, err = instance.QueryLabelValues(ctx, qry, name, start, end)
 				if err != nil {
 					return
 				}
@@ -299,6 +284,7 @@ func HandlerTagValues(c *gin.Context) {
 		return true
 	})
 
+	data.TraceID = span.TraceID()
 	resp.success(ctx, data)
 }
 
@@ -425,6 +411,7 @@ func HandlerSeries(c *gin.Context) {
 	})
 
 	wg.Wait()
+	data.TraceID = span.TraceID()
 
 	resp.success(ctx, data)
 }
@@ -515,6 +502,7 @@ func HandlerLabelValues(c *gin.Context) {
 
 	span.Set("result-num", len(result))
 	data.Values[labelName] = result
+	data.TraceID = span.TraceID()
 
 	resp.success(ctx, data)
 	return
@@ -536,10 +524,10 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 				IsRegexp:      params.IsRegexp,
 				Conditions:    params.Conditions,
 				Limit:         params.Limit,
-				ReferenceName: prometheus.ReferenceName,
+				ReferenceName: metadata.DefaultReferenceName,
 			},
 		},
-		MetricMerge: prometheus.ReferenceName,
+		MetricMerge: metadata.DefaultReferenceName,
 		Start:       params.Start,
 		End:         params.End,
 		Timezone:    params.Timezone,

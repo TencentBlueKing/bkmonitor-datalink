@@ -150,6 +150,11 @@ type TimeSync struct {
 	QueryTimeout  string `yaml:"query_timeout"`
 }
 
+type QCloudMonitor struct {
+	Enabled bool `yaml:"enabled"`
+	Private bool `yaml:"private"`
+}
+
 // Config Operator 进程主配置
 type Config struct {
 	// BkEnv 环境配置信息
@@ -239,9 +244,10 @@ type Config struct {
 	MonitorBlacklistMatchRules []MonitorBlacklistMatchRule `yaml:"monitor_blacklist_match_rules"`
 	PromSDSecrets              []PromSDSecret              `yaml:"prom_sd_configs"`
 
-	VCluster       VCluster `yaml:"vcluster"`
-	PolarisAddress []string `yaml:"polaris_address"`
-	TimeSync       TimeSync `yaml:"timesync"`
+	VCluster       VCluster      `yaml:"vcluster"`
+	PolarisAddress []string      `yaml:"polaris_address"`
+	TimeSync       TimeSync      `yaml:"timesync"`
+	QCloudMonitor  QCloudMonitor `yaml:"qcloudmonitor"`
 }
 
 type PromSDKinds []string

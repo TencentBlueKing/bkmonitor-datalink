@@ -12,6 +12,7 @@ package operator
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/pprof"
 	"strconv"
@@ -30,6 +31,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/qcloudmonitor/instance"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/pprofsnapshot"
 )
@@ -587,6 +589,42 @@ func (c *Operator) ConfigsRoute(w http.ResponseWriter, _ *http.Request) {
 	w.Write(b)
 }
 
+func (c *Operator) QCloudMonitorInstancesRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	var request instance.Request
+	if err := json.Unmarshal(body, &request); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	q, ok := instance.Get(request.Namespace)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(fmt.Sprintf("{\"msg\": \"namespace %s not found\"}", request.Namespace)))
+		return
+	}
+
+	data, err := q.Query(&request)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(fmt.Sprintf("{\"msg\": \"%s\"}", err)))
+		return
+	}
+
+	b, _ := json.Marshal(data)
+	w.Write(b)
+}
+
 func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 	content := `
 # Admin Routes
@@ -652,6 +690,9 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/labeljoin", c.LabelJoinRoute)
 	router.HandleFunc("/relation/metrics", c.RelationMetricsRoute)
 	router.HandleFunc("/configs", c.ConfigsRoute)
+
+	// qcloudmonitor 路由
+	router.HandleFunc("/qcloudmonitor/instances", c.QCloudMonitorInstancesRoute)
 
 	// check 路由
 	router.HandleFunc("/check", c.CheckRoute)

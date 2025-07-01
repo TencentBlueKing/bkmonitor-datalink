@@ -757,6 +757,11 @@ github.com/stretchr/testify v1.8.1/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o
 github.com/stretchr/testify v1.8.2/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=
 github.com/stretchr/testify v1.8.4 h1:CcVxjf3Q8PM0mHUKJCdn+eZZtm5yQwehR5yeSVQQcUk=
 github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/clb v1.0.1188 h1:zzaIE12soTfyAgRvBYhb5bYxFXRCelvYXDEfvtkT5Y4=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/clb v1.0.1188/go.mod h1:qIWFhWbmMuUaWCCKVSkdJ1BzKEOqkMeo+uKYS6jJimQ=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.0.1188/go.mod h1:r5r4xbfxSaeR04b166HGsBa/R4U3SueirEUpXGuw+Q0=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.0.1197 h1:jDcFkee9YRaz7mkc73A+8KArfZhHEbu4wziegpElS0Q=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.0.1197/go.mod h1:r5r4xbfxSaeR04b166HGsBa/R4U3SueirEUpXGuw+Q0=
 github.com/urfave/cli v1.22.2/go.mod h1:Gos4lmkARVdJ6EkW0WaNv/tZAAMe9V7XWyB60NtXRu0=
 github.com/valyala/bytebufferpool v1.0.0 h1:GqA5TC/0021Y/b9FG4Oi9Mr3q7XYx6KllzawFIhcdPw=
 github.com/valyala/bytebufferpool v1.0.0/go.mod h1:6bBcMArwyJ5K/AmCkWv1jt77kVWyCJ6HpOuEn7z0Csc=

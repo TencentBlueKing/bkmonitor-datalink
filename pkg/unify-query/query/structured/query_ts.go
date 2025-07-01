@@ -26,7 +26,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -36,6 +35,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+)
+
+const (
+	// Error messages
+	ErrUnknownOperatorMsg = "unknown operator: %s"
 )
 
 type QueryTs struct {
@@ -82,29 +86,6 @@ type QueryTs struct {
 
 	// HighLight 是否开启高亮
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
-}
-
-func (q *QueryTs) LabelMap() (map[string][]string, error) {
-	labelMap := make(map[string][]string)
-	labelCheck := make(map[string]struct{})
-
-	for _, query := range q.QueryList {
-		m, err := query.LabelMap()
-		if err != nil {
-			return nil, err
-		}
-		for key, values := range m {
-			for _, value := range values {
-				checkKey := key + ":" + value
-				if _, ok := labelCheck[checkKey]; !ok {
-					labelCheck[checkKey] = struct{}{}
-					labelMap[key] = append(labelMap[key], value)
-				}
-			}
-		}
-	}
-
-	return labelMap, nil
 }
 
 // StepParse 解析step
@@ -418,43 +399,6 @@ type Query struct {
 	Collapse *metadata.Collapse `json:"collapse,omitempty"`
 }
 
-func (q *Query) LabelMap() (map[string][]string, error) {
-	labelMap := make(map[string][]string)
-	labelCheck := make(map[string]struct{})
-
-	addLabel := func(key, value string) {
-		if value == "" {
-			return
-		}
-
-		checkKey := key + ":" + value
-		if _, ok := labelCheck[checkKey]; !ok {
-			labelCheck[checkKey] = struct{}{}
-			labelMap[key] = append(labelMap[key], value)
-		}
-	}
-
-	for _, condition := range q.Conditions.FieldList {
-		for _, value := range condition.Value {
-			if value != "" {
-				addLabel(condition.DimensionName, value)
-			}
-		}
-	}
-	if q.QueryString != "" {
-		qLabelMap, err := querystring.LabelMap(q.QueryString)
-		if err == nil {
-			for key, values := range qLabelMap {
-				for _, value := range values {
-					addLabel(key, value)
-				}
-			}
-		}
-	}
-
-	return labelMap, nil
-}
-
 func (q *Query) ToRouter() (*Route, error) {
 	router := &Route{
 		dataSource: q.DataSource,
@@ -509,8 +453,8 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 	if step < window {
 		return
 	}
-
-	if name, ok := domSampledFunc[am.Method+q.TimeAggregation.Function]; ok {
+	key := fmt.Sprintf("%s%s", am.Method, q.TimeAggregation.Function)
+	if name, ok := domSampledFunc[key]; ok {
 		agg := metadata.Aggregate{
 			Name:       name,
 			Field:      am.Field,

@@ -326,7 +326,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 					return
 				}
 			}
-
 		}
 
 		if qb.Scroll != "" {
@@ -569,12 +568,18 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				query:   query,
 				conn:    conn,
 			}
+			queryLabelMaps, err := query.LabelMap()
+			if err != nil {
+				err = fmt.Errorf("query label map error: %w", err)
+				return
+			}
 
 			fact := NewFormatFactory(ctx).
 				WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 				WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.Size).
 				WithMappings(mappings...).
-				WithOrders(query.Orders)
+				WithOrders(query.Orders).
+				WithIncludeValues(queryLabelMaps)
 
 			sr, queryErr := i.esQuery(ctx, qo, fact)
 			if queryErr != nil {
@@ -667,7 +672,12 @@ func (i *Instance) QuerySeriesSet(
 	)
 
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-series-set")
-	defer span.End(&err)
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("es query panic error: %s", r)
+		}
+		span.End(&err)
+	}()
 
 	if len(query.Aggregates) == 0 {
 		err = fmt.Errorf("聚合函数不能为空以及聚合周期跟 Step 必须一样")
@@ -752,13 +762,19 @@ func (i *Instance) QuerySeriesSet(
 				} else {
 					size = i.maxSize
 				}
+				queryLabelMap, err := query.LabelMap()
+				if err != nil {
+					setCh <- storage.ErrSeriesSet(fmt.Errorf("query label map error: %w", err))
+					return
+				}
 
 				fact := NewFormatFactory(ctx).
 					WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 					WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
 					WithMappings(mappings...).
 					WithOrders(query.Orders).
-					WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
+					WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc()).
+					WithIncludeValues(queryLabelMap)
 
 				if len(query.Aggregates) == 0 {
 					setCh <- storage.ErrSeriesSet(fmt.Errorf("aggregates is empty"))

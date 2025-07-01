@@ -364,6 +364,10 @@ func (s *SpacePusher) getDataLabelTableIdMap(bkTenantId string, dataLabelList []
 	if len(dataLabelList) == 0 {
 		return nil, errors.New("data label is null")
 	}
+
+	// dataLabelList 可能存在重复，需要去重
+	dataLabelList = slicex.RemoveDuplicate(&dataLabelList)
+
 	db := mysql.GetDBSession().DB
 	var rts []resulttable.ResultTable
 	for _, chunkDataLabels := range slicex.ChunkSlice(dataLabelList, 0) {

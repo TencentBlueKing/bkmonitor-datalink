@@ -10,6 +10,7 @@
 package sql_parser
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -26,8 +27,20 @@ func (w *walkParse) alias(k string) string {
 }
 
 func (w *walkParse) walk(q string) string {
-	for k, v := range w.fieldAlias {
-		q = strings.ReplaceAll(q, k, v)
+	for alias, key := range w.fieldAlias {
+		// 判断别名是否在 sql 语句中
+		if strings.Contains(q, alias) {
+			fieldType, _ := w.fieldMap[key]
+
+			values := strings.Split(key, ".")
+			if len(values) > 1 {
+				if fieldType == "string" {
+					key = fmt.Sprintf("JSON_EXTRACT_STRING(%s, '$.%s')", values[0], strings.Join(values[1:], "."))
+				}
+			}
+
+			q = strings.ReplaceAll(q, alias, key)
+		}
 	}
 	return q
 }

@@ -252,6 +252,69 @@ func HandlerQueryRaw(c *gin.Context) {
 	resp.success(ctx, listData)
 }
 
+// HandlerQueryRawWithScroll
+// @Summary  query raw data with scroll
+// @ID       query_raw_with_scroll
+// @Produce  json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    data                   body      structured.QueryTs            true   "json data"
+// @Success  200                    {object}  ListData
+// @Router   /query/ts/raw_with_scroll [post]
+func HandlerQueryRawWithScroll(c *gin.Context) {
+	var (
+		ctx      = c.Request.Context()
+		resp     = &response{c: c}
+		user     = metadata.GetUser(ctx)
+		err      error
+		span     *trace.Span
+		listData ListData
+	)
+
+	ctx, span = trace.NewSpan(ctx, "handler-query-raw-with-scroll")
+	defer func() {
+		if err != nil {
+			log.Errorf(ctx, err.Error())
+			resp.failed(ctx, err)
+		}
+
+		span.End(&err)
+	}()
+
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", c.Request.Header)
+
+	span.Set("query-source", user.Key)
+	span.Set("query-tenant-id", user.TenantID)
+	span.Set("query-space-uid", user.SpaceUID)
+
+	queryTs := &structured.QueryTs{}
+	err = json.NewDecoder(c.Request.Body).Decode(queryTs)
+	if err != nil {
+		return
+	}
+
+	if user.SpaceUID != "" {
+		queryTs.SpaceUid = user.SpaceUID
+	}
+
+	queryStr, _ := json.Marshal(queryTs)
+	span.Set("query-body", string(queryStr))
+
+	listData.TraceID = span.TraceID()
+
+	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithScroll(ctx, queryTs)
+	if err != nil {
+		listData.Status = &metadata.Status{
+			Code:    metadata.QueryRawError,
+			Message: err.Error(),
+		}
+		return
+	}
+
+	resp.success(ctx, listData)
+}
+
 // HandlerQueryTs
 // @Summary  query monitor by ts
 // @ID       query_ts

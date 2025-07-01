@@ -24,6 +24,7 @@ import (
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
+	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
@@ -329,8 +330,14 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 
 		if qb.Scroll != "" {
-			span.Set("query-scroll", qb.Scroll)
-			res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source).Do(ctx)
+			maxSlice := viper.GetInt("http.scroll.max_slice")
+			if maxSlice > 1 && len(qb.Aggregates) == 0 {
+				span.Set("query-scroll-slice", maxSlice)
+				res, err = i.esQueryWithSlices(ctx, client, qo, source, maxSlice)
+			} else {
+				span.Set("query-scroll", qb.Scroll)
+				res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source).Do(ctx)
+			}
 		} else {
 			span.Set("query-from", qb.From)
 			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
@@ -818,4 +825,139 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 func (i *Instance) InstanceType() string {
 	return consul.ElasticsearchStorageType
+}
+
+func (i *Instance) esQueryWithSlices(ctx context.Context, client *elastic.Client, qo *queryOption, source *elastic.SearchSource, maxSlice int) (*elastic.SearchResult, error) {
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-with-slices")
+	defer span.End(nil)
+
+	qb := qo.query
+
+	type sliceResult struct {
+		result  *elastic.SearchResult
+		err     error
+		sliceID int
+	}
+
+	resultChan := make(chan sliceResult, maxSlice)
+	var wg sync.WaitGroup
+
+	for sliceID := 0; sliceID < maxSlice; sliceID++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			sliceSource := elastic.NewSearchSource()
+
+			if originalQuery, err := source.Source(); err == nil {
+				if queryMap, ok := originalQuery.(map[string]interface{}); ok {
+					newQuery := make(map[string]interface{})
+					for key, value := range queryMap {
+						if key != "from" {
+							newQuery[key] = value
+						}
+					}
+
+					newQuery["slice"] = map[string]interface{}{
+						"id":  id,
+						"max": maxSlice,
+					}
+
+					newQuery["size"] = qb.Size
+
+					queryJson, _ := json.Marshal(newQuery)
+					log.Debugf(ctx, "ES slice %d query: %s", id, string(queryJson))
+
+					searchService := client.Search().Index(qo.indexes...)
+					searchService.Source(string(queryJson))
+
+					result, err := searchService.Do(ctx)
+
+					resultChan <- sliceResult{
+						result:  result,
+						err:     err,
+						sliceID: id,
+					}
+
+					log.Infof(ctx, "ES slice %d query completed, hits: %d", id, func() int64 {
+						if result != nil && result.Hits != nil {
+							return result.Hits.TotalHits.Value
+						}
+						return 0
+					}())
+					return
+				}
+			}
+
+			sliceSource.Size(qb.Size)
+			result, err := client.Search().Index(qo.indexes...).SearchSource(sliceSource).Do(ctx)
+
+			resultChan <- sliceResult{
+				result:  result,
+				err:     err,
+				sliceID: id,
+			}
+		}(sliceID)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	var allHits []*elastic.SearchHit
+	var totalHits int64
+	var scrollIDs []string
+	var firstResult *elastic.SearchResult
+
+	for sliceRes := range resultChan {
+		if sliceRes.err != nil {
+			log.Errorf(ctx, "ES slice %d query failed: %v", sliceRes.sliceID, sliceRes.err)
+			return nil, fmt.Errorf("slice %d query failed: %v", sliceRes.sliceID, sliceRes.err)
+		}
+
+		if sliceRes.result != nil {
+			if firstResult == nil {
+				firstResult = sliceRes.result
+			}
+
+			if sliceRes.result.Hits != nil {
+				allHits = append(allHits, sliceRes.result.Hits.Hits...)
+				totalHits += sliceRes.result.Hits.TotalHits.Value
+			}
+
+			if sliceRes.result.ScrollId != "" {
+				scrollIDs = append(scrollIDs, sliceRes.result.ScrollId)
+			}
+		}
+	}
+
+	if firstResult == nil {
+		return nil, fmt.Errorf("no valid slice results")
+	}
+
+	mergedResult := &elastic.SearchResult{
+		TookInMillis: firstResult.TookInMillis,
+		TimedOut:     firstResult.TimedOut,
+		Shards:       firstResult.Shards,
+		Hits: &elastic.SearchHits{
+			TotalHits: &elastic.TotalHits{
+				Value:    totalHits,
+				Relation: firstResult.Hits.TotalHits.Relation,
+			},
+			MaxScore: firstResult.Hits.MaxScore,
+			Hits:     allHits,
+		},
+		Aggregations: firstResult.Aggregations,
+		ScrollId:     strings.Join(scrollIDs, ","),
+	}
+
+	span.Set("slice-count", maxSlice)
+	span.Set("total-hits", totalHits)
+	span.Set("merged-hits", len(allHits))
+
+	log.Infof(ctx, "ES slice query completed: %d slices, total hits: %d, merged hits: %d",
+		maxSlice, totalHits, len(allHits))
+
+	return mergedResult, nil
 }

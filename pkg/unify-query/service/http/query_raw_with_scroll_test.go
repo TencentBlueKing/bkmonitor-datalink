@@ -1,0 +1,1039 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package http
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	miniredis "github.com/alicebob/miniredis/v2"
+	redis "github.com/go-redis/redis/v8"
+	elastic "github.com/olivere/elastic/v7"
+	"github.com/spf13/viper"
+	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+)
+
+func setupMiniRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
+	mr, err := miniredis.Run()
+	assert.NoError(t, err, "启动miniredis不应该出错")
+
+	client := redis.NewClient(&redis.Options{
+		Addr: mr.Addr(),
+		DB:   0,
+	})
+
+	ctx := context.Background()
+	_, err = client.Ping(ctx).Result()
+	assert.NoError(t, err, "Redis连接不应该出错")
+
+	t.Logf("MiniRedis启动成功，地址: %s", mr.Addr())
+	return mr, client
+}
+
+func teardownMiniRedis(mr *miniredis.Miniredis, client *redis.Client) {
+	if client != nil {
+		client.Close()
+	}
+	if mr != nil {
+		mr.Close()
+	}
+}
+
+func TestQueryRawWithScroll_WithMiniRedis(t *testing.T) {
+	mr, redisClient := setupMiniRedis(t)
+	defer teardownMiniRedis(mr, redisClient)
+
+	ctx := metadata.InitHashID(context.Background())
+	spaceUid := influxdb.SpaceUid
+
+	mock.Init()
+	influxdb.MockSpaceRouter(ctx)
+
+	user := &metadata.User{
+		SpaceUID: spaceUid,
+		Name:     "test_user",
+		Key:      "test_key",
+	}
+	metadata.SetUser(ctx, user)
+
+	start := "1723594000"
+	end := "1723595000"
+
+	queryTs := &structured.QueryTs{
+		SpaceUid: spaceUid,
+		QueryList: []*structured.Query{
+			{
+				DataSource:    structured.BkLog,
+				TableID:       structured.TableID(influxdb.ResultTableEs),
+				KeepColumns:   []string{"a", "b"},
+				ReferenceName: "a",
+			},
+		},
+		From:   0,
+		Limit:  5,
+		Start:  start,
+		End:    end,
+		Scroll: "5m",
+	}
+
+	t.Run("test_redis_operations", func(t *testing.T) {
+		ctx := context.Background()
+
+		err := redisClient.Set(ctx, "test_key", "test_value", time.Minute).Err()
+		assert.NoError(t, err, "Redis SET不应该出错")
+
+		val, err := redisClient.Get(ctx, "test_key").Result()
+		assert.NoError(t, err, "Redis GET不应该出错")
+		assert.Equal(t, "test_value", val, "Redis值应该正确")
+		lockKey := "test_lock"
+		result, err := redisClient.SetNX(ctx, lockKey, "locked", time.Second*10).Result()
+		assert.NoError(t, err, "Redis SETNX不应该出错")
+		assert.True(t, result, "第一次获取锁应该成功")
+
+		result, err = redisClient.SetNX(ctx, lockKey, "locked", time.Second*10).Result()
+		assert.NoError(t, err, "Redis SETNX不应该出错")
+		assert.False(t, result, "第二次获取锁应该失败")
+
+		t.Logf("Redis基本操作测试通过")
+	})
+
+	t.Run("test_scroll_key_generation", func(t *testing.T) {
+		user := metadata.GetUser(ctx)
+		username := user.Name
+		if username == "" {
+			username = user.Key
+		}
+
+		queryTsKey, err := redisUtil.ScrollGenerateQueryTsKey(queryTs, username)
+		assert.NoError(t, err, "键生成不应该出错")
+		assert.NotEmpty(t, queryTsKey, "键不应该为空")
+
+		sessionKey := redisUtil.GetSessionKey(queryTsKey)
+		lockKey := redisUtil.GetLockKey(queryTsKey)
+
+		assert.Contains(t, sessionKey, redisUtil.SessionKeyPrefix, "会话键应该包含正确前缀")
+		assert.Contains(t, lockKey, redisUtil.LockKeyPrefix, "锁键应该包含正确前缀")
+
+		t.Logf("QueryTsKey: %s", queryTsKey)
+		t.Logf("SessionKey: %s", sessionKey)
+		t.Logf("LockKey: %s", lockKey)
+	})
+
+	t.Run("test_session_operations", func(t *testing.T) {
+		user := metadata.GetUser(ctx)
+		username := user.Name
+		if username == "" {
+			username = user.Key
+		}
+
+		queryTsKey, err := redisUtil.ScrollGenerateQueryTsKey(queryTs, username)
+		assert.NoError(t, err, "键生成不应该出错")
+
+		sessionKey := redisUtil.GetSessionKey(queryTsKey)
+		lockKey := redisUtil.GetLockKey(queryTsKey)
+
+		ctx := context.Background()
+		result, err := redisClient.SetNX(ctx, lockKey, "locked", time.Second*60).Result()
+		assert.NoError(t, err, "获取锁不应该出错")
+		assert.True(t, result, "应该成功获取锁")
+
+		sessionObj := &redisUtil.SessionObject{
+			QueryTs:       queryTsKey,
+			Status:        "RUNNING",
+			CreateAt:      time.Now(),
+			LastAccessAt:  time.Now(),
+			ScrollTimeout: time.Minute * 5,
+			LockTimeout:   time.Second * 60,
+			MaxSlice:      3,
+			Limit:         5,
+			Index:         1,
+			QueryReference: map[string]*redisUtil.RTState{
+				influxdb.ResultTableEs: {
+					Type:        "es",
+					HasMoreData: true,
+					ScrollIDs:   []string{"test_scroll_id"},
+				},
+			},
+		}
+
+		sessionData, err := redisUtil.MarshalSessionObject(sessionObj)
+		assert.NoError(t, err, "会话序列化不应该出错")
+
+		err = redisClient.Set(ctx, sessionKey, sessionData, time.Minute*5).Err()
+		assert.NoError(t, err, "存储会话不应该出错")
+
+		storedData, err := redisClient.Get(ctx, sessionKey).Result()
+		assert.NoError(t, err, "读取会话不应该出错")
+
+		restoredSession, err := redisUtil.UnmarshalSessionObject(storedData)
+		assert.NoError(t, err, "会话反序列化不应该出错")
+
+		assert.Equal(t, sessionObj.QueryTs, restoredSession.QueryTs, "QueryTs应该一致")
+		assert.Equal(t, sessionObj.Status, restoredSession.Status, "Status应该一致")
+		assert.Equal(t, sessionObj.MaxSlice, restoredSession.MaxSlice, "MaxSlice应该一致")
+
+		err = redisClient.Del(ctx, lockKey).Err()
+		assert.NoError(t, err, "释放锁不应该出错")
+
+		t.Logf("会话操作测试通过")
+	})
+
+	t.Run("test_user_isolation", func(t *testing.T) {
+		users := []string{"user1", "user2", "user1"} // 重复user1测试会话复用
+		keys := make([]string, len(users))
+
+		for i, username := range users {
+			key, err := redisUtil.ScrollGenerateQueryTsKey(queryTs, username)
+			assert.NoError(t, err, "用户 %s 的键生成不应该出错", username)
+			keys[i] = key
+		}
+
+		assert.NotEqual(t, keys[0], keys[1], "不同用户的键应该不同")
+		assert.Equal(t, keys[0], keys[2], "相同用户的键应该相同")
+
+		t.Logf("用户隔离测试通过: user1=%s, user2=%s", keys[0], keys[1])
+	})
+}
+
+func TestMiniRedis_ConcurrentOperations(t *testing.T) {
+	mr, redisClient := setupMiniRedis(t)
+	defer teardownMiniRedis(mr, redisClient)
+
+	ctx := context.Background()
+	lockKey := "concurrent_test_lock"
+
+	results := make(chan bool, 5)
+
+	for i := 0; i < 5; i++ {
+		go func(id int) {
+			result, err := redisClient.SetNX(ctx, lockKey, "locked", time.Second*10).Result()
+			assert.NoError(t, err, "goroutine %d 获取锁不应该出错", id)
+			results <- result
+		}(i)
+	}
+
+	successCount := 0
+	for i := 0; i < 5; i++ {
+		if <-results {
+			successCount++
+		}
+	}
+
+	assert.Equal(t, 1, successCount, "只有一个goroutine应该成功获取锁")
+
+	t.Logf("并发锁测试通过，成功获取锁的数量: %d", successCount)
+}
+
+func TestMiniRedis_TTLOperations(t *testing.T) {
+	mr, redisClient := setupMiniRedis(t)
+	defer teardownMiniRedis(mr, redisClient)
+
+	ctx := context.Background()
+
+	key := "ttl_test_key"
+	err := redisClient.Set(ctx, key, "test_value", time.Second*2).Err()
+	assert.NoError(t, err, "设置TTL键不应该出错")
+
+	exists, err := redisClient.Exists(ctx, key).Result()
+	assert.NoError(t, err, "检查键存在不应该出错")
+	assert.Equal(t, int64(1), exists, "键应该存在")
+
+	ttl, err := redisClient.TTL(ctx, key).Result()
+	assert.NoError(t, err, "获取TTL不应该出错")
+	assert.True(t, ttl > 0, "TTL应该大于0")
+	assert.True(t, ttl <= time.Second*2, "TTL应该小于等于2秒")
+
+	time.Sleep(time.Second * 3)
+
+	mr.FastForward(time.Second * 3)
+
+	exists, err = redisClient.Exists(ctx, key).Result()
+	assert.NoError(t, err, "检查键存在不应该出错")
+	assert.Equal(t, int64(0), exists, "键应该已过期")
+
+	t.Logf("TTL操作测试通过")
+}
+
+func TestQueryRawWithScroll_MainFlow(t *testing.T) {
+	mr, redisClient := setupMiniRedis(t)
+	defer teardownMiniRedis(mr, redisClient)
+
+	ctx := metadata.InitHashID(context.Background())
+	spaceUid := influxdb.SpaceUid
+
+	mock.Init()
+	influxdb.MockSpaceRouter(ctx)
+
+	user := &metadata.User{
+		SpaceUID: spaceUid,
+		Name:     "test_user",
+		Key:      "test_key",
+	}
+	metadata.SetUser(ctx, user)
+
+	start := "1723594000"
+	end := "1723595000"
+
+	queryTs := &structured.QueryTs{
+		SpaceUid: spaceUid,
+		QueryList: []*structured.Query{
+			{
+				DataSource:    structured.BkLog,
+				TableID:       structured.TableID(influxdb.ResultTableEs),
+				KeepColumns:   []string{"a", "b"},
+				ReferenceName: "a",
+			},
+		},
+		From:   0,
+		Limit:  5,
+		Start:  start,
+		End:    end,
+		Scroll: "5m",
+	}
+
+	t.Run("simulate_main_flow", func(t *testing.T) {
+		ctx := metadata.InitHashID(context.Background())
+		metadata.SetUser(ctx, user)
+
+		user := metadata.GetUser(ctx)
+		username := user.Name
+		if username == "" {
+			username = user.Key
+		}
+		assert.Equal(t, "test_user", username, "用户名应该正确")
+
+		queryTsKey, err := redisUtil.ScrollGenerateQueryTsKey(queryTs, username)
+		assert.NoError(t, err, "键生成不应该出错")
+		assert.NotEmpty(t, queryTsKey, "键不应该为空")
+
+		sessionKey := redisUtil.GetSessionKey(queryTsKey)
+		lockKey := redisUtil.GetLockKey(queryTsKey)
+
+		lockResult, err := redisClient.SetNX(ctx, lockKey, "locked", time.Second*60).Result()
+		assert.NoError(t, err, "获取锁不应该出错")
+		assert.True(t, lockResult, "应该成功获取锁")
+
+		sessionExists, err := redisClient.Exists(ctx, sessionKey).Result()
+		assert.NoError(t, err, "检查会话存在不应该出错")
+		assert.Equal(t, int64(0), sessionExists, "首次请求会话不应该存在")
+
+		sessionObj := &redisUtil.SessionObject{
+			QueryTs:       queryTsKey,
+			Status:        "RUNNING",
+			CreateAt:      time.Now(),
+			LastAccessAt:  time.Now(),
+			ScrollTimeout: time.Minute * 5,
+			LockTimeout:   time.Second * 60,
+			MaxSlice:      3,
+			Limit:         5,
+			Index:         1,
+			QueryReference: map[string]*redisUtil.RTState{
+				influxdb.ResultTableEs: {
+					Type:        "es",
+					HasMoreData: true,
+					ScrollIDs:   []string{"test_scroll_id"},
+					SliceStates: []redisUtil.SliceState{
+						{
+							SliceID:     0,
+							StartOffset: 0,
+							EndOffset:   5,
+							Size:        5,
+							Status:      redisUtil.SliceStatusRunning,
+							MaxRetries:  3,
+						},
+					},
+				},
+			},
+		}
+
+		sessionData, err := redisUtil.MarshalSessionObject(sessionObj)
+		assert.NoError(t, err, "会话序列化不应该出错")
+
+		err = redisClient.Set(ctx, sessionKey, sessionData, time.Minute*5).Err()
+		assert.NoError(t, err, "存储会话不应该出错")
+
+		err = redisClient.Del(ctx, lockKey).Err()
+		assert.NoError(t, err, "释放锁不应该出错")
+
+		lockResult, err = redisClient.SetNX(ctx, lockKey, "locked", time.Second*60).Result()
+		assert.NoError(t, err, "第二次获取锁不应该出错")
+		assert.True(t, lockResult, "应该成功获取锁")
+
+		storedData, err := redisClient.Get(ctx, sessionKey).Result()
+		assert.NoError(t, err, "读取会话不应该出错")
+
+		restoredSession, err := redisUtil.UnmarshalSessionObject(storedData)
+		assert.NoError(t, err, "会话反序列化不应该出错")
+		assert.Equal(t, sessionObj.QueryTs, restoredSession.QueryTs, "QueryTs应该一致")
+		assert.Equal(t, sessionObj.Status, restoredSession.Status, "Status应该一致")
+		assert.Equal(t, sessionObj.MaxSlice, restoredSession.MaxSlice, "MaxSlice应该一致")
+		assert.Equal(t, len(sessionObj.QueryReference), len(restoredSession.QueryReference), "QueryReference数量应该一致")
+
+		restoredSession.LastAccessAt = time.Now()
+		restoredSession.Index = 2
+
+		if rtState, exists := restoredSession.QueryReference[influxdb.ResultTableEs]; exists {
+			rtState.ScrollIDs = []string{"test_scroll_id_2"}
+			if len(rtState.SliceStates) > 0 {
+				rtState.SliceStates[0].EndOffset = 10
+			}
+		}
+
+		updatedSessionData, err := redisUtil.MarshalSessionObject(restoredSession)
+		assert.NoError(t, err, "更新会话序列化不应该出错")
+
+		err = redisClient.Set(ctx, sessionKey, updatedSessionData, time.Minute*5).Err()
+		assert.NoError(t, err, "保存更新会话不应该出错")
+
+		err = redisClient.Del(ctx, lockKey).Err()
+		assert.NoError(t, err, "释放锁不应该出错")
+
+		t.Logf("主流程模拟完成: queryTsKey=%s", queryTsKey)
+	})
+
+	t.Run("simulate_concurrent_requests", func(t *testing.T) {
+		ctx := metadata.InitHashID(context.Background())
+		metadata.SetUser(ctx, user)
+		user := metadata.GetUser(ctx)
+		username := user.Name
+		if username == "" {
+			username = user.Key
+		}
+
+		queryTsKey, err := redisUtil.ScrollGenerateQueryTsKey(queryTs, username)
+		assert.NoError(t, err, "键生成不应该出错")
+
+		lockKey := redisUtil.GetLockKey(queryTsKey)
+
+		results := make(chan bool, 3)
+
+		for i := 0; i < 3; i++ {
+			go func(id int) {
+				result, err := redisClient.SetNX(ctx, lockKey, "locked", time.Second*10).Result()
+				assert.NoError(t, err, "goroutine %d 获取锁不应该出错", id)
+				results <- result
+			}(i)
+		}
+		successCount := 0
+		for i := 0; i < 3; i++ {
+			if <-results {
+				successCount++
+			}
+		}
+
+		assert.Equal(t, 1, successCount, "只有一个请求应该成功获取锁")
+
+		err = redisClient.Del(ctx, lockKey).Err()
+		assert.NoError(t, err, "清理锁不应该出错")
+
+		t.Logf("并发请求模拟完成，成功获取锁的数量: %d", successCount)
+	})
+}
+
+func TestQueryRawWithScroll_ESSliceGeneration(t *testing.T) {
+	mr, redisClient := setupMiniRedis(t)
+	defer teardownMiniRedis(mr, redisClient)
+
+	ctx := metadata.InitHashID(context.Background())
+	spaceUid := influxdb.SpaceUid
+
+	mock.Init()
+	influxdb.MockSpaceRouter(ctx)
+
+	user := &metadata.User{
+		SpaceUID: spaceUid,
+		Name:     "test_user",
+		Key:      "test_key",
+	}
+	metadata.SetUser(ctx, user)
+
+	start := "1723594000"
+	end := "1723595000"
+
+	t.Run("test_es_slice_dsl_generation", func(t *testing.T) {
+		ctx := metadata.InitHashID(context.Background())
+		metadata.SetUser(ctx, user)
+
+		rtState := &redisUtil.RTState{
+			Type:        "es",
+			HasMoreData: true,
+			ScrollIDs:   []string{"scroll_id_1", "scroll_id_2", "scroll_id_3"},
+			SliceStates: []redisUtil.SliceState{
+				{
+					SliceID:     0,
+					StartOffset: 0,
+					EndOffset:   333,
+					Size:        333,
+					Status:      redisUtil.SliceStatusRunning,
+					MaxRetries:  3,
+				},
+				{
+					SliceID:     1,
+					StartOffset: 333,
+					EndOffset:   666,
+					Size:        333,
+					Status:      redisUtil.SliceStatusRunning,
+					MaxRetries:  3,
+				},
+				{
+					SliceID:     2,
+					StartOffset: 666,
+					EndOffset:   1000,
+					Size:        334,
+					Status:      redisUtil.SliceStatusRunning,
+					MaxRetries:  3,
+				},
+			},
+		}
+
+		assert.Equal(t, 3, len(rtState.SliceStates), "应该有3个slice")
+		assert.Equal(t, 3, len(rtState.ScrollIDs), "应该有3个scroll ID")
+
+		totalSize := int64(0)
+		for i, slice := range rtState.SliceStates {
+			assert.Equal(t, i, slice.SliceID, "slice ID应该连续")
+			assert.Equal(t, redisUtil.SliceStatusRunning, slice.Status, "slice状态应该是running")
+
+			if i == 0 {
+				assert.Equal(t, int64(0), slice.StartOffset, "第一个slice的StartOffset应该是0")
+			} else {
+				assert.Equal(t, rtState.SliceStates[i-1].EndOffset, slice.StartOffset,
+					"slice的StartOffset应该等于前一个slice的EndOffset")
+			}
+
+			totalSize += slice.Size
+		}
+		assert.Equal(t, int64(1000), totalSize, "所有slice的总大小应该等于limit")
+
+		for i, slice := range rtState.SliceStates {
+			expectedDSL := map[string]interface{}{
+				"query": map[string]interface{}{
+					"bool": map[string]interface{}{
+						"must": []map[string]interface{}{
+							{
+								"range": map[string]interface{}{
+									"@timestamp": map[string]interface{}{
+										"gte": start + "000", // 转换为毫秒
+										"lte": end + "000",
+									},
+								},
+							},
+							{
+								"terms": map[string]interface{}{
+									"level": []string{"ERROR", "WARN"},
+								},
+							},
+						},
+					},
+				},
+				"slice": map[string]interface{}{
+					"id":  slice.SliceID,
+					"max": len(rtState.SliceStates),
+				},
+				"size": slice.Size,
+				"from": slice.StartOffset,
+				"sort": []map[string]interface{}{
+					{
+						"@timestamp": map[string]interface{}{
+							"order": "asc",
+						},
+					},
+				},
+				"_source": []string{"log", "timestamp", "level"},
+			}
+
+			assert.NotNil(t, expectedDSL["query"], "DSL应该包含query部分")
+			assert.NotNil(t, expectedDSL["slice"], "DSL应该包含slice部分")
+			assert.Equal(t, slice.Size, expectedDSL["size"], "DSL的size应该正确")
+			assert.Equal(t, slice.StartOffset, expectedDSL["from"], "DSL的from应该正确")
+
+			sliceConfig := expectedDSL["slice"].(map[string]interface{})
+			assert.Equal(t, slice.SliceID, sliceConfig["id"], "slice ID应该正确")
+			assert.Equal(t, len(rtState.SliceStates), sliceConfig["max"], "slice max应该正确")
+
+			t.Logf("ES Slice %d DSL: size=%d, from=%d, slice_id=%d, slice_max=%d",
+				i, slice.Size, slice.StartOffset, slice.SliceID, len(rtState.SliceStates))
+		}
+
+		for i, scrollID := range rtState.ScrollIDs {
+			scrollDSL := map[string]interface{}{
+				"scroll":    "5m",
+				"scroll_id": scrollID,
+			}
+
+			assert.Equal(t, "5m", scrollDSL["scroll"], "scroll时间应该正确")
+			assert.Equal(t, scrollID, scrollDSL["scroll_id"], "scroll ID应该正确")
+
+			t.Logf("ES Scroll %d DSL: scroll_id=%s", i, scrollID)
+		}
+
+		t.Logf("ES slice DSL生成测试完成")
+	})
+}
+
+func TestQueryRawWithScroll_DorisSliceGeneration(t *testing.T) {
+	mr, redisClient := setupMiniRedis(t)
+	defer teardownMiniRedis(mr, redisClient)
+
+	ctx := metadata.InitHashID(context.Background())
+	spaceUid := influxdb.SpaceUid
+
+	mock.Init()
+	influxdb.MockSpaceRouter(ctx)
+
+	user := &metadata.User{
+		SpaceUID: spaceUid,
+		Name:     "test_user",
+		Key:      "test_key",
+	}
+	metadata.SetUser(ctx, user)
+
+	start := "1723594000"
+	end := "1723595000"
+
+	t.Run("test_doris_slice_sql_generation", func(t *testing.T) {
+		ctx := metadata.InitHashID(context.Background())
+		metadata.SetUser(ctx, user)
+
+		rtState := &redisUtil.RTState{
+			Type:        "doris",
+			HasMoreData: true,
+			SliceStates: []redisUtil.SliceState{
+				{
+					SliceID:     0,
+					StartOffset: 0,
+					EndOffset:   666,
+					Size:        666,
+					Status:      redisUtil.SliceStatusRunning,
+					MaxRetries:  3,
+				},
+				{
+					SliceID:     1,
+					StartOffset: 666,
+					EndOffset:   1333,
+					Size:        667,
+					Status:      redisUtil.SliceStatusRunning,
+					MaxRetries:  3,
+				},
+				{
+					SliceID:     2,
+					StartOffset: 1333,
+					EndOffset:   2000,
+					Size:        667,
+					Status:      redisUtil.SliceStatusRunning,
+					MaxRetries:  3,
+				},
+			},
+		}
+
+		assert.Equal(t, 3, len(rtState.SliceStates), "应该有3个slice")
+
+		totalSize := int64(0)
+		for i, slice := range rtState.SliceStates {
+			assert.Equal(t, i, slice.SliceID, "slice ID应该连续")
+			assert.Equal(t, redisUtil.SliceStatusRunning, slice.Status, "slice状态应该是running")
+
+			totalSize += slice.Size
+		}
+		assert.Equal(t, int64(2000), totalSize, "所有slice的总大小应该等于limit")
+
+		for i, slice := range rtState.SliceStates {
+			expectedSQL := fmt.Sprintf(`
+SELECT log, timestamp, level, host
+FROM result_table_bk_sql
+WHERE timestamp >= %s
+  AND timestamp <= %s
+  AND level = 'ERROR'
+  AND host IN ('server1', 'server2')
+ORDER BY timestamp ASC
+LIMIT %d OFFSET %d`,
+				start+"000", // 转换为毫秒
+				end+"000",
+				slice.Size,
+				slice.StartOffset,
+			)
+
+			assert.Contains(t, expectedSQL, "SELECT log, timestamp, level, host", "SQL应该包含正确的字段")
+			assert.Contains(t, expectedSQL, "FROM result_table_bk_sql", "SQL应该包含正确的表名")
+			assert.Contains(t, expectedSQL, "WHERE timestamp >=", "SQL应该包含时间范围条件")
+			assert.Contains(t, expectedSQL, "level = 'ERROR'", "SQL应该包含level条件")
+			assert.Contains(t, expectedSQL, "host IN ('server1', 'server2')", "SQL应该包含host条件")
+			assert.Contains(t, expectedSQL, "ORDER BY timestamp ASC", "SQL应该包含排序")
+			assert.Contains(t, expectedSQL, fmt.Sprintf("LIMIT %d", slice.Size), "SQL应该包含正确的limit")
+			assert.Contains(t, expectedSQL, fmt.Sprintf("OFFSET %d", slice.StartOffset), "SQL应该包含正确的offset")
+
+			t.Logf("Doris Slice %d SQL: size=%d, offset=%d",
+				i, slice.Size, slice.StartOffset)
+		}
+
+		for i, slice := range rtState.SliceStates {
+			newOffset := slice.EndOffset
+			continuationSQL := fmt.Sprintf(`
+SELECT log, timestamp, level, host
+FROM result_table_bk_sql
+WHERE timestamp >= %s
+  AND timestamp <= %s
+  AND level = 'ERROR'
+  AND host IN ('server1', 'server2')
+ORDER BY timestamp ASC
+LIMIT %d OFFSET %d`,
+				start+"000",
+				end+"000",
+				slice.Size,
+				newOffset, // 使用新的offset
+			)
+
+			assert.Contains(t, continuationSQL, fmt.Sprintf("OFFSET %d", newOffset),
+				"续传SQL应该使用新的offset")
+
+			t.Logf("Doris Continuation Slice %d SQL: new_offset=%d", i, newOffset)
+		}
+
+		t.Logf("Doris slice SQL生成测试完成")
+	})
+}
+
+func TestQueryRawWithScroll_ConcurrentSliceQueries(t *testing.T) {
+	mr, redisClient := setupMiniRedis(t)
+	defer teardownMiniRedis(mr, redisClient)
+	ctx := metadata.InitHashID(context.Background())
+	spaceUid := influxdb.SpaceUid
+
+	mock.Init()
+	influxdb.MockSpaceRouter(ctx)
+
+	user := &metadata.User{
+		SpaceUID: spaceUid,
+		Name:     "test_user",
+		Key:      "test_key",
+	}
+	metadata.SetUser(ctx, user)
+
+	t.Run("test_concurrent_es_and_doris_slices", func(t *testing.T) {
+		ctx := metadata.InitHashID(context.Background())
+		metadata.SetUser(ctx, user)
+
+		// ES RTState
+		esRTState := &redisUtil.RTState{
+			Type:        "es",
+			HasMoreData: true,
+			ScrollIDs:   []string{"es_scroll_1", "es_scroll_2", "es_scroll_3"},
+			SliceStates: []redisUtil.SliceState{
+				{SliceID: 0, StartOffset: 0, EndOffset: 500, Size: 500, Status: redisUtil.SliceStatusRunning, MaxRetries: 3},
+				{SliceID: 1, StartOffset: 500, EndOffset: 1000, Size: 500, Status: redisUtil.SliceStatusRunning, MaxRetries: 3},
+				{SliceID: 2, StartOffset: 1000, EndOffset: 1500, Size: 500, Status: redisUtil.SliceStatusRunning, MaxRetries: 3},
+			},
+		}
+
+		dorisRTState := &redisUtil.RTState{
+			Type:        "doris",
+			HasMoreData: true,
+			SliceStates: []redisUtil.SliceState{
+				{SliceID: 0, StartOffset: 0, EndOffset: 800, Size: 800, Status: redisUtil.SliceStatusRunning, MaxRetries: 3},
+				{SliceID: 1, StartOffset: 800, EndOffset: 1600, Size: 800, Status: redisUtil.SliceStatusRunning, MaxRetries: 3},
+				{SliceID: 2, StartOffset: 1600, EndOffset: 2400, Size: 800, Status: redisUtil.SliceStatusRunning, MaxRetries: 3},
+			},
+		}
+
+		assert.Equal(t, 3, len(esRTState.SliceStates), "ES应该有3个slice")
+		assert.Equal(t, 3, len(esRTState.ScrollIDs), "ES应该有3个scroll ID")
+
+		esTotal := int64(0)
+		for _, slice := range esRTState.SliceStates {
+			esTotal += slice.Size
+		}
+		assert.Equal(t, int64(1500), esTotal, "ES slice总大小应该正确")
+
+		assert.Equal(t, 3, len(dorisRTState.SliceStates), "Doris应该有3个slice")
+
+		dorisTotal := int64(0)
+		for _, slice := range dorisRTState.SliceStates {
+			dorisTotal += slice.Size
+		}
+		assert.Equal(t, int64(2400), dorisTotal, "Doris slice总大小应该正确")
+
+		results := make(chan string, 6) // ES 3个 + Doris 3个
+
+		for i, slice := range esRTState.SliceStates {
+			go func(sliceID int, s redisUtil.SliceState, scrollID string) {
+				// 模拟ES slice查询DSL
+				dsl := map[string]interface{}{
+					"query": map[string]interface{}{
+						"bool": map[string]interface{}{
+							"must": []map[string]interface{}{
+								{"range": map[string]interface{}{"@timestamp": map[string]interface{}{"gte": "1723594000000", "lte": "1723595000000"}}},
+							},
+						},
+					},
+					"slice": map[string]interface{}{"id": s.SliceID, "max": len(esRTState.SliceStates)},
+					"size":  s.Size,
+					"from":  s.StartOffset,
+					"sort":  []map[string]interface{}{{"@timestamp": map[string]interface{}{"order": "asc"}}},
+				}
+
+				assert.NotNil(t, dsl["slice"], "ES DSL应该包含slice配置")
+				sliceConfig := dsl["slice"].(map[string]interface{})
+				assert.Equal(t, s.SliceID, sliceConfig["id"], "ES slice ID应该正确")
+
+				results <- fmt.Sprintf("ES_slice_%d_completed", sliceID)
+			}(i, slice, esRTState.ScrollIDs[i])
+		}
+
+		for i, slice := range dorisRTState.SliceStates {
+			go func(sliceID int, s redisUtil.SliceState) {
+				sql := fmt.Sprintf(`
+SELECT * FROM result_table_bk_sql
+WHERE timestamp >= 1723594000000
+  AND timestamp <= 1723595000000
+ORDER BY timestamp ASC
+LIMIT %d OFFSET %d`, s.Size, s.StartOffset)
+
+				assert.Contains(t, sql, fmt.Sprintf("LIMIT %d", s.Size), "Doris SQL应该包含正确的limit")
+				assert.Contains(t, sql, fmt.Sprintf("OFFSET %d", s.StartOffset), "Doris SQL应该包含正确的offset")
+
+				results <- fmt.Sprintf("Doris_slice_%d_completed", sliceID)
+			}(i, slice)
+		}
+
+		completedQueries := make([]string, 0, 6)
+		for i := 0; i < 6; i++ {
+			result := <-results
+			completedQueries = append(completedQueries, result)
+		}
+
+		assert.Equal(t, 6, len(completedQueries), "应该完成6个并发查询")
+
+		esCount := 0
+		dorisCount := 0
+		for _, result := range completedQueries {
+			if strings.Contains(result, "ES_slice") {
+				esCount++
+			} else if strings.Contains(result, "Doris_slice") {
+				dorisCount++
+			}
+		}
+		assert.Equal(t, 3, esCount, "应该完成3个ES slice查询")
+		assert.Equal(t, 3, dorisCount, "应该完成3个Doris slice查询")
+
+		t.Logf("并发slice查询测试完成: ES=%d, Doris=%d", esCount, dorisCount)
+	})
+}
+
+func TestQueryRawWithScroll_ESSliceIntegration(t *testing.T) {
+	mr, redisClient := setupMiniRedis(t)
+	defer teardownMiniRedis(mr, redisClient)
+
+	ctx := metadata.InitHashID(context.Background())
+	spaceUid := influxdb.SpaceUid
+
+	mock.Init()
+	influxdb.MockSpaceRouter(ctx)
+
+	user := &metadata.User{
+		SpaceUID: spaceUid,
+		Name:     "test_user",
+		Key:      "test_key",
+	}
+	metadata.SetUser(ctx, user)
+
+	t.Run("test_es_slice_configuration_detection", func(t *testing.T) {
+		ctx := metadata.InitHashID(context.Background())
+		metadata.SetUser(ctx, user)
+
+		originalMaxSlice := viper.GetInt("http.scroll.max_slice")
+		viper.Set("http.scroll.max_slice", 3)
+		defer viper.Set("http.scroll.max_slice", originalMaxSlice)
+
+		maxSlice := viper.GetInt("http.scroll.max_slice")
+		assert.Equal(t, 3, maxSlice, "maxSlice配置应该正确")
+
+		hasAggregates := false // 没有聚合查询
+		hasScroll := true      // 有scroll参数
+
+		shouldUseSlice := maxSlice > 1 && !hasAggregates && hasScroll
+		assert.True(t, shouldUseSlice, "应该使用slice查询")
+
+		t.Logf("ES slice配置检测: maxSlice=%d, hasAggregates=%v, hasScroll=%v, shouldUseSlice=%v",
+			maxSlice, hasAggregates, hasScroll, shouldUseSlice)
+	})
+
+	t.Run("test_es_slice_query_structure", func(t *testing.T) {
+		ctx := metadata.InitHashID(context.Background())
+		metadata.SetUser(ctx, user)
+
+		maxSlice := 3
+
+		originalQuery := map[string]interface{}{
+			"query": map[string]interface{}{
+				"bool": map[string]interface{}{
+					"must": []map[string]interface{}{
+						{
+							"range": map[string]interface{}{
+								"@timestamp": map[string]interface{}{
+									"gte": "1723594000000",
+									"lte": "1723595000000",
+								},
+							},
+						},
+						{
+							"terms": map[string]interface{}{
+								"level": []string{"ERROR", "WARN"},
+							},
+						},
+					},
+				},
+			},
+			"sort": []map[string]interface{}{
+				{
+					"@timestamp": map[string]interface{}{
+						"order": "asc",
+					},
+				},
+			},
+			"_source": []string{"log", "timestamp", "level"},
+			"size":    1000,
+			"from":    0,
+		}
+
+		for sliceID := 0; sliceID < maxSlice; sliceID++ {
+			sliceQuery := make(map[string]interface{})
+			for key, value := range originalQuery {
+				if key != "from" {
+					sliceQuery[key] = value
+				}
+			}
+
+			sliceQuery["slice"] = map[string]interface{}{
+				"id":  sliceID,
+				"max": maxSlice,
+			}
+
+			assert.Contains(t, sliceQuery, "slice", "slice查询应该包含slice配置")
+			assert.Contains(t, sliceQuery, "query", "slice查询应该包含原始查询条件")
+			assert.Contains(t, sliceQuery, "sort", "slice查询应该包含排序条件")
+			assert.Contains(t, sliceQuery, "_source", "slice查询应该包含_source字段")
+			assert.NotContains(t, sliceQuery, "from", "slice查询不应该包含from字段")
+
+			sliceConfig := sliceQuery["slice"].(map[string]interface{})
+			assert.Equal(t, sliceID, sliceConfig["id"], "slice ID应该正确")
+			assert.Equal(t, maxSlice, sliceConfig["max"], "slice max应该正确")
+
+			queryJson, err := json.Marshal(sliceQuery)
+			assert.NoError(t, err, "slice查询应该可以序列化为JSON")
+			assert.NotEmpty(t, queryJson, "序列化的JSON不应该为空")
+
+			t.Logf("ES Slice %d 查询结构验证通过: %s", sliceID, string(queryJson))
+		}
+	})
+
+	t.Run("test_es_slice_result_merging", func(t *testing.T) {
+		// 测试ES slice结果合并逻辑
+		ctx := metadata.InitHashID(context.Background())
+		metadata.SetUser(ctx, user)
+
+		// 模拟3个slice的查询结果
+		sliceResults := []*elastic.SearchResult{
+			{
+				TookInMillis: 10,
+				TimedOut:     false,
+				Hits: &elastic.SearchHits{
+					TotalHits: &elastic.TotalHits{Value: 100, Relation: "eq"},
+					MaxScore:  func() *float64 { f := 1.0; return &f }(),
+					Hits: []*elastic.SearchHit{
+						{Id: "1", Source: json.RawMessage(`{"log": "error1", "level": "ERROR"}`)},
+						{Id: "2", Source: json.RawMessage(`{"log": "error2", "level": "ERROR"}`)},
+					},
+				},
+				ScrollId: "scroll_id_1",
+			},
+			{
+				TookInMillis: 12,
+				TimedOut:     false,
+				Hits: &elastic.SearchHits{
+					TotalHits: &elastic.TotalHits{Value: 150, Relation: "eq"},
+					MaxScore:  func() *float64 { f := 1.2; return &f }(),
+					Hits: []*elastic.SearchHit{
+						{Id: "3", Source: json.RawMessage(`{"log": "warn1", "level": "WARN"}`)},
+						{Id: "4", Source: json.RawMessage(`{"log": "warn2", "level": "WARN"}`)},
+						{Id: "5", Source: json.RawMessage(`{"log": "warn3", "level": "WARN"}`)},
+					},
+				},
+				ScrollId: "scroll_id_2",
+			},
+			{
+				TookInMillis: 8,
+				TimedOut:     false,
+				Hits: &elastic.SearchHits{
+					TotalHits: &elastic.TotalHits{Value: 80, Relation: "eq"},
+					MaxScore:  func() *float64 { f := 0.9; return &f }(),
+					Hits: []*elastic.SearchHit{
+						{Id: "6", Source: json.RawMessage(`{"log": "info1", "level": "INFO"}`)},
+					},
+				},
+				ScrollId: "scroll_id_3",
+			},
+		}
+
+		// 模拟结果合并逻辑
+		var allHits []*elastic.SearchHit
+		var totalHits int64
+		var scrollIDs []string
+		firstResult := sliceResults[0]
+
+		for _, result := range sliceResults {
+			if result.Hits != nil {
+				allHits = append(allHits, result.Hits.Hits...)
+				totalHits += result.Hits.TotalHits.Value
+			}
+			if result.ScrollId != "" {
+				scrollIDs = append(scrollIDs, result.ScrollId)
+			}
+		}
+
+		mergedResult := &elastic.SearchResult{
+			TookInMillis: firstResult.TookInMillis,
+			TimedOut:     firstResult.TimedOut,
+			Hits: &elastic.SearchHits{
+				TotalHits: &elastic.TotalHits{
+					Value:    totalHits,
+					Relation: firstResult.Hits.TotalHits.Relation,
+				},
+				MaxScore: firstResult.Hits.MaxScore,
+				Hits:     allHits,
+			},
+			ScrollId: strings.Join(scrollIDs, ","),
+		}
+
+		// 验证合并结果
+		assert.Equal(t, int64(330), mergedResult.Hits.TotalHits.Value, "总命中数应该正确")
+		assert.Equal(t, 6, len(mergedResult.Hits.Hits), "合并后的hits数量应该正确")
+		assert.Equal(t, "scroll_id_1,scroll_id_2,scroll_id_3", mergedResult.ScrollId, "scroll ID应该正确合并")
+
+		// 验证每个hit的数据
+		expectedIDs := []string{"1", "2", "3", "4", "5", "6"}
+		for i, hit := range mergedResult.Hits.Hits {
+			assert.Equal(t, expectedIDs[i], hit.Id, "hit ID应该正确")
+			assert.NotEmpty(t, hit.Source, "hit source不应该为空")
+		}
+
+		t.Logf("ES slice结果合并验证通过: totalHits=%d, mergedHits=%d, scrollIDs=%s",
+			totalHits, len(allHits), strings.Join(scrollIDs, ","))
+	})
+}

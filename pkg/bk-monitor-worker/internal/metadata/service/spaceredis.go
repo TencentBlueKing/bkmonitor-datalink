@@ -2092,7 +2092,7 @@ func (s *SpacePusher) isNeedFilterForBkcc(measurementType, spaceType, spaceId st
 	}
 	// 对自定义插件的处理，兼容黑白名单对类型的更改
 	// 黑名单时，会更改为单指标单表
-	if measurementType == models.MeasurementTypeBkExporter || (dataIdDetail.EtlConfig == models.ETLConfigTypeBkExporter && measurementType == models.MeasurementTypeBkSplit) {
+	if (dataIdDetail.IsPlatformDataId && measurementType == models.MeasurementTypeBkExporter) || (dataIdDetail.EtlConfig == models.ETLConfigTypeBkExporter && measurementType == models.MeasurementTypeBkSplit) {
 		// 如果space_id与data_id所属空间UID相同，则不需要过滤
 		if dataIdDetail.SpaceUid == fmt.Sprintf("%s__%s", spaceType, spaceId) {
 			return false

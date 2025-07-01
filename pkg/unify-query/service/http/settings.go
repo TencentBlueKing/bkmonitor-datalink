@@ -42,6 +42,7 @@ const (
 	TSQueryPromQLHandlePathConfigPath         = "http.path.ts_promql"
 	TSQueryReferenceQueryHandlePathConfigPath = "http.path.ts_reference"
 	TSQueryRawQueryHandlePathConfigPath       = "http.path.ts_raw"
+	TSQueryRawWithScrollHandlePathConfigPath  = "http.path.ts_raw_with_scroll"
 	TSQueryStructToPromQLHandlePathConfigPath = "http.path.ts_struct_to_promql"
 	TSQueryPromQLToStructHandlePathConfigPath = "http.path.ts_promql_to_struct"
 	TSQueryLabelValuesPathConfigPath          = "http.path.ts_label_values"
@@ -61,6 +62,14 @@ const (
 
 	// 查询配置
 	InfoDefaultLimit = "http.info.limit"
+
+	// Scroll配置
+	ScrollMaxSliceConfigPath                    = "http.scroll.max_slice"
+	ScrollMaxFailedSliceThresholdConfigPath     = "http.scroll.max_failed_slice_threshold"
+	ScrollSliceDefaultLimitConfigPath           = "http.scroll.slice_default_limit"
+	ScrollDefaultScrollWindowDurationConfigPath = "http.scroll.default_scroll_window_duration"
+	ScrollDefaultLockTimeOutDurationConfigPath  = "http.scroll.default_lock_timeout_duration"
+	ScrollSliceMaxRetryConfigPath               = "http.scroll.slice_max_retry"
 
 	// 分段查询配置
 	SegmentedEnable      = "http.segmented.enable"
@@ -96,4 +105,11 @@ var (
 
 	JwtPublicKey       string
 	JwtBkAppCodeSpaces map[string][]string
+
+	ScrollMaxSlice                int
+	ScrollMaxFailedSliceThreshold int
+	ScrollSliceLimit              int
+	ScrollWindow                  string
+	ScrollLockTimeout             time.Duration
+	ScrollSliceMaxRetry           int
 )

@@ -190,7 +190,6 @@ func mockElasticSearchHandler(ctx context.Context) {
 
 	searchHandler := func(r *http.Request) (w *http.Response, err error) {
 		body, _ := io.ReadAll(r.Body)
-
 		d, ok := Es.Get(string(body))
 		if !ok {
 			err = fmt.Errorf(`es mock data is empty in "%s"`, body)

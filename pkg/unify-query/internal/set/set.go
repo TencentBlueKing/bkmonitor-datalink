@@ -31,6 +31,9 @@ func New[T comparable](items ...T) *Set[T] {
 func (s *Set[T]) First() (v T) {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
+	if s.m == nil {
+		return
+	}
 	for k := range s.m {
 		v = k
 		return
@@ -41,6 +44,9 @@ func (s *Set[T]) First() (v T) {
 func (s *Set[T]) Size() int {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
+	if s.m == nil {
+		return 0
+	}
 	size := len(s.m)
 	return size
 }
@@ -48,6 +54,9 @@ func (s *Set[T]) Size() int {
 func (s *Set[T]) Remove(items ...T) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	if s.m == nil {
+		return
+	}
 	for _, item := range items {
 		delete(s.m, item)
 	}
@@ -56,6 +65,9 @@ func (s *Set[T]) Remove(items ...T) {
 func (s *Set[T]) String() string {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
+	if s.m == nil {
+		return ""
+	}
 	var res strings.Builder
 	for k := range s.m {
 		res.WriteString(fmt.Sprintf("%v", k))
@@ -81,6 +93,10 @@ func (s *Set[T]) Intersection(t *Set[T]) *Set[T] {
 func (s *Set[T]) Add(items ...T) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	// 确保 map 已初始化
+	if s.m == nil {
+		s.m = make(map[T]struct{})
+	}
 	for _, item := range items {
 		if _, ok := s.m[item]; !ok {
 			s.m[item] = struct{}{}
@@ -91,6 +107,9 @@ func (s *Set[T]) Add(items ...T) {
 func (s *Set[T]) Existed(item T) bool {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
+	if s.m == nil {
+		return false
+	}
 	_, ok := s.m[item]
 	return ok
 }
@@ -98,6 +117,9 @@ func (s *Set[T]) Existed(item T) bool {
 func (s *Set[T]) ToArray() []T {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
+	if s.m == nil {
+		return []T{}
+	}
 	array := make([]T, 0, len(s.m))
 	for item := range s.m {
 		array = append(array, item)

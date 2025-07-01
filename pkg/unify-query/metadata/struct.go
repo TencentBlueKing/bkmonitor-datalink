@@ -152,11 +152,24 @@ type Query struct {
 	Size   int      `json:"size,omitempty"`
 
 	Scroll             string             `json:"scroll,omitempty"`
+	Connect            string             `json:"connect,omitempty"`
 	ResultTableOptions ResultTableOptions `json:"result_table_options,omitempty"`
 
 	Orders      Orders    `json:"orders,omitempty"`
 	NeedAddTime bool      `json:"need_add_time,omitempty"`
 	Collapse    *Collapse `json:"collapse,omitempty"`
+}
+
+func (q *Query) CalcStorageIDs() []string {
+	if len(q.StorageIDs) > 0 {
+		return q.StorageIDs
+	}
+
+	if q.StorageID != "" {
+		return []string{q.StorageID}
+	}
+
+	return nil
 }
 
 func (q *Query) VMExpand() *VmExpand {

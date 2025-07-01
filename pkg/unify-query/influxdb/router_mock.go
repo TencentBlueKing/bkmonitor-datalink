@@ -355,6 +355,7 @@ func MockSpaceRouter(ctx context.Context) {
 					StorageType: consul.BkSqlStorageType,
 				},
 				ResultTableBkBaseEs: &ir.ResultTableDetail{
+					StorageId:   3,
 					SourceType:  "bkdata",
 					DB:          "es_index",
 					DataLabel:   "bkbase_es",

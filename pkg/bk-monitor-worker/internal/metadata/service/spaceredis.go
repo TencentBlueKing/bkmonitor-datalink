@@ -2756,7 +2756,7 @@ func (s *SpacePusher) composeApmAllTypeTableIds(spaceType, spaceId string) (map[
 
 	var spaceObj space.Space
 	dataValues := make(map[string]map[string]interface{})
-	if err := space.NewSpaceQuerySet(mysql.GetDBSession().DB).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId).One(&spaceObj); err != nil {
+	if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId).One(&spaceObj); err != nil {
 		return dataValues, err
 	}
 
@@ -2767,6 +2767,9 @@ func (s *SpacePusher) composeApmAllTypeTableIds(spaceType, spaceId string) (map[
 			resulttable.ResultTableDBSchema.TableId,
 			resulttable.ResultTableDBSchema.BkBizIdAlias,
 		).
+		BkTenantIdEq(spaceObj.BkTenantId).
+		IsDeletedEq(false).
+		IsEnableEq(true).
 		TableIdLike("%apm_global.precalculate_storage%").
 		All(&rtList); err != nil {
 		return nil, err

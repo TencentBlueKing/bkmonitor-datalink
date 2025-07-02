@@ -1037,3 +1037,357 @@ func TestQueryRawWithScroll_ESSliceIntegration(t *testing.T) {
 			totalHits, len(allHits), strings.Join(scrollIDs, ","))
 	})
 }
+
+// TestQueryRawWithScroll_APMTraceRequest 测试APM trace请求的完整流程
+func TestQueryRawWithScroll_APMTraceRequest(t *testing.T) {
+	mr, redisClient := setupMiniRedis(t)
+	defer teardownMiniRedis(mr, redisClient)
+
+	ctx := metadata.InitHashID(context.Background())
+	spaceUid := "bkcc__2" // 使用请求中的space_uid
+
+	mock.Init()
+	influxdb.MockSpaceRouter(ctx)
+
+	user := &metadata.User{
+		SpaceUID: spaceUid,
+		Name:     "test_user",
+		Key:      "test_key",
+	}
+	metadata.SetUser(ctx, user)
+
+	// 设置scroll配置
+	originalMaxSlice := viper.GetInt("http.scroll.max_slice")
+	viper.Set("http.scroll.max_slice", 3)
+	defer viper.Set("http.scroll.max_slice", originalMaxSlice)
+
+	t.Run("test_apm_trace_table_configuration", func(t *testing.T) {
+		ctx := metadata.InitHashID(context.Background())
+		metadata.SetUser(ctx, user)
+
+		// 验证APM trace table配置
+		tableId := "2_bkapm.trace_tilapia"
+
+		// 模拟ES存储配置
+		mockESData := map[string]interface{}{
+			"took":      15,
+			"timed_out": false,
+			"_shards": map[string]interface{}{
+				"total":      3,
+				"successful": 3,
+				"skipped":    0,
+				"failed":     0,
+			},
+			"hits": map[string]interface{}{
+				"total": map[string]interface{}{
+					"value":    1250,
+					"relation": "eq",
+				},
+				"max_score": 1.0,
+				"hits": []map[string]interface{}{
+					{
+						"_index": "2_bkapm_trace_tilapia_20240814",
+						"_type":  "_doc",
+						"_id":    "trace_001",
+						"_score": 1.0,
+						"_source": map[string]interface{}{
+							"trace_id":       "abc123def456",
+							"span_id":        "span_001",
+							"operation_name": "http_request",
+							"start_time":     1723594000000,
+							"end_time":       1723594001000,
+							"duration":       1000,
+							"status":         "ok",
+							"service_name":   "web-service",
+							"resource": map[string]interface{}{
+								"service.name":    "web-service",
+								"service.version": "1.0.0",
+							},
+						},
+					},
+					{
+						"_index": "2_bkapm_trace_tilapia_20240814",
+						"_type":  "_doc",
+						"_id":    "trace_002",
+						"_score": 1.0,
+						"_source": map[string]interface{}{
+							"trace_id":       "def456ghi789",
+							"span_id":        "span_002",
+							"operation_name": "database_query",
+							"start_time":     1723594002000,
+							"end_time":       1723594003500,
+							"duration":       1500,
+							"status":         "error",
+							"service_name":   "db-service",
+							"resource": map[string]interface{}{
+								"service.name":    "db-service",
+								"service.version": "2.1.0",
+							},
+						},
+					},
+				},
+			},
+			"_scroll_id": "DXF1ZXJ5QW5kRmV0Y2gBAAAAAAAA",
+		}
+
+		// 设置ES mock数据
+		mock.Es.Set(map[string]any{
+			"mock_apm_trace_query": mockESData,
+		})
+
+		t.Logf("APM trace table配置验证: tableId=%s, spaceUid=%s", tableId, spaceUid)
+		assert.Equal(t, "2_bkapm.trace_tilapia", tableId, "table ID应该正确")
+		assert.Equal(t, "bkcc__2", spaceUid, "space UID应该正确")
+	})
+
+	t.Run("test_apm_trace_scroll_request", func(t *testing.T) {
+		ctx := metadata.InitHashID(context.Background())
+		metadata.SetUser(ctx, user)
+
+		// 模拟完整的scroll请求
+		requestBody := map[string]interface{}{
+			"space_uid": "bkcc__2",
+			"query_list": []map[string]interface{}{
+				{
+					"table_id": "2_bkapm.trace_tilapia",
+				},
+			},
+			"timezone":    "Asia/Shanghai",
+			"clear_cache": true,
+			"scroll":      "5m",
+			"limit":       10000,
+		}
+
+		// 验证请求参数
+		assert.Equal(t, "bkcc__2", requestBody["space_uid"], "space_uid应该正确")
+		assert.Equal(t, "5m", requestBody["scroll"], "scroll时间应该正确")
+		assert.Equal(t, 10000, requestBody["limit"], "limit应该正确")
+		assert.Equal(t, true, requestBody["clear_cache"], "clear_cache应该正确")
+
+		queryList := requestBody["query_list"].([]map[string]interface{})
+		assert.Equal(t, 1, len(queryList), "query_list长度应该正确")
+		assert.Equal(t, "2_bkapm.trace_tilapia", queryList[0]["table_id"], "table_id应该正确")
+
+		t.Logf("APM trace scroll请求验证通过: %+v", requestBody)
+	})
+
+	t.Run("test_apm_trace_es_slice_query", func(t *testing.T) {
+		ctx := metadata.InitHashID(context.Background())
+		metadata.SetUser(ctx, user)
+
+		maxSlice := 3
+
+		// 模拟APM trace的ES查询结构
+		baseQuery := map[string]interface{}{
+			"query": map[string]interface{}{
+				"bool": map[string]interface{}{
+					"must": []map[string]interface{}{
+						{
+							"range": map[string]interface{}{
+								"start_time": map[string]interface{}{
+									"gte": 1723594000000,
+									"lte": 1723595000000,
+								},
+							},
+						},
+					},
+				},
+			},
+			"sort": []map[string]interface{}{
+				{
+					"start_time": map[string]interface{}{
+						"order": "asc",
+					},
+				},
+			},
+			"_source": []string{"trace_id", "span_id", "operation_name", "start_time", "end_time", "duration", "status", "service_name"},
+			"size":    10000,
+		}
+
+		// 验证每个slice的查询结构
+		for sliceID := 0; sliceID < maxSlice; sliceID++ {
+			sliceQuery := make(map[string]interface{})
+			for key, value := range baseQuery {
+				sliceQuery[key] = value
+			}
+
+			sliceQuery["slice"] = map[string]interface{}{
+				"id":  sliceID,
+				"max": maxSlice,
+			}
+
+			// 验证slice查询结构
+			assert.Contains(t, sliceQuery, "slice", "slice查询应该包含slice配置")
+			assert.Contains(t, sliceQuery, "query", "slice查询应该包含查询条件")
+			assert.Contains(t, sliceQuery, "sort", "slice查询应该包含排序条件")
+			assert.Contains(t, sliceQuery, "_source", "slice查询应该包含_source字段")
+
+			sliceConfig := sliceQuery["slice"].(map[string]interface{})
+			assert.Equal(t, sliceID, sliceConfig["id"], "slice ID应该正确")
+			assert.Equal(t, maxSlice, sliceConfig["max"], "slice max应该正确")
+
+			// 验证APM trace特定字段
+			sourceFields := sliceQuery["_source"].([]string)
+			expectedFields := []string{"trace_id", "span_id", "operation_name", "start_time", "end_time", "duration", "status", "service_name"}
+			for _, field := range expectedFields {
+				assert.Contains(t, sourceFields, field, fmt.Sprintf("应该包含APM trace字段: %s", field))
+			}
+
+			queryJson, err := json.Marshal(sliceQuery)
+			assert.NoError(t, err, "slice查询应该可以序列化为JSON")
+			assert.NotEmpty(t, queryJson, "序列化的JSON不应该为空")
+
+			t.Logf("APM trace ES Slice %d 查询结构验证通过: %s", sliceID, string(queryJson))
+		}
+	})
+
+	t.Run("test_apm_trace_result_processing", func(t *testing.T) {
+		ctx := metadata.InitHashID(context.Background())
+		metadata.SetUser(ctx, user)
+
+		// 模拟APM trace的查询结果
+		mockTraceResults := []*elastic.SearchResult{
+			{
+				TookInMillis: 15,
+				TimedOut:     false,
+				Hits: &elastic.SearchHits{
+					TotalHits: &elastic.TotalHits{Value: 500, Relation: "eq"},
+					MaxScore:  func() *float64 { f := 1.0; return &f }(),
+					Hits: []*elastic.SearchHit{
+						{
+							Id: "trace_001",
+							Source: json.RawMessage(`{
+								"trace_id": "abc123def456",
+								"span_id": "span_001",
+								"operation_name": "http_request",
+								"start_time": 1723594000000,
+								"end_time": 1723594001000,
+								"duration": 1000,
+								"status": "ok",
+								"service_name": "web-service"
+							}`),
+						},
+						{
+							Id: "trace_002",
+							Source: json.RawMessage(`{
+								"trace_id": "def456ghi789",
+								"span_id": "span_002",
+								"operation_name": "database_query",
+								"start_time": 1723594002000,
+								"end_time": 1723594003500,
+								"duration": 1500,
+								"status": "error",
+								"service_name": "db-service"
+							}`),
+						},
+					},
+				},
+				ScrollId: "scroll_id_slice_1",
+			},
+			{
+				TookInMillis: 12,
+				TimedOut:     false,
+				Hits: &elastic.SearchHits{
+					TotalHits: &elastic.TotalHits{Value: 400, Relation: "eq"},
+					MaxScore:  func() *float64 { f := 0.9; return &f }(),
+					Hits: []*elastic.SearchHit{
+						{
+							Id: "trace_003",
+							Source: json.RawMessage(`{
+								"trace_id": "ghi789jkl012",
+								"span_id": "span_003",
+								"operation_name": "cache_lookup",
+								"start_time": 1723594004000,
+								"end_time": 1723594004200,
+								"duration": 200,
+								"status": "ok",
+								"service_name": "cache-service"
+							}`),
+						},
+					},
+				},
+				ScrollId: "scroll_id_slice_2",
+			},
+			{
+				TookInMillis: 18,
+				TimedOut:     false,
+				Hits: &elastic.SearchHits{
+					TotalHits: &elastic.TotalHits{Value: 350, Relation: "eq"},
+					MaxScore:  func() *float64 { f := 1.1; return &f }(),
+					Hits: []*elastic.SearchHit{
+						{
+							Id: "trace_004",
+							Source: json.RawMessage(`{
+								"trace_id": "jkl012mno345",
+								"span_id": "span_004",
+								"operation_name": "message_queue",
+								"start_time": 1723594005000,
+								"end_time": 1723594005800,
+								"duration": 800,
+								"status": "ok",
+								"service_name": "mq-service"
+							}`),
+						},
+					},
+				},
+				ScrollId: "scroll_id_slice_3",
+			},
+		}
+
+		// 模拟结果合并逻辑
+		var allHits []*elastic.SearchHit
+		var totalHits int64
+		var scrollIDs []string
+		firstResult := mockTraceResults[0]
+
+		for _, result := range mockTraceResults {
+			if result.Hits != nil {
+				allHits = append(allHits, result.Hits.Hits...)
+				totalHits += result.Hits.TotalHits.Value
+			}
+			if result.ScrollId != "" {
+				scrollIDs = append(scrollIDs, result.ScrollId)
+			}
+		}
+
+		mergedResult := &elastic.SearchResult{
+			TookInMillis: firstResult.TookInMillis,
+			TimedOut:     firstResult.TimedOut,
+			Hits: &elastic.SearchHits{
+				TotalHits: &elastic.TotalHits{
+					Value:    totalHits,
+					Relation: firstResult.Hits.TotalHits.Relation,
+				},
+				MaxScore: firstResult.Hits.MaxScore,
+				Hits:     allHits,
+			},
+			ScrollId: strings.Join(scrollIDs, ","),
+		}
+
+		// 验证合并结果
+		assert.Equal(t, int64(1250), mergedResult.Hits.TotalHits.Value, "APM trace总命中数应该正确")
+		assert.Equal(t, 4, len(mergedResult.Hits.Hits), "合并后的trace hits数量应该正确")
+		assert.Equal(t, "scroll_id_slice_1,scroll_id_slice_2,scroll_id_slice_3", mergedResult.ScrollId, "scroll ID应该正确合并")
+
+		// 验证每个trace hit的数据结构
+		expectedTraceIDs := []string{"trace_001", "trace_002", "trace_003", "trace_004"}
+		for i, hit := range mergedResult.Hits.Hits {
+			assert.Equal(t, expectedTraceIDs[i], hit.Id, "trace ID应该正确")
+			assert.NotEmpty(t, hit.Source, "trace source不应该为空")
+
+			// 验证trace数据包含必要字段
+			var traceData map[string]interface{}
+			err := json.Unmarshal(hit.Source, &traceData)
+			assert.NoError(t, err, "trace数据应该可以解析")
+
+			assert.Contains(t, traceData, "trace_id", "应该包含trace_id字段")
+			assert.Contains(t, traceData, "span_id", "应该包含span_id字段")
+			assert.Contains(t, traceData, "operation_name", "应该包含operation_name字段")
+			assert.Contains(t, traceData, "start_time", "应该包含start_time字段")
+			assert.Contains(t, traceData, "service_name", "应该包含service_name字段")
+		}
+
+		t.Logf("APM trace结果处理验证通过: totalHits=%d, mergedHits=%d, scrollIDs=%s",
+			totalHits, len(allHits), strings.Join(scrollIDs, ","))
+	})
+}

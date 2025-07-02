@@ -11,8 +11,10 @@ package elasticsearch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -29,7 +31,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -98,6 +99,14 @@ type queryOption struct {
 	conn Connect
 
 	query *metadata.Query
+}
+
+// MergedSliceResult 表示合并后的分片查询结果
+type MergedSliceResult struct {
+	Hits      []*elastic.SearchHit
+	TotalHits int64
+	// key 是 slice ID, value 是该 slice 对应的 scroll ID
+	ScrollIDs map[int]string
 }
 
 var TimeSeriesResultPool = sync.Pool{
@@ -207,14 +216,9 @@ func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []stri
 	return mappings, nil
 }
 
-func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
-	var (
-		err error
-		qb  = qo.query
-	)
-	ctx, span := trace.NewSpan(ctx, "elasticsearch-query")
-	defer span.End(&err)
-
+// buildSearchSource 构建 Elasticsearch 查询的 SearchSource
+// 这个函数被 esQuery 和 esQueryWithSlices 共同使用，避免代码重复
+func (i *Instance) buildSearchSource(ctx context.Context, qb *metadata.Query, fact *FormatFactory) (*elastic.SearchSource, error) {
 	filterQueries := make([]elastic.Query, 0)
 
 	// 过滤条件生成 elastic.query
@@ -280,6 +284,49 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		source.Collapse(elastic.NewCollapseBuilder(qb.Collapse.Field))
 	}
 
+	return source, nil
+}
+
+// convertMergedResultToSearchResult 将 MergedSliceResult 转换为 elastic.SearchResult
+// 这是为了保持与现有代码的兼容性，但注意 ScrollID 会被合并（这在实际使用中需要特殊处理）
+func (i *Instance) convertMergedResultToSearchResult(merged *MergedSliceResult) *elastic.SearchResult {
+	if merged == nil {
+		return nil
+	}
+
+	// 将多个 scroll ID 合并为一个字符串（注意：这只是为了兼容性，实际使用中需要特殊处理）
+	var scrollIDs []string
+	for _, scrollID := range merged.ScrollIDs {
+		if scrollID != "" {
+			scrollIDs = append(scrollIDs, scrollID)
+		}
+	}
+
+	return &elastic.SearchResult{
+		Hits: &elastic.SearchHits{
+			TotalHits: &elastic.TotalHits{
+				Value:    merged.TotalHits,
+				Relation: "eq",
+			},
+			Hits: merged.Hits,
+		},
+		ScrollId: strings.Join(scrollIDs, ","),
+	}
+}
+
+func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
+	var (
+		err error
+		qb  = qo.query
+	)
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query")
+	defer span.End(&err)
+
+	source, err := i.buildSearchSource(ctx, qb, fact)
+	if err != nil {
+		return nil, err
+	}
+
 	if source == nil {
 		return nil, fmt.Errorf("empty es query source")
 	}
@@ -337,7 +384,14 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 						log.Infof(ctx, "ES original query DSL (before slice): %s", string(queryJson))
 					}
 				}
-				res, err = i.esQueryWithSlices(ctx, client, qo, fact, maxSlice)
+				// 使用新的函数签名
+				mergedResult, sliceErr := i.esQueryWithSlices(ctx, client, qo, source, maxSlice)
+				if sliceErr != nil {
+					err = sliceErr
+					return
+				}
+				// 将 MergedSliceResult 转换为 elastic.SearchResult
+				res = i.convertMergedResultToSearchResult(mergedResult)
 			} else {
 				span.Set("query-scroll", qb.Scroll)
 				res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source).Do(ctx)
@@ -370,8 +424,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 				}
 			}
 
-			return nil, errors.New(msg.String())
-		} else if err.Error() == "EOF" {
+			return nil, fmt.Errorf("elasticsearch query failed: %s, details: %w", msg.String(), e)
+		} else if errors.Is(err, io.EOF) {
 			return nil, nil
 		} else {
 			return nil, err
@@ -848,11 +902,11 @@ func (i *Instance) InstanceType() string {
 	return consul.ElasticsearchStorageType
 }
 
-func (i *Instance) esQueryWithSlices(ctx context.Context, client *elastic.Client, qo *queryOption, fact *FormatFactory, maxSlice int) (*elastic.SearchResult, error) {
+func (i *Instance) esQueryWithSlices(ctx context.Context, client *elastic.Client, qo *queryOption, source *elastic.SearchSource, maxSlice int) (*MergedSliceResult, error) {
+	var err error
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-with-slices")
-	defer span.End(nil)
+	defer span.End(&err)
 
-	log.Infof(ctx, "ES starting slice query with %d slices on indexes: %v", maxSlice, qo.indexes)
 	qb := qo.query
 
 	type sliceResult struct {
@@ -869,96 +923,21 @@ func (i *Instance) esQueryWithSlices(ctx context.Context, client *elastic.Client
 		go func(id int) {
 			defer wg.Done()
 
-			filterQueries := make([]elastic.Query, 0)
+			// 使用高级的 ScrollService，而不是 PerformRequest
+			// 为每个 slice 创建一个独立的 scroll service
+			scrollService := client.Scroll(qo.indexes...).
+				Scroll(qb.Scroll).
+				SearchSource(source).                               // 复用外部构建好的 source
+				Slice(elastic.NewSliceQuery().Id(id).Max(maxSlice)) // 设置当前 slice
 
-			query, err := fact.Query(qb.AllConditions)
-			if err != nil {
-				resultChan <- sliceResult{
-					result:  nil,
-					err:     fmt.Errorf("slice %d query condition failed: %v", id, err),
-					sliceID: id,
-				}
-				return
-			}
-			if query != nil {
-				filterQueries = append(filterQueries, query)
-			}
+			res, err := scrollService.Do(ctx)
 
-			rangeQuery, err := fact.RangeQuery()
-			if err != nil {
-				resultChan <- sliceResult{
-					result:  nil,
-					err:     fmt.Errorf("slice %d range query failed: %v", id, err),
-					sliceID: id,
-				}
-				return
-			}
-			filterQueries = append(filterQueries, rangeQuery)
-
-			if qb.QueryString != "" {
-				qs := NewQueryString(qb.QueryString, qb.IsPrefix, fact.NestedField)
-				q, qsErr := qs.ToDSL(ctx, qb.FieldAlias)
-				if qsErr != nil {
-					resultChan <- sliceResult{
-						result:  nil,
-						err:     fmt.Errorf("slice %d query string failed: %v", id, qsErr),
-						sliceID: id,
-					}
-					return
-				}
-				if q != nil {
-					filterQueries = append(filterQueries, q)
-				}
+			// 记录详细日志
+			if err != nil && !errors.Is(err, io.EOF) {
+				log.Errorf(ctx, "ES slice %d query failed on indexes %v: %v", id, qo.indexes, err)
 			}
 
-			sliceSource := elastic.NewSearchSource()
-			for _, order := range fact.Orders() {
-				sliceSource.Sort(order.Name, order.Ast)
-			}
-
-			if len(filterQueries) > 0 {
-				esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
-				sliceSource.Query(esQuery)
-			}
-
-			if len(qb.Source) > 0 {
-				fetchSource := elastic.NewFetchSourceContext(true)
-				fetchSource.Include(qb.Source...)
-				sliceSource.FetchSourceContext(fetchSource)
-			}
-
-			sliceQuery := elastic.NewSliceQuery().Id(id).Max(maxSlice)
-			sliceSource.Slice(sliceQuery)
-			sliceSource.Size(qb.Size)
-
-			if querySource, err := sliceSource.Source(); err == nil {
-				if queryJson, err := json.Marshal(querySource); err == nil {
-					log.Infof(ctx, "ES slice %d/%d query DSL: %s", id, maxSlice, string(queryJson))
-				}
-			}
-
-			result, err := client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(sliceSource).Do(ctx)
-
-			if err != nil {
-				if querySource, err := sliceSource.Source(); err == nil {
-					if queryJson, err := json.Marshal(querySource); err == nil {
-						log.Errorf(ctx, "ES slice %d query failed with DSL: %s, error: %v", id, string(queryJson), err)
-					}
-				}
-			} else {
-				log.Infof(ctx, "ES slice %d query completed, hits: %d", id, func() int64 {
-					if result != nil && result.Hits != nil {
-						return result.Hits.TotalHits.Value
-					}
-					return 0
-				}())
-			}
-
-			resultChan <- sliceResult{
-				result:  result,
-				err:     err,
-				sliceID: id,
-			}
+			resultChan <- sliceResult{result: res, err: err, sliceID: id}
 		}(sliceID)
 	}
 
@@ -967,59 +946,38 @@ func (i *Instance) esQueryWithSlices(ctx context.Context, client *elastic.Client
 		close(resultChan)
 	}()
 
+	// 合并结果，并正确保存所有 scroll ID
 	var allHits []*elastic.SearchHit
-	var totalHits int64
-	var scrollIDs []string
-	var firstResult *elastic.SearchResult
+	var totalHitsAggr int64
 
-	for sliceRes := range resultChan {
-		if sliceRes.err != nil {
-			log.Errorf(ctx, "ES slice %d/%d query failed on indexes %v: %v", sliceRes.sliceID, maxSlice, qo.indexes, sliceRes.err)
-			return nil, fmt.Errorf("slice %d query failed: %v", sliceRes.sliceID, sliceRes.err)
+	mergedResult := &MergedSliceResult{
+		ScrollIDs: make(map[int]string, maxSlice),
+	}
+
+	for res := range resultChan {
+		// 如果任何一个 slice 失败，则整个操作失败
+		if res.err != nil && !errors.Is(res.err, io.EOF) {
+			err = fmt.Errorf("slice %d query failed: %w", res.sliceID, res.err)
+			return nil, err
 		}
 
-		if sliceRes.result != nil {
-			if firstResult == nil {
-				firstResult = sliceRes.result
+		if res.result != nil {
+			if res.result.Hits != nil && len(res.result.Hits.Hits) > 0 {
+				allHits = append(allHits, res.result.Hits.Hits...)
+				totalHitsAggr += res.result.Hits.TotalHits.Value
 			}
-
-			if sliceRes.result.Hits != nil {
-				allHits = append(allHits, sliceRes.result.Hits.Hits...)
-				totalHits += sliceRes.result.Hits.TotalHits.Value
-			}
-
-			if sliceRes.result.ScrollId != "" {
-				scrollIDs = append(scrollIDs, sliceRes.result.ScrollId)
+			// 保存每个 slice 独立的 scroll ID
+			if res.result.ScrollId != "" {
+				mergedResult.ScrollIDs[res.sliceID] = res.result.ScrollId
 			}
 		}
 	}
 
-	if firstResult == nil {
-		return nil, fmt.Errorf("no valid slice results")
-	}
-
-	mergedResult := &elastic.SearchResult{
-		TookInMillis: firstResult.TookInMillis,
-		TimedOut:     firstResult.TimedOut,
-		Shards:       firstResult.Shards,
-		Hits: &elastic.SearchHits{
-			TotalHits: &elastic.TotalHits{
-				Value:    totalHits,
-				Relation: firstResult.Hits.TotalHits.Relation,
-			},
-			MaxScore: firstResult.Hits.MaxScore,
-			Hits:     allHits,
-		},
-		Aggregations: firstResult.Aggregations,
-		ScrollId:     strings.Join(scrollIDs, ","),
-	}
-
-	span.Set("slice-count", maxSlice)
-	span.Set("total-hits", totalHits)
-	span.Set("merged-hits", len(allHits))
+	mergedResult.Hits = allHits
+	mergedResult.TotalHits = totalHitsAggr
 
 	log.Infof(ctx, "ES slice query completed: %d slices, total hits: %d, merged hits: %d",
-		maxSlice, totalHits, len(allHits))
+		maxSlice, mergedResult.TotalHits, len(mergedResult.Hits))
 
 	return mergedResult, nil
 }

@@ -261,6 +261,7 @@ func MockSpaceRouter(ctx context.Context) {
 					StorageId:       2,
 					TableId:         "system.disk",
 					VmRt:            "100147_ieod_system_disk_raw",
+					CmdbLevelVmRt:   "rt_by_cmdb_level",
 					Fields:          []string{"usage", "free"},
 					MeasurementType: redis.BKTraditionalMeasurement,
 					StorageType:     consul.InfluxDBStorageType,

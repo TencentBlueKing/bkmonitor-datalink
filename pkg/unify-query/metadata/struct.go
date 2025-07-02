@@ -108,7 +108,8 @@ type Query struct {
 	TableID    string `json:"table_id,omitempty"`
 
 	// vm 的 rt
-	VmRt string `json:"vm_rt,omitempty"`
+	VmRt          string `json:"vm_rt,omitempty"`
+	CmdbLevelVmRt string `json:"cmdb_level_vm_rt,omitempty"`
 
 	// 兼容 InfluxDB 结构体
 	RetentionPolicy string     `json:"retention_policy,omitempty"` // 存储 RP

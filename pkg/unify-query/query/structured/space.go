@@ -79,6 +79,7 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 	t.DB = d.DB
 	t.Measurement = d.Measurement
 	t.VmRt = d.VmRt
+	t.CmdbLevelVmRt = d.CmdbLevelVmRt
 	t.StorageName = d.StorageName
 	t.TimeField = metadata.TimeField{
 		Name: d.Options.TimeField.Name,

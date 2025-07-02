@@ -746,6 +746,12 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 				err = msgp.WrapError(err, "VmRt")
 				return
 			}
+		case "CmdbLevelVmRt":
+			z.CmdbLevelVmRt, err = dc.ReadString()
+			if err != nil {
+				err = msgp.WrapError(err, "CmdbLevelVmRt")
+				return
+			}
 		case "Fields":
 			var zb0004 uint32
 			zb0004, err = dc.ReadArrayHeader()
@@ -927,9 +933,9 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
-	// map header, size 18
+	// map header, size 19
 	// write "StorageId"
-	err = en.Append(0xde, 0x0, 0x12, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
+	err = en.Append(0xde, 0x0, 0x13, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
 	if err != nil {
 		return
 	}
@@ -1039,6 +1045,16 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 	err = en.WriteString(z.VmRt)
 	if err != nil {
 		err = msgp.WrapError(err, "VmRt")
+		return
+	}
+	// write "CmdbLevelVmRt"
+	err = en.Append(0xad, 0x43, 0x6d, 0x64, 0x62, 0x4c, 0x65, 0x76, 0x65, 0x6c, 0x56, 0x6d, 0x52, 0x74)
+	if err != nil {
+		return
+	}
+	err = en.WriteString(z.CmdbLevelVmRt)
+	if err != nil {
+		err = msgp.WrapError(err, "CmdbLevelVmRt")
 		return
 	}
 	// write "Fields"
@@ -1205,9 +1221,9 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 // MarshalMsg implements msgp.Marshaler
 func (z *ResultTableDetail) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 18
+	// map header, size 19
 	// string "StorageId"
-	o = append(o, 0xde, 0x0, 0x12, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
+	o = append(o, 0xde, 0x0, 0x13, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
 	o = msgp.AppendInt64(o, z.StorageId)
 	// string "StorageName"
 	o = append(o, 0xab, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x4e, 0x61, 0x6d, 0x65)
@@ -1242,6 +1258,9 @@ func (z *ResultTableDetail) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "VmRt"
 	o = append(o, 0xa4, 0x56, 0x6d, 0x52, 0x74)
 	o = msgp.AppendString(o, z.VmRt)
+	// string "CmdbLevelVmRt"
+	o = append(o, 0xad, 0x43, 0x6d, 0x64, 0x62, 0x4c, 0x65, 0x76, 0x65, 0x6c, 0x56, 0x6d, 0x52, 0x74)
+	o = msgp.AppendString(o, z.CmdbLevelVmRt)
 	// string "Fields"
 	o = append(o, 0xa6, 0x46, 0x69, 0x65, 0x6c, 0x64, 0x73)
 	o = msgp.AppendArrayHeader(o, uint32(len(z.Fields)))
@@ -1409,6 +1428,12 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			z.VmRt, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "VmRt")
+				return
+			}
+		case "CmdbLevelVmRt":
+			z.CmdbLevelVmRt, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "CmdbLevelVmRt")
 				return
 			}
 		case "Fields":
@@ -1593,7 +1618,7 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *ResultTableDetail) Msgsize() (s int) {
-	s = 3 + 10 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.StorageName) + 12 + msgp.StringPrefixSize + len(z.StorageType) + 22 + msgp.ArrayHeaderSize + (len(z.StorageClusterRecords) * (22 + msgp.Int64Size + msgp.Int64Size)) + 12 + msgp.StringPrefixSize + len(z.ClusterName) + 3 + msgp.StringPrefixSize + len(z.DB) + 8 + msgp.StringPrefixSize + len(z.TableId) + 12 + msgp.StringPrefixSize + len(z.Measurement) + 5 + msgp.StringPrefixSize + len(z.VmRt) + 7 + msgp.ArrayHeaderSize
+	s = 3 + 10 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.StorageName) + 12 + msgp.StringPrefixSize + len(z.StorageType) + 22 + msgp.ArrayHeaderSize + (len(z.StorageClusterRecords) * (22 + msgp.Int64Size + msgp.Int64Size)) + 12 + msgp.StringPrefixSize + len(z.ClusterName) + 3 + msgp.StringPrefixSize + len(z.DB) + 8 + msgp.StringPrefixSize + len(z.TableId) + 12 + msgp.StringPrefixSize + len(z.Measurement) + 5 + msgp.StringPrefixSize + len(z.VmRt) + 14 + msgp.StringPrefixSize + len(z.CmdbLevelVmRt) + 7 + msgp.ArrayHeaderSize
 	for za0002 := range z.Fields {
 		s += msgp.StringPrefixSize + len(z.Fields[za0002])
 	}

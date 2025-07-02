@@ -41,11 +41,13 @@ type TsDBV2 struct {
 	// StorageClusterRecords
 	StorageClusterRecords StorageClusterRecords `json:"storage_cluster_records,omitempty"`
 
-	ClusterName string   `json:"cluster_name,omitempty"`
-	TagsKey     []string `json:"tags_key,omitempty"`
-	DB          string   `json:"db,omitempty"`
-	Measurement string   `json:"measurement,omitempty"`
-	VmRt        string   `json:"vm_rt,omitempty"`
+	ClusterName   string   `json:"cluster_name,omitempty"`
+	TagsKey       []string `json:"tags_key,omitempty"`
+	DB            string   `json:"db,omitempty"`
+	Measurement   string   `json:"measurement,omitempty"`
+	VmRt          string   `json:"vm_rt,omitempty"`
+	CmdbLevelVmRt string   `json:"cmdb_level_vm_rt,omitempty"`
+
 	// 补充检索的元信息
 	MetricName        string   `json:"metric_name,omitempty"`
 	ExpandMetricNames []string `json:"expand_metric_names,omitempty"`

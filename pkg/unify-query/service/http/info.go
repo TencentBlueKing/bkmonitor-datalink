@@ -31,7 +31,7 @@ import (
 
 // TagValuesData
 type TagValuesData struct {
-	TraceID string              `json:"trace_id"`
+	TraceID string              `json:"trace_id,omitempty"`
 	Values  map[string][]string `json:"values"`
 }
 
@@ -39,7 +39,7 @@ type SeriesDataList []*SeriesData
 
 // SeriesData
 type SeriesData struct {
-	TraceID     string     `json:"trace_id"`
+	TraceID     string     `json:"trace_id,omitempty"`
 	Measurement string     `json:"measurement"`
 	Keys        []string   `json:"keys"`
 	Series      [][]string `json:"series"`

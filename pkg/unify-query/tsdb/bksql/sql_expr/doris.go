@@ -335,28 +335,34 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			for _, v := range c.Value {
 				var value string
 				if c.IsWildcard {
-					value = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x LIKE '%%%s%%', %s)", v, key)
+					value = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x LIKE '%s', %s)", d.likeValue(v), key)
 				} else {
 					value = fmt.Sprintf("ARRAY_CONTAINS(%s, '%s') == 1", key, v)
 				}
 				filter = append(filter, value)
 			}
 		} else {
-			var format string
 			if c.IsWildcard {
-				format = "'%%%s%%'"
 				op = "LIKE"
 			} else {
-				format = "'%s'"
-				if d.isText(c.DimensionName) {
+				if c.IsPrefix {
 					op = "MATCH_PHRASE_PREFIX"
+				} else if c.IsSuffix {
+					op = "MATCH_PHRASE_EDGE"
 				} else {
-					op = "="
+					if d.isText(c.DimensionName) {
+						op = "MATCH_PHRASE"
+					} else {
+						op = "="
+					}
 				}
 			}
 
 			for _, v := range c.Value {
-				filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
+				if c.IsWildcard {
+					v = d.likeValue(v)
+				}
+				filter = append(filter, fmt.Sprintf("%s %s '%s'", key, op, v))
 			}
 		}
 
@@ -390,21 +396,27 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 				filter = append(filter, value)
 			}
 		} else {
-			var format string
 			if c.IsWildcard {
-				format = "'%%%s%%'"
 				op = "NOT LIKE"
 			} else {
-				format = "'%s'"
-				if d.isText(c.DimensionName) {
+				if c.IsPrefix {
 					op = "NOT MATCH_PHRASE_PREFIX"
+				} else if c.IsSuffix {
+					op = "NOT MATCH_PHRASE_EDGE"
 				} else {
-					op = "!="
+					if d.isText(c.DimensionName) {
+						op = "NOT MATCH_PHRASE"
+					} else {
+						op = "!="
+					}
 				}
 			}
 
 			for _, v := range c.Value {
-				filter = append(filter, fmt.Sprintf("%s %s %s", key, op, fmt.Sprintf(format, v)))
+				if c.IsWildcard {
+					v = d.likeValue(v)
+				}
+				filter = append(filter, fmt.Sprintf("%s %s '%s'", key, op, v))
 			}
 		}
 
@@ -470,6 +482,39 @@ func (d *DorisSQLExpr) isText(k string) bool {
 	return d.getFieldType(k) == DorisTypeText
 }
 
+func (d *DorisSQLExpr) likeValue(s string) string {
+	if s == "" {
+		return s
+	}
+
+	var charChange = func(cur, last rune) rune {
+		if last == '\\' {
+			return cur
+		}
+
+		if cur == '*' {
+			return '%'
+		}
+
+		if cur == '?' {
+			return '_'
+		}
+
+		return cur
+	}
+
+	var (
+		ns       []rune
+		lastChar rune
+	)
+	for _, char := range s {
+		ns = append(ns, charChange(char, lastChar))
+		lastChar = char
+	}
+
+	return string(ns)
+}
+
 func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 	var (
 		err   error
@@ -509,14 +554,14 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 			c.Field = DefaultKey
 		}
 		field, _ := d.dimTransform(c.Field)
-		return fmt.Sprintf("%s LIKE '%%%s%%'", field, c.Value), nil
+		return fmt.Sprintf("%s LIKE '%s'", field, d.likeValue(c.Value)), nil
 	case *querystring.MatchExpr:
 		if c.Field == "" {
 			c.Field = DefaultKey
 		}
 		field, _ := d.dimTransform(c.Field)
 		if d.isText(c.Field) {
-			return fmt.Sprintf("%s MATCH_PHRASE_PREFIX '%s'", field, c.Value), nil
+			return fmt.Sprintf("%s MATCH_PHRASE '%s'", field, c.Value), nil
 		}
 
 		return fmt.Sprintf("%s = '%s'", field, c.Value), nil

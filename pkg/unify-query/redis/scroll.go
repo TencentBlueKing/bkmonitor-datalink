@@ -74,7 +74,10 @@ func (r *RTState) PickSlices(maxRunningCount, maxFailedCount int) ([]SliceState,
 				MaxRetries:  3,
 			}
 		}
-		r.SliceStates = append(remainSlices, r.makeUpSlices(lastOne, maxRunningCount-len(remainSlices))...)
+		r.SliceStates = remainSlices
+		r.SliceStates = r.makeUpSlices(lastOne, maxRunningCount)
+	} else {
+		r.SliceStates = remainSlices
 	}
 
 	return r.SliceStates, nil
@@ -82,18 +85,25 @@ func (r *RTState) PickSlices(maxRunningCount, maxFailedCount int) ([]SliceState,
 }
 
 func (r *RTState) makeUpSlices(lastOne SliceState, count int) []SliceState {
-	if count <= 0 || len(r.SliceStates) >= count {
+	if count <= 0 {
 		return r.SliceStates
 	}
 
 	if r.SliceStates == nil {
 		r.SliceStates = make([]SliceState, 0, count)
 	}
+
+	currentCount := len(r.SliceStates)
+	if currentCount >= count {
+		return r.SliceStates
+	}
+
+	needToCreate := count - currentCount
 	startOffset := lastOne.EndOffset
 
-	for i := len(r.SliceStates); i < count; i++ {
+	for i := 0; i < needToCreate; i++ {
 		r.SliceStates = append(r.SliceStates, SliceState{
-			SliceID:     i,
+			SliceID:     currentCount + i,
 			StartOffset: startOffset,
 			EndOffset:   startOffset + lastOne.Size,
 			Status:      SliceStatusRunning,
@@ -104,6 +114,7 @@ func (r *RTState) makeUpSlices(lastOne SliceState, count int) []SliceState {
 		})
 		startOffset += lastOne.Size
 	}
+
 	return r.SliceStates
 }
 
@@ -299,6 +310,7 @@ var ScrollGetOrCreateSession = func(ctx context.Context, sessionKey string, quer
 	if client == nil {
 		return nil, fmt.Errorf("redis client not available")
 	}
+
 	result := client.Get(ctx, sessionKey)
 	if result.Err() == nil {
 		var session SessionObject
@@ -317,7 +329,7 @@ var ScrollGetOrCreateSession = func(ctx context.Context, sessionKey string, quer
 	}
 
 	if err := ScrollUpdateSession(ctx, sessionKey, session); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to save new session: %v", err)
 	}
 
 	return session, nil

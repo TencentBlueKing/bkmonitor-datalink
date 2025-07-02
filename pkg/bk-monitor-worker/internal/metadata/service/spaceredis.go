@@ -948,6 +948,16 @@ func (s *SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[st
 		vmTableMap[record.ResultTableId] = map[string]interface{}{"vm_rt": record.VmResultTableId, "storage_name": vmClusterIdNameMap[record.VmClusterId], "storage_id": record.VmClusterId}
 	}
 
+	var rtCmdbLevelOptionList []resulttable.ResultTableOption
+	if err := resulttable.NewResultTableOptionQuerySet(db).Select(resulttable.ResultTableOptionDBSchema.TableID, resulttable.ResultTableOptionDBSchema.Value).NameEq(models.CmdbLevelVmrt).All(&rtCmdbLevelOptionList); err != nil {
+		logger.Errorf("getTableInfoForInfluxdbAndVm: get cmdb level vm rt option error:%s", err.Error())
+	}
+
+	cmdbLevelVmrtMap := make(map[string]string)
+	for _, option := range rtCmdbLevelOptionList {
+		cmdbLevelVmrtMap[option.TableID] = option.Value
+	}
+
 	// 获取proxy关联的集群信息
 	var influxdbProxyStorageList []storage.InfluxdbProxyStorage
 	if err := storage.NewInfluxdbProxyStorageQuerySet(db).Select(storage.InfluxdbProxyStorageDBSchema.ID, storage.InfluxdbProxyStorageDBSchema.ProxyClusterId, storage.InfluxdbProxyStorageDBSchema.InstanceClusterName).All(&influxdbProxyStorageList); err != nil {
@@ -977,10 +987,18 @@ func (s *SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[st
 
 	// 处理 vm 的数据信息
 	for tableId, detail := range vmTableMap {
+		// 如果存在 cmdb_level_vm_rt 的 option，则添加到 detail 中
+		if cmdbLevelVmrt, ok := cmdbLevelVmrtMap[tableId]; ok {
+			logger.Infof("getTableInfoForInfluxdbAndVm: found cmdb_level_vm_rt for table_id %s, value: %s", tableId, cmdbLevelVmrt)
+			detail["cmdb_level_vm_rt"] = cmdbLevelVmrt
+		} else {
+			detail["cmdb_level_vm_rt"] = ""
+		}
 		if _, ok := tableIdInfo[tableId]; ok {
 			tableIdInfo[tableId]["vm_rt"] = detail["vm_rt"]
 			tableIdInfo[tableId]["storage_name"] = detail["storage_name"]
 			tableIdInfo[tableId]["storage_type"] = models.StorageTypeVM
+			tableIdInfo[tableId]["cmdb_level_vm_rt"] = detail["cmdb_level_vmrt"]
 		} else {
 			detail["cluster_name"] = ""
 			detail["db"] = ""
@@ -991,7 +1009,6 @@ func (s *SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[st
 		}
 	}
 	return tableIdInfo, nil
-
 }
 
 // 通过结果表Id, 获取对应的 option 配置, 通过 option 转到到 measurement 类型

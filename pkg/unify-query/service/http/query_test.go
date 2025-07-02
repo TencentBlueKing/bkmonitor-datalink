@@ -1278,7 +1278,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 				OrderBy: structured.OrderBy{
 					"a",
 					"b",
-					elasticsearch.KeyTableID,
+					metadata.KeyTableID,
 				},
 				Limit:       5,
 				MetricMerge: "a",

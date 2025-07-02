@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +27,6 @@ import (
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
-	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
@@ -99,12 +99,6 @@ type queryOption struct {
 	conn Connect
 
 	query *metadata.Query
-}
-
-type MergedSliceResult struct {
-	Hits      []*elastic.SearchHit
-	TotalHits int64
-	ScrollIDs map[int]string
 }
 
 var TimeSeriesResultPool = sync.Pool{
@@ -285,30 +279,6 @@ func (i *Instance) buildSearchSource(ctx context.Context, qb *metadata.Query, fa
 	return source, nil
 }
 
-func (i *Instance) convertMergedResultToSearchResult(merged *MergedSliceResult) *elastic.SearchResult {
-	if merged == nil {
-		return nil
-	}
-
-	var scrollIDs []string
-	for _, scrollID := range merged.ScrollIDs {
-		if scrollID != "" {
-			scrollIDs = append(scrollIDs, scrollID)
-		}
-	}
-
-	return &elastic.SearchResult{
-		Hits: &elastic.SearchHits{
-			TotalHits: &elastic.TotalHits{
-				Value:    merged.TotalHits,
-				Relation: "eq",
-			},
-			Hits: merged.Hits,
-		},
-		ScrollId: strings.Join(scrollIDs, ","),
-	}
-}
-
 func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
 	var (
 		err error
@@ -371,33 +341,19 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 
 		if qb.Scroll != "" {
-			maxSlice := viper.GetInt("http.scroll.max_slice")
-			if maxSlice > 1 && len(qb.Aggregates) == 0 {
-				span.Set("query-scroll-slice", maxSlice)
-				if originalQuery, err := source.Source(); err == nil {
-					if queryJson, err := json.Marshal(originalQuery); err == nil {
-						log.Infof(ctx, "ES original query DSL (before slice): %s", string(queryJson))
-					}
-				}
-				mergedResult, sliceErr := i.esQueryWithSlices(ctx, client, qo, source, maxSlice)
-				if sliceErr != nil {
-					err = sliceErr
-					return
-				}
+			// 检查是否有 slice 信息传递
+			sliceID, maxSlice, hasSlice := i.parseSliceInfo(qb.ScrollIDs)
 
-				if mergedResult != nil && len(mergedResult.ScrollIDs) > 0 {
-					newScrollIDs := make([]string, maxSlice)
-					for sliceID, scrollID := range mergedResult.ScrollIDs {
-						if sliceID < len(newScrollIDs) {
-							newScrollIDs[sliceID] = scrollID
-						}
-					}
-					qb.ScrollIDs = newScrollIDs
-					log.Debugf(ctx, "Updated query ScrollIDs: %v", qb.ScrollIDs)
-				}
-
-				res = i.convertMergedResultToSearchResult(mergedResult)
+			if hasSlice {
+				// 使用指定的 slice 进行查询
+				span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", sliceID, maxSlice))
+				scrollService := client.Scroll(qo.indexes...).
+					Scroll(qb.Scroll).
+					SearchSource(source).
+					Slice(elastic.NewSliceQuery().Id(sliceID).Max(maxSlice))
+				res, err = scrollService.Do(ctx)
 			} else {
+				// 普通 scroll 查询
 				span.Set("query-scroll", qb.Scroll)
 				res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source).Do(ctx)
 			}
@@ -556,6 +512,7 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 }
 
 // QueryRawData 直接查询原始返回
+// 支持通过 query.ScrollIDs 传递 slice 信息进行 ES scroll+slice 查询
 func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
 	var (
 		err error
@@ -907,76 +864,26 @@ func (i *Instance) InstanceType() string {
 	return consul.ElasticsearchStorageType
 }
 
-func (i *Instance) esQueryWithSlices(ctx context.Context, client *elastic.Client, qo *queryOption, source *elastic.SearchSource, maxSlice int) (*MergedSliceResult, error) {
-	var err error
-	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-with-slices")
-	defer span.End(&err)
-
-	qb := qo.query
-
-	type sliceResult struct {
-		result  *elastic.SearchResult
-		err     error
-		sliceID int
+// parseSliceInfo 解析 ScrollIDs 中的 slice 信息
+// 格式: ["slice:0:3"] 表示 slice ID 为 0，最大 slice 数为 3
+// 返回: sliceID, maxSlice, hasSlice
+func (i *Instance) parseSliceInfo(scrollIDs []string) (int, int, bool) {
+	if len(scrollIDs) == 0 {
+		return 0, 0, false
 	}
 
-	resultChan := make(chan sliceResult, maxSlice)
-	var wg sync.WaitGroup
-
-	for sliceID := 0; sliceID < maxSlice; sliceID++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-
-			scrollService := client.Scroll(qo.indexes...).
-				Scroll(qb.Scroll).
-				SearchSource(source).
-				Slice(elastic.NewSliceQuery().Id(id).Max(maxSlice))
-
-			res, err := scrollService.Do(ctx)
-
-			if err != nil && !errors.Is(err, io.EOF) {
-				log.Errorf(ctx, "ES slice %d query failed on indexes %v: %v", id, qo.indexes, err)
-			}
-
-			resultChan <- sliceResult{result: res, err: err, sliceID: id}
-		}(sliceID)
-	}
-
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
-
-	var allHits []*elastic.SearchHit
-	var totalHitsAggr int64
-
-	mergedResult := &MergedSliceResult{
-		ScrollIDs: make(map[int]string, maxSlice),
-	}
-
-	for res := range resultChan {
-		if res.err != nil && !errors.Is(res.err, io.EOF) {
-			err = fmt.Errorf("slice %d query failed: %w", res.sliceID, res.err)
-			return nil, err
-		}
-
-		if res.result != nil {
-			if res.result.Hits != nil && len(res.result.Hits.Hits) > 0 {
-				allHits = append(allHits, res.result.Hits.Hits...)
-				totalHitsAggr += res.result.Hits.TotalHits.Value
-			}
-			if res.result.ScrollId != "" {
-				mergedResult.ScrollIDs[res.sliceID] = res.result.ScrollId
+	for _, scrollID := range scrollIDs {
+		if strings.HasPrefix(scrollID, "slice:") {
+			parts := strings.Split(scrollID, ":")
+			if len(parts) == 3 {
+				sliceID, err1 := strconv.Atoi(parts[1])
+				maxSlice, err2 := strconv.Atoi(parts[2])
+				if err1 == nil && err2 == nil {
+					return sliceID, maxSlice, true
+				}
 			}
 		}
 	}
 
-	mergedResult.Hits = allHits
-	mergedResult.TotalHits = totalHitsAggr
-
-	log.Infof(ctx, "ES slice query completed: %d slices, total hits: %d, merged hits: %d",
-		maxSlice, mergedResult.TotalHits, len(mergedResult.Hits))
-
-	return mergedResult, nil
+	return 0, 0, false
 }

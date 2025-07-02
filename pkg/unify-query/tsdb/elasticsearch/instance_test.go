@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	elastic "github.com/olivere/elastic/v7"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
@@ -752,135 +751,51 @@ func TestInstance_queryRawData(t *testing.T) {
 	}
 }
 
-func TestMergedSliceResult(t *testing.T) {
-	// 测试 MergedSiceResult 结构体
-	result := &MergedSliceResult{
-		Hits:      []*elastic.SearchHit{},
-		TotalHits: 100,
-		ScrollIDs: map[int]string{
-			0: "scroll_id_0",
-			1: "scroll_id_1",
-			2: "scroll_id_2",
-		},
-	}
-
-	assert.Equal(t, int64(100), result.TotalHits)
-	assert.Equal(t, 3, len(result.ScrollIDs))
-	assert.Equal(t, "scroll_id_0", result.ScrollIDs[0])
-	assert.Equal(t, "scroll_id_1", result.ScrollIDs[1])
-	assert.Equal(t, "scroll_id_2", result.ScrollIDs[2])
-}
-
-func TestConvertMergedResultToSearchResult(t *testing.T) {
+func TestParseSliceInfo(t *testing.T) {
 	instance := &Instance{}
 
-	result := instance.convertMergedResultToSearchResult(nil)
-	assert.Nil(t, result)
-	merged := &MergedSliceResult{
-		Hits:      []*elastic.SearchHit{},
-		TotalHits: 150,
-		ScrollIDs: map[int]string{
-			0: "scroll_id_0",
-			1: "scroll_id_1",
-		},
-	}
+	t.Run("test_valid_slice_info", func(t *testing.T) {
+		scrollIDs := []string{"slice:0:3"}
+		sliceID, maxSlice, hasSlice := instance.parseSliceInfo(scrollIDs)
 
-	result = instance.convertMergedResultToSearchResult(merged)
-	assert.NotNil(t, result)
-	assert.NotNil(t, result.Hits)
-	assert.Equal(t, int64(150), result.Hits.TotalHits.Value)
-	assert.Equal(t, "eq", result.Hits.TotalHits.Relation)
-
-	assert.Contains(t, result.ScrollId, "scroll_id_0")
-	assert.Contains(t, result.ScrollId, "scroll_id_1")
-}
-
-func TestScrollIDUpdateInESQuery(t *testing.T) {
-	t.Run("test_scroll_id_update_logic", func(t *testing.T) {
-		mergedResult := &MergedSliceResult{
-			Hits:      []*elastic.SearchHit{},
-			TotalHits: 100,
-			ScrollIDs: map[int]string{
-				0: "scroll_id_slice_0",
-				1: "scroll_id_slice_1",
-				2: "scroll_id_slice_2",
-			},
-		}
-
-		query := &metadata.Query{
-			ScrollIDs: []string{}, // 初始为空
-		}
-
-		maxSlice := 3
-
-		if mergedResult != nil && len(mergedResult.ScrollIDs) > 0 {
-			newScrollIDs := make([]string, maxSlice)
-			for sliceID, scrollID := range mergedResult.ScrollIDs {
-				if sliceID < len(newScrollIDs) {
-					newScrollIDs[sliceID] = scrollID
-				}
-			}
-			query.ScrollIDs = newScrollIDs
-		}
-
-		assert.Equal(t, 3, len(query.ScrollIDs), "ScrollIDs 数组长度应该正确")
-		assert.Equal(t, "scroll_id_slice_0", query.ScrollIDs[0], "索引0的 scroll ID 应该正确")
-		assert.Equal(t, "scroll_id_slice_1", query.ScrollIDs[1], "索引1的 scroll ID 应该正确")
-		assert.Equal(t, "scroll_id_slice_2", query.ScrollIDs[2], "索引2的 scroll ID 应该正确")
-
-		t.Logf("ES query scroll ID 更新测试通过: %v", query.ScrollIDs)
+		assert.True(t, hasSlice, "应该检测到 slice 信息")
+		assert.Equal(t, 0, sliceID, "slice ID 应该正确")
+		assert.Equal(t, 3, maxSlice, "max slice 应该正确")
 	})
 
-	t.Run("test_scroll_id_mapping_edge_cases", func(t *testing.T) {
-		mergedResult := &MergedSliceResult{
-			ScrollIDs: map[int]string{
-				0: "scroll_id_0",
-				2: "scroll_id_2", // 缺少 slice 1
-			},
-		}
+	t.Run("test_multiple_scroll_ids_with_slice", func(t *testing.T) {
+		scrollIDs := []string{"normal_scroll_id", "slice:1:4", "another_scroll_id"}
+		sliceID, maxSlice, hasSlice := instance.parseSliceInfo(scrollIDs)
 
-		maxSlice := 3
-		newScrollIDs := make([]string, maxSlice)
-		for sliceID, scrollID := range mergedResult.ScrollIDs {
-			if sliceID < len(newScrollIDs) {
-				newScrollIDs[sliceID] = scrollID
-			}
-		}
+		assert.True(t, hasSlice, "应该检测到 slice 信息")
+		assert.Equal(t, 1, sliceID, "slice ID 应该正确")
+		assert.Equal(t, 4, maxSlice, "max slice 应该正确")
+	})
 
-		assert.Equal(t, 3, len(newScrollIDs), "数组长度应该正确")
-		assert.Equal(t, "scroll_id_0", newScrollIDs[0], "索引0应该有值")
-		assert.Equal(t, "", newScrollIDs[1], "索引1应该为空字符串")
-		assert.Equal(t, "scroll_id_2", newScrollIDs[2], "索引2应该有值")
+	t.Run("test_no_slice_info", func(t *testing.T) {
+		scrollIDs := []string{"normal_scroll_id", "another_scroll_id"}
+		sliceID, maxSlice, hasSlice := instance.parseSliceInfo(scrollIDs)
 
-		t.Logf("边界情况测试通过: %v", newScrollIDs)
+		assert.False(t, hasSlice, "不应该检测到 slice 信息")
+		assert.Equal(t, 0, sliceID, "slice ID 应该为默认值")
+		assert.Equal(t, 0, maxSlice, "max slice 应该为默认值")
 	})
 
 	t.Run("test_empty_scroll_ids", func(t *testing.T) {
-		mergedResult := &MergedSliceResult{
-			ScrollIDs: map[int]string{},
-		}
+		scrollIDs := []string{}
+		sliceID, maxSlice, hasSlice := instance.parseSliceInfo(scrollIDs)
 
-		query := &metadata.Query{
-			ScrollIDs: []string{"old_scroll_1", "old_scroll_2"}, // 已有旧值
-		}
+		assert.False(t, hasSlice, "不应该检测到 slice 信息")
+		assert.Equal(t, 0, sliceID, "slice ID 应该为默认值")
+		assert.Equal(t, 0, maxSlice, "max slice 应该为默认值")
+	})
 
-		maxSlice := 3
+	t.Run("test_invalid_slice_format", func(t *testing.T) {
+		scrollIDs := []string{"slice:invalid:format", "slice:1", "slice:a:b"}
+		sliceID, maxSlice, hasSlice := instance.parseSliceInfo(scrollIDs)
 
-		if mergedResult != nil && len(mergedResult.ScrollIDs) > 0 {
-			newScrollIDs := make([]string, maxSlice)
-			for sliceID, scrollID := range mergedResult.ScrollIDs {
-				if sliceID < len(newScrollIDs) {
-					newScrollIDs[sliceID] = scrollID
-				}
-			}
-			query.ScrollIDs = newScrollIDs
-		}
-
-		// 验证：由于 ScrollIDs 为空，query.ScrollIDs 应该保持不变
-		assert.Equal(t, 2, len(query.ScrollIDs), "ScrollIDs 长度应该保持不变")
-		assert.Equal(t, "old_scroll_1", query.ScrollIDs[0], "旧值应该保持不变")
-		assert.Equal(t, "old_scroll_2", query.ScrollIDs[1], "旧值应该保持不变")
-
-		t.Logf("空 scroll ID 测试通过: %v", query.ScrollIDs)
+		assert.False(t, hasSlice, "不应该检测到有效的 slice 信息")
+		assert.Equal(t, 0, sliceID, "slice ID 应该为默认值")
+		assert.Equal(t, 0, maxSlice, "max slice 应该为默认值")
 	})
 }

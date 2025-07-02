@@ -564,12 +564,23 @@ func TestSpacePusher_getTableInfoForInfluxdbAndVm(t *testing.T) {
 	err = vmTable.Create(db)
 	assert.NoError(t, err)
 
+	opVal1 := models.OptionBase{Value: "test_vmrt_cmdb_level", ValueType: "string", Creator: "system"}
+	vmrtOption := resulttable.ResultTableOption{
+		TableID:    vmTableName,
+		Name:       "cmdb_level_vm_rt",
+		OptionBase: opVal1,
+	}
+	db.Delete(&vmrtOption)
+	err = vmrtOption.Create(db)
+	assert.NoError(t, err)
+
 	data, err := NewSpacePusher().getTableInfoForInfluxdbAndVm(tenant.DefaultTenantId, []string{itableName, vmTableName})
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(data))
 	vmData, err := jsonx.MarshalString(data[vmTableName])
 	assert.NoError(t, err)
-	assert.JSONEq(t, `{"cluster_name":"","db":"","measurement":"","storage_name":"vm_cluster_abc","tags_key":[],"storage_id":6,"vm_rt":"vm_result_table_id","storage_type":"victoria_metrics"}`, vmData)
+
+	assert.JSONEq(t, `{"cluster_name":"","cmdb_level_vm_rt":"test_vmrt_cmdb_level","db":"","measurement":"","storage_name":"vm_cluster_abc","tags_key":[],"storage_id":6,"vm_rt":"vm_result_table_id","storage_type":"victoria_metrics"}`, vmData)
 	itableData, err := jsonx.MarshalString(data[itableName])
 	assert.NoError(t, err)
 	assert.JSONEq(t, `{"cluster_name":"default","db":"dbname","measurement":"i_table_test","storage_id":2,"storage_name":"","tags_key":["t1","t2"],"vm_rt":"","storage_type":"influxdb"}`, itableData)

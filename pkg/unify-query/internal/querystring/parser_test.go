@@ -400,6 +400,9 @@ func TestParser(t *testing.T) {
 				Value: "/proz/logds/ds-5910974792526317*",
 			},
 		},
+		"test - many tPHRASE ": {
+			q: `loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND "game_app") AND __ext.io_kubernetes_pod: "nrc-dev-all-in-one-0" AND __ext.io_kubernetes_pod_namespace: "nrc-dev"`,
+		},
 	}
 
 	for name, c := range testCases {

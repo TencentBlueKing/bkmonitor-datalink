@@ -887,6 +887,7 @@ func (q *Query) BuildMetadataQuery(
 	query.TagsKey = tsDB.TagsKey
 	query.DB = tsDB.DB
 	query.VmRt = tsDB.VmRt
+	query.CmdbLevelVmRt = tsDB.CmdbLevelVmRt
 	query.StorageName = tsDB.StorageName
 	query.TimeField = tsDB.TimeField
 	query.NeedAddTime = tsDB.NeedAddTime

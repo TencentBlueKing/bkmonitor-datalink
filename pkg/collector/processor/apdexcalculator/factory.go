@@ -110,12 +110,11 @@ func (p *apdexCalculator) processTraces(record *define.Record) {
 		if v, ok := rsAttrs.Get(processor.KeyInstance); ok {
 			instance = v.AsString()
 		}
-
-		attrs := span.Attributes()
-		if v, ok := attrs.Get(processor.KeyService); ok {
+		if v, ok := rsAttrs.Get(processor.KeyService); ok {
 			service = v.AsString()
 		}
 
+		attrs := span.Attributes()
 		config := p.configs.Get(record.Token.Original, service, instance).(*Config)
 		kind := span.Kind().String()
 

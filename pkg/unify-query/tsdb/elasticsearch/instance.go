@@ -847,6 +847,7 @@ func (i *Instance) esQueryWithSlices(ctx context.Context, client *elastic.Client
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-with-slices")
 	defer span.End(nil)
 
+	log.Infof(ctx, "ES starting slice query with %d slices on indexes: %v", maxSlice, qo.indexes)
 	qb := qo.query
 
 	type sliceResult struct {
@@ -882,25 +883,29 @@ func (i *Instance) esQueryWithSlices(ctx context.Context, client *elastic.Client
 					newQuery["size"] = qb.Size
 
 					queryJson, _ := json.Marshal(newQuery)
-					log.Debugf(ctx, "ES slice %d query: %s", id, string(queryJson))
+					log.Infof(ctx, "ES slice %d/%d query DSL: %s", id, maxSlice, string(queryJson))
 
 					searchService := client.Search().Index(qo.indexes...)
 					searchService.Source(string(queryJson))
 
 					result, err := searchService.Do(ctx)
 
+					if err != nil {
+						log.Errorf(ctx, "ES slice %d query failed with DSL: %s, error: %v", id, string(queryJson), err)
+					} else {
+						log.Infof(ctx, "ES slice %d query completed, hits: %d", id, func() int64 {
+							if result != nil && result.Hits != nil {
+								return result.Hits.TotalHits.Value
+							}
+							return 0
+						}())
+					}
+
 					resultChan <- sliceResult{
 						result:  result,
 						err:     err,
 						sliceID: id,
 					}
-
-					log.Infof(ctx, "ES slice %d query completed, hits: %d", id, func() int64 {
-						if result != nil && result.Hits != nil {
-							return result.Hits.TotalHits.Value
-						}
-						return 0
-					}())
 					return
 				}
 			}
@@ -928,7 +933,7 @@ func (i *Instance) esQueryWithSlices(ctx context.Context, client *elastic.Client
 
 	for sliceRes := range resultChan {
 		if sliceRes.err != nil {
-			log.Errorf(ctx, "ES slice %d query failed: %v", sliceRes.sliceID, sliceRes.err)
+			log.Errorf(ctx, "ES slice %d/%d query failed on indexes %v: %v", sliceRes.sliceID, maxSlice, qo.indexes, sliceRes.err)
 			return nil, fmt.Errorf("slice %d query failed: %v", sliceRes.sliceID, sliceRes.err)
 		}
 

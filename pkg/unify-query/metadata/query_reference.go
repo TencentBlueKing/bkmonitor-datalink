@@ -151,11 +151,17 @@ func (q *Query) CheckDruidQuery(ctx context.Context, dims *set.Set[string]) bool
 
 	// 如果是查询 druid 的数据，vt 名称需要进行替换
 	if isDruid {
+
 		replaceLabels := make(ReplaceLabels)
 
 		// 替换 vmrt 的值
 		oldVmRT := q.VmRt
-		newVmRT := strings.TrimSuffix(oldVmRT, MaDruidQueryRawSuffix) + MaDruidQueryCmdbSuffix
+		var newVmRT string
+		if q.CmdbLevelVmRt != "" {
+			newVmRT = q.CmdbLevelVmRt
+		} else {
+			newVmRT = strings.TrimSuffix(oldVmRT, MaDruidQueryRawSuffix) + MaDruidQueryCmdbSuffix
+		}
 
 		if newVmRT != oldVmRT {
 			q.VmRt = newVmRT

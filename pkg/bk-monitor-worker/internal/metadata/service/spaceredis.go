@@ -998,7 +998,7 @@ func (s *SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[st
 			tableIdInfo[tableId]["vm_rt"] = detail["vm_rt"]
 			tableIdInfo[tableId]["storage_name"] = detail["storage_name"]
 			tableIdInfo[tableId]["storage_type"] = models.StorageTypeVM
-			tableIdInfo[tableId]["cmdb_level_vm_rt"] = detail["cmdb_level_vmrt"]
+			tableIdInfo[tableId]["cmdb_level_vm_rt"] = detail["cmdb_level_vm_rt"]
 		} else {
 			detail["cluster_name"] = ""
 			detail["db"] = ""

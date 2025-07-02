@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"testing"
 	"time"
 
@@ -798,6 +799,11 @@ func TestGetDataLabelByTableId(t *testing.T) {
 	obj = resulttable.ResultTable{TableId: "data_label", DataLabel: &dataLabel, BkTenantId: tenant.DefaultTenantId}
 	db.Delete(obj)
 	assert.NoError(t, obj.Create(db))
+	// with data_label_comma
+	dataLabelComma := "data_label_value1,data_label_value2"
+	obj = resulttable.ResultTable{TableId: "data_label_comma", DataLabel: &dataLabelComma, BkTenantId: tenant.DefaultTenantId}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
 
 	tests := []struct {
 		name         string
@@ -807,12 +813,174 @@ func TestGetDataLabelByTableId(t *testing.T) {
 		{"table_id is nil", []string{}, nil},
 		{"table_id without data_label", []string{"not_data_label"}, nil},
 		{"table_id with data_label", []string{"data_label"}, []string{dataLabel}},
+		{"table_id with data_label_comma", []string{"data_label_comma"}, []string{"data_label_value1", "data_label_value2"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			actualList, _ := NewSpacePusher().getDataLabelByTableId(tenant.DefaultTenantId, tt.tableIdList)
 			assert.Equal(t, tt.expectedList, actualList)
+		})
+	}
+}
+
+func TestGetDataLabelTableIdMap(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 准备测试数据
+	// 创建不带数据标签的结果表
+	obj1 := resulttable.ResultTable{
+		TableId:    "table_without_label",
+		IsEnable:   true,
+		IsDeleted:  false,
+		DataLabel:  nil,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	db.Delete(obj1)
+	assert.NoError(t, obj1.Create(db))
+
+	// 创建带单个数据标签的结果表
+	singleLabel := "test_label_1"
+	obj2 := resulttable.ResultTable{
+		TableId:    "table_with_single_label",
+		IsEnable:   true,
+		IsDeleted:  false,
+		DataLabel:  &singleLabel,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	db.Delete(obj2)
+	assert.NoError(t, obj2.Create(db))
+
+	// 创建带多个数据标签的结果表
+	multiLabel := "test_label_1,test_label_2,test_label_3"
+	obj3 := resulttable.ResultTable{
+		TableId:    "table_with_multi_label",
+		IsEnable:   true,
+		IsDeleted:  false,
+		DataLabel:  &multiLabel,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	db.Delete(obj3)
+	assert.NoError(t, obj3.Create(db))
+
+	// 创建另一个带相同标签的结果表
+	obj4 := resulttable.ResultTable{
+		TableId:    "table_with_same_label",
+		IsEnable:   true,
+		IsDeleted:  false,
+		DataLabel:  &singleLabel,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	db.Delete(obj4)
+	assert.NoError(t, obj4.Create(db))
+
+	// 创建已删除的结果表（不应该被包含）
+	deletedLabel := "deleted_label"
+	obj5 := resulttable.ResultTable{
+		TableId:    "deleted_table",
+		IsEnable:   true,
+		IsDeleted:  true,
+		DataLabel:  &deletedLabel,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	db.Delete(obj5)
+	assert.NoError(t, obj5.Create(db))
+
+	// 创建已禁用的结果表（不应该被包含）
+	disabledLabel := "disabled_label"
+	obj6 := resulttable.ResultTable{
+		TableId:    "disabled_table",
+		IsEnable:   false,
+		IsDeleted:  false,
+		DataLabel:  &disabledLabel,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	db.Delete(obj6)
+	assert.NoError(t, obj6.Create(db))
+
+	tests := []struct {
+		name          string
+		dataLabelList []string
+		expectedMap   map[string][]string
+		expectedError bool
+	}{
+		{
+			name:          "空数据标签列表",
+			dataLabelList: []string{},
+			expectedMap:   nil,
+			expectedError: true,
+		},
+		{
+			name:          "查询单个存在的数据标签",
+			dataLabelList: []string{"test_label_1"},
+			expectedMap: map[string][]string{
+				"test_label_1": {"table_with_single_label", "table_with_multi_label", "table_with_same_label"},
+			},
+			expectedError: false,
+		},
+		{
+			name:          "查询多个存在的数据标签",
+			dataLabelList: []string{"test_label_1", "test_label_2"},
+			expectedMap: map[string][]string{
+				"test_label_1": {"table_with_single_label", "table_with_multi_label", "table_with_same_label"},
+				"test_label_2": {"table_with_multi_label"},
+			},
+			expectedError: false,
+		},
+		{
+			name:          "查询不存在的数据标签",
+			dataLabelList: []string{"non_existent_label"},
+			expectedMap:   map[string][]string{},
+			expectedError: false,
+		},
+		{
+			name:          "查询已删除标签的数据",
+			dataLabelList: []string{"deleted_label"},
+			expectedMap:   map[string][]string{},
+			expectedError: false,
+		},
+		{
+			name:          "查询已禁用标签的数据",
+			dataLabelList: []string{"disabled_label"},
+			expectedMap:   map[string][]string{},
+			expectedError: false,
+		},
+		{
+			name:          "查询重复的数据标签",
+			dataLabelList: []string{"test_label_1", "test_label_1", "test_label_2"},
+			expectedMap: map[string][]string{
+				"test_label_1": {"table_with_single_label", "table_with_multi_label", "table_with_same_label"},
+				"test_label_2": {"table_with_multi_label"},
+			},
+			expectedError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actualMap, err := NewSpacePusher().getDataLabelTableIdMap(tenant.DefaultTenantId, tt.dataLabelList)
+
+			if tt.expectedError {
+				assert.Error(t, err)
+				assert.Nil(t, actualMap)
+			} else {
+				assert.NoError(t, err)
+
+				// 验证映射的键数量
+				assert.Equal(t, len(tt.expectedMap), len(actualMap))
+
+				// 验证每个数据标签对应的结果表
+				for dataLabel, expectedTableIds := range tt.expectedMap {
+					actualTableIds, exists := actualMap[dataLabel]
+					assert.True(t, exists, "数据标签 %s 应该存在", dataLabel)
+
+					// 由于数据库查询结果的顺序可能不固定，需要排序后比较
+					sort.Strings(expectedTableIds)
+					sort.Strings(actualTableIds)
+					assert.Equal(t, expectedTableIds, actualTableIds, "数据标签 %s 对应的结果表不匹配", dataLabel)
+				}
+			}
 		})
 	}
 }
@@ -836,6 +1004,11 @@ func TestGetAllDataLabelTableId(t *testing.T) {
 	db.Delete(obj)
 	assert.NoError(t, obj.Create(db))
 
+	dataLabel2 := "data_label_value,data_label_value2"
+	obj = resulttable.ResultTable{TableId: "data_label2", IsEnable: true, DataLabel: &dataLabel2, BkTenantId: tenant.DefaultTenantId}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+
 	data, err := NewSpacePusher().getAllDataLabelTableId(tenant.DefaultTenantId)
 	assert.NoError(t, err)
 
@@ -843,11 +1016,11 @@ func TestGetAllDataLabelTableId(t *testing.T) {
 	for dataLabel := range data {
 		dataLabelSet.Add(dataLabel)
 	}
-	expectedSet := mapset.NewSet("data_label_value", "data_label_value1")
+	expectedSet := mapset.NewSet("data_label_value", "data_label_value1", "data_label_value2")
 
 	assert.True(t, expectedSet.IsSubset(dataLabelSet))
 
-	assert.Equal(t, []string{"data_label"}, data["data_label_value"])
+	assert.Equal(t, []string{"data_label", "data_label2"}, data["data_label_value"])
 }
 
 func TestComposeBksaasSpaceClusterTableIds(t *testing.T) {

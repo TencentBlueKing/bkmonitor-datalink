@@ -117,7 +117,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			defer wg.Done()
 			t1 := time.Now()
 			name := "[task] PushAndPublishSpaceRouterInfo data_label_to_result_table"
-			if err = pusher.PushDataLabelTableIds(bkTenantId, nil, nil, true); err != nil {
+			if err = pusher.PushDataLabelTableIds(bkTenantId, nil, true); err != nil {
 				logger.Errorf("%s error %s", name, err)
 				return
 			}

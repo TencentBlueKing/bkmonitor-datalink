@@ -188,7 +188,7 @@ func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tabl
 		return errors.New("spaceType and spaceId must be specified")
 	}
 	// 更新数据
-	if err := pusher.PushDataLabelTableIds(bkTenantId, nil, tableIdList, true); err != nil {
+	if err := pusher.PushDataLabelTableIds(bkTenantId, tableIdList, true); err != nil {
 		return err
 	}
 	if err := pusher.PushTableIdDetail(bkTenantId, tableIdList, true, true); err != nil {
@@ -285,8 +285,8 @@ func (s *SpacePusher) GetSpaceTableIdDataId(bkTenantId string, spaceType, spaceI
 }
 
 // PushDataLabelTableIds 推送 data_label 及对应的结果表
-func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, dataLabelList, tableIdList []string, isPublish bool) error {
-	logger.Infof("PushDataLabelTableIds：start to push data_label table_id data, data_label_list->[%v], table_id_list->[%v]", dataLabelList, tableIdList)
+func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, tableIdList []string, isPublish bool) error {
+	logger.Infof("PushDataLabelTableIds：start to push data_label table_id data")
 
 	// 如果标签存在，则按照标签进行过滤
 	dlRtsMap := make(map[string][]string)
@@ -294,13 +294,7 @@ func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, dataLabelList, ta
 	// 1. 如果标签存在，则按照标签更新路由
 	// 2. 如果结果表存在，则按照结果表更新路由
 	// 3. 如果都不存在，则更新所有标签路由
-	if len(dataLabelList) != 0 {
-		dlRtsMap, err = s.getDataLabelTableIdMap(bkTenantId, dataLabelList)
-		if err != nil {
-			logger.Errorf("PushDataLabelTableIds error->[%s]", err)
-			return err
-		}
-	} else if len(tableIdList) != 0 {
+	if len(tableIdList) != 0 {
 		// 这里需要注意，因为是指定标签下所有更新，所以通过结果表查询到标签，再通过标签查询其下的所有结果表
 		dataLabels, err := s.getDataLabelByTableId(bkTenantId, tableIdList)
 		if err != nil {
@@ -320,85 +314,111 @@ func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, dataLabelList, ta
 		}
 	}
 
-	if len(dlRtsMap) != 0 {
-		client := redis.GetStorageRedisInstance()
-		// TODO: 待旁路没有问题，可以移除的逻辑
-		key := cfg.DataLabelToResultTableKey
-		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-		}
-		for dl, rts := range dlRtsMap {
-			// 二段式补充
-			for idx, value := range rts {
-				rts[idx] = reformatTableId(value)
-				// 多租户模式下，需要加上租户ID后缀
-				if cfg.EnableMultiTenantMode {
-					rts[idx] = fmt.Sprintf("%s|%s", rts[idx], bkTenantId)
-				}
-			}
+	// 打印结束日志
+	defer logger.Infof("PushDataLabelTableIds: push data_label table_id data successfully")
 
-			rtsStr, err := jsonx.MarshalString(rts)
-			if err != nil {
-				logger.Errorf("PushDataLabelTableIds: marshal data_label_to_result_table dl->[%s], rts->[%s], error->[%s]", dl, rts, err)
-				return err
-			}
-			// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Publish操作
-			logger.Infof("PushDataLabelTableIds: start push redis data_label_to_result_table, key->[%s], data_label->[%s], result_table->[%s], channel_name->[%s],channel_key->[%s]", key, dl, rtsStr, cfg.DataLabelToResultTableChannel, dl)
-			isSuccess, err := client.HSetWithCompareAndPublish(key, dl, rtsStr, cfg.DataLabelToResultTableChannel, dl)
-			if err != nil {
-				logger.Errorf("PushDataLabelTableIds: push redis data_label_to_result_table error, dl->[%s], rts->[%s], error->[%s]", dl, rts, err)
-				return err
-			}
-			logger.Infof("PushDataLabelTableIds: push redis data_label_to_result_table and publish, data_label->[%s], result_table->[%s], isSuccess->[%v]", dl, rtsStr, isSuccess)
-
-		}
-	} else {
-		logger.Info("PushDataLabelTableIds: data label and table id map is empty, skip push redis data_label_to_result_table,")
+	// 如果数据标签和结果表的映射关系为空，则直接返回
+	if len(dlRtsMap) == 0 {
+		logger.Infof("PushDataLabelTableIds: data label and table id map is empty, skip push redis data_label_to_result_table,")
+		return nil
 	}
 
-	logger.Infof("PushDataLabelTableIds: push redis data_label_to_result_table successfully")
+	client := redis.GetStorageRedisInstance()
+	// TODO: 待旁路没有问题，可以移除的逻辑
+	key := cfg.DataLabelToResultTableKey
+	if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
+		key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
+	}
+	for dl, rts := range dlRtsMap {
+		// 二段式补充
+		for idx, value := range rts {
+			rts[idx] = reformatTableId(value)
+			// 多租户模式下，需要加上租户ID后缀
+			if cfg.EnableMultiTenantMode {
+				rts[idx] = fmt.Sprintf("%s|%s", rts[idx], bkTenantId)
+			}
+		}
+
+		rtsStr, err := jsonx.MarshalString(rts)
+		if err != nil {
+			logger.Errorf("PushDataLabelTableIds: marshal data_label_to_result_table dl->[%s], rts->[%s], error->[%s]", dl, rts, err)
+			return err
+		}
+		// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Publish操作
+		logger.Infof("PushDataLabelTableIds: start push redis data_label_to_result_table, key->[%s], data_label->[%s], result_table->[%s], channel_name->[%s],channel_key->[%s]", key, dl, rtsStr, cfg.DataLabelToResultTableChannel, dl)
+		isSuccess, err := client.HSetWithCompareAndPublish(key, dl, rtsStr, cfg.DataLabelToResultTableChannel, dl)
+		if err != nil {
+			logger.Errorf("PushDataLabelTableIds: push redis data_label_to_result_table error, dl->[%s], rts->[%s], error->[%s]", dl, rts, err)
+			return err
+		}
+		logger.Infof("PushDataLabelTableIds: push redis data_label_to_result_table and publish, data_label->[%s], result_table->[%s], isSuccess->[%v]", dl, rtsStr, isSuccess)
+	}
+
 	return nil
 }
 
+// getDataLabelTableIdMap 获取数据标签和结果表的映射关系
 func (s *SpacePusher) getDataLabelTableIdMap(bkTenantId string, dataLabelList []string) (map[string][]string, error) {
 	if len(dataLabelList) == 0 {
 		return nil, errors.New("data label is null")
 	}
 
 	// dataLabelList 可能存在重复，需要去重
-	dataLabelList = slicex.RemoveDuplicate(&dataLabelList)
-
-	db := mysql.GetDBSession().DB
-	var rts []resulttable.ResultTable
-	for _, chunkDataLabels := range slicex.ChunkSlice(dataLabelList, 0) {
-		var tempList []resulttable.ResultTable
-		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.DataLabel, resulttable.ResultTableDBSchema.BkTenantId).DataLabelNe("").DataLabelIsNotNull().IsDeletedEq(false).IsEnableEq(true).BkTenantIdEq(bkTenantId).DataLabelIn(chunkDataLabels...).All(&tempList); err != nil {
-			logger.Errorf("get table id by data label error, %s", err)
-			continue
-		}
-		rts = append(rts, tempList...)
+	dataLabelSet := make(map[string]struct{})
+	for _, dataLabel := range dataLabelList {
+		dataLabelSet[dataLabel] = struct{}{}
 	}
+
+	var rts []resulttable.ResultTable
+
+	// 由于 data_label 可能存在逗号分隔传多个标签的情况，所以无法直接搜索，只能先查询全部结果表，再过滤数据标签
+	if err := resulttable.NewResultTableQuerySet(mysql.GetDBSession().DB).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.DataLabel, resulttable.ResultTableDBSchema.BkTenantId).DataLabelNe("").DataLabelIsNotNull().IsDeletedEq(false).IsEnableEq(true).BkTenantIdEq(bkTenantId).All(&rts); err != nil {
+		logger.Errorf("get table id by data label error, %s", err)
+		return nil, errors.Wrap(err, "get table id by data label error")
+	}
+
+	// 如果结果表为空，则直接返回
 	if len(rts) == 0 {
 		return nil, errors.Errorf("not found table id by data label, data labels: %v", dataLabelList)
 	}
+
 	dlRtsMap := make(map[string][]string)
 	for _, rt := range rts {
-		var key string
-		// 多租户模式下，需要加上租户ID后缀
-		if cfg.EnableMultiTenantMode {
-			key = fmt.Sprintf("%s|%s", *rt.DataLabel, rt.BkTenantId)
-		} else {
-			key = *rt.DataLabel
+		// 如果数据标签为空，则跳过
+		if rt.DataLabel == nil || *rt.DataLabel == "" {
+			continue
 		}
-		if rts, ok := dlRtsMap[key]; ok {
-			dlRtsMap[key] = append(rts, rt.TableId)
-		} else {
-			dlRtsMap[key] = []string{rt.TableId}
+
+		// 数据标签可能存在多个，需要拆分
+		for _, dataLabel := range strings.Split(*rt.DataLabel, ",") {
+			// 如果数据标签为空，则跳过
+			if dataLabel == "" {
+				continue
+			}
+
+			// 判断是否在 dataLabelSet 中
+			if _, ok := dataLabelSet[dataLabel]; !ok {
+				continue
+			}
+
+			var key string
+			// 多租户模式下，需要加上租户ID后缀
+			if cfg.EnableMultiTenantMode {
+				key = fmt.Sprintf("%s|%s", dataLabel, rt.BkTenantId)
+			} else {
+				key = dataLabel
+			}
+			if rts, ok := dlRtsMap[key]; ok {
+				dlRtsMap[key] = append(rts, rt.TableId)
+			} else {
+				dlRtsMap[key] = []string{rt.TableId}
+			}
 		}
 	}
 	return dlRtsMap, nil
 }
 
+// getDataLabelByTableId 获取结果表对应的数据标签
 func (s *SpacePusher) getDataLabelByTableId(bkTenantId string, tableIdList []string) ([]string, error) {
 	if len(tableIdList) == 0 {
 		return nil, errors.Errorf("table id is null")
@@ -418,8 +438,19 @@ func (s *SpacePusher) getDataLabelByTableId(bkTenantId string, tableIdList []str
 	}
 	var dataLabelList []string
 	for _, dl := range dataLabels {
-		dataLabelList = append(dataLabelList, *dl.DataLabel)
+		// 如果数据标签为空，则跳过
+		if dl.DataLabel == nil || *dl.DataLabel == "" {
+			continue
+		}
+		for _, dataLabel := range strings.Split(*dl.DataLabel, ",") {
+			// 如果数据标签为空，则跳过
+			if dataLabel == "" {
+				continue
+			}
+			dataLabelList = append(dataLabelList, dataLabel)
+		}
 	}
+	dataLabelList = slicex.RemoveDuplicate(&dataLabelList)
 	return dataLabelList, nil
 }
 
@@ -436,17 +467,32 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 	// 获取结果表
 	dataLabelTableIdMap := make(map[string][]string)
 	for _, rt := range rtList {
-		var key string
-		// 多租户模式下，需要加上租户ID后缀
-		if cfg.EnableMultiTenantMode {
-			key = fmt.Sprintf("%s|%s", *rt.DataLabel, rt.BkTenantId)
-		} else {
-			key = *rt.DataLabel
+		// 如果数据标签为空，则跳过
+		if rt.DataLabel == nil || *rt.DataLabel == "" {
+			continue
 		}
-		if rts, ok := dataLabelTableIdMap[key]; ok {
-			dataLabelTableIdMap[key] = append(rts, rt.TableId)
-		} else {
-			dataLabelTableIdMap[key] = []string{rt.TableId}
+
+		// 数据标签可能存在多个，需要拆分
+		dataLabels := strings.Split(*rt.DataLabel, ",")
+		for _, dataLabel := range dataLabels {
+			// 如果数据标签为空，则跳过
+			if dataLabel == "" {
+				continue
+			}
+
+			// 多租户模式下，需要加上租户ID后缀
+			var key string
+			if cfg.EnableMultiTenantMode {
+				key = fmt.Sprintf("%s|%s", dataLabel, rt.BkTenantId)
+			} else {
+				key = dataLabel
+			}
+
+			if rts, ok := dataLabelTableIdMap[key]; ok {
+				dataLabelTableIdMap[key] = append(rts, rt.TableId)
+			} else {
+				dataLabelTableIdMap[key] = []string{rt.TableId}
+			}
 		}
 	}
 	return dataLabelTableIdMap, nil

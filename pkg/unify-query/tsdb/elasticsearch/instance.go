@@ -332,7 +332,12 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			maxSlice := viper.GetInt("http.scroll.max_slice")
 			if maxSlice > 1 && len(qb.Aggregates) == 0 {
 				span.Set("query-scroll-slice", maxSlice)
-				res, err = i.esQueryWithSlices(ctx, client, qo, source, maxSlice)
+				if originalQuery, err := source.Source(); err == nil {
+					if queryJson, err := json.Marshal(originalQuery); err == nil {
+						log.Infof(ctx, "ES original query DSL (before slice): %s", string(queryJson))
+					}
+				}
+				res, err = i.esQueryWithSlices(ctx, client, qo, fact, maxSlice)
 			} else {
 				span.Set("query-scroll", qb.Scroll)
 				res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source).Do(ctx)
@@ -843,7 +848,7 @@ func (i *Instance) InstanceType() string {
 	return consul.ElasticsearchStorageType
 }
 
-func (i *Instance) esQueryWithSlices(ctx context.Context, client *elastic.Client, qo *queryOption, source *elastic.SearchSource, maxSlice int) (*elastic.SearchResult, error) {
+func (i *Instance) esQueryWithSlices(ctx context.Context, client *elastic.Client, qo *queryOption, fact *FormatFactory, maxSlice int) (*elastic.SearchResult, error) {
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-with-slices")
 	defer span.End(nil)
 
@@ -864,54 +869,90 @@ func (i *Instance) esQueryWithSlices(ctx context.Context, client *elastic.Client
 		go func(id int) {
 			defer wg.Done()
 
-			sliceSource := elastic.NewSearchSource()
+			filterQueries := make([]elastic.Query, 0)
 
-			if originalQuery, err := source.Source(); err == nil {
-				if queryMap, ok := originalQuery.(map[string]interface{}); ok {
-					newQuery := make(map[string]interface{})
-					for key, value := range queryMap {
-						if key != "from" {
-							newQuery[key] = value
-						}
-					}
+			query, err := fact.Query(qb.AllConditions)
+			if err != nil {
+				resultChan <- sliceResult{
+					result:  nil,
+					err:     fmt.Errorf("slice %d query condition failed: %v", id, err),
+					sliceID: id,
+				}
+				return
+			}
+			if query != nil {
+				filterQueries = append(filterQueries, query)
+			}
 
-					newQuery["slice"] = map[string]interface{}{
-						"id":  id,
-						"max": maxSlice,
-					}
+			rangeQuery, err := fact.RangeQuery()
+			if err != nil {
+				resultChan <- sliceResult{
+					result:  nil,
+					err:     fmt.Errorf("slice %d range query failed: %v", id, err),
+					sliceID: id,
+				}
+				return
+			}
+			filterQueries = append(filterQueries, rangeQuery)
 
-					newQuery["size"] = qb.Size
-
-					queryJson, _ := json.Marshal(newQuery)
-					log.Infof(ctx, "ES slice %d/%d query DSL: %s", id, maxSlice, string(queryJson))
-
-					searchService := client.Search().Index(qo.indexes...)
-					searchService.Source(string(queryJson))
-
-					result, err := searchService.Do(ctx)
-
-					if err != nil {
-						log.Errorf(ctx, "ES slice %d query failed with DSL: %s, error: %v", id, string(queryJson), err)
-					} else {
-						log.Infof(ctx, "ES slice %d query completed, hits: %d", id, func() int64 {
-							if result != nil && result.Hits != nil {
-								return result.Hits.TotalHits.Value
-							}
-							return 0
-						}())
-					}
-
+			if qb.QueryString != "" {
+				qs := NewQueryString(qb.QueryString, qb.IsPrefix, fact.NestedField)
+				q, qsErr := qs.ToDSL(ctx, qb.FieldAlias)
+				if qsErr != nil {
 					resultChan <- sliceResult{
-						result:  result,
-						err:     err,
+						result:  nil,
+						err:     fmt.Errorf("slice %d query string failed: %v", id, qsErr),
 						sliceID: id,
 					}
 					return
 				}
+				if q != nil {
+					filterQueries = append(filterQueries, q)
+				}
 			}
 
+			sliceSource := elastic.NewSearchSource()
+			for _, order := range fact.Orders() {
+				sliceSource.Sort(order.Name, order.Ast)
+			}
+
+			if len(filterQueries) > 0 {
+				esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
+				sliceSource.Query(esQuery)
+			}
+
+			if len(qb.Source) > 0 {
+				fetchSource := elastic.NewFetchSourceContext(true)
+				fetchSource.Include(qb.Source...)
+				sliceSource.FetchSourceContext(fetchSource)
+			}
+
+			sliceQuery := elastic.NewSliceQuery().Id(id).Max(maxSlice)
+			sliceSource.Slice(sliceQuery)
 			sliceSource.Size(qb.Size)
-			result, err := client.Search().Index(qo.indexes...).SearchSource(sliceSource).Do(ctx)
+
+			if querySource, err := sliceSource.Source(); err == nil {
+				if queryJson, err := json.Marshal(querySource); err == nil {
+					log.Infof(ctx, "ES slice %d/%d query DSL: %s", id, maxSlice, string(queryJson))
+				}
+			}
+
+			result, err := client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(sliceSource).Do(ctx)
+
+			if err != nil {
+				if querySource, err := sliceSource.Source(); err == nil {
+					if queryJson, err := json.Marshal(querySource); err == nil {
+						log.Errorf(ctx, "ES slice %d query failed with DSL: %s, error: %v", id, string(queryJson), err)
+					}
+				}
+			} else {
+				log.Infof(ctx, "ES slice %d query completed, hits: %d", id, func() int64 {
+					if result != nil && result.Hits != nil {
+						return result.Hits.TotalHits.Value
+					}
+					return 0
+				}())
+			}
 
 			resultChan <- sliceResult{
 				result:  result,

@@ -188,6 +188,115 @@ func TestSetSliceOptions(t *testing.T) {
 	})
 }
 
+func TestUpdateSliceStatus(t *testing.T) {
+	// 测试slice状态更新
+	t.Run("Update slice status to done", func(t *testing.T) {
+		rtState := &redisUtil.RTState{
+			Query: &metadata.Query{TableID: "test_table"},
+			Type:  "elasticsearch",
+			SliceStates: []redisUtil.SliceState{
+				{
+					SliceID:     0,
+					Status:      redisUtil.SliceStatusRunning,
+					ConnectInfo: "http://127.0.0.1:9200",
+				},
+				{
+					SliceID:     1,
+					Status:      redisUtil.SliceStatusRunning,
+					ConnectInfo: "http://127.0.0.1:9200",
+				},
+			},
+		}
+
+		activeSlices := redisUtil.SliceStates{
+			{
+				SliceID:     0,
+				Status:      redisUtil.SliceStatusRunning,
+				ConnectInfo: "http://127.0.0.1:9200",
+			},
+		}
+
+		options := metadata.ResultTableOptions{
+			"test_table|http://127.0.0.1:9200": &metadata.ResultTableOption{
+				ScrollID: "new_scroll_id_123",
+			},
+		}
+
+		updateSliceStatus(rtState, activeSlices, redisUtil.SliceStatusDone, "", options)
+
+		// 验证状态更新
+		assert.Equal(t, redisUtil.SliceStatusDone, rtState.SliceStates[0].Status, "第一个slice状态应该更新为done")
+		assert.Equal(t, "new_scroll_id_123", rtState.SliceStates[0].ScrollID, "第一个slice的ScrollID应该被更新")
+		assert.Equal(t, redisUtil.SliceStatusRunning, rtState.SliceStates[1].Status, "第二个slice状态应该保持running")
+	})
+
+	// 测试失败状态更新
+	t.Run("Update slice status to failed", func(t *testing.T) {
+		rtState := &redisUtil.RTState{
+			Query: &metadata.Query{TableID: "test_table"},
+			Type:  "elasticsearch",
+			SliceStates: []redisUtil.SliceState{
+				{
+					SliceID:     0,
+					Status:      redisUtil.SliceStatusRunning,
+					RetryCount:  0,
+					MaxRetries:  3,
+					ConnectInfo: "http://127.0.0.1:9200",
+				},
+			},
+		}
+
+		activeSlices := redisUtil.SliceStates{
+			{
+				SliceID:     0,
+				Status:      redisUtil.SliceStatusRunning,
+				RetryCount:  0,
+				MaxRetries:  3,
+				ConnectInfo: "http://127.0.0.1:9200",
+			},
+		}
+
+		updateSliceStatus(rtState, activeSlices, redisUtil.SliceStatusFailed, "connection timeout", nil)
+
+		// 验证状态更新
+		assert.Equal(t, redisUtil.SliceStatusFailed, rtState.SliceStates[0].Status, "slice状态应该更新为failed")
+		assert.Equal(t, "connection timeout", rtState.SliceStates[0].ErrorMsg, "错误信息应该被设置")
+		assert.Equal(t, 1, rtState.SliceStates[0].RetryCount, "重试次数应该增加")
+		assert.True(t, rtState.HasMoreData, "由于可以重试，应该还有更多数据")
+	})
+}
+
+func TestInitializeSlicesForQuery(t *testing.T) {
+	// 测试为query初始化slice
+	t.Run("Initialize slices for query", func(t *testing.T) {
+		qry := &metadata.Query{
+			TableID:     "test_table",
+			StorageID:   "test_storage",
+			StorageType: "elasticsearch",
+		}
+
+		slices := initializeSlicesForQuery(qry, 1000)
+
+		assert.NotNil(t, slices, "应该返回slice列表")
+		assert.Greater(t, len(slices), 0, "应该至少有一个slice")
+
+		// 验证第一个slice的属性
+		firstSlice := slices[0]
+		assert.Equal(t, 0, firstSlice.SliceID, "第一个slice的ID应该为0")
+		assert.Equal(t, int64(0), firstSlice.StartOffset, "StartOffset应该为0")
+		assert.Equal(t, int64(1000), firstSlice.EndOffset, "EndOffset应该为1000")
+		assert.Equal(t, int64(1000), firstSlice.Size, "Size应该为1000")
+		assert.Equal(t, redisUtil.SliceStatusRunning, firstSlice.Status, "状态应该为running")
+		assert.Equal(t, 3, firstSlice.MaxRetries, "最大重试次数应该为3")
+	})
+
+	// 测试nil query的处理
+	t.Run("Handle nil query", func(t *testing.T) {
+		slices := initializeSlicesForQuery(nil, 1000)
+		assert.Nil(t, slices, "nil query应该返回nil")
+	})
+}
+
 func TestQueryRawWithScrollSliceIntegration(t *testing.T) {
 	mr, redisClient := setupMiniRedis(t)
 	defer teardownMiniRedis(mr, redisClient)

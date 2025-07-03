@@ -15,188 +15,72 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-type SessionObject struct {
-	QueryTs        string         `json:"query_ts"`
-	Status         string         `json:"status"`
-	CreateAt       time.Time      `json:"create_at"`
-	LastAccessAt   time.Time      `json:"last_access_at"`
-	ScrollTimeout  time.Duration  `json:"scroll_timeout"`
-	LockTimeout    time.Duration  `json:"lock_timeout"`
-	MaxSlice       int            `json:"max_slice"`
-	Limit          int            `json:"limit"`
-	Index          int            `json:"index"`
-	QueryReference QueryReference `json:"query_reference"`
-}
+const (
+	sessionKeyPrefix = "scroll:session:"
+	lockKeyPrefix    = "scroll:lock:"
+	sliceKeyPrefix   = "scroll:slice:"
+)
 
-type QueryReference map[string]*RTState
-
-func (s *SessionObject) IsQueryReferenceEmpty() bool {
-	if s.QueryReference == nil {
-		return true
-	}
-	return len(s.QueryReference) == 0
-}
-
-type RTState struct {
-	Query       *metadata.Query `json:"query"`
-	Type        string          `json:"type"`
-	Offset      int64           `json:"offset"`
-	HasMoreData bool            `json:"has_more_data"`
-	SliceStates SliceStates     `json:"slice_states"`
-}
-
-type SliceStates []SliceState
-
-func (r *RTState) PickSlices(maxRunningCount, maxFailedCount int) (SliceStates, error) {
-	if r == nil {
-		return nil, fmt.Errorf("RTState is nil")
-	}
-
-	activeSlices := r.getActiveSlices()
-
-	failedCount := r.countFailedSlices(activeSlices)
-	if failedCount > maxFailedCount {
-		return nil, fmt.Errorf("too many failed slices: %d, max allowed: %d", failedCount, maxFailedCount)
-	}
-
-	if len(activeSlices) < maxRunningCount {
-		activeSlices = r.ensureSliceCount(activeSlices, maxRunningCount)
-	}
-
-	r.SliceStates = activeSlices
-	return r.SliceStates, nil
-}
-
-func (r *RTState) getActiveSlices() SliceStates {
-	if r.SliceStates == nil {
-		return nil
-	}
-
-	var activeSlices SliceStates
-	for _, slice := range r.SliceStates {
-		if r.isSliceActive(slice) {
-			activeSlices = append(activeSlices, slice)
-		}
-	}
-	return activeSlices
-}
-
-func (r *RTState) isSliceActive(slice SliceState) bool {
-	if slice.Status == SliceStatusRunning {
-		return true
-	}
-	if slice.Status == SliceStatusFailed && slice.RetryCount < slice.MaxRetries {
-		return true
-	}
-	return false
-}
-
-func (r *RTState) countFailedSlices(slices SliceStates) int {
-	count := 0
-	for _, slice := range slices {
-		if slice.Status == SliceStatusFailed {
-			count++
-		}
-	}
-	return count
-}
-
-func (r *RTState) ensureSliceCount(currentSlices SliceStates, targetCount int) SliceStates {
-	if len(currentSlices) >= targetCount {
-		return currentSlices
-	}
-
-	template := r.getSliceTemplate(currentSlices)
-
-	for len(currentSlices) < targetCount {
-		newSlice := r.createNextSlice(template, len(currentSlices))
-		currentSlices = append(currentSlices, newSlice)
-	}
-
-	return currentSlices
-}
-
-func (r *RTState) getSliceTemplate(slices SliceStates) SliceState {
-	if len(slices) > 0 {
-		maxSlice := slices[0]
-		for _, slice := range slices {
-			if slice.SliceID > maxSlice.SliceID {
-				maxSlice = slice
-			}
-		}
-		return maxSlice
-	}
-
-	return SliceState{
-		SliceID:     -1,
-		StartOffset: 0,
-		EndOffset:   1000,
-		Size:        1000,
-		Status:      SliceStatusRunning,
-		MaxRetries:  3,
-	}
-}
-
-func (r *RTState) createNextSlice(template SliceState, currentIndex int) SliceState {
-	newSlice := SliceState{
-		SliceID:     currentIndex,
-		StartOffset: template.EndOffset + int64(currentIndex-template.SliceID-1)*template.Size,
-		EndOffset:   template.EndOffset + int64(currentIndex-template.SliceID)*template.Size,
-		Size:        template.Size,
-		Status:      SliceStatusRunning,
-		ErrorMsg:    "",
-		RetryCount:  0,
-		MaxRetries:  template.MaxRetries,
-		ScrollID:    "",
-		ConnectInfo: template.ConnectInfo,
-	}
-
-	if template.SliceID == -1 {
-		newSlice.SliceID = currentIndex
-		newSlice.StartOffset = int64(currentIndex) * template.Size
-		newSlice.EndOffset = int64(currentIndex+1) * template.Size
-	}
-
-	return newSlice
+// ScrollSession 用于记录当前scroll的一些meta信息
+// 包含查询时间戳、用户名、状态、创建时间、最后访问时间、滚动超时时间、最大切片数、数据源类型等
+// 使用query_ts + username作为唯一标识
+// 同时也作为创建新的slice的模板
+// 如果针对一个查询需要创建多个切片，则可以通过ScrollSession来管理这些切片
+type ScrollSession struct {
+	Key           string
+	CreateAt      time.Time     `json:"create_at"`
+	LastAccessAt  time.Time     `json:"last_access_at"`
+	ScrollTimeout time.Duration `json:"scroll_timeout"`
+	MaxSlice      int           `json:"max_slice"`
+	Limit         int           `json:"limit"`
+	Index         int           `json:"index"`
+	SliceIds      []string      `json:"slice_ids"`
+	Status        string        `json:"status"`
+	Type          string        `json:"type"` // 数据源类型 es or doris
 }
 
 type SliceState struct {
-	SliceID     int    `json:"slice_id"`
-	StartOffset int64  `json:"start_offset"`
-	EndOffset   int64  `json:"end_offset"`
-	Size        int64  `json:"size"`         // slice数据量 (从Query.Limit获取)
-	Status      string `json:"status"`       // slice状态: "running", "done", "failed"
-	ErrorMsg    string `json:"error_msg"`    // 错误信息 (仅当status为failed时)
-	RetryCount  int    `json:"retry_count"`  // 重试次数
-	MaxRetries  int    `json:"max_retries"`  // 最大重试次数 (默认3次)
-	ScrollID    string `json:"scroll_id"`    // ES scroll ID for this slice
-	ConnectInfo string `json:"connect_info"` // 连接信息，支持不同connect的tableID
+	SessionKey    string        `json:"session_key"`
+	StartOffset   int           `json:"start_offset"`
+	EndOffset     int           `json:"end_offset"`
+	Size          int           `json:"size"`
+	Status        string        `json:"status"`
+	ErrorMsg      string        `json:"error_msg"`
+	RetryCount    int           `json:"retry_count"`
+	MaxRetries    int           `json:"max_retries"`
+	ScrollID      string        `json:"scroll_id"`
+	ConnectInfo   string        `json:"connect_info"`
+	SliceMax      int           `json:"slice_max"`
+	SliceID       int           `json:"slice_id"`
+	LastAccessAt  time.Time     `json:"last_access_at"`
+	ScrollTimeOut time.Duration `json:"scroll_timeout"`
+	Type          string        `json:"type"`     // 数据源类型 es or doris
+	TableID       string        `json:"table_id"` // Table ID for the slice, used to identify the data source
+	Connect       string        `json:"connect"`  // Connect information for the slice, used to identify the data source connection
 }
 
-type SessionInfo struct {
-	Index    int    `json:"index"`     // 当前请求次数
-	MaxSlice int    `json:"max_slice"` // 并发slice数
-	Size     int    `json:"size"`      // 每次数据量
-	Status   string `json:"status"`    // 会话状态
+type SlicesState []SliceState
+
+func (s *SlicesState) FilterConnect(connect string) []SliceState {
+	ss := *s
+	filtered := make([]SliceState, 0, len(ss))
+	for _, slice := range ss {
+		if slice.ConnectInfo == connect {
+			filtered = append(filtered, slice)
+		}
+	}
+	return filtered
 }
 
-// ScrollError scroll专用错误类型
-type ScrollError struct {
-	Code    string `json:"code"`    // 错误代码
-	Message string `json:"message"` // 错误信息
-	Retry   bool   `json:"retry"`   // 是否可重试
-}
-
-func (e *ScrollError) Error() string {
-	return e.Message
+func (s *SliceState) SliceKey() string {
+	return fmt.Sprintf(`%s|%d|%d`, s.ScrollID, s.SliceMax, s.SliceID)
 }
 
 const (
 	SessionStatusRunning = "RUNNING"
+	SessionStatusDone    = "DONE"
 	SessionStatusFailed  = "FAILED"
 )
 
@@ -206,169 +90,85 @@ const (
 	SliceStatusFailed  = "failed"
 )
 
-const (
-	SessionKeyPrefix = "scroll:session:"
-	LockKeyPrefix    = "scroll:lock:"
-)
-
-func GetSessionKey(queryTsKey string) string {
-	return SessionKeyPrefix + queryTsKey
+var sliceStateKey = func(suffix string) string {
+	return fmt.Sprintf("%s|%s", sliceKeyPrefix, suffix)
 }
 
-func GetLockKey(queryTsKey string) string {
-	return LockKeyPrefix + queryTsKey
-}
-
-type QueryTsKey struct {
-	QueryTs  interface{} `json:"queryTs"`
-	Username string      `json:"username"`
-}
-
-var ScrollGenerateQueryTsKey = func(queryTs interface{}, username string) (string, error) {
-	log.Debugf(context.TODO(), "[redis] generate query ts key with username: %s", username)
-
-	keyStruct := QueryTsKey{
-		QueryTs:  queryTs,
-		Username: username,
+func (s *ScrollSession) getAllSlices(ctx context.Context) (SlicesState, error) {
+	slices := make([]SliceState, 0, len(s.SliceIds))
+	for _, id := range s.SliceIds {
+		key := sliceStateKey(id)
+		data, err := globalInstance.client.Get(ctx, key).Bytes()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get slice %d: %w", id, err)
+		}
+		var slice SliceState
+		if err := json.Unmarshal(data, &slice); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal slice %d: %w", id, err)
+		}
+		slices = append(slices, slice)
 	}
+	return slices, nil
+}
 
-	queryBytes, err := json.Marshal(keyStruct)
+func (s *SlicesState) fetchLastActiveSlice() (*SliceState, bool) {
+	if len(*s) == 0 {
+		return nil, false
+	}
+	for i := len(*s) - 1; i >= 0; i-- {
+		cur := (*s)[i]
+		if cur.Status == SliceStatusRunning || cur.Status == SliceStatusFailed && cur.RetryCount < cur.MaxRetries {
+			return &cur, true
+		}
+	}
+	return nil, false
+}
+
+// EnsureSlices 确保所有切片都存在，如果不存在则创建新的切片
+func (s *ScrollSession) EnsureSlices(ctx context.Context) (SlicesState, error) {
+	slices, err := s.getAllSlices(ctx)
 	if err != nil {
-		return "", err
-	}
-	return string(queryBytes), nil
-}
-
-var ScrollAcquireRedisLock = func(ctx context.Context, lockKey string, timeout time.Duration) (interface{}, error) {
-	log.Debugf(ctx, "[redis] acquire lock %s", lockKey)
-	client := globalInstance.client
-	if client == nil {
-		return nil, fmt.Errorf("redis client not available")
+		return nil, fmt.Errorf("failed to get slices: %w", err)
 	}
 
-	result := client.SetNX(ctx, lockKey, "locked", timeout)
-	if result.Err() != nil {
-		return nil, result.Err()
+	if len(slices) >= s.MaxSlice {
+		return nil, fmt.Errorf("already have %d slices, max allowed is %d", len(slices), s.MaxSlice)
 	}
-
-	if !result.Val() {
-		return nil, fmt.Errorf("failed to acquire lock, already locked")
-	}
-
-	return lockKey, nil
-}
-
-var ScrollReleaseRedisLock = func(ctx context.Context, lock interface{}) error {
-	log.Debugf(ctx, "[redis] release lock")
-	client := globalInstance.client
-	if client == nil {
-		return fmt.Errorf("redis client not available")
-	}
-
-	lockKey, ok := lock.(string)
-	if !ok {
-		return fmt.Errorf("invalid lock type")
-	}
-
-	return client.Del(ctx, lockKey).Err()
-}
-
-var ScrollClearRedisSession = func(ctx context.Context, sessionKey string) error {
-	log.Debugf(ctx, "[redis] clear session %s", sessionKey)
-	client := globalInstance.client
-	if client == nil {
-		return fmt.Errorf("redis client not available")
-	}
-
-	return client.Del(ctx, sessionKey).Err()
-}
-
-var ScrollGetOrCreateSession = func(ctx context.Context, sessionKey string, queryTsJSON string) (*SessionObject, error) {
-	log.Debugf(ctx, "[redis] get or create session %s", sessionKey)
-	client := globalInstance.client
-	if client == nil {
-		return nil, fmt.Errorf("redis client not available")
-	}
-
-	result := client.Get(ctx, sessionKey)
-	if result.Err() == nil {
-		var session SessionObject
-		if err := json.Unmarshal([]byte(result.Val()), &session); err == nil {
-			session.LastAccessAt = time.Now()
-			if updateErr := ScrollUpdateSession(ctx, sessionKey, &session); updateErr != nil {
-				log.Warnf(ctx, "[redis] failed to update session access time: %v", updateErr)
+	if len(slices) == 0 && s.Type == "es" {
+		for i := 0; i < s.MaxSlice; i++ {
+			newSlice := SliceState{
+				SessionKey:  s.Key,
+				StartOffset: i * s.Limit,
+				EndOffset:   (i + 1) * s.Limit,
+				Status:      SliceStatusRunning,
+				SliceID:     i,
+				SliceMax:    s.MaxSlice,
+				ScrollID:    "",
 			}
-			return &session, nil
+			slices = append(slices, newSlice)
+		}
+	} else {
+		baseOffset := 0
+		lastActive, exist := slices.fetchLastActiveSlice()
+		if !exist {
+			baseOffset = 0
+		} else {
+			baseOffset = lastActive.EndOffset
+		}
+
+		for i := len(slices); i < s.MaxSlice; i++ {
+			newSlice := SliceState{
+				SessionKey:  "",
+				StartOffset: baseOffset + i*s.Limit,
+				EndOffset:   baseOffset + (i+1)*s.Limit,
+				Status:      SliceStatusRunning,
+				SliceID:     i,
+				SliceMax:    s.MaxSlice,
+				ScrollID:    "",
+			}
+			slices = append(slices, newSlice)
 		}
 	}
 
-	session := &SessionObject{
-		QueryTs:        queryTsJSON,
-		Status:         SessionStatusRunning,
-		CreateAt:       time.Now(),
-		LastAccessAt:   time.Now(),
-		Index:          0,
-		QueryReference: make(map[string]*RTState),
-	}
-
-	if err := ScrollUpdateSession(ctx, sessionKey, session); err != nil {
-		return nil, fmt.Errorf("failed to save new session: %v", err)
-	}
-
-	return session, nil
-}
-
-var ScrollUpdateSession = func(ctx context.Context, sessionKey string, session *SessionObject) error {
-	log.Debugf(ctx, "[redis] update session %s", sessionKey)
-	client := globalInstance.client
-	if client == nil {
-		return fmt.Errorf("redis client not available")
-	}
-
-	sessionBytes, err := json.Marshal(session)
-	if err != nil {
-		return err
-	}
-
-	return client.Set(ctx, sessionKey, sessionBytes, session.ScrollTimeout).Err()
-}
-
-var ScrollDeleteSession = func(ctx context.Context, sessionKey string) error {
-	log.Debugf(ctx, "[redis] delete session %s", sessionKey)
-	client := globalInstance.client
-	if client == nil {
-		return fmt.Errorf("redis client not available")
-	}
-
-	return client.Del(ctx, sessionKey).Err()
-}
-
-var ScrollCheckSessionHasMore = func(session *SessionObject) bool {
-	if session == nil || session.QueryReference == nil {
-		return false
-	}
-
-	for _, rtState := range session.QueryReference {
-		if rtState.HasMoreData {
-			return true
-		}
-	}
-	return false
-}
-
-func MarshalSessionObject(session *SessionObject) (string, error) {
-	data, err := json.Marshal(session)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal session object: %v", err)
-	}
-	return string(data), nil
-}
-
-func UnmarshalSessionObject(data string) (*SessionObject, error) {
-	var session SessionObject
-	err := json.Unmarshal([]byte(data), &session)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal session object: %v", err)
-	}
-	return &session, nil
+	return slices, nil
 }

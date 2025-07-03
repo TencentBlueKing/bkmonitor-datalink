@@ -766,9 +766,7 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 }
 
 func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (query *structured.QueryTs, err error) {
-	var (
-		matchers []*labels.Matcher
-	)
+	var matchers []*labels.Matcher
 
 	if queryPromQL == nil {
 		return
@@ -829,7 +827,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 		}
 
 		// 补充 Match
-		var verifyDimensions = func(key string) bool {
+		verifyDimensions := func(key string) bool {
 			return true
 		}
 
@@ -942,20 +940,14 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 	defer span.End(&err)
 
 	user := metadata.GetUser(ctx)
-	queryTsKey, err := redisUtil.ScrollGenerateQueryTsKey(queryTs, user.Name)
-	if err != nil {
-		return 0, nil, nil, fmt.Errorf("failed to generate queryTs key: %v", err)
-	}
-	log.Infof(ctx, "Generated queryTsKey: %s", queryTsKey)
 	if queryTs.Limit == 0 {
 		queryTs.Limit = ScrollSliceLimit
 	}
 	if queryTs.Scroll == "" {
 		queryTs.Scroll = ScrollWindow
 	}
-	lockKey := redisUtil.GetLockKey(queryTsKey)
 	scrollWindowDuration, _ := time.ParseDuration(queryTs.Scroll)
-	scrollLock, err := redisUtil.ScrollAcquireRedisLock(ctx, lockKey, scrollWindowDuration)
+	scrollLock, err := redisUtil.ScrollAcquireRedisLock(ctx, queryTs, user.Name, scrollWindowDuration)
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("failed to acquire lock: %v", err)
 	}
@@ -964,82 +956,15 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 			log.Warnf(ctx, "failed to release lock: %v", releaseErr)
 		}
 	}()
-
-	sessionKey := redisUtil.GetSessionKey(queryTsKey)
-	if queryTs.ClearCache {
-		if err := redisUtil.ScrollClearRedisSession(ctx, sessionKey); err != nil {
-			log.Warnf(ctx, "failed to clear cache for queryTs %s: %v", queryTsKey, err)
-		}
-	}
-
-	session, err := redisUtil.ScrollGetOrCreateSession(ctx, sessionKey, queryTsKey)
+	session, err := redisUtil.ScrollGetOrCreateSession(ctx, queryTs, user.Name, queryTs.ClearCache)
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("failed to get or create session: %v", err)
 	}
-
-	if session.IsQueryReferenceEmpty() {
-		log.Infof(ctx, "Initializing new session for queryTs: %+v", queryTs)
-		session.ScrollTimeout = scrollWindowDuration
-		session.LockTimeout = ScrollLockTimeout
-		session.MaxSlice = ScrollMaxSlice
-		session.Limit = queryTs.Limit
-
-		if queryTs.SpaceUid == "" {
-			queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
-		}
-		log.Infof(ctx, "Using SpaceUid: %s, QueryList length: %d", queryTs.SpaceUid, len(queryTs.QueryList))
-
-		for i, ql := range queryTs.QueryList {
-			log.Infof(ctx, "Processing query %d: TableID=%s, DataSource=%s", i, ql.TableID, ql.DataSource)
-			ql.Timezone = queryTs.Timezone
-			ql.Start = queryTs.Start
-			ql.End = queryTs.End
-			ql.OrderBy = queryTs.OrderBy
-			if ql.Step == "" {
-				ql.Step = queryTs.Step
-			}
-			if ql.Limit == 0 && queryTs.Limit > 0 {
-				ql.Limit = queryTs.Limit
-			}
-			if queryTs.Scroll != "" {
-				ql.Scroll = queryTs.Scroll
-			}
-			if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
-				ql.KeepColumns = queryTs.ResultColumns
-			}
-
-			qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
-			if qmErr != nil {
-				log.Errorf(ctx, "Failed to convert query to metric: %v", qmErr)
-				return 0, nil, nil, qmErr
-			}
-			log.Infof(ctx, "ToQueryMetric success, QueryList length: %d", len(qm.QueryList))
-
-			for j, qry := range qm.QueryList {
-				if qry != nil {
-					log.Infof(ctx, "Creating RTState for query %d.%d: TableID=%s, StorageType=%s", i, j, qry.TableID, qry.StorageType)
-					rtState := &redisUtil.RTState{
-						Query:       qry,
-						Type:        qry.StorageType,
-						HasMoreData: true,
-					}
-
-					rtState.SliceStates = initializeSlicesForQuery(qry, int64(queryTs.Limit))
-					log.Infof(ctx, "Initialized %d slices for TableID: %s", len(rtState.SliceStates), qry.TableID)
-
-					session.QueryReference[qry.TableID] = rtState
-				}
-			}
-		}
-		log.Infof(ctx, "Session initialization complete, QueryReference length: %d", len(session.QueryReference))
-	} else {
-		log.Infof(ctx, "Using existing session with %d query references", len(session.QueryReference))
+	slices, err := session.EnsureSlices(ctx)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("failed to ensure slices: %v", err)
 	}
 
-	session.LastAccessAt = time.Now()
-	session.Index++
-
-	log.Infof(ctx, "About to save session with %d query references", len(session.QueryReference))
 	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if timeErr != nil {
 		return 0, nil, nil, timeErr
@@ -1050,19 +975,12 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
 		queryList []*metadata.Query
-		lockMutex sync.Mutex
 	)
 
 	list = make([]map[string]any, 0)
 
-	for _, rtState := range session.QueryReference {
-		if rtState.HasMoreData {
-			queryList = append(queryList, rtState.Query)
-		}
-	}
-
 	if len(queryList) == 0 {
-		if err := redisUtil.ScrollDeleteSession(ctx, sessionKey); err != nil {
+		if err := redisUtil.ScrollDeleteSession(ctx, queryTs, user.Name); err != nil {
 			log.Warnf(ctx, "failed to delete completed session: %v", err)
 		}
 		return 0, nil, resultTableOptions, nil
@@ -1102,193 +1020,94 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 		}()
 
 		for _, qry := range queryList {
-			sendWg.Add(1)
-			qry := qry
 
-			err = p.Submit(func() {
-				defer sendWg.Done()
-				rtState, exist := session.QueryReference[qry.TableID]
-				if !exist {
-					log.Warnf(ctx, "not exist query reference for %s", qry.TableID)
-					return
-				}
-				activeSlices, err := rtState.PickSlices(ScrollMaxSlice, 10)
+			storageIds := qry.CalcStorageIDs()
+			if storageIds == nil {
+				return
+			}
+			storages := make([]*tsdb.Storage, 0, len(storageIds))
+			for _, storageId := range storageIds {
+				storage, err := tsdb.GetStorage(storageId)
 				if err != nil {
-					log.Errorf(ctx, "failed to pick slices for %s: %v", qry.TableID, err)
+					log.Errorf(ctx, "failed to get storage for %s: %v", storageId, err)
 					return
 				}
-				rtState.HasMoreData = len(activeSlices) > 0
-				if len(activeSlices) > 0 {
-					if qry.ResultTableOptions == nil {
-						qry.ResultTableOptions = make(metadata.ResultTableOptions)
+				storages = append(storages, storage)
+			}
+			for _, storage := range storages {
+				err = p.Submit(func() {
+					sendWg.Add(1)
+					defer sendWg.Done()
+					connectSlices := slices.FilterConnect(storage.Address)
+					for _, slice := range connectSlices {
+						sliceKey := slice.SliceKey()
+						instance := prometheus.GetTsDbInstance(ctx, qry)
+						if instance == nil {
+							log.Warnf(ctx, "not instance in %s", qry.StorageID)
+							return
+						}
+						qry.SliceID = slice.SliceID
+						qry.SliceMax = slice.SliceMax
+						qry.ScrollID = slice.ScrollID
+
+						size, options, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
+						if queryErr != nil {
+							log.Errorf(ctx, "query %s error: %s", qry.TableID, queryErr.Error())
+							slice.RetryCount += 1
+							slice.ErrorMsg = queryErr.Error()
+							slice.Status = redisUtil.SliceStatusFailed
+							if err := redisUtil.ScrollUpdateSlice(ctx, sliceKey, slice); err != nil {
+								log.Warnf(ctx, "failed to update slice %s: %v", slice.SliceID, err)
+							}
+						} else {
+							slice.RetryCount = 0
+							if err := redisUtil.ScrollUpdateSlice(ctx, sliceKey, slice); err != nil {
+								log.Warnf(ctx, "failed to update slice %s: %v", slice.SliceID, err)
+							}
+							if resultTableOptions == nil {
+								resultTableOptions = make(metadata.ResultTableOptions)
+							}
+							if options != nil {
+								resultTableOptions.MergeOptions(options)
+							}
+							total += size
+							isSliceDone := size == 0
+							if isSliceDone {
+								slice.Status = redisUtil.SessionStatusDone
+								resultOption := options.GetOption(slice.TableID, slice.Connect)
+								newSliceScrollID := resultOption.ScrollID
+								if newSliceScrollID != "" && newSliceScrollID != slice.ScrollID {
+								}
+
+							}
+						}
+						if err := redisUtil.ScrollUpdateSlice(ctx, sliceKey, slice); err != nil {
+							log.Warnf(ctx, "failed to update slice %s: %v", slice.SliceID, err)
+						}
 					}
-					setSliceOptions(qry, activeSlices, rtState.Type, ScrollMaxSlice)
-				}
 
-				instance := prometheus.GetTsDbInstance(ctx, qry)
-				if instance == nil {
-					log.Warnf(ctx, "not instance in %s", qry.StorageID)
-					return
-				}
-
-				size, options, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
-				lockMutex.Lock()
-				if queryErr != nil {
-					log.Errorf(ctx, "query %s error: %s", qry.TableID, queryErr.Error())
-					updateSliceStatus(rtState, activeSlices, redisUtil.SliceStatusFailed, queryErr.Error(), options)
-				} else {
-					updateSliceStatus(rtState, activeSlices, redisUtil.SliceStatusDone, "", options)
-
-					if resultTableOptions == nil {
-						resultTableOptions = make(metadata.ResultTableOptions)
+					if err != nil {
+						log.Errorf(ctx, "failed to pick slices for %s: %v", qry.TableID, err)
+						return
 					}
-					if options != nil {
-						resultTableOptions.MergeOptions(options)
+					if len(slices) > 0 {
+						if qry.ResultTableOptions == nil {
+							qry.ResultTableOptions = make(metadata.ResultTableOptions)
+						}
 					}
-					total += size
-				}
+				})
+			}
 
-				session.QueryReference[qry.TableID] = rtState
-				log.Infof(ctx, "Updated rtState for %s: HasMoreData=%v, SliceCount=%d",
-					qry.TableID, rtState.HasMoreData, len(rtState.SliceStates))
-				lockMutex.Unlock()
-			})
 		}
 	}()
 
 	receiveWg.Wait()
 
-	allDone := !redisUtil.ScrollCheckSessionHasMore(session)
+	allDone := redisUtil.CheckIsScrollAllDone(ctx, queryTs, user.Name)
 	if allDone {
-		if err := redisUtil.ScrollDeleteSession(ctx, sessionKey); err != nil {
+		if err := redisUtil.ScrollDeleteSession(ctx, queryTs, user.Name); err != nil {
 			log.Warnf(ctx, "failed to delete completed session: %v", err)
 		}
-	} else {
-		log.Infof(ctx, "Updating session with %d query references", len(session.QueryReference))
-		if err := redisUtil.ScrollUpdateSession(ctx, sessionKey, session); err != nil {
-			log.Warnf(ctx, "failed to update session: %v", err)
-		} else {
-			log.Infof(ctx, "Session updated successfully")
-		}
 	}
-
 	return
-}
-
-func setSliceOptions(qry *metadata.Query, activeSlices redisUtil.SliceStates, storageType string, maxSlice int) {
-	slicesByConnect := make(map[string][]redisUtil.SliceState)
-	for _, slice := range activeSlices {
-		if slice.ConnectInfo != "" {
-			slicesByConnect[slice.ConnectInfo] = append(slicesByConnect[slice.ConnectInfo], slice)
-		}
-	}
-
-	for connectAddr, slices := range slicesByConnect {
-		if len(slices) > 0 {
-			firstSlice := slices[0]
-			option := &metadata.ResultTableOption{}
-
-			switch storageType {
-			case "elasticsearch", "es":
-				option.SliceID = &firstSlice.SliceID
-				option.SliceMax = &maxSlice
-				if firstSlice.ScrollID != "" {
-					option.ScrollID = firstSlice.ScrollID
-				}
-			case "bk_sql", "doris":
-				fromOffset := int(firstSlice.StartOffset)
-				option.From = &fromOffset
-			default:
-				fromOffset := int(firstSlice.StartOffset)
-				option.From = &fromOffset
-			}
-
-			qry.ResultTableOptions.SetOption(qry.TableID, connectAddr, option)
-		}
-	}
-}
-
-func updateSliceStatus(rtState *redisUtil.RTState, activeSlices redisUtil.SliceStates, status string, errorMsg string, options metadata.ResultTableOptions) {
-	if rtState == nil || len(activeSlices) == 0 {
-		return
-	}
-
-	for i := range rtState.SliceStates {
-		for j, activeSlice := range activeSlices {
-			if rtState.SliceStates[i].SliceID == activeSlice.SliceID {
-				rtState.SliceStates[i].Status = status
-				rtState.SliceStates[i].ErrorMsg = errorMsg
-
-				if status == redisUtil.SliceStatusFailed {
-					rtState.SliceStates[i].RetryCount++
-				}
-
-				if status == redisUtil.SliceStatusDone && options != nil && activeSlice.ConnectInfo != "" {
-					option := options.GetOption(rtState.Query.TableID, activeSlice.ConnectInfo)
-					if option != nil && option.ScrollID != "" {
-						rtState.SliceStates[i].ScrollID = option.ScrollID
-					}
-				}
-
-				activeSlices[j] = rtState.SliceStates[i]
-				break
-			}
-		}
-	}
-
-	hasMoreData := false
-	for _, slice := range rtState.SliceStates {
-		if slice.Status == redisUtil.SliceStatusRunning ||
-			(slice.Status == redisUtil.SliceStatusFailed && slice.RetryCount < slice.MaxRetries) {
-			hasMoreData = true
-			break
-		}
-	}
-	rtState.HasMoreData = hasMoreData
-}
-
-func initializeSlicesForQuery(qry *metadata.Query, limit int64) redisUtil.SliceStates {
-	if qry == nil {
-		return nil
-	}
-
-	connectInfos := getQueryConnections(qry)
-	if len(connectInfos) == 0 {
-		return redisUtil.SliceStates{
-			{
-				SliceID:     0,
-				StartOffset: 0,
-				EndOffset:   limit,
-				Size:        limit,
-				Status:      redisUtil.SliceStatusRunning,
-				MaxRetries:  3,
-				ConnectInfo: "",
-			},
-		}
-	}
-
-	var slices redisUtil.SliceStates
-	for i, connectInfo := range connectInfos {
-		slice := redisUtil.SliceState{
-			SliceID:     i,
-			StartOffset: 0,
-			EndOffset:   limit,
-			Size:        limit,
-			Status:      redisUtil.SliceStatusRunning,
-			MaxRetries:  3,
-			ConnectInfo: connectInfo,
-		}
-		slices = append(slices, slice)
-	}
-
-	return slices
-}
-
-func getQueryConnections(qry *metadata.Query) []string {
-	instance := prometheus.GetTsDbInstance(context.Background(), qry)
-	if instance == nil {
-		return []string{""}
-	}
-
-	return []string{qry.StorageID}
 }

@@ -29,7 +29,7 @@ type ClusterRecord struct {
 	ClusterID int64 `json:"cluster_id" gorm:"index;comment:'存储集群ID'"`
 
 	// IsDeleted indicates whether the record is deleted or stopped.
-	IsDeleted bool `json:"is_deleted" gorm:"default:false;comment:'是否删除/停用'"`
+	IsDeleted bool `json:"is_deleted" gorm:"comment:'是否删除/停用'"`
 
 	// IsCurrent indicates whether the record is the current latest storage cluster.
 	IsCurrent bool `json:"is_current" gorm:"default:false;comment:'是否是当前最新存储集群'"`

@@ -17,7 +17,6 @@ import (
 	"io"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -341,22 +340,20 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 
 		if qb.Scroll != "" {
-			// 检查是否有 slice 信息传递
-			sliceID, maxSlice, hasSlice := i.parseSliceInfo(qb.ScrollIDs)
-
-			if hasSlice {
-				// 使用指定的 slice 进行查询
-				span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", sliceID, maxSlice))
-				scrollService := client.Scroll(qo.indexes...).
-					Scroll(qb.Scroll).
-					SearchSource(source).
-					Slice(elastic.NewSliceQuery().Id(sliceID).Max(maxSlice))
-				res, err = scrollService.Do(ctx)
-			} else {
-				// 普通 scroll 查询
-				span.Set("query-scroll", qb.Scroll)
-				res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source).Do(ctx)
+			scrollService := client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source)
+			if qb.ResultTableOptions != nil {
+				option := qb.ResultTableOptions.GetOption(qb.TableID, qo.conn.Address)
+				if option != nil {
+					if option.ScrollID != "" {
+						scrollService.ScrollId(option.ScrollID)
+					}
+					if option.SliceID != nil && option.SliceMax != nil {
+						span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", *option.SliceID, *option.SliceMax))
+						scrollService.Slice(elastic.NewSliceQuery().Id(*option.SliceID).Max(*option.SliceMax))
+					}
+				}
 			}
+			res, err = scrollService.Do(ctx)
 		} else {
 			span.Set("query-from", qb.From)
 			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
@@ -862,28 +859,4 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 func (i *Instance) InstanceType() string {
 	return consul.ElasticsearchStorageType
-}
-
-// parseSliceInfo 解析 ScrollIDs 中的 slice 信息
-// 格式: ["slice:0:3"] 表示 slice ID 为 0，最大 slice 数为 3
-// 返回: sliceID, maxSlice, hasSlice
-func (i *Instance) parseSliceInfo(scrollIDs []string) (int, int, bool) {
-	if len(scrollIDs) == 0 {
-		return 0, 0, false
-	}
-
-	for _, scrollID := range scrollIDs {
-		if strings.HasPrefix(scrollID, "slice:") {
-			parts := strings.Split(scrollID, ":")
-			if len(parts) == 3 {
-				sliceID, err1 := strconv.Atoi(parts[1])
-				maxSlice, err2 := strconv.Atoi(parts[2])
-				if err1 == nil && err2 == nil {
-					return sliceID, maxSlice, true
-				}
-			}
-		}
-	}
-
-	return 0, 0, false
 }

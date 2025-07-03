@@ -47,6 +47,240 @@ func setupMiniRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 	return mr, client
 }
 
+func TestSetSliceOptions(t *testing.T) {
+	t.Run("ES slice options", func(t *testing.T) {
+		qry := &metadata.Query{
+			TableID:            "test_table",
+			ResultTableOptions: make(metadata.ResultTableOptions),
+		}
+
+		activeSlices := redisUtil.SliceStates{
+			{
+				SliceID:     0,
+				StartOffset: 0,
+				EndOffset:   1000,
+				Size:        1000,
+				Status:      redisUtil.SliceStatusRunning,
+				ConnectInfo: "http://127.0.0.1:9200",
+				ScrollID:    "scroll_123",
+			},
+			{
+				SliceID:     1,
+				StartOffset: 0,
+				EndOffset:   1000,
+				Size:        1000,
+				Status:      redisUtil.SliceStatusRunning,
+				ConnectInfo: "http://127.0.0.1:9200",
+				ScrollID:    "scroll_456",
+			},
+		}
+
+		setSliceOptions(qry, activeSlices, "elasticsearch", 3)
+
+		option := qry.ResultTableOptions.GetOption("test_table", "http://127.0.0.1:9200")
+		assert.NotNil(t, option, "ES slice option应该被设置")
+		assert.NotNil(t, option.SliceID, "SliceID应该被设置")
+		assert.NotNil(t, option.SliceMax, "SliceMax应该被设置")
+		assert.Equal(t, 0, *option.SliceID, "SliceID应该为0")
+		assert.Equal(t, 3, *option.SliceMax, "SliceMax应该为3")
+		assert.Equal(t, "scroll_123", option.ScrollID, "ScrollID应该被设置")
+	})
+
+	t.Run("Doris slice options", func(t *testing.T) {
+		qry := &metadata.Query{
+			TableID:            "test_table",
+			ResultTableOptions: make(metadata.ResultTableOptions),
+		}
+
+		activeSlices := redisUtil.SliceStates{
+			{
+				SliceID:     0,
+				StartOffset: 1000,
+				EndOffset:   2000,
+				Size:        1000,
+				Status:      redisUtil.SliceStatusRunning,
+				ConnectInfo: "http://127.0.0.1:8030",
+			},
+			{
+				SliceID:     1,
+				StartOffset: 2000,
+				EndOffset:   3000,
+				Size:        1000,
+				Status:      redisUtil.SliceStatusRunning,
+				ConnectInfo: "http://127.0.0.1:8030",
+			},
+		}
+
+		setSliceOptions(qry, activeSlices, "doris", 3)
+
+		option := qry.ResultTableOptions.GetOption("test_table", "http://127.0.0.1:8030")
+		assert.NotNil(t, option, "Doris slice option应该被设置")
+		assert.NotNil(t, option.From, "From应该被设置")
+		assert.Equal(t, 1000, *option.From, "From应该为1000")
+	})
+
+	t.Run("Multiple connections slice options", func(t *testing.T) {
+		qry := &metadata.Query{
+			TableID:            "test_table",
+			ResultTableOptions: make(metadata.ResultTableOptions),
+		}
+
+		activeSlices := redisUtil.SliceStates{
+			{
+				SliceID:     0,
+				StartOffset: 0,
+				EndOffset:   1000,
+				Size:        1000,
+				Status:      redisUtil.SliceStatusRunning,
+				ConnectInfo: "http://127.0.0.1:9200",
+				ScrollID:    "scroll_1",
+			},
+			{
+				SliceID:     1,
+				StartOffset: 0,
+				EndOffset:   1000,
+				Size:        1000,
+				Status:      redisUtil.SliceStatusRunning,
+				ConnectInfo: "http://127.0.0.1:9201",
+				ScrollID:    "scroll_2",
+			},
+		}
+
+		setSliceOptions(qry, activeSlices, "elasticsearch", 2)
+
+		option1 := qry.ResultTableOptions.GetOption("test_table", "http://127.0.0.1:9200")
+		option2 := qry.ResultTableOptions.GetOption("test_table", "http://127.0.0.1:9201")
+
+		assert.NotNil(t, option1, "第一个连接的option应该被设置")
+		assert.NotNil(t, option2, "第二个连接的option应该被设置")
+
+		assert.Equal(t, 0, *option1.SliceID, "第一个连接的SliceID应该为0")
+		assert.Equal(t, 1, *option2.SliceID, "第二个连接的SliceID应该为1")
+		assert.Equal(t, "scroll_1", option1.ScrollID, "第一个连接的ScrollID应该正确")
+		assert.Equal(t, "scroll_2", option2.ScrollID, "第二个连接的ScrollID应该正确")
+	})
+
+	t.Run("Default slice options", func(t *testing.T) {
+		qry := &metadata.Query{
+			TableID:            "test_table",
+			ResultTableOptions: make(metadata.ResultTableOptions),
+		}
+
+		activeSlices := redisUtil.SliceStates{
+			{
+				SliceID:     0,
+				StartOffset: 500,
+				EndOffset:   1500,
+				Size:        1000,
+				Status:      redisUtil.SliceStatusRunning,
+				ConnectInfo: "http://127.0.0.1:8080",
+			},
+		}
+
+		setSliceOptions(qry, activeSlices, "unknown", 3)
+
+		option := qry.ResultTableOptions.GetOption("test_table", "http://127.0.0.1:8080")
+		assert.NotNil(t, option, "默认slice option应该被设置")
+		assert.NotNil(t, option.From, "From应该被设置")
+		assert.Equal(t, 500, *option.From, "From应该为500")
+		assert.Nil(t, option.SliceID, "默认类型不应该设置SliceID")
+		assert.Nil(t, option.SliceMax, "默认类型不应该设置SliceMax")
+	})
+}
+
+func TestQueryRawWithScrollSliceIntegration(t *testing.T) {
+	mr, redisClient := setupMiniRedis(t)
+	defer teardownMiniRedis(mr, redisClient)
+
+	ctx := context.Background()
+	options := &redis.UniversalOptions{
+		Addrs: []string{mr.Addr()},
+		DB:    0,
+	}
+	err := redisUtil.SetInstance(ctx, "test", options)
+	assert.NoError(t, err)
+
+	queryTs := &structured.QueryTs{
+		QueryList: []*structured.Query{
+			{
+				TableID: "test_table_es",
+			},
+		},
+		Start:      "1723594000",
+		End:        "1723595000",
+		Step:       "60s",
+		Limit:      1000,
+		Scroll:     "5m",
+		ClearCache: true,
+	}
+
+	user := &metadata.User{Name: "test_user"}
+	ctx = metadata.InitHashID(ctx)
+	metadata.SetUser(ctx, user)
+
+	queryTsKey, err := redisUtil.ScrollGenerateQueryTsKey(queryTs, user.Name)
+	assert.NoError(t, err)
+
+	sessionKey := redisUtil.GetSessionKey(queryTsKey)
+
+	session := &redisUtil.SessionObject{
+		QueryReference: map[string]*redisUtil.RTState{
+			"test_table_es": {
+				Type:        "elasticsearch",
+				HasMoreData: true,
+				SliceStates: []redisUtil.SliceState{
+					{
+						SliceID:     0,
+						StartOffset: 0,
+						EndOffset:   1000,
+						Size:        1000,
+						Status:      redisUtil.SliceStatusRunning,
+						MaxRetries:  3,
+						ConnectInfo: "http://127.0.0.1:9200",
+						ScrollID:    "scroll_123",
+					},
+					{
+						SliceID:     1,
+						StartOffset: 0,
+						EndOffset:   1000,
+						Size:        1000,
+						Status:      redisUtil.SliceStatusRunning,
+						MaxRetries:  3,
+						ConnectInfo: "http://127.0.0.1:9201",
+						ScrollID:    "scroll_456",
+					},
+				},
+			},
+		},
+		ScrollTimeout: time.Minute * 5,
+		LockTimeout:   time.Second * 30,
+		MaxSlice:      3,
+		Limit:         1000,
+	}
+
+	err = redisUtil.ScrollUpdateSession(ctx, sessionKey, session)
+	assert.NoError(t, err)
+
+	t.Logf("测试session已创建，sessionKey: %s", sessionKey)
+
+	rtState := session.QueryReference["test_table_es"]
+	assert.NotNil(t, rtState, "RTState应该存在")
+	assert.Equal(t, "elasticsearch", rtState.Type, "RTState类型应该为elasticsearch")
+	assert.Equal(t, 2, len(rtState.SliceStates), "应该有2个slice")
+
+	activeSlices, err := rtState.PickSlices(3, 2)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(activeSlices), "应该返回2个active slice")
+
+	for i, slice := range activeSlices {
+		assert.Equal(t, i, slice.SliceID, "SliceID应该连续")
+		assert.Equal(t, redisUtil.SliceStatusRunning, slice.Status, "Slice状态应该为running")
+		assert.NotEmpty(t, slice.ConnectInfo, "ConnectInfo不应该为空")
+	}
+
+	t.Logf("PickSlices测试完成，返回%d个active slice", len(activeSlices))
+}
+
 func teardownMiniRedis(mr *miniredis.Miniredis, client *redis.Client) {
 	if client != nil {
 		client.Close()
@@ -168,7 +402,14 @@ func TestQueryRawWithScroll_WithMiniRedis(t *testing.T) {
 				influxdb.ResultTableEs: {
 					Type:        "es",
 					HasMoreData: true,
-					ScrollIDs:   []string{"test_scroll_id"},
+					SliceStates: []redisUtil.SliceState{
+						{
+							SliceID:     0,
+							Status:      redisUtil.SliceStatusRunning,
+							ScrollID:    "test_scroll_id",
+							ConnectInfo: "http://127.0.0.1:9200",
+						},
+					},
 				},
 			},
 		}
@@ -348,7 +589,6 @@ func TestQueryRawWithScroll_MainFlow(t *testing.T) {
 				influxdb.ResultTableEs: {
 					Type:        "es",
 					HasMoreData: true,
-					ScrollIDs:   []string{"test_scroll_id"},
 					SliceStates: []redisUtil.SliceState{
 						{
 							SliceID:     0,
@@ -390,8 +630,8 @@ func TestQueryRawWithScroll_MainFlow(t *testing.T) {
 		restoredSession.Index = 2
 
 		if rtState, exists := restoredSession.QueryReference[influxdb.ResultTableEs]; exists {
-			rtState.ScrollIDs = []string{"test_scroll_id_2"}
 			if len(rtState.SliceStates) > 0 {
+				rtState.SliceStates[0].ScrollID = "test_scroll_id_2"
 				rtState.SliceStates[0].EndOffset = 10
 			}
 		}
@@ -474,7 +714,6 @@ func TestQueryRawWithScroll_ESSliceGeneration(t *testing.T) {
 		rtState := &redisUtil.RTState{
 			Type:        "es",
 			HasMoreData: true,
-			ScrollIDs:   []string{"scroll_id_1", "scroll_id_2", "scroll_id_3"},
 			SliceStates: []redisUtil.SliceState{
 				{
 					SliceID:     0,
@@ -483,6 +722,8 @@ func TestQueryRawWithScroll_ESSliceGeneration(t *testing.T) {
 					Size:        333,
 					Status:      redisUtil.SliceStatusRunning,
 					MaxRetries:  3,
+					ScrollID:    "scroll_id_1",
+					ConnectInfo: "http://127.0.0.1:9200",
 				},
 				{
 					SliceID:     1,
@@ -491,6 +732,8 @@ func TestQueryRawWithScroll_ESSliceGeneration(t *testing.T) {
 					Size:        333,
 					Status:      redisUtil.SliceStatusRunning,
 					MaxRetries:  3,
+					ScrollID:    "scroll_id_2",
+					ConnectInfo: "http://127.0.0.1:9200",
 				},
 				{
 					SliceID:     2,
@@ -499,12 +742,22 @@ func TestQueryRawWithScroll_ESSliceGeneration(t *testing.T) {
 					Size:        334,
 					Status:      redisUtil.SliceStatusRunning,
 					MaxRetries:  3,
+					ScrollID:    "scroll_id_3",
+					ConnectInfo: "http://127.0.0.1:9200",
 				},
 			},
 		}
 
 		assert.Equal(t, 3, len(rtState.SliceStates), "应该有3个slice")
-		assert.Equal(t, 3, len(rtState.ScrollIDs), "应该有3个scroll ID")
+
+		// 验证每个slice都有scroll ID
+		scrollIDCount := 0
+		for _, slice := range rtState.SliceStates {
+			if slice.ScrollID != "" {
+				scrollIDCount++
+			}
+		}
+		assert.Equal(t, 3, scrollIDCount, "应该有3个scroll ID")
 
 		totalSize := int64(0)
 		for i, slice := range rtState.SliceStates {
@@ -572,16 +825,18 @@ func TestQueryRawWithScroll_ESSliceGeneration(t *testing.T) {
 				i, slice.Size, slice.StartOffset, slice.SliceID, len(rtState.SliceStates))
 		}
 
-		for i, scrollID := range rtState.ScrollIDs {
-			scrollDSL := map[string]interface{}{
-				"scroll":    "5m",
-				"scroll_id": scrollID,
+		for i, slice := range rtState.SliceStates {
+			if slice.ScrollID != "" {
+				scrollDSL := map[string]interface{}{
+					"scroll":    "5m",
+					"scroll_id": slice.ScrollID,
+				}
+
+				assert.Equal(t, "5m", scrollDSL["scroll"], "scroll时间应该正确")
+				assert.Equal(t, slice.ScrollID, scrollDSL["scroll_id"], "scroll ID应该正确")
+
+				t.Logf("ES Scroll %d DSL: scroll_id=%s", i, slice.ScrollID)
 			}
-
-			assert.Equal(t, "5m", scrollDSL["scroll"], "scroll时间应该正确")
-			assert.Equal(t, scrollID, scrollDSL["scroll_id"], "scroll ID应该正确")
-
-			t.Logf("ES Scroll %d DSL: scroll_id=%s", i, scrollID)
 		}
 
 		t.Logf("ES slice DSL生成测试完成")
@@ -734,11 +989,10 @@ func TestQueryRawWithScroll_ConcurrentSliceQueries(t *testing.T) {
 		esRTState := &redisUtil.RTState{
 			Type:        "es",
 			HasMoreData: true,
-			ScrollIDs:   []string{"es_scroll_1", "es_scroll_2", "es_scroll_3"},
 			SliceStates: []redisUtil.SliceState{
-				{SliceID: 0, StartOffset: 0, EndOffset: 500, Size: 500, Status: redisUtil.SliceStatusRunning, MaxRetries: 3},
-				{SliceID: 1, StartOffset: 500, EndOffset: 1000, Size: 500, Status: redisUtil.SliceStatusRunning, MaxRetries: 3},
-				{SliceID: 2, StartOffset: 1000, EndOffset: 1500, Size: 500, Status: redisUtil.SliceStatusRunning, MaxRetries: 3},
+				{SliceID: 0, StartOffset: 0, EndOffset: 500, Size: 500, Status: redisUtil.SliceStatusRunning, MaxRetries: 3, ScrollID: "es_scroll_1", ConnectInfo: "http://127.0.0.1:9200"},
+				{SliceID: 1, StartOffset: 500, EndOffset: 1000, Size: 500, Status: redisUtil.SliceStatusRunning, MaxRetries: 3, ScrollID: "es_scroll_2", ConnectInfo: "http://127.0.0.1:9200"},
+				{SliceID: 2, StartOffset: 1000, EndOffset: 1500, Size: 500, Status: redisUtil.SliceStatusRunning, MaxRetries: 3, ScrollID: "es_scroll_3", ConnectInfo: "http://127.0.0.1:9200"},
 			},
 		}
 
@@ -753,7 +1007,15 @@ func TestQueryRawWithScroll_ConcurrentSliceQueries(t *testing.T) {
 		}
 
 		assert.Equal(t, 3, len(esRTState.SliceStates), "ES应该有3个slice")
-		assert.Equal(t, 3, len(esRTState.ScrollIDs), "ES应该有3个scroll ID")
+
+		// 验证每个ES slice都有scroll ID
+		esScrollIDCount := 0
+		for _, slice := range esRTState.SliceStates {
+			if slice.ScrollID != "" {
+				esScrollIDCount++
+			}
+		}
+		assert.Equal(t, 3, esScrollIDCount, "ES应该有3个scroll ID")
 
 		esTotal := int64(0)
 		for _, slice := range esRTState.SliceStates {
@@ -793,7 +1055,7 @@ func TestQueryRawWithScroll_ConcurrentSliceQueries(t *testing.T) {
 				assert.Equal(t, s.SliceID, sliceConfig["id"], "ES slice ID应该正确")
 
 				results <- fmt.Sprintf("ES_slice_%d_completed", sliceID)
-			}(i, slice, esRTState.ScrollIDs[i])
+			}(i, slice, slice.ScrollID)
 		}
 
 		for i, slice := range dorisRTState.SliceStates {

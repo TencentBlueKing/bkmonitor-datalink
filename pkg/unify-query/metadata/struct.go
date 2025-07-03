@@ -157,7 +157,6 @@ type Query struct {
 	Orders      Orders    `json:"orders,omitempty"`
 	NeedAddTime bool      `json:"need_add_time,omitempty"`
 	Collapse    *Collapse `json:"collapse,omitempty"`
-	ScrollIDs   []string  `json:"scroll_ids,omitempty"` // Scroll ID 列表
 }
 
 func (q *Query) VMExpand() *VmExpand {

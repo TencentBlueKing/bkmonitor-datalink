@@ -11,11 +11,10 @@ package redis
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -46,135 +45,138 @@ type RTState struct {
 	Query       *metadata.Query `json:"query"`
 	Type        string          `json:"type"`
 	Offset      int64           `json:"offset"`
-	ScrollIDs   []string        `json:"scroll_ids"`
 	HasMoreData bool            `json:"has_more_data"`
-	SliceStates []SliceState    `json:"slice_states"`
+	SliceStates SliceStates     `json:"slice_states"`
 }
 
-func (r *RTState) PickSlices(maxRunningCount, maxFailedCount int) ([]SliceState, error) {
+type SliceStates []SliceState
+
+func (r *RTState) PickSlices(maxRunningCount, maxFailedCount int) (SliceStates, error) {
 	if r == nil {
 		return nil, fmt.Errorf("RTState is nil")
 	}
 
-	remainSlices, filteredSlices := r.collectRTSlices([]string{SliceStatusRunning, SliceStatusFailed}, filterRunningAndFailedSlicesCallback)
-	if filteredSlices != nil && len(filteredSlices) > maxFailedCount {
-		return nil, fmt.Errorf("too many failed slices: %d, max allowed: %d", len(filteredSlices), maxFailedCount)
-	}
-	if len(remainSlices) < maxRunningCount {
-		var lastOne SliceState
-		if len(remainSlices) > 0 {
-			lastOne = remainSlices[len(remainSlices)-1]
-		} else {
-			lastOne = SliceState{
-				SliceID:     -1,
-				StartOffset: 0,
-				EndOffset:   1000,
-				Size:        1000,
-				Status:      SliceStatusRunning,
-				MaxRetries:  3,
-			}
-		}
-		r.SliceStates = remainSlices
-		r.SliceStates = r.makeUpSlices(lastOne, maxRunningCount)
-	} else {
-		r.SliceStates = remainSlices
+	activeSlices := r.getActiveSlices()
+
+	failedCount := r.countFailedSlices(activeSlices)
+	if failedCount > maxFailedCount {
+		return nil, fmt.Errorf("too many failed slices: %d, max allowed: %d", failedCount, maxFailedCount)
 	}
 
+	if len(activeSlices) < maxRunningCount {
+		activeSlices = r.ensureSliceCount(activeSlices, maxRunningCount)
+	}
+
+	r.SliceStates = activeSlices
 	return r.SliceStates, nil
-
 }
 
-func (r *RTState) makeUpSlices(lastOne SliceState, count int) []SliceState {
-	if count <= 0 {
-		return r.SliceStates
-	}
-
+func (r *RTState) getActiveSlices() SliceStates {
 	if r.SliceStates == nil {
-		r.SliceStates = make([]SliceState, 0, count)
+		return nil
 	}
 
-	currentCount := len(r.SliceStates)
-	if currentCount >= count {
-		return r.SliceStates
+	var activeSlices SliceStates
+	for _, slice := range r.SliceStates {
+		if r.isSliceActive(slice) {
+			activeSlices = append(activeSlices, slice)
+		}
 	}
-
-	needToCreate := count - currentCount
-	startOffset := lastOne.EndOffset
-
-	for i := 0; i < needToCreate; i++ {
-		r.SliceStates = append(r.SliceStates, SliceState{
-			SliceID:     currentCount + i,
-			StartOffset: startOffset,
-			EndOffset:   startOffset + lastOne.Size,
-			Status:      SliceStatusRunning,
-			Size:        lastOne.Size,
-			ErrorMsg:    "",
-			RetryCount:  0,
-			MaxRetries:  lastOne.MaxRetries,
-		})
-		startOffset += lastOne.Size
-	}
-
-	return r.SliceStates
+	return activeSlices
 }
 
-var filterRunningAndFailedSlicesCallback = func(r SliceState) bool {
-	if r.Status == SliceStatusRunning {
+func (r *RTState) isSliceActive(slice SliceState) bool {
+	if slice.Status == SliceStatusRunning {
 		return true
 	}
-	if r.Status == SliceStatusFailed && r.RetryCount < r.MaxRetries {
+	if slice.Status == SliceStatusFailed && slice.RetryCount < slice.MaxRetries {
 		return true
 	}
 	return false
 }
 
-func (r *RTState) collectRTSlices(status []string, filterCb func(r SliceState) bool) ([]SliceState, []SliceState) {
-	if r == nil || r.SliceStates == nil {
-		return nil, nil
-	}
-
-	statusSet := set.New[string]()
-	for _, s := range status {
-		statusSet.Add(s)
-	}
-
-	remainSliceStates := make([]SliceState, 0)
-	filteredSliceStates := make([]SliceState, 0)
-	for _, slice := range r.SliceStates {
-		if filterCb != nil && !filterCb(slice) {
-			remainSliceStates = append(remainSliceStates, slice)
-			continue
-		}
-		if statusSet.Existed(slice.Status) {
-			filteredSliceStates = append(filteredSliceStates, slice)
-		} else {
-			remainSliceStates = append(remainSliceStates, slice)
+func (r *RTState) countFailedSlices(slices SliceStates) int {
+	count := 0
+	for _, slice := range slices {
+		if slice.Status == SliceStatusFailed {
+			count++
 		}
 	}
-	return remainSliceStates, filteredSliceStates
+	return count
+}
+
+func (r *RTState) ensureSliceCount(currentSlices SliceStates, targetCount int) SliceStates {
+	if len(currentSlices) >= targetCount {
+		return currentSlices
+	}
+
+	template := r.getSliceTemplate(currentSlices)
+
+	for len(currentSlices) < targetCount {
+		newSlice := r.createNextSlice(template, len(currentSlices))
+		currentSlices = append(currentSlices, newSlice)
+	}
+
+	return currentSlices
+}
+
+func (r *RTState) getSliceTemplate(slices SliceStates) SliceState {
+	if len(slices) > 0 {
+		maxSlice := slices[0]
+		for _, slice := range slices {
+			if slice.SliceID > maxSlice.SliceID {
+				maxSlice = slice
+			}
+		}
+		return maxSlice
+	}
+
+	return SliceState{
+		SliceID:     -1,
+		StartOffset: 0,
+		EndOffset:   1000,
+		Size:        1000,
+		Status:      SliceStatusRunning,
+		MaxRetries:  3,
+	}
+}
+
+func (r *RTState) createNextSlice(template SliceState, currentIndex int) SliceState {
+	newSlice := SliceState{
+		SliceID:     currentIndex,
+		StartOffset: template.EndOffset + int64(currentIndex-template.SliceID-1)*template.Size,
+		EndOffset:   template.EndOffset + int64(currentIndex-template.SliceID)*template.Size,
+		Size:        template.Size,
+		Status:      SliceStatusRunning,
+		ErrorMsg:    "",
+		RetryCount:  0,
+		MaxRetries:  template.MaxRetries,
+		ScrollID:    "",
+		ConnectInfo: template.ConnectInfo,
+	}
+
+	if template.SliceID == -1 {
+		newSlice.SliceID = currentIndex
+		newSlice.StartOffset = int64(currentIndex) * template.Size
+		newSlice.EndOffset = int64(currentIndex+1) * template.Size
+	}
+
+	return newSlice
 }
 
 type SliceState struct {
 	SliceID     int    `json:"slice_id"`
 	StartOffset int64  `json:"start_offset"`
 	EndOffset   int64  `json:"end_offset"`
-	Size        int64  `json:"size"`        // slice数据量 (从Query.Limit获取)
-	Status      string `json:"status"`      // slice状态: "running", "done", "failed"
-	ErrorMsg    string `json:"error_msg"`   // 错误信息 (仅当status为failed时)
-	RetryCount  int    `json:"retry_count"` // 重试次数
-	MaxRetries  int    `json:"max_retries"` // 最大重试次数 (默认3次)
+	Size        int64  `json:"size"`         // slice数据量 (从Query.Limit获取)
+	Status      string `json:"status"`       // slice状态: "running", "done", "failed"
+	ErrorMsg    string `json:"error_msg"`    // 错误信息 (仅当status为failed时)
+	RetryCount  int    `json:"retry_count"`  // 重试次数
+	MaxRetries  int    `json:"max_retries"`  // 最大重试次数 (默认3次)
+	ScrollID    string `json:"scroll_id"`    // ES scroll ID for this slice
+	ConnectInfo string `json:"connect_info"` // 连接信息，支持不同connect的tableID
 }
 
-// ScrollResponse scroll查询响应结构
-type ScrollResponse struct {
-	QueryTs     string           `json:"query_ts"`     // 会话标识
-	Total       int64            `json:"total"`        // 本次返回数据量
-	List        []map[string]any `json:"list"`         // 数据列表
-	HasMore     bool             `json:"has_more"`     // 是否还有更多数据
-	SessionInfo SessionInfo      `json:"session_info"` // 会话信息
-}
-
-// SessionInfo 会话状态信息
 type SessionInfo struct {
 	Index    int    `json:"index"`     // 当前请求次数
 	MaxSlice int    `json:"max_slice"` // 并发slice数
@@ -193,19 +195,6 @@ func (e *ScrollError) Error() string {
 	return e.Message
 }
 
-type SliceResult struct {
-	SliceID  int   `json:"slice_id"`
-	RowCount int   `json:"row_count"`
-	Error    error `json:"error"`
-}
-
-type SliceQuery struct {
-	SliceID int    `json:"slice_id"`
-	Offset  int64  `json:"offset"`
-	Limit   int    `json:"limit"`
-	Action  string `json:"action"`
-}
-
 const (
 	SessionStatusRunning = "RUNNING"
 	SessionStatusFailed  = "FAILED"
@@ -215,17 +204,6 @@ const (
 	SliceStatusRunning = "running"
 	SliceStatusDone    = "done"
 	SliceStatusFailed  = "failed"
-)
-
-const (
-	ErrorCodeConcurrentRequest = "CONCURRENT_REQUEST"
-	ErrorCodeSessionExpired    = "SESSION_EXPIRED"
-	ErrorCodeLockTimeout       = "LOCK_TIMEOUT"
-	ErrorCodeQueryFailed       = "QUERY_FAILED"
-)
-
-const (
-	ScrollMax = 10
 )
 
 const (
@@ -241,15 +219,20 @@ func GetLockKey(queryTsKey string) string {
 	return LockKeyPrefix + queryTsKey
 }
 
+type QueryTsKey struct {
+	QueryTs  interface{} `json:"queryTs"`
+	Username string      `json:"username"`
+}
+
 var ScrollGenerateQueryTsKey = func(queryTs interface{}, username string) (string, error) {
 	log.Debugf(context.TODO(), "[redis] generate query ts key with username: %s", username)
 
-	keyMap := map[string]interface{}{
-		"queryTs":  queryTs,
-		"username": username,
+	keyStruct := QueryTsKey{
+		QueryTs:  queryTs,
+		Username: username,
 	}
 
-	queryBytes, err := json.Marshal(keyMap)
+	queryBytes, err := json.Marshal(keyStruct)
 	if err != nil {
 		return "", err
 	}
@@ -311,6 +294,10 @@ var ScrollGetOrCreateSession = func(ctx context.Context, sessionKey string, quer
 	if result.Err() == nil {
 		var session SessionObject
 		if err := json.Unmarshal([]byte(result.Val()), &session); err == nil {
+			session.LastAccessAt = time.Now()
+			if updateErr := ScrollUpdateSession(ctx, sessionKey, &session); updateErr != nil {
+				log.Warnf(ctx, "[redis] failed to update session access time: %v", updateErr)
+			}
 			return &session, nil
 		}
 	}

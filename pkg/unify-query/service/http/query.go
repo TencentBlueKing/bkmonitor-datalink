@@ -1017,22 +1017,6 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 						HasMoreData: true,
 					}
 
-					if rtState.Type == "doris" {
-						rtState.Offset = 0
-						rtState.SliceStates = make([]redisUtil.SliceState, session.MaxSlice)
-						for i := 0; i < session.MaxSlice; i++ {
-							rtState.SliceStates[i] = redisUtil.SliceState{
-								SliceID:     i,
-								StartOffset: int64(i * session.Limit),
-								EndOffset:   int64((i+1)*session.Limit - 1),
-								Status:      redisUtil.SliceStatusRunning,
-								MaxRetries:  ScrollSliceMaxRetry,
-							}
-						}
-					} else if rtState.Type == "es" {
-						rtState.ScrollIDs = make([]string, session.MaxSlice)
-					}
-
 					session.QueryReference[qry.TableID] = rtState
 				}
 			}
@@ -1114,30 +1098,18 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 					log.Warnf(ctx, "not exist query reference for %s", qry.TableID)
 					return
 				}
-				activeSlices, err := rtState.PickSlices(ScrollMaxSlice, redisUtil.ScrollMax)
+				activeSlices, err := rtState.PickSlices(ScrollMaxSlice, 10)
 				if err != nil {
 					log.Errorf(ctx, "failed to pick slices for %s: %v", qry.TableID, err)
 					return
 				}
-
-				if rtState.Type == "es" {
-					if len(rtState.ScrollIDs) > 0 {
-						qry.ScrollIDs = make([]string, len(rtState.ScrollIDs))
-						copy(qry.ScrollIDs, rtState.ScrollIDs)
-						log.Debugf(ctx, "Using existing ScrollIDs for %s: %v", qry.TableID, qry.ScrollIDs)
-					} else {
-						scrollIDs := make([]string, 0, len(activeSlices))
-						for _, slice := range activeSlices {
-							if slice.Status == redisUtil.SliceStatusRunning {
-								scrollIDs = append(scrollIDs, "")
-							}
-						}
-						qry.ScrollIDs = scrollIDs
-						log.Debugf(ctx, "Initialized empty ScrollIDs for %s: %v", qry.TableID, qry.ScrollIDs)
-					}
-				}
-
 				rtState.HasMoreData = len(activeSlices) > 0
+				if len(activeSlices) > 0 {
+					if qry.ResultTableOptions == nil {
+						qry.ResultTableOptions = make(metadata.ResultTableOptions)
+					}
+					setSliceOptions(qry, activeSlices, rtState.Type, ScrollMaxSlice)
+				}
 
 				instance := prometheus.GetTsDbInstance(ctx, qry)
 				if instance == nil {
@@ -1149,14 +1121,6 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 				if queryErr != nil {
 					log.Errorf(ctx, "query %s error: %s", qry.TableID, queryErr.Error())
 					return
-				}
-
-				if rtState.Type == "es" && len(qry.ScrollIDs) > 0 {
-					lockMutex.Lock()
-					rtState.ScrollIDs = make([]string, len(qry.ScrollIDs))
-					copy(rtState.ScrollIDs, qry.ScrollIDs)
-					log.Debugf(ctx, "Updated RTState ScrollIDs for %s: %v", qry.TableID, rtState.ScrollIDs)
-					lockMutex.Unlock()
 				}
 
 				lockMutex.Lock()
@@ -1187,4 +1151,37 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 	}
 
 	return
+}
+
+func setSliceOptions(qry *metadata.Query, activeSlices redisUtil.SliceStates, storageType string, maxSlice int) {
+	slicesByConnect := make(map[string][]redisUtil.SliceState)
+	for _, slice := range activeSlices {
+		if slice.ConnectInfo != "" {
+			slicesByConnect[slice.ConnectInfo] = append(slicesByConnect[slice.ConnectInfo], slice)
+		}
+	}
+
+	for connectAddr, slices := range slicesByConnect {
+		if len(slices) > 0 {
+			firstSlice := slices[0]
+			option := &metadata.ResultTableOption{}
+
+			switch storageType {
+			case "elasticsearch", "es":
+				option.SliceID = &firstSlice.SliceID
+				option.SliceMax = &maxSlice
+				if firstSlice.ScrollID != "" {
+					option.ScrollID = firstSlice.ScrollID
+				}
+			case "bk_sql", "doris":
+				fromOffset := int(firstSlice.StartOffset)
+				option.From = &fromOffset
+			default:
+				fromOffset := int(firstSlice.StartOffset)
+				option.From = &fromOffset
+			}
+
+			qry.ResultTableOptions.SetOption(qry.TableID, connectAddr, option)
+		}
+	}
 }

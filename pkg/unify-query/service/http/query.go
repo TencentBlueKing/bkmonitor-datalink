@@ -1147,6 +1147,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 					}
 					total += size
 				}
+
+				session.QueryReference[qry.TableID] = rtState
+				log.Infof(ctx, "Updated rtState for %s: HasMoreData=%v, SliceCount=%d",
+					qry.TableID, rtState.HasMoreData, len(rtState.SliceStates))
 				lockMutex.Unlock()
 			})
 		}

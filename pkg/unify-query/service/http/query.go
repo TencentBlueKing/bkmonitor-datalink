@@ -946,6 +946,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("failed to generate queryTs key: %v", err)
 	}
+	log.Infof(ctx, "Generated queryTsKey: %s", queryTsKey)
 	if queryTs.Limit == 0 {
 		queryTs.Limit = ScrollSliceLimit
 	}
@@ -977,6 +978,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 	}
 
 	if session.IsQueryReferenceEmpty() {
+		log.Infof(ctx, "Initializing new session for queryTs: %+v", queryTs)
 		session.ScrollTimeout = scrollWindowDuration
 		session.LockTimeout = ScrollLockTimeout
 		session.MaxSlice = ScrollMaxSlice
@@ -985,8 +987,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 		if queryTs.SpaceUid == "" {
 			queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
 		}
+		log.Infof(ctx, "Using SpaceUid: %s, QueryList length: %d", queryTs.SpaceUid, len(queryTs.QueryList))
 
-		for _, ql := range queryTs.QueryList {
+		for i, ql := range queryTs.QueryList {
+			log.Infof(ctx, "Processing query %d: TableID=%s, DataSource=%s", i, ql.TableID, ql.DataSource)
 			ql.Timezone = queryTs.Timezone
 			ql.Start = queryTs.Start
 			ql.End = queryTs.End
@@ -1006,11 +1010,14 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 
 			qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
 			if qmErr != nil {
+				log.Errorf(ctx, "Failed to convert query to metric: %v", qmErr)
 				return 0, nil, nil, qmErr
 			}
+			log.Infof(ctx, "ToQueryMetric success, QueryList length: %d", len(qm.QueryList))
 
-			for _, qry := range qm.QueryList {
+			for j, qry := range qm.QueryList {
 				if qry != nil {
+					log.Infof(ctx, "Creating RTState for query %d.%d: TableID=%s, StorageType=%s", i, j, qry.TableID, qry.StorageType)
 					rtState := &redisUtil.RTState{
 						Query:       qry,
 						Type:        qry.StorageType,
@@ -1018,16 +1025,21 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 					}
 
 					rtState.SliceStates = initializeSlicesForQuery(qry, int64(queryTs.Limit))
+					log.Infof(ctx, "Initialized %d slices for TableID: %s", len(rtState.SliceStates), qry.TableID)
 
 					session.QueryReference[qry.TableID] = rtState
 				}
 			}
 		}
+		log.Infof(ctx, "Session initialization complete, QueryReference length: %d", len(session.QueryReference))
+	} else {
+		log.Infof(ctx, "Using existing session with %d query references", len(session.QueryReference))
 	}
 
 	session.LastAccessAt = time.Now()
 	session.Index++
 
+	log.Infof(ctx, "About to save session with %d query references", len(session.QueryReference))
 	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if timeErr != nil {
 		return 0, nil, nil, timeErr
@@ -1148,8 +1160,11 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 			log.Warnf(ctx, "failed to delete completed session: %v", err)
 		}
 	} else {
+		log.Infof(ctx, "Updating session with %d query references", len(session.QueryReference))
 		if err := redisUtil.ScrollUpdateSession(ctx, sessionKey, session); err != nil {
 			log.Warnf(ctx, "failed to update session: %v", err)
+		} else {
+			log.Infof(ctx, "Session updated successfully")
 		}
 	}
 

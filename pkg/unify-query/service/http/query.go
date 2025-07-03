@@ -1147,6 +1147,8 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 					}
 					total += size
 				}
+
+				session.QueryReference[qry.TableID] = rtState
 				lockMutex.Unlock()
 			})
 		}

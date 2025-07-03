@@ -39,7 +39,7 @@ func TestClusterInfo_GetESClient(t *testing.T) {
 	assert.Nil(t, client)
 	cluster.ClusterType = models.StorageTypeES
 	// 测试获取客户端
-	patchESPing := gomonkey.ApplyFuncReturn(elasticsearch.Elasticsearch.Ping, nil, nil)
+	patchESPing := gomonkey.ApplyFuncReturn(elasticsearch.Elasticsearch.Ping, &elasticsearch.Response{}, nil)
 	defer patchESPing.Reset()
 	client, err = cluster.GetESClient(context.TODO())
 	assert.Nil(t, err)

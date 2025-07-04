@@ -598,3 +598,95 @@ processor:
 		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "app.v1")
 	})
 }
+
+func TestMetricsDefaultValueAction(t *testing.T) {
+	const content = `
+processor:
+    - name: "resource_filter/default_value"
+      config:
+        default_value:
+          - type: string
+            key: resource.service.name
+            value: "unknown_service"
+`
+
+	factory := processor.MustCreateFactory(content, NewFactory)
+	t.Run("default_value", func(t *testing.T) {
+		g := makeMetricsGenerator(1, "bool")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+		}
+
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
+		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "unknown_service")
+	})
+
+	t.Run("skip default_value", func(t *testing.T) {
+		g := makeMetricsGenerator(1, "bool")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+		}
+
+		attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
+		attrs.InsertString("service.name", "app.v1")
+
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs = record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
+		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "app.v1")
+	})
+}
+
+func TestLogsDefaultValueAction(t *testing.T) {
+	const content = `
+processor:
+    - name: "resource_filter/default_value"
+      config:
+        default_value:
+          - type: string
+            key: resource.service.name
+            value: "unknown_service"
+`
+
+	factory := processor.MustCreateFactory(content, NewFactory)
+	t.Run("default_value", func(t *testing.T) {
+		g := makeLogsGenerator(1, 10, "bool")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       data,
+		}
+
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
+		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "unknown_service")
+	})
+
+	t.Run("skip default_value", func(t *testing.T) {
+		g := makeLogsGenerator(1, 10, "bool")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       data,
+		}
+
+		attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
+		attrs.InsertString("service.name", "app.v1")
+
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs = record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
+		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "app.v1")
+	})
+}

@@ -154,7 +154,7 @@ func TestSkywalkingFetcher(t *testing.T) {
 		assert.Equal(t, "sn1", config.Sn)
 	})
 
-	t.Run("Value", func(t *testing.T) {
+	t.Run("Default", func(t *testing.T) {
 		var fetcher SkywalkingConfigFetcher
 		config := fetcher.Fetch("token1")
 		assert.Equal(t, "", config.Sn)

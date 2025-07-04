@@ -55,6 +55,13 @@ func SpansRemoveIf(resourceSpansSlice ptrace.ResourceSpansSlice, f func(span ptr
 	})
 }
 
+func SpansSliceResource(resourceSpansSlice ptrace.ResourceSpansSlice, f func(rs pcommon.Resource)) {
+	for i := 0; i < resourceSpansSlice.Len(); i++ {
+		resourceSpans := resourceSpansSlice.At(i)
+		f(resourceSpans.Resource())
+	}
+}
+
 func Metrics(resourceMetricsSlice pmetric.ResourceMetricsSlice, f func(metric pmetric.Metric)) {
 	for i := 0; i < resourceMetricsSlice.Len(); i++ {
 		scopeMetricsSlice := resourceMetricsSlice.At(i).ScopeMetrics()
@@ -69,15 +76,22 @@ func Metrics(resourceMetricsSlice pmetric.ResourceMetricsSlice, f func(metric pm
 
 func MetricsWithResourceAttrs(resourceMetricsSlice pmetric.ResourceMetricsSlice, f func(rsAttrs pcommon.Map, metric pmetric.Metric)) {
 	for i := 0; i < resourceMetricsSlice.Len(); i++ {
-		scopeMetrics := resourceMetricsSlice.At(i)
-		rsAttrs := scopeMetrics.Resource().Attributes()
-		scopeMetricsSlice := scopeMetrics.ScopeMetrics()
+		resourceMetrics := resourceMetricsSlice.At(i)
+		rsAttrs := resourceMetrics.Resource().Attributes()
+		scopeMetricsSlice := resourceMetrics.ScopeMetrics()
 		for j := 0; j < scopeMetricsSlice.Len(); j++ {
 			metrics := scopeMetricsSlice.At(j).Metrics()
 			for k := 0; k < metrics.Len(); k++ {
 				f(rsAttrs, metrics.At(k))
 			}
 		}
+	}
+}
+
+func MetricsSliceResource(resourceMetricsSlice pmetric.ResourceMetricsSlice, f func(rs pcommon.Resource)) {
+	for i := 0; i < resourceMetricsSlice.Len(); i++ {
+		resourceMetrics := resourceMetricsSlice.At(i)
+		f(resourceMetrics.Resource())
 	}
 }
 
@@ -95,14 +109,21 @@ func Logs(resourceLogsSlice plog.ResourceLogsSlice, f func(logRecord plog.LogRec
 
 func LogsWithResourceAttrs(resourceLogsSlice plog.ResourceLogsSlice, f func(rsAttrs pcommon.Map, logRecord plog.LogRecord)) {
 	for i := 0; i < resourceLogsSlice.Len(); i++ {
-		scopeLogs := resourceLogsSlice.At(i)
-		rsAttrs := scopeLogs.Resource().Attributes()
-		scopeLogsSlice := scopeLogs.ScopeLogs()
+		resourceLogs := resourceLogsSlice.At(i)
+		rsAttrs := resourceLogs.Resource().Attributes()
+		scopeLogsSlice := resourceLogs.ScopeLogs()
 		for j := 0; j < scopeLogsSlice.Len(); j++ {
 			logs := scopeLogsSlice.At(j).LogRecords()
 			for k := 0; k < logs.Len(); k++ {
 				f(rsAttrs, logs.At(k))
 			}
 		}
+	}
+}
+
+func LogsSliceResource(resourceLogsSlice plog.ResourceLogsSlice, f func(rs pcommon.Resource)) {
+	for i := 0; i < resourceLogsSlice.Len(); i++ {
+		resourceLogs := resourceLogsSlice.At(i)
+		f(resourceLogs.Resource())
 	}
 }

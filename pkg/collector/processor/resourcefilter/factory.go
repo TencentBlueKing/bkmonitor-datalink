@@ -19,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/resourcefilter/k8scache"
@@ -146,7 +147,10 @@ func (p *resourceFilter) Process(record *define.Record) (*define.Record, error) 
 		p.fromRecordAction(record, config)
 	}
 	if len(config.FromMetadata.Keys) > 0 {
-		p.fromTokenAction(record, config)
+		p.fromMetadataAction(record, config)
+	}
+	if len(config.DefaultValue) > 0 {
+		p.defaultValueAction(record, config)
 	}
 
 	if config.FromCache.Cache.Validate() {
@@ -157,157 +161,128 @@ func (p *resourceFilter) Process(record *define.Record) (*define.Record, error) 
 
 // assembleAction 组合维度
 func (p *resourceFilter) assembleAction(record *define.Record, config Config) {
+	handle := func(rs pcommon.Resource, action AssembleAction) {
+		var values []string
+		for _, key := range action.Keys {
+			v, ok := rs.Attributes().Get(key)
+			if !ok {
+				// 空值保留
+				values = append(values, "")
+				continue
+			}
+			values = append(values, v.AsString())
+		}
+		rs.Attributes().UpsertString(action.Destination, strings.Join(values, action.Separator))
+	}
+
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		resourceSpansSlice := pdTraces.ResourceSpans()
-		for _, action := range config.Assemble {
-			for i := 0; i < resourceSpansSlice.Len(); i++ {
-				resourceSpans := resourceSpansSlice.At(i)
-				attrs := resourceSpans.Resource().Attributes()
-				var values []string
-				for _, key := range action.Keys {
-					v, ok := attrs.Get(key)
-					if !ok {
-						// 空值保留
-						values = append(values, "")
-						continue
-					}
-					values = append(values, v.AsString())
-				}
-				attrs.UpsertString(action.Destination, strings.Join(values, action.Separator))
+		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+			for _, action := range config.Assemble {
+				handle(rs, action)
 			}
-		}
+		})
 	}
 }
 
 // addAction 新增维度
 func (p *resourceFilter) addAction(record *define.Record, config Config) {
+	handle := func(rs pcommon.Resource, action AddAction) {
+		rs.Attributes().UpsertString(action.Label, action.Value)
+	}
+
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		resourceSpansSlice := pdTraces.ResourceSpans()
-		for _, action := range config.Add {
-			for i := 0; i < resourceSpansSlice.Len(); i++ {
-				resourceSpans := resourceSpansSlice.At(i)
-				resourceSpans.Resource().Attributes().UpsertString(action.Label, action.Value)
+		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+			for _, action := range config.Add {
+				handle(rs, action)
 			}
-		}
+		})
 
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
-		resourceMetricsSlice := pdMetrics.ResourceMetrics()
-		for _, action := range config.Add {
-			for i := 0; i < resourceMetricsSlice.Len(); i++ {
-				resourceMetrics := resourceMetricsSlice.At(i)
-				resourceMetrics.Resource().Attributes().UpsertString(action.Label, action.Value)
+		foreach.MetricsSliceResource(pdMetrics.ResourceMetrics(), func(rs pcommon.Resource) {
+			for _, action := range config.Add {
+				handle(rs, action)
 			}
-		}
+		})
 
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
-		resourceLogsSlice := pdLogs.ResourceLogs()
-		for _, action := range config.Add {
-			for i := 0; i < resourceLogsSlice.Len(); i++ {
-				resourceLogs := resourceLogsSlice.At(i)
-				resourceLogs.Resource().Attributes().UpsertString(action.Label, action.Value)
+		foreach.LogsSliceResource(pdLogs.ResourceLogs(), func(rs pcommon.Resource) {
+			for _, action := range config.Add {
+				handle(rs, action)
 			}
-		}
+		})
 	}
 }
 
 // dropAction 丢弃维度
 func (p *resourceFilter) dropAction(record *define.Record, config Config) {
+	handle := func(rs pcommon.Resource, action DropAction) {
+		for _, key := range action.Keys {
+			rs.Attributes().Remove(key)
+		}
+	}
+
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		resourceSpansSlice := pdTraces.ResourceSpans()
-		// 只对 drop action 清洗到 span 维度
-		for _, dimension := range config.Drop.Keys {
-			for i := 0; i < resourceSpansSlice.Len(); i++ {
-				resourceSpans := resourceSpansSlice.At(i)
-				resourceSpans.Resource().Attributes().Remove(dimension)
-				scopeSpansSlice := resourceSpans.ScopeSpans()
-				for j := 0; j < scopeSpansSlice.Len(); j++ {
-					spans := scopeSpansSlice.At(j).Spans()
-					for k := 0; k < spans.Len(); k++ {
-						spans.At(k).Attributes().Remove(dimension)
-					}
-				}
-			}
-		}
+		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+			handle(rs, config.Drop)
+		})
 
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
-		resourceMetricsSlice := pdMetrics.ResourceMetrics()
-		for _, dimension := range config.Drop.Keys {
-			for i := 0; i < resourceMetricsSlice.Len(); i++ {
-				resourceMetrics := resourceMetricsSlice.At(i)
-				resourceMetrics.Resource().Attributes().Remove(dimension)
-			}
-		}
+		foreach.MetricsSliceResource(pdMetrics.ResourceMetrics(), func(rs pcommon.Resource) {
+			handle(rs, config.Drop)
+		})
 
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
-		resourceLogsSlice := pdLogs.ResourceLogs()
-		for _, dimension := range config.Drop.Keys {
-			for i := 0; i < resourceLogsSlice.Len(); i++ {
-				resourceLogs := resourceLogsSlice.At(i)
-				resourceLogs.Resource().Attributes().Remove(dimension)
-			}
-		}
+		foreach.LogsSliceResource(pdLogs.ResourceLogs(), func(rs pcommon.Resource) {
+			handle(rs, config.Drop)
+		})
 	}
 }
 
 // replaceAction 替换维度
 func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
+	handle := func(rs pcommon.Resource, action ReplaceAction) {
+		v, ok := rs.Attributes().Get(action.Source)
+		if !ok {
+			return
+		}
+		rs.Attributes().Remove(action.Source)
+		rs.Attributes().Upsert(action.Destination, v)
+	}
+
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		resourceSpansSlice := pdTraces.ResourceSpans()
-		for _, action := range config.Replace {
-			for i := 0; i < resourceSpansSlice.Len(); i++ {
-				resourceSpans := resourceSpansSlice.At(i)
-				v, ok := resourceSpans.Resource().Attributes().Get(action.Source)
-				if !ok {
-					continue
-				}
-				resourceSpans.Resource().Attributes().Remove(action.Source)
-				resourceSpans.Resource().Attributes().Upsert(action.Destination, v)
+		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+			for _, action := range config.Replace {
+				handle(rs, action)
 			}
-		}
+		})
 
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
-		resourceMetricsSlice := pdMetrics.ResourceMetrics()
-		for _, action := range config.Replace {
-			for i := 0; i < resourceMetricsSlice.Len(); i++ {
-				resourceMetrics := resourceMetricsSlice.At(i)
-				v, ok := resourceMetrics.Resource().Attributes().Get(action.Source)
-				if !ok {
-					continue
-				}
-				cloned := pcommon.NewValueEmpty()
-				v.CopyTo(cloned)
-				resourceMetrics.Resource().Attributes().Remove(action.Source)
-				resourceMetrics.Resource().Attributes().Upsert(action.Destination, cloned)
+		foreach.MetricsSliceResource(pdMetrics.ResourceMetrics(), func(rs pcommon.Resource) {
+			for _, action := range config.Replace {
+				handle(rs, action)
 			}
-		}
+		})
 
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
-		resourceLogsSlice := pdLogs.ResourceLogs()
-		for _, action := range config.Replace {
-			for i := 0; i < resourceLogsSlice.Len(); i++ {
-				resourceLogs := resourceLogsSlice.At(i)
-				v, ok := resourceLogs.Resource().Attributes().Get(action.Source)
-				if !ok {
-					continue
-				}
-				resourceLogs.Resource().Attributes().Remove(action.Source)
-				resourceLogs.Resource().Attributes().Upsert(action.Destination, v)
+		foreach.LogsSliceResource(pdLogs.ResourceLogs(), func(rs pcommon.Resource) {
+			for _, action := range config.Replace {
+				handle(rs, action)
 			}
-		}
+		})
 	}
 }
 
@@ -317,9 +292,9 @@ func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 	cache := p.caches.GetByToken(token).(k8scache.Cache)
 
 	keys := config.FromCache.CombineKeys()
-	handleTraces := func(resourceSpans ptrace.ResourceSpans) {
+	handle := func(rs pcommon.Resource) {
 		for _, key := range keys {
-			v, ok := resourceSpans.Resource().Attributes().Get(key)
+			v, ok := rs.Attributes().Get(key)
 			if !ok {
 				continue
 			}
@@ -329,7 +304,7 @@ func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 			}
 
 			for dk, dv := range dims {
-				resourceSpans.Resource().Attributes().InsertString(dk, dv)
+				rs.Attributes().InsertString(dk, dv)
 			}
 			return // 找到一次即可
 		}
@@ -338,45 +313,44 @@ func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		resourceSpansSlice := pdTraces.ResourceSpans()
-		for i := 0; i < resourceSpansSlice.Len(); i++ {
-			handleTraces(resourceSpansSlice.At(i))
-		}
+		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+			handle(rs)
+		})
 	}
 }
 
-// fromRecordAction 从 define.Record 中补充数据
+// fromRecordAction 补充 record 字段
 func (p *resourceFilter) fromRecordAction(record *define.Record, config Config) {
-	handleTraces := func(resourceSpans ptrace.ResourceSpans) {
-		for _, action := range config.FromRecord {
-			switch action.Source {
-			case "request.client.ip":
-				resourceSpans.Resource().Attributes().InsertString(action.Destination, record.RequestClient.IP)
-			}
+	handle := func(rs pcommon.Resource, action FromRecordAction) {
+		switch action.Source {
+		case "request.client.ip":
+			rs.Attributes().InsertString(action.Destination, record.RequestClient.IP)
 		}
 	}
 
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		resourceSpansSlice := pdTraces.ResourceSpans()
-		for i := 0; i < resourceSpansSlice.Len(); i++ {
-			handleTraces(resourceSpansSlice.At(i))
-		}
+		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+			for _, action := range config.FromRecord {
+				handle(rs, action)
+			}
+		})
 	}
 }
 
-func (p *resourceFilter) fromTokenAction(record *define.Record, config Config) {
-	handleTraces := func(resourceSpans ptrace.ResourceSpans) {
-		for _, field := range config.FromMetadata.Keys {
+// fromMetadataAction 补充 metadata 字段
+func (p *resourceFilter) fromMetadataAction(record *define.Record, config Config) {
+	handle := func(rs pcommon.Resource, action FromMetadataAction) {
+		for _, field := range action.Keys {
 			switch field {
 			case "*": // 补充所有 metadata 维度
 				for k, v := range record.Metadata {
-					resourceSpans.Resource().Attributes().InsertString(k, v)
+					rs.Attributes().InsertString(k, v)
 				}
 			default:
 				if v, ok := record.Metadata[field]; ok {
-					resourceSpans.Resource().Attributes().InsertString(field, v)
+					rs.Attributes().InsertString(field, v)
 				}
 			}
 		}
@@ -385,9 +359,51 @@ func (p *resourceFilter) fromTokenAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		resourceSpansSlice := pdTraces.ResourceSpans()
-		for i := 0; i < resourceSpansSlice.Len(); i++ {
-			handleTraces(resourceSpansSlice.At(i))
+		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+			handle(rs, config.FromMetadata)
+		})
+	}
+}
+
+// defaultValueAction 补充默认值
+func (p *resourceFilter) defaultValueAction(record *define.Record, config Config) {
+	handle := func(rs pcommon.Resource, action DefaultValueAction) {
+		v, ok := rs.Attributes().Get(action.Key)
+		if !ok || v.AsString() == "" {
+			switch action.Type {
+			case "string":
+				rs.Attributes().UpsertString(action.Key, action.StringValue())
+			case "int":
+				rs.Attributes().UpsertInt(action.Key, int64(action.IntValue()))
+			case "bool":
+				rs.Attributes().UpsertBool(action.Key, action.BoolValue())
+			}
 		}
+	}
+
+	switch record.RecordType {
+	case define.RecordTraces:
+		pdTraces := record.Data.(ptrace.Traces)
+		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+			for _, action := range config.DefaultValue {
+				handle(rs, action)
+			}
+		})
+
+	case define.RecordMetrics:
+		pdMetrics := record.Data.(pmetric.Metrics)
+		foreach.MetricsSliceResource(pdMetrics.ResourceMetrics(), func(rs pcommon.Resource) {
+			for _, action := range config.DefaultValue {
+				handle(rs, action)
+			}
+		})
+
+	case define.RecordLogs:
+		pdLogs := record.Data.(plog.Logs)
+		foreach.LogsSliceResource(pdLogs.ResourceLogs(), func(rs pcommon.Resource) {
+			for _, action := range config.DefaultValue {
+				handle(rs, action)
+			}
+		})
 	}
 }

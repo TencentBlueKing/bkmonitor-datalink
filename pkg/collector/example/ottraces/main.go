@@ -101,7 +101,7 @@ func MustNewResource(token string) *resource.Resource {
 			attribute.String("bk.data.token", token),
 		),
 	)
-	// TODO(Note): 这里是刻意而为之，请确保 resource.Default() 里使用的 SchemaURL 和 resource.NewWithAttributes() 里的 SchemaURL 使用的是相同版本
+	// TODO(Note): 这里是刻意而为之，请确保 resource.Value() 里使用的 SchemaURL 和 resource.NewWithAttributes() 里的 SchemaURL 使用的是相同版本
 	// 是的，这玩意确实有可能会不一样 ┓(-´∀`-)┏
 	if err != nil {
 		panic(err)

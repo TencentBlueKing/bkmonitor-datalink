@@ -24,7 +24,7 @@ import (
 	SpanKindUnspecified = 0
 
 	// SpanKindInternal indicates that the span represents an internal operation within an application,
-	// as opposed to an operation happening at the boundaries. Default value.
+	// as opposed to an operation happening at the boundaries. Value value.
 	SpanKindInternal = 1
 
 	// SpanKindServer indicates that the span covers server-side handling of an RPC or other

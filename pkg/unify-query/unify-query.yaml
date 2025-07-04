@@ -37,6 +37,7 @@ influxdb:
   max_limit: 1e8
   max_slimit: 1e5
   tolerance: 5
+  system_tenant_with_suffix: false
 es:
   max_concurrency: 200
   alias_refresh_period: 1m

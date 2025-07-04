@@ -254,7 +254,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 
 	if len(query.ResultTableOptions) > 0 {
-		option := query.ResultTableOptions.GetOption(query.TableID, "")
+		option := query.ResultTableOptions.GetOption(query.TableID, query.Connect)
 		if option != nil {
 			if option.From != nil {
 				query.From = *option.From

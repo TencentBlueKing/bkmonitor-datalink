@@ -155,6 +155,7 @@ type Query struct {
 	SliceID            int                `json:"slice_id,omitempty"`
 	ScrollID           string             `json:"scroll_id,omitempty"`
 	SliceMax           int                `json:"scroll_max,omitempty"`
+	Connect            string             `json:"connect,omitempty"`
 	ResultTableOptions ResultTableOptions `json:"result_table_options,omitempty"`
 
 	Orders      Orders    `json:"orders,omitempty"`

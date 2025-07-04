@@ -18,9 +18,9 @@ import (
 )
 
 const (
-	sessionKeyPrefix = "scroll:session:"
-	lockKeyPrefix    = "scroll:lock:"
-	sliceKeyPrefix   = "scroll:slice:"
+	SessionKeyPrefix = "scroll:session:"
+	LockKeyPrefix    = "scroll:lock:"
+	SliceKeyPrefix   = "scroll:slice:"
 )
 
 // ScrollSession 用于记录当前scroll的一些meta信息
@@ -91,7 +91,7 @@ const (
 )
 
 var sliceStateKey = func(suffix string) string {
-	return fmt.Sprintf("%s|%s", sliceKeyPrefix, suffix)
+	return fmt.Sprintf("%s|%s", SliceKeyPrefix, suffix)
 }
 
 func (s *ScrollSession) getAllSlices(ctx context.Context) (SlicesState, error) {

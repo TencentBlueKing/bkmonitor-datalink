@@ -935,6 +935,32 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	return resp, nil
 }
 
+func buildQueryList(ctx context.Context, queryTs *structured.QueryTs, start, end time.Time) ([]*metadata.Query, error) {
+	var queryList []*metadata.Query
+
+	queryReference, err := queryTs.ToQueryReference(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert to query reference: %v", err)
+	}
+
+	for _, queryMetrics := range queryReference {
+		for _, queryMetric := range queryMetrics {
+			for _, query := range queryMetric.QueryList {
+				if queryTs.Scroll != "" {
+					query.Scroll = queryTs.Scroll
+				}
+				if queryTs.ResultTableOptions != nil {
+					query.ResultTableOptions = queryTs.ResultTableOptions
+				}
+
+				queryList = append(queryList, query)
+			}
+		}
+	}
+
+	return queryList, nil
+}
+
 func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
 	defer span.End(&err)
@@ -946,8 +972,17 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 	if queryTs.Scroll == "" {
 		queryTs.Scroll = ScrollWindow
 	}
+
+	queryTsKey, err := redisUtil.ScrollGenerateQueryTsKey(queryTs, user.Name)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("failed to generate queryTs key: %v", err)
+	}
+	sessionKey := redisUtil.GetSessionKey(queryTsKey)
+	lockKey := redisUtil.GetLockKey(queryTsKey)
+	sliceKeyPrefix := redisUtil.GetSliceKey(queryTsKey)
+
 	scrollWindowDuration, _ := time.ParseDuration(queryTs.Scroll)
-	scrollLock, err := redisUtil.ScrollAcquireRedisLock(ctx, queryTs, user.Name, scrollWindowDuration)
+	scrollLock, err := redisUtil.ScrollAcquireRedisLock(ctx, lockKey, scrollWindowDuration)
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("failed to acquire lock: %v", err)
 	}
@@ -956,7 +991,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 			log.Warnf(ctx, "failed to release lock: %v", releaseErr)
 		}
 	}()
-	session, err := redisUtil.ScrollGetOrCreateSession(ctx, queryTs, user.Name, queryTs.ClearCache)
+	session, err := redisUtil.ScrollGetOrCreateSession(ctx, sessionKey, queryTs.ClearCache)
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("failed to get or create session: %v", err)
 	}
@@ -971,20 +1006,24 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 	}
 	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 
-	var (
-		receiveWg sync.WaitGroup
-		dataCh    = make(chan map[string]any)
-		queryList []*metadata.Query
-	)
-
-	list = make([]map[string]any, 0)
+	queryList, err := buildQueryList(ctx, queryTs, start, end)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("failed to build query list: %v", err)
+	}
 
 	if len(queryList) == 0 {
-		if err := redisUtil.ScrollDeleteSession(ctx, queryTs, user.Name); err != nil {
+		if err := redisUtil.ScrollDeleteSession(ctx, sessionKey); err != nil {
 			log.Warnf(ctx, "failed to delete completed session: %v", err)
 		}
 		return 0, nil, resultTableOptions, nil
 	}
+
+	var (
+		receiveWg sync.WaitGroup
+		dataCh    = make(chan map[string]any)
+	)
+
+	list = make([]map[string]any, 0)
 
 	receiveWg.Add(1)
 
@@ -1040,7 +1079,8 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 					defer sendWg.Done()
 					connectSlices := slices.FilterConnect(storage.Address)
 					for _, slice := range connectSlices {
-						sliceKey := slice.SliceKey()
+						// 为每个slice生成独立的key
+						sliceStateKey := fmt.Sprintf("%s|%s", sliceKeyPrefix, slice.SliceKey())
 						instance := prometheus.GetTsDbInstance(ctx, qry)
 						if instance == nil {
 							log.Warnf(ctx, "not instance in %s", qry.StorageID)
@@ -1049,6 +1089,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 						qry.SliceID = slice.SliceID
 						qry.SliceMax = slice.SliceMax
 						qry.ScrollID = slice.ScrollID
+						qry.Connect = slice.Connect
 
 						size, options, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
 						if queryErr != nil {
@@ -1056,14 +1097,12 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 							slice.RetryCount += 1
 							slice.ErrorMsg = queryErr.Error()
 							slice.Status = redisUtil.SliceStatusFailed
-							if err := redisUtil.ScrollUpdateSlice(ctx, sliceKey, slice); err != nil {
+							if err := redisUtil.ScrollUpdateSlice(ctx, sliceStateKey, slice); err != nil {
 								log.Warnf(ctx, "failed to update slice %s: %v", slice.SliceID, err)
 							}
+
 						} else {
 							slice.RetryCount = 0
-							if err := redisUtil.ScrollUpdateSlice(ctx, sliceKey, slice); err != nil {
-								log.Warnf(ctx, "failed to update slice %s: %v", slice.SliceID, err)
-							}
 							if resultTableOptions == nil {
 								resultTableOptions = make(metadata.ResultTableOptions)
 							}
@@ -1081,7 +1120,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 
 							}
 						}
-						if err := redisUtil.ScrollUpdateSlice(ctx, sliceKey, slice); err != nil {
+						if err := redisUtil.ScrollUpdateSlice(ctx, sliceStateKey, slice); err != nil {
 							log.Warnf(ctx, "failed to update slice %s: %v", slice.SliceID, err)
 						}
 					}
@@ -1105,7 +1144,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 
 	allDone := redisUtil.CheckIsScrollAllDone(ctx, queryTs, user.Name)
 	if allDone {
-		if err := redisUtil.ScrollDeleteSession(ctx, queryTs, user.Name); err != nil {
+		if err := redisUtil.ScrollDeleteSession(ctx, sessionKey); err != nil {
 			log.Warnf(ctx, "failed to delete completed session: %v", err)
 		}
 	}

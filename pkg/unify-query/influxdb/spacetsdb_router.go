@@ -39,6 +39,9 @@ var (
 	globalSpaceTsDbRouterLock sync.RWMutex
 )
 
+// getTenantSuffixKey generates a tenant-aware key for Redis lookups.
+// It appends the tenant ID from the context to the original key using a '|' separator.
+// For the "system" tenant, the suffix is only added if the SystemTenantWithSuffix feature flag is enabled.
 func getTenantSuffixKey(ctx context.Context, key string) string {
 	user := metadata.GetUser(ctx)
 	tenantID := user.TenantID

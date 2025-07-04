@@ -28,6 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/kvstore/bbolt"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/memcache"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
@@ -37,6 +38,22 @@ var (
 	globalSpaceTsDbRouter     *SpaceTsDbRouter
 	globalSpaceTsDbRouterLock sync.RWMutex
 )
+
+func getTenantSuffixKey(ctx context.Context, key string) string {
+	user := metadata.GetUser(ctx)
+	tenantID := user.TenantID
+
+	if tenantID != "" {
+		if tenantID == "system" {
+			if SystemTenantWithSuffix {
+				return key + "|" + tenantID
+			}
+		} else {
+			return key + "|" + tenantID
+		}
+	}
+	return key
+}
 
 type SpaceTsDbRouter struct {
 	ctx          context.Context
@@ -411,7 +428,8 @@ func (r *SpaceTsDbRouter) GetSpaceUIDList(ctx context.Context, bkAppCode string)
 
 // GetSpace 获取空间信息
 func (r *SpaceTsDbRouter) GetSpace(ctx context.Context, spaceID string) influxdb.Space {
-	genericRet := r.Get(ctx, influxdb.SpaceToResultTableKey, spaceID, true, false)
+	key := getTenantSuffixKey(ctx, spaceID)
+	genericRet := r.Get(ctx, influxdb.SpaceToResultTableKey, key, true, false)
 	if genericRet != nil {
 		return *genericRet.(*influxdb.Space)
 	}
@@ -420,7 +438,8 @@ func (r *SpaceTsDbRouter) GetSpace(ctx context.Context, spaceID string) influxdb
 
 // GetResultTable 获取 RT 详情
 func (r *SpaceTsDbRouter) GetResultTable(ctx context.Context, tableID string, ignoreKeyNotFound bool) *influxdb.ResultTableDetail {
-	genericRet := r.Get(ctx, influxdb.ResultTableDetailKey, tableID, true, ignoreKeyNotFound)
+	key := getTenantSuffixKey(ctx, tableID)
+	genericRet := r.Get(ctx, influxdb.ResultTableDetailKey, key, true, ignoreKeyNotFound)
 	if genericRet != nil {
 		return genericRet.(*influxdb.ResultTableDetail)
 	}
@@ -429,7 +448,8 @@ func (r *SpaceTsDbRouter) GetResultTable(ctx context.Context, tableID string, ig
 
 // GetDataLabelRelatedRts 获取 DataLabel 详情，仅包含映射的 RT 信息
 func (r *SpaceTsDbRouter) GetDataLabelRelatedRts(ctx context.Context, dataLabel string) influxdb.ResultTableList {
-	genericRet := r.Get(ctx, influxdb.DataLabelToResultTableKey, dataLabel, true, false)
+	key := getTenantSuffixKey(ctx, dataLabel)
+	genericRet := r.Get(ctx, influxdb.DataLabelToResultTableKey, key, true, false)
 	if genericRet != nil {
 		return *genericRet.(*influxdb.ResultTableList)
 	}

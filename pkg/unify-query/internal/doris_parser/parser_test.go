@@ -7,13 +7,15 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package sql_parser
+package doris_parser
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
@@ -24,20 +26,21 @@ func TestParseWithFieldAlias(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "test - 1",
+			name: "test-1",
+			q: `SELECT pod_namespace, 
+COUNT(*) AS log_count 
+FROM table 
+WHERE log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY serverIp LIMIT 1000`,
+			expected: "",
+		},
+		{
+			name: "test-2",
+			q:    `show TABLES`,
+		},
+		{
+			name: "test-3",
 			q: `SELECT
-  pod_namespace as ns,
-  split_part (log, '|', 3) as ct,
-  count(*)
-WHERE
- log MATCH_ALL 'Reliable RPC called out of limit'
-group by
-  ns,
-  ct
-LIMIT
-  1000`,
-			expected: `SELECT
-  JSON_EXTRACT_STRING(__ext, '$.io_kubernetes_pod_namespace') as ns,
+  JSON_EXTRACT_STRING (__ext, '$.io_kubernetes_pod_namespace') as ns,
   split_part (log, '|', 3) as ct,
   count(*)
 WHERE
@@ -49,7 +52,37 @@ LIMIT
   1000`,
 		},
 		{
-			name: "test - 2",
+			name: "test-4",
+			q:    `SELECT pod_namespace AS ns, split_part (log, '|', 3) AS ct, count(*) FROM table WHERE log MATCH_ALL 'Reliable RPC called out of limit' group by ns, ct LIMIT 1000`,
+			expected: `SELECT
+  JSON_EXTRACT_STRING(__ext, '$.io_kubernetes_pod_namespace') AS ns,
+  split_part (log, '|', 3) AS ct,
+  count(*)
+WHERE
+ log MATCH_ALL 'Reliable RPC called out of limit'
+group by
+  ns,
+  ct
+LIMIT
+  1000`,
+		},
+		{
+			name: "test-5",
+			q: `SELECT
+  JSON_EXTRACT_STRING(__ext, '$.io_kubernetes_pod_namespace') as ns,
+  split_part (log, '|', 3) as ct,
+  count(*)
+WHERE
+ log MATCH_ALL 'Reliable RPC called out of limit'
+group by
+  ns,
+  ct
+LIMIT
+  1000`,
+			expected: ``,
+		},
+		{
+			name: "test-6",
 			q: `SELECT
   serverIp,
   COUNT(*) AS log_count
@@ -76,17 +109,27 @@ LIMIT
 	mock.Init()
 	fieldAlias := map[string]string{
 		"pod_namespace": "__ext.io_kubernetes_pod_namespace",
+		"serverIp":      "test_server_ip",
 	}
 	fieldMap := map[string]string{
 		"__ext.io_kubernetes_pod_namespace": "string",
 	}
 
+	ctx := context.Background()
 	for _, c := range testCases {
 		t.Run(c.name, func(t *testing.T) {
-			actual, err := ParseWithFieldAlias(c.q, fieldAlias, fieldMap)
+			ctx = metadata.InitHashID(ctx)
 
-			assert.Nil(t, err)
-			assert.Equal(t, c.expected, actual)
+			// antlr4 and visitor
+			visitor := ParseDorisSQL(ctx, c.q, fieldMap, fieldAlias)
+
+			sql := visitor.GetModifiedSQL()
+
+			assert.NotNil(t, visitor)
+			assert.Nil(t, visitor.Err)
+			assert.NotEmpty(t, sql)
+			assert.Equal(t, c.expected, sql)
+			return
 		})
 	}
 }

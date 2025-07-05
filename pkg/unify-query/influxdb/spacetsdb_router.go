@@ -411,6 +411,7 @@ func (r *SpaceTsDbRouter) GetSpaceUIDList(ctx context.Context, bkAppCode string)
 
 // GetSpace 获取空间信息
 func (r *SpaceTsDbRouter) GetSpace(ctx context.Context, spaceID string) influxdb.Space {
+
 	genericRet := r.Get(ctx, influxdb.SpaceToResultTableKey, spaceID, true, false)
 	if genericRet != nil {
 		return *genericRet.(*influxdb.Space)

@@ -400,6 +400,9 @@ func TestParser(t *testing.T) {
 				Value: "/proz/logds/ds-5910974792526317*",
 			},
 		},
+		"test-1": {
+			q: "\"32221112\" AND path: \"/data/home/user00/log/zonesvr*\"",
+		},
 	}
 
 	for name, c := range testCases {

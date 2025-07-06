@@ -26,17 +26,16 @@ type DorisVisitor struct {
 	gen.BaseDorisParserVisitor
 	Ctx context.Context
 
+	opt DorisVisitorOption
+
 	OriginalSQL string                   // 原始SQL
 	ModifiedSQL string                   // 修改后的SQL
 	Tokens      *antlr.CommonTokenStream // 用于修改token
 
 	Tables       []string // 解析出的表名集合
 	Columns      []string // 解析出的字段名集合
-	WhereExprs   []string // 解析出的WHERE条件表达式集合
+	WhereExpr    []string // 解析出的WHERE条件表达式集合
 	Calculations []string // 解析出的计算表达式集合
-
-	FieldMap   map[string]string
-	FieldAlias map[string]string
 
 	Err error // 解析过程中的错误
 }
@@ -2173,6 +2172,7 @@ func (v *DorisVisitor) VisitInlineTable(ctx *gen.InlineTableContext) interface{}
 }
 
 func (v *DorisVisitor) VisitNamedExpression(ctx *gen.NamedExpressionContext) interface{} {
+	v.Columns = append(v.Columns, ctx.GetText())
 	return v.VisitChildren(ctx)
 }
 
@@ -2289,17 +2289,21 @@ func (v *DorisVisitor) VisitColumnReference(ctx *gen.ColumnReferenceContext) int
 	v.Columns = append(v.Columns, originalName)
 
 	// 别名修改
-	if alias, ok := v.FieldAlias[originalName]; ok {
-		// 如果有别名映射则修改token
-		start := ctx.GetStart().GetTokenIndex()
-		stop := ctx.GetStop().GetTokenIndex()
+	if v.opt.DimensionTransform != nil {
+		alias := v.opt.DimensionTransform(originalName)
+		// 如果别名修改成功
+		if alias != originalName {
+			// 如果有别名映射则修改token
+			start := ctx.GetStart().GetTokenIndex()
+			stop := ctx.GetStop().GetTokenIndex()
 
-		// 替换token流中的内容
-		for i := start; i <= stop; i++ {
-			token := v.Tokens.Get(i)
-			if token.GetText() == originalName {
-				v.Tokens.Get(i).SetText(alias)
-				log.Infof(v.Ctx, "修改字段引用: %s → %s", originalName, alias)
+			// 替换token流中的内容
+			for i := start; i <= stop; i++ {
+				token := v.Tokens.Get(i)
+				if token.GetText() == originalName {
+					v.Tokens.Get(i).SetText(alias)
+					log.Infof(v.Ctx, "修改字段引用: %s → %s", originalName, alias)
+				}
 			}
 		}
 	}
@@ -2612,10 +2616,12 @@ func (v *DorisVisitor) GetModifiedSQL() string {
 	return v.ModifiedSQL
 }
 
-func (v *DorisVisitor) WithOptions(fieldMap, fieldAlias map[string]string) *DorisVisitor {
-	v.FieldMap = fieldMap
-	v.FieldAlias = fieldAlias
-	return v
+type DorisVisitorOption struct {
+	DimensionTransform func(s string) string
+}
+
+func (v *DorisVisitor) WithOptions(opt DorisVisitorOption) {
+	v.opt = opt
 }
 
 // NewDorisVisitor 创建带Token流的Visitor

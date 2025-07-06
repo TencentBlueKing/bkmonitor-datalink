@@ -17,7 +17,13 @@ import (
 
 func ParseDorisSQL(ctx context.Context, q string, fieldMap, fieldAlias map[string]string) *DorisVisitor {
 	visitor := NewDorisVisitor(ctx, q)
-	visitor.WithOptions(fieldMap, fieldAlias)
+	visitor.WithOptions(DorisVisitorOption{DimensionTransform: func(s string) string {
+		if v, ok := fieldAlias[s]; ok {
+			return v
+		}
+
+		return s
+	}})
 
 	tree := gen.NewDorisParserParser(visitor.Tokens)
 	tree.Statement().Accept(visitor)

@@ -4588,15 +4588,13 @@ func (s *MultiStatementsContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MultiStatementsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterMultiStatements(s)
-	}
-}
+func (s *MultiStatementsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitMultiStatements(s)
 
-func (s *MultiStatementsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitMultiStatements(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -4835,15 +4833,13 @@ func (s *SingleStatementContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SingleStatementContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSingleStatement(s)
-	}
-}
+func (s *SingleStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSingleStatement(s)
 
-func (s *SingleStatementContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSingleStatement(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -5051,15 +5047,13 @@ func (s *ShowCreateProcedureContext) MultipartIdentifier() IMultipartIdentifierC
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowCreateProcedureContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCreateProcedure(s)
-	}
-}
+func (s *ShowCreateProcedureContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCreateProcedure(s)
 
-func (s *ShowCreateProcedureContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCreateProcedure(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -5097,15 +5091,13 @@ func (s *StatementBaseAliasContext) StatementBase() IStatementBaseContext {
 	return t.(IStatementBaseContext)
 }
 
-func (s *StatementBaseAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterStatementBaseAlias(s)
-	}
-}
+func (s *StatementBaseAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitStatementBaseAlias(s)
 
-func (s *StatementBaseAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitStatementBaseAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -5184,15 +5176,13 @@ func (s *ShowProcedureStatusContext) ValueExpression() IValueExpressionContext {
 	return t.(IValueExpressionContext)
 }
 
-func (s *ShowProcedureStatusContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowProcedureStatus(s)
-	}
-}
+func (s *ShowProcedureStatusContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowProcedureStatus(s)
 
-func (s *ShowProcedureStatusContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowProcedureStatus(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -5267,15 +5257,13 @@ func (s *CreateProcedureContext) OR() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserOR, 0)
 }
 
-func (s *CreateProcedureContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateProcedure(s)
-	}
-}
+func (s *CreateProcedureContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateProcedure(s)
 
-func (s *CreateProcedureContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateProcedure(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -5360,15 +5348,13 @@ func (s *ShowConfigContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowConfigContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowConfig(s)
-	}
-}
+func (s *ShowConfigContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowConfig(s)
 
-func (s *ShowConfigContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowConfig(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -5472,15 +5458,13 @@ func (s *CallProcedureContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *CallProcedureContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCallProcedure(s)
-	}
-}
+func (s *CallProcedureContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCallProcedure(s)
 
-func (s *CallProcedureContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCallProcedure(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -5543,15 +5527,13 @@ func (s *DropProcedureContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropProcedureContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropProcedure(s)
-	}
-}
+func (s *DropProcedureContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropProcedure(s)
 
-func (s *DropProcedureContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropProcedure(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6179,15 +6161,13 @@ func (s *SupportedSetStatementAliasContext) SupportedSetStatement() ISupportedSe
 	return t.(ISupportedSetStatementContext)
 }
 
-func (s *SupportedSetStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedSetStatementAlias(s)
-	}
-}
+func (s *SupportedSetStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedSetStatementAlias(s)
 
-func (s *SupportedSetStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedSetStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6225,15 +6205,13 @@ func (s *ConstraintStatementAliasContext) ConstraintStatement() IConstraintState
 	return t.(IConstraintStatementContext)
 }
 
-func (s *ConstraintStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterConstraintStatementAlias(s)
-	}
-}
+func (s *ConstraintStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitConstraintStatementAlias(s)
 
-func (s *ConstraintStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitConstraintStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6271,15 +6249,13 @@ func (s *SupportedKillStatementAliasContext) SupportedKillStatement() ISupported
 	return t.(ISupportedKillStatementContext)
 }
 
-func (s *SupportedKillStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedKillStatementAlias(s)
-	}
-}
+func (s *SupportedKillStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedKillStatementAlias(s)
 
-func (s *SupportedKillStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedKillStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6317,15 +6293,13 @@ func (s *SupportedRecoverStatementAliasContext) SupportedRecoverStatement() ISup
 	return t.(ISupportedRecoverStatementContext)
 }
 
-func (s *SupportedRecoverStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedRecoverStatementAlias(s)
-	}
-}
+func (s *SupportedRecoverStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedRecoverStatementAlias(s)
 
-func (s *SupportedRecoverStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedRecoverStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6363,15 +6337,13 @@ func (s *SupportedJobStatementAliasContext) SupportedJobStatement() ISupportedJo
 	return t.(ISupportedJobStatementContext)
 }
 
-func (s *SupportedJobStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedJobStatementAlias(s)
-	}
-}
+func (s *SupportedJobStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedJobStatementAlias(s)
 
-func (s *SupportedJobStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedJobStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6409,15 +6381,13 @@ func (s *UnsupportedContext) UnsupportedStatement() IUnsupportedStatementContext
 	return t.(IUnsupportedStatementContext)
 }
 
-func (s *UnsupportedContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterUnsupported(s)
-	}
-}
+func (s *UnsupportedContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitUnsupported(s)
 
-func (s *UnsupportedContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitUnsupported(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6487,15 +6457,13 @@ func (s *StatementDefaultContext) OutFileClause() IOutFileClauseContext {
 	return t.(IOutFileClauseContext)
 }
 
-func (s *StatementDefaultContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterStatementDefault(s)
-	}
-}
+func (s *StatementDefaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitStatementDefault(s)
 
-func (s *StatementDefaultContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitStatementDefault(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6533,15 +6501,13 @@ func (s *SupportedAdminStatementAliasContext) SupportedAdminStatement() ISupport
 	return t.(ISupportedAdminStatementContext)
 }
 
-func (s *SupportedAdminStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedAdminStatementAlias(s)
-	}
-}
+func (s *SupportedAdminStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedAdminStatementAlias(s)
 
-func (s *SupportedAdminStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedAdminStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6579,15 +6545,13 @@ func (s *SupportedStatsStatementAliasContext) SupportedStatsStatement() ISupport
 	return t.(ISupportedStatsStatementContext)
 }
 
-func (s *SupportedStatsStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedStatsStatementAlias(s)
-	}
-}
+func (s *SupportedStatsStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedStatsStatementAlias(s)
 
-func (s *SupportedStatsStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedStatsStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6625,15 +6589,13 @@ func (s *SupportedDescribeStatementAliasContext) SupportedDescribeStatement() IS
 	return t.(ISupportedDescribeStatementContext)
 }
 
-func (s *SupportedDescribeStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedDescribeStatementAlias(s)
-	}
-}
+func (s *SupportedDescribeStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedDescribeStatementAlias(s)
 
-func (s *SupportedDescribeStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedDescribeStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6671,15 +6633,13 @@ func (s *SupportedCancelStatementAliasContext) SupportedCancelStatement() ISuppo
 	return t.(ISupportedCancelStatementContext)
 }
 
-func (s *SupportedCancelStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedCancelStatementAlias(s)
-	}
-}
+func (s *SupportedCancelStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedCancelStatementAlias(s)
 
-func (s *SupportedCancelStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedCancelStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6717,15 +6677,13 @@ func (s *SupportedOtherStatementAliasContext) SupportedOtherStatement() ISupport
 	return t.(ISupportedOtherStatementContext)
 }
 
-func (s *SupportedOtherStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedOtherStatementAlias(s)
-	}
-}
+func (s *SupportedOtherStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedOtherStatementAlias(s)
 
-func (s *SupportedOtherStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedOtherStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6763,15 +6721,13 @@ func (s *SupportedDmlStatementAliasContext) SupportedDmlStatement() ISupportedDm
 	return t.(ISupportedDmlStatementContext)
 }
 
-func (s *SupportedDmlStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedDmlStatementAlias(s)
-	}
-}
+func (s *SupportedDmlStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedDmlStatementAlias(s)
 
-func (s *SupportedDmlStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedDmlStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6809,15 +6765,13 @@ func (s *SupportedLoadStatementAliasContext) SupportedLoadStatement() ISupported
 	return t.(ISupportedLoadStatementContext)
 }
 
-func (s *SupportedLoadStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedLoadStatementAlias(s)
-	}
-}
+func (s *SupportedLoadStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedLoadStatementAlias(s)
 
-func (s *SupportedLoadStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedLoadStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6855,15 +6809,13 @@ func (s *SupportedTransactionStatementAliasContext) SupportedTransactionStatemen
 	return t.(ISupportedTransactionStatementContext)
 }
 
-func (s *SupportedTransactionStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedTransactionStatementAlias(s)
-	}
-}
+func (s *SupportedTransactionStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedTransactionStatementAlias(s)
 
-func (s *SupportedTransactionStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedTransactionStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6901,15 +6853,13 @@ func (s *SupportedGrantRevokeStatementAliasContext) SupportedGrantRevokeStatemen
 	return t.(ISupportedGrantRevokeStatementContext)
 }
 
-func (s *SupportedGrantRevokeStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedGrantRevokeStatementAlias(s)
-	}
-}
+func (s *SupportedGrantRevokeStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedGrantRevokeStatementAlias(s)
 
-func (s *SupportedGrantRevokeStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedGrantRevokeStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6947,15 +6897,13 @@ func (s *SupportedAlterStatementAliasContext) SupportedAlterStatement() ISupport
 	return t.(ISupportedAlterStatementContext)
 }
 
-func (s *SupportedAlterStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedAlterStatementAlias(s)
-	}
-}
+func (s *SupportedAlterStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedAlterStatementAlias(s)
 
-func (s *SupportedAlterStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedAlterStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -6993,15 +6941,13 @@ func (s *SupportedCleanStatementAliasContext) SupportedCleanStatement() ISupport
 	return t.(ISupportedCleanStatementContext)
 }
 
-func (s *SupportedCleanStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedCleanStatementAlias(s)
-	}
-}
+func (s *SupportedCleanStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedCleanStatementAlias(s)
 
-func (s *SupportedCleanStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedCleanStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -7039,15 +6985,13 @@ func (s *SupportedUnsetStatementAliasContext) SupportedUnsetStatement() ISupport
 	return t.(ISupportedUnsetStatementContext)
 }
 
-func (s *SupportedUnsetStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedUnsetStatementAlias(s)
-	}
-}
+func (s *SupportedUnsetStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedUnsetStatementAlias(s)
 
-func (s *SupportedUnsetStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedUnsetStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -7085,15 +7029,13 @@ func (s *SupportedUseStatementAliasContext) SupportedUseStatement() ISupportedUs
 	return t.(ISupportedUseStatementContext)
 }
 
-func (s *SupportedUseStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedUseStatementAlias(s)
-	}
-}
+func (s *SupportedUseStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedUseStatementAlias(s)
 
-func (s *SupportedUseStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedUseStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -7131,15 +7073,13 @@ func (s *MaterializedViewStatementAliasContext) MaterializedViewStatement() IMat
 	return t.(IMaterializedViewStatementContext)
 }
 
-func (s *MaterializedViewStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterMaterializedViewStatementAlias(s)
-	}
-}
+func (s *MaterializedViewStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitMaterializedViewStatementAlias(s)
 
-func (s *MaterializedViewStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitMaterializedViewStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -7177,15 +7117,13 @@ func (s *SupportedDropStatementAliasContext) SupportedDropStatement() ISupported
 	return t.(ISupportedDropStatementContext)
 }
 
-func (s *SupportedDropStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedDropStatementAlias(s)
-	}
-}
+func (s *SupportedDropStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedDropStatementAlias(s)
 
-func (s *SupportedDropStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedDropStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -7223,15 +7161,13 @@ func (s *SupportedCreateStatementAliasContext) SupportedCreateStatement() ISuppo
 	return t.(ISupportedCreateStatementContext)
 }
 
-func (s *SupportedCreateStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedCreateStatementAlias(s)
-	}
-}
+func (s *SupportedCreateStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedCreateStatementAlias(s)
 
-func (s *SupportedCreateStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedCreateStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -7269,15 +7205,13 @@ func (s *SupportedShowStatementAliasContext) SupportedShowStatement() ISupported
 	return t.(ISupportedShowStatementContext)
 }
 
-func (s *SupportedShowStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedShowStatementAlias(s)
-	}
-}
+func (s *SupportedShowStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedShowStatementAlias(s)
 
-func (s *SupportedShowStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedShowStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -7315,15 +7249,13 @@ func (s *SupportedRefreshStatementAliasContext) SupportedRefreshStatement() ISup
 	return t.(ISupportedRefreshStatementContext)
 }
 
-func (s *SupportedRefreshStatementAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedRefreshStatementAlias(s)
-	}
-}
+func (s *SupportedRefreshStatementAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedRefreshStatementAlias(s)
 
-func (s *SupportedRefreshStatementAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedRefreshStatementAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -7705,15 +7637,13 @@ func (s *UnsupportedStatementContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *UnsupportedStatementContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterUnsupportedStatement(s)
-	}
-}
+func (s *UnsupportedStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitUnsupportedStatement(s)
 
-func (s *UnsupportedStatementContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitUnsupportedStatement(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -7901,15 +7831,13 @@ func (s *RefreshMTMVContext) AUTO() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserAUTO, 0)
 }
 
-func (s *RefreshMTMVContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRefreshMTMV(s)
-	}
-}
+func (s *RefreshMTMVContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRefreshMTMV(s)
 
-func (s *RefreshMTMVContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRefreshMTMV(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -8090,15 +8018,13 @@ func (s *AlterMTMVContext) RefreshTrigger() IRefreshTriggerContext {
 	return t.(IRefreshTriggerContext)
 }
 
-func (s *AlterMTMVContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterMTMV(s)
-	}
-}
+func (s *AlterMTMVContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterMTMV(s)
 
-func (s *AlterMTMVContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterMTMV(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -8409,15 +8335,13 @@ func (s *CreateMTMVContext) AUTO() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserAUTO, 0)
 }
 
-func (s *CreateMTMVContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateMTMV(s)
-	}
-}
+func (s *CreateMTMVContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateMTMV(s)
 
-func (s *CreateMTMVContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateMTMV(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -8480,15 +8404,13 @@ func (s *ResumeMTMVContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ResumeMTMVContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterResumeMTMV(s)
-	}
-}
+func (s *ResumeMTMVContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitResumeMTMV(s)
 
-func (s *ResumeMTMVContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitResumeMTMV(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -8547,15 +8469,13 @@ func (s *ShowCreateMTMVContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowCreateMTMVContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCreateMTMV(s)
-	}
-}
+func (s *ShowCreateMTMVContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCreateMTMV(s)
 
-func (s *ShowCreateMTMVContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCreateMTMV(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -8627,15 +8547,13 @@ func (s *CancelMTMVTaskContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *CancelMTMVTaskContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCancelMTMVTask(s)
-	}
-}
+func (s *CancelMTMVTaskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCancelMTMVTask(s)
 
-func (s *CancelMTMVTaskContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCancelMTMVTask(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -8698,15 +8616,13 @@ func (s *PauseMTMVContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *PauseMTMVContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPauseMTMV(s)
-	}
-}
+func (s *PauseMTMVContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPauseMTMV(s)
 
-func (s *PauseMTMVContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPauseMTMV(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -8803,15 +8719,13 @@ func (s *DropMTMVContext) ON() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserON, 0)
 }
 
-func (s *DropMTMVContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropMTMV(s)
-	}
-}
+func (s *DropMTMVContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropMTMV(s)
 
-func (s *DropMTMVContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropMTMV(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -9964,15 +9878,13 @@ func (s *CancelJobTaskContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *CancelJobTaskContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCancelJobTask(s)
-	}
-}
+func (s *CancelJobTaskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCancelJobTask(s)
 
-func (s *CancelJobTaskContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCancelJobTask(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -10040,15 +9952,13 @@ func (s *ResumeJobContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ResumeJobContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterResumeJob(s)
-	}
-}
+func (s *ResumeJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitResumeJob(s)
 
-func (s *ResumeJobContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitResumeJob(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -10124,15 +10034,13 @@ func (s *DropJobContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *DropJobContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropJob(s)
-	}
-}
+func (s *DropJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropJob(s)
 
-func (s *DropJobContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropJob(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -10300,15 +10208,13 @@ func (s *CreateScheduledJobContext) STRING_LITERAL(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, i)
 }
 
-func (s *CreateScheduledJobContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateScheduledJob(s)
-	}
-}
+func (s *CreateScheduledJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateScheduledJob(s)
 
-func (s *CreateScheduledJobContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateScheduledJob(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -10376,15 +10282,13 @@ func (s *PauseJobContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *PauseJobContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPauseJob(s)
-	}
-}
+func (s *PauseJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPauseJob(s)
 
-func (s *PauseJobContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPauseJob(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -11048,15 +10952,13 @@ func (s *ShowConstraintContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowConstraintContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowConstraint(s)
-	}
-}
+func (s *ShowConstraintContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowConstraint(s)
 
-func (s *ShowConstraintContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowConstraint(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -11140,15 +11042,13 @@ func (s *DropConstraintContext) ErrorCapturingIdentifier() IErrorCapturingIdenti
 	return t.(IErrorCapturingIdentifierContext)
 }
 
-func (s *DropConstraintContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropConstraint(s)
-	}
-}
+func (s *DropConstraintContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropConstraint(s)
 
-func (s *DropConstraintContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropConstraint(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -11248,15 +11148,13 @@ func (s *AddConstraintContext) ErrorCapturingIdentifier() IErrorCapturingIdentif
 	return t.(IErrorCapturingIdentifierContext)
 }
 
-func (s *AddConstraintContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAddConstraint(s)
-	}
-}
+func (s *AddConstraintContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAddConstraint(s)
 
-func (s *AddConstraintContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAddConstraint(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -11699,15 +11597,13 @@ func (s *InsertTableContext) IdentifierSeq() IIdentifierSeqContext {
 	return t.(IIdentifierSeqContext)
 }
 
-func (s *InsertTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterInsertTable(s)
-	}
-}
+func (s *InsertTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitInsertTable(s)
 
-func (s *InsertTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitInsertTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -11873,15 +11769,13 @@ func (s *LoadContext) CommentSpec() ICommentSpecContext {
 	return t.(ICommentSpecContext)
 }
 
-func (s *LoadContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterLoad(s)
-	}
-}
+func (s *LoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitLoad(s)
 
-func (s *LoadContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitLoad(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -12058,15 +11952,13 @@ func (s *CopyIntoContext) WhereClause() IWhereClauseContext {
 	return t.(IWhereClauseContext)
 }
 
-func (s *CopyIntoContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCopyInto(s)
-	}
-}
+func (s *CopyIntoContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCopyInto(s)
 
-func (s *CopyIntoContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCopyInto(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -12213,15 +12105,13 @@ func (s *UpdateContext) WhereClause() IWhereClauseContext {
 	return t.(IWhereClauseContext)
 }
 
-func (s *UpdateContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterUpdate(s)
-	}
-}
+func (s *UpdateContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitUpdate(s)
 
-func (s *UpdateContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitUpdate(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -12287,15 +12177,13 @@ func (s *TruncateTableContext) FORCE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserFORCE, 0)
 }
 
-func (s *TruncateTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterTruncateTable(s)
-	}
-}
+func (s *TruncateTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitTruncateTable(s)
 
-func (s *TruncateTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitTruncateTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -12333,15 +12221,13 @@ func (s *ReplayContext) ReplayCommand() IReplayCommandContext {
 	return t.(IReplayCommandContext)
 }
 
-func (s *ReplayContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterReplay(s)
-	}
-}
+func (s *ReplayContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitReplay(s)
 
-func (s *ReplayContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitReplay(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -12492,15 +12378,13 @@ func (s *DeleteContext) WhereClause() IWhereClauseContext {
 	return t.(IWhereClauseContext)
 }
 
-func (s *DeleteContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDelete(s)
-	}
-}
+func (s *DeleteContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDelete(s)
 
-func (s *DeleteContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDelete(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -12637,15 +12521,13 @@ func (s *ExportContext) IdentifierList() IIdentifierListContext {
 	return t.(IIdentifierListContext)
 }
 
-func (s *ExportContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterExport(s)
-	}
-}
+func (s *ExportContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitExport(s)
 
-func (s *ExportContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitExport(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -14012,15 +13894,13 @@ func (s *CreateTableContext) AUTO() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserAUTO, 0)
 }
 
-func (s *CreateTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateTable(s)
-	}
-}
+func (s *CreateTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateTable(s)
 
-func (s *CreateTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -14164,15 +14044,13 @@ func (s *CreateWorkloadPolicyContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateWorkloadPolicyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateWorkloadPolicy(s)
-	}
-}
+func (s *CreateWorkloadPolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateWorkloadPolicy(s)
 
-func (s *CreateWorkloadPolicyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateWorkloadPolicy(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -14260,15 +14138,13 @@ func (s *CreateResourceContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateResourceContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateResource(s)
-	}
-}
+func (s *CreateResourceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateResource(s)
 
-func (s *CreateResourceContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateResource(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -14392,15 +14268,13 @@ func (s *CreateWorkloadGroupContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateWorkloadGroupContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateWorkloadGroup(s)
-	}
-}
+func (s *CreateWorkloadGroupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateWorkloadGroup(s)
 
-func (s *CreateWorkloadGroupContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateWorkloadGroup(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -14575,15 +14449,13 @@ func (s *CreateDictionaryContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateDictionaryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateDictionary(s)
-	}
-}
+func (s *CreateDictionaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateDictionary(s)
 
-func (s *CreateDictionaryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateDictionary(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -14717,15 +14589,13 @@ func (s *CreateTableLikeContext) IdentifierList() IIdentifierListContext {
 	return t.(IIdentifierListContext)
 }
 
-func (s *CreateTableLikeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateTableLike(s)
-	}
-}
+func (s *CreateTableLikeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateTableLike(s)
 
-func (s *CreateTableLikeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateTableLike(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -14796,15 +14666,13 @@ func (s *CreateRoleContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *CreateRoleContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateRole(s)
-	}
-}
+func (s *CreateRoleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateRole(s)
 
-func (s *CreateRoleContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateRole(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -14888,15 +14756,13 @@ func (s *CreateStageContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateStageContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateStage(s)
-	}
-}
+func (s *CreateStageContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateStage(s)
 
-func (s *CreateStageContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateStage(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -14988,15 +14854,13 @@ func (s *CreateIndexAnalyzerContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateIndexAnalyzerContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateIndexAnalyzer(s)
-	}
-}
+func (s *CreateIndexAnalyzerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateIndexAnalyzer(s)
 
-func (s *CreateIndexAnalyzerContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateIndexAnalyzer(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -15088,15 +14952,13 @@ func (s *CreateIndexTokenizerContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateIndexTokenizerContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateIndexTokenizer(s)
-	}
-}
+func (s *CreateIndexTokenizerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateIndexTokenizer(s)
 
-func (s *CreateIndexTokenizerContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateIndexTokenizer(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -15185,15 +15047,13 @@ func (s *CreateFileContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *CreateFileContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateFile(s)
-	}
-}
+func (s *CreateFileContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateFile(s)
 
-func (s *CreateFileContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateFile(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -15380,15 +15240,13 @@ func (s *CreateRowPolicyContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *CreateRowPolicyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateRowPolicy(s)
-	}
-}
+func (s *CreateRowPolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateRowPolicy(s)
 
-func (s *CreateRowPolicyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateRowPolicy(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -15454,15 +15312,13 @@ func (s *CreateEncryptkeyContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *CreateEncryptkeyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateEncryptkey(s)
-	}
-}
+func (s *CreateEncryptkeyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateEncryptkey(s)
 
-func (s *CreateEncryptkeyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateEncryptkey(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -15590,15 +15446,13 @@ func (s *CreateViewContext) SimpleColumnDefs() ISimpleColumnDefsContext {
 	return t.(ISimpleColumnDefsContext)
 }
 
-func (s *CreateViewContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateView(s)
-	}
-}
+func (s *CreateViewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateView(s)
 
-func (s *CreateViewContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateView(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -15686,15 +15540,13 @@ func (s *CreateStorageVaultContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateStorageVaultContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateStorageVault(s)
-	}
-}
+func (s *CreateStorageVaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateStorageVault(s)
 
-func (s *CreateStorageVaultContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateStorageVault(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -15884,15 +15736,13 @@ func (s *CreateUserDefineFunctionContext) PropertyClause() IPropertyClauseContex
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateUserDefineFunctionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateUserDefineFunction(s)
-	}
-}
+func (s *CreateUserDefineFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateUserDefineFunction(s)
 
-func (s *CreateUserDefineFunctionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateUserDefineFunction(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -15980,15 +15830,13 @@ func (s *CreateStoragePolicyContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateStoragePolicyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateStoragePolicy(s)
-	}
-}
+func (s *CreateStoragePolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateStoragePolicy(s)
 
-func (s *CreateStoragePolicyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateStoragePolicy(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -16137,15 +15985,13 @@ func (s *CreateIndexContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateIndexContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateIndex(s)
-	}
-}
+func (s *CreateIndexContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateIndex(s)
 
-func (s *CreateIndexContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateIndex(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -16224,15 +16070,13 @@ func (s *CreateRepositoryContext) ONLY() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserONLY, 0)
 }
 
-func (s *CreateRepositoryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateRepository(s)
-	}
-}
+func (s *CreateRepositoryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateRepository(s)
 
-func (s *CreateRepositoryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateRepository(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -16320,15 +16164,13 @@ func (s *CreateDatabaseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateDatabaseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateDatabase(s)
-	}
-}
+func (s *CreateDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateDatabase(s)
 
-func (s *CreateDatabaseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateDatabase(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -16420,15 +16262,13 @@ func (s *BuildIndexContext) PartitionSpec() IPartitionSpecContext {
 	return t.(IPartitionSpecContext)
 }
 
-func (s *BuildIndexContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterBuildIndex(s)
-	}
-}
+func (s *BuildIndexContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitBuildIndex(s)
 
-func (s *BuildIndexContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitBuildIndex(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -16539,15 +16379,13 @@ func (s *CreateUserContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *CreateUserContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateUser(s)
-	}
-}
+func (s *CreateUserContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateUser(s)
 
-func (s *CreateUserContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateUser(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -16677,15 +16515,13 @@ func (s *CreateCatalogContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateCatalogContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateCatalog(s)
-	}
-}
+func (s *CreateCatalogContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateCatalog(s)
 
-func (s *CreateCatalogContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateCatalog(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -16844,15 +16680,13 @@ func (s *CreateAliasFunctionContext) IdentifierSeq() IIdentifierSeqContext {
 	return t.(IIdentifierSeqContext)
 }
 
-func (s *CreateAliasFunctionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateAliasFunction(s)
-	}
-}
+func (s *CreateAliasFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateAliasFunction(s)
 
-func (s *CreateAliasFunctionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateAliasFunction(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -16936,15 +16770,13 @@ func (s *CreateSqlBlockRuleContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateSqlBlockRuleContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateSqlBlockRule(s)
-	}
-}
+func (s *CreateSqlBlockRuleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateSqlBlockRule(s)
 
-func (s *CreateSqlBlockRuleContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateSqlBlockRule(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -17036,15 +16868,13 @@ func (s *CreateIndexTokenFilterContext) PropertyClause() IPropertyClauseContext 
 	return t.(IPropertyClauseContext)
 }
 
-func (s *CreateIndexTokenFilterContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateIndexTokenFilter(s)
-	}
-}
+func (s *CreateIndexTokenFilterContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateIndexTokenFilter(s)
 
-func (s *CreateIndexTokenFilterContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateIndexTokenFilter(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -20511,15 +20341,13 @@ func (s *DictionaryColumnDefsContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DictionaryColumnDefsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDictionaryColumnDefs(s)
-	}
-}
+func (s *DictionaryColumnDefsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDictionaryColumnDefs(s)
 
-func (s *DictionaryColumnDefsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDictionaryColumnDefs(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -20677,15 +20505,13 @@ func (s *DictionaryColumnDefContext) ToStringTree(ruleNames []string, recog antl
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DictionaryColumnDefContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDictionaryColumnDef(s)
-	}
-}
+func (s *DictionaryColumnDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDictionaryColumnDef(s)
 
-func (s *DictionaryColumnDefContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDictionaryColumnDef(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -20877,15 +20703,13 @@ func (s *AlterSystemRenameComputeGroupContext) Identifier(i int) IIdentifierCont
 	return t.(IIdentifierContext)
 }
 
-func (s *AlterSystemRenameComputeGroupContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterSystemRenameComputeGroup(s)
-	}
-}
+func (s *AlterSystemRenameComputeGroupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterSystemRenameComputeGroup(s)
 
-func (s *AlterSystemRenameComputeGroupContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterSystemRenameComputeGroup(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -20931,15 +20755,13 @@ func (s *AlterSystemContext) AlterSystemClause() IAlterSystemClauseContext {
 	return t.(IAlterSystemClauseContext)
 }
 
-func (s *AlterSystemContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterSystem(s)
-	}
-}
+func (s *AlterSystemContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterSystem(s)
 
-func (s *AlterSystemContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterSystem(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -21024,15 +20846,13 @@ func (s *AlterCatalogRenameContext) Identifier(i int) IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *AlterCatalogRenameContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterCatalogRename(s)
-	}
-}
+func (s *AlterCatalogRenameContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterCatalogRename(s)
 
-func (s *AlterCatalogRenameContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterCatalogRename(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -21137,15 +20957,13 @@ func (s *AlterDatabaseSetQuotaContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *AlterDatabaseSetQuotaContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterDatabaseSetQuota(s)
-	}
-}
+func (s *AlterDatabaseSetQuotaContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterDatabaseSetQuota(s)
 
-func (s *AlterDatabaseSetQuotaContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterDatabaseSetQuota(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -21221,15 +21039,13 @@ func (s *AlterStorageVaultContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterStorageVaultContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterStorageVault(s)
-	}
-}
+func (s *AlterStorageVaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterStorageVault(s)
 
-func (s *AlterStorageVaultContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterStorageVault(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -21339,15 +21155,13 @@ func (s *AlterWorkloadGroupContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterWorkloadGroupContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterWorkloadGroup(s)
-	}
-}
+func (s *AlterWorkloadGroupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterWorkloadGroup(s)
 
-func (s *AlterWorkloadGroupContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterWorkloadGroup(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -21455,15 +21269,13 @@ func (s *AlterTableDropRollupContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AlterTableDropRollupContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterTableDropRollup(s)
-	}
-}
+func (s *AlterTableDropRollupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterTableDropRollup(s)
 
-func (s *AlterTableDropRollupContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterTableDropRollup(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -21542,15 +21354,13 @@ func (s *AlterTablePropertiesContext) MultipartIdentifier() IMultipartIdentifier
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *AlterTablePropertiesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterTableProperties(s)
-	}
-}
+func (s *AlterTablePropertiesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterTableProperties(s)
 
-func (s *AlterTablePropertiesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterTableProperties(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -21628,15 +21438,13 @@ func (s *AlterUserContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *AlterUserContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterUser(s)
-	}
-}
+func (s *AlterUserContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterUser(s)
 
-func (s *AlterUserContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterUser(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -21703,15 +21511,13 @@ func (s *AlterRoleContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *AlterRoleContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterRole(s)
-	}
-}
+func (s *AlterRoleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterRole(s)
 
-func (s *AlterRoleContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterRole(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -21787,15 +21593,13 @@ func (s *AlterWorkloadPolicyContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterWorkloadPolicyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterWorkloadPolicy(s)
-	}
-}
+func (s *AlterWorkloadPolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterWorkloadPolicy(s)
 
-func (s *AlterWorkloadPolicyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterWorkloadPolicy(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -21880,15 +21684,13 @@ func (s *AlterDatabaseRenameContext) Identifier(i int) IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *AlterDatabaseRenameContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterDatabaseRename(s)
-	}
-}
+func (s *AlterDatabaseRenameContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterDatabaseRename(s)
 
-func (s *AlterDatabaseRenameContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterDatabaseRename(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -21971,15 +21773,13 @@ func (s *AlterCatalogPropertiesContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *AlterCatalogPropertiesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterCatalogProperties(s)
-	}
-}
+func (s *AlterCatalogPropertiesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterCatalogProperties(s)
 
-func (s *AlterCatalogPropertiesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterCatalogProperties(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -22062,15 +21862,13 @@ func (s *AlterDatabasePropertiesContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *AlterDatabasePropertiesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterDatabaseProperties(s)
-	}
-}
+func (s *AlterDatabasePropertiesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterDatabaseProperties(s)
 
-func (s *AlterDatabasePropertiesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterDatabaseProperties(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -22138,15 +21936,13 @@ func (s *AlterCatalogCommentContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *AlterCatalogCommentContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterCatalogComment(s)
-	}
-}
+func (s *AlterCatalogCommentContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterCatalogComment(s)
 
-func (s *AlterCatalogCommentContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterCatalogComment(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -22274,15 +22070,13 @@ func (s *AlterViewContext) SimpleColumnDefs() ISimpleColumnDefsContext {
 	return t.(ISimpleColumnDefsContext)
 }
 
-func (s *AlterViewContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterView(s)
-	}
-}
+func (s *AlterViewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterView(s)
 
-func (s *AlterViewContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterView(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -22358,15 +22152,13 @@ func (s *AlterStoragePolicyContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterStoragePolicyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterStoragePolicy(s)
-	}
-}
+func (s *AlterStoragePolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterStoragePolicy(s)
 
-func (s *AlterStoragePolicyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterStoragePolicy(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -22438,15 +22230,13 @@ func (s *AlterSqlBlockRuleContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterSqlBlockRuleContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterSqlBlockRule(s)
-	}
-}
+func (s *AlterSqlBlockRuleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterSqlBlockRule(s)
 
-func (s *AlterSqlBlockRuleContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterSqlBlockRule(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -22518,15 +22308,13 @@ func (s *AlterResourceContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterResourceContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterResource(s)
-	}
-}
+func (s *AlterResourceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterResource(s)
 
-func (s *AlterResourceContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterResource(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -22655,15 +22443,13 @@ func (s *AlterRoutineLoadContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *AlterRoutineLoadContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterRoutineLoad(s)
-	}
-}
+func (s *AlterRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterRoutineLoad(s)
 
-func (s *AlterRoutineLoadContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterRoutineLoad(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -22771,15 +22557,13 @@ func (s *AlterTableAddRollupContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AlterTableAddRollupContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterTableAddRollup(s)
-	}
-}
+func (s *AlterTableAddRollupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterTableAddRollup(s)
 
-func (s *AlterTableAddRollupContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterTableAddRollup(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -22851,15 +22635,13 @@ func (s *AlterRepositoryContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterRepositoryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterRepository(s)
-	}
-}
+func (s *AlterRepositoryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterRepository(s)
 
-func (s *AlterRepositoryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterRepository(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -22959,15 +22741,13 @@ func (s *AlterTableContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AlterTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterTable(s)
-	}
-}
+func (s *AlterTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterTable(s)
 
-func (s *AlterTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -23050,15 +22830,13 @@ func (s *AlterColocateGroupContext) MultipartIdentifier() IMultipartIdentifierCo
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *AlterColocateGroupContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterColocateGroup(s)
-	}
-}
+func (s *AlterColocateGroupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterColocateGroup(s)
 
-func (s *AlterColocateGroupContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterColocateGroup(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -24638,15 +24416,13 @@ func (s *DropUserContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropUserContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropUser(s)
-	}
-}
+func (s *DropUserContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropUser(s)
 
-func (s *DropUserContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropUser(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -24713,15 +24489,13 @@ func (s *DropDatabaseContext) FORCE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserFORCE, 0)
 }
 
-func (s *DropDatabaseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropDatabase(s)
-	}
-}
+func (s *DropDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropDatabase(s)
 
-func (s *DropDatabaseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropDatabase(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -24780,15 +24554,13 @@ func (s *DropDictionaryContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropDictionaryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropDictionary(s)
-	}
-}
+func (s *DropDictionaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropDictionary(s)
 
-func (s *DropDictionaryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropDictionary(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -24851,15 +24623,13 @@ func (s *DropWorkloadPolicyContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropWorkloadPolicyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropWorkloadPolicy(s)
-	}
-}
+func (s *DropWorkloadPolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropWorkloadPolicy(s)
 
-func (s *DropWorkloadPolicyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropWorkloadPolicy(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -25001,15 +24771,13 @@ func (s *DropRowPolicyContext) ROLE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserROLE, 0)
 }
 
-func (s *DropRowPolicyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropRowPolicy(s)
-	}
-}
+func (s *DropRowPolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropRowPolicy(s)
 
-func (s *DropRowPolicyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropRowPolicy(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -25103,15 +24871,13 @@ func (s *DropFunctionContext) FunctionArguments() IFunctionArgumentsContext {
 	return t.(IFunctionArgumentsContext)
 }
 
-func (s *DropFunctionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropFunction(s)
-	}
-}
+func (s *DropFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropFunction(s)
 
-func (s *DropFunctionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropFunction(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -25208,15 +24974,13 @@ func (s *DropWorkloadGroupContext) FOR() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserFOR, 0)
 }
 
-func (s *DropWorkloadGroupContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropWorkloadGroup(s)
-	}
-}
+func (s *DropWorkloadGroupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropWorkloadGroup(s)
 
-func (s *DropWorkloadGroupContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropWorkloadGroup(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -25270,15 +25034,13 @@ func (s *DropSqlBlockRuleContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropSqlBlockRuleContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropSqlBlockRule(s)
-	}
-}
+func (s *DropSqlBlockRuleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropSqlBlockRule(s)
 
-func (s *DropSqlBlockRuleContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropSqlBlockRule(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -25337,15 +25099,13 @@ func (s *DropViewContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropViewContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropView(s)
-	}
-}
+func (s *DropViewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropView(s)
 
-func (s *DropViewContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropView(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -25429,15 +25189,13 @@ func (s *DropIndexContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropIndexContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropIndex(s)
-	}
-}
+func (s *DropIndexContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropIndex(s)
 
-func (s *DropIndexContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropIndex(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -25496,15 +25254,13 @@ func (s *DropEncryptkeyContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropEncryptkeyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropEncryptkey(s)
-	}
-}
+func (s *DropEncryptkeyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropEncryptkey(s)
 
-func (s *DropEncryptkeyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropEncryptkey(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -25555,15 +25311,13 @@ func (s *DropRepositoryContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *DropRepositoryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropRepository(s)
-	}
-}
+func (s *DropRepositoryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropRepository(s)
 
-func (s *DropRepositoryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropRepository(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -25622,15 +25376,13 @@ func (s *DropRoleContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropRoleContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropRole(s)
-	}
-}
+func (s *DropRoleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropRole(s)
 
-func (s *DropRoleContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropRole(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -25697,15 +25449,13 @@ func (s *DropIndexAnalyzerContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropIndexAnalyzerContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropIndexAnalyzer(s)
-	}
-}
+func (s *DropIndexAnalyzerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropIndexAnalyzer(s)
 
-func (s *DropIndexAnalyzerContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropIndexAnalyzer(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -25764,15 +25514,13 @@ func (s *DropStageContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropStageContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropStage(s)
-	}
-}
+func (s *DropStageContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropStage(s)
 
-func (s *DropStageContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropStage(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -25839,15 +25587,13 @@ func (s *DropIndexTokenizerContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropIndexTokenizerContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropIndexTokenizer(s)
-	}
-}
+func (s *DropIndexTokenizerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropIndexTokenizer(s)
 
-func (s *DropIndexTokenizerContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropIndexTokenizer(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -25906,15 +25652,13 @@ func (s *DropResourceContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropResourceContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropResource(s)
-	}
-}
+func (s *DropResourceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropResource(s)
 
-func (s *DropResourceContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropResource(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -26003,15 +25747,13 @@ func (s *DropFileContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *DropFileContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropFile(s)
-	}
-}
+func (s *DropFileContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropFile(s)
 
-func (s *DropFileContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropFile(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -26070,15 +25812,13 @@ func (s *DropCatalogContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropCatalogContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropCatalog(s)
-	}
-}
+func (s *DropCatalogContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropCatalog(s)
 
-func (s *DropCatalogContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropCatalog(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -26142,15 +25882,13 @@ func (s *DropCatalogRecycleBinContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *DropCatalogRecycleBinContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropCatalogRecycleBin(s)
-	}
-}
+func (s *DropCatalogRecycleBinContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropCatalogRecycleBin(s)
 
-func (s *DropCatalogRecycleBinContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropCatalogRecycleBin(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -26217,15 +25955,13 @@ func (s *DropIndexTokenFilterContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropIndexTokenFilterContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropIndexTokenFilter(s)
-	}
-}
+func (s *DropIndexTokenFilterContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropIndexTokenFilter(s)
 
-func (s *DropIndexTokenFilterContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropIndexTokenFilter(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -26288,15 +26024,13 @@ func (s *DropTableContext) FORCE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserFORCE, 0)
 }
 
-func (s *DropTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropTable(s)
-	}
-}
+func (s *DropTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropTable(s)
 
-func (s *DropTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -26359,15 +26093,13 @@ func (s *DropStoragePolicyContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropStoragePolicyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropStoragePolicy(s)
-	}
-}
+func (s *DropStoragePolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropStoragePolicy(s)
 
-func (s *DropStoragePolicyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropStoragePolicy(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -27966,15 +27698,13 @@ func (s *ShowRepositoriesContext) REPOSITORIES() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserREPOSITORIES, 0)
 }
 
-func (s *ShowRepositoriesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowRepositories(s)
-	}
-}
+func (s *ShowRepositoriesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowRepositories(s)
 
-func (s *ShowRepositoriesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowRepositories(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -28065,15 +27795,13 @@ func (s *ShowDataContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowDataContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowData(s)
-	}
-}
+func (s *ShowDataContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowData(s)
 
-func (s *ShowDataContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowData(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -28182,15 +27910,13 @@ func (s *ShowIndexContext) MultipartIdentifier(i int) IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowIndexContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowIndex(s)
-	}
-}
+func (s *ShowIndexContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowIndex(s)
 
-func (s *ShowIndexContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowIndex(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -28257,15 +27983,13 @@ func (s *ShowDynamicPartitionContext) MultipartIdentifier() IMultipartIdentifier
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowDynamicPartitionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowDynamicPartition(s)
-	}
-}
+func (s *ShowDynamicPartitionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowDynamicPartition(s)
 
-func (s *ShowDynamicPartitionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowDynamicPartition(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -28344,15 +28068,13 @@ func (s *ShowTableStatusContext) MultipartIdentifier() IMultipartIdentifierConte
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowTableStatusContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowTableStatus(s)
-	}
-}
+func (s *ShowTableStatusContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowTableStatus(s)
 
-func (s *ShowTableStatusContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowTableStatus(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -28427,15 +28149,13 @@ func (s *ShowBackupContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowBackupContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowBackup(s)
-	}
-}
+func (s *ShowBackupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowBackup(s)
 
-func (s *ShowBackupContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowBackup(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -28554,15 +28274,13 @@ func (s *ShowCreateFunctionContext) MultipartIdentifier() IMultipartIdentifierCo
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowCreateFunctionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCreateFunction(s)
-	}
-}
+func (s *ShowCreateFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCreateFunction(s)
 
-func (s *ShowCreateFunctionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCreateFunction(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -28612,15 +28330,13 @@ func (s *ShowGrantsForUserContext) UserIdentify() IUserIdentifyContext {
 	return t.(IUserIdentifyContext)
 }
 
-func (s *ShowGrantsForUserContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowGrantsForUser(s)
-	}
-}
+func (s *ShowGrantsForUserContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowGrantsForUser(s)
 
-func (s *ShowGrantsForUserContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowGrantsForUser(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -28708,15 +28424,13 @@ func (s *ShowViewContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowViewContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowView(s)
-	}
-}
+func (s *ShowViewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowView(s)
 
-func (s *ShowViewContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowView(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -28795,15 +28509,13 @@ func (s *ShowTablesContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowTablesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowTables(s)
-	}
-}
+func (s *ShowTablesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowTables(s)
 
-func (s *ShowTablesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowTables(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -28910,15 +28622,13 @@ func (s *ShowExportContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowExportContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowExport(s)
-	}
-}
+func (s *ShowExportContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowExport(s)
 
-func (s *ShowExportContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowExport(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -28948,15 +28658,13 @@ func (s *ShowAuthorsContext) AUTHORS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserAUTHORS, 0)
 }
 
-func (s *ShowAuthorsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowAuthors(s)
-	}
-}
+func (s *ShowAuthorsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowAuthors(s)
 
-func (s *ShowAuthorsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowAuthors(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -28990,15 +28698,13 @@ func (s *ShowStorageEnginesContext) STORAGE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTORAGE, 0)
 }
 
-func (s *ShowStorageEnginesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowStorageEngines(s)
-	}
-}
+func (s *ShowStorageEnginesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowStorageEngines(s)
 
-func (s *ShowStorageEnginesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowStorageEngines(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -29048,15 +28754,13 @@ func (s *ShowWarningErrorsContext) LimitClause() ILimitClauseContext {
 	return t.(ILimitClauseContext)
 }
 
-func (s *ShowWarningErrorsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowWarningErrors(s)
-	}
-}
+func (s *ShowWarningErrorsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowWarningErrors(s)
 
-func (s *ShowWarningErrorsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowWarningErrors(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -29102,15 +28806,13 @@ func (s *ShowCatalogsContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *ShowCatalogsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCatalogs(s)
-	}
-}
+func (s *ShowCatalogsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCatalogs(s)
 
-func (s *ShowCatalogsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCatalogs(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -29140,15 +28842,13 @@ func (s *ShowRolesContext) ROLES() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserROLES, 0)
 }
 
-func (s *ShowRolesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowRoles(s)
-	}
-}
+func (s *ShowRolesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowRoles(s)
 
-func (s *ShowRolesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowRoles(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -29227,15 +28927,13 @@ func (s *ShowRowPolicyContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowRowPolicyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowRowPolicy(s)
-	}
-}
+func (s *ShowRowPolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowRowPolicy(s)
 
-func (s *ShowRowPolicyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowRowPolicy(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -29295,15 +28993,13 @@ func (s *ShowTabletsBelongContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *ShowTabletsBelongContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowTabletsBelong(s)
-	}
-}
+func (s *ShowTabletsBelongContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowTabletsBelong(s)
 
-func (s *ShowTabletsBelongContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowTabletsBelong(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -29382,15 +29078,13 @@ func (s *ShowTriggersContext) MultipartIdentifier() IMultipartIdentifierContext 
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowTriggersContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowTriggers(s)
-	}
-}
+func (s *ShowTriggersContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowTriggers(s)
 
-func (s *ShowTriggersContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowTriggers(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -29449,15 +29143,13 @@ func (s *ShowCreateTableContext) BRIEF() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserBRIEF, 0)
 }
 
-func (s *ShowCreateTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCreateTable(s)
-	}
-}
+func (s *ShowCreateTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCreateTable(s)
 
-func (s *ShowCreateTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCreateTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -29508,15 +29200,13 @@ func (s *ShowCatalogContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowCatalogContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCatalog(s)
-	}
-}
+func (s *ShowCatalogContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCatalog(s)
 
-func (s *ShowCatalogContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCatalog(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -29637,15 +29327,13 @@ func (s *ShowColumnsContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *ShowColumnsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowColumns(s)
-	}
-}
+func (s *ShowColumnsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowColumns(s)
 
-func (s *ShowColumnsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowColumns(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -29756,15 +29444,13 @@ func (s *ShowBuildIndexContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowBuildIndexContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowBuildIndex(s)
-	}
-}
+func (s *ShowBuildIndexContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowBuildIndex(s)
 
-func (s *ShowBuildIndexContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowBuildIndex(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -29826,15 +29512,13 @@ func (s *ShowVariablesContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *ShowVariablesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowVariables(s)
-	}
-}
+func (s *ShowVariablesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowVariables(s)
 
-func (s *ShowVariablesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowVariables(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -29909,15 +29593,13 @@ func (s *ShowEventsContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowEventsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowEvents(s)
-	}
-}
+func (s *ShowEventsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowEvents(s)
 
-func (s *ShowEventsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowEvents(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -29947,15 +29629,13 @@ func (s *ShowPluginsContext) PLUGINS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserPLUGINS, 0)
 }
 
-func (s *ShowPluginsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowPlugins(s)
-	}
-}
+func (s *ShowPluginsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowPlugins(s)
 
-func (s *ShowPluginsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowPlugins(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -29997,15 +29677,13 @@ func (s *ShowAllPropertiesContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowAllPropertiesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowAllProperties(s)
-	}
-}
+func (s *ShowAllPropertiesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowAllProperties(s)
 
-func (s *ShowAllPropertiesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowAllProperties(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -30059,15 +29737,13 @@ func (s *ShowDataSkewContext) BaseTableRef() IBaseTableRefContext {
 	return t.(IBaseTableRefContext)
 }
 
-func (s *ShowDataSkewContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowDataSkew(s)
-	}
-}
+func (s *ShowDataSkewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowDataSkew(s)
 
-func (s *ShowDataSkewContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowDataSkew(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -30126,15 +29802,13 @@ func (s *ShowConvertLscContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowConvertLscContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowConvertLsc(s)
-	}
-}
+func (s *ShowConvertLscContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowConvertLsc(s)
 
-func (s *ShowConvertLscContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowConvertLsc(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -30189,15 +29863,13 @@ func (s *ShowSqlBlockRuleContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowSqlBlockRuleContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowSqlBlockRule(s)
-	}
-}
+func (s *ShowSqlBlockRuleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowSqlBlockRule(s)
 
-func (s *ShowSqlBlockRuleContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowSqlBlockRule(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -30268,15 +29940,13 @@ func (s *ShowTableCreationContext) MultipartIdentifier() IMultipartIdentifierCon
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowTableCreationContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowTableCreation(s)
-	}
-}
+func (s *ShowTableCreationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowTableCreation(s)
 
-func (s *ShowTableCreationContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowTableCreation(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -30326,15 +29996,13 @@ func (s *ShowWarningErrorCountContext) ERRORS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserERRORS, 0)
 }
 
-func (s *ShowWarningErrorCountContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowWarningErrorCount(s)
-	}
-}
+func (s *ShowWarningErrorCountContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowWarningErrorCount(s)
 
-func (s *ShowWarningErrorCountContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowWarningErrorCount(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -30404,15 +30072,13 @@ func (s *ShowReplicaStatusContext) WhereClause() IWhereClauseContext {
 	return t.(IWhereClauseContext)
 }
 
-func (s *ShowReplicaStatusContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowReplicaStatus(s)
-	}
-}
+func (s *ShowReplicaStatusContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowReplicaStatus(s)
 
-func (s *ShowReplicaStatusContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowReplicaStatus(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -30471,15 +30137,13 @@ func (s *ShowDeleteContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowDeleteContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowDelete(s)
-	}
-}
+func (s *ShowDeleteContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowDelete(s)
 
-func (s *ShowDeleteContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowDelete(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -30598,15 +30262,13 @@ func (s *ShowTabletsFromTableContext) LimitClause() ILimitClauseContext {
 	return t.(ILimitClauseContext)
 }
 
-func (s *ShowTabletsFromTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowTabletsFromTable(s)
-	}
-}
+func (s *ShowTabletsFromTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowTabletsFromTable(s)
 
-func (s *ShowTabletsFromTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowTabletsFromTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -30636,15 +30298,13 @@ func (s *ShowStagesContext) STAGES() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTAGES, 0)
 }
 
-func (s *ShowStagesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowStages(s)
-	}
-}
+func (s *ShowStagesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowStages(s)
 
-func (s *ShowStagesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowStages(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -30719,15 +30379,13 @@ func (s *ShowTransactionContext) MultipartIdentifier() IMultipartIdentifierConte
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowTransactionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowTransaction(s)
-	}
-}
+func (s *ShowTransactionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowTransaction(s)
 
-func (s *ShowTransactionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowTransaction(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -30757,15 +30415,13 @@ func (s *ShowBrokerContext) BROKER() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserBROKER, 0)
 }
 
-func (s *ShowBrokerContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowBroker(s)
-	}
-}
+func (s *ShowBrokerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowBroker(s)
 
-func (s *ShowBrokerContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowBroker(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -30799,15 +30455,13 @@ func (s *ShowGrantsContext) ALL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserALL, 0)
 }
 
-func (s *ShowGrantsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowGrants(s)
-	}
-}
+func (s *ShowGrantsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowGrants(s)
 
-func (s *ShowGrantsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowGrants(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -30885,15 +30539,13 @@ func (s *ShowResourcesContext) LimitClause() ILimitClauseContext {
 	return t.(ILimitClauseContext)
 }
 
-func (s *ShowResourcesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowResources(s)
-	}
-}
+func (s *ShowResourcesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowResources(s)
 
-func (s *ShowResourcesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowResources(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -30935,15 +30587,13 @@ func (s *ShowWorkloadGroupsContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowWorkloadGroupsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowWorkloadGroups(s)
-	}
-}
+func (s *ShowWorkloadGroupsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowWorkloadGroups(s)
 
-func (s *ShowWorkloadGroupsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowWorkloadGroups(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -30997,15 +30647,13 @@ func (s *ShowReplicaDistributionContext) BaseTableRef() IBaseTableRefContext {
 	return t.(IBaseTableRefContext)
 }
 
-func (s *ShowReplicaDistributionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowReplicaDistribution(s)
-	}
-}
+func (s *ShowReplicaDistributionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowReplicaDistribution(s)
 
-func (s *ShowReplicaDistributionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowReplicaDistribution(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -31047,15 +30695,13 @@ func (s *ShowTabletStorageFormatContext) VERBOSE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserVERBOSE, 0)
 }
 
-func (s *ShowTabletStorageFormatContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowTabletStorageFormat(s)
-	}
-}
+func (s *ShowTabletStorageFormatContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowTabletStorageFormat(s)
 
-func (s *ShowTabletStorageFormatContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowTabletStorageFormat(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -31093,15 +30739,13 @@ func (s *ShowCharsetContext) SET() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSET, 0)
 }
 
-func (s *ShowCharsetContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCharset(s)
-	}
-}
+func (s *ShowCharsetContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCharset(s)
 
-func (s *ShowCharsetContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCharset(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -31140,15 +30784,13 @@ func (s *ShowProcContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowProcContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowProc(s)
-	}
-}
+func (s *ShowProcContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowProc(s)
 
-func (s *ShowProcContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowProc(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -31203,15 +30845,13 @@ func (s *ShowCreateViewContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowCreateViewContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCreateView(s)
-	}
-}
+func (s *ShowCreateViewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCreateView(s)
 
-func (s *ShowCreateViewContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCreateView(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -31290,15 +30930,13 @@ func (s *ShowOpenTablesContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowOpenTablesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowOpenTables(s)
-	}
-}
+func (s *ShowOpenTablesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowOpenTables(s)
 
-func (s *ShowOpenTablesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowOpenTables(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -31390,15 +31028,13 @@ func (s *ShowQueryStatsContext) VERBOSE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserVERBOSE, 0)
 }
 
-func (s *ShowQueryStatsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowQueryStats(s)
-	}
-}
+func (s *ShowQueryStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowQueryStats(s)
 
-func (s *ShowQueryStatsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowQueryStats(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -31457,15 +31093,13 @@ func (s *ShowCreateDatabaseContext) MultipartIdentifier() IMultipartIdentifierCo
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowCreateDatabaseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCreateDatabase(s)
-	}
-}
+func (s *ShowCreateDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCreateDatabase(s)
 
-func (s *ShowCreateDatabaseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCreateDatabase(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -31524,15 +31158,13 @@ func (s *ShowQueryProfileContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowQueryProfileContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowQueryProfile(s)
-	}
-}
+func (s *ShowQueryProfileContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowQueryProfile(s)
 
-func (s *ShowQueryProfileContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowQueryProfile(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -31578,15 +31210,13 @@ func (s *ShowDictionariesContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *ShowDictionariesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowDictionaries(s)
-	}
-}
+func (s *ShowDictionariesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowDictionaries(s)
 
-func (s *ShowDictionariesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowDictionaries(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -31649,15 +31279,13 @@ func (s *ShowStoragePolicyContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *ShowStoragePolicyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowStoragePolicy(s)
-	}
-}
+func (s *ShowStoragePolicyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowStoragePolicy(s)
 
-func (s *ShowStoragePolicyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowStoragePolicy(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -31724,15 +31352,13 @@ func (s *ShowEncryptKeysContext) MultipartIdentifier() IMultipartIdentifierConte
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowEncryptKeysContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowEncryptKeys(s)
-	}
-}
+func (s *ShowEncryptKeysContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowEncryptKeys(s)
 
-func (s *ShowEncryptKeysContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowEncryptKeys(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -31843,15 +31469,13 @@ func (s *ShowLoadContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowLoadContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowLoad(s)
-	}
-}
+func (s *ShowLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowLoad(s)
 
-func (s *ShowLoadContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowLoad(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -31889,15 +31513,13 @@ func (s *ShowClustersContext) GROUPS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserGROUPS, 0)
 }
 
-func (s *ShowClustersContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowClusters(s)
-	}
-}
+func (s *ShowClustersContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowClusters(s)
 
-func (s *ShowClustersContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowClusters(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -31940,15 +31562,13 @@ func (s *ShowTrashContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowTrashContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowTrash(s)
-	}
-}
+func (s *ShowTrashContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowTrash(s)
 
-func (s *ShowTrashContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowTrash(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -32055,15 +31675,13 @@ func (s *ShowPartitionsContext) LimitClause() ILimitClauseContext {
 	return t.(ILimitClauseContext)
 }
 
-func (s *ShowPartitionsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowPartitions(s)
-	}
-}
+func (s *ShowPartitionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowPartitions(s)
 
-func (s *ShowPartitionsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowPartitions(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -32109,15 +31727,13 @@ func (s *ShowGlobalFunctionsContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowGlobalFunctionsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowGlobalFunctions(s)
-	}
-}
+func (s *ShowGlobalFunctionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowGlobalFunctions(s)
 
-func (s *ShowGlobalFunctionsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowGlobalFunctions(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -32168,15 +31784,13 @@ func (s *ShowFrontendsContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowFrontendsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowFrontends(s)
-	}
-}
+func (s *ShowFrontendsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowFrontends(s)
 
-func (s *ShowFrontendsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowFrontends(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -32235,15 +31849,13 @@ func (s *ShowLoadProfileContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowLoadProfileContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowLoadProfile(s)
-	}
-}
+func (s *ShowLoadProfileContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowLoadProfile(s)
 
-func (s *ShowLoadProfileContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowLoadProfile(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -32282,15 +31894,13 @@ func (s *ShowPartitionIdContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowPartitionIdContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowPartitionId(s)
-	}
-}
+func (s *ShowPartitionIdContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowPartitionId(s)
 
-func (s *ShowPartitionIdContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowPartitionId(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -32361,15 +31971,13 @@ func (s *ShowSnapshotContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *ShowSnapshotContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowSnapshot(s)
-	}
-}
+func (s *ShowSnapshotContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowSnapshot(s)
 
-func (s *ShowSnapshotContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowSnapshot(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -32427,15 +32035,13 @@ func (s *ShowCatalogRecycleBinContext) Expression() IExpressionContext {
 	return t.(IExpressionContext)
 }
 
-func (s *ShowCatalogRecycleBinContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCatalogRecycleBin(s)
-	}
-}
+func (s *ShowCatalogRecycleBinContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCatalogRecycleBin(s)
 
-func (s *ShowCatalogRecycleBinContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCatalogRecycleBin(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -32542,15 +32148,13 @@ func (s *ShowCopyContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowCopyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCopy(s)
-	}
-}
+func (s *ShowCopyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCopy(s)
 
-func (s *ShowCopyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCopy(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -32596,15 +32200,13 @@ func (s *ShowCollationContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *ShowCollationContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCollation(s)
-	}
-}
+func (s *ShowCollationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCollation(s)
 
-func (s *ShowCollationContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCollation(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -32634,15 +32236,13 @@ func (s *ShowBackendsContext) BACKENDS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserBACKENDS, 0)
 }
 
-func (s *ShowBackendsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowBackends(s)
-	}
-}
+func (s *ShowBackendsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowBackends(s)
 
-func (s *ShowBackendsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowBackends(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -32701,15 +32301,13 @@ func (s *ShowTypeCastContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowTypeCastContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowTypeCast(s)
-	}
-}
+func (s *ShowTypeCastContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowTypeCast(s)
 
-func (s *ShowTypeCastContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowTypeCast(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -32739,15 +32337,13 @@ func (s *ShowPrivilegesContext) PRIVILEGES() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserPRIVILEGES, 0)
 }
 
-func (s *ShowPrivilegesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowPrivileges(s)
-	}
-}
+func (s *ShowPrivilegesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowPrivileges(s)
 
-func (s *ShowPrivilegesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowPrivileges(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -32826,15 +32422,13 @@ func (s *ShowRestoreContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowRestoreContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowRestore(s)
-	}
-}
+func (s *ShowRestoreContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowRestore(s)
 
-func (s *ShowRestoreContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowRestore(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -32942,15 +32536,13 @@ func (s *ShowLoadWaringsContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowLoadWaringsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowLoadWarings(s)
-	}
-}
+func (s *ShowLoadWaringsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowLoadWarings(s)
 
-func (s *ShowLoadWaringsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowLoadWarings(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33077,15 +32669,13 @@ func (s *ShowAlterTableContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowAlterTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowAlterTable(s)
-	}
-}
+func (s *ShowAlterTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowAlterTable(s)
 
-func (s *ShowAlterTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowAlterTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33124,15 +32714,13 @@ func (s *ShowTableIdContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowTableIdContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowTableId(s)
-	}
-}
+func (s *ShowTableIdContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowTableId(s)
 
-func (s *ShowTableIdContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowTableId(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33191,15 +32779,13 @@ func (s *ShowSmallFilesContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowSmallFilesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowSmallFiles(s)
-	}
-}
+func (s *ShowSmallFilesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowSmallFiles(s)
 
-func (s *ShowSmallFilesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowSmallFiles(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33274,15 +32860,13 @@ func (s *ShowDatabasesContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowDatabasesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowDatabases(s)
-	}
-}
+func (s *ShowDatabasesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowDatabases(s)
 
-func (s *ShowDatabasesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowDatabases(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33332,15 +32916,13 @@ func (s *ShowCreateUserContext) UserIdentify() IUserIdentifyContext {
 	return t.(IUserIdentifyContext)
 }
 
-func (s *ShowCreateUserContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCreateUser(s)
-	}
-}
+func (s *ShowCreateUserContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCreateUser(s)
 
-func (s *ShowCreateUserContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCreateUser(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33379,15 +32961,13 @@ func (s *ShowTabletIdContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowTabletIdContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowTabletId(s)
-	}
-}
+func (s *ShowTabletIdContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowTabletId(s)
 
-func (s *ShowTabletIdContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowTabletId(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33425,15 +33005,13 @@ func (s *ShowStorageVaultContext) VAULTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserVAULTS, 0)
 }
 
-func (s *ShowStorageVaultContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowStorageVault(s)
-	}
-}
+func (s *ShowStorageVaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowStorageVault(s)
 
-func (s *ShowStorageVaultContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowStorageVault(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33479,15 +33057,13 @@ func (s *ShowStatusContext) StatementScope() IStatementScopeContext {
 	return t.(IStatementScopeContext)
 }
 
-func (s *ShowStatusContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowStatus(s)
-	}
-}
+func (s *ShowStatusContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowStatus(s)
 
-func (s *ShowStatusContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowStatus(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33550,15 +33126,13 @@ func (s *ShowUserPropertiesContext) IdentifierOrText() IIdentifierOrTextContext 
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *ShowUserPropertiesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowUserProperties(s)
-	}
-}
+func (s *ShowUserPropertiesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowUserProperties(s)
 
-func (s *ShowUserPropertiesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowUserProperties(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33612,15 +33186,13 @@ func (s *ShowWarmUpJobContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *ShowWarmUpJobContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowWarmUpJob(s)
-	}
-}
+func (s *ShowWarmUpJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowWarmUpJob(s)
 
-func (s *ShowWarmUpJobContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowWarmUpJob(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33654,15 +33226,13 @@ func (s *ShowLastInsertContext) INSERT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINSERT, 0)
 }
 
-func (s *ShowLastInsertContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowLastInsert(s)
-	}
-}
+func (s *ShowLastInsertContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowLastInsert(s)
 
-func (s *ShowLastInsertContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowLastInsert(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33717,15 +33287,13 @@ func (s *ShowCreateCatalogContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowCreateCatalogContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCreateCatalog(s)
-	}
-}
+func (s *ShowCreateCatalogContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCreateCatalog(s)
 
-func (s *ShowCreateCatalogContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCreateCatalog(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33813,15 +33381,13 @@ func (s *ShowCreateMaterializedViewContext) MultipartIdentifier() IMultipartIden
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowCreateMaterializedViewContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCreateMaterializedView(s)
-	}
-}
+func (s *ShowCreateMaterializedViewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCreateMaterializedView(s)
 
-func (s *ShowCreateMaterializedViewContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCreateMaterializedView(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33855,15 +33421,13 @@ func (s *ShowProcessListContext) FULL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserFULL, 0)
 }
 
-func (s *ShowProcessListContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowProcessList(s)
-	}
-}
+func (s *ShowProcessListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowProcessList(s)
 
-func (s *ShowProcessListContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowProcessList(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33897,15 +33461,13 @@ func (s *ShowDataTypesContext) TYPES() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserTYPES, 0)
 }
 
-func (s *ShowDataTypesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowDataTypes(s)
-	}
-}
+func (s *ShowDataTypesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowDataTypes(s)
 
-func (s *ShowDataTypesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowDataTypes(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33948,15 +33510,13 @@ func (s *ShowDiagnoseTabletContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowDiagnoseTabletContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowDiagnoseTablet(s)
-	}
-}
+func (s *ShowDiagnoseTabletContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowDiagnoseTablet(s)
 
-func (s *ShowDiagnoseTabletContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowDiagnoseTablet(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -33986,15 +33546,13 @@ func (s *ShowWhitelistContext) WHITELIST() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserWHITELIST, 0)
 }
 
-func (s *ShowWhitelistContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowWhitelist(s)
-	}
-}
+func (s *ShowWhitelistContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowWhitelist(s)
 
-func (s *ShowWhitelistContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowWhitelist(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -34073,15 +33631,13 @@ func (s *ShowViewsContext) MultipartIdentifier() IMultipartIdentifierContext {
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowViewsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowViews(s)
-	}
-}
+func (s *ShowViewsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowViews(s)
 
-func (s *ShowViewsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowViews(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -34156,15 +33712,13 @@ func (s *ShowFunctionsContext) MultipartIdentifier() IMultipartIdentifierContext
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowFunctionsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowFunctions(s)
-	}
-}
+func (s *ShowFunctionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowFunctions(s)
 
-func (s *ShowFunctionsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowFunctions(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -34203,15 +33757,13 @@ func (s *ShowDatabaseIdContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowDatabaseIdContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowDatabaseId(s)
-	}
-}
+func (s *ShowDatabaseIdContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowDatabaseId(s)
 
-func (s *ShowDatabaseIdContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowDatabaseId(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -34265,15 +33817,13 @@ func (s *ShowCreateRepositoryContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowCreateRepositoryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCreateRepository(s)
-	}
-}
+func (s *ShowCreateRepositoryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCreateRepository(s)
 
-func (s *ShowCreateRepositoryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCreateRepository(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -39478,15 +39028,13 @@ func (s *ShowRoutineLoadContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowRoutineLoadContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowRoutineLoad(s)
-	}
-}
+func (s *ShowRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowRoutineLoad(s)
 
-func (s *ShowRoutineLoadContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowRoutineLoad(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -39545,15 +39093,13 @@ func (s *ResumeRoutineLoadContext) MultipartIdentifier() IMultipartIdentifierCon
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ResumeRoutineLoadContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterResumeRoutineLoad(s)
-	}
-}
+func (s *ResumeRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitResumeRoutineLoad(s)
 
-func (s *ResumeRoutineLoadContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitResumeRoutineLoad(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -39591,15 +39137,13 @@ func (s *CreateRoutineLoadAliasContext) CreateRoutineLoad() ICreateRoutineLoadCo
 	return t.(ICreateRoutineLoadContext)
 }
 
-func (s *CreateRoutineLoadAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateRoutineLoadAlias(s)
-	}
-}
+func (s *CreateRoutineLoadAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateRoutineLoadAlias(s)
 
-func (s *CreateRoutineLoadAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateRoutineLoadAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -39637,15 +39181,13 @@ func (s *ShowIndexTokenizerContext) TOKENIZER() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserTOKENIZER, 0)
 }
 
-func (s *ShowIndexTokenizerContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowIndexTokenizer(s)
-	}
-}
+func (s *ShowIndexTokenizerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowIndexTokenizer(s)
 
-func (s *ShowIndexTokenizerContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowIndexTokenizer(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -39683,15 +39225,13 @@ func (s *PauseAllRoutineLoadContext) LOAD() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserLOAD, 0)
 }
 
-func (s *PauseAllRoutineLoadContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPauseAllRoutineLoad(s)
-	}
-}
+func (s *PauseAllRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPauseAllRoutineLoad(s)
 
-func (s *PauseAllRoutineLoadContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPauseAllRoutineLoad(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -39717,15 +39257,13 @@ func (s *SyncContext) SYNC() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSYNC, 0)
 }
 
-func (s *SyncContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSync(s)
-	}
-}
+func (s *SyncContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSync(s)
 
-func (s *SyncContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSync(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -39792,15 +39330,13 @@ func (s *ShowCreateRoutineLoadContext) ALL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserALL, 0)
 }
 
-func (s *ShowCreateRoutineLoadContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCreateRoutineLoad(s)
-	}
-}
+func (s *ShowCreateRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCreateRoutineLoad(s)
 
-func (s *ShowCreateRoutineLoadContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCreateRoutineLoad(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -39859,15 +39395,13 @@ func (s *PauseRoutineLoadContext) MultipartIdentifier() IMultipartIdentifierCont
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *PauseRoutineLoadContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPauseRoutineLoad(s)
-	}
-}
+func (s *PauseRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPauseRoutineLoad(s)
 
-func (s *PauseRoutineLoadContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPauseRoutineLoad(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -39905,15 +39439,13 @@ func (s *ShowIndexTokenFilterContext) TOKEN_FILTER() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserTOKEN_FILTER, 0)
 }
 
-func (s *ShowIndexTokenFilterContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowIndexTokenFilter(s)
-	}
-}
+func (s *ShowIndexTokenFilterContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowIndexTokenFilter(s)
 
-func (s *ShowIndexTokenFilterContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowIndexTokenFilter(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -39951,15 +39483,13 @@ func (s *ShowIndexAnalyzerContext) ANALYZER() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserANALYZER, 0)
 }
 
-func (s *ShowIndexAnalyzerContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowIndexAnalyzer(s)
-	}
-}
+func (s *ShowIndexAnalyzerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowIndexAnalyzer(s)
 
-func (s *ShowIndexAnalyzerContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowIndexAnalyzer(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -40042,15 +39572,13 @@ func (s *ShowRoutineLoadTaskContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowRoutineLoadTaskContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowRoutineLoadTask(s)
-	}
-}
+func (s *ShowRoutineLoadTaskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowRoutineLoadTask(s)
 
-func (s *ShowRoutineLoadTaskContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowRoutineLoadTask(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -40088,15 +39616,13 @@ func (s *ResumeAllRoutineLoadContext) LOAD() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserLOAD, 0)
 }
 
-func (s *ResumeAllRoutineLoadContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterResumeAllRoutineLoad(s)
-	}
-}
+func (s *ResumeAllRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitResumeAllRoutineLoad(s)
 
-func (s *ResumeAllRoutineLoadContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitResumeAllRoutineLoad(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -40155,15 +39681,13 @@ func (s *StopRoutineLoadContext) MultipartIdentifier() IMultipartIdentifierConte
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *StopRoutineLoadContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterStopRoutineLoad(s)
-	}
-}
+func (s *StopRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitStopRoutineLoad(s)
 
-func (s *StopRoutineLoadContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitStopRoutineLoad(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -40862,15 +40386,13 @@ func (s *KillQueryContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *KillQueryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterKillQuery(s)
-	}
-}
+func (s *KillQueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitKillQuery(s)
 
-func (s *KillQueryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitKillQuery(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -40904,15 +40426,13 @@ func (s *KillConnectionContext) CONNECTION() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCONNECTION, 0)
 }
 
-func (s *KillConnectionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterKillConnection(s)
-	}
-}
+func (s *KillConnectionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitKillConnection(s)
 
-func (s *KillConnectionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitKillConnection(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -41111,15 +40631,13 @@ func (s *HelpContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *HelpContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterHelp(s)
-	}
-}
+func (s *HelpContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitHelp(s)
 
-func (s *HelpContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitHelp(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -41149,15 +40667,13 @@ func (s *UnlockTablesContext) TABLES() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserTABLES, 0)
 }
 
-func (s *UnlockTablesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterUnlockTables(s)
-	}
-}
+func (s *UnlockTablesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitUnlockTables(s)
 
-func (s *UnlockTablesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitUnlockTables(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -41208,15 +40724,13 @@ func (s *UninstallPluginContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *UninstallPluginContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterUninstallPlugin(s)
-	}
-}
+func (s *UninstallPluginContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitUninstallPlugin(s)
 
-func (s *UninstallPluginContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitUninstallPlugin(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -41378,15 +40892,13 @@ func (s *BackupContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *BackupContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterBackup(s)
-	}
-}
+func (s *BackupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitBackup(s)
 
-func (s *BackupContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitBackup(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -41465,15 +40977,13 @@ func (s *LockTablesContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *LockTablesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterLockTables(s)
-	}
-}
+func (s *LockTablesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitLockTables(s)
 
-func (s *LockTablesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitLockTables(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -41635,15 +41145,13 @@ func (s *RestoreContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *RestoreContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRestore(s)
-	}
-}
+func (s *RestoreContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRestore(s)
 
-func (s *RestoreContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRestore(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -41719,15 +41227,13 @@ func (s *InstallPluginContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *InstallPluginContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterInstallPlugin(s)
-	}
-}
+func (s *InstallPluginContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitInstallPlugin(s)
 
-func (s *InstallPluginContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitInstallPlugin(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -41889,15 +41395,13 @@ func (s *WarmUpClusterContext) AND(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserAND, i)
 }
 
-func (s *WarmUpClusterContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterWarmUpCluster(s)
-	}
-}
+func (s *WarmUpClusterContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitWarmUpCluster(s)
 
-func (s *WarmUpClusterContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitWarmUpCluster(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -42644,15 +42148,13 @@ func (s *UnsupportedStartTransactionContext) SNAPSHOT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSNAPSHOT, 0)
 }
 
-func (s *UnsupportedStartTransactionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterUnsupportedStartTransaction(s)
-	}
-}
+func (s *UnsupportedStartTransactionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitUnsupportedStartTransaction(s)
 
-func (s *UnsupportedStartTransactionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitUnsupportedStartTransaction(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -42846,15 +42348,13 @@ func (s *WarmUpItemContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WarmUpItemContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterWarmUpItem(s)
-	}
-}
+func (s *WarmUpItemContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitWarmUpItem(s)
 
-func (s *WarmUpItemContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitWarmUpItem(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -43052,15 +42552,13 @@ func (s *LockTableContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *LockTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterLockTable(s)
-	}
-}
+func (s *LockTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitLockTable(s)
 
-func (s *LockTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitLockTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -43503,15 +43001,13 @@ func (s *CreateRoutineLoadContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *CreateRoutineLoadContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateRoutineLoad(s)
-	}
-}
+func (s *CreateRoutineLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateRoutineLoad(s)
 
-func (s *CreateRoutineLoadContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateRoutineLoad(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -43837,15 +43333,13 @@ func (s *ShowCreateLoadContext) MultipartIdentifier() IMultipartIdentifierContex
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *ShowCreateLoadContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowCreateLoad(s)
-	}
-}
+func (s *ShowCreateLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowCreateLoad(s)
 
-func (s *ShowCreateLoadContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowCreateLoad(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -43936,15 +43430,13 @@ func (s *MysqlLoadContext) PropertyItemList() IPropertyItemListContext {
 	return t.(IPropertyItemListContext)
 }
 
-func (s *MysqlLoadContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterMysqlLoad(s)
-	}
-}
+func (s *MysqlLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitMysqlLoad(s)
 
-func (s *MysqlLoadContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitMysqlLoad(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -44180,15 +43672,13 @@ func (s *ImportPrecedingFilterContext) ImportPrecedingFilterStatement() IImportP
 	return t.(IImportPrecedingFilterStatementContext)
 }
 
-func (s *ImportPrecedingFilterContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterImportPrecedingFilter(s)
-	}
-}
+func (s *ImportPrecedingFilterContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitImportPrecedingFilter(s)
 
-func (s *ImportPrecedingFilterContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitImportPrecedingFilter(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -44226,15 +43716,13 @@ func (s *ImportSequenceContext) ImportSequenceStatement() IImportSequenceStateme
 	return t.(IImportSequenceStatementContext)
 }
 
-func (s *ImportSequenceContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterImportSequence(s)
-	}
-}
+func (s *ImportSequenceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitImportSequence(s)
 
-func (s *ImportSequenceContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitImportSequence(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -44272,15 +43760,13 @@ func (s *ImportColumnsContext) ImportColumnsStatement() IImportColumnsStatementC
 	return t.(IImportColumnsStatementContext)
 }
 
-func (s *ImportColumnsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterImportColumns(s)
-	}
-}
+func (s *ImportColumnsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitImportColumns(s)
 
-func (s *ImportColumnsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitImportColumns(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -44318,15 +43804,13 @@ func (s *ImportWhereContext) ImportWhereStatement() IImportWhereStatementContext
 	return t.(IImportWhereStatementContext)
 }
 
-func (s *ImportWhereContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterImportWhere(s)
-	}
-}
+func (s *ImportWhereContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitImportWhere(s)
 
-func (s *ImportWhereContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitImportWhere(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -44364,15 +43848,13 @@ func (s *SeparatorContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *SeparatorContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSeparator(s)
-	}
-}
+func (s *SeparatorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSeparator(s)
 
-func (s *SeparatorContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSeparator(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -44410,15 +43892,13 @@ func (s *ImportPartitionsContext) PartitionSpec() IPartitionSpecContext {
 	return t.(IPartitionSpecContext)
 }
 
-func (s *ImportPartitionsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterImportPartitions(s)
-	}
-}
+func (s *ImportPartitionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitImportPartitions(s)
 
-func (s *ImportPartitionsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitImportPartitions(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -44456,15 +43936,13 @@ func (s *ImportDeleteOnContext) ImportDeleteOnStatement() IImportDeleteOnStateme
 	return t.(IImportDeleteOnStatementContext)
 }
 
-func (s *ImportDeleteOnContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterImportDeleteOn(s)
-	}
-}
+func (s *ImportDeleteOnContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitImportDeleteOn(s)
 
-func (s *ImportDeleteOnContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitImportDeleteOn(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -44659,15 +44137,13 @@ func (s *ImportSequenceStatementContext) ToStringTree(ruleNames []string, recog 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ImportSequenceStatementContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterImportSequenceStatement(s)
-	}
-}
+func (s *ImportSequenceStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitImportSequenceStatement(s)
 
-func (s *ImportSequenceStatementContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitImportSequenceStatement(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -44789,15 +44265,13 @@ func (s *ImportDeleteOnStatementContext) ToStringTree(ruleNames []string, recog 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ImportDeleteOnStatementContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterImportDeleteOnStatement(s)
-	}
-}
+func (s *ImportDeleteOnStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitImportDeleteOnStatement(s)
 
-func (s *ImportDeleteOnStatementContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitImportDeleteOnStatement(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -44914,15 +44388,13 @@ func (s *ImportWhereStatementContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ImportWhereStatementContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterImportWhereStatement(s)
-	}
-}
+func (s *ImportWhereStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitImportWhereStatement(s)
 
-func (s *ImportWhereStatementContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitImportWhereStatement(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -45036,15 +44508,13 @@ func (s *ImportPrecedingFilterStatementContext) ToStringTree(ruleNames []string,
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ImportPrecedingFilterStatementContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterImportPrecedingFilterStatement(s)
-	}
-}
+func (s *ImportPrecedingFilterStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitImportPrecedingFilterStatement(s)
 
-func (s *ImportPrecedingFilterStatementContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitImportPrecedingFilterStatement(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -45207,15 +44677,13 @@ func (s *ImportColumnsStatementContext) ToStringTree(ruleNames []string, recog a
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ImportColumnsStatementContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterImportColumnsStatement(s)
-	}
-}
+func (s *ImportColumnsStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitImportColumnsStatement(s)
 
-func (s *ImportColumnsStatementContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitImportColumnsStatement(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -45408,15 +44876,13 @@ func (s *ImportColumnDescContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ImportColumnDescContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterImportColumnDesc(s)
-	}
-}
+func (s *ImportColumnDescContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitImportColumnDesc(s)
 
-func (s *ImportColumnDescContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitImportColumnDesc(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -45647,15 +45113,13 @@ func (s *RefreshCatalogContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *RefreshCatalogContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRefreshCatalog(s)
-	}
-}
+func (s *RefreshCatalogContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRefreshCatalog(s)
 
-func (s *RefreshCatalogContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRefreshCatalog(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -45706,15 +45170,13 @@ func (s *RefreshDictionaryContext) MultipartIdentifier() IMultipartIdentifierCon
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *RefreshDictionaryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRefreshDictionary(s)
-	}
-}
+func (s *RefreshDictionaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRefreshDictionary(s)
 
-func (s *RefreshDictionaryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRefreshDictionary(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -45781,15 +45243,13 @@ func (s *RefreshDatabaseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *RefreshDatabaseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRefreshDatabase(s)
-	}
-}
+func (s *RefreshDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRefreshDatabase(s)
 
-func (s *RefreshDatabaseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRefreshDatabase(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -45840,15 +45300,13 @@ func (s *RefreshTableContext) MultipartIdentifier() IMultipartIdentifierContext 
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *RefreshTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRefreshTable(s)
-	}
-}
+func (s *RefreshTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRefreshTable(s)
 
-func (s *RefreshTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRefreshTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -45907,15 +45365,13 @@ func (s *RefreshLdapContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *RefreshLdapContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRefreshLdap(s)
-	}
-}
+func (s *RefreshLdapContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRefreshLdap(s)
 
-func (s *RefreshLdapContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRefreshLdap(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -46281,15 +45737,13 @@ func (s *CleanLabelContext) Identifier(i int) IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *CleanLabelContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCleanLabel(s)
-	}
-}
+func (s *CleanLabelContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCleanLabel(s)
 
-func (s *CleanLabelContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCleanLabel(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -46377,15 +45831,13 @@ func (s *CleanQueryStatsContext) MultipartIdentifier() IMultipartIdentifierConte
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *CleanQueryStatsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCleanQueryStats(s)
-	}
-}
+func (s *CleanQueryStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCleanQueryStats(s)
 
-func (s *CleanQueryStatsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCleanQueryStats(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -46419,15 +45871,13 @@ func (s *CleanAllProfileContext) PROFILE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserPROFILE, 0)
 }
 
-func (s *CleanAllProfileContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCleanAllProfile(s)
-	}
-}
+func (s *CleanAllProfileContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCleanAllProfile(s)
 
-func (s *CleanAllProfileContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCleanAllProfile(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -46465,15 +45915,13 @@ func (s *CleanAllQueryStatsContext) STATS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTATS, 0)
 }
 
-func (s *CleanAllQueryStatsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCleanAllQueryStats(s)
-	}
-}
+func (s *CleanAllQueryStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCleanAllQueryStats(s)
 
-func (s *CleanAllQueryStatsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCleanAllQueryStats(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -46810,15 +46258,13 @@ func (s *CancelBackupContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *CancelBackupContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCancelBackup(s)
-	}
-}
+func (s *CancelBackupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCancelBackup(s)
 
-func (s *CancelBackupContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCancelBackup(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -46872,15 +46318,13 @@ func (s *CancelWarmUpJobContext) WildWhere() IWildWhereContext {
 	return t.(IWildWhereContext)
 }
 
-func (s *CancelWarmUpJobContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCancelWarmUpJob(s)
-	}
-}
+func (s *CancelWarmUpJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCancelWarmUpJob(s)
 
-func (s *CancelWarmUpJobContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCancelWarmUpJob(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -46955,15 +46399,13 @@ func (s *CancelExportContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *CancelExportContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCancelExport(s)
-	}
-}
+func (s *CancelExportContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCancelExport(s)
 
-func (s *CancelExportContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCancelExport(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -47056,15 +46498,13 @@ func (s *CancelBuildIndexContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *CancelBuildIndexContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCancelBuildIndex(s)
-	}
-}
+func (s *CancelBuildIndexContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCancelBuildIndex(s)
 
-func (s *CancelBuildIndexContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCancelBuildIndex(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -47123,15 +46563,13 @@ func (s *CancelRestoreContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *CancelRestoreContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCancelRestore(s)
-	}
-}
+func (s *CancelRestoreContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCancelRestore(s)
 
-func (s *CancelRestoreContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCancelRestore(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -47206,15 +46644,13 @@ func (s *CancelLoadContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *CancelLoadContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCancelLoad(s)
-	}
-}
+func (s *CancelLoadContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCancelLoad(s)
 
-func (s *CancelLoadContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCancelLoad(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -47274,15 +46710,13 @@ func (s *CancelDecommisionBackendContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *CancelDecommisionBackendContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCancelDecommisionBackend(s)
-	}
-}
+func (s *CancelDecommisionBackendContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCancelDecommisionBackend(s)
 
-func (s *CancelDecommisionBackendContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCancelDecommisionBackend(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -47391,15 +46825,13 @@ func (s *CancelAlterTableContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *CancelAlterTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCancelAlterTable(s)
-	}
-}
+func (s *CancelAlterTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCancelAlterTable(s)
 
-func (s *CancelAlterTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCancelAlterTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -48169,15 +47601,13 @@ func (s *AdminShowReplicaDistributionContext) BaseTableRef() IBaseTableRefContex
 	return t.(IBaseTableRefContext)
 }
 
-func (s *AdminShowReplicaDistributionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminShowReplicaDistribution(s)
-	}
-}
+func (s *AdminShowReplicaDistributionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminShowReplicaDistribution(s)
 
-func (s *AdminShowReplicaDistributionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminShowReplicaDistribution(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -48223,15 +47653,13 @@ func (s *AdminShowTabletStorageFormatContext) VERBOSE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserVERBOSE, 0)
 }
 
-func (s *AdminShowTabletStorageFormatContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminShowTabletStorageFormat(s)
-	}
-}
+func (s *AdminShowTabletStorageFormatContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminShowTabletStorageFormat(s)
 
-func (s *AdminShowTabletStorageFormatContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminShowTabletStorageFormat(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -48303,15 +47731,13 @@ func (s *AdminRebalanceDiskContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AdminRebalanceDiskContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminRebalanceDisk(s)
-	}
-}
+func (s *AdminRebalanceDiskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminRebalanceDisk(s)
 
-func (s *AdminRebalanceDiskContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminRebalanceDisk(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -48377,15 +47803,13 @@ func (s *AdminSetReplicaStatusContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *AdminSetReplicaStatusContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminSetReplicaStatus(s)
-	}
-}
+func (s *AdminSetReplicaStatusContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminSetReplicaStatus(s)
 
-func (s *AdminSetReplicaStatusContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminSetReplicaStatus(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -48451,15 +47875,13 @@ func (s *AdminSetReplicaVersionContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *AdminSetReplicaVersionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminSetReplicaVersion(s)
-	}
-}
+func (s *AdminSetReplicaVersionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminSetReplicaVersion(s)
 
-func (s *AdminSetReplicaVersionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminSetReplicaVersion(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -48539,15 +47961,13 @@ func (s *AdminSetTableStatusContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AdminSetTableStatusContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminSetTableStatus(s)
-	}
-}
+func (s *AdminSetTableStatusContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminSetTableStatus(s)
 
-func (s *AdminSetTableStatusContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminSetTableStatus(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -48601,15 +48021,13 @@ func (s *AdminCancelRepairTableContext) BaseTableRef() IBaseTableRefContext {
 	return t.(IBaseTableRefContext)
 }
 
-func (s *AdminCancelRepairTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminCancelRepairTable(s)
-	}
-}
+func (s *AdminCancelRepairTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminCancelRepairTable(s)
 
-func (s *AdminCancelRepairTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminCancelRepairTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -48673,15 +48091,13 @@ func (s *AdminCopyTabletContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AdminCopyTabletContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminCopyTablet(s)
-	}
-}
+func (s *AdminCopyTabletContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminCopyTablet(s)
 
-func (s *AdminCopyTabletContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminCopyTablet(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -48731,15 +48147,13 @@ func (s *AdminRepairTableContext) BaseTableRef() IBaseTableRefContext {
 	return t.(IBaseTableRefContext)
 }
 
-func (s *AdminRepairTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminRepairTable(s)
-	}
-}
+func (s *AdminRepairTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminRepairTable(s)
 
-func (s *AdminRepairTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminRepairTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -48813,15 +48227,13 @@ func (s *AdminSetFrontendConfigContext) FRONTENDS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserFRONTENDS, 0)
 }
 
-func (s *AdminSetFrontendConfigContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminSetFrontendConfig(s)
-	}
-}
+func (s *AdminSetFrontendConfigContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminSetFrontendConfig(s)
 
-func (s *AdminSetFrontendConfigContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminSetFrontendConfig(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -48888,15 +48300,13 @@ func (s *AdminCheckTabletsContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AdminCheckTabletsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminCheckTablets(s)
-	}
-}
+func (s *AdminCheckTabletsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminCheckTablets(s)
 
-func (s *AdminCheckTabletsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminCheckTablets(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -48968,15 +48378,13 @@ func (s *AdminCleanTrashContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AdminCleanTrashContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminCleanTrash(s)
-	}
-}
+func (s *AdminCleanTrashContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminCleanTrash(s)
 
-func (s *AdminCleanTrashContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminCleanTrash(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -49042,15 +48450,13 @@ func (s *AdminCompactTableContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *AdminCompactTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminCompactTable(s)
-	}
-}
+func (s *AdminCompactTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminCompactTable(s)
 
-func (s *AdminCompactTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminCompactTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -49093,15 +48499,13 @@ func (s *AdminDiagnoseTabletContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *AdminDiagnoseTabletContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminDiagnoseTablet(s)
-	}
-}
+func (s *AdminDiagnoseTabletContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminDiagnoseTablet(s)
 
-func (s *AdminDiagnoseTabletContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminDiagnoseTablet(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -49177,15 +48581,13 @@ func (s *AdminCancelRebalanceDiskContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AdminCancelRebalanceDiskContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminCancelRebalanceDisk(s)
-	}
-}
+func (s *AdminCancelRebalanceDiskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminCancelRebalanceDisk(s)
 
-func (s *AdminCancelRebalanceDiskContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminCancelRebalanceDisk(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -49263,15 +48665,13 @@ func (s *AdminShowReplicaStatusContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *AdminShowReplicaStatusContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminShowReplicaStatus(s)
-	}
-}
+func (s *AdminShowReplicaStatusContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminShowReplicaStatus(s)
 
-func (s *AdminShowReplicaStatusContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminShowReplicaStatus(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -50608,15 +50008,13 @@ func (s *RecoverPartitionContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *RecoverPartitionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRecoverPartition(s)
-	}
-}
+func (s *RecoverPartitionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRecoverPartition(s)
 
-func (s *RecoverPartitionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRecoverPartition(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -50701,15 +50099,13 @@ func (s *RecoverTableContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *RecoverTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRecoverTable(s)
-	}
-}
+func (s *RecoverTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRecoverTable(s)
 
-func (s *RecoverTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRecoverTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -50803,15 +50199,13 @@ func (s *RecoverDatabaseContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *RecoverDatabaseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRecoverDatabase(s)
-	}
-}
+func (s *RecoverDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRecoverDatabase(s)
 
-func (s *RecoverDatabaseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRecoverDatabase(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -51212,15 +50606,13 @@ func (s *AdminSetPartitionVersionContext) PropertyClause() IPropertyClauseContex
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AdminSetPartitionVersionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAdminSetPartitionVersion(s)
-	}
-}
+func (s *AdminSetPartitionVersionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAdminSetPartitionVersion(s)
 
-func (s *AdminSetPartitionVersionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAdminSetPartitionVersion(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -51498,15 +50890,13 @@ func (s *BaseTableRefContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *BaseTableRefContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterBaseTableRef(s)
-	}
-}
+func (s *BaseTableRefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitBaseTableRef(s)
 
-func (s *BaseTableRefContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitBaseTableRef(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -51705,15 +51095,13 @@ func (s *WildWhereContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WildWhereContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterWildWhere(s)
-	}
-}
+func (s *WildWhereContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitWildWhere(s)
 
-func (s *WildWhereContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitWildWhere(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -51879,15 +51267,13 @@ func (s *TranscationCommitContext) NO(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserNO, i)
 }
 
-func (s *TranscationCommitContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterTranscationCommit(s)
-	}
-}
+func (s *TranscationCommitContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitTranscationCommit(s)
 
-func (s *TranscationCommitContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitTranscationCommit(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -51937,15 +51323,13 @@ func (s *TransactionRollbackContext) NO(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserNO, i)
 }
 
-func (s *TransactionRollbackContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterTransactionRollback(s)
-	}
-}
+func (s *TransactionRollbackContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitTransactionRollback(s)
 
-func (s *TransactionRollbackContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitTransactionRollback(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -51995,15 +51379,13 @@ func (s *TransactionBeginContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *TransactionBeginContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterTransactionBegin(s)
-	}
-}
+func (s *TransactionBeginContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitTransactionBegin(s)
 
-func (s *TransactionBeginContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitTransactionBegin(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -52493,15 +51875,13 @@ func (s *GrantResourcePrivilegeContext) IdentifierOrText() IIdentifierOrTextCont
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *GrantResourcePrivilegeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterGrantResourcePrivilege(s)
-	}
-}
+func (s *GrantResourcePrivilegeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitGrantResourcePrivilege(s)
 
-func (s *GrantResourcePrivilegeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitGrantResourcePrivilege(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -52608,15 +51988,13 @@ func (s *RevokeRoleContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *RevokeRoleContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRevokeRole(s)
-	}
-}
+func (s *RevokeRoleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRevokeRole(s)
 
-func (s *RevokeRoleContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRevokeRole(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -52718,15 +52096,13 @@ func (s *GrantTablePrivilegeContext) IdentifierOrText() IIdentifierOrTextContext
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *GrantTablePrivilegeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterGrantTablePrivilege(s)
-	}
-}
+func (s *GrantTablePrivilegeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitGrantTablePrivilege(s)
 
-func (s *GrantTablePrivilegeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitGrantTablePrivilege(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -52833,15 +52209,13 @@ func (s *GrantRoleContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *GrantRoleContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterGrantRole(s)
-	}
-}
+func (s *GrantRoleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitGrantRole(s)
 
-func (s *GrantRoleContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitGrantRole(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -52975,15 +52349,13 @@ func (s *RevokeResourcePrivilegeContext) IdentifierOrText() IIdentifierOrTextCon
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *RevokeResourcePrivilegeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRevokeResourcePrivilege(s)
-	}
-}
+func (s *RevokeResourcePrivilegeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRevokeResourcePrivilege(s)
 
-func (s *RevokeResourcePrivilegeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRevokeResourcePrivilege(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -53085,15 +52457,13 @@ func (s *RevokeTablePrivilegeContext) IdentifierOrText() IIdentifierOrTextContex
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *RevokeTablePrivilegeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRevokeTablePrivilege(s)
-	}
-}
+func (s *RevokeTablePrivilegeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRevokeTablePrivilege(s)
 
-func (s *RevokeTablePrivilegeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRevokeTablePrivilege(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -53826,15 +53196,13 @@ func (s *PrivilegeContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PrivilegeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPrivilege(s)
-	}
-}
+func (s *PrivilegeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPrivilege(s)
 
-func (s *PrivilegeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPrivilege(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -54012,15 +53380,13 @@ func (s *PrivilegeListContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PrivilegeListContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPrivilegeList(s)
-	}
-}
+func (s *PrivilegeListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPrivilegeList(s)
 
-func (s *PrivilegeListContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPrivilegeList(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -54203,15 +53569,13 @@ func (s *DropBrokerClauseContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *DropBrokerClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropBrokerClause(s)
-	}
-}
+func (s *DropBrokerClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropBrokerClause(s)
 
-func (s *DropBrokerClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropBrokerClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -54267,15 +53631,13 @@ func (s *ModifyFrontendOrBackendHostNameClauseContext) STRING_LITERAL(i int) ant
 	return s.GetToken(DorisParserParserSTRING_LITERAL, i)
 }
 
-func (s *ModifyFrontendOrBackendHostNameClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterModifyFrontendOrBackendHostNameClause(s)
-	}
-}
+func (s *ModifyFrontendOrBackendHostNameClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitModifyFrontendOrBackendHostNameClause(s)
 
-func (s *ModifyFrontendOrBackendHostNameClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitModifyFrontendOrBackendHostNameClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -54314,15 +53676,13 @@ func (s *DropObserverClauseContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *DropObserverClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropObserverClause(s)
-	}
-}
+func (s *DropObserverClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropObserverClause(s)
 
-func (s *DropObserverClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropObserverClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -54361,15 +53721,13 @@ func (s *AddFollowerClauseContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *AddFollowerClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAddFollowerClause(s)
-	}
-}
+func (s *AddFollowerClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAddFollowerClause(s)
 
-func (s *AddFollowerClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAddFollowerClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -54408,15 +53766,13 @@ func (s *DropFollowerClauseContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *DropFollowerClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropFollowerClause(s)
-	}
-}
+func (s *DropFollowerClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropFollowerClause(s)
 
-func (s *DropFollowerClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropFollowerClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -54471,15 +53827,13 @@ func (s *DropAllBrokerClauseContext) IdentifierOrText() IIdentifierOrTextContext
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *DropAllBrokerClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropAllBrokerClause(s)
-	}
-}
+func (s *DropAllBrokerClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropAllBrokerClause(s)
 
-func (s *DropAllBrokerClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropAllBrokerClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -54539,15 +53893,13 @@ func (s *DropBackendClauseContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *DropBackendClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropBackendClause(s)
-	}
-}
+func (s *DropBackendClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropBackendClause(s)
 
-func (s *DropBackendClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropBackendClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -54606,15 +53958,13 @@ func (s *AlterLoadErrorUrlClauseContext) PropertyClause() IPropertyClauseContext
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterLoadErrorUrlClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterLoadErrorUrlClause(s)
-	}
-}
+func (s *AlterLoadErrorUrlClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterLoadErrorUrlClause(s)
 
-func (s *AlterLoadErrorUrlClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterLoadErrorUrlClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -54698,15 +54048,13 @@ func (s *ModifyBackendClauseContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *ModifyBackendClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterModifyBackendClause(s)
-	}
-}
+func (s *ModifyBackendClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitModifyBackendClause(s)
 
-func (s *ModifyBackendClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitModifyBackendClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -54783,15 +54131,13 @@ func (s *AddBrokerClauseContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AddBrokerClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAddBrokerClause(s)
-	}
-}
+func (s *AddBrokerClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAddBrokerClause(s)
 
-func (s *AddBrokerClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAddBrokerClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -54830,15 +54176,13 @@ func (s *AddObserverClauseContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *AddObserverClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAddObserverClause(s)
-	}
-}
+func (s *AddObserverClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAddObserverClause(s)
 
-func (s *AddObserverClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAddObserverClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -54894,15 +54238,13 @@ func (s *DecommissionBackendClauseContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *DecommissionBackendClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDecommissionBackendClause(s)
-	}
-}
+func (s *DecommissionBackendClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDecommissionBackendClause(s)
 
-func (s *DecommissionBackendClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDecommissionBackendClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -54979,15 +54321,13 @@ func (s *AddBackendClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AddBackendClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAddBackendClause(s)
-	}
-}
+func (s *AddBackendClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAddBackendClause(s)
 
-func (s *AddBackendClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAddBackendClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -55864,15 +55204,13 @@ func (s *DropRollupClauseContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DropRollupClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropRollupClause(s)
-	}
-}
+func (s *DropRollupClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropRollupClause(s)
 
-func (s *DropRollupClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropRollupClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -56121,15 +55459,13 @@ func (s *AddRollupClauseContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *AddRollupClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAddRollupClause(s)
-	}
-}
+func (s *AddRollupClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAddRollupClause(s)
 
-func (s *AddRollupClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAddRollupClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -56365,15 +55701,13 @@ func (s *ModifyDistributionClauseContext) AUTO() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserAUTO, 0)
 }
 
-func (s *ModifyDistributionClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterModifyDistributionClause(s)
-	}
-}
+func (s *ModifyDistributionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitModifyDistributionClause(s)
 
-func (s *ModifyDistributionClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitModifyDistributionClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -56472,15 +55806,13 @@ func (s *AddColumnClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AddColumnClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAddColumnClause(s)
-	}
-}
+func (s *AddColumnClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAddColumnClause(s)
 
-func (s *AddColumnClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAddColumnClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -56579,15 +55911,13 @@ func (s *ModifyColumnClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *ModifyColumnClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterModifyColumnClause(s)
-	}
-}
+func (s *ModifyColumnClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitModifyColumnClause(s)
 
-func (s *ModifyColumnClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitModifyColumnClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -56678,15 +56008,13 @@ func (s *AddColumnsClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AddColumnsClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAddColumnsClause(s)
-	}
-}
+func (s *AddColumnsClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAddColumnsClause(s)
 
-func (s *AddColumnsClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAddColumnsClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -56766,15 +56094,13 @@ func (s *ReplaceTableClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *ReplaceTableClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterReplaceTableClause(s)
-	}
-}
+func (s *ReplaceTableClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitReplaceTableClause(s)
 
-func (s *ReplaceTableClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitReplaceTableClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -56833,15 +56159,13 @@ func (s *DropIndexClauseContext) EXISTS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserEXISTS, 0)
 }
 
-func (s *DropIndexClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropIndexClause(s)
-	}
-}
+func (s *DropIndexClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropIndexClause(s)
 
-func (s *DropIndexClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropIndexClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -56946,15 +56270,13 @@ func (s *DropPartitionClauseContext) INDEX() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINDEX, 0)
 }
 
-func (s *DropPartitionClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropPartitionClause(s)
-	}
-}
+func (s *DropPartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropPartitionClause(s)
 
-func (s *DropPartitionClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropPartitionClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -57064,15 +56386,13 @@ func (s *ReplacePartitionClauseContext) PropertyClause() IPropertyClauseContext 
 	return t.(IPropertyClauseContext)
 }
 
-func (s *ReplacePartitionClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterReplacePartitionClause(s)
-	}
-}
+func (s *ReplacePartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitReplacePartitionClause(s)
 
-func (s *ReplacePartitionClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitReplacePartitionClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -57111,15 +56431,13 @@ func (s *ModifyTableCommentClauseContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ModifyTableCommentClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterModifyTableCommentClause(s)
-	}
-}
+func (s *ModifyTableCommentClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitModifyTableCommentClause(s)
 
-func (s *ModifyTableCommentClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitModifyTableCommentClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -57202,15 +56520,13 @@ func (s *ReorderColumnsClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *ReorderColumnsClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterReorderColumnsClause(s)
-	}
-}
+func (s *ReorderColumnsClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitReorderColumnsClause(s)
 
-func (s *ReorderColumnsClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitReorderColumnsClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -57248,15 +56564,13 @@ func (s *DropBranchClausesContext) DropBranchClause() IDropBranchClauseContext {
 	return t.(IDropBranchClauseContext)
 }
 
-func (s *DropBranchClausesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropBranchClauses(s)
-	}
-}
+func (s *DropBranchClausesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropBranchClauses(s)
 
-func (s *DropBranchClausesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropBranchClauses(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -57298,15 +56612,13 @@ func (s *AddIndexClauseContext) IndexDef() IIndexDefContext {
 	return t.(IIndexDefContext)
 }
 
-func (s *AddIndexClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAddIndexClause(s)
-	}
-}
+func (s *AddIndexClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAddIndexClause(s)
 
-func (s *AddIndexClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAddIndexClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -57370,15 +56682,13 @@ func (s *ModifyColumnCommentClauseContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ModifyColumnCommentClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterModifyColumnCommentClause(s)
-	}
-}
+func (s *ModifyColumnCommentClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitModifyColumnCommentClause(s)
 
-func (s *ModifyColumnCommentClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitModifyColumnCommentClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -57459,15 +56769,13 @@ func (s *RenameColumnClauseContext) Identifier(i int) IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *RenameColumnClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRenameColumnClause(s)
-	}
-}
+func (s *RenameColumnClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRenameColumnClause(s)
 
-func (s *RenameColumnClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRenameColumnClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -57505,15 +56813,13 @@ func (s *CreateOrReplaceTagClausesContext) CreateOrReplaceTagClause() ICreateOrR
 	return t.(ICreateOrReplaceTagClauseContext)
 }
 
-func (s *CreateOrReplaceTagClausesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateOrReplaceTagClauses(s)
-	}
-}
+func (s *CreateOrReplaceTagClausesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateOrReplaceTagClauses(s)
 
-func (s *CreateOrReplaceTagClausesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateOrReplaceTagClauses(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -57577,15 +56883,13 @@ func (s *EnableFeatureClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *EnableFeatureClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterEnableFeatureClause(s)
-	}
-}
+func (s *EnableFeatureClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitEnableFeatureClause(s)
 
-func (s *EnableFeatureClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitEnableFeatureClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -57623,15 +56927,13 @@ func (s *CreateOrReplaceBranchClausesContext) CreateOrReplaceBranchClause() ICre
 	return t.(ICreateOrReplaceBranchClauseContext)
 }
 
-func (s *CreateOrReplaceBranchClausesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateOrReplaceBranchClauses(s)
-	}
-}
+func (s *CreateOrReplaceBranchClausesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateOrReplaceBranchClauses(s)
 
-func (s *CreateOrReplaceBranchClausesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateOrReplaceBranchClauses(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -57752,15 +57054,13 @@ func (s *AddPartitionClauseContext) AUTO() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserAUTO, 0)
 }
 
-func (s *AddPartitionClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAddPartitionClause(s)
-	}
-}
+func (s *AddPartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAddPartitionClause(s)
 
-func (s *AddPartitionClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAddPartitionClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -57841,15 +57141,13 @@ func (s *RenameRollupClauseContext) Identifier(i int) IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *RenameRollupClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRenameRollupClause(s)
-	}
-}
+func (s *RenameRollupClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRenameRollupClause(s)
 
-func (s *RenameRollupClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRenameRollupClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -57930,15 +57228,13 @@ func (s *RenamePartitionClauseContext) Identifier(i int) IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *RenamePartitionClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRenamePartitionClause(s)
-	}
-}
+func (s *RenamePartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRenamePartitionClause(s)
 
-func (s *RenamePartitionClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRenamePartitionClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -58026,15 +57322,13 @@ func (s *DropColumnClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *DropColumnClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropColumnClause(s)
-	}
-}
+func (s *DropColumnClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropColumnClause(s)
 
-func (s *DropColumnClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropColumnClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -58081,15 +57375,13 @@ func (s *RenameClauseContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *RenameClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRenameClause(s)
-	}
-}
+func (s *RenameClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRenameClause(s)
 
-func (s *RenameClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRenameClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -58218,15 +57510,13 @@ func (s *ModifyPartitionClauseContext) IdentifierList() IIdentifierListContext {
 	return t.(IIdentifierListContext)
 }
 
-func (s *ModifyPartitionClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterModifyPartitionClause(s)
-	}
-}
+func (s *ModifyPartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitModifyPartitionClause(s)
 
-func (s *ModifyPartitionClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitModifyPartitionClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -58302,15 +57592,13 @@ func (s *ModifyEngineClauseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *ModifyEngineClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterModifyEngineClause(s)
-	}
-}
+func (s *ModifyEngineClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitModifyEngineClause(s)
 
-func (s *ModifyEngineClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitModifyEngineClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -58348,15 +57636,13 @@ func (s *DropTagClausesContext) DropTagClause() IDropTagClauseContext {
 	return t.(IDropTagClauseContext)
 }
 
-func (s *DropTagClausesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropTagClauses(s)
-	}
-}
+func (s *DropTagClausesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropTagClauses(s)
 
-func (s *DropTagClausesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropTagClauses(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -58501,15 +57787,13 @@ func (s *AlterMultiPartitionClauseContext) PropertyClause() IPropertyClauseConte
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AlterMultiPartitionClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterMultiPartitionClause(s)
-	}
-}
+func (s *AlterMultiPartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterMultiPartitionClause(s)
 
-func (s *AlterMultiPartitionClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterMultiPartitionClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -60238,15 +59522,13 @@ func (s *CreateOrReplaceTagClauseContext) ToStringTree(ruleNames []string, recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *CreateOrReplaceTagClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateOrReplaceTagClause(s)
-	}
-}
+func (s *CreateOrReplaceTagClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateOrReplaceTagClause(s)
 
-func (s *CreateOrReplaceTagClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateOrReplaceTagClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -60549,15 +59831,13 @@ func (s *CreateOrReplaceBranchClauseContext) ToStringTree(ruleNames []string, re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *CreateOrReplaceBranchClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCreateOrReplaceBranchClause(s)
-	}
-}
+func (s *CreateOrReplaceBranchClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCreateOrReplaceBranchClause(s)
 
-func (s *CreateOrReplaceBranchClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCreateOrReplaceBranchClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -60817,15 +60097,13 @@ func (s *TagOptionsContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TagOptionsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterTagOptions(s)
-	}
-}
+func (s *TagOptionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitTagOptions(s)
 
-func (s *TagOptionsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitTagOptions(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -61026,15 +60304,13 @@ func (s *BranchOptionsContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *BranchOptionsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterBranchOptions(s)
-	}
-}
+func (s *BranchOptionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitBranchOptions(s)
 
-func (s *BranchOptionsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitBranchOptions(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -61206,15 +60482,13 @@ func (s *RetainTimeContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RetainTimeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRetainTime(s)
-	}
-}
+func (s *RetainTimeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRetainTime(s)
 
-func (s *RetainTimeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRetainTime(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -61350,15 +60624,13 @@ func (s *RetentionSnapshotContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RetentionSnapshotContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRetentionSnapshot(s)
-	}
-}
+func (s *RetentionSnapshotContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRetentionSnapshot(s)
 
-func (s *RetentionSnapshotContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRetentionSnapshot(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -61560,15 +60832,13 @@ func (s *MinSnapshotsToKeepContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MinSnapshotsToKeepContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterMinSnapshotsToKeep(s)
-	}
-}
+func (s *MinSnapshotsToKeepContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitMinSnapshotsToKeep(s)
 
-func (s *MinSnapshotsToKeepContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitMinSnapshotsToKeep(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -61704,15 +60974,13 @@ func (s *TimeValueWithUnitContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TimeValueWithUnitContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterTimeValueWithUnit(s)
-	}
-}
+func (s *TimeValueWithUnitContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitTimeValueWithUnit(s)
 
-func (s *TimeValueWithUnitContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitTimeValueWithUnit(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -61866,15 +61134,13 @@ func (s *DropBranchClauseContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DropBranchClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropBranchClause(s)
-	}
-}
+func (s *DropBranchClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropBranchClause(s)
 
-func (s *DropBranchClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropBranchClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -62048,15 +61314,13 @@ func (s *DropTagClauseContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DropTagClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropTagClause(s)
-	}
-}
+func (s *DropTagClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropTagClause(s)
 
-func (s *DropTagClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropTagClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -62220,15 +61484,13 @@ func (s *ColumnPositionContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ColumnPositionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterColumnPosition(s)
-	}
-}
+func (s *ColumnPositionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitColumnPosition(s)
 
-func (s *ColumnPositionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitColumnPosition(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -62380,15 +61642,13 @@ func (s *ToRollupContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ToRollupContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterToRollup(s)
-	}
-}
+func (s *ToRollupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitToRollup(s)
 
-func (s *ToRollupContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitToRollup(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -62516,15 +61776,13 @@ func (s *FromRollupContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FromRollupContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterFromRollup(s)
-	}
-}
+func (s *FromRollupContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitFromRollup(s)
 
-func (s *FromRollupContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitFromRollup(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -62712,15 +61970,13 @@ func (s *ShowTableStatsContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowTableStatsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowTableStats(s)
-	}
-}
+func (s *ShowTableStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowTableStats(s)
 
-func (s *ShowTableStatsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowTableStats(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -62836,15 +62092,13 @@ func (s *AnalyzeDatabaseContext) PropertyClause() IPropertyClauseContext {
 	return t.(IPropertyClauseContext)
 }
 
-func (s *AnalyzeDatabaseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAnalyzeDatabase(s)
-	}
-}
+func (s *AnalyzeDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAnalyzeDatabase(s)
 
-func (s *AnalyzeDatabaseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAnalyzeDatabase(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -62941,15 +62195,13 @@ func (s *ShowQueuedAnalyzeJobsContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowQueuedAnalyzeJobsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowQueuedAnalyzeJobs(s)
-	}
-}
+func (s *ShowQueuedAnalyzeJobsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowQueuedAnalyzeJobs(s)
 
-func (s *ShowQueuedAnalyzeJobsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowQueuedAnalyzeJobs(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -63025,15 +62277,13 @@ func (s *ShowIndexStatsContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ShowIndexStatsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowIndexStats(s)
-	}
-}
+func (s *ShowIndexStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowIndexStats(s)
 
-func (s *ShowIndexStatsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowIndexStats(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -63121,15 +62371,13 @@ func (s *DropStatsContext) IdentifierList() IIdentifierListContext {
 	return t.(IIdentifierListContext)
 }
 
-func (s *DropStatsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropStats(s)
-	}
-}
+func (s *DropStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropStats(s)
 
-func (s *DropStatsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropStats(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -63184,15 +62432,13 @@ func (s *DropCachedStatsContext) MultipartIdentifier() IMultipartIdentifierConte
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *DropCachedStatsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropCachedStats(s)
-	}
-}
+func (s *DropCachedStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropCachedStats(s)
 
-func (s *DropCachedStatsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropCachedStats(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -63231,15 +62477,13 @@ func (s *KillAnalyzeJobContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *KillAnalyzeJobContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterKillAnalyzeJob(s)
-	}
-}
+func (s *KillAnalyzeJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitKillAnalyzeJob(s)
 
-func (s *KillAnalyzeJobContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitKillAnalyzeJob(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -63341,15 +62585,13 @@ func (s *ShowAnalyzeContext) STRING_LITERAL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRING_LITERAL, 0)
 }
 
-func (s *ShowAnalyzeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowAnalyze(s)
-	}
-}
+func (s *ShowAnalyzeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowAnalyze(s)
 
-func (s *ShowAnalyzeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowAnalyze(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -63387,15 +62629,13 @@ func (s *DropAnalyzeJobContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *DropAnalyzeJobContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropAnalyzeJob(s)
-	}
-}
+func (s *DropAnalyzeJobContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropAnalyzeJob(s)
 
-func (s *DropAnalyzeJobContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropAnalyzeJob(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -63557,15 +62797,13 @@ func (s *AlterColumnStatsContext) PartitionSpec() IPartitionSpecContext {
 	return t.(IPartitionSpecContext)
 }
 
-func (s *AlterColumnStatsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterColumnStats(s)
-	}
-}
+func (s *AlterColumnStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterColumnStats(s)
 
-func (s *AlterColumnStatsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterColumnStats(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -63599,15 +62837,13 @@ func (s *DropExpiredStatsContext) STATS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTATS, 0)
 }
 
-func (s *DropExpiredStatsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDropExpiredStats(s)
-	}
-}
+func (s *DropExpiredStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDropExpiredStats(s)
 
-func (s *DropExpiredStatsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDropExpiredStats(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -63760,15 +62996,13 @@ func (s *AnalyzeTableContext) IdentifierList() IIdentifierListContext {
 	return t.(IIdentifierListContext)
 }
 
-func (s *AnalyzeTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAnalyzeTable(s)
-	}
-}
+func (s *AnalyzeTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAnalyzeTable(s)
 
-func (s *AnalyzeTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAnalyzeTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -63867,15 +63101,13 @@ func (s *AlterTableStatsContext) PartitionSpec() IPartitionSpecContext {
 	return t.(IPartitionSpecContext)
 }
 
-func (s *AlterTableStatsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAlterTableStats(s)
-	}
-}
+func (s *AlterTableStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAlterTableStats(s)
 
-func (s *AlterTableStatsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAlterTableStats(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -63955,15 +63187,13 @@ func (s *ShowColumnHistogramStatsContext) IdentifierList() IIdentifierListContex
 	return t.(IIdentifierListContext)
 }
 
-func (s *ShowColumnHistogramStatsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowColumnHistogramStats(s)
-	}
-}
+func (s *ShowColumnHistogramStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowColumnHistogramStats(s)
 
-func (s *ShowColumnHistogramStatsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowColumnHistogramStats(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -65107,15 +64337,13 @@ func (s *ShowColumnStatsContext) IdentifierList() IIdentifierListContext {
 	return t.(IIdentifierListContext)
 }
 
-func (s *ShowColumnStatsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowColumnStats(s)
-	}
-}
+func (s *ShowColumnStatsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowColumnStats(s)
 
-func (s *ShowColumnStatsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowColumnStats(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -65162,15 +64390,13 @@ func (s *ShowAnalyzeTaskContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *ShowAnalyzeTaskContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterShowAnalyzeTask(s)
-	}
-}
+func (s *ShowAnalyzeTaskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitShowAnalyzeTask(s)
 
-func (s *ShowAnalyzeTaskContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitShowAnalyzeTask(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -65507,15 +64733,13 @@ func (s *AnalyzePropertiesContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *AnalyzePropertiesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAnalyzeProperties(s)
-	}
-}
+func (s *AnalyzePropertiesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAnalyzeProperties(s)
 
-func (s *AnalyzePropertiesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAnalyzeProperties(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -65838,15 +65062,13 @@ func (s *WorkloadPolicyActionsContext) ToStringTree(ruleNames []string, recog an
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WorkloadPolicyActionsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterWorkloadPolicyActions(s)
-	}
-}
+func (s *WorkloadPolicyActionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitWorkloadPolicyActions(s)
 
-func (s *WorkloadPolicyActionsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitWorkloadPolicyActions(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -65982,15 +65204,13 @@ func (s *WorkloadPolicyActionContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WorkloadPolicyActionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterWorkloadPolicyAction(s)
-	}
-}
+func (s *WorkloadPolicyActionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitWorkloadPolicyAction(s)
 
-func (s *WorkloadPolicyActionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitWorkloadPolicyAction(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -66173,15 +65393,13 @@ func (s *WorkloadPolicyConditionsContext) ToStringTree(ruleNames []string, recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WorkloadPolicyConditionsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterWorkloadPolicyConditions(s)
-	}
-}
+func (s *WorkloadPolicyConditionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitWorkloadPolicyConditions(s)
 
-func (s *WorkloadPolicyConditionsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitWorkloadPolicyConditions(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -66357,15 +65575,13 @@ func (s *WorkloadPolicyConditionContext) ToStringTree(ruleNames []string, recog 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WorkloadPolicyConditionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterWorkloadPolicyCondition(s)
-	}
-}
+func (s *WorkloadPolicyConditionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitWorkloadPolicyCondition(s)
 
-func (s *WorkloadPolicyConditionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitWorkloadPolicyCondition(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -66569,15 +65785,13 @@ func (s *StorageBackendContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *StorageBackendContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterStorageBackend(s)
-	}
-}
+func (s *StorageBackendContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitStorageBackend(s)
 
-func (s *StorageBackendContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitStorageBackend(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -66960,15 +66174,13 @@ func (s *PasswordOptionContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PasswordOptionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPasswordOption(s)
-	}
-}
+func (s *PasswordOptionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPasswordOption(s)
 
-func (s *PasswordOptionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPasswordOption(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -67415,15 +66627,13 @@ func (s *FunctionArgumentsContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FunctionArgumentsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterFunctionArguments(s)
-	}
-}
+func (s *FunctionArgumentsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitFunctionArguments(s)
 
-func (s *FunctionArgumentsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitFunctionArguments(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -67601,15 +66811,13 @@ func (s *DataTypeListContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DataTypeListContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDataTypeList(s)
-	}
-}
+func (s *DataTypeListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDataTypeList(s)
 
-func (s *DataTypeListContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDataTypeList(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -67804,15 +67012,13 @@ func (s *SetTransactionContext) StatementScope() IStatementScopeContext {
 	return t.(IStatementScopeContext)
 }
 
-func (s *SetTransactionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSetTransaction(s)
-	}
-}
+func (s *SetTransactionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSetTransaction(s)
 
-func (s *SetTransactionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSetTransaction(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -67883,15 +67089,13 @@ func (s *SetUserPropertiesContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *SetUserPropertiesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSetUserProperties(s)
-	}
-}
+func (s *SetUserPropertiesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSetUserProperties(s)
 
-func (s *SetUserPropertiesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSetUserProperties(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -67949,15 +67153,13 @@ func (s *SetDefaultStorageVaultContext) VAULT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserVAULT, 0)
 }
 
-func (s *SetDefaultStorageVaultContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSetDefaultStorageVault(s)
-	}
-}
+func (s *SetDefaultStorageVaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSetDefaultStorageVault(s)
 
-func (s *SetDefaultStorageVaultContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSetDefaultStorageVault(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -68073,15 +67275,13 @@ func (s *SetOptionsContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *SetOptionsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSetOptions(s)
-	}
-}
+func (s *SetOptionsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSetOptions(s)
 
-func (s *SetOptionsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSetOptions(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -68511,15 +67711,13 @@ func (s *SetVariableWithTypeContext) DEFAULT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDEFAULT, 0)
 }
 
-func (s *SetVariableWithTypeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSetVariableWithType(s)
-	}
-}
+func (s *SetVariableWithTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSetVariableWithType(s)
 
-func (s *SetVariableWithTypeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSetVariableWithType(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -68681,15 +67879,13 @@ func (s *SetNamesContext) Expression() IExpressionContext {
 	return t.(IExpressionContext)
 }
 
-func (s *SetNamesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSetNames(s)
-	}
-}
+func (s *SetNamesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSetNames(s)
 
-func (s *SetNamesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSetNames(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -68748,15 +67944,13 @@ func (s *SetCharsetContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *SetCharsetContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSetCharset(s)
-	}
-}
+func (s *SetCharsetContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSetCharset(s)
 
-func (s *SetCharsetContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSetCharset(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -68845,15 +68039,13 @@ func (s *SetCollateContext) COLLATE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOLLATE, 0)
 }
 
-func (s *SetCollateContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSetCollate(s)
-	}
-}
+func (s *SetCollateContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSetCollate(s)
 
-func (s *SetCollateContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSetCollate(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -68929,15 +68121,13 @@ func (s *SetPasswordContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *SetPasswordContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSetPassword(s)
-	}
-}
+func (s *SetPasswordContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSetPassword(s)
 
-func (s *SetPasswordContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSetPassword(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -68975,15 +68165,13 @@ func (s *SetVariableWithoutTypeContext) Variable() IVariableContext {
 	return t.(IVariableContext)
 }
 
-func (s *SetVariableWithoutTypeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSetVariableWithoutType(s)
-	}
-}
+func (s *SetVariableWithoutTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSetVariableWithoutType(s)
 
-func (s *SetVariableWithoutTypeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSetVariableWithoutType(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -69034,15 +68222,13 @@ func (s *SetLdapAdminPasswordContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *SetLdapAdminPasswordContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSetLdapAdminPassword(s)
-	}
-}
+func (s *SetLdapAdminPasswordContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSetLdapAdminPassword(s)
 
-func (s *SetLdapAdminPasswordContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSetLdapAdminPassword(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -69558,15 +68744,13 @@ func (s *SetUserVariableContext) Expression() IExpressionContext {
 	return t.(IExpressionContext)
 }
 
-func (s *SetUserVariableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSetUserVariable(s)
-	}
-}
+func (s *SetUserVariableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSetUserVariable(s)
 
-func (s *SetUserVariableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSetUserVariable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -69652,15 +68836,13 @@ func (s *SetSystemVariableContext) DOT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDOT, 0)
 }
 
-func (s *SetSystemVariableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSetSystemVariable(s)
-	}
-}
+func (s *SetSystemVariableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSetSystemVariable(s)
 
-func (s *SetSystemVariableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSetSystemVariable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -69871,15 +69053,13 @@ func (s *TransactionAccessModeContext) ToStringTree(ruleNames []string, recog an
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TransactionAccessModeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterTransactionAccessMode(s)
-	}
-}
+func (s *TransactionAccessModeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitTransactionAccessMode(s)
 
-func (s *TransactionAccessModeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitTransactionAccessMode(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -70010,15 +69190,13 @@ func (s *IsolationLevelContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IsolationLevelContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIsolationLevel(s)
-	}
-}
+func (s *IsolationLevelContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIsolationLevel(s)
 
-func (s *IsolationLevelContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIsolationLevel(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -70247,15 +69425,13 @@ func (s *SupportedUnsetStatementContext) ToStringTree(ruleNames []string, recog 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SupportedUnsetStatementContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSupportedUnsetStatement(s)
-	}
-}
+func (s *SupportedUnsetStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSupportedUnsetStatement(s)
 
-func (s *SupportedUnsetStatementContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSupportedUnsetStatement(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -70523,15 +69699,13 @@ func (s *UseCloudClusterContext) DOT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDOT, 0)
 }
 
-func (s *UseCloudClusterContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterUseCloudCluster(s)
-	}
-}
+func (s *UseCloudClusterContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitUseCloudCluster(s)
 
-func (s *UseCloudClusterContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitUseCloudCluster(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -70612,15 +69786,13 @@ func (s *UseDatabaseContext) DOT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDOT, 0)
 }
 
-func (s *UseDatabaseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterUseDatabase(s)
-	}
-}
+func (s *UseDatabaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitUseDatabase(s)
 
-func (s *UseDatabaseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitUseDatabase(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -70667,15 +69839,13 @@ func (s *SwitchCatalogContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *SwitchCatalogContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSwitchCatalog(s)
-	}
-}
+func (s *SwitchCatalogContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSwitchCatalog(s)
 
-func (s *SwitchCatalogContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSwitchCatalog(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -70953,15 +70123,13 @@ func (s *StageAndPatternContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *StageAndPatternContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterStageAndPattern(s)
-	}
-}
+func (s *StageAndPatternContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitStageAndPattern(s)
 
-func (s *StageAndPatternContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitStageAndPattern(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -71222,15 +70390,13 @@ func (s *DescribeTableValuedFunctionContext) PropertyItemList() IPropertyItemLis
 	return t.(IPropertyItemListContext)
 }
 
-func (s *DescribeTableValuedFunctionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDescribeTableValuedFunction(s)
-	}
-}
+func (s *DescribeTableValuedFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDescribeTableValuedFunction(s)
 
-func (s *DescribeTableValuedFunctionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDescribeTableValuedFunction(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -71300,15 +70466,13 @@ func (s *DescribeTableContext) SpecifiedPartition() ISpecifiedPartitionContext {
 	return t.(ISpecifiedPartitionContext)
 }
 
-func (s *DescribeTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDescribeTable(s)
-	}
-}
+func (s *DescribeTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDescribeTable(s)
 
-func (s *DescribeTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDescribeTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -71366,15 +70530,13 @@ func (s *DescribeTableAllContext) ALL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserALL, 0)
 }
 
-func (s *DescribeTableAllContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDescribeTableAll(s)
-	}
-}
+func (s *DescribeTableAllContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDescribeTableAll(s)
 
-func (s *DescribeTableAllContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDescribeTableAll(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -71432,15 +70594,13 @@ func (s *DescribeDictionaryContext) MultipartIdentifier() IMultipartIdentifierCo
 	return t.(IMultipartIdentifierContext)
 }
 
-func (s *DescribeDictionaryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDescribeDictionary(s)
-	}
-}
+func (s *DescribeDictionaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDescribeDictionary(s)
 
-func (s *DescribeDictionaryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDescribeDictionary(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -71770,15 +70930,13 @@ func (s *ConstraintContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ConstraintContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterConstraint(s)
-	}
-}
+func (s *ConstraintContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitConstraint(s)
 
-func (s *ConstraintContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitConstraint(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -72041,15 +71199,13 @@ func (s *PartitionSpecContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PartitionSpecContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPartitionSpec(s)
-	}
-}
+func (s *PartitionSpecContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPartitionSpec(s)
 
-func (s *PartitionSpecContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPartitionSpec(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -72354,15 +71510,13 @@ func (s *PartitionTableContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PartitionTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPartitionTable(s)
-	}
-}
+func (s *PartitionTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPartitionTable(s)
 
-func (s *PartitionTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPartitionTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -72631,15 +71785,13 @@ func (s *IdentityOrFunctionListContext) ToStringTree(ruleNames []string, recog a
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentityOrFunctionListContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIdentityOrFunctionList(s)
-	}
-}
+func (s *IdentityOrFunctionListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIdentityOrFunctionList(s)
 
-func (s *IdentityOrFunctionListContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIdentityOrFunctionList(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -72802,15 +71954,13 @@ func (s *IdentityOrFunctionContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentityOrFunctionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIdentityOrFunction(s)
-	}
-}
+func (s *IdentityOrFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIdentityOrFunction(s)
 
-func (s *IdentityOrFunctionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIdentityOrFunction(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -73470,15 +72620,13 @@ func (s *DataDescContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DataDescContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDataDesc(s)
-	}
-}
+func (s *DataDescContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDataDesc(s)
 
-func (s *DataDescContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDataDesc(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -74197,15 +73345,13 @@ func (s *StatementScopeContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *StatementScopeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterStatementScope(s)
-	}
-}
+func (s *StatementScopeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitStatementScope(s)
 
-func (s *StatementScopeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitStatementScope(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -74308,15 +73454,13 @@ func (s *BuildModeContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *BuildModeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterBuildMode(s)
-	}
-}
+func (s *BuildModeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitBuildMode(s)
 
-func (s *BuildModeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitBuildMode(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -74449,15 +73593,13 @@ func (s *RefreshTriggerContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RefreshTriggerContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRefreshTrigger(s)
-	}
-}
+func (s *RefreshTriggerContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRefreshTrigger(s)
 
-func (s *RefreshTriggerContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRefreshTrigger(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -74650,15 +73792,13 @@ func (s *RefreshScheduleContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RefreshScheduleContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRefreshSchedule(s)
-	}
-}
+func (s *RefreshScheduleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRefreshSchedule(s)
 
-func (s *RefreshScheduleContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRefreshSchedule(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -74794,15 +73934,13 @@ func (s *RefreshMethodContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RefreshMethodContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRefreshMethod(s)
-	}
-}
+func (s *RefreshMethodContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRefreshMethod(s)
 
-func (s *RefreshMethodContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRefreshMethod(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -74948,15 +74086,13 @@ func (s *MvPartitionContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MvPartitionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterMvPartition(s)
-	}
-}
+func (s *MvPartitionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitMvPartition(s)
 
-func (s *MvPartitionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitMvPartition(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -75082,15 +74218,13 @@ func (s *IdentifierOrTextContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentifierOrTextContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIdentifierOrText(s)
-	}
-}
+func (s *IdentifierOrTextContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIdentifierOrText(s)
 
-func (s *IdentifierOrTextContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIdentifierOrText(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -75220,15 +74354,13 @@ func (s *IdentifierOrTextOrAsteriskContext) ToStringTree(ruleNames []string, rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentifierOrTextOrAsteriskContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIdentifierOrTextOrAsterisk(s)
-	}
-}
+func (s *IdentifierOrTextOrAsteriskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIdentifierOrTextOrAsterisk(s)
 
-func (s *IdentifierOrTextOrAsteriskContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIdentifierOrTextOrAsterisk(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -75425,15 +74557,13 @@ func (s *MultipartIdentifierOrAsteriskContext) ToStringTree(ruleNames []string, 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MultipartIdentifierOrAsteriskContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterMultipartIdentifierOrAsterisk(s)
-	}
-}
+func (s *MultipartIdentifierOrAsteriskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitMultipartIdentifierOrAsterisk(s)
 
-func (s *MultipartIdentifierOrAsteriskContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitMultipartIdentifierOrAsterisk(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -75572,15 +74702,13 @@ func (s *IdentifierOrAsteriskContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentifierOrAsteriskContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIdentifierOrAsterisk(s)
-	}
-}
+func (s *IdentifierOrAsteriskContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIdentifierOrAsterisk(s)
 
-func (s *IdentifierOrAsteriskContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIdentifierOrAsterisk(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -75763,15 +74891,13 @@ func (s *UserIdentifyContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *UserIdentifyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterUserIdentify(s)
-	}
-}
+func (s *UserIdentifyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitUserIdentify(s)
 
-func (s *UserIdentifyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitUserIdentify(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -75955,15 +75081,13 @@ func (s *GrantUserIdentifyContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *GrantUserIdentifyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterGrantUserIdentify(s)
-	}
-}
+func (s *GrantUserIdentifyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitGrantUserIdentify(s)
 
-func (s *GrantUserIdentifyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitGrantUserIdentify(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -76171,15 +75295,13 @@ func (s *ExplainContext) ToStringTree(ruleNames []string, recog antlr.Recognizer
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ExplainContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterExplain(s)
-	}
-}
+func (s *ExplainContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitExplain(s)
 
-func (s *ExplainContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitExplain(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -76335,15 +75457,13 @@ func (s *ExplainCommandContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ExplainCommandContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterExplainCommand(s)
-	}
-}
+func (s *ExplainCommandContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitExplainCommand(s)
 
-func (s *ExplainCommandContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitExplainCommand(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -76481,15 +75601,13 @@ func (s *PlanTypeContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PlanTypeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPlanType(s)
-	}
-}
+func (s *PlanTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPlanType(s)
 
-func (s *PlanTypeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPlanType(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -76604,15 +75722,13 @@ func (s *ReplayCommandContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ReplayCommandContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterReplayCommand(s)
-	}
-}
+func (s *ReplayCommandContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitReplayCommand(s)
 
-func (s *ReplayCommandContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitReplayCommand(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -76750,15 +75866,13 @@ func (s *ReplayTypeContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ReplayTypeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterReplayType(s)
-	}
-}
+func (s *ReplayTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitReplayType(s)
 
-func (s *ReplayTypeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitReplayType(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -76895,15 +76009,13 @@ func (s *MergeTypeContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MergeTypeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterMergeType(s)
-	}
-}
+func (s *MergeTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitMergeType(s)
 
-func (s *MergeTypeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitMergeType(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -77018,15 +76130,13 @@ func (s *PreFilterClauseContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PreFilterClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPreFilterClause(s)
-	}
-}
+func (s *PreFilterClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPreFilterClause(s)
 
-func (s *PreFilterClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPreFilterClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -77148,15 +76258,13 @@ func (s *DeleteOnClauseContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DeleteOnClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDeleteOnClause(s)
-	}
-}
+func (s *DeleteOnClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDeleteOnClause(s)
 
-func (s *DeleteOnClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDeleteOnClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -77278,15 +76386,13 @@ func (s *SequenceColClauseContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SequenceColClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSequenceColClause(s)
-	}
-}
+func (s *SequenceColClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSequenceColClause(s)
 
-func (s *SequenceColClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSequenceColClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -77418,15 +76524,13 @@ func (s *ColFromPathContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ColFromPathContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterColFromPath(s)
-	}
-}
+func (s *ColFromPathContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitColFromPath(s)
 
-func (s *ColFromPathContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitColFromPath(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -77627,15 +76731,13 @@ func (s *ColMappingListContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ColMappingListContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterColMappingList(s)
-	}
-}
+func (s *ColMappingListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitColMappingList(s)
 
-func (s *ColMappingListContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitColMappingList(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -77826,15 +76928,13 @@ func (s *MappingExprContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MappingExprContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterMappingExpr(s)
-	}
-}
+func (s *MappingExprContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitMappingExpr(s)
 
-func (s *MappingExprContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitMappingExpr(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -78042,15 +77142,13 @@ func (s *WithRemoteStorageSystemContext) ToStringTree(ruleNames []string, recog 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WithRemoteStorageSystemContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterWithRemoteStorageSystem(s)
-	}
-}
+func (s *WithRemoteStorageSystemContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitWithRemoteStorageSystem(s)
 
-func (s *WithRemoteStorageSystemContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitWithRemoteStorageSystem(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -78393,15 +77491,13 @@ func (s *ResourceDescContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ResourceDescContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterResourceDesc(s)
-	}
-}
+func (s *ResourceDescContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitResourceDesc(s)
 
-func (s *ResourceDescContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitResourceDesc(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -78778,15 +77874,13 @@ func (s *MysqlDataDescContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MysqlDataDescContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterMysqlDataDesc(s)
-	}
-}
+func (s *MysqlDataDescContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitMysqlDataDesc(s)
 
-func (s *MysqlDataDescContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitMysqlDataDesc(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -79134,15 +78228,13 @@ func (s *SkipLinesContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SkipLinesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSkipLines(s)
-	}
-}
+func (s *SkipLinesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSkipLines(s)
 
-func (s *SkipLinesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSkipLines(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -79379,15 +78471,13 @@ func (s *OutFileClauseContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *OutFileClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterOutFileClause(s)
-	}
-}
+func (s *OutFileClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitOutFileClause(s)
 
-func (s *OutFileClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitOutFileClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -79585,15 +78675,13 @@ func (s *QueryContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) 
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *QueryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterQuery(s)
-	}
-}
+func (s *QueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitQuery(s)
 
-func (s *QueryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitQuery(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -79727,15 +78815,13 @@ func (s *QueryTermDefaultContext) QueryPrimary() IQueryPrimaryContext {
 	return t.(IQueryPrimaryContext)
 }
 
-func (s *QueryTermDefaultContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterQueryTermDefault(s)
-	}
-}
+func (s *QueryTermDefaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitQueryTermDefault(s)
 
-func (s *QueryTermDefaultContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitQueryTermDefault(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -79845,15 +78931,13 @@ func (s *SetOperationContext) MINUS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserMINUS, 0)
 }
 
-func (s *SetOperationContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSetOperation(s)
-	}
-}
+func (s *SetOperationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSetOperation(s)
 
-func (s *SetOperationContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSetOperation(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -80094,15 +79178,13 @@ func (s *SetQuantifierContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SetQuantifierContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSetQuantifier(s)
-	}
-}
+func (s *SetQuantifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSetQuantifier(s)
 
-func (s *SetQuantifierContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSetQuantifier(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -80233,15 +79315,13 @@ func (s *SubqueryContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *SubqueryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSubquery(s)
-	}
-}
+func (s *SubqueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSubquery(s)
 
-func (s *SubqueryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSubquery(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -80279,15 +79359,13 @@ func (s *ValuesTableContext) InlineTable() IInlineTableContext {
 	return t.(IInlineTableContext)
 }
 
-func (s *ValuesTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterValuesTable(s)
-	}
-}
+func (s *ValuesTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitValuesTable(s)
 
-func (s *ValuesTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitValuesTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -80325,15 +79403,13 @@ func (s *QueryPrimaryDefaultContext) QuerySpecification() IQuerySpecificationCon
 	return t.(IQuerySpecificationContext)
 }
 
-func (s *QueryPrimaryDefaultContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterQueryPrimaryDefault(s)
-	}
-}
+func (s *QueryPrimaryDefaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitQueryPrimaryDefault(s)
 
-func (s *QueryPrimaryDefaultContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitQueryPrimaryDefault(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -80605,15 +79681,13 @@ func (s *RegularQuerySpecificationContext) QualifyClause() IQualifyClauseContext
 	return t.(IQualifyClauseContext)
 }
 
-func (s *RegularQuerySpecificationContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRegularQuerySpecification(s)
-	}
-}
+func (s *RegularQuerySpecificationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRegularQuerySpecification(s)
 
-func (s *RegularQuerySpecificationContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRegularQuerySpecification(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -80853,15 +79927,13 @@ func (s *CteContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) st
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *CteContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCte(s)
-	}
-}
+func (s *CteContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCte(s)
 
-func (s *CteContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCte(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -81044,15 +80116,13 @@ func (s *AliasQueryContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *AliasQueryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAliasQuery(s)
-	}
-}
+func (s *AliasQueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAliasQuery(s)
 
-func (s *AliasQueryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAliasQuery(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -81238,15 +80308,13 @@ func (s *ColumnAliasesContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ColumnAliasesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterColumnAliases(s)
-	}
-}
+func (s *ColumnAliasesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitColumnAliases(s)
 
-func (s *ColumnAliasesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitColumnAliases(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -81403,15 +80471,13 @@ func (s *SelectClauseContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SelectClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSelectClause(s)
-	}
-}
+func (s *SelectClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSelectClause(s)
 
-func (s *SelectClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSelectClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -81538,15 +80604,13 @@ func (s *SelectColumnClauseContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SelectColumnClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSelectColumnClause(s)
-	}
-}
+func (s *SelectColumnClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSelectColumnClause(s)
 
-func (s *SelectColumnClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSelectColumnClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -81647,15 +80711,13 @@ func (s *WhereClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WhereClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterWhereClause(s)
-	}
-}
+func (s *WhereClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitWhereClause(s)
 
-func (s *WhereClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitWhereClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -81764,15 +80826,13 @@ func (s *FromClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FromClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterFromClause(s)
-	}
-}
+func (s *FromClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitFromClause(s)
 
-func (s *FromClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitFromClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -81977,15 +81037,13 @@ func (s *IntoClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IntoClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIntoClause(s)
-	}
-}
+func (s *IntoClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIntoClause(s)
 
-func (s *IntoClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIntoClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -82171,15 +81229,13 @@ func (s *BulkCollectClauseContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *BulkCollectClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterBulkCollectClause(s)
-	}
-}
+func (s *BulkCollectClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitBulkCollectClause(s)
 
-func (s *BulkCollectClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitBulkCollectClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -82302,15 +81358,13 @@ func (s *TableRowContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TableRowContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterTableRow(s)
-	}
-}
+func (s *TableRowContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitTableRow(s)
 
-func (s *TableRowContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitTableRow(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -82466,15 +81520,13 @@ func (s *RelationsContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RelationsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRelations(s)
-	}
-}
+func (s *RelationsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRelations(s)
 
-func (s *RelationsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRelations(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -82650,15 +81702,13 @@ func (s *RelationContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RelationContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRelation(s)
-	}
-}
+func (s *RelationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRelation(s)
 
-func (s *RelationContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRelation(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -82850,15 +81900,13 @@ func (s *JoinRelationContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *JoinRelationContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterJoinRelation(s)
-	}
-}
+func (s *JoinRelationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitJoinRelation(s)
 
-func (s *JoinRelationContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitJoinRelation(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -83020,15 +82068,13 @@ func (s *CommentDistributeTypeContext) HINT_END() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserHINT_END, 0)
 }
 
-func (s *CommentDistributeTypeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCommentDistributeType(s)
-	}
-}
+func (s *CommentDistributeTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCommentDistributeType(s)
 
-func (s *CommentDistributeTypeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCommentDistributeType(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -83074,15 +82120,13 @@ func (s *BracketDistributeTypeContext) RIGHT_BRACKET() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_BRACKET, 0)
 }
 
-func (s *BracketDistributeTypeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterBracketDistributeType(s)
-	}
-}
+func (s *BracketDistributeTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitBracketDistributeType(s)
 
-func (s *BracketDistributeTypeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitBracketDistributeType(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -83291,15 +82335,13 @@ func (s *BracketRelationHintContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *BracketRelationHintContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterBracketRelationHint(s)
-	}
-}
+func (s *BracketRelationHintContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitBracketRelationHint(s)
 
-func (s *BracketRelationHintContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitBracketRelationHint(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -83378,15 +82420,13 @@ func (s *CommentRelationHintContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *CommentRelationHintContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCommentRelationHint(s)
-	}
-}
+func (s *CommentRelationHintContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCommentRelationHint(s)
 
-func (s *CommentRelationHintContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCommentRelationHint(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -83604,15 +82644,13 @@ func (s *AggClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *AggClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAggClause(s)
-	}
-}
+func (s *AggClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAggClause(s)
 
-func (s *AggClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAggClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -83838,15 +82876,13 @@ func (s *GroupingElementContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *GroupingElementContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterGroupingElement(s)
-	}
-}
+func (s *GroupingElementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitGroupingElement(s)
 
-func (s *GroupingElementContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitGroupingElement(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -84268,15 +83304,13 @@ func (s *GroupingSetContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *GroupingSetContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterGroupingSet(s)
-	}
-}
+func (s *GroupingSetContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitGroupingSet(s)
 
-func (s *GroupingSetContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitGroupingSet(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -84433,15 +83467,13 @@ func (s *HavingClauseContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *HavingClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterHavingClause(s)
-	}
-}
+func (s *HavingClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitHavingClause(s)
 
-func (s *HavingClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitHavingClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -84550,15 +83582,13 @@ func (s *QualifyClauseContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *QualifyClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterQualifyClause(s)
-	}
-}
+func (s *QualifyClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitQualifyClause(s)
 
-func (s *QualifyClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitQualifyClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -84725,15 +83755,13 @@ func (s *SelectHintContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SelectHintContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSelectHint(s)
-	}
-}
+func (s *SelectHintContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSelectHint(s)
 
-func (s *SelectHintContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSelectHint(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -85069,15 +84097,13 @@ func (s *HintStatementContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *HintStatementContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterHintStatement(s)
-	}
-}
+func (s *HintStatementContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitHintStatement(s)
 
-func (s *HintStatementContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitHintStatement(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -85419,15 +84445,13 @@ func (s *HintAssignmentContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *HintAssignmentContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterHintAssignment(s)
-	}
-}
+func (s *HintAssignmentContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitHintAssignment(s)
 
-func (s *HintAssignmentContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitHintAssignment(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -85631,15 +84655,13 @@ func (s *UpdateAssignmentContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *UpdateAssignmentContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterUpdateAssignment(s)
-	}
-}
+func (s *UpdateAssignmentContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitUpdateAssignment(s)
 
-func (s *UpdateAssignmentContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitUpdateAssignment(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -85837,15 +84859,13 @@ func (s *UpdateAssignmentSeqContext) ToStringTree(ruleNames []string, recog antl
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *UpdateAssignmentSeqContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterUpdateAssignmentSeq(s)
-	}
-}
+func (s *UpdateAssignmentSeqContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitUpdateAssignmentSeq(s)
 
-func (s *UpdateAssignmentSeqContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitUpdateAssignmentSeq(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -86127,15 +85147,13 @@ func (s *LateralViewContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *LateralViewContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterLateralView(s)
-	}
-}
+func (s *LateralViewContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitLateralView(s)
 
-func (s *LateralViewContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitLateralView(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -86391,15 +85409,13 @@ func (s *QueryOrganizationContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *QueryOrganizationContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterQueryOrganization(s)
-	}
-}
+func (s *QueryOrganizationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitQueryOrganization(s)
 
-func (s *QueryOrganizationContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitQueryOrganization(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -86561,15 +85577,13 @@ func (s *SortClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SortClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSortClause(s)
-	}
-}
+func (s *SortClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSortClause(s)
 
-func (s *SortClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSortClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -86754,15 +85768,13 @@ func (s *SortItemContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SortItemContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSortItem(s)
-	}
-}
+func (s *SortItemContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSortItem(s)
 
-func (s *SortItemContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSortItem(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -86943,15 +85955,13 @@ func (s *LimitClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *LimitClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterLimitClause(s)
-	}
-}
+func (s *LimitClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitLimitClause(s)
 
-func (s *LimitClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitLimitClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -87202,15 +86212,13 @@ func (s *PartitionClauseContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PartitionClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPartitionClause(s)
-	}
-}
+func (s *PartitionClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPartitionClause(s)
 
-func (s *PartitionClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPartitionClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -87375,15 +86383,13 @@ func (s *JoinTypeContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *JoinTypeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterJoinType(s)
-	}
-}
+func (s *JoinTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitJoinType(s)
 
-func (s *JoinTypeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitJoinType(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -87708,15 +86714,13 @@ func (s *JoinCriteriaContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *JoinCriteriaContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterJoinCriteria(s)
-	}
-}
+func (s *JoinCriteriaContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitJoinCriteria(s)
 
-func (s *JoinCriteriaContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitJoinCriteria(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -87858,15 +86862,13 @@ func (s *IdentifierListContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentifierListContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIdentifierList(s)
-	}
-}
+func (s *IdentifierListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIdentifierList(s)
 
-func (s *IdentifierListContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIdentifierList(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -88040,15 +87042,13 @@ func (s *IdentifierSeqContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentifierSeqContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIdentifierSeq(s)
-	}
-}
+func (s *IdentifierSeqContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIdentifierSeq(s)
 
-func (s *IdentifierSeqContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIdentifierSeq(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -88264,15 +87264,13 @@ func (s *OptScanParamsContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *OptScanParamsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterOptScanParams(s)
-	}
-}
+func (s *OptScanParamsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitOptScanParams(s)
 
-func (s *OptScanParamsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitOptScanParams(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -88489,15 +87487,13 @@ func (s *TableValuedFunctionContext) PropertyItemList() IPropertyItemListContext
 	return t.(IPropertyItemListContext)
 }
 
-func (s *TableValuedFunctionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterTableValuedFunction(s)
-	}
-}
+func (s *TableValuedFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitTableValuedFunction(s)
 
-func (s *TableValuedFunctionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitTableValuedFunction(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -88543,15 +87539,13 @@ func (s *RelationListContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *RelationListContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRelationList(s)
-	}
-}
+func (s *RelationListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRelationList(s)
 
-func (s *RelationListContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRelationList(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -88654,15 +87648,13 @@ func (s *AliasedQueryContext) LateralView(i int) ILateralViewContext {
 	return t.(ILateralViewContext)
 }
 
-func (s *AliasedQueryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAliasedQuery(s)
-	}
-}
+func (s *AliasedQueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAliasedQuery(s)
 
-func (s *AliasedQueryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAliasedQuery(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -88869,15 +87861,13 @@ func (s *TableNameContext) LateralView(i int) ILateralViewContext {
 	return t.(ILateralViewContext)
 }
 
-func (s *TableNameContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterTableName(s)
-	}
-}
+func (s *TableNameContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitTableName(s)
 
-func (s *TableNameContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitTableName(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -89248,15 +88238,13 @@ func (s *MaterializedViewNameContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MaterializedViewNameContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterMaterializedViewName(s)
-	}
-}
+func (s *MaterializedViewNameContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitMaterializedViewName(s)
 
-func (s *MaterializedViewNameContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitMaterializedViewName(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -89389,15 +88377,13 @@ func (s *PropertyClauseContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PropertyClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPropertyClause(s)
-	}
-}
+func (s *PropertyClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPropertyClause(s)
 
-func (s *PropertyClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPropertyClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -89578,15 +88564,13 @@ func (s *PropertyItemListContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PropertyItemListContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPropertyItemList(s)
-	}
-}
+func (s *PropertyItemListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPropertyItemList(s)
 
-func (s *PropertyItemListContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPropertyItemList(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -89764,15 +88748,13 @@ func (s *PropertyItemContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PropertyItemContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPropertyItem(s)
-	}
-}
+func (s *PropertyItemContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPropertyItem(s)
 
-func (s *PropertyItemContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPropertyItem(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -89903,15 +88885,13 @@ func (s *PropertyKeyContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PropertyKeyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPropertyKey(s)
-	}
-}
+func (s *PropertyKeyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPropertyKey(s)
 
-func (s *PropertyKeyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPropertyKey(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -90043,15 +89023,13 @@ func (s *PropertyValueContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PropertyValueContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPropertyValue(s)
-	}
-}
+func (s *PropertyValueContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPropertyValue(s)
 
-func (s *PropertyValueContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPropertyValue(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -90188,15 +89166,13 @@ func (s *TableAliasContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TableAliasContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterTableAlias(s)
-	}
-}
+func (s *TableAliasContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitTableAlias(s)
 
-func (s *TableAliasContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitTableAlias(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -90394,15 +89370,13 @@ func (s *MultipartIdentifierContext) ToStringTree(ruleNames []string, recog antl
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *MultipartIdentifierContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterMultipartIdentifier(s)
-	}
-}
+func (s *MultipartIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitMultipartIdentifier(s)
 
-func (s *MultipartIdentifierContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitMultipartIdentifier(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -90605,15 +89579,13 @@ func (s *SimpleColumnDefsContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SimpleColumnDefsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSimpleColumnDefs(s)
-	}
-}
+func (s *SimpleColumnDefsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSimpleColumnDefs(s)
 
-func (s *SimpleColumnDefsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSimpleColumnDefs(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -90779,15 +89751,13 @@ func (s *SimpleColumnDefContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SimpleColumnDefContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSimpleColumnDef(s)
-	}
-}
+func (s *SimpleColumnDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSimpleColumnDef(s)
 
-func (s *SimpleColumnDefContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSimpleColumnDef(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -90975,15 +89945,13 @@ func (s *ColumnDefsContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ColumnDefsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterColumnDefs(s)
-	}
-}
+func (s *ColumnDefsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitColumnDefs(s)
 
-func (s *ColumnDefsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitColumnDefs(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -91487,15 +90455,13 @@ func (s *ColumnDefContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ColumnDefContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterColumnDef(s)
-	}
-}
+func (s *ColumnDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitColumnDef(s)
 
-func (s *ColumnDefContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitColumnDef(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -92145,15 +91111,13 @@ func (s *IndexDefsContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IndexDefsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIndexDefs(s)
-	}
-}
+func (s *IndexDefsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIndexDefs(s)
 
-func (s *IndexDefsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIndexDefs(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -92459,15 +91423,13 @@ func (s *IndexDefContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IndexDefContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIndexDef(s)
-	}
-}
+func (s *IndexDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIndexDef(s)
 
-func (s *IndexDefContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIndexDef(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -92784,15 +91746,13 @@ func (s *PartitionsDefContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PartitionsDefContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPartitionsDef(s)
-	}
-}
+func (s *PartitionsDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPartitionsDef(s)
 
-func (s *PartitionsDefContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPartitionsDef(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -93019,15 +91979,13 @@ func (s *PartitionDefContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PartitionDefContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPartitionDef(s)
-	}
-}
+func (s *PartitionDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPartitionDef(s)
 
-func (s *PartitionDefContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPartitionDef(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -93256,15 +92214,13 @@ func (s *LessThanPartitionDefContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *LessThanPartitionDefContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterLessThanPartitionDef(s)
-	}
-}
+func (s *LessThanPartitionDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitLessThanPartitionDef(s)
 
-func (s *LessThanPartitionDefContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitLessThanPartitionDef(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -93574,15 +92530,13 @@ func (s *FixedPartitionDefContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FixedPartitionDefContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterFixedPartitionDef(s)
-	}
-}
+func (s *FixedPartitionDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitFixedPartitionDef(s)
 
-func (s *FixedPartitionDefContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitFixedPartitionDef(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -93878,15 +92832,13 @@ func (s *StepPartitionDefContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *StepPartitionDefContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterStepPartitionDef(s)
-	}
-}
+func (s *StepPartitionDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitStepPartitionDef(s)
 
-func (s *StepPartitionDefContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitStepPartitionDef(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -94191,15 +93143,13 @@ func (s *InPartitionDefContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *InPartitionDefContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterInPartitionDef(s)
-	}
-}
+func (s *InPartitionDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitInPartitionDef(s)
 
-func (s *InPartitionDefContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitInPartitionDef(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -94517,15 +93467,13 @@ func (s *PartitionValueListContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PartitionValueListContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPartitionValueList(s)
-	}
-}
+func (s *PartitionValueListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPartitionValueList(s)
 
-func (s *PartitionValueListContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPartitionValueList(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -94683,15 +93631,13 @@ func (s *PartitionValueDefContext) ToStringTree(ruleNames []string, recog antlr.
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PartitionValueDefContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPartitionValueDef(s)
-	}
-}
+func (s *PartitionValueDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPartitionValueDef(s)
 
-func (s *PartitionValueDefContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPartitionValueDef(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -94915,15 +93861,13 @@ func (s *RollupDefsContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RollupDefsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRollupDefs(s)
-	}
-}
+func (s *RollupDefsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRollupDefs(s)
 
-func (s *RollupDefsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRollupDefs(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -95171,15 +94115,13 @@ func (s *RollupDefContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RollupDefContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRollupDef(s)
-	}
-}
+func (s *RollupDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRollupDef(s)
 
-func (s *RollupDefContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRollupDef(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -95365,15 +94307,13 @@ func (s *AggTypeDefContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *AggTypeDefContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAggTypeDef(s)
-	}
-}
+func (s *AggTypeDefContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAggTypeDef(s)
 
-func (s *AggTypeDefContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAggTypeDef(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -95518,15 +94458,13 @@ func (s *TabletListContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TabletListContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterTabletList(s)
-	}
-}
+func (s *TabletListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitTabletList(s)
 
-func (s *TabletListContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitTabletList(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -95733,15 +94671,13 @@ func (s *InlineTableContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *InlineTableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterInlineTable(s)
-	}
-}
+func (s *InlineTableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitInlineTable(s)
 
-func (s *InlineTableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitInlineTable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -95904,15 +94840,13 @@ func (s *NamedExpressionContext) ToStringTree(ruleNames []string, recog antlr.Re
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *NamedExpressionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterNamedExpression(s)
-	}
-}
+func (s *NamedExpressionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitNamedExpression(s)
 
-func (s *NamedExpressionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitNamedExpression(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -96077,15 +95011,13 @@ func (s *NamedExpressionSeqContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *NamedExpressionSeqContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterNamedExpressionSeq(s)
-	}
-}
+func (s *NamedExpressionSeqContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitNamedExpressionSeq(s)
 
-func (s *NamedExpressionSeqContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitNamedExpressionSeq(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -96235,15 +95167,13 @@ func (s *ExpressionContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ExpressionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterExpression(s)
-	}
-}
+func (s *ExpressionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitExpression(s)
 
-func (s *ExpressionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitExpression(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -96463,15 +95393,13 @@ func (s *LambdaExpressionContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *LambdaExpressionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterLambdaExpression(s)
-	}
-}
+func (s *LambdaExpressionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitLambdaExpression(s)
 
-func (s *LambdaExpressionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitLambdaExpression(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -96705,15 +95633,13 @@ func (s *ExistContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *ExistContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterExist(s)
-	}
-}
+func (s *ExistContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitExist(s)
 
-func (s *ExistContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitExist(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -96759,15 +95685,13 @@ func (s *LogicalNotContext) NOT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserNOT, 0)
 }
 
-func (s *LogicalNotContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterLogicalNot(s)
-	}
-}
+func (s *LogicalNotContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitLogicalNot(s)
 
-func (s *LogicalNotContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitLogicalNot(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -96821,15 +95745,13 @@ func (s *PredicatedContext) Predicate() IPredicateContext {
 	return t.(IPredicateContext)
 }
 
-func (s *PredicatedContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPredicated(s)
-	}
-}
+func (s *PredicatedContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPredicated(s)
 
-func (s *PredicatedContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPredicated(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -96883,15 +95805,13 @@ func (s *IsnullContext) IS_NULL_PRED() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserIS_NULL_PRED, 0)
 }
 
-func (s *IsnullContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIsnull(s)
-	}
-}
+func (s *IsnullContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIsnull(s)
 
-func (s *IsnullContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIsnull(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -96941,15 +95861,13 @@ func (s *Is_not_null_predContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *Is_not_null_predContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIs_not_null_pred(s)
-	}
-}
+func (s *Is_not_null_predContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIs_not_null_pred(s)
 
-func (s *Is_not_null_predContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIs_not_null_pred(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -97043,15 +95961,13 @@ func (s *LogicalBinaryContext) OR() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserOR, 0)
 }
 
-func (s *LogicalBinaryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterLogicalBinary(s)
-	}
-}
+func (s *LogicalBinaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitLogicalBinary(s)
 
-func (s *LogicalBinaryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitLogicalBinary(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -97133,15 +96049,13 @@ func (s *DoublePipesContext) DOUBLEPIPES() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDOUBLEPIPES, 0)
 }
 
-func (s *DoublePipesContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDoublePipes(s)
-	}
-}
+func (s *DoublePipesContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDoublePipes(s)
 
-func (s *DoublePipesContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDoublePipes(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -97626,15 +96540,13 @@ func (s *RowConstructorContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RowConstructorContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRowConstructor(s)
-	}
-}
+func (s *RowConstructorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRowConstructor(s)
 
-func (s *RowConstructorContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRowConstructor(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -97808,15 +96720,13 @@ func (s *RowConstructorItemContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *RowConstructorItemContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRowConstructorItem(s)
-	}
-}
+func (s *RowConstructorItemContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRowConstructorItem(s)
 
-func (s *RowConstructorItemContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRowConstructorItem(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -98198,15 +97108,13 @@ func (s *PredicateContext) ToStringTree(ruleNames []string, recog antlr.Recogniz
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PredicateContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPredicate(s)
-	}
-}
+func (s *PredicateContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPredicate(s)
 
-func (s *PredicateContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPredicate(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -98754,15 +97662,13 @@ func (s *ValueExpressionDefaultContext) PrimaryExpression() IPrimaryExpressionCo
 	return t.(IPrimaryExpressionContext)
 }
 
-func (s *ValueExpressionDefaultContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterValueExpressionDefault(s)
-	}
-}
+func (s *ValueExpressionDefaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitValueExpressionDefault(s)
 
-func (s *ValueExpressionDefaultContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitValueExpressionDefault(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -98851,15 +97757,13 @@ func (s *ComparisonContext) ValueExpression(i int) IValueExpressionContext {
 	return t.(IValueExpressionContext)
 }
 
-func (s *ComparisonContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterComparison(s)
-	}
-}
+func (s *ComparisonContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitComparison(s)
 
-func (s *ComparisonContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitComparison(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -98973,15 +97877,13 @@ func (s *ArithmeticBinaryContext) PIPE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserPIPE, 0)
 }
 
-func (s *ArithmeticBinaryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterArithmeticBinary(s)
-	}
-}
+func (s *ArithmeticBinaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitArithmeticBinary(s)
 
-func (s *ArithmeticBinaryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitArithmeticBinary(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -99036,15 +97938,13 @@ func (s *ArithmeticUnaryContext) TILDE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserTILDE, 0)
 }
 
-func (s *ArithmeticUnaryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterArithmeticUnary(s)
-	}
-}
+func (s *ArithmeticUnaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitArithmeticUnary(s)
 
-func (s *ArithmeticUnaryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitArithmeticUnary(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -99470,15 +98370,13 @@ func (s *DereferenceContext) Identifier() IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *DereferenceContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDereference(s)
-	}
-}
+func (s *DereferenceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDereference(s)
 
-func (s *DereferenceContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDereference(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -99509,15 +98407,13 @@ func (s *CurrentDateContext) CURRENT_DATE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCURRENT_DATE, 0)
 }
 
-func (s *CurrentDateContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCurrentDate(s)
-	}
-}
+func (s *CurrentDateContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCurrentDate(s)
 
-func (s *CurrentDateContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCurrentDate(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -99592,15 +98488,13 @@ func (s *CastContext) CAST() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCAST, 0)
 }
 
-func (s *CastContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCast(s)
-	}
-}
+func (s *CastContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCast(s)
 
-func (s *CastContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCast(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -99646,15 +98540,13 @@ func (s *ParenthesizedExpressionContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *ParenthesizedExpressionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterParenthesizedExpression(s)
-	}
-}
+func (s *ParenthesizedExpressionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitParenthesizedExpression(s)
 
-func (s *ParenthesizedExpressionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitParenthesizedExpression(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -99696,15 +98588,13 @@ func (s *UserVariableContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *UserVariableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterUserVariable(s)
-	}
-}
+func (s *UserVariableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitUserVariable(s)
 
-func (s *UserVariableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitUserVariable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -99776,15 +98666,13 @@ func (s *ElementAtContext) ValueExpression() IValueExpressionContext {
 	return t.(IValueExpressionContext)
 }
 
-func (s *ElementAtContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterElementAt(s)
-	}
-}
+func (s *ElementAtContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitElementAt(s)
 
-func (s *ElementAtContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitElementAt(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -99815,15 +98703,13 @@ func (s *LocalTimestampContext) LOCALTIMESTAMP() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserLOCALTIMESTAMP, 0)
 }
 
-func (s *LocalTimestampContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterLocalTimestamp(s)
-	}
-}
+func (s *LocalTimestampContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitLocalTimestamp(s)
 
-func (s *LocalTimestampContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitLocalTimestamp(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -99941,15 +98827,13 @@ func (s *CharFunctionContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *CharFunctionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCharFunction(s)
-	}
-}
+func (s *CharFunctionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCharFunction(s)
 
-func (s *CharFunctionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCharFunction(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -99987,15 +98871,13 @@ func (s *IntervalLiteralContext) Interval() IIntervalContext {
 	return t.(IIntervalContext)
 }
 
-func (s *IntervalLiteralContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIntervalLiteral(s)
-	}
-}
+func (s *IntervalLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIntervalLiteral(s)
 
-func (s *IntervalLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIntervalLiteral(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -100121,15 +99003,13 @@ func (s *SimpleCaseContext) ELSE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserELSE, 0)
 }
 
-func (s *SimpleCaseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSimpleCase(s)
-	}
-}
+func (s *SimpleCaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSimpleCase(s)
 
-func (s *SimpleCaseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSimpleCase(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -100171,15 +99051,13 @@ func (s *ColumnReferenceContext) BINARY() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserBINARY, 0)
 }
 
-func (s *ColumnReferenceContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterColumnReference(s)
-	}
-}
+func (s *ColumnReferenceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitColumnReference(s)
 
-func (s *ColumnReferenceContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitColumnReference(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -100266,15 +99144,13 @@ func (s *StarContext) DOT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDOT, 0)
 }
 
-func (s *StarContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterStar(s)
-	}
-}
+func (s *StarContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitStar(s)
 
-func (s *StarContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitStar(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -100305,15 +99181,13 @@ func (s *SessionUserContext) SESSION_USER() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSESSION_USER, 0)
 }
 
-func (s *SessionUserContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSessionUser(s)
-	}
-}
+func (s *SessionUserContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSessionUser(s)
 
-func (s *SessionUserContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSessionUser(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -100388,15 +99262,13 @@ func (s *ConvertTypeContext) Expression() IExpressionContext {
 	return t.(IExpressionContext)
 }
 
-func (s *ConvertTypeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterConvertType(s)
-	}
-}
+func (s *ConvertTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitConvertType(s)
 
-func (s *ConvertTypeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitConvertType(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -100476,15 +99348,13 @@ func (s *ConvertCharSetContext) IdentifierOrText() IIdentifierOrTextContext {
 	return t.(IIdentifierOrTextContext)
 }
 
-func (s *ConvertCharSetContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterConvertCharSet(s)
-	}
-}
+func (s *ConvertCharSetContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitConvertCharSet(s)
 
-func (s *ConvertCharSetContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitConvertCharSet(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -100530,15 +99400,13 @@ func (s *SubqueryExpressionContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *SubqueryExpressionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSubqueryExpression(s)
-	}
-}
+func (s *SubqueryExpressionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSubqueryExpression(s)
 
-func (s *SubqueryExpressionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSubqueryExpression(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -100619,15 +99487,13 @@ func (s *EncryptKeyContext) DOT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDOT, 0)
 }
 
-func (s *EncryptKeyContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterEncryptKey(s)
-	}
-}
+func (s *EncryptKeyContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitEncryptKey(s)
 
-func (s *EncryptKeyContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitEncryptKey(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -100658,15 +99524,13 @@ func (s *CurrentTimeContext) CURRENT_TIME() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCURRENT_TIME, 0)
 }
 
-func (s *CurrentTimeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCurrentTime(s)
-	}
-}
+func (s *CurrentTimeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCurrentTime(s)
 
-func (s *CurrentTimeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCurrentTime(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -100697,15 +99561,13 @@ func (s *LocalTimeContext) LOCALTIME() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserLOCALTIME, 0)
 }
 
-func (s *LocalTimeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterLocalTime(s)
-	}
-}
+func (s *LocalTimeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitLocalTime(s)
 
-func (s *LocalTimeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitLocalTime(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -100764,15 +99626,13 @@ func (s *SystemVariableContext) SESSION() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSESSION, 0)
 }
 
-func (s *SystemVariableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSystemVariable(s)
-	}
-}
+func (s *SystemVariableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSystemVariable(s)
 
-func (s *SystemVariableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSystemVariable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -100838,15 +99698,13 @@ func (s *CollateContext) DEFAULT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserDEFAULT, 0)
 }
 
-func (s *CollateContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCollate(s)
-	}
-}
+func (s *CollateContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCollate(s)
 
-func (s *CollateContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCollate(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -100877,15 +99735,13 @@ func (s *CurrentUserContext) CURRENT_USER() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCURRENT_USER, 0)
 }
 
-func (s *CurrentUserContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCurrentUser(s)
-	}
-}
+func (s *CurrentUserContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCurrentUser(s)
 
-func (s *CurrentUserContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCurrentUser(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -100923,15 +99779,13 @@ func (s *ConstantDefaultContext) Constant() IConstantContext {
 	return t.(IConstantContext)
 }
 
-func (s *ConstantDefaultContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterConstantDefault(s)
-	}
-}
+func (s *ConstantDefaultContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitConstantDefault(s)
 
-func (s *ConstantDefaultContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitConstantDefault(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -101019,15 +99873,13 @@ func (s *ExtractContext) TIMESTAMP() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserTIMESTAMP, 0)
 }
 
-func (s *ExtractContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterExtract(s)
-	}
-}
+func (s *ExtractContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitExtract(s)
 
-func (s *ExtractContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitExtract(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -101058,15 +99910,13 @@ func (s *CurrentTimestampContext) CURRENT_TIMESTAMP() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCURRENT_TIMESTAMP, 0)
 }
 
-func (s *CurrentTimestampContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCurrentTimestamp(s)
-	}
-}
+func (s *CurrentTimestampContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCurrentTimestamp(s)
 
-func (s *CurrentTimestampContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCurrentTimestamp(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -101104,15 +99954,13 @@ func (s *FunctionCallContext) FunctionCallExpression() IFunctionCallExpressionCo
 	return t.(IFunctionCallExpressionContext)
 }
 
-func (s *FunctionCallContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterFunctionCall(s)
-	}
-}
+func (s *FunctionCallContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitFunctionCall(s)
 
-func (s *FunctionCallContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitFunctionCall(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -101218,15 +100066,13 @@ func (s *ArraySliceContext) ValueExpression(i int) IValueExpressionContext {
 	return t.(IValueExpressionContext)
 }
 
-func (s *ArraySliceContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterArraySlice(s)
-	}
-}
+func (s *ArraySliceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitArraySlice(s)
 
-func (s *ArraySliceContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitArraySlice(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -101322,15 +100168,13 @@ func (s *SearchedCaseContext) Expression() IExpressionContext {
 	return t.(IExpressionContext)
 }
 
-func (s *SearchedCaseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSearchedCase(s)
-	}
-}
+func (s *SearchedCaseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSearchedCase(s)
 
-func (s *SearchedCaseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSearchedCase(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -102561,15 +101405,13 @@ func (s *ReplaceContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *ReplaceContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterReplace(s)
-	}
-}
+func (s *ReplaceContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitReplace(s)
 
-func (s *ReplaceContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitReplace(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -102619,15 +101461,13 @@ func (s *ExceptContext) RIGHT_PAREN() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserRIGHT_PAREN, 0)
 }
 
-func (s *ExceptContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterExcept(s)
-	}
-}
+func (s *ExceptContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitExcept(s)
 
-func (s *ExceptContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitExcept(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -102813,15 +101653,13 @@ func (s *CastDataTypeContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *CastDataTypeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCastDataType(s)
-	}
-}
+func (s *CastDataTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCastDataType(s)
 
-func (s *CastDataTypeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCastDataType(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -103137,15 +101975,13 @@ func (s *FunctionCallExpressionContext) ToStringTree(ruleNames []string, recog a
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FunctionCallExpressionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterFunctionCallExpression(s)
-	}
-}
+func (s *FunctionCallExpressionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitFunctionCallExpression(s)
 
-func (s *FunctionCallExpressionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitFunctionCallExpression(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -103441,15 +102277,13 @@ func (s *FunctionIdentifierContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FunctionIdentifierContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterFunctionIdentifier(s)
-	}
-}
+func (s *FunctionIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitFunctionIdentifier(s)
 
-func (s *FunctionIdentifierContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitFunctionIdentifier(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -103643,15 +102477,13 @@ func (s *FunctionNameIdentifierContext) ToStringTree(ruleNames []string, recog a
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FunctionNameIdentifierContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterFunctionNameIdentifier(s)
-	}
-}
+func (s *FunctionNameIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitFunctionNameIdentifier(s)
 
-func (s *FunctionNameIdentifierContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitFunctionNameIdentifier(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -103968,15 +102800,13 @@ func (s *WindowSpecContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WindowSpecContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterWindowSpec(s)
-	}
-}
+func (s *WindowSpecContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitWindowSpec(s)
 
-func (s *WindowSpecContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitWindowSpec(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -104203,15 +103033,13 @@ func (s *WindowFrameContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WindowFrameContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterWindowFrame(s)
-	}
-}
+func (s *WindowFrameContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitWindowFrame(s)
 
-func (s *WindowFrameContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitWindowFrame(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -104356,15 +103184,13 @@ func (s *FrameUnitsContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FrameUnitsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterFrameUnits(s)
-	}
-}
+func (s *FrameUnitsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitFrameUnits(s)
 
-func (s *FrameUnitsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitFrameUnits(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -104505,15 +103331,13 @@ func (s *FrameBoundaryContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *FrameBoundaryContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterFrameBoundary(s)
-	}
-}
+func (s *FrameBoundaryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitFrameBoundary(s)
 
-func (s *FrameBoundaryContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitFrameBoundary(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -104729,15 +103553,13 @@ func (s *QualifiedNameContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *QualifiedNameContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterQualifiedName(s)
-	}
-}
+func (s *QualifiedNameContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitQualifiedName(s)
 
-func (s *QualifiedNameContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitQualifiedName(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -104902,15 +103724,13 @@ func (s *SpecifiedPartitionContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SpecifiedPartitionContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSpecifiedPartition(s)
-	}
-}
+func (s *SpecifiedPartitionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSpecifiedPartition(s)
 
-func (s *SpecifiedPartitionContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSpecifiedPartition(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -105167,15 +103987,13 @@ func (s *StructLiteralContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *StructLiteralContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterStructLiteral(s)
-	}
-}
+func (s *StructLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitStructLiteral(s)
 
-func (s *StructLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitStructLiteral(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -105201,15 +104019,13 @@ func (s *NullLiteralContext) NULL() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserNULL, 0)
 }
 
-func (s *NullLiteralContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterNullLiteral(s)
-	}
-}
+func (s *NullLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitNullLiteral(s)
 
-func (s *NullLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitNullLiteral(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -105239,15 +104055,13 @@ func (s *StringLiteralContext) BINARY() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserBINARY, 0)
 }
 
-func (s *StringLiteralContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterStringLiteral(s)
-	}
-}
+func (s *StringLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitStringLiteral(s)
 
-func (s *StringLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitStringLiteral(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -105294,15 +104108,13 @@ func (s *TypeConstructorContext) TIMESTAMP() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserTIMESTAMP, 0)
 }
 
-func (s *TypeConstructorContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterTypeConstructor(s)
-	}
-}
+func (s *TypeConstructorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitTypeConstructor(s)
 
-func (s *TypeConstructorContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitTypeConstructor(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -105391,15 +104203,13 @@ func (s *ArrayLiteralContext) Constant(i int) IConstantContext {
 	return t.(IConstantContext)
 }
 
-func (s *ArrayLiteralContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterArrayLiteral(s)
-	}
-}
+func (s *ArrayLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitArrayLiteral(s)
 
-func (s *ArrayLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitArrayLiteral(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -105425,15 +104235,13 @@ func (s *PlaceholderContext) PLACEHOLDER() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserPLACEHOLDER, 0)
 }
 
-func (s *PlaceholderContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPlaceholder(s)
-	}
-}
+func (s *PlaceholderContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPlaceholder(s)
 
-func (s *PlaceholderContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPlaceholder(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -105530,15 +104338,13 @@ func (s *MapLiteralContext) Constant(i int) IConstantContext {
 	return t.(IConstantContext)
 }
 
-func (s *MapLiteralContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterMapLiteral(s)
-	}
-}
+func (s *MapLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitMapLiteral(s)
 
-func (s *MapLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitMapLiteral(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -105576,15 +104382,13 @@ func (s *NumericLiteralContext) Number() INumberContext {
 	return t.(INumberContext)
 }
 
-func (s *NumericLiteralContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterNumericLiteral(s)
-	}
-}
+func (s *NumericLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitNumericLiteral(s)
 
-func (s *NumericLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitNumericLiteral(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -105622,15 +104426,13 @@ func (s *BooleanLiteralContext) BooleanValue() IBooleanValueContext {
 	return t.(IBooleanValueContext)
 }
 
-func (s *BooleanLiteralContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterBooleanLiteral(s)
-	}
-}
+func (s *BooleanLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitBooleanLiteral(s)
 
-func (s *BooleanLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitBooleanLiteral(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -106083,15 +104885,13 @@ func (s *ComparisonOperatorContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ComparisonOperatorContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterComparisonOperator(s)
-	}
-}
+func (s *ComparisonOperatorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitComparisonOperator(s)
 
-func (s *ComparisonOperatorContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitComparisonOperator(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -106189,15 +104989,13 @@ func (s *BooleanValueContext) ToStringTree(ruleNames []string, recog antlr.Recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *BooleanValueContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterBooleanValue(s)
-	}
-}
+func (s *BooleanValueContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitBooleanValue(s)
 
-func (s *BooleanValueContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitBooleanValue(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -106360,15 +105158,13 @@ func (s *WhenClauseContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *WhenClauseContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterWhenClause(s)
-	}
-}
+func (s *WhenClauseContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitWhenClause(s)
 
-func (s *WhenClauseContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitWhenClause(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -106534,15 +105330,13 @@ func (s *IntervalContext) ToStringTree(ruleNames []string, recog antlr.Recognize
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IntervalContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterInterval(s)
-	}
-}
+func (s *IntervalContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitInterval(s)
 
-func (s *IntervalContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitInterval(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -106679,15 +105473,13 @@ func (s *UnitIdentifierContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *UnitIdentifierContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterUnitIdentifier(s)
-	}
-}
+func (s *UnitIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitUnitIdentifier(s)
 
-func (s *UnitIdentifierContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitUnitIdentifier(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -106802,15 +105594,13 @@ func (s *DataTypeWithNullableContext) ToStringTree(ruleNames []string, recog ant
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *DataTypeWithNullableContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDataTypeWithNullable(s)
-	}
-}
+func (s *DataTypeWithNullableContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDataTypeWithNullable(s)
 
-func (s *DataTypeWithNullableContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDataTypeWithNullable(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -107032,15 +105822,13 @@ func (s *ComplexDataTypeContext) STRUCT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSTRUCT, 0)
 }
 
-func (s *ComplexDataTypeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterComplexDataType(s)
-	}
-}
+func (s *ComplexDataTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitComplexDataType(s)
 
-func (s *ComplexDataTypeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitComplexDataType(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -107161,15 +105949,13 @@ func (s *AggStateDataTypeContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *AggStateDataTypeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterAggStateDataType(s)
-	}
-}
+func (s *AggStateDataTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitAggStateDataType(s)
 
-func (s *AggStateDataTypeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitAggStateDataType(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -107235,15 +106021,13 @@ func (s *PrimitiveDataTypeContext) COMMA(i int) antlr.TerminalNode {
 	return s.GetToken(DorisParserParserCOMMA, i)
 }
 
-func (s *PrimitiveDataTypeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPrimitiveDataType(s)
-	}
-}
+func (s *PrimitiveDataTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPrimitiveDataType(s)
 
-func (s *PrimitiveDataTypeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPrimitiveDataType(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -107787,15 +106571,13 @@ func (s *PrimitiveColTypeContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *PrimitiveColTypeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterPrimitiveColType(s)
-	}
-}
+func (s *PrimitiveColTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitPrimitiveColType(s)
 
-func (s *PrimitiveColTypeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitPrimitiveColType(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -108390,15 +107172,13 @@ func (s *ComplexColTypeListContext) ToStringTree(ruleNames []string, recog antlr
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ComplexColTypeListContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterComplexColTypeList(s)
-	}
-}
+func (s *ComplexColTypeListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitComplexColTypeList(s)
 
-func (s *ComplexColTypeListContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitComplexColTypeList(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -108563,15 +107343,13 @@ func (s *ComplexColTypeContext) ToStringTree(ruleNames []string, recog antlr.Rec
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ComplexColTypeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterComplexColType(s)
-	}
-}
+func (s *ComplexColTypeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitComplexColType(s)
 
-func (s *ComplexColTypeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitComplexColType(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -108688,15 +107466,13 @@ func (s *CommentSpecContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *CommentSpecContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterCommentSpec(s)
-	}
-}
+func (s *CommentSpecContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitCommentSpec(s)
 
-func (s *CommentSpecContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitCommentSpec(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -108840,15 +107616,13 @@ func (s *SampleContext) ToStringTree(ruleNames []string, recog antlr.Recognizer)
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *SampleContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSample(s)
-	}
-}
+func (s *SampleContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSample(s)
 
-func (s *SampleContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSample(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -109017,15 +107791,13 @@ func (s *SampleByRowsContext) ROWS() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserROWS, 0)
 }
 
-func (s *SampleByRowsContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSampleByRows(s)
-	}
-}
+func (s *SampleByRowsContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSampleByRows(s)
 
-func (s *SampleByRowsContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSampleByRows(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -109060,15 +107832,13 @@ func (s *SampleByPercentileContext) INTEGER_VALUE() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserINTEGER_VALUE, 0)
 }
 
-func (s *SampleByPercentileContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterSampleByPercentile(s)
-	}
-}
+func (s *SampleByPercentileContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitSampleByPercentile(s)
 
-func (s *SampleByPercentileContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitSampleByPercentile(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -109252,15 +108022,13 @@ func (s *TableSnapshotContext) ToStringTree(ruleNames []string, recog antlr.Reco
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *TableSnapshotContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterTableSnapshot(s)
-	}
-}
+func (s *TableSnapshotContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitTableSnapshot(s)
 
-func (s *TableSnapshotContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitTableSnapshot(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -109479,15 +108247,13 @@ func (s *ErrorCapturingIdentifierContext) ToStringTree(ruleNames []string, recog
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *ErrorCapturingIdentifierContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterErrorCapturingIdentifier(s)
-	}
-}
+func (s *ErrorCapturingIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitErrorCapturingIdentifier(s)
 
-func (s *ErrorCapturingIdentifierContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitErrorCapturingIdentifier(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -109638,15 +108404,13 @@ func (s *ErrorIdentContext) Identifier(i int) IIdentifierContext {
 	return t.(IIdentifierContext)
 }
 
-func (s *ErrorIdentContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterErrorIdent(s)
-	}
-}
+func (s *ErrorIdentContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitErrorIdent(s)
 
-func (s *ErrorIdentContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitErrorIdent(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -109668,15 +108432,13 @@ func (s *RealIdentContext) GetRuleContext() antlr.RuleContext {
 	return s
 }
 
-func (s *RealIdentContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterRealIdent(s)
-	}
-}
+func (s *RealIdentContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitRealIdent(s)
 
-func (s *RealIdentContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitRealIdent(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -109821,15 +108583,13 @@ func (s *IdentifierContext) ToStringTree(ruleNames []string, recog antlr.Recogni
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *IdentifierContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIdentifier(s)
-	}
-}
+func (s *IdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIdentifier(s)
 
-func (s *IdentifierContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIdentifier(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -109943,15 +108703,13 @@ func (s *QuotedIdentifierAlternativeContext) QuotedIdentifier() IQuotedIdentifie
 	return t.(IQuotedIdentifierContext)
 }
 
-func (s *QuotedIdentifierAlternativeContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterQuotedIdentifierAlternative(s)
-	}
-}
+func (s *QuotedIdentifierAlternativeContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitQuotedIdentifierAlternative(s)
 
-func (s *QuotedIdentifierAlternativeContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitQuotedIdentifierAlternative(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -109993,15 +108751,13 @@ func (s *UnquotedIdentifierContext) NonReserved() INonReservedContext {
 	return t.(INonReservedContext)
 }
 
-func (s *UnquotedIdentifierContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterUnquotedIdentifier(s)
-	}
-}
+func (s *UnquotedIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitUnquotedIdentifier(s)
 
-func (s *UnquotedIdentifierContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitUnquotedIdentifier(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -110119,15 +108875,13 @@ func (s *QuotedIdentifierContext) ToStringTree(ruleNames []string, recog antlr.R
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *QuotedIdentifierContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterQuotedIdentifier(s)
-	}
-}
+func (s *QuotedIdentifierContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitQuotedIdentifier(s)
 
-func (s *QuotedIdentifierContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitQuotedIdentifier(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -110241,15 +108995,13 @@ func (s *DecimalLiteralContext) SUBTRACT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSUBTRACT, 0)
 }
 
-func (s *DecimalLiteralContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterDecimalLiteral(s)
-	}
-}
+func (s *DecimalLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitDecimalLiteral(s)
 
-func (s *DecimalLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitDecimalLiteral(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -110279,15 +109031,13 @@ func (s *IntegerLiteralContext) SUBTRACT() antlr.TerminalNode {
 	return s.GetToken(DorisParserParserSUBTRACT, 0)
 }
 
-func (s *IntegerLiteralContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterIntegerLiteral(s)
-	}
-}
+func (s *IntegerLiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitIntegerLiteral(s)
 
-func (s *IntegerLiteralContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitIntegerLiteral(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 
@@ -112086,15 +110836,13 @@ func (s *NonReservedContext) ToStringTree(ruleNames []string, recog antlr.Recogn
 	return antlr.TreesStringTree(s, ruleNames, recog)
 }
 
-func (s *NonReservedContext) EnterRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.EnterNonReserved(s)
-	}
-}
+func (s *NonReservedContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+	switch t := visitor.(type) {
+	case DorisParserVisitor:
+		return t.VisitNonReserved(s)
 
-func (s *NonReservedContext) ExitRule(listener antlr.ParseTreeListener) {
-	if listenerT, ok := listener.(DorisParserListener); ok {
-		listenerT.ExitNonReserved(s)
+	default:
+		return t.VisitChildren(s)
 	}
 }
 

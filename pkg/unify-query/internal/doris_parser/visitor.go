@@ -2572,8 +2572,14 @@ func (v *DorisVisitor) VisitChildren(node antlr.RuleNode) interface{} {
 	children := node.GetChildren()
 	for _, child := range children {
 		if parseTree, ok := child.(antlr.ParseTree); ok {
-			log.Debugf(v.Ctx, "执行子节点 %T %s", parseTree, parseTree.GetText())
-			parseTree.Accept(v)
+			switch parseTree.(type) {
+			case *antlr.ErrorNodeImpl:
+				v.Err = fmt.Errorf("sql: %s, parse error: %+v", v.OriginalSQL, parseTree)
+				return nil
+			default:
+				log.Debugf(v.Ctx, "执行子节点 %T %s", parseTree, parseTree.GetText())
+				parseTree.Accept(v)
+			}
 		} else {
 			v.Err = fmt.Errorf("无效的子节点类型: %T", child)
 		}

@@ -225,6 +225,9 @@ bk-collector:
     # ResourceFilter: 维度补充
     - name: "resource_filter/fill_dimensions"
 
+    # ResourceFilter: 补充默认值
+    - name: "resource_filter/default_value"
+
     # ResourceFilter: 资源过滤处理器
     - name: "resource_filter/instance_id"
       config:
@@ -339,6 +342,7 @@ bk-collector:
         - "sampler/drop_traces"
         - "resource_filter/fill_dimensions"
         - "resource_filter/instance_id"
+        - "resource_filter/default_value"
         - "db_filter/common"
         - "attribute_filter/common"
         - "attribute_filter/app"

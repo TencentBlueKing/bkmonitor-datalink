@@ -300,16 +300,9 @@ processor:
           - label: label2
             value: value2
 `
-	const (
-		label1 = "label1"
-		label2 = "label2"
-		value1 = "value1"
-		value2 = "value2"
-	)
-
 	assertAddActionLabels := func(t *testing.T, attrs pcommon.Map) {
-		testkits.AssertAttrsFoundStringVal(t, attrs, label1, value1)
-		testkits.AssertAttrsFoundStringVal(t, attrs, label2, value2)
+		testkits.AssertAttrsFoundStringVal(t, attrs, "label1", "value1")
+		testkits.AssertAttrsFoundStringVal(t, attrs, "label2", "value2")
 	}
 
 	t.Run("traces", func(t *testing.T) {

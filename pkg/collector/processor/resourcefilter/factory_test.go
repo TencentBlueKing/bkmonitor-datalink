@@ -514,7 +514,7 @@ processor:
             key: resource.service.name
             value: "unknown_service"
 `
-	t.Run("traces default_value", func(t *testing.T) {
+	t.Run("traces", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
 		g := makeTracesGenerator(1, "bool")
 		data := g.Generate()
@@ -530,7 +530,7 @@ processor:
 		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "unknown_service")
 	})
 
-	t.Run("traces skip default_value", func(t *testing.T) {
+	t.Run("traces skipped", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
 		g := makeTracesGenerator(1, "bool")
 		data := g.Generate()
@@ -549,7 +549,7 @@ processor:
 		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "app.v1")
 	})
 
-	t.Run("metrics default_value", func(t *testing.T) {
+	t.Run("metrics", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
 		g := makeMetricsGenerator(1, "bool")
 		data := g.Generate()
@@ -565,7 +565,7 @@ processor:
 		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "unknown_service")
 	})
 
-	t.Run("metrics skip default_value", func(t *testing.T) {
+	t.Run("metrics skipped", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
 		g := makeMetricsGenerator(1, "bool")
 		data := g.Generate()
@@ -584,7 +584,7 @@ processor:
 		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "app.v1")
 	})
 
-	t.Run("logs default_value", func(t *testing.T) {
+	t.Run("logs", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
 		g := makeLogsGenerator(1, 10, "bool")
 		data := g.Generate()
@@ -600,7 +600,7 @@ processor:
 		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "unknown_service")
 	})
 
-	t.Run("logs skip default_value", func(t *testing.T) {
+	t.Run("logs skipped", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
 		g := makeLogsGenerator(1, 10, "bool")
 		data := g.Generate()

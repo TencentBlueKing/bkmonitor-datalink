@@ -230,31 +230,33 @@ func (p *attributeFilter) assembleAction(record *define.Record, config Config) {
 		spanKind := span.Kind().String()
 		for _, rule := range action.Rules {
 			// 匹配规则中不要求 Kind 类型或 Kind 类型符合要求的时候进行操作
-			if rule.Kind == "" || spanKind == rule.Kind {
-				fields := make([]string, 0, len(rule.Keys))
-				for _, key := range rule.Keys {
-					// 常量不需要判断是否存在
-					if strings.HasPrefix(key, define.ConstKeyPrefix) {
-						fields = append(fields, key[len(define.ConstKeyPrefix):])
-						continue
-					}
-
-					// 处理 attributes 属性 支持首字母大写
-					d := rule.Placeholder
-					if v, ok := attrs.Get(key); ok && v.AsString() != "" {
-						if _, exist := rule.upper[key]; exist {
-							d = utils.FirstUpper(v.AsString(), d)
-							attrs.UpdateString(key, d)
-						} else {
-							d = v.AsString()
-						}
-					}
-					fields = append(fields, d)
-				}
-				// 匹配到直接插入返回，不再进行后续 rule 匹配
-				attrs.UpsertString(action.Destination, strings.Join(fields, rule.Separator))
-				return true
+			if rule.Kind != "" && spanKind != rule.Kind {
+				continue
 			}
+
+			fields := make([]string, 0, len(rule.Keys))
+			for _, key := range rule.Keys {
+				// 常量不需要判断是否存在
+				if strings.HasPrefix(key, define.ConstKeyPrefix) {
+					fields = append(fields, key[len(define.ConstKeyPrefix):])
+					continue
+				}
+
+				// 处理 attributes 属性 支持首字母大写
+				d := rule.Placeholder
+				if v, ok := attrs.Get(key); ok && v.AsString() != "" {
+					if _, exist := rule.upper[key]; exist {
+						d = utils.FirstUpper(v.AsString(), d)
+						attrs.UpdateString(key, d)
+					} else {
+						d = v.AsString()
+					}
+				}
+				fields = append(fields, d)
+			}
+			// 匹配到直接插入返回，不再进行后续 rule 匹配
+			attrs.UpsertString(action.Destination, strings.Join(fields, rule.Separator))
+			return true
 		}
 
 		// Kind 条件不匹配直接返回，进入下一个循环

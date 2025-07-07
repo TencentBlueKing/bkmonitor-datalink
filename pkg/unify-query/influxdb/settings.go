@@ -10,7 +10,7 @@
 package influxdb
 
 const (
-	SystemTenantWithSuffixConfigPath = "influxdb.system_tenant_with_suffix"
+	SystemTenantWithSuffixConfigPath = "victoria_metrics.system_tenant.enable_suffix"
 )
 
 var (

@@ -46,16 +46,15 @@ func getTenantSuffixKey(ctx context.Context, key string) string {
 	user := metadata.GetUser(ctx)
 	tenantID := user.TenantID
 
-	if tenantID != "" {
-		if tenantID == "system" {
-			if SystemTenantWithSuffix {
-				return key + "|" + tenantID
-			}
-		} else {
-			return key + "|" + tenantID
-		}
+	if tenantID == "" {
+		return key
 	}
-	return key
+
+	if tenantID == "system" && !SystemTenantWithSuffix {
+		return key
+	}
+
+	return key + "|" + tenantID
 }
 
 type SpaceTsDbRouter struct {
@@ -461,7 +460,8 @@ func (r *SpaceTsDbRouter) GetDataLabelRelatedRts(ctx context.Context, dataLabel 
 
 // GetFieldRelatedRts 获取 Field 指标详情，仅包含映射的 RT 信息
 func (r *SpaceTsDbRouter) GetFieldRelatedRts(ctx context.Context, field string) influxdb.ResultTableList {
-	genericRet := r.Get(ctx, influxdb.FieldToResultTableKey, field, true, false)
+	key := getTenantSuffixKey(ctx, field)
+	genericRet := r.Get(ctx, influxdb.FieldToResultTableKey, key, true, false)
 	if genericRet != nil {
 		return *genericRet.(*influxdb.ResultTableList)
 	}

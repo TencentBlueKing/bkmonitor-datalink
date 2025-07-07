@@ -128,7 +128,7 @@ func makeLogsGenerator(count, length int, valueType string) *generator.LogsGener
 	return generator.NewLogsGenerator(opts)
 }
 
-func TestTracesAssembleAction(t *testing.T) {
+func TestAssembleAction(t *testing.T) {
 	content := `
 processor:
     - name: "resource_filter/assemble"
@@ -143,29 +143,24 @@ processor:
               - "resource.resource_key3"
               - "resource.resource_key4"
 `
-	factory := processor.MustCreateFactory(content, NewFactory)
+	t.Run("traces", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		g := makeTracesGenerator(1, "string")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+		}
 
-	g := makeTracesGenerator(1, "string")
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordTraces,
-		Data:       data,
-	}
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
 
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
-
-	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-	testkits.AssertAttrsFoundStringVal(t, attrs, "resource_final", "key1::key2:key3:key4")
+		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+		testkits.AssertAttrsFoundStringVal(t, attrs, "resource_final", "key1::key2:key3:key4")
+	})
 }
 
-func assertDropActionAttrs(t *testing.T, attrs pcommon.Map) {
-	testkits.AssertAttrsNotFound(t, attrs, "resource_key1")
-	testkits.AssertAttrsFound(t, attrs, "resource_key2")
-	testkits.AssertAttrsFound(t, attrs, "resource_key3")
-}
-
-func TestTracesDropAction(t *testing.T) {
+func TestDropAction(t *testing.T) {
 	content := `
 processor:
     - name: "resource_filter/drop"
@@ -174,78 +169,63 @@ processor:
           keys:
             - "resource.resource_key1"
 `
-	factory := processor.MustCreateFactory(content, NewFactory)
 
-	g := makeTracesGenerator(1, "string")
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordTraces,
-		Data:       data,
+	assertDropActionAttrs := func(t *testing.T, attrs pcommon.Map) {
+		testkits.AssertAttrsNotFound(t, attrs, "resource_key1")
+		testkits.AssertAttrsFound(t, attrs, "resource_key2")
+		testkits.AssertAttrsFound(t, attrs, "resource_key3")
 	}
 
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
+	t.Run("traces", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		g := makeTracesGenerator(1, "string")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+		}
 
-	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-	assertDropActionAttrs(t, attrs)
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+		assertDropActionAttrs(t, attrs)
+	})
+
+	t.Run("metrics", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		g := makeMetricsGenerator(1, "string")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+		}
+
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
+		assertDropActionAttrs(t, attrs)
+	})
+
+	t.Run("logs", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		g := makeLogsGenerator(10, 10, "string")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       data,
+		}
+
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
+		assertDropActionAttrs(t, attrs)
+	})
 }
 
-func TestMetricsDropAction(t *testing.T) {
-	content := `
-processor:
-    - name: "resource_filter/drop"
-      config:
-        drop:
-          keys:
-            - "resource.resource_key1"
-`
-	factory := processor.MustCreateFactory(content, NewFactory)
-
-	g := makeMetricsGenerator(1, "string")
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordMetrics,
-		Data:       data,
-	}
-
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
-
-	attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
-	assertDropActionAttrs(t, attrs)
-}
-
-func TestLogsDropAction(t *testing.T) {
-	content := `
-processor:
-    - name: "resource_filter/drop"
-      config:
-        drop:
-          keys:
-            - "resource.resource_key1"
-`
-	factory := processor.MustCreateFactory(content, NewFactory)
-
-	g := makeLogsGenerator(10, 10, "string")
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordLogs,
-		Data:       data,
-	}
-
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
-
-	attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
-	assertDropActionAttrs(t, attrs)
-}
-
-func assertReplaceActionAttrs(t *testing.T, attrs pcommon.Map) {
-	testkits.AssertAttrsNotFound(t, attrs, resourceKey1)
-	testkits.AssertAttrsFound(t, attrs, resourceKey4)
-}
-
-func TestTracesReplaceAction(t *testing.T) {
+func TestReplaceAction(t *testing.T) {
 	content := `
 processor:
     - name: "resource_filter/replace"
@@ -254,85 +234,62 @@ processor:
           - source: resource_key1
             destination: resource_key4
 `
-	factory := processor.MustCreateFactory(content, NewFactory)
 
-	g := makeTracesGenerator(1, "string")
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordTraces,
-		Data:       data,
+	assertReplaceActionAttrs := func(t *testing.T, attrs pcommon.Map) {
+		testkits.AssertAttrsNotFound(t, attrs, resourceKey1)
+		testkits.AssertAttrsFound(t, attrs, resourceKey4)
 	}
 
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
+	t.Run("traces", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		g := makeTracesGenerator(1, "string")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+		}
 
-	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-	assertReplaceActionAttrs(t, attrs)
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+		assertReplaceActionAttrs(t, attrs)
+	})
+
+	t.Run("metrics", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		g := makeMetricsGenerator(1, "float")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+		}
+
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
+		assertReplaceActionAttrs(t, attrs)
+	})
+
+	t.Run("logs", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		g := makeLogsGenerator(10, 10, "float")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       data,
+		}
+
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
+		assertReplaceActionAttrs(t, attrs)
+	})
 }
 
-func TestMetricsReplaceAction(t *testing.T) {
-	content := `
-processor:
-    - name: "resource_filter/replace"
-      config:
-        replace:
-          - source: resource_key1
-            destination: resource_key4
-`
-	factory := processor.MustCreateFactory(content, NewFactory)
-
-	g := makeMetricsGenerator(1, "float")
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordMetrics,
-		Data:       data,
-	}
-
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
-
-	attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
-	assertReplaceActionAttrs(t, attrs)
-}
-
-func TestLogsReplaceAction(t *testing.T) {
-	content := `
-processor:
-    - name: "resource_filter/replace"
-      config:
-        replace:
-          - source: resource_key1
-            destination: resource_key4
-`
-	factory := processor.MustCreateFactory(content, NewFactory)
-
-	g := makeLogsGenerator(10, 10, "float")
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordLogs,
-		Data:       data,
-	}
-
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
-
-	attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
-	assertReplaceActionAttrs(t, attrs)
-}
-
-const (
-	label1 = "label1"
-	label2 = "label2"
-	value1 = "value1"
-	value2 = "value2"
-)
-
-func assertAddActionLabels(t *testing.T, attrs pcommon.Map) {
-	testkits.AssertAttrsFoundStringVal(t, attrs, label1, value1)
-	testkits.AssertAttrsFoundStringVal(t, attrs, label2, value2)
-}
-
-func TestTracesAddAction(t *testing.T) {
+func TestAddAction(t *testing.T) {
 	content := `
 processor:
     - name: "resource_filter/replace"
@@ -343,77 +300,68 @@ processor:
           - label: label2
             value: value2
 `
-	factory := processor.MustCreateFactory(content, NewFactory)
+	const (
+		label1 = "label1"
+		label2 = "label2"
+		value1 = "value1"
+		value2 = "value2"
+	)
 
-	g := makeTracesGenerator(1, "bool")
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordTraces,
-		Data:       data,
+	assertAddActionLabels := func(t *testing.T, attrs pcommon.Map) {
+		testkits.AssertAttrsFoundStringVal(t, attrs, label1, value1)
+		testkits.AssertAttrsFoundStringVal(t, attrs, label2, value2)
 	}
 
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
+	t.Run("traces", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		g := makeTracesGenerator(1, "bool")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+		}
 
-	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-	assertAddActionLabels(t, attrs)
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+		assertAddActionLabels(t, attrs)
+	})
+
+	t.Run("metrics", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		g := makeMetricsGenerator(1, "int")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+		}
+
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
+		assertAddActionLabels(t, attrs)
+	})
+
+	t.Run("logs", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		g := makeLogsGenerator(10, 10, "int")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       data,
+		}
+
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
+		assertAddActionLabels(t, attrs)
+	})
 }
 
-func TestMetricsAddAction(t *testing.T) {
-	content := `
-processor:
-    - name: "resource_filter/replace"
-      config:
-        add:
-          - label: label1
-            value: value1
-          - label: label2
-            value: value2
-`
-	factory := processor.MustCreateFactory(content, NewFactory)
-
-	g := makeMetricsGenerator(1, "int")
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordMetrics,
-		Data:       data,
-	}
-
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
-
-	attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
-	assertAddActionLabels(t, attrs)
-}
-
-func TestLogsAddAction(t *testing.T) {
-	content := `
-processor:
-    - name: "resource_filter/replace"
-      config:
-        add:
-          - label: label1
-            value: value1
-          - label: label2
-            value: value2
-`
-	factory := processor.MustCreateFactory(content, NewFactory)
-
-	g := makeLogsGenerator(10, 10, "int")
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordLogs,
-		Data:       data,
-	}
-
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
-
-	attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
-	assertAddActionLabels(t, attrs)
-}
-
-func TestTracesFromRecordAction(t *testing.T) {
+func TestFromRecordAction(t *testing.T) {
 	content := `
 processor:
     - name: "resource_filter/from_record"
@@ -422,24 +370,26 @@ processor:
           - source: "request.client.ip"
             destination: "resource.client.ip"
 `
-	factory := processor.MustCreateFactory(content, NewFactory)
 
-	g := makeTracesGenerator(1, "bool")
-	data := g.Generate()
-	record := define.Record{
-		RecordType:    define.RecordTraces,
-		Data:          data,
-		RequestClient: define.RequestClient{IP: "127.1.1.1"},
-	}
+	t.Run("traces", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		g := makeTracesGenerator(1, "bool")
+		data := g.Generate()
+		record := define.Record{
+			RecordType:    define.RecordTraces,
+			Data:          data,
+			RequestClient: define.RequestClient{IP: "127.1.1.1"},
+		}
 
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
 
-	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-	testkits.AssertAttrsFoundStringVal(t, attrs, "client.ip", "127.1.1.1")
+		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+		testkits.AssertAttrsFoundStringVal(t, attrs, "client.ip", "127.1.1.1")
+	})
 }
 
-func TestTracesFromCacheAction(t *testing.T) {
+func TestFromCacheAction(t *testing.T) {
 	svr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(map[string][]map[string]string{
 			"pods": {
@@ -475,10 +425,9 @@ processor:
             timeout: "1m"
 `, svr.URL)
 
-	factory := processor.MustCreateFactory(content, NewFactory)
-	time.Sleep(time.Second) // wait for syncing
-
-	t.Run("net.host.ip", func(t *testing.T) {
+	t.Run("traces net.host.ip", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		time.Sleep(time.Second) // wait for syncing
 		g := makeTracesGenerator(1, "bool")
 		data := g.Generate()
 		data.ResourceSpans().At(0).Resource().Attributes().InsertString("net.host.ip", "127.1.0.1")
@@ -498,7 +447,9 @@ processor:
 		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.bcs.cluster.id", "K8S-BCS-00000")
 	})
 
-	t.Run("client.ip", func(t *testing.T) {
+	t.Run("traces client.ip", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		time.Sleep(time.Second) // wait for syncing
 		g := makeTracesGenerator(1, "bool")
 		data := g.Generate()
 		data.ResourceSpans().At(0).Resource().Attributes().InsertString("client.ip", "127.1.0.2")
@@ -519,7 +470,7 @@ processor:
 	})
 }
 
-func TestTracesFromMetadataAction(t *testing.T) {
+func TestFromMetadataAction(t *testing.T) {
 	r, _ := http.NewRequest("GET", "/", nil)
 	r.Header.Set(define.KeyUserMetadata, "k8s.pod.ip=127.1.0.2,k8s.pod.name=myapp2,k8s.namespace.name=my-ns2,k8s.bcs.cluster.id=K8S-BCS-90000")
 
@@ -531,8 +482,8 @@ processor:
           keys: ["*"]
 `
 
-	factory := processor.MustCreateFactory(content, NewFactory)
-	t.Run("from_metadata", func(t *testing.T) {
+	t.Run("traces from_metadata", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
 		g := makeTracesGenerator(1, "bool")
 		data := g.Generate()
 		record := define.Record{
@@ -553,7 +504,7 @@ processor:
 	})
 }
 
-func TestTracesDefaultValueAction(t *testing.T) {
+func TestDefaultValueAction(t *testing.T) {
 	const content = `
 processor:
     - name: "resource_filter/default_value"
@@ -563,9 +514,8 @@ processor:
             key: resource.service.name
             value: "unknown_service"
 `
-
-	factory := processor.MustCreateFactory(content, NewFactory)
-	t.Run("default_value", func(t *testing.T) {
+	t.Run("traces default_value", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
 		g := makeTracesGenerator(1, "bool")
 		data := g.Generate()
 		record := define.Record{
@@ -580,7 +530,8 @@ processor:
 		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "unknown_service")
 	})
 
-	t.Run("skip default_value", func(t *testing.T) {
+	t.Run("traces skip default_value", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
 		g := makeTracesGenerator(1, "bool")
 		data := g.Generate()
 		record := define.Record{
@@ -597,21 +548,9 @@ processor:
 		attrs = record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
 		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "app.v1")
 	})
-}
 
-func TestMetricsDefaultValueAction(t *testing.T) {
-	const content = `
-processor:
-    - name: "resource_filter/default_value"
-      config:
-        default_value:
-          - type: string
-            key: resource.service.name
-            value: "unknown_service"
-`
-
-	factory := processor.MustCreateFactory(content, NewFactory)
-	t.Run("default_value", func(t *testing.T) {
+	t.Run("metrics default_value", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
 		g := makeMetricsGenerator(1, "bool")
 		data := g.Generate()
 		record := define.Record{
@@ -626,7 +565,8 @@ processor:
 		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "unknown_service")
 	})
 
-	t.Run("skip default_value", func(t *testing.T) {
+	t.Run("metrics skip default_value", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
 		g := makeMetricsGenerator(1, "bool")
 		data := g.Generate()
 		record := define.Record{
@@ -643,21 +583,9 @@ processor:
 		attrs = record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
 		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "app.v1")
 	})
-}
 
-func TestLogsDefaultValueAction(t *testing.T) {
-	const content = `
-processor:
-    - name: "resource_filter/default_value"
-      config:
-        default_value:
-          - type: string
-            key: resource.service.name
-            value: "unknown_service"
-`
-
-	factory := processor.MustCreateFactory(content, NewFactory)
-	t.Run("default_value", func(t *testing.T) {
+	t.Run("logs default_value", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
 		g := makeLogsGenerator(1, 10, "bool")
 		data := g.Generate()
 		record := define.Record{
@@ -672,7 +600,8 @@ processor:
 		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "unknown_service")
 	})
 
-	t.Run("skip default_value", func(t *testing.T) {
+	t.Run("logs skip default_value", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
 		g := makeLogsGenerator(1, 10, "bool")
 		data := g.Generate()
 		record := define.Record{

@@ -126,6 +126,7 @@ func (p *attributeFilter) fromTokenAction(record *define.Record, config Config) 
 				attrs.UpsertString(config.FromToken.AppName, record.Token.AppName)
 			}
 		})
+
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
 		foreach.Logs(pdLogs.ResourceLogs(), func(logRecord plog.LogRecord) {
@@ -137,6 +138,7 @@ func (p *attributeFilter) fromTokenAction(record *define.Record, config Config) 
 				attrs.UpsertString(config.FromToken.AppName, record.Token.AppName)
 			}
 		})
+
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
 		foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
@@ -169,6 +171,7 @@ func (p *attributeFilter) asStringAction(record *define.Record, config Config) {
 				}
 			}
 		})
+
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
 		foreach.Logs(pdLogs.ResourceLogs(), func(logRecord plog.LogRecord) {
@@ -182,186 +185,192 @@ func (p *attributeFilter) asStringAction(record *define.Record, config Config) {
 	}
 }
 
-func processAsIntAction(attrs pcommon.Map, key string) {
-	v, ok := attrs.Get(key)
-	if !ok {
-		return
-	}
-
-	i, err := strconv.ParseInt(v.AsString(), 10, 64)
-	if err != nil {
-		logger.Debugf("parse attribute key '%s' as int failed, error: %s", key, err)
-		return
-	}
-	attrs.UpsertInt(key, i)
-}
-
 func (p *attributeFilter) asIntAction(record *define.Record, config Config) {
+	handle := func(attrs pcommon.Map, key string) {
+		v, ok := attrs.Get(key)
+		if !ok {
+			return
+		}
+
+		i, err := strconv.ParseInt(v.AsString(), 10, 64)
+		if err != nil {
+			logger.Debugf("parse attribute key '%s' as int failed, error: %s", key, err)
+			return
+		}
+		attrs.UpsertInt(key, i)
+	}
+
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
 		foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
 			for _, key := range config.AsInt.Keys {
-				processAsIntAction(span.Attributes(), key)
+				handle(span.Attributes(), key)
 			}
 		})
+
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
 		foreach.Logs(pdLogs.ResourceLogs(), func(logRecord plog.LogRecord) {
 			for _, key := range config.AsInt.Keys {
-				processAsIntAction(logRecord.Attributes(), key)
+				handle(logRecord.Attributes(), key)
 			}
 		})
 	}
 }
 
 func (p *attributeFilter) assembleAction(record *define.Record, config Config) {
+	handle := func(span ptrace.Span, action AssembleAction) bool {
+		attrs := span.Attributes()
+		if _, ok := attrs.Get(action.PredicateKey); !ok {
+			// 没有匹配的情况下直接返回，进入下一个循环
+			return false
+		}
+
+		spanKind := span.Kind().String()
+		for _, rule := range action.Rules {
+			// 匹配规则中不要求 Kind 类型或 Kind 类型符合要求的时候进行操作
+			if rule.Kind == "" || spanKind == rule.Kind {
+				fields := make([]string, 0, len(rule.Keys))
+				for _, key := range rule.Keys {
+					// 常量不需要判断是否存在
+					if strings.HasPrefix(key, define.ConstKeyPrefix) {
+						fields = append(fields, key[len(define.ConstKeyPrefix):])
+						continue
+					}
+
+					// 处理 attributes 属性 支持首字母大写
+					d := rule.Placeholder
+					if v, ok := attrs.Get(key); ok && v.AsString() != "" {
+						if _, exist := rule.upper[key]; exist {
+							d = utils.FirstUpper(v.AsString(), d)
+							attrs.UpdateString(key, d)
+						} else {
+							d = v.AsString()
+						}
+					}
+					fields = append(fields, d)
+				}
+				// 匹配到直接插入返回，不再进行后续 rule 匹配
+				attrs.UpsertString(action.Destination, strings.Join(fields, rule.Separator))
+				return true
+			}
+		}
+
+		// Kind 条件不匹配直接返回，进入下一个循环
+		return false
+	}
+
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
 		resourceSpansSlice := pdTraces.ResourceSpans()
 		foreach.Spans(resourceSpansSlice, func(span ptrace.Span) {
 			for _, action := range config.Assemble {
-				if processAssembleAction(span, action) {
+				if handle(span, action) {
 					continue
 				}
 
 				attrs := span.Attributes()
-				if _, ok := attrs.Get(action.Destination); !ok {
-					key := action.DefaultFrom
-					// 判定常量情况直接插入
-					if strings.HasPrefix(key, define.ConstKeyPrefix) {
-						attrs.UpsertString(action.Destination, key[len(define.ConstKeyPrefix):])
-						continue
-					}
-					// 匹配到 span_name 插入 span.Name(), 否则直接跳过
-					switch key {
-					case "span_name":
-						attrs.UpsertString(action.Destination, span.Name())
-					}
+				_, ok := attrs.Get(action.Destination)
+				if ok {
+					continue
+				}
+
+				key := action.DefaultFrom
+				// 判定常量情况直接插入
+				if strings.HasPrefix(key, define.ConstKeyPrefix) {
+					attrs.UpsertString(action.Destination, key[len(define.ConstKeyPrefix):])
+					continue
+				}
+				// 匹配到 span_name 插入 span.Name(), 否则直接跳过
+				switch key {
+				case "span_name":
+					attrs.UpsertString(action.Destination, span.Name())
 				}
 			}
 		})
 	}
 }
 
-func processAssembleAction(span ptrace.Span, action AssembleAction) bool {
-	attrs := span.Attributes()
-	if _, ok := attrs.Get(action.PredicateKey); !ok {
-		// 没有匹配的情况下直接返回，进入下一个循环
-		return false
-	}
+func (p *attributeFilter) dropAction(record *define.Record, config Config) {
+	handle := func(attrs pcommon.Map, action DropAction) {
+		v, ok := attrs.Get(action.PredicateKey)
+		if !ok {
+			return
+		}
 
-	spanKind := span.Kind().String()
-	for _, rule := range action.Rules {
-		// 匹配规则中不要求 Kind 类型或 Kind 类型符合要求的时候进行操作
-		if rule.Kind == "" || spanKind == rule.Kind {
-			fields := make([]string, 0, len(rule.Keys))
-			for _, key := range rule.Keys {
-				// 常量不需要判断是否存在
-				if strings.HasPrefix(key, define.ConstKeyPrefix) {
-					fields = append(fields, key[len(define.ConstKeyPrefix):])
-					continue
-				}
-
-				// 处理 attributes 属性 支持首字母大写
-				d := rule.Placeholder
-				if v, ok := attrs.Get(key); ok && v.AsString() != "" {
-					if _, exist := rule.upper[key]; exist {
-						d = utils.FirstUpper(v.AsString(), d)
-						attrs.UpdateString(key, d)
-					} else {
-						d = v.AsString()
-					}
-				}
-				fields = append(fields, d)
-			}
-			// 匹配到直接插入返回，不再进行后续 rule 匹配
-			attrs.UpsertString(action.Destination, strings.Join(fields, rule.Separator))
-			return true
+		// 取到 key，但是判定条件不符合的时候
+		_, ok = action.match[v.AsString()]
+		if len(action.Match) > 0 && !ok {
+			return
+		}
+		for _, k := range action.Keys {
+			attrs.Remove(k)
 		}
 	}
 
-	// Kind 条件不匹配直接返回，进入下一个循环
-	return false
-}
-
-func (p *attributeFilter) dropAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
 		foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
 			for _, action := range config.Drop {
-				processDropAction(span.Attributes(), action)
+				handle(span.Attributes(), action)
 			}
 		})
+
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
 		foreach.Logs(pdLogs.ResourceLogs(), func(logRecord plog.LogRecord) {
 			for _, action := range config.Drop {
-				processDropAction(logRecord.Attributes(), action)
+				handle(logRecord.Attributes(), action)
 			}
 		})
-	}
-}
-
-func processDropAction(attrs pcommon.Map, action DropAction) {
-	v, ok := attrs.Get(action.PredicateKey)
-	if !ok {
-		return
-	}
-
-	// 取到 key，但是判定条件不符合的时候
-	_, ok = action.match[v.AsString()]
-	if len(action.Match) > 0 && !ok {
-		return
-	}
-	for _, k := range action.Keys {
-		attrs.Remove(k)
 	}
 }
 
 func (p *attributeFilter) cutAction(record *define.Record, config Config) {
+	handle := func(attrs pcommon.Map, action CutAction) {
+		v, ok := attrs.Get(action.PredicateKey)
+		if !ok {
+			return
+		}
+
+		// 不符合匹配条件的时候跳过
+		_, ok = action.match[v.AsString()]
+		if len(action.Match) > 0 && !ok {
+			return
+		}
+
+		// preKey 取值 ok 并且 无匹配条件 或 匹配条件符合的情况下
+		for _, k := range action.Keys {
+			// 无法获取到 key 的值 则跳过
+			if v, ok = attrs.Get(k); !ok {
+				continue
+			}
+			// 对于长度超出的情况，进行裁剪
+			value := v.AsString()
+			if len(value) > action.MaxLength {
+				attrs.UpsertString(k, value[:action.MaxLength])
+			}
+		}
+	}
+
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
 		foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
 			for _, action := range config.Cut {
-				processCutAction(span.Attributes(), action)
+				handle(span.Attributes(), action)
 			}
 		})
+
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
 		foreach.Logs(pdLogs.ResourceLogs(), func(logRecord plog.LogRecord) {
 			for _, action := range config.Cut {
-				processCutAction(logRecord.Attributes(), action)
+				handle(logRecord.Attributes(), action)
 			}
 		})
-	}
-}
-
-func processCutAction(attrs pcommon.Map, action CutAction) {
-	v, ok := attrs.Get(action.PredicateKey)
-	if !ok {
-		return
-	}
-
-	// 不符合匹配条件的时候跳过
-	_, ok = action.match[v.AsString()]
-	if len(action.Match) > 0 && !ok {
-		return
-	}
-
-	// preKey 取值 ok 并且 无匹配条件 或 匹配条件符合的情况下
-	for _, k := range action.Keys {
-		// 无法获取到 key 的值 则跳过
-		if v, ok = attrs.Get(k); !ok {
-			continue
-		}
-		// 对于长度超出的情况，进行裁剪
-		value := v.AsString()
-		if len(value) > action.MaxLength {
-			attrs.UpsertString(k, value[:action.MaxLength])
-		}
 	}
 }

@@ -2,8 +2,6 @@ module github.com/TencentBlueKing/bkmonitor-datalink/pkg/ingester
 
 go 1.23.0
 
-toolchain go1.24.4
-
 require (
 	github.com/Shopify/sarama v1.22.1
 	github.com/clbanning/mxj/v2 v2.5.5

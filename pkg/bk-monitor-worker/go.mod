@@ -2,8 +2,6 @@ module github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker
 
 go 1.23.0
 
-toolchain go1.24.4
-
 require (
 	github.com/RedisBloom/redisbloom-go v1.0.0
 	github.com/Shopify/sarama v1.27.1

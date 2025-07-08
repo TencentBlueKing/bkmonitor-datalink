@@ -1,7 +1,5 @@
 go 1.23.0
 
-toolchain go1.24.4
-
 module github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector
 
 require (

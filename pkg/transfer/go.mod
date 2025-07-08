@@ -2,14 +2,12 @@ module github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer
 
 go 1.23.0
 
-toolchain go1.24.4
-
 require (
 	github.com/MauriceGit/skiplist v0.0.0-20181208093031-38aa714e3f14
 	github.com/Shopify/sarama v1.27.0
 	github.com/alicebob/miniredis/v2 v2.14.1
 	github.com/asaskevich/EventBus v0.0.0-20180315140547-d46933a94f05
-	github.com/bytedance/sonic v1.11.2
+	github.com/bytedance/sonic v1.12.3
 	github.com/cenkalti/backoff v2.0.0+incompatible
 	github.com/cespare/xxhash v1.1.0
 	github.com/cespare/xxhash/v2 v2.2.0
@@ -58,8 +56,9 @@ require (
 	github.com/alicebob/gopher-json v0.0.0-20200520072559-a9ecdc9d1d3a // indirect
 	github.com/armon/go-metrics v0.3.10 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/chenzhuoyu/base64x v0.0.0-20230717121745-296ad89f973d // indirect
-	github.com/chenzhuoyu/iasm v0.9.0 // indirect
+	github.com/bytedance/sonic/loader v0.2.0 // indirect
+	github.com/cloudwego/base64x v0.1.4 // indirect
+	github.com/cloudwego/iasm v0.2.0 // indirect
 	github.com/cstockton/go-iter v0.0.0-20161124213939-353ca660c5db // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect

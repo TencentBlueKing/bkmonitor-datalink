@@ -10,9 +10,9 @@
 package influxdb
 
 const (
-	SystemTenantWithSuffixConfigPath = "victoria_metrics.system_tenant.enable_suffix"
+	MultiTenantModeConfigPath = "http.multiTenantMode"
 )
 
 var (
-	SystemTenantWithSuffix bool
+	MultiTenantMode bool
 )

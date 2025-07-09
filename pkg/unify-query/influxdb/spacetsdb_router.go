@@ -39,20 +39,15 @@ var (
 	globalSpaceTsDbRouterLock sync.RWMutex
 )
 
-// getTenantSuffixKey generates a tenant-aware key for Redis lookups.
-// It appends the tenant ID from the context to the original key using a '|' separator.
-// For the "system" tenant, the suffix is only added if the SystemTenantWithSuffix feature flag is enabled.
-func getTenantSuffixKey(ctx context.Context, key string) string {
+// getKey generates a  key for lookup ResultTableDetail or other space-related data.
+// If enable MultiTenantMode, it appends the tenant ID to the key.
+func getKey(ctx context.Context, key string) string {
+	if !MultiTenantMode {
+		return key
+	}
+
 	user := metadata.GetUser(ctx)
 	tenantID := user.TenantID
-
-	if tenantID == "" {
-		return key
-	}
-
-	if tenantID == "system" && !SystemTenantWithSuffix {
-		return key
-	}
 
 	return key + "|" + tenantID
 }
@@ -327,15 +322,6 @@ func (r *SpaceTsDbRouter) ReloadByChannel(ctx context.Context, channelKey string
 		if err != nil {
 			return err
 		}
-	case influxdb.FieldToResultTableChannelKey:
-		tableIds, err := r.router.GetFieldToResultTableDetail(ctx, hashKey)
-		if err != nil {
-			return err
-		}
-		err = r.Add(ctx, influxdb.FieldToResultTableKey, hashKey, &tableIds)
-		if err != nil {
-			return err
-		}
 	default:
 		return fmt.Errorf("Invalid channel key(%s) from subscribe process ", channelKey)
 	}
@@ -430,7 +416,7 @@ func (r *SpaceTsDbRouter) GetSpaceUIDList(ctx context.Context, bkAppCode string)
 
 // GetSpace 获取空间信息
 func (r *SpaceTsDbRouter) GetSpace(ctx context.Context, spaceID string) influxdb.Space {
-	key := getTenantSuffixKey(ctx, spaceID)
+	key := getKey(ctx, spaceID)
 	genericRet := r.Get(ctx, influxdb.SpaceToResultTableKey, key, true, false)
 	if genericRet != nil {
 		return *genericRet.(*influxdb.Space)
@@ -440,7 +426,7 @@ func (r *SpaceTsDbRouter) GetSpace(ctx context.Context, spaceID string) influxdb
 
 // GetResultTable 获取 RT 详情
 func (r *SpaceTsDbRouter) GetResultTable(ctx context.Context, tableID string, ignoreKeyNotFound bool) *influxdb.ResultTableDetail {
-	key := getTenantSuffixKey(ctx, tableID)
+	key := getKey(ctx, tableID)
 	genericRet := r.Get(ctx, influxdb.ResultTableDetailKey, key, true, ignoreKeyNotFound)
 	if genericRet != nil {
 		return genericRet.(*influxdb.ResultTableDetail)
@@ -450,7 +436,7 @@ func (r *SpaceTsDbRouter) GetResultTable(ctx context.Context, tableID string, ig
 
 // GetDataLabelRelatedRts 获取 DataLabel 详情，仅包含映射的 RT 信息
 func (r *SpaceTsDbRouter) GetDataLabelRelatedRts(ctx context.Context, dataLabel string) influxdb.ResultTableList {
-	key := getTenantSuffixKey(ctx, dataLabel)
+	key := getKey(ctx, dataLabel)
 	genericRet := r.Get(ctx, influxdb.DataLabelToResultTableKey, key, true, false)
 	if genericRet != nil {
 		return *genericRet.(*influxdb.ResultTableList)
@@ -460,7 +446,7 @@ func (r *SpaceTsDbRouter) GetDataLabelRelatedRts(ctx context.Context, dataLabel 
 
 // GetFieldRelatedRts 获取 Field 指标详情，仅包含映射的 RT 信息
 func (r *SpaceTsDbRouter) GetFieldRelatedRts(ctx context.Context, field string) influxdb.ResultTableList {
-	key := getTenantSuffixKey(ctx, field)
+	key := getKey(ctx, field)
 	genericRet := r.Get(ctx, influxdb.FieldToResultTableKey, key, true, false)
 	if genericRet != nil {
 		return *genericRet.(*influxdb.ResultTableList)

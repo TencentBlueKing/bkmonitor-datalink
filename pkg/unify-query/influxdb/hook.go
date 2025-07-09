@@ -19,13 +19,13 @@ import (
 )
 
 func setDefaultConfig() {
-	viper.SetDefault(SystemTenantWithSuffixConfigPath, false)
+	viper.SetDefault(MultiTenantModeConfigPath, false)
 }
 
 func LoadConfig() {
-	SystemTenantWithSuffix = viper.GetBool(SystemTenantWithSuffixConfigPath)
+	MultiTenantMode = viper.GetBool(MultiTenantModeConfigPath)
 
-	log.Debugf(context.TODO(), "reload influxdb config: system_tenant_with_suffix=%v", SystemTenantWithSuffix)
+	log.Debugf(context.TODO(), "reload influxdb config: system_tenant_with_suffix=%v", MultiTenantMode)
 }
 
 func init() {

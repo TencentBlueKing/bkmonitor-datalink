@@ -196,7 +196,7 @@ func (s *TestSuite) TestReloadKeyWithBigData() {
 func (s *TestSuite) TestMultiTenantSupport() {
 	s.setupMultiTenantData()
 	s.testTenantDataIsolation()
-	s.testSystemTenantHandling()
+	s.testNormalDataAccess()
 }
 
 func (s *TestSuite) setupMultiTenantData() {
@@ -232,7 +232,8 @@ func (s *TestSuite) setupMultiTenantData() {
 }
 
 func (s *TestSuite) testTenantDataIsolation() {
-	ctx1 := s.createContextWithTenant("tenant1")
+	MultiTenantMode = true
+	ctx1 := s.createContext("tenant1")
 	space1 := s.router.GetSpace(ctx1, "test_space")
 	s.Assert().NotNil(space1)
 	s.Assert().Contains(space1, "test_table1")
@@ -245,7 +246,7 @@ func (s *TestSuite) testTenantDataIsolation() {
 	s.Assert().NotNil(rtList1)
 	s.Assert().Contains(rtList1, "test_table1")
 
-	ctx2 := s.createContextWithTenant("tenant2")
+	ctx2 := s.createContext("tenant2")
 	space2 := s.router.GetSpace(ctx2, "test_space")
 	s.Assert().NotNil(space2)
 	s.Assert().Contains(space2, "test_table2")
@@ -262,34 +263,36 @@ func (s *TestSuite) testTenantDataIsolation() {
 	s.Assert().NotContains(space2, "test_table1")
 }
 
-func (s *TestSuite) testSystemTenantHandling() {
-	SystemTenantWithSuffix = false
-	ctxSystem := s.createContextWithTenant("system")
+func (s *TestSuite) testNormalDataAccess() {
+	MultiTenantMode = false
+	ctx := s.createContext("system")
 
-	spaceSystem := s.router.GetSpace(ctxSystem, "test_space")
-	s.Assert().NotNil(spaceSystem)
-	s.Assert().Contains(spaceSystem, "test_table_system")
-	s.Assert().NotContains(spaceSystem, "test_table_system_with_suffix")
+	space := s.router.GetSpace(ctx, "test_space")
+	s.Assert().NotNil(space)
+	s.Assert().Contains(space, "test_table_system")
 
-	rtSystem := s.router.GetResultTable(ctxSystem, "test_table_system", false)
-	s.Assert().NotNil(rtSystem)
-	s.Assert().Equal("system_cluster", rtSystem.ClusterName)
+	rt := s.router.GetResultTable(ctx, "test_table_system", false)
+	s.Assert().NotNil(rt)
+	s.Assert().Equal("system_cluster", rt.ClusterName)
 
-	SystemTenantWithSuffix = true
+	rtList := s.router.GetDataLabelRelatedRts(ctx, "test_label")
+	s.Assert().NotNil(rtList)
+	s.Assert().Contains(rtList, "test_table_system")
 
-	spaceSystemWithSuffix := s.router.GetSpace(ctxSystem, "test_space")
-	s.Assert().NotNil(spaceSystemWithSuffix)
-	s.Assert().Contains(spaceSystemWithSuffix, "test_table_system_with_suffix")
-	s.Assert().NotContains(spaceSystemWithSuffix, "test_table_system")
+	spaceWithSuffix := s.router.GetSpace(ctx, "test_space|system")
+	s.Assert().NotNil(spaceWithSuffix)
+	s.Assert().Contains(spaceWithSuffix, "test_table_system_with_suffix")
 
-	rtSystemWithSuffix := s.router.GetResultTable(ctxSystem, "test_table_system_with_suffix", false)
-	s.Assert().NotNil(rtSystemWithSuffix)
-	s.Assert().Equal("system_cluster_with_suffix", rtSystemWithSuffix.ClusterName)
+	rtWithSuffix := s.router.GetResultTable(ctx, "test_table_system_with_suffix|system", false)
+	s.Assert().NotNil(rtWithSuffix)
+	s.Assert().Equal("system_cluster_with_suffix", rtWithSuffix.ClusterName)
 
-	SystemTenantWithSuffix = false
+	rtListWithSuffix := s.router.GetDataLabelRelatedRts(ctx, "test_label|system")
+	s.Assert().NotNil(rtListWithSuffix)
+	s.Assert().Contains(rtListWithSuffix, "test_table_system_with_suffix")
 }
 
-func (s *TestSuite) createContextWithTenant(tenantID string) context.Context {
+func (s *TestSuite) createContext(tenantID string) context.Context {
 	ctx := metadata.InitHashID(s.ctx)
 	user := &metadata.User{
 		TenantID: tenantID,

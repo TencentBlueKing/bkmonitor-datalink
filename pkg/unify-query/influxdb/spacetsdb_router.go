@@ -444,16 +444,6 @@ func (r *SpaceTsDbRouter) GetDataLabelRelatedRts(ctx context.Context, dataLabel 
 	return nil
 }
 
-// GetFieldRelatedRts 获取 Field 指标详情，仅包含映射的 RT 信息
-func (r *SpaceTsDbRouter) GetFieldRelatedRts(ctx context.Context, field string) influxdb.ResultTableList {
-	key := getKey(ctx, field)
-	genericRet := r.Get(ctx, influxdb.FieldToResultTableKey, key, true, false)
-	if genericRet != nil {
-		return *genericRet.(*influxdb.ResultTableList)
-	}
-	return nil
-}
-
 func (r *SpaceTsDbRouter) Print(ctx context.Context, typeKey string, includeContent bool) string {
 	ret := make([]string, 0)
 	parts := make([]string, 0)

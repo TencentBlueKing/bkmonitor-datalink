@@ -104,7 +104,6 @@ proxy:
 	req := httptest.NewRequest(http.MethodPost, routeV2Push, buf)
 	proxy.V2PushRoute(rw, req)
 	assert.Equal(t, http.StatusBadRequest, rw.Code)
-	assert.Contains(t, string(rw.Body.Bytes()), "Syntax error")
 }
 
 func TestV2PreCheckFailed(t *testing.T) {

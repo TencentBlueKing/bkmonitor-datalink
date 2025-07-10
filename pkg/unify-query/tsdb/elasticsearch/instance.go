@@ -33,6 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/pool"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
@@ -421,7 +422,7 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 	return remote.FromQueryResult(false, qr)
 }
 
-func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time, timezone string) ([]string, error) {
+func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time, sourceType string) ([]string, error) {
 	var (
 		aliases []string
 		_, span = trace.NewSpan(ctx, "get-alias")
@@ -439,6 +440,16 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 	span.Set("need-add-time", needAddTime)
 	if !needAddTime {
 		return aliases, nil
+	}
+
+	span.Set("source-type", sourceType)
+
+	// bkdata 数据源使用东八区创建别名，而自建 es 则使用 UTC 创建别名，所以需要特殊处理该逻辑
+	var timezone string
+	if sourceType == structured.BkData {
+		timezone = "Asia/Shanghai"
+	} else {
+		timezone = "UTC"
 	}
 
 	loc, err = time.LoadLocation(timezone)
@@ -513,7 +524,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 	unit := metadata.GetQueryParams(ctx).TimeUnit
 
-	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
+	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
 	if err != nil {
 		return total, resultTableOptions, err
 	}
@@ -715,7 +726,7 @@ func (i *Instance) QuerySeriesSet(
 			close(setCh)
 		}()
 
-		aliases, err1 := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
+		aliases, err1 := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
 		if err1 != nil {
 			setCh <- storage.ErrSeriesSet(err1)
 		}

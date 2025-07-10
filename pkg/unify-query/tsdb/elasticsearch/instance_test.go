@@ -49,6 +49,8 @@ func TestInstance_getAlias(t *testing.T) {
 		db          string
 		needAddTime bool
 
+		sourceType string
+
 		expected []string
 	}{
 		"3d with UTC": {
@@ -56,6 +58,13 @@ func TestInstance_getAlias(t *testing.T) {
 			end:         time.Date(2024, 1, 3, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
 			expected:    []string{"db_test_20240101*", "db_test_20240102*", "db_test_20240103*"},
+		},
+		"20250709 06:59:22 ~ 20250709 07:59:22 with bkbase 使用东八区作为别名生成规则，需要特殊处理": {
+			start:       time.UnixMilli(1752015562000), // 2025-07-09 06:59:22 Asia/ShangHai
+			end:         time.UnixMilli(1752019162000), // 2025-07-09 07:59:22 Asia/ShangHai
+			needAddTime: true,
+			sourceType:  structured.BkData,
+			expected:    []string{"db_test_20250709*"},
 		},
 		"change month with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 25, 7, 10, 5, 0, time.UTC),
@@ -126,7 +135,7 @@ func TestInstance_getAlias(t *testing.T) {
 				c.db = "db_test"
 			}
 			ctx = metadata.InitHashID(ctx)
-			actual, err := inst.getAlias(ctx, c.db, c.needAddTime, c.start, c.end, c.timezone)
+			actual, err := inst.getAlias(ctx, c.db, c.needAddTime, c.start, c.end, c.timezone, c.sourceType)
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, actual)
 		})

@@ -10,6 +10,7 @@
 package function
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -109,4 +110,28 @@ func TestHighLightFactory_splitTextForAnalysis(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHighLightFactory_process(t *testing.T) {
+	data := map[string]any{
+		"file":           "victoriaMetrics/instance.go:397",
+		"gseIndex":       "8019256",
+		"iterationIndex": 14,
+		"level":          "info",
+	}
+
+	// map[gseIndex:[{Value:8019256 Operator:eq}]]
+	h := &HighLightFactory{
+		labelMap: map[string][]LabelMapValue{
+			"gseIndex": {
+				{
+					Value:    "8019256",
+					Operator: "eq",
+				},
+			},
+		},
+	}
+
+	nd := h.Process(data)
+	fmt.Println(nd)
 }

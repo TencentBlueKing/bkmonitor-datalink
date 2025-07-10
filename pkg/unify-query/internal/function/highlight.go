@@ -62,10 +62,8 @@ func (h *HighLightFactory) processField(fieldValue any, keywords []LabelMapValue
 	switch value := fieldValue.(type) {
 	case string:
 		newValue = value
-	case int:
-		newValue = fmt.Sprintf("%d", value)
 	default:
-		return nil
+		newValue = fmt.Sprintf("%v", value)
 	}
 
 	if highlighted := h.highlightString(newValue, keywords); highlighted != newValue {
@@ -100,11 +98,20 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 
 		if !check {
 			// 高亮替换需要把头尾的*去掉
-			newKeywords = append(newKeywords, strings.Trim(keyword.Value, "*"))
+			nv := strings.Trim(keyword.Value, "*")
+
+			// 如果为空的情况下不要进行判定
+			if nv != "" {
+				newKeywords = append(newKeywords, nv)
+			}
 		}
 	}
 
 	for _, keyword := range newKeywords {
+		if keyword == "" {
+			continue
+		}
+
 		analyzablePart = strings.ReplaceAll(analyzablePart, keyword, fmt.Sprintf("<mark>%s</mark>", keyword))
 	}
 

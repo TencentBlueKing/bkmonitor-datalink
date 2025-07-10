@@ -31,7 +31,7 @@ require (
 	github.com/gomodule/redigo v1.8.9
 	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.6.0
-	github.com/grafana/pyroscope-go v1.1.1
+	github.com/grafana/pyroscope-go v1.2.2
 	github.com/hashicorp/consul/api v1.28.2
 	github.com/influxdata/influxdb1-client v0.0.0-20220302092344-a9ab5670611c
 	github.com/jinzhu/gorm v1.9.16
@@ -50,7 +50,7 @@ require (
 	github.com/spf13/cast v1.5.1
 	github.com/spf13/cobra v1.7.0
 	github.com/spf13/viper v1.16.0
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 	github.com/tylertreat/BoomFilters v0.0.0-20210315201527-1a82519a3e43
 	github.com/wcharczuk/go-chart/v2 v2.1.1
 	github.com/xdg-go/scram v1.1.2
@@ -107,7 +107,7 @@ require (
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	github.com/golang/glog v1.2.0 // indirect
-	github.com/grafana/pyroscope-go/godeltaprof v0.1.6 // indirect
+	github.com/grafana/pyroscope-go/godeltaprof v0.1.8 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-hclog v1.5.0 // indirect
@@ -125,7 +125,7 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.17.7 // indirect
+	github.com/klauspost/compress v1.17.8 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.7 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/lib/pq v1.10.2 // indirect

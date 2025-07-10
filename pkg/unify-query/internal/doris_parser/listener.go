@@ -23,7 +23,9 @@ import (
 type DorisListener struct {
 	gen.BaseDorisParserListener
 	ctx context.Context
-	err error
+
+	sql string
+
 	opt DorisListenerOption
 
 	fieldListExpr []*FieldExpr
@@ -102,42 +104,38 @@ func (l *DorisListener) WithOptions(opt DorisListenerOption) *DorisListener {
 	return l
 }
 
-func (l *DorisListener) Error() error {
-	return l.err
-}
-
-func (l *DorisListener) SQL() string {
+func (l *DorisListener) SQL() (string, error) {
 	selectsList := make([]string, 0, len(l.Selects))
 	for _, selectExpr := range l.Selects {
 		selectsList = append(selectsList, selectExpr.String())
 	}
+	if len(selectsList) == 0 {
+		return "", fmt.Errorf("sql 解析异常: %s", l.sql)
+	}
+
 	var (
 		sql strings.Builder
 	)
 	sql.WriteString("SELECT ")
-	if len(selectsList) != 0 {
-		sql.WriteString(strings.Join(selectsList, ", "))
-	} else {
-		sql.WriteString("*")
-	}
+	sql.WriteString(strings.Join(selectsList, ", "))
 
-	sql.WriteString(fmt.Sprintf(" FROM %s", l.Table.String()))
+	if l.Table != nil {
+		sql.WriteString(fmt.Sprintf(" FROM %s", l.Table.String()))
+	}
 	if l.Conditions != nil {
 		sql.WriteString(fmt.Sprintf(" WHERE %s", l.Conditions.String()))
 	}
 
-	return sql.String()
+	return sql.String(), nil
 }
 
 // NewDorisListener 创建带Token流的Listener
-func NewDorisListener(ctx context.Context) *DorisListener {
+func NewDorisListener(ctx context.Context, sql string) *DorisListener {
 	return &DorisListener{
 		ctx:           ctx,
+		sql:           sql,
 		fieldListExpr: make([]*FieldExpr, 0),
 		fieldExpr:     &FieldExpr{},
-		conditionExpr: &ConditionExpr{
-			Field: &FieldExpr{},
-		},
-		Table: &FieldExpr{},
+		conditionExpr: &ConditionExpr{},
 	}
 }

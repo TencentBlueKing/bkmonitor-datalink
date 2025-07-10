@@ -111,7 +111,7 @@ LIMIT
 		{
 			name: "test-9",
 			q:    `select_1 * from_1 where 1=1'`,
-			err:  fmt.Errorf("sql: select_1 * from_1 where 1=1', parse error: select_1"),
+			err:  fmt.Errorf("sql 解析异常: select_1 * from_1 where 1=1'"),
 		},
 		{
 			name: "test-10",
@@ -148,15 +148,15 @@ LIMIT
 
 			// antlr4 and visitor
 			listener := ParseDorisSQL(ctx, c.q, fieldMap, fieldAlias)
+			expected, err := listener.SQL()
 
 			assert.NotNil(t, listener)
 			if c.err != nil {
-				assert.Equal(t, c.err, listener.Error())
+				assert.Equal(t, c.err, err)
 				return
 			}
 
-			assert.Nil(t, listener.Error())
-			assert.Equal(t, c.sql, listener.SQL())
+			assert.Equal(t, c.sql, expected)
 			return
 		})
 	}

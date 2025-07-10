@@ -29,7 +29,7 @@ func ParseDorisSQL(ctx context.Context, q string, fieldMap, fieldAlias map[strin
 	parser := gen.NewDorisParserParser(tokens)
 
 	// 创建解析树
-	listener := NewDorisListener(ctx).
+	listener := NewDorisListener(ctx, q).
 		WithOptions(
 			DorisListenerOption{
 				DimensionTransform: func(s string) string {

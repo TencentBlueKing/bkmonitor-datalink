@@ -12,6 +12,7 @@ package function
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -58,10 +59,20 @@ func (h *HighLightFactory) Process(data map[string]any) map[string]any {
 }
 
 func (h *HighLightFactory) processField(fieldValue any, keywords []LabelMapValue) any {
+	if len(keywords) == 0 {
+		return nil
+	}
+
 	var newValue string
 	switch value := fieldValue.(type) {
 	case string:
 		newValue = value
+	case int, int32, int64, uint32, uint64:
+		newValue = fmt.Sprintf("%d", value)
+	case float64:
+		newValue = strconv.FormatFloat(value, 'f', -1, 64)
+	case float32:
+		newValue = strconv.FormatFloat(float64(value), 'f', -1, 32)
 	default:
 		newValue = fmt.Sprintf("%v", value)
 	}

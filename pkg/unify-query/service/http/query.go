@@ -292,8 +292,13 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 						}
 					} else {
 						// 只有长度符合的数据才进行裁剪
-						if len(data) > queryTs.From+queryTs.Limit {
-							data = data[queryTs.From : queryTs.From+queryTs.Limit]
+						if len(data) > queryTs.From {
+							maxLength := queryTs.From + queryTs.Limit
+							if len(data) < maxLength {
+								maxLength = len(data)
+							}
+
+							data = data[queryTs.From:maxLength]
 						}
 					}
 				}

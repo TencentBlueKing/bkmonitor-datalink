@@ -1137,6 +1137,12 @@ func TestQueryRawWithInstance(t *testing.T) {
 
 		// highlight with int field
 		`{"_source":{"includes":["application","log_level","message"]},"from":0,"query":{"bool":{"filter":[{"wildcard":{"gseIndex":{"value":"12345"}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"2\""}}]}},"size":3}`: `{"hits":{"total":{"value":3},"hits":[{"_index":"result_table_index","_id":"6","_source":{"a":"2","b":"1","gseIndex":12345}},{"_index":"result_table_index","_id":"7","_source":{"a":"2","b":"2","gseIndex":12345}},{"_index":"result_table_index","_id":"9","_source":{"a":"2","b":"4","gseIndex":12345}}]}}`,
+
+		// highlight with gseIndex 8019256.12
+		`{"from":0,"query":{"bool":{"filter":[{"wildcard":{"gseIndex":{"value":"8019256.12"}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}]}},"size":1}`: `{"took":1043,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},"hits":{"total":{"value":16,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250710_0","_type":"_doc","_id":"3440427488472403621","_score":null,"_source":{"report_time":"2025-07-10T02:46:19.443Z","trace_id":"af754e7bbf629abaee3499638974dda9","level":"info","iterationIndex":15,"cloudId":0,"gseIndex":8019256.12,"time":"1752115579000","file":"victoriaMetrics/instance.go:397","dtEventTimeStamp":"1752115579000"}}]}}`,
+
+		// highlight with gseIndex 8019256
+		`{"from":0,"query":{"bool":{"filter":[{"wildcard":{"gseIndex":{"value":"8019256"}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}]}},"size":1}`: `{"took":1043,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},"hits":{"total":{"value":16,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250710_0","_type":"_doc","_id":"3440427488472403621","_score":null,"_source":{"report_time":"2025-07-10T02:46:19.443Z","trace_id":"af754e7bbf629abaee3499638974dda9","level":"info","iterationIndex":15,"cloudId":0,"gseIndex":8019256,"time":"1752115579000","file":"victoriaMetrics/instance.go:397","dtEventTimeStamp":"1752115579000"}}]}}`,
 	})
 
 	tcs := map[string]struct {
@@ -1767,6 +1773,64 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    3,
 			expected: `[{"__data_label":"es","__doc_id":"6","__highlight":{"a":["<mark>2</mark>"],"gseIndex":["<mark>12345</mark>"]},"__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"1","gseIndex":12345},{"__data_label":"es","__doc_id":"7","__highlight":{"a":["<mark>2</mark>"],"b":["<mark>2</mark>"],"gseIndex":["<mark>12345</mark>"]},"__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"2","gseIndex":12345},{"__data_label":"es","__doc_id":"9","__highlight":{"a":["<mark>2</mark>"],"gseIndex":["<mark>12345</mark>"]},"__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"4","gseIndex":12345}]`,
+		},
+		"highlight with gseIndex 8019256.12": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource: structured.BkLog,
+						TableID:    structured.TableID(influxdb.ResultTableEs),
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "gseIndex",
+									Value:         []string{"8019256.12"},
+									Operator:      structured.Contains,
+								},
+							},
+							ConditionList: []string{},
+						},
+					},
+				},
+				HighLight: &metadata.HighLight{
+					Enable: true,
+				},
+				Limit: 1,
+				Start: start,
+				End:   end,
+			},
+			total:    16,
+			expected: `[{"__data_label":"es","__doc_id":"3440427488472403621","__highlight":{"gseIndex":["<mark>8019256.12</mark>"]},"__index":"v2_2_bklog_bkunify_query_20250710_0","__result_table":"result_table.es","_time":"1752115579000","cloudId":0,"dtEventTimeStamp":"1752115579000","file":"victoriaMetrics/instance.go:397","gseIndex":8.01925612e+06,"iterationIndex":15,"level":"info","report_time":"2025-07-10T02:46:19.443Z","time":"1752115579000","trace_id":"af754e7bbf629abaee3499638974dda9"}]`,
+		},
+		"highlight with gseIndex 8019256": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource: structured.BkLog,
+						TableID:    structured.TableID(influxdb.ResultTableEs),
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "gseIndex",
+									Value:         []string{"8019256"},
+									Operator:      structured.Contains,
+								},
+							},
+							ConditionList: []string{},
+						},
+					},
+				},
+				HighLight: &metadata.HighLight{
+					Enable: true,
+				},
+				Limit: 1,
+				Start: start,
+				End:   end,
+			},
+			total:    16,
+			expected: `[{"__data_label":"es","__doc_id":"3440427488472403621","__highlight":{"gseIndex":["<mark>8019256</mark>"]},"__index":"v2_2_bklog_bkunify_query_20250710_0","__result_table":"result_table.es","_time":"1752115579000","cloudId":0,"dtEventTimeStamp":"1752115579000","file":"victoriaMetrics/instance.go:397","gseIndex":8.019256e+06,"iterationIndex":15,"level":"info","report_time":"2025-07-10T02:46:19.443Z","time":"1752115579000","trace_id":"af754e7bbf629abaee3499638974dda9"}]`,
 		},
 	}
 

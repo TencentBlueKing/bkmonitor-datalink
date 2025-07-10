@@ -12,6 +12,7 @@ package function
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -58,14 +59,22 @@ func (h *HighLightFactory) Process(data map[string]any) map[string]any {
 }
 
 func (h *HighLightFactory) processField(fieldValue any, keywords []LabelMapValue) any {
+	if len(keywords) == 0 {
+		return nil
+	}
+
 	var newValue string
 	switch value := fieldValue.(type) {
 	case string:
 		newValue = value
-	case int:
+	case int, int32, int64, uint32, uint64:
 		newValue = fmt.Sprintf("%d", value)
+	case float64:
+		newValue = strconv.FormatFloat(value, 'f', -1, 64)
+	case float32:
+		newValue = strconv.FormatFloat(float64(value), 'f', -1, 32)
 	default:
-		return nil
+		newValue = fmt.Sprintf("%v", value)
 	}
 
 	if highlighted := h.highlightString(newValue, keywords); highlighted != newValue {
@@ -100,11 +109,20 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 
 		if !check {
 			// 高亮替换需要把头尾的*去掉
-			newKeywords = append(newKeywords, strings.Trim(keyword.Value, "*"))
+			nv := strings.Trim(keyword.Value, "*")
+
+			// 如果为空的情况下不要进行判定
+			if nv != "" {
+				newKeywords = append(newKeywords, nv)
+			}
 		}
 	}
 
 	for _, keyword := range newKeywords {
+		if keyword == "" {
+			continue
+		}
+
 		analyzablePart = strings.ReplaceAll(analyzablePart, keyword, fmt.Sprintf("<mark>%s</mark>", keyword))
 	}
 

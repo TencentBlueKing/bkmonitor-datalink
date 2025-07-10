@@ -1,6 +1,8 @@
 module github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/script/diff
 
-go 1.21
+go 1.23.0
+
+toolchain go1.24.4
 
 require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker v0.0.0-20240301092319-f348d765f0f7
@@ -72,8 +74,8 @@ require (
 	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/arch v0.8.0 // indirect
 	golang.org/x/exp v0.0.0-20240119083558-1b970713d09a // indirect
-	golang.org/x/sys v0.21.0 // indirect
-	golang.org/x/text v0.16.0 // indirect
+	golang.org/x/sys v0.31.0 // indirect
+	golang.org/x/text v0.23.0 // indirect
 	google.golang.org/protobuf v1.34.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect

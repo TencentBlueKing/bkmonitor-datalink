@@ -83,6 +83,7 @@ type ResultTableDetail struct {
 	TableId               string            `json:"table_id"`
 	Measurement           string            `json:"measurement"`
 	VmRt                  string            `json:"vm_rt"`
+	CmdbLevelVmRt         string            `json:"cmdb_level_vm_rt"`
 	Fields                []string          `json:"fields"`
 	FieldAlias            map[string]string `json:"field_alias"` // 字段别名，key 为新字段，value 为老字段
 	MeasurementType       string            `json:"measurement_type"`

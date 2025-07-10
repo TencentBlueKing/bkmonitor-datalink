@@ -83,7 +83,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "text filter",
 			input: "text:value",
-			want:  "`text` MATCH_PHRASE_PREFIX 'value'",
+			want:  "`text` MATCH_PHRASE 'value'",
 		},
 		{
 			name:  "object field",
@@ -154,21 +154,83 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "CAST(object['field'] AS TEXT) MATCH_PHRASE_PREFIX 'What''s UP' AND `tag` != 'test'",
+			want: "CAST(object['field'] AS TEXT) MATCH_PHRASE 'What''s UP' AND `tag` != 'test'",
 		},
 		{
-			name: "doris t8est text field wildcard",
+			name: "doris test object field condition",
 			condition: metadata.AllConditions{
 				{
 					{
 						DimensionName: "object.field",
-						Value:         []string{"partial"},
+						Value:         []string{"What's UP"},
+						Operator:      metadata.ConditionEqual,
+						IsPrefix:      true,
+					},
+					{
+						DimensionName: "tag",
+						Value:         []string{"test"},
+						Operator:      metadata.ConditionNotEqual,
+						IsSuffix:      true,
+					},
+				},
+			},
+			want: "CAST(object['field'] AS TEXT) MATCH_PHRASE_PREFIX 'What''s UP' AND `tag` NOT MATCH_PHRASE_EDGE 'test'",
+		},
+		{
+			name: "doris t8est text field wildcard use *",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "object.field",
+						Value:         []string{"*partial*"},
 						Operator:      metadata.ConditionContains,
 						IsWildcard:    true,
 					},
 				},
 			},
 			want: "CAST(object['field'] AS TEXT) LIKE '%partial%'",
+		},
+		{
+			name: "doris t8est text field wildcard use *",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "object.field",
+						Value:         []string{"*pa*tial*"},
+						Operator:      metadata.ConditionContains,
+						IsWildcard:    true,
+					},
+				},
+			},
+			want: "CAST(object['field'] AS TEXT) LIKE '%pa%tial%'",
+		},
+		{
+			name: "doris t8est text field wildcard use ?",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "object.field",
+						Value:         []string{"*pa*tial?"},
+						Operator:      metadata.ConditionContains,
+						IsWildcard:    true,
+					},
+				},
+			},
+			want: "CAST(object['field'] AS TEXT) LIKE '%pa%tial_'",
+		},
+		{
+			name: "doris t8est text field wildcard use ?",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "object.field",
+						Value:         []string{"*pa\\*tial?"},
+						Operator:      metadata.ConditionContains,
+						IsWildcard:    true,
+					},
+				},
+			},
+			want: "CAST(object['field'] AS TEXT) LIKE '%pa\\*tial_'",
 		},
 		{
 			name: "doris test OR condition",
@@ -217,7 +279,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			want: "`env` IN ('prod', 'test')",
 		},
 		{
-			name: "test IN operator with wildcard",
+			name: "test IN operator with wildcard and no *",
 			condition: metadata.AllConditions{
 				{
 					{
@@ -228,7 +290,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "(`env` LIKE '%prod%' OR `env` LIKE '%test%')",
+			want: "(`env` LIKE 'prod' OR `env` LIKE 'test')",
 		},
 		{
 			name: "doris test empty value",

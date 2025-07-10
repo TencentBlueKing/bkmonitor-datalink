@@ -70,6 +70,14 @@ processor:
       config:
         from_metadata:
           keys: ["*"]
+
+    # DefaultValue Action
+    - name: "resource_filter/default_value"
+      config:
+        default_value:
+          - type: string
+            key: resource.service.name
+            value: "unknown_service"
 */
 
 package resourcefilter

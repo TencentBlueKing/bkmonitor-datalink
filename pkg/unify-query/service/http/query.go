@@ -271,7 +271,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				span.Set("query-ts-from", queryTs.From)
 				span.Set("query-ts-limit", queryTs.Limit)
 
-				if len(data) > queryTs.Limit {
+				if len(data) > queryTs.Limit && queryTs.Limit > 0 {
 					if queryTs.IsMultiFrom {
 						resultTableOptions = queryTs.ResultTableOptions
 						if resultTableOptions == nil {
@@ -291,7 +291,15 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 							}
 						}
 					} else {
-						data = data[queryTs.From : queryTs.From+queryTs.Limit]
+						// 只有长度符合的数据才进行裁剪
+						if len(data) > queryTs.From {
+							maxLength := queryTs.From + queryTs.Limit
+							if len(data) < maxLength {
+								maxLength = len(data)
+							}
+
+							data = data[queryTs.From:maxLength]
+						}
 					}
 				}
 			}

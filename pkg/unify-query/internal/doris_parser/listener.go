@@ -28,14 +28,11 @@ type DorisListener struct {
 
 	opt DorisListenerOption
 
-	fieldListExpr []*FieldExpr
-	fieldExpr     *FieldExpr
+	expr Expr
 
-	conditionExpr *ConditionExpr
-
-	Selects    []*FieldExpr
-	Conditions Expr
-	Table      *FieldExpr
+	Select    string
+	Condition string
+	Table     string
 }
 
 type DorisListenerOption struct {
@@ -44,58 +41,28 @@ type DorisListenerOption struct {
 
 func (l *DorisListener) EnterEveryRule(ctx antlr.ParserRuleContext) {
 	log.Infof(l.ctx, "enter %T %s", ctx, ctx.GetText())
+	switch ctx.(type) {
+	case *gen.SelectClauseContext:
+		l.expr = &SelectExpr{}
+	case *gen.FromClauseContext:
+		l.expr = &TableExpr{}
+	}
 
-	switch v := ctx.(type) {
-	case *gen.FunctionNameIdentifierContext:
-		l.fieldExpr.FuncName = v.GetText()
-	case *gen.IdentifierOrTextContext:
-		l.fieldExpr.As = v.GetText()
-	case *gen.ValueExpressionDefaultContext:
-		l.fieldExpr.Name = v.GetText()
-	case *gen.NamedExpressionContext:
-		l.fieldExpr = &FieldExpr{}
-	case *gen.TableAliasContext:
-		l.fieldExpr.As = ctx.GetText()
-	case *gen.TableNameContext:
-		l.fieldExpr.Name = ctx.GetText()
-	case *gen.PredicateContext:
-		l.conditionExpr.Field = l.fieldExpr
-	case *gen.ComparisonOperatorContext:
-		l.conditionExpr.Op = v.GetText()
+	if l.expr != nil {
+		l.expr.Enter(ctx)
 	}
 }
 
 func (l *DorisListener) ExitEveryRule(ctx antlr.ParserRuleContext) {
 	log.Infof(l.ctx, "exit %T %s", ctx, ctx.GetText())
-
-	switch v := ctx.(type) {
-	case *gen.NamedExpressionContext:
-		l.fieldListExpr = append(l.fieldListExpr, l.fieldExpr)
+	if l.expr != nil {
+		l.expr.Exit(ctx)
+	}
+	switch ctx.(type) {
 	case *gen.SelectClauseContext:
-		l.Selects = l.fieldListExpr
-		l.fieldListExpr = make([]*FieldExpr, 0)
-		l.fieldExpr = &FieldExpr{}
-	case *gen.TableNameContext:
-		l.Table = l.fieldExpr
-		l.fieldExpr = &FieldExpr{}
-	case *gen.PredicateContext:
-		l.conditionExpr = &ConditionExpr{
-			Field: &FieldExpr{},
-		}
-	case *gen.LogicalBinaryContext:
-		op := strings.ToLower(v.GetOperator().GetText())
-		switch op {
-		case "and":
-			l.Conditions = &AndExpr{
-				Left:  l.conditionExpr,
-				Right: l.Conditions,
-			}
-		case "or":
-			l.Conditions = &OrExpr{
-				Left:  l.conditionExpr,
-				Right: l.Conditions,
-			}
-		}
+		l.Select = l.expr.String()
+	case *gen.FromClauseContext:
+		l.Table = l.expr.String()
 	}
 }
 
@@ -105,37 +72,20 @@ func (l *DorisListener) WithOptions(opt DorisListenerOption) *DorisListener {
 }
 
 func (l *DorisListener) SQL() (string, error) {
-	selectsList := make([]string, 0, len(l.Selects))
-	for _, selectExpr := range l.Selects {
-		selectsList = append(selectsList, selectExpr.String())
-	}
-	if len(selectsList) == 0 {
+	if l.Select == "" {
 		return "", fmt.Errorf("sql 解析异常: %s", l.sql)
 	}
 
-	var (
-		sql strings.Builder
-	)
-	sql.WriteString("SELECT ")
-	sql.WriteString(strings.Join(selectsList, ", "))
+	return strings.Join([]string{
+		l.Select, l.Table, l.Condition,
+	}, " "), nil
 
-	if l.Table != nil {
-		sql.WriteString(fmt.Sprintf(" FROM %s", l.Table.String()))
-	}
-	if l.Conditions != nil {
-		sql.WriteString(fmt.Sprintf(" WHERE %s", l.Conditions.String()))
-	}
-
-	return sql.String(), nil
 }
 
 // NewDorisListener 创建带Token流的Listener
 func NewDorisListener(ctx context.Context, sql string) *DorisListener {
 	return &DorisListener{
-		ctx:           ctx,
-		sql:           sql,
-		fieldListExpr: make([]*FieldExpr, 0),
-		fieldExpr:     &FieldExpr{},
-		conditionExpr: &ConditionExpr{},
+		ctx: ctx,
+		sql: sql,
 	}
 }

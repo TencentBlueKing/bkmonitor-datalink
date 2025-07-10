@@ -406,6 +406,15 @@ func TestParser(t *testing.T) {
 		//},
 		"test-1": {
 			q: "\"32221112\" AND path: \"/data/home/user00/log/zonesvr*\"",
+			e: &AndExpr{
+				Left: &MatchExpr{
+					Value: "32221112",
+				},
+				Right: &WildcardExpr{
+					Field: "path",
+					Value: "/data/home/user00/log/zonesvr*",
+				},
+			},
 		},
 	}
 

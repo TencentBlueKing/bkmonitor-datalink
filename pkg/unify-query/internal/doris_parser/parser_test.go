@@ -130,6 +130,10 @@ LIMIT
 				Name: "pod_namespace",
 			},
 		},
+		{
+			name: "test-11",
+			q:    `select * from t where a = 1`,
+		},
 	}
 
 	mock.Init()
@@ -156,6 +160,7 @@ LIMIT
 				return
 			}
 
+			assert.NotEmpty(t, expected)
 			assert.Equal(t, c.sql, expected)
 			return
 		})

@@ -422,7 +422,10 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 		return
 	}
 
+	// 用于判定字段是否需要删除
 	f.dimensionSet = dimensionSet
+
+	// 用于补零判定
 	f.timeAggregate = timeAggregate
 
 	span.Set("select-fields", selectFields)

@@ -31,6 +31,8 @@ import (
 
 // Instance prometheus 查询引擎
 type Instance struct {
+	tsdb.DefaultInstance
+
 	ctx          context.Context
 	instanceType string
 

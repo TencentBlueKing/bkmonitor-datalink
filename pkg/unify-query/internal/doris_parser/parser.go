@@ -12,21 +12,36 @@ package doris_parser
 import (
 	"context"
 
+	antlr "github.com/antlr4-go/antlr/v4"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser/gen"
 )
 
-func ParseDorisSQL(ctx context.Context, q string, fieldMap, fieldAlias map[string]string) *DorisVisitor {
-	visitor := NewDorisVisitor(ctx, q)
-	visitor.WithOptions(DorisVisitorOption{DimensionTransform: func(s string) string {
-		if v, ok := fieldAlias[s]; ok {
-			return v
-		}
+func ParseDorisSQL(ctx context.Context, q string, fieldMap, fieldAlias map[string]string) *DorisListener {
+	// 创建输入流
+	is := antlr.NewInputStream(q)
 
-		return s
-	}})
+	// 创建词法分析器
+	lexer := gen.NewDorisLexer(is)
 
-	tree := gen.NewDorisParserParser(visitor.Tokens)
-	tree.Statement().Accept(visitor)
+	// 创建Token流
+	tokens := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
+	parser := gen.NewDorisParserParser(tokens)
 
-	return visitor
+	// 创建解析树
+	listener := NewDorisListener(ctx).
+		WithOptions(
+			DorisListenerOption{
+				DimensionTransform: func(s string) string {
+					if v, ok := fieldAlias[s]; ok {
+						return v
+					}
+
+					return s
+				},
+			},
+		)
+	antlr.ParseTreeWalkerDefault.Walk(listener, parser.Statement())
+
+	return listener
 }

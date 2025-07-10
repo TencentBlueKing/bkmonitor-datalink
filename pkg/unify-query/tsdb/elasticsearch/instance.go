@@ -40,6 +40,8 @@ import (
 var _ tsdb.Instance = (*Instance)(nil)
 
 type Instance struct {
+	tsdb.DefaultInstance
+
 	ctx context.Context
 	wg  sync.WaitGroup
 

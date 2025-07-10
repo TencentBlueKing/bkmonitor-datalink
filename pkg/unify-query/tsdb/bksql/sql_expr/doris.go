@@ -58,6 +58,8 @@ const (
 )
 
 type DorisSQLExpr struct {
+	DefaultSQLExpr
+
 	encodeFunc func(string) string
 
 	timeField  string
@@ -121,6 +123,10 @@ func (d *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
 
 func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
 	return fmt.Sprintf("SHOW CREATE TABLE %s", table)
+}
+
+func (d *DorisSQLExpr) ParserSQL(_ string) ([]string, []string, []string, *set.Set[string], TimeAggregate, error) {
+	return nil, nil, nil, nil, TimeAggregate{}, fmt.Errorf("not support")
 }
 
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段

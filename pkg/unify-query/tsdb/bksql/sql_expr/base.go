@@ -63,6 +63,8 @@ type SQLExpr interface {
 	ParserAllConditions(allConditions metadata.AllConditions) (string, error)
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
 	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, *set.Set[string], TimeAggregate, error)
+	// ParserSQL 解析 SQL 语句
+	ParserSQL(q string) ([]string, []string, []string, *set.Set[string], TimeAggregate, error)
 	// DescribeTableSQL 返回当前表结构
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
@@ -130,6 +132,10 @@ func (d *DefaultSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 func (d *DefaultSQLExpr) WithFieldsMap(fieldMap map[string]string) SQLExpr {
 	d.fieldMap = fieldMap
 	return d
+}
+
+func (d *DefaultSQLExpr) ParserSQL(_ string) ([]string, []string, []string, *set.Set[string], TimeAggregate, error) {
+	return nil, nil, nil, nil, TimeAggregate{}, nil
 }
 
 func (d *DefaultSQLExpr) WithKeepColumns(cols []string) SQLExpr {

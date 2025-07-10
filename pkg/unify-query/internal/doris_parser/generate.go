@@ -12,6 +12,7 @@ package doris_parser
 import "fmt"
 
 //go:generate antlr4 -Dlanguage=Go -no-listener -visitor -package gen *.g4 -o ../gen
+//go:generate antlr4 -Dlanguage=Go -listener -no-visitor -package gen *.g4 -o ../gen
 
 // for lexer.g4
 var has_unclosed_bracketed_comment = false

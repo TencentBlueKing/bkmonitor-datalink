@@ -144,6 +144,9 @@ type Query struct {
 	QueryString string `json:"query_string,omitempty"`
 	IsPrefix    bool   `json:"is_prefix,omitempty"`
 
+	// sql 查询
+	SQL string `json:"sql,omitempty"`
+
 	AllConditions AllConditions `json:"all_conditions,omitempty"`
 
 	Source []string `json:"source,omitempty"`

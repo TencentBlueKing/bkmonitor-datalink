@@ -45,7 +45,6 @@ func TestInstance_getAlias(t *testing.T) {
 	for name, c := range map[string]struct {
 		start       time.Time
 		end         time.Time
-		timezone    string
 		db          string
 		needAddTime bool
 
@@ -53,7 +52,7 @@ func TestInstance_getAlias(t *testing.T) {
 
 		expected []string
 	}{
-		"3d with UTC": {
+		"3d with bklog": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 1, 3, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
@@ -70,49 +69,48 @@ func TestInstance_getAlias(t *testing.T) {
 			start:       time.Date(2024, 1, 25, 7, 10, 5, 0, time.UTC),
 			end:         time.Date(2024, 2, 2, 6, 1, 4, 10, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_20240125*", "db_test_20240126*", "db_test_20240127*", "db_test_20240128*", "db_test_20240129*", "db_test_20240130*", "db_test_20240131*", "db_test_20240201*", "db_test_20240202*"},
 		},
-		"2d with Asia/Shanghai": {
+		"2d with bkdata": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 1, 3, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/Shanghai",
+			sourceType:  structured.BkData,
 			expected:    []string{"db_test_20240102*", "db_test_20240103*", "db_test_20240104*"},
 		},
-		"14d with Asia/Shanghai": {
+		"14d with bkdata": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 1, 15, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/Shanghai",
+			sourceType:  structured.BkData,
 			expected:    []string{"db_test_20240102*", "db_test_20240103*", "db_test_20240104*", "db_test_20240105*", "db_test_20240106*", "db_test_20240107*", "db_test_20240108*", "db_test_20240109*", "db_test_20240110*", "db_test_20240111*", "db_test_20240112*", "db_test_20240113*", "db_test_20240114*", "db_test_20240115*", "db_test_20240116*"},
 		},
-		"16d with Asia/Shanghai": {
+		"16d with bkdata": {
 			start:       time.Date(2024, 1, 15, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 2, 10, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/Shanghai",
+			sourceType:  structured.BkData,
 			expected:    []string{"db_test_202401*", "db_test_202402*"},
 		},
-		"15d with Asia/Shanghai": {
+		"15d with bkdata": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 1, 16, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/Shanghai",
+			sourceType:  structured.BkData,
 			expected:    []string{"db_test_202401*"},
 		},
-		"6m with Asia/Shanghai": {
+		"6m with bkdata": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 7, 1, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/Shanghai",
+			sourceType:  structured.BkData,
 			expected:    []string{"db_test_202401*", "db_test_202402*", "db_test_202403*", "db_test_202404*", "db_test_202405*", "db_test_202406*", "db_test_202407*"},
 		},
-		"7m with Asia/Shanghai": {
+		"7m with bkdata": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 8, 1, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/Shanghai",
+			sourceType:  structured.BkData,
 			expected:    []string{"db_test_202402*", "db_test_202403*", "db_test_202404*", "db_test_202405*", "db_test_202406*", "db_test_202407*", "db_test_202408*"},
 		},
 		"2m and db": {
@@ -135,7 +133,7 @@ func TestInstance_getAlias(t *testing.T) {
 				c.db = "db_test"
 			}
 			ctx = metadata.InitHashID(ctx)
-			actual, err := inst.getAlias(ctx, c.db, c.needAddTime, c.start, c.end, c.timezone, c.sourceType)
+			actual, err := inst.getAlias(ctx, c.db, c.needAddTime, c.start, c.end, c.sourceType)
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, actual)
 		})

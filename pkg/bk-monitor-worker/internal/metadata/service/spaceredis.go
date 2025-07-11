@@ -333,10 +333,6 @@ func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, tableIdList []str
 		// 二段式补充
 		for idx, value := range rts {
 			rts[idx] = reformatTableId(value)
-			// 多租户模式下，需要加上租户ID后缀
-			if cfg.EnableMultiTenantMode {
-				rts[idx] = fmt.Sprintf("%s|%s", rts[idx], bkTenantId)
-			}
 		}
 
 		rtsStr, err := jsonx.MarshalString(rts)
@@ -688,11 +684,6 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 			detail["data_label"] = ""
 		} else {
 			detail["data_label"] = rt.DataLabel
-
-			// 多租户模式下，需要加上租户ID后缀
-			if cfg.EnableMultiTenantMode {
-				detail["data_label"] = fmt.Sprintf("%s|%s", *rt.DataLabel, bkTenantId)
-			}
 		}
 		detail["measurement_type"] = measurementTypeMap[tableId]
 		detail["bcs_cluster_id"] = tableIdClusterIdMap[tableId]
@@ -917,13 +908,6 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		fieldAliasSettings = make(map[string]string)
 	}
 
-	// 多租户模式下，需要加上租户ID后缀
-	dataLabel := rt.DataLabel
-	if cfg.EnableMultiTenantMode && dataLabel != nil {
-		newDataLabel := fmt.Sprintf("%s|%s", *dataLabel, rt.BkTenantId)
-		dataLabel = &newDataLabel
-	}
-
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
 		"storage_type":            models.StorageTypeES,
@@ -933,7 +917,7 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		"source_type":             sourceType,
 		"options":                 options,
 		"storage_cluster_records": clusterRecords,
-		"data_label":              dataLabel,
+		"data_label":              rt.DataLabel,
 		"field_alias":             fieldAliasSettings, // 添加字段别名
 	})
 	if err != nil {
@@ -1513,10 +1497,6 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		// 如果开启了多租户模式，则需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
 			redisKey = fmt.Sprintf("%s__%s|%s", spaceType, spaceId, bkTenantId)
-			oldValue, values := values, make(map[string]map[string]interface{})
-			for tid, val := range oldValue {
-				values[fmt.Sprintf("%s|%s", tid, bkTenantId)] = val
-			}
 		} else {
 			redisKey = fmt.Sprintf("%s__%s", spaceType, spaceId)
 		}
@@ -1622,11 +1602,6 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		// 如果开启了多租户模式，则需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
 			redisKey = fmt.Sprintf("%s__%s|%s", spaceType, spaceId, bkTenantId)
-			// value需要补充租户ID前缀
-			oldValue, values := values, make(map[string]map[string]interface{})
-			for tid, val := range oldValue {
-				values[fmt.Sprintf("%s|%s", tid, bkTenantId)] = val
-			}
 		} else {
 			redisKey = fmt.Sprintf("%s__%s", spaceType, spaceId)
 		}
@@ -1707,11 +1682,6 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 		// 如果开启了多租户模式，则需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
 			redisKey = fmt.Sprintf("%s__%s|%s", spaceType, spaceId, bkTenantId)
-			// value需要补充租户ID后缀
-			oldValue, values := values, make(map[string]map[string]interface{})
-			for tid, val := range oldValue {
-				values[fmt.Sprintf("%s|%s", tid, bkTenantId)] = val
-			}
 		} else {
 			redisKey = fmt.Sprintf("%s__%s", spaceType, spaceId)
 		}

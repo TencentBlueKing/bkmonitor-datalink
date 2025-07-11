@@ -74,7 +74,7 @@ func (p *Proxy) V2PushRoute(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		writeResponse(w, err.Error(), int(code))
 		logger.Warnf("failed to run pre-check processors, code=%d, dataid=%v, ip=%v, error %s", code, pd.DataId, ip, err)
-		DefaultMetricMonitor.IncPreCheckFailedCounter(processorName, r.Token.Original, code)
+		DefaultMetricMonitor.IncPreCheckFailedCounter(processorName, r.Token.Original, pd.DataId, code)
 		return
 	}
 

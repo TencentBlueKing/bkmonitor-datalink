@@ -41,6 +41,7 @@ es:
   max_concurrency: 200
   alias_refresh_period: 1m
 http:
+  multiTenantMode: false
   address: 127.0.0.1
   path:
     es: /query/es

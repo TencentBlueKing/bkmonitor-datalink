@@ -277,13 +277,14 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	tableIDs := set.New[string]()
 	isK8s := false
 
-	if db != "" && measurement != "" {
-		// 判断如果 tableID 完整的情况下（三段式），则直接取对应的 tsDB
-		tableIDs.Add(string(opt.TableID))
-	} else if db != "" {
+	if db != "" {
 		// 指标二段式，仅传递 data-label
 		tIDs := s.router.GetDataLabelRelatedRts(s.ctx, db)
 		tableIDs.Add(tIDs...)
+
+		if measurement != "" {
+			tableIDs.Add(fmt.Sprintf("%s.%s", db, measurement))
+		}
 
 		if tableIDs.Size() == 0 {
 			routerMessage = fmt.Sprintf("data_label router is empty with data_label: %s", db)

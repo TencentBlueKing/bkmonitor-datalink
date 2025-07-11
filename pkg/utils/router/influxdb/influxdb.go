@@ -28,11 +28,9 @@ const (
 	QueryRouterInfoKey               = "query_router_info"
 	SpaceToResultTableKey            = "space_to_result_table"
 	DataLabelToResultTableKey        = "data_label_to_result_table"
-	FieldToResultTableKey            = "field_to_result_table"
 	ResultTableDetailKey             = "result_table_detail"
 	SpaceToResultTableChannelKey     = "space_to_result_table:channel"
 	DataLabelToResultTableChannelKey = "data_label_to_result_table:channel"
-	FieldToResultTableChannelKey     = "field_to_result_table:channel"
 	ResultTableDetailChannelKey      = "result_table_detail:channel"
 
 	BkAppToSpaceKey        = "bk_app_to_space"
@@ -60,7 +58,6 @@ type Router interface {
 	SetHostStatusRead(ctx context.Context, hostName string, readStatus bool) error
 	GetBkAppSpace(ctx context.Context, bkApp string) (SpaceUIDList, error)
 	GetSpace(ctx context.Context, spaceId string) (Space, error)
-	GetFieldToResultTableDetail(ctx context.Context, field string) (ResultTableList, error)
 	GetResultTableDetail(ctx context.Context, tableId string) (*ResultTableDetail, error)
 	GetDataLabelToResultTableDetail(ctx context.Context, dataLabel string) (ResultTableList, error)
 	IterGenericKeyResult(ctx context.Context, coreKey string, batchSize int64, genericCh chan GenericKV)
@@ -339,15 +336,6 @@ func (r *router) GetDataLabelToResultTableDetail(ctx context.Context, dataLabel 
 	return value, nil
 }
 
-func (r *router) GetFieldToResultTableDetail(ctx context.Context, field string) (ResultTableList, error) {
-	value := ResultTableList{}
-	err := GetGenericHashKeyResult(r, ctx, FieldToResultTableKey, field, &value)
-	if err != nil {
-		return nil, err
-	}
-	return value, nil
-}
-
 // IterGenericKeyResult 遍历 Redis 获取 KEY 的完整内容
 func (r *router) IterGenericKeyResult(ctx context.Context, coreKey string, batchSize int64, genericCh chan GenericKV) {
 	key := r.key(coreKey)
@@ -407,8 +395,6 @@ func NewGenericValue(typeKey string) (stoVal GenericValue, err error) {
 	switch typeKey {
 	case BkAppToSpaceKey:
 		stoVal = &SpaceUIDList{}
-	case FieldToResultTableKey:
-		stoVal = &ResultTableList{}
 	case SpaceToResultTableKey:
 		stoVal = &Space{}
 	case DataLabelToResultTableKey:

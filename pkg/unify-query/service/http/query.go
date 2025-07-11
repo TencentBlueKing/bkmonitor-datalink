@@ -32,6 +32,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
@@ -183,6 +184,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 	list = make([]map[string]any, 0)
 
+	if !queryTs.IsMultiFrom {
+		resultTableOptions = make(metadata.ResultTableOptions)
+	}
+
 	// 构建查询路由列表
 	if queryTs.SpaceUid == "" {
 		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
@@ -271,36 +276,34 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				span.Set("query-ts-from", queryTs.From)
 				span.Set("query-ts-limit", queryTs.Limit)
 
-				if len(data) > queryTs.Limit && queryTs.Limit > 0 {
-					if queryTs.IsMultiFrom {
-						resultTableOptions = queryTs.ResultTableOptions
-						if resultTableOptions == nil {
-							resultTableOptions = make(metadata.ResultTableOptions)
-						}
-
+				if queryTs.IsMultiFrom {
+					resultTableOptions = queryTs.ResultTableOptions
+					if resultTableOptions == nil {
+						resultTableOptions = make(metadata.ResultTableOptions)
+					}
+					if len(data) > queryTs.Limit && queryTs.Limit > 0 {
 						data = data[0:queryTs.Limit]
-						for _, l := range data {
-							tableID := l[elasticsearch.KeyTableID].(string)
-							address := l[elasticsearch.KeyAddress].(string)
+					}
+					for _, l := range data {
+						tableID := l[elasticsearch.KeyTableID].(string)
+						address := l[elasticsearch.KeyAddress].(string)
 
-							option := resultTableOptions.GetOption(tableID, address)
-							if option == nil {
-								resultTableOptions.SetOption(tableID, address, &metadata.ResultTableOption{From: function.IntPoint(1)})
-							} else {
-								*option.From++
-							}
-						}
-					} else {
-						// 只有长度符合的数据才进行裁剪
-						if len(data) > queryTs.From {
-							maxLength := queryTs.From + queryTs.Limit
-							if len(data) < maxLength {
-								maxLength = len(data)
-							}
-
-							data = data[queryTs.From:maxLength]
+						option := resultTableOptions.GetOption(tableID, address)
+						if option == nil {
+							resultTableOptions.SetOption(tableID, address, &metadata.ResultTableOption{From: function.IntPoint(1)})
+						} else {
+							*option.From++
 						}
 					}
+				} else if len(data) > queryTs.From {
+					// 只有长度符合的数据才进行裁剪
+					maxLength := queryTs.From + queryTs.Limit
+					if len(data) < maxLength {
+						maxLength = len(data)
+					}
+
+					data = data[queryTs.From:maxLength]
+
 				}
 			}
 		}
@@ -390,9 +393,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
 				if !queryTs.IsMultiFrom {
-					if resultTableOptions == nil {
-						resultTableOptions = make(metadata.ResultTableOptions)
-					}
 					lock.Lock()
 					resultTableOptions.MergeOptions(options)
 					lock.Unlock()
@@ -773,9 +773,7 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 }
 
 func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (query *structured.QueryTs, err error) {
-	var (
-		matchers []*labels.Matcher
-	)
+	var matchers []*labels.Matcher
 
 	if queryPromQL == nil {
 		return
@@ -836,7 +834,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 		}
 
 		// 补充 Match
-		var verifyDimensions = func(key string) bool {
+		verifyDimensions := func(key string) bool {
 			return true
 		}
 
@@ -942,4 +940,334 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 		return nil, err
 	}
 	return resp, nil
+}
+
+func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
+	// 注意：ClearCache 参数使用规则
+	// - 第一次查询：ClearCache = true（清理可能存在的旧session）
+	// - 后续查询：ClearCache = false（保持session连续性，避免丢失scrollID）
+	// 如果每次都设置ClearCache=true，会导致session被重复删除，scrollID信息丢失
+	ignoreDimensions := []string{elasticsearch.KeyAddress}
+
+	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
+	defer span.End(&err)
+
+	user := metadata.GetUser(ctx)
+
+	if queryTs.Limit == 0 {
+		queryTs.Limit = ScrollSliceLimit
+	}
+	if queryTs.Scroll == "" {
+		queryTs.Scroll = ScrollWindow
+	}
+
+	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
+	if timeErr != nil {
+		err = timeErr
+		return
+	}
+	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
+
+	var (
+		receiveWg sync.WaitGroup
+		dataCh    = make(chan map[string]any)
+
+		message   strings.Builder
+		queryList []*metadata.Query
+		lock      sync.Mutex
+
+		allLabelMap = make(map[string][]function.LabelMapValue)
+
+		sessionLock sync.Mutex
+	)
+
+	list = make([]map[string]any, 0)
+
+	if queryTs.SpaceUid == "" {
+		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
+	}
+	for _, ql := range queryTs.QueryList {
+		ql.Timezone = queryTs.Timezone
+		ql.Start = queryTs.Start
+		ql.End = queryTs.End
+		ql.OrderBy = queryTs.OrderBy
+
+		if ql.Step == "" {
+			ql.Step = queryTs.Step
+		}
+
+		if queryTs.ResultTableOptions != nil {
+			ql.ResultTableOptions = queryTs.ResultTableOptions
+		}
+
+		if ql.Limit == 0 && queryTs.Limit > 0 {
+			ql.Limit = queryTs.Limit
+		}
+
+		if ql.From == 0 && queryTs.From > 0 {
+			ql.From = queryTs.From
+		}
+
+		if queryTs.Scroll != "" {
+			ql.Scroll = queryTs.Scroll
+		}
+
+		if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
+			ql.KeepColumns = queryTs.ResultColumns
+		}
+
+		qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
+		if qmErr != nil {
+			err = qmErr
+			return
+		}
+
+		for _, qry := range qm.QueryList {
+			if qry != nil {
+				queryList = append(queryList, qry)
+			}
+		}
+	}
+
+	queryTsKey, err := redisUtil.ScrollGenerateQueryTsKey(queryTs, user.Name)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("failed to generate queryTs key: %v", err)
+	}
+	sessionKey := redisUtil.GetSessionKey(queryTsKey)
+	lockKey := redisUtil.GetLockKey(queryTsKey)
+	scrollWindowDuration, _ := time.ParseDuration(queryTs.Scroll)
+	scrollLock, err := redisUtil.ScrollAcquireRedisLock(ctx, lockKey, scrollWindowDuration)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("failed to acquire lock: %v", err)
+	}
+	defer func() {
+		if releaseErr := redisUtil.ScrollReleaseRedisLock(ctx, scrollLock); releaseErr != nil {
+			log.Warnf(ctx, "failed to release lock: %v", releaseErr)
+		}
+	}()
+
+	session, err := redisUtil.ScrollGetOrCreateSession(ctx, sessionKey, queryTs.ClearCache, scrollWindowDuration, ScrollMaxSlice, queryTs.Limit)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("failed to get or create session: %v", err)
+	}
+
+	if session.Status == redisUtil.SessionStatusDone {
+		return 0, nil, nil, fmt.Errorf("session %s is already done", sessionKey)
+	}
+
+	storageQueryMap := make(map[string][]*metadata.Query)
+	for _, qry := range queryList {
+		storageIds := qry.CalcStorageIDs()
+		if storageIds == nil {
+			continue
+		}
+
+		for _, storageId := range storageIds {
+			if storageQueryMap[storageId] == nil {
+				storageQueryMap[storageId] = make([]*metadata.Query, 0)
+			}
+			storageQueryMap[storageId] = append(storageQueryMap[storageId], qry)
+		}
+	}
+
+	receiveWg.Add(1)
+
+	// 数据合并处理
+	go func() {
+		defer receiveWg.Done()
+
+		var data []map[string]any
+		for d := range dataCh {
+			data = append(data, d)
+		}
+
+		span.Set("query-list-num", len(queryList))
+		span.Set("result-data-num", len(data))
+
+		if len(queryList) > 1 {
+			queryTs.OrderBy.Orders().SortSliceList(data)
+		}
+
+		span.Set("query-label-map", allLabelMap)
+		span.Set("query-highlight", queryTs.HighLight)
+
+		var hlF *function.HighLightFactory
+		if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(allLabelMap) > 0 {
+			hlF = function.NewHighLightFactory(allLabelMap, queryTs.HighLight.MaxAnalyzedOffset)
+		}
+
+		for _, item := range data {
+			if item == nil {
+				continue
+			}
+
+			for _, ignoreDimension := range ignoreDimensions {
+				delete(item, ignoreDimension)
+			}
+
+			if hlF != nil {
+				if highlightResult := hlF.Process(item); len(highlightResult) > 0 {
+					item[function.KeyHighLight] = highlightResult
+				}
+			}
+			list = append(list, item)
+		}
+
+		span.Set("result-list-num", len(list))
+	}()
+
+	var sendWg sync.WaitGroup
+
+	p, _ := ants.NewPool(QueryMaxRouting)
+	defer p.Release()
+
+	go func() {
+		defer func() {
+			sendWg.Wait()
+			close(dataCh)
+		}()
+
+		for storageId, queries := range storageQueryMap {
+			storage, err := tsdb.GetStorage(storageId)
+			if err != nil {
+				message.WriteString(fmt.Sprintf("failed to get storage for %s: %v ", storageId, err))
+				continue
+			}
+
+			for _, qry := range queries {
+				connect := storage.Address
+				tableId := qry.TableID
+				instance := prometheus.GetTsDbInstance(ctx, qry)
+				if instance == nil {
+					log.Warnf(ctx, "not instance in %s", qry.StorageID)
+					continue
+				}
+
+				// 为每个query创建多个slice并发处理
+				for sliceIndex := 0; sliceIndex < session.MaxSlice; sliceIndex++ {
+					sendWg.Add(1)
+
+					// 创建每个slice的查询副本
+					sliceQuery := *qry
+					currentSliceIndex := sliceIndex
+
+					err = p.Submit(func() {
+						defer sendWg.Done()
+
+						sessionLock.Lock()
+						// 获取scrollID或index
+						scrollID, index, err := session.GetNextScrollID(ctx, instance.InstanceType(), connect, tableId, currentSliceIndex)
+						sessionLock.Unlock()
+						if err != nil {
+							message.WriteString(fmt.Sprintf("failed to get scroll info for %s: %v ", tableId, err))
+							return
+						}
+
+						log.Debugf(ctx, "[DEBUG] Got scrollID for slice %d: scrollID=%s, index=%d, instanceType=%s", currentSliceIndex, scrollID, index, instance.InstanceType())
+
+						// 对于ES，如果没有可用的scrollID且不是第一次查询，跳过这个slice
+						if instance.InstanceType() == consul.ElasticsearchStorageType && scrollID == "" {
+							log.Debugf(ctx, "[DEBUG] Slice %d for %s|%s starting new scroll", currentSliceIndex, connect, tableId)
+						}
+
+						if queryTs.Scroll != "" {
+							sliceQuery.Scroll = queryTs.Scroll
+						}
+
+						if sliceQuery.ResultTableOptions == nil {
+							sliceQuery.ResultTableOptions = make(metadata.ResultTableOptions)
+						}
+
+						var option *metadata.ResultTableOption
+						if instance.InstanceType() == consul.ElasticsearchStorageType {
+							option = &metadata.ResultTableOption{
+								SliceID:  &currentSliceIndex,
+								SliceMax: &session.MaxSlice,
+								Connect:  storage.Address,
+								ScrollID: scrollID,
+							}
+							log.Debugf(ctx, "[DEBUG] ES option created for slice %d: scrollID=%s, scroll=%s", currentSliceIndex, scrollID, sliceQuery.Scroll)
+						} else {
+							// Doris场景：使用index计算偏移量
+							option = &metadata.ResultTableOption{
+								SliceID:  &currentSliceIndex,
+								SliceMax: &session.MaxSlice,
+								Connect:  storage.Address,
+								ScrollID: "",
+							}
+							// 为Doris设置分页参数
+							sliceQuery.From = index * session.Limit
+							sliceQuery.Size = session.Limit
+							log.Debugf(ctx, "[DEBUG] Doris option created for slice %d: from=%d, size=%d", currentSliceIndex, sliceQuery.From, sliceQuery.Size)
+						}
+						sliceQuery.ResultTableOptions.SetOption(sliceQuery.TableID, storage.Address, option)
+
+						labelMap, labelErr := sliceQuery.LabelMap()
+						if labelErr == nil {
+							lock.Lock()
+							for k, lm := range labelMap {
+								if _, ok := allLabelMap[k]; !ok {
+									allLabelMap[k] = make([]function.LabelMapValue, 0)
+								}
+								allLabelMap[k] = append(allLabelMap[k], lm...)
+							}
+							lock.Unlock()
+						}
+
+						if len(queryList) > 1 {
+							sliceQuery.Size += sliceQuery.From
+							sliceQuery.From = 0
+						}
+
+						log.Debugf(ctx, "[DEBUG] Starting query for slice %d: tableID=%s, from=%d, size=%d", currentSliceIndex, sliceQuery.TableID, sliceQuery.From, sliceQuery.Size)
+
+						size, options, queryErr := instance.QueryRawData(ctx, &sliceQuery, start, end, dataCh)
+						if queryErr != nil {
+							message.WriteString(fmt.Sprintf("query %s:%s slice %d is error: %s ", sliceQuery.TableID, sliceQuery.Fields, currentSliceIndex, queryErr.Error()))
+							log.Debugf(ctx, "[DEBUG] Query error for slice %d: %v", currentSliceIndex, queryErr)
+						} else {
+							log.Debugf(ctx, "[DEBUG] Query success for slice %d: size=%d", currentSliceIndex, size)
+
+							if resultTableOptions == nil {
+								resultTableOptions = make(metadata.ResultTableOptions)
+							}
+
+							lock.Lock()
+							if options != nil {
+								resultTableOptions.MergeOptions(options)
+								log.Debugf(ctx, "[DEBUG] Merged options for slice %d: %+v", currentSliceIndex, options)
+							}
+							total += size
+							lock.Unlock()
+
+							sessionLock.Lock()
+							log.Debugf(ctx, "[DEBUG] Processing slice result for slice %d: connect=%s, tableID=%s, scrollID=%s, size=%d", currentSliceIndex, connect, tableId, scrollID, size)
+							if processErr := redisUtil.ScrollProcessSliceResult(ctx, &session, connect, tableId, scrollID, currentSliceIndex, instance.InstanceType(), size, options); processErr != nil {
+								log.Warnf(ctx, "[DEBUG] Failed to process slice result: %v", processErr)
+							} else {
+								log.Debugf(ctx, "[DEBUG] Successfully processed slice result for slice %d", currentSliceIndex)
+								if updateErr := redisUtil.UpdateSession(ctx, sessionKey, session); updateErr != nil {
+									log.Warnf(ctx, "[DEBUG] Failed to update session %s after processing slice %d: %v", sessionKey, currentSliceIndex, updateErr)
+								} else {
+									log.Debugf(ctx, "[DEBUG] Successfully updated session %s after processing slice %d", sessionKey, currentSliceIndex)
+								}
+							}
+							sessionLock.Unlock()
+						}
+					})
+
+					if err != nil {
+						sendWg.Done()
+						message.WriteString(fmt.Sprintf("failed to submit slice %d task for %s: %v ", currentSliceIndex, tableId, err))
+					}
+				}
+			}
+		}
+	}()
+
+	receiveWg.Wait()
+	if message.Len() > 0 {
+		err = errors.New(message.String())
+	}
+	return
 }

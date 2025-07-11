@@ -548,10 +548,11 @@ func TestInstance_queryRawData(t *testing.T) {
 	}{
 		"nested query + query string 测试 + highlight": {
 			query: &metadata.Query{
-				DB:    db,
-				Field: "group",
-				From:  0,
-				Size:  5,
+				DB:      db,
+				Field:   "group",
+				From:    0,
+				Size:    5,
+				Connect: mock.EsUrl,
 				Orders: metadata.Orders{
 					{
 						Name: FieldTime,
@@ -584,6 +585,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				Field:      field,
 				From:       0,
 				Size:       10,
+				Connect:    mock.EsUrl,
 				DataSource: structured.BkLog,
 				TableID:    "bk_log_index_set_10",
 				DataLabel:  "set_10",
@@ -616,6 +618,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				Field:       field,
 				From:        0,
 				Size:        10,
+				Connect:     mock.EsUrl,
 				Source:      []string{"__ext.io_kubernetes_pod", "__ext.container_name"},
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
@@ -642,6 +645,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			query: &metadata.Query{
 				DB:          db,
 				Field:       field,
+				Connect:     mock.EsUrl,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				StorageType: consul.ElasticsearchStorageType,
@@ -666,6 +670,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			query: &metadata.Query{
 				DB:          db,
 				Field:       field,
+				Connect:     mock.EsUrl,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				StorageType: consul.ElasticsearchStorageType,
@@ -684,6 +689,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			query: &metadata.Query{
 				DB:          db,
 				Field:       field,
+				Connect:     mock.EsUrl,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				StorageType: consul.ElasticsearchStorageType,

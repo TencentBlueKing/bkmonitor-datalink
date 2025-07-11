@@ -1287,7 +1287,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 				OrderBy: structured.OrderBy{
 					"a",
 					"b",
-					elasticsearch.KeyTableID,
+					metadata.KeyTableID,
 				},
 				Limit:       5,
 				MetricMerge: "a",
@@ -3425,7 +3425,8 @@ func TestStructAndPromQLConvert(t *testing.T) {
 
 	for n, c := range testCase {
 		t.Run(n, func(t *testing.T) {
-			ctx, _ = context.WithCancel(ctx)
+			ctx, cancel := context.WithCancel(ctx)
+			defer cancel()
 			if c.queryStruct {
 				promql, err := structToPromQL(ctx, c.query)
 				if c.err != nil {

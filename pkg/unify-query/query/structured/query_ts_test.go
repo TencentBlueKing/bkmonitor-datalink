@@ -1239,6 +1239,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								},
 								Field:       "usage",
 								StorageType: consul.ElasticsearchStorageType,
+								Connect:     "http://127.0.0.1:93002",
 								Aggregates: md.Aggregates{
 									{
 										Name:       "sum",
@@ -1311,6 +1312,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								Fields:      []string{"usage"},
 								MetricNames: []string{"bklog:result_table:es:usage"},
 								StorageType: consul.ElasticsearchStorageType,
+								Connect:     "http://127.0.0.1:93002",
 								Aggregates: md.Aggregates{
 									{
 										Name:       "sum",

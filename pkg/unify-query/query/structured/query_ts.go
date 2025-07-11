@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -75,6 +76,9 @@ type QueryTs struct {
 	Scroll string `json:"scroll,omitempty"`
 	// IsMultiFrom 是否启用 MultiFrom 查询
 	IsMultiFrom bool `json:"is_multi_from,omitempty"`
+
+	// ClearCache 是否强制清理已存在的缓存会话
+	ClearCache bool `json:"clear_cache,omitempty"`
 
 	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`
 
@@ -889,6 +893,20 @@ func (q *Query) BuildMetadataQuery(
 	query.TimeField = tsDB.TimeField
 	query.NeedAddTime = tsDB.NeedAddTime
 	query.SourceType = tsDB.SourceType
+
+	if query.StorageType == consul.ElasticsearchStorageType {
+		if query.SourceType == BkData {
+			user := metadata.GetUser(ctx)
+			query.Connect = bkapi.GetBkDataAPI().QueryUrlForES(user.SpaceUID)
+		} else {
+			if query.StorageID != "" {
+				stg, _ := tsdb.GetStorage(query.StorageID)
+				if stg != nil {
+					query.Connect = stg.Address
+				}
+			}
+		}
+	}
 
 	query.AllConditions = allCondition.MetaDataAllConditions()
 	query.Condition = whereList.String()

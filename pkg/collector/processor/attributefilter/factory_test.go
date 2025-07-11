@@ -193,7 +193,6 @@ processor:
 			})
 		}
 	})
-
 }
 
 func TestAsIntAction(t *testing.T) {

@@ -102,7 +102,7 @@ func TestBulkRefreshTSMetrics_UpdateScenario(t *testing.T) {
 	svc := &TimeSeriesMetricSvc{}
 
 	// 调用 BulkRefreshTSMetrics
-	needPush, err := svc.BulkRefreshTSMetrics(100376, "test_table", metricInfoList, true)
+	needPush, err := svc.BulkRefreshTSMetrics("system", 100376, "test_table", metricInfoList, true)
 	assert.NoError(t, err)
 	assert.False(t, needPush)
 

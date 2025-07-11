@@ -45,20 +45,24 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 		return errors.Wrap(err, "find ts group record error")
 	}
 
-	// 获取结果表对应的计算平台结果表
-	var tableIdList []string
+	// 按租户分组
+	tenantTableIds := make(map[string][]string)
 	for _, tg := range tsGroupList {
-		tableIdList = append(tableIdList, tg.TableID)
+		tenantTableIds[tg.BkTenantId] = append(tenantTableIds[tg.BkTenantId], tg.TableID)
 	}
-	rtMapVmRt := make(map[string]string)
-	for _, chunkDataLabels := range slicex.ChunkSlice(tableIdList, 0) {
-		var tempList []storage.AccessVMRecord
-		if err := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.ResultTableId, storage.AccessVMRecordDBSchema.VmResultTableId).ResultTableIdIn(chunkDataLabels...).All(&tempList); err != nil {
-			logger.Errorf("RefreshTimeSeriesMetric get vm table id by monitor table id error, %s", err)
-			continue
-		}
-		for _, rtInfo := range tempList {
-			rtMapVmRt[rtInfo.ResultTableId] = rtInfo.VmResultTableId
+
+	// 获取结果表对应的计算平台结果表
+	rtMapVmRt := make(map[[2]string]string)
+	for tenantId, tableIdList := range tenantTableIds {
+		for _, chunkDataLabels := range slicex.ChunkSlice(tableIdList, 0) {
+			var tempList []storage.AccessVMRecord
+			if err := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.BkTenantId, storage.AccessVMRecordDBSchema.ResultTableId, storage.AccessVMRecordDBSchema.VmResultTableId).BkTenantIdEq(tenantId).ResultTableIdIn(chunkDataLabels...).All(&tempList); err != nil {
+				logger.Errorf("RefreshTimeSeriesMetric get vm table id by monitor table id error, %s", err)
+				continue
+			}
+			for _, rtInfo := range tempList {
+				rtMapVmRt[[2]string{rtInfo.BkTenantId, rtInfo.ResultTableId}] = rtInfo.VmResultTableId
+			}
 		}
 	}
 
@@ -95,10 +99,10 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 		// 默认不在白名单中
 		queryFromBkdata := false
 		// 如果不存在 vm rt, 则不会通过bkbase查询
-		vmRt, ok := rtMapVmRt[eg.TableID]
+		vmRt, ok := rtMapVmRt[[2]string{eg.BkTenantId, eg.TableID}]
 
 		var ds resulttable.DataSource
-		if err := resulttable.NewDataSourceQuerySet(db).BkDataIdEq(eg.BkDataID).One(&ds); err != nil {
+		if err := resulttable.NewDataSourceQuerySet(db).BkDataIdEq(eg.BkDataID).BkTenantIdEq(eg.BkTenantId).One(&ds); err != nil {
 			logger.Errorf("RefreshTimeSeriesMetric:table_id %s found datasource record error, %v", eg.TableID, err)
 		}
 

@@ -49,15 +49,15 @@ func (d *defaultExpr) String() string {
 	return ""
 }
 
-type SelectExpr struct {
+type Select struct {
 	defaultExpr
-	fieldExpr     *FieldExpr
-	fieldListExpr []*FieldExpr
+	Field         *Field
+	FieldListExpr []*Field
 }
 
-func (e *SelectExpr) String() string {
+func (e *Select) String() string {
 	var s []string
-	for _, expr := range e.fieldListExpr {
+	for _, expr := range e.FieldListExpr {
 		s = append(s, expr.String())
 	}
 
@@ -68,44 +68,44 @@ func (e *SelectExpr) String() string {
 	return fmt.Sprintf("SELECT %s", strings.Join(s, ","))
 }
 
-func (e *SelectExpr) Enter(ctx antlr.ParserRuleContext) {
+func (e *Select) Enter(ctx antlr.ParserRuleContext) {
 	switch ctx.(type) {
 	case *gen.NamedExpressionContext:
-		e.fieldExpr = &FieldExpr{}
+		e.Field = &Field{}
 	}
 }
 
-func (e *SelectExpr) Exit(ctx antlr.ParserRuleContext) {
+func (e *Select) Exit(ctx antlr.ParserRuleContext) {
 	switch v := ctx.(type) {
 	case *gen.FunctionNameIdentifierContext:
-		e.fieldExpr.FuncName = v.GetText()
+		e.Field.FuncName = v.GetText()
 	case *gen.IdentifierOrTextContext:
-		e.fieldExpr.As = v.GetText()
+		e.Field.As = v.GetText()
 	case *gen.ValueExpressionDefaultContext:
 		// 多层重叠的情况下忽略，避免覆盖
-		if e.fieldExpr.Name == "" {
-			e.fieldExpr.Name = v.GetText()
+		if e.Field.Name == "" {
+			e.Field.Name = v.GetText()
 		}
 	case *gen.NamedExpressionContext:
-		e.fieldListExpr = append(e.fieldListExpr, e.fieldExpr)
+		e.FieldListExpr = append(e.FieldListExpr, e.Field)
 	}
 
 	return
 }
 
-type TableExpr struct {
+type Table struct {
 	defaultExpr
 	name string
 }
 
-func (e *TableExpr) Exit(ctx antlr.ParserRuleContext) {
+func (e *Table) Exit(ctx antlr.ParserRuleContext) {
 	switch v := ctx.(type) {
 	case *gen.TableNameContext:
 		e.name = v.GetText()
 	}
 }
 
-func (e *TableExpr) String() string {
+func (e *Table) String() string {
 	if e.name == "" {
 		return ""
 	}
@@ -113,99 +113,89 @@ func (e *TableExpr) String() string {
 	return fmt.Sprintf("FROM %s", e.name)
 }
 
-type LogicalExpr interface {
-	String() string
-	SetParen()
-}
-
-type WhereExpr struct {
+type Where struct {
 	defaultExpr
 
-	condition *ConditionExpr
+	cur *Condition
 
-	isParen bool
-	logical LogicalExpr
+	conditions []Expr
 }
 
-func (e *WhereExpr) String() string {
-	if e.logical == nil {
+func (e *Where) addCondition(condition Expr) {
+	if condition == nil {
+		return
+	}
+	e.conditions = append(e.conditions, condition)
+}
+
+func (e *Where) String() string {
+	var str []string
+	for _, c := range e.conditions {
+		str = append(str, c.String())
+	}
+
+	if len(str) == 0 {
 		return ""
 	}
 
-	logical := e.logical.String()
-	if logical == "" {
-		return ""
-	}
-
-	return fmt.Sprintf("WHERE %s", logical)
+	return fmt.Sprintf("WHERE %s", strings.Join(str, " "))
 }
 
-func (e *WhereExpr) LoggerEnable() bool {
+func (e *Where) LoggerEnable() bool {
 	return true
 }
 
-func (e *WhereExpr) getOp(s string) string {
+func (e *Where) getOp(s string) string {
 	// 删除掉值结尾的就是操作符
 	// TODO: 找到可以直接获取 op 的方式
-	return strings.TrimSuffix(s, e.condition.Value)
+	return strings.TrimSuffix(s, e.cur.Value)
 }
 
-func (e *WhereExpr) Enter(ctx antlr.ParserRuleContext) {
-	switch ctx.(type) {
-	case *gen.PredicatedContext:
-		e.condition = &ConditionExpr{
-			Field: &FieldExpr{},
-		}
-	}
-}
-
-func (e *WhereExpr) Exit(ctx antlr.ParserRuleContext) {
-	if e.condition == nil {
-		e.condition = &ConditionExpr{
-			Field: &FieldExpr{},
-		}
-	}
-
+func (e *Where) Enter(ctx antlr.ParserRuleContext) {
 	switch v := ctx.(type) {
-	case *gen.PredicatedContext:
-		if e.logical == nil {
-			e.logical = e.condition
-		}
-	case *gen.LogicalBinaryContext:
-		op := strings.ToUpper(v.GetOperator().GetText())
-		switch op {
-		case logicalAnd:
-			e.logical = &AndExpr{
-				Left:  e.logical,
-				Right: e.condition,
-			}
-		case logicalOr:
-			e.logical = &OrExpr{
-				Left:  e.logical,
-				Right: e.condition,
-			}
-		}
 	case *gen.ParenthesizedExpressionContext:
-		e.logical.SetParen()
+		e.addCondition(&Paren{
+			Left: true,
+		})
+	case *gen.LogicalBinaryContext:
+		e.addCondition(&Logical{
+			Name: strings.ToUpper(v.GetOperator().GetText()),
+		})
+	case *gen.PredicatedContext:
+		e.cur = &Condition{
+			Field: &Field{},
+		}
 	case *gen.ColumnReferenceContext:
-		e.condition.Field.Name = ctx.GetText()
+		e.cur.Field.Name = ctx.GetText()
 	case *gen.ComparisonOperatorContext:
-		e.condition.Op = ctx.GetText()
+		e.cur.Op = ctx.GetText()
 	case *gen.ConstantDefaultContext:
-		e.condition.Value = ctx.GetText()
+		e.cur.Value = ctx.GetText()
 	case *gen.PredicateContext:
-		e.condition.Op = e.getOp(ctx.GetText())
+		e.cur.Op = e.getOp(ctx.GetText())
 	}
 }
 
-type FieldExpr struct {
+func (e *Where) Exit(ctx antlr.ParserRuleContext) {
+	switch ctx.(type) {
+	case *gen.ParenthesizedExpressionContext:
+		e.addCondition(&Paren{
+			Right: true,
+		})
+	case *gen.PredicatedContext:
+		e.addCondition(e.cur)
+		e.cur = nil
+	}
+}
+
+type Field struct {
 	defaultExpr
 	Name     string
 	As       string
 	FuncName string
 }
 
-func (e *FieldExpr) String() string {
+func (e *Field) String() string {
 	s := e.Name
 	if e.FuncName != "" {
 		s = fmt.Sprintf("%s(%s)", e.FuncName, s)
@@ -216,68 +206,40 @@ func (e *FieldExpr) String() string {
 	return s
 }
 
-type ConditionExpr struct {
-	IsParen bool
-	Field   *FieldExpr
-	Op      string
-	Value   string
+type Condition struct {
+	defaultExpr
+	Field *Field
+	Op    string
+	Value string
 }
 
-func (e *ConditionExpr) String() string {
+func (e *Condition) String() string {
 	if e == nil || e.Field == nil {
 		return ""
 	}
 	s := fmt.Sprintf("%s %s %s", e.Field.String(), e.Op, e.Value)
-	if e.IsParen {
-		s = fmt.Sprintf("(%s)", s)
-	}
 	return s
 }
 
-func (e *ConditionExpr) SetParen() {
-	e.IsParen = true
+type Logical struct {
+	defaultExpr
+	Name string
 }
 
-type AndExpr struct {
-	IsParen bool
-	Left    LogicalExpr
-	Right   LogicalExpr
+func (e *Logical) String() string {
+	return e.Name
 }
 
-func (e *AndExpr) String() string {
-	return getLogicalString(logicalAnd, e.Left, e.Right, e.IsParen)
+type Paren struct {
+	defaultExpr
+	Left  bool
+	Right bool
 }
 
-func (e *AndExpr) SetParen() {
-	e.IsParen = true
-}
-
-type OrExpr struct {
-	IsParen bool
-
-	Left  LogicalExpr
-	Right LogicalExpr
-}
-
-func (e *OrExpr) String() string {
-	return getLogicalString(logicalOr, e.Left, e.Right, e.IsParen)
-}
-
-func getLogicalString(op string, left, right LogicalExpr, IsParen bool) string {
-	var s string
-	if left != nil && right != nil {
-		s = fmt.Sprintf("%s OR %s", left.String(), right.String())
-	} else if left != nil {
-		s = left.String()
+func (e *Paren) String() string {
+	if e.Left {
+		return "("
 	} else {
-		s = right.String()
+		return ")"
 	}
-	if IsParen {
-		s = fmt.Sprintf("(%s)", s)
-	}
-	return s
-}
-
-func (e *OrExpr) SetParen() {
-	e.IsParen = true
 }

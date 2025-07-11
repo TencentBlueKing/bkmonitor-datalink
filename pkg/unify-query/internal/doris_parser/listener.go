@@ -50,11 +50,11 @@ func (l *DorisListener) writeSQL() {
 func (l *DorisListener) EnterEveryRule(ctx antlr.ParserRuleContext) {
 	switch ctx.(type) {
 	case *gen.SelectClauseContext:
-		l.expr = &SelectExpr{}
+		l.expr = &Select{}
 	case *gen.FromClauseContext:
-		l.expr = &TableExpr{}
+		l.expr = &Table{}
 	case *gen.WhereClauseContext:
-		l.expr = &WhereExpr{}
+		l.expr = &Where{}
 	}
 
 	if l.expr != nil {

@@ -112,11 +112,15 @@ LIMIT
 		{
 			name: "test-12",
 			q:    `select * from t where (t match_phrase_prefix '%gg%' or t match_phrase '%gg%') and t != 'test'`,
-			sql:  `SELECT * FROM t WHERE (t match_phrase_prefix '%gg%' OR t match_phrase '%gg%') OR t != 'test'`,
+			sql:  `SELECT * FROM t WHERE (t match_phrase_prefix '%gg%' OR t match_phrase '%gg%') AND t != 'test'`,
 		},
 		{
 			name: "test-13",
-			q:    `select * from table where dim_1 = 'val_1' and (dim_2 = 'val_2' or dim_3 = 'val_3')`,
+			q:    `select * from my_db where dim_1 = 'val_1' and (dim_2 = 'val_2' or dim_3 = 'val_3')`,
+		},
+		{
+			name: "test-14",
+			q:    `select * from my_db where ((dim_1 = 'val_1' or 'dim_4' > 1) and (dim_2 = 'val_2' or (dim_3 = 'val_3' or t > 1)))`,
 		},
 	}
 

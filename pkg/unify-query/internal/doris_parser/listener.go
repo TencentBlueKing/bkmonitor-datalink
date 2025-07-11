@@ -17,52 +17,66 @@ import (
 	antlr "github.com/antlr4-go/antlr/v4"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser/gen"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 type DorisListener struct {
 	gen.BaseDorisParserListener
 	ctx context.Context
 
-	sql string
+	originSQL string
 
 	opt DorisListenerOption
 
 	expr Expr
 
-	Select    string
-	Condition string
-	Table     string
+	depIndex int
+
+	exprString []string
+	err        error
 }
 
 type DorisListenerOption struct {
 	DimensionTransform func(s string) string
 }
 
+func (l *DorisListener) writeSQL() {
+	s := l.expr.String()
+	if s == "" {
+		return
+	}
+	l.exprString = append(l.exprString, s)
+}
+
 func (l *DorisListener) EnterEveryRule(ctx antlr.ParserRuleContext) {
-	log.Infof(l.ctx, "enter %T %s", ctx, ctx.GetText())
 	switch ctx.(type) {
 	case *gen.SelectClauseContext:
 		l.expr = &SelectExpr{}
 	case *gen.FromClauseContext:
 		l.expr = &TableExpr{}
+	case *gen.WhereClauseContext:
+		l.expr = &WhereExpr{}
 	}
 
 	if l.expr != nil {
+		if l.expr.LoggerEnable() {
+			l.depIndex++
+			fmt.Printf("%d,ENTER,%T,%s\n", l.depIndex, ctx, ctx.GetText())
+		}
 		l.expr.Enter(ctx)
 	}
 }
 
 func (l *DorisListener) ExitEveryRule(ctx antlr.ParserRuleContext) {
-	log.Infof(l.ctx, "exit %T %s", ctx, ctx.GetText())
 	if l.expr != nil {
+		if l.expr.LoggerEnable() {
+			fmt.Printf("%d,EXIT,%T,%s\n", l.depIndex, ctx, ctx.GetText())
+			l.depIndex--
+		}
 		l.expr.Exit(ctx)
 	}
 	switch ctx.(type) {
-	case *gen.SelectClauseContext:
-		l.Select = l.expr.String()
-	case *gen.FromClauseContext:
-		l.Table = l.expr.String()
+	case *gen.SelectClauseContext, *gen.FromClauseContext, *gen.WhereClauseContext:
+		l.writeSQL()
 	}
 }
 
@@ -71,21 +85,17 @@ func (l *DorisListener) WithOptions(opt DorisListenerOption) *DorisListener {
 	return l
 }
 
-func (l *DorisListener) SQL() (string, error) {
-	if l.Select == "" {
-		return "", fmt.Errorf("sql 解析异常: %s", l.sql)
+func (l *DorisListener) SQL() string {
+	if len(l.exprString) == 0 {
+		l.err = fmt.Errorf("SQL 解析失败：%s", l.originSQL)
 	}
-
-	return strings.Join([]string{
-		l.Select, l.Table, l.Condition,
-	}, " "), nil
-
+	return strings.Join(l.exprString, " ")
 }
 
 // NewDorisListener 创建带Token流的Listener
 func NewDorisListener(ctx context.Context, sql string) *DorisListener {
 	return &DorisListener{
-		ctx: ctx,
-		sql: sql,
+		ctx:       ctx,
+		originSQL: sql,
 	}
 }

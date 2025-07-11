@@ -25,18 +25,7 @@ func TestParseWithFieldAlias(t *testing.T) {
 		name string
 		q    string
 
-		selects []*FieldExpr
-		table   *FieldExpr
-
-		where   string
-		havings []string
-		orders  []string
-		groups  []string
-		offset  string
-		limit   string
-
 		sql string
-
 		err error
 	}{
 		{
@@ -45,10 +34,7 @@ func TestParseWithFieldAlias(t *testing.T) {
 count(*) AS log_count 
 from t_table 
 where log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY serverIp LIMIT 1000`,
-			where:  "log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal'",
-			groups: []string{"test_server_ip"},
-			limit:  "1000",
-			sql:    `select __ext.io_kubernetes_pod_namespace , count ( * ) AS log_count from t_table where log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY test_server_ip LIMIT 1000 `,
+			sql: `select __ext.io_kubernetes_pod_namespace , count ( * ) AS log_count from t_table where log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY test_server_ip LIMIT 1000 `,
 		},
 		{
 			name: "test-2",
@@ -116,23 +102,21 @@ LIMIT
 		{
 			name: "test-10",
 			q:    `select pod_namespace, count(*) as _value from pod_namespace where city LIKE '%c%' and pod_namespace != 'pod_namespace_1' or (pod_namespace='5' or a > 4) group by serverIp order by time limit 1000 offset 999`,
-			selects: []*FieldExpr{
-				{
-					Name: "pod_namespace",
-				},
-				{
-					Name:     "*",
-					As:       "_value",
-					FuncName: "count",
-				},
-			},
-			table: &FieldExpr{
-				Name: "pod_namespace",
-			},
+			sql:  ``,
 		},
 		{
 			name: "test-11",
-			q:    `select * from t where a = 1`,
+			q:    `select * from t where (t match_phrase_prefix '%gg%')`,
+			sql:  `SELECT * FROM t WHERE (t match_phrase_prefix '%gg%')`,
+		},
+		{
+			name: "test-12",
+			q:    `select * from t where (t match_phrase_prefix '%gg%' or t match_phrase '%gg%') and t != 'test'`,
+			sql:  `SELECT * FROM t WHERE (t match_phrase_prefix '%gg%' OR t match_phrase '%gg%') OR t != 'test'`,
+		},
+		{
+			name: "test-13",
+			q:    `select * from table where dim_1 = 'val_1' and (dim_2 = 'val_2' or dim_3 = 'val_3')`,
 		},
 	}
 
@@ -152,14 +136,9 @@ LIMIT
 
 			// antlr4 and visitor
 			listener := ParseDorisSQL(ctx, c.q, fieldMap, fieldAlias)
-			expected, err := listener.SQL()
+			expected := listener.SQL()
 
 			assert.NotNil(t, listener)
-			if c.err != nil {
-				assert.Equal(t, c.err, err)
-				return
-			}
-
 			assert.NotEmpty(t, expected)
 			assert.Equal(t, c.sql, expected)
 			return

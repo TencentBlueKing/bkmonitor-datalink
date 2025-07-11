@@ -18,13 +18,23 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser/gen"
 )
 
+const (
+	logicalAnd = "AND"
+	logicalOr  = "OR"
+)
+
 type Expr interface {
+	LoggerEnable() bool
 	String() string
 	Enter(ctx antlr.ParserRuleContext)
 	Exit(ctx antlr.ParserRuleContext)
 }
 
 type defaultExpr struct {
+}
+
+func (d *defaultExpr) LoggerEnable() bool {
+	return false
 }
 
 func (d *defaultExpr) Enter(ctx antlr.ParserRuleContext) {
@@ -51,11 +61,11 @@ func (e *SelectExpr) String() string {
 		s = append(s, expr.String())
 	}
 
-	if len(s) > 0 {
-		return fmt.Sprintf("SELECT %s", strings.Join(s, ","))
+	if len(s) == 0 {
+		return ""
 	}
 
-	return ""
+	return fmt.Sprintf("SELECT %s", strings.Join(s, ","))
 }
 
 func (e *SelectExpr) Enter(ctx antlr.ParserRuleContext) {
@@ -72,7 +82,10 @@ func (e *SelectExpr) Exit(ctx antlr.ParserRuleContext) {
 	case *gen.IdentifierOrTextContext:
 		e.fieldExpr.As = v.GetText()
 	case *gen.ValueExpressionDefaultContext:
-		e.fieldExpr.Name = v.GetText()
+		// 多层重叠的情况下忽略，避免覆盖
+		if e.fieldExpr.Name == "" {
+			e.fieldExpr.Name = v.GetText()
+		}
 	case *gen.NamedExpressionContext:
 		e.fieldListExpr = append(e.fieldListExpr, e.fieldExpr)
 	}
@@ -93,11 +106,96 @@ func (e *TableExpr) Exit(ctx antlr.ParserRuleContext) {
 }
 
 func (e *TableExpr) String() string {
-	if e.name != "" {
-		return fmt.Sprintf("FROM %s", e.name)
+	if e.name == "" {
+		return ""
 	}
 
-	return ""
+	return fmt.Sprintf("FROM %s", e.name)
+}
+
+type LogicalExpr interface {
+	String() string
+	SetParen()
+}
+
+type WhereExpr struct {
+	defaultExpr
+
+	condition *ConditionExpr
+
+	isParen bool
+	logical LogicalExpr
+}
+
+func (e *WhereExpr) String() string {
+	if e.logical == nil {
+		return ""
+	}
+
+	logical := e.logical.String()
+	if logical == "" {
+		return ""
+	}
+
+	return fmt.Sprintf("WHERE %s", logical)
+}
+
+func (e *WhereExpr) LoggerEnable() bool {
+	return true
+}
+
+func (e *WhereExpr) getOp(s string) string {
+	// 删除掉值结尾的就是操作符
+	// TODO: 找到可以直接获取 op 的方式
+	return strings.TrimSuffix(s, e.condition.Value)
+}
+
+func (e *WhereExpr) Enter(ctx antlr.ParserRuleContext) {
+	switch ctx.(type) {
+	case *gen.PredicatedContext:
+		e.condition = &ConditionExpr{
+			Field: &FieldExpr{},
+		}
+	}
+}
+
+func (e *WhereExpr) Exit(ctx antlr.ParserRuleContext) {
+	if e.condition == nil {
+		e.condition = &ConditionExpr{
+			Field: &FieldExpr{},
+		}
+	}
+
+	switch v := ctx.(type) {
+	case *gen.PredicatedContext:
+		if e.logical == nil {
+			e.logical = e.condition
+		}
+	case *gen.LogicalBinaryContext:
+		op := strings.ToUpper(v.GetOperator().GetText())
+		switch op {
+		case logicalAnd:
+			e.logical = &AndExpr{
+				Left:  e.logical,
+				Right: e.condition,
+			}
+		case logicalOr:
+			e.logical = &OrExpr{
+				Left:  e.logical,
+				Right: e.condition,
+			}
+		}
+	case *gen.ParenthesizedExpressionContext:
+		e.logical.SetParen()
+	case *gen.ColumnReferenceContext:
+		e.condition.Field.Name = ctx.GetText()
+	case *gen.ComparisonOperatorContext:
+		e.condition.Op = ctx.GetText()
+	case *gen.ConstantDefaultContext:
+		e.condition.Value = ctx.GetText()
+	case *gen.PredicateContext:
+		e.condition.Op = e.getOp(ctx.GetText())
+	}
 }
 
 type FieldExpr struct {
@@ -119,65 +217,67 @@ func (e *FieldExpr) String() string {
 }
 
 type ConditionExpr struct {
-	defaultExpr
-	Field *FieldExpr
-	Op    string
-	Value string
+	IsParen bool
+	Field   *FieldExpr
+	Op      string
+	Value   string
 }
 
 func (e *ConditionExpr) String() string {
-	return fmt.Sprintf("%s %s '%s'", e.Field.String(), e.Op, e.Value)
+	if e == nil || e.Field == nil {
+		return ""
+	}
+	s := fmt.Sprintf("%s %s %s", e.Field.String(), e.Op, e.Value)
+	if e.IsParen {
+		s = fmt.Sprintf("(%s)", s)
+	}
+	return s
+}
+
+func (e *ConditionExpr) SetParen() {
+	e.IsParen = true
 }
 
 type AndExpr struct {
-	defaultExpr
-	IsLeftInclude  bool
-	IsRightInclude bool
-	Left           Expr
-	Right          Expr
+	IsParen bool
+	Left    LogicalExpr
+	Right   LogicalExpr
 }
 
 func (e *AndExpr) String() string {
-	var s string
-	if e.Left != nil && e.Right != nil {
-		s = fmt.Sprintf("%s AND %s", e.Left.String(), e.Right.String())
-	} else if e.Left != nil {
-		s = e.Left.String()
-	} else {
-		s = e.Right.String()
-	}
+	return getLogicalString(logicalAnd, e.Left, e.Right, e.IsParen)
+}
 
-	if e.IsLeftInclude {
-		s = fmt.Sprintf("(%s", s)
-	}
-	if e.IsRightInclude {
-		s = fmt.Sprintf("%s)", s)
-	}
-	return s
+func (e *AndExpr) SetParen() {
+	e.IsParen = true
 }
 
 type OrExpr struct {
-	defaultExpr
-	IsLeftInclude  bool
-	IsRightInclude bool
-	Left           Expr
-	Right          Expr
+	IsParen bool
+
+	Left  LogicalExpr
+	Right LogicalExpr
 }
 
 func (e *OrExpr) String() string {
+	return getLogicalString(logicalOr, e.Left, e.Right, e.IsParen)
+}
+
+func getLogicalString(op string, left, right LogicalExpr, IsParen bool) string {
 	var s string
-	if e.Left != nil && e.Right != nil {
-		s = fmt.Sprintf("%s OR %s", e.Left.String(), e.Right.String())
-	} else if e.Left != nil {
-		s = e.Left.String()
+	if left != nil && right != nil {
+		s = fmt.Sprintf("%s OR %s", left.String(), right.String())
+	} else if left != nil {
+		s = left.String()
 	} else {
-		s = e.Right.String()
+		s = right.String()
 	}
-	if e.IsLeftInclude {
-		s = fmt.Sprintf("(%s", s)
-	}
-	if e.IsRightInclude {
-		s = fmt.Sprintf("%s)", s)
+	if IsParen {
+		s = fmt.Sprintf("(%s)", s)
 	}
 	return s
+}
+
+func (e *OrExpr) SetParen() {
+	e.IsParen = true
 }

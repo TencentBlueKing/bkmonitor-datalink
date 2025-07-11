@@ -42,8 +42,6 @@ var (
 // getKey generates a  key for lookup ResultTableDetail or other space-related data.
 // If enable MultiTenantMode, it appends the tenant ID to the key.
 func getKey(ctx context.Context, key string) string {
-	log.Infof(ctx, "[get redis key]MultiTenantMode: %s, %v", key, MultiTenantMode)
-
 	if !MultiTenantMode {
 		return key
 	}
@@ -52,9 +50,6 @@ func getKey(ctx context.Context, key string) string {
 	tenantID := user.TenantID
 
 	newKey := key + "|" + tenantID
-
-	log.Infof(ctx, "[get redis key]MultiTenantMode: %s, %v", newKey, MultiTenantMode)
-
 	return newKey
 }
 

@@ -1929,6 +1929,12 @@ func (s *SpacePusher) getPlatformDataIds(bkTenantId, spaceType string) ([]uint, 
 	var bkDataIdList []uint
 	var dsList []resulttable.DataSource
 	qs := resulttable.NewDataSourceQuerySet(db).Select(resulttable.DataSourceDBSchema.BkDataId, resulttable.DataSourceDBSchema.SpaceTypeId).BkTenantIdEq(bkTenantId).IsPlatformDataIdEq(true)
+
+	// 多住模式下去除单租户使用的全局数据源
+	if cfg.EnableMultiTenantMode {
+		qs = qs.BkDataIdNotIn(1001, 1002, 1003, 1004, 1005, 1006, 1007, 1013, 1008, 1009, 1010, 1011, 1100003, 1100005, 1100000)
+	}
+
 	// 针对 bkcc 类型，这要是插件，不属于某个业务空间，也没有传递空间类型，因此，需要包含 all 类型
 	if spaceType != "" && spaceType != models.SpaceTypeBKCC {
 		qs = qs.SpaceTypeIdEq(spaceType)

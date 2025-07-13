@@ -1009,17 +1009,34 @@ func TestGetAllDataLabelTableId(t *testing.T) {
 	db.Delete(obj)
 	assert.NoError(t, obj.Create(db))
 
+	obj = resulttable.ResultTable{TableId: "1_system.cpu_detail", IsEnable: true, DataLabel: nil, BkTenantId: tenant.DefaultTenantId}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+
+	cfg.EnableMultiTenantMode = true
 	data, err := NewSpacePusher().getAllDataLabelTableId(tenant.DefaultTenantId)
 	assert.NoError(t, err)
-
 	dataLabelSet := mapset.NewSet[string]()
 	for dataLabel := range data {
 		dataLabelSet.Add(dataLabel)
 	}
-	expectedSet := mapset.NewSet("data_label_value", "data_label_value1", "data_label_value2")
-
+	expectedSet := mapset.NewSet("data_label_value|system", "data_label_value1|system", "data_label_value2|system", "system.cpu_detail|system")
+	t.Logf("dataLabelSet: %v", dataLabelSet)
+	t.Logf("expectedSet: %v", expectedSet)
 	assert.True(t, expectedSet.IsSubset(dataLabelSet))
+	t.Logf("data: %v", data)
+	assert.Equal(t, []string{"data_label", "data_label2"}, data["data_label_value|system"])
+	assert.Equal(t, []string{"1_system.cpu_detail"}, data["system.cpu_detail|system"])
 
+	cfg.EnableMultiTenantMode = false
+	data, err = NewSpacePusher().getAllDataLabelTableId(tenant.DefaultTenantId)
+	assert.NoError(t, err)
+	dataLabelSet = mapset.NewSet[string]()
+	for dataLabel := range data {
+		dataLabelSet.Add(dataLabel)
+	}
+	expectedSet = mapset.NewSet("data_label_value", "data_label_value1", "data_label_value2")
+	assert.True(t, expectedSet.IsSubset(dataLabelSet))
 	assert.Equal(t, []string{"data_label", "data_label2"}, data["data_label_value"])
 }
 

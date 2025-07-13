@@ -462,7 +462,7 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 	db := mysql.GetDBSession().DB
 	var rtList []resulttable.ResultTable
 	// 过滤为结果表可用，标签不为空和null的数据记录
-	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.DataLabel).BkTenantIdEq(bkTenantId).IsEnableEq(true).IsDeletedEq(false).DataLabelIsNotNull().DataLabelNe("").All(&rtList); err != nil {
+	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.BkTenantId, resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.DataLabel).BkTenantIdEq(bkTenantId).IsEnableEq(true).IsDeletedEq(false).DataLabelIsNotNull().DataLabelNe("").All(&rtList); err != nil {
 		logger.Errorf("get all data label and table id map error, %s", err)
 		return nil, err
 	}
@@ -482,31 +482,36 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 				continue
 			}
 
-			// 多租户模式下，需要加上租户ID后缀
-			var key string
-			if cfg.EnableMultiTenantMode {
-				key = fmt.Sprintf("%s|%s", dataLabel, rt.BkTenantId)
+			if rts, ok := dataLabelTableIdMap[dataLabel]; ok {
+				dataLabelTableIdMap[dataLabel] = append(rts, rt.TableId)
 			} else {
-				key = dataLabel
+				dataLabelTableIdMap[dataLabel] = []string{rt.TableId}
 			}
+		}
+	}
 
-			if rts, ok := dataLabelTableIdMap[key]; ok {
-				dataLabelTableIdMap[key] = append(rts, rt.TableId)
+	// 多租户模式特殊处理
+	if cfg.EnableMultiTenantMode {
+		// 添加内置数据源
+		var builtInRts []resulttable.ResultTable
+		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).TableIdLike("%_system.%").BkTenantIdEq(bkTenantId).IsEnableEq(true).IsDeletedEq(false).All(&builtInRts); err != nil {
+			logger.Errorf("get built in data label and table id map error, %s", err)
+			return nil, err
+		}
+
+		for _, rt := range builtInRts {
+			dataLabel := strings.SplitN(rt.TableId, "_", 2)[1]
+			if rts, ok := dataLabelTableIdMap[dataLabel]; ok {
+				dataLabelTableIdMap[dataLabel] = append(rts, rt.TableId)
 			} else {
-				dataLabelTableIdMap[key] = []string{rt.TableId}
+				dataLabelTableIdMap[dataLabel] = []string{rt.TableId}
 			}
 		}
 
-		// 多租户模式下添加内置数据源
-		if cfg.EnableMultiTenantMode {
-			if strings.Contains(rt.TableId, "_system.") {
-				dataLabel := strings.SplitN(rt.TableId, "_", 2)[1]
-				if rts, ok := dataLabelTableIdMap[dataLabel]; ok {
-					dataLabelTableIdMap[dataLabel] = append(rts, rt.TableId)
-				} else {
-					dataLabelTableIdMap[dataLabel] = []string{rt.TableId}
-				}
-			}
+		// 添加后缀
+		for dataLabel, rts := range dataLabelTableIdMap {
+			dataLabelTableIdMap[fmt.Sprintf("%s|%s", dataLabel, bkTenantId)] = rts
+			delete(dataLabelTableIdMap, dataLabel)
 		}
 	}
 

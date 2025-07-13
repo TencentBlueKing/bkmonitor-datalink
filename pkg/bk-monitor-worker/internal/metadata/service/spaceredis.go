@@ -312,6 +312,12 @@ func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, tableIdList []str
 			logger.Errorf("PushDataLabelTableIds: get all data label and table id map error->[%s]", err)
 			return err
 		}
+
+		// 多租户模式下添加内置数据源
+		if cfg.EnableMultiTenantMode {
+
+		}
+
 	}
 
 	// 打印结束日志
@@ -490,7 +496,20 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 				dataLabelTableIdMap[key] = []string{rt.TableId}
 			}
 		}
+
+		// 多租户模式下添加内置数据源
+		if cfg.EnableMultiTenantMode {
+			if strings.Contains(rt.TableId, "_system.") {
+				dataLabel := strings.SplitN(rt.TableId, "_", 2)[1]
+				if rts, ok := dataLabelTableIdMap[dataLabel]; ok {
+					dataLabelTableIdMap[dataLabel] = append(rts, rt.TableId)
+				} else {
+					dataLabelTableIdMap[dataLabel] = []string{rt.TableId}
+				}
+			}
+		}
 	}
+
 	return dataLabelTableIdMap, nil
 }
 

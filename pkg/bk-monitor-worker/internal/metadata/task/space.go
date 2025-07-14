@@ -16,7 +16,6 @@ import (
 	"time"
 
 	ants "github.com/panjf2000/ants/v2"
-	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
@@ -25,22 +24,6 @@ import (
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
-
-// SyncBkccSpaceDataSource 同步bkcc数据源和空间的关系及数据源的所属类型
-func SyncBkccSpaceDataSource(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("SyncBkccSpaceDataSource Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Info("start sync bkcc space data source task")
-	svc := service.NewSpaceDataSourceSvc(nil)
-	if err := svc.SyncBkccSpaceDataSource(); err != nil {
-		return errors.Wrap(err, "sync bkcc space data source failed")
-	}
-	logger.Info("sync bkcc space data source successfully")
-	return nil
-}
 
 // PushAndPublishSpaceRouterInfo 推送并发布空间路由信息
 func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {

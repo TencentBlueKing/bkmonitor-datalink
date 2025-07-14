@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	consulSvc "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -98,6 +99,23 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 
 // RefreshDatasource update datasource
 func RefreshDatasource(ctx context.Context, t *t.Task) error {
+	tenants, err := tenant.GetTenantList()
+	if err != nil {
+		logger.Errorf("RefreshDatasource: get tenant list error, %v", err)
+		return err
+	}
+
+	for _, tenant := range tenants {
+		err := RefreshTenantDatasource(ctx, tenant.Id)
+		if err != nil {
+			logger.Errorf("RefreshDatasource: refresh tenant(%s) datasource error, %v", tenant.Id, err)
+		}
+	}
+	return nil
+}
+
+// RefreshTenantDatasource update datasource
+func RefreshTenantDatasource(ctx context.Context, bkTenantId string) error {
 	defer func() {
 		if err := recover(); err != nil {
 			logger.Errorf("RefreshDatasource: Runtime panic caught: %v", err)
@@ -109,7 +127,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	db := mysql.GetDBSession().DB
 	// 过滤满足条件的记录
 	var dataSourceRtList []resulttable.DataSourceResultTable
-	if err := resulttable.NewDataSourceResultTableQuerySet(db).Select("bk_data_id", "table_id").All(&dataSourceRtList); err != nil {
+	if err := resulttable.NewDataSourceResultTableQuerySet(db).Select(resulttable.DataSourceResultTableDBSchema.BkDataId, resulttable.DataSourceResultTableDBSchema.TableId).BkTenantIdEq(bkTenantId).All(&dataSourceRtList); err != nil {
 		logger.Errorf("RefreshDatasource: query datasourceresulttable record error, %v", err)
 		return err
 	}
@@ -129,7 +147,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	// 拆分查询
 	for _, chunkRts := range slicex.ChunkSlice(rtList, 0) {
 		var tempList []resulttable.ResultTable
-		if err := resulttable.NewResultTableQuerySet(db).IsDeletedEq(false).IsEnableEq(true).TableIdIn(chunkRts...).Select("table_id").All(&tempList); err != nil {
+		if err := resulttable.NewResultTableQuerySet(db).BkTenantIdEq(bkTenantId).IsDeletedEq(false).IsEnableEq(true).TableIdIn(chunkRts...).Select(resulttable.ResultTableDBSchema.TableId).All(&tempList); err != nil {
 			logger.Errorf("RefreshDatasource: query enabled result table error, %v", err)
 			continue
 		}
@@ -163,6 +181,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	// data id 数量可控，先不拆分；仅刷新未迁移到计算平台的数据源 ID 及通过 gse 创建的数据源 ID
 	if err := resulttable.NewDataSourceQuerySet(db).
 		CreatedFromEq(common.DataIdFromBkGse).
+		BkTenantIdEq(bkTenantId).
 		IsEnableEq(true).
 		BkDataIdIn(dataIdList...).
 		OrderDescByLastModifyTime().
@@ -191,8 +210,9 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 			// 处理单个数据源前，刷新以从DB中获取最新数据，进行double check
 			var latestDataSource resulttable.DataSource
 			if err := resulttable.NewDataSourceQuerySet(db).
+				BkTenantIdEq(bkTenantId).
 				BkDataIdEq(ds.BkDataId). // 根据数据ID精确查询
-				Select("bk_data_id", "is_enable", "created_from", "last_modify_time").
+				Select(resulttable.DataSourceDBSchema.BkDataId, resulttable.DataSourceDBSchema.IsEnable, resulttable.DataSourceDBSchema.CreatedFrom, resulttable.DataSourceDBSchema.LastModifyTime).
 				One(&latestDataSource); err != nil {
 				logger.Warnf("RefreshDatasource: data_id [%v] not found or query error, skip", ds.BkDataId)
 				return

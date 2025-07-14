@@ -401,12 +401,7 @@ func setSpaceTsDbMockData(ctx context.Context, bkAppSpace ir.BkAppSpace, spaceIn
 			panic(err)
 		}
 	}
-	for field, rts := range fieldInfo {
-		err = sr.Add(ctx, ir.FieldToResultTableKey, field, &rts)
-		if err != nil {
-			panic(err)
-		}
-	}
+
 	for dataLabel, rts := range dataLabelInfo {
 		err = sr.Add(ctx, ir.DataLabelToResultTableKey, dataLabel, &rts)
 		if err != nil {

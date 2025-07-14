@@ -2186,3 +2186,82 @@ func TestSpaceRedisSvc_ComposeApmAll(t *testing.T) {
 	assert.Equal(t, expected, bksaasData, "Expected 2 table IDs for bkci space")
 
 }
+
+func TestSpaceRedisSvc_composeBkciLevelTableIds(t *testing.T) {
+	// 初始化数据库配置
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 清理所有相关表数据
+	cleanTestData := func() {
+		db.Delete(&space.Space{})
+		db.Delete(&resulttable.ResultTable{})
+		db.Delete(&resulttable.DataSource{})
+		db.Delete(&resulttable.DataSourceResultTable{})
+		db.Delete(&storage.ESStorage{})
+	}
+	cleanTestData()       // 测试开始前清理数据
+	defer cleanTestData() // 测试结束后清理数据
+
+	// 准备测试用数据
+
+	// 准备 Space 测试数据
+	spaceObjs := []space.Space{
+		{
+			SpaceTypeId: "bkci",
+			SpaceId:     "test_bkci_space",
+			SpaceName:   "testSpace6",
+			Id:          1050,
+			BkTenantId:  "system",
+		},
+	}
+	insertTestData(t, db, spaceObjs)
+
+	// 准备 ResultTable 测试数据
+	resultTable := resulttable.ResultTable{
+		TableId:        "bkmonitor_event_60010",
+		BkBizId:        0,
+		DefaultStorage: models.StorageTypeES,
+		IsDeleted:      false,
+		IsEnable:       true,
+		BkBizIdAlias:   "dimensions.project_id",
+		BkTenantId:     "system",
+	}
+	err := resultTable.Create(db)
+	assert.NoError(t, err)
+
+	// 准备 DataSource 测试数据
+	dataSource := resulttable.DataSource{
+		BkDataId:         60010,
+		IsPlatformDataId: true,
+		SpaceTypeId:      "bkci",
+		DataName:         "test_event",
+		BkTenantId:       "system",
+	}
+	err = dataSource.Create(db)
+	assert.NoError(t, err)
+
+	// 准备 DataSourceResultTable 测试数据
+	dataSourceResultTable := resulttable.DataSourceResultTable{
+		BkDataId:   60010,
+		TableId:    "bkmonitor_event_60010",
+		BkTenantId: "system",
+	}
+	err = dataSourceResultTable.Create(db)
+	assert.NoError(t, err)
+
+	// 准备 ESStorage 测试数据
+	esStorage := storage.ESStorage{
+		TableID:          "bkmonitor_event_60010",
+		StorageClusterID: 11,
+		NeedCreateIndex:  true,
+	}
+	err = esStorage.Create(db)
+	assert.NoError(t, err)
+
+	// 测试 composeBkciLevelTableIds
+	bkciData, err := NewSpacePusher().composeBkciLevelTableIds("system", "bkci", "test_bkci_space")
+	expected := map[string]map[string]interface{}{"bkmonitor_event_60010.__default__": map[string]interface{}{"filters": []map[string]interface{}{map[string]interface{}{"dimensions.project_id": "test_bkci_space"}}}}
+	assert.NoError(t, err)
+	assert.Equal(t, expected, bkciData, "Expected 1 table IDs for bkci space")
+}

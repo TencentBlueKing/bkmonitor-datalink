@@ -400,7 +400,6 @@ func HandleSpaceKeyPrint(c *gin.Context) {
 		refreshMapping := map[string]string{
 			routerInfluxdb.BkAppToSpaceKey:           routerInfluxdb.BkAppToSpaceChannelKey,
 			routerInfluxdb.SpaceToResultTableKey:     routerInfluxdb.SpaceToResultTableChannelKey,
-			routerInfluxdb.FieldToResultTableKey:     routerInfluxdb.FieldToResultTableChannelKey,
 			routerInfluxdb.DataLabelToResultTableKey: routerInfluxdb.DataLabelToResultTableChannelKey,
 			routerInfluxdb.ResultTableDetailKey:      routerInfluxdb.ResultTableDetailChannelKey,
 		}

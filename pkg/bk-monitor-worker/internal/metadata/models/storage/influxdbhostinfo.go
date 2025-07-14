@@ -34,10 +34,10 @@ import (
 // InfluxdbHostInfo influxdb host info model
 // gen:qs
 type InfluxdbHostInfo struct {
-	HostName        string  `gorm:"primary_key" json:"host_name;size:128"`
+	HostName        string  `gorm:"primary_key;size:128" json:"host_name"`
 	DomainName      string  `gorm:"size:128" json:"domain_name"`
 	Port            uint    `json:"port"`
-	Username        string  `gorm:"size:64" json:"username;"`
+	Username        string  `gorm:"size:64" json:"username"`
 	Password        string  `gorm:"password" json:"password"`
 	Description     string  `gorm:"size:256" json:"description"`
 	Status          bool    `gorm:"column:status" json:"status"`

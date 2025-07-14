@@ -34,11 +34,12 @@ func TestParseWithFieldAlias(t *testing.T) {
 count(*) AS log_count 
 from t_table 
 where log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY serverIp LIMIT 1000`,
-			sql: `select __ext.io_kubernetes_pod_namespace , count ( * ) AS log_count from t_table where log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY test_server_ip LIMIT 1000 `,
+			sql: `SELECT __ext.io_kubernetes_pod_namespace, count(*) AS log_count FROM t_table WHERE log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY serverIp LIMIT 1000`,
 		},
 		{
 			name: "test-2",
 			q:    `show TABLES`,
+			err:  fmt.Errorf("SQL 解析失败：show TABLES"),
 		},
 		{
 			name: "test-3",
@@ -84,43 +85,47 @@ GROUP BY
 LIMIT
   1000
 `,
+			sql: `SELECT serverIp, COUNT(*) AS log_count WHERE log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY serverIp LIMIT 1000`,
 		},
 		{
 			name: "test-7",
 			q:    `select field_1, field_2 where log match_phrase 'test' group by dim_1, dim_2`,
+			sql:  `SELECT field_1, field_2 WHERE log match_phrase 'test' GROUP BY dim_1, dim_2`,
 		},
 		{
 			name: "test-8",
 			q:    `test error sql`,
-			err:  fmt.Errorf("sql: test error sql, parse error: test"),
+			err:  fmt.Errorf("SQL 解析失败：test error sql"),
 		},
 		{
 			name: "test-9",
 			q:    `select_1 * from_1 where 1=1'`,
-			err:  fmt.Errorf("sql 解析异常: select_1 * from_1 where 1=1'"),
+			err:  fmt.Errorf("SQL 解析失败：select_1 * from_1 where 1=1'"),
 		},
 		{
 			name: "test-10",
-			q:    `select pod_namespace, count(*) as _value from pod_namespace where city LIKE '%c%' and pod_namespace != 'pod_namespace_1' or (pod_namespace='5' or a > 4) group by serverIp order by time limit 1000 offset 999`,
-			sql:  ``,
+			q:    `select pod_namespace, count(*) as _value from pod_namespace where city LIKE '%c%' and pod_namespace != 'pod_namespace_1' or (pod_namespace='5' or a > 4) group by serverIp, abc order by time limit 1000 offset 999`,
+			sql:  `SELECT pod_namespace, count(*) AS _value FROM pod_namespace WHERE city LIKE '%c%' AND pod_namespace != 'pod_namespace_1' OR ( pod_namespace = '5' OR a > 4 ) GROUP BY serverIp, abc ORDER BY time LIMIT 1000 OFFSET 999`,
 		},
 		{
 			name: "test-11",
 			q:    `select * from t where (t match_phrase_prefix '%gg%')`,
-			sql:  `SELECT * FROM t WHERE (t match_phrase_prefix '%gg%')`,
+			sql:  `SELECT * FROM t WHERE ( t match_phrase_prefix '%gg%' )`,
 		},
 		{
 			name: "test-12",
 			q:    `select * from t where (t match_phrase_prefix '%gg%' or t match_phrase '%gg%') and t != 'test'`,
-			sql:  `SELECT * FROM t WHERE (t match_phrase_prefix '%gg%' OR t match_phrase '%gg%') AND t != 'test'`,
+			sql:  `SELECT * FROM t WHERE ( t match_phrase_prefix '%gg%' OR t match_phrase '%gg%' ) AND t != 'test'`,
 		},
 		{
 			name: "test-13",
 			q:    `select * from my_db where dim_1 = 'val_1' and (dim_2 = 'val_2' or dim_3 = 'val_3')`,
+			sql:  `SELECT * FROM my_db WHERE dim_1 = 'val_1' AND ( dim_2 = 'val_2' OR dim_3 = 'val_3' )`,
 		},
 		{
 			name: "test-14",
-			q:    `select * from my_db where ((dim_1 = 'val_1' or 'dim_4' > 1) and (dim_2 = 'val_2' or (dim_3 = 'val_3' or t > 1)))`,
+			q:    `select * from my_db where ((dim_1 = 'val_1' or dim_4 > 1) and (dim_2 = 'val_2' or (dim_3 = 'val_3' or t > 1)))`,
+			sql:  `SELECT * FROM my_db WHERE ( ( dim_1 = 'val_1' OR dim_4 > 1 ) AND ( dim_2 = 'val_2' OR ( dim_3 = 'val_3' OR t > 1 ) ) )`,
 		},
 	}
 
@@ -141,11 +146,13 @@ LIMIT
 			// antlr4 and visitor
 			listener := ParseDorisSQL(ctx, c.q, fieldMap, fieldAlias)
 			expected := listener.SQL()
-
-			assert.NotNil(t, listener)
-			assert.NotEmpty(t, expected)
-			assert.Equal(t, c.sql, expected)
-			return
+			if c.err != nil {
+				assert.Equal(t, c.err, listener.Error())
+			} else {
+				assert.Nil(t, listener.Error())
+				assert.NotEmpty(t, expected)
+				assert.Equal(t, c.sql, expected)
+			}
 		})
 	}
 }

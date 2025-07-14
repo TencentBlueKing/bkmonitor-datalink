@@ -18,13 +18,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser/gen"
 )
 
-const (
-	logicalAnd = "AND"
-	logicalOr  = "OR"
-)
-
 type Expr interface {
-	LoggerEnable() bool
+	Log() bool
 	String() string
 	Enter(ctx antlr.ParserRuleContext)
 	Exit(ctx antlr.ParserRuleContext)
@@ -33,15 +28,15 @@ type Expr interface {
 type defaultExpr struct {
 }
 
-func (d *defaultExpr) LoggerEnable() bool {
+func (d *defaultExpr) Log() bool {
 	return false
 }
 
-func (d *defaultExpr) Enter(ctx antlr.ParserRuleContext) {
+func (d *defaultExpr) Enter(_ antlr.ParserRuleContext) {
 	return
 }
 
-func (d *defaultExpr) Exit(ctx antlr.ParserRuleContext) {
+func (d *defaultExpr) Exit(_ antlr.ParserRuleContext) {
 	return
 }
 
@@ -65,7 +60,7 @@ func (e *Select) String() string {
 		return ""
 	}
 
-	return fmt.Sprintf("SELECT %s", strings.Join(s, ","))
+	return fmt.Sprintf("SELECT %s", strings.Join(s, ", "))
 }
 
 func (e *Select) Enter(ctx antlr.ParserRuleContext) {
@@ -88,6 +83,7 @@ func (e *Select) Exit(ctx antlr.ParserRuleContext) {
 		}
 	case *gen.NamedExpressionContext:
 		e.FieldListExpr = append(e.FieldListExpr, e.Field)
+		e.Field = &Field{}
 	}
 
 	return
@@ -113,36 +109,92 @@ func (e *Table) String() string {
 	return fmt.Sprintf("FROM %s", e.name)
 }
 
+type logicListInc struct {
+	list []*logicInc
+}
+
+type logicInc struct {
+	name string
+	inc  int
+}
+
+func (l *logicListInc) Append(name string) {
+	if l.list == nil {
+		l.list = make([]*logicInc, 0)
+	}
+	l.list = append(l.list, &logicInc{
+		name: name,
+	})
+}
+
+func (l *logicListInc) Name() (name string) {
+	if len(l.list) == 0 {
+		return name
+	}
+
+	last := l.list[len(l.list)-1]
+	if last.inc == 0 {
+		name = last.name
+		l.list = l.list[:len(l.list)-1]
+	}
+
+	return name
+}
+
+func (l *logicListInc) Inc(e Expr) {
+	if e == nil || len(l.list) == 0 {
+		return
+	}
+
+	switch v := e.(type) {
+	case *Paren:
+		if v.Left {
+			l.list[len(l.list)-1].inc++
+		} else if v.Right {
+			l.list[len(l.list)-1].inc--
+		}
+	}
+}
+
 type Where struct {
 	defaultExpr
 
 	cur *Condition
 
+	logic *logicListInc
+
 	conditions []Expr
 }
 
 func (e *Where) addCondition(condition Expr) {
-	if condition == nil {
-		return
-	}
 	e.conditions = append(e.conditions, condition)
 }
 
 func (e *Where) String() string {
-	var str []string
+	var list []string
 	for _, c := range e.conditions {
-		str = append(str, c.String())
+		switch c.(type) {
+		case *Logical:
+			e.logic.Append(c.String())
+		default:
+			e.logic.Inc(c)
+			item := c.String()
+			if item != "" {
+				list = append(list, item)
+			}
+
+			logicName := e.logic.Name()
+			if logicName != "" {
+				list = append(list, logicName)
+			}
+		}
 	}
 
-	if len(str) == 0 {
+	if len(list) == 0 {
 		return ""
 	}
 
-	return fmt.Sprintf("WHERE %s", strings.Join(str, " "))
-}
-
-func (e *Where) LoggerEnable() bool {
-	return true
+	return fmt.Sprintf("WHERE %s", strings.Join(list, " "))
 }
 
 func (e *Where) getOp(s string) string {
@@ -165,6 +217,20 @@ func (e *Where) Enter(ctx antlr.ParserRuleContext) {
 		e.cur = &Condition{
 			Field: &Field{},
 		}
+	}
+}
+
+func (e *Where) Exit(ctx antlr.ParserRuleContext) {
+	switch ctx.(type) {
+	case *gen.ParenthesizedExpressionContext:
+		e.addCondition(&Paren{
+			Right: true,
+		})
+	case *gen.PredicatedContext:
+		if e.cur != nil {
+			e.addCondition(e.cur)
+			e.cur = nil
+		}
 	case *gen.ColumnReferenceContext:
 		e.cur.Field.Name = ctx.GetText()
 	case *gen.ComparisonOperatorContext:
@@ -176,16 +242,123 @@ func (e *Where) Enter(ctx antlr.ParserRuleContext) {
 	}
 }
 
-func (e *Where) Exit(ctx antlr.ParserRuleContext) {
+type Agg struct {
+	defaultExpr
+
+	Field         *Field
+	FieldListExpr []*Field
+}
+
+func (e *Agg) Enter(ctx antlr.ParserRuleContext) {
 	switch ctx.(type) {
-	case *gen.ParenthesizedExpressionContext:
-		e.addCondition(&Paren{
-			Right: true,
-		})
-	case *gen.PredicatedContext:
-		e.addCondition(e.cur)
-		e.cur = nil
+	case *gen.ExpressionContext:
+		e.Field = &Field{}
 	}
+}
+
+func (e *Agg) Exit(ctx antlr.ParserRuleContext) {
+	switch v := ctx.(type) {
+	case *gen.FunctionNameIdentifierContext:
+		e.Field.FuncName = v.GetText()
+	case *gen.IdentifierOrTextContext:
+		e.Field.As = v.GetText()
+	case *gen.ValueExpressionDefaultContext:
+		// 多层重叠的情况下忽略，避免覆盖
+		if e.Field.Name == "" {
+			e.Field.Name = v.GetText()
+		}
+	case *gen.ExpressionContext:
+		e.FieldListExpr = append(e.FieldListExpr, e.Field)
+		e.Field = &Field{}
+	}
+}
+
+func (e *Agg) String() string {
+	var s []string
+	for _, expr := range e.FieldListExpr {
+		s = append(s, expr.String())
+	}
+
+	if len(s) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("GROUP BY %s", strings.Join(s, ", "))
+}
+
+type Sort struct {
+	defaultExpr
+
+	Field         *Field
+	FieldListExpr []*Field
+}
+
+func (e *Sort) Enter(ctx antlr.ParserRuleContext) {
+	switch ctx.(type) {
+	case *gen.ExpressionContext:
+		e.Field = &Field{}
+	}
+}
+
+func (e *Sort) Exit(ctx antlr.ParserRuleContext) {
+	switch v := ctx.(type) {
+	case *gen.FunctionNameIdentifierContext:
+		e.Field.FuncName = v.GetText()
+	case *gen.IdentifierOrTextContext:
+		e.Field.As = v.GetText()
+	case *gen.ValueExpressionDefaultContext:
+		// 多层重叠的情况下忽略，避免覆盖
+		if e.Field.Name == "" {
+			e.Field.Name = v.GetText()
+		}
+	case *gen.ExpressionContext:
+		e.FieldListExpr = append(e.FieldListExpr, e.Field)
+		e.Field = &Field{}
+	}
+}
+
+func (e *Sort) String() string {
+	var s []string
+	for _, expr := range e.FieldListExpr {
+		s = append(s, expr.String())
+	}
+
+	if len(s) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("ORDER BY %s", strings.Join(s, ", "))
+}
+
+type Limit struct {
+	defaultExpr
+
+	offset string
+	limit  string
+}
+
+func (e *Limit) Exit(ctx antlr.ParserRuleContext) {
+	switch v := ctx.(type) {
+	case *gen.LimitClauseContext:
+		if v.GetLimit() != nil {
+			e.limit = v.GetLimit().GetText()
+		}
+		if v.GetOffset() != nil {
+			e.offset = v.GetOffset().GetText()
+		}
+	}
+}
+
+func (e *Limit) String() string {
+	var s []string
+	if e.limit != "" {
+		s = append(s, fmt.Sprintf("LIMIT %s", e.limit))
+	}
+	if e.offset != "" {
+		s = append(s, fmt.Sprintf("OFFSET %s", e.offset))
+	}
+
+	return strings.Join(s, " ")
 }
 
 type Field struct {

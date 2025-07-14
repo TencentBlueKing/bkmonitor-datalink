@@ -54,28 +54,34 @@ func (l *DorisListener) EnterEveryRule(ctx antlr.ParserRuleContext) {
 	case *gen.FromClauseContext:
 		l.expr = &Table{}
 	case *gen.WhereClauseContext:
-		l.expr = &Where{}
+		l.expr = &Where{
+			logic: &logicListInc{},
+		}
+	case *gen.AggClauseContext:
+		l.expr = &Agg{}
+	case *gen.SortClauseContext:
+		l.expr = &Sort{}
+	case *gen.LimitClauseContext:
+		l.expr = &Limit{}
 	}
 
+	l.depIndex++
+	fmt.Printf("%d,ENTER,%T,%s\n", l.depIndex, ctx, ctx.GetText())
+
 	if l.expr != nil {
-		if l.expr.LoggerEnable() {
-			l.depIndex++
-			fmt.Printf("%d,ENTER,%T,%s\n", l.depIndex, ctx, ctx.GetText())
-		}
 		l.expr.Enter(ctx)
 	}
 }
 
 func (l *DorisListener) ExitEveryRule(ctx antlr.ParserRuleContext) {
+	fmt.Printf("%d,EXIT,%T,%s\n", l.depIndex, ctx, ctx.GetText())
+	l.depIndex--
+
 	if l.expr != nil {
-		if l.expr.LoggerEnable() {
-			fmt.Printf("%d,EXIT,%T,%s\n", l.depIndex, ctx, ctx.GetText())
-			l.depIndex--
-		}
 		l.expr.Exit(ctx)
 	}
 	switch ctx.(type) {
-	case *gen.SelectClauseContext, *gen.FromClauseContext, *gen.WhereClauseContext:
+	case *gen.SelectClauseContext, *gen.FromClauseContext, *gen.WhereClauseContext, *gen.AggClauseContext, *gen.SortClauseContext, *gen.LimitClauseContext:
 		l.writeSQL()
 	}
 }
@@ -90,6 +96,10 @@ func (l *DorisListener) SQL() string {
 		l.err = fmt.Errorf("SQL 解析失败：%s", l.originSQL)
 	}
 	return strings.Join(l.exprString, " ")
+}
+
+func (l *DorisListener) Error() error {
+	return l.err
 }
 
 // NewDorisListener 创建带Token流的Listener

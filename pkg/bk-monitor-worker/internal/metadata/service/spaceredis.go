@@ -598,34 +598,6 @@ func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 	return tableIds, nil
 }
 
-func (s *SpacePusher) refineEsTableIds(tableIdList []string) ([]string, error) {
-	// 过滤写入 es 的结果表
-	db := mysql.GetDBSession().DB
-	var esStorageList []storage.ESStorage
-	qs3 := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID)
-	if len(tableIdList) != 0 {
-		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
-			var tempList []storage.ESStorage
-			qsTemp := qs3.TableIDIn(chunkTableIdList...)
-			if err := qsTemp.All(&tempList); err != nil {
-				return nil, err
-			}
-			esStorageList = append(esStorageList, tempList...)
-		}
-	} else {
-		if err := qs3.All(&esStorageList); err != nil {
-			return nil, err
-		}
-	}
-
-	var tableIds []string
-	for _, i := range esStorageList {
-		tableIds = append(tableIds, i.TableID)
-	}
-	tableIds = slicex.RemoveDuplicate(&tableIds)
-	return tableIds, nil
-}
-
 // PushTableIdDetail 推送结果表的详细信息
 func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool, useByPass bool) error {
 	logger.Infof("PushTableIdDetail: start to push table_id detail data")
@@ -2578,7 +2550,6 @@ func (s *SpacePusher) composeBkciLevelTableIds(bkTenantId, spaceType, spaceId st
 				continue
 			}
 			filterAlias = rt.BkBizIdAlias
-
 		}
 		options := FilterBuildContext{
 			SpaceType:   spaceType,

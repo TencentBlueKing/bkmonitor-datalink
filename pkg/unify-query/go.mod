@@ -68,6 +68,7 @@ require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
 	github.com/VictoriaMetrics/metrics v1.24.0 // indirect
 	github.com/alecthomas/units v0.0.0-20211218093645-b94a6e3cc137 // indirect
+	github.com/alicebob/miniredis/v2 v2.35.0 // indirect
 	github.com/antlr/antlr4/runtime/Go/antlr/v4 v4.0.0-20220911224424-aa1f1f12a846 // indirect
 	github.com/armon/go-metrics v0.4.0 // indirect
 	github.com/aws/aws-sdk-go v1.44.280 // indirect
@@ -160,6 +161,7 @@ require (
 	github.com/valyala/histogram v1.2.0 // indirect
 	github.com/willf/bitset v1.1.3 // indirect
 	github.com/xlab/treeprint v1.1.0 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/internal/retry v1.16.0 // indirect
 	go.opentelemetry.io/otel/metric v1.16.0 // indirect
 	go.opentelemetry.io/proto/otlp v0.19.0 // indirect

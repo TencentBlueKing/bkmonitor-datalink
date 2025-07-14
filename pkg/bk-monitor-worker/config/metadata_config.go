@@ -42,6 +42,9 @@ var (
 	// BkciSpaceAccessPlugins 允许被项目空间访问业务数据的RT列表
 	BkciSpaceAccessPlugins []string
 
+	// SpecialRtRouterAliasResultTableList 特殊的路由别名结果表列表
+	SpecialRtRouterAliasResultTableList []string
+
 	// GlobalFetchTimeSeriesMetricIntervalSeconds 获取指标的间隔时间
 	GlobalFetchTimeSeriesMetricIntervalSeconds int
 	// GlobalTimeSeriesMetricExpiredSeconds 自定义指标过期时间
@@ -161,6 +164,7 @@ func initMetadataVariables() {
 	GlobalIPV6SupportBizList = GetValue("taskConfig.metadata.global.ipv6SupportBizList", []int{})
 	GlobalHostDisableMonitorStates = GetValue("taskConfig.metadata.global.hostDisableMonitorStates", []string{"备用机", "测试中", "故障中"})
 	BkciSpaceAccessPlugins = GetValue("taskConfig.metadata.bcs.bkciSpaceAccessPlugins", []string{})
+	SpecialRtRouterAliasResultTableList = GetValue("taskConfig.metadata.bcs.specialRtRouterAliasResultTableList", []string{})
 
 	PingServerEnablePingAlarm = GetValue("taskConfig.metadata.pingserver.enablePingAlarm", true)
 	PingServerEnableDirectAreaPingCollect = GetValue("taskConfig.metadata.pingserver.enableDirectAreaPingCollect", true)

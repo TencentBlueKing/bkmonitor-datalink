@@ -419,9 +419,6 @@ func (r *SpaceTsDbRouter) GetSpaceUIDList(ctx context.Context, bkAppCode string)
 func (r *SpaceTsDbRouter) GetSpace(ctx context.Context, spaceID string) influxdb.Space {
 	key := getKey(ctx, spaceID)
 	genericRet := r.Get(ctx, influxdb.SpaceToResultTableKey, key, true, false)
-
-	log.Infof(ctx, "looktest GetSpace key(%s,%v)", key, genericRet)
-
 	if genericRet != nil {
 		return *genericRet.(*influxdb.Space)
 	}
@@ -432,9 +429,6 @@ func (r *SpaceTsDbRouter) GetSpace(ctx context.Context, spaceID string) influxdb
 func (r *SpaceTsDbRouter) GetResultTable(ctx context.Context, tableID string, ignoreKeyNotFound bool) *influxdb.ResultTableDetail {
 	key := getKey(ctx, tableID)
 	genericRet := r.Get(ctx, influxdb.ResultTableDetailKey, key, true, ignoreKeyNotFound)
-
-	log.Infof(ctx, "looktest GetResultTable key(%s,%v)", key, genericRet)
-
 	if genericRet != nil {
 		return genericRet.(*influxdb.ResultTableDetail)
 	}
@@ -445,9 +439,6 @@ func (r *SpaceTsDbRouter) GetResultTable(ctx context.Context, tableID string, ig
 func (r *SpaceTsDbRouter) GetDataLabelRelatedRts(ctx context.Context, dataLabel string) influxdb.ResultTableList {
 	key := getKey(ctx, dataLabel)
 	genericRet := r.Get(ctx, influxdb.DataLabelToResultTableKey, key, true, false)
-
-	log.Infof(ctx, "looktest GetDataLabelRelatedRts key(%s,%v)", key, genericRet)
-
 	if genericRet != nil {
 		return *genericRet.(*influxdb.ResultTableList)
 	}

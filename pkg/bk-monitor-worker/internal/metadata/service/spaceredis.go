@@ -333,9 +333,6 @@ func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, tableIdList []str
 	client := redis.GetStorageRedisInstance()
 	// TODO: 待旁路没有问题，可以移除的逻辑
 	key := cfg.DataLabelToResultTableKey
-	if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-		key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-	}
 	for dl, rts := range dlRtsMap {
 		// 二段式补充
 		for idx, value := range rts {
@@ -686,9 +683,6 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 	client := redis.GetStorageRedisInstance()
 	// 推送数据
 	rtDetailKey := cfg.ResultTableDetailKey
-	if useByPass && !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-		rtDetailKey = fmt.Sprintf("%s%s", rtDetailKey, cfg.BypassSuffixPath)
-	}
 	for tableId, detail := range tableIdDetail {
 		var ok bool
 		// fields
@@ -1390,10 +1384,6 @@ func (s *SpacePusher) PushBkAppToSpace() (err error) {
 
 	client := redis.GetStorageRedisInstance()
 	key := cfg.BkAppToSpaceKey
-	if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-		key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-	}
-
 	for field, value := range appSpaces.HashData() {
 		// 多租户模式下，需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
@@ -1540,9 +1530,6 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		}
 		// TODO: 待旁路没有问题，可以移除的逻辑
 		key := cfg.SpaceToResultTableKey
-		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-		}
 		logger.Infof("pushBkccSpaceTableIds:push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v]", key, redisKey, valuesStr)
 
 		channelName := fmt.Sprintf("%s__%s", spaceType, spaceId)
@@ -1644,9 +1631,6 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		}
 		// TODO: 待旁路没有问题，可以移除的逻辑
 		key := cfg.SpaceToResultTableKey
-		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-		}
 		channelName := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Set & Publish
 		logger.Infof("pushBkciSpaceTableIds:start to push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v], channelName [%s], channelKey [%s]", key, redisKey, valuesStr, cfg.SpaceToResultTableChannel, channelName)
@@ -1724,9 +1708,6 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 		}
 		// TODO: 待旁路没有问题，可以移除的逻辑
 		key := cfg.SpaceToResultTableKey
-		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-		}
 		channelName := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Set & Publish
 		logger.Infof("pushBksaasSpaceTableIds: start to push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v], channelName [%s], channelKey [%s]", key, redisKey, valuesStr, cfg.SpaceToResultTableChannel, channelName)

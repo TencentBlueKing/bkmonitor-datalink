@@ -482,10 +482,17 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 				continue
 			}
 
-			if rts, ok := dataLabelTableIdMap[dataLabel]; ok {
-				dataLabelTableIdMap[dataLabel] = append(rts, rt.TableId)
+			var key string
+			if cfg.EnableMultiTenantMode {
+				key = fmt.Sprintf("%s|%s", dataLabel, bkTenantId)
 			} else {
-				dataLabelTableIdMap[dataLabel] = []string{rt.TableId}
+				key = dataLabel
+			}
+
+			if rts, ok := dataLabelTableIdMap[key]; ok {
+				dataLabelTableIdMap[key] = append(rts, rt.TableId)
+			} else {
+				dataLabelTableIdMap[key] = []string{rt.TableId}
 			}
 		}
 	}
@@ -501,17 +508,17 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 
 		for _, rt := range builtInRts {
 			dataLabel := strings.SplitN(rt.TableId, "_", 2)[1]
-			if rts, ok := dataLabelTableIdMap[dataLabel]; ok {
-				dataLabelTableIdMap[dataLabel] = append(rts, rt.TableId)
+			var key string
+			if cfg.EnableMultiTenantMode {
+				key = fmt.Sprintf("%s|%s", dataLabel, bkTenantId)
 			} else {
-				dataLabelTableIdMap[dataLabel] = []string{rt.TableId}
+				key = dataLabel
 			}
-		}
-
-		// 添加后缀
-		for dataLabel, rts := range dataLabelTableIdMap {
-			dataLabelTableIdMap[fmt.Sprintf("%s|%s", dataLabel, bkTenantId)] = rts
-			delete(dataLabelTableIdMap, dataLabel)
+			if rts, ok := dataLabelTableIdMap[key]; ok {
+				dataLabelTableIdMap[key] = append(rts, rt.TableId)
+			} else {
+				dataLabelTableIdMap[key] = []string{rt.TableId}
+			}
 		}
 	}
 

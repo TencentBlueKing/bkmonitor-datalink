@@ -278,10 +278,11 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	isK8s := false
 
 	if db != "" {
-		// 指标二段式，仅传递 data-label
-		tIDs := s.router.GetDataLabelRelatedRts(s.ctx, db)
+		// 指标二段式，仅传递 data-label， datalabel 支持各种格式
+		tIDs := s.router.GetDataLabelRelatedRts(s.ctx, string(opt.TableID))
 		tableIDs.Add(tIDs...)
 
+		// 只有当 db 和 measurement 都不为空时，才是 tableID，为了兼容，同时也接入到 tableID  list
 		if measurement != "" {
 			tableIDs.Add(fmt.Sprintf("%s.%s", db, measurement))
 		}

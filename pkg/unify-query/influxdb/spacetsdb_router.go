@@ -39,18 +39,24 @@ var (
 	globalSpaceTsDbRouterLock sync.RWMutex
 )
 
-// getKey generates a  key for lookup ResultTableDetail or other space-related data.
+// getRedisRouterKey generates a  key for lookup ResultTableDetail or other space-related data.
 // If enable MultiTenantMode, it appends the tenant ID to the key.
-func getKey(ctx context.Context, key string) string {
+func getRedisRouterKey(ctx context.Context, key string) (newKey string) {
+	defer func() {
+		log.Infof(ctx, "getRedisRouterKey: %s -> %s", key, newKey)
+	}()
+
+	newKey = key
 	if !MultiTenantMode {
-		return key
+		return
 	}
 
 	user := metadata.GetUser(ctx)
 	tenantID := user.TenantID
 
-	newKey := key + "|" + tenantID
-	return newKey
+	newKey = key + "|" + tenantID
+
+	return
 }
 
 type SpaceTsDbRouter struct {
@@ -417,7 +423,7 @@ func (r *SpaceTsDbRouter) GetSpaceUIDList(ctx context.Context, bkAppCode string)
 
 // GetSpace 获取空间信息
 func (r *SpaceTsDbRouter) GetSpace(ctx context.Context, spaceID string) influxdb.Space {
-	key := getKey(ctx, spaceID)
+	key := getRedisRouterKey(ctx, spaceID)
 	genericRet := r.Get(ctx, influxdb.SpaceToResultTableKey, key, true, false)
 	if genericRet != nil {
 		return *genericRet.(*influxdb.Space)
@@ -427,7 +433,7 @@ func (r *SpaceTsDbRouter) GetSpace(ctx context.Context, spaceID string) influxdb
 
 // GetResultTable 获取 RT 详情
 func (r *SpaceTsDbRouter) GetResultTable(ctx context.Context, tableID string, ignoreKeyNotFound bool) *influxdb.ResultTableDetail {
-	key := getKey(ctx, tableID)
+	key := getRedisRouterKey(ctx, tableID)
 	genericRet := r.Get(ctx, influxdb.ResultTableDetailKey, key, true, ignoreKeyNotFound)
 	if genericRet != nil {
 		return genericRet.(*influxdb.ResultTableDetail)
@@ -437,7 +443,7 @@ func (r *SpaceTsDbRouter) GetResultTable(ctx context.Context, tableID string, ig
 
 // GetDataLabelRelatedRts 获取 DataLabel 详情，仅包含映射的 RT 信息
 func (r *SpaceTsDbRouter) GetDataLabelRelatedRts(ctx context.Context, dataLabel string) influxdb.ResultTableList {
-	key := getKey(ctx, dataLabel)
+	key := getRedisRouterKey(ctx, dataLabel)
 	genericRet := r.Get(ctx, influxdb.DataLabelToResultTableKey, key, true, false)
 	if genericRet != nil {
 		return *genericRet.(*influxdb.ResultTableList)

@@ -10,7 +10,7 @@
 package influxdb
 
 const (
-	MultiTenantModeConfigPath = "http.multiTenantMode"
+	MultiTenantModeConfigPath = "http.multi_tenant_mode"
 )
 
 var (

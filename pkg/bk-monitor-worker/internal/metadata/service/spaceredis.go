@@ -2585,7 +2585,7 @@ func (s *SpacePusher) composeBkciLevelTableIds(bkTenantId, spaceType, spaceId st
 		if slices.Contains(cfg.SpecialRtRouterAliasResultTableList, tid) {
 			logger.Infof("composeBkciLevelTableIds: table_id->[%s] in special rt router alias list, use rt bk_biz_id_alias as filter alias", tid)
 			var rt resulttable.ResultTable
-			if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.BkBizIdAlias).TableIdEq(tid).One(&rt); err != nil {
+			if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.BkBizIdAlias).BkTenantIdEq(bkTenantId).TableIdEq(tid).One(&rt); err != nil {
 				logger.Errorf("composeBkciLevelTableIds get bk_biz_id_alias for table_id [%s] error, %s", tid, err)
 				continue
 			}

@@ -412,13 +412,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	return
 }
 
-func queryReferenceWithOutPromEngine(ctx context.Context, queryTs *structured.QueryTs) (list []map[string]any, err error) {
-	ctx, span := trace.NewSpan(ctx, "query-reference-without-prom-engine")
-	defer span.End(&err)
-
-	return
-}
-
 func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.QueryTs) (*PromData, error) {
 	var (
 		res  any

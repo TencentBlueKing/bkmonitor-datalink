@@ -15,9 +15,17 @@ import (
 	antlr "github.com/antlr4-go/antlr/v4"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser/gen"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 func ParseDorisSQL(ctx context.Context, q string, opt DorisListenerOption) *DorisListener {
+	defer func() {
+		if r := recover(); r != nil {
+			// 处理异常
+			log.Errorf(ctx, "parse doris sql error: %v", r)
+		}
+	}()
+
 	// 创建输入流
 	is := antlr.NewInputStream(q)
 

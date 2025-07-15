@@ -12,10 +12,12 @@ package http
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/jarcoal/httpmock"
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -35,6 +37,7 @@ import (
 	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
+	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 func TestQueryTsWithDoris(t *testing.T) {
@@ -3713,5 +3716,253 @@ func TestQueryTsToInstanceAndStmt(t *testing.T) {
 				assert.Equal(t, c.instanceType, instance.InstanceType())
 			}
 		})
+	}
+}
+
+func TestMultiRouteQuerySortingIssues(t *testing.T) {
+	mock.Init()
+	ctx := context.Background()
+
+	influxdb.MockSpaceRouter(ctx)
+
+	router, err := influxdb.GetSpaceTsDbRouter()
+	assert.NoError(t, err)
+
+	err = router.Add(ctx, ir.DataLabelToResultTableKey, "multi_route_test", &ir.ResultTableList{
+		"route1_table", "route2_table",
+	})
+	assert.NoError(t, err)
+
+	err = router.Add(ctx, ir.ResultTableDetailKey, "route1_table", &ir.ResultTableDetail{
+		StorageId:   3,
+		TableId:     "route1_table",
+		DB:          "route1",
+		StorageType: "elasticsearch",
+		DataLabel:   "route1",
+	})
+	assert.NoError(t, err)
+
+	err = router.Add(ctx, ir.ResultTableDetailKey, "route2_table", &ir.ResultTableDetail{
+		StorageId:   3,
+		TableId:     "route2_table",
+		DB:          "route2",
+		StorageType: "elasticsearch",
+		DataLabel:   "route2",
+	})
+	assert.NoError(t, err)
+
+	space := router.GetSpace(ctx, "bkcc__2")
+	if space == nil {
+		space = make(ir.Space)
+	}
+	space["route1_table"] = &ir.SpaceResultTable{
+		TableId: "route1_table",
+	}
+	space["route2_table"] = &ir.SpaceResultTable{
+		TableId: "route2_table",
+	}
+	space["multi_route_test"] = &ir.SpaceResultTable{
+		TableId: "multi_route_test", // multi_route_test -> route1_table, route2_table
+	}
+	err = router.Add(ctx, ir.SpaceToResultTableKey, "bkcc__2", &space)
+	assert.NoError(t, err)
+
+	const EsUrlDomain = "http://127.0.0.1:93002"
+
+	route1Mappings := `{"route1":{"mappings":{"properties":{"dtEventTimeStamp":{"type":"date"},"gseIndex":{"type":"long"},"iterationIndex":{"type":"long"},"__data_label":{"type":"keyword"},"log":{"type":"text"}}}}}`
+	httpmock.RegisterResponder(http.MethodGet, EsUrlDomain+"/route1/_mapping/", httpmock.NewStringResponder(http.StatusOK, route1Mappings))
+
+	route2Mappings := `{"route2":{"mappings":{"properties":{"dtEventTimeStamp":{"type":"date"},"gseIndex":{"type":"long"},"iterationIndex":{"type":"long"},"__data_label":{"type":"keyword"},"log":{"type":"text"}}}}}`
+	httpmock.RegisterResponder(http.MethodGet, EsUrlDomain+"/route2/_mapping/", httpmock.NewStringResponder(http.StatusOK, route2Mappings))
+
+	route1SearchResponse := `{
+		"took": 5,
+		"timed_out": false,
+		"_shards": {"total": 1, "successful": 1, "skipped": 0, "failed": 0},
+		"hits": {
+			"total": {"value": 1000, "relation": "eq"},
+			"max_score": null,
+			"hits": [
+				{"_index": "route1", "_id": "id1", "_score": null, "_source": {"dtEventTimeStamp": "1752141800000", "gseIndex": 1, "iterationIndex": 3, "__data_label": "route1", "log": "route1 message 1"}},
+				{"_index": "route1", "_id": "id2", "_score": null, "_source": {"dtEventTimeStamp": "1752141800000", "gseIndex": 1, "iterationIndex": 2, "__data_label": "route1", "log": "route1 message 2"}},
+				{"_index": "route1", "_id": "id3", "_score": null, "_source": {"dtEventTimeStamp": "1752141800000", "gseIndex": 1, "iterationIndex": 1, "__data_label": "route1", "log": "route1 message 3"}},
+				{"_index": "route1", "_id": "id4", "_score": null, "_source": {"dtEventTimeStamp": "1752141800000", "gseIndex": 1, "iterationIndex": 0, "__data_label": "route1", "log": "route1 message 4"}},
+				{"_index": "route1", "_id": "id5", "_score": null, "_source": {"dtEventTimeStamp": "1752141700000", "gseIndex": 5, "iterationIndex": 2, "__data_label": "route1", "log": "route1 message 5"}},
+				{"_index": "route1", "_id": "id6", "_score": null, "_source": {"dtEventTimeStamp": "1752141700000", "gseIndex": 5, "iterationIndex": 1, "__data_label": "route1", "log": "route1 message 6"}},
+				{"_index": "route1", "_id": "id7", "_score": null, "_source": {"dtEventTimeStamp": "1752141700000", "gseIndex": 5, "iterationIndex": 0, "__data_label": "route1", "log": "route1 message 7"}},
+				{"_index": "route1", "_id": "id8", "_score": null, "_source": {"dtEventTimeStamp": "1752141600000", "gseIndex": 8, "iterationIndex": 1, "__data_label": "route1", "log": "route1 message 8"}},
+				{"_index": "route1", "_id": "id9", "_score": null, "_source": {"dtEventTimeStamp": "1752141600000", "gseIndex": 8, "iterationIndex": 0, "__data_label": "route1", "log": "route1 message 9"}},
+				{"_index": "route1", "_id": "id10", "_score": null, "_source": {"dtEventTimeStamp": "1752141500000", "gseIndex": 10, "iterationIndex": 0, "__data_label": "route1", "log": "route1 message 10"}}
+			]
+		}
+	}`
+	httpmock.RegisterResponder(http.MethodPost, EsUrlDomain+"/route1/_search", httpmock.NewStringResponder(http.StatusOK, route1SearchResponse))
+
+	route2SearchResponse := `{
+		"took": 5,
+		"timed_out": false,
+		"_shards": {"total": 1, "successful": 1, "skipped": 0, "failed": 0},
+		"hits": {
+			"total": {"value": 2000, "relation": "eq"},
+			"max_score": null,
+			"hits": [
+				{"_index": "route2", "_id": "id1", "_score": null, "_source": {"dtEventTimeStamp": "1752141800000", "gseIndex": 3, "iterationIndex": 2, "__data_label": "route2", "log": "route2 message 1"}},
+				{"_index": "route2", "_id": "id2", "_score": null, "_source": {"dtEventTimeStamp": "1752141800000", "gseIndex": 3, "iterationIndex": 1, "__data_label": "route2", "log": "route2 message 2"}},
+				{"_index": "route2", "_id": "id3", "_score": null, "_source": {"dtEventTimeStamp": "1752141800000", "gseIndex": 3, "iterationIndex": 0, "__data_label": "route2", "log": "route2 message 3"}},
+				{"_index": "route2", "_id": "id4", "_score": null, "_source": {"dtEventTimeStamp": "1752141800000", "gseIndex": 2, "iterationIndex": 3, "__data_label": "route2", "log": "route2 message 4"}},
+				{"_index": "route2", "_id": "id5", "_score": null, "_source": {"dtEventTimeStamp": "1752141800000", "gseIndex": 2, "iterationIndex": 2, "__data_label": "route2", "log": "route2 message 5"}},
+				{"_index": "route2", "_id": "id6", "_score": null, "_source": {"dtEventTimeStamp": "1752141800000", "gseIndex": 2, "iterationIndex": 1, "__data_label": "route2", "log": "route2 message 6"}},
+				{"_index": "route2", "_id": "id7", "_score": null, "_source": {"dtEventTimeStamp": "1752141700000", "gseIndex": 7, "iterationIndex": 2, "__data_label": "route2", "log": "route2 message 7"}},
+				{"_index": "route2", "_id": "id8", "_score": null, "_source": {"dtEventTimeStamp": "1752141700000", "gseIndex": 7, "iterationIndex": 1, "__data_label": "route2", "log": "route2 message 8"}},
+				{"_index": "route2", "_id": "id9", "_score": null, "_source": {"dtEventTimeStamp": "1752141700000", "gseIndex": 6, "iterationIndex": 0, "__data_label": "route2", "log": "route2 message 9"}},
+				{"_index": "route2", "_id": "id10", "_score": null, "_source": {"dtEventTimeStamp": "1752141600000", "gseIndex": 9, "iterationIndex": 0, "__data_label": "route2", "log": "route2 message 10"}}
+			]
+		}
+	}`
+	httpmock.RegisterResponder(http.MethodPost, EsUrlDomain+"/route2/_search", httpmock.NewStringResponder(http.StatusOK, route2SearchResponse))
+
+	// -dtEventTimeStamp, -gseIndex, -iterationIndex
+	queryTs := &structured.QueryTs{
+		SpaceUid: "bkcc__2",
+		QueryList: []*structured.Query{
+			{
+				TableID: "multi_route_test",
+				FieldList: []string{
+					"dtEventTimeStamp",
+					"gseIndex",
+					"iterationIndex",
+					"__data_label",
+					"log",
+				},
+			},
+		},
+		Start: "1752141400000",
+		End:   "1752141900000",
+		OrderBy: structured.OrderBy{
+			"-dtEventTimeStamp",
+			"-gseIndex",
+			"-iterationIndex",
+		},
+		Limit: 50,
+	}
+
+	_, list, _, err := queryRawWithInstance(ctx, queryTs)
+	assert.NoError(t, err)
+
+	for i, item := range list {
+		dtEventTimeStamp := getIntValue(item["dtEventTimeStamp"])
+		gseIndex := getIntValue(item["gseIndex"])
+		iterationIndex := getIntValue(item["iterationIndex"])
+		dataLabel := item["__data_label"]
+
+		t.Logf("第%d条: dtEventTimeStamp=%d, gseIndex=%d, iterationIndex=%d, 来源=%s",
+			i+1, dtEventTimeStamp, gseIndex, iterationIndex, dataLabel)
+	}
+
+	sortingErrors := []string{}
+	for i := 0; i < len(list)-1; i++ {
+		current := list[i]
+		next := list[i+1]
+
+		currentTime := getIntValue(current["dtEventTimeStamp"])
+		nextTime := getIntValue(next["dtEventTimeStamp"])
+
+		currentGse := getIntValue(current["gseIndex"])
+		nextGse := getIntValue(next["gseIndex"])
+
+		currentIter := getIntValue(current["iterationIndex"])
+		nextIter := getIntValue(next["iterationIndex"])
+
+		//  -dtEventTimeStamp, -gseIndex, -iterationIndex
+		if currentTime > nextTime {
+			continue
+		} else if currentTime == nextTime {
+			// gseIndex
+			if currentGse > nextGse {
+				continue
+			} else if currentGse == nextGse {
+				// iterationIndex
+				if currentIter >= nextIter {
+					continue
+				} else {
+					sortingErrors = append(sortingErrors, fmt.Sprintf("位置%d和%d: iterationIndex排序错误 %d < %d", i, i+1, currentIter, nextIter))
+				}
+			} else {
+				sortingErrors = append(sortingErrors, fmt.Sprintf("位置%d和%d: gseIndex排序错误 %d < %d", i, i+1, currentGse, nextGse))
+			}
+		} else {
+			sortingErrors = append(sortingErrors, fmt.Sprintf("位置%d和%d: dtEventTimeStamp排序错误 %d < %d", i, i+1, currentTime, nextTime))
+		}
+	}
+
+	route1Count := 0
+	route2Count := 0
+	for _, item := range list {
+		if dataLabel, ok := item["__data_label"]; ok {
+			if dataLabel == "route1" {
+				route1Count++
+			} else if dataLabel == "route2" {
+				route2Count++
+			}
+		}
+	}
+
+	if len(sortingErrors) > 0 {
+		t.Logf("errors:")
+		for _, err := range sortingErrors {
+			t.Logf(" %s", err)
+		}
+	}
+
+	if route1Count == 0 || route2Count == 0 {
+		t.Errorf("merge data error: expected both routes data, got route1=%d, route2=%d", route1Count, route2Count)
+	} else {
+		t.Logf("merge data success: route1=%d, route2=%d", route1Count, route2Count)
+	}
+
+	expectedOrder := []map[string]interface{}{
+		{"dtEventTimeStamp": int64(1752141800000), "gseIndex": int64(3), "iterationIndex": int64(2), "__data_label": "route2"},
+		{"dtEventTimeStamp": int64(1752141800000), "gseIndex": int64(3), "iterationIndex": int64(1), "__data_label": "route2"},
+		{"dtEventTimeStamp": int64(1752141800000), "gseIndex": int64(3), "iterationIndex": int64(0), "__data_label": "route2"},
+		{"dtEventTimeStamp": int64(1752141800000), "gseIndex": int64(2), "iterationIndex": int64(3), "__data_label": "route2"},
+		{"dtEventTimeStamp": int64(1752141800000), "gseIndex": int64(2), "iterationIndex": int64(2), "__data_label": "route2"},
+		{"dtEventTimeStamp": int64(1752141800000), "gseIndex": int64(2), "iterationIndex": int64(1), "__data_label": "route2"},
+		{"dtEventTimeStamp": int64(1752141800000), "gseIndex": int64(1), "iterationIndex": int64(3), "__data_label": "route1"},
+		{"dtEventTimeStamp": int64(1752141800000), "gseIndex": int64(1), "iterationIndex": int64(2), "__data_label": "route1"},
+		{"dtEventTimeStamp": int64(1752141800000), "gseIndex": int64(1), "iterationIndex": int64(1), "__data_label": "route1"},
+		{"dtEventTimeStamp": int64(1752141800000), "gseIndex": int64(1), "iterationIndex": int64(0), "__data_label": "route1"},
+	}
+
+	for i, expected := range expectedOrder {
+		if i >= len(list) {
+			break
+		}
+		actual := list[i]
+
+		if getIntValue(actual["dtEventTimeStamp"]) != expected["dtEventTimeStamp"].(int64) ||
+			getIntValue(actual["gseIndex"]) != expected["gseIndex"].(int64) ||
+			getIntValue(actual["iterationIndex"]) != expected["iterationIndex"].(int64) ||
+			actual["__data_label"] != expected["__data_label"] {
+			t.Errorf("number %d mismatch: expected %v, got %v", i+1, expected, actual)
+		}
+	}
+}
+
+func getIntValue(value interface{}) int64 {
+	switch v := value.(type) {
+	case string:
+		var result int64
+		if _, err := fmt.Sscanf(v, "%d", &result); err == nil {
+			return result
+		}
+		return 0
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	default:
+		return 0
 	}
 }

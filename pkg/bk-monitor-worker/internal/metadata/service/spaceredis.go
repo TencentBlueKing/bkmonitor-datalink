@@ -192,7 +192,7 @@ func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tabl
 	if err := pusher.PushDataLabelTableIds(bkTenantId, tableIdList, true); err != nil {
 		return err
 	}
-	if err := pusher.PushTableIdDetail(bkTenantId, tableIdList, true, true); err != nil {
+	if err := pusher.PushTableIdDetail(bkTenantId, tableIdList, true); err != nil {
 		return err
 	}
 	elapsedTime := time.Since(startTime) // 计算耗时
@@ -599,7 +599,7 @@ func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 }
 
 // PushTableIdDetail 推送结果表的详细信息
-func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool, useByPass bool) error {
+func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool) error {
 	logger.Infof("PushTableIdDetail: start to push table_id detail data")
 	tableIdDetail, err := s.getTableInfoForInfluxdbAndVm(bkTenantId, tableIdList)
 	logger.Infof("PushTableIdDetail: get table info for influxdb and vm:%s", tableIdDetail)

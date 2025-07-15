@@ -127,7 +127,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 				tableIdList = append(tableIdList, rt.TableId)
 			}
 
-			if err = pusher.PushTableIdDetail(bkTenantId, tableIdList, true, true); err != nil {
+			if err = pusher.PushTableIdDetail(bkTenantId, tableIdList, true); err != nil {
 				logger.Errorf("%s error %s", name, err)
 				return
 			}

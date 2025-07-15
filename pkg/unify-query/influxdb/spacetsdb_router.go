@@ -43,7 +43,7 @@ var (
 // If enable MultiTenantMode, it appends the tenant ID to the key.
 func getRedisRouterKey(ctx context.Context, key string) (newKey string) {
 	defer func() {
-		log.Infof(ctx, "getRedisRouterKey: %s -> %s", key, newKey)
+		log.Debugf(ctx, "getRedisRouterKey: %s -> %s", key, newKey)
 	}()
 
 	newKey = key

@@ -11,6 +11,7 @@ package service
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -2580,11 +2581,22 @@ func (s *SpacePusher) composeBkciLevelTableIds(bkTenantId, spaceType, spaceId st
 	}
 	for _, tid := range tableIds {
 		//dataValues[tid] = map[string]interface{}{"filters": []map[string]interface{}{{"projectId": spaceId}}}
+		filterAlias := "projectId"
+		if slices.Contains(cfg.SpecialRtRouterAliasResultTableList, tid) {
+			logger.Infof("composeBkciLevelTableIds: table_id->[%s] in special rt router alias list, use rt bk_biz_id_alias as filter alias", tid)
+			var rt resulttable.ResultTable
+			if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.BkBizIdAlias).BkTenantIdEq(bkTenantId).TableIdEq(tid).One(&rt); err != nil {
+				logger.Errorf("composeBkciLevelTableIds get bk_biz_id_alias for table_id [%s] error, %s", tid, err)
+				continue
+			}
+			filterAlias = rt.BkBizIdAlias
+
+		}
 		options := FilterBuildContext{
 			SpaceType:   spaceType,
 			SpaceId:     spaceId,
 			TableId:     tid,
-			FilterAlias: "projectId",
+			FilterAlias: filterAlias,
 		}
 		// 使用统一抽象方法生成filters
 		filters := s.buildFiltersByUsage(options, UsageComposeBkciLevelTableIds)

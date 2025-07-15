@@ -10,18 +10,8 @@
 package service
 
 import (
-	"time"
-
-	"github.com/jinzhu/gorm"
-	"github.com/pkg/errors"
-
-	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // ResultTableFieldOptionSvc result table field option service
@@ -61,47 +51,4 @@ func (ResultTableFieldOptionSvc) BathFieldOption(tableIdList []string) (map[stri
 		}
 	}
 	return optionData, nil
-}
-
-func (ResultTableFieldOptionSvc) CreateOption(tableId string, fieldName string, name string, value interface{}, creator string, db *gorm.DB) error {
-	if db == nil {
-		db = mysql.GetDBSession().DB
-	}
-	count, err := resulttable.NewResultTableFieldOptionQuerySet(db).TableIDEq(tableId).FieldNameEq(fieldName).NameEq(name).Count()
-	if err != nil {
-		return err
-	}
-	if count != 0 {
-		return errors.Errorf("table_id [%s] field_name [%s] already has option [%s]", tableId, fieldName, name)
-	}
-
-	valueStr, valueType, err := models.ParseOptionValue(value)
-	if err != nil {
-		return err
-	}
-	rtfo := resulttable.ResultTableFieldOption{
-		OptionBase: models.OptionBase{
-			ValueType:  valueType,
-			Value:      valueStr,
-			Creator:    creator,
-			CreateTime: time.Now(),
-		},
-		TableID:   tableId,
-		FieldName: fieldName,
-		Name:      name,
-	}
-	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
-		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(rtfo.TableName(), map[string]interface{}{
-			resulttable.ResultTableFieldOptionDBSchema.TableID.String():   rtfo.TableID,
-			resulttable.ResultTableFieldOptionDBSchema.FieldName.String(): rtfo.FieldName,
-			resulttable.ResultTableFieldOptionDBSchema.Name.String():      rtfo.Name,
-			resulttable.ResultTableFieldOptionDBSchema.Value.String():     rtfo.Value,
-			resulttable.ResultTableFieldOptionDBSchema.ValueType.String(): rtfo.ValueType,
-		}), ""))
-	} else {
-		if err := rtfo.Create(db); err != nil {
-			return err
-		}
-	}
-	return nil
 }

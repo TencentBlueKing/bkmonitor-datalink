@@ -55,6 +55,11 @@ func TestSpaceFilter_NewTsDBs(t *testing.T) {
 			isRegexp:  true,
 			expected:  `[{"table_id":"result_table.vm","field":["container_cpu_usage_seconds_total","kube_pod_info","node_with_pod_relation","node_with_system_relation","deployment_with_replicaset_relation","pod_with_replicaset_relation","apm_service_instance_with_pod_relation","apm_service_instance_with_system_relation","container_info_relation","host_info_relation","kubelet_info"],"measurement_type":"bk_split_measurement","data_label":"vm","storage_id":"2","vm_rt":"2_bcs_prom_computation_result_table","metric_name":"container_.+","expand_metric_names":["container_cpu_usage_seconds_total","container_info_relation"],"time_field":{},"need_add_time":false,"storage_type":"victoria_metrics"}]`,
 		},
+		"test_4_incomplete_tableid_from_datalabel": {
+			fieldName: "kube_pod_info",
+			tableID:   "influxdb",
+			expected:  `[{"table_id":"result_table.influxdb","field":["kube_pod_info","kube_node_info","kube_node_status_condition","kubelet_cluster_request_total","merltrics_rest_request_status_200_count","merltrics_rest_request_status_500_count"],"measurement_type":"bk_split_measurement","data_label":"influxdb","storage_id":"2","cluster_name":"default","db":"result_table","measurement":"influxdb","metric_name":"kube_pod_info","expand_metric_names":["kube_pod_info"],"time_field":{},"need_add_time":false,"storage_type":"influxdb"},{"table_id":"result_table.vm","field":["container_cpu_usage_seconds_total","kube_pod_info","node_with_pod_relation","node_with_system_relation","deployment_with_replicaset_relation","pod_with_replicaset_relation","apm_service_instance_with_pod_relation","apm_service_instance_with_system_relation","container_info_relation","host_info_relation","kubelet_info"],"measurement_type":"bk_split_measurement","data_label":"vm","storage_id":"2","vm_rt":"2_bcs_prom_computation_result_table","metric_name":"kube_pod_info","expand_metric_names":["kube_pod_info"],"time_field":{},"need_add_time":false,"storage_type":"victoria_metrics"}]`,
+		},
 	}
 
 	for name, c := range testCases {

@@ -368,6 +368,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								TableID:         "system.disk",
 								DataLabel:       "disk",
 								VmRt:            "100147_ieod_system_disk_raw",
+								CmdbLevelVmRt:   "rt_by_cmdb_level",
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
 								StorageID:       "2",
@@ -465,6 +466,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								TableID:         "system.disk",
 								DataLabel:       "disk",
 								VmRt:            "100147_ieod_system_disk_raw",
+								CmdbLevelVmRt:   "rt_by_cmdb_level",
 								VmConditionNum:  3,
 								VmCondition:     `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
 								StorageID:       "2",
@@ -528,6 +530,74 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
+										},
+									},
+								},
+							},
+						},
+						ReferenceName: "b",
+						MetricName:    "usage",
+					},
+				},
+			},
+		},
+		"bk_inst_id / bk_obj_id 作为条件 = 查询 VM cmdb level rt": {
+			ts: &QueryTs{
+				QueryList: []*Query{
+					{
+						TableID:       "system.disk",
+						FieldName:     "usage",
+						ReferenceName: "b",
+						Conditions: Conditions{FieldList: []ConditionField{
+							{
+								DimensionName: "bk_obj_id",
+								Operator:      Ncontains,
+								Value:         []string{"0"},
+							},
+						}},
+					},
+				},
+				MetricMerge: "b",
+			},
+			promql:        "b",
+			isDirectQuery: true,
+			expand: &md.VmExpand{
+				ResultTableList: []string{"rt_by_cmdb_level"},
+				MetricFilterCondition: map[string]string{
+					"b": `bk_biz_id="2", bk_obj_id!="0", result_table_id="rt_by_cmdb_level", __name__="usage_value"`,
+				},
+			},
+			ref: md.QueryReference{
+				"b": {
+					{
+						QueryList: md.QueryList{
+							{
+								DataSource:      BkMonitor,
+								Condition:       "bk_obj_id!='0' and bk_biz_id='2'",
+								Timezone:        "UTC",
+								Fields:          []string{"usage"},
+								MetricNames:     []string{"bkmonitor:system:disk:usage"},
+								TableID:         "system.disk",
+								DataLabel:       "disk",
+								VmRt:            "rt_by_cmdb_level",
+								CmdbLevelVmRt:   "rt_by_cmdb_level",
+								VmConditionNum:  4,
+								VmCondition:     `bk_biz_id="2", bk_obj_id!="0", result_table_id="rt_by_cmdb_level", __name__="usage_value"`,
+								StorageID:       "2",
+								StorageType:     consul.VictoriaMetricsStorageType,
+								Field:           "usage",
+								MeasurementType: redis.BKTraditionalMeasurement,
+								AllConditions: md.AllConditions{
+									{
+										{
+											DimensionName: "bk_biz_id",
+											Operator:      ConditionEqual,
+											Value:         []string{"2"},
+										},
+										{
+											DimensionName: "bk_obj_id",
+											Operator:      Ncontains,
+											Value:         []string{"0"},
 										},
 									},
 								},

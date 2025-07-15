@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,6 +48,10 @@ const (
 	ConditionGte   = "gte"
 	ConditionLt    = "lt"
 	ConditionLte   = "lte"
+)
+
+const (
+	DefaultReferenceName = "a"
 )
 
 type VmCondition string
@@ -104,7 +109,8 @@ type Query struct {
 	TableID    string `json:"table_id,omitempty"`
 
 	// vm 的 rt
-	VmRt string `json:"vm_rt,omitempty"`
+	VmRt          string `json:"vm_rt,omitempty"`
+	CmdbLevelVmRt string `json:"cmdb_level_vm_rt,omitempty"`
 
 	// 兼容 InfluxDB 结构体
 	RetentionPolicy string     `json:"retention_policy,omitempty"` // 存储 RP
@@ -152,6 +158,16 @@ type Query struct {
 	Orders      Orders    `json:"orders,omitempty"`
 	NeedAddTime bool      `json:"need_add_time,omitempty"`
 	Collapse    *Collapse `json:"collapse,omitempty"`
+}
+
+func (q *Query) VMExpand() *VmExpand {
+	return &VmExpand{
+		ResultTableList: []string{q.VmRt},
+		MetricFilterCondition: map[string]string{
+			DefaultReferenceName: q.VmCondition.String(),
+		},
+		ClusterName: q.StorageName,
+	}
 }
 
 func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
@@ -448,21 +464,105 @@ func (os Orders) SortSliceList(list []map[string]any) {
 
 	sort.SliceStable(list, func(i, j int) bool {
 		for _, o := range os {
-			a, _ := list[i][o.Name].(string)
-			b, _ := list[j][o.Name].(string)
+			a := list[i][o.Name]
+			b := list[j][o.Name]
 
 			if a != b {
-				if o.Ast {
-					r := a < b
-					return r
-				} else {
-					r := a > b
-					return r
+				result := lessFunc(a, b)
+				if result != 0 {
+					if o.Ast {
+						return result < 0
+					} else {
+						return result > 0
+					}
 				}
 			}
 		}
 		return true
 	})
+}
+
+func lessFunc(a, b interface{}) int {
+	if a == nil && b == nil {
+		return 0
+	}
+	if a == nil {
+		return -1
+	}
+	if b == nil {
+		return 1
+	}
+
+	aNum, aIsNum := convertToFloat64(a)
+	bNum, bIsNum := convertToFloat64(b)
+
+	if aIsNum && bIsNum {
+		if aNum < bNum {
+			return -1
+		} else if aNum > bNum {
+			return 1
+		}
+		return 0
+	}
+
+	aStr := convertToString(a)
+	bStr := convertToString(b)
+
+	if aStr < bStr {
+		return -1
+	} else if aStr > bStr {
+		return 1
+	}
+	return 0
+}
+
+func convertToFloat64(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case int:
+		return float64(v), true
+	case int8:
+		return float64(v), true
+	case int16:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case uint:
+		return float64(v), true
+	case uint8:
+		return float64(v), true
+	case uint16:
+		return float64(v), true
+	case uint32:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	case float32:
+		return float64(v), true
+	case float64:
+		return v, true
+	case string:
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f, true
+		}
+	}
+	return 0, false
+}
+
+func convertToString(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprintf("%d", v)
+	case float32, float64:
+		return fmt.Sprintf("%g", v)
+	case bool:
+		return fmt.Sprintf("%t", v)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 func (fa FieldAlias) Alias(f string) string {

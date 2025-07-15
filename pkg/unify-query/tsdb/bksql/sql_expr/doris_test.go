@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package sql_expr_test
+package sql_expr
 
 import (
 	"fmt"
@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
 
 func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
@@ -84,12 +83,12 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "text filter",
 			input: "text:value",
-			want:  "`text` MATCH_PHRASE_PREFIX 'value'",
+			want:  "`text` MATCH_PHRASE 'value'",
 		},
 		{
 			name:  "object field",
 			input: "__ext.container_name: value",
-			want:  "CAST(__ext[\"container_name\"] AS STRING) = 'value'",
+			want:  "CAST(__ext['container_name'] AS STRING) = 'value'",
 		},
 		{
 			name:  "start",
@@ -100,8 +99,8 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := sql_expr.NewSQLExpr(sql_expr.Doris).WithFieldsMap(map[string]string{
-				"text": sql_expr.DorisTypeText,
+			got, err := NewSQLExpr(Doris).WithFieldsMap(map[string]string{
+				"text": DorisTypeText,
 			}).ParserQueryString(tt.input)
 			if err != nil {
 				assert.Equal(t, tt.err, err.Error())
@@ -122,6 +121,24 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 		wantErr   error
 	}{
 		{
+			name: "doris test multi object field condition",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "object.field.name",
+						Value:         []string{"What's UP"},
+						Operator:      metadata.ConditionEqual,
+					},
+					{
+						DimensionName: "tag.city.town.age",
+						Value:         []string{"test"},
+						Operator:      metadata.ConditionNotEqual,
+					},
+				},
+			},
+			want: `CAST(object['field']['name'] AS STRING) = 'What''s UP' AND CAST(tag['city']['town']['age'] AS TINYINT) != 'test'`,
+		},
+		{
 			name: "doris test object field condition",
 			condition: metadata.AllConditions{
 				{
@@ -137,21 +154,83 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "CAST(object[\"field\"] AS STRING) MATCH_PHRASE_PREFIX 'What''s UP' AND `tag` != 'test'",
+			want: "CAST(object['field'] AS TEXT) MATCH_PHRASE 'What''s UP' AND `tag` != 'test'",
 		},
 		{
-			name: "doris t8est text field wildcard",
+			name: "doris test object field condition",
 			condition: metadata.AllConditions{
 				{
 					{
 						DimensionName: "object.field",
-						Value:         []string{"partial"},
+						Value:         []string{"What's UP"},
+						Operator:      metadata.ConditionEqual,
+						IsPrefix:      true,
+					},
+					{
+						DimensionName: "tag",
+						Value:         []string{"test"},
+						Operator:      metadata.ConditionNotEqual,
+						IsSuffix:      true,
+					},
+				},
+			},
+			want: "CAST(object['field'] AS TEXT) MATCH_PHRASE_PREFIX 'What''s UP' AND `tag` NOT MATCH_PHRASE_EDGE 'test'",
+		},
+		{
+			name: "doris t8est text field wildcard use *",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "object.field",
+						Value:         []string{"*partial*"},
 						Operator:      metadata.ConditionContains,
 						IsWildcard:    true,
 					},
 				},
 			},
-			want: "CAST(object[\"field\"] AS STRING) LIKE '%partial%'",
+			want: "CAST(object['field'] AS TEXT) LIKE '%partial%'",
+		},
+		{
+			name: "doris t8est text field wildcard use *",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "object.field",
+						Value:         []string{"*pa*tial*"},
+						Operator:      metadata.ConditionContains,
+						IsWildcard:    true,
+					},
+				},
+			},
+			want: "CAST(object['field'] AS TEXT) LIKE '%pa%tial%'",
+		},
+		{
+			name: "doris t8est text field wildcard use ?",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "object.field",
+						Value:         []string{"*pa*tial?"},
+						Operator:      metadata.ConditionContains,
+						IsWildcard:    true,
+					},
+				},
+			},
+			want: "CAST(object['field'] AS TEXT) LIKE '%pa%tial_'",
+		},
+		{
+			name: "doris t8est text field wildcard use ?",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "object.field",
+						Value:         []string{"*pa\\*tial?"},
+						Operator:      metadata.ConditionContains,
+						IsWildcard:    true,
+					},
+				},
+			},
+			want: "CAST(object['field'] AS TEXT) LIKE '%pa\\*tial_'",
 		},
 		{
 			name: "doris test OR condition",
@@ -200,7 +279,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			want: "`env` IN ('prod', 'test')",
 		},
 		{
-			name: "test IN operator with wildcard",
+			name: "test IN operator with wildcard and no *",
 			condition: metadata.AllConditions{
 				{
 					{
@@ -211,7 +290,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "(`env` LIKE '%prod%' OR `env` LIKE '%test%')",
+			want: "(`env` LIKE 'prod' OR `env` LIKE 'test')",
 		},
 		{
 			name: "doris test empty value",
@@ -239,10 +318,27 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 			},
 			wantErr: fmt.Errorf("unknown operator unknown"),
 		},
+		{
+			name: "doris array text eq",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "events.attributes.exception.type",
+						Value:         []string{"errorString"},
+						Operator:      "ne",
+						IsWildcard:    false,
+					},
+				},
+			},
+			want: `ARRAY_CONTAINS(CAST(events['attributes']['exception.type'] AS TEXT ARRAY), 'errorString') != 1`,
+		},
 	}
 
-	e := sql_expr.NewSQLExpr(sql_expr.Doris).WithFieldsMap(map[string]string{
-		"object.field": sql_expr.DorisTypeText,
+	e := NewSQLExpr(Doris).WithFieldsMap(map[string]string{
+		"object.field":                     DorisTypeText,
+		"tag.city.town.age":                DorisTypeTinyInt,
+		"events.attributes.exception.type": fmt.Sprintf(DorisTypeArray, DorisTypeText),
+		"events.timestamp":                 fmt.Sprintf(DorisTypeArray, DorisTypeBigInt),
 	})
 
 	for _, tt := range tests {

@@ -1,6 +1,6 @@
 module github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat
 
-go 1.22
+go 1.23.0
 
 require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v0.0.0-00010101000000-000000000000
@@ -40,10 +40,10 @@ require (
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/yumaojun03/dmidecode v0.1.4
 	github.com/yusufpapurcu/wmi v1.2.3
-	golang.org/x/net v0.33.0
-	golang.org/x/sync v0.10.0
-	golang.org/x/sys v0.28.0
-	golang.org/x/text v0.21.0
+	golang.org/x/net v0.38.0
+	golang.org/x/sync v0.12.0
+	golang.org/x/sys v0.31.0
+	golang.org/x/text v0.23.0
 	gopkg.in/yaml.v2 v2.4.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -128,9 +128,9 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
-	golang.org/x/crypto v0.31.0 // indirect
-	google.golang.org/genproto v0.0.0-20230306155012-7f2fa6fef1f4 // indirect
-	google.golang.org/grpc v1.55.0 // indirect
+	golang.org/x/crypto v0.36.0 // indirect
+	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect
+	google.golang.org/grpc v1.56.3 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/fsnotify.v1 v1.4.7 // indirect
 	gopkg.in/jcmturner/aescts.v1 v1.0.1 // indirect
@@ -148,5 +148,5 @@ replace (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils => ../utils
 	github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.17-bk+incompatible
 	github.com/gosnmp/gosnmp v1.32.0 => github.com/TencentBlueKing/gosnmp v1.30.0-bk
-	github.com/shirou/gopsutil/v3 v3.23.4 => github.com/TencentBlueKing/gopsutil/v3 v3.23.12-bk
+	github.com/shirou/gopsutil/v3 v3.23.4 => github.com/TencentBlueKing/gopsutil/v3 v3.25.6-bk
 )

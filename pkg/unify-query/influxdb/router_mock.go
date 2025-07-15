@@ -261,6 +261,7 @@ func MockSpaceRouter(ctx context.Context) {
 					StorageId:       2,
 					TableId:         "system.disk",
 					VmRt:            "100147_ieod_system_disk_raw",
+					CmdbLevelVmRt:   "rt_by_cmdb_level",
 					Fields:          []string{"usage", "free"},
 					MeasurementType: redis.BKTraditionalMeasurement,
 					StorageType:     consul.InfluxDBStorageType,
@@ -400,12 +401,7 @@ func setSpaceTsDbMockData(ctx context.Context, bkAppSpace ir.BkAppSpace, spaceIn
 			panic(err)
 		}
 	}
-	for field, rts := range fieldInfo {
-		err = sr.Add(ctx, ir.FieldToResultTableKey, field, &rts)
-		if err != nil {
-			panic(err)
-		}
-	}
+
 	for dataLabel, rts := range dataLabelInfo {
 		err = sr.Add(ctx, ir.DataLabelToResultTableKey, dataLabel, &rts)
 		if err != nil {

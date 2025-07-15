@@ -976,46 +976,59 @@ func TestGetAllDataLabelTableId(t *testing.T) {
 	// 初始数据
 	db := mysql.GetDBSession().DB
 	// not data_label
-	obj := resulttable.ResultTable{TableId: "not_data_label", IsEnable: true, DataLabel: nil, BkTenantId: tenant.DefaultTenantId}
+	obj := resulttable.ResultTable{TableId: "not_data_label", IsEnable: true, DataLabel: nil, BkTenantId: "test"}
 	db.Delete(obj)
 	assert.NoError(t, obj.Create(db))
 	// with data_label
 	dataLabel := "data_label_value"
-	obj = resulttable.ResultTable{TableId: "data_label", IsEnable: true, DataLabel: &dataLabel, BkTenantId: tenant.DefaultTenantId}
+	obj = resulttable.ResultTable{TableId: "data_label", IsEnable: true, DataLabel: &dataLabel, BkTenantId: "test"}
 	db.Delete(obj)
 	assert.NoError(t, obj.Create(db))
 
 	dataLabel1 := "data_label_value1"
-	obj = resulttable.ResultTable{TableId: "data_label1", IsEnable: true, DataLabel: &dataLabel1, BkTenantId: tenant.DefaultTenantId}
+	obj = resulttable.ResultTable{TableId: "data_label1", IsEnable: true, DataLabel: &dataLabel1, BkTenantId: "test"}
 	db.Delete(obj)
 	assert.NoError(t, obj.Create(db))
 
 	dataLabel2 := "data_label_value,data_label_value2"
-	obj = resulttable.ResultTable{TableId: "data_label2", IsEnable: true, DataLabel: &dataLabel2, BkTenantId: tenant.DefaultTenantId}
+	obj = resulttable.ResultTable{TableId: "data_label2", IsEnable: true, DataLabel: &dataLabel2, BkTenantId: "test"}
 	db.Delete(obj)
 	assert.NoError(t, obj.Create(db))
 
-	obj = resulttable.ResultTable{TableId: "1_system.cpu_detail", IsEnable: true, DataLabel: nil, BkTenantId: tenant.DefaultTenantId}
+	obj = resulttable.ResultTable{TableId: "test_1_dbm.cpu_detail", IsEnable: true, DataLabel: nil, BkTenantId: "test"}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+
+	obj = resulttable.ResultTable{TableId: "test_1_sys.cpu_detail", IsEnable: true, DataLabel: nil, BkTenantId: "test"}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+
+	obj = resulttable.ResultTable{TableId: "test_1_sys.cpu_detail", IsEnable: true, DataLabel: nil, BkTenantId: "test"}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+
+	obj = resulttable.ResultTable{TableId: "test_1_sys.hhh", IsEnable: true, DataLabel: nil, BkTenantId: "test"}
 	db.Delete(obj)
 	assert.NoError(t, obj.Create(db))
 
 	cfg.EnableMultiTenantMode = true
-	data, err := NewSpacePusher().getAllDataLabelTableId(tenant.DefaultTenantId)
+	data, err := NewSpacePusher().getAllDataLabelTableId("test")
 	assert.NoError(t, err)
 	dataLabelSet := mapset.NewSet[string]()
 	for dataLabel := range data {
 		dataLabelSet.Add(dataLabel)
 	}
-	expectedSet := mapset.NewSet("data_label_value|system", "data_label_value1|system", "data_label_value2|system", "system.cpu_detail|system")
+	expectedSet := mapset.NewSet("data_label_value|test", "data_label_value1|test", "data_label_value2|test", "system.cpu_detail|test", "dbm_system.cpu_detail|test")
 	t.Logf("dataLabelSet: %v", dataLabelSet)
 	t.Logf("expectedSet: %v", expectedSet)
 	assert.True(t, expectedSet.IsSubset(dataLabelSet))
 	t.Logf("data: %v", data)
-	assert.Equal(t, []string{"data_label", "data_label2"}, data["data_label_value|system"])
-	assert.Equal(t, []string{"1_system.cpu_detail"}, data["system.cpu_detail|system"])
+	assert.Equal(t, []string{"data_label", "data_label2"}, data["data_label_value|test"])
+	assert.Equal(t, []string{"test_1_sys.cpu_detail"}, data["system.cpu_detail|test"])
+	assert.Equal(t, []string{"test_1_dbm.cpu_detail"}, data["dbm_system.cpu_detail|test"])
 
 	cfg.EnableMultiTenantMode = false
-	data, err = NewSpacePusher().getAllDataLabelTableId(tenant.DefaultTenantId)
+	data, err = NewSpacePusher().getAllDataLabelTableId("test")
 	assert.NoError(t, err)
 	dataLabelSet = mapset.NewSet[string]()
 	for dataLabel := range data {

@@ -11,6 +11,7 @@ package service
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -82,6 +83,36 @@ type FilterBuildContext struct {
 	IsShared       bool   // 用于判断共享集群
 	ExtraStringVal string // 用于如 spaceObj.Id 这种转字符串场景
 	FilterAlias    string // 过滤条件key的别名
+}
+
+// 基础数据表名
+var BaseReportTableNames = []string{
+	"cpu_summary",
+	"cpu_detail",
+	"disk",
+	"env",
+	"inode",
+	"io",
+	"load",
+	"mem",
+	"net",
+	"netstat",
+	"swap",
+}
+
+// 基础采集数据链路来源 -- 主机系统、DBM、DEVX、Perforce
+const (
+	BaseReportSourceSystem   = "sys"
+	BaseReportSourceDBM      = "dbm"
+	BaseReportSourceDevx     = "devx"
+	BaseReportSourcePerforce = "perforce"
+)
+
+var BaseReportSources = []string{
+	BaseReportSourceSystem,
+	BaseReportSourceDBM,
+	BaseReportSourceDevx,
+	BaseReportSourcePerforce,
 }
 
 const (
@@ -495,23 +526,47 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 		}
 	}
 
-	// 多租户模式特殊处理
+	// 多租户模式特殊处理 -- 内置系统数据路由
 	if cfg.EnableMultiTenantMode {
-		// 添加内置数据源
 		var builtInRts []resulttable.ResultTable
-		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).TableIdLike("%_system.%").BkTenantIdEq(bkTenantId).IsEnableEq(true).IsDeletedEq(false).All(&builtInRts); err != nil {
+
+		// 表名格式为{bk_tenant_id}_{bk_biz_id}_{source}.{table}，先进行粗略匹配
+		tablePattern := fmt.Sprintf("%s_%%_%%.%%", bkTenantId)
+		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).TableIdLike(tablePattern).BkTenantIdEq(bkTenantId).IsEnableEq(true).IsDeletedEq(false).All(&builtInRts); err != nil {
 			logger.Errorf("get built in data label and table id map error, %s", err)
 			return nil, err
 		}
 
+		tableRegex := fmt.Sprintf("^%s_\\d+_(%s)\\.(%s)$", bkTenantId, strings.Join(BaseReportSources, "|"), strings.Join(BaseReportTableNames, "|"))
+		re := regexp.MustCompile(tableRegex)
 		for _, rt := range builtInRts {
-			dataLabel := strings.SplitN(rt.TableId, "_", 2)[1]
-			var key string
-			if cfg.EnableMultiTenantMode {
-				key = fmt.Sprintf("%s|%s", dataLabel, bkTenantId)
-			} else {
-				key = dataLabel
+			// 严格匹配正则表达式
+			if !re.MatchString(rt.TableId) {
+				continue
 			}
+
+			// 提取source和table
+			matches := re.FindStringSubmatch(rt.TableId)
+			if len(matches) != 3 {
+				continue
+			}
+			source := matches[1]
+			tableName := matches[2]
+
+			// 根据source和table生成数据标签
+			var dataLabel string
+			if source == BaseReportSourceSystem {
+				// 系统数据标签
+				dataLabel = fmt.Sprintf("system.%s", tableName)
+			} else {
+				// 其他数据标签
+				dataLabel = fmt.Sprintf("%s_system.%s", source, tableName)
+			}
+
+			// 多租户模式下，data_label需要加上租户ID后缀
+			key := fmt.Sprintf("%s|%s", dataLabel, bkTenantId)
+
+			// 添加到数据标签和结果表的映射关系中
 			if rts, ok := dataLabelTableIdMap[key]; ok {
 				dataLabelTableIdMap[key] = append(rts, rt.TableId)
 			} else {

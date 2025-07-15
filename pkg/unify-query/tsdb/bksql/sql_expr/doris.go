@@ -140,6 +140,9 @@ func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (s
 		Where: where,
 	}
 	listener := doris_parser.ParseDorisSQL(ctx, q, opt)
+	if listener == nil {
+		return "", fmt.Errorf("parse doris sql error")
+	}
 	return listener.SQL()
 }
 

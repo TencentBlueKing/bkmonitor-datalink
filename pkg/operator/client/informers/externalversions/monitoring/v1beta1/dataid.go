@@ -55,25 +55,13 @@ func NewFilteredDataIDInformer(client versioned.Interface, namespace string, res
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.MonitoringV1beta1().DataIDs(namespace).List(context.Background(), options)
+				return client.MonitoringV1beta1().DataIDs(namespace).List(context.TODO(), options)
 			},
 			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.MonitoringV1beta1().DataIDs(namespace).Watch(context.Background(), options)
-			},
-			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
-				if tweakListOptions != nil {
-					tweakListOptions(&options)
-				}
-				return client.MonitoringV1beta1().DataIDs(namespace).List(ctx, options)
-			},
-			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
-				if tweakListOptions != nil {
-					tweakListOptions(&options)
-				}
-				return client.MonitoringV1beta1().DataIDs(namespace).Watch(ctx, options)
+				return client.MonitoringV1beta1().DataIDs(namespace).Watch(context.TODO(), options)
 			},
 		},
 		&apismonitoringv1beta1.DataID{},

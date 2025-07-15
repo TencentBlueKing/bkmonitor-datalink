@@ -23,7 +23,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"gopkg.in/yaml.v2"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/httpx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
@@ -432,26 +431,6 @@ func (c *Operator) AdminLoggerRoute(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status": "success"}`))
 }
 
-func (c *Operator) AdminReloadRoute(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		w.Write([]byte(`{"msg": "/-/reload route only POST method supported"}`))
-		return
-	}
-
-	timer := time.NewTimer(time.Second * 15)
-	select {
-	case <-timer.C:
-		w.Write([]byte(`{"status": "failed"}`))
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-
-	case beat.ReloadChan <- true:
-		w.Write([]byte(`{"status": "success"}`))
-		return
-	}
-}
-
 func (c *Operator) AdminDispatchRoute(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -719,7 +698,6 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 # Admin Routes
 --------------
 * POST /-/logger
-* POST /-/reload
 * POST /-/dispatch
 
 # Metadata Routes
@@ -773,7 +751,6 @@ func (c *Operator) ListenAndServe() error {
 
 	// admin 路由
 	router.HandleFunc("/-/logger", c.AdminLoggerRoute)
-	router.HandleFunc("/-/reload", c.AdminReloadRoute)
 	router.HandleFunc("/-/dispatch", c.AdminDispatchRoute)
 
 	// metadata 路由

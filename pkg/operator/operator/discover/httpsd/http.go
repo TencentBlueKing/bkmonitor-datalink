@@ -17,7 +17,6 @@ import (
 	promconfig "github.com/prometheus/common/config"
 	promhttpsd "github.com/prometheus/prometheus/discovery/http"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/commonconfigs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
@@ -81,7 +80,7 @@ func (d *Discover) Start() error {
 	d.PreStart()
 
 	err := shareddiscovery.Register(d.UK(), func() (*shareddiscovery.SharedDiscovery, error) {
-		discovery, err := promhttpsd.NewDiscovery(d.opts.SDConfig, logx.New(TypeHttpSd), nil)
+		discovery, err := promhttpsd.NewDiscovery(d.opts.SDConfig, commonconfigs.NewSlogLogger("http"), nil, commonconfigs.NoopDiscovererMetrics())
 		if err != nil {
 			return nil, errors.Wrap(err, d.Type())
 		}

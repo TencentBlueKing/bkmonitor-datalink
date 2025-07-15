@@ -24,12 +24,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-kit/log"
 	"github.com/grafana/regexp"
 	"github.com/polarismesh/polaris-go"
 	"github.com/polarismesh/polaris-go/api"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	promconfig "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/discovery"
@@ -37,6 +35,7 @@ import (
 	"github.com/prometheus/prometheus/discovery/targetgroup"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/commonconfigs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -47,12 +46,6 @@ var (
 	}
 	userAgent        = "Blueking/Operator"
 	matchContentType = regexp.MustCompile(`^(?i:application\/json(;\s*charset=("utf-8"|utf-8))?)$`)
-
-	failuresCount = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "prometheus_sd_polaris_failures_total",
-			Help: "Number of Polaris service discovery refresh failures.",
-		})
 )
 
 func init() {
@@ -71,6 +64,10 @@ func (*SDConfig) Name() string {
 	return "polaris"
 }
 
+func (c *SDConfig) NewDiscovererMetrics(_ prometheus.Registerer, _ discovery.RefreshMetricsInstantiator) discovery.DiscovererMetrics {
+	return commonconfigs.NoopDiscovererMetrics()
+}
+
 func (c *SDConfig) SetDirectory(dir string) {
 	c.HTTPClientConfig.SetDirectory(dir)
 }
@@ -82,7 +79,7 @@ func (c *SDConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 }
 
 func (c *SDConfig) NewDiscoverer(opts discovery.DiscovererOptions) (discovery.Discoverer, error) {
-	return NewDiscovery(c, opts.Logger, opts.HTTPClientOptions)
+	return NewDiscovery(c, opts.HTTPClientOptions)
 }
 
 const polarisSDURLLabel = model.MetaLabelPrefix + "url"
@@ -96,11 +93,7 @@ type Discovery struct {
 	consumer        polaris.ConsumerAPI
 }
 
-func NewDiscovery(conf *SDConfig, logger log.Logger, clientOpts []promconfig.HTTPClientOption) (*Discovery, error) {
-	if logger == nil {
-		logger = log.NewNopLogger()
-	}
-
+func NewDiscovery(conf *SDConfig, clientOpts []promconfig.HTTPClientOption) (*Discovery, error) {
 	client, err := promconfig.NewClientFromConfig(conf.HTTPClientConfig, "polaris", clientOpts...)
 	if err != nil {
 		return nil, err
@@ -112,12 +105,13 @@ func NewDiscovery(conf *SDConfig, logger log.Logger, clientOpts []promconfig.HTT
 		client:          client,
 		refreshInterval: time.Duration(conf.RefreshInterval),
 	}
-	d.Discovery = refresh.NewDiscovery(
-		logger,
-		"polaris",
-		time.Duration(conf.RefreshInterval),
-		d.Refresh,
-	)
+	d.Discovery = refresh.NewDiscovery(refresh.Options{
+		Logger:              commonconfigs.NewSlogLogger("polaris"),
+		Mech:                "polaris",
+		Interval:            time.Duration(conf.RefreshInterval),
+		RefreshF:            d.Refresh,
+		MetricsInstantiator: commonconfigs.DefaultRefreshMetricsInstantiator(),
+	})
 	return d, nil
 }
 
@@ -194,7 +188,6 @@ func (d *Discovery) refresh(ctx context.Context, url string) ([]*targetgroup.Gro
 
 	rsp, err := d.client.Do(req.WithContext(ctx))
 	if err != nil {
-		failuresCount.Inc()
 		return nil, err
 	}
 	defer func() {
@@ -203,30 +196,25 @@ func (d *Discovery) refresh(ctx context.Context, url string) ([]*targetgroup.Gro
 	}()
 
 	if rsp.StatusCode != http.StatusOK {
-		failuresCount.Inc()
 		return nil, fmt.Errorf("server returned HTTP status %s", rsp.Status)
 	}
 
 	if !matchContentType.MatchString(strings.TrimSpace(rsp.Header.Get("Content-Type"))) {
-		failuresCount.Inc()
 		return nil, fmt.Errorf("unsupported content type %q", rsp.Header.Get("Content-Type"))
 	}
 
 	b, err := io.ReadAll(rsp.Body)
 	if err != nil {
-		failuresCount.Inc()
 		return nil, err
 	}
 
 	var targetGroups []*targetgroup.Group
 	if err := json.Unmarshal(b, &targetGroups); err != nil {
-		failuresCount.Inc()
 		return nil, err
 	}
 
 	for i, tg := range targetGroups {
 		if tg == nil {
-			failuresCount.Inc()
 			err = errors.New("nil target group item found")
 			return nil, err
 		}

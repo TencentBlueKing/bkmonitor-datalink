@@ -35,68 +35,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// RefreshInfluxdbRoute : update influxdb route
-func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("RefreshInfluxdbRoute Runtime panic caught: %v", err)
-		}
-	}()
-
-	db := mysql.GetDBSession().DB
-	var influxdbHostInfoList []storage.InfluxdbHostInfo
-	var influxdbClusterInfoList []storage.InfluxdbClusterInfo
-	var influxdbStorageList []storage.InfluxdbStorage
-	var accessVMRecordList []storage.AccessVMRecord
-	var influxdbTagInfoList []storage.InfluxdbTagInfo
-
-	// 更新influxdb路由信息至consul当中
-	// 更新主机信息
-	if err := storage.NewInfluxdbHostInfoQuerySet(db).All(&influxdbHostInfoList); err != nil {
-		logger.Errorf("refresh_influxdb_route query influxdb host info error, %v", err)
-	} else {
-		storage.RefreshInfluxdbHostInfoConsulClusterConfig(ctx, &influxdbHostInfoList, GetGoroutineLimit("refresh_influxdb_route"))
-	}
-
-	// 更新集群信息
-	if err := storage.NewInfluxdbClusterInfoQuerySet(db).All(&influxdbClusterInfoList); err != nil {
-		logger.Errorf("refresh_influxdb_route query influxdb cluster info error, %v", err)
-	} else {
-		storage.RefreshInfluxdbClusterInfoConsulClusterConfig(ctx, &influxdbClusterInfoList, GetGoroutineLimit("refresh_influxdb_route"))
-	}
-
-	// 更新结果表信息
-	if err := storage.NewInfluxdbStorageQuerySet(db).All(&influxdbStorageList); err != nil {
-		logger.Errorf("refresh_influxdb_route query influxdb storage error, %v", err)
-	} else {
-		storage.RefreshInfluxdbStorageConsulClusterConfig(ctx, &influxdbStorageList, GetGoroutineLimit("refresh_influxdb_route"))
-	}
-
-	// 更新vm router信息
-	if err := storage.NewAccessVMRecordQuerySet(db).All(&accessVMRecordList); err != nil {
-		logger.Errorf("refresh_influxdb_route query access vm record error, %v", err)
-	} else {
-		storage.RefreshVmRouter(ctx, &accessVMRecordList, GetGoroutineLimit("refresh_influxdb_route"))
-	}
-
-	// 更新version
-	consulInfluxdbVersionPath := fmt.Sprintf(models.InfluxdbInfoVersionConsulPathTemplate, config.StorageConsulPathPrefix, config.BypassSuffixPath)
-	if err := models.RefreshRouterVersion(ctx, consulInfluxdbVersionPath); err != nil {
-		logger.Errorf("refresh_influxdb_route refresh router version error, %v", err)
-	} else {
-		logger.Infof("influxdb router config refresh success")
-	}
-
-	// 更新tag路由信息
-	if err := storage.NewInfluxdbTagInfoQuerySet(db).All(&influxdbTagInfoList); err != nil {
-		logger.Errorf("refresh_influxdb_route query influxdb tag info error, %v", err)
-	} else {
-		storage.RefreshConsulTagConfig(ctx, &influxdbTagInfoList, GetGoroutineLimit("refresh_influxdb_route"))
-	}
-
-	return nil
-}
-
 // RefreshDatasource update datasource
 func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	tenants, err := tenant.GetTenantList()

@@ -54,7 +54,7 @@ func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(bkTenantId string, groupId ui
 	db := mysql.GetDBSession().DB
 	// 获取不存在的指标，然后批量创建
 	var metrics []customreport.TimeSeriesMetric
-	if err := customreport.NewTimeSeriesMetricQuerySet(db).Select(customreport.TimeSeriesMetricDBSchema.FieldName).BkTenantIdEq(bkTenantId).GroupIDEq(groupId).All(&metrics); err != nil {
+	if err := customreport.NewTimeSeriesMetricQuerySet(db).Select(customreport.TimeSeriesMetricDBSchema.FieldName).GroupIDEq(groupId).All(&metrics); err != nil {
 		return false, errors.Wrapf(err, "query for TimeSeriesMetric with group_id [%v] failed", groupId)
 	}
 	existFieldNameSet := mapset.NewSet[string]()
@@ -118,7 +118,6 @@ func (s *TimeSeriesMetricSvc) BulkCreateMetrics(bkTenantId string, metricMap map
 		}
 		realTableId := fmt.Sprintf("%s.%s", strings.Split(tableId, ".")[0], name)
 		tsm := customreport.TimeSeriesMetric{
-			BkTenantId:     bkTenantId,
 			GroupID:        groupId,
 			TableID:        realTableId,
 			FieldName:      name,

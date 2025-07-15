@@ -10,12 +10,14 @@
 package sql_expr
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -125,8 +127,20 @@ func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
 	return fmt.Sprintf("SHOW CREATE TABLE %s", table)
 }
 
-func (d *DorisSQLExpr) ParserSQL(_ string) ([]string, []string, []string, *set.Set[string], TimeAggregate, error) {
-	return nil, nil, nil, nil, TimeAggregate{}, fmt.Errorf("not support")
+func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (sql string, err error) {
+	opt := doris_parser.DorisListenerOption{
+		DimensionTransform: func(s string) string {
+			if as, ok := d.fieldAlias[s]; ok {
+				s = as
+			}
+			ns, _ := d.dimTransform(s)
+			return ns
+		},
+		Table: table,
+		Where: where,
+	}
+	listener := doris_parser.ParseDorisSQL(ctx, q, opt)
+	return listener.SQL()
 }
 
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段
@@ -641,8 +655,8 @@ func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
 }
 
 func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
-	if s == "" {
-		return "", false
+	if s == "" || s == "*" {
+		return s, false
 	}
 
 	fieldType := d.getFieldType(s)

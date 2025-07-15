@@ -1780,6 +1780,72 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			end:      time.UnixMilli(1750953838000),
 			expected: "SELECT COUNT(CAST(extra['queueDuration'] AS INT)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND CAST(extra['queueDuration'] AS INT) IS NOT NULL GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC LIMIT 1",
 		},
+		{
+			name: "object field eq and aggregate with sql - 1",
+			query: &metadata.Query{
+				DB:          "100968_bklog_proz_ds_analysis",
+				Measurement: sql_expr.Doris,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "log",
+							Operator:      metadata.ConditionEqual,
+							Value:         []string{"MetricsOnRPCSendBunch a big bunch happen"},
+						},
+					},
+				},
+				FieldAlias: map[string]string{
+					"pod_namespace": "__ext.pod.namespace",
+				},
+				QueryString: "test",
+				SQL: `SELECT
+  pod_namespace as ns,
+  split_part (log, '|', 3) as ct,
+  count(*)
+WHERE
+ log MATCH_ALL 'Reliable RPC called out of limit'
+group by
+  ns,
+  ct
+LIMIT
+  1000`,
+			},
+			start:    time.UnixMilli(1751958582292),
+			end:      time.UnixMilli(1752563382292),
+			expected: "SELECT CAST(__ext['pod']['namespace'] AS STRING) AS ns, split_part(`log`, '|', 3) AS ct, count(*) FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_ALL 'Reliable RPC called out of limit' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND `log` = 'test' AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `ns`, `ct` LIMIT 1000",
+		},
+		{
+			name: "object field eq and aggregate with sql - 2",
+			query: &metadata.Query{
+				DB:          "100968_bklog_proz_ds_analysis",
+				Measurement: sql_expr.Doris,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "log",
+							Operator:      metadata.ConditionEqual,
+							Value:         []string{"MetricsOnRPCSendBunch a big bunch happen"},
+						},
+					},
+				},
+				FieldAlias: map[string]string{
+					"pod_namespace": "__ext.pod.namespace",
+				},
+				QueryString: "test",
+				SQL: `SELECT
+  serverIp,
+  COUNT(*) AS log_count
+WHERE
+  log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal'
+GROUP BY
+  serverIp
+LIMIT
+  1000`,
+			},
+			start:    time.UnixMilli(1751958582292),
+			end:      time.UnixMilli(1752563382292),
+			expected: "SELECT `serverIp`, COUNT(*) AS log_count FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_PHRASE 'Error' OR `log` MATCH_PHRASE 'Fatal' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND `log` = 'test' AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `serverIp` LIMIT 1000",
+		},
 	}
 
 	for _, tc := range testCases {

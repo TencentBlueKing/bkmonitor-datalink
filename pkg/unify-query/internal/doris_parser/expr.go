@@ -75,7 +75,7 @@ func (e *Select) String() string {
 		return ""
 	}
 
-	return fmt.Sprintf("SELECT %s", strings.Join(s, ", "))
+	return strings.Join(s, ", ")
 }
 
 func (e *Select) Enter(ctx antlr.ParserRuleContext) {
@@ -155,7 +155,7 @@ func (e *Table) String() string {
 		return ""
 	}
 
-	return fmt.Sprintf("FROM %s", e.name)
+	return e.name
 }
 
 type logicListInc struct {
@@ -261,7 +261,7 @@ func (e *Where) String() string {
 		return ""
 	}
 
-	return fmt.Sprintf("WHERE %s", strings.Join(list, " "))
+	return strings.Join(list, " ")
 }
 
 func (e *Where) getOp(s string) string {
@@ -404,7 +404,7 @@ func (e *Agg) String() string {
 		return ""
 	}
 
-	return fmt.Sprintf("GROUP BY %s", strings.Join(s, ", "))
+	return strings.Join(s, ", ")
 }
 
 type Sort struct {
@@ -457,7 +457,7 @@ func (e *Sort) String() string {
 		return ""
 	}
 
-	return fmt.Sprintf("ORDER BY %s", strings.Join(s, ", "))
+	return strings.Join(s, ", ")
 }
 
 type Limit struct {

@@ -17,7 +17,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser/gen"
 )
 
-func ParseDorisSQL(ctx context.Context, q string, fieldMap, fieldAlias map[string]string) *DorisListener {
+func ParseDorisSQL(ctx context.Context, q string, opt DorisListenerOption) *DorisListener {
 	// 创建输入流
 	is := antlr.NewInputStream(q)
 
@@ -30,17 +30,7 @@ func ParseDorisSQL(ctx context.Context, q string, fieldMap, fieldAlias map[strin
 
 	// 创建解析树
 	listener := NewDorisListener(ctx, q).
-		WithOptions(
-			DorisListenerOption{
-				DimensionTransform: func(s string) string {
-					if v, ok := fieldAlias[s]; ok {
-						return v
-					}
-
-					return s
-				},
-			},
-		)
+		WithOptions(opt)
 	antlr.ParseTreeWalkerDefault.Walk(listener, parser.Statement())
 
 	return listener

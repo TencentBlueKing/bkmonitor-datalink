@@ -192,9 +192,6 @@ group by
 		"pod_namespace": "__ext.io_kubernetes_pod_namespace",
 		"serverIp":      "test_server_ip",
 	}
-	fieldMap := map[string]string{
-		"__ext.io_kubernetes_pod_namespace": "string",
-	}
 
 	ctx := context.Background()
 	for _, c := range testCases {
@@ -202,12 +199,20 @@ group by
 			ctx = metadata.InitHashID(ctx)
 
 			// antlr4 and visitor
-			listener := ParseDorisSQL(ctx, c.q, fieldMap, fieldAlias)
-			expected := listener.SQL()
+			opt := DorisListenerOption{
+				DimensionTransform: func(s string) string {
+					if _, ok := fieldAlias[s]; ok {
+						return fieldAlias[s]
+					}
+					return s
+				},
+			}
+			listener := ParseDorisSQL(ctx, c.q, opt)
+			expected, err := listener.SQL()
 			if c.err != nil {
-				assert.Equal(t, c.err, listener.Error())
+				assert.Equal(t, c.err, err)
 			} else {
-				assert.Nil(t, listener.Error())
+				assert.Nil(t, err)
 				assert.NotEmpty(t, expected)
 				assert.Equal(t, c.sql, expected)
 			}

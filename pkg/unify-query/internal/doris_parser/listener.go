@@ -32,30 +32,28 @@ type DorisListener struct {
 
 	depIndex int
 
-	exprString []string
-	err        error
+	selectClause []string
+	tableClause  string
+	whereClause  []string
+	groupClause  []string
+	sortClause   []string
+	limitClause  string
 }
 
 type DorisListenerOption struct {
 	DimensionTransform func(s string) string
-}
-
-func (l *DorisListener) writeSQL() {
-	s := l.expr.String()
-	if s == "" {
-		return
-	}
-	l.exprString = append(l.exprString, s)
+	Table              string
+	Where              string
 }
 
 func (l *DorisListener) EnterEveryRule(ctx antlr.ParserRuleContext) {
 	switch ctx.(type) {
 	case *gen.SelectClauseContext:
 		l.expr = NewSelect()
-	case *gen.FromClauseContext:
-		l.expr = NewTable()
 	case *gen.WhereClauseContext:
 		l.expr = NewWhere()
+	case *gen.FromClauseContext:
+		l.expr = NewTable()
 	case *gen.AggClauseContext:
 		l.expr = NewAgg()
 	case *gen.SortClauseContext:
@@ -80,8 +78,18 @@ func (l *DorisListener) ExitEveryRule(ctx antlr.ParserRuleContext) {
 		l.expr.Exit(ctx)
 	}
 	switch ctx.(type) {
-	case *gen.SelectClauseContext, *gen.FromClauseContext, *gen.WhereClauseContext, *gen.AggClauseContext, *gen.SortClauseContext, *gen.LimitClauseContext:
-		l.writeSQL()
+	case *gen.SelectClauseContext:
+		l.selectClause = append(l.selectClause, l.expr.String())
+	case *gen.FromClauseContext:
+		l.tableClause = l.expr.String()
+	case *gen.WhereClauseContext:
+		l.whereClause = append(l.whereClause, l.expr.String())
+	case *gen.AggClauseContext:
+		l.groupClause = append(l.groupClause, l.expr.String())
+	case *gen.SortClauseContext:
+		l.sortClause = append(l.sortClause, l.expr.String())
+	case *gen.LimitClauseContext:
+		l.limitClause = l.expr.String()
 	}
 }
 
@@ -90,15 +98,36 @@ func (l *DorisListener) WithOptions(opt DorisListenerOption) *DorisListener {
 	return l
 }
 
-func (l *DorisListener) SQL() string {
-	if len(l.exprString) == 0 {
-		l.err = fmt.Errorf("SQL 解析失败：%s", l.originSQL)
+func (l *DorisListener) SQL() (string, error) {
+	if len(l.selectClause) == 0 {
+		return "", fmt.Errorf("SQL 解析失败：%s", l.originSQL)
 	}
-	return strings.Join(l.exprString, " ")
-}
 
-func (l *DorisListener) Error() error {
-	return l.err
+	var sql strings.Builder
+	sql.WriteString(fmt.Sprintf("SELECT %s", strings.Join(l.selectClause, ", ")))
+	if l.opt.Table != "" {
+		l.tableClause = l.opt.Table
+	}
+	if l.tableClause != "" {
+		sql.WriteString(fmt.Sprintf(" FROM %s", l.tableClause))
+	}
+	if l.opt.Where != "" {
+		l.whereClause = append(l.whereClause, l.opt.Where)
+	}
+	if len(l.whereClause) > 0 {
+		sql.WriteString(fmt.Sprintf(" WHERE %s", strings.Join(l.whereClause, " AND ")))
+	}
+	if len(l.groupClause) > 0 {
+		sql.WriteString(fmt.Sprintf(" GROUP BY %s", strings.Join(l.groupClause, ", ")))
+	}
+	if len(l.sortClause) > 0 {
+		sql.WriteString(fmt.Sprintf(" ORDER BY %s", strings.Join(l.sortClause, ", ")))
+	}
+	if l.limitClause != "" {
+		sql.WriteString(fmt.Sprintf(" %s", l.limitClause))
+	}
+
+	return sql.String(), nil
 }
 
 // NewDorisListener 创建带Token流的Listener

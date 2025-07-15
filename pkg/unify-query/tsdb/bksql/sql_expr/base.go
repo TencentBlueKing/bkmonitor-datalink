@@ -10,6 +10,7 @@
 package sql_expr
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -64,7 +65,7 @@ type SQLExpr interface {
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
 	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, *set.Set[string], TimeAggregate, error)
 	// ParserSQL 解析 SQL 语句
-	ParserSQL(q string) ([]string, []string, []string, *set.Set[string], TimeAggregate, error)
+	ParserSQL(ctx context.Context, q, table, where string) (string, error)
 	// DescribeTableSQL 返回当前表结构
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
@@ -134,8 +135,8 @@ func (d *DefaultSQLExpr) WithFieldsMap(fieldMap map[string]string) SQLExpr {
 	return d
 }
 
-func (d *DefaultSQLExpr) ParserSQL(_ string) ([]string, []string, []string, *set.Set[string], TimeAggregate, error) {
-	return nil, nil, nil, nil, TimeAggregate{}, nil
+func (d *DefaultSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (string, error) {
+	return "", nil
 }
 
 func (d *DefaultSQLExpr) WithKeepColumns(cols []string) SQLExpr {

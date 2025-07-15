@@ -23,6 +23,7 @@ type Expr interface {
 	String() string
 	Enter(ctx antlr.ParserRuleContext)
 	Exit(ctx antlr.ParserRuleContext)
+	WithDimensionEncode(func(s string) string) Expr
 }
 
 type defaultExpr struct {
@@ -44,10 +45,24 @@ func (d *defaultExpr) String() string {
 	return ""
 }
 
+func (d *defaultExpr) WithDimensionEncode(func(s string) string) Expr {
+	return d
+}
+
 type Select struct {
 	defaultExpr
 	Field         *Field
 	FieldListExpr []*Field
+	encode        func(s string) string
+}
+
+func NewSelect() *Select {
+	return &Select{}
+}
+
+func (e *Select) WithDimensionEncode(fn func(s string) string) Expr {
+	e.encode = fn
+	return e
 }
 
 func (e *Select) String() string {
@@ -64,26 +79,56 @@ func (e *Select) String() string {
 }
 
 func (e *Select) Enter(ctx antlr.ParserRuleContext) {
-	switch ctx.(type) {
+	switch v := ctx.(type) {
 	case *gen.NamedExpressionContext:
-		e.Field = &Field{}
+		e.Field = NewField(e.encode)
+	default:
+		sf := e.Field
+		if sf != nil {
+			switch ctx.(type) {
+			case *gen.CastContext:
+				sf.SelectFunc = NewSelectFunc()
+				sf.SetFuncName("CAST")
+			case *gen.CastDataTypeContext:
+				if sf.SelectFunc != nil {
+					sf.SelectFunc.As = ctx.GetText()
+				}
+			case *gen.FunctionCallContext:
+				sf.SelectFunc = NewSelectFunc()
+			case *gen.FunctionNameIdentifierContext:
+				sf.SetFuncName(ctx.GetText())
+			case *gen.ColumnReferenceContext:
+				sf.Name = ctx.GetText()
+			case *gen.StarContext:
+				sf.Name = "*"
+			case *gen.ConstantDefaultContext:
+				if sf.SelectFunc != nil {
+					sf.SelectFunc.Arg = append(sf.SelectFunc.Arg, v.GetText())
+				}
+			case *gen.IdentifierOrTextContext:
+				sf.As = v.GetText()
+			}
+		}
 	}
 }
 
 func (e *Select) Exit(ctx antlr.ParserRuleContext) {
-	switch v := ctx.(type) {
-	case *gen.FunctionNameIdentifierContext:
-		e.Field.FuncName = v.GetText()
-	case *gen.IdentifierOrTextContext:
-		e.Field.As = v.GetText()
-	case *gen.ValueExpressionDefaultContext:
-		// 多层重叠的情况下忽略，避免覆盖
-		if e.Field.Name == "" {
-			e.Field.Name = v.GetText()
-		}
+	switch ctx.(type) {
 	case *gen.NamedExpressionContext:
 		e.FieldListExpr = append(e.FieldListExpr, e.Field)
-		e.Field = &Field{}
+		e.Field = NewField(e.encode)
+	default:
+		sf := e.Field
+		if sf != nil {
+			switch ctx.(type) {
+			case *gen.FunctionCallContext, *gen.CastContext:
+				if sf.SelectFunc != nil {
+					sf.SelectFunc.Name = sf.GetFuncName()
+					sf.SelectFuncs = append(sf.SelectFuncs, sf.SelectFunc)
+					sf.SelectFunc = NewSelectFunc()
+				}
+			}
+		}
 	}
 
 	return
@@ -92,6 +137,10 @@ func (e *Select) Exit(ctx antlr.ParserRuleContext) {
 type Table struct {
 	defaultExpr
 	name string
+}
+
+func NewTable() *Table {
+	return &Table{}
 }
 
 func (e *Table) Exit(ctx antlr.ParserRuleContext) {
@@ -159,11 +208,29 @@ func (l *logicListInc) Inc(e Expr) {
 type Where struct {
 	defaultExpr
 
-	cur *Condition
+	encode func(s string) string
+	cur    *Condition
 
 	logic *logicListInc
 
 	conditions []Expr
+}
+
+func NewWhere() *Where {
+	return &Where{
+		cur: &Condition{
+			Field: NewField(nil),
+		},
+		logic: &logicListInc{},
+	}
+}
+
+func (e *Where) WithDimensionEncode(fn func(s string) string) Expr {
+	e.encode = fn
+	if e.cur != nil && e.cur.Field != nil {
+		e.cur.Field.WithDimensionEncode(fn)
+	}
+	return e
 }
 
 func (e *Where) addCondition(condition Expr) {
@@ -213,9 +280,38 @@ func (e *Where) Enter(ctx antlr.ParserRuleContext) {
 		e.addCondition(&Logical{
 			Name: strings.ToUpper(v.GetOperator().GetText()),
 		})
-	case *gen.PredicatedContext:
+	case *gen.ComparisonContext:
 		e.cur = &Condition{
-			Field: &Field{},
+			Field: NewField(e.encode),
+		}
+	default:
+		if e.cur != nil && e.cur.Field != nil {
+			cur := e.cur
+			sf := cur.Field
+			switch ctx.(type) {
+			case *gen.ColumnReferenceContext:
+				sf.Name = ctx.GetText()
+			case *gen.IdentifierOrTextContext:
+				sf.As = v.GetText()
+			case *gen.CastContext:
+				sf.SelectFunc = NewSelectFunc()
+				sf.SelectFunc.Name = "CAST"
+			case *gen.CastDataTypeContext:
+				if sf.SelectFunc != nil {
+					sf.SelectFunc.As = ctx.GetText()
+				}
+			case *gen.ConstantDefaultContext:
+				if sf.SelectFunc != nil {
+					sf.SelectFunc.Arg = append(sf.SelectFunc.Arg, v.GetText())
+				}
+			case *gen.ComparisonOperatorContext, *gen.PredicateContext:
+				cur.Op = ctx.GetText()
+			case *gen.ValueExpressionDefaultContext:
+				// 只有拿到 op 的 value 才是值
+				if cur.Op != "" {
+					cur.Value = ctx.GetText()
+				}
+			}
 		}
 	}
 }
@@ -226,19 +322,35 @@ func (e *Where) Exit(ctx antlr.ParserRuleContext) {
 		e.addCondition(&Paren{
 			Right: true,
 		})
-	case *gen.PredicatedContext:
+	case *gen.ComparisonContext:
 		if e.cur != nil {
 			e.addCondition(e.cur)
-			e.cur = nil
+			e.cur = &Condition{
+				Field: NewField(e.encode),
+			}
 		}
-	case *gen.ColumnReferenceContext:
-		e.cur.Field.Name = ctx.GetText()
-	case *gen.ComparisonOperatorContext:
-		e.cur.Op = ctx.GetText()
-	case *gen.ConstantDefaultContext:
-		e.cur.Value = ctx.GetText()
+		// 兼容特殊查询操作符，op 操作符需要修改
 	case *gen.PredicateContext:
-		e.cur.Op = e.getOp(ctx.GetText())
+		if e.cur != nil {
+			e.cur.Op = e.getOp(ctx.GetText())
+			e.addCondition(e.cur)
+			e.cur = &Condition{
+				Field: NewField(e.encode),
+			}
+		}
+	default:
+		cur := e.cur
+		if cur != nil {
+			sf := cur.Field
+			switch ctx.(type) {
+			case *gen.CastContext:
+				sf.SelectFuncs = append(sf.SelectFuncs, sf.SelectFunc)
+				sf.SelectFunc = NewSelectFunc()
+			case *gen.FunctionCallContext:
+				sf.SelectFuncs = append(sf.SelectFuncs, sf.SelectFunc)
+				sf.SelectFunc = NewSelectFunc()
+			}
+		}
 	}
 }
 
@@ -247,19 +359,28 @@ type Agg struct {
 
 	Field         *Field
 	FieldListExpr []*Field
+
+	encode func(s string) string
+}
+
+func NewAgg() *Agg {
+	return &Agg{}
+}
+
+func (e *Agg) WithDimensionEncode(fn func(s string) string) Expr {
+	e.encode = fn
+	return e
 }
 
 func (e *Agg) Enter(ctx antlr.ParserRuleContext) {
 	switch ctx.(type) {
 	case *gen.ExpressionContext:
-		e.Field = &Field{}
+		e.Field = NewField(e.encode)
 	}
 }
 
 func (e *Agg) Exit(ctx antlr.ParserRuleContext) {
 	switch v := ctx.(type) {
-	case *gen.FunctionNameIdentifierContext:
-		e.Field.FuncName = v.GetText()
 	case *gen.IdentifierOrTextContext:
 		e.Field.As = v.GetText()
 	case *gen.ValueExpressionDefaultContext:
@@ -269,7 +390,7 @@ func (e *Agg) Exit(ctx antlr.ParserRuleContext) {
 		}
 	case *gen.ExpressionContext:
 		e.FieldListExpr = append(e.FieldListExpr, e.Field)
-		e.Field = &Field{}
+		e.Field = NewField(e.encode)
 	}
 }
 
@@ -291,19 +412,28 @@ type Sort struct {
 
 	Field         *Field
 	FieldListExpr []*Field
+
+	encode func(s string) string
+}
+
+func NewSort() *Sort {
+	return &Sort{}
+}
+
+func (e *Sort) WithDimensionEncode(fn func(s string) string) Expr {
+	e.encode = fn
+	return e
 }
 
 func (e *Sort) Enter(ctx antlr.ParserRuleContext) {
 	switch ctx.(type) {
 	case *gen.ExpressionContext:
-		e.Field = &Field{}
+		e.Field = NewField(e.encode)
 	}
 }
 
 func (e *Sort) Exit(ctx antlr.ParserRuleContext) {
 	switch v := ctx.(type) {
-	case *gen.FunctionNameIdentifierContext:
-		e.Field.FuncName = v.GetText()
 	case *gen.IdentifierOrTextContext:
 		e.Field.As = v.GetText()
 	case *gen.ValueExpressionDefaultContext:
@@ -313,7 +443,7 @@ func (e *Sort) Exit(ctx antlr.ParserRuleContext) {
 		}
 	case *gen.ExpressionContext:
 		e.FieldListExpr = append(e.FieldListExpr, e.Field)
-		e.Field = &Field{}
+		e.Field = NewField(e.encode)
 	}
 }
 
@@ -335,6 +465,10 @@ type Limit struct {
 
 	offset string
 	limit  string
+}
+
+func NewLimit() *Limit {
+	return &Limit{}
 }
 
 func (e *Limit) Exit(ctx antlr.ParserRuleContext) {
@@ -361,18 +495,78 @@ func (e *Limit) String() string {
 	return strings.Join(s, " ")
 }
 
+type SelectFunc struct {
+	Name string
+	Arg  []string
+	As   string
+}
+
+func NewSelectFunc() *SelectFunc {
+	return &SelectFunc{
+		Arg: make([]string, 0),
+	}
+}
+
 type Field struct {
 	defaultExpr
-	Name     string
-	As       string
-	FuncName string
+	Name string
+	As   string
+
+	encode func(s string) string
+
+	FuncsName []string
+
+	SelectFunc  *SelectFunc
+	SelectFuncs []*SelectFunc
+}
+
+func NewField(fn func(s string) string) *Field {
+	return (&Field{
+		SelectFunc: NewSelectFunc(),
+	}).WithDimensionEncode(fn)
+}
+
+func (e *Field) WithDimensionEncode(fn func(s string) string) *Field {
+	e.encode = fn
+	return e
+}
+
+func (e *Field) SetFuncName(name string) {
+	e.FuncsName = append(e.FuncsName, name)
+}
+
+func (e *Field) GetFuncName() (name string) {
+	if len(e.FuncsName) == 0 {
+		return name
+	}
+
+	lastNum := len(e.FuncsName) - 1
+	name = e.FuncsName[lastNum]
+	e.FuncsName = e.FuncsName[0:lastNum]
+	return name
 }
 
 func (e *Field) String() string {
-	s := e.Name
-	if e.FuncName != "" {
-		s = fmt.Sprintf("%s(%s)", e.FuncName, s)
+	var s string
+	if e.encode != nil {
+		s = e.encode(e.Name)
+	} else {
+		s = e.Name
 	}
+	for _, sf := range e.SelectFuncs {
+		var fieldName string
+		if sf.Name == "CAST" {
+			fieldName = s
+			if len(sf.Arg) > 0 {
+				fieldName = fmt.Sprintf("%s[%s]", fieldName, strings.Join(sf.Arg, "]["))
+			}
+			fieldName = fmt.Sprintf("%s AS %s", fieldName, sf.As)
+		} else {
+			fieldName = strings.Join(append([]string{s}, sf.Arg...), ", ")
+		}
+		s = fmt.Sprintf("%s(%s)", sf.Name, fieldName)
+	}
+
 	if e.As != "" {
 		s = fmt.Sprintf("%s AS %s", s, e.As)
 	}

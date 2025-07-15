@@ -17,6 +17,7 @@ import (
 	antlr "github.com/antlr4-go/antlr/v4"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser/gen"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 type DorisListener struct {
@@ -50,31 +51,29 @@ func (l *DorisListener) writeSQL() {
 func (l *DorisListener) EnterEveryRule(ctx antlr.ParserRuleContext) {
 	switch ctx.(type) {
 	case *gen.SelectClauseContext:
-		l.expr = &Select{}
+		l.expr = NewSelect()
 	case *gen.FromClauseContext:
-		l.expr = &Table{}
+		l.expr = NewTable()
 	case *gen.WhereClauseContext:
-		l.expr = &Where{
-			logic: &logicListInc{},
-		}
+		l.expr = NewWhere()
 	case *gen.AggClauseContext:
-		l.expr = &Agg{}
+		l.expr = NewAgg()
 	case *gen.SortClauseContext:
-		l.expr = &Sort{}
+		l.expr = NewSort()
 	case *gen.LimitClauseContext:
-		l.expr = &Limit{}
+		l.expr = NewLimit()
 	}
 
 	l.depIndex++
-	fmt.Printf("%d,ENTER,%T,%s\n", l.depIndex, ctx, ctx.GetText())
-
+	log.Debugf(l.ctx, `"%d","ENTER","%T","%s"`, l.depIndex, ctx, ctx.GetText())
 	if l.expr != nil {
+		l.expr.WithDimensionEncode(l.opt.DimensionTransform)
 		l.expr.Enter(ctx)
 	}
 }
 
 func (l *DorisListener) ExitEveryRule(ctx antlr.ParserRuleContext) {
-	fmt.Printf("%d,EXIT,%T,%s\n", l.depIndex, ctx, ctx.GetText())
+	log.Debugf(l.ctx, `"%d","EXIT","%T","%s"`, l.depIndex, ctx, ctx.GetText())
 	l.depIndex--
 
 	if l.expr != nil {

@@ -33,8 +33,8 @@ func TestParseWithFieldAlias(t *testing.T) {
 			q: `select pod_namespace, 
 count(*) AS log_count 
 from t_table 
-where log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY serverIp LIMIT 1000`,
-			sql: `SELECT __ext.io_kubernetes_pod_namespace, count(*) AS log_count FROM t_table WHERE log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY serverIp LIMIT 1000`,
+where log MATCH_PHRASE 'Error' OR serverIp MATCH_PHRASE 'Fatal' GROUP BY serverIp order by pod_namespace LIMIT 1000`,
+			sql: `SELECT __ext.io_kubernetes_pod_namespace, count(*) AS log_count FROM t_table WHERE log MATCH_PHRASE 'Error' OR test_server_ip MATCH_PHRASE 'Fatal' GROUP BY test_server_ip ORDER BY __ext.io_kubernetes_pod_namespace LIMIT 1000`,
 		},
 		{
 			name: "test-2",
@@ -54,10 +54,12 @@ group by
   ct
 LIMIT
   1000`,
+			sql: "SELECT JSON_EXTRACT_STRING(__ext, '$.io_kubernetes_pod_namespace') AS ns, split_part(log, '|', 3) AS ct, count(*) WHERE log MATCH_ALL 'Reliable RPC called out of limit' GROUP BY ns, ct LIMIT 1000",
 		},
 		{
 			name: "test-4",
 			q:    "SELECT pod_namespace AS ns, split_part (log, '|', 3) AS ct, count(*) FROM `table` WHERE log MATCH_ALL 'Reliable RPC called out of limit' group by ns, ct LIMIT 1000",
+			sql:  "SELECT __ext.io_kubernetes_pod_namespace AS ns, split_part(log, '|', 3) AS ct, count(*) FROM `table` WHERE log MATCH_ALL 'Reliable RPC called out of limit' GROUP BY ns, ct LIMIT 1000",
 		},
 		{
 			name: "test-5",
@@ -72,6 +74,7 @@ group by
   ct
 LIMIT
   1000`,
+			sql: "SELECT JSON_EXTRACT_STRING(__ext, '$.io_kubernetes_pod_namespace') AS ns, split_part(log, '|', 3) AS ct, count(*) WHERE log MATCH_ALL 'Reliable RPC called out of limit' GROUP BY ns, ct LIMIT 1000",
 		},
 		{
 			name: "test-6",
@@ -85,7 +88,7 @@ GROUP BY
 LIMIT
   1000
 `,
-			sql: `SELECT serverIp, COUNT(*) AS log_count WHERE log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY serverIp LIMIT 1000`,
+			sql: `SELECT test_server_ip, COUNT(*) AS log_count WHERE log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY test_server_ip LIMIT 1000`,
 		},
 		{
 			name: "test-7",
@@ -105,7 +108,7 @@ LIMIT
 		{
 			name: "test-10",
 			q:    `select pod_namespace, count(*) as _value from pod_namespace where city LIKE '%c%' and pod_namespace != 'pod_namespace_1' or (pod_namespace='5' or a > 4) group by serverIp, abc order by time limit 1000 offset 999`,
-			sql:  `SELECT pod_namespace, count(*) AS _value FROM pod_namespace WHERE city LIKE '%c%' AND pod_namespace != 'pod_namespace_1' OR ( pod_namespace = '5' OR a > 4 ) GROUP BY serverIp, abc ORDER BY time LIMIT 1000 OFFSET 999`,
+			sql:  `SELECT __ext.io_kubernetes_pod_namespace, count(*) AS _value FROM pod_namespace WHERE city LIKE '%c%' AND __ext.io_kubernetes_pod_namespace != 'pod_namespace_1' OR ( __ext.io_kubernetes_pod_namespace = '5' OR a > 4 ) GROUP BY test_server_ip, abc ORDER BY time LIMIT 1000 OFFSET 999`,
 		},
 		{
 			name: "test-11",
@@ -126,6 +129,61 @@ LIMIT
 			name: "test-14",
 			q:    `select * from my_db where ((dim_1 = 'val_1' or dim_4 > 1) and (dim_2 = 'val_2' or (dim_3 = 'val_3' or t > 1)))`,
 			sql:  `SELECT * FROM my_db WHERE ( ( dim_1 = 'val_1' OR dim_4 > 1 ) AND ( dim_2 = 'val_2' OR ( dim_3 = 'val_3' OR t > 1 ) ) )`,
+		},
+		{
+			name: "test-15",
+			q: `select
+  CAST(__ext ['io_kubernetes_pod_namespace'] AS TEXT) as ns,
+  split_part (
+    split_part (split_part (log, 'Object:', 2), 'Func:', 1),
+    ':',
+    1
+  ) as Obj,
+  split_part (
+    split_part (split_part (log, 'Object:', 2), 'Func:', 2),
+    'BunchNum:',
+    1
+  ) as FuncName,
+  max(
+    cast(
+      split_part (
+        split_part (
+          split_part (split_part (log, 'Object:', 2), 'Func:', 2),
+          'BunchNum:',
+          2
+        ),
+        ' exceed',
+        1
+      ) as bigint
+    )
+  ) as BNum
+group by
+  ns,
+  Obj,
+  FuncName limit 10000`,
+			sql: `SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, split_part(split_part(split_part(log, 'Object:', 2), 'Func:', 1), ':', 1) AS Obj, split_part(split_part(split_part(log, 'Object:', 2), 'Func:', 2), 'BunchNum:', 1) AS FuncName, max(CAST(split_part(split_part(split_part(split_part(log, 'Object:', 2), 'Func:', 2), 'BunchNum:', 2), ' exceed', 1) AS bigint)) AS BNum GROUP BY ns, Obj, FuncName LIMIT 10000`,
+		},
+		{
+			name: "test-17",
+			q: `SELECT max(
+    cast(
+      split_part (
+        split_part (
+          split_part (split_part (log, 'Object:', 2), 'Func:', 2),
+          'BunchNum:',
+          2
+        ),
+        ' exceed',
+        1
+      ) as bigint
+    )
+  ) as BNum`,
+			sql: `SELECT max(CAST(split_part(split_part(split_part(split_part(log, 'Object:', 2), 'Func:', 2), 'BunchNum:', 2), ' exceed', 1) AS bigint)) AS BNum`,
+		},
+		{
+			name: "test-16",
+			q:    `SELECT * WHERE CAST(__ext['io_kubernetes_pod_namespace']['extra.name'] AS TEXT) != 'test' AND abc != 'test'`,
+			sql:  `SELECT * WHERE CAST(__ext['io_kubernetes_pod_namespace']['extra.name'] AS TEXT) != 'test' AND abc != 'test'`,
 		},
 	}
 

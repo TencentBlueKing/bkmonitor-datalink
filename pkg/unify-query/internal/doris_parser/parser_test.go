@@ -190,6 +190,16 @@ group by
 			q:    "SELECT * WHERE name IN ('test', 'test-1')",
 			sql:  "SELECT * WHERE name IN ('test','test-1')",
 		},
+		{
+			name: "test-18",
+			q:    "SELECT a,b",
+			sql:  "SELECT a, b",
+		},
+		{
+			name: "test-18",
+			q:    "SELECT a.b.c,b.a",
+			sql:  "SELECT a.b.c, b.a",
+		},
 	}
 
 	mock.Init()

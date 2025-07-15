@@ -101,6 +101,13 @@ func (e *Select) Enter(ctx antlr.ParserRuleContext) {
 				sf.Name = ctx.GetText()
 			case *gen.StarContext:
 				sf.Name = "*"
+			case *gen.IdentifierContext:
+				if sf.As == "" && sf.Name != "" {
+					aliasName := ctx.GetText()
+					if aliasName != sf.Name {
+						sf.ExtraNames = append(sf.ExtraNames, aliasName)
+					}
+				}
 			case *gen.ConstantDefaultContext:
 				if sf.SelectFunc != nil {
 					sf.SelectFunc.Arg = append(sf.SelectFunc.Arg, v.GetText())
@@ -509,8 +516,10 @@ func NewSelectFunc() *SelectFunc {
 
 type Field struct {
 	defaultExpr
-	Name string
-	As   string
+	Name       string
+	ExtraNames []string
+
+	As string
 
 	encode func(s string) string
 
@@ -547,12 +556,11 @@ func (e *Field) GetFuncName() (name string) {
 }
 
 func (e *Field) String() string {
-	var s string
+	s := strings.Join(append([]string{e.Name}, e.ExtraNames...), ".")
 	if e.encode != nil {
-		s = e.encode(e.Name)
-	} else {
-		s = e.Name
+		s = e.encode(s)
 	}
+
 	for _, sf := range e.SelectFuncs {
 		var fieldName string
 		if sf.Name == "CAST" {

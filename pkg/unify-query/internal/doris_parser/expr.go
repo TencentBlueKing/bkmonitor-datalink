@@ -267,7 +267,7 @@ func (e *Where) String() string {
 func (e *Where) getOp(s string) string {
 	// 删除掉值结尾的就是操作符
 	// TODO: 找到可以直接获取 op 的方式
-	return strings.TrimSuffix(s, e.cur.Value)
+	return strings.TrimSuffix(s, e.cur.GetValue())
 }
 
 func (e *Where) Enter(ctx antlr.ParserRuleContext) {
@@ -309,7 +309,7 @@ func (e *Where) Enter(ctx antlr.ParserRuleContext) {
 			case *gen.ValueExpressionDefaultContext:
 				// 只有拿到 op 的 value 才是值
 				if cur.Op != "" {
-					cur.Value = ctx.GetText()
+					cur.Values = append(cur.Values, ctx.GetText())
 				}
 			}
 		}
@@ -575,16 +575,30 @@ func (e *Field) String() string {
 
 type Condition struct {
 	defaultExpr
-	Field *Field
-	Op    string
-	Value string
+	Field  *Field
+	Op     string
+	Values []string
+}
+
+func (e *Condition) GetValue() string {
+	var val string
+	if len(e.Values) > 0 {
+		if len(e.Values) > 1 {
+			val = fmt.Sprintf("(%s)", strings.Join(e.Values, ","))
+		} else {
+			val = e.Values[0]
+		}
+	}
+
+	return val
 }
 
 func (e *Condition) String() string {
 	if e == nil || e.Field == nil {
 		return ""
 	}
-	s := fmt.Sprintf("%s %s %s", e.Field.String(), e.Op, e.Value)
+
+	s := fmt.Sprintf("%s %s %s", e.Field.String(), e.Op, e.GetValue())
 	return s
 }
 

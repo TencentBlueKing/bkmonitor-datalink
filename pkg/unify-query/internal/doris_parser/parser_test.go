@@ -185,6 +185,11 @@ group by
 			q:    `SELECT * WHERE CAST(__ext['io_kubernetes_pod_namespace']['extra.name'] AS TEXT) != 'test' AND abc != 'test'`,
 			sql:  `SELECT * WHERE CAST(__ext['io_kubernetes_pod_namespace']['extra.name'] AS TEXT) != 'test' AND abc != 'test'`,
 		},
+		{
+			name: "test-17",
+			q:    "SELECT * WHERE name IN ('test', 'test-1')",
+			sql:  "SELECT * WHERE name IN ('test','test-1')",
+		},
 	}
 
 	mock.Init()

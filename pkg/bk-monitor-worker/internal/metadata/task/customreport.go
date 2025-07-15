@@ -77,7 +77,7 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 
 	// 收集需要更新推送redis的table_id
 	tableIdChan := make(chan [2]string, GetGoroutineLimit("refresh_time_series_metric"))
-	var updatedTableIds map[string][]string
+	updatedTableIds := make(map[string][]string)
 	wgReceive := sync.WaitGroup{}
 	wgReceive.Add(1)
 	go func(wg *sync.WaitGroup) {
@@ -88,7 +88,11 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 				break
 			}
 			bkTenantId := tableId[0]
-			updatedTableIds[bkTenantId] = append(updatedTableIds[bkTenantId], tableId[1])
+			if _, ok := updatedTableIds[bkTenantId]; !ok {
+				updatedTableIds[bkTenantId] = make([]string, 0)
+			} else {
+				updatedTableIds[bkTenantId] = append(updatedTableIds[bkTenantId], tableId[1])
+			}
 		}
 	}(&wgReceive)
 	ch := make(chan struct{}, GetGoroutineLimit("refresh_time_series_metric"))

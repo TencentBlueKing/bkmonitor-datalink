@@ -428,7 +428,11 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 		where = fmt.Sprintf("(%s)", where)
 	}
 
-	return f.expr.ParserSQL(f.ctx, f.query.SQL, table, where)
+	sql, err = f.expr.ParserSQL(f.ctx, f.query.SQL, table, where)
+	span.Set("query-sql", f.query.SQL)
+
+	span.Set("sql", sql)
+	return
 }
 
 func (f *QueryFactory) SQL() (sql string, err error) {

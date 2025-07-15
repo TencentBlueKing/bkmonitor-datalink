@@ -118,7 +118,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			name := "[task] PushAndPublishSpaceRouterInfo result_table_detail"
 			var tableIdList []string
 			var rtList []resulttable.ResultTable
-			if err = resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).DefaultStorageEq("influxdb").IsEnableEq(true).IsDeletedEq(false).All(&rtList); err != nil {
+			if err = resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).BkTenantIdEq(bkTenantId).DefaultStorageEq("influxdb").IsEnableEq(true).IsDeletedEq(false).All(&rtList); err != nil {
 				logger.Errorf("%s error, %s", name, err)
 				return
 			}

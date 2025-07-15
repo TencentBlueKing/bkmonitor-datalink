@@ -150,9 +150,19 @@ type TimeSync struct {
 	QueryTimeout  string `yaml:"query_timeout"`
 }
 
+// QCloudMonitor 腾讯云监控采集配置
 type QCloudMonitor struct {
+	// Enabled 是否启用
 	Enabled bool `yaml:"enabled"`
+
+	// Private 是否为内部模式
 	Private bool `yaml:"private"`
+
+	// TargetNamespaces namespace 匹配白名单
+	TargetNamespaces []string `yaml:"target_namespaces"`
+
+	// DenyTargetNamespaces namespace 匹配黑名单
+	DenyTargetNamespaces []string `yaml:"deny_target_namespaces"`
 }
 
 // Config Operator 进程主配置

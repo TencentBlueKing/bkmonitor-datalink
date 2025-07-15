@@ -10,17 +10,41 @@
 package instance
 
 import (
+	"sort"
+	"strconv"
 	"strings"
+
+	"k8s.io/utils/pointer"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 )
 
-type Request struct {
-	Namespace string              `json:"namespace"`
-	SecretId  string              `json:"secretId"`
-	SecretKey string              `json:"secretKey"`
-	Region    string              `json:"region"`
-	Filters   map[string][]string `json:"filters"`
+type Parameters struct {
+	Namespace string   `json:"namespace"`
+	SecretId  string   `json:"secretId"`
+	SecretKey string   `json:"secretKey"`
+	Region    string   `json:"region"`
+	Tags      []Tag    `json:"tags"`
+	Filters   []Filter `json:"filters"`
+}
+
+type Tag struct {
+	Name   string   `json:"name"`
+	Values []string `json:"values"`
+	Fuzzy  bool     `json:"fuzzy"`
+}
+
+func (t Tag) Key() string {
+	return "tag:" + t.Name
+}
+
+type Filter struct {
+	Name   string   `json:"name"`
+	Values []string `json:"values"`
+}
+
+func (f Filter) LowerKey() string {
+	return strings.ToLower(f.Name)
 }
 
 func pickEndpoint(ep string) string {
@@ -37,20 +61,68 @@ func pickEndpoint(ep string) string {
 	return strings.Join(dst, ".")
 }
 
+func toPointerStrings(ss []string) []*string {
+	lst := make([]*string, 0, len(ss))
+	for _, s := range ss {
+		lst = append(lst, pointer.String(s))
+	}
+	return lst
+}
+
+func toPointerStringsAt(ss []string, idx int) *string {
+	lst := toPointerStrings(ss)
+	if len(lst) <= 0 || idx >= len(lst) {
+		return nil
+	}
+	return lst[idx]
+}
+
+func toPointerInt64At(ss []string, idx int) *int64 {
+	s := toPointerStringsAt(ss, idx)
+	if s == nil {
+		return nil
+	}
+
+	i, err := strconv.Atoi(*s)
+	if err != nil {
+		return nil
+	}
+	return pointer.Int64(int64(i))
+}
+
+// Querier 产品示例查询接口
 type Querier interface {
-	Query(r *Request) ([]any, error)
+	// Query 查询接口
+	Query(p *Parameters) ([]any, error)
+
+	// Filters 支持的 filters 字段
+	Filters() []string
+
+	// ParametersJSON 返回 Parameters JSON 字符串
+	ParametersJSON(p *Parameters) (string, error)
 }
 
 var queriers = make(map[string]Querier)
 
-func Register(namespace string, q Querier) {
-	if _, ok := queriers[namespace]; ok {
-		panic("duplicate register querier")
+func Register(q Querier, namespaces ...string) {
+	for _, namespace := range namespaces {
+		if _, ok := queriers[namespace]; ok {
+			panic("duplicate register querier")
+		}
+		queriers[namespace] = q
 	}
-	queriers[namespace] = q
 }
 
 func Get(namespace string) (Querier, bool) {
 	q, ok := queriers[namespace]
 	return q, ok
+}
+
+func Namespaces() []string {
+	ns := make([]string, 0, len(queriers))
+	for n := range queriers {
+		ns = append(ns, n)
+	}
+	sort.Strings(ns)
+	return ns
 }

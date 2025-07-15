@@ -601,27 +601,116 @@ func (c *Operator) QCloudMonitorInstancesRoute(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var request instance.Request
-	if err := json.Unmarshal(body, &request); err != nil {
+	var params instance.Parameters
+	if err := json.Unmarshal(body, &params); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	q, ok := instance.Get(request.Namespace)
+	q, ok := instance.Get(params.Namespace)
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(fmt.Sprintf("{\"msg\": \"namespace %s not found\"}", request.Namespace)))
+		w.Write([]byte(fmt.Sprintf("{\"msg\":\"namespace (%s) not found\"}", params.Namespace)))
 		return
 	}
 
-	data, err := q.Query(&request)
+	data, err := q.Query(&params)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(fmt.Sprintf("{\"msg\": \"%s\"}", err)))
+		w.Write([]byte(fmt.Sprintf("{\"msg\":\"%s\"}", err)))
 		return
 	}
 
-	b, _ := json.Marshal(data)
+	type R struct {
+		Total int   `json:"total"`
+		Data  []any `json:"data"`
+	}
+	b, _ := json.Marshal(R{
+		Total: len(data),
+		Data:  data,
+	})
+	w.Write(b)
+}
+
+func (c *Operator) QCloudMonitorNamespacesRoute(w http.ResponseWriter, _ *http.Request) {
+	b, _ := json.Marshal(instance.Namespaces())
+	w.Write(b)
+}
+
+func (c *Operator) QCloudMonitorParametersRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	type Params struct {
+		Namespace string            `json:"namespace"`
+		Tags      []instance.Tag    `json:"tags"`
+		Filters   []instance.Filter `json:"filters"`
+	}
+	var params Params
+	if err := json.Unmarshal(body, &params); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	q, ok := instance.Get(params.Namespace)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(fmt.Sprintf("{\"msg\":\"namespace (%s) not found\"}", params.Namespace)))
+		return
+	}
+
+	b, _ := q.ParametersJSON(&instance.Parameters{
+		Namespace: params.Namespace,
+		Tags:      params.Tags,
+		Filters:   params.Filters,
+	})
+	w.Write([]byte(b))
+}
+
+func (c *Operator) QCloudMonitorInstancesFiltersRoute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	type Params struct {
+		Namespace string `json:"namespace"`
+	}
+	var params Params
+	if err := json.Unmarshal(body, &params); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	q, ok := instance.Get(params.Namespace)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(fmt.Sprintf("{\"msg\":\"namespace (%s) not found\"}", params.Namespace)))
+		return
+	}
+
+	type R struct {
+		Namespace string   `json:"namespace"`
+		Filters   []string `json:"filters"`
+	}
+	b, _ := json.Marshal(R{
+		Namespace: params.Namespace,
+		Filters:   q.Filters(),
+	})
 	w.Write(b)
 }
 
@@ -644,6 +733,13 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /relation/metrics
 * GET /rule/metrics
 * GET /configs
+
+# QCloudMonitor Routes
+----------------------
+* GET /qcloudmonitor/namespaces
+* POST /qcloudmonitor/parameters
+* POST /qcloudmonitor/instances
+* POST /qcloudmonitor/instances/filters
 
 # Check Routes
 --------------
@@ -692,7 +788,10 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/configs", c.ConfigsRoute)
 
 	// qcloudmonitor 路由
+	router.HandleFunc("/qcloudmonitor/namespaces", c.QCloudMonitorNamespacesRoute)
+	router.HandleFunc("/qcloudmonitor/parameters", c.QCloudMonitorParametersRoute)
 	router.HandleFunc("/qcloudmonitor/instances", c.QCloudMonitorInstancesRoute)
+	router.HandleFunc("/qcloudmonitor/instances/filters", c.QCloudMonitorInstancesFiltersRoute)
 
 	// check 路由
 	router.HandleFunc("/check", c.CheckRoute)

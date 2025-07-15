@@ -11,28 +11,28 @@ package instance
 
 import (
 	"github.com/pkg/errors"
-	clb "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/clb/v20180317"
+	cdn "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cdn/v20180606"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
 	"k8s.io/utils/pointer"
 )
 
 const (
-	endpointLB = "clb.tencentcloudapi.com"
+	endpointCDN = "cdn.tencentcloudapi.com"
 )
 
 func init() {
-	Register(&clbQuerier{}, "QCE/LB_PRIVATE", "QCE/LB_PUBLIC")
+	Register(&cdnQuerier{}, "QCE/CDN", "QCE/CDN_LOG_DATA", "QCE/OV_CDN")
 }
 
-type clbQuerier struct{}
+type cdnQuerier struct{}
 
-func (q *clbQuerier) Query(p *Parameters) ([]any, error) {
+func (q *cdnQuerier) Query(p *Parameters) ([]any, error) {
 	credential := common.NewCredential(p.SecretId, p.SecretKey)
 	cpf := profile.NewClientProfile()
-	cpf.HttpProfile.Endpoint = pickEndpoint(endpointLB)
+	cpf.HttpProfile.Endpoint = pickEndpoint(endpointCDN)
 
-	client, err := clb.NewClient(credential, p.Region, cpf)
+	client, err := cdn.NewClient(credential, p.Region, cpf)
 	if err != nil {
 		return nil, err
 	}
@@ -42,36 +42,33 @@ func (q *clbQuerier) Query(p *Parameters) ([]any, error) {
 		return nil, err
 	}
 
-	response, err := client.DescribeLoadBalancers(request)
+	response, err := client.DescribeDomains(request)
 	if err != nil {
 		return nil, err
 	}
 
-	if response.Response == nil || response.Response.LoadBalancerSet == nil {
+	if response.Response == nil || response.Response.Domains == nil {
 		return nil, nil
 	}
 
 	var data []any
-	for _, item := range response.Response.LoadBalancerSet {
+	for _, item := range response.Response.Domains {
 		data = append(data, item)
 	}
 	return data, nil
 }
 
-func (q *clbQuerier) Filters() []string {
+func (q *cdnQuerier) Filters() []string {
 	return []string{
 		"Domain",
+		"ResourceId",
 		"ProjectId",
-		"VpcId",
-		"Forward",
-		"LoadBalancerVips",
-		"LoadBalancerId",
-		"LoadBalancerName",
-		"LoadBalancerType",
+		"ServiceType",
+		"Status",
 	}
 }
 
-func (q *clbQuerier) ParametersJSON(p *Parameters) (string, error) {
+func (q *cdnQuerier) ParametersJSON(p *Parameters) (string, error) {
 	request, err := q.makeRequest(p)
 	if err != nil {
 		return "", err
@@ -79,35 +76,26 @@ func (q *clbQuerier) ParametersJSON(p *Parameters) (string, error) {
 	return request.ToJsonString(), nil
 }
 
-func (q *clbQuerier) makeRequest(p *Parameters) (*clb.DescribeLoadBalancersRequest, error) {
-	request := clb.NewDescribeLoadBalancersRequest()
+func (q *cdnQuerier) makeRequest(p *Parameters) (*cdn.DescribeDomainsRequest, error) {
+	request := cdn.NewDescribeDomainsRequest()
 	for _, tag := range p.Tags {
 		request.Filters = append(request.Filters,
-			&clb.Filter{
-				Name:   pointer.String(tag.Key()),
-				Values: toPointerStrings(tag.Values),
+			&cdn.DomainFilter{
+				Name:  pointer.String(tag.Key()),
+				Value: toPointerStrings(tag.Values),
 			},
 		)
 	}
 
 	for _, filter := range p.Filters {
 		switch filter.Name {
-		case "Domain":
-			request.Domain = toPointerStringsAt(filter.Values, 0)
-		case "ProjectId":
-			request.ProjectId = toPointerInt64At(filter.Values, 0)
-		case "VpcId":
-			request.VpcId = toPointerStringsAt(filter.Values, 0)
-		case "Forward":
-			request.Forward = toPointerInt64At(filter.Values, 0)
-		case "LoadBalancerVips":
-			request.LoadBalancerVips = toPointerStrings(filter.Values)
-		case "LoadBalancerId":
-			request.LoadBalancerIds = toPointerStrings(filter.Values)
-		case "LoadBalancerName":
-			request.LoadBalancerName = toPointerStringsAt(filter.Values, 0)
-		case "LoadBalancerType":
-			request.LoadBalancerType = toPointerStringsAt(filter.Values, 0)
+		case "Domain", "ResourceId", "ProjectId", "ServiceType", "Status":
+			request.Filters = append(request.Filters,
+				&cdn.DomainFilter{
+					Name:  pointer.String(filter.LowerKey()),
+					Value: toPointerStrings(filter.Values),
+				},
+			)
 		default:
 			return nil, errors.Errorf("illegel filter (%s)", filter.Name)
 		}

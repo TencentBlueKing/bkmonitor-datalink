@@ -11,7 +11,9 @@ package v1beta1
 
 import (
 	"strings"
+	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
@@ -93,4 +95,141 @@ type DataIDList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 
 	Items []*DataID `json:"items"`
+}
+
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+type QCloudMonitor struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec QCloudMonitorSpec `json:"spec,omitempty"`
+}
+
+type QCloudMonitorSpec struct {
+	// DataID 采集项 dataid
+	//
+	// dataid 在创建采集项时生成 无须在集群中创建 DataID Resource 再进行关联
+	// +kubebuilder:validation:Minimum=1
+	DataID int `json:"dataID,omitempty"`
+
+	// Interval 采集间隔
+	Interval time.Duration `json:"interval,omitempty"`
+
+	// Timeout 采集超时时间
+	//
+	// 默认与 Interval 保持一致
+	Timeout time.Duration `json:"timeout,omitempty"`
+
+	// ExtendLabels 扩展标签
+	//
+	// 所有 labels 会在采集上报前补充在每个指标中
+	ExtendLabels map[string]string `json:"extendLabels,omitempty"`
+
+	// MetricRelabelings prometheus metric 标准 relabels 规则
+	MetricRelabelings []RelabelConfig `json:"metricRelabelings,omitempty"`
+
+	// Exporter 真正运行的工作负载 即 exporter deployment 实例
+	Exporter QCloudMonitorExporter `json:"exporter,omitempty"`
+
+	// Config exporter 采集配置
+	Config QCloudMonitorConfig `json:"config,omitempty"`
+}
+
+type QCloudMonitorExporter struct {
+	// Resources 标准资源限制规则
+	//
+	// limits/requests
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// +kubebuilder:validation:MinLength=1
+	Image string `json:"image,omitempty"`
+
+	// +kubebuilder:validation:Enum="";Always;Never;IfNotPresent
+	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
+
+	// See http://kubernetes.io/docs/user-guide/images#specifying-imagepullsecrets-on-a-pod
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+}
+
+// LabelName is a valid Prometheus label name which may only contain ASCII
+// letters, numbers, as well as underscores.
+//
+// +kubebuilder:validation:Pattern:="^[a-zA-Z_][a-zA-Z0-9_]*$"
+type LabelName string
+
+// RelabelConfig allows dynamic rewriting of the label set for targets, alerts,
+// scraped samples and remote write samples.
+//
+// More info: https://prometheus.io/docs/prometheus/latest/configuration/configuration/#relabel_config
+//
+// +k8s:openapi-gen=true
+type RelabelConfig struct {
+	// The source labels select values from existing labels. Their content is
+	// concatenated using the configured Separator and matched against the
+	// configured regular expression.
+	//
+	// +optional
+	SourceLabels []LabelName `json:"sourceLabels,omitempty"`
+
+	// Separator is the string between concatenated SourceLabels.
+	Separator *string `json:"separator,omitempty"`
+
+	// Label to which the resulting string is written in a replacement.
+	//
+	// It is mandatory for `Replace`, `HashMod`, `Lowercase`, `Uppercase`,
+	// `KeepEqual` and `DropEqual` actions.
+	//
+	// Regex capture groups are available.
+	TargetLabel string `json:"targetLabel,omitempty"`
+
+	// Regular expression against which the extracted value is matched.
+	Regex string `json:"regex,omitempty"`
+
+	// Modulus to take of the hash of the source label values.
+	//
+	// Only applicable when the action is `HashMod`.
+	Modulus uint64 `json:"modulus,omitempty"`
+
+	// Replacement value against which a Replace action is performed if the
+	// regular expression matches.
+	//
+	// Regex capture groups are available.
+	//
+	//+optional
+	Replacement *string `json:"replacement,omitempty"`
+
+	// Action to perform based on the regex matching.
+	//
+	// `Uppercase` and `Lowercase` actions require Prometheus >= v2.36.0.
+	// `DropEqual` and `KeepEqual` actions require Prometheus >= v2.41.0.
+	//
+	// Default: "Replace"
+	//
+	// +kubebuilder:validation:Enum=replace;Replace;keep;Keep;drop;Drop;hashmod;HashMod;labelmap;LabelMap;labeldrop;LabelDrop;labelkeep;LabelKeep;lowercase;Lowercase;uppercase;Uppercase;keepequal;KeepEqual;dropequal;DropEqual
+	// +kubebuilder:default=replace
+	Action string `json:"action,omitempty"`
+}
+
+type QCloudMonitorConfig struct {
+	// EnableExporterMetrics 是否开启导出指标
+	//
+	// 建议开启 可以观察程序本身性能指标
+	EnableExporterMetrics bool `json:"enableExporterMetrics,omitempty"`
+
+	// MaxRequests 抓取 /metrics 最大请求并发数
+	//
+	// 默认为 0 即不做限制
+	MaxRequests int `json:"maxRequests"`
+
+	// 日志级别
+	//
+	// 默认值 info
+	LogLevel string `json:"logLevel"`
+
+	// exporter 采集配置真实内容文本
+	//
+	// 此文本内容会被生成 configmap 用于挂载到 exporter 实例中
+	// +kubebuilder:validation:MinLength=1
+	FileContent string `json:"fileContent"`
 }

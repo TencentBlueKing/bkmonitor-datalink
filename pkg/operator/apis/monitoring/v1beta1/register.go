@@ -32,6 +32,7 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(SchemeGroupVersion,
 		&DataID{},
 		&DataIDList{},
+		&QCloudMonitor{},
 	)
 
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)

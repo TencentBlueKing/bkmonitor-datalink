@@ -19,6 +19,8 @@ import (
 type Interface interface {
 	// DataIDs returns a DataIDInformer.
 	DataIDs() DataIDInformer
+	// QCloudMonitors returns a QCloudMonitorInformer.
+	QCloudMonitors() QCloudMonitorInformer
 }
 
 type version struct {
@@ -35,4 +37,9 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 // DataIDs returns a DataIDInformer.
 func (v *version) DataIDs() DataIDInformer {
 	return &dataIDInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// QCloudMonitors returns a QCloudMonitorInformer.
+func (v *version) QCloudMonitors() QCloudMonitorInformer {
+	return &qCloudMonitorInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }

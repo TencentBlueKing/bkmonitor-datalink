@@ -19,14 +19,14 @@ import (
 	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
-	promversioned "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
-	prominformers "github.com/prometheus-operator/prometheus-operator/pkg/informers"
+	promcli "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
+	prominfs "github.com/prometheus-operator/prometheus-operator/pkg/informers"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/tools/cache"
 
-	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
+	bkcli "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
@@ -35,6 +35,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/helmcharts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/qcloudmonitor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -63,12 +64,14 @@ type Operator struct {
 
 	client     kubernetes.Interface
 	mdClient   metadata.Interface
-	promclient promversioned.Interface
-	bkclient   bkversioned.Interface
+	promclient promcli.Interface
+	bkclient   bkcli.Interface
 	srv        *http.Server
 
-	serviceMonitorInformer *prominformers.ForResource
-	podMonitorInformer     *prominformers.ForResource
+	qmopr *qcloudmonitor.Operator
+
+	serviceMonitorInformer *prominfs.ForResource
+	podMonitorInformer     *prominfs.ForResource
 	helmchartsController   *helmcharts.Controller
 
 	statefulSetWorkerScaled time.Time
@@ -158,8 +161,8 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	}
 
 	if configs.G().EnableServiceMonitor {
-		operator.serviceMonitorInformer, err = prominformers.NewInformersForResource(
-			prominformers.NewMonitoringInformerFactories(
+		operator.serviceMonitorInformer, err = prominfs.NewInformersForResource(
+			prominfs.NewMonitoringInformerFactories(
 				allNamespaces,
 				denyTargetNamespaces,
 				operator.promclient,
@@ -174,8 +177,8 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	}
 
 	if configs.G().EnablePodMonitor {
-		operator.podMonitorInformer, err = prominformers.NewInformersForResource(
-			prominformers.NewMonitoringInformerFactories(
+		operator.podMonitorInformer, err = prominfs.NewInformersForResource(
+			prominfs.NewMonitoringInformerFactories(
 				allNamespaces,
 				denyTargetNamespaces,
 				operator.promclient,
@@ -186,6 +189,18 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		)
 		if err != nil {
 			return nil, errors.Wrap(err, "create PodMonitor informer failed")
+		}
+	}
+
+	if configs.G().QCloudMonitor.Enabled {
+		operator.qmopr, err = qcloudmonitor.New(ctx, qcloudmonitor.ClientSet{
+			Client: operator.client,
+			Meta:   operator.mdClient,
+			BK:     operator.bkclient,
+			Prom:   operator.promclient,
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "create QCloudMonitor operator failed")
 		}
 	}
 
@@ -413,7 +428,7 @@ func (c *Operator) waitForCacheSync(ctx context.Context) error {
 
 	for _, infs := range []struct {
 		name                 string
-		informersForResource *prominformers.ForResource
+		informersForResource *prominfs.ForResource
 	}{
 		{"ServiceMonitor", c.serviceMonitorInformer},
 		{"PodMonitor", c.podMonitorInformer},

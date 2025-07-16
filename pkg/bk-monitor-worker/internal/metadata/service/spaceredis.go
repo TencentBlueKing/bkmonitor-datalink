@@ -656,6 +656,11 @@ func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 // PushTableIdDetail 推送结果表的详细信息
 func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool) error {
 	logger.Infof("PushTableIdDetail: start to push table_id detail data")
+
+	if len(tableIdList) == 0 {
+		logger.Infof("PushTableIdDetail: table_id_list is empty, query all table_id")
+	}
+
 	tableIdDetail, err := s.getTableInfoForInfluxdbAndVm(bkTenantId, tableIdList)
 	logger.Infof("PushTableIdDetail: get table info for influxdb and vm:%s", tableIdDetail)
 	if err != nil {

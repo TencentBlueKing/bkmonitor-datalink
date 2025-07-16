@@ -79,42 +79,12 @@ func (e *Select) String() string {
 }
 
 func (e *Select) Enter(ctx antlr.ParserRuleContext) {
-	switch v := ctx.(type) {
+	switch ctx.(type) {
 	case *gen.NamedExpressionContext:
 		e.Field = NewField(e.encode)
 	default:
-		sf := e.Field
-		if sf != nil {
-			switch ctx.(type) {
-			case *gen.CastContext:
-				sf.SelectFunc = NewSelectFunc()
-				sf.SetFuncName("CAST")
-			case *gen.CastDataTypeContext:
-				if sf.SelectFunc != nil {
-					sf.SelectFunc.As = ctx.GetText()
-				}
-			case *gen.FunctionCallContext:
-				sf.SelectFunc = NewSelectFunc()
-			case *gen.FunctionNameIdentifierContext:
-				sf.SetFuncName(ctx.GetText())
-			case *gen.ColumnReferenceContext:
-				sf.Name = ctx.GetText()
-			case *gen.StarContext:
-				sf.Name = "*"
-			case *gen.IdentifierContext:
-				if sf.As == "" && sf.Name != "" {
-					aliasName := ctx.GetText()
-					if aliasName != sf.Name {
-						sf.ExtraNames = append(sf.ExtraNames, aliasName)
-					}
-				}
-			case *gen.ConstantDefaultContext:
-				if sf.SelectFunc != nil {
-					sf.SelectFunc.Arg = append(sf.SelectFunc.Arg, v.GetText())
-				}
-			case *gen.IdentifierOrTextContext:
-				sf.As = v.GetText()
-			}
+		if e.Field != nil {
+			e.Field.Enter(ctx)
 		}
 	}
 }
@@ -125,16 +95,8 @@ func (e *Select) Exit(ctx antlr.ParserRuleContext) {
 		e.FieldListExpr = append(e.FieldListExpr, e.Field)
 		e.Field = NewField(e.encode)
 	default:
-		sf := e.Field
-		if sf != nil {
-			switch ctx.(type) {
-			case *gen.FunctionCallContext, *gen.CastContext:
-				if sf.SelectFunc != nil {
-					sf.SelectFunc.Name = sf.GetFuncName()
-					sf.SelectFuncs = append(sf.SelectFuncs, sf.SelectFunc)
-					sf.SelectFunc = NewSelectFunc()
-				}
-			}
+		if e.Field != nil {
+			e.Field.Exit(ctx)
 		}
 	}
 
@@ -294,23 +256,7 @@ func (e *Where) Enter(ctx antlr.ParserRuleContext) {
 	default:
 		if e.cur != nil && e.cur.Field != nil {
 			cur := e.cur
-			sf := cur.Field
 			switch ctx.(type) {
-			case *gen.ColumnReferenceContext:
-				sf.Name = ctx.GetText()
-			case *gen.IdentifierOrTextContext:
-				sf.As = v.GetText()
-			case *gen.CastContext:
-				sf.SelectFunc = NewSelectFunc()
-				sf.SelectFunc.Name = "CAST"
-			case *gen.CastDataTypeContext:
-				if sf.SelectFunc != nil {
-					sf.SelectFunc.As = ctx.GetText()
-				}
-			case *gen.ConstantDefaultContext:
-				if sf.SelectFunc != nil {
-					sf.SelectFunc.Arg = append(sf.SelectFunc.Arg, v.GetText())
-				}
 			case *gen.ComparisonOperatorContext, *gen.PredicateContext:
 				cur.Op = ctx.GetText()
 			case *gen.ValueExpressionDefaultContext:
@@ -318,6 +264,8 @@ func (e *Where) Enter(ctx antlr.ParserRuleContext) {
 				if cur.Op != "" {
 					cur.Values = append(cur.Values, ctx.GetText())
 				}
+			default:
+				cur.Field.Enter(ctx)
 			}
 		}
 	}
@@ -346,17 +294,9 @@ func (e *Where) Exit(ctx antlr.ParserRuleContext) {
 			}
 		}
 	default:
-		cur := e.cur
-		if cur != nil {
-			sf := cur.Field
-			switch ctx.(type) {
-			case *gen.CastContext:
-				sf.SelectFuncs = append(sf.SelectFuncs, sf.SelectFunc)
-				sf.SelectFunc = NewSelectFunc()
-			case *gen.FunctionCallContext:
-				sf.SelectFuncs = append(sf.SelectFuncs, sf.SelectFunc)
-				sf.SelectFunc = NewSelectFunc()
-			}
+		if e.cur != nil && e.cur.Field != nil {
+			e.cur.Field.Exit(ctx)
+
 		}
 	}
 }
@@ -553,6 +493,48 @@ func (e *Field) GetFuncName() (name string) {
 	name = e.FuncsName[lastNum]
 	e.FuncsName = e.FuncsName[0:lastNum]
 	return name
+}
+
+func (e *Field) Enter(ctx antlr.ParserRuleContext) {
+	switch v := ctx.(type) {
+	case *gen.CastContext:
+		e.SelectFunc = NewSelectFunc()
+		e.SetFuncName("CAST")
+	case *gen.CastDataTypeContext:
+		if e.SelectFunc != nil {
+			e.SelectFunc.As = v.GetText()
+		}
+	case *gen.FunctionCallContext:
+		e.SelectFunc = NewSelectFunc()
+	case *gen.FunctionNameIdentifierContext:
+		e.SetFuncName(ctx.GetText())
+	case *gen.ColumnReferenceContext:
+		e.Name = v.GetText()
+	case *gen.StarContext:
+		e.Name = "*"
+	case *gen.IdentifierContext:
+		if e.As == "" && e.Name != "" {
+			aliasName := v.GetText()
+			if aliasName != e.Name {
+				e.ExtraNames = append(e.ExtraNames, aliasName)
+			}
+		}
+	case *gen.ConstantDefaultContext:
+		if e.SelectFunc != nil {
+			e.SelectFunc.Arg = append(e.SelectFunc.Arg, v.GetText())
+		}
+	case *gen.IdentifierOrTextContext:
+		e.As = v.GetText()
+	}
+}
+
+func (e *Field) Exit(ctx antlr.ParserRuleContext) {
+	switch ctx.(type) {
+	case *gen.FunctionCallContext, *gen.CastContext:
+		e.SelectFunc.Name = e.GetFuncName()
+		e.SelectFuncs = append(e.SelectFuncs, e.SelectFunc)
+		e.SelectFunc = NewSelectFunc()
+	}
 }
 
 func (e *Field) String() string {

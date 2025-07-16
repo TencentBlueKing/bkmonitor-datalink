@@ -197,8 +197,8 @@ group by
 		},
 		{
 			name: "test-18",
-			q:    "SELECT a.b.c,b.a",
-			sql:  "SELECT a.b.c, b.a",
+			q:    "SELECT a.b.c,b.a WHERE a.b.c != 'test' or b.a != 'test' group by a.b, b.a order by a.b",
+			sql:  "SELECT a.b.c, b.a WHERE a.b.c != 'test' OR b.a != 'test' GROUP BY a.b, b.a ORDER BY a.b",
 		},
 	}
 

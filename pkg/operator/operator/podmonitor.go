@@ -175,7 +175,7 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 		var safeTlsConfig promv1.SafeTLSConfig
 		tlsConfig := endpoint.TLSConfig.DeepCopy()
 		if tlsConfig != nil {
-			safeTlsConfig = *tlsConfig
+			safeTlsConfig = tlsConfig.SafeTLSConfig
 		}
 
 		dis := kubernetesd.New(c.ctx, kubernetesd.TypePod, &kubernetesd.Options{

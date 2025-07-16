@@ -13,8 +13,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"os"
 	"strings"
 
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -36,6 +34,7 @@ import (
 	"k8s.io/client-go/util/retry"
 
 	bkcli "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logx"
 )
 
 const (
@@ -43,14 +42,7 @@ const (
 )
 
 func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig) (kubernetes.Interface, error) {
-	if tlsConfig == nil {
-		tlsConfig = &rest.TLSClientConfig{}
-	}
-
-	cfg, err := promk8sutil.NewClusterConfig(promk8sutil.ClusterConfig{
-		Host:      host,
-		TLSConfig: *tlsConfig,
-	})
+	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "bkm")
 	if err != nil {
 		return nil, err
 	}
@@ -60,14 +52,7 @@ func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig) (kubernetes.Inte
 }
 
 func NewMetadataClient(host string, tlsConfig *rest.TLSClientConfig) (metadata.Interface, error) {
-	if tlsConfig == nil {
-		tlsConfig = &rest.TLSClientConfig{}
-	}
-
-	cfg, err := promk8sutil.NewClusterConfig(promk8sutil.ClusterConfig{
-		Host:      host,
-		TLSConfig: *tlsConfig,
-	})
+	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "bkm")
 	if err != nil {
 		return nil, err
 	}
@@ -77,10 +62,8 @@ func NewMetadataClient(host string, tlsConfig *rest.TLSClientConfig) (metadata.I
 }
 
 func NewK8SClientInsecure() (kubernetes.Interface, error) {
-	cfg, err := promk8sutil.NewClusterConfig(promk8sutil.ClusterConfig{
-		Host:      "",
-		TLSConfig: rest.TLSClientConfig{Insecure: true},
-	})
+	tlsConfigs := rest.TLSClientConfig{Insecure: true}
+	cfg, err := promk8sutil.NewClusterConfig("", tlsConfigs, "bkm")
 	if err != nil {
 		return nil, err
 	}
@@ -91,14 +74,7 @@ func NewK8SClientInsecure() (kubernetes.Interface, error) {
 
 // NewPromClient 操作 ServiceMonitor/PodMonitor/Probe CRD
 func NewPromClient(host string, tlsConfig *rest.TLSClientConfig) (promcli.Interface, error) {
-	if tlsConfig == nil {
-		tlsConfig = &rest.TLSClientConfig{}
-	}
-
-	cfg, err := promk8sutil.NewClusterConfig(promk8sutil.ClusterConfig{
-		Host:      host,
-		TLSConfig: *tlsConfig,
-	})
+	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "bkm")
 	if err != nil {
 		return nil, err
 	}
@@ -109,14 +85,7 @@ func NewPromClient(host string, tlsConfig *rest.TLSClientConfig) (promcli.Interf
 
 // NewBKClient 操作 DataID CRD
 func NewBKClient(host string, tlsConfig *rest.TLSClientConfig) (bkcli.Interface, error) {
-	if tlsConfig == nil {
-		tlsConfig = &rest.TLSClientConfig{}
-	}
-
-	cfg, err := promk8sutil.NewClusterConfig(promk8sutil.ClusterConfig{
-		Host:      host,
-		TLSConfig: *tlsConfig,
-	})
+	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "bkm")
 	if err != nil {
 		return nil, err
 	}
@@ -126,9 +95,7 @@ func NewBKClient(host string, tlsConfig *rest.TLSClientConfig) (bkcli.Interface,
 }
 
 func WaitForNamedCacheSync(ctx context.Context, controllerName string, inf cache.SharedIndexInformer) bool {
-	l := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{AddSource: true}))
-	l = l.With(slog.String("controller", controllerName))
-	return promoperator.WaitForNamedCacheSync(ctx, controllerName, l, inf)
+	return promoperator.WaitForNamedCacheSync(ctx, controllerName, logx.New(controllerName), inf)
 }
 
 func mergeMaps(new map[string]string, old map[string]string) map[string]string {
@@ -165,8 +132,7 @@ func mergeKubectlAnnotations(from *metav1.ObjectMeta, to metav1.ObjectMeta) {
 }
 
 func CreateOrUpdateService(ctx context.Context, cli corev1iface.ServiceInterface, desired *corev1.Service) error {
-	_, err := promk8sutil.CreateOrUpdateService(ctx, cli, desired)
-	return err
+	return promk8sutil.CreateOrUpdateService(ctx, cli, desired)
 }
 
 func CreateOrUpdateEndpoints(ctx context.Context, cli corev1iface.EndpointsInterface, desired *corev1.Endpoints) error {

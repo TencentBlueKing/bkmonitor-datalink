@@ -10,9 +10,9 @@
 package qcloudmonitor
 
 import (
-	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/operator"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/utils/ptr"
 )
 
 type Owner interface {
@@ -21,7 +21,19 @@ type Owner interface {
 }
 
 func InjectManagingOwner(o metav1.Object, owner Owner) {
-	promoperator.WithManagingOwner(owner)(o)
+	o.SetOwnerReferences(
+		append(
+			o.GetOwnerReferences(),
+			metav1.OwnerReference{
+				APIVersion:         owner.GroupVersionKind().GroupVersion().String(),
+				BlockOwnerDeletion: ptr.To(true),
+				Controller:         ptr.To(true),
+				Kind:               owner.GroupVersionKind().Kind,
+				Name:               owner.GetObjectMeta().GetName(),
+				UID:                owner.GetObjectMeta().GetUID(),
+			},
+		),
+	)
 }
 
 const InputHashAnnotationName = "bkmonitor-operator-input-hash"

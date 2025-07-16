@@ -20,10 +20,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-kit/log"
 	"github.com/grafana/regexp"
 	"github.com/polarismesh/polaris-go"
 	"github.com/polarismesh/polaris-go/api"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	promconfig "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/discovery"
@@ -31,7 +33,6 @@ import (
 	"github.com/prometheus/prometheus/discovery/targetgroup"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/commonconfigs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -42,6 +43,12 @@ var (
 	}
 	userAgent        = "Blueking/Operator"
 	matchContentType = regexp.MustCompile(`^(?i:application\/json(;\s*charset=("utf-8"|utf-8))?)$`)
+
+	failuresCount = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "prometheus_sd_polaris_failures_total",
+			Help: "Number of Polaris service discovery refresh failures.",
+		})
 )
 
 func init() {
@@ -60,10 +67,6 @@ func (*SDConfig) Name() string {
 	return "polaris"
 }
 
-func (c *SDConfig) NewDiscovererMetrics(_ prometheus.Registerer, _ discovery.RefreshMetricsInstantiator) discovery.DiscovererMetrics {
-	return commonconfigs.NoopDiscovererMetrics()
-}
-
 func (c *SDConfig) SetDirectory(dir string) {
 	c.HTTPClientConfig.SetDirectory(dir)
 }
@@ -75,7 +78,7 @@ func (c *SDConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 }
 
 func (c *SDConfig) NewDiscoverer(opts discovery.DiscovererOptions) (discovery.Discoverer, error) {
-	return NewDiscovery(c, opts.HTTPClientOptions)
+	return NewDiscovery(c, opts.Logger, opts.HTTPClientOptions)
 }
 
 const polarisSDURLLabel = model.MetaLabelPrefix + "url"
@@ -89,7 +92,10 @@ type Discovery struct {
 	consumer        polaris.ConsumerAPI
 }
 
-func NewDiscovery(conf *SDConfig, clientOpts []promconfig.HTTPClientOption) (*Discovery, error) {
+func NewDiscovery(conf *SDConfig, logger log.Logger, clientOpts []promconfig.HTTPClientOption) (*Discovery, error) {
+	if logger == nil {
+		logger = log.NewNopLogger()
+	}
 	client, err := promconfig.NewClientFromConfig(conf.HTTPClientConfig, "polaris", clientOpts...)
 	if err != nil {
 		return nil, err
@@ -101,13 +107,12 @@ func NewDiscovery(conf *SDConfig, clientOpts []promconfig.HTTPClientOption) (*Di
 		client:          client,
 		refreshInterval: time.Duration(conf.RefreshInterval),
 	}
-	d.Discovery = refresh.NewDiscovery(refresh.Options{
-		Logger:              commonconfigs.NewSlogLogger("polaris"),
-		Mech:                "polaris",
-		Interval:            time.Duration(conf.RefreshInterval),
-		RefreshF:            d.Refresh,
-		MetricsInstantiator: commonconfigs.DefaultRefreshMetricsInstantiator(),
-	})
+	d.Discovery = refresh.NewDiscovery(
+		logger,
+		"polaris",
+		time.Duration(conf.RefreshInterval),
+		d.Refresh,
+	)
 	return d, nil
 }
 
@@ -235,6 +240,7 @@ func (d *Discovery) refresh(ctx context.Context, url string) ([]*targetgroup.Gro
 func (d *Discovery) Refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 	instances, err := d.resolveInstances()
 	if err != nil {
+		failuresCount.Inc()
 		return nil, err
 	}
 
@@ -247,6 +253,7 @@ func (d *Discovery) Refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 	for _, inst := range instances {
 		tgs, err := d.refresh(ctx, inst)
 		if err != nil {
+			failuresCount.Inc()
 			return nil, err
 		}
 		ret = append(ret, tgs...)

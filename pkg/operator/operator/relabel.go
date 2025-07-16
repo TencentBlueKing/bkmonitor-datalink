@@ -63,14 +63,14 @@ func enforceNamespaceLabel(relabelings []yaml.MapSlice, namespace, enforcedNames
 	})
 }
 
-func generatePromv1RelabelConfig(c promv1.RelabelConfig) yaml.MapSlice {
+func generatePromv1RelabelConfig(c *promv1.RelabelConfig) yaml.MapSlice {
 	relabeling := yaml.MapSlice{}
 
 	if len(c.SourceLabels) > 0 {
 		relabeling = append(relabeling, yaml.MapItem{Key: "source_labels", Value: c.SourceLabels})
 	}
 
-	if c.Separator != nil && *c.Separator != "" {
+	if c.Separator != "" {
 		relabeling = append(relabeling, yaml.MapItem{Key: "separator", Value: c.Separator})
 	}
 
@@ -86,7 +86,7 @@ func generatePromv1RelabelConfig(c promv1.RelabelConfig) yaml.MapSlice {
 		relabeling = append(relabeling, yaml.MapItem{Key: "modulus", Value: c.Modulus})
 	}
 
-	if c.Replacement != nil && *c.Replacement != "" {
+	if c.Replacement != "" {
 		relabeling = append(relabeling, yaml.MapItem{Key: "replacement", Value: c.Replacement})
 	}
 
@@ -352,7 +352,7 @@ func getPodMonitorRelabels(m *promv1.PodMonitor, ep *promv1.PodMetricsEndpoint) 
 	}
 
 	// Filter targets based on correct port for the endpoint.
-	if ep.Port != nil && *ep.Port != "" {
+	if ep.Port != "" {
 		relabelings = append(relabelings, yaml.MapSlice{
 			{Key: "action", Value: "keep"},
 			{Key: "source_labels", Value: []string{"__meta_kubernetes_pod_container_port_name"}},
@@ -420,7 +420,7 @@ func getPodMonitorRelabels(m *promv1.PodMonitor, ep *promv1.PodMetricsEndpoint) 
 		})
 	}
 
-	if ep.Port != nil && *ep.Port != "" {
+	if ep.Port != "" {
 		relabelings = append(relabelings, yaml.MapSlice{
 			{Key: "target_label", Value: "endpoint"},
 			{Key: "replacement", Value: ep.Port},

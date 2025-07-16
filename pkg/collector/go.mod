@@ -13,13 +13,13 @@ require (
 	github.com/bytedance/sonic v1.13.3
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/elastic/beats v7.1.1+incompatible
-	github.com/elastic/go-ucfg v0.7.0
+	github.com/elastic/go-ucfg v0.8.8
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/protobuf v1.5.4
 	github.com/golang/snappy v1.0.0
 	github.com/google/pprof v0.0.0-20241029153458-d1b30febd7db
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/mux v1.8.0
+	github.com/gorilla/mux v1.8.1
 	github.com/grafana/jfr-parser v0.7.2-0.20230831140626-08fa3a941bf8
 	github.com/jaegertracing/jaeger v1.34.1
 	github.com/klauspost/pgzip v1.2.6
@@ -49,9 +49,9 @@ require (
 	google.golang.org/grpc v1.72.2
 	google.golang.org/protobuf v1.36.6
 	gopkg.in/yaml.v2 v2.4.0
-	k8s.io/api v0.33.1
-	k8s.io/apimachinery v0.33.1
-	k8s.io/client-go v0.33.1
+	k8s.io/api v0.33.3
+	k8s.io/apimachinery v0.33.3
+	k8s.io/client-go v0.33.3
 	lukechampine.com/frand v1.4.2
 	skywalking.apache.org/repo/goapi v0.0.0-20230314034821-0c5a44bb767a
 )

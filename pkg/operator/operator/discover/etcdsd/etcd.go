@@ -16,6 +16,7 @@ import (
 	"github.com/pkg/errors"
 	promconfig "github.com/prometheus/common/config"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/commonconfigs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
@@ -73,7 +74,7 @@ func (d *Discover) Start() error {
 	d.PreStart()
 
 	err := shareddiscovery.Register(d.UK(), func() (*shareddiscovery.SharedDiscovery, error) {
-		discovery, err := NewDiscovery(d.opts.SDConfig, nil)
+		discovery, err := NewDiscovery(d.opts.SDConfig, logx.New(TypeEtcdSd), nil)
 		if err != nil {
 			return nil, errors.Wrap(err, d.Type())
 		}

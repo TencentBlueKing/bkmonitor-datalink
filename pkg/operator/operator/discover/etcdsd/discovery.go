@@ -17,7 +17,9 @@ import (
 	"path"
 	"time"
 
+	"github.com/go-kit/log"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	promconfig "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/discovery"
@@ -25,14 +27,22 @@ import (
 	"github.com/prometheus/prometheus/discovery/targetgroup"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/commonconfigs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-var DefaultSDConfig = SDConfig{
-	RefreshInterval:  model.Duration(60 * time.Second),
-	HTTPClientConfig: promconfig.DefaultHTTPClientConfig,
-}
+var (
+	DefaultSDConfig = SDConfig{
+		RefreshInterval:  model.Duration(60 * time.Second),
+		HTTPClientConfig: promconfig.DefaultHTTPClientConfig,
+	}
+
+	failuresCount = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "prometheus_sd_etcd_failures_total",
+			Help: "Number of ETCD service discovery refresh failures.",
+		},
+	)
+)
 
 func init() {
 	discovery.RegisterConfig(&SDConfig{})
@@ -51,10 +61,6 @@ func (*SDConfig) Name() string {
 	return "etcd"
 }
 
-func (c *SDConfig) NewDiscovererMetrics(_ prometheus.Registerer, _ discovery.RefreshMetricsInstantiator) discovery.DiscovererMetrics {
-	return commonconfigs.NoopDiscovererMetrics()
-}
-
 func (c *SDConfig) SetDirectory(dir string) {
 	c.HTTPClientConfig.SetDirectory(dir)
 }
@@ -66,7 +72,7 @@ func (c *SDConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 }
 
 func (c *SDConfig) NewDiscoverer(opts discovery.DiscovererOptions) (discovery.Discoverer, error) {
-	return NewDiscovery(c, opts.HTTPClientOptions)
+	return NewDiscovery(c, opts.Logger, opts.HTTPClientOptions)
 }
 
 const etcdSDURLLabel = model.MetaLabelPrefix + "url"
@@ -78,15 +84,18 @@ type Discovery struct {
 	client       *clientv3.Client
 }
 
-func NewDiscovery(conf *SDConfig, _ []promconfig.HTTPClientOption) (*Discovery, error) {
+func NewDiscovery(conf *SDConfig, logger log.Logger, _ []promconfig.HTTPClientOption) (*Discovery, error) {
+	if logger == nil {
+		logger = log.NewNopLogger()
+	}
+
 	d := &Discovery{sdConfig: conf}
-	d.Discovery = refresh.NewDiscovery(refresh.Options{
-		Logger:              commonconfigs.NewSlogLogger("etcd"),
-		Mech:                "etcd",
-		Interval:            time.Duration(conf.RefreshInterval),
-		RefreshF:            d.Refresh,
-		MetricsInstantiator: commonconfigs.DefaultRefreshMetricsInstantiator(),
-	})
+	d.Discovery = refresh.NewDiscovery(
+		logger,
+		"etcd",
+		time.Duration(conf.RefreshInterval),
+		d.Refresh,
+	)
 	return d, nil
 }
 
@@ -174,6 +183,7 @@ func (d *Discovery) resolveServices(ctx context.Context, prefixKey string) ([]Se
 func (d *Discovery) refresh(ctx context.Context, prefixKey string) ([]*targetgroup.Group, error) {
 	services, err := d.resolveServices(ctx, prefixKey)
 	if err != nil {
+		failuresCount.Inc()
 		return nil, err
 	}
 

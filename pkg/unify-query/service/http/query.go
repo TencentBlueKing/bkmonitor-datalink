@@ -430,7 +430,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	span.Set("query-ts", string(qStr))
 
 	for _, ql := range queryTs.QueryList {
-		ql.IsReference = true
+		ql.NotPromFunc = true
 
 		// 排序复用
 		ql.OrderBy = queryTs.OrderBy
@@ -464,7 +464,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		return nil, err
 	}
 
-	// es 需要使用自己的查询时间范围
+	// 开启时间不对齐模式
 	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit).SetIsReference(true)
 	metadata.SetQueryReference(ctx, queryRef)
 
@@ -574,10 +574,21 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 		}
 	}
 
+	// 判定是否开启时间不对齐模式
+	if queryTs.Reference {
+		unit, startTime, endTime, err := function.QueryTimestamp(queryTs.Start, queryTs.End)
+		if err != nil {
+			return
+		}
+
+		metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit).SetIsReference(true)
+	}
+
 	// 判断是否打开对齐
 	for _, ql := range queryTs.QueryList {
-		ql.IsReference = false
-		ql.AlignInfluxdbResult = AlignInfluxdbResult
+		ql.NotPromFunc = false
+		// 只有时间对齐模式，才需要开启
+		ql.AlignInfluxdbResult = AlignInfluxdbResult && !queryTs.Reference
 
 		// 排序复用
 		ql.OrderBy = queryTs.OrderBy
@@ -794,6 +805,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 	query.LookBackDelta = queryPromQL.LookBackDelta
 	query.Instant = queryPromQL.Instant
 	query.DownSampleRange = queryPromQL.DownSampleRange
+	query.Reference = queryPromQL.Reference
 
 	if queryPromQL.Match != "" {
 		matchers, err = parser.ParseMetricSelector(queryPromQL.Match)

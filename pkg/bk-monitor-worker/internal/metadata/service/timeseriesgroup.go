@@ -363,6 +363,7 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateMetrics(tableId string, metricMap
 			isDisabled = false
 		}
 		rtf := resulttable.ResultTableField{
+			BkTenantId:     s.BkTenantId,
 			TableID:        tableId,
 			FieldName:      metric,
 			FieldType:      models.ResultTableFieldTypeFloat,
@@ -437,6 +438,7 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateTags(tableId string, tagMap map[s
 		defaultValue := ""
 		description, _ := tagMap[tag]
 		rtf := resulttable.ResultTableField{
+			BkTenantId:     s.BkTenantId,
 			TableID:        tableId,
 			FieldName:      tag,
 			Description:    description,

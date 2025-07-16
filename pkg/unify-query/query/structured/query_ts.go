@@ -384,7 +384,7 @@ type Query struct {
 	// IsPrefix 是否启用前缀匹配
 	IsPrefix bool `json:"is_prefix"`
 
-	// NotPromFunc 是否使用非时间聚合查询
+	// NotPromFunc 不使用 PromQL 的函数
 	NotPromFunc bool `json:"-" swaggerignore:"true"`
 
 	// ResultTableOptions

@@ -188,13 +188,13 @@ func New(ctx context.Context, cs ClientSet) (*Operator, error) {
 			operator.bkCli,
 			define.ReSyncPeriod,
 			func(options *metav1.ListOptions) {
-				options.LabelSelector = appLabelSelection
+				//options.LabelSelector = appLabelSelection
 			},
 		),
 		bkv1beta1.SchemeGroupVersion.WithResource("qcloudmonitors"),
 	)
 	if err != nil {
-		return nil, errors.Wrap(err, "create Deployment informer failed")
+		return nil, errors.Wrap(err, "create QCloudMonitor informer failed")
 	}
 
 	operator.seh = newSyncEventHandler(operator)
@@ -223,11 +223,11 @@ func (c *Operator) waitForCacheSync() error {
 		name                 string
 		informersForResource *prominfs.ForResource
 	}{
-		{"QCloudMonitor", c.qcmInfs},
 		{"Service", c.svcInfs},
 		{"Deployment", c.dpInfs},
 		{"ConfigMap", c.cmInfs},
 		{"ServiceMonitor", c.smInfs},
+		{"QCloudMonitor", c.qcmInfs},
 	} {
 		if infs.informersForResource == nil {
 			continue

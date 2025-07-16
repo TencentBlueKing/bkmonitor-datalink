@@ -42,7 +42,7 @@ const (
 )
 
 func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig) (kubernetes.Interface, error) {
-	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "bkm")
+	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "")
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig) (kubernetes.Inte
 }
 
 func NewMetadataClient(host string, tlsConfig *rest.TLSClientConfig) (metadata.Interface, error) {
-	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "bkm")
+	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "")
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func NewMetadataClient(host string, tlsConfig *rest.TLSClientConfig) (metadata.I
 
 func NewK8SClientInsecure() (kubernetes.Interface, error) {
 	tlsConfigs := rest.TLSClientConfig{Insecure: true}
-	cfg, err := promk8sutil.NewClusterConfig("", tlsConfigs, "bkm")
+	cfg, err := promk8sutil.NewClusterConfig("", tlsConfigs, "")
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func NewK8SClientInsecure() (kubernetes.Interface, error) {
 
 // NewPromClient 操作 ServiceMonitor/PodMonitor/Probe CRD
 func NewPromClient(host string, tlsConfig *rest.TLSClientConfig) (promcli.Interface, error) {
-	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "bkm")
+	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "")
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func NewPromClient(host string, tlsConfig *rest.TLSClientConfig) (promcli.Interf
 
 // NewBKClient 操作 DataID CRD
 func NewBKClient(host string, tlsConfig *rest.TLSClientConfig) (bkcli.Interface, error) {
-	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "bkm")
+	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "")
 	if err != nil {
 		return nil, err
 	}

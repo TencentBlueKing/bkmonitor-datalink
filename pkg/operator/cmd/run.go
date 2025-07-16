@@ -56,7 +56,7 @@ var runCmd = &cobra.Command{
 				Time:    BuildTime,
 			})
 			if err != nil {
-				logger.Fatalf("crate operator failed: %s", err)
+				logger.Fatalf("create operator failed: %s", err)
 			}
 
 			if err = mgr.Run(); err != nil {

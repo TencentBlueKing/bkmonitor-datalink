@@ -327,8 +327,15 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, p *bkv1beta1.QC
 		labelAppInstance:  p.Name,
 	}
 
+	//p monitoringv1.PrometheusInterface,
+
+	//bkcli.
+
+	//c.bkCli.MonitoringV1beta1().
+
 	fmt.Printf("name=(%s), GVK: %#v, %v\n", p.Name, p.GroupVersionKind(), p.GroupVersionKind().GroupVersion().String())
 	fmt.Println("owner.GetObjectMeta().name=:", p.GetObjectMeta().GetName())
+	fmt.Println("owner.GetObjectMeta()111.name=:", p.GetObjectKind().GroupVersionKind().GroupVersion())
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{

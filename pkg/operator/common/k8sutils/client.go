@@ -79,7 +79,7 @@ func NewPromClient(host string, tlsConfig *rest.TLSClientConfig) (promcli.Interf
 		return nil, err
 	}
 
-	cfg.ContentType = contentTypeProtobuf
+	//cfg.ContentType = contentTypeProtobuf
 	return promcli.NewForConfig(cfg)
 }
 

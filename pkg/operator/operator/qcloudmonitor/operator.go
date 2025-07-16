@@ -361,7 +361,7 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, p *bkv1beta1.QC
 						{
 							Name: "qcloud-exporter",
 							Args: []string{
-								"/usr/bin/qcloud_exporter --config.file=/usr/bin/qcloud.yml --web.listen-address=:8080",
+								"/usr/bin/qcloud_exporter --config.file=/usr/bin/config/qcloud.yml --web.listen-address=:8080",
 							},
 							Command: []string{
 								"/bin/sh",
@@ -372,10 +372,9 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, p *bkv1beta1.QC
 							ImagePullPolicy: p.Spec.Exporter.ImagePullPolicy,
 							Resources:       p.Spec.Exporter.Resources,
 							VolumeMounts: []corev1.VolumeMount{{
-								MountPath: "/usr/bin/qcloud.yml",
+								MountPath: "/usr/bin/config",
 								Name:      "config",
 								ReadOnly:  true,
-								SubPath:   "qcloud.yml",
 							}},
 						},
 					},
@@ -384,7 +383,7 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, p *bkv1beta1.QC
 						VolumeSource: corev1.VolumeSource{
 							ConfigMap: &corev1.ConfigMapVolumeSource{
 								LocalObjectReference: corev1.LocalObjectReference{Name: p.Name},
-								DefaultMode:          pointer.Int32(0o420),
+								//DefaultMode:          pointer.Int32(0644),
 							},
 						},
 					}},

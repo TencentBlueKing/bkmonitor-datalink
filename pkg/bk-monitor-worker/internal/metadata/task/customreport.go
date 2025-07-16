@@ -149,7 +149,7 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 				continue
 			}
 			if err := pusher.PushTableIdDetail(bkTenantId, tableIds, true, false); err != nil {
-				return errors.Wrapf(err, "RefreshTimeSeriesMetric,metric update to push table id detailed for [%v] failed", updatedTableIds)
+				return errors.Wrapf(err, "RefreshTimeSeriesMetric,metric update to push table id detailed for tenant [%s] and tableIds [%v] failed", bkTenantId, tableIds)
 			}
 		}
 		logger.Infof("RefreshTimeSeriesMetric,metric updated of table_id  [%v]", updatedTableIds)

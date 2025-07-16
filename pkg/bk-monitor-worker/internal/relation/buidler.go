@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package cmdbcache
+package relation
 
 import (
 	"bytes"
@@ -20,6 +20,12 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+)
+
+const (
+	Set    = "set"
+	Module = "module"
+	Host   = "host"
 )
 
 var (
@@ -41,62 +47,58 @@ func putTsPool(ts []prompb.TimeSeries) {
 	tsPool.Put(ts)
 }
 
-// RelationMetricsBuilder 关联指标构建器，生成指标缓存以及输出 prometheus 上报指标
-type RelationMetricsBuilder struct {
+// MetricsBuilder 关联指标构建器，生成指标缓存以及输出 prometheus 上报指标
+type MetricsBuilder struct {
 	spaceReport remote.Reporter
-	metricsLock sync.RWMutex
-	metrics     map[int]map[int]Nodes
+
+	metrics   map[int]map[int]Nodes
+	lock      sync.RWMutex
+	resources *ResourceExpandInfos
 }
 
-func newRelationMetricsBuilder() *RelationMetricsBuilder {
-	return &RelationMetricsBuilder{
-		metrics: make(map[int]map[int]Nodes),
+func newRelationMetricsBuilder() *MetricsBuilder {
+	return &MetricsBuilder{
+		resources: NewResourceExpandInfos(),
 	}
 }
 
-func GetRelationMetricsBuilder() *RelationMetricsBuilder {
+func GetRelationMetricsBuilder() *MetricsBuilder {
 	return defaultRelationMetricsBuilder
 }
 
-func (b *RelationMetricsBuilder) WithSpaceReport(reporter remote.Reporter) *RelationMetricsBuilder {
+func (b *MetricsBuilder) WithSpaceReport(reporter remote.Reporter) *MetricsBuilder {
 	b.spaceReport = reporter
 	return b
 }
 
-func (b *RelationMetricsBuilder) toString(v any) string {
-	var val string
-	switch v.(type) {
-	case int:
-		val = fmt.Sprintf("%d", v)
-	case string:
-		val = v.(string)
-	default:
-		val = fmt.Sprintf("%v", v)
-	}
-	return val
-}
-
 // ClearAllMetrics 清理全部指标
-func (b *RelationMetricsBuilder) ClearAllMetrics() {
-	b.metrics = make(map[int]map[int]Nodes)
+func (b *MetricsBuilder) ClearAllMetrics() {
+	b.lock.RLock()
+	defer b.lock.RUnlock()
+	b.resources.Reset()
 }
 
-// ClearMetricsWithHostID 清理 host 指标
-func (b *RelationMetricsBuilder) ClearMetricsWithHostID(hosts ...*AlarmHostInfo) {
-	b.metricsLock.Lock()
-	defer b.metricsLock.Unlock()
+func (b *MetricsBuilder) ClearResourceWithID(name string, ids ...string) {
+	b.lock.RLock()
+	defer b.lock.RUnlock()
 
-	for _, host := range hosts {
-		if hostMap, ok := b.metrics[host.BkBizId]; ok {
-			if _, ok = hostMap[host.BkHostId]; ok {
-				delete(hostMap, host.BkHostId)
-			}
-		}
-	}
+	b.resources.Delete(name, ids...)
+}
+
+type HostS struct {
+	BkHostId      int
+	TopoLinks     map[string][]map[string]any
+	BkHostInnerip string
+	BkCloudId     int
+	BkBizId       int
+}
+
+func (b *MetricsBuilder) toString(s any) string {
+	return fmt.Sprintf("%v", s)
 }
 
 // BuildMetrics 通过 hosts 构建关联指标，存入缓存
-func (b *RelationMetricsBuilder) BuildMetrics(_ context.Context, bkBizID int, hosts []*AlarmHostInfo) error {
+func (b *MetricsBuilder) BuildMetrics(_ context.Context, name string, bkBizID int, hosts []HostS) error {
 	nodeMap := make(map[int]Nodes)
 	for _, host := range hosts {
 		if host.BkHostId == 0 {
@@ -165,9 +167,9 @@ func (b *RelationMetricsBuilder) BuildMetrics(_ context.Context, bkBizID int, ho
 	}
 
 	if len(nodeMap) > 0 {
-		b.metricsLock.Lock()
+		b.lock.Lock()
 		b.metrics[bkBizID] = nodeMap
-		b.metricsLock.Unlock()
+		b.lock.Unlock()
 	}
 
 	logger.Infof("[cmdb_relation] set metrics  bkcc__%d: %d", bkBizID, len(nodeMap))
@@ -175,10 +177,10 @@ func (b *RelationMetricsBuilder) BuildMetrics(_ context.Context, bkBizID int, ho
 }
 
 // String 以 string 格式获取所有指标数据
-func (b *RelationMetricsBuilder) String() string {
+func (b *MetricsBuilder) String() string {
 	var buf bytes.Buffer
-	b.metricsLock.RLock()
-	defer b.metricsLock.RUnlock()
+	b.lock.RLock()
+	defer b.lock.RUnlock()
 
 	metricsMap := make(map[string]struct{})
 	for bkBizID, nodeMap := range b.metrics {
@@ -198,24 +200,24 @@ func (b *RelationMetricsBuilder) String() string {
 }
 
 // PushAll 推送全业务数据
-func (b *RelationMetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error {
+func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error {
 	if b.spaceReport == nil {
 		return fmt.Errorf("space reporter is nil")
 	}
 
 	// 提前把 bkBizIDs 取出来，缩小锁区间，控制在单业务下
 	bkBizIDs := make([]int, 0, len(b.metrics))
-	b.metricsLock.RLock()
+	b.lock.RLock()
 	for bizID := range b.metrics {
 		bkBizIDs = append(bkBizIDs, bizID)
 	}
-	b.metricsLock.RUnlock()
+	b.lock.RUnlock()
 
 	for bkBizID := range bkBizIDs {
 		ts := getTsPool()
 		metricsMap := make(map[string]struct{})
 
-		b.metricsLock.RLock()
+		b.lock.RLock()
 		if nodeMap, ok := b.metrics[bkBizID]; ok {
 			for _, nodes := range nodeMap {
 				for _, relationMetric := range nodes.toRelationMetrics() {
@@ -227,7 +229,7 @@ func (b *RelationMetricsBuilder) PushAll(ctx context.Context, timestamp time.Tim
 				}
 			}
 		}
-		b.metricsLock.RUnlock()
+		b.lock.RUnlock()
 
 		if len(ts) > 0 {
 			// 上传业务 timeSeries

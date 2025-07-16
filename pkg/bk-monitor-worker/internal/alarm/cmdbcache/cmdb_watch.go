@@ -36,6 +36,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -323,7 +324,7 @@ func NewCmdbEventHandler(bkTenantId string, prefix string, rOpt *redis.Options, 
 
 // Close 关闭操作
 func (h *CmdbEventHandler) Close() {
-	GetRelationMetricsBuilder().ClearAllMetrics()
+	relation.GetRelationMetricsBuilder().ClearAllMetrics()
 }
 
 // getBkEvents 获取全部资源变更事件
@@ -556,7 +557,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 		defer func() {
 			err = reporter.Close(ctx)
 		}()
-		spaceReport := GetRelationMetricsBuilder().WithSpaceReport(reporter)
+		spaceReport := relation.GetRelationMetricsBuilder().WithSpaceReport(reporter)
 
 		for {
 			ticker := time.NewTicker(time.Minute)
@@ -564,7 +565,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 			// 事件处理间隔时间
 			select {
 			case <-cancelCtx.Done():
-				GetRelationMetricsBuilder().ClearAllMetrics()
+				relation.GetRelationMetricsBuilder().ClearAllMetrics()
 				ticker.Stop()
 				return
 			case <-ticker.C:

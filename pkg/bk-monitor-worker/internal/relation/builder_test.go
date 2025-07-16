@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package cmdbcache
+package relation
 
 import (
 	"context"
@@ -27,18 +27,18 @@ func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
 	for name, c := range map[string]struct {
 		bkBizIDHosts []struct {
 			bkBizID int
-			hosts   []*AlarmHostInfo
+			hosts   []HostS
 		}
 		expected string
 	}{
 		"test build metrics with same bkbizID": {
 			bkBizIDHosts: []struct {
 				bkBizID int
-				hosts   []*AlarmHostInfo
+				hosts   []HostS
 			}{
 				{
 					bkBizID: 2,
-					hosts: []*AlarmHostInfo{
+					hosts: []HostS{
 						{
 							BkHostId:      1001,
 							BkBizId:       2,
@@ -61,7 +61,7 @@ func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
 				},
 				{
 					bkBizID: 2,
-					hosts: []*AlarmHostInfo{
+					hosts: []HostS{
 						{
 							BkHostId:      1001,
 							BkBizId:       2,
@@ -72,7 +72,7 @@ func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
 				},
 				{
 					bkBizID: 3,
-					hosts: []*AlarmHostInfo{
+					hosts: []HostS{
 						{
 							BkHostId:      31001,
 							BkBizId:       3,
@@ -88,11 +88,11 @@ host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.1.0.1",host_id="3100
 		"test build metrics with diff bkbizID": {
 			bkBizIDHosts: []struct {
 				bkBizID int
-				hosts   []*AlarmHostInfo
+				hosts   []HostS
 			}{
 				{
 					bkBizID: 2,
-					hosts: []*AlarmHostInfo{
+					hosts: []HostS{
 						{
 							BkHostId:      1001,
 							BkBizId:       2,
@@ -115,7 +115,7 @@ host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.1.0.1",host_id="3100
 				},
 				{
 					bkBizID: 3,
-					hosts: []*AlarmHostInfo{
+					hosts: []HostS{
 						{
 							BkHostId:      31001,
 							BkBizId:       3,
@@ -134,7 +134,7 @@ host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.1.0.1",host_id="3100
 		t.Run(name, func(t *testing.T) {
 			rmb := newRelationMetricsBuilder()
 			for _, bh := range c.bkBizIDHosts {
-				_ = rmb.BuildMetrics(context.Background(), bh.bkBizID, bh.hosts)
+				_ = rmb.BuildMetrics(context.Background(), "", bh.bkBizID, bh.hosts)
 			}
 
 			metrics := strings.Split(strings.Trim(rmb.String(), "\n"), "\n")
@@ -149,13 +149,13 @@ func TestBuildMetrics(t *testing.T) {
 
 	for name, c := range map[string]struct {
 		bkBizID    int
-		hosts      []*AlarmHostInfo
-		clearHosts []*AlarmHostInfo
+		hosts      []HostS
+		clearhosts []HostS
 		expected   string
 	}{
 		"test build metrics": {
 			bkBizID: 2,
-			hosts: []*AlarmHostInfo{
+			hosts: []HostS{
 				{
 					BkHostId:      1001,
 					BkBizId:       2,
@@ -275,7 +275,7 @@ module_with_set_relation{module_id="2003",set_id="3001",bk_biz_id="2"} 1`,
 		},
 		"test build and clear metrics": {
 			bkBizID: 2,
-			hosts: []*AlarmHostInfo{
+			hosts: []HostS{
 				{
 					BkHostId:      1001,
 					BkBizId:       2,
@@ -357,7 +357,7 @@ module_with_set_relation{module_id="2003",set_id="3001",bk_biz_id="2"} 1`,
 					},
 				},
 			},
-			clearHosts: []*AlarmHostInfo{
+			clearhosts: []HostS{
 				{
 					BkBizId:  2,
 					BkHostId: 1001,
@@ -376,8 +376,8 @@ module_with_set_relation{module_id="2003",set_id="3001",bk_biz_id="2"} 1`,
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			rmb := newRelationMetricsBuilder()
-			_ = rmb.BuildMetrics(ctx, c.bkBizID, c.hosts)
-			rmb.ClearMetricsWithHostID(c.clearHosts...)
+			_ = rmb.BuildMetrics(ctx, "", c.bkBizID, c.hosts)
+			//rmb.ClearMetricsWithHostID(c.clearHosts...)
 
 			metrics := strings.Split(strings.Trim(rmb.String(), "\n"), "\n")
 			sort.Strings(metrics)

@@ -39,6 +39,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -335,7 +336,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 
 	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
 	go func() {
-		err = GetRelationMetricsBuilder().BuildMetrics(ctx, bkBizId, hosts)
+		err = relation.GetRelationMetricsBuilder().BuildMetrics(ctx, "", bkBizId, nil)
 		if err != nil {
 			logger.Error("refresh relation metrics failed, err: %v", err)
 		}
@@ -595,6 +596,7 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 	case "host":
 		agentIds := make([]string, 0)
 		hostKeys := make([]string, 0)
+		hostIDs := make([]int, 0)
 
 		// 提取需要删除的缓存key
 		for _, event := range events {
@@ -606,6 +608,7 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 			hostId, ok := event["bk_host_id"].(float64)
 			if ok && hostId != 0 {
 				hostKeys = append(hostKeys, strconv.Itoa(int(hostId)))
+				hostIDs = append(hostIDs, int(hostId))
 			}
 
 			ip, ok := event["bk_host_innerip"].(string)
@@ -623,29 +626,15 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 			}
 		}
 		if len(hostKeys) > 0 {
-			// 清理 relationMetrics 里的缓存数据
-			result := m.RedisClient.HMGet(ctx, m.GetCacheKey(hostCacheKey), hostKeys...)
-			clearNodes := make([]*AlarmHostInfo, 0)
-			for _, value := range result.Val() {
-				// 如果找不到对应的缓存，不需要更新
-				if value == nil {
-					continue
-				}
-
-				var host *AlarmHostInfo
-				err := json.Unmarshal([]byte(value.(string)), &host)
-				if err != nil {
-					continue
-				}
-				clearNodes = append(clearNodes, host)
-			}
-			GetRelationMetricsBuilder().ClearMetricsWithHostID(clearNodes...)
 
 			// 记录需要更新的业务ID
 			err := client.HDel(ctx, m.GetCacheKey(hostCacheKey), hostKeys...).Err()
 			if err != nil {
 				logger.Errorf("hdel failed, key: %s, err: %v", m.GetCacheKey(hostCacheKey), err)
 			}
+		}
+		if len(hostIDs) > 0 {
+			relation.GetRelationMetricsBuilder().ClearResourceWithID(relation.Host)
 		}
 	case "mainline_instance":
 		key := m.GetCacheKey(topoCacheKey)

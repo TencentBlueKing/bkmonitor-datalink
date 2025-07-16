@@ -645,26 +645,22 @@ func (d *BaseDiscover) populateLabels(lset labels.Labels) (res, orig labels.Labe
 		{Name: model.MetricsPathLabel, Value: d.opts.Path},
 		{Name: model.SchemeLabel, Value: d.opts.Scheme},
 	}
-	lb := labels.NewBuilder(lset)
 
+	lb := labels.NewBuilder(lset)
 	for _, l := range scrapeLabels {
-		if lv := lset.Get(l.Name); lv == "" {
+		if lb.Get(l.Name) == "" {
 			lb.Set(l.Name, l.Value)
 		}
 	}
 
 	preRelabelLabels := lb.Labels()
-	lset, _ = relabel.Process(preRelabelLabels, d.opts.Relabels...)
-
-	// Check if the target was dropped.
-	if lset == nil {
+	keep := relabel.ProcessBuilder(lb, d.opts.Relabels...)
+	if !keep {
 		return nil, preRelabelLabels, nil
 	}
-	if v := lset.Get(model.AddressLabel); v == "" {
+	if v := lb.Get(model.AddressLabel); v == "" {
 		return nil, nil, errors.New("no address")
 	}
-
-	lb = labels.NewBuilder(lset)
 
 	// addPort checks whether we should add a default port to the address.
 	// If the address is not valid, we don't append a port either.
@@ -678,11 +674,12 @@ func (d *BaseDiscover) populateLabels(lset labels.Labels) (res, orig labels.Labe
 		_, _, err := net.SplitHostPort(s + ":1234")
 		return err == nil
 	}
-	addr := lset.Get(model.AddressLabel)
+
+	addr := lb.Get(model.AddressLabel)
 	// If it's an address with no trailing port, infer it based on the used scheme.
 	if addPort(addr) {
 		// Addresses reaching this point are already wrapped in [] if necessary.
-		switch lset.Get(model.SchemeLabel) {
+		switch lb.Get(model.SchemeLabel) {
 		case "http", "":
 			addr = addr + ":80"
 		case "https":
@@ -699,14 +696,14 @@ func (d *BaseDiscover) populateLabels(lset labels.Labels) (res, orig labels.Labe
 
 	// Meta labels are deleted after relabelling. Other internal labels propagate to
 	// the target which decides whether they will be part of their label set.
-	for _, l := range lset {
+	lb.Range(func(l labels.Label) {
 		if strings.HasPrefix(l.Name, model.MetaLabelPrefix) {
 			lb.Del(l.Name)
 		}
-	}
+	})
 
 	// Default the instance label to the target address.
-	if v := lset.Get(model.InstanceLabel); v == "" {
+	if v := lb.Get(model.InstanceLabel); v == "" {
 		lb.Set(model.InstanceLabel, addr)
 	}
 

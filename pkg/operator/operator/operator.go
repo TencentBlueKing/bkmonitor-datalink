@@ -62,11 +62,11 @@ type Operator struct {
 	mm        *metricMonitor
 	buildInfo BuildInfo
 
-	client     kubernetes.Interface
-	mdClient   metadata.Interface
-	promclient promcli.Interface
-	bkclient   bkcli.Interface
-	srv        *http.Server
+	client  kubernetes.Interface
+	mdCli   metadata.Interface
+	promCli promcli.Interface
+	bkCli   bkcli.Interface
+	srv     *http.Server
 
 	qmopr *qcloudmonitor.Operator
 
@@ -111,17 +111,17 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		return nil, err
 	}
 
-	operator.mdClient, err = k8sutils.NewMetadataClient(apiHost, configs.G().GetTLS())
+	operator.mdCli, err = k8sutils.NewMetadataClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.promclient, err = k8sutils.NewPromClient(apiHost, configs.G().GetTLS())
+	operator.promCli, err = k8sutils.NewPromClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.bkclient, err = k8sutils.NewBKClient(apiHost, configs.G().GetTLS())
+	operator.bkCli, err = k8sutils.NewBKClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +165,7 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 			prominfs.NewMonitoringInformerFactories(
 				allNamespaces,
 				denyTargetNamespaces,
-				operator.promclient,
+				operator.promCli,
 				define.ReSyncPeriod,
 				nil,
 			),
@@ -181,7 +181,7 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 			prominfs.NewMonitoringInformerFactories(
 				allNamespaces,
 				denyTargetNamespaces,
-				operator.promclient,
+				operator.promCli,
 				define.ReSyncPeriod,
 				nil,
 			),
@@ -195,9 +195,9 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	if configs.G().QCloudMonitor.Enabled {
 		operator.qmopr, err = qcloudmonitor.New(ctx, qcloudmonitor.ClientSet{
 			Client: operator.client,
-			Meta:   operator.mdClient,
-			BK:     operator.bkclient,
-			Prom:   operator.promclient,
+			Meta:   operator.mdCli,
+			BK:     operator.bkCli,
+			Prom:   operator.promCli,
 		})
 		if err != nil {
 			return nil, errors.Wrap(err, "create QCloudMonitor operator failed")
@@ -209,13 +209,13 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		return nil, errors.Wrap(err, "create helmchartsController failed")
 	}
 
-	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.mdClient, operator.bkclient)
+	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.mdCli, operator.bkCli)
 	if err != nil {
 		return nil, errors.Wrap(err, "create objectsController failed")
 	}
 
 	operator.recorder = newRecorder()
-	operator.dw = dataidwatcher.New(operator.ctx, operator.bkclient)
+	operator.dw = dataidwatcher.New(operator.ctx, operator.bkCli)
 	operator.mm = newMetricMonitor()
 	operator.statefulSetSecretMap = map[string]struct{}{}
 

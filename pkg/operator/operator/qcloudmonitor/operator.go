@@ -78,7 +78,6 @@ type Operator struct {
 	seh *syncEventHandler
 
 	qcmInfs *prominfs.ForResource // QCloudMonitor
-	//qcmInfs cache.SharedIndexInformer
 	dpInfs  *prominfs.ForResource // Deployment
 	svcInfs *prominfs.ForResource // Service
 	cmInfs  *prominfs.ForResource // ConfigMap
@@ -182,18 +181,13 @@ func New(ctx context.Context, cs ClientSet) (*Operator, error) {
 		return nil, errors.Wrap(err, "create Deployment informer failed")
 	}
 
-	//factory := bkinfs.NewSharedInformerFactory(operator.bkCli, define.ReSyncPeriod)
-	//operator.qcmInfs = factory.Monitoring().V1beta1().QCloudMonitors().Informer()
-
 	operator.qcmInfs, err = prominfs.NewInformersForResource(
 		k8sutils.NewBKInformerFactories(
 			allNamespaces,
 			denyTargetNamespaces,
 			operator.bkCli,
 			define.ReSyncPeriod,
-			func(options *metav1.ListOptions) {
-				//options.LabelSelector = appLabelSelection
-			},
+			nil,
 		),
 		bkv1beta1.SchemeGroupVersion.WithResource("qcloudmonitors"),
 	)
@@ -244,7 +238,6 @@ func (c *Operator) waitForCacheSync() error {
 				return fmt.Errorf("failed to sync cache for %s informer", infs.name)
 			}
 		}
-		infs.informersForResource.Start(c.ctx.Done())
 	}
 	return nil
 }

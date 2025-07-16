@@ -582,13 +582,6 @@ func TestSpacePusher_getTableInfoForInfluxdbAndVm(t *testing.T) {
 	assert.JSONEq(t, `{"cluster_name":"default","db":"dbname","measurement":"i_table_test","storage_id":2,"storage_name":"","tags_key":["t1","t2"],"vm_rt":"","storage_type":"influxdb"}`, itableData)
 }
 
-func TestSpaceRedisSvc_PushAndPublishSpaceRouter(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	// no panic
-	err := NewSpaceRedisSvc(1).PushAndPublishSpaceRouter("bkcc", "2", nil)
-	assert.NoError(t, err)
-}
-
 func TestSpaceRedisSvc_composeAllTypeTableIds(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB

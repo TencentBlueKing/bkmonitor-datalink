@@ -179,58 +179,6 @@ func NewSpaceRedisSvc(goroutineLimit int) SpaceRedisSvc {
 	return SpaceRedisSvc{goroutineLimit: goroutineLimit}
 }
 
-func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tableIdList []string) error {
-	startTime := time.Now() // 记录开始时间
-	logger.Infof("PushAndPublishSpaceRouter:start to push and publish space_type [%s], space_id [%s] table_ids [%v] router", spaceType, spaceId, tableIdList)
-	pusher := NewSpacePusher()
-
-	// 获取租户ID
-	bkTenantId := ""
-	if cfg.EnableMultiTenantMode {
-		var spaceObj space.Space
-		db := mysql.GetDBSession().DB
-		if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId).One(&spaceObj); err != nil {
-			return err
-		}
-		bkTenantId = spaceObj.BkTenantId
-	} else {
-		bkTenantId = tenant.DefaultTenantId
-	}
-
-	// 获取空间下的结果表，如果不存在，则获取空间下的所有
-	if len(tableIdList) == 0 {
-		tableDataIdMap, err := pusher.GetSpaceTableIdDataId(bkTenantId, spaceType, spaceId, nil, nil, nil)
-		if err != nil {
-			return errors.Wrap(err, "get space table id dataid failed")
-		}
-		for tableId := range tableDataIdMap {
-			tableIdList = append(tableIdList, tableId)
-		}
-	}
-
-	// 更新空间下的结果表相关数据
-	if spaceType != "" && spaceId != "" {
-		// 更新相关数据到 redis
-		// NOTE:这里统一根据Redis中的新老值是否存在差异决定是否需要Publish,isPublish参数不再生效
-		if err := pusher.PushSpaceTableIds(bkTenantId, spaceType, spaceId); err != nil {
-			return err
-		}
-	} else {
-		// 必须指定空间类型和空间ID
-		return errors.New("spaceType and spaceId must be specified")
-	}
-	// 更新数据
-	if err := pusher.PushDataLabelTableIds(bkTenantId, tableIdList, true); err != nil {
-		return err
-	}
-	if err := pusher.PushTableIdDetail(bkTenantId, tableIdList, true); err != nil {
-		return err
-	}
-	elapsedTime := time.Since(startTime) // 计算耗时
-	logger.Infof("PushAndPublishSpaceRouter:push and publish space_type: %s, space_id: %s router successfully,took %s", spaceType, spaceId, elapsedTime)
-	return nil
-}
-
 type SpacePusher struct {
 	mut  sync.Mutex
 	once sync.Once

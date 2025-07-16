@@ -44,7 +44,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	}
 
 	for _, tenant := range tenants {
-		err := RefreshTenantDatasource(ctx, tenant.Id)
+		err := refreshTenantDatasource(ctx, tenant.Id)
 		if err != nil {
 			logger.Errorf("RefreshDatasource: refresh tenant(%s) datasource error, %v", tenant.Id, err)
 		}
@@ -52,8 +52,8 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	return nil
 }
 
-// RefreshTenantDatasource update datasource
-func RefreshTenantDatasource(ctx context.Context, bkTenantId string) error {
+// refreshTenantDatasource update datasource
+func refreshTenantDatasource(ctx context.Context, bkTenantId string) error {
 	defer func() {
 		if err := recover(); err != nil {
 			logger.Errorf("RefreshDatasource: Runtime panic caught: %v", err)

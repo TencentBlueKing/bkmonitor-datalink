@@ -12,9 +12,7 @@ package service
 import (
 	"context"
 	"fmt"
-	"strings"
 
-	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
 
@@ -49,11 +47,6 @@ func NewDataSourceSvc(obj *resulttable.DataSource) DataSourceSvc {
 	return DataSourceSvc{
 		DataSource: obj,
 	}
-}
-
-// makeToken
-func (d DataSourceSvc) makeToken() string {
-	return strings.ReplaceAll(uuid.NewString(), "-", "")
 }
 
 // ConsulPath 获取datasource的consul根路径

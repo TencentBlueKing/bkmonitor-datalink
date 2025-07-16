@@ -10,6 +10,8 @@
 package qcloudmonitor
 
 import (
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
@@ -33,6 +35,15 @@ var (
 		},
 		[]string{"name"},
 	)
+	reconcileQCloudMonitorDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: define.MonitorNamespace,
+			Name:      "reconcile_qcloudmonitor_duration_seconds",
+			Help:      "reconcile qcloudmonitor duration in seconds",
+			Buckets:   define.DefObserveDuration,
+		},
+		[]string{"name"},
+	)
 )
 
 func newMetricMonitor() *metricMonitor {
@@ -49,4 +60,8 @@ func (m *metricMonitor) IncReconcileQCloudMonitorSuccessCounter(name string) {
 
 func (m *metricMonitor) IncReconcileQCloudMonitorFailedCounter(name string) {
 	reconcileQCloudMonitorFailed.WithLabelValues(name).Inc()
+}
+
+func (m *metricMonitor) ObserveReconcileQCloudMonitorDuration(name string, duration time.Duration) {
+	reconcileQCloudMonitorDuration.WithLabelValues(name).Observe(duration.Seconds())
 }

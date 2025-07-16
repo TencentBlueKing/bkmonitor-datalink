@@ -255,6 +255,7 @@ func (c *Operator) Sync(ctx context.Context, namespace, name string) error {
 
 	key := fmt.Sprintf("%s/%s", namespace, name)
 	defaultMetricMonitor.IncReconcileQCloudMonitorSuccessCounter(key)
+	defaultMetricMonitor.ObserveReconcileQCloudMonitorDuration(key, time.Since(start))
 	logger.Infof("reconcile QCloudmonitor (%s), take: %v", key, time.Since(start))
 	return nil
 }

@@ -12,6 +12,7 @@ package structured
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/Knetic/govaluate"
@@ -88,7 +89,17 @@ type queryPromQLExpr struct {
 
 // NewQueryPromQLExpr
 func NewQueryPromQLExpr(q string) *queryPromQLExpr {
-	return &queryPromQLExpr{q: q, ref: &refMgr{char: "abcdefghijklmnopqrstuvwxyz"}}
+	return (&queryPromQLExpr{
+		q: q, ref: &refMgr{char: "abcdefghijklmnopqrstuvwxyz"},
+	}).init()
+}
+
+func (sp *queryPromQLExpr) init() *queryPromQLExpr {
+	// 针对 now() 函数进行转换成毫秒时间戳
+	if strings.Contains(sp.q, "now()") {
+		sp.q = strings.ReplaceAll(sp.q, "now()", fmt.Sprintf("%d", time.Now().UnixMilli()))
+	}
+	return sp
 }
 
 // inspect 使用深度优先遍历语法树 并记录 VectorSelector 的索引位置

@@ -200,6 +200,8 @@ func New(ctx context.Context, cs ClientSet) (*Operator, error) {
 }
 
 func (c *Operator) Start() error {
+	c.seh.Run(c.ctx)
+
 	startInfs := func(infs *prominfs.ForResource) {
 		infs.AddEventHandler(c.seh)
 		infs.Start(c.ctx.Done())

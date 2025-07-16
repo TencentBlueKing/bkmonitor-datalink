@@ -388,6 +388,12 @@ func (c *Operator) Run() error {
 		return err
 	}
 
+	if configs.G().QCloudMonitor.Enabled {
+		if err := c.qmopr.Start(); err != nil {
+			return err
+		}
+	}
+
 	// 如果启动了 StatefulSetWorker 则需要监听 statefulset secrets 的变化以及 statefulset 本身的变化
 	// 该资源只存在于 ConfMonitorNamespace namespace
 	if configs.G().EnableStatefulSetWorker {

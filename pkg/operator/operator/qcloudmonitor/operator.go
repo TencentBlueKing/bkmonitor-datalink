@@ -201,7 +201,24 @@ func New(ctx context.Context, cs ClientSet) (*Operator, error) {
 	return operator, nil
 }
 
-func (c *Operator) waitForCacheSync(ctx context.Context) error {
+func (c *Operator) Start() error {
+	c.addEventHandlers()
+	return c.waitForCacheSync()
+}
+
+func (c *Operator) Stop() {
+	c.cancel()
+}
+
+func (c *Operator) addEventHandlers() {
+	c.svcInfs.AddEventHandler(c.seh)
+	c.smInfs.AddEventHandler(c.seh)
+	c.dpInfs.AddEventHandler(c.seh)
+	c.cmInfs.AddEventHandler(c.seh)
+	c.qcmInfs.AddEventHandler(c.seh)
+}
+
+func (c *Operator) waitForCacheSync() error {
 	for _, infs := range []struct {
 		name                 string
 		informersForResource *prominfs.ForResource
@@ -217,20 +234,13 @@ func (c *Operator) waitForCacheSync(ctx context.Context) error {
 		}
 
 		for _, inf := range infs.informersForResource.GetInformers() {
-			if !k8sutils.WaitForNamedCacheSync(ctx, infs.name, inf.Informer()) {
+			if !k8sutils.WaitForNamedCacheSync(c.ctx, infs.name, inf.Informer()) {
 				return fmt.Errorf("failed to sync cache for %s informer", infs.name)
 			}
 		}
+		infs.informersForResource.Start(c.ctx.Done())
 	}
 	return nil
-}
-
-func (c *Operator) addEventHandlers() {
-	c.svcInfs.AddEventHandler(c.seh)
-	c.smInfs.AddEventHandler(c.seh)
-	c.dpInfs.AddEventHandler(c.seh)
-	c.cmInfs.AddEventHandler(c.seh)
-	c.qcmInfs.AddEventHandler(c.seh)
 }
 
 func (c *Operator) Sync(ctx context.Context, namespace, name string) error {

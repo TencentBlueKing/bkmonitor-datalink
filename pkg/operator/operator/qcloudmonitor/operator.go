@@ -339,7 +339,7 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, p *bkv1beta1.QC
 
 	fmt.Println("p.APIVersion", p.APIVersion, "Kind", p.Kind)
 	fmt.Printf("Spec: %#v\n", p.Spec)
-	fmt.Printf("Meta: %#v\n", p.ObjectMeta)
+	fmt.Printf("Meta: %#v\n", p.GetObjectKind())
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{

@@ -25,12 +25,14 @@ func InjectManagingOwner(o metav1.Object, owner Owner) {
 		append(
 			o.GetOwnerReferences(),
 			metav1.OwnerReference{
-				APIVersion:         owner.GroupVersionKind().GroupVersion().String(),
+				//APIVersion:         owner.GroupVersionKind().GroupVersion().String(),
+				APIVersion:         "monitoring.bk.tencent.com/v1beta1",
 				BlockOwnerDeletion: ptr.To(true),
 				Controller:         ptr.To(true),
-				Kind:               owner.GroupVersionKind().Kind,
-				Name:               owner.GetObjectMeta().GetName(),
-				UID:                owner.GetObjectMeta().GetUID(),
+				//Kind:               owner.GroupVersionKind().Kind,
+				Kind: "QCloudMonitor",
+				Name: owner.GetObjectMeta().GetName(),
+				UID:  owner.GetObjectMeta().GetUID(),
 			},
 		),
 	)

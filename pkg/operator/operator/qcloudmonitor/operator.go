@@ -206,20 +206,22 @@ func New(ctx context.Context, cs ClientSet) (*Operator, error) {
 }
 
 func (c *Operator) Start() error {
-	c.addEventHandlers()
+	startInfs := func(infs *prominfs.ForResource) {
+		infs.AddEventHandler(c.seh)
+		infs.Start(c.ctx.Done())
+	}
+
+	startInfs(c.qcmInfs)
+	startInfs(c.svcInfs)
+	startInfs(c.smInfs)
+	startInfs(c.dpInfs)
+	startInfs(c.cmInfs)
+
 	return c.waitForCacheSync()
 }
 
 func (c *Operator) Stop() {
 	c.cancel()
-}
-
-func (c *Operator) addEventHandlers() {
-	c.qcmInfs.AddEventHandler(c.seh)
-	c.svcInfs.AddEventHandler(c.seh)
-	c.smInfs.AddEventHandler(c.seh)
-	c.dpInfs.AddEventHandler(c.seh)
-	c.cmInfs.AddEventHandler(c.seh)
 }
 
 func (c *Operator) waitForCacheSync() error {

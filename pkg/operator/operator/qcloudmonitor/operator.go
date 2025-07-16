@@ -328,6 +328,7 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, p *bkv1beta1.QC
 	}
 
 	fmt.Printf("name=(%s), GVK: %#v, %v\n", p.Name, p.GroupVersionKind(), p.GroupVersionKind().GroupVersion().String())
+	fmt.Println("owner.GetObjectMeta().name=:", p.GetObjectMeta().GetName())
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{

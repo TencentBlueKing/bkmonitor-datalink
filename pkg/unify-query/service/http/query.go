@@ -576,8 +576,9 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 
 	// 判定是否开启时间不对齐模式
 	if queryTs.Reference {
-		unit, startTime, endTime, err := function.QueryTimestamp(queryTs.Start, queryTs.End)
-		if err != nil {
+		unit, startTime, endTime, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
+		if timeErr != nil {
+			err = timeErr
 			return
 		}
 

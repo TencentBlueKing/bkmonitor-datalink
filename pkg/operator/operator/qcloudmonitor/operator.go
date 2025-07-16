@@ -29,12 +29,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/metadata"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/pointer"
 
 	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
 	bkcli "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
-	bkinfs "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
@@ -79,8 +77,8 @@ type Operator struct {
 
 	seh *syncEventHandler
 
-	// qcmInfs *prominfs.ForResource // QCloudMonitor
-	qcmInfs cache.SharedIndexInformer
+	qcmInfs *prominfs.ForResource // QCloudMonitor
+	//qcmInfs cache.SharedIndexInformer
 	dpInfs  *prominfs.ForResource // Deployment
 	svcInfs *prominfs.ForResource // Service
 	cmInfs  *prominfs.ForResource // ConfigMap
@@ -184,24 +182,24 @@ func New(ctx context.Context, cs ClientSet) (*Operator, error) {
 		return nil, errors.Wrap(err, "create Deployment informer failed")
 	}
 
-	factory := bkinfs.NewSharedInformerFactory(operator.bkCli, define.ReSyncPeriod)
-	operator.qcmInfs = factory.Monitoring().V1beta1().QCloudMonitors().Informer()
+	//factory := bkinfs.NewSharedInformerFactory(operator.bkCli, define.ReSyncPeriod)
+	//operator.qcmInfs = factory.Monitoring().V1beta1().QCloudMonitors().Informer()
 
-	//operator.qcmInfs, err = prominfs.NewInformersForResource(
-	//	k8sutils.NewBKInformerFactories(
-	//		allNamespaces,
-	//		denyTargetNamespaces,
-	//		operator.bkCli,
-	//		define.ReSyncPeriod,
-	//		func(options *metav1.ListOptions) {
-	//			//options.LabelSelector = appLabelSelection
-	//		},
-	//	),
-	//	bkv1beta1.SchemeGroupVersion.WithResource("qcloudmonitors"),
-	//)
-	//if err != nil {
-	//	return nil, errors.Wrap(err, "create QCloudMonitor informer failed")
-	//}
+	operator.qcmInfs, err = prominfs.NewInformersForResource(
+		k8sutils.NewBKInformerFactories(
+			allNamespaces,
+			denyTargetNamespaces,
+			operator.bkCli,
+			define.ReSyncPeriod,
+			func(options *metav1.ListOptions) {
+				//options.LabelSelector = appLabelSelection
+			},
+		),
+		bkv1beta1.SchemeGroupVersion.WithResource("qcloudmonitors"),
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "create QCloudMonitor informer failed")
+	}
 
 	operator.seh = newSyncEventHandler(operator)
 	return operator, nil
@@ -218,7 +216,6 @@ func (c *Operator) Stop() {
 
 func (c *Operator) addEventHandlers() {
 	c.qcmInfs.AddEventHandler(c.seh)
-
 	c.svcInfs.AddEventHandler(c.seh)
 	c.smInfs.AddEventHandler(c.seh)
 	c.dpInfs.AddEventHandler(c.seh)
@@ -230,11 +227,11 @@ func (c *Operator) waitForCacheSync() error {
 		name                 string
 		informersForResource *prominfs.ForResource
 	}{
+		{"QCloudMonitor", c.qcmInfs},
 		{"Service", c.svcInfs},
 		{"Deployment", c.dpInfs},
 		{"ConfigMap", c.cmInfs},
 		{"ServiceMonitor", c.smInfs},
-		//{"QCloudMonitor", c.qcmInfs},
 	} {
 		if infs.informersForResource == nil {
 			continue

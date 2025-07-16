@@ -284,7 +284,7 @@ func (c *Operator) createOrUpdateConfigMap(ctx context.Context, p *bkv1beta1.QCl
 			Labels:    selector,
 		},
 		Data: map[string]string{
-			"qcloud.yaml": p.Spec.Config.FileContent,
+			"qcloud.yml": p.Spec.Config.FileContent,
 		},
 	}
 

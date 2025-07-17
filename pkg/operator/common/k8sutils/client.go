@@ -131,6 +131,14 @@ func mergeKubectlAnnotations(from *metav1.ObjectMeta, to metav1.ObjectMeta) {
 	from.SetAnnotations(mergeMapsByPrefix(from.Annotations, to.Annotations, "kubectl.kubernetes.io/"))
 }
 
+func CreateOrUpdateEndpoints(ctx context.Context, cli corev1iface.EndpointsInterface, desired *corev1.Endpoints) error {
+	return promk8sutil.CreateOrUpdateEndpoints(ctx, cli, desired)
+}
+
+func CreateOrUpdateSecret(ctx context.Context, cli corev1iface.SecretInterface, desired *corev1.Secret) error {
+	return promk8sutil.CreateOrUpdateSecret(ctx, cli, desired)
+}
+
 func CreateOrUpdateService(ctx context.Context, cli corev1iface.ServiceInterface, desired *corev1.Service) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		service, err := cli.Get(ctx, desired.Name, metav1.GetOptions{})
@@ -142,7 +150,6 @@ func CreateOrUpdateService(ctx context.Context, cli corev1iface.ServiceInterface
 			_, err = cli.Create(ctx, desired, metav1.CreateOptions{})
 			return err
 		}
-
 		// Apply immutable fields from the existing service.
 		desired.Spec.IPFamilies = service.Spec.IPFamilies
 		desired.Spec.IPFamilyPolicy = service.Spec.IPFamilyPolicy
@@ -153,14 +160,6 @@ func CreateOrUpdateService(ctx context.Context, cli corev1iface.ServiceInterface
 		_, err = cli.Update(ctx, desired, metav1.UpdateOptions{})
 		return err
 	})
-}
-
-func CreateOrUpdateEndpoints(ctx context.Context, cli corev1iface.EndpointsInterface, desired *corev1.Endpoints) error {
-	return promk8sutil.CreateOrUpdateEndpoints(ctx, cli, desired)
-}
-
-func CreateOrUpdateSecret(ctx context.Context, secretClient corev1iface.SecretInterface, desired *corev1.Secret) error {
-	return promk8sutil.CreateOrUpdateSecret(ctx, secretClient, desired)
 }
 
 func CreateOrUpdateConfigMap(ctx context.Context, cli corev1iface.ConfigMapInterface, desired *corev1.ConfigMap) error {

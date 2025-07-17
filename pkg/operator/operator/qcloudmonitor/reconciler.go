@@ -16,8 +16,10 @@ package qcloudmonitor
 
 import (
 	"context"
+	"golang.org/x/time/rate"
 	"reflect"
 	"strings"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -43,8 +45,16 @@ var _ = cache.ResourceEventHandler(&syncEventHandler{})
 
 func newSyncEventHandler(syncer Syncer) *syncEventHandler {
 	return &syncEventHandler{
-		syncer:     syncer,
-		reconcileQ: workqueue.NewTypedRateLimitingQueueWithConfig[string](workqueue.DefaultTypedControllerRateLimiter[string](), workqueue.TypedRateLimitingQueueConfig[string]{Name: "sync"}),
+		syncer: syncer,
+		reconcileQ: workqueue.NewTypedRateLimitingQueueWithConfig[string](
+			workqueue.NewTypedMaxOfRateLimiter(
+				workqueue.NewTypedItemExponentialFailureRateLimiter[string](5*time.Millisecond, 1000*time.Second),
+				&workqueue.TypedBucketRateLimiter[string]{Limiter: rate.NewLimiter(rate.Limit(10), 100)},
+			),
+			workqueue.TypedRateLimitingQueueConfig[string]{
+				Name: "sync",
+			},
+		),
 	}
 }
 
@@ -87,10 +97,13 @@ func (r *syncEventHandler) OnAdd(obj interface{}, _ bool) {
 		return
 	}
 
-	_, err := meta.Accessor(obj)
+	mCur, err := meta.Accessor(obj)
 	if err != nil {
 		return
 	}
+
+	kind := meta.AsPartialObjectMetadata(mCur).Kind
+	logger.Infof("qcm handler on (Add) event, kind=%s, name=%s", kind, key)
 	r.reconcileQ.Add(key)
 }
 
@@ -118,6 +131,8 @@ func (r *syncEventHandler) OnUpdate(old, cur interface{}) {
 		return
 	}
 
+	kind := meta.AsPartialObjectMetadata(mCur).Kind
+	logger.Infof("qcm handler on (Update) event, kind=%s, name=%s", kind, key)
 	r.reconcileQ.Add(key)
 }
 
@@ -127,10 +142,13 @@ func (r *syncEventHandler) OnDelete(obj interface{}) {
 		return
 	}
 
-	_, err := meta.Accessor(obj)
+	mCur, err := meta.Accessor(obj)
 	if err != nil {
 		return
 	}
+
+	kind := meta.AsPartialObjectMetadata(mCur).Kind
+	logger.Infof("qcm handler on (Delete) event, kind=%s, name=%s", kind, key)
 	r.reconcileQ.Add(key)
 }
 

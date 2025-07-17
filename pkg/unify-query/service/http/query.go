@@ -1173,7 +1173,13 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 							SliceMax: &session.MaxSlice,
 							ScrollID: scrollID,
 						}
-						sliceQuery.From = index * session.Limit
+
+						if index >= 0 {
+							sliceQuery.From = index * session.Limit
+						} else {
+							sliceQuery.From = 0
+							log.Warnf(ctx, "Invalid index %d for slice %d, using 0", index, currentSliceIndex)
+						}
 						sliceQuery.Size = session.Limit
 						sliceQuery.ResultTableOptions.SetOption(sliceQuery.TableID, storage.Address, option)
 

@@ -146,7 +146,7 @@ func TestFormatFactory_Query(t *testing.T) {
 				{
 					{
 						DimensionName: "nested1.key",
-						Value:         []string{"val*-1", "val-2"},
+						Value:         []string{"val*-1", "val\\*-2"},
 						Operator:      structured.ConditionContains,
 					},
 					{
@@ -160,7 +160,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"nested":{"query":{"bool":{"must":[{"bool":{"should":[{"wildcard":{"nested1.key":{"value":"*val\\*-1*"}}},{"wildcard":{"nested1.key":{"value":"*val-2*"}}}]}},{"match_phrase":{"nested1.key":{"query":"val-3"}}},{"exists":{"field":"nested1.key"}}]}},"path":"nested1"}}}`,
+			expected: `{"query":{"nested":{"query":{"bool":{"must":[{"bool":{"should":[{"wildcard":{"nested1.key":{"value":"*val\\*-1*"}}},{"wildcard":{"nested1.key":{"value":"*val\\*-2*"}}}]}},{"match_phrase":{"nested1.key":{"query":"val-3"}}},{"exists":{"field":"nested1.key"}}]}},"path":"nested1"}}}`,
 		},
 		"keyword and text check wildcard": {
 			conditions: metadata.AllConditions{

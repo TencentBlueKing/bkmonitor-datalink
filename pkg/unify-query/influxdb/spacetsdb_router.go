@@ -42,10 +42,6 @@ var (
 // getRedisRouterKey generates a  key for lookup ResultTableDetail or other space-related data.
 // If enable MultiTenantMode, it appends the tenant ID to the key.
 func getRedisRouterKey(ctx context.Context, key string) (newKey string) {
-	defer func() {
-		log.Infof(ctx, "getRedisRouterKey: %s -> %s", key, newKey)
-	}()
-
 	newKey = key
 	if !MultiTenantMode {
 		return

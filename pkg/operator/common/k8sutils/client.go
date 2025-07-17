@@ -132,7 +132,27 @@ func mergeKubectlAnnotations(from *metav1.ObjectMeta, to metav1.ObjectMeta) {
 }
 
 func CreateOrUpdateService(ctx context.Context, cli corev1iface.ServiceInterface, desired *corev1.Service) error {
-	return promk8sutil.CreateOrUpdateService(ctx, cli, desired)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		service, err := cli.Get(ctx, desired.Name, metav1.GetOptions{})
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return err
+			}
+
+			_, err = cli.Create(ctx, desired, metav1.CreateOptions{})
+			return err
+		}
+
+		// Apply immutable fields from the existing service.
+		desired.Spec.IPFamilies = service.Spec.IPFamilies
+		desired.Spec.IPFamilyPolicy = service.Spec.IPFamilyPolicy
+		desired.Spec.ClusterIP = service.Spec.ClusterIP
+		desired.Spec.ClusterIPs = service.Spec.ClusterIPs
+
+		mergeMetadata(&desired.ObjectMeta, service.ObjectMeta)
+		_, err = cli.Update(ctx, desired, metav1.UpdateOptions{})
+		return err
+	})
 }
 
 func CreateOrUpdateEndpoints(ctx context.Context, cli corev1iface.EndpointsInterface, desired *corev1.Endpoints) error {

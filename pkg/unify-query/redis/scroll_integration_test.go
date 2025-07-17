@@ -356,6 +356,38 @@ func TestESScrollFixedFlow(t *testing.T) {
 	log.Infof(ctx, "[TEST] ====== 修复后的ES scroll流程测试完成 ======")
 }
 
+// TestUnsupportedStorageType 测试不支持的存储类型
+func TestUnsupportedStorageType(t *testing.T) {
+	ctx := context.Background()
+
+	session := ScrollSession{
+		Key:           "test_session_unsupported",
+		CreateAt:      time.Now(),
+		LastAccessAt:  time.Now(),
+		Index:         0,
+		MaxSlice:      2,
+		Limit:         10,
+		ScrollTimeout: 5 * time.Minute,
+		Status:        SessionStatusRunning,
+		ScrollIDs:     make(map[string]string),
+		SliceStatus:   make(map[string]bool),
+	}
+
+	connect := "http://127.0.0.1:9200"
+	tableID := "test_table"
+
+	// 测试不支持的存储类型
+	_, _, err := session.GetNextScrollID(ctx, "unsupported_storage", connect, tableID, 0)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported storage type")
+
+	// 测试 HasMoreData 对不支持的存储类型返回 false
+	hasMore := session.HasMoreData("unsupported_storage")
+	assert.False(t, hasMore, "Unsupported storage type should return false for HasMoreData")
+
+	log.Infof(ctx, "[TEST] ====== 不支持的存储类型测试完成 ======")
+}
+
 // TestESScrollCorrectTermination 测试正确的ES scroll终止逻辑
 func TestESScrollCorrectTermination(t *testing.T) {
 	ctx := context.Background()

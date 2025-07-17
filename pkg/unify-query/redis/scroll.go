@@ -45,11 +45,14 @@ const (
 )
 
 func (s *ScrollSession) GetNextScrollID(ctx context.Context, storageType, connect, tableID string, sliceIdx int) (string, int, error) {
-	if storageType != consul.ElasticsearchStorageType {
+	switch storageType {
+	case consul.ElasticsearchStorageType:
+		return s.getNextElasticsearchScrollID(ctx, connect, tableID, sliceIdx)
+	case consul.BkSqlStorageType:
 		return s.getNextDorisIndex(ctx)
+	default:
+		return "", 0, fmt.Errorf("unsupported storage type for scroll: %s", storageType)
 	}
-
-	return s.getNextElasticsearchScrollID(ctx, connect, tableID, sliceIdx)
 }
 
 func (s *ScrollSession) getNextDorisIndex(ctx context.Context) (string, int, error) {
@@ -93,12 +96,13 @@ func (s *ScrollSession) RemoveScrollID(connect, tableID string, sliceIdx int) {
 }
 
 func (s *ScrollSession) HasMoreData(tsDbType string) bool {
-	if tsDbType == consul.ElasticsearchStorageType {
+	switch tsDbType {
+	case consul.ElasticsearchStorageType:
 		if s.SliceStatus == nil {
 			s.SliceStatus = make(map[string]bool)
 		}
 
-		if s.ScrollIDs != nil && len(s.ScrollIDs) > 0 {
+		if len(s.ScrollIDs) > 0 {
 			return true
 		}
 
@@ -126,8 +130,9 @@ func (s *ScrollSession) HasMoreData(tsDbType string) bool {
 		}
 
 		return false
-	} else {
-		hasMore := s.Status != SessionStatusDone
-		return hasMore
+	case consul.BkSqlStorageType:
+		return s.Status != SessionStatusDone
+	default:
+		return false
 	}
 }

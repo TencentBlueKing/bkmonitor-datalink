@@ -61,6 +61,12 @@ func New(conf *confengine.Config) (*Exporter, error) {
 	c.Validate()
 	logger.Infof("exporter config: %+v", c)
 
+	// 注册 gse output hook
+	gse.RegisterSendHook(func(dataID int32, n float64) bool {
+		DefaultMetricMonitor.ObserveBeatSentBytes(dataID, n)
+		return n < float64(c.MaxMessageBytes)
+	})
+
 	ctx, cancel := context.WithCancel(context.Background())
 	exp := &Exporter{
 		ctx:       ctx,

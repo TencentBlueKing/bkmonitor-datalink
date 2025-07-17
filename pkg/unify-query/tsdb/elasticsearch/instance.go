@@ -549,6 +549,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				err = mappingErr
 				return
 			}
+			span.Set("mapping-length", len(mappings))
 			if len(mappings) == 0 {
 				err = fmt.Errorf("index is empty with %v，url: %s", aliases, conn.Address)
 				return
@@ -589,6 +590,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 			sr, queryErr := i.esQuery(ctx, qo, fact)
 			if queryErr != nil {
+				log.Errorf(ctx, fmt.Sprintf("es query raw data error: %s", queryErr.Error()))
 				err = queryErr
 				return
 			}

@@ -11,6 +11,7 @@ package function
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -123,7 +124,13 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 			continue
 		}
 
-		analyzablePart = strings.ReplaceAll(analyzablePart, keyword, fmt.Sprintf("<mark>%s</mark>", keyword))
+		re := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(keyword))
+		matches := re.FindAllString(analyzablePart, -1)
+		for _, m := range matches {
+			if m != "" {
+				analyzablePart = strings.ReplaceAll(analyzablePart, m, fmt.Sprintf("<mark>%s</mark>", m))
+			}
+		}
 	}
 
 	return analyzablePart + remainingPart

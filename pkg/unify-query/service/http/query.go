@@ -1189,11 +1189,6 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 							lock.Unlock()
 						}
 
-						if len(queryList) > 1 {
-							sliceQuery.Size += sliceQuery.From
-							sliceQuery.From = 0
-						}
-
 						size, options, queryErr := instance.QueryRawData(ctx, &sliceQuery, start, end, dataCh)
 						if queryErr != nil {
 							message.WriteString(fmt.Sprintf("query %s:%s slice %d is error: %s ", sliceQuery.TableID, sliceQuery.Fields, currentSliceIndex, queryErr.Error()))

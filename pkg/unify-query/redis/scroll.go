@@ -31,10 +31,8 @@ type ScrollSession struct {
 	MaxSlice      int           `json:"max_slice"`
 	Limit         int           `json:"limit"`
 	Index         int           `json:"index"`
-	// key: connect|tableID, value: scrollID列表(ES) 或 空(Doris)
-	ScrollIDs map[string][]string `json:"scroll_ids"`
-	// key: connect|tableID|scrollID, value: 是否已完成
-	ScrollIDStatus map[string]bool `json:"scroll_id_status"`
+	// key: connect|tableID|sliceIdx, value: 当前有效的 scrollID
+	ScrollIDs map[string]string `json:"scroll_ids"`
 	// key: connect|tableID|sliceIdx, value: 是否已完成
 	SliceStatus map[string]bool `json:"slice_status"`
 	Status      string          `json:"status"`
@@ -63,41 +61,21 @@ func (s *ScrollSession) getNextDorisIndex(ctx context.Context) (string, int, err
 func (s *ScrollSession) getNextElasticsearchScrollID(ctx context.Context, connect, tableID string, sliceIdx int) (string, int, error) {
 	mapKey := fmt.Sprintf("%s|%s|%d", connect, tableID, sliceIdx)
 
-	scrollIDs, exist := s.ScrollIDs[mapKey]
-	if !exist || len(scrollIDs) == 0 {
+	scrollID, exist := s.ScrollIDs[mapKey]
+	if !exist {
 		return "", 0, nil
 	}
 
-	if s.ScrollIDStatus == nil {
-		s.ScrollIDStatus = make(map[string]bool)
-	}
-
-	for _, scrollID := range scrollIDs {
-		statusKey := fmt.Sprintf("%s|%s", mapKey, scrollID)
-		if !s.ScrollIDStatus[statusKey] {
-			return scrollID, 0, nil
-		}
-	}
-	return "", 0, nil
+	return scrollID, 0, nil
 }
 
-func (s *ScrollSession) AddScrollID(connect, tableID, scrollID string, sliceIdx int) {
+func (s *ScrollSession) SetScrollID(connect, tableID, scrollID string, sliceIdx int) {
 	if s.ScrollIDs == nil {
-		s.ScrollIDs = make(map[string][]string)
+		s.ScrollIDs = make(map[string]string)
 	}
 
 	mapKey := fmt.Sprintf("%s|%s|%d", connect, tableID, sliceIdx)
-	s.ScrollIDs[mapKey] = append(s.ScrollIDs[mapKey], scrollID)
-}
-
-func (s *ScrollSession) MarkScrollIDDone(connect, tableID, scrollID string, sliceIdx int) {
-	if s.ScrollIDStatus == nil {
-		s.ScrollIDStatus = make(map[string]bool)
-	}
-
-	mapKey := fmt.Sprintf("%s|%s|%d", connect, tableID, sliceIdx)
-	statusKey := fmt.Sprintf("%s|%s", mapKey, scrollID)
-	s.ScrollIDStatus[statusKey] = true
+	s.ScrollIDs[mapKey] = scrollID
 }
 
 func (s *ScrollSession) MarkSliceDone(connect, tableID string, sliceIdx int) {
@@ -109,20 +87,9 @@ func (s *ScrollSession) MarkSliceDone(connect, tableID string, sliceIdx int) {
 	s.SliceStatus[sliceKey] = true
 }
 
-func (s *ScrollSession) RemoveScrollID(connect, tableID, scrollID string, sliceIdx int) {
+func (s *ScrollSession) RemoveScrollID(connect, tableID string, sliceIdx int) {
 	mapKey := fmt.Sprintf("%s|%s|%d", connect, tableID, sliceIdx)
-	scrollIDs, exist := s.ScrollIDs[mapKey]
-	if !exist {
-		return
-	}
-
-	newScrollIDs := make([]string, 0, len(scrollIDs))
-	for _, id := range scrollIDs {
-		if id != scrollID {
-			newScrollIDs = append(newScrollIDs, id)
-		}
-	}
-	s.ScrollIDs[mapKey] = newScrollIDs
+	delete(s.ScrollIDs, mapKey)
 }
 
 func (s *ScrollSession) HasMoreData(tsDbType string) bool {
@@ -131,13 +98,13 @@ func (s *ScrollSession) HasMoreData(tsDbType string) bool {
 			s.SliceStatus = make(map[string]bool)
 		}
 
-		if s.ScrollIDs == nil {
-			return false
+		if s.ScrollIDs != nil && len(s.ScrollIDs) > 0 {
+			return true
 		}
 
 		connectTablePairs := make(map[string]bool)
-		for mapKey := range s.ScrollIDs {
-			parts := strings.Split(mapKey, "|")
+		for sliceKey := range s.SliceStatus {
+			parts := strings.Split(sliceKey, "|")
 			if len(parts) >= 3 {
 				connectTable := fmt.Sprintf("%s|%s", parts[0], parts[1])
 				connectTablePairs[connectTable] = true

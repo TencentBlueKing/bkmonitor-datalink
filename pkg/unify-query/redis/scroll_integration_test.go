@@ -27,16 +27,16 @@ func TestCompleteESScrollFlow(t *testing.T) {
 
 	// 创建session
 	session := ScrollSession{
-		Key:            "test_session_complete_flow",
-		CreateAt:       time.Now(),
-		LastAccessAt:   time.Now(),
-		Index:          0,
-		MaxSlice:       3,
-		Limit:          10,
-		ScrollTimeout:  5 * time.Minute,
-		Status:         SessionStatusRunning,
-		ScrollIDs:      make(map[string][]string),
-		ScrollIDStatus: make(map[string]bool),
+		Key:           "test_session_complete_flow",
+		CreateAt:      time.Now(),
+		LastAccessAt:  time.Now(),
+		Index:         0,
+		MaxSlice:      3,
+		Limit:         10,
+		ScrollTimeout: 5 * time.Minute,
+		Status:        SessionStatusRunning,
+		ScrollIDs:     make(map[string]string),
+		SliceStatus:   make(map[string]bool),
 	}
 
 	connect := "http://127.0.0.1:9200"
@@ -122,9 +122,6 @@ func TestCompleteESScrollFlow(t *testing.T) {
 		err = ScrollProcessSliceResult(ctx, &session, connect, tableID, scrollID, sliceIdx, "elasticsearch", 0, options)
 		assert.NoError(t, err)
 
-		// 手动标记scrollID为完成
-		session.MarkScrollIDDone(connect, tableID, scrollID, sliceIdx)
-
 		log.Infof(ctx, "[TEST] Slice %d round 3: using scrollID %s, got empty result", sliceIdx, scrollID)
 	}
 
@@ -141,16 +138,16 @@ func TestESScrollProblematicFlow(t *testing.T) {
 
 	// 创建session
 	session := ScrollSession{
-		Key:            "test_session_problematic",
-		CreateAt:       time.Now(),
-		LastAccessAt:   time.Now(),
-		Index:          0,
-		MaxSlice:       3,
-		Limit:          10,
-		ScrollTimeout:  5 * time.Minute,
-		Status:         SessionStatusRunning,
-		ScrollIDs:      make(map[string][]string),
-		ScrollIDStatus: make(map[string]bool),
+		Key:           "test_session_problematic",
+		CreateAt:      time.Now(),
+		LastAccessAt:  time.Now(),
+		Index:         0,
+		MaxSlice:      3,
+		Limit:         10,
+		ScrollTimeout: 5 * time.Minute,
+		Status:        SessionStatusRunning,
+		ScrollIDs:     make(map[string]string),
+		SliceStatus:   make(map[string]bool),
 	}
 
 	connect := "http://127.0.0.1:9200"
@@ -205,18 +202,18 @@ func TestESScrollProblematicFlow(t *testing.T) {
 	}
 
 	log.Infof(ctx, "[TEST] Session ScrollIDs after round 2: %+v", session.ScrollIDs)
-	log.Infof(ctx, "[TEST] Session ScrollIDStatus after round 2: %+v", session.ScrollIDStatus)
+	log.Infof(ctx, "[TEST] Session SliceStatus after round 2: %+v", session.SliceStatus)
 
 	// 验证第二轮后的状态
 	assert.Equal(t, SessionStatusRunning, session.Status)
 	assert.True(t, session.HasMoreData("elasticsearch"))
 
-	// 检查每个slice的scrollID数量
+	// 检查每个slice的scrollID
 	for sliceIdx := 0; sliceIdx < 3; sliceIdx++ {
 		mapKey := fmt.Sprintf("%s|%s|%d", connect, tableID, sliceIdx)
-		scrollIDs := session.ScrollIDs[mapKey]
-		log.Infof(ctx, "[TEST] Slice %d has %d scrollIDs: %v", sliceIdx, len(scrollIDs), scrollIDs)
-		assert.Equal(t, 2, len(scrollIDs), "Each slice should have 2 scrollIDs")
+		scrollID := session.ScrollIDs[mapKey]
+		log.Infof(ctx, "[TEST] Slice %d has scrollID: %s", sliceIdx, scrollID)
+		assert.NotEmpty(t, scrollID, "Each slice should have a scrollID")
 	}
 
 	// 模拟第三轮查询：继续产生新的scrollID（无限循环问题）
@@ -245,15 +242,118 @@ func TestESScrollProblematicFlow(t *testing.T) {
 	assert.Equal(t, SessionStatusRunning, session.Status, "Session keeps running indefinitely")
 	assert.True(t, session.HasMoreData("elasticsearch"), "Always has more data")
 
-	// 检查每个slice的scrollID数量 - 不断增长
+	// 检查每个slice的scrollID - 现在应该只有一个当前的scrollID
 	for sliceIdx := 0; sliceIdx < 3; sliceIdx++ {
 		mapKey := fmt.Sprintf("%s|%s|%d", connect, tableID, sliceIdx)
-		scrollIDs := session.ScrollIDs[mapKey]
-		log.Infof(ctx, "[TEST] Slice %d now has %d scrollIDs: %v", sliceIdx, len(scrollIDs), scrollIDs)
-		assert.Equal(t, 3, len(scrollIDs), "Each slice now has 3 scrollIDs")
+		scrollID := session.ScrollIDs[mapKey]
+		log.Infof(ctx, "[TEST] Slice %d has scrollID: %s", sliceIdx, scrollID)
+		assert.NotEmpty(t, scrollID, "Each slice should have a current scrollID")
 	}
 
-	log.Infof(ctx, "[TEST] ====== 问题流程测试完成 - 展示了无限循环问题 ======")
+	log.Infof(ctx, "[TEST] ====== 问题流程测试完成 - 现在应该正确处理 ======")
+}
+
+// TestESScrollFixedFlow 测试修复后的ES scroll流程
+func TestESScrollFixedFlow(t *testing.T) {
+	ctx := context.Background()
+
+	// 创建session
+	session := ScrollSession{
+		Key:           "test_session_fixed",
+		CreateAt:      time.Now(),
+		LastAccessAt:  time.Now(),
+		Index:         0,
+		MaxSlice:      2,
+		Limit:         10,
+		ScrollTimeout: 5 * time.Minute,
+		Status:        SessionStatusRunning,
+		ScrollIDs:     make(map[string]string),
+		SliceStatus:   make(map[string]bool),
+	}
+
+	connect := "http://127.0.0.1:9200"
+	tableID := "test_table"
+
+	log.Infof(ctx, "[TEST] ====== 测试修复后的ES scroll流程 ======")
+
+	// 第一轮：每个slice获取初始scrollID
+	for sliceIdx := 0; sliceIdx < 2; sliceIdx++ {
+		scrollID, _, err := session.GetNextScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
+		assert.NoError(t, err)
+		assert.Equal(t, "", scrollID, "First query should return empty scrollID")
+
+		// 模拟ES返回新的scrollID和数据
+		newScrollID := fmt.Sprintf("scroll_id_%d_round1", sliceIdx)
+		options := make(metadata.ResultTableOptions)
+		options.SetOption(tableID, connect, &metadata.ResultTableOption{
+			ScrollID: newScrollID,
+		})
+
+		err = ScrollProcessSliceResult(ctx, &session, connect, tableID, "", sliceIdx, "elasticsearch", 5, options)
+		assert.NoError(t, err)
+
+		log.Infof(ctx, "[TEST] Slice %d round 1: got scrollID %s", sliceIdx, newScrollID)
+	}
+
+	// 验证第一轮后的状态
+	assert.Equal(t, SessionStatusRunning, session.Status)
+	assert.True(t, session.HasMoreData("elasticsearch"))
+	assert.Equal(t, 2, len(session.ScrollIDs), "Should have 2 scrollIDs")
+
+	// 第二轮：使用现有scrollID获取更多数据
+	for sliceIdx := 0; sliceIdx < 2; sliceIdx++ {
+		scrollID, _, err := session.GetNextScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
+		assert.NoError(t, err)
+		assert.Equal(t, fmt.Sprintf("scroll_id_%d_round1", sliceIdx), scrollID)
+
+		// 模拟ES返回新的scrollID和数据
+		newScrollID := fmt.Sprintf("scroll_id_%d_round2", sliceIdx)
+		options := make(metadata.ResultTableOptions)
+		options.SetOption(tableID, connect, &metadata.ResultTableOption{
+			ScrollID: newScrollID,
+		})
+
+		err = ScrollProcessSliceResult(ctx, &session, connect, tableID, scrollID, sliceIdx, "elasticsearch", 3, options)
+		assert.NoError(t, err)
+
+		log.Infof(ctx, "[TEST] Slice %d round 2: used scrollID %s, got new scrollID %s", sliceIdx, scrollID, newScrollID)
+	}
+
+	// 验证第二轮后的状态
+	assert.Equal(t, SessionStatusRunning, session.Status)
+	assert.True(t, session.HasMoreData("elasticsearch"))
+	assert.Equal(t, 2, len(session.ScrollIDs), "Should still have 2 scrollIDs (replaced, not accumulated)")
+
+	// 第三轮：模拟数据耗尽，没有新的scrollID
+	for sliceIdx := 0; sliceIdx < 2; sliceIdx++ {
+		scrollID, _, err := session.GetNextScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
+		assert.NoError(t, err)
+		assert.Equal(t, fmt.Sprintf("scroll_id_%d_round2", sliceIdx), scrollID)
+
+		// 模拟ES返回空结果且没有新的scrollID
+		options := make(metadata.ResultTableOptions)
+		options.SetOption(tableID, connect, &metadata.ResultTableOption{
+			ScrollID: "", // 没有新的scrollID
+		})
+
+		err = ScrollProcessSliceResult(ctx, &session, connect, tableID, scrollID, sliceIdx, "elasticsearch", 0, options)
+		assert.NoError(t, err)
+
+		log.Infof(ctx, "[TEST] Slice %d round 3: used scrollID %s, got empty result", sliceIdx, scrollID)
+	}
+
+	// 验证最终状态
+	assert.Equal(t, SessionStatusDone, session.Status, "Session should be done")
+	assert.False(t, session.HasMoreData("elasticsearch"), "Should not have more data")
+	assert.Equal(t, 0, len(session.ScrollIDs), "All scrollIDs should be removed")
+
+	// 验证所有slice都被标记为完成
+	for sliceIdx := 0; sliceIdx < 2; sliceIdx++ {
+		sliceKey := fmt.Sprintf("%s|%s|%d", connect, tableID, sliceIdx)
+		assert.True(t, session.SliceStatus[sliceKey], "Slice %d should be marked as done", sliceIdx)
+	}
+
+	log.Infof(ctx, "[TEST] ====== 修复后的ES scroll流程测试完成 ======")
 }
 
 // TestESScrollCorrectTermination 测试正确的ES scroll终止逻辑
@@ -262,16 +362,16 @@ func TestESScrollCorrectTermination(t *testing.T) {
 
 	// 创建session
 	session := ScrollSession{
-		Key:            "test_session_correct_termination",
-		CreateAt:       time.Now(),
-		LastAccessAt:   time.Now(),
-		Index:          0,
-		MaxSlice:       3,
-		Limit:          10,
-		ScrollTimeout:  5 * time.Minute,
-		Status:         SessionStatusRunning,
-		ScrollIDs:      make(map[string][]string),
-		ScrollIDStatus: make(map[string]bool),
+		Key:           "test_session_correct_termination",
+		CreateAt:      time.Now(),
+		LastAccessAt:  time.Now(),
+		Index:         0,
+		MaxSlice:      3,
+		Limit:         10,
+		ScrollTimeout: 5 * time.Minute,
+		Status:        SessionStatusRunning,
+		ScrollIDs:     make(map[string]string),
+		SliceStatus:   make(map[string]bool),
 	}
 
 	connect := "http://127.0.0.1:9200"
@@ -311,9 +411,6 @@ func TestESScrollCorrectTermination(t *testing.T) {
 		err = ScrollProcessSliceResult(ctx, &session, connect, tableID, scrollID, sliceIdx, "elasticsearch", 0, options)
 		assert.NoError(t, err)
 
-		// 关键：手动标记scrollID为完成
-		session.MarkScrollIDDone(connect, tableID, scrollID, sliceIdx)
-
 		log.Infof(ctx, "[TEST] Slice %d terminated: scrollID %s marked as done", sliceIdx, scrollID)
 	}
 
@@ -330,16 +427,16 @@ func TestRealESScrollFlow(t *testing.T) {
 
 	// 创建session
 	session := ScrollSession{
-		Key:            "test_real_es_scroll_flow",
-		CreateAt:       time.Now(),
-		LastAccessAt:   time.Now(),
-		Index:          0,
-		MaxSlice:       3,
-		Limit:          10,
-		ScrollTimeout:  5 * time.Minute,
-		Status:         SessionStatusRunning,
-		ScrollIDs:      make(map[string][]string),
-		ScrollIDStatus: make(map[string]bool),
+		Key:           "test_real_es_scroll_flow",
+		CreateAt:      time.Now(),
+		LastAccessAt:  time.Now(),
+		Index:         0,
+		MaxSlice:      3,
+		Limit:         10,
+		ScrollTimeout: 5 * time.Minute,
+		Status:        SessionStatusRunning,
+		ScrollIDs:     make(map[string]string),
+		SliceStatus:   make(map[string]bool),
 	}
 
 	connect := "http://127.0.0.1:9200"
@@ -422,15 +519,16 @@ func TestRealESScrollFlow(t *testing.T) {
 	assert.False(t, session.HasMoreData("elasticsearch"), "Should not have more data at the end")
 	assert.Equal(t, SessionStatusDone, session.Status, "Session should be done at the end")
 
-	// 验证所有scrollID都被标记为完成
-	for mapKey, scrollIDs := range session.ScrollIDs {
-		for _, scrollID := range scrollIDs {
-			statusKey := fmt.Sprintf("%s|%s", mapKey, scrollID)
-			assert.True(t, session.ScrollIDStatus[statusKey], "ScrollID %s should be marked as done", scrollID)
-		}
+	// 验证所有scrollID都已被清理（因为所有slice都完成了）
+	assert.Empty(t, session.ScrollIDs, "All scrollIDs should be removed when session is done")
+
+	// 验证所有slice都被标记为完成
+	for sliceIdx := 0; sliceIdx < session.MaxSlice; sliceIdx++ {
+		sliceKey := fmt.Sprintf("%s|%s|%d", connect, tableID, sliceIdx)
+		assert.True(t, session.SliceStatus[sliceKey], "Slice %d should be marked as done", sliceIdx)
 	}
 
 	log.Infof(ctx, "[TEST] ====== 真实ES scroll流程测试完成 ======")
 	log.Infof(ctx, "[TEST] Final session ScrollIDs: %+v", session.ScrollIDs)
-	log.Infof(ctx, "[TEST] Final session ScrollIDStatus: %+v", session.ScrollIDStatus)
+	log.Infof(ctx, "[TEST] Final session SliceStatus: %+v", session.SliceStatus)
 }

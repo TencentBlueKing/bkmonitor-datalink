@@ -106,17 +106,16 @@ var ScrollGetOrCreateSession = func(ctx context.Context, sessionKey string, forc
 	}
 
 	session := ScrollSession{
-		Key:            sessionKey,
-		CreateAt:       time.Now(),
-		LastAccessAt:   time.Now(),
-		Index:          0,
-		MaxSlice:       maxSlice,
-		Limit:          limit,
-		ScrollTimeout:  timeout,
-		Status:         SessionStatusRunning,
-		ScrollIDs:      make(map[string][]string),
-		ScrollIDStatus: make(map[string]bool),
-		SliceStatus:    make(map[string]bool),
+		Key:           sessionKey,
+		CreateAt:      time.Now(),
+		LastAccessAt:  time.Now(),
+		Index:         0,
+		MaxSlice:      maxSlice,
+		Limit:         limit,
+		ScrollTimeout: timeout,
+		Status:        SessionStatusRunning,
+		ScrollIDs:     make(map[string]string),
+		SliceStatus:   make(map[string]bool),
 	}
 
 	if err := scrollUpdateSession(ctx, sessionKey, session); err != nil {
@@ -168,37 +167,28 @@ var ScrollProcessSliceResult = func(ctx context.Context, session *ScrollSession,
 	isDone := size == 0
 
 	if tsDbType == consul.ElasticsearchStorageType {
-		if scrollID != "" {
-			session.MarkScrollIDDone(connect, tableID, scrollID, sliceIdx)
-			log.Debugf(ctx, "Marked current scrollID %s as done for %s|%s|%d", scrollID, connect, tableID, sliceIdx)
-		}
-
-		hasNewScrollID := false
+		newScrollID := ""
 		if options != nil {
 			resultOption := options.GetOption(tableID, connect)
 			if resultOption != nil && resultOption.ScrollID != "" {
-				newScrollID := resultOption.ScrollID
+				newScrollID = resultOption.ScrollID
 				log.Debugf(ctx, "Found new scrollID in result: %s", newScrollID)
-
-				if newScrollID != scrollID {
-					session.AddScrollID(connect, tableID, newScrollID, sliceIdx)
-					hasNewScrollID = true
-				}
 			}
 		}
 
-		if isDone && !hasNewScrollID {
+		if newScrollID != "" {
+			session.SetScrollID(connect, tableID, newScrollID, sliceIdx)
+			log.Debugf(ctx, "Updated scrollID for slice %d: %s", sliceIdx, newScrollID)
+		} else if isDone {
+			session.RemoveScrollID(connect, tableID, sliceIdx)
 			session.MarkSliceDone(connect, tableID, sliceIdx)
 			log.Debugf(ctx, "slice %d completed for %s|%s (empty result and no new scrollID)", sliceIdx, connect, tableID)
-		} else if !isDone {
-			log.Debugf(ctx, "slice %d for %s|%s still has data (size=%d)", sliceIdx, connect, tableID, size)
-		} else if hasNewScrollID {
-			log.Debugf(ctx, "slice %d for %s|%s has new scrollID, continuing", sliceIdx, connect, tableID)
 		}
 
 		hasMoreData := session.HasMoreData("elasticsearch")
 		if !hasMoreData {
 			session.Status = SessionStatusDone
+			log.Debugf(ctx, "All slices completed, session marked as done")
 		}
 	} else {
 		if isDone {

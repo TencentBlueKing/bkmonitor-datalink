@@ -1052,7 +1052,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 	}
 
 	if session.Status == redisUtil.SessionStatusDone {
-		return 0, nil, nil, true, fmt.Errorf("session %s is already done", sessionKey)
+		return 0, nil, nil, true, nil
 	}
 
 	storageQueryMap := make(map[string][]*metadata.Query)

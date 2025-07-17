@@ -1835,6 +1835,35 @@ func TestQueryRawWithInstance(t *testing.T) {
 			total:    16,
 			expected: `[{"__data_label":"es","__doc_id":"3440427488472403621","__highlight":{"gseIndex":["<mark>8019256</mark>"]},"__index":"v2_2_bklog_bkunify_query_20250710_0","__result_table":"result_table.es","_time":"1752115579000","cloudId":0,"dtEventTimeStamp":"1752115579000","file":"victoriaMetrics/instance.go:397","gseIndex":8.019256e+06,"iterationIndex":15,"level":"info","report_time":"2025-07-10T02:46:19.443Z","time":"1752115579000","trace_id":"af754e7bbf629abaee3499638974dda9"}]`,
 		},
+		"query string ": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource: structured.BkLog,
+						TableID:    structured.TableID(influxdb.ResultTableEs),
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "gseIndex",
+									Value:         []string{"8019256"},
+									Operator:      structured.Contains,
+								},
+							},
+							ConditionList: []string{},
+						},
+					},
+				},
+				HighLight: &metadata.HighLight{
+					Enable: true,
+				},
+				Limit: 1,
+				Start: start,
+				End:   end,
+			},
+			total:    16,
+			expected: `[{"__data_label":"es","__doc_id":"3440427488472403621","__highlight":{"gseIndex":["<mark>8019256</mark>"]},"__index":"v2_2_bklog_bkunify_query_20250710_0","__result_table":"result_table.es","_time":"1752115579000","cloudId":0,"dtEventTimeStamp":"1752115579000","file":"victoriaMetrics/instance.go:397","gseIndex":8.019256e+06,"iterationIndex":15,"level":"info","report_time":"2025-07-10T02:46:19.443Z","time":"1752115579000","trace_id":"af754e7bbf629abaee3499638974dda9"}]`,
+		},
 	}
 
 	for name, c := range tcs {

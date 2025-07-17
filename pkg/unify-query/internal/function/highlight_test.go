@@ -10,8 +10,9 @@
 package function
 
 import (
-	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestHighLightFactory_splitTextForAnalysis(t *testing.T) {
@@ -129,9 +130,27 @@ func TestHighLightFactory_process(t *testing.T) {
 					Operator: "eq",
 				},
 			},
+			"file": {
+				{
+					Value:    "metrics",
+					Operator: "contains",
+				},
+			},
+			"level": {
+				{
+					Value:    "info",
+					Operator: "eq",
+				},
+			},
 		},
 	}
 
+	expected := map[string]any{
+		"gseIndex": []string{"<mark>8019256</mark>"},
+		"file":     []string{"victoria<mark>Metrics</mark>/instance.go:397"},
+		"level":    []string{"<mark>info</mark>"},
+	}
+
 	nd := h.Process(data)
-	fmt.Println(nd)
+	assert.Equal(t, expected, nd)
 }

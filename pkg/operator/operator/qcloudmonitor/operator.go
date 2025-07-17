@@ -271,39 +271,40 @@ func (c *Operator) Sync(ctx context.Context, namespace, name string) error {
 	return nil
 }
 
-func (c *Operator) createOrUpdateConfigMap(ctx context.Context, p *bkv1beta1.QCloudMonitor) error {
+func (c *Operator) createOrUpdateConfigMap(ctx context.Context, qcm *bkv1beta1.QCloudMonitor) error {
 	selector := map[string]string{
 		labelAppManagedBy: define.AppName,
-		labelAppInstance:  p.Name,
+		labelAppInstance:  qcm.Name,
 	}
 
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      p.Name,
-			Namespace: p.Namespace,
-			Labels:    selector,
+			Name:            qcm.Name,
+			Namespace:       qcm.Namespace,
+			Labels:          selector,
+			OwnerReferences: []metav1.OwnerReference{OwnerRef(qcm)},
 		},
 		Data: map[string]string{
-			"qcloud.yml": p.Spec.Config.FileContent,
+			"qcloud.yml": qcm.Spec.Config.FileContent,
 		},
 	}
 
-	InjectManagingOwner(configMap, p)
-	cli := c.client.CoreV1().ConfigMaps(p.Namespace)
+	cli := c.client.CoreV1().ConfigMaps(qcm.Namespace)
 	return k8sutils.CreateOrUpdateConfigMap(ctx, cli, configMap)
 }
 
-func (c *Operator) createOrUpdateService(ctx context.Context, p *bkv1beta1.QCloudMonitor) error {
+func (c *Operator) createOrUpdateService(ctx context.Context, qcm *bkv1beta1.QCloudMonitor) error {
 	selector := map[string]string{
 		labelAppManagedBy: define.AppName,
-		labelAppInstance:  p.Name,
+		labelAppInstance:  qcm.Name,
 	}
 
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      p.Name,
-			Namespace: p.Namespace,
-			Labels:    selector,
+			Name:            qcm.Name,
+			Namespace:       qcm.Namespace,
+			Labels:          selector,
+			OwnerReferences: []metav1.OwnerReference{OwnerRef(qcm)},
 		},
 		Spec: corev1.ServiceSpec{
 			Type: corev1.ServiceTypeClusterIP,
@@ -316,36 +317,22 @@ func (c *Operator) createOrUpdateService(ctx context.Context, p *bkv1beta1.QClou
 		},
 	}
 
-	InjectManagingOwner(service, p)
-	cli := c.client.CoreV1().Services(p.Namespace)
+	cli := c.client.CoreV1().Services(qcm.Namespace)
 	return k8sutils.CreateOrUpdateService(ctx, cli, service)
 }
 
-func (c *Operator) createOrUpdateDeployment(ctx context.Context, p *bkv1beta1.QCloudMonitor) error {
+func (c *Operator) createOrUpdateDeployment(ctx context.Context, qcm *bkv1beta1.QCloudMonitor) error {
 	selector := map[string]string{
 		labelAppManagedBy: define.AppName,
-		labelAppInstance:  p.Name,
+		labelAppInstance:  qcm.Name,
 	}
-
-	//p monitoringv1.PrometheusInterface,
-
-	//bkcli.
-
-	//c.bkCli.MonitoringV1beta1().
-
-	fmt.Printf("name=(%s), GVK: %#v, %v\n", p.Name, p.GroupVersionKind(), p.GroupVersionKind().GroupVersion().String())
-	fmt.Println("owner.GetObjectMeta().name=:", p.GetObjectMeta().GetName())
-	fmt.Println("owner.GetObjectMeta()111.name=:", p.GetObjectKind().GroupVersionKind().GroupVersion())
-
-	fmt.Println("p.APIVersion", p.APIVersion, "Kind", p.Kind)
-	fmt.Printf("Spec: %#v\n", p.Spec)
-	fmt.Printf("Meta: %#v\n", p.GetObjectKind())
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      p.Name,
-			Namespace: p.Namespace,
-			Labels:    selector,
+			Name:            qcm.Name,
+			Namespace:       qcm.Namespace,
+			Labels:          selector,
+			OwnerReferences: []metav1.OwnerReference{OwnerRef(qcm)},
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: pointer.Int32(1),
@@ -368,9 +355,9 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, p *bkv1beta1.QC
 								"-c",
 								"--",
 							},
-							Image:           p.Spec.Exporter.Image,
-							ImagePullPolicy: p.Spec.Exporter.ImagePullPolicy,
-							Resources:       p.Spec.Exporter.Resources,
+							Image:           qcm.Spec.Exporter.Image,
+							ImagePullPolicy: qcm.Spec.Exporter.ImagePullPolicy,
+							Resources:       qcm.Spec.Exporter.Resources,
 							VolumeMounts: []corev1.VolumeMount{{
 								MountPath: "/usr/bin/config",
 								Name:      "config",
@@ -378,40 +365,41 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, p *bkv1beta1.QC
 							}},
 						},
 					},
-					Volumes: []corev1.Volume{{
-						Name: "config",
-						VolumeSource: corev1.VolumeSource{
-							ConfigMap: &corev1.ConfigMapVolumeSource{
-								LocalObjectReference: corev1.LocalObjectReference{Name: p.Name},
-								//DefaultMode:          pointer.Int32(0644),
+					Volumes: []corev1.Volume{
+						{
+							Name: "config",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{Name: qcm.Name},
+								},
 							},
 						},
-					}},
+					},
 				},
 			},
 		},
 	}
 
-	InjectManagingOwner(deployment, p)
-	cli := c.client.AppsV1().Deployments(p.Namespace)
+	cli := c.client.AppsV1().Deployments(qcm.Namespace)
 	return k8sutils.CreateOrUpdateDeployment(ctx, cli, deployment)
 }
 
-func (c *Operator) createOrUpdateServiceMonitor(ctx context.Context, p *bkv1beta1.QCloudMonitor) error {
+func (c *Operator) createOrUpdateServiceMonitor(ctx context.Context, qcm *bkv1beta1.QCloudMonitor) error {
 	selector := map[string]string{
 		labelAppManagedBy: define.AppName,
-		labelAppInstance:  p.Name,
+		labelAppInstance:  qcm.Name,
 	}
 
 	serviceMonitor := &promv1.ServiceMonitor{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      p.Name,
-			Namespace: p.Namespace,
-			Labels:    selector,
+			Name:            qcm.Name,
+			Namespace:       qcm.Namespace,
+			Labels:          selector,
+			OwnerReferences: []metav1.OwnerReference{OwnerRef(qcm)},
 		},
 		Spec: promv1.ServiceMonitorSpec{
 			NamespaceSelector: promv1.NamespaceSelector{
-				MatchNames: []string{p.Namespace},
+				MatchNames: []string{qcm.Namespace},
 			},
 			Endpoints: []promv1.Endpoint{{
 				Port: "http",
@@ -423,7 +411,6 @@ func (c *Operator) createOrUpdateServiceMonitor(ctx context.Context, p *bkv1beta
 		},
 	}
 
-	InjectManagingOwner(serviceMonitor, p)
-	cli := c.promCli.MonitoringV1().ServiceMonitors(p.Namespace)
+	cli := c.promCli.MonitoringV1().ServiceMonitors(qcm.Namespace)
 	return k8sutils.CreateOrUpdateServiceMonitor(ctx, cli, serviceMonitor)
 }

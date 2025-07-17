@@ -11,31 +11,20 @@ package qcloudmonitor
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/utils/ptr"
+
+	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
 )
 
-type Owner interface {
-	metav1.ObjectMetaAccessor
-	schema.ObjectKind
-}
-
-func InjectManagingOwner(o metav1.Object, owner Owner) {
-	o.SetOwnerReferences(
-		append(
-			o.GetOwnerReferences(),
-			metav1.OwnerReference{
-				//APIVersion:         owner.GroupVersionKind().GroupVersion().String(),
-				APIVersion:         "monitoring.bk.tencent.com/v1beta1",
-				BlockOwnerDeletion: ptr.To(true),
-				Controller:         ptr.To(true),
-				//Kind:               owner.GroupVersionKind().Kind,
-				Kind: "QCloudMonitor",
-				Name: owner.GetObjectMeta().GetName(),
-				UID:  owner.GetObjectMeta().GetUID(),
-			},
-		),
-	)
+func OwnerRef(qcm *bkv1beta1.QCloudMonitor) metav1.OwnerReference {
+	return metav1.OwnerReference{
+		APIVersion:         bkv1beta1.SchemeGroupVersion.String(),
+		BlockOwnerDeletion: ptr.To(true),
+		Controller:         ptr.To(true),
+		Kind:               "QCloudMonitor",
+		Name:               qcm.Name,
+		UID:                qcm.UID,
+	}
 }
 
 const InputHashAnnotationName = "bkmonitor-operator-input-hash"

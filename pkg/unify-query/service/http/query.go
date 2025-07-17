@@ -1152,7 +1152,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 						defer sendWg.Done()
 
 						sessionLock.Lock()
-						scrollID, index, err := session.GetNextScrollID(ctx, instance.InstanceType(), connect, tableId, currentSliceIndex)
+						scrollID, index, err := session.CurrentScrollID(ctx, instance.InstanceType(), connect, tableId, currentSliceIndex)
 						sessionLock.Unlock()
 						if err != nil {
 							message.WriteString(fmt.Sprintf("failed to get scroll info for %s: %v ", tableId, err))

@@ -47,7 +47,7 @@ func TestCompleteESScrollFlow(t *testing.T) {
 	// 模拟第一轮查询：每个slice都获取到新的scrollID
 	for sliceIdx := 0; sliceIdx < 3; sliceIdx++ {
 		// 第一次查询，应该返回空scrollID（用于创建新的scroll）
-		scrollID, index, err := session.GetNextScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
+		scrollID, index, err := session.CurrentScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
 		assert.NoError(t, err)
 		assert.Equal(t, "", scrollID, "First query should return empty scrollID")
 		assert.Equal(t, 0, index)
@@ -77,7 +77,7 @@ func TestCompleteESScrollFlow(t *testing.T) {
 	// 第二轮查询：使用已有的scrollID
 	for sliceIdx := 0; sliceIdx < 3; sliceIdx++ {
 		// 应该返回第一轮创建的scrollID
-		scrollID, index, err := session.GetNextScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
+		scrollID, index, err := session.CurrentScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
 		assert.NoError(t, err)
 		assert.Equal(t, fmt.Sprintf("scroll_id_%d_round1", sliceIdx), scrollID)
 		assert.Equal(t, 0, index)
@@ -107,7 +107,7 @@ func TestCompleteESScrollFlow(t *testing.T) {
 	// 第三轮查询：ES返回空结果，结束scroll
 	for sliceIdx := 0; sliceIdx < 3; sliceIdx++ {
 		// 应该返回第二轮创建的scrollID
-		scrollID, index, err := session.GetNextScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
+		scrollID, index, err := session.CurrentScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
 		assert.NoError(t, err)
 		assert.Equal(t, fmt.Sprintf("scroll_id_%d_round2", sliceIdx), scrollID)
 		assert.Equal(t, 0, index)
@@ -157,7 +157,7 @@ func TestESScrollProblematicFlow(t *testing.T) {
 
 	// 模拟第一轮查询：每个slice都获取到新的scrollID
 	for sliceIdx := 0; sliceIdx < 3; sliceIdx++ {
-		scrollID, _, err := session.GetNextScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
+		scrollID, _, err := session.CurrentScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
 		assert.NoError(t, err)
 		assert.Equal(t, "", scrollID, "First query should return empty scrollID")
 
@@ -183,7 +183,7 @@ func TestESScrollProblematicFlow(t *testing.T) {
 
 	// 模拟第二轮查询：每个slice又获取到新的scrollID（这里可能是问题所在）
 	for sliceIdx := 0; sliceIdx < 3; sliceIdx++ {
-		scrollID, _, err := session.GetNextScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
+		scrollID, _, err := session.CurrentScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
 		assert.NoError(t, err)
 		assert.Equal(t, fmt.Sprintf("scroll_id_%d_round1", sliceIdx), scrollID)
 
@@ -218,7 +218,7 @@ func TestESScrollProblematicFlow(t *testing.T) {
 
 	// 模拟第三轮查询：继续产生新的scrollID（无限循环问题）
 	for sliceIdx := 0; sliceIdx < 3; sliceIdx++ {
-		scrollID, _, err := session.GetNextScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
+		scrollID, _, err := session.CurrentScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
 		assert.NoError(t, err)
 		assert.Equal(t, fmt.Sprintf("scroll_id_%d_round2", sliceIdx), scrollID)
 
@@ -278,7 +278,7 @@ func TestESScrollFixedFlow(t *testing.T) {
 
 	// 第一轮：每个slice获取初始scrollID
 	for sliceIdx := 0; sliceIdx < 2; sliceIdx++ {
-		scrollID, _, err := session.GetNextScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
+		scrollID, _, err := session.CurrentScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
 		assert.NoError(t, err)
 		assert.Equal(t, "", scrollID, "First query should return empty scrollID")
 
@@ -302,7 +302,7 @@ func TestESScrollFixedFlow(t *testing.T) {
 
 	// 第二轮：使用现有scrollID获取更多数据
 	for sliceIdx := 0; sliceIdx < 2; sliceIdx++ {
-		scrollID, _, err := session.GetNextScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
+		scrollID, _, err := session.CurrentScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
 		assert.NoError(t, err)
 		assert.Equal(t, fmt.Sprintf("scroll_id_%d_round1", sliceIdx), scrollID)
 
@@ -326,7 +326,7 @@ func TestESScrollFixedFlow(t *testing.T) {
 
 	// 第三轮：模拟数据耗尽，没有新的scrollID
 	for sliceIdx := 0; sliceIdx < 2; sliceIdx++ {
-		scrollID, _, err := session.GetNextScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
+		scrollID, _, err := session.CurrentScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
 		assert.NoError(t, err)
 		assert.Equal(t, fmt.Sprintf("scroll_id_%d_round2", sliceIdx), scrollID)
 
@@ -377,7 +377,7 @@ func TestUnsupportedStorageType(t *testing.T) {
 	tableID := "test_table"
 
 	// 测试不支持的存储类型
-	_, _, err := session.GetNextScrollID(ctx, "unsupported_storage", connect, tableID, 0)
+	_, _, err := session.CurrentScrollID(ctx, "unsupported_storage", connect, tableID, 0)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported storage type")
 
@@ -413,7 +413,7 @@ func TestESScrollCorrectTermination(t *testing.T) {
 
 	// 第一轮查询
 	for sliceIdx := 0; sliceIdx < 3; sliceIdx++ {
-		scrollID, _, err := session.GetNextScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
+		scrollID, _, err := session.CurrentScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
 		assert.NoError(t, err)
 		assert.Equal(t, "", scrollID)
 
@@ -430,7 +430,7 @@ func TestESScrollCorrectTermination(t *testing.T) {
 
 	// 第二轮查询：模拟ES返回空结果和空scrollID
 	for sliceIdx := 0; sliceIdx < 3; sliceIdx++ {
-		scrollID, _, err := session.GetNextScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
+		scrollID, _, err := session.CurrentScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
 		assert.NoError(t, err)
 		assert.Equal(t, fmt.Sprintf("scroll_id_%d_round1", sliceIdx), scrollID)
 
@@ -484,7 +484,7 @@ func TestRealESScrollFlow(t *testing.T) {
 		// 对每个slice进行查询
 		for sliceIdx := 0; sliceIdx < session.MaxSlice; sliceIdx++ {
 			// 获取scrollID
-			scrollID, _, err := session.GetNextScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
+			scrollID, _, err := session.CurrentScrollID(ctx, "elasticsearch", connect, tableID, sliceIdx)
 			assert.NoError(t, err)
 
 			log.Infof(ctx, "[TEST] Round %d, Slice %d: scrollID=%s", round, sliceIdx, scrollID)

@@ -44,7 +44,7 @@ const (
 	SessionStatusFailed  = "FAILED"
 )
 
-func (s *ScrollSession) GetNextScrollID(ctx context.Context, storageType, connect, tableID string, sliceIdx int) (string, int, error) {
+func (s *ScrollSession) CurrentScrollID(ctx context.Context, storageType, connect, tableID string, sliceIdx int) (string, int, error) {
 	switch storageType {
 	case consul.ElasticsearchStorageType:
 		return s.getNextElasticsearchScrollID(ctx, connect, tableID, sliceIdx)

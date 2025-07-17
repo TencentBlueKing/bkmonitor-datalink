@@ -16,12 +16,12 @@ package qcloudmonitor
 
 import (
 	"context"
-	"golang.org/x/time/rate"
 	"reflect"
 	"strings"
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
@@ -97,13 +97,12 @@ func (r *syncEventHandler) OnAdd(obj interface{}, _ bool) {
 		return
 	}
 
-	mCur, err := meta.Accessor(obj)
+	_, err := meta.Accessor(obj)
 	if err != nil {
 		return
 	}
 
-	kind := meta.AsPartialObjectMetadata(mCur).Kind
-	logger.Infof("qcm handler on (Add) event, kind=%s, name=%s", kind, key)
+	logger.Infof("handle (Add) event, name=%s", key)
 	r.reconcileQ.Add(key)
 }
 
@@ -131,8 +130,7 @@ func (r *syncEventHandler) OnUpdate(old, cur interface{}) {
 		return
 	}
 
-	kind := meta.AsPartialObjectMetadata(mCur).Kind
-	logger.Infof("qcm handler on (Update) event, kind=%s, name=%s", kind, key)
+	logger.Infof("handle (Update) event, name=%s", key)
 	r.reconcileQ.Add(key)
 }
 
@@ -142,13 +140,12 @@ func (r *syncEventHandler) OnDelete(obj interface{}) {
 		return
 	}
 
-	mCur, err := meta.Accessor(obj)
+	_, err := meta.Accessor(obj)
 	if err != nil {
 		return
 	}
 
-	kind := meta.AsPartialObjectMetadata(mCur).Kind
-	logger.Infof("qcm handler on (Delete) event, kind=%s, name=%s", kind, key)
+	logger.Infof("handle (Delete) event, name=%s", key)
 	r.reconcileQ.Add(key)
 }
 

@@ -35,6 +35,7 @@ import (
 
 	bkcli "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -146,7 +147,6 @@ func CreateOrUpdateService(ctx context.Context, cli corev1iface.ServiceInterface
 			if !apierrors.IsNotFound(err) {
 				return err
 			}
-
 			_, err = cli.Create(ctx, desired, metav1.CreateOptions{})
 			return err
 		}
@@ -157,6 +157,29 @@ func CreateOrUpdateService(ctx context.Context, cli corev1iface.ServiceInterface
 		desired.Spec.ClusterIPs = service.Spec.ClusterIPs
 
 		mergeMetadata(&desired.ObjectMeta, service.ObjectMeta)
+		_, err = cli.Update(ctx, desired, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+func CreateOrUpdateServiceMonitor(ctx context.Context, cli promv1iface.ServiceMonitorInterface, desired *promv1.ServiceMonitor) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		serviceMonitor, err := cli.Get(ctx, desired.Name, metav1.GetOptions{})
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return err
+			}
+			_, err = cli.Create(ctx, desired, metav1.CreateOptions{})
+			return err
+		}
+
+		mutated := serviceMonitor.DeepCopyObject().(*promv1.ServiceMonitor)
+		mergeMetadata(&desired.ObjectMeta, mutated.ObjectMeta)
+		if apiequality.Semantic.DeepEqual(serviceMonitor, desired) {
+			logger.Infof("servicemonitor %s nothing changed, skip op", desired.Name)
+			return nil
+		}
+
 		_, err = cli.Update(ctx, desired, metav1.UpdateOptions{})
 		return err
 	})
@@ -176,6 +199,7 @@ func CreateOrUpdateConfigMap(ctx context.Context, cli corev1iface.ConfigMapInter
 		mutated := configMap.DeepCopyObject().(*corev1.ConfigMap)
 		mergeMetadata(&desired.ObjectMeta, mutated.ObjectMeta)
 		if apiequality.Semantic.DeepEqual(configMap, desired) {
+			logger.Infof("configmap %s nothing changed, skip op", desired.Name)
 			return nil
 		}
 
@@ -197,24 +221,6 @@ func CreateOrUpdateDeployment(ctx context.Context, cli appsv1iface.DeploymentInt
 
 		mergeMetadata(&desired.ObjectMeta, deployment.ObjectMeta)
 		mergeKubectlAnnotations(&deployment.Spec.Template.ObjectMeta, desired.Spec.Template.ObjectMeta)
-		_, err = cli.Update(ctx, desired, metav1.UpdateOptions{})
-		return err
-	})
-}
-
-func CreateOrUpdateServiceMonitor(ctx context.Context, cli promv1iface.ServiceMonitorInterface, desired *promv1.ServiceMonitor) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		serviceMonitor, err := cli.Get(ctx, desired.Name, metav1.GetOptions{})
-		if err != nil {
-			if !apierrors.IsNotFound(err) {
-				return err
-			}
-			_, err = cli.Create(ctx, desired, metav1.CreateOptions{})
-			return err
-		}
-
-		mutated := serviceMonitor.DeepCopyObject().(*promv1.ServiceMonitor)
-		mergeMetadata(&desired.ObjectMeta, mutated.ObjectMeta)
 		_, err = cli.Update(ctx, desired, metav1.UpdateOptions{})
 		return err
 	})

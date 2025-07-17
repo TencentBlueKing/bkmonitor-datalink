@@ -25,6 +25,7 @@ import (
 	prominfs "github.com/prometheus-operator/prometheus-operator/pkg/informers"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
@@ -247,6 +248,9 @@ func (c *Operator) waitForCacheSync() error {
 func (c *Operator) Sync(ctx context.Context, namespace, name string) error {
 	obj, err := c.bkCli.MonitoringV1beta1().QCloudMonitors(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
 		return err
 	}
 

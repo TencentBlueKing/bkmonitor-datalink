@@ -1168,23 +1168,13 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 						}
 
 						var option *metadata.ResultTableOption
-						// ES scenario
-						if instance.InstanceType() == consul.ElasticsearchStorageType {
-							option = &metadata.ResultTableOption{
-								SliceID:  &currentSliceIndex,
-								SliceMax: &session.MaxSlice,
-								ScrollID: scrollID,
-							}
-						} else {
-							// other storage scenario
-							option = &metadata.ResultTableOption{
-								SliceID:  &currentSliceIndex,
-								SliceMax: &session.MaxSlice,
-								ScrollID: "",
-							}
-							sliceQuery.From = index * session.Limit
-							sliceQuery.Size = session.Limit
+						option = &metadata.ResultTableOption{
+							SliceID:  &currentSliceIndex,
+							SliceMax: &session.MaxSlice,
+							ScrollID: scrollID,
 						}
+						sliceQuery.From = index * session.Limit
+						sliceQuery.Size = session.Limit
 						sliceQuery.ResultTableOptions.SetOption(sliceQuery.TableID, storage.Address, option)
 
 						labelMap, labelErr := sliceQuery.LabelMap()

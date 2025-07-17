@@ -311,7 +311,8 @@ func (c *Operator) createOrUpdateService(ctx context.Context, qcm *bkv1beta1.QCl
 			Ports: []corev1.ServicePort{{
 				Name:       "http",
 				Port:       8080,
-				TargetPort: intstr.FromString("http"),
+				Protocol:   corev1.ProtocolTCP,
+				TargetPort: intstr.FromInt32(8080),
 			}},
 			Selector: selector,
 		},

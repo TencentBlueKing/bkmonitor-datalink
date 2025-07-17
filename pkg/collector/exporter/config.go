@@ -24,10 +24,12 @@ const (
 	defaultLogsBatchSize    = 100
 	defaultProxyBatchSize   = 2000
 	defaultFlushInterval    = 3 * time.Second
+	defaultMaxMessageBytes  = 10 * 1024 * 1024 // 10MB
 )
 
 type Config struct {
-	Queue queue.Config `config:"queue"`
+	MaxMessageBytes int          `config:"max_message_bytes"`
+	Queue           queue.Config `config:"queue"`
 }
 
 func (c *Config) Validate() {
@@ -45,6 +47,9 @@ func (c *Config) Validate() {
 	}
 	if c.Queue.FlushInterval <= 0 {
 		c.Queue.FlushInterval = defaultFlushInterval
+	}
+	if c.MaxMessageBytes <= 0 {
+		c.MaxMessageBytes = defaultMaxMessageBytes
 	}
 }
 

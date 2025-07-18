@@ -123,9 +123,9 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 		Kind:      monitorKindServiceMonitor,
 		Namespace: serviceMonitor.Namespace,
 	}
-	dataID, err := c.dw.MatchMetricDataID(meta, systemResource)
+	dataID, err := c.pickMonitorDataID(meta, serviceMonitor.Annotations)
 	if err != nil {
-		logger.Errorf("servicemonitor(%+v) no dataid matched", meta)
+		logger.Errorf("servicemonitor (%+v) no dataid matched", meta)
 		return discovers
 	}
 	specLabels := dataID.Spec.Labels

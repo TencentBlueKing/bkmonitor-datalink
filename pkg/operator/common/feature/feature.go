@@ -10,6 +10,7 @@
 package feature
 
 import (
+	"strconv"
 	"strings"
 )
 
@@ -29,6 +30,7 @@ const (
 	keyMonitorMatchSelector = "monitorMatchSelector"
 	keyMonitorDropSelector  = "monitorDropSelector"
 	keyLabelJoinMatcher     = "labelJoinMatcher"
+	keyScheduledDataID      = "scheduledDataID"
 )
 
 func isMapKeyExists(m map[string]string, key string) bool {
@@ -157,4 +159,17 @@ func MonitorDropSelector(m map[string]string) map[string]string {
 
 func LabelJoinMatcher(m map[string]string) *LabelJoinMatcherSpec {
 	return parseLabelJoinMatcher(m[keyLabelJoinMatcher])
+}
+
+func ScheduledDataID(m map[string]string) int {
+	v, ok := m[keyScheduledDataID]
+	if !ok {
+		return 0
+	}
+
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		return 0
+	}
+	return i
 }

@@ -13,6 +13,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"reflect"
 	"sync"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
 	bkcli "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
@@ -243,6 +245,29 @@ func (c *Operator) getDiscoverCount() map[string]int {
 	return count
 }
 
+func equalDataID(a, b *v1beta1.DataID) bool {
+	// 当且仅当 DataID 实例存在且非空才可能相等
+	if a == nil || b == nil {
+		return false
+	}
+
+	// 仅比对关键字段 dataid reload 是一个`比较重`的操作 尽量减少其影响
+	if a.Name != b.Name {
+		return false
+	}
+	if a.Spec.DataID != b.Spec.DataID {
+		return false
+	}
+	if !reflect.DeepEqual(a.Spec, b.Spec) {
+		return false
+	}
+	if !reflect.DeepEqual(a.Labels, b.Labels) {
+		return false
+	}
+
+	return true
+}
+
 func (c *Operator) reloadAllDiscovers() {
 	c.discoversMut.Lock()
 	defer c.discoversMut.Unlock()
@@ -254,7 +279,7 @@ func (c *Operator) reloadAllDiscovers() {
 			logger.Errorf("no dataid found, meta=%+v, discover=%s", meta, dis)
 			continue
 		}
-		if dis.DataID() == newDataID {
+		if equalDataID(dis.DataID(), newDataID) {
 			continue
 		}
 

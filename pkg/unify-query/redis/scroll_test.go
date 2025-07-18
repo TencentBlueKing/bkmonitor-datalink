@@ -32,8 +32,8 @@ func TestScrollSession_ElasticsearchFlow(t *testing.T) {
 		MaxSlice:      3,
 		Limit:         10,
 		Index:         0,
-		ScrollIDs:     make(map[string]string),
-		SliceStatus:   make(map[string]bool),
+		ScrollIDs:     make(map[SliceStatus]string),
+		SliceStatus:   make(map[SliceStatus]struct{}),
 		Status:        SessionStatusRunning,
 	}
 
@@ -93,8 +93,8 @@ func TestScrollSession_DorisFlow(t *testing.T) {
 		MaxSlice:      2,
 		Limit:         20,
 		Index:         0,
-		ScrollIDs:     make(map[string]string),
-		SliceStatus:   make(map[string]bool),
+		ScrollIDs:     make(map[SliceStatus]string),
+		SliceStatus:   make(map[SliceStatus]struct{}),
 		Status:        SessionStatusRunning,
 	}
 
@@ -136,8 +136,8 @@ func TestScrollSession_MultipleConnectAndTable(t *testing.T) {
 		MaxSlice:      2,
 		Limit:         10,
 		Index:         0,
-		ScrollIDs:     make(map[string]string),
-		SliceStatus:   make(map[string]bool),
+		ScrollIDs:     make(map[SliceStatus]string),
+		SliceStatus:   make(map[SliceStatus]struct{}),
 		Status:        SessionStatusRunning,
 	}
 

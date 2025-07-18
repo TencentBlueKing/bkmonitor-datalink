@@ -980,7 +980,12 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 	if err != nil {
 		return 0, nil, nil, false, fmt.Errorf("failed to generate queryTs key: %v", err)
 	}
-
+	defer func() {
+		if err = redisUtil.ScrollReleaseRedisLock(ctx, queryTsKey); err != nil {
+			log.Warnf(ctx, "failed to release lock: %v", err)
+			return
+		}
+	}()
 	session, isDone, err := ScrollSessionHelperInstance.GetOrCreateSessionByKey(ctx, queryTsKey,
 		queryTs.ClearCache, queryTs.Scroll, queryTs.Limit)
 	if err != nil {

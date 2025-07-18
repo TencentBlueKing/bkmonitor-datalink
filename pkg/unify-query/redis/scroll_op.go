@@ -28,29 +28,21 @@ var ScrollGenerateQueryTsKey = func(queryTs any, userName string) (string, error
 
 	queryBytes, err := json.Marshal(keyStruct)
 	if err != nil {
-		log.Errorf(
-			context.Background(),
-			"failed to marshal queryTs key: %v",
-			err,
-		)
 		return "", fmt.Errorf("failed to marshal queryTs key: %v", err)
 	}
 	return string(queryBytes), nil
 }
 
-var GetSessionKey = func(queryTsKey string) string {
+func GetSessionKey(queryTsKey string) string {
 	return fmt.Sprintf("%s%s", SessionKeyPrefix, queryTsKey)
 }
 
-var GetLockKey = func(queryTsKey string) string {
+func GetLockKey(queryTsKey string) string {
 	return fmt.Sprintf("%s%s", LockKeyPrefix, queryTsKey)
 }
 
-var ScrollAcquireRedisLock = func(ctx context.Context, lockKey string, timeout time.Duration) (string, error) {
+func ScrollAcquireRedisLock(ctx context.Context, lockKey string, timeout time.Duration) (string, error) {
 	client := globalInstance.client
-	if client == nil {
-		return "", fmt.Errorf("redis client not available")
-	}
 
 	result := client.SetNX(ctx, lockKey, "locked", timeout)
 	if result.Err() != nil {
@@ -64,11 +56,8 @@ var ScrollAcquireRedisLock = func(ctx context.Context, lockKey string, timeout t
 	return lockKey, nil
 }
 
-var ScrollReleaseRedisLock = func(ctx context.Context, lock interface{}) error {
+func ScrollReleaseRedisLock(ctx context.Context, lock interface{}) error {
 	client := globalInstance.client
-	if client == nil {
-		return fmt.Errorf("redis client not available")
-	}
 
 	lockKey, ok := lock.(string)
 	if !ok {
@@ -78,7 +67,7 @@ var ScrollReleaseRedisLock = func(ctx context.Context, lock interface{}) error {
 	return client.Del(ctx, lockKey).Err()
 }
 
-var ScrollGetOrCreateSession = func(ctx context.Context, sessionKey string, forceClear bool, timeout time.Duration, maxSlice int, limit int) (ScrollSession, error) {
+func ScrollGetOrCreateSession(ctx context.Context, sessionKey string, forceClear bool, timeout time.Duration, maxSlice int, limit int) (ScrollSession, error) {
 	client := globalInstance.client
 	if client == nil {
 		return ScrollSession{}, fmt.Errorf("redis client not available")
@@ -94,15 +83,17 @@ var ScrollGetOrCreateSession = func(ctx context.Context, sessionKey string, forc
 		var session ScrollSession
 		if err := json.Unmarshal([]byte(result.Val()), &session); err == nil {
 			session.LastAccessAt = time.Now()
-			if updateErr := scrollUpdateSession(ctx, sessionKey, session); updateErr != nil {
+			if err = scrollUpdateSession(ctx, sessionKey, session); err != nil {
 				log.Warnf(
 					ctx,
 					"failed to update session access time: %v",
-					updateErr,
+					err,
 				)
 			}
 			return session, nil
 		}
+	} else {
+		return ScrollSession{}, fmt.Errorf("failed to get session: %v", result.Err())
 	}
 
 	session := ScrollSession{
@@ -114,8 +105,8 @@ var ScrollGetOrCreateSession = func(ctx context.Context, sessionKey string, forc
 		Limit:         limit,
 		ScrollTimeout: timeout,
 		Status:        SessionStatusRunning,
-		ScrollIDs:     make(map[string]string),
-		SliceStatus:   make(map[string]bool),
+		ScrollIDs:     make(map[SliceStatus]string),
+		SliceStatus:   make(map[SliceStatus]struct{}),
 	}
 
 	if err := scrollUpdateSession(ctx, sessionKey, session); err != nil {
@@ -125,11 +116,8 @@ var ScrollGetOrCreateSession = func(ctx context.Context, sessionKey string, forc
 	return session, nil
 }
 
-var scrollUpdateSession = func(ctx context.Context, key string, session ScrollSession) error {
+func scrollUpdateSession(ctx context.Context, key string, session ScrollSession) error {
 	client := globalInstance.client
-	if client == nil {
-		return fmt.Errorf("redis client not available")
-	}
 
 	session.LastAccessAt = time.Now()
 	sessionBytes, err := json.Marshal(session)
@@ -140,7 +128,7 @@ var scrollUpdateSession = func(ctx context.Context, key string, session ScrollSe
 	return client.Set(ctx, key, sessionBytes, session.ScrollTimeout).Err()
 }
 
-var UpdateSession = func(ctx context.Context, sessionKey string, session ScrollSession) error {
+func UpdateSession(ctx context.Context, sessionKey string, session ScrollSession) error {
 	if globalInstance == nil {
 		return fmt.Errorf("redis instance not initialized")
 	}
@@ -157,14 +145,18 @@ var UpdateSession = func(ctx context.Context, sessionKey string, session ScrollS
 
 	err = client.Set(ctx, sessionKey, sessionBytes, session.ScrollTimeout).Err()
 	if err != nil {
-		log.Errorf(ctx, "Failed to update session %s: %v", sessionKey, err)
+		return fmt.Errorf("failed to update session: %v", err)
 	}
 
 	return err
 }
 
-var ScrollProcessSliceResult = func(ctx context.Context, session *ScrollSession, connect, tableID, scrollID string, sliceIdx int, tsDbType string, size int64, options metadata.ResultTableOptions) error {
+func ScrollProcessSliceResult(ctx context.Context, session *ScrollSession, connect, tableID, scrollID string, sliceIdx int, tsDbType string, size int64, options metadata.ResultTableOptions) error {
 	isDone := size == 0
+
+	if isDone {
+		session.Status = SessionStatusDone
+	}
 
 	if tsDbType == consul.ElasticsearchStorageType {
 		newScrollID := ""
@@ -185,14 +177,10 @@ var ScrollProcessSliceResult = func(ctx context.Context, session *ScrollSession,
 			log.Debugf(ctx, "slice %d completed for %s|%s (empty result and no new scrollID)", sliceIdx, connect, tableID)
 		}
 
-		hasMoreData := session.HasMoreData("elasticsearch")
+		hasMoreData := session.HasMoreData(consul.ElasticsearchStorageType)
 		if !hasMoreData {
 			session.Status = SessionStatusDone
 			log.Debugf(ctx, "All slices completed, session marked as done")
-		}
-	} else {
-		if isDone {
-			session.Status = SessionStatusDone
 		}
 	}
 

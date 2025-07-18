@@ -12,10 +12,10 @@ package redis
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
@@ -26,17 +26,21 @@ const (
 
 type ScrollSession struct {
 	Key           string
-	CreateAt      time.Time     `json:"create_at"`
-	LastAccessAt  time.Time     `json:"last_access_at"`
-	ScrollTimeout time.Duration `json:"scroll_timeout"`
-	MaxSlice      int           `json:"max_slice"`
-	Limit         int           `json:"limit"`
-	Index         int           `json:"index"`
-	// key: connect|tableID|sliceIdx, value: 当前有效的 scrollID
-	ScrollIDs map[string]string `json:"scroll_ids"`
-	// key: connect|tableID|sliceIdx, value: 是否已完成
-	SliceStatus map[string]bool `json:"slice_status"`
-	Status      string          `json:"status"`
+	CreateAt      time.Time                `json:"create_at"`
+	LastAccessAt  time.Time                `json:"last_access_at"`
+	ScrollTimeout time.Duration            `json:"scroll_timeout"`
+	MaxSlice      int                      `json:"max_slice"`
+	Limit         int                      `json:"limit"`
+	Index         int                      `json:"index"`
+	ScrollIDs     map[SliceStatus]string   `json:"scroll_ids"`
+	SliceStatus   map[SliceStatus]struct{} `json:"slice_status"`
+	Status        string                   `json:"status"`
+}
+
+type SliceStatus struct {
+	Connect  string `json:"connect"`
+	TableID  string `json:"table_id"`
+	SliceIdx int    `json:"slice_idx"`
 }
 
 const (
@@ -63,9 +67,12 @@ func (s *ScrollSession) getNextDorisIndex(ctx context.Context) (string, int, err
 }
 
 func (s *ScrollSession) getNextElasticsearchScrollID(ctx context.Context, connect, tableID string, sliceIdx int) (string, int, error) {
-	mapKey := fmt.Sprintf("%s|%s|%d", connect, tableID, sliceIdx)
-
-	scrollID, exist := s.ScrollIDs[mapKey]
+	k := SliceStatus{
+		Connect:  connect,
+		TableID:  tableID,
+		SliceIdx: sliceIdx,
+	}
+	scrollID, exist := s.ScrollIDs[k]
 	if !exist {
 		return "", 0, nil
 	}
@@ -75,35 +82,43 @@ func (s *ScrollSession) getNextElasticsearchScrollID(ctx context.Context, connec
 
 func (s *ScrollSession) SetScrollID(connect, tableID, scrollID string, sliceIdx int) {
 	if s.ScrollIDs == nil {
-		s.ScrollIDs = make(map[string]string)
+		s.ScrollIDs = make(map[SliceStatus]string)
 	}
-
-	mapKey := fmt.Sprintf("%s|%s|%d", connect, tableID, sliceIdx)
-	s.ScrollIDs[mapKey] = scrollID
+	k := SliceStatus{
+		Connect:  connect,
+		TableID:  tableID,
+		SliceIdx: sliceIdx,
+	}
+	s.ScrollIDs[k] = scrollID
 }
 
 func (s *ScrollSession) MarkSliceDone(connect, tableID string, sliceIdx int) {
 	if s.SliceStatus == nil {
-		s.SliceStatus = make(map[string]bool)
+		s.SliceStatus = make(map[SliceStatus]struct{})
 	}
-
-	sliceKey := fmt.Sprintf("%s|%s|%d", connect, tableID, sliceIdx)
-	s.SliceStatus[sliceKey] = true
+	k := SliceStatus{
+		Connect:  connect,
+		TableID:  tableID,
+		SliceIdx: sliceIdx,
+	}
+	s.SliceStatus[k] = struct{}{}
 }
 
 func (s *ScrollSession) RemoveScrollID(connect, tableID string, sliceIdx int) {
-	mapKey := fmt.Sprintf("%s|%s|%d", connect, tableID, sliceIdx)
-	delete(s.ScrollIDs, mapKey)
+	k := SliceStatus{
+		Connect:  connect,
+		TableID:  tableID,
+		SliceIdx: sliceIdx,
+	}
+	delete(s.ScrollIDs, k)
 }
 
-// SliceInfo 分片信息
 type SliceInfo struct {
 	SliceIndex int
 	ScrollID   string
-	Index      int // 用于 Doris 类型存储
+	Index      int
 }
 
-// MakeSlices 为指定的 connect 和 tableID 生成所有分片信息
 func (s *ScrollSession) MakeSlices(ctx context.Context, storageType, connect, tableID string) ([]SliceInfo, error) {
 	switch storageType {
 	case consul.ElasticsearchStorageType:
@@ -115,7 +130,6 @@ func (s *ScrollSession) MakeSlices(ctx context.Context, storageType, connect, ta
 	}
 }
 
-// makeElasticsearchSlices 为 Elasticsearch 生成分片信息
 func (s *ScrollSession) makeElasticsearchSlices(ctx context.Context, connect, tableID string) ([]SliceInfo, error) {
 	slices := make([]SliceInfo, 0, s.MaxSlice)
 
@@ -128,14 +142,13 @@ func (s *ScrollSession) makeElasticsearchSlices(ctx context.Context, connect, ta
 		slices = append(slices, SliceInfo{
 			SliceIndex: sliceIndex,
 			ScrollID:   scrollID,
-			Index:      0, // ES 不使用 index
+			Index:      0,
 		})
 	}
 
 	return slices, nil
 }
 
-// makeDorisSlices 为 Doris 生成分片信息
 func (s *ScrollSession) makeDorisSlices(ctx context.Context) ([]SliceInfo, error) {
 	slices := make([]SliceInfo, 0, s.MaxSlice)
 
@@ -147,7 +160,7 @@ func (s *ScrollSession) makeDorisSlices(ctx context.Context) ([]SliceInfo, error
 
 		slices = append(slices, SliceInfo{
 			SliceIndex: sliceIndex,
-			ScrollID:   "", // Doris 不使用 scrollID
+			ScrollID:   "",
 			Index:      index,
 		})
 	}
@@ -159,27 +172,33 @@ func (s *ScrollSession) HasMoreData(tsDbType string) bool {
 	switch tsDbType {
 	case consul.ElasticsearchStorageType:
 		if s.SliceStatus == nil {
-			s.SliceStatus = make(map[string]bool)
+			s.SliceStatus = make(map[SliceStatus]struct{})
 		}
 
 		if len(s.ScrollIDs) > 0 {
 			return true
 		}
 
-		connectTablePairs := make(map[string]bool)
+		connectTablePairs := make(map[SliceStatus]struct{})
 		for sliceKey := range s.SliceStatus {
-			parts := strings.Split(sliceKey, "|")
-			if len(parts) >= 3 {
-				connectTable := fmt.Sprintf("%s|%s", parts[0], parts[1])
-				connectTablePairs[connectTable] = true
-			}
+			connectTablePairs[SliceStatus{
+				Connect:  sliceKey.Connect,
+				TableID:  sliceKey.TableID,
+				SliceIdx: sliceKey.SliceIdx,
+			}] = struct{}{}
 		}
 
 		for connectTable := range connectTablePairs {
 			completedSlices := 0
 			for sliceIdx := 0; sliceIdx < s.MaxSlice; sliceIdx++ {
-				sliceKey := fmt.Sprintf("%s|%d", connectTable, sliceIdx)
-				if s.SliceStatus[sliceKey] {
+				k := SliceStatus{
+					Connect:  connectTable.Connect,
+					TableID:  connectTable.TableID,
+					SliceIdx: sliceIdx,
+				}
+
+				v := s.SliceStatus[k]
+				if v == struct{}{} {
 					completedSlices++
 				}
 			}
@@ -197,7 +216,6 @@ func (s *ScrollSession) HasMoreData(tsDbType string) bool {
 	}
 }
 
-// ScrollSessionHelper 滚动查询会话辅助器，简化会话操作
 type ScrollSessionHelper struct {
 	scrollSliceLimit int
 	scrollWindow     string
@@ -205,7 +223,6 @@ type ScrollSessionHelper struct {
 	lockTimeout      time.Duration
 }
 
-// NewScrollSessionHelper 创建滚动查询会话辅助器
 func NewScrollSessionHelper(scrollSliceLimit int, scrollWindow string, scrollMaxSlice int, lockTimeout time.Duration) *ScrollSessionHelper {
 	return &ScrollSessionHelper{
 		scrollSliceLimit: scrollSliceLimit,
@@ -221,19 +238,8 @@ func (h *ScrollSessionHelper) GetOrCreateSessionByKey(ctx context.Context, query
 	sessionKey := GetSessionKey(queryTsKey)
 	lockKey := GetLockKey(queryTsKey)
 
-	// 获取锁
 	scrollWindowDuration, _ := time.ParseDuration(scrollWindow)
-	scrollLock, err := ScrollAcquireRedisLock(ctx, lockKey, h.lockTimeout)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to acquire lock: %v", err)
-	}
-	defer func() {
-		if releaseErr := ScrollReleaseRedisLock(ctx, scrollLock); releaseErr != nil {
-			// 记录错误但不返回，避免影响主要逻辑
-		}
-	}()
 
-	// 获取或创建会话
 	session, err := ScrollGetOrCreateSession(ctx, sessionKey, clearCache, scrollWindowDuration, h.scrollMaxSlice, limit)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to get or create session: %v", err)
@@ -243,21 +249,18 @@ func (h *ScrollSessionHelper) GetOrCreateSessionByKey(ctx context.Context, query
 	return &session, isDone, nil
 }
 
-// ProcessSliceResults 处理分片查询结果
 func (h *ScrollSessionHelper) ProcessSliceResults(ctx context.Context, session *ScrollSession, connect, tableId, scrollID string,
 	sliceIndex int, storageType string, size int64, options metadata.ResultTableOptions) error {
 
 	return ScrollProcessSliceResult(ctx, session, connect, tableId, scrollID, sliceIndex, storageType, size, options)
 }
 
-// UpdateSession 更新会话状态
 func (h *ScrollSessionHelper) UpdateSession(ctx context.Context, session *ScrollSession) error {
 	queryTsKey := session.Key
 	sessionKey := GetSessionKey(queryTsKey)
 	return UpdateSession(ctx, sessionKey, *session)
 }
 
-// IsSessionDone 检查会话是否完成
 func (h *ScrollSessionHelper) IsSessionDone(session *ScrollSession) bool {
 	return session.Status == SessionStatusDone
 }

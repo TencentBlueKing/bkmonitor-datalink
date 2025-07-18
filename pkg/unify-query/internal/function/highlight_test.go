@@ -10,8 +10,9 @@
 package function
 
 import (
-	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestHighLightFactory_splitTextForAnalysis(t *testing.T) {
@@ -118,6 +119,7 @@ func TestHighLightFactory_process(t *testing.T) {
 		"gseIndex":       "8019256",
 		"iterationIndex": 14,
 		"level":          "info",
+		"message":        "victoriaMetrics query and victoriaMetrics query or victoria metrics query and victoriametrics query",
 	}
 
 	// map[gseIndex:[{Value:8019256 Operator:eq}]]
@@ -129,9 +131,32 @@ func TestHighLightFactory_process(t *testing.T) {
 					Operator: "eq",
 				},
 			},
+			"": {
+				{
+					Value:    "metrics",
+					Operator: "contains",
+				},
+			},
+			"level": {
+				{
+					Value:    "info",
+					Operator: "eq",
+				},
+				{
+					Value:    "In",
+					Operator: "contains",
+				},
+			},
 		},
 	}
 
+	expected := map[string]any{
+		"gseIndex": []string{"<mark>8019256</mark>"},
+		"file":     []string{"victoria<mark>Metrics</mark>/instance.go:397"},
+		"level":    []string{"<mark>info</mark>"},
+		"message":  []string{"victoria<mark>Metrics</mark> query and victoria<mark>Metrics</mark> query or victoria <mark>metrics</mark> query and victoria<mark>metrics</mark> query"},
+	}
+
 	nd := h.Process(data)
-	fmt.Println(nd)
+	assert.Equal(t, expected, nd)
 }

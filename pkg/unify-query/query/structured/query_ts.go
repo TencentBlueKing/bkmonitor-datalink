@@ -65,6 +65,8 @@ type QueryTs struct {
 	// Instant 瞬时数据
 	Instant bool `json:"instant"`
 
+	Reference bool `json:"reference,omitempty"`
+
 	// 增加公共限制
 	// Limit 点数限制数量
 	Limit int `json:"limit,omitempty" example:"0"`
@@ -382,8 +384,8 @@ type Query struct {
 	// IsPrefix 是否启用前缀匹配
 	IsPrefix bool `json:"is_prefix"`
 
-	// IsReference 是否使用非时间聚合查询
-	IsReference bool `json:"-" swaggerignore:"true"`
+	// NotPromFunc 不使用 PromQL 的函数
+	NotPromFunc bool `json:"-" swaggerignore:"true"`
 
 	// ResultTableOptions
 	ResultTableOptions metadata.ResultTableOptions `json:"-"`
@@ -408,7 +410,7 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 	}
 
 	// 非时间聚合函数使用透传的方式
-	if q.IsReference {
+	if q.NotPromFunc {
 		aggs, err = q.AggregateMethodList.ToQry(q.Timezone)
 		return
 	}

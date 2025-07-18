@@ -388,7 +388,8 @@ func (e *Sort) Exit(ctx antlr.ParserRuleContext) {
 		if e.Field.Name == "" {
 			e.Field.Name = v.GetText()
 		}
-	case *gen.ExpressionContext:
+	case *gen.SortItemContext:
+		e.Field.Sort = strings.ToUpper(strings.TrimPrefix(v.GetText(), e.Field.Name))
 		e.FieldListExpr = append(e.FieldListExpr, e.Field)
 		e.Field = NewField(e.encode)
 	}
@@ -458,6 +459,8 @@ type Field struct {
 	defaultExpr
 	Name       string
 	ExtraNames []string
+
+	Sort string
 
 	As string
 
@@ -559,6 +562,9 @@ func (e *Field) String() string {
 
 	if e.As != "" {
 		s = fmt.Sprintf("%s AS %s", s, e.As)
+	}
+	if e.Sort != "" {
+		s = fmt.Sprintf("%s %s", s, e.Sort)
 	}
 	return s
 }

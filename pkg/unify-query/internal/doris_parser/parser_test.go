@@ -200,6 +200,21 @@ group by
 			q:    "SELECT a.b.c,b.a WHERE a.b.c != 'test' or b.a != 'test' group by a.b, b.a order by a.b",
 			sql:  "SELECT a.b.c, b.a WHERE a.b.c != 'test' OR b.a != 'test' GROUP BY a.b, b.a ORDER BY a.b",
 		},
+		{
+			name: "test-19",
+			q:    "SELECT * WHERE name IN ('test', 'test-1') ORDER BY time ASC, name desc limit 1000",
+			sql:  "SELECT * WHERE name IN ('test','test-1') ORDER BY time ASC, name DESC LIMIT 1000",
+		},
+		{
+			name: "test-20",
+			q:    "SELECT * WHERE name IN ('test', 'test-1') ORDER BY time desc, name limit 1000",
+			sql:  "SELECT * WHERE name IN ('test','test-1') ORDER BY time DESC, name LIMIT 1000",
+		},
+		{
+			name: "test-21",
+			q:    "select ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) AS ratio_percent as ct",
+			sql:  "SELECT ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) AS ratio_percent AS ct",
+		},
 	}
 
 	mock.Init()

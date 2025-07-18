@@ -976,18 +976,35 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 
 	user := metadata.GetUser(ctx)
+	queryTs.ClearCache = false
 	queryTsKey, err := redisUtil.ScrollGenerateQueryTsKey(queryTs, user.Name)
 	if err != nil {
-		return 0, nil, nil, false, fmt.Errorf("failed to generate queryTs key: %v", err)
+		return 0, nil, nil, false, err
 	}
+	lockKey := redisUtil.GetLockKey(queryTsKey)
+	if err = redisUtil.ScrollAcquireRedisLock(ctx, lockKey, ScrollLockTimeout); err != nil {
+		return 0, nil, nil, false, err
+	}
+	defer func() {
+		if err = redisUtil.ScrollReleaseRedisLock(ctx, lockKey); err != nil {
+			log.Warnf(ctx, "Failed to release scroll query lock, key: %s, error: %v", lockKey, err)
+			return
+		}
+	}()
 
-	session, isDone, err := ScrollSessionHelperInstance.GetOrCreateSessionByKey(ctx, queryTsKey,
+	scrollSessionHelperInstance := redisUtil.NewScrollSessionHelper(
+		ScrollSliceLimit,
+		ScrollWindow,
+		ScrollMaxSlice,
+		ScrollLockTimeout,
+	)
+	session, sessionKey, isDone, err := scrollSessionHelperInstance.GetOrCreateSessionByKey(ctx, queryTsKey,
 		queryTs.ClearCache, queryTs.Scroll, queryTs.Limit)
 	if err != nil {
 		return 0, nil, nil, false, err
 	}
 	if isDone {
-		return 0, nil, nil, true, nil
+		return 0, []map[string]any{}, nil, true, nil
 	}
 
 	queryList, err := prepareQueryList(ctx, queryTs)
@@ -995,13 +1012,13 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 		return 0, nil, nil, false, err
 	}
 
-	return executeScrollQueriesWithHelper(ctx, session, queryList, start, end, queryTs)
+	return executeScrollQueriesWithHelper(ctx, scrollSessionHelperInstance, sessionKey, session, queryList, start, end, queryTs)
 }
 
-func executeScrollQueriesWithHelper(ctx context.Context, session *redisUtil.ScrollSession, queryList []*metadata.Query,
+func executeScrollQueriesWithHelper(ctx context.Context, scrollSessionHelperInstance *redisUtil.ScrollSessionHelper, sessionKey string, session *redisUtil.ScrollSession, queryList []*metadata.Query,
 	start, end time.Time, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, done bool, err error) {
 
-	executor := NewScrollQueryExecutor(ctx, session, queryTs, start, end)
+	executor := NewScrollQueryExecutor(ctx, sessionKey, session, queryTs, start, end)
 	defer executor.cleanup()
 
 	storageQueryMap := buildStorageQueryMap(queryList)
@@ -1012,10 +1029,10 @@ func executeScrollQueriesWithHelper(ctx context.Context, session *redisUtil.Scro
 	receiveWg.Add(1)
 	go func() {
 		defer receiveWg.Done()
-		list = processQueryResults(ctx, executor.dataCh, queryList, queryTs, executor.allLabelMap, ignoreDimensions)
+		list = processQueryResults(executor.dataCh, queryList, queryTs, ignoreDimensions)
 	}()
 
-	go executor.executeQueries(storageQueryMap)
+	go executor.executeQueries(storageQueryMap, scrollSessionHelperInstance)
 
 	receiveWg.Wait()
 
@@ -1025,7 +1042,7 @@ func executeScrollQueriesWithHelper(ctx context.Context, session *redisUtil.Scro
 
 	total = executor.total
 	resultTableOptions = executor.resultTableOptions
-	done = ScrollSessionHelperInstance.IsSessionDone(session)
+	done = scrollSessionHelperInstance.IsSessionDone(session)
 	return
 }
 
@@ -1096,8 +1113,8 @@ func buildStorageQueryMap(queryList []*metadata.Query) map[string][]*metadata.Qu
 	return storageQueryMap
 }
 
-func processQueryResults(ctx context.Context, dataCh <-chan map[string]any, queryList []*metadata.Query,
-	queryTs *structured.QueryTs, allLabelMap map[string][]function.LabelMapValue,
+func processQueryResults(dataCh <-chan map[string]any, queryList []*metadata.Query,
+	queryTs *structured.QueryTs,
 	ignoreDimensions []string) []map[string]any {
 
 	var data []map[string]any
@@ -1105,7 +1122,7 @@ func processQueryResults(ctx context.Context, dataCh <-chan map[string]any, quer
 		data = append(data, d)
 	}
 
-	if len(queryList) > 1 {
+	if queryTs.OrderBy != nil && len(queryTs.OrderBy.Orders()) > 0 {
 		queryTs.OrderBy.Orders().SortSliceList(data)
 	}
 

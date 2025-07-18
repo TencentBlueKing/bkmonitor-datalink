@@ -125,7 +125,7 @@ func (s *TimeSeriesGroupSvc) QueryMetricAndDimension(vmRt string) (vmRtMetrics *
 	// NOTE: 现阶段仅支持 vm 存储
 	vmStorage := "vm"
 
-	metricAndDimension, err := apiservice.Bkdata.QueryMetricAndDimension(vmStorage, vmRt)
+	metricAndDimension, err := apiservice.Bkdata.QueryMetricAndDimension(s.BkTenantId, vmStorage, vmRt)
 	if err != nil {
 		return nil, err
 	}

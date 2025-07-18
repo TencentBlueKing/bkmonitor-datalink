@@ -11,6 +11,7 @@ package service
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -604,6 +605,11 @@ func (s *SpacePusher) refineEsTableIds(tableIdList []string) ([]string, error) {
 // PushTableIdDetail 推送结果表的详细信息
 func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool, useByPass bool) error {
 	logger.Infof("PushTableIdDetail: start to push table_id detail data")
+
+	if len(tableIdList) == 0 {
+		logger.Infof("PushTableIdDetail: table_id_list is empty, query all table_id")
+	}
+
 	tableIdDetail, err := s.getTableInfoForInfluxdbAndVm(bkTenantId, tableIdList)
 	logger.Infof("PushTableIdDetail: get table info for influxdb and vm:%s", tableIdDetail)
 	if err != nil {
@@ -2580,11 +2586,22 @@ func (s *SpacePusher) composeBkciLevelTableIds(bkTenantId, spaceType, spaceId st
 	}
 	for _, tid := range tableIds {
 		//dataValues[tid] = map[string]interface{}{"filters": []map[string]interface{}{{"projectId": spaceId}}}
+		filterAlias := "projectId"
+		if slices.Contains(cfg.SpecialRtRouterAliasResultTableList, tid) {
+			logger.Infof("composeBkciLevelTableIds: table_id->[%s] in special rt router alias list, use rt bk_biz_id_alias as filter alias", tid)
+			var rt resulttable.ResultTable
+			if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.BkBizIdAlias).BkTenantIdEq(bkTenantId).TableIdEq(tid).One(&rt); err != nil {
+				logger.Errorf("composeBkciLevelTableIds get bk_biz_id_alias for table_id [%s] error, %s", tid, err)
+				continue
+			}
+			filterAlias = rt.BkBizIdAlias
+
+		}
 		options := FilterBuildContext{
 			SpaceType:   spaceType,
 			SpaceId:     spaceId,
 			TableId:     tid,
-			FilterAlias: "projectId",
+			FilterAlias: filterAlias,
 		}
 		// 使用统一抽象方法生成filters
 		filters := s.buildFiltersByUsage(options, UsageComposeBkciLevelTableIds)

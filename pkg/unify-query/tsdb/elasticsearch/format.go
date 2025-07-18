@@ -937,7 +937,21 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 									}
 								case structured.ConditionContains, structured.ConditionNotContains:
 									if fieldType == KeyWord {
-										value = fmt.Sprintf("*%s*", value)
+										// 针对 value 里的 * 进行转义
+										var (
+											nv    []rune
+											lastv rune
+										)
+										for _, v := range []rune(value) {
+											if v == '*' && lastv != '\\' {
+												nv = append(nv, '\\')
+												nv = append(nv, v)
+											} else {
+												nv = append(nv, v)
+											}
+											lastv = v
+										}
+										value = fmt.Sprintf("*%s*", string(nv))
 									}
 
 									if !con.IsWildcard && fieldType == Text {

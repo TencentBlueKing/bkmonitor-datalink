@@ -153,6 +153,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 
 	span.Set("query-source", user.Key)
 	span.Set("query-space-uid", user.SpaceUID)
+	span.Set("query-tenant-id", user.TenantID)
 
 	// 解析请求 body
 	query := &structured.QueryTs{}

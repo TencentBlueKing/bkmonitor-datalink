@@ -10,19 +10,8 @@
 package storage
 
 import (
-	"context"
 	"fmt"
 	"strings"
-	"sync"
-
-	"github.com/pkg/errors"
-
-	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 //go:generate goqueryset -in influxdbtaginfo.go -out qs_influxdbtaginfo_gen.go
@@ -49,16 +38,8 @@ func (i InfluxdbTagInfo) GenerateTagKey() string {
 	return fmt.Sprintf("%s/%s/%s==%s", i.Database, i.Measurement, i.TagName, i.TagValue)
 }
 
-func (InfluxdbTagInfo) ConsulPath() string {
-	return fmt.Sprintf(models.InfluxdbTagInfoConsulPathTemplate, cfg.StorageConsulPathPrefix, cfg.BypassSuffixPath)
-}
-
 func (i InfluxdbTagInfo) RedisField() string {
 	return fmt.Sprintf("%s/%s", i.ClusterName, i.GenerateTagKey())
-}
-
-func (i InfluxdbTagInfo) ConsulConfigPath() string {
-	return fmt.Sprintf("%s/%s/%s", i.ConsulPath(), i.ClusterName, i.GenerateTagKey())
 }
 
 func (i InfluxdbTagInfo) GenerateNewInfo(oldInfo TagItemInfo) (TagItemInfo, error) {
@@ -106,150 +87,6 @@ func (i InfluxdbTagInfo) GenerateNewInfo(oldInfo TagItemInfo) (TagItemInfo, erro
 		TransportFinishAt: 0,
 	}
 	return newInfo, nil
-}
-
-// AddConsulInfo 新增consul信息
-func (i InfluxdbTagInfo) AddConsulInfo(ctx context.Context) error {
-	var unreadble []string
-	if i.ManualUnreadableHost != "" {
-		unreadble = strings.Split(i.ManualUnreadableHost, ",")
-	} else {
-		unreadble = make([]string, 0)
-	}
-	var hostListObj []string
-	if i.HostList == "" {
-		hostListObj = make([]string, 0)
-	} else {
-		hostListObj = strings.Split(i.HostList, ",")
-	}
-	info := TagItemInfo{
-		HostList:       hostListObj,
-		UnreadableHost: unreadble,
-		DeleteHostList: make([]string, 0),
-		Status:         "ready",
-	}
-
-	consulClient, err := consul.GetInstance()
-	if err != nil {
-		return err
-	}
-	val, err := jsonx.MarshalString(info)
-	if err != nil {
-		return err
-	}
-	err = hashconsul.PutCas(consulClient, i.ConsulConfigPath(), val, 0, nil)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// GetConsulInfo 从consul中获取信息
-func (i InfluxdbTagInfo) GetConsulInfo(ctx context.Context) (*TagItemInfo, error) {
-	consulClient, err := consul.GetInstance()
-	if err != nil {
-		return nil, err
-	}
-	_, dataBytes, err := consulClient.Get(i.ConsulConfigPath())
-	if err != nil {
-		return nil, err
-	}
-	var data TagItemInfo
-	err = jsonx.Unmarshal(dataBytes, &data)
-	if err != nil {
-		return nil, err
-	}
-	return &data, nil
-}
-
-// ModifyConsulInfo 更新consul信息
-func (i InfluxdbTagInfo) ModifyConsulInfo(ctx context.Context, oldInfo TagItemInfo) error {
-	// 如果状态不为ready，则不应修改
-	if oldInfo.Status != "ready" {
-		return nil
-	}
-
-	newInfo, err := i.GenerateNewInfo(oldInfo)
-	if err != nil {
-		return err
-	}
-	val, err := jsonx.MarshalString(newInfo)
-	if err != nil {
-		return err
-	}
-	consulClient, err := consul.GetInstance()
-	if err != nil {
-		return err
-	}
-	err = hashconsul.PutCas(consulClient, i.ConsulConfigPath(), val, 0, nil)
-
-	models.PushToRedis(ctx, models.InfluxdbTagInfoKey, i.RedisField(), val)
-	return nil
-}
-
-// RefreshConsulConfig 更新tag路由信息
-func (i InfluxdbTagInfo) RefreshConsulConfig(ctx context.Context) error {
-	// 强制刷新模式下，直接刷新对应tag的数据即可
-	if i.ForceOverwrite {
-		err := i.AddConsulInfo(ctx)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-	// 根据item信息,到consul中获取数据
-	config, err := i.GetConsulInfo(ctx)
-	if err != nil {
-		if errors.Is(consul.NotFoundErr, err) {
-			// 没有数据直接刷新对应tag的数据
-			err := i.AddConsulInfo(ctx)
-			if err != nil {
-				return err
-			}
-			return nil
-		} else {
-			return err
-		}
-	}
-	// 否则进行更新
-	err = i.ModifyConsulInfo(ctx, *config)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// RefreshConsulTagConfig 更新tag路由信息
-func RefreshConsulTagConfig(ctx context.Context, objs *[]InfluxdbTagInfo, goroutineLimit int) {
-	var clusterNameList []string
-	wg := &sync.WaitGroup{}
-	ch := make(chan bool, goroutineLimit)
-	wg.Add(len(*objs))
-	for _, tagInfo := range *objs {
-		ch <- true
-		clusterNameList = append(clusterNameList, tagInfo.ClusterName)
-		go func(tagInfo InfluxdbTagInfo, wg *sync.WaitGroup, ch chan bool) {
-			defer func() {
-				<-ch
-				wg.Done()
-			}()
-			err := tagInfo.RefreshConsulConfig(ctx)
-			if err != nil {
-				logger.Errorf("db [%s] tag [%s] try to refresh consul tag config, %v", tagInfo.Database, tagInfo.TagName, err)
-			} else {
-				logger.Infof("db [%s] tag [%s] refresh consul tag config success", tagInfo.Database, tagInfo.TagName)
-			}
-		}(tagInfo, wg, ch)
-	}
-	wg.Wait()
-	tagConsulPath := InfluxdbTagInfo{}.ConsulPath()
-	for _, clusterName := range clusterNameList {
-		err := models.RefreshRouterVersion(ctx, fmt.Sprintf("%s/%s/version/", tagConsulPath, clusterName))
-		if err != nil {
-			logger.Errorf("cluster [%s] update tag_info version failed, %v", clusterName, err)
-		}
-	}
-
 }
 
 type TagItemInfo struct {

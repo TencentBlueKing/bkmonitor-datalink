@@ -261,7 +261,7 @@ func GetNodemanApi() (*nodeman.Client, error) {
 
 // todo: tenant
 // GetBkdataApi BkdataApi
-func GetBkdataApi() (*bkdata.Client, error) {
+func GetBkdataApi(tenantId string) (*bkdata.Client, error) {
 	muForBkdataApi.Lock()
 	defer muForBkdataApi.Unlock()
 	if bkdataApi != nil {
@@ -280,7 +280,7 @@ func GetBkdataApi() (*bkdata.Client, error) {
 	}
 
 	var err error
-	bkdataApi, err = bkdata.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	bkdataApi, err = bkdata.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-Tenant-Id": tenantId}))
 	if err != nil {
 		return nil, err
 	}

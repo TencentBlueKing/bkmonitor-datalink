@@ -36,10 +36,8 @@ type PeriodicTask struct {
 // NOTE: 后续增加针对不同的任务，使用不同的调度器
 func getPeriodicTasks() map[string]PeriodicTask {
 	refreshTsMetric := "periodic:metadata:refresh_ts_metric"
-	refreshInfluxdbRoute := "periodic:metadata:refresh_influxdb_route"
 	refreshDatasource := "periodic:metadata:refresh_datasource"
 	RefreshKafkaTopicInfo := "periodic:metadata:refresh_kafka_topic_info"
-	SyncBkccSpaceDataSource := "periodic:metadata:sync_bkcc_space_data_source"
 	ReportInfluxdbClusterMetrics := "periodic:cluster_metrics:report_influxdb"
 	PushAndPublishSpaceRouterInfo := "periodic:cluster_metrics:push_and_publish_space_router_info"
 	ReportESClusterMetrics := "periodic:cluster_metrics:report_es"
@@ -54,10 +52,6 @@ func getPeriodicTasks() map[string]PeriodicTask {
 			Handler: metadataTask.RefreshTimeSeriesMetric,
 			Option:  []task.Option{task.Timeout(600 * time.Second)},
 		},
-		refreshInfluxdbRoute: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.RefreshInfluxdbRoute,
-		},
 		refreshDatasource: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshDatasource,
@@ -65,10 +59,6 @@ func getPeriodicTasks() map[string]PeriodicTask {
 		RefreshKafkaTopicInfo: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshKafkaTopicInfo,
-		},
-		SyncBkccSpaceDataSource: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.SyncBkccSpaceDataSource,
 		},
 		ReportInfluxdbClusterMetrics: {
 			Cron:    "*/1 * * * *",

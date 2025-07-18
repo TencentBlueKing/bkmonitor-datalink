@@ -9,19 +9,6 @@
 
 package storage
 
-import (
-	"context"
-	"fmt"
-	"sync"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-)
-
 //go:generate goqueryset -in influxdbclusterinfo.go -out qs_influxdbclusterinfo_gen.go
 
 // InfluxdbClusterInfo influxdb cluster info model
@@ -35,76 +22,4 @@ type InfluxdbClusterInfo struct {
 // TableName 用于设置表的别名
 func (InfluxdbClusterInfo) TableName() string {
 	return "metadata_influxdbclusterinfo"
-}
-
-// ConsulPath 获取cluster_info的consul根路径
-func (InfluxdbClusterInfo) ConsulPath() string {
-	return fmt.Sprintf(models.InfluxdbClusterInfoConsulPathTemplate, config.StorageConsulPathPrefix, config.BypassSuffixPath)
-}
-
-// RefreshInfluxdbClusterInfoConsulClusterConfig 更新influxDB集群信息到Consul中
-func RefreshInfluxdbClusterInfoConsulClusterConfig(ctx context.Context, objs *[]InfluxdbClusterInfo, goroutineLimit int) {
-	refreshMap := make(map[string][]InfluxdbClusterInfo)
-	// 按照clusterName分组处理
-	for _, clusterInfo := range *objs {
-		clusterList, ok := refreshMap[clusterInfo.ClusterName]
-		if ok {
-			clusterList = append(clusterList, clusterInfo)
-		} else {
-			clusterList = []InfluxdbClusterInfo{clusterInfo}
-		}
-		refreshMap[clusterInfo.ClusterName] = clusterList
-	}
-
-	wg := &sync.WaitGroup{}
-	ch := make(chan bool, goroutineLimit)
-	wg.Add(len(refreshMap))
-	for clusterName, clusterInfoList := range refreshMap {
-		ch <- true
-		go func(clusterName string, clusterInfoList *[]InfluxdbClusterInfo, wg *sync.WaitGroup, ch chan bool) {
-			defer func() {
-				<-ch
-				wg.Done()
-			}()
-
-			err := func() error {
-				consulConfigPath := fmt.Sprintf("%s/%s", InfluxdbClusterInfo{}.ConsulPath(), clusterName)
-				var hostNameList = make([]string, 0)
-				var unreadableHostList = make([]string, 0)
-				for _, clusterInfo := range *clusterInfoList {
-					hostNameList = append(hostNameList, clusterInfo.HostName)
-					if !clusterInfo.HostReadable {
-						unreadableHostList = append(unreadableHostList, clusterInfo.HostName)
-					}
-				}
-				var valMap = map[string][]string{
-					"host_list":            hostNameList,
-					"unreadable_host_list": unreadableHostList,
-				}
-				val, err := jsonx.MarshalString(valMap)
-				if err != nil {
-					return err
-				}
-				consulClient, err := consul.GetInstance()
-				if err != nil {
-					return err
-				}
-				err = hashconsul.PutCas(consulClient, consulConfigPath, val, 0, nil)
-				if err != nil {
-					logger.Errorf("consul path [%s] refresh with value [%s] failed, %v", consulConfigPath, val, err)
-					return err
-				}
-				logger.Infof("consul path [%s] is refresh with value [%s] success", consulConfigPath, val)
-				models.PushToRedis(ctx, models.InfluxdbClusterInfoKey, clusterName, val)
-				return nil
-			}()
-
-			if err != nil {
-				logger.Errorf("cluster: [%v] try to refresh consul config failed, %v", clusterName, err)
-			} else {
-				logger.Infof("cluster: [%v] refresh consul config success", clusterName)
-			}
-		}(clusterName, &clusterInfoList, wg, ch)
-	}
-	wg.Wait()
 }

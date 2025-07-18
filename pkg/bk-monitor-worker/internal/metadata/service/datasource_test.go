@@ -171,6 +171,7 @@ func TestDataSourceSvc_ToJson(t *testing.T) {
 		IndexSettings:     "{}",
 		MappingSettings:   "{}",
 		StorageClusterID:  cluster.ClusterID,
+		NeedCreateIndex:   true,
 	}
 	db.Delete(&es, "table_id = ?", es.TableID)
 	err = es.Create(db)
@@ -291,6 +292,7 @@ func TestDataSourceConsulPath(t *testing.T) {
 
 	var bkDataId uint = 1000001
 	ds := &resulttable.DataSource{
+		BkTenantId:        "system",
 		BkDataId:          bkDataId,
 		Token:             "9e679720296f4ad7abf5ad95ac0acbdf",
 		DataName:          "test_data_source",

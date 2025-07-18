@@ -26,7 +26,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	redisStore "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
@@ -84,7 +83,7 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, queryFromBkDat
 	// 检查是否配置了字段白名单
 	db := mysql.GetDBSession().DB
 	var whitelistOption resulttable.ResultTableOption
-	err = resulttable.NewResultTableOptionQuerySet(db).TableIDEq(s.TableID).NameEq(models.OptionFieldWhitelist).One(&whitelistOption)
+	err = resulttable.NewResultTableOptionQuerySet(db).TableIDEq(s.TableID).BkTenantIdEq(s.BkTenantId).NameEq(models.OptionFieldWhitelist).One(&whitelistOption)
 	if err == nil {
 		// 存在白名单配置，解析白名单字段列表
 		var whitelistFields []string
@@ -126,7 +125,7 @@ func (s *TimeSeriesGroupSvc) QueryMetricAndDimension(vmRt string) (vmRtMetrics *
 	// NOTE: 现阶段仅支持 vm 存储
 	vmStorage := "vm"
 
-	metricAndDimension, err := apiservice.Bkdata.QueryMetricAndDimension(vmStorage, vmRt)
+	metricAndDimension, err := apiservice.Bkdata.QueryMetricAndDimension(s.BkTenantId, vmStorage, vmRt)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +237,7 @@ func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]interface
 	tsmSvc := NewTimeSeriesMetricSvcSvc(nil)
 	logger.Infof("UpdateMetrics: TimeSeriesGroupId: %v,table_id: %v,isAutoDiscovery: %v", s.TimeSeriesGroupID, s.TableID, isAutoDiscovery)
 	// 刷新 ts 表中的指标和维度
-	updated, err := tsmSvc.BulkRefreshTSMetrics(s.TimeSeriesGroupID, s.TableID, metricInfoList, isAutoDiscovery)
+	updated, err := tsmSvc.BulkRefreshTSMetrics(s.BkTenantId, s.TimeSeriesGroupID, s.TableID, metricInfoList, isAutoDiscovery)
 	if err != nil {
 		return false, errors.Wrapf(err, "BulkRefreshRtFields for table id [%s] with metric info [%v] failed", s.TableID, metricInfoList)
 	}
@@ -260,7 +259,7 @@ func (s *TimeSeriesGroupSvc) BulkRefreshRtFields(tableId string, metricInfoList 
 	// 通过结果表过滤到到指标和维度
 	// NOTE: 因为 `ResultTableField` 字段是打平的，如果指标或维度已经存在，则以存在的数据为准
 	var existRTFields []resulttable.ResultTableField
-	if err := resulttable.NewResultTableFieldQuerySet(db).Select(resulttable.ResultTableFieldDBSchema.FieldName).TableIDEq(tableId).All(&existRTFields); err != nil {
+	if err := resulttable.NewResultTableFieldQuerySet(db).Select(resulttable.ResultTableFieldDBSchema.FieldName).BkTenantIdEq(s.BkTenantId).TableIDEq(tableId).All(&existRTFields); err != nil {
 		return errors.Wrapf(err, "query ResultTableField with table_id [%s] failed", tableId)
 	}
 	// 组装结果表包含的字段数据，包含指标和维度
@@ -274,7 +273,7 @@ func (s *TimeSeriesGroupSvc) BulkRefreshRtFields(tableId string, metricInfoList 
 	if !ok {
 		return errors.New("parse metricMap failed")
 	}
-	metricSet := mapset.NewSet[string](mapx.GetMapKeys(metricMap)...)
+	metricSet := mapset.NewSet(mapx.GetMapKeys(metricMap)...)
 	needCreateMetricSet := metricSet.Difference(existFields)
 	needUpdateMetricSet := metricSet.Difference(needCreateMetricSet)
 	if err := s.BulkCreateOrUpdateMetrics(tableId, metricMap, needCreateMetricSet.ToSlice(), needUpdateMetricSet.ToSlice()); err != nil {
@@ -286,7 +285,7 @@ func (s *TimeSeriesGroupSvc) BulkRefreshRtFields(tableId string, metricInfoList 
 	if !ok {
 		return errors.New("parse tagMap failed")
 	}
-	tagSet := mapset.NewSet[string](mapx.GetMapKeys(tagMap)...)
+	tagSet := mapset.NewSet(mapx.GetMapKeys(tagMap)...)
 	needCreateTagSet := tagSet.Difference(existFields).Difference(needCreateMetricSet)
 	needUpdateTagSet := tagSet.Difference(needCreateTagSet)
 	isUpdateDescription, ok := metricTagInfo["isUpdateDescription"].(bool)
@@ -344,7 +343,7 @@ func (s *TimeSeriesGroupSvc) IsAutoDiscovery() (bool, error) {
 	}
 	db := mysql.GetDBSession().DB
 
-	count, err := resulttable.NewResultTableOptionQuerySet(db).TableIDEq(s.TableID).NameEq(models.OptionEnableFieldBlackList).ValueEq("false").Count()
+	count, err := resulttable.NewResultTableOptionQuerySet(db).TableIDEq(s.TableID).BkTenantIdEq(s.BkTenantId).NameEq(models.OptionEnableFieldBlackList).ValueEq("false").Count()
 	if err != nil {
 		return false, errors.Wrapf(err, "query NewResultTableOptionQuerySet with table_id [%s] name [%s] value [%s] failed", s.TableID, models.OptionEnableFieldBlackList, "false")
 	}
@@ -374,21 +373,10 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateMetrics(tableId string, metricMap
 			LastModifyUser: "system",
 			IsDisabled:     isDisabled,
 		}
-		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "check_update_ts_metric") {
-			logger.Info(diffutil.BuildLogStr("check_update_ts_metric", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(rtf.TableName(), map[string]interface{}{
-				resulttable.ResultTableFieldDBSchema.TableID.String():        rtf.TableID,
-				resulttable.ResultTableFieldDBSchema.FieldName.String():      rtf.FieldName,
-				resulttable.ResultTableFieldDBSchema.FieldType.String():      rtf.FieldType,
-				resulttable.ResultTableFieldDBSchema.Tag.String():            rtf.Tag,
-				resulttable.ResultTableFieldDBSchema.IsConfigByUser.String(): rtf.IsConfigByUser,
-				resulttable.ResultTableFieldDBSchema.DefaultValue.String():   rtf.DefaultValue,
-				resulttable.ResultTableFieldDBSchema.IsDisabled.String():     rtf.IsDisabled,
-			}), ""))
-		} else {
-			if err := rtf.Create(db); err != nil {
-				logger.Errorf("create ResultTableField table_id [%s] field_name [%s], failed, %v", rtf.TableID, rtf.FieldName, err)
-				continue
-			}
+
+		if err := rtf.Create(db); err != nil {
+			logger.Errorf("create ResultTableField table_id [%s] field_name [%s], failed, %v", rtf.TableID, rtf.FieldName, err)
+			continue
 		}
 		logger.Infof("created ResultTableField table_id [%s] field_name [%s]", rtf.TableID, rtf.FieldName)
 	}
@@ -398,7 +386,7 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateMetrics(tableId string, metricMap
 	var updateRTFs []resulttable.ResultTableField
 	for _, chunkMetrics := range slicex.ChunkSlice(needUpdateMetrics, 0) {
 		var tempList []resulttable.ResultTableField
-		if err := resulttable.NewResultTableFieldQuerySet(db).TableIDEq(tableId).TagEq(models.ResultTableFieldTagMetric).FieldNameIn(chunkMetrics...).All(&tempList); err != nil {
+		if err := resulttable.NewResultTableFieldQuerySet(db).BkTenantIdEq(s.BkTenantId).TableIDEq(tableId).TagEq(models.ResultTableFieldTagMetric).FieldNameIn(chunkMetrics...).All(&tempList); err != nil {
 			return errors.Wrapf(err, "query ResultTableField with table_id [%s] field_name [%v] tag [%s] failed", tableId, chunkMetrics, models.ResultTableFieldTagMetric)
 		}
 		updateRTFs = append(updateRTFs, tempList...)
@@ -412,16 +400,10 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateMetrics(tableId string, metricMap
 			rtf.IsDisabled = expectMetricStatus
 			rtf.LastModifyTime = time.Now().UTC()
 			updateRecords = append(updateRecords, rtf)
-			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "check_update_ts_metric") {
-				logger.Info(diffutil.BuildLogStr("check_update_ts_metric", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(rtf.TableName(), map[string]interface{}{
-					resulttable.ResultTableFieldDBSchema.Id.String():         rtf.Id,
-					resulttable.ResultTableFieldDBSchema.IsDisabled.String(): rtf.IsDisabled,
-				}), ""))
-			} else {
-				if err := rtf.Update(db, resulttable.ResultTableFieldDBSchema.IsDisabled, resulttable.ResultTableFieldDBSchema.LastModifyTime); err != nil {
-					logger.Errorf("update ResultTableField table_id [%v] field_name [%s] with is_disabled [%v] last_modify_time [%v] failed, %v", rtf.TableID, rtf.FieldName, rtf.IsDisabled, rtf.LastModifyTime, err)
-					continue
-				}
+
+			if err := rtf.Update(db, resulttable.ResultTableFieldDBSchema.IsDisabled, resulttable.ResultTableFieldDBSchema.LastModifyTime); err != nil {
+				logger.Errorf("update ResultTableField table_id [%v] field_name [%s] with is_disabled [%v] last_modify_time [%v] failed, %v", rtf.TableID, rtf.FieldName, rtf.IsDisabled, rtf.LastModifyTime, err)
+				continue
 			}
 			logger.Infof("update ResultTableField table_id [%v] field_name [%s] with is_disabled [%v] last_modify_time [%v]", rtf.TableID, rtf.FieldName, rtf.IsDisabled, rtf.LastModifyTime)
 		}
@@ -450,22 +432,10 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateTags(tableId string, tagMap map[s
 			LastModifyUser: "system",
 			IsDisabled:     false,
 		}
-		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "check_update_ts_metric") {
-			logger.Info(diffutil.BuildLogStr("check_update_ts_metric", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(rtf.TableName(), map[string]interface{}{
-				resulttable.ResultTableFieldDBSchema.TableID.String():        rtf.TableID,
-				resulttable.ResultTableFieldDBSchema.FieldName.String():      rtf.FieldName,
-				resulttable.ResultTableFieldDBSchema.Description.String():    rtf.Description,
-				resulttable.ResultTableFieldDBSchema.FieldType.String():      rtf.FieldType,
-				resulttable.ResultTableFieldDBSchema.Tag.String():            rtf.Tag,
-				resulttable.ResultTableFieldDBSchema.IsConfigByUser.String(): rtf.IsConfigByUser,
-				resulttable.ResultTableFieldDBSchema.DefaultValue.String():   rtf.DefaultValue,
-				resulttable.ResultTableFieldDBSchema.IsDisabled.String():     rtf.IsDisabled,
-			}), ""))
-		} else {
-			if err := rtf.Create(db); err != nil {
-				logger.Errorf("create ResultTableField table_id [%s] field_name [%s] description [%s], failed, %v", rtf.TableID, rtf.FieldName, rtf.Description, err)
-				continue
-			}
+
+		if err := rtf.Create(db); err != nil {
+			logger.Errorf("create ResultTableField table_id [%s] field_name [%s] description [%s], failed, %v", rtf.TableID, rtf.FieldName, rtf.Description, err)
+			continue
 		}
 		logger.Infof("created ResultTableField table_id [%s] field_name [%s] description [%s]", rtf.TableID, rtf.FieldName, rtf.Description)
 	}
@@ -474,7 +444,7 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateTags(tableId string, tagMap map[s
 	var updateRTFs []resulttable.ResultTableField
 	for _, chunkMetrics := range slicex.ChunkSlice(needUpdateTags, 0) {
 		var tempList []resulttable.ResultTableField
-		if err := resulttable.NewResultTableFieldQuerySet(db).TableIDEq(tableId).TagIn(models.ResultTableFieldTagDimension, models.ResultTableFieldTagTimestamp, models.ResultTableFieldTagGroup).FieldNameIn(chunkMetrics...).All(&tempList); err != nil {
+		if err := resulttable.NewResultTableFieldQuerySet(db).BkTenantIdEq(s.BkTenantId).TableIDEq(tableId).TagIn(models.ResultTableFieldTagDimension, models.ResultTableFieldTagTimestamp, models.ResultTableFieldTagGroup).FieldNameIn(chunkMetrics...).All(&tempList); err != nil {
 			return errors.Wrapf(err, "query ResultTableField with table_id [%s] field_name [%v] tag [%s,%s,%s] failed", tableId, chunkMetrics, models.ResultTableFieldTagDimension, models.ResultTableFieldTagTimestamp, models.ResultTableFieldTagGroup)
 		}
 		updateRTFs = append(updateRTFs, tempList...)
@@ -487,16 +457,10 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateTags(tableId string, tagMap map[s
 		if rtf.Description != expectTagDescription {
 			rtf.Description = expectTagDescription
 			rtf.LastModifyTime = time.Now().UTC()
-			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "check_update_ts_metric") {
-				logger.Info(diffutil.BuildLogStr("check_update_ts_metric", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(rtf.TableName(), map[string]interface{}{
-					resulttable.ResultTableFieldDBSchema.Id.String():          rtf.Id,
-					resulttable.ResultTableFieldDBSchema.Description.String(): rtf.Description,
-				}), ""))
-			} else {
-				if err := rtf.Update(db, resulttable.ResultTableFieldDBSchema.Description, resulttable.ResultTableFieldDBSchema.LastModifyTime); err != nil {
-					logger.Errorf("update ResultTableField table_id [%v] field_name [%s] with description [%s] last_modify_time [%v] failed, %v", rtf.TableID, rtf.FieldName, rtf.Description, rtf.LastModifyTime, err)
-					continue
-				}
+
+			if err := rtf.Update(db, resulttable.ResultTableFieldDBSchema.Description, resulttable.ResultTableFieldDBSchema.LastModifyTime); err != nil {
+				logger.Errorf("update ResultTableField table_id [%v] field_name [%s] with description [%s] last_modify_time [%v] failed, %v", rtf.TableID, rtf.FieldName, rtf.Description, rtf.LastModifyTime, err)
+				continue
 			}
 			logger.Infof("update ResultTableField table_id [%v] field_name [%s] with description [%s] last_modify_time [%v]", rtf.TableID, rtf.FieldName, rtf.Description, rtf.LastModifyTime)
 		}

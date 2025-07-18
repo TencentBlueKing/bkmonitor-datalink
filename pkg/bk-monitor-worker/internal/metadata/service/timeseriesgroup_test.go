@@ -30,9 +30,10 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	db := mysql.GetDBSession().DB
 	tsm := customreport.TimeSeriesGroup{
 		CustomGroupBase: customreport.CustomGroupBase{
-			BkDataID: 22112,
-			TableID:  "test_for_metric_update.base",
-			IsEnable: true,
+			BkDataID:            22112,
+			TableID:             "test_for_metric_update.base",
+			IsEnable:            true,
+			MaxFutureTimeOffset: -1,
 		},
 		TimeSeriesGroupID:   3343,
 		TimeSeriesGroupName: "test_for_metric_update_group",

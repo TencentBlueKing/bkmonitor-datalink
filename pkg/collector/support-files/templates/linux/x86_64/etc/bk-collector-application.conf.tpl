@@ -31,6 +31,12 @@ exporter:
     {% if queue_config.traces_batch_size is defined %}
     traces_batch_size: {{ queue_config.traces_batch_size }}
     {%- endif %}
+    {% if queue_config.profiles_batch_size is defined %}
+    profiles_batch_size: {{ queue_config.profiles_batch_size }}
+    {%- endif %}
+    {% if queue_config.proxy_batch_size is defined %}
+    proxy_batch_size: {{ queue_config.proxy_batch_size }}
+    {%- endif %}
 {%- endif %}
 
 default:

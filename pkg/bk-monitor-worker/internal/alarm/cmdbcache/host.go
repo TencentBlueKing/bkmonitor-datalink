@@ -126,6 +126,8 @@ type AlarmHostInfo struct {
 	DisplayName string `json:"display_name"`
 
 	TopoLinks map[string][]map[string]interface{} `json:"topo_link"`
+
+	Expand map[string]map[string]string `json:"expand"`
 }
 
 const (
@@ -193,6 +195,8 @@ func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataI
 	if info.Host.BkIspName != nil {
 		bkIspName = *info.Host.BkIspName
 	}
+
+	// 补充扩展信息到 host 节点
 
 	host := &AlarmHostInfo{
 		BkBizId:             info.Host.BkBizId,
@@ -336,7 +340,8 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 
 	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
 	go func() {
-		err = relation.GetRelationMetricsBuilder().BuildMetrics(ctx, "", bkBizId, nil)
+		infos := m.HostToRelationInfos(hosts)
+		err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bkBizId, relation.Host, infos)
 		if err != nil {
 			logger.Error("refresh relation metrics failed, err: %v", err)
 		}
@@ -344,8 +349,25 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 	}()
 
 	wg.Wait()
-
 	return nil
+}
+
+// HostToRelationInfos 主机信息转关联缓存信息
+func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []*relation.Info {
+	infos := make([]*relation.Info, 0, len(hosts))
+	for _, h := range hosts {
+		id := fmt.Sprintf("%d", h.BkHostId)
+		infos = append(infos, &relation.Info{
+			ID: id,
+			Label: map[string]string{
+				"host_id": id,
+			},
+			Expand:    h.Expand,
+			TopoLinks: h.TopoLinks,
+		})
+	}
+
+	return infos
 }
 
 // RefreshGlobal 刷新全局缓存
@@ -626,15 +648,32 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 			}
 		}
 		if len(hostKeys) > 0 {
+			// 清理 relationMetrics 里的缓存数据
+			result := m.RedisClient.HMGet(ctx, m.GetCacheKey(hostCacheKey), hostKeys...)
+			clearNodes := make([]*AlarmHostInfo, 0)
+
+			for _, value := range result.Val() {
+				// 如果找不到对应的缓存，不需要更新
+				if value == nil {
+					continue
+				}
+
+				var host *AlarmHostInfo
+				err := json.Unmarshal([]byte(value.(string)), &host)
+				if err != nil {
+					continue
+				}
+
+				id := fmt.Sprintf("%d", host.BkHostId)
+				relation.GetRelationMetricsBuilder().ClearResourceWithID(host.BkBizId, relation.Host, id)
+				clearNodes = append(clearNodes, host)
+			}
 
 			// 记录需要更新的业务ID
 			err := client.HDel(ctx, m.GetCacheKey(hostCacheKey), hostKeys...).Err()
 			if err != nil {
 				logger.Errorf("hdel failed, key: %s, err: %v", m.GetCacheKey(hostCacheKey), err)
 			}
-		}
-		if len(hostIDs) > 0 {
-			relation.GetRelationMetricsBuilder().ClearResourceWithID(relation.Host)
 		}
 	case "mainline_instance":
 		key := m.GetCacheKey(topoCacheKey)

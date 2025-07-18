@@ -9,33 +9,42 @@
 
 package relation
 
-// ExpandInfo 扩展信息 map[{维度 Key}]{维度 value}
-type ExpandInfo map[string]string
-
-// ExpandInfos 扩展信息 map[{资源ID}]map[{资源类型}]ap[{维度 Key}]{维度 value}
-type ExpandInfos struct {
-	data map[string]ExpandInfo
+// Info
+// label 关键维度
+// expand 扩展信息 map[{资源类型}]map[{维度 Key}]{维度 value}
+// topo 拓扑关联
+type Info struct {
+	ID        string
+	Label     map[string]string
+	Expand    map[string]map[string]string
+	TopoLinks map[string][]map[string]any
 }
 
-func (e *ExpandInfos) Add(id string, data map[string]string) {
+// ResourceInfo 扩展信息 map[{资源ID}]Info
+type ResourceInfo struct {
+	name string
+	data map[string]*Info
+}
+
+func (e *ResourceInfo) Add(id string, info *Info) {
 	if e.data == nil {
-		e.data = make(map[string]ExpandInfo)
+		e.data = make(map[string]*Info)
 	}
-	e.data[id] = data
+	e.data[id] = info
 }
 
-func (e *ExpandInfos) Delete(id string) {
+func (e *ResourceInfo) Delete(id string) {
 	if e.data == nil {
 		return
 	}
 	delete(e.data, id)
 }
 
-func (e *ExpandInfos) Reset() {
-	e.data = make(map[string]ExpandInfo)
+func (e *ResourceInfo) Reset() {
+	e.data = make(map[string]*Info)
 }
 
-func (e *ExpandInfos) Get(id string) map[string]string {
+func (e *ResourceInfo) Get(id string) *Info {
 	if e.data == nil {
 		return nil
 	}
@@ -45,56 +54,4 @@ func (e *ExpandInfos) Get(id string) map[string]string {
 	}
 
 	return nil
-}
-
-// ResourceExpandInfos 扩展信息 map[{资源类型}]map[{资源ID}]map[{维度 Key}]{维度 value}
-type ResourceExpandInfos struct {
-	data map[string]*ExpandInfos
-}
-
-func NewResourceExpandInfos(keys ...string) *ResourceExpandInfos {
-	r := &ResourceExpandInfos{
-		data: make(map[string]*ExpandInfos),
-	}
-
-	for _, key := range keys {
-		r.data[key] = &ExpandInfos{
-			data: make(map[string]ExpandInfo),
-		}
-	}
-	return r
-}
-
-func (e *ResourceExpandInfos) Reset() {
-	if e.data == nil {
-		return
-	}
-
-	for _, v := range e.data {
-		v.Reset()
-	}
-}
-
-func (e *ResourceExpandInfos) Get(name string) *ExpandInfos {
-	if e.data == nil {
-		return nil
-	}
-
-	if v, ok := e.data[name]; ok {
-		return v
-	}
-
-	return nil
-}
-
-func (e *ResourceExpandInfos) Delete(name string, ids ...string) {
-	if e.data == nil {
-		return
-	}
-
-	if ei, ok := e.data[name]; ok {
-		for _, id := range ids {
-			ei.Delete(id)
-		}
-	}
 }

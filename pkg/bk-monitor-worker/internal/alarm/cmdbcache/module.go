@@ -37,6 +37,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -188,7 +189,48 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 		logger.Infof("refresh service_template cache by biz: %d, service_template count: %d", bizID, len(templateToModules))
 	}
 
+	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
+	var wg sync.WaitGroup
+	go func() {
+		wg.Add(1)
+		infos := m.ModuleToRelationInfos(moduleList)
+		err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Module, infos)
+		if err != nil {
+			logger.Error("refresh set cache failed, err: %v", err)
+		}
+	}()
+	wg.Wait()
+
 	return nil
+}
+
+// ModuleToRelationInfos 模块信息转关联缓存信息
+func (m *ModuleCacheManager) ModuleToRelationInfos(result []map[string]any) []*relation.Info {
+	infos := make([]*relation.Info, 0, len(result))
+	for _, r := range result {
+		setId, ok := r["bk_set_id"].(float64)
+		if !ok {
+			continue
+		}
+		id := strconv.Itoa(int(setId))
+		var expand map[string]map[string]string
+		if expandString, ok := r[relation.ExpandInfoColumn].(string); ok {
+			err := json.Unmarshal([]byte(expandString), &expand)
+			if err != nil {
+				logger.Errorf("json unmarshal error with %s", expandString)
+				continue
+			}
+		}
+		infos = append(infos, &relation.Info{
+			ID: id,
+			Label: map[string]string{
+				"set_id": id,
+			},
+			Expand: expand,
+		})
+	}
+
+	return infos
 }
 
 // RefreshGlobal 刷新全局模块缓存

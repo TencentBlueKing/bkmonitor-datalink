@@ -12,7 +12,9 @@ package relation
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,6 +28,16 @@ const (
 	Set    = "set"
 	Module = "module"
 	Host   = "host"
+
+	ExpandInfoColumn = "version_meta"
+)
+
+var (
+	bkIDKeys = map[string]string{
+		Set:    "bk_set_id",
+		Module: "bk_module_id",
+		Host:   "bk_host_id",
+	}
 )
 
 var (
@@ -51,14 +63,14 @@ func putTsPool(ts []prompb.TimeSeries) {
 type MetricsBuilder struct {
 	spaceReport remote.Reporter
 
-	metrics   map[int]map[int]Nodes
-	lock      sync.RWMutex
-	resources *ResourceExpandInfos
+	lock sync.RWMutex
+	// 业务ID -> 资源类型（set、module、host) -> resourceInfo
+	resources map[int]map[string]*ResourceInfo
 }
 
 func newRelationMetricsBuilder() *MetricsBuilder {
 	return &MetricsBuilder{
-		resources: NewResourceExpandInfos(),
+		resources: make(map[int]map[string]*ResourceInfo),
 	}
 }
 
@@ -71,109 +83,72 @@ func (b *MetricsBuilder) WithSpaceReport(reporter remote.Reporter) *MetricsBuild
 	return b
 }
 
+func (b *MetricsBuilder) GetResourceInfo(bizID int, name string) *ResourceInfo {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+
+	if _, ok := b.resources[bizID]; !ok {
+		b.resources[bizID] = make(map[string]*ResourceInfo)
+	}
+	if _, ok := b.resources[bizID][name]; !ok {
+		b.resources[bizID][name] = &ResourceInfo{}
+	}
+
+	return b.resources[bizID][name]
+}
+
 // ClearAllMetrics 清理全部指标
 func (b *MetricsBuilder) ClearAllMetrics() {
 	b.lock.RLock()
-	defer b.lock.RUnlock()
-	b.resources.Reset()
+	b.resources = make(map[int]map[string]*ResourceInfo)
+	b.lock.RUnlock()
 }
 
-func (b *MetricsBuilder) ClearResourceWithID(name string, ids ...string) {
+func (b *MetricsBuilder) ClearResourceWithID(bizID int, name string, ids ...string) {
+	resourceInfo := b.GetResourceInfo(bizID, name)
+
 	b.lock.RLock()
-	defer b.lock.RUnlock()
-
-	b.resources.Delete(name, ids...)
-}
-
-type HostS struct {
-	BkHostId      int
-	TopoLinks     map[string][]map[string]any
-	BkHostInnerip string
-	BkCloudId     int
-	BkBizId       int
+	for _, id := range ids {
+		resourceInfo.Delete(id)
+	}
+	b.lock.RUnlock()
 }
 
 func (b *MetricsBuilder) toString(s any) string {
-	return fmt.Sprintf("%v", s)
+	var newValue string
+	switch value := s.(type) {
+	case string:
+		newValue = value
+	case int, int32, int64, uint32, uint64:
+		newValue = fmt.Sprintf("%d", value)
+	case float64:
+		newValue = strconv.FormatFloat(value, 'f', -1, 64)
+	case float32:
+		newValue = strconv.FormatFloat(float64(value), 'f', -1, 32)
+	default:
+		newValue = fmt.Sprintf("%v", value)
+	}
+
+	return newValue
 }
 
-// BuildMetrics 通过 hosts 构建关联指标，存入缓存
-func (b *MetricsBuilder) BuildMetrics(_ context.Context, name string, bkBizID int, hosts []HostS) error {
-	nodeMap := make(map[int]Nodes)
-	for _, host := range hosts {
-		if host.BkHostId == 0 {
-			continue
-		}
-
-		if len(host.TopoLinks) == 0 {
-			// 如果没有 topo 数据，至少需要增加一条路径，用于存放 system、agent、business 等信息
-			host.TopoLinks = map[string][]map[string]any{
-				"": nil,
-			}
-		}
-
-		for _, topoLinks := range host.TopoLinks {
-			nodes := make(Nodes, 0)
-
-			// 加入 system 节点
-			if host.BkHostInnerip != "" {
-				nodes = append(nodes, Node{
-					Name: RelationSystemNode,
-					Labels: map[string]string{
-						"bk_cloud_id":  b.toString(host.BkCloudId),
-						"bk_target_ip": b.toString(host.BkHostInnerip),
-					},
-				})
-			}
-
-			// 加入 host 节点
-			nodes = append(nodes, Node{
-				Name: RelationHostNode,
-				Labels: map[string]string{
-					"host_id": b.toString(host.BkHostId),
-				},
-			})
-
-			// 加入拓扑节点
-			for _, n := range topoLinks {
-				key := b.toString(n["bk_obj_id"])
-				if key == "" {
-					continue
-				}
-				if key == "biz" {
-					continue
-				}
-
-				nodes = append(nodes, Node{
-					Name: key,
-					Labels: map[string]string{
-						fmt.Sprintf("%s_id", key): b.toString(n["bk_inst_id"]),
-					},
-				})
-			}
-
-			// 加入业务节点
-			if len(topoLinks) > 0 {
-				nodes = append(nodes, Node{
-					Name: RelationBusinessNode,
-					Labels: map[string]string{
-						"biz_id": b.toString(host.BkBizId),
-					},
-				})
-			}
-
-			nodeMap[host.BkHostId] = nodes
-		}
+func (b *MetricsBuilder) BuildInfosCache(_ context.Context, bizID int, name string, infos []*Info) error {
+	if infos == nil {
+		return nil
 	}
-
-	if len(nodeMap) > 0 {
-		b.lock.Lock()
-		b.metrics[bkBizID] = nodeMap
-		b.lock.Unlock()
+	b.lock.Lock()
+	oldInfos := b.GetResourceInfo(bizID, name)
+	for _, info := range infos {
+		oldInfos.Add(info.ID, info)
 	}
+	b.lock.Unlock()
 
-	logger.Infof("[cmdb_relation] set metrics  bkcc__%d: %d", bkBizID, len(nodeMap))
+	logger.Infof("[cmdb_relation] build info cache bkcc__%d %s %d", bizID, name, len(infos))
 	return nil
+}
+
+func (b *MetricsBuilder) ToNodeList() {
+
 }
 
 // String 以 string 格式获取所有指标数据
@@ -182,18 +157,10 @@ func (b *MetricsBuilder) String() string {
 	b.lock.RLock()
 	defer b.lock.RUnlock()
 
-	metricsMap := make(map[string]struct{})
-	for bkBizID, nodeMap := range b.metrics {
-		for _, nodes := range nodeMap {
-			for _, relationMetric := range nodes.toRelationMetrics() {
-				metricsMap[relationMetric.String(bkBizID)] = struct{}{}
-			}
+	for bizID, infos := range b.resources {
+		for id, info := range infos {
+			buf.WriteString("\n")
 		}
-	}
-
-	for metric := range metricsMap {
-		buf.WriteString(metric)
-		buf.WriteString("\n")
 	}
 
 	return buf.String()
@@ -206,9 +173,9 @@ func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error
 	}
 
 	// 提前把 bkBizIDs 取出来，缩小锁区间，控制在单业务下
-	bkBizIDs := make([]int, 0, len(b.metrics))
+	bkBizIDs := make([]int, 0, len(b.resources))
 	b.lock.RLock()
-	for bizID := range b.metrics {
+	for bizID := range b.resources {
 		bkBizIDs = append(bkBizIDs, bizID)
 	}
 	b.lock.RUnlock()
@@ -218,7 +185,7 @@ func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error
 		metricsMap := make(map[string]struct{})
 
 		b.lock.RLock()
-		if nodeMap, ok := b.metrics[bkBizID]; ok {
+		if nodeMap, ok := b.resources[bkBizID]; ok {
 			for _, nodes := range nodeMap {
 				for _, relationMetric := range nodes.toRelationMetrics() {
 					d := relationMetric.TimeSeries(bkBizID, timestamp)

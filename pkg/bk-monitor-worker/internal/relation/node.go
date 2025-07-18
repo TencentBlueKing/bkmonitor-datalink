@@ -28,7 +28,23 @@ type Node struct {
 	Labels map[string]string
 }
 
-func (ns Nodes) toRelationMetrics() []RelationMetric {
+func (n Node) ExpandInfo() RelationMetric {
+	name := fmt.Sprintf("%s_info_relation", n.Name)
+	labels := make([]RelationLabel, 0, len(n.Labels))
+	for k, v := range n.Labels {
+		labels = append(labels, RelationLabel{
+			Name:  k,
+			Value: v,
+		})
+	}
+
+	return RelationMetric{
+		Name:   name,
+		Labels: labels,
+	}
+}
+
+func (ns Nodes) ToRelationMetrics() []RelationMetric {
 	// 关联节点必须要 2 个以上
 	if len(ns) < 2 {
 		return nil

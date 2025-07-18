@@ -38,3 +38,58 @@ type Instance interface {
 
 	InstanceType() string
 }
+
+var (
+	_ Instance = &DefaultInstance{}
+)
+
+type DefaultInstance struct {
+}
+
+func (d *DefaultInstance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
+	return 0, nil, nil
+}
+
+func (d *DefaultInstance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
+	return storage.EmptySeriesSet()
+}
+
+func (d *DefaultInstance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
+	return nil, nil
+}
+
+func (d *DefaultInstance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
+	return nil, nil
+}
+
+func (d *DefaultInstance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error) {
+	return nil, nil
+}
+
+func (d *DefaultInstance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
+	return nil, nil
+}
+
+func (d *DefaultInstance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
+	return ""
+}
+
+func (d *DefaultInstance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+	return nil, nil
+}
+
+func (d *DefaultInstance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
+	return nil, nil
+}
+
+func (d *DefaultInstance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	return nil, nil
+}
+
+func (d *DefaultInstance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
+	return nil, nil
+}
+
+func (d *DefaultInstance) InstanceType() string {
+	return "default"
+}

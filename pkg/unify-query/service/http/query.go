@@ -419,7 +419,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		resp = NewPromData(queryTs.ResultColumns)
 	)
 
-	ctx, span := trace.NewSpan(ctx, "query-reference")
+	ctx, span := trace.NewSpan(ctx, "query-reference-with-prom-engine")
 	defer func() {
 		resp.TraceID = span.TraceID()
 		resp.Status = metadata.GetStatus(ctx)

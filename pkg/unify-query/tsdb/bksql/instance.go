@@ -43,6 +43,8 @@ const (
 )
 
 type Instance struct {
+	tsdb.DefaultInstance
+
 	ctx context.Context
 
 	querySyncUrl  string

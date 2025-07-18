@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package querystring
+package querystring_parser
 
 func LabelMap(query string, addLabel func(key string, operator string, values ...string)) error {
 	expr, err := Parse(query)

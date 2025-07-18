@@ -180,7 +180,8 @@ type FormatFactory struct {
 	encode func(k string) string
 
 	mapping map[string]string
-	data    map[string]any
+
+	data map[string]any
 
 	aggInfoList aggInfoList
 	orders      metadata.Orders
@@ -343,7 +344,17 @@ func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
 // WithMappings 合并 mapping，后面的合并前面的
 func (f *FormatFactory) WithMappings(mappings ...map[string]any) *FormatFactory {
 	for _, mapping := range mappings {
-		mapProperties("", mapping, f.mapping)
+		if _, ok := mapping[Properties]; ok {
+			mapProperties("", mapping, f.mapping)
+		} else {
+			// 有的 es 因为版本不同，properties 不在第一层，所以需要往下一层找
+			for _, m := range mapping {
+				switch nm := m.(type) {
+				case map[string]any:
+					f.WithMappings(nm)
+				}
+			}
+		}
 	}
 	return f
 }

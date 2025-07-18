@@ -12,7 +12,6 @@ require (
 	github.com/buraksezer/consistent v0.10.0
 	github.com/bytedance/sonic v1.13.3
 	github.com/cespare/xxhash/v2 v2.3.0
-	github.com/cespare/xxhash/v2 v2.2.0
 	github.com/elastic/beats v7.1.1+incompatible
 	github.com/elastic/go-ucfg v0.8.8
 	github.com/gogo/protobuf v1.3.2

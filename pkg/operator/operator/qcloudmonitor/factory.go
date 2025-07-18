@@ -16,6 +16,7 @@ import (
 	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
 )
 
+// OwnerRef 返回 qcm 作为 OwnerReference 的对象
 func OwnerRef(qcm *bkv1beta1.QCloudMonitor) metav1.OwnerReference {
 	return metav1.OwnerReference{
 		APIVersion:         bkv1beta1.SchemeGroupVersion.String(),
@@ -25,15 +26,4 @@ func OwnerRef(qcm *bkv1beta1.QCloudMonitor) metav1.OwnerReference {
 		Name:               qcm.Name,
 		UID:                qcm.UID,
 	}
-}
-
-const InputHashAnnotationName = "bkmonitor-operator-input-hash"
-
-func InjectInputHashAnnotation(o metav1.Object, h string) {
-	a := o.GetAnnotations()
-	if a == nil {
-		a = map[string]string{}
-	}
-	a[InputHashAnnotationName] = h
-	o.SetAnnotations(a)
 }

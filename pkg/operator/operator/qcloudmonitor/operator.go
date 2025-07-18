@@ -245,20 +245,30 @@ func (c *Operator) waitForCacheSync() error {
 	return nil
 }
 
+// Sync 是 reconcile 最重要的环节 负责将状态修正为期待的结果
+//
+// Sync 在资源变更时可能会被连续触发 但在这里应用层不做收敛 因为连续的变更可能都是不同的内容
+// 尽量保证其状态迭代的一致性
+// 当返回 error 的情况下 workqueue 会记录并进行重试 确保事件不会丢失（补偿机制）
 func (c *Operator) Sync(ctx context.Context, namespace, name string) error {
 	obj, err := c.bkCli.MonitoringV1beta1().QCloudMonitors(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
+		// 没找到可能是因为该对象已经被删除 此时无需再进行 diff
+		// 交由 ownerref 进行 cleanup 即可
 		if apierrors.IsNotFound(err) {
+			logger.Infof("syncing resource, but (%s/%s) not found", namespace, name)
 			return nil
 		}
 		return err
 	}
 
+	// 创建的所有依附于 QCloudMonitor 的所有资源均于 QCloudMonitor 资源具有相同 namespace/name
+	// 创建需要遵循以下顺序
 	start := time.Now()
-	if err := c.createOrUpdateDeployment(ctx, obj); err != nil {
+	if err := c.createOrUpdateConfigMap(ctx, obj); err != nil {
 		return err
 	}
-	if err := c.createOrUpdateConfigMap(ctx, obj); err != nil {
+	if err := c.createOrUpdateDeployment(ctx, obj); err != nil {
 		return err
 	}
 	if err := c.createOrUpdateService(ctx, obj); err != nil {
@@ -351,23 +361,19 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, qcm *bkv1beta1.
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name: "qcloud-exporter",
-							Args: []string{
-								"/usr/bin/qcloud_exporter --config.file=/usr/bin/config/qcloud.yml --web.listen-address=:8080",
-							},
-							Command: []string{
-								"/bin/sh",
-								"-c",
-								"--",
-							},
+							Name:            "qcloud-exporter",
+							Args:            []string{"/usr/bin/qcloud_exporter --config.file=/usr/bin/config/qcloud.yml --web.listen-address=:8080"},
+							Command:         []string{"/bin/sh", "-c", "--"},
 							Image:           qcm.Spec.Exporter.Image,
 							ImagePullPolicy: qcm.Spec.Exporter.ImagePullPolicy,
 							Resources:       qcm.Spec.Exporter.Resources,
-							VolumeMounts: []corev1.VolumeMount{{
-								MountPath: "/usr/bin/config",
-								Name:      "config",
-								ReadOnly:  true,
-							}},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									MountPath: "/usr/bin/config",
+									Name:      "config",
+									ReadOnly:  true,
+								},
+							},
 						},
 					},
 					Volumes: []corev1.Volume{

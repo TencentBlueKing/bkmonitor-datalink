@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const (
@@ -95,6 +96,65 @@ func (s *ScrollSession) RemoveScrollID(connect, tableID string, sliceIdx int) {
 	delete(s.ScrollIDs, mapKey)
 }
 
+// SliceInfo 分片信息
+type SliceInfo struct {
+	SliceIndex int
+	ScrollID   string
+	Index      int // 用于 Doris 类型存储
+}
+
+// MakeSlices 为指定的 connect 和 tableID 生成所有分片信息
+func (s *ScrollSession) MakeSlices(ctx context.Context, storageType, connect, tableID string) ([]SliceInfo, error) {
+	switch storageType {
+	case consul.ElasticsearchStorageType:
+		return s.makeElasticsearchSlices(ctx, connect, tableID)
+	case consul.BkSqlStorageType:
+		return s.makeDorisSlices(ctx)
+	default:
+		return nil, fmt.Errorf("unsupported storage type for scroll: %s", storageType)
+	}
+}
+
+// makeElasticsearchSlices 为 Elasticsearch 生成分片信息
+func (s *ScrollSession) makeElasticsearchSlices(ctx context.Context, connect, tableID string) ([]SliceInfo, error) {
+	slices := make([]SliceInfo, 0, s.MaxSlice)
+
+	for sliceIndex := 0; sliceIndex < s.MaxSlice; sliceIndex++ {
+		scrollID, _, err := s.getNextElasticsearchScrollID(ctx, connect, tableID, sliceIndex)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get scroll ID for slice %d: %v", sliceIndex, err)
+		}
+
+		slices = append(slices, SliceInfo{
+			SliceIndex: sliceIndex,
+			ScrollID:   scrollID,
+			Index:      0, // ES 不使用 index
+		})
+	}
+
+	return slices, nil
+}
+
+// makeDorisSlices 为 Doris 生成分片信息
+func (s *ScrollSession) makeDorisSlices(ctx context.Context) ([]SliceInfo, error) {
+	slices := make([]SliceInfo, 0, s.MaxSlice)
+
+	for sliceIndex := 0; sliceIndex < s.MaxSlice; sliceIndex++ {
+		_, index, err := s.getNextDorisIndex(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get index for slice %d: %v", sliceIndex, err)
+		}
+
+		slices = append(slices, SliceInfo{
+			SliceIndex: sliceIndex,
+			ScrollID:   "", // Doris 不使用 scrollID
+			Index:      index,
+		})
+	}
+
+	return slices, nil
+}
+
 func (s *ScrollSession) HasMoreData(tsDbType string) bool {
 	switch tsDbType {
 	case consul.ElasticsearchStorageType:
@@ -135,4 +195,69 @@ func (s *ScrollSession) HasMoreData(tsDbType string) bool {
 	default:
 		return false
 	}
+}
+
+// ScrollSessionHelper 滚动查询会话辅助器，简化会话操作
+type ScrollSessionHelper struct {
+	scrollSliceLimit int
+	scrollWindow     string
+	scrollMaxSlice   int
+	lockTimeout      time.Duration
+}
+
+// NewScrollSessionHelper 创建滚动查询会话辅助器
+func NewScrollSessionHelper(scrollSliceLimit int, scrollWindow string, scrollMaxSlice int, lockTimeout time.Duration) *ScrollSessionHelper {
+	return &ScrollSessionHelper{
+		scrollSliceLimit: scrollSliceLimit,
+		scrollWindow:     scrollWindow,
+		scrollMaxSlice:   scrollMaxSlice,
+		lockTimeout:      lockTimeout,
+	}
+}
+
+func (h *ScrollSessionHelper) GetOrCreateSessionByKey(ctx context.Context, queryTsKey string, clearCache bool,
+	scrollWindow string, limit int) (*ScrollSession, bool, error) {
+
+	sessionKey := GetSessionKey(queryTsKey)
+	lockKey := GetLockKey(queryTsKey)
+
+	// 获取锁
+	scrollWindowDuration, _ := time.ParseDuration(scrollWindow)
+	scrollLock, err := ScrollAcquireRedisLock(ctx, lockKey, h.lockTimeout)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to acquire lock: %v", err)
+	}
+	defer func() {
+		if releaseErr := ScrollReleaseRedisLock(ctx, scrollLock); releaseErr != nil {
+			// 记录错误但不返回，避免影响主要逻辑
+		}
+	}()
+
+	// 获取或创建会话
+	session, err := ScrollGetOrCreateSession(ctx, sessionKey, clearCache, scrollWindowDuration, h.scrollMaxSlice, limit)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to get or create session: %v", err)
+	}
+
+	isDone := session.Status == SessionStatusDone
+	return &session, isDone, nil
+}
+
+// ProcessSliceResults 处理分片查询结果
+func (h *ScrollSessionHelper) ProcessSliceResults(ctx context.Context, session *ScrollSession, connect, tableId, scrollID string,
+	sliceIndex int, storageType string, size int64, options metadata.ResultTableOptions) error {
+
+	return ScrollProcessSliceResult(ctx, session, connect, tableId, scrollID, sliceIndex, storageType, size, options)
+}
+
+// UpdateSession 更新会话状态
+func (h *ScrollSessionHelper) UpdateSession(ctx context.Context, session *ScrollSession) error {
+	queryTsKey := session.Key
+	sessionKey := GetSessionKey(queryTsKey)
+	return UpdateSession(ctx, sessionKey, *session)
+}
+
+// IsSessionDone 检查会话是否完成
+func (h *ScrollSessionHelper) IsSessionDone(session *ScrollSession) bool {
+	return session.Status == SessionStatusDone
 }

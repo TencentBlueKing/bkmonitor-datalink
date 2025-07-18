@@ -337,11 +337,10 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 					if option.ScrollID != "" {
 						span.Set("query-scroll-id", option.ScrollID)
 						scroll.ScrollId(option.ScrollID)
-					} else {
-						if option.SliceID != nil && option.SliceMax != nil {
-							span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", *option.SliceID, *option.SliceMax))
-							scroll.Slice(elastic.NewSliceQuery().Id(*option.SliceID).Max(*option.SliceMax))
-						}
+					}
+					if option.SliceID != nil && option.SliceMax != nil {
+						span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", *option.SliceID, *option.SliceMax))
+						scroll.Slice(elastic.NewSliceQuery().Id(*option.SliceID).Max(*option.SliceMax))
 					}
 				}
 			}

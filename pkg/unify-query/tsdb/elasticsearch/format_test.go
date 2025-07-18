@@ -564,6 +564,74 @@ func TestFormatFactory_Query(t *testing.T) {
 	}
 }
 
+func TestFOrmatFactory_WithMapping(t *testing.T) {
+	testCases := []struct {
+		name     string
+		mappings []map[string]any
+		expected map[string]string
+	}{
+		{
+			name: "test normal mappings",
+			mappings: []map[string]any{
+				{
+					"properties": map[string]any{
+						"nested1": map[string]any{
+							"type": "nested",
+							"properties": map[string]any{
+								"key": map[string]any{
+									"type": "keyword",
+								},
+							},
+						},
+						"keyword": map[string]any{
+							"type": "keyword",
+						},
+					},
+				},
+			},
+			expected: map[string]string{
+				"nested1":     "nested",
+				"nested1.key": "keyword",
+				"keyword":     "keyword",
+			},
+		},
+		{
+			name: "test old es version mapping",
+			mappings: []map[string]any{
+				{
+					"es_type": map[string]any{
+						"properties": map[string]any{
+							"nested1": map[string]any{
+								"type": "nested",
+								"properties": map[string]any{
+									"key": map[string]any{
+										"type": "keyword",
+									},
+								},
+							},
+							"keyword": map[string]any{
+								"type": "keyword",
+							},
+						},
+					},
+				},
+			},
+			expected: map[string]string{
+				"nested1":     "nested",
+				"nested1.key": "keyword",
+				"keyword":     "keyword",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fact := NewFormatFactory(context.Background()).WithMappings(tc.mappings...)
+			assert.Equal(t, tc.expected, fact.mapping)
+		})
+	}
+}
+
 func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 	var start = time.Unix(1721024820, 0)
 	var end = time.Unix(1721046420, 0)

@@ -12,16 +12,17 @@
 package v1beta1
 
 import (
-	"net/http"
+	http "net/http"
 
-	v1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/scheme"
+	monitoringv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
+	scheme "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned/scheme"
 	rest "k8s.io/client-go/rest"
 )
 
 type MonitoringV1beta1Interface interface {
 	RESTClient() rest.Interface
 	DataIDsGetter
+	QCloudMonitorsGetter
 }
 
 // MonitoringV1beta1Client is used to interact with features provided by the monitoring.bk.tencent.com group.
@@ -31,6 +32,10 @@ type MonitoringV1beta1Client struct {
 
 func (c *MonitoringV1beta1Client) DataIDs(namespace string) DataIDInterface {
 	return newDataIDs(c, namespace)
+}
+
+func (c *MonitoringV1beta1Client) QCloudMonitors(namespace string) QCloudMonitorInterface {
+	return newQCloudMonitors(c, namespace)
 }
 
 // NewForConfig creates a new MonitoringV1beta1Client for the given config.
@@ -78,10 +83,10 @@ func New(c rest.Interface) *MonitoringV1beta1Client {
 }
 
 func setConfigDefaults(config *rest.Config) error {
-	gv := v1beta1.SchemeGroupVersion
+	gv := monitoringv1beta1.SchemeGroupVersion
 	config.GroupVersion = &gv
 	config.APIPath = "/apis"
-	config.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
+	config.NegotiatedSerializer = rest.CodecFactoryForGeneratedClient(scheme.Scheme, scheme.Codecs).WithoutConversion()
 
 	if config.UserAgent == "" {
 		config.UserAgent = rest.DefaultKubernetesUserAgent()

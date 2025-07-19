@@ -16,6 +16,7 @@ import (
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"gopkg.in/yaml.v2"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
@@ -111,6 +112,30 @@ func (c *Operator) getPodMonitorDiscoversName(podMonitor *promv1.PodMonitor) []s
 	return names
 }
 
+func (c *Operator) pickMonitorDataID(meta define.MonitorMeta, annotation map[string]string) (*v1beta1.DataID, error) {
+	// 1) 优先选择 scheduled dataID
+	schedDataID := feature.ScheduledDataID(annotation)
+	if schedDataID > 0 {
+		dataID, err := c.dw.MatchMetricDataID(define.MonitorMeta{}, true)
+		if err != nil {
+			return nil, err
+		}
+
+		// TODO(mando): 是否需要支持自定义 sched dataid labels？
+		cloned := dataID.DeepCopy() // 需要复用集群内置的归属信息
+		cloned.Spec.DataID = schedDataID
+		return cloned, nil
+	}
+
+	// 2) 根据匹配规则选择
+	systemResource := feature.IfSystemResource(annotation)
+	dataID, err := c.dw.MatchMetricDataID(meta, systemResource)
+	if err != nil {
+		return nil, err
+	}
+	return dataID.DeepCopy(), nil
+}
+
 func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []discover.Discover {
 	var (
 		namespaces []string
@@ -123,9 +148,9 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 		Kind:      monitorKindPodMonitor,
 		Namespace: podMonitor.Namespace,
 	}
-	dataID, err := c.dw.MatchMetricDataID(meta, systemResource)
+	dataID, err := c.pickMonitorDataID(meta, podMonitor.Annotations)
 	if err != nil {
-		logger.Errorf("podmonitor(%+v) no dataid matched", meta)
+		logger.Errorf("podmonitor (%+v) no dataid matched", meta)
 		return discovers
 	}
 	specLabels := dataID.Spec.Labels

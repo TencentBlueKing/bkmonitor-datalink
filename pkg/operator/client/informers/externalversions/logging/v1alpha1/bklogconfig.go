@@ -12,13 +12,13 @@
 package v1alpha1
 
 import (
-	"context"
+	context "context"
 	time "time"
 
-	loggingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
+	apisloggingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/logging/v1alpha1"
 	versioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	internalinterfaces "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions/internalinterfaces"
-	v1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/listers/logging/v1alpha1"
+	loggingv1alpha1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/listers/logging/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -29,7 +29,7 @@ import (
 // BkLogConfigs.
 type BkLogConfigInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() v1alpha1.BkLogConfigLister
+	Lister() loggingv1alpha1.BkLogConfigLister
 }
 
 type bkLogConfigInformer struct {
@@ -64,7 +64,7 @@ func NewFilteredBkLogConfigInformer(client versioned.Interface, namespace string
 				return client.BkV1alpha1().BkLogConfigs(namespace).Watch(context.TODO(), options)
 			},
 		},
-		&loggingv1alpha1.BkLogConfig{},
+		&apisloggingv1alpha1.BkLogConfig{},
 		resyncPeriod,
 		indexers,
 	)
@@ -75,9 +75,9 @@ func (f *bkLogConfigInformer) defaultInformer(client versioned.Interface, resync
 }
 
 func (f *bkLogConfigInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&loggingv1alpha1.BkLogConfig{}, f.defaultInformer)
+	return f.factory.InformerFor(&apisloggingv1alpha1.BkLogConfig{}, f.defaultInformer)
 }
 
-func (f *bkLogConfigInformer) Lister() v1alpha1.BkLogConfigLister {
-	return v1alpha1.NewBkLogConfigLister(f.Informer().GetIndexer())
+func (f *bkLogConfigInformer) Lister() loggingv1alpha1.BkLogConfigLister {
+	return loggingv1alpha1.NewBkLogConfigLister(f.Informer().GetIndexer())
 }

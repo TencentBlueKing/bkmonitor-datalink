@@ -297,8 +297,8 @@ func TestWriteContainerInfoRelation(t *testing.T) {
 		},
 		NodeName: "test-node-1",
 		Annotations: map[string]string{
-			"monitor.bk.tencent.com/relation/info/container/environment": "paasv3",
-			"monitor.bk.tencent.com/relation/info/container/region":      "guangzhou",
+			"monitoring.bk.tencent.com/relation/info/container/environment": "paasv3",
+			"monitoring.bk.tencent.com/relation/info/container/region":      "guangzhou",
 		},
 		Containers: []ContainerKey{
 			{Name: "test-container-1", Tag: "1.0.0"},

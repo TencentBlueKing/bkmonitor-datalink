@@ -7,7 +7,6 @@ $ kubectl exec -it -n bkmonitor-operator bkm-operator-79486746f5-n6ztd -- curl h
 # Admin Routes
 --------------
 * POST /-/logger
-* POST /-/reload
 * POST /-/dispatch
 
 # Metadata Routes

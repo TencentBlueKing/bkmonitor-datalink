@@ -11,7 +11,6 @@ package v1beta1
 
 import (
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -97,6 +96,12 @@ type DataIDList struct {
 	Items []*DataID `json:"items"`
 }
 
+// Duration is a valid time duration that can be parsed by Prometheus model.ParseDuration() function.
+// Supported units: y, w, d, h, m, s, ms
+// Examples: `30s`, `1m`, `1h20m15s`, `15d`
+// +kubebuilder:validation:Pattern:="^(0|(([0-9]+)y)?(([0-9]+)w)?(([0-9]+)d)?(([0-9]+)h)?(([0-9]+)m)?(([0-9]+)s)?(([0-9]+)ms)?)$"
+type Duration string
+
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 type QCloudMonitorList struct {
 	metav1.TypeMeta `json:",inline"`
@@ -123,12 +128,12 @@ type QCloudMonitorSpec struct {
 	DataID int `json:"dataID,omitempty"`
 
 	// Interval 采集间隔
-	Interval time.Duration `json:"interval,omitempty"`
+	Interval Duration `json:"interval,omitempty"`
 
 	// Timeout 采集超时时间
 	//
 	// 默认与 Interval 保持一致
-	Timeout time.Duration `json:"timeout,omitempty"`
+	Timeout Duration `json:"timeout,omitempty"`
 
 	// ExtendLabels 扩展标签
 	//
@@ -224,17 +229,21 @@ type QCloudMonitorConfig struct {
 	// EnableExporterMetrics 是否开启导出指标
 	//
 	// 建议开启 可以观察程序本身性能指标
-	EnableExporterMetrics bool `json:"enableExporterMetrics,omitempty"`
+	// +optional
+	EnableExporterMetrics *bool `json:"enableExporterMetrics,omitempty"`
 
 	// MaxRequests 抓取 /metrics 最大请求并发数
 	//
 	// 默认为 0 即不做限制
-	MaxRequests int `json:"maxRequests"`
+	// +optional
+	MaxRequests *int `json:"maxRequests,omitempty"`
 
 	// 日志级别
 	//
 	// 默认值 info
-	LogLevel string `json:"logLevel"`
+	// +kubebuilder:default=info
+	// +kubebuilder:validation:Enum=debug;info;warn;error
+	LogLevel string `json:"logLevel,omitempty"`
 
 	// exporter 采集配置真实内容文本
 	//

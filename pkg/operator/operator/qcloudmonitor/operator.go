@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cespare/xxhash/v2"
@@ -25,6 +26,7 @@ import (
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	promcli "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
 	prominfs "github.com/prometheus-operator/prometheus-operator/pkg/informers"
+	"github.com/prometheus/common/model"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -351,6 +353,24 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, qcm *bkv1beta1.
 		"qcloudmonitor-configmap-hash": strconv.FormatUint(hash, 10),
 	}
 
+	cfg := qcm.Spec.Config
+	var args []string
+	if cfg.EnableExporterMetrics != nil && *cfg.EnableExporterMetrics {
+		args = append(args, "--web.enable-exporter-metrics=true")
+	}
+	if cfg.MaxRequests != nil && *cfg.MaxRequests > 0 {
+		args = append(args, "--web.max-requests="+strconv.Itoa(*cfg.MaxRequests))
+	}
+	if len(cfg.LogLevel) > 0 {
+		args = append(args, "--log.level="+cfg.LogLevel)
+	}
+
+	var argsContent string
+	if len(args) > 0 {
+		argsContent += " "
+		argsContent = strings.Join(args, " ")
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            qcm.Name,
@@ -372,8 +392,10 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, qcm *bkv1beta1.
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:            "qcloud-exporter",
-							Args:            []string{"/usr/bin/qcloud_exporter --config.file=/usr/bin/config/qcloud.yml --web.listen-address=:8080"},
+							Name: "qcloud-exporter",
+							Args: []string{
+								"/usr/bin/qcloud_exporter --config.file=/usr/bin/config/qcloud.yml --web.listen-address=:8080" + argsContent,
+							},
 							Command:         []string{"/bin/sh", "-c", "--"},
 							Image:           qcm.Spec.Exporter.Image,
 							ImagePullPolicy: qcm.Spec.Exporter.ImagePullPolicy,
@@ -406,6 +428,15 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, qcm *bkv1beta1.
 	return k8sutils.CreateOrUpdateDeployment(ctx, cli, deployment)
 }
 
+func castDuration(s string) promv1.Duration {
+	_, err := model.ParseDuration(s)
+	if err != nil {
+		// 解析失败使用默认采集周期
+		return promv1.Duration(configs.G().DefaultPeriod)
+	}
+	return promv1.Duration(s)
+}
+
 func (c *Operator) createOrUpdateServiceMonitor(ctx context.Context, qcm *bkv1beta1.QCloudMonitor) error {
 	selector := map[string]string{
 		labelAppManagedBy: define.AppName,
@@ -426,10 +457,14 @@ func (c *Operator) createOrUpdateServiceMonitor(ctx context.Context, qcm *bkv1be
 			NamespaceSelector: promv1.NamespaceSelector{
 				MatchNames: []string{qcm.Namespace},
 			},
-			Endpoints: []promv1.Endpoint{{
-				Port: "http",
-				Path: "/metrics",
-			}},
+			Endpoints: []promv1.Endpoint{
+				{
+					Port:          "http",
+					Path:          "/metrics",
+					Interval:      castDuration(string(qcm.Spec.Interval)),
+					ScrapeTimeout: castDuration(string(qcm.Spec.Timeout)),
+				},
+			},
 			Selector: metav1.LabelSelector{
 				MatchLabels: selector,
 			},

@@ -17,8 +17,10 @@ package qcloudmonitor
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/pkg/errors"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	promcli "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
@@ -265,10 +267,13 @@ func (c *Operator) Sync(ctx context.Context, namespace, name string) error {
 	// 创建的所有依附于 QCloudMonitor 的所有资源均于 QCloudMonitor 资源具有相同 namespace/name
 	// 创建需要遵循以下顺序
 	start := time.Now()
-	if err := c.createOrUpdateConfigMap(ctx, obj); err != nil {
+	hash, err := c.createOrUpdateConfigMap(ctx, obj)
+	if err != nil {
 		return err
 	}
-	if err := c.createOrUpdateDeployment(ctx, obj); err != nil {
+
+	// 确保配置变更 operator 会重启 workload
+	if err := c.createOrUpdateDeployment(ctx, obj, hash); err != nil {
 		return err
 	}
 	if err := c.createOrUpdateService(ctx, obj); err != nil {
@@ -285,7 +290,7 @@ func (c *Operator) Sync(ctx context.Context, namespace, name string) error {
 	return nil
 }
 
-func (c *Operator) createOrUpdateConfigMap(ctx context.Context, qcm *bkv1beta1.QCloudMonitor) error {
+func (c *Operator) createOrUpdateConfigMap(ctx context.Context, qcm *bkv1beta1.QCloudMonitor) (uint64, error) {
 	selector := map[string]string{
 		labelAppManagedBy: define.AppName,
 		labelAppInstance:  qcm.Name,
@@ -303,8 +308,9 @@ func (c *Operator) createOrUpdateConfigMap(ctx context.Context, qcm *bkv1beta1.Q
 		},
 	}
 
+	hash := xxhash.Sum64([]byte(qcm.Spec.Config.FileContent))
 	cli := c.client.CoreV1().ConfigMaps(qcm.Namespace)
-	return k8sutils.CreateOrUpdateConfigMap(ctx, cli, configMap)
+	return hash, k8sutils.CreateOrUpdateConfigMap(ctx, cli, configMap)
 }
 
 func (c *Operator) createOrUpdateService(ctx context.Context, qcm *bkv1beta1.QCloudMonitor) error {
@@ -336,10 +342,13 @@ func (c *Operator) createOrUpdateService(ctx context.Context, qcm *bkv1beta1.QCl
 	return k8sutils.CreateOrUpdateService(ctx, cli, service)
 }
 
-func (c *Operator) createOrUpdateDeployment(ctx context.Context, qcm *bkv1beta1.QCloudMonitor) error {
+func (c *Operator) createOrUpdateDeployment(ctx context.Context, qcm *bkv1beta1.QCloudMonitor, hash uint64) error {
 	selector := map[string]string{
 		labelAppManagedBy: define.AppName,
 		labelAppInstance:  qcm.Name,
+	}
+	annotations := map[string]string{
+		"qcloudmonitor-configmap-hash": strconv.FormatUint(hash, 10),
 	}
 
 	deployment := &appsv1.Deployment{
@@ -347,6 +356,7 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, qcm *bkv1beta1.
 			Name:            qcm.Name,
 			Namespace:       qcm.Namespace,
 			Labels:          selector,
+			Annotations:     annotations,
 			OwnerReferences: []metav1.OwnerReference{OwnerRef(qcm)},
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -356,7 +366,8 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, qcm *bkv1beta1.
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: selector,
+					Labels:      selector,
+					Annotations: annotations,
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -403,9 +414,12 @@ func (c *Operator) createOrUpdateServiceMonitor(ctx context.Context, qcm *bkv1be
 
 	serviceMonitor := &promv1.ServiceMonitor{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            qcm.Name,
-			Namespace:       qcm.Namespace,
-			Labels:          selector,
+			Name:      qcm.Name,
+			Namespace: qcm.Namespace,
+			Labels:    selector,
+			Annotations: map[string]string{
+				"scheduledDataID": strconv.Itoa(qcm.Spec.DataID),
+			},
 			OwnerReferences: []metav1.OwnerReference{OwnerRef(qcm)},
 		},
 		Spec: promv1.ServiceMonitorSpec{

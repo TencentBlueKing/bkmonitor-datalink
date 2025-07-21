@@ -175,8 +175,8 @@ func CreateOrUpdateServiceMonitor(ctx context.Context, cli promv1iface.ServiceMo
 
 		mutated := serviceMonitor.DeepCopyObject().(*promv1.ServiceMonitor)
 		mergeMetadata(&desired.ObjectMeta, mutated.ObjectMeta)
+		logger.Infof("servicemonitor %v nothing changed, skip op", apiequality.Semantic.DeepEqual(serviceMonitor, desired))
 		if apiequality.Semantic.DeepEqual(serviceMonitor, desired) {
-			logger.Infof("servicemonitor %s nothing changed, skip op", desired.Name)
 			return nil
 		}
 
@@ -198,8 +198,8 @@ func CreateOrUpdateConfigMap(ctx context.Context, cli corev1iface.ConfigMapInter
 
 		mutated := configMap.DeepCopyObject().(*corev1.ConfigMap)
 		mergeMetadata(&desired.ObjectMeta, mutated.ObjectMeta)
+		logger.Infof("configmap %v nothing changed, skip op", apiequality.Semantic.DeepEqual(configMap, desired))
 		if apiequality.Semantic.DeepEqual(configMap, desired) {
-			logger.Infof("configmap %s nothing changed, skip op", desired.Name)
 			return nil
 		}
 

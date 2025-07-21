@@ -35,7 +35,6 @@ import (
 
 	bkcli "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logx"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -175,7 +174,6 @@ func CreateOrUpdateServiceMonitor(ctx context.Context, cli promv1iface.ServiceMo
 
 		mutated := serviceMonitor.DeepCopyObject().(*promv1.ServiceMonitor)
 		mergeMetadata(&desired.ObjectMeta, mutated.ObjectMeta)
-		logger.Infof("servicemonitor %v nothing changed, skip op", apiequality.Semantic.DeepEqual(serviceMonitor, desired))
 		if apiequality.Semantic.DeepEqual(serviceMonitor, desired) {
 			return nil
 		}
@@ -198,7 +196,6 @@ func CreateOrUpdateConfigMap(ctx context.Context, cli corev1iface.ConfigMapInter
 
 		mutated := configMap.DeepCopyObject().(*corev1.ConfigMap)
 		mergeMetadata(&desired.ObjectMeta, mutated.ObjectMeta)
-		logger.Infof("configmap %v nothing changed, skip op", apiequality.Semantic.DeepEqual(configMap, desired))
 		if apiequality.Semantic.DeepEqual(configMap, desired) {
 			return nil
 		}

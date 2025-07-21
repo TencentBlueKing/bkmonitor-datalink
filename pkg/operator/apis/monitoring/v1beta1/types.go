@@ -121,39 +121,29 @@ type QCloudMonitor struct {
 }
 
 type QCloudMonitorSpec struct {
-	// DataID 采集项 dataid
-	//
-	// dataid 在创建采集项时生成 无须在集群中创建 DataID Resource 再进行关联
 	// +kubebuilder:validation:Minimum=1
 	DataID int `json:"dataID,omitempty"`
 
-	// Interval 采集间隔
+	// Interval is the frequency at which the task scrapes metrics.
 	Interval Duration `json:"interval,omitempty"`
 
-	// Timeout 采集超时时间
-	//
-	// 默认与 Interval 保持一致
+	// Timeout is the timeout at which the task scrapes metrics.
 	Timeout Duration `json:"timeout,omitempty"`
 
-	// ExtendLabels 扩展标签
-	//
-	// 所有 labels 会在采集上报前补充在每个指标中
+	// ExtendLabels are additional labels that will be appended to each metric before reporting.
 	ExtendLabels map[string]string `json:"extendLabels,omitempty"`
 
-	// MetricRelabelings prometheus metric 标准 relabels 规则
+	// MetricRelabelings defines the standard Prometheus metric relabeling rules.
 	MetricRelabelings []RelabelConfig `json:"metricRelabelings,omitempty"`
 
-	// Exporter 真正运行的工作负载 即 exporter deployment 实例
+	// Exporter represents the actual workload running the exporter deployment instance.
 	Exporter QCloudMonitorExporter `json:"exporter,omitempty"`
 
-	// Config exporter 采集配置
+	// Config contains the exporter's collection configuration.
 	Config QCloudMonitorConfig `json:"config,omitempty"`
 }
 
 type QCloudMonitorExporter struct {
-	// Resources 标准资源限制规则
-	//
-	// limits/requests
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
 	// +kubebuilder:validation:MinLength=1
@@ -226,28 +216,25 @@ type RelabelConfig struct {
 }
 
 type QCloudMonitorConfig struct {
-	// EnableExporterMetrics 是否开启导出指标
-	//
-	// 建议开启 可以观察程序本身性能指标
+	// EnableExporterMetrics indicates whether to enable exporter metrics.
 	// +optional
 	EnableExporterMetrics *bool `json:"enableExporterMetrics,omitempty"`
 
-	// MaxRequests 抓取 /metrics 最大请求并发数
+	// MaxRequests defines the maximum concurrency for scraping /metrics.
+	// Default to 0 (no limit).
 	//
-	// 默认为 0 即不做限制
 	// +optional
 	MaxRequests *int `json:"maxRequests,omitempty"`
 
-	// 日志级别
+	// LogLevel specifies the logging level.
 	//
-	// 默认值 info
 	// +kubebuilder:default=info
 	// +kubebuilder:validation:Enum=debug;info;warn;error
 	LogLevel string `json:"logLevel,omitempty"`
 
-	// exporter 采集配置真实内容文本
+	// FileContent contains the actual configuration text for the exporter.
+	// This content will be generated into a ConfigMap and mounted to the exporter instance.
 	//
-	// 此文本内容会被生成 configmap 用于挂载到 exporter 实例中
 	// +kubebuilder:validation:MinLength=1
 	FileContent string `json:"fileContent"`
 }

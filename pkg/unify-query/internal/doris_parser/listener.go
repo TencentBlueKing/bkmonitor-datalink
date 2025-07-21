@@ -41,7 +41,7 @@ type DorisListener struct {
 }
 
 type DorisListenerOption struct {
-	DimensionTransform func(s string) string
+	DimensionTransform Encode
 	Table              string
 	Where              string
 }
@@ -65,7 +65,9 @@ func (l *DorisListener) EnterEveryRule(ctx antlr.ParserRuleContext) {
 	l.depIndex++
 	log.Debugf(l.ctx, `"%d","ENTER","%T","%s"`, l.depIndex, ctx, ctx.GetText())
 	if l.expr != nil {
-		l.expr.WithDimensionEncode(l.opt.DimensionTransform)
+		if l.opt.DimensionTransform != nil {
+			l.expr.WithAliasEncode(l.opt.DimensionTransform)
+		}
 		l.expr.Enter(ctx)
 	}
 }

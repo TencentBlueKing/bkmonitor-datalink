@@ -18,12 +18,15 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser/gen"
 )
 
+type Encode func(s string) (string, bool)
+
 type Expr interface {
 	Log() bool
 	String() string
 	Enter(ctx antlr.ParserRuleContext)
 	Exit(ctx antlr.ParserRuleContext)
-	WithDimensionEncode(func(s string) string) Expr
+
+	WithAliasEncode(Encode) Expr
 }
 
 type defaultExpr struct {
@@ -45,7 +48,7 @@ func (d *defaultExpr) String() string {
 	return ""
 }
 
-func (d *defaultExpr) WithDimensionEncode(func(s string) string) Expr {
+func (d *defaultExpr) WithAliasEncode(_ Encode) Expr {
 	return d
 }
 
@@ -53,14 +56,17 @@ type Select struct {
 	defaultExpr
 	Field         *Field
 	FieldListExpr []*Field
-	encode        func(s string) string
+
+	setAs  bool
+	encode Encode
 }
 
 func NewSelect() *Select {
 	return &Select{}
 }
 
-func (e *Select) WithDimensionEncode(fn func(s string) string) Expr {
+func (e *Select) WithAliasEncode(fn Encode) Expr {
+	e.setAs = true
 	e.encode = fn
 	return e
 }
@@ -81,7 +87,7 @@ func (e *Select) String() string {
 func (e *Select) Enter(ctx antlr.ParserRuleContext) {
 	switch ctx.(type) {
 	case *gen.NamedExpressionContext:
-		e.Field = NewField(e.encode)
+		e.Field = NewField().WithAliasEncode(e.encode).WithSetAs(true)
 	default:
 		if e.Field != nil {
 			e.Field.Enter(ctx)
@@ -93,7 +99,7 @@ func (e *Select) Exit(ctx antlr.ParserRuleContext) {
 	switch ctx.(type) {
 	case *gen.NamedExpressionContext:
 		e.FieldListExpr = append(e.FieldListExpr, e.Field)
-		e.Field = NewField(e.encode)
+		e.Field = NewField().WithAliasEncode(e.encode).WithSetAs(true)
 	default:
 		if e.Field != nil {
 			e.Field.Exit(ctx)
@@ -177,7 +183,7 @@ func (l *logicListInc) Inc(e Expr) {
 type Where struct {
 	defaultExpr
 
-	encode func(s string) string
+	encode Encode
 	cur    *Condition
 
 	logic *logicListInc
@@ -188,16 +194,16 @@ type Where struct {
 func NewWhere() *Where {
 	return &Where{
 		cur: &Condition{
-			Field: NewField(nil),
+			Field: NewField(),
 		},
 		logic: &logicListInc{},
 	}
 }
 
-func (e *Where) WithDimensionEncode(fn func(s string) string) Expr {
+func (e *Where) WithAliasEncode(fn Encode) Expr {
 	e.encode = fn
 	if e.cur != nil && e.cur.Field != nil {
-		e.cur.Field.WithDimensionEncode(fn)
+		e.cur.Field.WithAliasEncode(fn)
 	}
 	return e
 }
@@ -251,7 +257,7 @@ func (e *Where) Enter(ctx antlr.ParserRuleContext) {
 		})
 	case *gen.ComparisonContext:
 		e.cur = &Condition{
-			Field: NewField(e.encode),
+			Field: NewField().WithAliasEncode(e.encode),
 		}
 	default:
 		if e.cur != nil && e.cur.Field != nil {
@@ -281,7 +287,7 @@ func (e *Where) Exit(ctx antlr.ParserRuleContext) {
 		if e.cur != nil {
 			e.addCondition(e.cur)
 			e.cur = &Condition{
-				Field: NewField(e.encode),
+				Field: NewField().WithAliasEncode(e.encode),
 			}
 		}
 		// 兼容特殊查询操作符，op 操作符需要修改
@@ -290,7 +296,7 @@ func (e *Where) Exit(ctx antlr.ParserRuleContext) {
 			e.cur.Op = e.getOp(ctx.GetText())
 			e.addCondition(e.cur)
 			e.cur = &Condition{
-				Field: NewField(e.encode),
+				Field: NewField().WithAliasEncode(e.encode),
 			}
 		}
 	default:
@@ -307,14 +313,14 @@ type Agg struct {
 	Field         *Field
 	FieldListExpr []*Field
 
-	encode func(s string) string
+	encode Encode
 }
 
 func NewAgg() *Agg {
 	return &Agg{}
 }
 
-func (e *Agg) WithDimensionEncode(fn func(s string) string) Expr {
+func (e *Agg) WithAliasEncode(fn Encode) Expr {
 	e.encode = fn
 	return e
 }
@@ -322,7 +328,7 @@ func (e *Agg) WithDimensionEncode(fn func(s string) string) Expr {
 func (e *Agg) Enter(ctx antlr.ParserRuleContext) {
 	switch ctx.(type) {
 	case *gen.ExpressionContext:
-		e.Field = NewField(e.encode)
+		e.Field = NewField().WithAliasEncode(e.encode)
 	}
 }
 
@@ -337,7 +343,7 @@ func (e *Agg) Exit(ctx antlr.ParserRuleContext) {
 		}
 	case *gen.ExpressionContext:
 		e.FieldListExpr = append(e.FieldListExpr, e.Field)
-		e.Field = NewField(e.encode)
+		e.Field = NewField().WithAliasEncode(e.encode)
 	}
 }
 
@@ -360,14 +366,14 @@ type Sort struct {
 	Field         *Field
 	FieldListExpr []*Field
 
-	encode func(s string) string
+	encode Encode
 }
 
 func NewSort() *Sort {
 	return &Sort{}
 }
 
-func (e *Sort) WithDimensionEncode(fn func(s string) string) Expr {
+func (e *Sort) WithAliasEncode(fn Encode) Expr {
 	e.encode = fn
 	return e
 }
@@ -375,7 +381,7 @@ func (e *Sort) WithDimensionEncode(fn func(s string) string) Expr {
 func (e *Sort) Enter(ctx antlr.ParserRuleContext) {
 	switch ctx.(type) {
 	case *gen.ExpressionContext:
-		e.Field = NewField(e.encode)
+		e.Field = NewField().WithAliasEncode(e.encode)
 	}
 }
 
@@ -391,7 +397,7 @@ func (e *Sort) Exit(ctx antlr.ParserRuleContext) {
 	case *gen.SortItemContext:
 		e.Field.Sort = strings.ToUpper(strings.TrimPrefix(v.GetText(), e.Field.Name))
 		e.FieldListExpr = append(e.FieldListExpr, e.Field)
-		e.Field = NewField(e.encode)
+		e.Field = NewField().WithAliasEncode(e.encode)
 	}
 }
 
@@ -455,6 +461,95 @@ func NewSelectFunc() *SelectFunc {
 	}
 }
 
+type LeftParen struct {
+	defaultExpr
+}
+
+func (e *LeftParen) String() string {
+	return "("
+}
+
+type RightParen struct {
+	defaultExpr
+}
+
+func (e *RightParen) String() string {
+	return ")"
+}
+
+type As struct {
+	defaultExpr
+	name string
+}
+
+func (e *As) String() string {
+	return fmt.Sprintf("AS %s", e.name)
+}
+
+type S struct {
+	defaultExpr
+	name string
+}
+
+func NewS(s string) *S {
+	return &S{
+		name: s,
+	}
+}
+
+func (e *S) String() string {
+	return e.name
+}
+
+type Item struct {
+	defaultExpr
+	exprList []Expr
+}
+
+func (e *Item) add(expr Expr) {
+	e.exprList = append(e.exprList, expr)
+}
+
+func (e *Item) Exit(ctx antlr.ParserRuleContext) {
+	switch ctx.(type) {
+	case *gen.CastContext:
+		e.add(&RightParen{})
+	}
+}
+
+func (e *Item) Enter(ctx antlr.ParserRuleContext) {
+	//switch v := ctx.(type) {
+	//case *gen.CastContext:
+	//	e.add(NewS("CAST"))
+	//	e.add(&LeftParen{})
+	//case *gen.CastDataTypeContext:
+	//	if e.SelectFunc != nil {
+	//		e.SelectFunc.As = v.GetText()
+	//	}
+	//case *gen.FunctionCallContext:
+	//	e.SelectFunc = NewSelectFunc()
+	//case *gen.FunctionNameIdentifierContext:
+	//	e.SetFuncName(ctx.GetText())
+	//case *gen.ColumnReferenceContext:
+	//	e.Name = v.GetText()
+	//case *gen.StarContext:
+	//	e.Name = "*"
+	//case *gen.IdentifierContext:
+	//	if e.As == "" && e.Name != "" {
+	//		aliasName := v.GetText()
+	//		if aliasName != e.Name {
+	//			e.ExtraNames = append(e.ExtraNames, aliasName)
+	//		}
+	//	}
+	//case *gen.ConstantDefaultContext:
+	//	if e.SelectFunc != nil {
+	//		e.SelectFunc.Arg = append(e.SelectFunc.Arg, v.GetText())
+	//	}
+	//case *gen.IdentifierOrTextContext:
+	//	e.As = v.GetText()
+	//}
+}
+
 type Field struct {
 	defaultExpr
 	Name       string
@@ -464,7 +559,8 @@ type Field struct {
 
 	As string
 
-	encode func(s string) string
+	encode Encode
+	setAs  bool
 
 	FuncsName []string
 
@@ -472,14 +568,19 @@ type Field struct {
 	SelectFuncs []*SelectFunc
 }
 
-func NewField(fn func(s string) string) *Field {
-	return (&Field{
+func NewField() *Field {
+	return &Field{
 		SelectFunc: NewSelectFunc(),
-	}).WithDimensionEncode(fn)
+	}
 }
 
-func (e *Field) WithDimensionEncode(fn func(s string) string) *Field {
+func (e *Field) WithAliasEncode(fn Encode) *Field {
 	e.encode = fn
+	return e
+}
+
+func (e *Field) WithSetAs(setAs bool) *Field {
+	e.setAs = setAs
 	return e
 }
 
@@ -541,32 +642,41 @@ func (e *Field) Exit(ctx antlr.ParserRuleContext) {
 }
 
 func (e *Field) String() string {
-	s := strings.Join(append([]string{e.Name}, e.ExtraNames...), ".")
+	var (
+		originName string
+		isAlias    bool
+	)
+	aliasName := strings.Join(append([]string{e.Name}, e.ExtraNames...), ".")
 	if e.encode != nil {
-		s = e.encode(s)
+		originName, isAlias = e.encode(aliasName)
+		if e.setAs && isAlias && e.As == "" {
+			e.As = aliasName
+		}
+	} else {
+		originName = aliasName
 	}
 
 	for _, sf := range e.SelectFuncs {
 		var fieldName string
 		if sf.Name == "CAST" {
-			fieldName = s
+			fieldName = originName
 			if len(sf.Arg) > 0 {
 				fieldName = fmt.Sprintf("%s[%s]", fieldName, strings.Join(sf.Arg, "]["))
 			}
 			fieldName = fmt.Sprintf("%s AS %s", fieldName, sf.As)
 		} else {
-			fieldName = strings.Join(append([]string{s}, sf.Arg...), ", ")
+			fieldName = strings.Join(append([]string{originName}, sf.Arg...), ", ")
 		}
-		s = fmt.Sprintf("%s(%s)", sf.Name, fieldName)
+		originName = fmt.Sprintf("%s(%s)", sf.Name, fieldName)
 	}
 
 	if e.As != "" {
-		s = fmt.Sprintf("%s AS %s", s, e.As)
+		originName = fmt.Sprintf("%s AS %s", originName, e.As)
 	}
 	if e.Sort != "" {
-		s = fmt.Sprintf("%s %s", s, e.Sort)
+		originName = fmt.Sprintf("%s %s", originName, e.Sort)
 	}
-	return s
+	return originName
 }
 
 type Condition struct {

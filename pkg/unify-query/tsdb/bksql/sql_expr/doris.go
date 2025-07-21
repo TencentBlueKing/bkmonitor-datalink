@@ -129,7 +129,7 @@ func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
 
 func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (sql string, err error) {
 	opt := doris_parser.DorisListenerOption{
-		DimensionTransform: func(s string) string {
+		DimensionTransform: func(s string) (string, bool) {
 			if as, ok := d.fieldAlias[s]; ok {
 				s = as
 			}

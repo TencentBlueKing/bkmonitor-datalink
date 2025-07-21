@@ -13,11 +13,8 @@ import (
 	"github.com/Shopify/sarama"
 	"github.com/pkg/errors"
 
-	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -61,15 +58,8 @@ func (s KafkaTopicInfoSvc) RefreshTopicInfo(clusterInfo storage.ClusterInfo, kaf
 	}
 
 	s.Partition = partitionLen
-	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_kafka_topic_info") {
-		logger.Info(diffutil.BuildLogStr("refresh_kafka_topic_info", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(s.TableName(), map[string]interface{}{
-			storage.KafkaTopicInfoDBSchema.Id.String():        s.Id,
-			storage.KafkaTopicInfoDBSchema.Partition.String(): s.Partition,
-		}), ""))
-	} else {
-		if err := s.Update(db, storage.KafkaTopicInfoDBSchema.Partition); err != nil {
-			return errors.Wrapf(err, "update KafkaTopicInfo [%s] Partition to [%v] failed", s.Topic, partitionLen)
-		}
+	if err := s.Update(db, storage.KafkaTopicInfoDBSchema.Partition); err != nil {
+		return errors.Wrapf(err, "update KafkaTopicInfo [%s] Partition to [%v] failed", s.Topic, partitionLen)
 	}
 	logger.Infof("kafka topic info for partition of topic [%s] with partition [%v] has been refreshed", s.Topic, s.Partition)
 	return nil

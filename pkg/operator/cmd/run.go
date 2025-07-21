@@ -13,7 +13,6 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"runtime"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -46,9 +45,6 @@ var runCmd = &cobra.Command{
 		if err := configs.Load(define.ConfigFilePath); err != nil {
 			logger.Fatalf("failed to load config %s: %s", define.ConfigFilePath, err)
 		}
-
-		logger.Infof("runtime.NumCPU()=%v", runtime.NumCPU())
-		logger.Infof("runtime.GOMAXPROCS(-1)=%v", runtime.GOMAXPROCS(-1))
 
 		var reloadTotal int
 	Outer:

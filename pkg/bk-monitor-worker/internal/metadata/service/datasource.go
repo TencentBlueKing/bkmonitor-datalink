@@ -12,9 +12,7 @@ package service
 import (
 	"context"
 	"fmt"
-	"strings"
 
-	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
 
@@ -29,7 +27,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
@@ -50,11 +47,6 @@ func NewDataSourceSvc(obj *resulttable.DataSource) DataSourceSvc {
 	return DataSourceSvc{
 		DataSource: obj,
 	}
-}
-
-// makeToken
-func (d DataSourceSvc) makeToken() string {
-	return strings.ReplaceAll(uuid.NewString(), "-", "")
 }
 
 // ConsulPath 获取datasource的consul根路径
@@ -352,16 +344,12 @@ func (d DataSourceSvc) AddBuiltInChannelIdToGse() error {
 		Route:     []interface{}{route},
 		Operation: bkgse.Operation{OperatorName: "admin"},
 	}
-	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_datasource") {
-		paramStr, _ := jsonx.MarshalString(params)
-		logger.Info(diffutil.BuildLogStr("refresh_datasource", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
-	} else {
-		data, err := apiservice.Gse.AddRoute(params)
-		if err != nil {
-			return err
-		}
-		logger.Infof("data_id [%v] success to push route info to gse, [%v]", d.BkDataId, data)
+
+	data, err := apiservice.Gse.AddRoute(params)
+	if err != nil {
+		return err
 	}
+	logger.Infof("data_id [%v] success to push route info to gse, [%v]", d.BkDataId, data)
 	return nil
 }
 

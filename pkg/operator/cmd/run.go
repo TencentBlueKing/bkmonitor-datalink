@@ -48,6 +48,7 @@ var runCmd = &cobra.Command{
 		}
 
 		logger.Infof("runtime.NumCPU()=%v", runtime.NumCPU())
+		logger.Infof("runtime.GOMAXPROCS(-1)=%v", runtime.GOMAXPROCS(-1))
 
 		var reloadTotal int
 	Outer:

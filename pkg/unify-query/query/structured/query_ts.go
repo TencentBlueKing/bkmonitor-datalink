@@ -82,6 +82,9 @@ type QueryTs struct {
 
 	// HighLight 是否开启高亮
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
+
+	// DryRun 是否启用 DryRun
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 // StepParse 解析step
@@ -393,6 +396,8 @@ type Query struct {
 	ResultTableOptions metadata.ResultTableOptions `json:"-"`
 	// Scroll
 	Scroll string `json:"-"`
+	// DryRun
+	DryRun bool `json:"-"`
 	// Collapse
 	Collapse *metadata.Collapse `json:"collapse,omitempty"`
 }
@@ -907,6 +912,7 @@ func (q *Query) BuildMetadataQuery(
 	query.Collapse = q.Collapse
 
 	query.Scroll = q.Scroll
+	query.DryRun = q.DryRun
 	query.ResultTableOptions = q.ResultTableOptions
 
 	query.Size = q.Limit

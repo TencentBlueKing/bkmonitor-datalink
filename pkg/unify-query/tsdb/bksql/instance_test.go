@@ -263,6 +263,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 
 	for name, c := range map[string]struct {
 		query    *metadata.Query
+		options  string
 		expected string
 	}{
 		"query with in": {
@@ -594,7 +595,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "time" : 1742540045
 } ]`,
 		},
-		"query raw by doris use condition": {
+		"query raw by doris use condition and result schema": {
 			query: &metadata.Query{
 				TableID:     "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
 				DB:          "2_bklog_pure_v4_log_doris_for_unify_query",
@@ -611,6 +612,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 				},
 				Size: 5,
 			},
+			options: `{"2_bklog.bklog_pure_v4_log_doris_for_unify_query":{"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"__shard_key__","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"cloudId","field_index":2,"field_name":"__c2","field_type":"double"},{"field_alias":"serverIp","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"path","field_index":4,"field_name":"__c4","field_type":"string"},{"field_alias":"gseIndex","field_index":5,"field_name":"__c5","field_type":"double"},{"field_alias":"iterationIndex","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"dtEventTimeStamp","field_index":7,"field_name":"__c7","field_type":"long"},{"field_alias":"dtEventTime","field_index":8,"field_name":"__c8","field_type":"string"},{"field_alias":"localTime","field_index":9,"field_name":"__c9","field_type":"string"},{"field_alias":"__ext","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"file","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"level","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"log","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"message","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"report_time","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"long"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]}}`,
 			expected: `[ {
   "__data_label" : "log_index_set_1183",
   "__index" : "2_bklog_pure_v4_log_doris_for_unify_query",
@@ -723,6 +725,27 @@ func TestInstance_QueryRaw(t *testing.T) {
   "trace_id" : "adb84ecc380008245cdb800b6fd54d7f"
 } ]`,
 		},
+		"query raw by doris dry run": {
+			query: &metadata.Query{
+				TableID:     "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
+				DB:          "2_bklog_pure_v4_log_doris_for_unify_query",
+				Measurement: "doris",
+				Field:       "dtEventTimeStamp",
+				DataLabel:   "log_index_set_1183",
+				AllConditions: metadata.AllConditions{
+					{
+						{DimensionName: "message", Value: []string{"Bk-Query-Source"}, Operator: "contains"},
+					},
+					{
+						{DimensionName: "level", Value: []string{"error", "info"}, Operator: "contains"},
+					},
+				},
+				DryRun: true,
+				Size:   5,
+			},
+			options:  "{\"2_bklog.bklog_pure_v4_log_doris_for_unify_query\":{\"sql\":\"SELECT *, `dtEventTimeStamp` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_pure_v4_log_doris_for_unify_query`.doris WHERE `dtEventTimeStamp` \\u003e= 1730118589181 AND `dtEventTimeStamp` \\u003c= 1730118889181 AND `thedate` = '20241028' AND (`message` MATCH_PHRASE 'Bk-Query-Source' OR (`level` MATCH_PHRASE 'error' OR `level` MATCH_PHRASE 'info')) LIMIT 5\"}}",
+			expected: `[]`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
@@ -735,12 +758,16 @@ func TestInstance_QueryRaw(t *testing.T) {
 
 			dataCh := make(chan map[string]any)
 
+			var (
+				options metadata.ResultTableOptions
+				err     error
+			)
 			go func() {
 				defer func() {
 					close(dataCh)
 				}()
 
-				_, _, err := ins.QueryRawData(ctx, c.query, start, end, dataCh)
+				_, options, err = ins.QueryRawData(ctx, c.query, start, end, dataCh)
 				assert.Nil(t, err)
 			}()
 
@@ -753,6 +780,11 @@ func TestInstance_QueryRaw(t *testing.T) {
 			assert.Nil(t, err)
 
 			assert.JSONEq(t, c.expected, string(actual))
+
+			if c.options != "" {
+				optString, _ := json.Marshal(options)
+				assert.Equal(t, c.options, string(optString))
+			}
 		})
 	}
 }

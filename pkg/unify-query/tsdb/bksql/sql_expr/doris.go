@@ -130,11 +130,17 @@ func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
 func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (sql string, err error) {
 	opt := doris_parser.DorisListenerOption{
 		DimensionTransform: func(s string) (string, bool) {
-			if as, ok := d.fieldAlias[s]; ok {
+			var (
+				as string
+				ok bool
+			)
+
+			as, ok = d.fieldAlias[s]
+			if ok {
 				s = as
 			}
 			ns, _ := d.dimTransform(s)
-			return ns
+			return ns, ok
 		},
 		Table: table,
 		Where: where,

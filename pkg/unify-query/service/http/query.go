@@ -195,6 +195,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 		// 排序复用
 		ql.OrderBy = queryTs.OrderBy
+		ql.DryRun = queryTs.DryRun
 
 		// 如果 qry.Step 不存在去外部统一的 step
 		if ql.Step == "" {

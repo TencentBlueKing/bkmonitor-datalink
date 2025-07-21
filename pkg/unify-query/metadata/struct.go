@@ -161,6 +161,8 @@ type Query struct {
 	Orders      Orders    `json:"orders,omitempty"`
 	NeedAddTime bool      `json:"need_add_time,omitempty"`
 	Collapse    *Collapse `json:"collapse,omitempty"`
+
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 func (q *Query) VMExpand() *VmExpand {

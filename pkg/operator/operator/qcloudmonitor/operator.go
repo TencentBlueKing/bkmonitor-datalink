@@ -363,7 +363,7 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, qcm *bkv1beta1.
 	var argsContent string
 	if len(args) > 0 {
 		argsContent += " "
-		argsContent = strings.Join(args, " ")
+		argsContent += strings.Join(args, " ")
 	}
 
 	deployment := &appsv1.Deployment{

@@ -99,7 +99,7 @@ func (s *TimeSeriesMetricSvc) BulkCreateMetrics(bkTenantId string, metricMap map
 			// 如果获取不到指标数据，则跳过
 			continue
 		}
-		tagList, err := s.getMetricTagFromMetricInfo(bkTenantId, metricInfo)
+		tagList, err := s.getMetricTagFromMetricInfo(metricInfo)
 		if err != nil {
 			logger.Errorf("getMetricTagFromMetricInfo from [%#v] failed, %v", metricInfo, tagList)
 		}
@@ -188,7 +188,7 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(bkTenantId string, metricMap map
 		}
 
 		// 如果 tag 不一致，则进行更新
-		tagList, err := s.getMetricTagFromMetricInfo(bkTenantId, metricInfo)
+		tagList, err := s.getMetricTagFromMetricInfo(metricInfo)
 		if err != nil {
 			logger.Errorf("BulkUpdateMetrics:getMetricTagFromMetricInfo from [%#v] failed, %v", metricInfo, tagList)
 			continue
@@ -228,7 +228,7 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(bkTenantId string, metricMap map
 }
 
 // 获取 tags
-func (*TimeSeriesMetricSvc) getMetricTagFromMetricInfo(bkTenantId string, metricInfo map[string]interface{}) ([]string, error) {
+func (*TimeSeriesMetricSvc) getMetricTagFromMetricInfo(metricInfo map[string]interface{}) ([]string, error) {
 	tags := mapset.NewSet[string]()
 	// 当前从redis中取出的metricInfo只有tag_value_list
 	if tagValues, ok := metricInfo["tag_value_list"].(map[string]interface{}); ok {

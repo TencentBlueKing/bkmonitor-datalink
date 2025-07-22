@@ -39,7 +39,8 @@ func ParseDorisSQL(ctx context.Context, q string, opt DorisListenerOption) *Dori
 	// 创建解析树
 	listener := NewDorisListener(ctx, q).
 		WithOptions(opt)
-	antlr.ParseTreeWalkerDefault.Walk(listener, parser.Statement())
+
+	antlr.ParseTreeWalkerDefault.Walk(listener, parser.Query())
 
 	return listener
 }

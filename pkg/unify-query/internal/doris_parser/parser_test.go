@@ -220,6 +220,11 @@ group by
 			q:    "select ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) as ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns",
 			sql:  "",
 		},
+		{
+			name: "test-22",
+			q:    "SELECT namespace, workload, COUNT() GROUP BY namespace, workload",
+			sql:  "SELECT namespace, workload, COUNT() GROUP BY namespace, workload",
+		},
 	}
 
 	mock.Init()

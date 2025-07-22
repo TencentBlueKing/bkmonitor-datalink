@@ -971,7 +971,8 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 
 	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if timeErr != nil {
-		return 0, nil, nil, false, timeErr
+		err = fmt.Errorf("invalid time: %v", timeErr)
+		return
 	}
 	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 	user := metadata.GetUser(ctx)

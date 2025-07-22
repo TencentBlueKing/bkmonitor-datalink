@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/elastic/beats v7.1.1+incompatible
+	// 不要轻易尝试变更 prometheus/k8s 相关依赖的版本（一个过来人的建议）
 	github.com/prometheus-operator/prometheus-operator v0.70.0
 	github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring v0.70.0
 	github.com/prometheus-operator/prometheus-operator/pkg/client v0.70.0

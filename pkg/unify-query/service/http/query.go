@@ -974,10 +974,18 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 		return 0, nil, nil, false, timeErr
 	}
 	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
-
 	user := metadata.GetUser(ctx)
-	queryTs.ClearCache = false
-	queryTsKey, err := redisUtil.ScrollGenerateQueryTsKey(queryTs, user.Name)
+
+	queryTsBytes, err := json.Marshal(queryTs)
+	if err != nil {
+		return 0, nil, nil, false, fmt.Errorf("failed to marshal queryTs: %v", err)
+	}
+	var queryTsMap map[string]interface{}
+	if err := json.Unmarshal(queryTsBytes, &queryTsMap); err != nil {
+		return 0, nil, nil, false, fmt.Errorf("failed to unmarshal queryTs to map: %v", err)
+	}
+
+	queryTsKey, err := redisUtil.ScrollGenerateQueryTsKey(queryTsMap, user.Name)
 	if err != nil {
 		return 0, nil, nil, false, err
 	}

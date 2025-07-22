@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/spf13/cast"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -26,7 +28,18 @@ func isRedisNilError(err error) bool {
 	return err.Error() == "redis: nil"
 }
 
+const (
+	clearCacheField = "clear_cache"
+)
+
 func ScrollGenerateQueryTsKey(queryTs any, userName string) (string, error) {
+	queryTsMap, err := cast.ToStringMapE(queryTs)
+	if err != nil {
+		return "", err
+	}
+	if _, ok := queryTsMap[clearCacheField]; ok {
+		delete(queryTsMap, clearCacheField)
+	}
 	keyStruct := map[string]any{
 		"queryTs":  queryTs,
 		"username": userName,

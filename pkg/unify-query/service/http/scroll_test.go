@@ -29,6 +29,13 @@ import (
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
+type expectResult struct {
+	desc    string
+	total   int64
+	done    bool
+	hasData bool
+}
+
 func TestQueryRawWithScroll(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	spaceUid := influxdb.SpaceUid
@@ -102,133 +109,69 @@ func TestQueryRawWithScroll(t *testing.T) {
 
 	start := "1723594000"
 	end := "1723595000"
-
-	tcs := map[string]struct {
+	type testCase struct {
 		queryTs  *structured.QueryTs
-		expected struct {
-			firstCall struct {
-				total   int64
-				done    bool
-				hasData bool
-			}
-			secondCall struct {
-				total   int64
-				done    bool
-				hasData bool
-			}
-			thirdCall struct {
-				total   int64
-				done    bool
-				hasData bool
-			}
-		}
-	}{
-		"scroll with ES multiple slices": {
-			queryTs: &structured.QueryTs{
-				SpaceUid: spaceUid,
-				QueryList: []*structured.Query{
-					{
-						TableID: structured.TableID(testTableId),
-					},
+		expected []expectResult
+	}
+
+	tCase := testCase{
+		queryTs: &structured.QueryTs{
+			SpaceUid: spaceUid,
+			QueryList: []*structured.Query{
+				{
+					TableID: structured.TableID(testTableId),
 				},
-				Timezone: "Asia/Shanghai",
-				Scroll:   "9m",
-				Limit:    10,
-				Start:    start,
-				End:      end,
 			},
-			expected: struct {
-				firstCall struct {
-					total   int64
-					done    bool
-					hasData bool
-				}
-				secondCall struct {
-					total   int64
-					done    bool
-					hasData bool
-				}
-				thirdCall struct {
-					total   int64
-					done    bool
-					hasData bool
-				}
-			}{
-				firstCall: struct {
-					total   int64
-					done    bool
-					hasData bool
-				}{
-					total:   3, // 1 + 1 + 1 from three slices (using slice ID=1)
-					done:    false,
-					hasData: true,
-				},
-				secondCall: struct {
-					total   int64
-					done    bool
-					hasData bool
-				}{
-					total:   3, // 1 + 1 + 1 from three slices (all using slice ID=1)
-					done:    false,
-					hasData: true,
-				},
-				thirdCall: struct {
-					total   int64
-					done    bool
-					hasData bool
-				}{
-					total:   3, // 1 + 1 + 1 from three slices (no slice info)
-					done:    false,
-					hasData: true,
-				},
+			Timezone: "Asia/Shanghai",
+			Scroll:   "9m",
+			Limit:    10,
+			Start:    start,
+			End:      end,
+		},
+		expected: []expectResult{
+			{
+				desc:    "First scroll request",
+				total:   3,
+				done:    false,
+				hasData: true,
+			},
+			{
+				desc:    "Second scroll request",
+				total:   3,
+				done:    false,
+				hasData: true,
+			},
+			{
+				desc:    "Third scroll request",
+				total:   3,
+				done:    false,
+				hasData: true,
+			},
+			{
+				desc:    "Final scroll",
+				total:   0,
+				done:    true,
+				hasData: false,
 			},
 		},
 	}
-
-	for name, c := range tcs {
-		t.Run(name, func(t *testing.T) {
-			user := &metadata.User{
-				Key:       "username:test_scroll_user",
-				SpaceUID:  spaceUid,
-				SkipSpace: "true",
-			}
-			testCtx := ctx
+	user := &metadata.User{
+		Key:       "username:test_scroll_user",
+		SpaceUID:  spaceUid,
+		SkipSpace: "true",
+	}
+	for _, c := range tCase.expected {
+		t.Run(c.desc, func(t *testing.T) {
+			testCtx := metadata.InitHashID(context.Background())
 			metadata.SetUser(testCtx, user)
-
-			total1, list1, options1, done1, err1 := queryRawWithScroll(testCtx, c.queryTs)
-			assert.NoError(t, err1, "First scroll request should succeed")
-			assert.Equal(t, c.expected.firstCall.total, total1, "First call total should match")
-			assert.Equal(t, c.expected.firstCall.done, done1, "First call done should match")
-			if c.expected.firstCall.hasData {
-				assert.NotEmpty(t, list1, "First call should return data")
-			} else {
-				assert.Empty(t, list1, "First call should not return data")
-			}
-			assert.NotNil(t, options1, "First call should return options")
-
-			total2, list2, options2, done2, err2 := queryRawWithScroll(testCtx, c.queryTs)
-			assert.NoError(t, err2, "Second scroll request should succeed")
-			assert.Equal(t, c.expected.secondCall.total, total2, "Second call total should match")
-			assert.Equal(t, c.expected.secondCall.done, done2, "Second call done should match")
-			if c.expected.secondCall.hasData {
-				assert.NotEmpty(t, list2, "Second call should return data")
-			} else {
-				assert.Empty(t, list2, "Second call should not return data")
-			}
-			assert.NotNil(t, options2, "Second call should return options")
-
-			total3, list3, options3, done3, err3 := queryRawWithScroll(testCtx, c.queryTs)
-			assert.NoError(t, err3, "Third scroll request should succeed")
-			assert.GreaterOrEqual(t, total3, c.expected.thirdCall.total, "Third call total should be at least expected")
-			assert.Equal(t, c.expected.thirdCall.done, done3, "Third call done should match")
-			if c.expected.thirdCall.hasData {
-				assert.NotEmpty(t, list3, "Third call should return data")
-			} else {
-				assert.Empty(t, list3, "Third call should not return data")
-			}
-			assert.NotNil(t, options3, "Third call should return options")
-
+			total, list, _, done, err := queryRawWithScroll(testCtx, tCase.queryTs)
+			hasData := len(list) > 0
+			assert.NoError(t, err, "QueryRawWithScroll should not return error")
+			assert.Equal(t, c.total, total, "Total should match expected value")
+			assert.Equal(t, c.done, done, "Done should match expected value")
+			assert.Equal(t, c.hasData, hasData, "HasData should match expected value")
 		})
+
 	}
 }
 

@@ -42,7 +42,7 @@ const (
 )
 
 func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig) (kubernetes.Interface, error) {
-	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "")
+	cfg, err := promk8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig) (kubernetes.Inte
 }
 
 func NewMetadataClient(host string, tlsConfig *rest.TLSClientConfig) (metadata.Interface, error) {
-	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "")
+	cfg, err := promk8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -62,8 +62,7 @@ func NewMetadataClient(host string, tlsConfig *rest.TLSClientConfig) (metadata.I
 }
 
 func NewK8SClientInsecure() (kubernetes.Interface, error) {
-	tlsConfigs := rest.TLSClientConfig{Insecure: true}
-	cfg, err := promk8sutil.NewClusterConfig("", tlsConfigs, "")
+	cfg, err := promk8sutil.NewClusterConfig("", true, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -72,24 +71,21 @@ func NewK8SClientInsecure() (kubernetes.Interface, error) {
 	return kubernetes.NewForConfig(cfg)
 }
 
-// NewPromClient 操作 ServiceMonitor/PodMonitor/Probe CRD
 func NewPromClient(host string, tlsConfig *rest.TLSClientConfig) (promcli.Interface, error) {
-	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "")
+	cfg, err := promk8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
-
-	// cfg.ContentType = contentTypeProtobuf
+	//cfg.ContentType = contentTypeProtobuf
 	return promcli.NewForConfig(cfg)
 }
 
 // NewBKClient 操作 DataID CRD
 func NewBKClient(host string, tlsConfig *rest.TLSClientConfig) (bkcli.Interface, error) {
-	cfg, err := promk8sutil.NewClusterConfig(host, *tlsConfig, "")
+	cfg, err := promk8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
-
 	cfg.ContentType = contentTypeProtobuf
 	return bkcli.NewForConfig(cfg)
 }

@@ -1,8 +1,6 @@
 module github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/example/parsepprof
 
-go 1.24.0
-
-toolchain go1.24.4
+go 1.23.0
 
 require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector v0.0.0-00010101000000-000000000000
@@ -107,11 +105,6 @@ require (
 
 replace (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector => ../../
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse => ../../../libgse
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator => ../../../operator
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils => ../../../utils
 	github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.17-bk+incompatible
-	// A replace directive is needed for github.com/prometheus/prometheus to ensure running against the latest version of prometheus.
 	github.com/prometheus/prometheus => github.com/prometheus/prometheus v0.38.0
-	k8s.io/kubernetes => k8s.io/kubernetes v1.20.0
 )

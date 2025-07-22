@@ -119,6 +119,7 @@ func MakeGSE(im outputs.IndexManager, beat beat.Info, stats outputs.Observer, cf
 
 	if c.FlowLimit > 0 {
 		output.fl = newFlowLimiter(c.FlowLimit)
+		logp.Info("enable flowlimit, rate: %d", c.FlowLimit)
 	}
 
 	// start gse client

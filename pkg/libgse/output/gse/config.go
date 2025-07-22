@@ -79,11 +79,11 @@ type flowLimiter struct {
 
 func newFlowLimiter(bytesRate int) *flowLimiter {
 	n := bytesRatio(bytesRate)
-	fr := &flowLimiter{
+	fl := &flowLimiter{
 		n:       n,
 		limiter: rate.NewLimiter(rate.Limit(n), n),
 	}
-	return fr
+	return fl
 }
 
 func (fl *flowLimiter) Consume(n int) {

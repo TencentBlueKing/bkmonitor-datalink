@@ -12,8 +12,8 @@ require (
 require (
 	github.com/Shopify/sarama v1.32.0 // indirect
 	github.com/TarsCloud/TarsGo v1.4.5 // indirect
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v0.0.0-00010101000000-000000000000 // indirect
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000 // indirect
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.7.0 // indirect
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect

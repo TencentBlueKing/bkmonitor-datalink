@@ -1026,7 +1026,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 func executeScrollQueriesWithHelper(ctx context.Context, scrollSessionHelperInstance *redisUtil.ScrollSessionHelper, sessionKey string, session *redisUtil.ScrollSession, queryList []*metadata.Query,
 	start, end time.Time, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, done bool, err error) {
 
-	executor := NewScrollQueryExecutor(ctx, sessionKey, session, queryTs, start, end)
+	executor := newScrollQueryExecutor(ctx, sessionKey, session, queryTs, start, end)
 	defer executor.cleanup()
 
 	storageQueryMap := buildStorageQueryMap(queryList)

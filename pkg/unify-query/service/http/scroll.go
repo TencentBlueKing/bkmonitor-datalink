@@ -129,7 +129,7 @@ type ScrollQueryExecutor struct {
 	pool        *ants.Pool
 }
 
-func NewScrollQueryExecutor(
+func newScrollQueryExecutor(
 	ctx context.Context,
 	sessionKey string,
 	session *redisUtil.ScrollSession,

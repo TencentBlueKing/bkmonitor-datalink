@@ -41,6 +41,8 @@ github.com/Shopify/toxiproxy v2.1.4+incompatible h1:TKdv8HiTLgE5wdJuEML90aBgNWso
 github.com/Shopify/toxiproxy v2.1.4+incompatible/go.mod h1:OXgGpZ6Cli1/URJOF1DMxUHB2q5Ap20/P/eIdh4G0pI=
 github.com/TencentBlueKing/beats v7.1.12-bk+incompatible h1:rG9cyibyCYcUVYQPSG395AdKXsL5kf/2gz8fDLmwtnQ=
 github.com/TencentBlueKing/beats v7.1.12-bk+incompatible/go.mod h1:ZMsX71rXxEo52YtXTamkUBNY4BmgxFY1NSZL1l1dNts=
+github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0 h1:M22V54nzKf4jReUWp9+rF0255nvlQP/B4zzuXIGyBlU=
+github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0/go.mod h1:ETap19QgROaVGv9E9MRtWMeOgx/gbhbtzcjk4cgadoM=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=

@@ -351,7 +351,7 @@ func (c *Operator) createOrUpdateDeployment(ctx context.Context, qcm *bkv1beta1.
 	cfg := qcm.Spec.Config
 	var args []string
 	if cfg.EnableExporterMetrics != nil && *cfg.EnableExporterMetrics {
-		args = append(args, "--web.enable-exporter-metrics=true")
+		args = append(args, "--web.enable-exporter-metrics")
 	}
 	if cfg.MaxRequests != nil && *cfg.MaxRequests > 0 {
 		args = append(args, "--web.max-requests="+strconv.Itoa(*cfg.MaxRequests))

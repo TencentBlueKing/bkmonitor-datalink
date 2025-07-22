@@ -19,11 +19,12 @@ require (
 )
 
 require (
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
 	github.com/blang/semver/v4 v4.0.0
 	github.com/go-kit/log v0.2.1
 	github.com/gorilla/mux v1.8.1
 	github.com/goware/urlx v0.3.2
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.7.0
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0
 	github.com/grafana/regexp v0.0.0-20221122212121-6b5c0a4cb7fd
 	github.com/kylelemons/godebug v1.1.0
 	github.com/pkg/errors v0.9.1
@@ -161,7 +162,5 @@ require (
 )
 
 replace (
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse => ../libgse
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils => ../utils
 	github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.17-bk+incompatible
 )

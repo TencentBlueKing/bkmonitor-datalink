@@ -11,6 +11,7 @@ package service
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -84,6 +85,36 @@ type FilterBuildContext struct {
 	FilterAlias    string // 过滤条件key的别名
 }
 
+// 基础数据表名
+var BaseReportTableNames = []string{
+	"cpu_summary",
+	"cpu_detail",
+	"disk",
+	"env",
+	"inode",
+	"io",
+	"load",
+	"mem",
+	"net",
+	"netstat",
+	"swap",
+}
+
+// 基础采集数据链路来源 -- 主机系统、DBM、DEVX、Perforce
+const (
+	BaseReportSourceSystem   = "sys"
+	BaseReportSourceDBM      = "dbm"
+	BaseReportSourceDevx     = "devx"
+	BaseReportSourcePerforce = "perforce"
+)
+
+var BaseReportSources = []string{
+	BaseReportSourceSystem,
+	BaseReportSourceDBM,
+	BaseReportSourceDevx,
+	BaseReportSourcePerforce,
+}
+
 const (
 	CachedClusterDataIdKey = "bmw_cached_cluster_data_id_list"
 	CachedSpaceBizIdKey    = "bmw_cached_space_biz_id"
@@ -146,58 +177,6 @@ func NewSpaceRedisSvc(goroutineLimit int) SpaceRedisSvc {
 		goroutineLimit = 10
 	}
 	return SpaceRedisSvc{goroutineLimit: goroutineLimit}
-}
-
-func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tableIdList []string) error {
-	startTime := time.Now() // 记录开始时间
-	logger.Infof("PushAndPublishSpaceRouter:start to push and publish space_type [%s], space_id [%s] table_ids [%v] router", spaceType, spaceId, tableIdList)
-	pusher := NewSpacePusher()
-
-	// 获取租户ID
-	bkTenantId := ""
-	if cfg.EnableMultiTenantMode {
-		var spaceObj space.Space
-		db := mysql.GetDBSession().DB
-		if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId).One(&spaceObj); err != nil {
-			return err
-		}
-		bkTenantId = spaceObj.BkTenantId
-	} else {
-		bkTenantId = tenant.DefaultTenantId
-	}
-
-	// 获取空间下的结果表，如果不存在，则获取空间下的所有
-	if len(tableIdList) == 0 {
-		tableDataIdMap, err := pusher.GetSpaceTableIdDataId(bkTenantId, spaceType, spaceId, nil, nil, nil)
-		if err != nil {
-			return errors.Wrap(err, "get space table id dataid failed")
-		}
-		for tableId := range tableDataIdMap {
-			tableIdList = append(tableIdList, tableId)
-		}
-	}
-
-	// 更新空间下的结果表相关数据
-	if spaceType != "" && spaceId != "" {
-		// 更新相关数据到 redis
-		// NOTE:这里统一根据Redis中的新老值是否存在差异决定是否需要Publish,isPublish参数不再生效
-		if err := pusher.PushSpaceTableIds(bkTenantId, spaceType, spaceId); err != nil {
-			return err
-		}
-	} else {
-		// 必须指定空间类型和空间ID
-		return errors.New("spaceType and spaceId must be specified")
-	}
-	// 更新数据
-	if err := pusher.PushDataLabelTableIds(bkTenantId, tableIdList, true); err != nil {
-		return err
-	}
-	if err := pusher.PushTableIdDetail(bkTenantId, tableIdList, true, true); err != nil {
-		return err
-	}
-	elapsedTime := time.Since(startTime) // 计算耗时
-	logger.Infof("PushAndPublishSpaceRouter:push and publish space_type: %s, space_id: %s router successfully,took %s", spaceType, spaceId, elapsedTime)
-	return nil
 }
 
 type SpacePusher struct {
@@ -313,6 +292,12 @@ func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, tableIdList []str
 			logger.Errorf("PushDataLabelTableIds: get all data label and table id map error->[%s]", err)
 			return err
 		}
+
+		// 多租户模式下添加内置数据源
+		if cfg.EnableMultiTenantMode {
+
+		}
+
 	}
 
 	// 打印结束日志
@@ -327,17 +312,10 @@ func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, tableIdList []str
 	client := redis.GetStorageRedisInstance()
 	// TODO: 待旁路没有问题，可以移除的逻辑
 	key := cfg.DataLabelToResultTableKey
-	if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-		key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-	}
 	for dl, rts := range dlRtsMap {
 		// 二段式补充
 		for idx, value := range rts {
 			rts[idx] = reformatTableId(value)
-			// 多租户模式下，需要加上租户ID后缀
-			if cfg.EnableMultiTenantMode {
-				rts[idx] = fmt.Sprintf("%s|%s", rts[idx], bkTenantId)
-			}
 		}
 
 		rtsStr, err := jsonx.MarshalString(rts)
@@ -461,7 +439,7 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 	db := mysql.GetDBSession().DB
 	var rtList []resulttable.ResultTable
 	// 过滤为结果表可用，标签不为空和null的数据记录
-	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.DataLabel).BkTenantIdEq(bkTenantId).IsEnableEq(true).IsDeletedEq(false).DataLabelIsNotNull().DataLabelNe("").All(&rtList); err != nil {
+	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.BkTenantId, resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.DataLabel).BkTenantIdEq(bkTenantId).IsEnableEq(true).IsDeletedEq(false).DataLabelIsNotNull().DataLabelNe("").All(&rtList); err != nil {
 		logger.Errorf("get all data label and table id map error, %s", err)
 		return nil, err
 	}
@@ -481,10 +459,9 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 				continue
 			}
 
-			// 多租户模式下，需要加上租户ID后缀
 			var key string
 			if cfg.EnableMultiTenantMode {
-				key = fmt.Sprintf("%s|%s", dataLabel, rt.BkTenantId)
+				key = fmt.Sprintf("%s|%s", dataLabel, bkTenantId)
 			} else {
 				key = dataLabel
 			}
@@ -496,6 +473,56 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 			}
 		}
 	}
+
+	// 多租户模式特殊处理 -- 内置系统数据路由
+	if cfg.EnableMultiTenantMode {
+		var builtInRts []resulttable.ResultTable
+
+		// 表名格式为{bk_tenant_id}_{bk_biz_id}_{source}.{table}，先进行粗略匹配
+		tablePattern := fmt.Sprintf("%s_%%_%%.%%", bkTenantId)
+		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).TableIdLike(tablePattern).BkTenantIdEq(bkTenantId).IsEnableEq(true).IsDeletedEq(false).All(&builtInRts); err != nil {
+			logger.Errorf("get built in data label and table id map error, %s", err)
+			return nil, err
+		}
+
+		tableRegex := fmt.Sprintf("^%s_\\d+_(%s)\\.(%s)$", bkTenantId, strings.Join(BaseReportSources, "|"), strings.Join(BaseReportTableNames, "|"))
+		re := regexp.MustCompile(tableRegex)
+		for _, rt := range builtInRts {
+			// 严格匹配正则表达式
+			if !re.MatchString(rt.TableId) {
+				continue
+			}
+
+			// 提取source和table
+			matches := re.FindStringSubmatch(rt.TableId)
+			if len(matches) != 3 {
+				continue
+			}
+			source := matches[1]
+			tableName := matches[2]
+
+			// 根据source和table生成数据标签
+			var dataLabel string
+			if source == BaseReportSourceSystem {
+				// 系统数据标签
+				dataLabel = fmt.Sprintf("system.%s", tableName)
+			} else {
+				// 其他数据标签
+				dataLabel = fmt.Sprintf("%s_system.%s", source, tableName)
+			}
+
+			// 多租户模式下，data_label需要加上租户ID后缀
+			key := fmt.Sprintf("%s|%s", dataLabel, bkTenantId)
+
+			// 添加到数据标签和结果表的映射关系中
+			if rts, ok := dataLabelTableIdMap[key]; ok {
+				dataLabelTableIdMap[key] = append(rts, rt.TableId)
+			} else {
+				dataLabelTableIdMap[key] = []string{rt.TableId}
+			}
+		}
+	}
+
 	return dataLabelTableIdMap, nil
 }
 
@@ -574,36 +601,8 @@ func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 	return tableIds, nil
 }
 
-func (s *SpacePusher) refineEsTableIds(tableIdList []string) ([]string, error) {
-	// 过滤写入 es 的结果表
-	db := mysql.GetDBSession().DB
-	var esStorageList []storage.ESStorage
-	qs3 := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID)
-	if len(tableIdList) != 0 {
-		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
-			var tempList []storage.ESStorage
-			qsTemp := qs3.TableIDIn(chunkTableIdList...)
-			if err := qsTemp.All(&tempList); err != nil {
-				return nil, err
-			}
-			esStorageList = append(esStorageList, tempList...)
-		}
-	} else {
-		if err := qs3.All(&esStorageList); err != nil {
-			return nil, err
-		}
-	}
-
-	var tableIds []string
-	for _, i := range esStorageList {
-		tableIds = append(tableIds, i.TableID)
-	}
-	tableIds = slicex.RemoveDuplicate(&tableIds)
-	return tableIds, nil
-}
-
 // PushTableIdDetail 推送结果表的详细信息
-func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool, useByPass bool) error {
+func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool) error {
 	logger.Infof("PushTableIdDetail: start to push table_id detail data")
 
 	if len(tableIdList) == 0 {
@@ -664,9 +663,6 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 	client := redis.GetStorageRedisInstance()
 	// 推送数据
 	rtDetailKey := cfg.ResultTableDetailKey
-	if useByPass && !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-		rtDetailKey = fmt.Sprintf("%s%s", rtDetailKey, cfg.BypassSuffixPath)
-	}
 	for tableId, detail := range tableIdDetail {
 		var ok bool
 		// fields
@@ -694,11 +690,6 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 			detail["data_label"] = ""
 		} else {
 			detail["data_label"] = rt.DataLabel
-
-			// 多租户模式下，需要加上租户ID后缀
-			if cfg.EnableMultiTenantMode {
-				detail["data_label"] = fmt.Sprintf("%s|%s", *rt.DataLabel, bkTenantId)
-			}
 		}
 		detail["measurement_type"] = measurementTypeMap[tableId]
 		detail["bcs_cluster_id"] = tableIdClusterIdMap[tableId]
@@ -923,13 +914,6 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		fieldAliasSettings = make(map[string]string)
 	}
 
-	// 多租户模式下，需要加上租户ID后缀
-	dataLabel := rt.DataLabel
-	if cfg.EnableMultiTenantMode && dataLabel != nil {
-		newDataLabel := fmt.Sprintf("%s|%s", *dataLabel, rt.BkTenantId)
-		dataLabel = &newDataLabel
-	}
-
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
 		"storage_type":            models.StorageTypeES,
@@ -939,7 +923,7 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		"source_type":             sourceType,
 		"options":                 options,
 		"storage_cluster_records": clusterRecords,
-		"data_label":              dataLabel,
+		"data_label":              rt.DataLabel,
 		"field_alias":             fieldAliasSettings, // 添加字段别名
 	})
 	if err != nil {
@@ -1380,10 +1364,6 @@ func (s *SpacePusher) PushBkAppToSpace() (err error) {
 
 	client := redis.GetStorageRedisInstance()
 	key := cfg.BkAppToSpaceKey
-	if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-		key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-	}
-
 	for field, value := range appSpaces.HashData() {
 		// 多租户模式下，需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
@@ -1519,10 +1499,6 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		// 如果开启了多租户模式，则需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
 			redisKey = fmt.Sprintf("%s__%s|%s", spaceType, spaceId, bkTenantId)
-			oldValue, values := values, make(map[string]map[string]interface{})
-			for tid, val := range oldValue {
-				values[fmt.Sprintf("%s|%s", tid, bkTenantId)] = val
-			}
 		} else {
 			redisKey = fmt.Sprintf("%s__%s", spaceType, spaceId)
 		}
@@ -1534,9 +1510,6 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		}
 		// TODO: 待旁路没有问题，可以移除的逻辑
 		key := cfg.SpaceToResultTableKey
-		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-		}
 		logger.Infof("pushBkccSpaceTableIds:push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v]", key, redisKey, valuesStr)
 
 		channelName := fmt.Sprintf("%s__%s", spaceType, spaceId)
@@ -1628,11 +1601,6 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		// 如果开启了多租户模式，则需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
 			redisKey = fmt.Sprintf("%s__%s|%s", spaceType, spaceId, bkTenantId)
-			// value需要补充租户ID前缀
-			oldValue, values := values, make(map[string]map[string]interface{})
-			for tid, val := range oldValue {
-				values[fmt.Sprintf("%s|%s", tid, bkTenantId)] = val
-			}
 		} else {
 			redisKey = fmt.Sprintf("%s__%s", spaceType, spaceId)
 		}
@@ -1643,9 +1611,6 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		}
 		// TODO: 待旁路没有问题，可以移除的逻辑
 		key := cfg.SpaceToResultTableKey
-		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-		}
 		channelName := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Set & Publish
 		logger.Infof("pushBkciSpaceTableIds:start to push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v], channelName [%s], channelKey [%s]", key, redisKey, valuesStr, cfg.SpaceToResultTableChannel, channelName)
@@ -1713,11 +1678,6 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 		// 如果开启了多租户模式，则需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
 			redisKey = fmt.Sprintf("%s__%s|%s", spaceType, spaceId, bkTenantId)
-			// value需要补充租户ID后缀
-			oldValue, values := values, make(map[string]map[string]interface{})
-			for tid, val := range oldValue {
-				values[fmt.Sprintf("%s|%s", tid, bkTenantId)] = val
-			}
 		} else {
 			redisKey = fmt.Sprintf("%s__%s", spaceType, spaceId)
 		}
@@ -1728,9 +1688,6 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 		}
 		// TODO: 待旁路没有问题，可以移除的逻辑
 		key := cfg.SpaceToResultTableKey
-		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-		}
 		channelName := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Set & Publish
 		logger.Infof("pushBksaasSpaceTableIds: start to push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v], channelName [%s], channelKey [%s]", key, redisKey, valuesStr, cfg.SpaceToResultTableChannel, channelName)
@@ -1965,6 +1922,12 @@ func (s *SpacePusher) getPlatformDataIds(bkTenantId, spaceType string) ([]uint, 
 	var bkDataIdList []uint
 	var dsList []resulttable.DataSource
 	qs := resulttable.NewDataSourceQuerySet(db).Select(resulttable.DataSourceDBSchema.BkDataId, resulttable.DataSourceDBSchema.SpaceTypeId).BkTenantIdEq(bkTenantId).IsPlatformDataIdEq(true)
+
+	// 多住模式下去除单租户使用的全局数据源
+	if cfg.EnableMultiTenantMode {
+		qs = qs.BkDataIdNotIn(1001, 1002, 1003, 1004, 1005, 1006, 1007, 1013, 1008, 1009, 1010, 1011, 1100003, 1100005, 1100000)
+	}
+
 	// 针对 bkcc 类型，这要是插件，不属于某个业务空间，也没有传递空间类型，因此，需要包含 all 类型
 	if spaceType != "" && spaceType != models.SpaceTypeBKCC {
 		qs = qs.SpaceTypeIdEq(spaceType)
@@ -2595,7 +2558,6 @@ func (s *SpacePusher) composeBkciLevelTableIds(bkTenantId, spaceType, spaceId st
 				continue
 			}
 			filterAlias = rt.BkBizIdAlias
-
 		}
 		options := FilterBuildContext{
 			SpaceType:   spaceType,

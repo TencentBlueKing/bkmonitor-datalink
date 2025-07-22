@@ -10,22 +10,13 @@
 package storage
 
 import (
-	"context"
 	"fmt"
-	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
-	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 //go:generate goqueryset -in influxdbstorage.go -out qs_influxdbstorage_gen.go
@@ -62,16 +53,6 @@ func (i *InfluxdbStorage) BeforeCreate(tx *gorm.DB) error {
 		i.ProxyClusterName = "default"
 	}
 	return nil
-}
-
-// ConsulPath 获取router的consul根路径
-func (InfluxdbStorage) ConsulPath() string {
-	return fmt.Sprintf(models.InfluxdbStorageConsulPathTemplate, cfg.StorageConsulPathPrefix, cfg.BypassSuffixPath)
-}
-
-// ConsulConfigPath 获取具体结果表router的consul配置路径
-func (i InfluxdbStorage) ConsulConfigPath() string {
-	return fmt.Sprintf("%s/%s/%s", i.ConsulPath(), i.Database, i.RealTableName)
 }
 
 // RpName 该结果表的rp名字
@@ -129,118 +110,4 @@ func (i InfluxdbStorage) ConsulClusterConfig() (map[string]interface{}, error) {
 		config["partition_tag"] = strings.Split(i.PartitionTag, ",")
 	}
 	return config, nil
-}
-
-// PushRedisData 路由存储关系同步写入到 redis 里面
-func (i InfluxdbStorage) PushRedisData(ctx context.Context, isPublish bool) error {
-	logger.Infof("PushRedisData: push storage relation to redis, table_id->[%s],is_pubish->[%v]", i.TableID, isPublish)
-	// 通过 AccessVMRecord 获取结果表 ID
-	var vmTableId string
-	var vmRecord AccessVMRecord
-	dbSession := mysql.GetDBSession()
-	err := NewAccessVMRecordQuerySet(dbSession.DB).ResultTableIdEq(i.TableID).One(&vmRecord)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			logger.Warnf("table_id: %s not access vm", i.TableID)
-		} else {
-			return err
-		}
-	}
-	vmTableId = vmRecord.VmResultTableId
-	var partitionTags = make([]string, 0)
-	if i.PartitionTag != "" {
-		partitionTags = strings.Split(i.PartitionTag, ",")
-	}
-
-	proxyStorage, err := i.InfluxdbProxyStorage()
-	if err != nil {
-		return err
-	}
-	valMap := map[string]interface{}{
-		"storageID":   strconv.Itoa(int(proxyStorage.ProxyClusterId)),
-		"clusterName": proxyStorage.InstanceClusterName,
-		"tagsKey":     partitionTags,
-		"db":          i.Database,
-		"vm_rt":       vmTableId,
-		"measurement": i.RealTableName,
-		"retention_policies": map[string]interface{}{
-			"autogen": map[string]interface{}{
-				"is_default": true,
-				"resolution": 0,
-			},
-		},
-	}
-	val, err := jsonx.MarshalString(valMap)
-	if err != nil {
-		return err
-	}
-	models.PushToRedis(ctx, models.InfluxdbProxyStorageRouterKey, i.TableID, val)
-	return nil
-}
-
-// RefreshConsulClusterConfig 更新influxDB结果表信息到consul中
-func (i InfluxdbStorage) RefreshConsulClusterConfig(ctx context.Context, isPublish bool, isVersionRefresh bool) error {
-	consulClient, err := consul.GetInstance()
-	if err != nil {
-		return err
-	}
-	config, err := i.ConsulClusterConfig()
-	if err != nil {
-		return err
-	}
-	val, err := jsonx.MarshalString(config)
-	if err != nil {
-		return err
-	}
-	err = hashconsul.PutCas(consulClient, i.ConsulConfigPath(), val, 0, nil)
-	if err != nil {
-		logger.Errorf("put consul path [%s] value [%s] err, %v", i.ConsulConfigPath(), val, err)
-		return err
-	}
-	err = i.PushRedisData(ctx, isPublish)
-	if err != nil {
-		return err
-	}
-	if isVersionRefresh {
-		if err := models.RefreshRouterVersion(ctx, fmt.Sprintf(models.InfluxdbInfoVersionConsulPathTemplate, cfg.StorageConsulPathPrefix, cfg.BypassSuffixPath)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// RefreshInfluxdbStorageConsulClusterConfig 更新influxDB结果表信息到consul中
-func RefreshInfluxdbStorageConsulClusterConfig(ctx context.Context, objs *[]InfluxdbStorage, goroutineLimit int) {
-	wg := &sync.WaitGroup{}
-	ch := make(chan bool, goroutineLimit)
-	wg.Add(len(*objs) - 1)
-	for i, influxdbStorage := range *objs {
-		if i == len(*objs)-1 {
-			// 最后一个收尾单独处理进行publish
-			continue
-		}
-		ch <- true
-		go func(s InfluxdbStorage, wg *sync.WaitGroup, ch chan bool) {
-			defer func() {
-				<-ch
-				wg.Done()
-			}()
-			err := s.RefreshConsulClusterConfig(ctx, false, false)
-			if err != nil {
-				logger.Errorf("result_table: [%s] try to refresh consul config failed, %v", s.TableID, err)
-			} else {
-				logger.Infof("result_table: [%s] refresh consul config success", s.TableID)
-			}
-		}(influxdbStorage, wg, ch)
-	}
-	wg.Wait()
-	// 最后一个进行publish
-	last := (*objs)[len(*objs)-1]
-	err := last.RefreshConsulClusterConfig(ctx, true, false)
-	if err != nil {
-		logger.Errorf("result_table: [%s] try to refresh consul config failed, %v", last.TableID, err)
-	} else {
-		logger.Infof("result_table: [%s] refresh consul config success", last.TableID)
-	}
-
 }

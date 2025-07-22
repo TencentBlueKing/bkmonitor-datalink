@@ -3,8 +3,8 @@ module github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat
 go 1.23.0
 
 require (
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v0.0.0-00010101000000-000000000000
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.7.0
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0
 	github.com/beevik/ntp v1.4.3
 	github.com/cespare/xxhash v1.1.0
 	github.com/cespare/xxhash/v2 v2.2.0
@@ -144,8 +144,6 @@ require (
 
 replace (
 	github.com/Sirupsen/logrus v1.6.0 => github.com/sirupsen/logrus v1.6.0
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse => ../libgse
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils => ../utils
 	github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.17-bk+incompatible
 	github.com/gosnmp/gosnmp v1.32.0 => github.com/TencentBlueKing/gosnmp v1.30.0-bk
 	github.com/shirou/gopsutil/v3 v3.23.4 => github.com/TencentBlueKing/gopsutil/v3 v3.25.6-bk

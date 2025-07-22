@@ -214,7 +214,6 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 
 		groupByFields = append(groupByFields, timeField)
 		selectFields = append(selectFields, fmt.Sprintf("MAX%s AS `%s`", timeField, TimeStamp))
-		orderByFields = append(orderByFields, fmt.Sprintf("`%s` ASC", TimeStamp))
 	}
 
 	if len(selectFields) == 0 {
@@ -227,6 +226,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		}
 	}
 
+	orderNameSet := set.New[string]()
 	for _, order := range orders {
 		// 如果是聚合操作的话，只能使用维度进行排序
 		if len(aggregates) > 0 {
@@ -249,6 +249,12 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		if err != nil {
 			return
 		}
+
+		// 移除重复的排序字段
+		if orderNameSet.Existed(orderField) {
+			continue
+		}
+		orderNameSet.Add(orderField)
 
 		ascName := "ASC"
 		if !order.Ast {

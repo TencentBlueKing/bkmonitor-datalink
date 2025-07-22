@@ -255,9 +255,6 @@ func equalDataID(a, b *v1beta1.DataID) bool {
 	if a.Name != b.Name {
 		return false
 	}
-	if a.Spec.DataID != b.Spec.DataID {
-		return false
-	}
 	if !reflect.DeepEqual(a.Spec, b.Spec) {
 		return false
 	}

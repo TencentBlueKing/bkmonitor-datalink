@@ -369,6 +369,7 @@ bk-collector:
       type: "logs"
       processors:
         - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
         - "resource_filter/logs"
         - "attribute_filter/logs"
 

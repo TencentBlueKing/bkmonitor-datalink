@@ -6,6 +6,7 @@ require (
 	connectrpc.com/connect v1.16.2
 	github.com/TarsCloud/TarsGo v1.4.5
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.7.0
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator v1.0.0
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0
 	github.com/apache/thrift v0.16.0
 	github.com/buraksezer/consistent v0.10.0

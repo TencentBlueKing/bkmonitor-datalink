@@ -4,7 +4,7 @@ go 1.23.0
 
 require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v0.0.0-00010101000000-000000000000
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0
 	github.com/beevik/ntp v1.4.3
 	github.com/cespare/xxhash v1.1.0
 	github.com/cespare/xxhash/v2 v2.2.0

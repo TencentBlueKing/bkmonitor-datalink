@@ -54,6 +54,8 @@ github.com/TarsCloud/TarsGo v1.4.5 h1:AeOILCND6p35Swnu8MRHVLWqcjzJ+M6aKi6UIfsemN
 github.com/TarsCloud/TarsGo v1.4.5/go.mod h1:fQITmq34rZnC0bz+KbQcHGdQUijzcmVtowXlic33jSk=
 github.com/TencentBlueKing/beats v7.1.15-bk+incompatible h1:0p9uoXdD4ehQ/XTnjf+jieL84L6uSMTazGbkshH2WWw=
 github.com/TencentBlueKing/beats v7.1.15-bk+incompatible/go.mod h1:ZMsX71rXxEo52YtXTamkUBNY4BmgxFY1NSZL1l1dNts=
+github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.7.0/go.mod h1:yfNv566z2pJdXZN+lQpMpi2zP5vi43KjevnFutZnYcg=
+github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0/go.mod h1:ETap19QgROaVGv9E9MRtWMeOgx/gbhbtzcjk4cgadoM=
 github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da h1:KjTM2ks9d14ZYCvmHS9iAKVt9AyzRSqNU1qabPih5BY=
 github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da/go.mod h1:eHEWzANqSiWQsof+nXEI9bUVUyV6F53Fp89EuCh2EAA=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=

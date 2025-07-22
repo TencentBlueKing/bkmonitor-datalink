@@ -30,8 +30,8 @@ require (
 )
 
 require (
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v0.0.0-00010101000000-000000000000
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.7.0
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0
 	github.com/grafana/regexp v0.0.0-20221122212121-6b5c0a4cb7fd
 	github.com/polarismesh/polaris-go v1.5.9
 	go.etcd.io/etcd/client/v3 v3.5.4
@@ -178,8 +178,6 @@ require (
 )
 
 replace (
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse => ../libgse
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils => ../utils
 	github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.17-bk+incompatible
 	// A replace directive is needed for github.com/prometheus/prometheus to ensure running against the latest version of prometheus.
 	github.com/prometheus/prometheus => github.com/prometheus/prometheus v0.40.0

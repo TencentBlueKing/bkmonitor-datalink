@@ -5,9 +5,8 @@ module github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector
 require (
 	connectrpc.com/connect v1.16.2
 	github.com/TarsCloud/TarsGo v1.4.5
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v0.0.0-00010101000000-000000000000
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator v0.0.0-00010101000000-000000000000
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.7.0
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0
 	github.com/apache/thrift v0.16.0
 	github.com/buraksezer/consistent v0.10.0
 	github.com/bytedance/sonic v1.13.3
@@ -189,9 +188,6 @@ require (
 )
 
 replace (
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse => ../libgse
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator => ../operator
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils => ../utils
 	github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.15-bk+incompatible
 	// A replace directive is needed for github.com/prometheus/prometheus to ensure running against the latest version of prometheus.
 	github.com/prometheus/prometheus => github.com/prometheus/prometheus v0.38.0

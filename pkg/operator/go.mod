@@ -19,12 +19,11 @@ require (
 )
 
 require (
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0
 	github.com/blang/semver/v4 v4.0.0
 	github.com/go-kit/log v0.2.1
 	github.com/gorilla/mux v1.8.1
 	github.com/goware/urlx v0.3.2
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.7.0
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0
 	github.com/grafana/regexp v0.0.0-20221122212121-6b5c0a4cb7fd
 	github.com/kylelemons/godebug v1.1.0
 	github.com/pkg/errors v0.9.1
@@ -34,6 +33,7 @@ require (
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.0.1207
 	go.etcd.io/etcd/client/v3 v3.5.9
 	golang.org/x/sync v0.12.0
+	golang.org/x/time v0.9.0
 	k8s.io/api v0.33.3
 	k8s.io/apimachinery v0.33.3
 	k8s.io/client-go v0.33.3
@@ -139,7 +139,6 @@ require (
 	golang.org/x/sys v0.31.0 // indirect
 	golang.org/x/term v0.30.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
-	golang.org/x/time v0.9.0 // indirect
 	golang.org/x/tools v0.26.0 // indirect
 	google.golang.org/genproto v0.0.0-20231002182017-d307bd883b97 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20231012201019-e917dd12ba7a // indirect
@@ -161,6 +160,4 @@ require (
 	sigs.k8s.io/yaml v1.4.0 // indirect
 )
 
-replace (
-	github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.17-bk+incompatible
-)
+replace github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.17-bk+incompatible

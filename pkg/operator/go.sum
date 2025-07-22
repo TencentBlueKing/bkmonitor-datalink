@@ -196,11 +196,8 @@ github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578 h1:d+Bc7a5rLufV
 github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578/go.mod h1:uGdkoq3SwY9Y+13GIhn11/XLaGBb4BfwItxLd5jeuXE=
 github.com/TencentBlueKing/beats v7.1.17-bk+incompatible h1:KsMFXnlBDdpgqkiLzfI57fMudfQThtJJS8ZUQ2n/Fe0=
 github.com/TencentBlueKing/beats v7.1.17-bk+incompatible/go.mod h1:ZMsX71rXxEo52YtXTamkUBNY4BmgxFY1NSZL1l1dNts=
-github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.7.0 h1:rKVu8SOuq+uhNSw534zd5XKH1wIN2yuNTqhNFu60vn0=
-github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.7.0/go.mod h1:yfNv566z2pJdXZN+lQpMpi2zP5vi43KjevnFutZnYcg=
 github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0 h1:M22V54nzKf4jReUWp9+rF0255nvlQP/B4zzuXIGyBlU=
 github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0/go.mod h1:ETap19QgROaVGv9E9MRtWMeOgx/gbhbtzcjk4cgadoM=
-github.com/agiledragon/gomonkey v2.0.2+incompatible h1:eXKi9/piiC3cjJD1658mEE2o3NjkJ5vDLgYjCQu0Xlw=
 github.com/agiledragon/gomonkey v2.0.2+incompatible/go.mod h1:2NGfXu1a80LLr2cmWXGBDaHEjb1idR6+FVlX5T3D9hw=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=

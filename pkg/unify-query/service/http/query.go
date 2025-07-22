@@ -1087,9 +1087,9 @@ func prepareQueryList(ctx context.Context, queryTs *structured.QueryTs) ([]*meta
 			ql.KeepColumns = queryTs.ResultColumns
 		}
 
-		qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
-		if qmErr != nil {
-			return nil, qmErr
+		qm, err := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
+		if err != nil {
+			return nil, err
 		}
 
 		for _, qry := range qm.QueryList {

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const (
@@ -233,16 +232,6 @@ func (h *ScrollSessionHelper) GetOrCreateSessionByKey(ctx context.Context, query
 
 	isDone := session.Status == SessionStatusDone
 	return session, sessionKey, isDone, nil
-}
-
-func (h *ScrollSessionHelper) ProcessSliceResults(ctx context.Context, sessionKey string, session *ScrollSession, connect, tableId, scrollID string,
-	sliceIndex int, storageType string, size int64, options metadata.ResultTableOptions) error {
-
-	return ScrollProcessSliceResult(ctx, sessionKey, session, connect, tableId, scrollID, sliceIndex, storageType, size, options)
-}
-
-func (h *ScrollSessionHelper) UpdateSession(ctx context.Context, sessionKey string, session *ScrollSession) error {
-	return UpdateSession(ctx, sessionKey, *session)
 }
 
 func (h *ScrollSessionHelper) IsSessionDone(session *ScrollSession) bool {

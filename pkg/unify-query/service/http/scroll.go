@@ -63,48 +63,36 @@ type SliceQueryContext struct {
 	SessionLock *sync.Mutex
 }
 
-func NewSliceQueryContext(
-	ctx context.Context,
-	session *redisUtil.ScrollSession,
-	scrollSessionHelper *redisUtil.ScrollSessionHelper,
-	sessionKey string,
-	queryTs *structured.QueryTs,
+func newSliceQueryContext(
+	executor *ScrollQueryExecutor,
+	scrollSessionHelperInstance *redisUtil.ScrollSessionHelper,
 	query *metadata.Query,
 	slice redisUtil.SliceInfo,
 	storage *tsdb.Storage,
-	startTime, endTime time.Time,
-	dataCh chan<- map[string]any,
-	resultCh chan<- SliceQueryResult,
-	allLabelMap map[string][]function.LabelMapValue,
-	resultTableOptions metadata.ResultTableOptions,
-	total *int64,
-	message *strings.Builder,
-	lock *sync.Mutex,
-	sessionLock *sync.Mutex,
 ) *SliceQueryContext {
 	return &SliceQueryContext{
-		Ctx:                 ctx,
-		Session:             session,
-		ScrollSessionHelper: scrollSessionHelper,
-		SessionKey:          sessionKey,
-		QueryTs:             queryTs,
+		Ctx:                 executor.ctx,
+		Session:             executor.session,
+		ScrollSessionHelper: scrollSessionHelperInstance,
+		SessionKey:          executor.sessionKey,
+		QueryTs:             executor.queryTs,
 
 		Query:   query,
 		Slice:   slice,
 		Storage: storage,
 
-		StartTime: startTime,
-		EndTime:   endTime,
+		StartTime: executor.startTime,
+		EndTime:   executor.endTime,
 
-		DataCh:             dataCh,
-		ResultCh:           resultCh,
-		AllLabelMap:        allLabelMap,
-		ResultTableOptions: resultTableOptions,
-		Total:              total,
-		Message:            message,
+		DataCh:             executor.dataCh,
+		ResultCh:           executor.resultCh,
+		AllLabelMap:        executor.allLabelMap,
+		ResultTableOptions: executor.resultTableOptions,
+		Total:              &executor.total,
+		Message:            &executor.message,
 
-		Lock:        lock,
-		SessionLock: sessionLock,
+		Lock:        executor.lock,
+		SessionLock: executor.sessionLock,
 	}
 }
 
@@ -123,8 +111,8 @@ type ScrollQueryExecutor struct {
 	total              int64
 	message            strings.Builder
 
-	lock        sync.Mutex
-	sessionLock sync.Mutex
+	lock        *sync.Mutex
+	sessionLock *sync.Mutex
 	sendWg      sync.WaitGroup
 	pool        *ants.Pool
 }
@@ -150,6 +138,8 @@ func newScrollQueryExecutor(
 		allLabelMap:        make(map[string][]function.LabelMapValue),
 		resultTableOptions: make(metadata.ResultTableOptions),
 		pool:               pool,
+		lock:               &sync.Mutex{},
+		sessionLock:        &sync.Mutex{},
 	}
 }
 
@@ -162,9 +152,7 @@ func (e *ScrollQueryExecutor) submitSliceQuery(
 	e.sendWg.Add(1)
 	err := e.pool.Submit(func() {
 		defer e.sendWg.Done()
-
-		queryCtx := NewSliceQueryContext(e.ctx, e.session, scrollSessionHelperInstance, e.sessionKey, e.queryTs, qry, slice, storage, e.startTime, e.endTime, e.dataCh, e.resultCh, e.allLabelMap, e.resultTableOptions, &e.total, &e.message, &e.lock, &e.sessionLock)
-
+		queryCtx := newSliceQueryContext(e, scrollSessionHelperInstance, qry, slice, storage)
 		if err := processSliceQueryWithHelper(queryCtx); err != nil {
 			return
 		}
@@ -244,21 +232,20 @@ func processSliceQueryWithHelper(queryCtx *SliceQueryContext) error {
 	if options != nil {
 		resultTableOptions.MergeOptions(options)
 	}
-	total := queryCtx.Total
-	*total += size
+	*queryCtx.Total += size
 	lock.Unlock()
 	sessionLock := queryCtx.SessionLock
 	connect := storage.Address
 	tableId := qry.TableID
 	sessionKey := queryCtx.SessionKey
 	sessionLock.Lock()
-	if err = queryCtx.ScrollSessionHelper.ProcessSliceResults(ctx, sessionKey, session, connect, tableId, slice.ScrollID, slice.SliceIndex, instance.InstanceType(), size, options); err != nil {
+	if err = redisUtil.ScrollProcessSliceResult(ctx, sessionKey, session, connect, tableId, slice.SliceIndex, instance.InstanceType(), size, options); err != nil {
 		log.Warnf(ctx, "Failed to process slice result: %v", err)
 		sessionLock.Unlock()
 		return err
 	}
 
-	if err = queryCtx.ScrollSessionHelper.UpdateSession(ctx, sessionKey, queryCtx.Session); err != nil {
+	if err = redisUtil.UpdateSession(ctx, sessionKey, queryCtx.Session); err != nil {
 		log.Warnf(ctx, "Failed to update session: %v", err)
 	}
 	sessionLock.Unlock()

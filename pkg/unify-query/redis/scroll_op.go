@@ -11,9 +11,11 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	redis "github.com/go-redis/redis/v8"
 	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
@@ -25,7 +27,7 @@ func isRedisNilError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return err.Error() == "redis: nil"
+	return errors.Is(err, redis.Nil)
 }
 
 const (
@@ -77,7 +79,9 @@ func ScrollAcquireRedisLock(ctx context.Context, lockKey string, timeout time.Du
 
 func ScrollReleaseRedisLock(ctx context.Context, lock interface{}) error {
 	client := globalInstance.client
-
+	if client == nil {
+		return fmt.Errorf("redis client not available")
+	}
 	lockKey, ok := lock.(string)
 	if !ok {
 		return fmt.Errorf("invalid lock type")
@@ -131,7 +135,7 @@ func scrollUpdateSession(ctx context.Context, key string, session *ScrollSession
 	return client.Set(ctx, key, sessionBytes, session.ScrollTimeout).Err()
 }
 
-func UpdateSession(ctx context.Context, sessionKey string, session ScrollSession) error {
+func UpdateSession(ctx context.Context, sessionKey string, session *ScrollSession) error {
 	if globalInstance == nil {
 		return fmt.Errorf("redis instance not initialized")
 	}
@@ -154,7 +158,7 @@ func UpdateSession(ctx context.Context, sessionKey string, session ScrollSession
 	return err
 }
 
-func ScrollProcessSliceResult(ctx context.Context, sessionKey string, session *ScrollSession, connect, tableID, scrollID string, sliceIdx int, tsDbType string, size int64, options metadata.ResultTableOptions) error {
+func ScrollProcessSliceResult(ctx context.Context, sessionKey string, session *ScrollSession, connect, tableID string, sliceIdx int, tsDbType string, size int64, options metadata.ResultTableOptions) error {
 	isDone := size == 0
 
 	switch tsDbType {
@@ -187,5 +191,5 @@ func ScrollProcessSliceResult(ctx context.Context, sessionKey string, session *S
 		return fmt.Errorf("unsupported tsdb type: %s", tsDbType)
 	}
 
-	return UpdateSession(ctx, sessionKey, *session)
+	return UpdateSession(ctx, sessionKey, session)
 }

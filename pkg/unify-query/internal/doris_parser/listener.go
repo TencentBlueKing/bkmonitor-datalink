@@ -50,6 +50,7 @@ func (l *DorisListener) EnterEveryRule(ctx antlr.ParserRuleContext) {
 	switch ctx.(type) {
 	case *gen.SelectClauseContext:
 		l.expr = NewSelect()
+		//l.expr = &SelectV2{}
 	case *gen.WhereClauseContext:
 		l.expr = NewWhere()
 	case *gen.FromClauseContext:

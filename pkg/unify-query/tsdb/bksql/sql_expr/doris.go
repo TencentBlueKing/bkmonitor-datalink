@@ -583,7 +583,7 @@ func (d *DorisSQLExpr) walk(e querystring_parser.Expr) (string, error) {
 			c.Field = DefaultKey
 		}
 		field, _ := d.dimTransform(c.Field)
-		return fmt.Sprintf("%s LIKE '%%%s%%'", field, c.Value), nil
+		return fmt.Sprintf("%s LIKE '%s'", field, d.likeValue(c.Value)), nil
 	case *querystring_parser.MatchExpr:
 		if c.Field == "" {
 			c.Field = DefaultKey

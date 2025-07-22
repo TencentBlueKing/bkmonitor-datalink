@@ -170,13 +170,11 @@ func (l *logicListInc) Inc(e Expr) {
 		return
 	}
 
-	switch v := e.(type) {
-	case *Paren:
-		if v.Left {
-			l.list[len(l.list)-1].inc++
-		} else if v.Right {
-			l.list[len(l.list)-1].inc--
-		}
+	switch e.(type) {
+	case *LeftParen:
+		l.list[len(l.list)-1].inc++
+	case *RightParen:
+		l.list[len(l.list)-1].inc--
 	}
 }
 
@@ -248,9 +246,7 @@ func (e *Where) getOp(s string) string {
 func (e *Where) Enter(ctx antlr.ParserRuleContext) {
 	switch v := ctx.(type) {
 	case *gen.ParenthesizedExpressionContext:
-		e.addCondition(&Paren{
-			Left: true,
-		})
+		e.addCondition(NewLeftParen())
 	case *gen.LogicalBinaryContext:
 		e.addCondition(&Logical{
 			Name: strings.ToUpper(v.GetOperator().GetText()),
@@ -280,9 +276,7 @@ func (e *Where) Enter(ctx antlr.ParserRuleContext) {
 func (e *Where) Exit(ctx antlr.ParserRuleContext) {
 	switch ctx.(type) {
 	case *gen.ParenthesizedExpressionContext:
-		e.addCondition(&Paren{
-			Right: true,
-		})
+		e.addCondition(NewRightParen())
 	case *gen.ComparisonContext:
 		if e.cur != nil {
 			e.addCondition(e.cur)
@@ -461,95 +455,6 @@ func NewSelectFunc() *SelectFunc {
 	}
 }
 
-type LeftParen struct {
-	defaultExpr
-}
-
-func (e *LeftParen) String() string {
-	return "("
-}
-
-type RightParen struct {
-	defaultExpr
-}
-
-func (e *RightParen) String() string {
-	return ")"
-}
-
-type As struct {
-	defaultExpr
-	name string
-}
-
-func (e *As) String() string {
-	return fmt.Sprintf("AS %s", e.name)
-}
-
-type S struct {
-	defaultExpr
-	name string
-}
-
-func NewS(s string) *S {
-	return &S{
-		name: s,
-	}
-}
-
-func (e *S) String() string {
-	return e.name
-}
-
-type Item struct {
-	defaultExpr
-	exprList []Expr
-}
-
-func (e *Item) add(expr Expr) {
-	e.exprList = append(e.exprList, expr)
-}
-
-func (e *Item) Exit(ctx antlr.ParserRuleContext) {
-	switch ctx.(type) {
-	case *gen.CastContext:
-		e.add(&RightParen{})
-	}
-}
-
-func (e *Item) Enter(ctx antlr.ParserRuleContext) {
-	//switch v := ctx.(type) {
-	//case *gen.CastContext:
-	//	e.add(NewS("CAST"))
-	//	e.add(&LeftParen{})
-	//case *gen.CastDataTypeContext:
-	//	if e.SelectFunc != nil {
-	//		e.SelectFunc.As = v.GetText()
-	//	}
-	//case *gen.FunctionCallContext:
-	//	e.SelectFunc = NewSelectFunc()
-	//case *gen.FunctionNameIdentifierContext:
-	//	e.SetFuncName(ctx.GetText())
-	//case *gen.ColumnReferenceContext:
-	//	e.Name = v.GetText()
-	//case *gen.StarContext:
-	//	e.Name = "*"
-	//case *gen.IdentifierContext:
-	//	if e.As == "" && e.Name != "" {
-	//		aliasName := v.GetText()
-	//		if aliasName != e.Name {
-	//			e.ExtraNames = append(e.ExtraNames, aliasName)
-	//		}
-	//	}
-	//case *gen.ConstantDefaultContext:
-	//	if e.SelectFunc != nil {
-	//		e.SelectFunc.Arg = append(e.SelectFunc.Arg, v.GetText())
-	//	}
-	//case *gen.IdentifierOrTextContext:
-	//	e.As = v.GetText()
-	//}
-}
-
 type Field struct {
 	defaultExpr
 	Name       string
@@ -717,16 +622,235 @@ func (e *Logical) String() string {
 	return e.Name
 }
 
-type Paren struct {
+type LeftParen struct {
 	defaultExpr
-	Left  bool
-	Right bool
 }
 
-func (e *Paren) String() string {
-	if e.Left {
-		return "("
-	} else {
-		return ")"
+func NewLeftParen() *LeftParen {
+	return &LeftParen{}
+}
+
+func (e *LeftParen) String() string {
+	return "("
+}
+
+type RightParen struct {
+	defaultExpr
+}
+
+func NewRightParen() *RightParen {
+	return &RightParen{}
+}
+
+func (e *RightParen) String() string {
+	return ")"
+}
+
+type As struct {
+	defaultExpr
+	name string
+}
+
+func NewAs(s string) *As {
+	return &As{
+		name: s,
 	}
+}
+
+func (e *As) String() string {
+	return fmt.Sprintf("AS %s", e.name)
+}
+
+type Str struct {
+	defaultExpr
+	name string
+}
+
+func NewStr(s string) *Str {
+	return &Str{
+		name: s,
+	}
+}
+
+func (e *Str) String() string {
+	return e.name
+}
+
+type SF struct {
+	defaultExpr
+	name  Expr
+	value Expr
+	as    Expr
+}
+
+func NewSF() *SF {
+	return &SF{}
+}
+
+func (e *SF) String() string {
+	s := fmt.Sprintf("%s(%s)", e.name.String(), e.value.String())
+	if e.as != nil {
+		s += fmt.Sprintf(" AS %s", e.as.String())
+	}
+	return s
+}
+
+func (e *SF) SetName(exp Expr) *SF {
+	e.name = exp
+	return e
+}
+
+func (e *SF) SetValue(exp Expr) *SF {
+	e.value = exp
+	return e
+}
+
+func (e *SF) SetAs(exp Expr) *SF {
+	e.as = exp
+	return e
+}
+
+type Binary struct {
+	defaultExpr
+	Left  Expr
+	Right Expr
+	Op    string
+}
+
+func (e *Binary) String() string {
+	return fmt.Sprintf("%s %s %s", e.Left.String(), e.Op, e.Right.String())
+}
+
+type Item struct {
+	defaultExpr
+	items []Expr
+}
+
+func NewItem() *Item {
+	return &Item{}
+}
+
+func (e *Item) String() string {
+	var s strings.Builder
+	for _, item := range e.items {
+		if item == nil {
+			continue
+		}
+		if s.Len() > 0 {
+			s.WriteString(", ")
+		}
+		s.WriteString(item.String())
+	}
+	return s.String()
+}
+
+func (e *Item) add(exp Expr) {
+	if exp == nil {
+		return
+	}
+	if e.items == nil {
+		e.items = make([]Expr, 0)
+	}
+	e.items = append(e.items, exp)
+}
+
+func (e *Item) getSF() (*SF, bool) {
+	if len(e.items) == 0 {
+		e.items = append(e.items, NewSF())
+	}
+	v, ok := e.items[0].(*SF)
+	return v, ok
+}
+
+func (e *Item) setFuncName(exp Expr) {
+	if sf, ok := e.getSF(); ok {
+		sf.SetName(exp)
+	}
+}
+
+func (e *Item) setFuncValue(exp Expr) {
+	if sf, ok := e.getSF(); ok {
+		sf.SetValue(exp)
+	}
+}
+
+func (e *Item) setAs(exp Expr) {
+	if sf, ok := e.getSF(); ok {
+		sf.SetAs(exp)
+	}
+}
+
+func (e *Item) Enter(ctx antlr.ParserRuleContext) {
+	switch v := ctx.(type) {
+	case *gen.FunctionNameIdentifierContext:
+		e.items = append(e.items, NewSF())
+		if sf, ok := e.getSF(); ok {
+			sf.SetName(NewStr(v.GetText()))
+		}
+	case *gen.CastContext:
+		if sf, ok := e.getSF(); ok {
+			sf.SetName(NewStr("CAST"))
+		}
+	case *gen.StarContext:
+		if sf, ok := e.getSF(); ok {
+			sf.SetValue(NewStr("*"))
+		}
+	}
+}
+
+func (e *Item) Exit(ctx antlr.ParserRuleContext) {
+	switch v := ctx.(type) {
+	case *gen.FunctionNameIdentifierContext:
+	case *gen.CastDataTypeContext:
+		if sf, ok := e.getSF(); ok {
+			sf.SetAs(NewStr(v.GetText()))
+		}
+	case *gen.CastContext:
+	case *gen.FunctionCallContext:
+	case *gen.NamedExpressionContext:
+	}
+}
+
+type SelectV2 struct {
+	defaultExpr
+	Item *Item
+
+	Items []*Item
+}
+
+func (e *SelectV2) String() string {
+	var s []string
+	for _, expr := range e.Items {
+		s = append(s, expr.String())
+	}
+
+	if len(s) == 0 {
+		return ""
+	}
+
+	return strings.Join(s, ", ")
+}
+
+func (e *SelectV2) Enter(ctx antlr.ParserRuleContext) {
+	switch ctx.(type) {
+	case *gen.NamedExpressionContext:
+		e.Item = NewItem()
+	default:
+		if e.Item != nil {
+			e.Item.Enter(ctx)
+		}
+	}
+}
+
+func (e *SelectV2) Exit(ctx antlr.ParserRuleContext) {
+	switch ctx.(type) {
+	case *gen.NamedExpressionContext:
+		e.Items = append(e.Items, e.Item)
+	default:
+		if e.Item != nil {
+			e.Item.Exit(ctx)
+		}
+	}
+
+	return
 }

@@ -483,7 +483,7 @@ func (os Orders) SortSliceList(list []map[string]any) {
 				}
 			}
 		}
-		return true
+		return false
 	})
 }
 

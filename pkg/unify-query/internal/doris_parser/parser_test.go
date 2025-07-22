@@ -217,8 +217,8 @@ group by
 		},
 		{
 			name: "test-21",
-			q:    "select ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) as ct",
-			sql:  "SELECT ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) AS ct",
+			q:    "select ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) as ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns",
+			sql:  "",
 		},
 	}
 

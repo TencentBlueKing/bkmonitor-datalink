@@ -176,8 +176,12 @@ func (s *ScrollSession) HasMoreData(tsDbType string) bool {
 			s.SliceStatus = make(map[string]bool)
 		}
 
-		if len(s.ScrollIDs) > 0 {
-			return true
+		for key, scrollID := range s.ScrollIDs {
+			if scrollID != "" {
+				if !s.SliceStatus[key] {
+					return true
+				}
+			}
 		}
 
 		return false

@@ -171,17 +171,30 @@ func ScrollProcessSliceResult(ctx context.Context, sessionKey string, session *S
 			}
 		}
 
-		if newScrollID != "" {
-			session.SetScrollID(connect, tableID, newScrollID, sliceIdx)
-		} else {
-			hasMoreData := session.HasMoreData(consul.ElasticsearchStorageType)
-			if !hasMoreData {
-				session.Status = SessionStatusDone
-			}
-		}
 		if isSliceDone {
 			session.RemoveScrollID(connect, tableID, sliceIdx)
 			session.MarkSliceDone(connect, tableID, sliceIdx)
+		} else if newScrollID != "" {
+			session.SetScrollID(connect, tableID, newScrollID, sliceIdx)
+		} else {
+			session.MarkSliceDone(connect, tableID, sliceIdx)
+		}
+
+		allSlicesDone := true
+		for i := 0; i < session.MaxSlice; i++ {
+			k := SliceStatus{
+				Connect:  connect,
+				TableID:  tableID,
+				SliceIdx: i,
+			}
+			if !session.SliceStatus[k.String()] {
+				allSlicesDone = false
+				break
+			}
+		}
+
+		if allSlicesDone {
+			session.Status = SessionStatusDone
 		}
 
 	case consul.BkSqlStorageType:

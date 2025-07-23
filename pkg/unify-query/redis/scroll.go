@@ -130,9 +130,21 @@ func (s *ScrollSession) makeElasticsearchSlices(connect, tableID string) ([]Slic
 	slices := make([]SliceInfo, 0, s.MaxSlice)
 
 	for sliceIndex := 0; sliceIndex < s.MaxSlice; sliceIndex++ {
+		scrollID := s.getNextElasticsearchScrollID(connect, tableID, sliceIndex)
+
+		k := SliceStatus{
+			Connect:  connect,
+			TableID:  tableID,
+			SliceIdx: sliceIndex,
+		}
+
+		if s.SliceStatus != nil && s.SliceStatus[k.String()] {
+			continue
+		}
+
 		slices = append(slices, SliceInfo{
 			SliceIndex: sliceIndex,
-			ScrollID:   s.getNextElasticsearchScrollID(connect, tableID, sliceIndex),
+			ScrollID:   scrollID,
 			Index:      0,
 		})
 	}
@@ -176,7 +188,17 @@ func (s *ScrollSession) HasMoreData(tsDbType string) bool {
 
 		return false
 	case consul.BkSqlStorageType:
-		return s.Status != SessionStatusDone
+		if s.SliceStatus == nil {
+			s.SliceStatus = make(map[string]bool)
+		}
+
+		for key := range s.ScrollIDs {
+			if !s.SliceStatus[key] {
+				return true
+			}
+		}
+
+		return false
 	default:
 		return false
 	}

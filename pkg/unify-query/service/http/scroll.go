@@ -18,10 +18,13 @@ import (
 
 	ants "github.com/panjf2000/ants/v2"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
@@ -152,8 +155,7 @@ func (e *ScrollQueryExecutor) submitSliceQuery(
 	e.sendWg.Add(1)
 	err := e.pool.Submit(func() {
 		defer e.sendWg.Done()
-		queryCtx := newSliceQueryContext(e, scrollSessionHelperInstance, qry, slice, storage)
-		if err := processSliceQueryWithHelper(queryCtx); err != nil {
+		if err := processSliceQueryWithHelper(newSliceQueryContext(e, scrollSessionHelperInstance, qry, slice, storage)); err != nil {
 			return
 		}
 	})
@@ -182,26 +184,6 @@ func processSliceQueryWithHelper(queryCtx *SliceQueryContext) error {
 		qry.Scroll = queryTs.Scroll
 	}
 
-	qry.ResultTableOptions = make(metadata.ResultTableOptions)
-
-	slice := queryCtx.Slice
-	session := queryCtx.Session
-	option := &metadata.ResultTableOption{
-		SliceID:  &slice.SliceIndex,
-		SliceMax: &session.MaxSlice,
-		ScrollID: slice.ScrollID,
-	}
-
-	if slice.Index >= 0 {
-		qry.From = slice.Index * session.Limit
-	}
-	storage := queryCtx.Storage
-	qry.Size = session.Limit
-	qry.ResultTableOptions.SetOption(
-		qry.TableID,
-		storage.Address,
-		option,
-	)
 	start := queryCtx.StartTime
 	end := queryCtx.EndTime
 	dataCh := queryCtx.DataCh
@@ -213,6 +195,7 @@ func processSliceQueryWithHelper(queryCtx *SliceQueryContext) error {
 		dataCh,
 	)
 	message := queryCtx.Message
+	slice := queryCtx.Slice
 	if err != nil {
 		message.WriteString(
 			fmt.Sprintf(
@@ -235,9 +218,11 @@ func processSliceQueryWithHelper(queryCtx *SliceQueryContext) error {
 	*queryCtx.Total += size
 	lock.Unlock()
 	sessionLock := queryCtx.SessionLock
+	storage := queryCtx.Storage
 	connect := storage.Address
 	tableId := qry.TableID
 	sessionKey := queryCtx.SessionKey
+	session := queryCtx.Session
 	sessionLock.Lock()
 	if err = redisUtil.ScrollProcessSliceResult(ctx, sessionKey, session, connect, tableId, slice.SliceIndex, instance.InstanceType(), size, options); err != nil {
 		log.Warnf(ctx, "Failed to process slice result: %v", err)
@@ -292,8 +277,75 @@ func (e *ScrollQueryExecutor) processQueryForStorage(
 	}
 
 	for _, slice := range slices {
-		e.submitSliceQuery(qry, slice, storage, scrollSessionHelperInstance)
+		e.submitSliceQuery(e.createSliceQuery(qry, slice, instance.InstanceType(), storage), slice, storage, scrollSessionHelperInstance)
 	}
+}
+
+func (e *ScrollQueryExecutor) createSliceQuery(originalQry *metadata.Query, slice redis.SliceInfo, instanceType string, storage *tsdb.Storage) *metadata.Query {
+	qry := e.deepCopyQuery(originalQry)
+
+	if e.queryTs.Scroll != "" {
+		qry.Scroll = e.queryTs.Scroll
+	}
+
+	var from int
+	if slice.Index >= 0 {
+		from = slice.Index * e.session.Limit
+	}
+
+	fromPtr := &from
+	option := &metadata.ResultTableOption{
+		SliceID:  &slice.SliceIndex,
+		SliceMax: &e.session.MaxSlice,
+		ScrollID: slice.ScrollID,
+		From:     fromPtr,
+	}
+
+	address := storage.Address
+	if instanceType == consul.BkSqlStorageType {
+		address = ""
+	}
+
+	qry.ResultTableOptions.SetOption(qry.TableID, address, option)
+
+	return qry
+}
+
+func (e *ScrollQueryExecutor) deepCopyQuery(original *metadata.Query) *metadata.Query {
+	data, err := json.Marshal(original)
+	if err != nil {
+		return &metadata.Query{
+			TableID:            original.TableID,
+			DB:                 original.DB,
+			Measurement:        original.Measurement,
+			Field:              original.Field,
+			From:               original.From,
+			Size:               original.Size,
+			Scroll:             original.Scroll,
+			ResultTableOptions: make(metadata.ResultTableOptions),
+		}
+	}
+
+	var result metadata.Query
+	err = json.Unmarshal(data, &result)
+	if err != nil {
+		return &metadata.Query{
+			TableID:            original.TableID,
+			DB:                 original.DB,
+			Measurement:        original.Measurement,
+			Field:              original.Field,
+			From:               original.From,
+			Size:               original.Size,
+			Scroll:             original.Scroll,
+			ResultTableOptions: make(metadata.ResultTableOptions),
+		}
+	}
+
+	if result.ResultTableOptions == nil {
+		result.ResultTableOptions = make(metadata.ResultTableOptions)
+	}
+
+	return &result
 }
 
 func (e *ScrollQueryExecutor) processStorageQueries(

@@ -29,7 +29,7 @@ import (
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
-func TestQueryRawWithScroll(t *testing.T) {
+func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	spaceUid := influxdb.SpaceUid
 
@@ -143,7 +143,7 @@ func TestQueryRawWithScroll(t *testing.T) {
 			},
 			{
 				desc:     "Third scroll request - slice 0 ends, others continue",
-				total:    3,
+				total:    2,
 				done:     false,
 				hasData:  true,
 				mockData: thirdRoundEsMockData,
@@ -176,6 +176,151 @@ func TestQueryRawWithScroll(t *testing.T) {
 		t.Logf("Running step %d: %s", i+1, c.desc)
 
 		mock.Es.Set(c.mockData)
+
+		queryTsBytes, _ := json.Marshal(tCase.queryTs)
+		var queryTsCopy structured.QueryTs
+		json.Unmarshal(queryTsBytes, &queryTsCopy)
+
+		total, list, _, done, err := queryRawWithScroll(testCtx, &queryTsCopy)
+		hasData := len(list) > 0
+
+		assert.NoError(t, err, "QueryRawWithScroll should not return error for step %d", i+1)
+		assert.Equal(t, c.total, total, "Total should match expected value for step %d", i+1)
+		assert.Equal(t, c.done, done, "Done should match expected value for step %d", i+1)
+		assert.Equal(t, c.hasData, hasData, "HasData should match expected value for step %d", i+1)
+
+		if t.Failed() {
+			t.Fatalf("Test failed at step %d: %s", i+1, c.desc)
+		}
+	}
+}
+
+func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	spaceUid := influxdb.SpaceUid
+
+	mock.Init()
+	influxdb.MockSpaceRouter(ctx)
+	promql.MockEngine()
+
+	testTableId := "result_table.doris"
+
+	router, err := influxdb.GetSpaceTsDbRouter()
+	require.NoError(t, err, "Failed to get space router")
+
+	err = router.Add(ctx, ir.ResultTableDetailKey, testTableId, &ir.ResultTableDetail{
+		StorageId:   4,
+		TableId:     testTableId,
+		DB:          "doris_db",
+		StorageType: consul.BkSqlStorageType,
+		DataLabel:   "doris_test",
+	})
+	assert.NoError(t, err)
+
+	type expectResult struct {
+		desc     string
+		total    int64
+		done     bool
+		hasData  bool
+		mockData map[string]any
+	}
+
+	require.NoError(t, err, "Failed to add space mapping")
+
+	s, err := miniredis.Run()
+	require.NoError(t, err, "Failed to start miniredis")
+	defer s.Close()
+
+	options := &goRedis.UniversalOptions{
+		Addrs: []string{s.Addr()},
+		DB:    0,
+	}
+
+	err = redisUtil.SetInstance(ctx, "test", options)
+	require.NoError(t, err, "Failed to set redis instance")
+
+	initDorisMockData := map[string]any{
+		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10`:           `{"result":true,"code":"00","message":"","data":{"totalRecords":2,"total_record_size":2,"list":[{"dtEventTimeStamp":"1723594001000","data":"doris_test1"},{"dtEventTimeStamp":"1723594002000","data":"doris_test2"}]}}`,
+		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 10`: `{"result":true,"code":"00","message":"","data":{"totalRecords":2,"total_record_size":2,"list":[{"dtEventTimeStamp":"1723594003000","data":"doris_test3"},{"dtEventTimeStamp":"1723594004000","data":"doris_test4"}]}}`,
+		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 20`: `{"result":true,"code":"00","message":"","data":{"totalRecords":2,"total_record_size":2,"list":[{"dtEventTimeStamp":"1723594005000","data":"doris_test5"},{"dtEventTimeStamp":"1723594006000","data":"doris_test6"}]}}`,
+	}
+
+	inProgressDorisMockData := map[string]any{
+		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 30`: `{"result":true,"code":"00","message":"","data":{"totalRecords":2,"total_record_size":2,"list":[{"dtEventTimeStamp":"1723594007000","data":"doris_test7"},{"dtEventTimeStamp":"1723594008000","data":"doris_test8"}]}}`,
+		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 40`: `{"result":true,"code":"00","message":"","data":{"totalRecords":2,"total_record_size":2,"list":[{"dtEventTimeStamp":"1723594009000","data":"doris_test9"},{"dtEventTimeStamp":"1723594010000","data":"doris_test10"}]}}`,
+		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 50`: `{"result":true,"code":"00","message":"","data":{"totalRecords":2,"total_record_size":2,"list":[{"dtEventTimeStamp":"1723594011000","data":"doris_test11"},{"dtEventTimeStamp":"1723594012000","data":"doris_test12"}]}}`,
+	}
+
+	thirdRoundDorisMockData := map[string]any{
+		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 60`: `{"result":true,"code":"00","message":"","data":{"totalRecords":0,"total_record_size":0,"list":[]}}`,
+		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 70`: `{"result":true,"code":"00","message":"","data":{"totalRecords":0,"total_record_size":0,"list":[]}}`,
+		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 80`: `{"result":true,"code":"00","message":"","data":{"totalRecords":0,"total_record_size":0,"list":[]}}`,
+	}
+
+	start := "1723594000"
+	end := "1723595000"
+	type testCase struct {
+		queryTs  *structured.QueryTs
+		expected []expectResult
+	}
+
+	tCase := testCase{
+		queryTs: &structured.QueryTs{
+			SpaceUid: spaceUid,
+			QueryList: []*structured.Query{
+				{
+					TableID: structured.TableID(testTableId),
+				},
+			},
+			Timezone: "Asia/Shanghai",
+			Scroll:   "9m",
+			Limit:    10,
+			Start:    start,
+			End:      end,
+		},
+		expected: []expectResult{
+			{
+				desc:     "First scroll request - slice 0,1,2 with OFFSET 0,10,20",
+				total:    6,
+				done:     false,
+				hasData:  true,
+				mockData: initDorisMockData,
+			},
+			{
+				desc:     "Second scroll request - slice 0,1,2 with OFFSET 30,40,50",
+				total:    6,
+				done:     false,
+				hasData:  true,
+				mockData: inProgressDorisMockData,
+			},
+			{
+				desc:     "Third scroll request - slice 0,1,2 with OFFSET 60,70,80 - should be done",
+				total:    0,
+				done:     true,
+				hasData:  false,
+				mockData: thirdRoundDorisMockData,
+			},
+			{
+				desc:     "Fourth scroll request - should still be done",
+				total:    0,
+				done:     true,
+				hasData:  false,
+				mockData: thirdRoundDorisMockData,
+			},
+		},
+	}
+	user := &metadata.User{
+		Key:       "username:test_doris_scroll_user",
+		SpaceUID:  spaceUid,
+		SkipSpace: "true",
+	}
+	testCtx := metadata.InitHashID(context.Background())
+	metadata.SetUser(testCtx, user)
+
+	for i, c := range tCase.expected {
+		t.Logf("Running step %d: %s", i+1, c.desc)
+
+		mock.BkSQL.Set(c.mockData)
 
 		queryTsBytes, _ := json.Marshal(tCase.queryTs)
 		var queryTsCopy structured.QueryTs

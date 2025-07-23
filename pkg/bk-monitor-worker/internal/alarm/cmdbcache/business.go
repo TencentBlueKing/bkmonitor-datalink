@@ -75,11 +75,11 @@ func getBusinessList(ctx context.Context, bkTenantId string) ([]map[string]inter
 		func(resp interface{}) (int, error) {
 			data, ok := resp.(map[string]interface{})["data"]
 			if !ok {
-				return 0, errors.New("response data not found")
+				return 0, errors.Errorf("response data not found, resp: %v", resp)
 			}
 			count, ok := data.(map[string]interface{})["count"]
 			if !ok {
-				return 0, errors.New("response count not found")
+				return 0, errors.Errorf("response count not found, resp: %v", resp)
 			}
 			return int(count.(float64)), nil
 		},

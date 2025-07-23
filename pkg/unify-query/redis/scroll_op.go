@@ -11,14 +11,16 @@ package redis
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	redis "github.com/go-redis/redis/v8"
 	"github.com/spf13/cast"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -34,6 +36,28 @@ const (
 	clearCacheField = "clear_cache"
 )
 
+func generateDeterministicKey(data map[string]any) string {
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var parts []string
+	for _, k := range keys {
+		v := data[k]
+		if nestedMap, ok := v.(map[string]any); ok {
+			parts = append(parts, fmt.Sprintf("%s:%s", k, generateDeterministicKey(nestedMap)))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s:%v", k, v))
+		}
+	}
+
+	combined := fmt.Sprintf("{%s}", fmt.Sprintf("%v", parts))
+	hash := md5.Sum([]byte(combined))
+	return hex.EncodeToString(hash[:])
+}
+
 func ScrollGenerateQueryTsKey(queryTs any, userName string) (string, error) {
 	queryTsMap, err := cast.ToStringMapE(queryTs)
 	if err != nil {
@@ -42,16 +66,15 @@ func ScrollGenerateQueryTsKey(queryTs any, userName string) (string, error) {
 	if _, ok := queryTsMap[clearCacheField]; ok {
 		delete(queryTsMap, clearCacheField)
 	}
-	keyStruct := map[string]any{
-		"queryTs":  queryTs,
+
+	keyData := map[string]any{
+		"queryTs":  queryTsMap,
 		"username": userName,
 	}
 
-	queryBytes, err := json.Marshal(keyStruct)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal queryTs key: %v", err)
-	}
-	return string(queryBytes), nil
+	deterministicKey := generateDeterministicKey(keyData)
+
+	return deterministicKey, nil
 }
 
 func GetSessionKey(queryTsKey string) string {
@@ -160,47 +183,22 @@ func UpdateSession(ctx context.Context, sessionKey string, session *ScrollSessio
 
 func ScrollProcessSliceResult(ctx context.Context, sessionKey string, session *ScrollSession, connect, tableID string, sliceIdx int, tsDbType string, size int64, options metadata.ResultTableOptions) error {
 	isSliceDone := size == 0
-
-	switch tsDbType {
-	case consul.ElasticsearchStorageType:
-		newScrollID := ""
-		if options != nil {
-			resultOption := options.GetOption(tableID, connect)
-			if resultOption != nil {
-				newScrollID = resultOption.ScrollID
-			}
+	var newScrollID string
+	if options != nil {
+		if opt := options.GetOption(tableID, connect); opt != nil {
+			newScrollID = opt.ScrollID
 		}
+	}
 
-		if isSliceDone || newScrollID == "" {
-			session.RemoveScrollID(connect, tableID, sliceIdx)
-			session.MarkSliceDone(connect, tableID, sliceIdx)
-		} else {
-			session.SetScrollID(connect, tableID, newScrollID, sliceIdx)
-		}
+	if isSliceDone {
+		session.RemoveScrollID(connect, tableID, sliceIdx)
+		session.MarkSliceDone(connect, tableID, sliceIdx)
+	} else {
+		session.SetScrollID(connect, tableID, newScrollID, sliceIdx)
+	}
 
-		allSlicesDone := true
-		for i := 0; i < session.MaxSlice; i++ {
-			k := SliceStatus{
-				Connect:  connect,
-				TableID:  tableID,
-				SliceIdx: i,
-			}
-			if !session.SliceStatus[k.String()] {
-				allSlicesDone = false
-				break
-			}
-		}
-
-		if allSlicesDone {
-			session.Status = SessionStatusDone
-		}
-
-	case consul.BkSqlStorageType:
-		if isSliceDone {
-			session.Status = SessionStatusDone
-		}
-	default:
-		return fmt.Errorf("unsupported tsdb type: %s", tsDbType)
+	if !session.HasMoreData(tsDbType) {
+		session.Status = SessionStatusDone
 	}
 
 	return UpdateSession(ctx, sessionKey, session)

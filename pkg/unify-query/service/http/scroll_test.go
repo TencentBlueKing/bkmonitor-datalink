@@ -89,22 +89,26 @@ func TestQueryRawWithScroll(t *testing.T) {
 	}
 
 	inProgressEsMockData := map[string]any{
-		`{"scroll":"9m","scroll_id":"scroll_id_0"}`: `{"_scroll_id":"scroll_id_0","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"4","_source":{"dtEventTimeStamp":"1723594004000","data":"es_test4"}}]}}`,
-		`{"scroll":"9m","scroll_id":"scroll_id_1"}`: `{"_scroll_id":"scroll_id_1","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"5","_source":{"dtEventTimeStamp":"1723594005000","data":"es_test5"}}]}}`,
-		`{"scroll":"9m","scroll_id":"scroll_id_2"}`: `{"_scroll_id":"scroll_id_2","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"6","_source":{"dtEventTimeStamp":"1723594006000","data":"es_test6"}}]}}`,
+		`{"scroll":"9m","scroll_id":"scroll_id_0"}`: `{"_scroll_id":"scroll_id_0_next","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"4","_source":{"dtEventTimeStamp":"1723594004000","data":"es_test4"}}]}}`,
+		`{"scroll":"9m","scroll_id":"scroll_id_1"}`: `{"_scroll_id":"scroll_id_1_next","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"5","_source":{"dtEventTimeStamp":"1723594005000","data":"es_test5"}}]}}`,
+		`{"scroll":"9m","scroll_id":"scroll_id_2"}`: `{"_scroll_id":"scroll_id_2_next","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"6","_source":{"dtEventTimeStamp":"1723594006000","data":"es_test6"}}]}}`,
+	}
+
+	thirdRoundEsMockData := map[string]any{
+		`{"scroll":"9m","scroll_id":"scroll_id_0_next"}`: `{"_scroll_id":"","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
+		`{"scroll":"9m","scroll_id":"scroll_id_1_next"}`: `{"_scroll_id":"scroll_id_1_final","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"7","_source":{"dtEventTimeStamp":"1723594007000","data":"es_test7"}}]}}`,
+		`{"scroll":"9m","scroll_id":"scroll_id_2_next"}`: `{"_scroll_id":"scroll_id_2_final","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"8","_source":{"dtEventTimeStamp":"1723594008000","data":"es_test8"}}]}}`,
 	}
 
 	allDoneMockData := map[string]any{
-		`{"scroll":"9m","scroll_id":"scroll_id_0"}`: `{"_scroll_id":"","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
-		`{"scroll":"9m","scroll_id":"scroll_id_1"}`: `{"_scroll_id":"","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
-		`{"scroll":"9m","scroll_id":"scroll_id_2"}`: `{"_scroll_id":"","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
+		`{"scroll":"9m","scroll_id":"scroll_id_1_final"}`: `{"_scroll_id":"","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
+		`{"scroll":"9m","scroll_id":"scroll_id_2_final"}`: `{"_scroll_id":"","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
 	}
 
 	start := "1723594000"
 	end := "1723595000"
 	type testCase struct {
 		queryTs  *structured.QueryTs
-		mockDat  map[string]any
 		expected []expectResult
 	}
 
@@ -138,28 +142,21 @@ func TestQueryRawWithScroll(t *testing.T) {
 				mockData: inProgressEsMockData,
 			},
 			{
-				desc:     "Third scroll request",
+				desc:     "Third scroll request - slice 0 ends, others continue",
 				total:    3,
 				done:     false,
 				hasData:  true,
-				mockData: inProgressEsMockData,
+				mockData: thirdRoundEsMockData,
 			},
 			{
-				desc:     "Continue",
+				desc:     "Fourth scroll request - should be done",
 				total:    0,
 				done:     true,
 				hasData:  false,
 				mockData: allDoneMockData,
 			},
 			{
-				desc:     "Continue",
-				total:    0,
-				done:     true,
-				hasData:  false,
-				mockData: allDoneMockData,
-			},
-			{
-				desc:     "Continue",
+				desc:     "Fifth scroll request - should still be done",
 				total:    0,
 				done:     true,
 				hasData:  false,
@@ -175,18 +172,25 @@ func TestQueryRawWithScroll(t *testing.T) {
 	testCtx := metadata.InitHashID(context.Background())
 	metadata.SetUser(testCtx, user)
 
-	for _, c := range tCase.expected {
-		t.Run(c.desc, func(t *testing.T) {
-			queryTsBytes, _ := json.Marshal(tCase.queryTs)
-			var queryTsCopy structured.QueryTs
-			json.Unmarshal(queryTsBytes, &queryTsCopy)
-			mock.Es.Set(c.mockData)
-			total, list, _, done, err := queryRawWithScroll(testCtx, &queryTsCopy)
-			hasData := len(list) > 0
-			assert.NoError(t, err, "QueryRawWithScroll should not return error")
-			assert.Equal(t, c.total, total, "Total should match expected value")
-			assert.Equal(t, c.done, done, "Done should match expected value")
-			assert.Equal(t, c.hasData, hasData, "HasData should match expected value")
-		})
+	for i, c := range tCase.expected {
+		t.Logf("Running step %d: %s", i+1, c.desc)
+
+		mock.Es.Set(c.mockData)
+
+		queryTsBytes, _ := json.Marshal(tCase.queryTs)
+		var queryTsCopy structured.QueryTs
+		json.Unmarshal(queryTsBytes, &queryTsCopy)
+
+		total, list, _, done, err := queryRawWithScroll(testCtx, &queryTsCopy)
+		hasData := len(list) > 0
+
+		assert.NoError(t, err, "QueryRawWithScroll should not return error for step %d", i+1)
+		assert.Equal(t, c.total, total, "Total should match expected value for step %d", i+1)
+		assert.Equal(t, c.done, done, "Done should match expected value for step %d", i+1)
+		assert.Equal(t, c.hasData, hasData, "HasData should match expected value for step %d", i+1)
+
+		if t.Failed() {
+			t.Fatalf("Test failed at step %d: %s", i+1, c.desc)
+		}
 	}
 }

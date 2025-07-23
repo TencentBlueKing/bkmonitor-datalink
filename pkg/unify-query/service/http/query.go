@@ -1012,7 +1012,9 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 	if err != nil {
 		return
 	}
+
 	if isDone {
+		done = true
 		return
 	}
 

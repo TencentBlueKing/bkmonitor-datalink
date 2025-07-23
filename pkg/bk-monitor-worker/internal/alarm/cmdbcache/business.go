@@ -192,7 +192,7 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 	for _, tenant := range tenants {
 		bizList, err := getBusinessList(ctx, tenant.Id)
 		if err != nil {
-			return errors.Wrap(err, "failed to get business list")
+			return errors.Wrapf(err, "failed to get business list, tenantId: %s", tenant.Id)
 		}
 
 		// 业务信息处理

@@ -192,7 +192,8 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 	for _, tenant := range tenants {
 		bizList, err := getBusinessList(ctx, tenant.Id)
 		if err != nil {
-			return errors.Wrapf(err, "failed to get business list, tenantId: %s", tenant.Id)
+			logger.Errorf("failed to get business list, tenantId: %s, err: %v", tenant.Id, err)
+			continue
 		}
 
 		// 业务信息处理
@@ -209,6 +210,12 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 		}
 	}
 
+	// 如果没有拉到任何业务，则不更新缓存
+	if len(bizCacheData) == 0 {
+		logger.Errorf("no business found when refresh business cache")
+		return nil
+	}
+
 	// 空间查询
 	spaces, err := getSpaceList()
 	if err != nil {
@@ -218,11 +225,6 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 	// 将空间信息转换为业务信息
 	var bkBizId int
 	for _, s := range spaces {
-		// 跳过非当前租户的空间
-		if s.BkTenantId != m.GetBkTenantId() {
-			continue
-		}
-
 		// 业务ID，非bkcc空间为负数
 		if s.SpaceTypeId == "bkcc" {
 			continue

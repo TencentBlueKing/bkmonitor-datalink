@@ -252,7 +252,10 @@ func (c *BaseCacheManager) DeleteMissingHashMapFields(ctx context.Context, key s
 	}
 
 	// 执行删除
-	client.HDel(ctx, key, needDeleteFields...)
+	if len(needDeleteFields) > 0 {
+		client.HDel(ctx, key, needDeleteFields...)
+		log.Infof("delete missing hashmap fields, key: %s, fields: %v", key, needDeleteFields)
+	}
 
 	return nil
 }

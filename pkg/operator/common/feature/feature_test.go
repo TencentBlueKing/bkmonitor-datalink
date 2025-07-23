@@ -15,38 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestParseSelector(t *testing.T) {
-	cases := []struct {
-		input  string
-		output map[string]string
-	}{
-		{
-			input: "__meta_kubernetes_endpoint_address_target_name=^eklet-.*,__meta_kubernetes_endpoint_address_target_kind=Node",
-			output: map[string]string{
-				"__meta_kubernetes_endpoint_address_target_name": "^eklet-.*",
-				"__meta_kubernetes_endpoint_address_target_kind": "Node",
-			},
-		},
-		{
-			input: "__meta_kubernetes_endpoint_address_target_name=^eklet-.*,,",
-			output: map[string]string{
-				"__meta_kubernetes_endpoint_address_target_name": "^eklet-.*",
-			},
-		},
-		{
-			input: "foo=bar, , ,k1=v1 ",
-			output: map[string]string{
-				"foo": "bar",
-				"k1":  "v1",
-			},
-		},
-	}
-
-	for _, c := range cases {
-		assert.Equal(t, c.output, parseSelector(c.input))
-	}
-}
-
 func TestParseLabelJoinMatcher(t *testing.T) {
 	cases := []struct {
 		input       string

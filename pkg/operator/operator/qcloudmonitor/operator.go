@@ -34,7 +34,9 @@ import (
 	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
 	bkcli "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -444,7 +446,8 @@ func (c *Operator) createOrUpdateServiceMonitor(ctx context.Context, qcm *bkv1be
 			Namespace: qcm.Namespace,
 			Labels:    selector,
 			Annotations: map[string]string{
-				"scheduledDataID": strconv.Itoa(qcm.Spec.DataID),
+				feature.KeyScheduledDataID: strconv.Itoa(qcm.Spec.DataID),
+				feature.KeyExtendLabels:    utils.MapToSelector(qcm.Spec.ExtendLabels),
 			},
 			OwnerReferences: []metav1.OwnerReference{OwnerRef(qcm)},
 		},

@@ -57,3 +57,77 @@ func TestMatchSubLabels(t *testing.T) {
 		assert.False(t, MatchSubLabels(subset, set))
 	})
 }
+
+func TestMapToSelector(t *testing.T) {
+	tests := []struct {
+		input    map[string]string
+		expected string
+	}{
+		{
+			input:    map[string]string{},
+			expected: "",
+		},
+		{
+			input:    map[string]string{"key1": "value1"},
+			expected: "key1=value1",
+		},
+		{
+			input:    map[string]string{"key1": "value1", "key2": "value2"},
+			expected: "key1=value1,key2=value2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run("", func(t *testing.T) {
+			got := MapToSelector(tt.input)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+func TestSelectorToMap(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected map[string]string
+	}{
+		{
+			input:    "",
+			expected: map[string]string{},
+		},
+		{
+			input:    "key1=value1",
+			expected: map[string]string{"key1": "value1"},
+		},
+		{
+			input: "__meta_kubernetes_endpoint_address_target_name=^eklet-.*,__meta_kubernetes_endpoint_address_target_kind=Node",
+			expected: map[string]string{
+				"__meta_kubernetes_endpoint_address_target_name": "^eklet-.*",
+				"__meta_kubernetes_endpoint_address_target_kind": "Node",
+			},
+		},
+		{
+			input: "__meta_kubernetes_endpoint_address_target_name=^eklet-.*,,",
+			expected: map[string]string{
+				"__meta_kubernetes_endpoint_address_target_name": "^eklet-.*",
+			},
+		},
+		{
+			input:    "key1=value1,key2",
+			expected: map[string]string{"key1": "value1"},
+		},
+		{
+			input: "foo=bar, , ,k1=v1 ",
+			expected: map[string]string{
+				"foo": "bar",
+				"k1":  "v1",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run("", func(t *testing.T) {
+			got := SelectorToMap(tt.input)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}

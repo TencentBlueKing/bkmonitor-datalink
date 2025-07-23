@@ -46,7 +46,6 @@ func NewK8SClient(host string, tlsConfig *rest.TLSClientConfig) (kubernetes.Inte
 	if err != nil {
 		return nil, err
 	}
-
 	cfg.ContentType = contentTypeProtobuf
 	return kubernetes.NewForConfig(cfg)
 }
@@ -56,7 +55,6 @@ func NewMetadataClient(host string, tlsConfig *rest.TLSClientConfig) (metadata.I
 	if err != nil {
 		return nil, err
 	}
-
 	cfg.ContentType = contentTypeProtobuf
 	return metadata.NewForConfig(cfg)
 }
@@ -66,7 +64,6 @@ func NewK8SClientInsecure() (kubernetes.Interface, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	cfg.ContentType = contentTypeProtobuf
 	return kubernetes.NewForConfig(cfg)
 }
@@ -76,11 +73,9 @@ func NewPromClient(host string, tlsConfig *rest.TLSClientConfig) (promcli.Interf
 	if err != nil {
 		return nil, err
 	}
-	//cfg.ContentType = contentTypeProtobuf
 	return promcli.NewForConfig(cfg)
 }
 
-// NewBKClient 操作 DataID CRD
 func NewBKClient(host string, tlsConfig *rest.TLSClientConfig) (bkcli.Interface, error) {
 	cfg, err := promk8sutil.NewClusterConfig(host, tlsConfig.Insecure, tlsConfig)
 	if err != nil {

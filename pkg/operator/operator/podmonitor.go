@@ -113,6 +113,14 @@ func (c *Operator) getPodMonitorDiscoversName(podMonitor *promv1.PodMonitor) []s
 }
 
 func (c *Operator) pickMonitorDataID(meta define.MonitorMeta, annotation map[string]string) (*v1beta1.DataID, error) {
+	fillLabels := func(obj *v1beta1.DataID) {
+		// labels 高优先级
+		extLabels := feature.ExtendLabels(annotation)
+		for k, v := range extLabels {
+			obj.Spec.Labels[k] = v
+		}
+	}
+
 	// 1) 优先选择 scheduled dataID
 	schedDataID := feature.ScheduledDataID(annotation)
 	if schedDataID > 0 {
@@ -121,9 +129,9 @@ func (c *Operator) pickMonitorDataID(meta define.MonitorMeta, annotation map[str
 			return nil, err
 		}
 
-		// TODO(mando): 是否需要支持自定义 sched dataid labels？
 		cloned := dataID.DeepCopy() // 需要复用集群内置的归属信息
 		cloned.Spec.DataID = schedDataID
+		fillLabels(cloned)
 		return cloned, nil
 	}
 
@@ -133,7 +141,10 @@ func (c *Operator) pickMonitorDataID(meta define.MonitorMeta, annotation map[str
 	if err != nil {
 		return nil, err
 	}
-	return dataID.DeepCopy(), nil
+
+	cloned := dataID.DeepCopy()
+	fillLabels(cloned)
+	return cloned, nil
 }
 
 func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []discover.Discover {

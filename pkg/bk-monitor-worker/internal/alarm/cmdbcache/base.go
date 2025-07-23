@@ -37,6 +37,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -254,7 +255,7 @@ func (c *BaseCacheManager) DeleteMissingHashMapFields(ctx context.Context, key s
 	// 执行删除
 	if len(needDeleteFields) > 0 {
 		client.HDel(ctx, key, needDeleteFields...)
-		log.Infof("delete missing hashmap fields, key: %s, fields: %v", key, needDeleteFields)
+		logger.Infof("delete missing hashmap fields, key: %s, fields: %v", key, needDeleteFields)
 	}
 
 	return nil

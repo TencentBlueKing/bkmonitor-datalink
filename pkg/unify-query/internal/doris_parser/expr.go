@@ -717,6 +717,14 @@ type Binary struct {
 	Op    string
 }
 
+func NewBinary(left, right Expr, op string) *Binary {
+	return &Binary{
+		Left:  left,
+		Right: right,
+		Op:    op,
+	}
+}
+
 func (e *Binary) String() string {
 	return fmt.Sprintf("%s %s %s", e.Left.String(), e.Op, e.Right.String())
 }

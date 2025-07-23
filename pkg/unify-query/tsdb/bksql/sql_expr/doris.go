@@ -127,6 +127,10 @@ func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
 	return fmt.Sprintf("SHOW CREATE TABLE %s", table)
 }
 
+func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where string) (sql string, err error) {
+
+}
+
 func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (sql string, err error) {
 	opt := doris_parser.DorisListenerOption{
 		DimensionTransform: func(s string) (string, bool) {
@@ -145,7 +149,7 @@ func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (s
 		Table: table,
 		Where: where,
 	}
-	listener := doris_parser.ParseDorisSQL(ctx, q, opt)
+	listener := doris_parser.ParseDorisSQLWithListener(ctx, q, opt)
 	if listener == nil {
 		return "", fmt.Errorf("parse doris sql error")
 	}

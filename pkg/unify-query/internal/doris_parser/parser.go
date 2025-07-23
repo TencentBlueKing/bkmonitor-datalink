@@ -18,7 +18,37 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
-func ParseDorisSQL(ctx context.Context, q string, opt DorisListenerOption) *DorisListener {
+func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt DorisVisitorOption) (string, error) {
+	//defer func() {
+	//	if r := recover(); r != nil {
+	//		// 处理异常
+	//		log.Errorf(ctx, "parse doris sql error: %v", r)
+	//	}
+	//}()
+
+	// 创建输入流
+	is := antlr.NewInputStream(q)
+
+	// 创建词法分析器
+	lexer := gen.NewDorisLexer(is)
+
+	// 创建Token流
+	tokens := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
+	parser := gen.NewDorisParserParser(tokens)
+
+	// 创建解析树
+	//visitor := NewDorisVisitor(ctx, q).WithOptions(opt)
+
+	stmt := &Statement{}
+
+	log.Debugf(ctx, `"dept index","action","type","text"`)
+
+	// 开始解析
+	parser.Query().Accept(stmt)
+	return stmt.SQL(), stmt.Error()
+}
+
+func ParseDorisSQLWithListener(ctx context.Context, q string, opt DorisListenerOption) *DorisListener {
 	defer func() {
 		if r := recover(); r != nil {
 			// 处理异常
@@ -41,6 +71,5 @@ func ParseDorisSQL(ctx context.Context, q string, opt DorisListenerOption) *Dori
 		WithOptions(opt)
 
 	antlr.ParseTreeWalkerDefault.Walk(listener, parser.Query())
-
 	return listener
 }

@@ -180,7 +180,8 @@ type FormatFactory struct {
 	encode func(k string) string
 
 	mapping map[string]string
-	data    map[string]any
+
+	data map[string]any
 
 	aggInfoList aggInfoList
 	orders      metadata.Orders
@@ -193,6 +194,8 @@ type FormatFactory struct {
 	timeFormat string
 
 	isReference bool
+
+	labelMap map[string][]function.LabelMapValue
 }
 
 func NewFormatFactory(ctx context.Context) *FormatFactory {
@@ -210,6 +213,21 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 		},
 	}
 
+	return f
+}
+
+func (f *FormatFactory) WithIncludeValues(labelMap map[string][]function.LabelMapValue) *FormatFactory {
+	var newLabelMap map[string][]function.LabelMapValue
+	if f.decode == nil {
+		newLabelMap = labelMap
+	} else {
+		newLabelMap = make(map[string][]function.LabelMapValue, len(labelMap))
+		for k, v := range labelMap {
+			newLabelMap[f.decode(k)] = v
+		}
+	}
+
+	f.labelMap = newLabelMap
 	return f
 }
 
@@ -326,7 +344,17 @@ func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
 // WithMappings 合并 mapping，后面的合并前面的
 func (f *FormatFactory) WithMappings(mappings ...map[string]any) *FormatFactory {
 	for _, mapping := range mappings {
-		mapProperties("", mapping, f.mapping)
+		if _, ok := mapping[Properties]; ok {
+			mapProperties("", mapping, f.mapping)
+		} else {
+			// 有的 es 因为版本不同，properties 不在第一层，所以需要往下一层找
+			for _, m := range mapping {
+				switch nm := m.(type) {
+				case map[string]any:
+					f.WithMappings(nm)
+				}
+			}
+		}
 	}
 	return f
 }
@@ -709,6 +737,22 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			if f.size > 0 {
 				curAgg = curAgg.Size(f.size)
 			}
+			fieldLabelValues, ok := f.labelMap[info.Name]
+			if ok && len(fieldLabelValues) > 0 {
+				var filteredFieldLabelValues []any
+				for _, labelMapValue := range fieldLabelValues {
+					// 只有为非空的值并且操作符为等于时才添加到include子句
+					value := labelMapValue.Value
+					operator := labelMapValue.Operator
+					if value != "" && operator == metadata.ConditionEqual {
+						filteredFieldLabelValues = append(filteredFieldLabelValues, value)
+					}
+				}
+				if len(filteredFieldLabelValues) > 0 {
+					curAgg = curAgg.IncludeValues(filteredFieldLabelValues...)
+				}
+			}
+
 			for _, order := range info.Orders {
 				curAgg = curAgg.Order(order.Name, order.Ast)
 			}
@@ -833,6 +877,11 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 
 		// First pass: process all conditions and separate nested from non-nested
 		for _, con := range conditions {
+			// 对于星号来说等于空
+			if con.DimensionName == "*" {
+				con.DimensionName = ""
+			}
+
 			key := con.DimensionName
 			if f.decode != nil {
 				key = f.decode(key)
@@ -899,7 +948,21 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 									}
 								case structured.ConditionContains, structured.ConditionNotContains:
 									if fieldType == KeyWord {
-										value = fmt.Sprintf("*%s*", value)
+										// 针对 value 里的 * 进行转义
+										var (
+											nv    []rune
+											lastv rune
+										)
+										for _, v := range []rune(value) {
+											if v == '*' && lastv != '\\' {
+												nv = append(nv, '\\')
+												nv = append(nv, v)
+											} else {
+												nv = append(nv, v)
+											}
+											lastv = v
+										}
+										value = fmt.Sprintf("*%s*", string(nv))
 									}
 
 									if !con.IsWildcard && fieldType == Text {
@@ -926,7 +989,11 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 								}
 							}
 						} else {
-							query = elastic.NewQueryStringQuery(value)
+							if con.IsPrefix {
+								query = elastic.NewMultiMatchQuery(value, "*", "__*").Type("phrase_prefix").Lenient(true)
+							} else {
+								query = elastic.NewQueryStringQuery(value)
+							}
 						}
 
 						if query != nil {

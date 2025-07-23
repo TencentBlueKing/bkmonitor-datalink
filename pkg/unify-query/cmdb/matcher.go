@@ -20,6 +20,11 @@ func (m Matcher) Rename() Matcher {
 	}
 	newMatcher := make(Matcher, len(m))
 	for k, v := range m {
+		// 值为空会导致查询扩散，所以需要跳过
+		if v == "" {
+			continue
+		}
+
 		var (
 			nk string
 			ok bool

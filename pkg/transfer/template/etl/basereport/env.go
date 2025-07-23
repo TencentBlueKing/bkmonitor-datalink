@@ -50,6 +50,10 @@ func NewEnvProcessor(ctx context.Context, name string) *template.RecordProcessor
 			etl.ExtractByJMESPath("data.env.maxfiles"), etl.TransformNilFloat64,
 		),
 		etl.NewSimpleField(
+			"allocated_files",
+			etl.ExtractByJMESPath("data.env.allocated_files"), etl.TransformNilFloat64,
+		),
+		etl.NewSimpleField(
 			"uname",
 			etl.ExtractByJMESPath("data.env.uname"), etl.TransformNilString,
 		),

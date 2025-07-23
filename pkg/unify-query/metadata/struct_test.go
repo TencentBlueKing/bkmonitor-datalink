@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 )
 
 func TestReplaceVmCondition(t *testing.T) {
@@ -242,6 +244,189 @@ func TestOrders_SortSliceList(t *testing.T) {
 			c.orders.SortSliceList(c.list)
 
 			assert.Equal(t, c.expected, c.list)
+		})
+	}
+}
+
+// TestQuery_LabelMap 测试 Query.LabelMap 函数（包含 QueryString 和 Conditions 的组合）
+func TestQuery_LabelMap(t *testing.T) {
+	testCases := []struct {
+		name     string
+		query    Query
+		expected map[string][]function.LabelMapValue
+	}{
+		{
+			name: "只有 Conditions",
+			query: Query{
+				AllConditions: AllConditions{
+					{
+						{
+							DimensionName: "status",
+							Value:         []string{"error"},
+							Operator:      ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]function.LabelMapValue{
+				"status": {{Value: "error", Operator: ConditionEqual}},
+			},
+		},
+		{
+			name: "只有 QueryString",
+			query: Query{
+				QueryString: "level:warning",
+			},
+			expected: map[string][]function.LabelMapValue{
+				"level": {{Value: "warning", Operator: ConditionEqual}},
+			},
+		},
+		{
+			name: "QueryString 和 Conditions 组合",
+			query: Query{
+				QueryString: "service:web",
+				AllConditions: AllConditions{
+					{
+						{
+							DimensionName: "status",
+							Value:         []string{"error"},
+							Operator:      ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]function.LabelMapValue{
+				"service": {{Value: "web", Operator: ConditionEqual}},
+				"status":  {{Value: "error", Operator: ConditionEqual}},
+			},
+		},
+		{
+			name: "QueryString 和 Conditions 有重复字段",
+			query: Query{
+				QueryString: "level:error",
+				AllConditions: AllConditions{
+					{
+						{
+							DimensionName: "status",
+							Value:         []string{"warning"},
+							Operator:      ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]function.LabelMapValue{
+				"level": {
+					{
+						Value: "error", Operator: ConditionEqual,
+					},
+				},
+				"status": {
+					{
+						Value: "warning", Operator: ConditionEqual,
+					},
+				},
+			},
+		},
+		{
+			name: "QueryString 和 Conditions 有重复字段和值（去重）",
+			query: Query{
+				QueryString: "level:error",
+				AllConditions: AllConditions{
+					{
+						{
+							DimensionName: "level",
+							Value:         []string{"error"},
+							Operator:      ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]function.LabelMapValue{
+				"level": {{Value: "error", Operator: ConditionEqual}},
+			},
+		},
+		{
+			name: "复杂 QueryString 和多个 Conditions - 1",
+			query: Query{
+				QueryString: "NOT service:web AND component:database",
+				AllConditions: AllConditions{
+					{
+						{
+							DimensionName: "status",
+							Value:         []string{"warning", "error"},
+							Operator:      ConditionNotEqual,
+						},
+						{
+							DimensionName: "region",
+							Value:         []string{"us-east-1"},
+							Operator:      ConditionEqual,
+						},
+						{
+							DimensionName: "region",
+							Value:         []string{"us-east-2"},
+							Operator:      ConditionEqual,
+							IsWildcard:    true,
+						},
+					},
+				},
+			},
+			expected: map[string][]function.LabelMapValue{
+				"component": {
+					{Value: "database", Operator: ConditionEqual},
+				},
+				"region": {
+					{Value: "us-east-1", Operator: ConditionEqual},
+					{Value: "us-east-2", Operator: ConditionContains},
+				},
+			},
+		},
+		{
+			name: "复杂 QueryString 和多个 Conditions",
+			query: Query{
+				QueryString: "service:web AND component:database",
+				AllConditions: AllConditions{
+					{
+						{
+							DimensionName: "status",
+							Value:         []string{"warning", "error"},
+							Operator:      ConditionEqual,
+						},
+						{
+							DimensionName: "region",
+							Value:         []string{"us-east-1"},
+							Operator:      ConditionEqual,
+						},
+					},
+				},
+			},
+			expected: map[string][]function.LabelMapValue{
+				"service": {
+					{Value: "web", Operator: ConditionEqual},
+				},
+				"component": {
+					{Value: "database", Operator: ConditionEqual},
+				},
+				"status": {
+					{Value: "warning", Operator: ConditionEqual},
+					{Value: "error", Operator: ConditionEqual},
+				},
+				"region": {
+					{Value: "us-east-1", Operator: ConditionEqual},
+				},
+			},
+		},
+		{
+			name:     "空 QueryString 和空 Conditions",
+			query:    Query{},
+			expected: map[string][]function.LabelMapValue{},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := tc.query.LabelMap()
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expected, result, "Query.LabelMap result should match expected")
 		})
 	}
 }

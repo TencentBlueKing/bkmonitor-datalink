@@ -45,65 +45,72 @@ func TestInstance_getAlias(t *testing.T) {
 	for name, c := range map[string]struct {
 		start       time.Time
 		end         time.Time
-		timezone    string
 		db          string
 		needAddTime bool
 
+		sourceType string
+
 		expected []string
 	}{
-		"3d with UTC": {
+		"3d with bklog": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 1, 3, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
 			expected:    []string{"db_test_20240101*", "db_test_20240102*", "db_test_20240103*"},
 		},
+		"20250709 06:59:22 ~ 20250709 07:59:22 with bkbase 使用东八区作为别名生成规则，需要特殊处理": {
+			start:       time.UnixMilli(1752015562000), // 2025-07-09 06:59:22 Asia/ShangHai
+			end:         time.UnixMilli(1752019162000), // 2025-07-09 07:59:22 Asia/ShangHai
+			needAddTime: true,
+			sourceType:  structured.BkData,
+			expected:    []string{"db_test_20250709*"},
+		},
 		"change month with Asia/Shanghai": {
 			start:       time.Date(2024, 1, 25, 7, 10, 5, 0, time.UTC),
 			end:         time.Date(2024, 2, 2, 6, 1, 4, 10, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/Shanghai",
 			expected:    []string{"db_test_20240125*", "db_test_20240126*", "db_test_20240127*", "db_test_20240128*", "db_test_20240129*", "db_test_20240130*", "db_test_20240131*", "db_test_20240201*", "db_test_20240202*"},
 		},
-		"2d with Asia/Shanghai": {
+		"2d with bkdata": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 1, 3, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/Shanghai",
+			sourceType:  structured.BkData,
 			expected:    []string{"db_test_20240102*", "db_test_20240103*", "db_test_20240104*"},
 		},
-		"14d with Asia/Shanghai": {
+		"14d with bkdata": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 1, 15, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/Shanghai",
+			sourceType:  structured.BkData,
 			expected:    []string{"db_test_20240102*", "db_test_20240103*", "db_test_20240104*", "db_test_20240105*", "db_test_20240106*", "db_test_20240107*", "db_test_20240108*", "db_test_20240109*", "db_test_20240110*", "db_test_20240111*", "db_test_20240112*", "db_test_20240113*", "db_test_20240114*", "db_test_20240115*", "db_test_20240116*"},
 		},
-		"16d with Asia/Shanghai": {
+		"16d with bkdata": {
 			start:       time.Date(2024, 1, 15, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 2, 10, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/Shanghai",
+			sourceType:  structured.BkData,
 			expected:    []string{"db_test_202401*", "db_test_202402*"},
 		},
-		"15d with Asia/Shanghai": {
+		"15d with bkdata": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 1, 16, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/Shanghai",
+			sourceType:  structured.BkData,
 			expected:    []string{"db_test_202401*"},
 		},
-		"6m with Asia/Shanghai": {
+		"6m with bkdata": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 7, 1, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/Shanghai",
+			sourceType:  structured.BkData,
 			expected:    []string{"db_test_202401*", "db_test_202402*", "db_test_202403*", "db_test_202404*", "db_test_202405*", "db_test_202406*", "db_test_202407*"},
 		},
-		"7m with Asia/Shanghai": {
+		"7m with bkdata": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 8, 1, 20, 0, 0, 0, time.UTC),
 			needAddTime: true,
-			timezone:    "Asia/Shanghai",
+			sourceType:  structured.BkData,
 			expected:    []string{"db_test_202402*", "db_test_202403*", "db_test_202404*", "db_test_202405*", "db_test_202406*", "db_test_202407*", "db_test_202408*"},
 		},
 		"2m and db": {
@@ -126,7 +133,7 @@ func TestInstance_getAlias(t *testing.T) {
 				c.db = "db_test"
 			}
 			ctx = metadata.InitHashID(ctx)
-			actual, err := inst.getAlias(ctx, c.db, c.needAddTime, c.start, c.end, c.timezone)
+			actual, err := inst.getAlias(ctx, c.db, c.needAddTime, c.start, c.end, c.sourceType)
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, actual)
 		})
@@ -208,7 +215,6 @@ func TestInstance_queryReference(t *testing.T) {
 				},
 				DataSource:    structured.BkLog,
 				TableID:       "es_index",
-				MetricName:    "user.first",
 				Source:        []string{"group", "user.first", "user.last"},
 				StorageType:   consul.ElasticsearchStorageType,
 				AllConditions: metadata.AllConditions{},
@@ -230,7 +236,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:       10,
 				DataSource: structured.BkLog,
 				TableID:    "bk_log_index_set_10",
-				MetricName: "__ext.io_kubernetes_pod",
 				Orders: metadata.Orders{
 					{
 						Name: FieldTime,
@@ -265,7 +270,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:       10,
 				DataSource: structured.BkLog,
 				TableID:    "bk_log_index_set_10",
-				MetricName: "__ext.io_kubernetes_pod",
 				Orders: metadata.Orders{
 					{
 						Name: FieldTime,
@@ -290,7 +294,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":4,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":4,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
 		},
 		"使用 promql 计算平均值 sum(count_over_time(field[12h]))": {
 			query: &metadata.Query{
@@ -300,7 +304,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -315,7 +318,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__ext__bk_46__container_name","value":"sync-apigw"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-apigw-sync-1178-cl8k8"},{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":24,"timestamp":1723593600000},{"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"sync-apigw"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-apigw-sync-1179-9h9xv"},{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":24,"timestamp":1723593600000},{"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"unify-query"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-64bd4f5df4-599f9"},{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":375064,"timestamp":1723593600000},{"value":392679,"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"unify-query"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-64bd4f5df4-llp94"},{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":381173,"timestamp":1723593600000},{"value":374338,"timestamp":1723636800000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__ext__bk_46__container_name","value":"sync-apigw"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-apigw-sync-1178-cl8k8"},{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":24,"timestamp":1723593600000},{"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"sync-apigw"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-apigw-sync-1179-9h9xv"},{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":24,"timestamp":1723593600000},{"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"unify-query"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-64bd4f5df4-599f9"},{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":375064,"timestamp":1723593600000},{"value":392679,"timestamp":1723636800000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__ext__bk_46__container_name","value":"unify-query"},{"name":"__ext__bk_46__io_kubernetes_pod","value":"bkmonitor-unify-query-64bd4f5df4-llp94"},{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":381173,"timestamp":1723593600000},{"value":374338,"timestamp":1723636800000}],"exemplars":null,"histograms":null}]`,
 		},
 		"使用非时间聚合统计数量": {
 			query: &metadata.Query{
@@ -325,7 +328,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        3,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -335,7 +337,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"}],"samples":[{"value":1523302,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"}],"samples":[{"value":1523302,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
 		},
 		"获取 50 分位值": {
 			query: &metadata.Query{
@@ -345,7 +347,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -358,7 +359,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"le","value":"50.0"}],"samples":[{"value":1723637132806.3303,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"le","value":"50.0"}],"samples":[{"value":1723637132806.3303,"timestamp":1723593608000}],"exemplars":null,"histograms":null}]`,
 		},
 		"获取 50, 90 分支值，同时按 6h 时间聚合": {
 			query: &metadata.Query{
@@ -368,7 +369,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -385,7 +385,7 @@ func TestInstance_queryReference(t *testing.T) {
 			},
 			start:    defaultStart,
 			end:      defaultEnd,
-			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"le","value":"50.0"}],"samples":[{"value":1723604380350.2532,"timestamp":1723593600000},{"value":1723625838006.1033,"timestamp":1723615200000},{"value":1723647585882.9739,"timestamp":1723636800000},{"value":1723669177640.7131,"timestamp":1723658400000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:__ext__bk_46__io_kubernetes_pod"},{"name":"le","value":"90.0"}],"samples":[{"value":1723612956128.9934,"timestamp":1723593600000},{"value":1723634678721.5513,"timestamp":1723615200000},{"value":1723656196499.344,"timestamp":1723636800000},{"value":1723677836133.885,"timestamp":1723658400000}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"le","value":"50.0"}],"samples":[{"value":1723604380350.2532,"timestamp":1723593600000},{"value":1723625838006.1033,"timestamp":1723615200000},{"value":1723647585882.9739,"timestamp":1723636800000},{"value":1723669177640.7131,"timestamp":1723658400000}],"exemplars":null,"histograms":null},{"labels":[{"name":"__name__","value":"bklog:bk_log_index_set_10:dtEventTimeStamp"},{"name":"le","value":"90.0"}],"samples":[{"value":1723612956128.9934,"timestamp":1723593600000},{"value":1723634678721.5513,"timestamp":1723615200000},{"value":1723656196499.344,"timestamp":1723636800000},{"value":1723677836133.885,"timestamp":1723658400000}],"exemplars":null,"histograms":null}]`,
 		},
 		"根据 field 字段聚合计算数量，同时根据值排序": {
 			query: &metadata.Query{
@@ -395,7 +395,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        10,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -424,7 +423,6 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        10,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				Aggregates: metadata.Aggregates{
 					{
@@ -508,7 +506,7 @@ func TestInstance_queryRawData(t *testing.T) {
 	mock.Es.Set(map[string]any{
 
 		// nested query + query string 测试 + highlight
-		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"group: fans"}}]}},"size":5,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]},"highlight":{"group":["<mark>fans</mark>"],"user.first":["<mark>John</mark>"]}}]}}`,
+		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"match_phrase":{"group":{"query":"fans"}}}]}},"size":5,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]},"highlight":{"group":["<mark>fans</mark>"],"user.first":["<mark>John</mark>"]}}]}}`,
 		// high light from condition
 		`{"_source":{"includes":["status","message"]},"from":0,"query":{"bool":{"filter":[{"match_phrase":{"status":{"query":"error"}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}]}},"size":5,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"bT4KjpEBbwEm76LbdH2H","_score":0.0,"_source":{"status":"error","message":"Something went wrong"},"highlight":{"status":["<mark>error</mark>"]}}]}}`,
 
@@ -563,7 +561,6 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "es_index",
 				DataLabel:   "es_index",
-				MetricName:  "group",
 				StorageType: consul.ElasticsearchStorageType,
 				Source:      []string{"group", "user.first", "user.last"},
 				AllConditions: metadata.AllConditions{
@@ -590,7 +587,6 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource: structured.BkLog,
 				TableID:    "bk_log_index_set_10",
 				DataLabel:  "set_10",
-				MetricName: "__ext.io_kubernetes_pod",
 				Orders: metadata.Orders{
 					{
 						Name: FieldTime,
@@ -624,7 +620,6 @@ func TestInstance_queryRawData(t *testing.T) {
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
 				DataLabel:   "bk_log",
-				MetricName:  "__ext.io_kubernetes_pod",
 				StorageType: consul.ElasticsearchStorageType,
 				TimeField: metadata.TimeField{
 					Name: "dtEventTimeStamp",

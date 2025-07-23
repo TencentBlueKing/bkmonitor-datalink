@@ -214,6 +214,7 @@ const (
 	VmDataTypeUserCustom       = "user_custom"
 	VmDataTypeBcsClusterK8s    = "bcs_cluster_k8s"
 	VmDataTypeBcsClusterCustom = "bcs_cluster_custom"
+	CmdbLevelVmrt              = "cmdb_level_vm_rt"
 )
 
 // TimeStampLen

@@ -369,6 +369,7 @@ bk-collector:
       type: "logs"
       processors:
         - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
         - "resource_filter/logs"
         - "attribute_filter/logs"
 
@@ -427,4 +428,5 @@ bk-collector:
       traces_batch_size: 600
       logs_batch_size: 100
       proxy_batch_size: 3000
+      profiles_batch_size: 50
       flush_interval: 3s

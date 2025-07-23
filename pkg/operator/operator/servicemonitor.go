@@ -35,10 +35,6 @@ func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
 		return
 	}
 
-	if configs.G().EnablePromRule {
-		c.promsliController.UpdateServiceMonitor(serviceMonitor)
-	}
-
 	// 新增的 servicemonitor 命中黑名单则流程终止
 	if ifRejectServiceMonitor(serviceMonitor) {
 		logger.Infof("add action match blacklist rules, serviceMonitor=%s", serviceMonitorID(serviceMonitor))
@@ -63,10 +59,6 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", newObj)
 		return
-	}
-
-	if configs.G().EnablePromRule {
-		c.promsliController.UpdateServiceMonitor(cur)
 	}
 
 	if old.ResourceVersion == cur.ResourceVersion {
@@ -98,10 +90,6 @@ func (c *Operator) handleServiceMonitorDelete(obj interface{}) {
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", obj)
 		return
-	}
-
-	if configs.G().EnablePromRule {
-		c.promsliController.DeleteServiceMonitor(serviceMonitor)
 	}
 
 	for _, name := range c.getServiceMonitorDiscoversName(serviceMonitor) {
@@ -208,7 +196,7 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 				System:                 systemResource,
 				UrlValues:              endpoint.Params,
 				MetricRelabelConfigs:   metricRelabelings,
-				NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+				CheckNodeNameFunc:      c.objectsController.CheckNodeName,
 				NodeLabelsFunc:         c.objectsController.NodeLabels,
 			},
 			Client:            c.client,

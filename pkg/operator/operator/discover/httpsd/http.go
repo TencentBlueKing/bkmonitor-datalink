@@ -71,6 +71,12 @@ func (d *Discover) Stop() {
 	shareddiscovery.Unregister(d.UK())
 }
 
+type WrapDiscovery struct {
+	*promhttpsd.Discovery
+}
+
+func (WrapDiscovery) Stop() {}
+
 func (d *Discover) Start() error {
 	d.PreStart()
 
@@ -79,7 +85,7 @@ func (d *Discover) Start() error {
 		if err != nil {
 			return nil, errors.Wrap(err, d.Type())
 		}
-		return shareddiscovery.New(d.UK(), discovery), nil
+		return shareddiscovery.New(d.UK(), &WrapDiscovery{discovery}), nil
 	})
 	if err != nil {
 		return err

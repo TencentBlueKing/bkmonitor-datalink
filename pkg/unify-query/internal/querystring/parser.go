@@ -12,12 +12,20 @@ package querystring
 //go:generate goyacc -o querystring.y.go querystring.y
 
 import (
+	"context"
 	"fmt"
 	"strings"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 // Parse querystring and return Expr
 func Parse(query string) (Expr, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf(context.TODO(), "parse querystring panic: %v", r)
+		}
+	}()
 	if query == "" || query == "*" {
 		return nil, nil
 	}
@@ -31,14 +39,61 @@ func Parse(query string) (Expr, error) {
 	return lex.expr, nil
 }
 
-func doParse(lex *lexerWrapper) {
-	defer func() {
-		r := recover()
-		if r != nil {
-			lex.errs = append(lex.errs, fmt.Sprintf("parse error: %v", r))
-		}
-	}()
+type walkParse struct {
+	fieldAlias map[string]string
+}
 
+func (w *walkParse) alias(k string) string {
+	if alias, ok := w.fieldAlias[k]; ok {
+		return alias
+	}
+	return k
+}
+
+func (w *walkParse) do(e Expr) Expr {
+	switch c := e.(type) {
+	case *NotExpr:
+		return &NotExpr{
+			Expr: w.do(c.Expr),
+		}
+	case *AndExpr:
+		return &AndExpr{
+			Left:  w.do(c.Left),
+			Right: w.do(c.Right),
+		}
+	case *OrExpr:
+		return &OrExpr{
+			Left:  w.do(c.Left),
+			Right: w.do(c.Right),
+		}
+	case *NumberRangeExpr:
+		if c.Field != "" {
+			c.Field = w.alias(c.Field)
+		}
+	case *MatchExpr:
+		if c.Field != "" {
+			c.Field = w.alias(c.Field)
+		}
+	case *WildcardExpr:
+		if c.Field != "" {
+			c.Field = w.alias(c.Field)
+		}
+	case *RegexpExpr:
+		c.Field = w.alias(c.Field)
+	}
+	return e
+}
+
+func ParseWithFieldAlias(query string, fieldAlias map[string]string) (Expr, error) {
+	expr, err := Parse(query)
+	if err != nil {
+		return nil, err
+	}
+	wp := &walkParse{fieldAlias: fieldAlias}
+	return wp.do(expr), nil
+}
+
+func doParse(lex *lexerWrapper) {
 	yyParse(lex)
 }
 

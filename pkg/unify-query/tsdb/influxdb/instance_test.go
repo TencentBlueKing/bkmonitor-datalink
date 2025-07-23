@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
 
 func TestInstance_MakeSQL(t *testing.T) {
@@ -141,14 +142,15 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
 	}{
 		"test_1": {
 			query: &metadata.Query{
-				DataSource:   "bkmonitor",
-				TableID:      "system.swap",
-				DB:           "system",
-				Measurement:  "swap",
-				Measurements: []string{"swap"},
-				Field:        "free",
-				Fields:       []string{"free"},
-				MetricName:   "free",
+				DataSource:      "bkmonitor",
+				TableID:         "system.swap",
+				DB:              "system",
+				Measurement:     "swap",
+				Measurements:    []string{"swap"},
+				Field:           "free",
+				Fields:          []string{"free"},
+				MeasurementType: redis.BKTraditionalMeasurement,
+				MetricNames:     []string{"bkmonitor:system:swap:free"},
 				Aggregates: metadata.Aggregates{
 					{
 						Name:       "count",

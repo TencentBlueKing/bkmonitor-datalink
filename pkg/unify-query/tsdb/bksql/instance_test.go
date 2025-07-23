@@ -113,14 +113,14 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
 					},
 				},
 			},
-			expected: `[{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:"},{"name":"cloudId","value":"0"}],"samples":[{"value":6,"timestamp":1730118589181}],"exemplars":null,"histograms":null}]`,
+			expected: `[{"labels":[{"name":"__name__","value":"bkdata:132_lol_new_login_queue_login_1min:default:cloudId"},{"name":"cloudId","value":"0"}],"samples":[{"value":6,"timestamp":1730118589181}],"exemplars":null,"histograms":null}]`,
 		},
 		"count by namespace with mysql": {
 			query: &metadata.Query{
 				DataSource: datasource,
 				TableID:    tableID,
 				DB:         db,
-				MetricName: field,
+				Field:      field,
 				DataLabel:  db,
 				Aggregates: metadata.Aggregates{
 					{
@@ -136,7 +136,7 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
 				DataSource: datasource,
 				TableID:    tableID,
 				DB:         db,
-				MetricName: field,
+				Field:      field,
 				DataLabel:  db,
 				Aggregates: metadata.Aggregates{
 					{
@@ -176,7 +176,7 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
 				TableID:     tableID,
 				DB:          "2_bklog_bkunify_query_doris",
 				Measurement: sql_expr.Doris,
-				MetricName:  field,
+				Field:       field,
 				DataLabel:   db,
 				Aggregates: metadata.Aggregates{
 					{
@@ -239,7 +239,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 		// query raw by doris use condition
 		"SHOW CREATE TABLE `2_bklog_pure_v4_log_doris_for_unify_query`.doris": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":18,"external_api_call_time_mills":{"bkbase_auth_api":69,"bkbase_meta_api":9,"bkbase_apigw_api":25},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"__shard_key__","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"cloudId","Type":"decimalv3(38, 6)","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"serverIp","Type":"varchar(512)","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"path","Type":"varchar(512)","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"gseIndex","Type":"decimalv3(38, 6)","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"iterationIndex","Type":"decimalv3(38, 6)","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__ext","Type":"variant","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"file","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"level","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"log","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"message","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"report_time","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"time","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"trace_id","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"}],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":6,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":6,"connect_db":66,"match_query_routing_rule":0,"check_permission":69,"check_query_semantic":0,"pick_valid_storage":0},"select_fields_order":["Field","Type","Null","Key","Default","Extra"],"sql":"SHOW COLUMNS FROM mapleleaf_2.bklog_pure_v4_log_doris_for_unify_query_2","total_record_size":11808,"timetaken":0.148,"result_schema":[{"field_type":"string","field_name":"Field","field_alias":"Field","field_index":0},{"field_type":"string","field_name":"Type","field_alias":"Type","field_index":1},{"field_type":"string","field_name":"Null","field_alias":"Null","field_index":2},{"field_type":"string","field_name":"Key","field_alias":"Key","field_index":3},{"field_type":"string","field_name":"Default","field_alias":"Default","field_index":4},{"field_type":"string","field_name":"Extra","field_alias":"Extra","field_index":5}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_pure_v4_log_doris_for_unify_query"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
 		// query raw by doris use condition
-		"SELECT *, `dtEventTimeStamp` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_pure_v4_log_doris_for_unify_query`.doris WHERE `dtEventTimeStamp` >= 1730118589181 AND `dtEventTimeStamp` <= 1730118889181 AND `thedate` = '20241028' AND (`message` MATCH_PHRASE_PREFIX 'Bk-Query-Source' OR (`level` MATCH_PHRASE_PREFIX 'error' OR `level` MATCH_PHRASE_PREFIX 'info')) LIMIT 5": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"2_bklog_pure_v4_log_doris_for_unify_query":{"start":"2025042100","end":"2025042123"}},"cluster":"doris-test","totalRecords":5,"external_api_call_time_mills":{"bkbase_auth_api":38,"bkbase_meta_api":0,"bkbase_apigw_api":0},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"thedate":20250421,"__shard_key__":29087245464,"cloudId":0.0,"path":"/var/host/data/bcs/lib/docker/containers/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93-json.log","gseIndex":4281730.0,"iterationIndex":0.0,"dtEventTimeStamp":1745234704000,"dtEventTime":"2025-04-21 19:25:04","localTime":"2025-04-21 19:25:04","file":"http/handler.go:361","level":"info","log":"2025-04-21T11:25:00.643Z\tinfo\thttp/handler.go:361\t[9a8222f1a3407f97f351207752953cb5] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[204] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-ed105a4a519bddd9-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"promql\":\"count by (target) ({__name__=~\\\"custom:2_bkapm_metric_mandotest.__default__:trpc.*\\\"})\",\"start\":\"1745234900\",\"end\":\"1745235100\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[204] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-ed105a4a519bddd9-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"promql\":\"count by (target) ({__name__=~\\\"custom:2_bkapm_metric_mandotest.__default__:trpc.*\\\"})\",\"start\":\"1745234900\",\"end\":\"1745235100\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","report_time":"2025-04-21T11:25:00.643Z","time":"1745234704","trace_id":"9a8222f1a3407f97f351207752953cb5","_value_":1745234704000,"_timestamp_":1745234704000},{"thedate":20250421,"__shard_key__":29087245464,"cloudId":0.0,"path":"/var/host/data/bcs/lib/docker/containers/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93-json.log","gseIndex":4281730.0,"iterationIndex":2.0,"dtEventTimeStamp":1745234704000,"dtEventTime":"2025-04-21 19:25:04","localTime":"2025-04-21 19:25:04","file":"http/handler.go:361","level":"info","log":"2025-04-21T11:25:00.790Z\tinfo\thttp/handler.go:361\t[9a8222f1a3407f97f351207752953cb5] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[202] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-1b008865dfe232ab-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__7]], body: {\"promql\":\"count by (target) ({__name__=~\\\"custom:7_bkapm_metric_bk_itsm.__default__:trpc.*\\\"})\",\"start\":\"1745234700\",\"end\":\"1745234900\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[202] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-1b008865dfe232ab-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__7]], body: {\"promql\":\"count by (target) ({__name__=~\\\"custom:7_bkapm_metric_bk_itsm.__default__:trpc.*\\\"})\",\"start\":\"1745234700\",\"end\":\"1745234900\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","report_time":"2025-04-21T11:25:00.790Z","time":"1745234704","trace_id":"9a8222f1a3407f97f351207752953cb5","_value_":1745234704000,"_timestamp_":1745234704000},{"thedate":20250421,"__shard_key__":29087245464,"cloudId":0.0,"path":"/var/host/data/bcs/lib/docker/containers/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93-json.log","gseIndex":4281730.0,"iterationIndex":4.0,"dtEventTimeStamp":1745234704000,"dtEventTime":"2025-04-21 19:25:04","localTime":"2025-04-21 19:25:04","file":"http/handler.go:361","level":"info","log":"2025-04-21T11:25:00.855Z\tinfo\thttp/handler.go:361\t[9a8222f1a3407f97f351207752953cb5] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[202] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-6c1e5853f8d7c5ea-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__7]], body: {\"promql\":\"count by (target) ({__name__=~\\\"custom:7_bkapm_metric_bk_itsm.__default__:trpc.*\\\"})\",\"start\":\"1745235100\",\"end\":\"1745235300\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[202] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-6c1e5853f8d7c5ea-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__7]], body: {\"promql\":\"count by (target) ({__name__=~\\\"custom:7_bkapm_metric_bk_itsm.__default__:trpc.*\\\"})\",\"start\":\"1745235100\",\"end\":\"1745235300\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","report_time":"2025-04-21T11:25:00.855Z","time":"1745234704","trace_id":"9a8222f1a3407f97f351207752953cb5","_value_":1745234704000,"_timestamp_":1745234704000},{"thedate":20250421,"__shard_key__":29087245464,"cloudId":0.0,"path":"/var/host/data/bcs/lib/docker/containers/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93-json.log","gseIndex":4281730.0,"iterationIndex":6.0,"dtEventTimeStamp":1745234704000,"dtEventTime":"2025-04-21 19:25:04","localTime":"2025-04-21 19:25:04","file":"http/handler.go:361","level":"info","log":"2025-04-21T11:25:01.030Z\tinfo\thttp/handler.go:361\t[9a8222f1a3407f97f351207752953cb5] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[220] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-d3159692d865fe24-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bksaas__capp512]], body: {\"promql\":\"count by (service_name) ({__name__=~\\\"custom:bkapm_-59_metric_bkapp_capp512_stag_21.__default__:.*\\\"})\",\"start\":\"1745234900\",\"end\":\"1745235100\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[220] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-d3159692d865fe24-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bksaas__capp512]], body: {\"promql\":\"count by (service_name) ({__name__=~\\\"custom:bkapm_-59_metric_bkapp_capp512_stag_21.__default__:.*\\\"})\",\"start\":\"1745234900\",\"end\":\"1745235100\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","report_time":"2025-04-21T11:25:01.030Z","time":"1745234704","trace_id":"9a8222f1a3407f97f351207752953cb5","_value_":1745234704000,"_timestamp_":1745234704000},{"thedate":20250421,"__shard_key__":29087245464,"cloudId":0.0,"path":"/var/host/data/bcs/lib/docker/containers/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93-json.log","gseIndex":4281730.0,"iterationIndex":8.0,"dtEventTimeStamp":1745234704000,"dtEventTime":"2025-04-21 19:25:04","localTime":"2025-04-21 19:25:04","file":"http/handler.go:305","level":"info","log":"2025-04-21T11:25:01.199Z\tinfo\thttp/handler.go:305\t[adb84ecc380008245cdb800b6fd54d7f] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[username:admin] Connection:[keep-alive] Content-Length:[686] Content-Type:[application/json] Traceparent:[00-adb84ecc380008245cdb800b6fd54d7f-ddc4638680c14719-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__11]], body: {\"space_uid\":\"bkcc__11\",\"query_list\":[{\"table_id\":\"system.cpu_summary\",\"field_name\":\"usage\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"bk_target_ip\",\"bk_target_cloud_id\"]}],\"time_aggregation\":{\"function\":\"avg_over_time\",\"window\":\"60s\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"bk_target_ip\",\"bk_target_cloud_id\"],\"conditions\":{},\"keep_columns\":[\"_time\",\"a\",\"bk_target_ip\",\"bk_target_cloud_id\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1745234520\",\"end_time\":\"1745234700\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[username:admin] Connection:[keep-alive] Content-Length:[686] Content-Type:[application/json] Traceparent:[00-adb84ecc380008245cdb800b6fd54d7f-ddc4638680c14719-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__11]], body: {\"space_uid\":\"bkcc__11\",\"query_list\":[{\"table_id\":\"system.cpu_summary\",\"field_name\":\"usage\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"bk_target_ip\",\"bk_target_cloud_id\"]}],\"time_aggregation\":{\"function\":\"avg_over_time\",\"window\":\"60s\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"bk_target_ip\",\"bk_target_cloud_id\"],\"conditions\":{},\"keep_columns\":[\"_time\",\"a\",\"bk_target_ip\",\"bk_target_cloud_id\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1745234520\",\"end_time\":\"1745234700\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","report_time":"2025-04-21T11:25:01.199Z","time":"1745234704","trace_id":"adb84ecc380008245cdb800b6fd54d7f","_value_":1745234704000,"_timestamp_":1745234704000}],"stage_elapsed_time_mills":{"check_query_syntax":2,"query_db":19,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":41,"match_query_routing_rule":0,"check_permission":39,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["thedate","__shard_key__","cloudId","serverIp","path","gseIndex","iterationIndex","dtEventTimeStamp","dtEventTime","localTime","__ext","file","level","log","message","report_time","time","trace_id","_value_","_timestamp_"],"total_record_size":30880,"timetaken":0.104,"result_schema":[{"field_type":"int","field_name":"__c0","field_alias":"thedate","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"__shard_key__","field_index":1},{"field_type":"double","field_name":"__c2","field_alias":"cloudId","field_index":2},{"field_type":"string","field_name":"__c3","field_alias":"serverIp","field_index":3},{"field_type":"string","field_name":"__c4","field_alias":"path","field_index":4},{"field_type":"double","field_name":"__c5","field_alias":"gseIndex","field_index":5},{"field_type":"double","field_name":"__c6","field_alias":"iterationIndex","field_index":6},{"field_type":"long","field_name":"__c7","field_alias":"dtEventTimeStamp","field_index":7},{"field_type":"string","field_name":"__c8","field_alias":"dtEventTime","field_index":8},{"field_type":"string","field_name":"__c9","field_alias":"localTime","field_index":9},{"field_type":"string","field_name":"__c10","field_alias":"__ext","field_index":10},{"field_type":"string","field_name":"__c11","field_alias":"file","field_index":11},{"field_type":"string","field_name":"__c12","field_alias":"level","field_index":12},{"field_type":"string","field_name":"__c13","field_alias":"log","field_index":13},{"field_type":"string","field_name":"__c14","field_alias":"message","field_index":14},{"field_type":"string","field_name":"__c15","field_alias":"report_time","field_index":15},{"field_type":"string","field_name":"__c16","field_alias":"time","field_index":16},{"field_type":"string","field_name":"__c17","field_alias":"trace_id","field_index":17},{"field_type":"long","field_name":"__c18","field_alias":"_value_","field_index":18},{"field_type":"long","field_name":"__c19","field_alias":"_timestamp_","field_index":19}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_pure_v4_log_doris_for_unify_query"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+		"SELECT *, `dtEventTimeStamp` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_pure_v4_log_doris_for_unify_query`.doris WHERE `dtEventTimeStamp` >= 1730118589181 AND `dtEventTimeStamp` <= 1730118889181 AND `thedate` = '20241028' AND (`message` MATCH_PHRASE 'Bk-Query-Source' OR (`level` MATCH_PHRASE 'error' OR `level` MATCH_PHRASE 'info')) LIMIT 5": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"2_bklog_pure_v4_log_doris_for_unify_query":{"start":"2025042100","end":"2025042123"}},"cluster":"doris-test","totalRecords":5,"external_api_call_time_mills":{"bkbase_auth_api":38,"bkbase_meta_api":0,"bkbase_apigw_api":0},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"thedate":20250421,"__shard_key__":29087245464,"cloudId":0.0,"path":"/var/host/data/bcs/lib/docker/containers/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93-json.log","gseIndex":4281730.0,"iterationIndex":0.0,"dtEventTimeStamp":1745234704000,"dtEventTime":"2025-04-21 19:25:04","localTime":"2025-04-21 19:25:04","file":"http/handler.go:361","level":"info","log":"2025-04-21T11:25:00.643Z\tinfo\thttp/handler.go:361\t[9a8222f1a3407f97f351207752953cb5] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[204] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-ed105a4a519bddd9-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"promql\":\"count by (target) ({__name__=~\\\"custom:2_bkapm_metric_mandotest.__default__:trpc.*\\\"})\",\"start\":\"1745234900\",\"end\":\"1745235100\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[204] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-ed105a4a519bddd9-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"promql\":\"count by (target) ({__name__=~\\\"custom:2_bkapm_metric_mandotest.__default__:trpc.*\\\"})\",\"start\":\"1745234900\",\"end\":\"1745235100\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","report_time":"2025-04-21T11:25:00.643Z","time":"1745234704","trace_id":"9a8222f1a3407f97f351207752953cb5","_value_":1745234704000,"_timestamp_":1745234704000},{"thedate":20250421,"__shard_key__":29087245464,"cloudId":0.0,"path":"/var/host/data/bcs/lib/docker/containers/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93-json.log","gseIndex":4281730.0,"iterationIndex":2.0,"dtEventTimeStamp":1745234704000,"dtEventTime":"2025-04-21 19:25:04","localTime":"2025-04-21 19:25:04","file":"http/handler.go:361","level":"info","log":"2025-04-21T11:25:00.790Z\tinfo\thttp/handler.go:361\t[9a8222f1a3407f97f351207752953cb5] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[202] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-1b008865dfe232ab-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__7]], body: {\"promql\":\"count by (target) ({__name__=~\\\"custom:7_bkapm_metric_bk_itsm.__default__:trpc.*\\\"})\",\"start\":\"1745234700\",\"end\":\"1745234900\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[202] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-1b008865dfe232ab-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__7]], body: {\"promql\":\"count by (target) ({__name__=~\\\"custom:7_bkapm_metric_bk_itsm.__default__:trpc.*\\\"})\",\"start\":\"1745234700\",\"end\":\"1745234900\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","report_time":"2025-04-21T11:25:00.790Z","time":"1745234704","trace_id":"9a8222f1a3407f97f351207752953cb5","_value_":1745234704000,"_timestamp_":1745234704000},{"thedate":20250421,"__shard_key__":29087245464,"cloudId":0.0,"path":"/var/host/data/bcs/lib/docker/containers/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93-json.log","gseIndex":4281730.0,"iterationIndex":4.0,"dtEventTimeStamp":1745234704000,"dtEventTime":"2025-04-21 19:25:04","localTime":"2025-04-21 19:25:04","file":"http/handler.go:361","level":"info","log":"2025-04-21T11:25:00.855Z\tinfo\thttp/handler.go:361\t[9a8222f1a3407f97f351207752953cb5] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[202] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-6c1e5853f8d7c5ea-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__7]], body: {\"promql\":\"count by (target) ({__name__=~\\\"custom:7_bkapm_metric_bk_itsm.__default__:trpc.*\\\"})\",\"start\":\"1745235100\",\"end\":\"1745235300\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[202] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-6c1e5853f8d7c5ea-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__7]], body: {\"promql\":\"count by (target) ({__name__=~\\\"custom:7_bkapm_metric_bk_itsm.__default__:trpc.*\\\"})\",\"start\":\"1745235100\",\"end\":\"1745235300\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","report_time":"2025-04-21T11:25:00.855Z","time":"1745234704","trace_id":"9a8222f1a3407f97f351207752953cb5","_value_":1745234704000,"_timestamp_":1745234704000},{"thedate":20250421,"__shard_key__":29087245464,"cloudId":0.0,"path":"/var/host/data/bcs/lib/docker/containers/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93-json.log","gseIndex":4281730.0,"iterationIndex":6.0,"dtEventTimeStamp":1745234704000,"dtEventTime":"2025-04-21 19:25:04","localTime":"2025-04-21 19:25:04","file":"http/handler.go:361","level":"info","log":"2025-04-21T11:25:01.030Z\tinfo\thttp/handler.go:361\t[9a8222f1a3407f97f351207752953cb5] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[220] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-d3159692d865fe24-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bksaas__capp512]], body: {\"promql\":\"count by (service_name) ({__name__=~\\\"custom:bkapm_-59_metric_bkapp_capp512_stag_21.__default__:.*\\\"})\",\"start\":\"1745234900\",\"end\":\"1745235100\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[backend] Connection:[keep-alive] Content-Length:[220] Content-Type:[application/json] Traceparent:[00-9a8222f1a3407f97f351207752953cb5-d3159692d865fe24-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bksaas__capp512]], body: {\"promql\":\"count by (service_name) ({__name__=~\\\"custom:bkapm_-59_metric_bkapp_capp512_stag_21.__default__:.*\\\"})\",\"start\":\"1745234900\",\"end\":\"1745235100\",\"step\":\"200s\",\"bk_biz_ids\":null,\"look_back_delta\":\"\",\"instant\":false}","report_time":"2025-04-21T11:25:01.030Z","time":"1745234704","trace_id":"9a8222f1a3407f97f351207752953cb5","_value_":1745234704000,"_timestamp_":1745234704000},{"thedate":20250421,"__shard_key__":29087245464,"cloudId":0.0,"path":"/var/host/data/bcs/lib/docker/containers/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93/5d0cff8ae531973edec39aa9989439c6371357491c3c7791d920e6f5569d5c93-json.log","gseIndex":4281730.0,"iterationIndex":8.0,"dtEventTimeStamp":1745234704000,"dtEventTime":"2025-04-21 19:25:04","localTime":"2025-04-21 19:25:04","file":"http/handler.go:305","level":"info","log":"2025-04-21T11:25:01.199Z\tinfo\thttp/handler.go:305\t[adb84ecc380008245cdb800b6fd54d7f] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[username:admin] Connection:[keep-alive] Content-Length:[686] Content-Type:[application/json] Traceparent:[00-adb84ecc380008245cdb800b6fd54d7f-ddc4638680c14719-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__11]], body: {\"space_uid\":\"bkcc__11\",\"query_list\":[{\"table_id\":\"system.cpu_summary\",\"field_name\":\"usage\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"bk_target_ip\",\"bk_target_cloud_id\"]}],\"time_aggregation\":{\"function\":\"avg_over_time\",\"window\":\"60s\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"bk_target_ip\",\"bk_target_cloud_id\"],\"conditions\":{},\"keep_columns\":[\"_time\",\"a\",\"bk_target_ip\",\"bk_target_cloud_id\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1745234520\",\"end_time\":\"1745234700\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[username:admin] Connection:[keep-alive] Content-Length:[686] Content-Type:[application/json] Traceparent:[00-adb84ecc380008245cdb800b6fd54d7f-ddc4638680c14719-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__11]], body: {\"space_uid\":\"bkcc__11\",\"query_list\":[{\"table_id\":\"system.cpu_summary\",\"field_name\":\"usage\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"bk_target_ip\",\"bk_target_cloud_id\"]}],\"time_aggregation\":{\"function\":\"avg_over_time\",\"window\":\"60s\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"bk_target_ip\",\"bk_target_cloud_id\"],\"conditions\":{},\"keep_columns\":[\"_time\",\"a\",\"bk_target_ip\",\"bk_target_cloud_id\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1745234520\",\"end_time\":\"1745234700\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","report_time":"2025-04-21T11:25:01.199Z","time":"1745234704","trace_id":"adb84ecc380008245cdb800b6fd54d7f","_value_":1745234704000,"_timestamp_":1745234704000}],"stage_elapsed_time_mills":{"check_query_syntax":2,"query_db":19,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":41,"match_query_routing_rule":0,"check_permission":39,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["thedate","__shard_key__","cloudId","serverIp","path","gseIndex","iterationIndex","dtEventTimeStamp","dtEventTime","localTime","__ext","file","level","log","message","report_time","time","trace_id","_value_","_timestamp_"],"total_record_size":30880,"timetaken":0.104,"result_schema":[{"field_type":"int","field_name":"__c0","field_alias":"thedate","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"__shard_key__","field_index":1},{"field_type":"double","field_name":"__c2","field_alias":"cloudId","field_index":2},{"field_type":"string","field_name":"__c3","field_alias":"serverIp","field_index":3},{"field_type":"string","field_name":"__c4","field_alias":"path","field_index":4},{"field_type":"double","field_name":"__c5","field_alias":"gseIndex","field_index":5},{"field_type":"double","field_name":"__c6","field_alias":"iterationIndex","field_index":6},{"field_type":"long","field_name":"__c7","field_alias":"dtEventTimeStamp","field_index":7},{"field_type":"string","field_name":"__c8","field_alias":"dtEventTime","field_index":8},{"field_type":"string","field_name":"__c9","field_alias":"localTime","field_index":9},{"field_type":"string","field_name":"__c10","field_alias":"__ext","field_index":10},{"field_type":"string","field_name":"__c11","field_alias":"file","field_index":11},{"field_type":"string","field_name":"__c12","field_alias":"level","field_index":12},{"field_type":"string","field_name":"__c13","field_alias":"log","field_index":13},{"field_type":"string","field_name":"__c14","field_alias":"message","field_index":14},{"field_type":"string","field_name":"__c15","field_alias":"report_time","field_index":15},{"field_type":"string","field_name":"__c16","field_alias":"time","field_index":16},{"field_type":"string","field_name":"__c17","field_alias":"trace_id","field_index":17},{"field_type":"long","field_name":"__c18","field_alias":"_value_","field_index":18},{"field_type":"long","field_name":"__c19","field_alias":"_timestamp_","field_index":19}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_pure_v4_log_doris_for_unify_query"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
 
 		"SHOW CREATE TABLE `5000140_bklog_container_log_demo_analysis`.doris": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris_bklog","totalRecords":19,"external_api_call_time_mills":{"bkbase_meta_api":10},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtimestamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtime","Type":"varchar(32)","Null":"NO","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"localtime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__shard_key__","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"_starttime_","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"_endtime_","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"bk_host_id","Type":"int","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__ext","Type":"variant","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"cloudid","Type":"int","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"serverip","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"path","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"gseindex","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"iterationindex","Type":"int","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"log","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"logtime","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"level","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"cid","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"time","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"}],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":4,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":10,"connect_db":43,"match_query_routing_rule":0,"check_permission":12,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["Field","Type","Null","Key","Default","Extra"],"sql":"SHOW COLUMNS FROM mapleleaf_5000140.bklog_container_log_demo_analysis_5000140__2","total_record_size":12408,"timetaken":0.071,"result_schema":[{"field_type":"string","field_name":"Field","field_alias":"Field","field_index":0},{"field_type":"string","field_name":"Type","field_alias":"Type","field_index":1},{"field_type":"string","field_name":"Null","field_alias":"Null","field_index":2},{"field_type":"string","field_name":"Key","field_alias":"Key","field_index":3},{"field_type":"string","field_name":"Default","field_alias":"Default","field_index":4},{"field_type":"string","field_name":"Extra","field_alias":"Extra","field_index":5}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["5000140_bklog_container_log_demo_analysis"]},"errors":null,"trace_id":"9ad04717f6b8da2c921d371cb3915cdf","span_id":"57ea24802f21b887"}`,
 
@@ -250,7 +250,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 		"SELECT *, `bk_host_id` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1730118589181 AND `dtEventTimeStamp` <= 1730118889181 AND `thedate` = '20241028' LIMIT 2": "{\"result\":true,\"message\":\"成功\",\"code\":\"00\",\"data\":{\"result_table_scan_range\":{\"5000140_bklog_container_log_demo_analysis\":{\"start\":\"2025032100\",\"end\":\"2025032123\"}},\"cluster\":\"doris_bklog\",\"totalRecords\":2,\"external_api_call_time_mills\":{\"bkbase_meta_api\":0},\"resource_use_summary\":{\"cpu_time_mills\":0,\"memory_bytes\":0,\"processed_bytes\":0,\"processed_rows\":0},\"source\":\"\",\"list\":[{\"thedate\":20250321,\"dteventtimestamp\":1742540043000,\"dteventtime\":\"2025-03-21 14:54:03\",\"localtime\":\"2025-03-21 14:54:12\",\"__shard_key__\":29042334000,\"_starttime_\":\"2025-03-21 14:54:03\",\"_endtime_\":\"2025-03-21 14:54:03\",\"bk_host_id\":267382,\"__ext\":\"{\\\"container_id\\\":\\\"436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e\\\",\\\"container_image\\\":\\\"sha256:3aec083a12d24544c15f55559e80b571cb3e66e291c5f67f4366b0f9c75674bf\\\",\\\"container_name\\\":\\\"bkmonitorbeat\\\",\\\"io_kubernetes_pod\\\":\\\"bkm-daemonset-worker-9tckj\\\",\\\"io_kubernetes_pod_namespace\\\":\\\"bkmonitor-operator\\\",\\\"io_kubernetes_pod_uid\\\":\\\"0d310b8f-aca1-48ab-b02c-92f5c221eac3\\\",\\\"io_kubernetes_workload_name\\\":\\\"bkm-daemonset-worker\\\",\\\"io_kubernetes_workload_type\\\":\\\"DaemonSet\\\",\\\"labels\\\":{\\\"app_kubernetes_io_component\\\":\\\"bkmonitorbeat\\\",\\\"controller_revision_hash\\\":\\\"6b87cb95fc\\\",\\\"pod_template_generation\\\":\\\"14\\\"}}\",\"cloudid\":0,\"path\":\"/data/bcs/service/docker/containers/436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e/436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e-json.log\",\"gseindex\":7451424,\"iterationindex\":2,\"log\":\"2025-03-21 06:54:03.766\\tINFO\\t[metricbeat] bkm_metricbeat_scrape_line{} 274; kvs=[uri=(http://:10251/metrics)]\",\"logtime\":\"2025-03-21 06:54:03.766\",\"level\":\"INFO\",\"cid\":\"436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e\",\"time\":1742540045,\"_value_\":267382,\"_timestamp_\":1742540043000},{\"thedate\":20250321,\"dteventtimestamp\":1742540043000,\"dteventtime\":\"2025-03-21 14:54:03\",\"localtime\":\"2025-03-21 14:54:12\",\"__shard_key__\":29042334000,\"_starttime_\":\"2025-03-21 14:54:03\",\"_endtime_\":\"2025-03-21 14:54:03\",\"bk_host_id\":267382,\"__ext\":\"{\\\"container_id\\\":\\\"436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e\\\",\\\"container_image\\\":\\\"sha256:3aec083a12d24544c15f55559e80b571cb3e66e291c5f67f4366b0f9c75674bf\\\",\\\"container_name\\\":\\\"bkmonitorbeat\\\",\\\"io_kubernetes_pod\\\":\\\"bkm-daemonset-worker-9tckj\\\",\\\"io_kubernetes_pod_namespace\\\":\\\"bkmonitor-operator\\\",\\\"io_kubernetes_pod_uid\\\":\\\"0d310b8f-aca1-48ab-b02c-92f5c221eac3\\\",\\\"io_kubernetes_workload_name\\\":\\\"bkm-daemonset-worker\\\",\\\"io_kubernetes_workload_type\\\":\\\"DaemonSet\\\",\\\"labels\\\":{\\\"app_kubernetes_io_component\\\":\\\"bkmonitorbeat\\\",\\\"controller_revision_hash\\\":\\\"6b87cb95fc\\\",\\\"pod_template_generation\\\":\\\"14\\\"}}\",\"cloudid\":0,\"path\":\"/data/bcs/service/docker/containers/436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e/436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e-json.log\",\"gseindex\":7451424,\"iterationindex\":1,\"log\":\"2025-03-21 06:54:03.766\\tINFO\\t[metricbeat] bkm_metricbeat_scrape_duration_seconds{} 0.002395; kvs=[uri=(http://:10251/metrics)]\",\"logtime\":\"2025-03-21 06:54:03.766\",\"level\":\"INFO\",\"cid\":\"436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e\",\"time\":1742540045,\"_value_\":267382,\"_timestamp_\":1742540043000}],\"stage_elapsed_time_mills\":{\"check_query_syntax\":1,\"query_db\":21,\"get_query_driver\":0,\"match_query_forbidden_config\":0,\"convert_query_statement\":1,\"connect_db\":45,\"match_query_routing_rule\":0,\"check_permission\":0,\"check_query_semantic\":0,\"pick_valid_storage\":1},\"select_fields_order\":[\"thedate\",\"dteventtimestamp\",\"dteventtime\",\"localtime\",\"__shard_key__\",\"_starttime_\",\"_endtime_\",\"bk_host_id\",\"__ext\",\"cloudid\",\"serverip\",\"path\",\"gseindex\",\"iterationindex\",\"log\",\"logtime\",\"level\",\"cid\",\"time\",\"_value_\",\"_timestamp_\"],\"sql\":\"SELECT *, `bk_host_id` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM mapleleaf_5000140.bklog_container_log_demo_analysis_5000140__2 WHERE `thedate` = '20250321' LIMIT 2\",\"total_record_size\":9304,\"timetaken\":0.069,\"result_schema\":[{\"field_type\":\"int\",\"field_name\":\"__c0\",\"field_alias\":\"thedate\",\"field_index\":0},{\"field_type\":\"long\",\"field_name\":\"__c1\",\"field_alias\":\"dteventtimestamp\",\"field_index\":1},{\"field_type\":\"string\",\"field_name\":\"__c2\",\"field_alias\":\"dteventtime\",\"field_index\":2},{\"field_type\":\"string\",\"field_name\":\"__c3\",\"field_alias\":\"localtime\",\"field_index\":3},{\"field_type\":\"long\",\"field_name\":\"__c4\",\"field_alias\":\"__shard_key__\",\"field_index\":4},{\"field_type\":\"string\",\"field_name\":\"__c5\",\"field_alias\":\"_starttime_\",\"field_index\":5},{\"field_type\":\"string\",\"field_name\":\"__c6\",\"field_alias\":\"_endtime_\",\"field_index\":6},{\"field_type\":\"int\",\"field_name\":\"__c7\",\"field_alias\":\"bk_host_id\",\"field_index\":7},{\"field_type\":\"string\",\"field_name\":\"__c8\",\"field_alias\":\"__ext\",\"field_index\":8},{\"field_type\":\"int\",\"field_name\":\"__c9\",\"field_alias\":\"cloudid\",\"field_index\":9},{\"field_type\":\"string\",\"field_name\":\"__c10\",\"field_alias\":\"serverip\",\"field_index\":10},{\"field_type\":\"string\",\"field_name\":\"__c11\",\"field_alias\":\"path\",\"field_index\":11},{\"field_type\":\"long\",\"field_name\":\"__c12\",\"field_alias\":\"gseindex\",\"field_index\":12},{\"field_type\":\"int\",\"field_name\":\"__c13\",\"field_alias\":\"iterationindex\",\"field_index\":13},{\"field_type\":\"string\",\"field_name\":\"__c14\",\"field_alias\":\"log\",\"field_index\":14},{\"field_type\":\"string\",\"field_name\":\"__c15\",\"field_alias\":\"logtime\",\"field_index\":15},{\"field_type\":\"string\",\"field_name\":\"__c16\",\"field_alias\":\"level\",\"field_index\":16},{\"field_type\":\"string\",\"field_name\":\"__c17\",\"field_alias\":\"cid\",\"field_index\":17},{\"field_type\":\"long\",\"field_name\":\"__c18\",\"field_alias\":\"time\",\"field_index\":18},{\"field_type\":\"int\",\"field_name\":\"__c19\",\"field_alias\":\"_value_\",\"field_index\":19},{\"field_type\":\"long\",\"field_name\":\"__c20\",\"field_alias\":\"_timestamp_\",\"field_index\":20}],\"bksql_call_elapsed_time\":0,\"device\":\"doris\",\"result_table_ids\":[\"5000140_bklog_container_log_demo_analysis\"]},\"errors\":null,\"trace_id\":\"1d6580ef7e6d7e7c040801a72645fdf2\",\"span_id\":\"ab5485e1dd6595bc\"}",
 
 		// query raw by doris
-		"SELECT *, `bk_host_id` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1730118589181 AND `dtEventTimeStamp` <= 1730118889181 AND `thedate` = '20241028' AND (`log` MATCH_PHRASE_PREFIX 'metricbeat_scrape' OR `log` MATCH_PHRASE_PREFIX 'metricbeat') LIMIT 2": "{\"result\":true,\"message\":\"成功\",\"code\":\"00\",\"data\":{\"result_table_scan_range\":{\"5000140_bklog_container_log_demo_analysis\":{\"start\":\"2025032100\",\"end\":\"2025032123\"}},\"cluster\":\"doris_bklog\",\"totalRecords\":2,\"external_api_call_time_mills\":{\"bkbase_meta_api\":0},\"resource_use_summary\":{\"cpu_time_mills\":0,\"memory_bytes\":0,\"processed_bytes\":0,\"processed_rows\":0},\"source\":\"\",\"list\":[{\"thedate\":20250321,\"dteventtimestamp\":1742540043000,\"dteventtime\":\"2025-03-21 14:54:03\",\"localtime\":\"2025-03-21 14:54:12\",\"__shard_key__\":29042334000,\"_starttime_\":\"2025-03-21 14:54:03\",\"_endtime_\":\"2025-03-21 14:54:03\",\"bk_host_id\":267382,\"__ext\":\"{\\\"container_id\\\":\\\"436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e\\\",\\\"container_image\\\":\\\"sha256:3aec083a12d24544c15f55559e80b571cb3e66e291c5f67f4366b0f9c75674bf\\\",\\\"container_name\\\":\\\"bkmonitorbeat\\\",\\\"io_kubernetes_pod\\\":\\\"bkm-daemonset-worker-9tckj\\\",\\\"io_kubernetes_pod_namespace\\\":\\\"bkmonitor-operator\\\",\\\"io_kubernetes_pod_uid\\\":\\\"0d310b8f-aca1-48ab-b02c-92f5c221eac3\\\",\\\"io_kubernetes_workload_name\\\":\\\"bkm-daemonset-worker\\\",\\\"io_kubernetes_workload_type\\\":\\\"DaemonSet\\\",\\\"labels\\\":{\\\"app_kubernetes_io_component\\\":\\\"bkmonitorbeat\\\",\\\"controller_revision_hash\\\":\\\"6b87cb95fc\\\",\\\"pod_template_generation\\\":\\\"14\\\"}}\",\"cloudid\":0,\"path\":\"/data/bcs/service/docker/containers/436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e/436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e-json.log\",\"gseindex\":7451424,\"iterationindex\":2,\"log\":\"2025-03-21 06:54:03.766\\tINFO\\t[metricbeat] bkm_metricbeat_scrape_line{} 274; kvs=[uri=(http://:10251/metrics)]\",\"logtime\":\"2025-03-21 06:54:03.766\",\"level\":\"INFO\",\"cid\":\"436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e\",\"time\":1742540045,\"_value_\":267382,\"_timestamp_\":1742540043000},{\"thedate\":20250321,\"dteventtimestamp\":1742540043000,\"dteventtime\":\"2025-03-21 14:54:03\",\"localtime\":\"2025-03-21 14:54:12\",\"__shard_key__\":29042334000,\"_starttime_\":\"2025-03-21 14:54:03\",\"_endtime_\":\"2025-03-21 14:54:03\",\"bk_host_id\":267382,\"__ext\":\"{\\\"container_id\\\":\\\"436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e\\\",\\\"container_image\\\":\\\"sha256:3aec083a12d24544c15f55559e80b571cb3e66e291c5f67f4366b0f9c75674bf\\\",\\\"container_name\\\":\\\"bkmonitorbeat\\\",\\\"io_kubernetes_pod\\\":\\\"bkm-daemonset-worker-9tckj\\\",\\\"io_kubernetes_pod_namespace\\\":\\\"bkmonitor-operator\\\",\\\"io_kubernetes_pod_uid\\\":\\\"0d310b8f-aca1-48ab-b02c-92f5c221eac3\\\",\\\"io_kubernetes_workload_name\\\":\\\"bkm-daemonset-worker\\\",\\\"io_kubernetes_workload_type\\\":\\\"DaemonSet\\\",\\\"labels\\\":{\\\"app_kubernetes_io_component\\\":\\\"bkmonitorbeat\\\",\\\"controller_revision_hash\\\":\\\"6b87cb95fc\\\",\\\"pod_template_generation\\\":\\\"14\\\"}}\",\"cloudid\":0,\"path\":\"/data/bcs/service/docker/containers/436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e/436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e-json.log\",\"gseindex\":7451424,\"iterationindex\":1,\"log\":\"2025-03-21 06:54:03.766\\tINFO\\t[metricbeat] bkm_metricbeat_scrape_duration_seconds{} 0.002395; kvs=[uri=(http://:10251/metrics)]\",\"logtime\":\"2025-03-21 06:54:03.766\",\"level\":\"INFO\",\"cid\":\"436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e\",\"time\":1742540045,\"_value_\":267382,\"_timestamp_\":1742540043000}],\"stage_elapsed_time_mills\":{\"check_query_syntax\":1,\"query_db\":21,\"get_query_driver\":0,\"match_query_forbidden_config\":0,\"convert_query_statement\":1,\"connect_db\":45,\"match_query_routing_rule\":0,\"check_permission\":0,\"check_query_semantic\":0,\"pick_valid_storage\":1},\"select_fields_order\":[\"thedate\",\"dteventtimestamp\",\"dteventtime\",\"localtime\",\"__shard_key__\",\"_starttime_\",\"_endtime_\",\"bk_host_id\",\"__ext\",\"cloudid\",\"serverip\",\"path\",\"gseindex\",\"iterationindex\",\"log\",\"logtime\",\"level\",\"cid\",\"time\",\"_value_\",\"_timestamp_\"],\"sql\":\"SELECT *, `bk_host_id` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM mapleleaf_5000140.bklog_container_log_demo_analysis_5000140__2 WHERE `thedate` = '20250321' LIMIT 2\",\"total_record_size\":9304,\"timetaken\":0.069,\"result_schema\":[{\"field_type\":\"int\",\"field_name\":\"__c0\",\"field_alias\":\"thedate\",\"field_index\":0},{\"field_type\":\"long\",\"field_name\":\"__c1\",\"field_alias\":\"dteventtimestamp\",\"field_index\":1},{\"field_type\":\"string\",\"field_name\":\"__c2\",\"field_alias\":\"dteventtime\",\"field_index\":2},{\"field_type\":\"string\",\"field_name\":\"__c3\",\"field_alias\":\"localtime\",\"field_index\":3},{\"field_type\":\"long\",\"field_name\":\"__c4\",\"field_alias\":\"__shard_key__\",\"field_index\":4},{\"field_type\":\"string\",\"field_name\":\"__c5\",\"field_alias\":\"_starttime_\",\"field_index\":5},{\"field_type\":\"string\",\"field_name\":\"__c6\",\"field_alias\":\"_endtime_\",\"field_index\":6},{\"field_type\":\"int\",\"field_name\":\"__c7\",\"field_alias\":\"bk_host_id\",\"field_index\":7},{\"field_type\":\"string\",\"field_name\":\"__c8\",\"field_alias\":\"__ext\",\"field_index\":8},{\"field_type\":\"int\",\"field_name\":\"__c9\",\"field_alias\":\"cloudid\",\"field_index\":9},{\"field_type\":\"string\",\"field_name\":\"__c10\",\"field_alias\":\"serverip\",\"field_index\":10},{\"field_type\":\"string\",\"field_name\":\"__c11\",\"field_alias\":\"path\",\"field_index\":11},{\"field_type\":\"long\",\"field_name\":\"__c12\",\"field_alias\":\"gseindex\",\"field_index\":12},{\"field_type\":\"int\",\"field_name\":\"__c13\",\"field_alias\":\"iterationindex\",\"field_index\":13},{\"field_type\":\"string\",\"field_name\":\"__c14\",\"field_alias\":\"log\",\"field_index\":14},{\"field_type\":\"string\",\"field_name\":\"__c15\",\"field_alias\":\"logtime\",\"field_index\":15},{\"field_type\":\"string\",\"field_name\":\"__c16\",\"field_alias\":\"level\",\"field_index\":16},{\"field_type\":\"string\",\"field_name\":\"__c17\",\"field_alias\":\"cid\",\"field_index\":17},{\"field_type\":\"long\",\"field_name\":\"__c18\",\"field_alias\":\"time\",\"field_index\":18},{\"field_type\":\"int\",\"field_name\":\"__c19\",\"field_alias\":\"_value_\",\"field_index\":19},{\"field_type\":\"long\",\"field_name\":\"__c20\",\"field_alias\":\"_timestamp_\",\"field_index\":20}],\"bksql_call_elapsed_time\":0,\"device\":\"doris\",\"result_table_ids\":[\"5000140_bklog_container_log_demo_analysis\"]},\"errors\":null,\"trace_id\":\"1d6580ef7e6d7e7c040801a72645fdf2\",\"span_id\":\"ab5485e1dd6595bc\"}",
+		"SELECT *, `bk_host_id` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1730118589181 AND `dtEventTimeStamp` <= 1730118889181 AND `thedate` = '20241028' AND (`log` MATCH_PHRASE 'metricbeat_scrape' OR `log` MATCH_PHRASE 'metricbeat') LIMIT 2": "{\"result\":true,\"message\":\"成功\",\"code\":\"00\",\"data\":{\"result_table_scan_range\":{\"5000140_bklog_container_log_demo_analysis\":{\"start\":\"2025032100\",\"end\":\"2025032123\"}},\"cluster\":\"doris_bklog\",\"totalRecords\":2,\"external_api_call_time_mills\":{\"bkbase_meta_api\":0},\"resource_use_summary\":{\"cpu_time_mills\":0,\"memory_bytes\":0,\"processed_bytes\":0,\"processed_rows\":0},\"source\":\"\",\"list\":[{\"thedate\":20250321,\"dteventtimestamp\":1742540043000,\"dteventtime\":\"2025-03-21 14:54:03\",\"localtime\":\"2025-03-21 14:54:12\",\"__shard_key__\":29042334000,\"_starttime_\":\"2025-03-21 14:54:03\",\"_endtime_\":\"2025-03-21 14:54:03\",\"bk_host_id\":267382,\"__ext\":\"{\\\"container_id\\\":\\\"436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e\\\",\\\"container_image\\\":\\\"sha256:3aec083a12d24544c15f55559e80b571cb3e66e291c5f67f4366b0f9c75674bf\\\",\\\"container_name\\\":\\\"bkmonitorbeat\\\",\\\"io_kubernetes_pod\\\":\\\"bkm-daemonset-worker-9tckj\\\",\\\"io_kubernetes_pod_namespace\\\":\\\"bkmonitor-operator\\\",\\\"io_kubernetes_pod_uid\\\":\\\"0d310b8f-aca1-48ab-b02c-92f5c221eac3\\\",\\\"io_kubernetes_workload_name\\\":\\\"bkm-daemonset-worker\\\",\\\"io_kubernetes_workload_type\\\":\\\"DaemonSet\\\",\\\"labels\\\":{\\\"app_kubernetes_io_component\\\":\\\"bkmonitorbeat\\\",\\\"controller_revision_hash\\\":\\\"6b87cb95fc\\\",\\\"pod_template_generation\\\":\\\"14\\\"}}\",\"cloudid\":0,\"path\":\"/data/bcs/service/docker/containers/436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e/436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e-json.log\",\"gseindex\":7451424,\"iterationindex\":2,\"log\":\"2025-03-21 06:54:03.766\\tINFO\\t[metricbeat] bkm_metricbeat_scrape_line{} 274; kvs=[uri=(http://:10251/metrics)]\",\"logtime\":\"2025-03-21 06:54:03.766\",\"level\":\"INFO\",\"cid\":\"436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e\",\"time\":1742540045,\"_value_\":267382,\"_timestamp_\":1742540043000},{\"thedate\":20250321,\"dteventtimestamp\":1742540043000,\"dteventtime\":\"2025-03-21 14:54:03\",\"localtime\":\"2025-03-21 14:54:12\",\"__shard_key__\":29042334000,\"_starttime_\":\"2025-03-21 14:54:03\",\"_endtime_\":\"2025-03-21 14:54:03\",\"bk_host_id\":267382,\"__ext\":\"{\\\"container_id\\\":\\\"436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e\\\",\\\"container_image\\\":\\\"sha256:3aec083a12d24544c15f55559e80b571cb3e66e291c5f67f4366b0f9c75674bf\\\",\\\"container_name\\\":\\\"bkmonitorbeat\\\",\\\"io_kubernetes_pod\\\":\\\"bkm-daemonset-worker-9tckj\\\",\\\"io_kubernetes_pod_namespace\\\":\\\"bkmonitor-operator\\\",\\\"io_kubernetes_pod_uid\\\":\\\"0d310b8f-aca1-48ab-b02c-92f5c221eac3\\\",\\\"io_kubernetes_workload_name\\\":\\\"bkm-daemonset-worker\\\",\\\"io_kubernetes_workload_type\\\":\\\"DaemonSet\\\",\\\"labels\\\":{\\\"app_kubernetes_io_component\\\":\\\"bkmonitorbeat\\\",\\\"controller_revision_hash\\\":\\\"6b87cb95fc\\\",\\\"pod_template_generation\\\":\\\"14\\\"}}\",\"cloudid\":0,\"path\":\"/data/bcs/service/docker/containers/436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e/436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e-json.log\",\"gseindex\":7451424,\"iterationindex\":1,\"log\":\"2025-03-21 06:54:03.766\\tINFO\\t[metricbeat] bkm_metricbeat_scrape_duration_seconds{} 0.002395; kvs=[uri=(http://:10251/metrics)]\",\"logtime\":\"2025-03-21 06:54:03.766\",\"level\":\"INFO\",\"cid\":\"436cf7ea65b29fb0280c89a774056ac8420ee67d2ba485cfb2932e15c15d9e4e\",\"time\":1742540045,\"_value_\":267382,\"_timestamp_\":1742540043000}],\"stage_elapsed_time_mills\":{\"check_query_syntax\":1,\"query_db\":21,\"get_query_driver\":0,\"match_query_forbidden_config\":0,\"convert_query_statement\":1,\"connect_db\":45,\"match_query_routing_rule\":0,\"check_permission\":0,\"check_query_semantic\":0,\"pick_valid_storage\":1},\"select_fields_order\":[\"thedate\",\"dteventtimestamp\",\"dteventtime\",\"localtime\",\"__shard_key__\",\"_starttime_\",\"_endtime_\",\"bk_host_id\",\"__ext\",\"cloudid\",\"serverip\",\"path\",\"gseindex\",\"iterationindex\",\"log\",\"logtime\",\"level\",\"cid\",\"time\",\"_value_\",\"_timestamp_\"],\"sql\":\"SELECT *, `bk_host_id` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM mapleleaf_5000140.bklog_container_log_demo_analysis_5000140__2 WHERE `thedate` = '20250321' LIMIT 2\",\"total_record_size\":9304,\"timetaken\":0.069,\"result_schema\":[{\"field_type\":\"int\",\"field_name\":\"__c0\",\"field_alias\":\"thedate\",\"field_index\":0},{\"field_type\":\"long\",\"field_name\":\"__c1\",\"field_alias\":\"dteventtimestamp\",\"field_index\":1},{\"field_type\":\"string\",\"field_name\":\"__c2\",\"field_alias\":\"dteventtime\",\"field_index\":2},{\"field_type\":\"string\",\"field_name\":\"__c3\",\"field_alias\":\"localtime\",\"field_index\":3},{\"field_type\":\"long\",\"field_name\":\"__c4\",\"field_alias\":\"__shard_key__\",\"field_index\":4},{\"field_type\":\"string\",\"field_name\":\"__c5\",\"field_alias\":\"_starttime_\",\"field_index\":5},{\"field_type\":\"string\",\"field_name\":\"__c6\",\"field_alias\":\"_endtime_\",\"field_index\":6},{\"field_type\":\"int\",\"field_name\":\"__c7\",\"field_alias\":\"bk_host_id\",\"field_index\":7},{\"field_type\":\"string\",\"field_name\":\"__c8\",\"field_alias\":\"__ext\",\"field_index\":8},{\"field_type\":\"int\",\"field_name\":\"__c9\",\"field_alias\":\"cloudid\",\"field_index\":9},{\"field_type\":\"string\",\"field_name\":\"__c10\",\"field_alias\":\"serverip\",\"field_index\":10},{\"field_type\":\"string\",\"field_name\":\"__c11\",\"field_alias\":\"path\",\"field_index\":11},{\"field_type\":\"long\",\"field_name\":\"__c12\",\"field_alias\":\"gseindex\",\"field_index\":12},{\"field_type\":\"int\",\"field_name\":\"__c13\",\"field_alias\":\"iterationindex\",\"field_index\":13},{\"field_type\":\"string\",\"field_name\":\"__c14\",\"field_alias\":\"log\",\"field_index\":14},{\"field_type\":\"string\",\"field_name\":\"__c15\",\"field_alias\":\"logtime\",\"field_index\":15},{\"field_type\":\"string\",\"field_name\":\"__c16\",\"field_alias\":\"level\",\"field_index\":16},{\"field_type\":\"string\",\"field_name\":\"__c17\",\"field_alias\":\"cid\",\"field_index\":17},{\"field_type\":\"long\",\"field_name\":\"__c18\",\"field_alias\":\"time\",\"field_index\":18},{\"field_type\":\"int\",\"field_name\":\"__c19\",\"field_alias\":\"_value_\",\"field_index\":19},{\"field_type\":\"long\",\"field_name\":\"__c20\",\"field_alias\":\"_timestamp_\",\"field_index\":20}],\"bksql_call_elapsed_time\":0,\"device\":\"doris\",\"result_table_ids\":[\"5000140_bklog_container_log_demo_analysis\"]},\"errors\":null,\"trace_id\":\"1d6580ef7e6d7e7c040801a72645fdf2\",\"span_id\":\"ab5485e1dd6595bc\"}",
 	})
 
 	end := time.UnixMilli(1730118889181)
@@ -271,7 +271,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 				TableID:    tableID,
 				DB:         db,
 				DataLabel:  db,
-				MetricName: field,
+				Field:      field,
 				OffsetInfo: metadata.OffSetInfo{Limit: 10},
 				AllConditions: metadata.AllConditions{
 					{
@@ -360,7 +360,6 @@ func TestInstance_QueryRaw(t *testing.T) {
 				TableID:     "5000140_bklog_container_log_demo_analysis.doris",
 				DB:          "5000140_bklog_container_log_demo_analysis",
 				Measurement: "doris",
-				MetricName:  "bk_host_id",
 				Field:       "bk_host_id",
 				DataLabel:   "5000140_bklog_container_log_demo_analysis",
 				Size:        2,
@@ -440,7 +439,6 @@ func TestInstance_QueryRaw(t *testing.T) {
 				TableID:     "5000140_bklog_container_log_demo_analysis.doris",
 				DB:          "5000140_bklog_container_log_demo_analysis",
 				Measurement: "doris",
-				MetricName:  "bk_host_id",
 				Field:       "bk_host_id",
 				DataLabel:   "5000140_bklog_container_log_demo_analysis",
 				QueryString: "metricbeat_scrape metricbeat",
@@ -521,7 +519,6 @@ func TestInstance_QueryRaw(t *testing.T) {
 				TableID:     "5000140_bklog_container_log_demo_analysis.doris",
 				DB:          "5000140_bklog_container_log_demo_analysis",
 				Measurement: "doris",
-				MetricName:  "bk_host_id",
 				Field:       "bk_host_id",
 				DataLabel:   "5000140_bklog_container_log_demo_analysis",
 				QueryString: "metricbeat_scrape metricbeat",
@@ -602,7 +599,6 @@ func TestInstance_QueryRaw(t *testing.T) {
 				TableID:     "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
 				DB:          "2_bklog_pure_v4_log_doris_for_unify_query",
 				Measurement: "doris",
-				MetricName:  "dtEventTimeStamp",
 				Field:       "dtEventTimeStamp",
 				DataLabel:   "log_index_set_1183",
 				AllConditions: metadata.AllConditions{
@@ -844,7 +840,7 @@ func TestInstance_bkSql(t *testing.T) {
 						{
 							DimensionName: "namespace",
 							Operator:      metadata.ConditionNotEqual,
-							Value:         []string{"test", "test2"},
+							Value:         []string{"*test*", "*test2*"},
 							IsWildcard:    true,
 						},
 						{
@@ -855,7 +851,7 @@ func TestInstance_bkSql(t *testing.T) {
 						{
 							DimensionName: "namespace",
 							Operator:      metadata.ConditionNotEqual,
-							Value:         []string{"test"},
+							Value:         []string{"*test*"},
 							IsWildcard:    true,
 						},
 						{
@@ -866,7 +862,7 @@ func TestInstance_bkSql(t *testing.T) {
 						{
 							DimensionName: "text",
 							Operator:      metadata.ConditionNotEqual,
-							Value:         []string{"test", "test2"},
+							Value:         []string{"*test*", "*test2*"},
 							IsWildcard:    true,
 						},
 						{
@@ -877,7 +873,7 @@ func TestInstance_bkSql(t *testing.T) {
 						{
 							DimensionName: "text",
 							Operator:      metadata.ConditionNotEqual,
-							Value:         []string{"test"},
+							Value:         []string{"*test*"},
 							IsWildcard:    true,
 						},
 						{
@@ -888,7 +884,7 @@ func TestInstance_bkSql(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT *, `login_rate` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `thedate` = '20240612' AND (`namespace` NOT LIKE '%test%' AND `namespace` NOT LIKE '%test2%') AND `namespace` NOT IN ('test', 'test2') AND `namespace` NOT LIKE '%test%' AND `namespace` != 'test' AND (`text` NOT LIKE '%test%' AND `text` NOT LIKE '%test2%') AND (`text` NOT MATCH_PHRASE_PREFIX 'test' AND `text` NOT MATCH_PHRASE_PREFIX 'test2') AND `text` NOT LIKE '%test%' AND `text` NOT MATCH_PHRASE_PREFIX 'test'",
+			expected: "SELECT *, `login_rate` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `thedate` = '20240612' AND (`namespace` NOT LIKE '%test%' AND `namespace` NOT LIKE '%test2%') AND `namespace` NOT IN ('test', 'test2') AND `namespace` NOT LIKE '%test%' AND `namespace` != 'test' AND (`text` NOT LIKE '%test%' AND `text` NOT LIKE '%test2%') AND (`text` NOT MATCH_PHRASE 'test' AND `text` NOT MATCH_PHRASE 'test2') AND `text` NOT LIKE '%test%' AND `text` NOT MATCH_PHRASE 'test'",
 		},
 		{
 			name: "conditions with or and like",
@@ -1411,7 +1407,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.Unix(1741334700, 0),
 			end:      time.Unix(1741335000, 0),
-			expected: "SELECT CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_type`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` <= 1741335000000 AND `thedate` = '20250307' AND CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) = 'bkm-daemonset-worker' AND `bk_host_id` = '267730' GROUP BY __ext__bk_46__io_kubernetes_workload_name, __ext__bk_46__io_kubernetes_workload_type ORDER BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) DESC LIMIT 3",
+			expected: "SELECT CAST(__ext['io_kubernetes_workload_name'] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, CAST(__ext['io_kubernetes_workload_type'] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_type`, COUNT(CAST(__ext['container_id'] AS STRING)) AS `_value_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` <= 1741335000000 AND `thedate` = '20250307' AND CAST(__ext['io_kubernetes_workload_name'] AS STRING) = 'bkm-daemonset-worker' AND `bk_host_id` = '267730' GROUP BY __ext__bk_46__io_kubernetes_workload_name, __ext__bk_46__io_kubernetes_workload_type ORDER BY CAST(__ext['io_kubernetes_workload_name'] AS STRING) DESC LIMIT 3",
 		},
 		// 测试用例10: doris 处理 object 字段 + 时间聚合
 		{
@@ -1450,7 +1446,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.Unix(1741334700, 0),
 			end:      time.Unix(1741335000, 0),
-			expected: "SELECT CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, CAST(__ext[\"io_kubernetes_workload_type\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_type`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` <= 1741335000000 AND `thedate` = '20250307' AND CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) = 'bkm-daemonset-worker' AND `bk_host_id` = '267730' GROUP BY __ext__bk_46__io_kubernetes_workload_name, __ext__bk_46__io_kubernetes_workload_type, _timestamp_ ORDER BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
+			expected: "SELECT CAST(__ext['io_kubernetes_workload_name'] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, CAST(__ext['io_kubernetes_workload_type'] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_type`, COUNT(CAST(__ext['container_id'] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` <= 1741335000000 AND `thedate` = '20250307' AND CAST(__ext['io_kubernetes_workload_name'] AS STRING) = 'bkm-daemonset-worker' AND `bk_host_id` = '267730' GROUP BY __ext__bk_46__io_kubernetes_workload_name, __ext__bk_46__io_kubernetes_workload_type, _timestamp_ ORDER BY CAST(__ext['io_kubernetes_workload_name'] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
 		},
 		// 测试用例11: doris 处理 object 字段 + 时间聚合 5m
 		{
@@ -1476,7 +1472,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.Unix(1741334700, 0),
 			end:      time.Unix(1741335000, 0),
-			expected: "SELECT CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 5 AS INT) * 5 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` <= 1741335000000 AND `thedate` = '20250307' GROUP BY __ext__bk_46__io_kubernetes_workload_name, _timestamp_ ORDER BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
+			expected: "SELECT CAST(__ext['io_kubernetes_workload_name'] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, COUNT(CAST(__ext['container_id'] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 5 AS INT) * 5 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` <= 1741335000000 AND `thedate` = '20250307' GROUP BY __ext__bk_46__io_kubernetes_workload_name, _timestamp_ ORDER BY CAST(__ext['io_kubernetes_workload_name'] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
 		},
 		// 测试用例12: doris 处理 object 字段 + 时间聚合 15s
 		{
@@ -1502,7 +1498,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.Unix(1741334700, 0),
 			end:      time.Unix(1741335000, 0),
-			expected: "SELECT CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, COUNT(CAST(__ext[\"container_id\"] AS STRING)) AS `_value_`, CAST(FLOOR(dtEventTimeStamp / 15000) AS INT) * 15000  AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` <= 1741335000000 AND `thedate` = '20250307' GROUP BY __ext__bk_46__io_kubernetes_workload_name, _timestamp_ ORDER BY CAST(__ext[\"io_kubernetes_workload_name\"] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
+			expected: "SELECT CAST(__ext['io_kubernetes_workload_name'] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, COUNT(CAST(__ext['container_id'] AS STRING)) AS `_value_`, CAST(FLOOR(dtEventTimeStamp / 15000) AS INT) * 15000  AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` <= 1741335000000 AND `thedate` = '20250307' GROUP BY __ext__bk_46__io_kubernetes_workload_name, _timestamp_ ORDER BY CAST(__ext['io_kubernetes_workload_name'] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
 		},
 		// 测试用例13: doris 处理多层级 object 字段
 		{
@@ -1536,7 +1532,253 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.UnixMilli(1744880448784),
 			end:      time.UnixMilli(1744884048785),
-			expected: "SELECT CAST(attributes[\"http.host\"] AS STRING) AS `attributes__bk_46__http__bk_46__host`, COUNT(CAST(attributes[\"http.host\"] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1744880448784 AND `dtEventTimeStamp` <= 1744884048785 AND `thedate` = '20250417' AND CAST(attributes[\"http.host\"] AS STRING) IS NOT NULL GROUP BY attributes__bk_46__http__bk_46__host, _timestamp_ ORDER BY CAST(attributes[\"http.host\"] AS STRING) DESC, `_timestamp_` ASC LIMIT 1",
+			expected: "SELECT CAST(attributes['http.host'] AS STRING) AS `attributes__bk_46__http__bk_46__host`, COUNT(CAST(attributes['http.host'] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1744880448784 AND `dtEventTimeStamp` <= 1744884048785 AND `thedate` = '20250417' AND CAST(attributes['http.host'] AS STRING) IS NOT NULL GROUP BY attributes__bk_46__http__bk_46__host, _timestamp_ ORDER BY CAST(attributes['http.host'] AS STRING) DESC, `_timestamp_` ASC LIMIT 1",
+		},
+		{
+			name: "nested field eq",
+			query: &metadata.Query{
+				DB:          "2_bkapm_trace_bkop_doris",
+				Measurement: sql_expr.Doris,
+				Field:       "events.attributes.exception.type",
+				Size:        1,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "events.attributes.exception.type",
+							Operator:      metadata.ConditionEqual,
+							Value:         []string{"*errors.withMessage"},
+						},
+						{
+							DimensionName: "events",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"{}"},
+						},
+					},
+				},
+			},
+			start:    time.UnixMilli(1750953836000),
+			end:      time.UnixMilli(1750953838000),
+			expected: "SELECT *, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_CONTAINS(CAST(events['attributes']['exception.type'] AS TEXT ARRAY), '*errors.withMessage') == 1 AND `events` != '{}' LIMIT 1",
+		},
+		{
+			name: "nested field existed",
+			query: &metadata.Query{
+				DB:          "2_bkapm_trace_bkop_doris",
+				Measurement: sql_expr.Doris,
+				Field:       "events.attributes.exception.type",
+				Size:        1,
+				Source:      []string{"events"},
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "events.attributes.exception.type",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{""},
+						},
+						{
+							DimensionName: "events",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"{}"},
+						},
+					},
+				},
+			},
+			start:    time.UnixMilli(1750953836000),
+			end:      time.UnixMilli(1750953838000),
+			expected: "SELECT *, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND CAST(events['attributes']['exception.type'] AS TEXT ARRAY) IS NOT NULL AND `events` != '{}' LIMIT 1",
+		},
+		{
+			name: "nested field like",
+			query: &metadata.Query{
+				DB:          "2_bkapm_trace_bkop_doris",
+				Measurement: sql_expr.Doris,
+				Field:       "events.attributes.exception.type",
+				Size:        1,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "events.attributes.exception.type",
+							Operator:      metadata.ConditionEqual,
+							Value:         []string{"*errors*"},
+							IsWildcard:    true,
+						},
+						{
+							DimensionName: "events",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"{}"},
+						},
+					},
+				},
+			},
+			start:    time.UnixMilli(1750953836000),
+			end:      time.UnixMilli(1750953838000),
+			expected: "SELECT *, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_MATCH_ANY(x -> x LIKE '%errors%', CAST(events['attributes']['exception.type'] AS TEXT ARRAY)) AND `events` != '{}' LIMIT 1",
+		},
+		{
+			name: "nested field regex",
+			query: &metadata.Query{
+				DB:          "2_bkapm_trace_bkop_doris",
+				Measurement: sql_expr.Doris,
+				Field:       "events.attributes.exception.type",
+				Size:        1,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "events.attributes.exception.type",
+							Operator:      metadata.ConditionRegEqual,
+							Value:         []string{".*errors.*"},
+							IsWildcard:    true,
+						},
+						{
+							DimensionName: "events",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"{}"},
+						},
+					},
+				},
+			},
+			start:    time.UnixMilli(1750953836000),
+			end:      time.UnixMilli(1750953838000),
+			expected: "SELECT *, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_MATCH_ANY(x -> x REGEXP '.*errors.*', CAST(events['attributes']['exception.type'] AS TEXT ARRAY)) AND `events` != '{}' LIMIT 1",
+		},
+		{
+			name: "nested field gt",
+			query: &metadata.Query{
+				DB:          "2_bkapm_trace_bkop_doris",
+				Measurement: sql_expr.Doris,
+				Field:       "events.timestamp",
+				Size:        1,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "events.timestamp",
+							Operator:      metadata.ConditionGt,
+							Value:         []string{"0"},
+						},
+						{
+							DimensionName: "events",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"{}"},
+						},
+					},
+				},
+			},
+			start:    time.UnixMilli(1750953836000),
+			end:      time.UnixMilli(1750953838000),
+			expected: "SELECT *, CAST(events['timestamp'] AS BIGINT ARRAY) AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_MATCH_ANY(x -> x > 0, CAST(events['timestamp'] AS BIGINT ARRAY)) AND `events` != '{}' LIMIT 1",
+		},
+		{
+			name: "nested field eq multi values and aggregate",
+			query: &metadata.Query{
+				DB:          "2_bkapm_trace_bkop_doris",
+				Measurement: sql_expr.Doris,
+				Field:       "events.attributes.exception.type",
+				Size:        1,
+				Aggregates: metadata.Aggregates{
+					{
+						Name:   "count",
+						Window: time.Minute,
+					},
+				},
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "events.attributes.exception.type",
+							Operator:      metadata.ConditionEqual,
+							Value:         []string{"*errors.withMessage", "info"},
+						},
+					},
+				},
+			},
+			start:    time.UnixMilli(1750953836000),
+			end:      time.UnixMilli(1750953838000),
+			expected: "SELECT COUNT(CAST(events['attributes']['exception.type'] AS TEXT ARRAY)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND (ARRAY_CONTAINS(CAST(events['attributes']['exception.type'] AS TEXT ARRAY), '*errors.withMessage') == 1 OR ARRAY_CONTAINS(CAST(events['attributes']['exception.type'] AS TEXT ARRAY), 'info') == 1) GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC LIMIT 1",
+		},
+		{
+			name: "nested field eq and aggregate",
+			query: &metadata.Query{
+				DB:          "2_bkapm_trace_bkop_doris",
+				Measurement: sql_expr.Doris,
+				Field:       "events.attributes.exception.type",
+				Size:        1,
+				Aggregates: metadata.Aggregates{
+					{
+						Name:   "count",
+						Window: time.Minute,
+					},
+				},
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "events.attributes.exception.type",
+							Operator:      metadata.ConditionEqual,
+							Value:         []string{"*errors.withMessage"},
+						},
+						{
+							DimensionName: "events",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{"{}"},
+						},
+					},
+				},
+			},
+			start:    time.UnixMilli(1750953836000),
+			end:      time.UnixMilli(1750953838000),
+			expected: "SELECT COUNT(CAST(events['attributes']['exception.type'] AS TEXT ARRAY)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_CONTAINS(CAST(events['attributes']['exception.type'] AS TEXT ARRAY), '*errors.withMessage') == 1 AND `events` != '{}' GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC LIMIT 1",
+		},
+		{
+			name: "nested field eq and aggregate",
+			query: &metadata.Query{
+				DB:          "2_bkapm_trace_bkop_doris",
+				Measurement: sql_expr.Doris,
+				Field:       "resource.bk.instance.id",
+				Size:        1,
+				Aggregates: metadata.Aggregates{
+					{
+						Name:   "count",
+						Window: time.Minute,
+					},
+				},
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "resource.bk.instance.id",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{""},
+						},
+					},
+				},
+			},
+			start:    time.UnixMilli(1750953836000),
+			end:      time.UnixMilli(1750953838000),
+			expected: "SELECT COUNT(CAST(resource['bk.instance.id'] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND CAST(resource['bk.instance.id'] AS STRING) IS NOT NULL GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC LIMIT 1",
+		},
+		{
+			name: "object field eq and aggregate",
+			query: &metadata.Query{
+				DB:          "2_bkapm_trace_bkop_doris",
+				Measurement: sql_expr.Doris,
+				Field:       "extra.queueDuration",
+				Size:        1,
+				Aggregates: metadata.Aggregates{
+					{
+						Name:   "count",
+						Window: time.Minute,
+					},
+				},
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "extra.queueDuration",
+							Operator:      metadata.ConditionNotEqual,
+							Value:         []string{""},
+						},
+					},
+				},
+			},
+			start:    time.UnixMilli(1750953836000),
+			end:      time.UnixMilli(1750953838000),
+			expected: "SELECT COUNT(CAST(extra['queueDuration'] AS INT)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND CAST(extra['queueDuration'] AS INT) IS NOT NULL GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC LIMIT 1",
 		},
 	}
 
@@ -1556,7 +1798,10 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 
 			// SQL生成验证
 			fact := bksql.NewQueryFactory(ctx, tc.query).WithFieldsMap(map[string]string{
-				"text": sql_expr.DorisTypeText,
+				"text":                             sql_expr.DorisTypeText,
+				"events.attributes.exception.type": fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText),
+				"events.timestamp":                 fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt),
+				"extra.queueDuration":              sql_expr.DorisTypeInt,
 			}).WithRangeTime(start, end)
 			generatedSQL, err := fact.SQL()
 

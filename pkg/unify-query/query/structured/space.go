@@ -79,6 +79,7 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 	t.DB = d.DB
 	t.Measurement = d.Measurement
 	t.VmRt = d.VmRt
+	t.CmdbLevelVmRt = d.CmdbLevelVmRt
 	t.StorageName = d.StorageName
 	t.TimeField = metadata.TimeField{
 		Name: d.Options.TimeField.Name,
@@ -166,6 +167,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	// 字段为空时，需要返回结果表的信息，表示无需过滤字段过滤
 	// bklog 或者 bkapm 则不判断 field 是否存在
 	if isSkipField {
+		defaultTsDB.ExpandMetricNames = []string{fieldName}
 		tsDBs = append(tsDBs, &defaultTsDB)
 		return tsDBs
 	}
@@ -275,13 +277,15 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	tableIDs := set.New[string]()
 	isK8s := false
 
-	if db != "" && measurement != "" {
-		// 判断如果 tableID 完整的情况下（三段式），则直接取对应的 tsDB
-		tableIDs.Add(string(opt.TableID))
-	} else if db != "" {
-		// 指标二段式，仅传递 data-label
-		tIDs := s.router.GetDataLabelRelatedRts(s.ctx, db)
+	if db != "" {
+		// 指标二段式，仅传递 data-label， datalabel 支持各种格式
+		tIDs := s.router.GetDataLabelRelatedRts(s.ctx, string(opt.TableID))
 		tableIDs.Add(tIDs...)
+
+		// 只有当 db 和 measurement 都不为空时，才是 tableID，为了兼容，同时也接入到 tableID  list
+		if measurement != "" {
+			tableIDs.Add(fmt.Sprintf("%s.%s", db, measurement))
+		}
 
 		if tableIDs.Size() == 0 {
 			routerMessage = fmt.Sprintf("data_label router is empty with data_label: %s", db)

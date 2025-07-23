@@ -12,19 +12,14 @@ package service
 import (
 	"context"
 	"fmt"
-	"strings"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
@@ -32,7 +27,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
@@ -53,145 +47,6 @@ func NewDataSourceSvc(obj *resulttable.DataSource) DataSourceSvc {
 	return DataSourceSvc{
 		DataSource: obj,
 	}
-}
-
-func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLabel string, mqCluster uint, typeLabel, transferClusterId, sourceSystem string) (*resulttable.DataSource, error) {
-	db := mysql.GetDBSession().DB
-	// 判断两个使用到的标签是否存在
-	count, err := resulttable.NewLabelQuerySet(db).LabelIdEq(sourceLabel).LabelTypeEq(models.LabelTypeSource).Count()
-	if err != nil {
-		return nil, err
-	}
-	if count == 0 {
-		return nil, errors.Errorf("user [%s] try to create datasource but use source_type [%s], which is not exists", operator, sourceLabel)
-	}
-	count, err = resulttable.NewLabelQuerySet(db).LabelIdEq(typeLabel).LabelTypeEq(models.LabelTypeType).Count()
-	if err != nil {
-		return nil, err
-	}
-	if count == 0 {
-		return nil, errors.Errorf("user [%s] try to create datasource but use type_label [%s], which is not exists", operator, typeLabel)
-	}
-	// 判断参数是否符合预期
-	// 数据源名称是否重复
-	count, err = resulttable.NewDataSourceQuerySet(db).DataNameEq(dataName).Count()
-	if err != nil {
-		return nil, err
-	}
-	if count != 0 {
-		return nil, errors.Errorf("data_name [%s] is already exists, maybe something go wrong", dataName)
-	}
-	// 如果集群信息无提供，则使用默认的MQ集群信息
-	var mqClusterObj storage.ClusterInfo
-	if mqCluster == 0 {
-		if err := storage.NewClusterInfoQuerySet(db).ClusterTypeEq(models.StorageTypeKafka).
-			IsDefaultClusterEq(true).One(&mqClusterObj); err != nil {
-			return nil, err
-		}
-	} else {
-		if err := storage.NewClusterInfoQuerySet(db).ClusterIDEq(mqCluster).One(&mqClusterObj); err != nil {
-			return nil, err
-		}
-	}
-	bkDataId, err := d.ApplyForDataIdFromGse(operator)
-	if err != nil {
-		return nil, errors.Wrap(err, "apply for data_id error")
-	}
-	if transferClusterId == "" {
-		transferClusterId = "default"
-	}
-	// 此处启动DB事务，创建默认的信息
-	ds := resulttable.DataSource{
-		BkDataId:          bkDataId,
-		Token:             d.makeToken(),
-		DataName:          dataName,
-		MqClusterId:       mqClusterObj.ClusterID,
-		EtlConfig:         etcConfig,
-		Creator:           operator,
-		CreateTime:        time.Now(),
-		LastModifyUser:    operator,
-		LastModifyTime:    time.Now(),
-		TypeLabel:         typeLabel,
-		SourceLabel:       sourceLabel,
-		SourceSystem:      sourceSystem,
-		IsEnable:          true,
-		TransferClusterId: transferClusterId,
-		IsPlatformDataId:  false,
-		IsCustomSource:    true,
-		SpaceTypeId:       "all",
-		SpaceUid:          "",
-	}
-	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
-		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(ds.TableName(), map[string]interface{}{
-			resulttable.DataSourceDBSchema.BkDataId.String():          ds.BkDataId,
-			resulttable.DataSourceDBSchema.Token.String():             ds.Token,
-			resulttable.DataSourceDBSchema.DataName.String():          ds.DataName,
-			resulttable.DataSourceDBSchema.MqClusterId.String():       ds.MqClusterId,
-			resulttable.DataSourceDBSchema.EtlConfig.String():         ds.EtlConfig,
-			resulttable.DataSourceDBSchema.TypeLabel.String():         ds.TypeLabel,
-			resulttable.DataSourceDBSchema.SourceLabel.String():       ds.SourceLabel,
-			resulttable.DataSourceDBSchema.SourceSystem.String():      ds.SourceSystem,
-			resulttable.DataSourceDBSchema.IsEnable.String():          ds.IsEnable,
-			resulttable.DataSourceDBSchema.TransferClusterId.String(): ds.TransferClusterId,
-			resulttable.DataSourceDBSchema.IsPlatformDataId.String():  ds.IsPlatformDataId,
-			resulttable.DataSourceDBSchema.IsCustomSource.String():    ds.IsCustomSource,
-			resulttable.DataSourceDBSchema.SpaceTypeId.String():       ds.SpaceTypeId,
-			resulttable.DataSourceDBSchema.SpaceUid.String():          ds.SpaceUid,
-		}), ""))
-	} else {
-		if err := ds.Create(db); err != nil {
-			return nil, err
-		}
-	}
-	logger.Infof("data_id [%v] data_name [%s] by operator [%s] now is pre-create.", ds.BkDataId, ds.DataName, ds.Creator)
-	// 获取这个数据源对应的配置记录model，并创建一个新的配置记录
-	mqConfig, err := NewKafkaTopicInfoSvc(nil).CreateInfo(bkDataId, "", 0, nil, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	ds.MqConfigId = mqConfig.Id
-	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
-		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(ds.TableName(), map[string]interface{}{
-			resulttable.DataSourceDBSchema.BkDataId.String():   ds.BkDataId,
-			resulttable.DataSourceDBSchema.MqConfigId.String(): ds.MqConfigId,
-		}), ""))
-	} else {
-		err = ds.Update(db, resulttable.DataSourceDBSchema.MqConfigId)
-		if err != nil {
-			return nil, err
-		}
-	}
-	logger.Infof("data_id [%v] now is relate to its mq config id [%v]", ds.BkDataId, ds.MqConfigId)
-
-	// 判断是否NS支持的etl配置，如果是，则需要追加option内容
-	tx := db.Begin()
-	for _, etl := range NsTimestampEtlConfigList {
-		if etcConfig != etl {
-			continue
-		}
-		err := NewDataSourceOptionSvc(nil).CreateOption(ds.BkDataId, models.OptionTimestampUnit, "ms", operator, tx)
-		if err != nil {
-			tx.Rollback()
-			return nil, err
-		}
-		logger.Infof("bk_data_id [%v] etl_config [%s] so is has now has option [%s] with value->[ms]", ds.BkDataId, etcConfig, models.OptionTimestampUnit)
-	}
-	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
-		tx.Rollback()
-	} else {
-		tx.Commit()
-	}
-	// 触发consul刷新
-	err = NewDataSourceSvc(&ds).RefreshOuterConfig(context.Background(), 0, nil)
-	if err != nil {
-		return nil, err
-	}
-	return &ds, nil
-}
-
-// makeToken
-func (d DataSourceSvc) makeToken() string {
-	return strings.ReplaceAll(uuid.NewString(), "-", "")
 }
 
 // ConsulPath 获取datasource的consul根路径
@@ -489,16 +344,12 @@ func (d DataSourceSvc) AddBuiltInChannelIdToGse() error {
 		Route:     []interface{}{route},
 		Operation: bkgse.Operation{OperatorName: "admin"},
 	}
-	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_datasource") {
-		paramStr, _ := jsonx.MarshalString(params)
-		logger.Info(diffutil.BuildLogStr("refresh_datasource", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
-	} else {
-		data, err := apiservice.Gse.AddRoute(params)
-		if err != nil {
-			return err
-		}
-		logger.Infof("data_id [%v] success to push route info to gse, [%v]", d.BkDataId, data)
+
+	data, err := apiservice.Gse.AddRoute(params)
+	if err != nil {
+		return err
 	}
+	logger.Infof("data_id [%v] success to push route info to gse, [%v]", d.BkDataId, data)
 	return nil
 }
 
@@ -585,46 +436,6 @@ func (d DataSourceSvc) RefreshOuterConfig(ctx context.Context, modifyIndex uint6
 	}
 
 	return err
-}
-
-// ApplyForDataIdFromGse 从gse请求生成data id
-func (d DataSourceSvc) ApplyForDataIdFromGse(operator string) (uint, error) {
-	gseApi, err := api.GetGseApi()
-	if err != nil {
-		return 0, nil
-	}
-	params := map[string]interface{}{
-		"metadata": map[string]interface{}{
-			"plat_name": "bkmonitor",
-		},
-		"operation": map[string]interface{}{
-			"operator_name": operator,
-		},
-	}
-	var resp define.APICommonResp
-	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
-		paramStr, _ := jsonx.MarshalString(params)
-		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
-		return 0, nil
-	} else {
-		_, err = gseApi.AddRoute().SetBody(params).SetResult(&resp).Request()
-		if err != nil {
-			return 0, err
-		}
-		if resp.Code != 0 {
-			return 0, errors.New(resp.Message)
-		}
-		data, ok := resp.Data.(map[string]interface{})
-		if !ok {
-			return 0, errors.New("ApplyForDataIdFromGse parse response data failed")
-		}
-		channelIdInterface := data["channel_id"]
-		channelId, ok := channelIdInterface.(float64)
-		if !ok {
-			return 0, errors.New("ApplyForDataIdFromGse parse channel_id failed")
-		}
-		return uint(channelId), nil
-	}
 }
 
 // CleanConsulPath clean datasource consul path, when not enable or from bkdata

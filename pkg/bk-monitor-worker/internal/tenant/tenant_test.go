@@ -39,22 +39,22 @@ func TestGetTenantList(t *testing.T) {
 func TestBkBizIdToTenantId(t *testing.T) {
 	db := mysql.GetDBSession().DB
 
+	db.Delete(&space.Space{})
+
 	db.Create(&space.Space{
-		Id:          1,
 		SpaceTypeId: "bkcc",
-		SpaceId:     "1",
+		SpaceId:     "101",
 		SpaceName:   "test_space_1",
 		BkTenantId:  "test_tenant_id_1",
 	})
 	db.Create(&space.Space{
-		Id:          2,
 		SpaceTypeId: "bkcc",
-		SpaceId:     "2",
+		SpaceId:     "102",
 		SpaceName:   "test_space_2",
 		BkTenantId:  "test_tenant_id_2",
 	})
 	db.Create(&space.Space{
-		Id:          3,
+		Id:          1003,
 		SpaceTypeId: "bkci",
 		SpaceId:     "aaa",
 		SpaceName:   "test_space_3",
@@ -62,20 +62,20 @@ func TestBkBizIdToTenantId(t *testing.T) {
 	})
 
 	cfg.EnableMultiTenantMode = false
-	tenantId, err := tenant.GetTenantIdByBkBizId(1)
+	tenantId, err := tenant.GetTenantIdByBkBizId(101)
 	assert.NoError(t, err)
 	assert.Equal(t, tenant.DefaultTenantId, tenantId)
 
 	cfg.EnableMultiTenantMode = true
-	tenantId, err = tenant.GetTenantIdByBkBizId(1)
+	tenantId, err = tenant.GetTenantIdByBkBizId(101)
 	assert.NoError(t, err)
 	assert.Equal(t, "test_tenant_id_1", tenantId)
 
-	tenantId, err = tenant.GetTenantIdByBkBizId(2)
+	tenantId, err = tenant.GetTenantIdByBkBizId(102)
 	assert.NoError(t, err)
 	assert.Equal(t, "test_tenant_id_2", tenantId)
 
-	tenantId, err = tenant.GetTenantIdByBkBizId(-3)
+	tenantId, err = tenant.GetTenantIdByBkBizId(-1003)
 	assert.NoError(t, err)
 	assert.Equal(t, "test_tenant_id_3", tenantId)
 }

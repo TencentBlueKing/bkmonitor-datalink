@@ -177,6 +177,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		message   strings.Builder
 		queryList []*metadata.Query
 		lock      sync.Mutex
+
+		allLabelMap = make(map[string][]function.LabelMapValue)
 	)
 
 	list = make([]map[string]any, 0)
@@ -223,11 +225,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			queryTs.IsMultiFrom = false
 		}
 
-		// 复用 高亮配置，没有特殊配置的情况下使用公共配置
-		if ql.HighLight == nil && queryTs.HighLight != nil {
-			ql.HighLight = queryTs.HighLight
-		}
-
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
 		if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
 			ql.KeepColumns = queryTs.ResultColumns
@@ -258,6 +255,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		}
 
 		span.Set("query-list-num", len(queryList))
+		span.Set("result-data-num", len(data))
 
 		if len(queryList) > 1 {
 			queryTs.OrderBy.Orders().SortSliceList(data)
@@ -273,7 +271,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				span.Set("query-ts-from", queryTs.From)
 				span.Set("query-ts-limit", queryTs.Limit)
 
-				if len(data) > queryTs.Limit {
+				if len(data) > queryTs.Limit && queryTs.Limit > 0 {
 					if queryTs.IsMultiFrom {
 						resultTableOptions = queryTs.ResultTableOptions
 						if resultTableOptions == nil {
@@ -293,21 +291,28 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 							}
 						}
 					} else {
-						data = data[queryTs.From : queryTs.From+queryTs.Limit]
+						// 只有长度符合的数据才进行裁剪
+						if len(data) > queryTs.From {
+							maxLength := queryTs.From + queryTs.Limit
+							if len(data) < maxLength {
+								maxLength = len(data)
+							}
+
+							data = data[queryTs.From:maxLength]
+						}
 					}
 				}
 			}
+		}
 
+		span.Set("query-label-map", allLabelMap)
+		span.Set("query-highlight", queryTs.HighLight)
+
+		var hlF *function.HighLightFactory
+		if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(allLabelMap) > 0 {
+			hlF = function.NewHighLightFactory(allLabelMap, queryTs.HighLight.MaxAnalyzedOffset)
 		}
-		labelMap, err := queryTs.LabelMap()
-		if err != nil {
-			return
-		}
-		var maxAnalyzedOffset int
-		if queryTs.HighLight != nil {
-			maxAnalyzedOffset = queryTs.HighLight.MaxAnalyzedOffset
-		}
-		hlF := function.NewHighLightFactory(labelMap, maxAnalyzedOffset)
+
 		for _, item := range data {
 			if item == nil {
 				continue
@@ -317,14 +322,16 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				delete(item, ignoreDimension)
 			}
 
-			if queryTs.HighLight != nil && queryTs.HighLight.Enable && len(labelMap) > 0 {
+			if hlF != nil {
 				if highlightResult := hlF.Process(item); len(highlightResult) > 0 {
 					item[function.KeyHighLight] = highlightResult
 				}
 			}
-
 			list = append(list, item)
 		}
+
+		span.Set("result-list-num", len(list))
+		span.Set("result-option", resultTableOptions)
 	}()
 
 	// 多协程查询数据
@@ -343,6 +350,18 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		for _, qry := range queryList {
 			sendWg.Add(1)
 			qry := qry
+
+			labelMap, err := qry.LabelMap()
+			if err == nil {
+				// 合并 labelMap
+				for k, lm := range labelMap {
+					if _, ok := allLabelMap[k]; !ok {
+						allLabelMap[k] = make([]function.LabelMapValue, 0)
+					}
+
+					allLabelMap[k] = append(allLabelMap[k], lm...)
+				}
+			}
 
 			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
 			if len(queryList) > 1 {
@@ -411,7 +430,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	span.Set("query-ts", string(qStr))
 
 	for _, ql := range queryTs.QueryList {
-		ql.IsReference = true
+		ql.NotPromFunc = true
 
 		// 排序复用
 		ql.OrderBy = queryTs.OrderBy
@@ -445,7 +464,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		return nil, err
 	}
 
-	// es 需要使用自己的查询时间范围
+	// 开启时间不对齐模式
 	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit).SetIsReference(true)
 	metadata.SetQueryReference(ctx, queryRef)
 
@@ -555,10 +574,22 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 		}
 	}
 
+	// 判定是否开启时间不对齐模式
+	if queryTs.Reference {
+		unit, startTime, endTime, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
+		if timeErr != nil {
+			err = timeErr
+			return
+		}
+
+		metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit).SetIsReference(true)
+	}
+
 	// 判断是否打开对齐
 	for _, ql := range queryTs.QueryList {
-		ql.IsReference = false
-		ql.AlignInfluxdbResult = AlignInfluxdbResult
+		ql.NotPromFunc = false
+		// 只有时间对齐模式，才需要开启
+		ql.AlignInfluxdbResult = AlignInfluxdbResult && !queryTs.Reference
 
 		// 排序复用
 		ql.OrderBy = queryTs.OrderBy
@@ -775,57 +806,76 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 	query.LookBackDelta = queryPromQL.LookBackDelta
 	query.Instant = queryPromQL.Instant
 	query.DownSampleRange = queryPromQL.DownSampleRange
+	query.Reference = queryPromQL.Reference
 
-	// 补充业务ID
-	if len(queryPromQL.BKBizIDs) > 0 {
-		for _, q := range query.QueryList {
+	if queryPromQL.Match != "" {
+		matchers, err = parser.ParseMetricSelector(queryPromQL.Match)
+		if err != nil {
+			return
+		}
+	}
+
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
+	if decodeFunc == nil {
+		decodeFunc = func(q string) string {
+			return q
+		}
+	}
+
+	for _, q := range query.QueryList {
+		// decode table id and field name
+		q.TableID = structured.TableID(decodeFunc(string(q.TableID)))
+		q.FieldName = decodeFunc(q.FieldName)
+
+		// decode condition
+		for i, d := range q.Conditions.FieldList {
+			q.Conditions.FieldList[i].DimensionName = decodeFunc(d.DimensionName)
+		}
+
+		// decode agg
+		for aggIdx, agg := range q.AggregateMethodList {
+			for i, d := range agg.Dimensions {
+				q.AggregateMethodList[aggIdx].Dimensions[i] = decodeFunc(d)
+			}
+		}
+
+		// 补充业务ID
+		if len(queryPromQL.BKBizIDs) > 0 {
 			q.Conditions.Append(structured.ConditionField{
 				DimensionName: structured.BizID,
 				Value:         queryPromQL.BKBizIDs,
 				Operator:      structured.Contains,
 			}, structured.ConditionAnd)
 		}
-	}
 
-	if queryPromQL.Match == "" {
-		return
-	}
-
-	matchers, err = parser.ParseMetricSelector(queryPromQL.Match)
-	if err != nil {
-		return
-	}
-
-	if len(matchers) == 0 {
-		return
-	}
-
-	for _, q := range query.QueryList {
+		// 补充 Match
 		var verifyDimensions = func(key string) bool {
 			return true
 		}
 
-		if queryPromQL.IsVerifyDimensions {
-			dimSet := set.New[string]()
-			for _, a := range q.AggregateMethodList {
-				dimSet.Add(a.Dimensions...)
+		if len(matchers) > 0 {
+			if queryPromQL.IsVerifyDimensions {
+				dimSet := set.New[string]()
+				for _, a := range q.AggregateMethodList {
+					dimSet.Add(a.Dimensions...)
+				}
+
+				verifyDimensions = func(key string) bool {
+					return dimSet.Existed(key)
+				}
 			}
 
-			verifyDimensions = func(key string) bool {
-				return dimSet.Existed(key)
-			}
-		}
+			for _, m := range matchers {
+				if !verifyDimensions(m.Name) {
+					continue
+				}
 
-		for _, m := range matchers {
-			if !verifyDimensions(m.Name) {
-				continue
+				q.Conditions.Append(structured.ConditionField{
+					DimensionName: m.Name,
+					Value:         []string{m.Value},
+					Operator:      structured.PromOperatorToConditions(m.Type),
+				}, structured.ConditionAnd)
 			}
-
-			q.Conditions.Append(structured.ConditionField{
-				DimensionName: m.Name,
-				Value:         []string{m.Value},
-				Operator:      structured.PromOperatorToConditions(m.Type),
-			}, structured.ConditionAnd)
 		}
 	}
 

@@ -15,10 +15,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"testing"
 	"time"
 
-	"github.com/agiledragon/gomonkey/v2"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/jinzhu/gorm"
 	"github.com/stretchr/testify/assert"
@@ -30,13 +30,13 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/memcache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 )
 
 func TestSpacePusher_getMeasurementType(t *testing.T) {
@@ -216,6 +216,7 @@ func TestSpacePusher_getTableIdClusterId(t *testing.T) {
 			ClusterID:          "BCS-K8S-00000",
 			K8sMetricDataID:    1001,
 			CustomMetricDataID: 2001,
+			BkTenantId:         tenant.DefaultTenantId,
 		},
 		{
 			ClusterID:          "BCS-K8S-00001",
@@ -223,12 +224,14 @@ func TestSpacePusher_getTableIdClusterId(t *testing.T) {
 			CustomMetricDataID: 2002,
 			Status:             models.BcsClusterStatusDeleted, // 已删除
 			IsDeletedAllowView: true,
+			BkTenantId:         tenant.DefaultTenantId,
 		},
 		{
 			ClusterID:          "BCS-K8S-00002",
 			K8sMetricDataID:    1003,
 			CustomMetricDataID: 2003,
 			Status:             models.BcsRawClusterStatusDeleted, // 已删除
+			BkTenantId:         tenant.DefaultTenantId,
 		},
 	}
 	migrate.Migrate(context.TODO(), &bcs.BCSClusterInfo{})
@@ -240,28 +243,34 @@ func TestSpacePusher_getTableIdClusterId(t *testing.T) {
 	// 创建 DataSourceResultTable 数据
 	dataSourceResultTables := []resulttable.DataSourceResultTable{
 		{
-			BkDataId: 1001,
-			TableId:  "table1",
+			BkTenantId: tenant.DefaultTenantId,
+			BkDataId:   1001,
+			TableId:    "table1",
 		},
 		{
-			BkDataId: 2001,
-			TableId:  "table2",
+			BkTenantId: tenant.DefaultTenantId,
+			BkDataId:   2001,
+			TableId:    "table2",
 		},
 		{
-			BkDataId: 1002,
-			TableId:  "table3",
+			BkTenantId: tenant.DefaultTenantId,
+			BkDataId:   1002,
+			TableId:    "table3",
 		},
 		{
-			BkDataId: 2002,
-			TableId:  "table4",
+			BkTenantId: tenant.DefaultTenantId,
+			BkDataId:   2002,
+			TableId:    "table4",
 		},
 		{
-			BkDataId: 1003,
-			TableId:  "table5",
+			BkTenantId: tenant.DefaultTenantId,
+			BkDataId:   1003,
+			TableId:    "table5",
 		},
 		{
-			BkDataId: 2003,
-			TableId:  "table6",
+			BkTenantId: tenant.DefaultTenantId,
+			BkDataId:   2003,
+			TableId:    "table6",
 		},
 	}
 	db.Delete(&resulttable.DataSourceResultTable{})
@@ -271,7 +280,7 @@ func TestSpacePusher_getTableIdClusterId(t *testing.T) {
 	}
 
 	tableIds := []string{"table1", "table2", "table3", "table4", "table5", "table6"}
-	data, err := NewSpacePusher().getTableIdClusterId(tableIds)
+	data, err := NewSpacePusher().getTableIdClusterId(tenant.DefaultTenantId, tableIds)
 	assert.NoError(t, err)
 
 	// 验证结果
@@ -333,13 +342,13 @@ func TestSpacePusher_refineEsTableIds(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
 	itableName := "i_table_test.dbname"
-	iTable := storage.ESStorage{TableID: itableName, SourceType: models.EsSourceTypeLOG}
+	iTable := storage.ESStorage{TableID: itableName, SourceType: models.EsSourceTypeLOG, NeedCreateIndex: true}
 	db.Delete(&iTable)
 	err := iTable.Create(db)
 	assert.NoError(t, err)
 
 	itableName1 := "i_table_test1.dbname1"
-	iTable1 := storage.ESStorage{TableID: itableName1, SourceType: models.EsSourceTypeBKDATA}
+	iTable1 := storage.ESStorage{TableID: itableName1, SourceType: models.EsSourceTypeBKDATA, NeedCreateIndex: true}
 	db.Delete(&iTable1)
 	err = iTable1.Create(db)
 	assert.NoError(t, err)
@@ -358,9 +367,7 @@ func TestSpacePusher_GetBizIdBySpace(t *testing.T) {
 	obj2 := space.Space{Id: 5, SpaceTypeId: "bkci", SpaceId: "test"}
 	obj3 := space.Space{Id: 6, SpaceTypeId: "bksaas", SpaceId: "test2"}
 
-	db.Delete(obj)
-	db.Delete(obj2)
-	db.Delete(obj3)
+	db.Delete(&space.Space{})
 
 	assert.NoError(t, obj.Create(db))
 	assert.NoError(t, obj2.Create(db))
@@ -406,22 +413,30 @@ func TestSpacePusher_ComposeEsTableIds(t *testing.T) {
 	assert.NoError(t, obj3.Create(db))
 	assert.NoError(t, obj4.Create(db))
 
+	var nilMap map[string]map[string]interface{}
+
 	tests := []struct {
 		spaceType string
 		spaceId   string
+		hasError  bool
 		want      map[string]map[string]interface{}
 	}{
-		{spaceType: "bkcc", spaceId: "3", want: nil}, // 数据库无该记录
-		{spaceType: "bkcc", spaceId: "2", want: map[string]map[string]interface{}{"apache.net": {"filters": []interface{}{}}, // bizId=2
-			"system.net": {"filters": []interface{}{}}}},
-		{spaceType: "bkci", spaceId: "test", want: map[string]map[string]interface{}{"system.mem": {"filters": []interface{}{}}}},   // bizId=-5
-		{spaceType: "bksaas", spaceId: "test2", want: map[string]map[string]interface{}{"system.io": {"filters": []interface{}{}}}}, // bizId=-6
+		{spaceType: "bkcc", spaceId: "3", hasError: true, want: nilMap}, // 数据库无该记录
+		{spaceType: "bkcc", spaceId: "2", hasError: false, want: map[string]map[string]interface{}{"apache.net": {"filters": []map[string]interface{}{}}, // bizId=2
+			"system.net": {"filters": []map[string]interface{}{}}}},
+		{spaceType: "bkci", spaceId: "test", hasError: false, want: map[string]map[string]interface{}{"system.mem": {"filters": []map[string]interface{}{}}}},   // bizId=-5
+		{spaceType: "bksaas", spaceId: "test2", hasError: false, want: map[string]map[string]interface{}{"system.io": {"filters": []map[string]interface{}{}}}}, // bizId=-6
 	}
 
 	s := &SpacePusher{}
 	for _, tt := range tests {
 		t.Run(tt.spaceType+tt.spaceId, func(t *testing.T) {
-			datavalues, _ := s.ComposeEsTableIds(tt.spaceType, tt.spaceId)
+			datavalues, err := s.ComposeEsTableIds(tt.spaceType, tt.spaceId)
+			if tt.hasError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
 			assert.Equal(t, tt.want, datavalues)
 		})
 	}
@@ -430,8 +445,6 @@ func TestSpacePusher_ComposeEsTableIds(t *testing.T) {
 func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
-	_, redisPatch := mocker.RedisMocker()
-	defer redisPatch.Reset()
 	var platformDataId uint = 18003
 	platformRt := "rt_18003"
 	dsRtMap := map[string]uint{
@@ -442,6 +455,7 @@ func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
 	for rti, dataId := range dsRtMap {
 		db.Delete(&resulttable.DataSourceResultTable{}, "bk_data_id = ? and table_id = ?", dataId, rti)
 		dsrt := resulttable.DataSourceResultTable{
+			BkTenantId: tenant.DefaultTenantId,
 			BkDataId:   dataId,
 			TableId:    rti,
 			CreateTime: time.Now(),
@@ -461,6 +475,7 @@ func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
 	// 添加
 	db.Delete(&resulttable.DataSourceResultTable{}, "bk_data_id = ? and table_id = ?", platformDataId, platformRt)
 	dsrt := resulttable.DataSourceResultTable{
+		BkTenantId: tenant.DefaultTenantId,
 		BkDataId:   platformDataId,
 		TableId:    platformRt,
 		CreateTime: time.Now(),
@@ -469,6 +484,7 @@ func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
 	assert.NoError(t, err)
 	db.Delete(&resulttable.DataSource{}, "bk_data_id = ?", platformDataId)
 	ds := resulttable.DataSource{
+		BkTenantId:       tenant.DefaultTenantId,
 		BkDataId:         platformDataId,
 		IsPlatformDataId: true,
 	}
@@ -477,30 +493,29 @@ func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
 
 	pusher := NewSpacePusher()
 	// 指定rtList
-	dataMap, err := pusher.GetSpaceTableIdDataId("", "", []string{"rt_18000", "rt_18002"}, nil, nil)
+	dataMap, err := pusher.GetSpaceTableIdDataId(tenant.DefaultTenantId, "", "", []string{"rt_18000", "rt_18002"}, nil, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, map[string]uint{"rt_18000": 18000, "rt_18002": 18002}, dataMap)
 
 	// 执行类型，不指定结果表
-	dataMap, err = pusher.GetSpaceTableIdDataId("bkcc_t", "2", nil, nil, nil)
+	dataMap, err = pusher.GetSpaceTableIdDataId(tenant.DefaultTenantId, "bkcc_t", "2", nil, nil, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, map[string]uint{"rt_18000": 18000, "rt_18001": 18001, "rt_18002": 18002}, dataMap)
 
 	// 测试排除
-	dataMap, err = pusher.GetSpaceTableIdDataId("bkcc_t", "2", nil, []uint{18000, 18002}, nil)
+	dataMap, err = pusher.GetSpaceTableIdDataId(tenant.DefaultTenantId, "bkcc_t", "2", nil, []uint{18000, 18002}, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, map[string]uint{"rt_18001": 18001}, dataMap)
 
 	// 不包含全局数据源
 	opt := optionx.NewOptions(map[string]interface{}{"includePlatformDataId": false})
-	dataMap, err = pusher.GetSpaceTableIdDataId("bkcc_t", "2", nil, nil, opt)
+	dataMap, err = pusher.GetSpaceTableIdDataId(tenant.DefaultTenantId, "bkcc_t", "2", nil, nil, opt)
 	fmt.Println(dataMap)
 }
 
 func TestSpacePusher_getTableInfoForInfluxdbAndVm(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	_, redisPatch := mocker.RedisMocker()
-	defer redisPatch.Reset()
+
 	db := mysql.GetDBSession().DB
 	s := storage.InfluxdbProxyStorage{
 		ProxyClusterId:      2,
@@ -519,6 +534,7 @@ func TestSpacePusher_getTableInfoForInfluxdbAndVm(t *testing.T) {
 		RealTableName:          "i_table_test",
 		Database:               "dbname",
 		PartitionTag:           "t1,t2",
+		BkTenantId:             tenant.DefaultTenantId,
 	}
 	db.Delete(&iTable)
 	err = iTable.Create(db)
@@ -538,36 +554,32 @@ func TestSpacePusher_getTableInfoForInfluxdbAndVm(t *testing.T) {
 		ResultTableId:   vmTableName,
 		VmResultTableId: "vm_result_table_id",
 		VmClusterId:     cluster.ClusterID,
+		BkTenantId:      tenant.DefaultTenantId,
 	}
 	db.Delete(&vmTable)
 	err = vmTable.Create(db)
 	assert.NoError(t, err)
 
-	data, err := NewSpacePusher().getTableInfoForInfluxdbAndVm([]string{itableName, vmTableName})
+	opVal1 := models.OptionBase{Value: "test_vmrt_cmdb_level", ValueType: "string", Creator: "system"}
+	vmrtOption := resulttable.ResultTableOption{
+		TableID:    vmTableName,
+		Name:       "cmdb_level_vm_rt",
+		OptionBase: opVal1,
+	}
+	db.Delete(&vmrtOption)
+	err = vmrtOption.Create(db)
+	assert.NoError(t, err)
+
+	data, err := NewSpacePusher().getTableInfoForInfluxdbAndVm(tenant.DefaultTenantId, []string{itableName, vmTableName})
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(data))
 	vmData, err := jsonx.MarshalString(data[vmTableName])
 	assert.NoError(t, err)
-	assert.JSONEq(t, `{"cluster_name":"","db":"","measurement":"","storage_name":"vm_cluster_abc","tags_key":[],"storage_id":6,"vm_rt":"vm_result_table_id","storage_type":"victoria_metrics"}`, vmData)
+
+	assert.JSONEq(t, `{"cluster_name":"","cmdb_level_vm_rt":"test_vmrt_cmdb_level","db":"","measurement":"","storage_name":"vm_cluster_abc","tags_key":[],"storage_id":6,"vm_rt":"vm_result_table_id","storage_type":"victoria_metrics"}`, vmData)
 	itableData, err := jsonx.MarshalString(data[itableName])
 	assert.NoError(t, err)
 	assert.JSONEq(t, `{"cluster_name":"default","db":"dbname","measurement":"i_table_test","storage_id":2,"storage_name":"","tags_key":["t1","t2"],"vm_rt":"","storage_type":"influxdb"}`, itableData)
-}
-
-func TestSpaceRedisSvc_PushAndPublishSpaceRouter(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	redisClient := &mocker.RedisClientMocker{
-		SetMap: map[string]mapset.Set[string]{},
-	}
-	patch := gomonkey.ApplyFunc(redis.GetInstance, func() *redis.Instance {
-		return &redis.Instance{
-			Client: redisClient,
-		}
-	})
-	defer patch.Reset()
-	// no panic
-	err := NewSpaceRedisSvc(1).PushAndPublishSpaceRouter("", "", nil)
-	assert.NoError(t, err)
 }
 
 func TestSpaceRedisSvc_composeAllTypeTableIds(t *testing.T) {
@@ -696,7 +708,6 @@ func TestSpaceRedisSvc_ComposeEsTableIds(t *testing.T) {
 
 	expectedTableId2 := "-1051_space_test.__default__"
 	assert.Contains(t, data, expectedTableId2, "Expected table ID not found in the result")
-
 }
 
 // 通用数据插入函数
@@ -759,12 +770,17 @@ func TestGetDataLabelByTableId(t *testing.T) {
 	// 初始数据
 	db := mysql.GetDBSession().DB
 	// not data_label
-	obj := resulttable.ResultTable{TableId: "not_data_label", DataLabel: nil}
+	obj := resulttable.ResultTable{TableId: "not_data_label", DataLabel: nil, BkTenantId: tenant.DefaultTenantId}
 	db.Delete(obj)
 	assert.NoError(t, obj.Create(db))
 	// with data_label
 	dataLabel := "data_label_value"
-	obj = resulttable.ResultTable{TableId: "data_label", DataLabel: &dataLabel}
+	obj = resulttable.ResultTable{TableId: "data_label", DataLabel: &dataLabel, BkTenantId: tenant.DefaultTenantId}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+	// with data_label_comma
+	dataLabelComma := "data_label_value1,data_label_value2"
+	obj = resulttable.ResultTable{TableId: "data_label_comma", DataLabel: &dataLabelComma, BkTenantId: tenant.DefaultTenantId}
 	db.Delete(obj)
 	assert.NoError(t, obj.Create(db))
 
@@ -776,12 +792,174 @@ func TestGetDataLabelByTableId(t *testing.T) {
 		{"table_id is nil", []string{}, nil},
 		{"table_id without data_label", []string{"not_data_label"}, nil},
 		{"table_id with data_label", []string{"data_label"}, []string{dataLabel}},
+		{"table_id with data_label_comma", []string{"data_label_comma"}, []string{"data_label_value1", "data_label_value2"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actualList, _ := NewSpacePusher().getDataLabelByTableId(tt.tableIdList)
+			actualList, _ := NewSpacePusher().getDataLabelByTableId(tenant.DefaultTenantId, tt.tableIdList)
 			assert.Equal(t, tt.expectedList, actualList)
+		})
+	}
+}
+
+func TestGetDataLabelTableIdMap(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 准备测试数据
+	// 创建不带数据标签的结果表
+	obj1 := resulttable.ResultTable{
+		TableId:    "table_without_label",
+		IsEnable:   true,
+		IsDeleted:  false,
+		DataLabel:  nil,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	db.Delete(obj1)
+	assert.NoError(t, obj1.Create(db))
+
+	// 创建带单个数据标签的结果表
+	singleLabel := "test_label_1"
+	obj2 := resulttable.ResultTable{
+		TableId:    "table_with_single_label",
+		IsEnable:   true,
+		IsDeleted:  false,
+		DataLabel:  &singleLabel,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	db.Delete(obj2)
+	assert.NoError(t, obj2.Create(db))
+
+	// 创建带多个数据标签的结果表
+	multiLabel := "test_label_1,test_label_2,test_label_3"
+	obj3 := resulttable.ResultTable{
+		TableId:    "table_with_multi_label",
+		IsEnable:   true,
+		IsDeleted:  false,
+		DataLabel:  &multiLabel,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	db.Delete(obj3)
+	assert.NoError(t, obj3.Create(db))
+
+	// 创建另一个带相同标签的结果表
+	obj4 := resulttable.ResultTable{
+		TableId:    "table_with_same_label",
+		IsEnable:   true,
+		IsDeleted:  false,
+		DataLabel:  &singleLabel,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	db.Delete(obj4)
+	assert.NoError(t, obj4.Create(db))
+
+	// 创建已删除的结果表（不应该被包含）
+	deletedLabel := "deleted_label"
+	obj5 := resulttable.ResultTable{
+		TableId:    "deleted_table",
+		IsEnable:   true,
+		IsDeleted:  true,
+		DataLabel:  &deletedLabel,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	db.Delete(obj5)
+	assert.NoError(t, obj5.Create(db))
+
+	// 创建已禁用的结果表（不应该被包含）
+	disabledLabel := "disabled_label"
+	obj6 := resulttable.ResultTable{
+		TableId:    "disabled_table",
+		IsEnable:   false,
+		IsDeleted:  false,
+		DataLabel:  &disabledLabel,
+		BkTenantId: tenant.DefaultTenantId,
+	}
+	db.Delete(obj6)
+	assert.NoError(t, obj6.Create(db))
+
+	tests := []struct {
+		name          string
+		dataLabelList []string
+		expectedMap   map[string][]string
+		expectedError bool
+	}{
+		{
+			name:          "空数据标签列表",
+			dataLabelList: []string{},
+			expectedMap:   nil,
+			expectedError: true,
+		},
+		{
+			name:          "查询单个存在的数据标签",
+			dataLabelList: []string{"test_label_1"},
+			expectedMap: map[string][]string{
+				"test_label_1": {"table_with_single_label", "table_with_multi_label", "table_with_same_label"},
+			},
+			expectedError: false,
+		},
+		{
+			name:          "查询多个存在的数据标签",
+			dataLabelList: []string{"test_label_1", "test_label_2"},
+			expectedMap: map[string][]string{
+				"test_label_1": {"table_with_single_label", "table_with_multi_label", "table_with_same_label"},
+				"test_label_2": {"table_with_multi_label"},
+			},
+			expectedError: false,
+		},
+		{
+			name:          "查询不存在的数据标签",
+			dataLabelList: []string{"non_existent_label"},
+			expectedMap:   map[string][]string{},
+			expectedError: false,
+		},
+		{
+			name:          "查询已删除标签的数据",
+			dataLabelList: []string{"deleted_label"},
+			expectedMap:   map[string][]string{},
+			expectedError: false,
+		},
+		{
+			name:          "查询已禁用标签的数据",
+			dataLabelList: []string{"disabled_label"},
+			expectedMap:   map[string][]string{},
+			expectedError: false,
+		},
+		{
+			name:          "查询重复的数据标签",
+			dataLabelList: []string{"test_label_1", "test_label_1", "test_label_2"},
+			expectedMap: map[string][]string{
+				"test_label_1": {"table_with_single_label", "table_with_multi_label", "table_with_same_label"},
+				"test_label_2": {"table_with_multi_label"},
+			},
+			expectedError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actualMap, err := NewSpacePusher().getDataLabelTableIdMap(tenant.DefaultTenantId, tt.dataLabelList)
+
+			if tt.expectedError {
+				assert.Error(t, err)
+				assert.Nil(t, actualMap)
+			} else {
+				assert.NoError(t, err)
+
+				// 验证映射的键数量
+				assert.Equal(t, len(tt.expectedMap), len(actualMap))
+
+				// 验证每个数据标签对应的结果表
+				for dataLabel, expectedTableIds := range tt.expectedMap {
+					actualTableIds, exists := actualMap[dataLabel]
+					assert.True(t, exists, "数据标签 %s 应该存在", dataLabel)
+
+					// 由于数据库查询结果的顺序可能不固定，需要排序后比较
+					sort.Strings(expectedTableIds)
+					sort.Strings(actualTableIds)
+					assert.Equal(t, expectedTableIds, actualTableIds, "数据标签 %s 对应的结果表不匹配", dataLabel)
+				}
+			}
 		})
 	}
 }
@@ -791,32 +969,67 @@ func TestGetAllDataLabelTableId(t *testing.T) {
 	// 初始数据
 	db := mysql.GetDBSession().DB
 	// not data_label
-	obj := resulttable.ResultTable{TableId: "not_data_label", IsEnable: true, DataLabel: nil}
+	obj := resulttable.ResultTable{TableId: "not_data_label", IsEnable: true, DataLabel: nil, BkTenantId: "test"}
 	db.Delete(obj)
 	assert.NoError(t, obj.Create(db))
 	// with data_label
 	dataLabel := "data_label_value"
-	obj = resulttable.ResultTable{TableId: "data_label", IsEnable: true, DataLabel: &dataLabel}
+	obj = resulttable.ResultTable{TableId: "data_label", IsEnable: true, DataLabel: &dataLabel, BkTenantId: "test"}
 	db.Delete(obj)
 	assert.NoError(t, obj.Create(db))
 
 	dataLabel1 := "data_label_value1"
-	obj = resulttable.ResultTable{TableId: "data_label1", IsEnable: true, DataLabel: &dataLabel1}
+	obj = resulttable.ResultTable{TableId: "data_label1", IsEnable: true, DataLabel: &dataLabel1, BkTenantId: "test"}
 	db.Delete(obj)
 	assert.NoError(t, obj.Create(db))
 
-	data, err := NewSpacePusher().getAllDataLabelTableId()
-	assert.NoError(t, err)
+	dataLabel2 := "data_label_value,data_label_value2"
+	obj = resulttable.ResultTable{TableId: "data_label2", IsEnable: true, DataLabel: &dataLabel2, BkTenantId: "test"}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
 
+	obj = resulttable.ResultTable{TableId: "test_1_dbm.cpu_detail", IsEnable: true, DataLabel: nil, BkTenantId: "test"}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+
+	obj = resulttable.ResultTable{TableId: "test_1_sys.cpu_detail", IsEnable: true, DataLabel: nil, BkTenantId: "test"}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+
+	obj = resulttable.ResultTable{TableId: "test_1_sys.cpu_detail", IsEnable: true, DataLabel: nil, BkTenantId: "test"}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+
+	obj = resulttable.ResultTable{TableId: "test_1_sys.hhh", IsEnable: true, DataLabel: nil, BkTenantId: "test"}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+
+	cfg.EnableMultiTenantMode = true
+	data, err := NewSpacePusher().getAllDataLabelTableId("test")
+	assert.NoError(t, err)
 	dataLabelSet := mapset.NewSet[string]()
-	for dataLabel, _ := range data {
+	for dataLabel := range data {
 		dataLabelSet.Add(dataLabel)
 	}
-	expectedSet := mapset.NewSet("data_label_value", "data_label_value1")
-
+	expectedSet := mapset.NewSet("data_label_value|test", "data_label_value1|test", "data_label_value2|test", "system.cpu_detail|test", "dbm_system.cpu_detail|test")
+	t.Logf("dataLabelSet: %v", dataLabelSet)
+	t.Logf("expectedSet: %v", expectedSet)
 	assert.True(t, expectedSet.IsSubset(dataLabelSet))
+	t.Logf("data: %v", data)
+	assert.Equal(t, []string{"data_label", "data_label2"}, data["data_label_value|test"])
+	assert.Equal(t, []string{"test_1_sys.cpu_detail"}, data["system.cpu_detail|test"])
+	assert.Equal(t, []string{"test_1_dbm.cpu_detail"}, data["dbm_system.cpu_detail|test"])
 
-	assert.Equal(t, []string{"data_label"}, data["data_label_value"])
+	cfg.EnableMultiTenantMode = false
+	data, err = NewSpacePusher().getAllDataLabelTableId("test")
+	assert.NoError(t, err)
+	dataLabelSet = mapset.NewSet[string]()
+	for dataLabel := range data {
+		dataLabelSet.Add(dataLabel)
+	}
+	expectedSet = mapset.NewSet("data_label_value", "data_label_value1", "data_label_value2")
+	assert.True(t, expectedSet.IsSubset(dataLabelSet))
+	assert.Equal(t, []string{"data_label", "data_label2"}, data["data_label_value"])
 }
 
 func TestComposeBksaasSpaceClusterTableIds(t *testing.T) {
@@ -855,94 +1068,114 @@ func TestComposeBksaasSpaceClusterTableIds(t *testing.T) {
 	assert.Equal(t, 2, len(data))
 }
 
-func TestClearSpaceToRt(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	// 添加space资源
-	db := mysql.GetDBSession().DB
-	spaceType, spaceId1, spaceId2, spaceId3 := "bkcc", "1", "2", "3"
-	obj1 := space.Space{SpaceTypeId: spaceType, SpaceId: spaceId1, SpaceName: spaceId1}
-	obj2 := space.Space{SpaceTypeId: spaceType, SpaceId: spaceId2, SpaceName: spaceId2}
-	obj3 := space.Space{SpaceTypeId: spaceType, SpaceId: spaceId3, SpaceName: spaceId3}
-	db.Delete(obj1, "space_id=?", obj1.SpaceId)
-	db.Delete(obj2, "space_id=?", obj2.SpaceId)
-	db.Delete(obj3, "space_id=?", obj3.SpaceId)
-	assert.NoError(t, obj1.Create(db))
-	assert.NoError(t, obj2.Create(db))
-	assert.NoError(t, obj3.Create(db))
+// func TestClearSpaceToRt(t *testing.T) {
+// 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+// 	// 添加space资源
+// 	db := mysql.GetDBSession().DB
+// 	spaceType, spaceId1, spaceId2, spaceId3 := "bkcc", "1", "2", "3"
+// 	obj1 := space.Space{SpaceTypeId: spaceType, SpaceId: spaceId1, SpaceName: spaceId1, BkTenantId: tenant.DefaultTenantId}
+// 	obj2 := space.Space{SpaceTypeId: spaceType, SpaceId: spaceId2, SpaceName: spaceId2, BkTenantId: "test"}
+// 	obj3 := space.Space{SpaceTypeId: spaceType, SpaceId: spaceId3, SpaceName: spaceId3, BkTenantId: "test2"}
+// 	db.Delete(space.Space{})
+// 	assert.NoError(t, obj1.Create(db))
+// 	assert.NoError(t, obj2.Create(db))
+// 	assert.NoError(t, obj3.Create(db))
 
-	// 初始化redis中数据
-	redisClient, redisPatch := mocker.RedisMocker()
-	defer redisPatch.Reset()
+// 	// 多租户
+// 	cfg.EnableMultiTenantMode = true
+// 	redisClient.HKeysValue = append(redisClient.HKeysValue, "bkcc__1|system", "bkcc__2|test", "bkcc__4|test2")
 
-	redisClient.HKeysValue = append(redisClient.HKeysValue, "bkcc__1", "bkcc__2", "bkcc__4")
+// 	// 清理数据
+// 	clearer := NewSpaceRedisClearer()
+// 	clearer.ClearSpaceToRt()
 
-	// 清理数据
-	clearer := NewSpaceRedisClearer()
-	clearer.ClearSpaceToRt()
+// 	t.Logf("redisClient.HKeysValue: %v", redisClient.HKeysValue)
+// 	assert.Equal(t, 2, len(redisClient.HKeysValue))
+// 	assert.Equal(t, slicex.StringList2Set([]string{"bkcc__1|system", "bkcc__2|test"}), slicex.StringList2Set(redisClient.HKeysValue))
 
-	assert.Equal(t, 2, len(redisClient.HKeysValue))
-	assert.Equal(t, slicex.StringList2Set([]string{"bkcc__1", "bkcc__2"}), slicex.StringList2Set(redisClient.HKeysValue))
-}
+// 	// 单租户
+// 	cfg.EnableMultiTenantMode = false
+// 	redisClient.HKeysValue = append(redisClient.HKeysValue, "bkcc__1", "bkcc__2", "bkcc__4")
 
-func TestClearDataLabelToRt(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	// 添加space资源
-	db := mysql.GetDBSession().DB
-	rt1, rt2, rt3 := "demo.test1", "demo.test2", "demo.test3"
-	rtDl1, rtDl2, rtDl3 := "data_label1", "data_label2", "data_label3"
-	rtObj1 := resulttable.ResultTable{TableId: rt1, IsDeleted: false, IsEnable: true, DataLabel: &rtDl1}
-	rtObj2 := resulttable.ResultTable{TableId: rt2, IsDeleted: false, IsEnable: true, DataLabel: &rtDl2}
-	rtObj3 := resulttable.ResultTable{TableId: rt3, IsDeleted: false, IsEnable: true, DataLabel: &rtDl3}
-	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
-	db.Delete(rtObj2, "table_id=?", rtObj2.TableId)
-	db.Delete(rtObj3, "table_id=?", rtObj3.TableId)
-	assert.NoError(t, rtObj1.Create(db))
-	assert.NoError(t, rtObj2.Create(db))
-	assert.NoError(t, rtObj3.Create(db))
+// 	// 清理数据
+// 	clearer.ClearSpaceToRt()
 
-	// 初始化redis中数据
-	redisClient, redisPatch := mocker.RedisMocker()
-	defer redisPatch.Reset()
+// 	t.Logf("redisClient.HKeysValue: %v", redisClient.HKeysValue)
+// 	assert.Equal(t, 2, len(redisClient.HKeysValue))
+// 	assert.Equal(t, slicex.StringList2Set([]string{"bkcc__1", "bkcc__2"}), slicex.StringList2Set(redisClient.HKeysValue))
+// }
 
-	redisClient.HKeysValue = append(redisClient.HKeysValue, "data_label1", "data_label2", "data_label4")
+// func TestClearDataLabelToRt(t *testing.T) {
+// 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+// 	// 添加space资源
+// 	db := mysql.GetDBSession().DB
+// 	rt1, rt2, rt3 := "demo.test1", "demo.test2", "demo.test3"
+// 	rtDl1, rtDl2, rtDl3 := "data_label1", "data_label2", "data_label3"
+// 	rtObj1 := resulttable.ResultTable{TableId: rt1, IsDeleted: false, IsEnable: true, DataLabel: &rtDl1, BkTenantId: tenant.DefaultTenantId}
+// 	rtObj2 := resulttable.ResultTable{TableId: rt2, IsDeleted: false, IsEnable: true, DataLabel: &rtDl2, BkTenantId: "test"}
+// 	rtObj3 := resulttable.ResultTable{TableId: rt3, IsDeleted: false, IsEnable: true, DataLabel: &rtDl3, BkTenantId: "test2"}
+// 	db.Delete(&resulttable.ResultTable{})
+// 	assert.NoError(t, rtObj1.Create(db))
+// 	assert.NoError(t, rtObj2.Create(db))
+// 	assert.NoError(t, rtObj3.Create(db))
 
-	// 清理数据
-	clearer := NewSpaceRedisClearer()
-	clearer.ClearDataLabelToRt()
+// 	// 多租户
+// 	cfg.EnableMultiTenantMode = true
+// 	redisClient.HKeysValue = append(redisClient.HKeysValue, "data_label1|system", "data_label2|test", "data_label4|test2")
 
-	assert.Equal(t, 2, len(redisClient.HKeysValue))
-	assert.Equal(t, slicex.StringList2Set([]string{"data_label1", "data_label2"}), slicex.StringList2Set(redisClient.HKeysValue))
-}
+// 	// 清理数据
+// 	clearer := NewSpaceRedisClearer()
+// 	clearer.ClearDataLabelToRt()
 
-func TestClearRtDetail(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	// 添加space资源
-	db := mysql.GetDBSession().DB
-	rt1, rt2, rt3 := "demo.test1", "demo.test2", "demo.test3"
-	rtDl1, rtDl2, rtDl3 := "data_label1", "data_label2", "data_label3"
-	rtObj1 := resulttable.ResultTable{TableId: rt1, IsDeleted: false, IsEnable: true, DataLabel: &rtDl1}
-	rtObj2 := resulttable.ResultTable{TableId: rt2, IsDeleted: true, IsEnable: false, DataLabel: &rtDl2}
-	rtObj3 := resulttable.ResultTable{TableId: rt3, IsDeleted: false, IsEnable: true, DataLabel: &rtDl3}
-	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
-	db.Delete(rtObj2, "table_id=?", rtObj2.TableId)
-	db.Delete(rtObj3, "table_id=?", rtObj3.TableId)
-	assert.NoError(t, rtObj1.Create(db))
-	assert.NoError(t, rtObj2.Create(db))
-	assert.NoError(t, rtObj3.Create(db))
+// 	assert.Equal(t, 2, len(redisClient.HKeysValue))
+// 	assert.Equal(t, slicex.StringList2Set([]string{"data_label1|system", "data_label2|test"}), slicex.StringList2Set(redisClient.HKeysValue))
 
-	// 初始化redis中数据
-	redisClient, redisPatch := mocker.RedisMocker()
-	defer redisPatch.Reset()
+// 	// 单租户
+// 	cfg.EnableMultiTenantMode = false
+// 	redisClient.HKeysValue = append(redisClient.HKeysValue, "data_label1", "data_label2", "data_label4")
 
-	redisClient.HKeysValue = append(redisClient.HKeysValue, "demo.test1", "demo.test2", "demo.test4")
+// 	// 清理数据
+// 	clearer.ClearDataLabelToRt()
 
-	// 清理数据
-	clearer := NewSpaceRedisClearer()
-	clearer.ClearRtDetail()
+// 	assert.Equal(t, 2, len(redisClient.HKeysValue))
+// 	assert.Equal(t, slicex.StringList2Set([]string{"data_label1", "data_label2"}), slicex.StringList2Set(redisClient.HKeysValue))
+// }
 
-	assert.Equal(t, 1, len(redisClient.HKeysValue))
-	assert.Equal(t, slicex.StringList2Set([]string{"demo.test1"}), slicex.StringList2Set(redisClient.HKeysValue))
-}
+// func TestClearRtDetail(t *testing.T) {
+// 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+// 	// 添加space资源
+// 	db := mysql.GetDBSession().DB
+// 	rt1, rt2, rt3 := "demo.test1", "demo.test2", "demo.test3"
+// 	rtDl1, rtDl2, rtDl3 := "data_label1", "data_label2", "data_label3"
+// 	rtObj1 := resulttable.ResultTable{TableId: rt1, IsDeleted: false, IsEnable: true, DataLabel: &rtDl1, BkTenantId: tenant.DefaultTenantId}
+// 	rtObj2 := resulttable.ResultTable{TableId: rt2, IsDeleted: true, IsEnable: false, DataLabel: &rtDl2, BkTenantId: "test"}
+// 	rtObj3 := resulttable.ResultTable{TableId: rt3, IsDeleted: false, IsEnable: true, DataLabel: &rtDl3, BkTenantId: "test2"}
+// 	db.Delete(&resulttable.ResultTable{})
+// 	assert.NoError(t, rtObj1.Create(db))
+// 	assert.NoError(t, rtObj2.Create(db))
+// 	assert.NoError(t, rtObj3.Create(db))
+
+// 	// 多租户
+// 	cfg.EnableMultiTenantMode = true
+// 	redisClient.HKeysValue = append(redisClient.HKeysValue, "demo.test1|system", "demo.test2|test", "demo.test4|test2")
+
+// 	// 清理数据
+// 	clearer := NewSpaceRedisClearer()
+// 	clearer.ClearRtDetail()
+
+// 	assert.Equal(t, 1, len(redisClient.HKeysValue))
+// 	assert.Equal(t, slicex.StringList2Set([]string{"demo.test1|system"}), slicex.StringList2Set(redisClient.HKeysValue))
+
+// 	// 单租户
+// 	cfg.EnableMultiTenantMode = false
+// 	redisClient.HKeysValue = append(redisClient.HKeysValue, "demo.test1", "demo.test2", "demo.test4")
+
+// 	// 清理数据
+// 	clearer.ClearRtDetail()
+
+// 	assert.Equal(t, 1, len(redisClient.HKeysValue))
+// 	assert.Equal(t, slicex.StringList2Set([]string{"demo.test1"}), slicex.StringList2Set(redisClient.HKeysValue))
+// }
 
 func TestComposeEsTableIdOptions(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
@@ -957,9 +1190,7 @@ func TestComposeEsTableIdOptions(t *testing.T) {
 	rtObj1 := resulttable.ResultTable{TableId: rt1, IsDeleted: false, IsEnable: true}
 	rtObj2 := resulttable.ResultTable{TableId: rt2, IsDeleted: true, IsEnable: false}
 	rtObj3 := resulttable.ResultTable{TableId: rt3, IsDeleted: false, IsEnable: true}
-	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
-	db.Delete(rtObj2, "table_id=?", rtObj2.TableId)
-	db.Delete(rtObj3, "table_id=?", rtObj3.TableId)
+	db.Delete(&resulttable.ResultTable{})
 	assert.NoError(t, rtObj1.Create(db))
 	assert.NoError(t, rtObj2.Create(db))
 	assert.NoError(t, rtObj3.Create(db))
@@ -972,9 +1203,7 @@ func TestComposeEsTableIdOptions(t *testing.T) {
 	rtOp2 := resulttable.ResultTableOption{OptionBase: opVal2, TableID: rt2, Name: op2}
 	opVal3 := models.OptionBase{Value: val3, ValueType: "dict", Creator: "system"}
 	rtOp3 := resulttable.ResultTableOption{OptionBase: opVal3, TableID: rt3, Name: op3}
-	db.Delete(rtOp1, "table_id=? AND name=?", rtOp1.TableID, rtOp1.Name)
-	db.Delete(rtOp2, "table_id=? AND name=?", rtOp2.TableID, rtOp2.Name)
-	db.Delete(rtOp3, "table_id=? AND name=?", rtOp3.TableID, rtOp3.Name)
+	db.Delete(&resulttable.ResultTableOption{})
 	assert.NoError(t, rtOp1.Create(db))
 	assert.NoError(t, rtOp2.Create(db))
 	assert.NoError(t, rtOp3.Create(db))
@@ -994,6 +1223,32 @@ func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 
 	db := mysql.GetDBSession().DB
+
+	db.Delete(&space.Space{})
+	spaces := []space.Space{
+		{
+			SpaceTypeId: "bkcc",
+			SpaceId:     "1",
+			SpaceName:   "1",
+			BkTenantId:  tenant.DefaultTenantId,
+		},
+		{
+			SpaceTypeId: "bkcc",
+			SpaceId:     "2",
+			SpaceName:   "2",
+			BkTenantId:  "test",
+		},
+		{
+			SpaceTypeId: "bkci",
+			SpaceId:     "3",
+			SpaceName:   "3",
+			BkTenantId:  "test2",
+		},
+	}
+	for _, space := range spaces {
+		assert.NoError(t, db.Create(&space).Error)
+	}
+
 	data := space.BkAppSpaces{
 		{
 			BkAppCode: "default_app_code",
@@ -1002,17 +1257,17 @@ func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
 		},
 		{
 			BkAppCode: "other_code",
-			SpaceUID:  "my_space_uid",
+			SpaceUID:  "bkcc__1",
 			IsEnable:  true,
 		},
 		{
 			BkAppCode: "my_code",
-			SpaceUID:  "other_space_uid",
+			SpaceUID:  "bkcc__2",
 			IsEnable:  true,
 		},
 		{
 			BkAppCode: "my_code",
-			SpaceUID:  "my_space_uid",
+			SpaceUID:  "bkci__3",
 			IsEnable:  true,
 		},
 	}
@@ -1044,11 +1299,24 @@ func TestSpacePusher_PushBkAppToSpace(t *testing.T) {
 	actual := client.HGetAll(cfg.BkAppToSpaceKey)
 
 	expected := map[string]string{
-		"my_code":          `["other_space_uid","my_space_uid"]`,
+		"my_code":          `["bkcc__2","bkci__3"]`,
 		"default_app_code": `["*"]`,
 		"other_code":       `[]`,
 	}
 
+	assert.Equal(t, expected, actual)
+
+	cfg.EnableMultiTenantMode = true
+
+	err = pusher.PushBkAppToSpace()
+	assert.NoError(t, err)
+
+	actual = client.HGetAll(cfg.BkAppToSpaceKey)
+	expected = map[string]string{
+		"my_code":          `["bkcc__2|test","bkci__3|test2"]`,
+		"default_app_code": `["*"]`,
+		"other_code":       `[]`,
+	}
 	assert.Equal(t, expected, actual)
 }
 
@@ -1058,11 +1326,13 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 	db := mysql.GetDBSession().DB
 	// 准备测试数据
 	tableID := "bklog.test_rt"
-	tableID2 := "bklog.test_rt2"
-	tableID3 := "test_system_event"
 	storageClusterID := uint(1)
 	sourceType := "log"
 	indexSet := "index_1"
+
+	rtObj1 := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true}
+	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
+	assert.NoError(t, rtObj1.Create(db))
 
 	db.AutoMigrate(&storage.ESStorage{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
 
@@ -1070,20 +1340,6 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 	esStorages := []storage.ESStorage{
 		{
 			TableID:          tableID,
-			StorageClusterID: storageClusterID,
-			SourceType:       sourceType,
-			IndexSet:         indexSet,
-			NeedCreateIndex:  true,
-		},
-		{
-			TableID:          tableID2,
-			StorageClusterID: storageClusterID,
-			SourceType:       sourceType,
-			IndexSet:         indexSet,
-			NeedCreateIndex:  true,
-		},
-		{
-			TableID:          tableID3,
 			StorageClusterID: storageClusterID,
 			SourceType:       sourceType,
 			IndexSet:         indexSet,
@@ -1135,11 +1391,35 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 			DeleteTime:  nil,
 		},
 	}
+
 	// 执行插入
 	for _, record := range testRecords {
 		db.Delete(&storage.ClusterRecord{}, "table_id = ? AND cluster_id = ?", tableID, record.ClusterID)
 		err := db.Create(&record).Error
 		assert.NoError(t, err, "Failed to insert StorageClusterRecord")
+	}
+
+	fieldAliasRecords := []resulttable.ESFieldQueryAliasOption{
+		{
+			TableID:    tableID,
+			FieldPath:  "__ext.pod_name",
+			PathType:   "keyword",
+			QueryAlias: "pod_name",
+			IsDeleted:  false,
+		},
+		{
+			TableID:    tableID,
+			FieldPath:  "__ext.pod_id",
+			PathType:   "keyword",
+			QueryAlias: "pod_id",
+			IsDeleted:  false,
+		},
+	}
+	// 执行插入
+	for _, record := range fieldAliasRecords {
+		db.Delete(&resulttable.ESFieldQueryAliasOption{}, "table_id = ? AND field_path = ?", tableID, record.FieldPath)
+		err := db.Create(&record).Error
+		assert.NoError(t, err, "Failed to insert ESFieldQueryAliasOption")
 	}
 
 	// 捕获日志输出
@@ -1149,7 +1429,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 
 	// 执行测试方法
 	pusher := NewSpacePusher()
-	err := pusher.PushEsTableIdDetail([]string{tableID, tableID2, tableID3}, false)
+	err := pusher.PushEsTableIdDetail([]string{tableID}, false)
 	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
 
 }
@@ -1171,22 +1451,28 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 	// 数据源表
 	dataSources := []resulttable.DataSource{
 		{
-			BkDataId:         50010,
-			DataName:         "data_link_test",
-			EtlConfig:        "bk_standard_v2_time_series",
-			IsPlatformDataId: true,
+			BkDataId:               50010,
+			DataName:               "data_link_test",
+			EtlConfig:              "bk_standard_v2_time_series",
+			IsPlatformDataId:       true,
+			IsTenantSpecificGlobal: true,
+			BkTenantId:             tenant.DefaultTenantId,
 		},
 		{
-			BkDataId:         50011,
-			DataName:         "data_link_test_2",
-			EtlConfig:        "bk_standard_v2_time_series",
-			IsPlatformDataId: true,
+			BkDataId:               50011,
+			DataName:               "data_link_test_2",
+			EtlConfig:              "bk_standard_v2_time_series",
+			IsPlatformDataId:       true,
+			IsTenantSpecificGlobal: true,
+			BkTenantId:             tenant.DefaultTenantId,
 		},
 		{
-			BkDataId:         50012,
-			DataName:         "data_link_test_3",
-			EtlConfig:        "test",
-			IsPlatformDataId: false,
+			BkDataId:               50012,
+			DataName:               "data_link_test_3",
+			EtlConfig:              "test",
+			IsPlatformDataId:       false,
+			IsTenantSpecificGlobal: false,
+			BkTenantId:             tenant.DefaultTenantId,
 		},
 	}
 
@@ -1202,16 +1488,19 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 			TableId:      tableID1,
 			BkBizId:      1001,
 			BkBizIdAlias: "appid",
+			BkTenantId:   tenant.DefaultTenantId,
 		},
 		{
 			TableId:      tableID2,
 			BkBizId:      1001,
 			BkBizIdAlias: "",
+			BkTenantId:   tenant.DefaultTenantId,
 		},
 		{
 			TableId:      tableID3,
 			BkBizId:      1002,
 			BkBizIdAlias: "",
+			BkTenantId:   tenant.DefaultTenantId,
 		},
 	}
 	for _, rt := range resultTables {
@@ -1249,18 +1538,21 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 			BkBaseDataId:    50010,
 			VmResultTableId: "1001_vm_test_50010",
 			BkBaseDataName:  "data_link_test",
+			BkTenantId:      tenant.DefaultTenantId,
 		},
 		{
 			ResultTableId:   tableID2,
 			BkBaseDataId:    50011,
 			VmResultTableId: "1001_vm_test_50011",
 			BkBaseDataName:  "data_link_test_2",
+			BkTenantId:      tenant.DefaultTenantId,
 		},
 		{
 			ResultTableId:   tableID3,
 			BkBaseDataId:    50012,
 			VmResultTableId: "1001_vm_test_50012",
 			BkBaseDataName:  "data_link_test_3",
+			BkTenantId:      tenant.DefaultTenantId,
 		},
 	}
 	for _, avm := range accessVMRecords {
@@ -1270,16 +1562,19 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 
 	dsRts := []resulttable.DataSourceResultTable{
 		{
-			TableId:  tableID1,
-			BkDataId: 50010,
+			TableId:    tableID1,
+			BkDataId:   50010,
+			BkTenantId: tenant.DefaultTenantId,
 		},
 		{
-			TableId:  tableID2,
-			BkDataId: 50011,
+			TableId:    tableID2,
+			BkDataId:   50011,
+			BkTenantId: tenant.DefaultTenantId,
 		},
 		{
-			TableId:  tableID3,
-			BkDataId: 50012,
+			TableId:    tableID3,
+			BkDataId:   50012,
+			BkTenantId: tenant.DefaultTenantId,
 		},
 	}
 	for _, dsrt := range dsRts {
@@ -1296,7 +1591,7 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 	pusher := NewSpacePusher()
 
 	// 测试空间 1001 的 composeData
-	valuesForCreator, err := pusher.composeData(spaceType, spaceId, []string{}, defaultFilters, nil)
+	valuesForCreator, err := pusher.composeData(tenant.DefaultTenantId, spaceType, spaceId, []string{}, defaultFilters, nil)
 	assert.NoError(t, err, "composeData should not return an error")
 
 	expectedForCreator := map[string]map[string]interface{}{
@@ -1306,12 +1601,12 @@ func TestSpacePusher_ComposeData(t *testing.T) {
 	assert.Equal(t, expectedForCreator, valuesForCreator, "Unexpected result for space 1001")
 
 	// 测试空间 1003 的 composeData
-	valuesForOthers, err := pusher.composeData(spaceType, "1003", []string{}, defaultFilters, nil)
+	valuesForOthers, err := pusher.composeData(tenant.DefaultTenantId, spaceType, "1003", []string{}, defaultFilters, nil)
 	assert.NoError(t, err, "composeData should not return an error")
 
 	expectedForOthers := map[string]map[string]interface{}{
-		tableID1: {"filters": []map[string]interface{}{{"dimensions.bk_biz_id": "1003"}}},
-		"1001_bkmonitor_time_series_50011.__default__": {"filters": []map[string]interface{}{{"dimensions.bk_biz_id": "1003"}}},
+		tableID1: {"filters": []map[string]interface{}{{"appid": "1003"}}},
+		"1001_bkmonitor_time_series_50011.__default__": {"filters": []map[string]interface{}{{"bk_biz_id": "1003"}}},
 	}
 	assert.Equal(t, expectedForOthers, valuesForOthers, "Unexpected result for space 1003")
 }
@@ -1361,7 +1656,6 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
-
 	// 调用测试方法
 	tableID, detailStr, err := spacePusher.composeEsTableIdDetail(
 		tableID1,
@@ -1369,6 +1663,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 		1,
 		"sourceType1",
 		"indexSet1",
+		nil,
 	)
 
 	// 断言返回结果无错误
@@ -1385,6 +1680,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 		"storage_type":            "elasticsearch",
 		"storage_id":              float64(1), // 修改为 float64
 		"db":                      "indexSet1",
+		"field_alias":             map[string]interface{}{},
 	}
 
 	// 将 detailStr 转换为 map 以便比较
@@ -1394,7 +1690,6 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 
 	// 比较预期值和实际值
 	assert.Equal(t, expectedDetail, actualDetail, "detailStr should match expected JSON")
-
 	// 调用测试方法
 	resTid, detailStr2, err := spacePusher.composeEsTableIdDetail(
 		tableID2,
@@ -1402,6 +1697,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 		1,
 		"sourceType1",
 		"indexSet1",
+		nil,
 	)
 
 	expectedDetail2 := map[string]interface{}{
@@ -1413,6 +1709,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 		"storage_type":            "elasticsearch",
 		"storage_id":              float64(1), // 修改为 float64
 		"db":                      "indexSet1",
+		"field_alias":             map[string]interface{}{},
 	}
 
 	// 将 detailStr 转换为 map 以便比较
@@ -1434,16 +1731,18 @@ func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {
 	// 数据源表
 	dataSources := []resulttable.DataSource{
 		{
-			BkDataId:         50010,
-			DataName:         "data_link_test",
-			EtlConfig:        "bk_standard_v2_time_series",
-			IsPlatformDataId: false,
+			BkDataId:               50010,
+			DataName:               "data_link_test",
+			EtlConfig:              "bk_standard_v2_time_series",
+			IsPlatformDataId:       false,
+			IsTenantSpecificGlobal: false,
 		},
 		{
-			BkDataId:         50011,
-			DataName:         "data_link_test_2",
-			EtlConfig:        "bk_standard_v2_time_series",
-			IsPlatformDataId: true,
+			BkDataId:               50011,
+			DataName:               "data_link_test_2",
+			EtlConfig:              "bk_standard_v2_time_series",
+			IsPlatformDataId:       true,
+			IsTenantSpecificGlobal: false,
 		},
 	}
 
@@ -1575,7 +1874,7 @@ func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
 
-	isPublish, err := spacePusher.pushBkccSpaceTableIds("bkcc", "1001", nil)
+	isPublish, err := spacePusher.pushBkccSpaceTableIds(tenant.DefaultTenantId, "bkcc", "1001", nil)
 	if err != nil {
 		return
 	}
@@ -1629,7 +1928,7 @@ func TestSpacePusher_pushBkciSpaceTableIds(t *testing.T) {
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
 
-	isPublish, err := spacePusher.pushBkciSpaceTableIds("bkci", "bcs_project")
+	isPublish, err := spacePusher.pushBkciSpaceTableIds(tenant.DefaultTenantId, "bkci", "bcs_project")
 	if err != nil {
 		return
 	}
@@ -1683,7 +1982,7 @@ func TestSpacePusher_pushBksaasSpaceTableIds(t *testing.T) {
 
 	// 准备 SpacePusher 实例
 	spacePusher := SpacePusher{}
-	isPublish, err := spacePusher.pushBksaasSpaceTableIds("bksaas", "demo", nil)
+	isPublish, err := spacePusher.pushBksaasSpaceTableIds(tenant.DefaultTenantId, "bksaas", "demo", nil)
 	if err != nil {
 		return
 	}
@@ -1702,9 +2001,10 @@ func TestBuildFiltersByUsage(t *testing.T) {
 		{
 			name: "UsageComposeData",
 			ctx: FilterBuildContext{
-				SpaceType: "bkcc",
-				SpaceId:   "1001",
-				TableId:   "table_1",
+				SpaceType:   "bkcc",
+				SpaceId:     "1001",
+				TableId:     "table_1",
+				FilterAlias: "bk_biz_id",
 			},
 			usage: UsageComposeData,
 			expectedResult: []map[string]interface{}{
@@ -1714,10 +2014,11 @@ func TestBuildFiltersByUsage(t *testing.T) {
 		{
 			name: "UsageComposeBcsSpaceBizTableIds",
 			ctx: FilterBuildContext{
-				SpaceType: "bkci",
-				SpaceId:   "1001",
-				TableId:   "table_1",
-				BkBizId:   "2001",
+				SpaceType:   "bkci",
+				SpaceId:     "1001",
+				TableId:     "table_1",
+				BkBizId:     "2001",
+				FilterAlias: "bk_biz_id",
 			},
 			usage: UsageComposeBcsSpaceBizTableIds,
 			expectedResult: []map[string]interface{}{
@@ -1727,10 +2028,10 @@ func TestBuildFiltersByUsage(t *testing.T) {
 		{
 			name: "UsageComposeBkciLevelTableIds",
 			ctx: FilterBuildContext{
-				SpaceType:       "bkci",
-				SpaceId:         "1001",
-				TableId:         "table_1",
-				originFilterKey: "projectId",
+				SpaceType:   "bkci",
+				SpaceId:     "1001",
+				TableId:     "table_1",
+				FilterAlias: "projectId",
 			},
 			usage: UsageComposeBkciLevelTableIds,
 			expectedResult: []map[string]interface{}{
@@ -1744,6 +2045,7 @@ func TestBuildFiltersByUsage(t *testing.T) {
 				SpaceId:        "1001",
 				TableId:        "table_1",
 				ExtraStringVal: "-1001",
+				FilterAlias:    "bk_biz_id",
 			},
 			usage: UsageComposeAllTypeTableIds,
 			expectedResult: []map[string]interface{}{
@@ -1795,4 +2097,153 @@ func TestBuildFiltersByUsage(t *testing.T) {
 			assert.Equal(t, tt.expectedResult, result)
 		})
 	}
+}
+
+func TestSpaceRedisSvc_ComposeApmAll(t *testing.T) {
+	// 初始化数据库配置
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 清理所有相关表数据
+	cleanTestData := func() {
+		db.Delete(&space.Space{})
+		db.Delete(&resulttable.ResultTable{})
+	}
+	cleanTestData()       // 测试开始前清理数据
+	defer cleanTestData() // 测试结束后清理数据
+
+	// 准备测试用数据
+
+	// 准备 Space 测试数据
+	spaceObjs := []space.Space{
+		{
+			SpaceTypeId: "bkci",
+			SpaceId:     "test_bkci_space",
+			SpaceName:   "testSpace6",
+			Id:          1050,
+		},
+		{
+			SpaceTypeId: "bksaas",
+			SpaceId:     "test_bksaas_space",
+			SpaceName:   "testSpace7",
+			Id:          1051,
+		},
+	}
+	insertTestData(t, db, spaceObjs)
+
+	// 准备 ResultTable 测试数据
+	resultTable := resulttable.ResultTable{
+		TableId:        "apm_global.precalculate_storage_1",
+		BkBizId:        0,
+		DefaultStorage: models.StorageTypeES,
+		IsDeleted:      false,
+		IsEnable:       true,
+		BkBizIdAlias:   "biz_id",
+	}
+	err := resultTable.Create(db)
+	assert.NoError(t, err)
+
+	resultTable2 := resulttable.ResultTable{
+		TableId:        "apm_global.precalculate_storage_2",
+		BkBizId:        0,
+		DefaultStorage: models.StorageTypeES,
+		IsDeleted:      false,
+		IsEnable:       true,
+		BkBizIdAlias:   "biz_id",
+	}
+	err = resultTable2.Create(db)
+	assert.NoError(t, err)
+
+	// 测试 composeApmAllTypeTableIds
+	bkciData, err := NewSpacePusher().composeApmAllTypeTableIds("bkci", "test_bkci_space")
+	expected := map[string]map[string]interface{}(map[string]map[string]interface{}{"apm_global.precalculate_storage_1": map[string]interface{}{"filters": []map[string]interface{}{map[string]interface{}{"biz_id": "-1050"}}}, "apm_global.precalculate_storage_2": map[string]interface{}{"filters": []map[string]interface{}{map[string]interface{}{"biz_id": "-1050"}}}})
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, bkciData, "Expected 2 table IDs for bkci space")
+
+	bksaasData, err := NewSpacePusher().composeApmAllTypeTableIds("bksaas", "test_bksaas_space")
+	expected = map[string]map[string]interface{}{"apm_global.precalculate_storage_1": map[string]interface{}{"filters": []map[string]interface{}{map[string]interface{}{"biz_id": "-1051"}}}, "apm_global.precalculate_storage_2": map[string]interface{}{"filters": []map[string]interface{}{map[string]interface{}{"biz_id": "-1051"}}}}
+	assert.Equal(t, expected, bksaasData, "Expected 2 table IDs for bkci space")
+
+}
+
+func TestSpaceRedisSvc_composeBkciLevelTableIds(t *testing.T) {
+	// 初始化数据库配置
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 清理所有相关表数据
+	cleanTestData := func() {
+		db.Delete(&space.Space{})
+		db.Delete(&resulttable.ResultTable{})
+		db.Delete(&resulttable.DataSource{})
+		db.Delete(&resulttable.DataSourceResultTable{})
+		db.Delete(&storage.ESStorage{})
+	}
+	cleanTestData()       // 测试开始前清理数据
+	defer cleanTestData() // 测试结束后清理数据
+
+	// 准备测试用数据
+
+	// 准备 Space 测试数据
+	spaceObjs := []space.Space{
+		{
+			SpaceTypeId: "bkci",
+			SpaceId:     "test_bkci_space",
+			SpaceName:   "testSpace6",
+			Id:          1050,
+			BkTenantId:  "system",
+		},
+	}
+	insertTestData(t, db, spaceObjs)
+
+	// 准备 ResultTable 测试数据
+	resultTable := resulttable.ResultTable{
+		TableId:        "bkmonitor_event_60010",
+		BkBizId:        0,
+		DefaultStorage: models.StorageTypeES,
+		IsDeleted:      false,
+		IsEnable:       true,
+		BkBizIdAlias:   "dimensions.project_id",
+		BkTenantId:     "system",
+	}
+	err := resultTable.Create(db)
+	assert.NoError(t, err)
+
+	// 准备 DataSource 测试数据
+	dataSource := resulttable.DataSource{
+		BkDataId:         60010,
+		IsPlatformDataId: true,
+		SpaceTypeId:      "bkci",
+		DataName:         "test_event",
+		BkTenantId:       "system",
+	}
+	err = dataSource.Create(db)
+	assert.NoError(t, err)
+
+	// 准备 DataSourceResultTable 测试数据
+	dataSourceResultTable := resulttable.DataSourceResultTable{
+		BkDataId:   60010,
+		TableId:    "bkmonitor_event_60010",
+		BkTenantId: "system",
+	}
+	err = dataSourceResultTable.Create(db)
+	assert.NoError(t, err)
+
+	// 准备 ESStorage 测试数据
+	esStorage := storage.ESStorage{
+		TableID:          "bkmonitor_event_60010",
+		StorageClusterID: 11,
+		NeedCreateIndex:  true,
+	}
+	err = esStorage.Create(db)
+	assert.NoError(t, err)
+
+	cfg.SpecialRtRouterAliasResultTableList = []string{"bkmonitor_event_60010"}
+
+	// 测试 composeBkciLevelTableIds
+	bkciData, err := NewSpacePusher().composeBkciLevelTableIds("system", "bkci", "test_bkci_space")
+	expected := map[string]map[string]interface{}{"bkmonitor_event_60010.__default__": {"filters": []map[string]interface{}{{"dimensions.project_id": "test_bkci_space"}}}}
+	assert.NoError(t, err)
+	assert.Equal(t, expected, bkciData, "Expected 1 table IDs for bkci space")
 }

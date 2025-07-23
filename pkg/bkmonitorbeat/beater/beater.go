@@ -629,7 +629,7 @@ func (bt *MonitorBeater) Reload(cfg *common.Config) {
 		switch t {
 		case configs.ConfigTypeKeyword:
 			keywordTasks = append(keywordTasks, task)
-		case configs.ConfigTypeTrap, configs.ConfigTypeMetric, configs.ConfigTypeKubeevent:
+		case configs.ConfigTypeTrap, configs.ConfigTypeMetric, configs.ConfigTypeKubeevent, configs.ConfigTypeDmesg:
 			listenTasks = append(listenTasks, task)
 		default:
 			beatTasks = append(beatTasks, task)

@@ -128,10 +128,10 @@ func StartStreamSeriesSet(
 			for {
 				r, err := s.stream.Recv()
 				if r != nil {
-					if opt.MetricLabel != nil {
+					if opt.MetricName != "" {
 						r.Labels = append(r.Labels, &remote.LabelPair{
-							Name:  opt.MetricLabel.Name,
-							Value: opt.MetricLabel.Value,
+							Name:  labels.MetricName,
+							Value: opt.MetricName,
 						})
 					}
 

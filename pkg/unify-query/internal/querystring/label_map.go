@@ -9,88 +9,49 @@
 
 package querystring
 
-import (
-	"fmt"
-)
-
-var (
-	DefaultKey = "log" // 默认字段名，与 Doris 的 DefaultKey 一致
-)
-
-func LabelMap(query string) (map[string][]string, error) {
-	labelMap := make(map[string][]string)
+func LabelMap(query string, addLabel func(key string, operator string, values ...string)) error {
 	expr, err := Parse(query)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	if err := parseExprToKeyValue(query, expr, labelMap); err != nil {
-		return nil, err
+	if err = parseExprToKeyValue(expr, addLabel); err != nil {
+		return err
 	}
 
-	return labelMap, nil
+	return nil
 }
 
-func parseExprToKeyValue(query string, expr Expr, kv map[string][]string) error {
+// parseExprToKeyValue 因为我们并不知道 queryString 中的表达式是否需要被include到 labelMap 中，所以没有是否为positive的判断
+func parseExprToKeyValue(expr Expr, addLabel func(key string, operator string, values ...string)) error {
 	if expr == nil {
-		return fmt.Errorf("expression is nil for query: %s", query)
+		return nil
 	}
 
 	switch e := expr.(type) {
 	case *NotExpr:
-		if err := parseExprToKeyValue(query, e.Expr, kv); err != nil {
-			return err
-		}
+		// 如果是not表达式，直接返回
+		return nil
 	case *OrExpr:
-		if err := parseExprToKeyValue(query, e.Left, kv); err != nil {
+		if err := parseExprToKeyValue(e.Left, addLabel); err != nil {
 			return err
 		}
-		if err := parseExprToKeyValue(query, e.Right, kv); err != nil {
+		if err := parseExprToKeyValue(e.Right, addLabel); err != nil {
 			return err
 		}
 	case *AndExpr:
-		if err := parseExprToKeyValue(query, e.Left, kv); err != nil {
+		if err := parseExprToKeyValue(e.Left, addLabel); err != nil {
 			return err
 		}
-		if err := parseExprToKeyValue(query, e.Right, kv); err != nil {
+		if err := parseExprToKeyValue(e.Right, addLabel); err != nil {
 			return err
 		}
 	case *WildcardExpr:
-		field := e.Field
-		if field == "" {
-			field = DefaultKey
-		}
-		if err := addValueToMap(kv, field, e.Value); err != nil {
-			return fmt.Errorf("failed to add value to map: %w", err)
-		}
+		addLabel(e.Field, "contains", e.Value)
 	case *MatchExpr:
-		field := e.Field
-		if field == "" {
-			field = DefaultKey
-		}
-		if err := addValueToMap(kv, field, e.Value); err != nil {
-			return fmt.Errorf("failed to add value to map: %w", err)
-		}
+		addLabel(e.Field, "eq", e.Value)
 	default:
 		return nil
 	}
-	return nil
-}
-
-func addValueToMap(kv map[string][]string, field, value string) error {
-	if kv == nil {
-		return fmt.Errorf("kv map is nil")
-	}
-	if value == "" {
-		return fmt.Errorf("value cannot be empty")
-	}
-
-	for _, v := range kv[field] {
-		if v == value {
-			return nil
-		}
-	}
-
-	kv[field] = append(kv[field], value)
 	return nil
 }

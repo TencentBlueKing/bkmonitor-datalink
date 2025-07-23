@@ -13,9 +13,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 /*
@@ -78,8 +75,14 @@ func TestParser(t *testing.T) {
 				},
 			},
 		},
+		"无条件正则匹配": {
+			q: `/joh?n(ath[oa]n)/`,
+			e: &RegexpExpr{
+				Value: "joh?n(ath[oa]n)",
+			},
+		},
 		"正则匹配": {
-			q: `name:/joh?n(ath[oa]n)/`,
+			q: `name: /joh?n(ath[oa]n)/`,
 			e: &RegexpExpr{
 				Field: "name",
 				Value: "joh?n(ath[oa]n)",
@@ -298,6 +301,36 @@ func TestParser(t *testing.T) {
 				},
 			},
 		},
+		"start without tCOLON": {
+			q: "a > 100",
+			e: &NumberRangeExpr{
+				Field: "a",
+				Start: pointer("100"),
+			},
+		},
+		"end without tCOLON": {
+			q: "a < 100",
+			e: &NumberRangeExpr{
+				Field: "a",
+				End:   pointer("100"),
+			},
+		},
+		"start and eq without tCOLON": {
+			q: "a >= 100",
+			e: &NumberRangeExpr{
+				Field:        "a",
+				Start:        pointer("100"),
+				IncludeStart: true,
+			},
+		},
+		"end and eq without tCOLON": {
+			q: "a <= 100",
+			e: &NumberRangeExpr{
+				Field:      "a",
+				End:        pointer("100"),
+				IncludeEnd: true,
+			},
+		},
 		"start": {
 			q: "a: >100",
 			e: &NumberRangeExpr{
@@ -336,10 +369,42 @@ func TestParser(t *testing.T) {
 				Value: "*66036*",
 			},
 		},
+		"value like regex": {
+			q: `"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log" and level: "error" and "2_bklog.bkunify_query"`,
+			e: &AndExpr{
+				Left: &MatchExpr{
+					Value: "/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log",
+				},
+				Right: &AndExpr{
+					Left: &MatchExpr{
+						Field: "level",
+						Value: "error",
+					},
+					Right: &MatchExpr{
+						Value: "2_bklog.bkunify_query",
+					},
+				},
+			},
+		},
+		"双引号转义符号支持": {
+			q: `log: "(reading \\\"remove\\\")"`,
+			e: &MatchExpr{
+				Field: "log",
+				Value: `(reading \"remove\")`,
+			},
+		},
+		"test": {
+			q: `path: "/proz/logds/ds-5910974792526317*"`,
+			e: &WildcardExpr{
+				Field: "path",
+				Value: "/proz/logds/ds-5910974792526317*",
+			},
+		},
+		// TODO: 待解决的解析问题
+		//"test - many tPHRASE ": {
+		//	q: `loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND "game_app") AND __ext.io_kubernetes_pod: "nrc-dev-all-in-one-0" AND __ext.io_kubernetes_pod_namespace: "nrc-dev"`,
+		//},
 	}
-
-	metadata.InitMetadata()
-	mock.Init()
 
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {

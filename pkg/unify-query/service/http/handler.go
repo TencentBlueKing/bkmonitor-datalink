@@ -105,7 +105,6 @@ func HandlerStructToPromQL(c *gin.Context) {
 		resp.failed(ctx, err)
 		return
 	}
-
 	queryStr, _ := json.Marshal(query)
 	span.Set("query-body", string(queryStr))
 
@@ -154,6 +153,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 
 	span.Set("query-source", user.Key)
 	span.Set("query-space-uid", user.SpaceUID)
+	span.Set("query-tenant-id", user.TenantID)
 
 	// 解析请求 body
 	query := &structured.QueryTs{}
@@ -168,7 +168,6 @@ func HandlerQueryExemplar(c *gin.Context) {
 	if user.SpaceUID != "" {
 		query.SpaceUid = user.SpaceUID
 	}
-
 	queryStr, _ := json.Marshal(query)
 	span.Set("query-body", string(queryStr))
 
@@ -299,7 +298,6 @@ func HandlerQueryTs(c *gin.Context) {
 	if user.SpaceUID != "" {
 		query.SpaceUid = user.SpaceUID
 	}
-
 	queryStr, _ := json.Marshal(query)
 	span.Set("query-body", string(queryStr))
 	span.Set("query-body-size", len(queryStr))
@@ -437,14 +435,14 @@ func HandlerQueryReference(c *gin.Context) {
 	span.Set("query-body-size", len(queryStr))
 
 	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
-
 	res, err := queryReferenceWithPromEngine(ctx, query)
-	span.Set("resp-table-length", len(res.Tables))
-
-	span.Set("resp-size", fmt.Sprint(unsafe.Sizeof(res)))
 	if err != nil {
 		resp.failed(ctx, err)
 		return
+	}
+	if res != nil {
+		span.Set("resp-table-length", len(res.Tables))
+		span.Set("resp-size", fmt.Sprint(unsafe.Sizeof(res)))
 	}
 
 	resp.success(ctx, res)

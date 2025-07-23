@@ -64,6 +64,20 @@ processor:
         from_record:
           - source: "request.client.ip"
             destination: "resource.client.ip"
+
+    # FromMetadata Action
+    - name: "resource_filter/from_metadata"
+      config:
+        from_metadata:
+          keys: ["*"]
+
+    # DefaultValue Action
+    - name: "resource_filter/default_value"
+      config:
+        default_value:
+          - type: string
+            key: resource.service.name
+            value: "unknown_service"
 */
 
 package resourcefilter

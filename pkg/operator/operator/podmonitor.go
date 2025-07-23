@@ -202,7 +202,7 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 				System:                 systemResource,
 				UrlValues:              endpoint.Params,
 				MetricRelabelConfigs:   metricRelabelings,
-				NodeNameExistsFunc:     c.objectsController.NodeNameExists,
+				CheckNodeNameFunc:      c.objectsController.CheckNodeName,
 				NodeLabelsFunc:         c.objectsController.NodeLabels,
 			},
 			Client:            c.client,

@@ -166,18 +166,16 @@ func ScrollProcessSliceResult(ctx context.Context, sessionKey string, session *S
 		newScrollID := ""
 		if options != nil {
 			resultOption := options.GetOption(tableID, connect)
-			if resultOption != nil && resultOption.ScrollID != "" {
+			if resultOption != nil {
 				newScrollID = resultOption.ScrollID
 			}
 		}
 
-		if isSliceDone {
+		if isSliceDone || newScrollID == "" {
 			session.RemoveScrollID(connect, tableID, sliceIdx)
 			session.MarkSliceDone(connect, tableID, sliceIdx)
-		} else if newScrollID != "" {
-			session.SetScrollID(connect, tableID, newScrollID, sliceIdx)
 		} else {
-			session.MarkSliceDone(connect, tableID, sliceIdx)
+			session.SetScrollID(connect, tableID, newScrollID, sliceIdx)
 		}
 
 		allSlicesDone := true

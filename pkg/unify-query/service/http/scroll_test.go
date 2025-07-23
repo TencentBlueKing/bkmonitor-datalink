@@ -94,6 +94,12 @@ func TestQueryRawWithScroll(t *testing.T) {
 		`{"scroll":"9m","scroll_id":"scroll_id_2"}`: `{"_scroll_id":"scroll_id_2","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"6","_source":{"dtEventTimeStamp":"1723594006000","data":"es_test6"}}]}}`,
 	}
 
+	allDoneMockData := map[string]any{
+		`{"scroll":"9m","scroll_id":"scroll_id_0"}`: `{"_scroll_id":"","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
+		`{"scroll":"9m","scroll_id":"scroll_id_1"}`: `{"_scroll_id":"","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
+		`{"scroll":"9m","scroll_id":"scroll_id_2"}`: `{"_scroll_id":"","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
+	}
+
 	start := "1723594000"
 	end := "1723595000"
 	type testCase struct {
@@ -137,6 +143,27 @@ func TestQueryRawWithScroll(t *testing.T) {
 				done:     false,
 				hasData:  true,
 				mockData: inProgressEsMockData,
+			},
+			{
+				desc:     "Continue",
+				total:    0,
+				done:     true,
+				hasData:  false,
+				mockData: allDoneMockData,
+			},
+			{
+				desc:     "Continue",
+				total:    0,
+				done:     true,
+				hasData:  false,
+				mockData: allDoneMockData,
+			},
+			{
+				desc:     "Continue",
+				total:    0,
+				done:     true,
+				hasData:  false,
+				mockData: allDoneMockData,
 			},
 		},
 	}

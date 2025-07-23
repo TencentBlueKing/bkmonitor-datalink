@@ -129,8 +129,9 @@ func (c *Operator) pickMonitorDataID(meta define.MonitorMeta, annotation map[str
 			return nil, err
 		}
 
-		cloned := dataID.DeepCopy() // 需要复用集群内置的归属信息
+		cloned := dataID.DeepCopy()
 		cloned.Spec.DataID = schedDataID
+		cloned.Spec.Labels = make(map[string]string) // schedDataID 不需要内置 labels
 		fillLabels(cloned)
 		return cloned, nil
 	}

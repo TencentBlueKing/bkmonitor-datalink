@@ -11,11 +11,8 @@ package redis
 
 import (
 	"context"
-	"crypto/md5"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"sort"
 	"time"
 
 	redis "github.com/go-redis/redis/v8"
@@ -36,28 +33,6 @@ const (
 	clearCacheField = "clear_cache"
 )
 
-func generateDeterministicKey(data map[string]any) string {
-	keys := make([]string, 0, len(data))
-	for k := range data {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	var parts []string
-	for _, k := range keys {
-		v := data[k]
-		if nestedMap, ok := v.(map[string]any); ok {
-			parts = append(parts, fmt.Sprintf("%s:%s", k, generateDeterministicKey(nestedMap)))
-		} else {
-			parts = append(parts, fmt.Sprintf("%s:%v", k, v))
-		}
-	}
-
-	combined := fmt.Sprintf("{%s}", fmt.Sprintf("%v", parts))
-	hash := md5.Sum([]byte(combined))
-	return hex.EncodeToString(hash[:])
-}
-
 func ScrollGenerateQueryTsKey(queryTs any, userName string) (string, error) {
 	queryTsMap, err := cast.ToStringMapE(queryTs)
 	if err != nil {
@@ -72,9 +47,11 @@ func ScrollGenerateQueryTsKey(queryTs any, userName string) (string, error) {
 		"username": userName,
 	}
 
-	deterministicKey := generateDeterministicKey(keyData)
-
-	return deterministicKey, nil
+	jsonBytes, err := json.StableMarshal(keyData)
+	if err != nil {
+		return "", err
+	}
+	return string(jsonBytes), nil
 }
 
 func GetSessionKey(queryTsKey string) string {

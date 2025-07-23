@@ -244,10 +244,6 @@ func processSliceQueryWithHelper(queryCtx *SliceQueryContext) error {
 		sessionLock.Unlock()
 		return err
 	}
-
-	if err = redisUtil.UpdateSession(ctx, sessionKey, queryCtx.Session); err != nil {
-		log.Warnf(ctx, "Failed to update session: %v", err)
-	}
 	sessionLock.Unlock()
 
 	result := SliceQueryResult{

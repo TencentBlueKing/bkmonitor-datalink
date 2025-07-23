@@ -982,17 +982,17 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 		return 0, nil, nil, false, fmt.Errorf("failed to marshal queryTs: %v", err)
 	}
 	var queryTsMap map[string]interface{}
-	if err := json.Unmarshal(queryTsBytes, &queryTsMap); err != nil {
+	if err = json.Unmarshal(queryTsBytes, &queryTsMap); err != nil {
 		return 0, nil, nil, false, fmt.Errorf("failed to unmarshal queryTs to map: %v", err)
 	}
 
 	queryTsKey, err := redisUtil.ScrollGenerateQueryTsKey(queryTsMap, user.Name)
 	if err != nil {
-		return 0, nil, nil, false, err
+		return
 	}
 	lockKey := redisUtil.GetLockKey(queryTsKey)
 	if err = redisUtil.ScrollAcquireRedisLock(ctx, lockKey, ScrollLockTimeout); err != nil {
-		return 0, nil, nil, false, err
+		return
 	}
 	defer func() {
 		if err = redisUtil.ScrollReleaseRedisLock(ctx, lockKey); err != nil {
@@ -1010,15 +1010,15 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 	session, sessionKey, isDone, err := scrollSessionHelperInstance.GetOrCreateSessionByKey(ctx, queryTsKey,
 		queryTs.ClearCache, queryTs.Scroll, queryTs.Limit)
 	if err != nil {
-		return 0, nil, nil, false, err
+		return
 	}
 	if isDone {
-		return 0, []map[string]any{}, nil, true, nil
+		return
 	}
 
 	queryList, err := prepareQueryList(ctx, queryTs)
 	if err != nil {
-		return 0, nil, nil, false, err
+		return
 	}
 
 	return executeScrollQueriesWithHelper(ctx, scrollSessionHelperInstance, sessionKey, session, queryList, start, end, queryTs)
@@ -1038,7 +1038,7 @@ func executeScrollQueriesWithHelper(ctx context.Context, scrollSessionHelperInst
 	receiveWg.Add(1)
 	go func() {
 		defer receiveWg.Done()
-		list = processQueryResults(executor.dataCh, queryList, queryTs, ignoreDimensions)
+		list = processQueryResults(executor.dataCh, queryTs, ignoreDimensions)
 	}()
 
 	go executor.executeQueries(storageQueryMap, scrollSessionHelperInstance)
@@ -1051,12 +1051,11 @@ func executeScrollQueriesWithHelper(ctx context.Context, scrollSessionHelperInst
 
 	total = executor.total
 	resultTableOptions = executor.resultTableOptions
-	done = scrollSessionHelperInstance.IsSessionDone(session)
+	done = executor.session.Status == redisUtil.SessionStatusDone
 	return
 }
 
-func prepareQueryList(ctx context.Context, queryTs *structured.QueryTs) ([]*metadata.Query, error) {
-	var queryList []*metadata.Query
+func prepareQueryList(ctx context.Context, queryTs *structured.QueryTs) (queryList []*metadata.Query, err error) {
 
 	if queryTs.SpaceUid == "" {
 		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
@@ -1087,9 +1086,10 @@ func prepareQueryList(ctx context.Context, queryTs *structured.QueryTs) ([]*meta
 			ql.KeepColumns = queryTs.ResultColumns
 		}
 
-		qm, err := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
-		if err != nil {
-			return nil, err
+		qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
+		if qmErr != nil {
+			err = qmErr
+			return
 		}
 
 		for _, qry := range qm.QueryList {
@@ -1102,9 +1102,8 @@ func prepareQueryList(ctx context.Context, queryTs *structured.QueryTs) ([]*meta
 	return queryList, nil
 }
 
-func buildStorageQueryMap(queryList []*metadata.Query) map[string][]*metadata.Query {
-	storageQueryMap := make(map[string][]*metadata.Query)
-
+func buildStorageQueryMap(queryList []*metadata.Query) (storageQueryMap map[string][]*metadata.Query) {
+	storageQueryMap = make(map[string][]*metadata.Query)
 	for _, qry := range queryList {
 		storageIds := qry.CalcStorageIDs()
 		if storageIds == nil {
@@ -1122,10 +1121,7 @@ func buildStorageQueryMap(queryList []*metadata.Query) map[string][]*metadata.Qu
 	return storageQueryMap
 }
 
-func processQueryResults(dataCh <-chan map[string]any, queryList []*metadata.Query,
-	queryTs *structured.QueryTs,
-	ignoreDimensions []string) []map[string]any {
-
+func processQueryResults(dataCh <-chan map[string]any, queryTs *structured.QueryTs, ignoreDimensions []string) []map[string]any {
 	var data []map[string]any
 	for d := range dataCh {
 		data = append(data, d)

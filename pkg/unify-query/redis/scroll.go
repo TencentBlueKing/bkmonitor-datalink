@@ -62,21 +62,10 @@ const (
 	SessionStatusFailed  = "FAILED"
 )
 
-func (s *ScrollSession) CurrentScrollID(storageType, connect, tableID string, sliceIdx int) (string, int, error) {
-	switch storageType {
-	case consul.ElasticsearchStorageType:
-		return s.getNextElasticsearchScrollID(connect, tableID, sliceIdx)
-	case consul.BkSqlStorageType:
-		return s.getNextDorisIndex()
-	default:
-		return "", 0, fmt.Errorf("unsupported storage type for scroll: %s", storageType)
-	}
-}
-
-func (s *ScrollSession) getNextDorisIndex() (string, int, error) {
+func (s *ScrollSession) getNextDorisIndex() (int, error) {
 	currentIndex := s.Index
 	s.Index++
-	return "", currentIndex, nil
+	return currentIndex, nil
 }
 
 func (s *ScrollSession) getNextElasticsearchScrollID(connect, tableID string, sliceIdx int) (string, int, error) {
@@ -151,7 +140,6 @@ func (s *ScrollSession) makeElasticsearchSlices(connect, tableID string) ([]Slic
 		if err != nil {
 			return nil, fmt.Errorf("failed to get scroll ID for slice %d: %v", sliceIndex, err)
 		}
-
 		slices = append(slices, SliceInfo{
 			SliceIndex: sliceIndex,
 			ScrollID:   scrollID,
@@ -166,7 +154,7 @@ func (s *ScrollSession) makeDorisSlices() ([]SliceInfo, error) {
 	slices := make([]SliceInfo, 0, s.MaxSlice)
 
 	for sliceIndex := 0; sliceIndex < s.MaxSlice; sliceIndex++ {
-		_, index, err := s.getNextDorisIndex()
+		index, err := s.getNextDorisIndex()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get index for slice %d: %v", sliceIndex, err)
 		}
@@ -232,8 +220,4 @@ func (h *ScrollSessionHelper) GetOrCreateSessionByKey(ctx context.Context, query
 
 	isDone := session.Status == SessionStatusDone
 	return session, sessionKey, isDone, nil
-}
-
-func (h *ScrollSessionHelper) IsSessionDone(session *ScrollSession) bool {
-	return session.Status == SessionStatusDone
 }

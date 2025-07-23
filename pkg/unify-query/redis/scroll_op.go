@@ -159,7 +159,7 @@ func UpdateSession(ctx context.Context, sessionKey string, session *ScrollSessio
 }
 
 func ScrollProcessSliceResult(ctx context.Context, sessionKey string, session *ScrollSession, connect, tableID string, sliceIdx int, tsDbType string, size int64, options metadata.ResultTableOptions) error {
-	isDone := size == 0
+	isSliceDone := size == 0
 
 	switch tsDbType {
 	case consul.ElasticsearchStorageType:
@@ -173,18 +173,19 @@ func ScrollProcessSliceResult(ctx context.Context, sessionKey string, session *S
 
 		if newScrollID != "" {
 			session.SetScrollID(connect, tableID, newScrollID, sliceIdx)
+		} else {
+			hasMoreData := session.HasMoreData(consul.ElasticsearchStorageType)
+			if !hasMoreData {
+				session.Status = SessionStatusDone
+			}
 		}
-		if isDone {
+		if isSliceDone {
 			session.RemoveScrollID(connect, tableID, sliceIdx)
 			session.MarkSliceDone(connect, tableID, sliceIdx)
 		}
-		hasMoreData := session.HasMoreData(consul.ElasticsearchStorageType)
-		if !hasMoreData {
-			session.Status = SessionStatusDone
-		}
 
 	case consul.BkSqlStorageType:
-		if isDone {
+		if isSliceDone {
 			session.Status = SessionStatusDone
 		}
 	default:

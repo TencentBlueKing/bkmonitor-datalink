@@ -68,7 +68,7 @@ func (s *ScrollSession) getNextDorisIndex() (int, error) {
 	return currentIndex, nil
 }
 
-func (s *ScrollSession) getNextElasticsearchScrollID(connect, tableID string, sliceIdx int) (string, int, error) {
+func (s *ScrollSession) getNextElasticsearchScrollID(connect, tableID string, sliceIdx int) string {
 	k := SliceStatus{
 		Connect:  connect,
 		TableID:  tableID,
@@ -76,16 +76,13 @@ func (s *ScrollSession) getNextElasticsearchScrollID(connect, tableID string, sl
 	}
 	scrollID, exist := s.ScrollIDs[k.String()]
 	if !exist {
-		return "", 0, nil
+		return ""
 	}
 
-	return scrollID, 0, nil
+	return scrollID
 }
 
 func (s *ScrollSession) SetScrollID(connect, tableID, scrollID string, sliceIdx int) {
-	if s.ScrollIDs == nil {
-		s.ScrollIDs = make(map[string]string)
-	}
 	k := SliceStatus{
 		Connect:  connect,
 		TableID:  tableID,
@@ -95,9 +92,6 @@ func (s *ScrollSession) SetScrollID(connect, tableID, scrollID string, sliceIdx 
 }
 
 func (s *ScrollSession) MarkSliceDone(connect, tableID string, sliceIdx int) {
-	if s.SliceStatus == nil {
-		s.SliceStatus = make(map[string]bool)
-	}
 	k := SliceStatus{
 		Connect:  connect,
 		TableID:  tableID,
@@ -136,13 +130,9 @@ func (s *ScrollSession) makeElasticsearchSlices(connect, tableID string) ([]Slic
 	slices := make([]SliceInfo, 0, s.MaxSlice)
 
 	for sliceIndex := 0; sliceIndex < s.MaxSlice; sliceIndex++ {
-		scrollID, _, err := s.getNextElasticsearchScrollID(connect, tableID, sliceIndex)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get scroll ID for slice %d: %v", sliceIndex, err)
-		}
 		slices = append(slices, SliceInfo{
 			SliceIndex: sliceIndex,
-			ScrollID:   scrollID,
+			ScrollID:   s.getNextElasticsearchScrollID(connect, tableID, sliceIndex),
 			Index:      0,
 		})
 	}

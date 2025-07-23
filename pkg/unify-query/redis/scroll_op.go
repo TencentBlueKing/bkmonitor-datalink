@@ -135,7 +135,7 @@ func scrollUpdateSession(ctx context.Context, key string, session *ScrollSession
 	return client.Set(ctx, key, sessionBytes, session.ScrollTimeout).Err()
 }
 
-func UpdateSession(ctx context.Context, sessionKey string, session *ScrollSession) error {
+func UpdateSession(ctx context.Context, sessionKey string, session *ScrollSession) (err error) {
 	if globalInstance == nil {
 		return fmt.Errorf("redis instance not initialized")
 	}
@@ -147,7 +147,7 @@ func UpdateSession(ctx context.Context, sessionKey string, session *ScrollSessio
 	session.LastAccessAt = time.Now()
 	sessionBytes, err := json.Marshal(session)
 	if err != nil {
-		return err
+		return
 	}
 
 	err = client.Set(ctx, sessionKey, sessionBytes, session.ScrollTimeout).Err()

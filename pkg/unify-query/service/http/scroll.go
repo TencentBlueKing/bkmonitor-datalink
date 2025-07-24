@@ -174,36 +174,22 @@ func (e *ScrollQueryExecutor) submitSliceQuery(
 }
 
 func processSliceQueryWithHelper(queryCtx *SliceQueryContext) error {
-	ctx := queryCtx.Ctx
 	instance := prometheus.GetTsDbInstance(queryCtx.Ctx, queryCtx.Query)
 	if instance == nil {
 		return fmt.Errorf("no instance found for storage %s", queryCtx.Query.StorageID)
 	}
-	qry := queryCtx.Query
-	queryTs := queryCtx.QueryTs
 	if queryCtx.QueryTs.Scroll != "" {
-		qry.Scroll = queryTs.Scroll
+		queryCtx.Query.Scroll = queryCtx.QueryTs.Scroll
 	}
 
-	start := queryCtx.StartTime
-	end := queryCtx.EndTime
-	dataCh := queryCtx.DataCh
-	size, options, err := instance.QueryRawData(
-		ctx,
-		qry,
-		start,
-		end,
-		dataCh,
-	)
-	message := queryCtx.Message
-	slice := queryCtx.Slice
+	size, options, err := instance.QueryRawData(queryCtx.Ctx, queryCtx.Query, queryCtx.StartTime, queryCtx.EndTime, queryCtx.DataCh)
 	if err != nil {
-		message.WriteString(
+		queryCtx.Message.WriteString(
 			fmt.Sprintf(
 				"query %s:%s slice %d is error: %s ",
-				qry.TableID,
-				qry.Fields,
-				slice.SliceIndex,
+				queryCtx.Query.TableID,
+				queryCtx.Query.Fields,
+				queryCtx.Slice.SliceIndex,
 				err.Error(),
 			),
 		)
@@ -218,24 +204,17 @@ func processSliceQueryWithHelper(queryCtx *SliceQueryContext) error {
 	}
 	*queryCtx.Total += size
 	lock.Unlock()
-	sessionLock := queryCtx.SessionLock
-	storage := queryCtx.Storage
-	connect := storage.Address
-	tableId := qry.TableID
-	sessionKey := queryCtx.SessionKey
-	session := queryCtx.Session
-	sessionLock.Lock()
-	defer sessionLock.Unlock()
-	if err = redisUtil.ScrollProcessSliceResult(ctx, sessionKey, session, connect, tableId, slice.SliceIndex, instance.InstanceType(), size, options); err != nil {
-		log.Warnf(ctx, "Failed to process slice result: %v", err)
-
+	queryCtx.SessionLock.Lock()
+	defer queryCtx.SessionLock.Unlock()
+	if err = redisUtil.ScrollProcessSliceResult(queryCtx.Ctx, queryCtx.SessionKey, queryCtx.Session, queryCtx.Storage.Address, queryCtx.Query.TableID, queryCtx.Slice.SliceIndex, instance.InstanceType(), size, options); err != nil {
+		log.Warnf(queryCtx.Ctx, "Failed to process slice result: %v", err)
 		return err
 	}
 	result := SliceQueryResult{
-		Connect:    connect,
-		TableID:    tableId,
-		SliceIndex: slice.SliceIndex,
-		ScrollID:   slice.ScrollID,
+		Connect:    queryCtx.Storage.Address,
+		TableID:    queryCtx.Query.TableID,
+		SliceIndex: queryCtx.Slice.SliceIndex,
+		ScrollID:   queryCtx.Slice.ScrollID,
 		TsDbType:   instance.InstanceType(),
 		Size:       size,
 		Options:    options,
@@ -243,7 +222,7 @@ func processSliceQueryWithHelper(queryCtx *SliceQueryContext) error {
 	}
 
 	if options != nil {
-		resultOption := options.GetOption(tableId, connect)
+		resultOption := options.GetOption(queryCtx.Query.TableID, queryCtx.Storage.Address)
 		if resultOption != nil && resultOption.ScrollID != "" {
 			result.ScrollID = resultOption.ScrollID
 		}

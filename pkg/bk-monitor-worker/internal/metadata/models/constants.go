@@ -86,7 +86,7 @@ const (
 	StorageTypeArgus    = "argus"
 	StorageTypeVM       = "victoria_metrics"
 	StorageTypeDoris    = "doris"
-	StorageTypeBkSql    = "bksql"
+	StorageTypeBkSql    = "bk_sql"
 )
 
 const (

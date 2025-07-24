@@ -18,8 +18,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser/gen"
 )
 
-type Encode func(s string) (string, bool)
-
 type Expr interface {
 	Log() bool
 	String() string
@@ -549,12 +547,11 @@ func (e *Field) Exit(ctx antlr.ParserRuleContext) {
 func (e *Field) String() string {
 	var (
 		originName string
-		isAlias    bool
 	)
 	aliasName := strings.Join(append([]string{e.Name}, e.ExtraNames...), ".")
 	if e.encode != nil {
-		originName, isAlias = e.encode(aliasName)
-		if e.setAs && isAlias && e.As == "" {
+		originName = e.encode(aliasName)
+		if e.setAs && originName != aliasName && e.As == "" {
 			e.As = aliasName
 		}
 	} else {

@@ -240,11 +240,11 @@ group by
 
 			// antlr4 and visitor
 			opt := DorisListenerOption{
-				DimensionTransform: func(s string) (string, bool) {
+				DimensionTransform: func(s string) string {
 					if _, ok := fieldAlias[s]; ok {
-						return fieldAlias[s], ok
+						return fieldAlias[s]
 					}
-					return s, false
+					return s
 				},
 			}
 			listener := ParseDorisSQLWithListener(ctx, c.q, opt)
@@ -338,12 +338,12 @@ LIMIT
 		{
 			name: "test-8",
 			q:    `test error sql`,
-			err:  fmt.Errorf("SQL 解析失败：test error sql"),
+			err:  fmt.Errorf("parse doris sql (test error sql) error: test error sql"),
 		},
 		{
 			name: "test-9",
 			q:    `select_1 * from_1 where 1=1'`,
-			err:  fmt.Errorf("SQL 解析失败：select_1 * from_1 where 1=1'"),
+			err:  fmt.Errorf("parse doris sql (select_1 * from_1 where 1=1') error: select_1 * from_1 where 1 = 1 '"),
 		},
 		{
 			name: "test-10",
@@ -358,7 +358,7 @@ LIMIT
 		{
 			name: "test-11",
 			q:    `select * from t where (t match_phrase_prefix '%gg%')`,
-			sql:  `SELECT * FROM t WHERE ( t match_phrase_prefix '%gg%' )`,
+			sql:  `SELECT * FROM t WHERE (t match_phrase_prefix '%gg%')`,
 		},
 		{
 			name: "test-12",
@@ -448,7 +448,7 @@ group by
 		{
 			name: "test-19",
 			q:    "SELECT * WHERE name = '1' and a > 2",
-			sql:  "SELECT * WHERE name = '1' and a > 2",
+			sql:  "SELECT * WHERE name = '1' AND a > 2",
 		},
 		{
 			name: "test-20",
@@ -549,6 +549,26 @@ group by
   ct`,
 			sql: `SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, substr(CAST(__ext['container_image'] AS TEXT), 20) AS imn, substr(log, 53) AS ct, count(*) GROUP BY ns, imn, ct`,
 		},
+		{
+			name: `test-37`,
+			q:    `select count() where log like 'test*'`,
+			sql:  `SELECT count() WHERE log like 'test*'`,
+		},
+		{
+			name: `test-38`,
+			q:    `select count() where (log like 'test*')`,
+			sql:  `SELECT count() WHERE (log like 'test*')`,
+		},
+		{
+			name: `test-39`,
+			q:    `select pod_namespace where pod_namespace != ''`,
+			sql:  `SELECT __ext.io_kubernetes_pod_namespace AS pod_namespace WHERE __ext.io_kubernetes_pod_namespace != ''`,
+		},
+		{
+			name: `test-40`,
+			q:    `select count(pod_namespace) where log like 'test*'`,
+			sql:  `SELECT count(__ext.io_kubernetes_pod_namespace) WHERE log like 'test*'`,
+		},
 	}
 
 	mock.Init()
@@ -563,12 +583,15 @@ group by
 			ctx = metadata.InitHashID(ctx)
 
 			// antlr4 and visitor
-			opt := DorisVisitorOption{
-				DimensionTransform: func(s string) (string, bool) {
-					if _, ok := fieldAlias[s]; ok {
-						return fieldAlias[s], ok
+			opt := &Option{
+				DimensionTransform: func(s string) string {
+					if s == "" {
+						return ""
 					}
-					return s, false
+					if _, ok := fieldAlias[s]; ok {
+						return fieldAlias[s]
+					}
+					return s
 				},
 			}
 			sql, err := ParseDorisSQLWithVisitor(ctx, c.q, opt)

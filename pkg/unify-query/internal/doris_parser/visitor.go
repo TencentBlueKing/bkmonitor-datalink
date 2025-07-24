@@ -20,14 +20,22 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
+type Encode func(string) string
+
 type Node interface {
 	antlr.ParseTreeVisitor
 	String() string
 	Error() error
+
+	WithEncode(Encode)
+	WithSetAs(bool)
 }
 
 type baseNode struct {
 	antlr.BaseParseTreeVisitor
+
+	Encode Encode
+	SetAs  bool
 }
 
 func (n *baseNode) String() string {
@@ -36,6 +44,14 @@ func (n *baseNode) String() string {
 
 func (n *baseNode) Error() error {
 	return nil
+}
+
+func (n *baseNode) WithEncode(encode Encode) {
+	n.Encode = encode
+}
+
+func (n *baseNode) WithSetAs(setAs bool) {
+	n.SetAs = setAs
 }
 
 type Statement struct {
@@ -83,9 +99,11 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) interface{} {
 	var next Node
 	next = v
 
+	var isSetAs bool
 	switch ctx.(type) {
 	case *gen.SelectClauseContext:
 		v.selectNode = &SelectNode{}
+		isSetAs = true
 		next = v.selectNode
 	case *gen.FromClauseContext:
 		v.tableNode = &TableNode{}
@@ -103,7 +121,8 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) interface{} {
 		v.limitNode = &LimitNode{}
 		next = v.limitNode
 	}
-	return visitChildren(next, ctx)
+
+	return visitChildren(v.Encode, isSetAs, next, ctx)
 }
 
 type LimitNode struct {
@@ -168,7 +187,7 @@ func (v *SortNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 		next = fn
 		v.nodes = append(v.nodes, fn)
 	}
-	return visitChildren(next, ctx)
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
 
 type OrderNode struct {
@@ -209,7 +228,7 @@ func (v *OrderNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 		v.node = &FieldNode{}
 		next = v.node
 	}
-	return visitChildren(next, ctx)
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
 
 type AggNode struct {
@@ -244,15 +263,14 @@ func (v *AggNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 		next = fn
 		v.fieldsNode = append(v.fieldsNode, fn)
 	}
-	return visitChildren(next, ctx)
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
 
 type WhereNode struct {
 	baseNode
 
-	Node Node
-
-	err error
+	node Node
+	err  error
 }
 
 func (v *WhereNode) Error() error {
@@ -260,7 +278,7 @@ func (v *WhereNode) Error() error {
 }
 
 func (v *WhereNode) String() string {
-	where := nodeToString(v.Node)
+	where := nodeToString(v.node)
 	if where != "" {
 		return fmt.Sprintf("WHERE %s", where)
 	}
@@ -273,13 +291,22 @@ func (v *WhereNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 
 	switch ctx.(type) {
 	case *gen.LogicalBinaryContext:
-		v.Node = &LogicNode{}
-		next = v.Node
+		v.node = &LogicNode{}
+		next = v.node
+	case *gen.ParenthesizedExpressionContext:
+		v.node = &ParentNode{}
+		next = v.node
 	case *gen.PredicatedContext:
-		v.Node = &ConditionNode{}
-		next = v.Node
+		// 忽略带有括号的
+		s := ctx.GetText()
+		if s[0] == '(' && s[len(s)-1] == ')' {
+			break
+		}
+
+		v.node = &OperatorNode{}
+		next = v.node
 	}
-	return visitChildren(next, ctx)
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
 
 type ParentNode struct {
@@ -293,9 +320,9 @@ func (v *ParentNode) String() string {
 }
 
 func (v *ParentNode) VisitChildren(ctx antlr.RuleNode) interface{} {
-	v.node = &WhereNode{}
+	v.node = &ConditionNode{}
 	next := v.node
-	return visitChildren(next, ctx)
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
 
 type LogicNode struct {
@@ -327,60 +354,64 @@ func (v *LogicNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 	switch ctx.(type) {
 	case *gen.PredicatedContext:
 		if v.Left == nil {
-			v.Left = &ConditionNode{}
+			v.Left = &OperatorNode{}
 			next = v.Left
 		} else if v.Right == nil {
-			v.Right = &ConditionNode{}
+			v.Right = &OperatorNode{}
 			next = v.Right
 		}
 	}
-	return visitChildren(next, ctx)
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
 
 type ConditionNode struct {
 	baseNode
 
-	Key    Node
-	Op     Node
-	Values []Node
+	node Node
 }
 
 func (v *ConditionNode) String() string {
-	key := nodeToString(v.Key)
-	op := nodeToString(v.Op)
-
-	var values []string
-	for _, vn := range v.Values {
-		vs := nodeToString(vn)
-		if vs != "" {
-			values = append(values, vs)
-		}
-	}
-
-	var condition string
-	if key != "" {
-		condition = key
-	}
-	if op != "" {
-		condition = fmt.Sprintf("%s %s", condition, op)
-	}
-
-	var value string
-	if len(values) > 0 {
-		if len(values) == 1 {
-			value = values[0]
-		} else {
-			value = fmt.Sprintf("(%s)", strings.Join(values, ", "))
-		}
-	}
-	if value != "" {
-		condition = fmt.Sprintf("%s %s", condition, value)
-	}
-
-	return condition
+	return nodeToString(v.node)
 }
 
-func (v *ConditionNode) VisitTerminal(node antlr.TerminalNode) interface{} {
+func (v *ConditionNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+	var next Node
+	next = v
+
+	switch ctx.(type) {
+	case *gen.PredicatedContext:
+		v.node = &OperatorNode{}
+		next = v.node
+	case *gen.LogicalBinaryContext:
+		v.node = &LogicNode{}
+		next = v.node
+	}
+
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
+}
+
+type OperatorNode struct {
+	baseNode
+
+	Left  Node
+	Right Node
+	Op    Node
+}
+
+func (v *OperatorNode) String() string {
+	left := nodeToString(v.Left)
+	op := nodeToString(v.Op)
+	right := nodeToString(v.Right)
+
+	if v.Encode != nil {
+		left = v.Encode(left)
+	}
+
+	result := fmt.Sprintf("%s %s %s", left, op, right)
+	return result
+}
+
+func (v *OperatorNode) VisitTerminal(node antlr.TerminalNode) interface{} {
 	if v.Op == nil {
 		v.Op = &StringNode{
 			Name: node.GetText(),
@@ -389,51 +420,23 @@ func (v *ConditionNode) VisitTerminal(node antlr.TerminalNode) interface{} {
 	return nil
 }
 
-func (v *ConditionNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *OperatorNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 	var next Node
 	next = v
 
 	switch ctx.(type) {
-	case *gen.ParenthesizedExpressionContext:
-		v.Key = &ParentNode{}
-		next = v.Key
-	case *gen.ColumnReferenceContext:
-		v.Key = &ColumnNode{
-			Names: []Node{
-				&StringNode{Name: ctx.GetText()},
-			},
-		}
-		next = v.Key
-	case *gen.ConstantDefaultContext:
-		if v.Key != nil {
-			switch n := v.Key.(type) {
-			case *ColumnNode:
-				n.Sep = "]["
-				n.Names = append(n.Names, &StringNode{Name: ctx.GetText()})
-			case *FunctionNode:
-				n.Args = append(n.Args, &StringNode{Name: ctx.GetText()})
-			}
+	case *gen.ValueExpressionDefaultContext:
+		if v.Left == nil {
+			v.Left = &FieldNode{}
+			next = v.Left
+		} else if v.Right == nil {
+			v.Right = &ValueNode{}
+			next = v.Right
 		} else {
-			v.Key = &StringNode{
-				Name: ctx.GetText(),
-			}
-		}
-	case *gen.ExpressionContext:
-		if v.Key == nil {
-			v.Key = &FieldNode{}
-			next = v.Key
-		} else {
-			fn := &FieldNode{}
-			v.Values = append(v.Values, fn)
-			next = fn
-		}
-	case *gen.ComparisonOperatorContext:
-		v.Op = &StringNode{
-			Name: ctx.GetText(),
+			next = v.Right
 		}
 	}
-
-	return visitChildren(next, ctx)
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
 
 type TableNode struct {
@@ -462,7 +465,7 @@ func (v *TableNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 	case *gen.TableNameContext:
 		v.Table = &StringNode{Name: ctx.GetText()}
 	}
-	return visitChildren(next, ctx)
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
 
 type SelectNode struct {
@@ -497,7 +500,8 @@ func (v *SelectNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 		next = fn
 		v.fieldsNode = append(v.fieldsNode, fn)
 	}
-	return visitChildren(next, ctx)
+
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
 
 type FieldNode struct {
@@ -512,8 +516,18 @@ type FieldNode struct {
 }
 
 func (v *FieldNode) String() string {
-	var result string
+	var (
+		result string
+	)
 	result = nodeToString(v.node)
+
+	if v.Encode != nil {
+		originField := v.Encode(result)
+		if v.SetAs && originField != result && v.as == nil {
+			v.as = &StringNode{Name: result}
+		}
+		result = originField
+	}
 
 	var cols []string
 	for _, val := range v.args {
@@ -541,7 +555,7 @@ func (v *FieldNode) String() string {
 
 func (v *FieldNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 	next := visitFieldNode(ctx, v)
-	return visitChildren(next, ctx)
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
 
 type BinaryNode struct {
@@ -591,7 +605,7 @@ func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 			v.Right = &StringNode{Name: ctx.GetText()}
 		}
 	}
-	return visitChildren(next, ctx)
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
 
 type FunctionNode struct {
@@ -604,6 +618,10 @@ type FunctionNode struct {
 func (v *FunctionNode) String() string {
 	var result string
 	result = nodeToString(v.Value)
+
+	if v.Encode != nil {
+		result = v.Encode(result)
+	}
 
 	var cols []string
 	for _, val := range v.Args {
@@ -645,7 +663,7 @@ func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 		v.Value = &StringNode{Name: ctx.GetText()}
 		next = v.Value
 	}
-	return visitChildren(next, ctx)
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
 
 type CastNode struct {
@@ -702,7 +720,7 @@ func (v *CastNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 		v.Value = &StringNode{Name: ctx.GetText()}
 		next = v.Value
 	}
-	return visitChildren(next, ctx)
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
 
 type ColumnNode struct {
@@ -736,7 +754,28 @@ func (v *ColumnNode) String() string {
 }
 
 func (v *ColumnNode) VisitChildren(ctx antlr.RuleNode) interface{} {
-	return visitChildren(v, ctx)
+	return visitChildren(v.Encode, v.SetAs, v, ctx)
+}
+
+type ValueNode struct {
+	baseNode
+
+	names []string
+}
+
+func (v *ValueNode) String() string {
+	if len(v.names) == 1 {
+		return v.names[0]
+	}
+	return fmt.Sprintf("(%s)", strings.Join(v.names, ", "))
+}
+
+func (v *ValueNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+	switch ctx.(type) {
+	case *gen.ConstantDefaultContext:
+		v.names = append(v.names, ctx.GetText())
+	}
+	return visitChildren(v.Encode, v.SetAs, v, ctx)
 }
 
 type StringNode struct {
@@ -749,7 +788,7 @@ func (v *StringNode) String() string {
 }
 
 func (v *StringNode) VisitChildren(ctx antlr.RuleNode) interface{} {
-	return visitChildren(v, ctx)
+	return visitChildren(v.Encode, v.SetAs, v, ctx)
 }
 
 func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
@@ -810,11 +849,13 @@ func nodeToString(node Node) string {
 	return node.String()
 }
 
-func visitChildren(visitor Node, node antlr.RuleNode) interface{} {
+func visitChildren(encode Encode, setAs bool, next Node, node antlr.RuleNode) interface{} {
+	next.WithEncode(encode)
+	next.WithSetAs(setAs)
 	for _, child := range node.GetChildren() {
 		if tree, ok := child.(antlr.ParseTree); ok {
 			log.Debugf(context.TODO(), `"ENTER","%T","%s"`, tree, tree.GetText())
-			tree.Accept(visitor)
+			tree.Accept(next)
 			log.Debugf(context.TODO(), `"EXIT","%T","%s"`, tree, tree.GetText())
 		}
 	}
@@ -822,6 +863,6 @@ func visitChildren(visitor Node, node antlr.RuleNode) interface{} {
 	return nil
 }
 
-type DorisVisitorOption struct {
-	DimensionTransform func(s string) (string, bool)
+type Option struct {
+	DimensionTransform Encode
 }

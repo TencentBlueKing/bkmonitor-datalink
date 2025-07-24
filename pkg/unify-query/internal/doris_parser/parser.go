@@ -19,7 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
-func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt DorisVisitorOption) (string, error) {
+func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (string, error) {
 	defer func() {
 		if r := recover(); r != nil {
 			// 处理异常
@@ -41,6 +41,7 @@ func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt DorisVisitorOpt
 	//visitor := NewDorisVisitor(ctx, q).WithOptions(opt)
 
 	stmt := &Statement{}
+	stmt.WithEncode(opt.DimensionTransform)
 
 	log.Debugf(ctx, `"action","type","text"`)
 

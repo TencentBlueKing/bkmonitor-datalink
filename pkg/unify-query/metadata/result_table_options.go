@@ -15,8 +15,8 @@ type ResultTableOption struct {
 	From        *int   `json:"from,omitempty"`
 	ScrollID    string `json:"scroll_id,omitempty"`
 	SearchAfter []any  `json:"search_after,omitempty"`
-	SliceID     *int   `json:"slice_id,omitempty"`
-	SliceMax    *int   `json:"slice_max,omitempty"`
+	SliceID     *int
+	SliceMax    *int
 }
 
 func (o ResultTableOptions) SetOption(tableID, address string, option *ResultTableOption) {

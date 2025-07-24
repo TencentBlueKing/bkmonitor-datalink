@@ -43,19 +43,19 @@ type Client struct {
 type innerLogger struct{}
 
 func (innerLogger) Debug(format string, args ...interface{}) {
-	logger.Debugf(format, args)
+	logger.Debugf(format, args...)
 }
 
 func (innerLogger) Info(format string, args ...interface{}) {
-	logger.Infof(format, args)
+	logger.Infof(format, args...)
 }
 
 func (innerLogger) Warn(format string, args ...interface{}) {
-	logger.Warnf(format, args)
+	logger.Warnf(format, args...)
 }
 
 func (innerLogger) Error(format string, args ...interface{}) {
-	logger.Errorf(format, args)
+	logger.Errorf(format, args...)
 }
 
 func NewClient(opt Option) (*Client, error) {

@@ -152,7 +152,7 @@ func UpdateSession(ctx context.Context, sessionKey string, session *ScrollSessio
 
 	err = client.Set(ctx, sessionKey, sessionBytes, session.ScrollTimeout).Err()
 	if err != nil {
-		return err
+		return
 	}
 
 	return err

@@ -88,7 +88,6 @@ func newSliceQueryContext(
 		EndTime:   executor.endTime,
 
 		DataCh:             executor.dataCh,
-		ResultCh:           executor.resultCh,
 		AllLabelMap:        executor.allLabelMap,
 		ResultTableOptions: executor.resultTableOptions,
 		Total:              &executor.total,
@@ -108,7 +107,6 @@ type ScrollQueryExecutor struct {
 	endTime    time.Time
 
 	dataCh             chan map[string]any
-	resultCh           chan SliceQueryResult
 	allLabelMap        map[string][]function.LabelMapValue
 	resultTableOptions metadata.ResultTableOptions
 	total              int64
@@ -137,7 +135,6 @@ func newScrollQueryExecutor(
 		startTime:          start,
 		endTime:            end,
 		dataCh:             make(chan map[string]any),
-		resultCh:           make(chan SliceQueryResult),
 		allLabelMap:        make(map[string][]function.LabelMapValue),
 		resultTableOptions: make(metadata.ResultTableOptions),
 		pool:               pool,
@@ -234,7 +231,7 @@ func (e *ScrollQueryExecutor) processQueryForStorage(
 	storage *tsdb.Storage,
 	qry *metadata.Query,
 	scrollSessionHelperInstance *redisUtil.ScrollSessionHelper,
-) {
+) (err error) {
 	connect := storage.Address
 	tableId := qry.TableID
 	instance := prometheus.GetTsDbInstance(e.ctx, qry)
@@ -255,15 +252,17 @@ func (e *ScrollQueryExecutor) processQueryForStorage(
 	}
 
 	for _, slice := range slices {
-		qry, err := e.createSliceQuery(qry, slice, instance.InstanceType(), storage)
-		if err != nil {
+		cpQry, cErr := e.createSliceQuery(qry, slice, instance.InstanceType(), storage)
+		if cErr != nil {
 			e.message.WriteString(
 				fmt.Sprintf("failed to create slice query for %s: %v ", tableId, err),
 			)
+			err = cErr
 			return
 		}
-		e.submitSliceQuery(qry, slice, storage, scrollSessionHelperInstance)
+		e.submitSliceQuery(cpQry, slice, storage, scrollSessionHelperInstance)
 	}
+	return
 }
 
 func (e *ScrollQueryExecutor) createSliceQuery(originalQry *metadata.Query, slice redis.SliceInfo, instanceType string, storage *tsdb.Storage) (*metadata.Query, error) {
@@ -324,7 +323,6 @@ func (e *ScrollQueryExecutor) executeQueries(
 	defer func() {
 		e.sendWg.Wait()
 		close(e.dataCh)
-		close(e.resultCh)
 	}()
 
 	for storageId, queries := range storageQueryMap {

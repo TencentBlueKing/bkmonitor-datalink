@@ -85,6 +85,8 @@ const (
 	StorageTypeBkdata   = "bkdata"
 	StorageTypeArgus    = "argus"
 	StorageTypeVM       = "victoria_metrics"
+	StorageTypeDoris    = "doris"
+	StorageTypeBkSql    = "bksql"
 )
 
 const (
@@ -143,6 +145,7 @@ const (
 
 const (
 	TSGroupDefaultMeasurement = "__default__"
+	DorisMeasurement          = "doris"
 )
 
 // ReplaceConfig

@@ -62,10 +62,10 @@ const (
 	SessionStatusFailed  = "FAILED"
 )
 
-func (s *ScrollSession) getNextDorisIndex() (int, error) {
+func (s *ScrollSession) getNextDorisIndex() int {
 	currentIndex := s.Index
 	s.Index++
-	return currentIndex, nil
+	return currentIndex
 }
 
 func (s *ScrollSession) getNextElasticsearchScrollID(connect, tableID string, sliceIdx int) string {
@@ -118,15 +118,17 @@ type SliceInfo struct {
 func (s *ScrollSession) MakeSlices(storageType, connect, tableID string) ([]SliceInfo, error) {
 	switch storageType {
 	case consul.ElasticsearchStorageType:
-		return s.makeElasticsearchSlices(connect, tableID)
+		sliceInfos := s.makeElasticsearchSlices(connect, tableID)
+		return sliceInfos, nil
 	case consul.BkSqlStorageType:
-		return s.makeDorisSlices()
+		sliceInfos := s.makeDorisSlices()
+		return sliceInfos, nil
 	default:
 		return nil, fmt.Errorf("unsupported storage type for scroll: %s", storageType)
 	}
 }
 
-func (s *ScrollSession) makeElasticsearchSlices(connect, tableID string) ([]SliceInfo, error) {
+func (s *ScrollSession) makeElasticsearchSlices(connect, tableID string) []SliceInfo {
 	slices := make([]SliceInfo, 0, s.MaxSlice)
 
 	for sliceIndex := 0; sliceIndex < s.MaxSlice; sliceIndex++ {
@@ -149,26 +151,21 @@ func (s *ScrollSession) makeElasticsearchSlices(connect, tableID string) ([]Slic
 		})
 	}
 
-	return slices, nil
+	return slices
 }
 
-func (s *ScrollSession) makeDorisSlices() ([]SliceInfo, error) {
+func (s *ScrollSession) makeDorisSlices() []SliceInfo {
 	slices := make([]SliceInfo, 0, s.MaxSlice)
 
 	for sliceIndex := 0; sliceIndex < s.MaxSlice; sliceIndex++ {
-		index, err := s.getNextDorisIndex()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get index for slice %d: %v", sliceIndex, err)
-		}
-
 		slices = append(slices, SliceInfo{
 			SliceIndex: sliceIndex,
 			ScrollID:   "",
-			Index:      index,
+			Index:      s.getNextDorisIndex(),
 		})
 	}
 
-	return slices, nil
+	return slices
 }
 
 func (s *ScrollSession) HasMoreData(tsDbType string) bool {

@@ -969,6 +969,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 		queryTs.Scroll = ScrollWindow
 	}
 
+	if queryTs.SpaceUid == "" {
+		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
+	}
+
 	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if timeErr != nil {
 		err = fmt.Errorf("invalid time: %v", timeErr)
@@ -983,7 +987,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 	}
 	var queryTsMap map[string]interface{}
 	if err = json.Unmarshal(queryTsBytes, &queryTsMap); err != nil {
-		return 0, nil, nil, false, fmt.Errorf("failed to unmarshal queryTs to map: %v", err)
+		return
 	}
 
 	queryTsKey, err := redisUtil.ScrollGenerateQueryTsKey(queryTsMap, user.Name)
@@ -1058,11 +1062,6 @@ func executeScrollQueriesWithHelper(ctx context.Context, scrollSessionHelperInst
 }
 
 func prepareQueryList(ctx context.Context, queryTs *structured.QueryTs) (queryList []*metadata.Query, err error) {
-
-	if queryTs.SpaceUid == "" {
-		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
-	}
-
 	for _, ql := range queryTs.QueryList {
 		ql.Timezone = queryTs.Timezone
 		ql.Start = queryTs.Start

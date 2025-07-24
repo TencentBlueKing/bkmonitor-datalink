@@ -16,11 +16,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jinzhu/copier"
 	ants "github.com/panjf2000/ants/v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -268,7 +268,6 @@ func (e *ScrollQueryExecutor) processQueryForStorage(
 		connect,
 		tableId,
 	)
-
 	if err != nil {
 		e.message.WriteString(
 			fmt.Sprintf("failed to make slices for %s: %v ", tableId, err),
@@ -277,13 +276,26 @@ func (e *ScrollQueryExecutor) processQueryForStorage(
 	}
 
 	for _, slice := range slices {
-		e.submitSliceQuery(e.createSliceQuery(qry, slice, instance.InstanceType(), storage), slice, storage, scrollSessionHelperInstance)
+		qry, err := e.createSliceQuery(qry, slice, instance.InstanceType(), storage)
+		if err != nil {
+			e.message.WriteString(
+				fmt.Sprintf("failed to create slice query for %s: %v ", tableId, err),
+			)
+			return
+		}
+		e.submitSliceQuery(qry, slice, storage, scrollSessionHelperInstance)
 	}
 }
 
-func (e *ScrollQueryExecutor) createSliceQuery(originalQry *metadata.Query, slice redis.SliceInfo, instanceType string, storage *tsdb.Storage) *metadata.Query {
-	qry := e.deepCopyQuery(originalQry)
-
+func (e *ScrollQueryExecutor) createSliceQuery(originalQry *metadata.Query, slice redis.SliceInfo, instanceType string, storage *tsdb.Storage) (*metadata.Query, error) {
+	qry := &metadata.Query{}
+	err := copier.CopyWithOption(qry, originalQry, copier.Option{
+		DeepCopy: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	qry.ResultTableOptions = make(metadata.ResultTableOptions)
 	if e.queryTs.Scroll != "" {
 		qry.Scroll = e.queryTs.Scroll
 	}
@@ -292,7 +304,6 @@ func (e *ScrollQueryExecutor) createSliceQuery(originalQry *metadata.Query, slic
 	if slice.Index >= 0 {
 		from = slice.Index * e.session.Limit
 	}
-
 	fromPtr := &from
 	option := &metadata.ResultTableOption{
 		SliceID:  &slice.SliceIndex,
@@ -305,47 +316,8 @@ func (e *ScrollQueryExecutor) createSliceQuery(originalQry *metadata.Query, slic
 	if instanceType == consul.BkSqlStorageType {
 		address = ""
 	}
-
 	qry.ResultTableOptions.SetOption(qry.TableID, address, option)
-
-	return qry
-}
-
-func (e *ScrollQueryExecutor) deepCopyQuery(original *metadata.Query) *metadata.Query {
-	data, err := json.Marshal(original)
-	if err != nil {
-		return &metadata.Query{
-			TableID:            original.TableID,
-			DB:                 original.DB,
-			Measurement:        original.Measurement,
-			Field:              original.Field,
-			From:               original.From,
-			Size:               original.Size,
-			Scroll:             original.Scroll,
-			ResultTableOptions: make(metadata.ResultTableOptions),
-		}
-	}
-
-	var result metadata.Query
-	err = json.Unmarshal(data, &result)
-	if err != nil {
-		return &metadata.Query{
-			TableID:            original.TableID,
-			DB:                 original.DB,
-			Measurement:        original.Measurement,
-			Field:              original.Field,
-			From:               original.From,
-			Size:               original.Size,
-			Scroll:             original.Scroll,
-			ResultTableOptions: make(metadata.ResultTableOptions),
-		}
-	}
-
-	if result.ResultTableOptions == nil {
-		result.ResultTableOptions = make(metadata.ResultTableOptions)
-	}
-
-	return &result
+	return qry, nil
 }
 
 func (e *ScrollQueryExecutor) processStorageQueries(

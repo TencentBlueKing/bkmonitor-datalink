@@ -224,13 +224,12 @@ func processSliceQueryWithHelper(queryCtx *SliceQueryContext) error {
 	sessionKey := queryCtx.SessionKey
 	session := queryCtx.Session
 	sessionLock.Lock()
+	defer sessionLock.Unlock()
 	if err = redisUtil.ScrollProcessSliceResult(ctx, sessionKey, session, connect, tableId, slice.SliceIndex, instance.InstanceType(), size, options); err != nil {
 		log.Warnf(ctx, "Failed to process slice result: %v", err)
-		sessionLock.Unlock()
+
 		return err
 	}
-	sessionLock.Unlock()
-
 	result := SliceQueryResult{
 		Connect:    connect,
 		TableID:    tableId,

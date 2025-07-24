@@ -279,7 +279,7 @@ where log MATCH_PHRASE 'Error' OR serverIp MATCH_PHRASE 'Fatal' GROUP BY serverI
 		{
 			name: "test-2",
 			q:    `show TABLES`,
-			err:  fmt.Errorf("SQL 解析失败：show TABLES"),
+			err:  fmt.Errorf("parse doris sql (show TABLES) error: show TABLES"),
 		},
 		{
 			name: "test-3",
@@ -433,7 +433,7 @@ group by
 		{
 			name: "test-17",
 			q:    "SELECT * WHERE name IN ('test', 'test-1')",
-			sql:  "SELECT * WHERE name IN ('test','test-1')",
+			sql:  "SELECT * WHERE name IN ('test', 'test-1')",
 		},
 		{
 			name: "test-18",
@@ -447,13 +447,13 @@ group by
 		},
 		{
 			name: "test-19",
-			q:    "SELECT * WHERE name IN ('test', 'test-1') ORDER BY time ASC, name desc limit 1000",
-			sql:  "SELECT * WHERE name IN ('test','test-1') ORDER BY time ASC, name DESC LIMIT 1000",
+			q:    "SELECT * WHERE name = '1' and a > 2",
+			sql:  "SELECT * WHERE name = '1' and a > 2",
 		},
 		{
 			name: "test-20",
 			q:    "SELECT * WHERE name IN ('test', 'test-1') ORDER BY time desc, name limit 1000",
-			sql:  "SELECT * WHERE name IN ('test','test-1') ORDER BY time DESC, name LIMIT 1000",
+			sql:  "SELECT * WHERE name IN ('test', 'test-1') ORDER BY time DESC, name LIMIT 1000",
 		},
 		{
 			name: "test-21",
@@ -462,8 +462,8 @@ group by
 		},
 		{
 			name: "test-22",
-			q:    "SELECT namespace, workload, COUNT() GROUP BY namespace, workload",
-			sql:  "SELECT namespace, workload, COUNT() GROUP BY namespace, workload",
+			q:    "SELECT namespace, workload as t1, COUNT()",
+			sql:  "SELECT namespace, workload AS t1, COUNT()",
 		},
 		{
 			name: "test-23",
@@ -477,8 +477,8 @@ group by
 		},
 		{
 			name: "test-25",
-			q:    "SELECT *",
-			sql:  "SELECT *",
+			q:    "SELECT a.b.c",
+			sql:  "SELECT a.b.c",
 		},
 		{
 			name: "test-26",
@@ -487,8 +487,13 @@ group by
 		},
 		{
 			name: "test-27",
-			q:    "SELECT COUNT(test) AS nt",
-			sql:  "SELECT COUNT(test) AS nt",
+			q:    "SELECT COUNT(test) AS nt limit 1000 offset 10",
+			sql:  "SELECT COUNT(test) AS nt LIMIT 1000 OFFSET 10",
+		},
+		{
+			name: "test-28",
+			q:    "SELECT __ext.cluster.extra.name_space",
+			sql:  "SELECT __ext.cluster.extra.name_space",
 		},
 		{
 			name: "test-28",
@@ -504,6 +509,45 @@ group by
 			name: "test-30",
 			q:    `SELECT COUNT(CAST(__ext['cluster']['extra.name_space'] AS TEXT)) AS nt, CAST(split_part(log, 'Object:', 2) AS TEXT) AS ns`,
 			sql:  `SELECT COUNT(CAST(__ext['cluster']['extra.name_space'] AS TEXT)) AS nt, CAST(split_part(log, 'Object:', 2) AS TEXT) AS ns`,
+		},
+		{
+			name: "test-31",
+			q:    `select a- b`,
+			sql:  `SELECT a - b`,
+		},
+		{
+			name: "test-32",
+			q:    `select count(a)/count(b)`,
+			sql:  `SELECT count(a) / count(b)`,
+		},
+		{
+			name: "test-33",
+			q:    `select count(a)*100.0`,
+			sql:  `SELECT count(a) * 100.0`,
+		},
+		{
+			name: "test-34",
+			q: `SELECT regexp_extract(log, 'FPzPieceActorData ([0-9]+)', 1) AS count, log 
+ORDER BY cast(count AS bigint) desc, item asc limit 10000`,
+			sql: `SELECT regexp_extract(log, 'FPzPieceActorData ([0-9]+)', 1) AS count, log ORDER BY CAST(count AS bigint) DESC, item ASC LIMIT 10000`,
+		},
+		{
+			name: `test-35`,
+			q:    `SELECT DEPLOYMENT AS t, aaa as t1 from my_bro`,
+			sql:  `SELECT DEPLOYMENT AS t, aaa AS t1 FROM my_bro`,
+		},
+		{
+			name: `test-36`,
+			q: `select
+  CAST(__ext ['io_kubernetes_pod_namespace'] AS TEXT) as ns,
+  substr (CAST(__ext ['container_image'] AS TEXT), 20) as imn,
+  substr (log, 53) as ct,
+  count(*)
+group by
+  ns,
+  imn,
+  ct`,
+			sql: `SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, substr(CAST(__ext['container_image'] AS TEXT), 20) AS imn, substr(log, 53) AS ct, count(*) GROUP BY ns, imn, ct`,
 		},
 	}
 

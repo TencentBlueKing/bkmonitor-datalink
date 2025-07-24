@@ -11,6 +11,7 @@ package doris_parser
 
 import (
 	"context"
+	"fmt"
 
 	antlr "github.com/antlr4-go/antlr/v4"
 
@@ -19,12 +20,12 @@ import (
 )
 
 func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt DorisVisitorOption) (string, error) {
-	//defer func() {
-	//	if r := recover(); r != nil {
-	//		// 处理异常
-	//		log.Errorf(ctx, "parse doris sql error: %v", r)
-	//	}
-	//}()
+	defer func() {
+		if r := recover(); r != nil {
+			// 处理异常
+			log.Errorf(ctx, "parse doris sql error: %v", r)
+		}
+	}()
 
 	// 创建输入流
 	is := antlr.NewInputStream(q)
@@ -41,11 +42,17 @@ func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt DorisVisitorOpt
 
 	stmt := &Statement{}
 
-	log.Debugf(ctx, `"dept index","action","type","text"`)
+	log.Debugf(ctx, `"action","type","text"`)
 
 	// 开始解析
 	parser.Query().Accept(stmt)
-	return stmt.SQL(), stmt.Error()
+
+	err := stmt.Error()
+	if err != nil {
+		return "", fmt.Errorf("parse doris sql (%s) error: %v", q, err.Error())
+	}
+
+	return stmt.SQL()
 }
 
 func ParseDorisSQLWithListener(ctx context.Context, q string, opt DorisListenerOption) *DorisListener {

@@ -128,7 +128,7 @@ func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
 }
 
 func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where string) (sql string, err error) {
-
+	return "", nil
 }
 
 func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (sql string, err error) {

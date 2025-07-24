@@ -191,10 +191,10 @@ func New(cfg *common.Config, name, version string) (*MonitorBeater, error) {
 }
 
 // initHostIDWatcher 监听cmdb下发host id文件
-func (bt *MonitorBeater) initHostIDWatcher() error {
+func (bt *MonitorBeater) initHostIDWatcher(config *configs.Config) error {
 	var err error
 	if bt.hostIDWatcher != nil {
-		err = bt.hostIDWatcher.Reload(bt.ctx, bt.config.HostIDPath, bt.config.CmdbLevelMaxLength, bt.config.MustHostIDExist)
+		err = bt.hostIDWatcher.Reload(bt.ctx, config.HostIDPath, config.CmdbLevelMaxLength, config.MustHostIDExist)
 		if err != nil {
 			logger.Warnf("reload watch host id failed,error:%s", err.Error())
 			// 不影响其他位置的reload
@@ -205,15 +205,15 @@ func (bt *MonitorBeater) initHostIDWatcher() error {
 
 	// 将watcher初始化并启动
 	hostConfig := host.Config{
-		HostIDPath:         bt.config.HostIDPath,
-		CMDBLevelMaxLength: bt.config.CmdbLevelMaxLength,
-		IgnoreCmdbLevel:    bt.config.IgnoreCmdbLevel,
-		MustHostIDExist:    bt.config.MustHostIDExist,
+		HostIDPath:         config.HostIDPath,
+		CMDBLevelMaxLength: config.CmdbLevelMaxLength,
+		IgnoreCmdbLevel:    config.IgnoreCmdbLevel,
+		MustHostIDExist:    config.MustHostIDExist,
 	}
 	bt.hostIDWatcher = host.NewWatcher(bt.ctx, hostConfig)
 	err = bt.hostIDWatcher.Start()
 	if err != nil {
-		logger.Warnf("start watch host id failed,filepath:%s,cmdb max length:%d,error:%s", bt.config.HostIDPath, bt.config.CmdbLevelMaxLength, err)
+		logger.Warnf("start watch host id failed,filepath:%s,cmdb max length:%d,error:%s", config.HostIDPath, config.CmdbLevelMaxLength, err)
 		return err
 	}
 	define.GlobalWatcher = bt.hostIDWatcher
@@ -227,14 +227,18 @@ func (bt *MonitorBeater) ParseConfig(cfg *common.Config) error {
 	var err error
 	ctx := bt.ctx
 
-	// 加载任务前先初始化 hostid watcher
-	err = bt.initHostIDWatcher()
+	// 获取全局 config 以加载 hostid watcher
+	baseConfig := configs.NewConfig()
+	err = cfg.Unpack(baseConfig)
+	if err != nil {
+		return fmt.Errorf("%s: %w", define.ErrUnpackCfg, err)
+	}
+	err = bt.initHostIDWatcher(baseConfig)
 	if err != nil {
 		return fmt.Errorf("init hostid failed,error:%s", err)
 	}
 
 	bt.configEngine = NewBaseConfigEngine(ctx)
-
 	err = bt.configEngine.Init(cfg, bt)
 	if err != nil {
 		return fmt.Errorf("init configEngine failed: %v", err)

@@ -132,6 +132,7 @@ type AgentMsgRequest struct {
 }
 
 func (c *Client) SendMsg(messageID string, content []byte) error {
+	logger.Debugf("send agent.msg (%s), content=(%s)", messageID, content)
 	return c.agent.SendMessage(c.ctx, messageID, content)
 }
 

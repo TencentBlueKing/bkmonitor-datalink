@@ -18,6 +18,7 @@ import (
 	redis "github.com/go-redis/redis/v8"
 	"github.com/spf13/cast"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -160,18 +161,21 @@ func UpdateSession(ctx context.Context, sessionKey string, session *ScrollSessio
 
 func ScrollProcessSliceResult(ctx context.Context, sessionKey string, session *ScrollSession, connect, tableID string, sliceIdx int, tsDbType string, size int64, options metadata.ResultTableOptions) error {
 	isSliceDone := size == 0
-	var newScrollID string
-	if options != nil {
-		if opt := options.GetOption(tableID, connect); opt != nil {
-			newScrollID = opt.ScrollID
-		}
-	}
-
 	if isSliceDone {
 		session.RemoveScrollID(connect, tableID, sliceIdx)
 		session.MarkSliceDone(connect, tableID, sliceIdx)
 	} else {
-		session.SetScrollID(connect, tableID, newScrollID, sliceIdx)
+		switch tsDbType {
+		case consul.ElasticsearchStorageType:
+			if options != nil {
+				if opt := options.GetOption(tableID, connect); opt != nil && opt.ScrollID != "" {
+					session.SetScrollID(connect, tableID, opt.ScrollID, sliceIdx)
+				}
+			}
+		case consul.BkSqlStorageType:
+			// 保留一个标记,doris scroll还没有取完
+			session.SetScrollID(connect, tableID, "", sliceIdx)
+		}
 	}
 
 	if !session.HasMoreData(tsDbType) {

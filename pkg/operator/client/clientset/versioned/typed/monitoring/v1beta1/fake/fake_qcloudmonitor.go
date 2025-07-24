@@ -17,24 +17,28 @@ import (
 	gentype "k8s.io/client-go/gentype"
 )
 
-// fakeDataIDs implements DataIDInterface
-type fakeDataIDs struct {
-	*gentype.FakeClientWithList[*v1beta1.DataID, *v1beta1.DataIDList]
+// fakeQCloudMonitors implements QCloudMonitorInterface
+type fakeQCloudMonitors struct {
+	*gentype.FakeClientWithList[*v1beta1.QCloudMonitor, *v1beta1.QCloudMonitorList]
 	Fake *FakeMonitoringV1beta1
 }
 
-func newFakeDataIDs(fake *FakeMonitoringV1beta1, namespace string) monitoringv1beta1.DataIDInterface {
-	return &fakeDataIDs{
-		gentype.NewFakeClientWithList[*v1beta1.DataID, *v1beta1.DataIDList](
+func newFakeQCloudMonitors(fake *FakeMonitoringV1beta1, namespace string) monitoringv1beta1.QCloudMonitorInterface {
+	return &fakeQCloudMonitors{
+		gentype.NewFakeClientWithList[*v1beta1.QCloudMonitor, *v1beta1.QCloudMonitorList](
 			fake.Fake,
 			namespace,
-			v1beta1.SchemeGroupVersion.WithResource("dataids"),
-			v1beta1.SchemeGroupVersion.WithKind("DataID"),
-			func() *v1beta1.DataID { return &v1beta1.DataID{} },
-			func() *v1beta1.DataIDList { return &v1beta1.DataIDList{} },
-			func(dst, src *v1beta1.DataIDList) { dst.ListMeta = src.ListMeta },
-			func(list *v1beta1.DataIDList) []*v1beta1.DataID { return gentype.ToPointerSlice(list.Items) },
-			func(list *v1beta1.DataIDList, items []*v1beta1.DataID) { list.Items = gentype.FromPointerSlice(items) },
+			v1beta1.SchemeGroupVersion.WithResource("qcloudmonitors"),
+			v1beta1.SchemeGroupVersion.WithKind("QCloudMonitor"),
+			func() *v1beta1.QCloudMonitor { return &v1beta1.QCloudMonitor{} },
+			func() *v1beta1.QCloudMonitorList { return &v1beta1.QCloudMonitorList{} },
+			func(dst, src *v1beta1.QCloudMonitorList) { dst.ListMeta = src.ListMeta },
+			func(list *v1beta1.QCloudMonitorList) []*v1beta1.QCloudMonitor {
+				return gentype.ToPointerSlice(list.Items)
+			},
+			func(list *v1beta1.QCloudMonitorList, items []*v1beta1.QCloudMonitor) {
+				list.Items = gentype.FromPointerSlice(items)
+			},
 		),
 		fake,
 	}

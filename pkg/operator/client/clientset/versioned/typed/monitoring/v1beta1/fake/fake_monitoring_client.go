@@ -22,7 +22,11 @@ type FakeMonitoringV1beta1 struct {
 }
 
 func (c *FakeMonitoringV1beta1) DataIDs(namespace string) v1beta1.DataIDInterface {
-	return &FakeDataIDs{c, namespace}
+	return newFakeDataIDs(c, namespace)
+}
+
+func (c *FakeMonitoringV1beta1) QCloudMonitors(namespace string) v1beta1.QCloudMonitorInterface {
+	return newFakeQCloudMonitors(c, namespace)
 }
 
 // RESTClient returns a RESTClient that is used to communicate

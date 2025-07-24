@@ -25,71 +25,71 @@ import (
 	cache "k8s.io/client-go/tools/cache"
 )
 
-// DataIDInformer provides access to a shared informer and lister for
-// DataIDs.
-type DataIDInformer interface {
+// QCloudMonitorInformer provides access to a shared informer and lister for
+// QCloudMonitors.
+type QCloudMonitorInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() monitoringv1beta1.DataIDLister
+	Lister() monitoringv1beta1.QCloudMonitorLister
 }
 
-type dataIDInformer struct {
+type qCloudMonitorInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
 	tweakListOptions internalinterfaces.TweakListOptionsFunc
 	namespace        string
 }
 
-// NewDataIDInformer constructs a new informer for DataID type.
+// NewQCloudMonitorInformer constructs a new informer for QCloudMonitor type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewDataIDInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredDataIDInformer(client, namespace, resyncPeriod, indexers, nil)
+func NewQCloudMonitorInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
+	return NewFilteredQCloudMonitorInformer(client, namespace, resyncPeriod, indexers, nil)
 }
 
-// NewFilteredDataIDInformer constructs a new informer for DataID type.
+// NewFilteredQCloudMonitorInformer constructs a new informer for QCloudMonitor type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewFilteredDataIDInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
+func NewFilteredQCloudMonitorInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.MonitoringV1beta1().DataIDs(namespace).List(context.Background(), options)
+				return client.MonitoringV1beta1().QCloudMonitors(namespace).List(context.Background(), options)
 			},
 			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.MonitoringV1beta1().DataIDs(namespace).Watch(context.Background(), options)
+				return client.MonitoringV1beta1().QCloudMonitors(namespace).Watch(context.Background(), options)
 			},
 			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.MonitoringV1beta1().DataIDs(namespace).List(ctx, options)
+				return client.MonitoringV1beta1().QCloudMonitors(namespace).List(ctx, options)
 			},
 			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.MonitoringV1beta1().DataIDs(namespace).Watch(ctx, options)
+				return client.MonitoringV1beta1().QCloudMonitors(namespace).Watch(ctx, options)
 			},
 		},
-		&apismonitoringv1beta1.DataID{},
+		&apismonitoringv1beta1.QCloudMonitor{},
 		resyncPeriod,
 		indexers,
 	)
 }
 
-func (f *dataIDInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredDataIDInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+func (f *qCloudMonitorInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
+	return NewFilteredQCloudMonitorInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
 }
 
-func (f *dataIDInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apismonitoringv1beta1.DataID{}, f.defaultInformer)
+func (f *qCloudMonitorInformer) Informer() cache.SharedIndexInformer {
+	return f.factory.InformerFor(&apismonitoringv1beta1.QCloudMonitor{}, f.defaultInformer)
 }
 
-func (f *dataIDInformer) Lister() monitoringv1beta1.DataIDLister {
-	return monitoringv1beta1.NewDataIDLister(f.Informer().GetIndexer())
+func (f *qCloudMonitorInformer) Lister() monitoringv1beta1.QCloudMonitorLister {
+	return monitoringv1beta1.NewQCloudMonitorLister(f.Informer().GetIndexer())
 }

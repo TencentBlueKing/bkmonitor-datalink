@@ -65,7 +65,6 @@ func NewClient(opt Option) (*Client, error) {
 		agentmessage.WithDomainSocketPath(opt.IPC),
 		agentmessage.WithRecvCallback(func(msgID string, content []byte) {
 			type R struct {
-				Code int                   `json:"code"`
 				Data []FetchHostDataIDData `json:"data"`
 			}
 			var rsp R
@@ -73,7 +72,7 @@ func NewClient(opt Option) (*Client, error) {
 				logger.Errorf("failed to unmarshal agent.msg (%s): %v", msgID, err)
 				return
 			}
-			logger.Debugf("handle agent.msg (%s), code=%d", msgID, rsp.Code)
+			logger.Debugf("handle agent.msg (%s)", msgID)
 
 			tasks := make(map[string]int32)
 			for _, pair := range rsp.Data {

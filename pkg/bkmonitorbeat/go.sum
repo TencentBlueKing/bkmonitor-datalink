@@ -50,6 +50,7 @@ github.com/TencentBlueKing/gopsutil/v3 v3.25.6-bk h1:/TAhO8/n4mrwyIbkFDHeDCPZSSX
 github.com/TencentBlueKing/gopsutil/v3 v3.25.6-bk/go.mod h1:7hmCaBn+2ZwaZOr6jmPBZDfawwMGuo1id3C6aM8EDqQ=
 github.com/TencentBlueKing/gosnmp v1.30.0-bk h1:BgXW4Vm1fr90L70lPKU+K+N3ckaz10o5a3uNDZ0yWHQ=
 github.com/TencentBlueKing/gosnmp v1.30.0-bk/go.mod h1:Ux0YzU4nV5yDET7dNIijd0VST0BCy8ijBf+gTVFQeaM=
+github.com/abbhb/gopsutil/v3 v3.23.11-bk/go.mod h1:7hmCaBn+2ZwaZOr6jmPBZDfawwMGuo1id3C6aM8EDqQ=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=

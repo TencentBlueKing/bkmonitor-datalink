@@ -61,6 +61,7 @@ var MarshalFunc = json.Marshal
 type Output struct {
 	cli         *gse.GseClient
 	aif         *AgentInfoFetcher
+	fl          *flowLimiter
 	fastMode    bool
 	concurrency int
 }
@@ -114,6 +115,11 @@ func MakeGSE(im outputs.IndexManager, beat beat.Info, stats outputs.Observer, cf
 		aif:         fetcher,
 		fastMode:    c.FastMode,
 		concurrency: c.Concurrency,
+	}
+
+	if c.FlowLimit > 0 {
+		output.fl = newFlowLimiter(c.FlowLimit)
+		logp.Info("enable flowlimit, rate: %d", c.FlowLimit)
 	}
 
 	// start gse client
@@ -432,6 +438,10 @@ func (c *Output) ReportCommonData(dataid int32, data common.MapStr) error {
 		if !sendHook(dataid, float64(len(buf))) {
 			return nil
 		}
+	}
+
+	if c.fl != nil {
+		c.fl.Consume(len(buf))
 	}
 
 	// new dynamic msg

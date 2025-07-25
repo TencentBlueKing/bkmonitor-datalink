@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/gse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/host"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -43,6 +45,7 @@ type Config struct {
 	WriteTimeout   time.Duration `config:"writetimeout"` // unit: second
 	FastMode       bool          `config:"fastmode"`     // 是否启用高性能模式（默认不启用）
 	Concurrency    int           `config:"concurrency"`  // 并发数（仅在高性能模式下生效）
+	FlowLimit      int           `config:"flowlimit"`    // unit: Bytes（仅在大于 0 时生效）
 
 	BKAddressing BKAddressingType `config:"bk_addressing"`
 	HostIP       string           `config:"hostip"`
@@ -56,6 +59,44 @@ type Config struct {
 
 var defaultConfig = Config{
 	MonitorID: 295,
+}
+
+// bytesRatio 等比缩小 b，即 1KB 表示 1 个 token
+// 最少保证有 1 个 token
+func bytesRatio(b int) int {
+	n := b / 1024
+	if n <= 0 {
+		n = 1
+	}
+	return n
+}
+
+type flowLimiter struct {
+	n        int
+	consumed int
+	limiter  *rate.Limiter
+}
+
+func newFlowLimiter(bytesRate int) *flowLimiter {
+	n := bytesRatio(bytesRate)
+	fl := &flowLimiter{
+		n:       n,
+		limiter: rate.NewLimiter(rate.Limit(n), n),
+	}
+	return fl
+}
+
+func (fl *flowLimiter) Consume(n int) {
+	now := time.Now()
+	fl.consumed += n
+	tokens := bytesRatio(n)
+
+	// 确保不能超过 limiter/burst 否则会触发无限等待
+	if tokens > fl.n {
+		tokens = fl.n
+	}
+
+	time.Sleep(fl.limiter.ReserveN(now, tokens).DelayFrom(now))
 }
 
 type AgentInfoFetcher struct {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tenant"
 )
 
 const (
@@ -59,6 +60,11 @@ func (c *ExceptionBeatConfig) GetTaskConfigList() []define.TaskConfig {
 	// 说明没有任务 有且仅有一个任务
 	if c.DataID == 0 {
 		return tasks
+	}
+
+	storage := tenant.DefaultStorage()
+	if v, ok := storage.GetTaskDataID(define.ModuleExceptionbeat); ok {
+		c.DataID = v
 	}
 
 	tasks = append(tasks, c)

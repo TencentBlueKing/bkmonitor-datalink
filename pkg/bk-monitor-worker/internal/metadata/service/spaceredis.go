@@ -71,6 +71,7 @@ const (
 	UsageComposeBksaasOtherTableIds
 	// UsageComposeAllTypeTableIds BKCI&BKSAAS类型 组装指定全空间的可以访问的结果表数据
 	UsageComposeAllTypeTableIds
+	UsageComposeDorisTableIds
 )
 
 type FilterBuildContext struct {
@@ -143,7 +144,7 @@ func (s *SpacePusher) buildFiltersByUsage(filterBuilderOptions FilterBuildContex
 		key := filterBuilderOptions.FilterAlias
 		return []map[string]interface{}{{key: filterBuilderOptions.SpaceId}}
 
-	case UsageComposeBkciOtherTableIds, UsageComposeBksaasOtherTableIds, UsageComposeRecordRuleTableIds, UsageComposeEsTableIds, UsageComposeEsBkciTableIds:
+	case UsageComposeBkciOtherTableIds, UsageComposeBksaasOtherTableIds, UsageComposeRecordRuleTableIds, UsageComposeEsTableIds, UsageComposeEsBkciTableIds, UsageComposeDorisTableIds:
 		return []map[string]interface{}{}
 
 	case UsageComposeAllTypeTableIds: // BKCI&BKSAAS类型，组装指定全空间的可以访问的结果表数据
@@ -810,6 +811,88 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 	return nil
 }
 
+// PushDorisTableIdDetail  推送Doris结果表详情路由
+func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish bool) error {
+	logger.Infof("PushDorisTableIdDetail:start to compose doris table id detail data")
+	db := mysql.GetDBSession().DB
+
+	// 获取数据
+	var dorisStorageList []storage.DorisStorage
+	dorisQuerySet := storage.NewDorisStorageQuerySet(db).Select(
+		storage.DorisStorageDBSchema.TableID,
+		storage.DorisStorageDBSchema.BkbaseTableID,
+	)
+
+	// 如果过滤结果表存在，则添加过滤条件
+	if len(tableIdList) != 0 {
+		if err := dorisQuerySet.TableIDIn(tableIdList...).All(&dorisStorageList); err != nil {
+			logger.Errorf("PushDorisTableIdDetail: compose doris table id detail error, table_id: %v, error: %s", tableIdList, err)
+			return err
+		}
+	} else {
+		if err := dorisQuerySet.All(&dorisStorageList); err != nil {
+			logger.Errorf("PushDorisTableIdDetail: compose doris table id detail error, %s", err)
+			return err
+		}
+	}
+
+	var tidList []string
+	for _, doris := range dorisStorageList {
+		tidList = append(tidList, doris.TableID)
+	}
+
+	// 获取查询别名映射关系
+	fieldAliasMap, err := s.getFieldAliasMap(tidList)
+	if err != nil {
+		logger.Errorf("PushDorisTableIdDetail: failed to get field alias map, error: %s", err)
+	}
+
+	// 组装数据
+	client := redis.GetStorageRedisInstance()
+	wg := &sync.WaitGroup{}
+	// 因为每个处理任务完全独立，可以并发执行
+	ch := make(chan struct{}, 50)
+	wg.Add(len(dorisStorageList))
+	for _, doris := range dorisStorageList {
+		ch <- struct{}{}
+		go func(doris storage.DorisStorage, wg *sync.WaitGroup, ch chan struct{}) {
+			defer func() {
+				<-ch
+				wg.Done()
+			}()
+
+			tableId := doris.TableID
+			bkbaseTableId := doris.BkbaseTableID
+
+			logger.Infof("PushDorisTableIdDetail:start to compose doris table id detail, table_id->[%s],bkbase_table_id->[%s]", tableId, bkbaseTableId)
+
+			var fieldAliasSettings map[string]string
+			if fieldAliasMap != nil {
+				fieldAliasSettings = fieldAliasMap[tableId]
+			}
+
+			composedTableId, detailStr, err := s.composeDorisTableIdDetail(tableId, doris.BkbaseTableID, fieldAliasSettings)
+
+			if err != nil {
+				logger.Errorf("PushDorisTableIdDetail:compose doris table id detail error, table_id: %s, error: %s", tableId, err)
+				return
+			}
+			// 推送数据
+			// NOTE: HSetWithCompareAndPublish 判定新老值是否存在差异，若存在差异，则进行 Publish 操作
+			logger.Infof("PushDorisTableIdDetail:start push and publish doris table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", composedTableId, cfg.ResultTableDetailChannel, composedTableId, detailStr)
+			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, composedTableId, detailStr, cfg.ResultTableDetailChannel, composedTableId)
+			if err != nil {
+				logger.Errorf("PushDorisTableIdDetail:push and publish doris table id detail error, table_id->[%s], error->[%s]", tableId, err)
+				return
+			}
+			logger.Infof("PushDorisTableIdDetail: push doris table id detail success, table_id->[%s], is_success->[%v]", tableId, isSuccess)
+		}(doris, wg, ch)
+	}
+	wg.Wait()
+	logger.Infof("PushDorisTableIdDetail: push doris table id detail success, table_id_list [%v]", tableIdList)
+	return nil
+}
+
 // composeEsTableIdOptions 组装 es
 func (s *SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]map[string]interface{} {
 	db := mysql.GetDBSession().DB
@@ -945,6 +1028,50 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 	// 大部份情况下,len(parts)=2，保持原样，无需显式处理
 
 	logger.Infof("composeEsTableIdDetail:compose success, table_id [%s], detail [%s]", tableId, detailStr)
+	return tableId, detailStr, err
+}
+
+func (s *SpacePusher) composeDorisTableIdDetail(tableId string, bkbaseTableId string, fieldAliasSettings map[string]string) (string, string, error) {
+	logger.Infof("composeDorisTableIdDetail: table_id [%s], bkbase_table_id [%s]", tableId, bkbaseTableId)
+
+	db := mysql.GetDBSession().DB
+
+	var rt resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).TableIdEq(tableId).One(&rt); err != nil {
+		return tableId, "", err
+	}
+
+	if fieldAliasSettings == nil {
+		fieldAliasSettings = make(map[string]string)
+	}
+
+	// 组装数据
+	detailStr, err := jsonx.MarshalString(map[string]any{
+		"storage_type": models.StorageTypeBkSql,
+		"db":           bkbaseTableId,
+		"measurement":  models.DorisMeasurement,
+		"data_label":   rt.DataLabel,
+		"field_alias":  fieldAliasSettings, // 添加字段别名
+	})
+	if err != nil {
+		return tableId, "", err
+	}
+
+	parts := strings.Split(tableId, ".")
+
+	if len(parts) == 1 {
+		// 如果长度为 1，补充 `.__default__`
+		logger.Infof("composeDorisTableIdDetail: table_id [%s] is missing '.', adding '.__default__'", tableId)
+		tableId = fmt.Sprintf("%s.__default__", tableId)
+	} else if len(parts) != 2 {
+		// 如果长度不是 2，记录错误日志并返回
+		err = errors.Errorf("invalid table_id format: too many dots in %q", tableId)
+		logger.Errorf("composeDorisTableIdDetail: table_id [%s] is invalid, contains too many dots", tableId)
+		return tableId, "", err
+	}
+	// 大部份情况下,len(parts)=2，保持原样，无需显式处理
+
+	logger.Infof("composeDorisTableIdDetail:compose success, table_id [%s], detail [%s]", tableId, detailStr)
 	return tableId, detailStr, err
 }
 
@@ -1480,6 +1607,13 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	s.composeValue(&values, &esValues)
 
+	// 追加Doris空间路由表,不需要filters
+	dorisValues, errDoris := s.ComposeDorisTableIds(spaceType, spaceId)
+	if errDoris != nil {
+		logger.Errorf("pushBkccSpaceTableIds:compose doris space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errDoris)
+	}
+	s.composeValue(&values, &dorisValues)
+
 	// 追加关联的BKCI相关的ES结果表,不需要filters
 	esBkciValues, errEsBkci := s.ComposeEsBkciTableIds(spaceType, spaceId)
 	if errEsBkci != nil {
@@ -1585,6 +1719,13 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	s.composeValue(&values, &esValues)
 
+	// 追加Doris空间结果表
+	dorisValues, err := s.ComposeDorisTableIds(spaceType, spaceId)
+	if err != nil {
+		logger.Errorf("pushBkciSpaceTableIds：compose doris space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
+	}
+	s.composeValue(&values, &dorisValues)
+
 	// 追加APM全局结果表
 	apmAllTypeValues, errApmAllType := s.composeApmAllTypeTableIds(spaceType, spaceId)
 	if errApmAllType != nil {
@@ -1655,6 +1796,13 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 		logger.Errorf("pushBksaasSpaceTableIds: compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, esErr)
 	}
 	s.composeValue(&values, &esValues)
+
+	// 追加Doris空间路由表
+	dorisValues, errDoris := s.ComposeDorisTableIds(spaceType, spaceId)
+	if errDoris != nil {
+		logger.Errorf("pushBksaasSpaceTableIds: compose doris space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errDoris)
+	}
+	s.composeValue(&values, &dorisValues)
 
 	allTypeTableIdValues, allTypeErr := s.composeAllTypeTableIds(spaceType, spaceId)
 	if allTypeErr != nil {
@@ -1764,6 +1912,43 @@ func (s *SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (map[string]m
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
 	}
+
+	return dataValuesToRedis, nil
+}
+
+// ComposeDorisTableIds 组装关联的Doris结果表
+func (s *SpacePusher) ComposeDorisTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+	logger.Infof("ComposeDorisTableIds: start to push doris table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
+	bizId, err := s.getBizIdBySpace(spaceType, spaceId)
+	if err != nil {
+		return nil, errors.Wrapf(err, "ComposeDorisTableIds: compose doris table_id, get biz_id by space failed, space_type [%s], space_id [%s]", spaceType, spaceId)
+	}
+
+	db := mysql.GetDBSession().DB
+	var rtList []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).BkBizIdEq(bizId).DefaultStorageEq(models.StorageTypeDoris).IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
+		return nil, err
+	}
+	dataValues := make(map[string]map[string]interface{})
+	for _, rt := range rtList {
+		// dataValues[rt.TableId] = map[string]interface{}{"filters": []interface{}{}}
+		options := FilterBuildContext{
+			SpaceType: spaceType,
+			SpaceId:   spaceId,
+			TableId:   rt.TableId,
+		}
+		// 使用统一抽象方法生成filters
+		filters := s.buildFiltersByUsage(options, UsageComposeDorisTableIds)
+		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
+	}
+
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]interface{})
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+	logger.Infof("ComposeDorisTableIds: compose doris table_id successfully, data_values->[%v]", dataValues)
 
 	return dataValuesToRedis, nil
 }

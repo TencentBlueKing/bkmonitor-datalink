@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"time"
 
 	mapset "github.com/deckarep/golang-set/v2"
@@ -43,6 +44,8 @@ var TSStorageFieldList = []map[string]interface{}{
 		"is_config_by_user": true,
 	},
 }
+
+const metricNamePattern = `^[a-zA-Z0-9_]+$`
 
 // TimeSeriesGroupSvc time series group service
 type TimeSeriesGroupSvc struct {
@@ -231,11 +234,33 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 	return metricInfo, nil
 }
 
+func (s *TimeSeriesGroupSvc) filterInvalidMetrics(metricInfoList []map[string]interface{}) []map[string]interface{} {
+	validMetricInfoList := make([]map[string]interface{}, 0)
+	compiledRegex := regexp.MustCompile(metricNamePattern)
+	for _, metric := range metricInfoList {
+		metricName, ok := metric["field_name"].(string)
+		if !ok {
+			logger.Errorf("get metric field_name from [%v] failed", metric)
+			continue
+		}
+		if !compiledRegex.MatchString(metricName) {
+			logger.Errorf("metric field_name [%s] is invalid, skip", metricName)
+			continue
+		}
+		validMetricInfoList = append(validMetricInfoList, metric)
+	}
+	return validMetricInfoList
+}
+
 // UpdateMetrics update ts metrics
 func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]interface{}) (bool, error) {
 	isAutoDiscovery, err := s.IsAutoDiscovery()
 	tsmSvc := NewTimeSeriesMetricSvcSvc(nil)
 	logger.Infof("UpdateMetrics: TimeSeriesGroupId: %v,table_id: %v,isAutoDiscovery: %v", s.TimeSeriesGroupID, s.TableID, isAutoDiscovery)
+
+	// 过滤非法的指标
+	metricInfoList = s.filterInvalidMetrics(metricInfoList)
+
 	// 刷新 ts 表中的指标和维度
 	updated, err := tsmSvc.BulkRefreshTSMetrics(s.BkTenantId, s.TimeSeriesGroupID, s.TableID, metricInfoList, isAutoDiscovery)
 	if err != nil {

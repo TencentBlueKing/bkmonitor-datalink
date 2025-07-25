@@ -314,8 +314,10 @@ func (e *ScrollQueryExecutor) executeQueries(storageQueryMap map[string][]*metad
 func (e *ScrollQueryExecutor) collectResults() (total int64, err error) {
 	var results []SliceQueryResult
 
-	e.sendWg.Wait()
-	close(e.resultCh)
+	go func() {
+		e.sendWg.Wait()
+		close(e.resultCh)
+	}()
 
 	for result := range e.resultCh {
 		results = append(results, result)

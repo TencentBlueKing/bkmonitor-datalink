@@ -236,13 +236,14 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 
 func (s *TimeSeriesGroupSvc) filterInvalidMetrics(metricInfoList []map[string]interface{}) []map[string]interface{} {
 	validMetricInfoList := make([]map[string]interface{}, 0)
+	compiledRegex := regexp.MustCompile(metricNamePattern)
 	for _, metric := range metricInfoList {
 		metricName, ok := metric["field_name"].(string)
 		if !ok {
 			logger.Errorf("get metric field_name from [%v] failed", metric)
 			continue
 		}
-		if !regexp.MustCompile(metricNamePattern).MatchString(metricName) {
+		if !compiledRegex.MatchString(metricName) {
 			logger.Errorf("metric field_name [%s] is invalid, skip", metricName)
 			continue
 		}

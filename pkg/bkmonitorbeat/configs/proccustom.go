@@ -84,7 +84,7 @@ func (c *ProcCustomConfig) Setup() {
 	if c.MatchPattern != "" {
 		c.matchRegx, err = regexp.Compile(c.MatchPattern)
 		if err != nil {
-			logger.Errorf("failed to compile RegexPattern regex:%v, err:%v", c.MatchPattern, err)
+			logger.Errorf("failed to compile MatchPattern regex:%v, err:%v", c.MatchPattern, err)
 		}
 	}
 }

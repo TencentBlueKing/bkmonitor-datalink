@@ -324,7 +324,7 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	// series 计算需要按照时间排序
 	query.Orders = append(metadata.Orders{
 		{
-			Name: "_time",
+			Name: sql_expr.FieldTime,
 			Ast:  true,
 		},
 	}, query.Orders...)

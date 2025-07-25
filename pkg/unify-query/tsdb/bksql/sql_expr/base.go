@@ -162,6 +162,8 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		offsetMillis int64
 		timezone     string
 	)
+
+	// 时间和值排序属于内置字段，默认需要支持
 	dimensionSet = set.New[string]([]string{FieldValue, FieldTime}...)
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {

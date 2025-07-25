@@ -24,9 +24,6 @@ import (
 )
 
 func isRedisNilError(err error) bool {
-	if err == nil {
-		return false
-	}
 	return errors.Is(err, redis.Nil)
 }
 
@@ -99,20 +96,24 @@ func ScrollGetOrCreateSession(ctx context.Context, sessionKey string, forceClear
 	}
 
 	result := globalInstance.client.Get(ctx, sessionKey)
-	if result.Err() == nil {
-		var session *ScrollSession
-		if err := json.Unmarshal([]byte(result.Val()), &session); err == nil {
-			session.LastAccessAt = time.Now()
-			if err = scrollUpdateSession(ctx, sessionKey, session); err != nil {
+
+	if result.Err() != nil {
+		if isRedisNilError(result.Err()) {
+			session := NewScrollSession(maxSlice, timeout, limit)
+			if err := scrollUpdateSession(ctx, sessionKey, session); err != nil {
 				return nil, err
 			}
 			return session, nil
 		}
-	} else if !isRedisNilError(result.Err()) {
 		return nil, result.Err()
 	}
 
-	session := NewScrollSession(maxSlice, timeout, limit)
+	var session *ScrollSession
+	if err := json.Unmarshal([]byte(result.Val()), &session); err != nil {
+		session = NewScrollSession(maxSlice, timeout, limit)
+	} else {
+		session.LastAccessAt = time.Now()
+	}
 
 	if err := scrollUpdateSession(ctx, sessionKey, session); err != nil {
 		return nil, err

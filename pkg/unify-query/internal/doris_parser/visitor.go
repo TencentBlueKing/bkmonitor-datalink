@@ -20,6 +20,17 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
+const (
+	SelectItem = "SELECT"
+	TableItem  = "FROM"
+	WhereItem  = "WHERE"
+	OrderItem  = "ORDER BY"
+	GroupItem  = "GROUP BY"
+	LimitItem  = "LIMIT"
+
+	AsItem = "AS"
+)
+
 type Encode func(string) (string, bool)
 
 type Node interface {
@@ -57,27 +68,53 @@ func (n *baseNode) WithSetAs(setAs bool) {
 type Statement struct {
 	baseNode
 
-	selectNode Node
-	tableNode  Node
-	whereNode  Node
-	aggNode    Node
-	sortNode   Node
-	limitNode  Node
+	nodeMap map[string]Node
+
+	Table string
+	Where string
 
 	errNode []string
 }
 
+func (v *Statement) ItemString(name string) string {
+	if n, ok := v.nodeMap[name]; ok {
+		return nodeToString(n)
+	}
+
+	return ""
+}
+
 func (v *Statement) SQL() (string, error) {
-	var result []string
-	for _, node := range []Node{v.selectNode, v.tableNode, v.whereNode, v.aggNode, v.sortNode, v.limitNode} {
-		if node != nil {
-			if node.Error() != nil {
-				return "", node.Error()
+	var (
+		result []string
+	)
+
+	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, OrderItem, LimitItem} {
+		res := v.ItemString(name)
+		key := name
+
+		switch name {
+		case TableItem:
+			if v.Table != "" {
+				res = v.Table
 			}
-			res := node.String()
-			if res != "" {
-				result = append(result, node.String())
+		case WhereItem:
+			if v.Where != "" {
+				if res == "" {
+					res = v.Where
+				} else {
+					res = fmt.Sprintf("%s AND %s", res, v.Where)
+				}
 			}
+		case LimitItem:
+			key = ""
+		}
+
+		if res != "" {
+			if key != "" {
+				res = fmt.Sprintf("%s %s", key, res)
+			}
+			result = append(result, res)
 		}
 	}
 	return strings.Join(result, " "), nil
@@ -99,27 +136,33 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) interface{} {
 	var next Node
 	next = v
 
+	if v.nodeMap == nil {
+		v.nodeMap = map[string]Node{}
+	}
+
 	var isSetAs bool
 	switch ctx.(type) {
 	case *gen.SelectClauseContext:
-		v.selectNode = &SelectNode{}
+		v.nodeMap[SelectItem] = &SelectNode{}
 		isSetAs = true
-		next = v.selectNode
+		next = v.nodeMap[SelectItem]
 	case *gen.FromClauseContext:
-		v.tableNode = &TableNode{}
-		next = v.tableNode
+		v.nodeMap[TableItem] = &TableNode{}
+		next = v.nodeMap[TableItem]
 	case *gen.WhereClauseContext:
-		v.whereNode = &WhereNode{}
-		next = v.whereNode
+		v.nodeMap[WhereItem] = &WhereNode{
+			LogicInc: &LogicNodesInc{},
+		}
+		next = v.nodeMap[WhereItem]
 	case *gen.AggClauseContext:
-		v.aggNode = &AggNode{}
-		next = v.aggNode
+		v.nodeMap[GroupItem] = &AggNode{}
+		next = v.nodeMap[GroupItem]
 	case *gen.SortClauseContext:
-		v.sortNode = &SortNode{}
-		next = v.sortNode
+		v.nodeMap[OrderItem] = &SortNode{}
+		next = v.nodeMap[OrderItem]
 	case *gen.LimitClauseContext:
-		v.limitNode = &LimitNode{}
-		next = v.limitNode
+		v.nodeMap[LimitItem] = &LimitNode{}
+		next = v.nodeMap[LimitItem]
 	}
 
 	return visitChildren(v.Encode, isSetAs, next, ctx)
@@ -140,11 +183,7 @@ func (v *LimitNode) String() string {
 		}
 	}
 
-	if len(ns) > 0 {
-		return fmt.Sprintf("%s", strings.Join(ns, " "))
-	}
-
-	return ""
+	return strings.Join(ns, " ")
 }
 
 func (v *LimitNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
@@ -170,11 +209,7 @@ func (v *SortNode) String() string {
 		}
 	}
 
-	if len(ns) > 0 {
-		return fmt.Sprintf("ORDER BY %s", strings.Join(ns, ", "))
-	}
-
-	return ""
+	return strings.Join(ns, ", ")
 }
 
 func (v *SortNode) VisitChildren(ctx antlr.RuleNode) interface{} {
@@ -246,11 +281,7 @@ func (v *AggNode) String() string {
 		}
 	}
 
-	if len(ns) > 0 {
-		return fmt.Sprintf("GROUP BY %s", strings.Join(ns, ", "))
-	}
-
-	return ""
+	return strings.Join(ns, ", ")
 }
 
 func (v *AggNode) VisitChildren(ctx antlr.RuleNode) interface{} {
@@ -269,8 +300,15 @@ func (v *AggNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 type WhereNode struct {
 	baseNode
 
-	node Node
-	err  error
+	nodes []Node
+
+	LogicInc *LogicNodesInc
+
+	err error
+}
+
+func (v *WhereNode) add(node Node) {
+	v.nodes = append(v.nodes, node)
 }
 
 func (v *WhereNode) Error() error {
@@ -278,24 +316,44 @@ func (v *WhereNode) Error() error {
 }
 
 func (v *WhereNode) String() string {
-	where := nodeToString(v.node)
-	if where != "" {
-		return fmt.Sprintf("WHERE %s", where)
+	var list []string
+	for _, n := range v.nodes {
+		switch n.(type) {
+		case *LogicNode:
+			v.LogicInc.Append(nodeToString(n))
+		default:
+			v.LogicInc.Inc(n)
+			item := nodeToString(n)
+			if item != "" {
+				list = append(list, item)
+			}
+
+			logicName := v.LogicInc.Name()
+			if logicName != "" {
+				list = append(list, logicName)
+			}
+		}
 	}
-	return ""
+
+	return strings.Join(list, " ")
 }
 
 func (v *WhereNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 	var next Node
 	next = v
 
-	switch ctx.(type) {
+	switch n := ctx.(type) {
 	case *gen.LogicalBinaryContext:
-		v.node = &LogicNode{}
-		next = v.node
+		v.add(&LogicNode{
+			Op: &StringNode{
+				Name: strings.ToUpper(n.GetOperator().GetText()),
+			},
+		})
 	case *gen.ParenthesizedExpressionContext:
-		v.node = &ParentNode{}
-		next = v.node
+		v.add(&LeftParenNode{})
+		defer func() {
+			v.add(&RightParenNode{})
+		}()
 	case *gen.PredicatedContext:
 		// 忽略带有括号的
 		s := ctx.GetText()
@@ -303,10 +361,27 @@ func (v *WhereNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 			break
 		}
 
-		v.node = &OperatorNode{}
-		next = v.node
+		on := &OperatorNode{}
+		v.add(on)
+		next = on
 	}
 	return visitChildren(v.Encode, v.SetAs, next, ctx)
+}
+
+type LeftParenNode struct {
+	baseNode
+}
+
+func (v *LeftParenNode) String() string {
+	return fmt.Sprintf("(")
+}
+
+type RightParenNode struct {
+	baseNode
+}
+
+func (v *RightParenNode) String() string {
+	return fmt.Sprintf(")")
 }
 
 type ParentNode struct {
@@ -328,40 +403,56 @@ func (v *ParentNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 type LogicNode struct {
 	baseNode
 
-	Left  Node
-	Right Node
-	Op    Node
+	Op Node
 }
 
 func (v *LogicNode) String() string {
-	left := nodeToString(v.Left)
-	op := nodeToString(v.Op)
-	right := nodeToString(v.Right)
-	return fmt.Sprintf("%s %s %s", left, op, right)
+	return nodeToString(v.Op)
 }
 
-func (v *LogicNode) VisitTerminal(node antlr.TerminalNode) interface{} {
-	v.Op = &StringNode{
-		Name: strings.ToUpper(node.GetText()),
-	}
-	return nil
+type LogicNodesInc struct {
+	list []*LogicNodeInc
 }
 
-func (v *LogicNode) VisitChildren(ctx antlr.RuleNode) interface{} {
-	var next Node
-	next = v
+type LogicNodeInc struct {
+	name string
+	inc  int
+}
 
-	switch ctx.(type) {
-	case *gen.PredicatedContext:
-		if v.Left == nil {
-			v.Left = &OperatorNode{}
-			next = v.Left
-		} else if v.Right == nil {
-			v.Right = &OperatorNode{}
-			next = v.Right
-		}
+func (l *LogicNodesInc) Append(name string) {
+	if l.list == nil {
+		l.list = make([]*LogicNodeInc, 0)
 	}
-	return visitChildren(v.Encode, v.SetAs, next, ctx)
+	l.list = append(l.list, &LogicNodeInc{
+		name: name,
+	})
+}
+
+func (l *LogicNodesInc) Name() (name string) {
+	if len(l.list) == 0 {
+		return name
+	}
+
+	last := l.list[len(l.list)-1]
+	if last.inc == 0 {
+		name = last.name
+		l.list = l.list[:len(l.list)-1]
+	}
+
+	return name
+}
+
+func (l *LogicNodesInc) Inc(e Node) {
+	if e == nil || len(l.list) == 0 {
+		return
+	}
+
+	switch e.(type) {
+	case *LeftParenNode:
+		l.list[len(l.list)-1].inc++
+	case *RightParenNode:
+		l.list[len(l.list)-1].inc--
+	}
 }
 
 type ConditionNode struct {
@@ -383,7 +474,11 @@ func (v *ConditionNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 		v.node = &OperatorNode{}
 		next = v.node
 	case *gen.LogicalBinaryContext:
-		v.node = &LogicNode{}
+		v.node = &LogicNode{
+			Op: &StringNode{
+				Name: ctx.GetText(),
+			},
+		}
 		next = v.node
 	}
 
@@ -402,10 +497,6 @@ func (v *OperatorNode) String() string {
 	left := nodeToString(v.Left)
 	op := nodeToString(v.Op)
 	right := nodeToString(v.Right)
-
-	if v.Encode != nil {
-		left, _ = v.Encode(left)
-	}
 
 	result := fmt.Sprintf("%s %s %s", left, op, right)
 	return result
@@ -450,11 +541,7 @@ func (v *TableNode) String() string {
 	}
 
 	table := v.Table.String()
-	if table == "" {
-		return ""
-	}
-
-	return fmt.Sprintf("FROM %s", table)
+	return table
 }
 
 func (v *TableNode) VisitChildren(ctx antlr.RuleNode) interface{} {
@@ -483,11 +570,7 @@ func (v *SelectNode) String() string {
 		}
 	}
 
-	if len(ns) > 0 {
-		return fmt.Sprintf("SELECT %s", strings.Join(ns, ", "))
-	}
-
-	return ""
+	return strings.Join(ns, ", ")
 }
 
 func (v *SelectNode) VisitChildren(ctx antlr.RuleNode) interface{} {
@@ -507,6 +590,8 @@ func (v *SelectNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 type FieldNode struct {
 	baseNode
 
+	isField bool
+
 	node Node
 	as   Node
 
@@ -521,7 +606,7 @@ func (v *FieldNode) String() string {
 	)
 	result = nodeToString(v.node)
 
-	if v.Encode != nil {
+	if v.isField && v.Encode != nil {
 		originField, ok := v.Encode(result)
 		if v.SetAs && ok && v.as == nil {
 			v.as = &StringNode{Name: result}
@@ -542,7 +627,7 @@ func (v *FieldNode) String() string {
 
 	as := nodeToString(v.as)
 	if as != "" {
-		result = fmt.Sprintf("%s AS %s", result, as)
+		result = fmt.Sprintf("%s %s %s", result, AsItem, as)
 	}
 
 	sort := nodeToString(v.sort)
@@ -611,27 +696,21 @@ func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 type FunctionNode struct {
 	baseNode
 	FuncName string
-	Value    Node
-	Args     []Node
+	Values   []Node
 }
 
 func (v *FunctionNode) String() string {
 	var result string
-	result = nodeToString(v.Value)
-
-	if v.Encode != nil {
-		result, _ = v.Encode(result)
-	}
 
 	var cols []string
-	for _, val := range v.Args {
+	for _, val := range v.Values {
 		col := nodeToString(val)
 		if col != "" {
 			cols = append(cols, col)
 		}
 	}
 
-	result = strings.Join(append([]string{result}, cols...), ", ")
+	result = strings.Join(cols, ", ")
 
 	if v.FuncName != "" {
 		result = fmt.Sprintf("%s(%s)", v.FuncName, result)
@@ -644,24 +723,98 @@ func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 	next = v
 
 	switch ctx.(type) {
+	case *gen.SearchedCaseContext:
+		sn := &SearchCaseNode{}
+		v.Values = append(v.Values, sn)
+		next = sn
 	case *gen.ArithmeticBinaryContext:
-		v.Value = &BinaryNode{}
-		next = v.Value
+		bn := &BinaryNode{}
+		v.Values = append(v.Values, bn)
+		next = bn
 	case *gen.CastContext:
-		v.Value = &CastNode{}
-		next = v.Value
+		bn := &CastNode{}
+		v.Values = append(v.Values, bn)
+		next = bn
 	case *gen.FunctionCallContext:
-		v.Value = &FunctionNode{}
-		next = v.Value
+		bn := &FunctionNode{}
+		v.Values = append(v.Values, bn)
+		next = bn
 	case *gen.FunctionIdentifierContext:
 		v.FuncName = ctx.GetText()
 	case *gen.ColumnReferenceContext:
-		v.Value = &StringNode{Name: ctx.GetText()}
+		col := ctx.GetText()
+		if v.Encode != nil {
+			col, _ = v.Encode(col)
+		}
+		v.Values = append(v.Values, &StringNode{Name: col})
 	case *gen.ConstantDefaultContext:
-		v.Args = append(v.Args, &StringNode{Name: ctx.GetText()})
+		v.Values = append(v.Values, &StringNode{Name: ctx.GetText()})
 	case *gen.StarContext:
-		v.Value = &StringNode{Name: ctx.GetText()}
-		next = v.Value
+		v.Values = append(v.Values, &StringNode{Name: ctx.GetText()})
+	}
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
+}
+
+type SearchCaseNode struct {
+	baseNode
+
+	ops   []string
+	nodes []Node
+}
+
+func (v *SearchCaseNode) String() string {
+	var s = strings.Builder{}
+	if len(v.nodes) > 0 && len(v.ops) > len(v.nodes) {
+		s.WriteString("CASE")
+		for idx, n := range v.nodes {
+			op := v.ops[idx+1]
+
+			when := nodeToString(n)
+			if when != "" {
+				s.WriteString(fmt.Sprintf(" %s %s", op, nodeToString(n)))
+			}
+		}
+
+		s.WriteString(" END")
+	}
+
+	return s.String()
+}
+
+func (v *SearchCaseNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+	v.ops = append(v.ops, strings.ToUpper(ctx.GetText()))
+	return nil
+}
+
+func (v *SearchCaseNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+	var next Node
+	next = v
+
+	switch ctx.(type) {
+	case *gen.ArithmeticBinaryContext:
+		bn := &BinaryNode{}
+		v.nodes = append(v.nodes, bn)
+		next = bn
+	case *gen.CastContext:
+		bn := &CastNode{}
+		v.nodes = append(v.nodes, bn)
+		next = bn
+	case *gen.FunctionCallContext:
+		bn := &FunctionNode{}
+		v.nodes = append(v.nodes, bn)
+		next = bn
+	case *gen.ColumnReferenceContext:
+		col := ctx.GetText()
+		if v.Encode != nil {
+			col, _ = v.Encode(col)
+		}
+		cn := &StringNode{Name: col}
+		v.nodes = append(v.nodes, cn)
+		next = cn
+	case *gen.ConstantDefaultContext, *gen.StarContext:
+		sn := &StringNode{Name: ctx.GetText()}
+		v.nodes = append(v.nodes, sn)
+		next = sn
 	}
 	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
@@ -678,7 +831,7 @@ func (v *CastNode) String() string {
 
 	as := nodeToString(v.As)
 	if as != "" {
-		result = fmt.Sprintf("CAST(%s AS %s)", result, as)
+		result = fmt.Sprintf("CAST(%s %s %s)", result, AsItem, as)
 	}
 	return result
 }
@@ -709,7 +862,7 @@ func (v *CastNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 				n.Sep = "]["
 				n.Names = append(n.Names, &StringNode{Name: ctx.GetText()})
 			case *FunctionNode:
-				n.Args = append(n.Args, &StringNode{Name: ctx.GetText()})
+				n.Values = append(n.Values, &StringNode{Name: ctx.GetText()})
 			}
 		} else {
 			v.Value = &StringNode{
@@ -796,6 +949,9 @@ func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
 	next = node
 
 	switch ctx.(type) {
+	case *gen.SearchedCaseContext:
+		node.node = &SearchCaseNode{}
+		next = node.node
 	case *gen.ArithmeticBinaryContext:
 		node.node = &BinaryNode{}
 		next = node.node
@@ -807,6 +963,7 @@ func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
 		next = node.node
 	case *gen.ColumnReferenceContext:
 		node.node = &ColumnNode{}
+		node.isField = true
 	// 兼容 a.b.c 的字段情况
 	case *gen.IdentifierContext:
 		if node.node != nil {
@@ -823,7 +980,7 @@ func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
 				n.Sep = "]["
 				n.Names = append(n.Names, &StringNode{Name: ctx.GetText()})
 			case *FunctionNode:
-				n.Args = append(n.Args, &StringNode{Name: ctx.GetText()})
+				n.Values = append(n.Values, &StringNode{Name: ctx.GetText()})
 			}
 		} else {
 			node.node = &StringNode{
@@ -865,4 +1022,7 @@ func visitChildren(encode Encode, setAs bool, next Node, node antlr.RuleNode) in
 
 type Option struct {
 	DimensionTransform Encode
+
+	Table string
+	Where string
 }

@@ -132,7 +132,7 @@ func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where
 }
 
 func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (sql string, err error) {
-	opt := doris_parser.DorisListenerOption{
+	opt := &doris_parser.Option{
 		DimensionTransform: func(field string) (string, bool) {
 			var (
 				originFiled string
@@ -147,11 +147,8 @@ func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (s
 		Table: table,
 		Where: where,
 	}
-	listener := doris_parser.ParseDorisSQLWithListener(ctx, q, opt)
-	if listener == nil {
-		return "", fmt.Errorf("parse doris sql error")
-	}
-	return listener.SQL()
+
+	return doris_parser.ParseDorisSQLWithVisitor(ctx, q, opt)
 }
 
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段

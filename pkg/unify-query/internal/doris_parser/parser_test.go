@@ -269,21 +269,9 @@ func TestParseDorisSQLWithVisitor(t *testing.T) {
 		sql string
 		err error
 	}{
+		// 用法验证
 		{
-			name: "test-1",
-			q: `select pod_namespace, 
-count(*) AS log_count 
-from t_table 
-where log MATCH_PHRASE 'Error' OR serverIp MATCH_PHRASE 'Fatal' GROUP BY serverIp order by pod_namespace LIMIT 1000`,
-			sql: `SELECT __ext.io_kubernetes_pod_namespace AS pod_namespace, count(*) AS log_count FROM t_table WHERE log MATCH_PHRASE 'Error' OR test_server_ip MATCH_PHRASE 'Fatal' GROUP BY test_server_ip ORDER BY __ext.io_kubernetes_pod_namespace LIMIT 1000`,
-		},
-		{
-			name: "test-2",
-			q:    `show TABLES`,
-			err:  fmt.Errorf("parse doris sql (show TABLES) error: show TABLES"),
-		},
-		{
-			name: "test-3",
+			name: "DS-单帧RPC超限-Func名字聚合",
 			q: `SELECT
   JSON_EXTRACT_STRING (__ext, '$.io_kubernetes_pod_namespace') as ns,
   split_part (log, '|', 3) as ct,
@@ -296,6 +284,189 @@ group by
 LIMIT
   1000`,
 			sql: "SELECT JSON_EXTRACT_STRING(__ext, '$.io_kubernetes_pod_namespace') AS ns, split_part(log, '|', 3) AS ct, count(*) WHERE log MATCH_ALL 'Reliable RPC called out of limit' GROUP BY ns, ct LIMIT 1000",
+		},
+		{
+			name: "错误日志上报IP分布",
+			q: `SELECT
+  serverIp,
+  COUNT(*) AS log_count
+WHERE
+  log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal'
+GROUP BY
+  serverIp
+LIMIT
+  1000
+`,
+			sql: "SELECT test_server_ip AS serverIp, COUNT(*) AS log_count WHERE log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal' GROUP BY test_server_ip LIMIT 1000",
+		},
+		{
+			name: "Core日志 (近6个小时)",
+			q:    `select path, count(*) as cnt group by path order by cnt desc limit 1000`,
+			sql:  "SELECT path, count(*) AS cnt GROUP BY path ORDER BY cnt DESC LIMIT 1000",
+		},
+		{
+			name: "DS定时执行STAT",
+			q:    `select CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) as ns, count(*) as log_count group by ns limit 1000`,
+			sql:  "SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, count(*) AS log_count GROUP BY ns LIMIT 1000",
+		},
+		{
+			name: "DS所有地图加载的LevelNb统计",
+			q: `SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) as ns, split_part(split_part(log,'=',2), ' ', 1) as ct, split_part(split_part(log,'=',13),' ',1) as LvlNb
+group by ns,ct,LvlNb order by LvlNb desc
+LIMIT 10000`,
+			sql: `SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, split_part(split_part(log, '=', 2), ' ', 1) AS ct, split_part(split_part(log, '=', 13), ' ', 1) AS LvlNb GROUP BY ns, ct, LvlNb ORDER BY LvlNb DESC LIMIT 10000`,
+		},
+		{
+			name: "DS流量统计",
+			q:    `select minute1, sum(cast(substring_index(substring_index(log, '[', -1), ']', 1) as bigint)) group by minute1 limit 10000`,
+			sql:  `SELECT minute1, sum(CAST(substring_index(substring_index(log, '[', -1), ']', 1) AS bigint)) GROUP BY minute1 LIMIT 10000`,
+		},
+		{
+			name: "ensure统计",
+			q:    `select array_join(array_slice(split_by_string(log, ':'), 4, cardinality(split_by_string(log, ':')) - 3), ':') as cat, count(*) group by cat limit 10000`,
+			sql:  `SELECT array_join(array_slice(split_by_string(log, ':'), 4, cardinality(split_by_string(log, ':')) - 3), ':') AS cat, count(*) GROUP BY cat LIMIT 10000`,
+		},
+		{
+			name: "RPC发送Bunch大包统计",
+			q: `select
+  CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) as ns,
+  split_part (
+    split_part (
+      split_part (log, 'Object:', 2),
+      'Func:',
+      1
+    ),
+    ':',
+    1
+  ) as Obj,
+  split_part (
+    split_part (
+      split_part (log, 'Object:', 2),
+      'Func:',
+      2
+    ),
+    'BunchNum:',
+    1
+  ) as FuncName,
+  max(
+    cast(
+      split_part (
+        split_part (
+          split_part (
+            split_part (log, 'Object:', 2),
+            'Func:',
+            2
+          ),
+          'BunchNum:',
+          2
+        ),
+        ' exceed',
+        1
+      ) as bigint
+    )
+  ) as BNum
+group by
+  ns,
+  Obj,
+  FuncName limit 10000`,
+			sql: `SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, split_part(split_part(split_part(log, 'Object:', 2), 'Func:', 1), ':', 1) AS Obj, split_part(split_part(split_part(log, 'Object:', 2), 'Func:', 2), 'BunchNum:', 1) AS FuncName, max(CAST(split_part(split_part(split_part(split_part(log, 'Object:', 2), 'Func:', 2), 'BunchNum:', 2), ' exceed', 1) AS bigint)) AS BNum GROUP BY ns, Obj, FuncName LIMIT 10000`,
+		},
+		{
+			name: "函数调用STAT",
+			q: `select
+  CAST(__ext ['io_kubernetes_pod_namespace'] AS TEXT) as ns,
+  count(*) as log_count
+group by
+  ns limit 1000`,
+			sql: `SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, count(*) AS log_count GROUP BY ns LIMIT 1000`,
+		},
+		{
+			name: "建筑数量1",
+			q:    `SELECT CAST(regexp_extract(log, 'FPzPieceActorData ([0-9]+)', 1) AS bigint) AS count, log ORDER BY count desc limit 10000`,
+			sql:  `SELECT CAST(regexp_extract(log, 'FPzPieceActorData ([0-9]+)', 1) AS bigint) AS count, log ORDER BY count DESC LIMIT 10000`,
+		},
+		{
+			name: "查找ENSURE-按ns/image/内存聚类",
+			q: `select
+  CAST(__ext ['io_kubernetes_pod_namespace'] AS TEXT) as ns,
+  substr (CAST(__ext ['container_image'] AS TEXT), 20) as imn,
+  substr (log, 53) as ct,
+  count(*)
+group by
+  ns,
+  imn,
+  ct`,
+			sql: `SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, substr(CAST(__ext['container_image'] AS TEXT), 20) AS imn, substr(log, 53) AS ct, count(*) GROUP BY ns, imn, ct`,
+		},
+		{
+			name: "查找GUID Duplicated-按照ns/类别聚合",
+			q: `select
+  CAST(__ext ['io_kubernetes_pod_namespace'] AS TEXT) as ns,
+  split_part (split_part (log, 'name=', 3), '_', 1) as ct,
+  count(*)
+group by
+  ns,
+  ct`,
+			sql: "SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, split_part(split_part(log, 'name=', 3), '_', 1) AS ct, count(*) GROUP BY ns, ct",
+		},
+		{
+			name: "真DS-单帧RPC超限-Func名字聚合",
+			q:    `select CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) as ns, split_part(log,'|',3) as ct,count(*) group by ns,ct`,
+			sql:  `SELECT CAST(__ext['io_kubernetes_pod_namespace'] AS TEXT) AS ns, split_part(log, '|', 3) AS ct, count(*) GROUP BY ns, ct`,
+		},
+		// CASE WHEN
+		{
+			name: "长tick统计",
+			q: `SELECT
+  floor(
+    CAST(
+      regexp_extract(log, 'FrameTime=([0-9.]+)ms', 1) AS DOUBLE
+    ) / 100
+  ) * 100 AS tick,
+  COUNT(
+    CASE WHEN 
+      CAST(
+        regexp_extract(log, 'FrameTime=([0-9.]+)ms', 1) AS DOUBLE
+      ) > 200 
+    THEN 1 ELSE NULL END
+  ) AS cnt
+GROUP BY
+  tick
+ORDER BY
+  cnt DESC 
+LIMIT 10000;`,
+			sql: "SELECT floor(CAST(regexp_extract(log, 'FrameTime=([0-9.]+)ms', 1) AS DOUBLE) / 100) * 100 AS tick, COUNT(CASE WHEN CAST(regexp_extract(log, 'FrameTime=([0-9.]+)ms', 1) AS DOUBLE) > 200 THEN 1 ELSE NULL END) AS cnt GROUP BY tick ORDER BY cnt DESC LIMIT 10000",
+		},
+
+		// 自定义验证
+		{
+			name: "CASE WHEN 语法",
+			q: `SELECT COUNT(
+    CASE WHEN 
+      CAST(
+        regexp_extract(log, 'FrameTime=([0-9.]+)ms', 1) AS DOUBLE
+      ) > 200 
+    THEN 1 ELSE NULL END
+  ) AS cnt`,
+			sql: "SELECT COUNT(CASE WHEN CAST(regexp_extract(log, 'FrameTime=([0-9.]+)ms', 1) AS DOUBLE) > 200 THEN 1 ELSE NULL END) AS cnt",
+		},
+		{
+			name: "函数参数嵌套表达式",
+			q:    `select array_join(array_slice(split_by_string(log, ':'), 4, cardinality(split_by_string(log, ':'))), ':') as cat`,
+			sql:  `SELECT array_join(array_slice(split_by_string(log, ':'), 4, cardinality(split_by_string(log, ':'))), ':') AS cat`,
+		},
+		{
+			name: "test-1",
+			q: `select pod_namespace, 
+count(*) AS log_count 
+from t_table 
+where log MATCH_PHRASE 'Error' OR serverIp MATCH_PHRASE 'Fatal' GROUP BY serverIp order by pod_namespace LIMIT 1000`,
+			sql: `SELECT __ext.io_kubernetes_pod_namespace AS pod_namespace, count(*) AS log_count FROM t_table WHERE log MATCH_PHRASE 'Error' OR test_server_ip MATCH_PHRASE 'Fatal' GROUP BY test_server_ip ORDER BY __ext.io_kubernetes_pod_namespace LIMIT 1000`,
+		},
+		{
+			name: "test-2",
+			q:    `show TABLES`,
+			err:  fmt.Errorf("parse doris sql (show TABLES) error: show TABLES"),
 		},
 		{
 			name: "test-4",
@@ -359,7 +530,7 @@ LIMIT
 		{
 			name: "test-11",
 			q:    `select * from t where (t match_phrase_prefix '%gg%')`,
-			sql:  `SELECT * FROM t WHERE (t match_phrase_prefix '%gg%')`,
+			sql:  `SELECT * FROM t WHERE ( t match_phrase_prefix '%gg%' )`,
 		},
 		{
 			name: "test-12",
@@ -456,10 +627,11 @@ group by
 			q:    "SELECT * WHERE name IN ('test', 'test-1') ORDER BY time desc, name limit 1000",
 			sql:  "SELECT * WHERE name IN ('test', 'test-1') ORDER BY time DESC, name LIMIT 1000",
 		},
+		// TODO: 子查询暂时先忽略，后续版本支持
 		{
-			name: "test-21",
+			name: "子查询验证",
 			q:    "select ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) as ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT()) AS pct",
-			sql:  "",
+			sql:  "SELECT ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) AS ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT()) AS pct",
 		},
 		{
 			name: "test-22",
@@ -558,7 +730,7 @@ group by
 		{
 			name: `test-38`,
 			q:    `select count() where (log like 'test*')`,
-			sql:  `SELECT count() WHERE (log like 'test*')`,
+			sql:  `SELECT count() WHERE ( log like 'test*' )`,
 		},
 		{
 			name: `test-39`,

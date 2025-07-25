@@ -57,6 +57,8 @@ func (l *Logger) Debugf(ctx context.Context, format string, v ...any) {
 	if l == nil || l.logger == nil {
 		return
 	}
+	fmt.Printf(format+"\n", v...)
+	return
 	l.logger.Debug(withTraceID(ctx, format, v...))
 }
 
@@ -87,8 +89,7 @@ func Errorf(ctx context.Context, format string, v ...any) {
 }
 
 func Debugf(ctx context.Context, format string, v ...any) {
-	fmt.Printf(format+"\n", v...)
-	//DefaultLogger.Debugf(ctx, format, v...)
+	DefaultLogger.Debugf(ctx, format, v...)
 }
 
 func Panicf(ctx context.Context, format string, v ...any) {

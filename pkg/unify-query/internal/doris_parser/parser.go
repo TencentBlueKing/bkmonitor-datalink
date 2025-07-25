@@ -41,7 +41,11 @@ func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (strin
 	//visitor := NewDorisVisitor(ctx, q).WithOptions(opt)
 
 	stmt := &Statement{}
-	stmt.WithEncode(opt.DimensionTransform)
+	if opt != nil {
+		stmt.WithEncode(opt.DimensionTransform)
+		stmt.Table = opt.Table
+		stmt.Where = opt.Where
+	}
 
 	log.Debugf(ctx, `"action","type","text"`)
 

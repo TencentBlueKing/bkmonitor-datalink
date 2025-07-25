@@ -71,6 +71,7 @@ type QuerySyncResultData struct {
 	BksqlCallElapsedTime int                      `json:"bksql_call_elapsed_time"`
 	Device               string                   `json:"device"`
 	ResultTableIds       []string                 `json:"result_table_ids"`
+	ResultSchema         []map[string]interface{} `json:"result_schema"`
 }
 
 type QueryAsyncResultData struct {

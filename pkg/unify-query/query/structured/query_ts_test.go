@@ -1601,3 +1601,48 @@ func TestGetMaxWindow(t *testing.T) {
 		})
 	}
 }
+
+func TestOrderBy(t *testing.T) {
+	data := []map[string]any{
+		{
+			"__data_label": "bkdata_index_set_627506",
+			"log_count":    292,
+			"minute1":      "202507221020",
+		},
+		{
+			"__data_label": "bkdata_index_set_627506",
+			"log_count":    1909,
+			"minute1":      "202507221019",
+		},
+		{
+			"__data_label": "bkdata_index_set_627506",
+			"log_count":    499,
+			"minute1":      "202507221018",
+		},
+	}
+
+	queryTs := &QueryTs{OrderBy: OrderBy{
+		"-gseIndex",
+		"-iterationIndex",
+	}}
+
+	queryTs.OrderBy.Orders().SortSliceList(data)
+
+	assert.Equal(t, []map[string]any{
+		{
+			"__data_label": "bkdata_index_set_627506",
+			"log_count":    292,
+			"minute1":      "202507221020",
+		},
+		{
+			"__data_label": "bkdata_index_set_627506",
+			"log_count":    1909,
+			"minute1":      "202507221019",
+		},
+		{
+			"__data_label": "bkdata_index_set_627506",
+			"log_count":    499,
+			"minute1":      "202507221018",
+		},
+	}, data)
+}

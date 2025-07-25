@@ -10,14 +10,16 @@
 package sql_expr
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -58,6 +60,8 @@ const (
 )
 
 type DorisSQLExpr struct {
+	DefaultSQLExpr
+
 	encodeFunc func(string) string
 
 	timeField  string
@@ -108,7 +112,7 @@ func (d *DorisSQLExpr) FieldMap() map[string]string {
 }
 
 func (d *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
-	expr, err := querystring.ParseWithFieldAlias(qs, d.fieldAlias)
+	expr, err := querystring_parser.ParseWithFieldAlias(qs, d.fieldAlias)
 	if err != nil {
 		return "", err
 	}
@@ -121,6 +125,30 @@ func (d *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
 
 func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
 	return fmt.Sprintf("SHOW CREATE TABLE %s", table)
+}
+
+func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where string) (sql string, err error) {
+	return "", nil
+}
+
+func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (sql string, err error) {
+	opt := &doris_parser.Option{
+		DimensionTransform: func(field string) (string, bool) {
+			var (
+				originFiled string
+				ok          bool
+			)
+			if originFiled, ok = d.fieldAlias[field]; ok {
+				field = originFiled
+			}
+			field, _ = d.dimTransform(field)
+			return field, ok
+		},
+		Table: table,
+		Where: where,
+	}
+
+	return doris_parser.ParseDorisSQLWithVisitor(ctx, q, opt)
 }
 
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段
@@ -521,7 +549,7 @@ func (d *DorisSQLExpr) likeValue(s string) string {
 	return string(ns)
 }
 
-func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
+func (d *DorisSQLExpr) walk(e querystring_parser.Expr) (string, error) {
 	var (
 		err   error
 		left  string
@@ -529,13 +557,13 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 	)
 
 	switch c := e.(type) {
-	case *querystring.NotExpr:
+	case *querystring_parser.NotExpr:
 		left, err = d.walk(c.Expr)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("NOT (%s)", left), nil
-	case *querystring.OrExpr:
+	case *querystring_parser.OrExpr:
 		left, err = d.walk(c.Left)
 		if err != nil {
 			return "", err
@@ -545,7 +573,7 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 			return "", err
 		}
 		return fmt.Sprintf("(%s OR %s)", left, right), nil
-	case *querystring.AndExpr:
+	case *querystring_parser.AndExpr:
 		left, err = d.walk(c.Left)
 		if err != nil {
 			return "", err
@@ -555,13 +583,13 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 			return "", err
 		}
 		return fmt.Sprintf("%s AND %s", left, right), nil
-	case *querystring.WildcardExpr:
+	case *querystring_parser.WildcardExpr:
 		if c.Field == "" {
 			c.Field = DefaultKey
 		}
 		field, _ := d.dimTransform(c.Field)
 		return fmt.Sprintf("%s LIKE '%s'", field, d.likeValue(c.Value)), nil
-	case *querystring.MatchExpr:
+	case *querystring_parser.MatchExpr:
 		if c.Field == "" {
 			c.Field = DefaultKey
 		}
@@ -571,7 +599,7 @@ func (d *DorisSQLExpr) walk(e querystring.Expr) (string, error) {
 		}
 
 		return fmt.Sprintf("%s = '%s'", field, c.Value), nil
-	case *querystring.NumberRangeExpr:
+	case *querystring_parser.NumberRangeExpr:
 		if c.Field == "" {
 			c.Field = DefaultKey
 		}
@@ -641,8 +669,8 @@ func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
 }
 
 func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
-	if s == "" {
-		return "", false
+	if s == "" || s == "*" {
+		return s, false
 	}
 
 	fieldType := d.getFieldType(s)

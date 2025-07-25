@@ -1047,15 +1047,17 @@ func executeScrollQueriesWithHelper(ctx context.Context, scrollSessionHelperInst
 		list = processQueryResults(executor.dataCh, queryTs, ignoreDimensions)
 	}()
 
-	go executor.executeQueries(storageQueryMap, scrollSessionHelperInstance)
+	go func() {
+		err = executor.executeQueries(storageQueryMap, scrollSessionHelperInstance)
+	}()
 
 	receiveWg.Wait()
 
-	if executor.message.Len() > 0 {
-		err = errors.New(executor.message.String())
+	total, collectErr := executor.collectResults()
+	if collectErr != nil {
+		err = collectErr
 	}
 
-	total = executor.total
 	resultTableOptions = executor.resultTableOptions
 	done = executor.session.Status == redisUtil.SessionStatusDone
 	return

@@ -57,8 +57,6 @@ func (l *Logger) Debugf(ctx context.Context, format string, v ...any) {
 	if l == nil || l.logger == nil {
 		return
 	}
-	fmt.Printf(format+"\n", v...)
-	return
 	l.logger.Debug(withTraceID(ctx, format, v...))
 }
 

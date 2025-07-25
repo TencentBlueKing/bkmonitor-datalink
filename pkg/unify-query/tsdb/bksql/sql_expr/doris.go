@@ -133,18 +133,16 @@ func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where
 
 func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (sql string, err error) {
 	opt := doris_parser.DorisListenerOption{
-		DimensionTransform: func(s string) (string, bool) {
+		DimensionTransform: func(field string) (string, bool) {
 			var (
-				as string
-				ok bool
+				originFiled string
+				ok          bool
 			)
-
-			as, ok = d.fieldAlias[s]
-			if ok {
-				s = as
+			if originFiled, ok = d.fieldAlias[field]; ok {
+				field = originFiled
 			}
-			ns, _ := d.dimTransform(s)
-			return ns, ok
+			field, _ = d.dimTransform(field)
+			return field, ok
 		},
 		Table: table,
 		Where: where,

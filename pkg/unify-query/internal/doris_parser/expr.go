@@ -547,11 +547,12 @@ func (e *Field) Exit(ctx antlr.ParserRuleContext) {
 func (e *Field) String() string {
 	var (
 		originName string
+		ok         bool
 	)
 	aliasName := strings.Join(append([]string{e.Name}, e.ExtraNames...), ".")
 	if e.encode != nil {
-		originName = e.encode(aliasName)
-		if e.setAs && originName != aliasName && e.As == "" {
+		originName, ok = e.encode(aliasName)
+		if e.setAs && ok && e.As == "" {
 			e.As = aliasName
 		}
 	} else {

@@ -215,11 +215,12 @@ group by
 			q:    "SELECT * WHERE name IN ('test', 'test-1') ORDER BY time desc, name limit 1000",
 			sql:  "SELECT * WHERE name IN ('test','test-1') ORDER BY time DESC, name LIMIT 1000",
 		},
-		{
-			name: "test-21",
-			q:    "select ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) as ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT()) AS pct",
-			sql:  "",
-		},
+		// listener 模式的实现不支持表达式计算解析，改用 visitor 模式
+		//{
+		//	name: "test-21",
+		//	q:    "select ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) as ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT()) AS pct",
+		//	sql:  "",
+		//},
 		{
 			name: "test-22",
 			q:    "SELECT namespace, workload, COUNT() GROUP BY namespace, workload",
@@ -240,11 +241,11 @@ group by
 
 			// antlr4 and visitor
 			opt := DorisListenerOption{
-				DimensionTransform: func(s string) string {
+				DimensionTransform: func(s string) (string, bool) {
 					if _, ok := fieldAlias[s]; ok {
-						return fieldAlias[s]
+						return fieldAlias[s], true
 					}
-					return s
+					return s, false
 				},
 			}
 			listener := ParseDorisSQLWithListener(ctx, c.q, opt)
@@ -584,14 +585,11 @@ group by
 
 			// antlr4 and visitor
 			opt := &Option{
-				DimensionTransform: func(s string) string {
-					if s == "" {
-						return ""
-					}
+				DimensionTransform: func(s string) (string, bool) {
 					if _, ok := fieldAlias[s]; ok {
-						return fieldAlias[s]
+						return fieldAlias[s], true
 					}
-					return s
+					return s, false
 				},
 			}
 			sql, err := ParseDorisSQLWithVisitor(ctx, c.q, opt)

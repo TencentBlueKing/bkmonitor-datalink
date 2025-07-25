@@ -20,7 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
-type Encode func(string) string
+type Encode func(string) (string, bool)
 
 type Node interface {
 	antlr.ParseTreeVisitor
@@ -404,7 +404,7 @@ func (v *OperatorNode) String() string {
 	right := nodeToString(v.Right)
 
 	if v.Encode != nil {
-		left = v.Encode(left)
+		left, _ = v.Encode(left)
 	}
 
 	result := fmt.Sprintf("%s %s %s", left, op, right)
@@ -522,8 +522,8 @@ func (v *FieldNode) String() string {
 	result = nodeToString(v.node)
 
 	if v.Encode != nil {
-		originField := v.Encode(result)
-		if v.SetAs && originField != result && v.as == nil {
+		originField, ok := v.Encode(result)
+		if v.SetAs && ok && v.as == nil {
 			v.as = &StringNode{Name: result}
 		}
 		result = originField
@@ -620,7 +620,7 @@ func (v *FunctionNode) String() string {
 	result = nodeToString(v.Value)
 
 	if v.Encode != nil {
-		result = v.Encode(result)
+		result, _ = v.Encode(result)
 	}
 
 	var cols []string

@@ -764,7 +764,7 @@ type SearchCaseNode struct {
 
 func (v *SearchCaseNode) String() string {
 	var s = strings.Builder{}
-	if len(v.nodes) > 0 && len(v.ops) >= len(v.nodes) {
+	if len(v.nodes) > 0 && len(v.ops) > len(v.nodes) {
 		s.WriteString("CASE")
 		for idx, n := range v.nodes {
 			op := v.ops[idx+1]

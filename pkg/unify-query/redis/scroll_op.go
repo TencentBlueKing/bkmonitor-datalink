@@ -74,9 +74,6 @@ func ScrollAcquireRedisLock(ctx context.Context, lockKey string, timeout time.Du
 }
 
 func ScrollReleaseRedisLock(ctx context.Context, lock interface{}) error {
-	if globalInstance.client == nil {
-		return fmt.Errorf("redis client not available")
-	}
 	lockKey, ok := lock.(string)
 	if !ok {
 		return fmt.Errorf("invalid lock type")
@@ -86,9 +83,6 @@ func ScrollReleaseRedisLock(ctx context.Context, lock interface{}) error {
 }
 
 func ScrollGetOrCreateSession(ctx context.Context, sessionKey string, forceClear bool, timeout time.Duration, maxSlice int, limit int) (*ScrollSession, error) {
-	if globalInstance.client == nil {
-		return nil, fmt.Errorf("redis client not available")
-	}
 	if forceClear {
 		if err := globalInstance.client.Del(ctx, sessionKey).Err(); err != nil {
 			return nil, err

@@ -10,6 +10,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/asaskevich/EventBus v0.0.0-20200907212545-49d423059eef
 	github.com/bytedance/sonic v1.12.3
+	github.com/deckarep/golang-set v1.8.0
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dominikbraun/graph v0.23.0
 	github.com/elastic/go-elasticsearch/v8 v8.0.0-20210317102009-a9d74cec0186

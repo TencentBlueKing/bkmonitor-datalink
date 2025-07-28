@@ -1103,8 +1103,8 @@ func prepareQueryList(ctx context.Context, queryTs *structured.QueryTs) (queryLi
 	return queryList, nil
 }
 
-func buildStorageQueryMap(queryList []*metadata.Query) (storageQueryMap map[string][]*metadata.Query) {
-	storageQueryMap = make(map[string][]*metadata.Query)
+func buildStorageQueryMap(queryList []*metadata.Query) map[string][]*metadata.Query {
+	storageQueryMap := make(map[string][]*metadata.Query)
 	for _, qry := range queryList {
 		storageIds := qry.CalcStorageIDs()
 		if storageIds == nil {
@@ -1112,9 +1112,6 @@ func buildStorageQueryMap(queryList []*metadata.Query) (storageQueryMap map[stri
 		}
 
 		for _, storageId := range storageIds {
-			if storageQueryMap[storageId] == nil {
-				storageQueryMap[storageId] = make([]*metadata.Query, 0)
-			}
 			storageQueryMap[storageId] = append(storageQueryMap[storageId], qry)
 		}
 	}

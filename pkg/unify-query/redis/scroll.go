@@ -12,6 +12,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
@@ -23,14 +24,13 @@ const (
 )
 
 type ScrollSession struct {
-	LastAccessAt  time.Time         `json:"last_access_at"`
-	ScrollTimeout time.Duration     `json:"scroll_timeout"`
-	MaxSlice      int               `json:"max_slice"`
-	Limit         int               `json:"limit"`
-	Index         int               `json:"index"`
-	ScrollIDs     map[string]string `json:"scroll_ids"`
-	SliceStatus   map[string]bool   `json:"slice_status"`
-	Status        string            `json:"status"`
+	LastAccessAt  time.Time                      `json:"last_access_at"`
+	ScrollTimeout time.Duration                  `json:"scroll_timeout"`
+	MaxSlice      int                            `json:"max_slice"`
+	Limit         int                            `json:"limit"`
+	Index         int                            `json:"index"`
+	ScrollIDs     map[string]map[string]struct{} `json:"scroll_ids"`
+	Status        string                         `json:"status"`
 }
 
 func NewScrollSession(maxSlice int, scrollTimeout time.Duration, limit int) *ScrollSession {
@@ -40,8 +40,7 @@ func NewScrollSession(maxSlice int, scrollTimeout time.Duration, limit int) *Scr
 		MaxSlice:      maxSlice,
 		Limit:         limit,
 		Index:         0,
-		ScrollIDs:     make(map[string]string),
-		SliceStatus:   make(map[string]bool),
+		ScrollIDs:     map[string]map[string]struct{}{},
 		Status:        SessionStatusRunning,
 	}
 }
@@ -74,39 +73,66 @@ func (s *ScrollSession) getNextElasticsearchScrollID(connect, tableID string, sl
 		TableID:  tableID,
 		SliceIdx: sliceIdx,
 	}
-	scrollID, exist := s.ScrollIDs[k.String()]
-	if !exist {
+	key := k.String()
+	scrollIdSet := s.ScrollIDs[key]
+	if len(scrollIdSet) == 0 {
 		return ""
 	}
-
-	return scrollID
+	for scrollID := range scrollIdSet {
+		return scrollID
+	}
+	return ""
 }
 
-func (s *ScrollSession) SetScrollID(connect, tableID, scrollID string, sliceIdx int) {
+func (s *ScrollSession) AddScrollId(connect, tableID, scrollID string, sliceIdx int) {
 	k := SliceStatus{
 		Connect:  connect,
 		TableID:  tableID,
 		SliceIdx: sliceIdx,
 	}
-	s.ScrollIDs[k.String()] = scrollID
+	key := k.String()
+
+	var idToAdd string
+	if scrollID != "" {
+		idToAdd = scrollID
+		s.ScrollIDs[key] = map[string]struct{}{idToAdd: {}}
+	} else {
+		if strings.Contains(connect, "bk_data") {
+			idToAdd = fmt.Sprintf("slice_%d", sliceIdx)
+
+			st := s.ScrollIDs[key]
+			if st == nil {
+				st = make(map[string]struct{})
+			}
+
+			st[idToAdd] = struct{}{}
+			s.ScrollIDs[key] = st
+		}
+	}
 }
 
-func (s *ScrollSession) MarkSliceDone(connect, tableID string, sliceIdx int) {
+func (s *ScrollSession) RemoveScrollID(slice SliceInfo, connect, tableID string, sliceIdx int) {
 	k := SliceStatus{
 		Connect:  connect,
 		TableID:  tableID,
 		SliceIdx: sliceIdx,
 	}
-	s.SliceStatus[k.String()] = true
-}
+	key := k.String()
+	scrollIDSet := s.ScrollIDs[key]
+	if scrollIDSet != nil {
+		var idToRemove string
+		if slice.ScrollID == "" {
+			idToRemove = fmt.Sprintf("slice_%d", sliceIdx)
+		} else {
+			idToRemove = slice.ScrollID
+		}
 
-func (s *ScrollSession) RemoveScrollID(connect, tableID string, sliceIdx int) {
-	k := SliceStatus{
-		Connect:  connect,
-		TableID:  tableID,
-		SliceIdx: sliceIdx,
+		delete(scrollIDSet, idToRemove)
+
+		if len(scrollIDSet) == 0 {
+			delete(s.ScrollIDs, key)
+		}
 	}
-	delete(s.ScrollIDs, k.String())
 }
 
 type SliceInfo struct {
@@ -115,40 +141,35 @@ type SliceInfo struct {
 	Index      int
 }
 
-func (s *ScrollSession) MakeSlices(storageType, connect, tableID string) ([]SliceInfo, error) {
+func (s *ScrollSession) MakeSlices(storageType, connect, tableID string) (sliceInfos []SliceInfo, err error) {
 	switch storageType {
 	case consul.ElasticsearchStorageType:
-		sliceInfos := s.makeElasticsearchSlices(connect, tableID)
-		return sliceInfos, nil
+		sliceInfos = s.makeElasticsearchSlices(connect, tableID)
+		return
 	case consul.BkSqlStorageType:
-		sliceInfos := s.makeDorisSlices()
-		return sliceInfos, nil
+		sliceInfos = s.makeDorisSlices()
+		return
 	default:
-		return nil, fmt.Errorf("unsupported storage type for scroll: %s", storageType)
+		err = fmt.Errorf("unsupported storage type for scroll: %s", storageType)
+		return
 	}
 }
 
 func (s *ScrollSession) makeElasticsearchSlices(connect, tableID string) []SliceInfo {
 	slices := make([]SliceInfo, 0, s.MaxSlice)
 
+	isFirstRequest := len(s.ScrollIDs) == 0
+
 	for sliceIndex := 0; sliceIndex < s.MaxSlice; sliceIndex++ {
 		scrollID := s.getNextElasticsearchScrollID(connect, tableID, sliceIndex)
 
-		k := SliceStatus{
-			Connect:  connect,
-			TableID:  tableID,
-			SliceIdx: sliceIndex,
+		if isFirstRequest || scrollID != "" {
+			slices = append(slices, SliceInfo{
+				SliceIndex: sliceIndex,
+				ScrollID:   scrollID,
+				Index:      0,
+			})
 		}
-
-		if s.SliceStatus != nil && s.SliceStatus[k.String()] {
-			continue
-		}
-
-		slices = append(slices, SliceInfo{
-			SliceIndex: sliceIndex,
-			ScrollID:   scrollID,
-			Index:      0,
-		})
 	}
 
 	return slices
@@ -157,13 +178,30 @@ func (s *ScrollSession) makeElasticsearchSlices(connect, tableID string) []Slice
 func (s *ScrollSession) makeDorisSlices() []SliceInfo {
 	slices := make([]SliceInfo, 0, s.MaxSlice)
 
+	roundNumber := 0
+	if len(s.ScrollIDs) > 0 {
+		hasActiveSlices := false
+		for _, scrollIDSet := range s.ScrollIDs {
+			if len(scrollIDSet) > 0 {
+				hasActiveSlices = true
+				break
+			}
+		}
+		if hasActiveSlices {
+			roundNumber = s.Index + 1
+		}
+	}
+
 	for sliceIndex := 0; sliceIndex < s.MaxSlice; sliceIndex++ {
+		offsetIndex := roundNumber*s.MaxSlice + sliceIndex
 		slices = append(slices, SliceInfo{
 			SliceIndex: sliceIndex,
 			ScrollID:   "",
-			Index:      s.getNextDorisIndex(),
+			Index:      offsetIndex,
 		})
 	}
+
+	s.Index = roundNumber
 
 	return slices
 }
@@ -171,30 +209,22 @@ func (s *ScrollSession) makeDorisSlices() []SliceInfo {
 func (s *ScrollSession) HasMoreData(tsDbType string) bool {
 	switch tsDbType {
 	case consul.ElasticsearchStorageType:
-		if s.SliceStatus == nil {
-			s.SliceStatus = make(map[string]bool)
-		}
-
-		for key, scrollID := range s.ScrollIDs {
-			if scrollID != "" {
-				if !s.SliceStatus[key] {
-					return true
+		for _, scrollIDSet := range s.ScrollIDs {
+			if len(scrollIDSet) > 0 {
+				for scrollID := range scrollIDSet {
+					if scrollID != "" {
+						return true
+					}
 				}
 			}
 		}
-
 		return false
 	case consul.BkSqlStorageType:
-		if s.SliceStatus == nil {
-			s.SliceStatus = make(map[string]bool)
-		}
-
-		for key := range s.ScrollIDs {
-			if !s.SliceStatus[key] {
+		for _, scrollIDSet := range s.ScrollIDs {
+			if len(scrollIDSet) > 0 {
 				return true
 			}
 		}
-
 		return false
 	default:
 		return false

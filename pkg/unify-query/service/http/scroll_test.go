@@ -25,7 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
-	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
@@ -38,9 +38,26 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 	promql.MockEngine()
 
 	testTableId := "result_table.es"
+	testDataLabel := "es"
 
 	router, err := influxdb.GetSpaceTsDbRouter()
 	require.NoError(t, err, "Failed to get space router")
+	err = router.Add(ctx, ir.ResultTableDetailKey, testTableId, &ir.ResultTableDetail{
+		StorageId:   3,
+		TableId:     testTableId,
+		DB:          "es_index",
+		StorageType: consul.ElasticsearchStorageType,
+		DataLabel:   "es",
+	})
+	assert.NoError(t, err)
+
+	resultTableList := ir.ResultTableList{testTableId}
+	err = router.Add(ctx, ir.DataLabelToResultTableKey, "es", &resultTableList)
+	assert.NoError(t, err)
+
+	err = router.Add(ctx, ir.DataLabelToResultTableKey, testTableId, &resultTableList)
+	assert.NoError(t, err)
+
 	route01 := "route1_table"
 	err = router.Add(ctx, ir.ResultTableDetailKey, route01, &ir.ResultTableDetail{
 		StorageId:   3,
@@ -79,8 +96,8 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 		DB:    0,
 	}
 
-	err = redisUtil.SetInstance(ctx, "test", options)
-	require.NoError(t, err, "Failed to set redis instance")
+	err = redis.SetInstance(ctx, "test", options)
+	require.NoError(t, err, "Failed to set unify-query redis instance")
 
 	initEsMockData := map[string]any{
 		`{"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":10,"slice":{"id":0,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"scroll_id_0","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"1","_source":{"dtEventTimeStamp":"1723594001000","data":"es_test1"}}]}}`,
@@ -117,11 +134,11 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 			SpaceUid: spaceUid,
 			QueryList: []*structured.Query{
 				{
-					TableID: structured.TableID(testTableId),
+					TableID: structured.TableID(testDataLabel),
 				},
 			},
-			Timezone: "Asia/Shanghai",
 			Scroll:   "9m",
+			Timezone: "Asia/Shanghai",
 			Limit:    10,
 			Start:    start,
 			End:      end,
@@ -175,6 +192,7 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 	for i, c := range tCase.expected {
 		t.Logf("Running step %d: %s", i+1, c.desc)
 
+		//mock.Es.Set(map[string]any{})
 		mock.Es.Set(c.mockData)
 
 		queryTsBytes, _ := json.Marshal(tCase.queryTs)
@@ -188,10 +206,6 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 		assert.Equal(t, c.total, total, "Total should match expected value for step %d", i+1)
 		assert.Equal(t, c.done, done, "Done should match expected value for step %d", i+1)
 		assert.Equal(t, c.hasData, hasData, "HasData should match expected value for step %d", i+1)
-
-		if t.Failed() {
-			t.Fatalf("Test failed at step %d: %s", i+1, c.desc)
-		}
 	}
 }
 
@@ -236,8 +250,8 @@ func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
 		DB:    0,
 	}
 
-	err = redisUtil.SetInstance(ctx, "test", options)
-	require.NoError(t, err, "Failed to set redis instance")
+	err = redis.SetInstance(ctx, "test", options)
+	require.NoError(t, err, "Failed to set unify-query redis instance")
 
 	initDorisMockData := map[string]any{
 		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10`:           `{"result":true,"code":"00","message":"","data":{"totalRecords":2,"total_record_size":2,"list":[{"dtEventTimeStamp":"1723594001000","data":"doris_test1"},{"dtEventTimeStamp":"1723594002000","data":"doris_test2"}]}}`,
@@ -333,9 +347,5 @@ func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
 		assert.Equal(t, c.total, total, "Total should match expected value for step %d", i+1)
 		assert.Equal(t, c.done, done, "Done should match expected value for step %d", i+1)
 		assert.Equal(t, c.hasData, hasData, "HasData should match expected value for step %d", i+1)
-
-		if t.Failed() {
-			t.Fatalf("Test failed at step %d: %s", i+1, c.desc)
-		}
 	}
 }

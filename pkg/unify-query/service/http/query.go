@@ -1112,6 +1112,9 @@ func buildStorageQueryMap(queryList []*metadata.Query) (storageQueryMap map[stri
 		}
 
 		for _, storageId := range storageIds {
+			if storageQueryMap[storageId] == nil {
+				storageQueryMap[storageId] = make([]*metadata.Query, 0)
+			}
 			storageQueryMap[storageId] = append(storageQueryMap[storageId], qry)
 		}
 	}

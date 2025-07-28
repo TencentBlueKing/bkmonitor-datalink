@@ -314,28 +314,25 @@ func (e *ScrollQueryExecutor) executeQueries(storageQueryMap map[string][]*metad
 func (e *ScrollQueryExecutor) collectResults() (total int64, err error) {
 	var results []SliceQueryResult
 
-	done := make(chan struct{})
 	go func() {
-		defer close(done)
-		for result := range e.resultCh {
-			results = append(results, result)
-			if result.Error != nil {
-				if result.Message != "" {
-					err = errors.Join(err, fmt.Errorf("slice query error: %s", result.Message))
-				}
-			} else {
-				total += result.Size
-				if result.Options != nil {
-					e.resultTableOptions.MergeOptions(result.Options)
-				}
-			}
-		}
+		e.sendWg.Wait()
+		close(e.resultCh)
 	}()
 
-	e.sendWg.Wait()
-	close(e.resultCh)
+	for result := range e.resultCh {
+		results = append(results, result)
 
-	<-done
+		if result.Error != nil {
+			if result.Message != "" {
+				err = errors.Join(err, fmt.Errorf("slice query error: %s", result.Message))
+			}
+		} else {
+			total += result.Size
+			if result.Options != nil {
+				e.resultTableOptions.MergeOptions(result.Options)
+			}
+		}
+	}
 
 	return
 }

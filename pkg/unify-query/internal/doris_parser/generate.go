@@ -9,8 +9,6 @@
 
 package doris_parser
 
-import "fmt"
-
 //go:generate antlr4 -Dlanguage=Go -no-listener -visitor -package gen *.g4 -o ../gen
 //go:generate antlr4 -Dlanguage=Go -listener -no-visitor -package gen *.g4 -o ../gen
 
@@ -18,7 +16,6 @@ import "fmt"
 var has_unclosed_bracketed_comment = false
 
 func isValidDecimal(input string) bool {
-	fmt.Println("isValidDecimal input:", input)
 	return true
 }
 

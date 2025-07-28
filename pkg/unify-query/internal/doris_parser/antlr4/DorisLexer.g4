@@ -23,7 +23,6 @@ lexer grammar DorisLexer;
     var has_unclosed_bracketed_comment = false;
 
     func isValidDecimal(ctx antlr.RuleContext) bool {
-    	fmt.Println("isValidDecimal input:", ctx.GetText())
     	return true
     }
 

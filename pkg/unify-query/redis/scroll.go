@@ -74,8 +74,12 @@ func (s *ScrollSession) getNextElasticsearchScrollID(connect, tableID string, sl
 		TableID:  tableID,
 		SliceIdx: sliceIdx,
 	}
-	// Returning "" when not found is expected behavior, as there is no corresponding scrollID for the first retrieval'
-	return s.ScrollIDs[k.String()]
+	scrollID, exist := s.ScrollIDs[k.String()]
+	if !exist {
+		return ""
+	}
+
+	return scrollID
 }
 
 func (s *ScrollSession) SetScrollID(connect, tableID, scrollID string, sliceIdx int) {
@@ -128,6 +132,8 @@ func (s *ScrollSession) makeElasticsearchSlices(connect, tableID string) []Slice
 	slices := make([]SliceInfo, 0, s.MaxSlice)
 
 	for sliceIndex := 0; sliceIndex < s.MaxSlice; sliceIndex++ {
+		scrollID := s.getNextElasticsearchScrollID(connect, tableID, sliceIndex)
+
 		k := SliceStatus{
 			Connect:  connect,
 			TableID:  tableID,
@@ -140,7 +146,7 @@ func (s *ScrollSession) makeElasticsearchSlices(connect, tableID string) []Slice
 
 		slices = append(slices, SliceInfo{
 			SliceIndex: sliceIndex,
-			ScrollID:   s.getNextElasticsearchScrollID(connect, tableID, sliceIndex),
+			ScrollID:   scrollID,
 			Index:      0,
 		})
 	}

@@ -1062,6 +1062,7 @@ func executeScrollQueriesWithHelper(ctx context.Context, scrollSessionHelperInst
 	total = int64(len(list))
 	if executeErr != nil {
 		err = executeErr
+		return
 	}
 
 	resultTableOptions = executor.resultTableOptions

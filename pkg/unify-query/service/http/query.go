@@ -11,13 +11,13 @@ package http
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	ants "github.com/panjf2000/ants/v2"
+	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -1039,36 +1039,29 @@ func executeScrollQueriesWithHelper(ctx context.Context, scrollSessionHelperInst
 	defer executor.cleanup()
 
 	storageQueryMap := buildStorageQueryMap(queryList)
+
+	var receiveWg sync.WaitGroup
 	ignoreDimensions := []string{elasticsearch.KeyAddress}
 
-	var wg sync.WaitGroup
-	var executeErr, collectErr error
-
-	wg.Add(1)
+	receiveWg.Add(1)
 	go func() {
-		defer wg.Done()
+		defer receiveWg.Done()
 		list = processQueryResults(executor.dataCh, queryTs, ignoreDimensions)
 	}()
 
-	wg.Add(1)
+	var executeWg sync.WaitGroup
+	executeWg.Add(1)
 	go func() {
-		defer wg.Done()
-		executeErr = executor.executeQueries(storageQueryMap, scrollSessionHelperInstance)
+		defer executeWg.Done()
+		err = executor.executeQueries(storageQueryMap, scrollSessionHelperInstance)
 	}()
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		total, collectErr = executor.collectResults()
-	}()
+	receiveWg.Wait()
+	executeWg.Wait() // 等待查询执行完成
 
-	wg.Wait()
-
-	if executeErr != nil {
-		err = executeErr
-	}
+	total, collectErr := executor.collectResults()
 	if collectErr != nil {
-		err = errors.Join(err, collectErr)
+		err = collectErr
 	}
 
 	resultTableOptions = executor.resultTableOptions

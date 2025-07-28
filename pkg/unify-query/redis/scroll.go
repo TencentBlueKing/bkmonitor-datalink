@@ -162,28 +162,28 @@ func (s *ScrollSession) makeDorisSlices() []SliceInfo {
 	return slices
 }
 
-func (s *ScrollSession) HasMoreData(tsDbType string) bool {
+func (s *ScrollSession) HasMoreData(tsDbType string) (string, bool) {
 	switch tsDbType {
 	case consul.ElasticsearchStorageType:
 		for key, scrollID := range s.ScrollIDs {
 			if scrollID != "" {
 				if !s.SliceStatus[key] {
-					return true
+					return scrollID, true
 				}
 			}
 		}
 
-		return false
+		return "", false
 	case consul.BkSqlStorageType:
 		for key := range s.ScrollIDs {
 			if !s.SliceStatus[key] {
-				return true
+				return key, true
 			}
 		}
 
-		return false
+		return "", false
 	default:
-		return false
+		return "", false
 	}
 }
 

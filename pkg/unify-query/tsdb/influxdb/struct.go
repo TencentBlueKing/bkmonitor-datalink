@@ -18,10 +18,13 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
 // Instance influxDB 查询引擎
 type Instance struct {
+	tsdb.DefaultInstance
+
 	ctx context.Context
 
 	host     string

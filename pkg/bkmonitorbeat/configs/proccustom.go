@@ -37,6 +37,7 @@ type ProcCustomConfig struct {
 	nameRegx    *regexp.Regexp
 	dimsRegx    *regexp.Regexp
 	excludeRegx *regexp.Regexp
+	matchRegx   *regexp.Regexp
 }
 
 func NewProcCustomConfig(root *Config) *ProcCustomConfig {
@@ -80,6 +81,12 @@ func (c *ProcCustomConfig) Setup() {
 			logger.Errorf("failed to compile DimPattern regex:%v, err:%v", c.DimPattern, err)
 		}
 	}
+	if c.MatchPattern != "" {
+		c.matchRegx, err = regexp.Compile(c.MatchPattern)
+		if err != nil {
+			logger.Errorf("failed to compile MatchPattern regex:%v, err:%v", c.MatchPattern, err)
+		}
+	}
 }
 
 func (c *ProcCustomConfig) EnablePortCollected() bool { return c.PortDetect && c.PortDataID > 0 }
@@ -113,12 +120,10 @@ func (c *ProcCustomConfig) match(name string) bool {
 		return false
 	}
 
-	if c.MatchPattern == "" {
+	if c.matchRegx == nil {
 		return false
 	}
-
-	// 否则如果进程名包含表达式，就算匹配成功
-	return strings.Contains(name, c.MatchPattern)
+	return c.matchRegx.MatchString(name)
 }
 
 func (c *ProcCustomConfig) ExtractDimensions(name string) map[string]string {

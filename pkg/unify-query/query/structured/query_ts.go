@@ -82,6 +82,9 @@ type QueryTs struct {
 
 	// HighLight 是否开启高亮
 	HighLight *metadata.HighLight `json:"highlight,omitempty"`
+
+	// DryRun 是否启用 DryRun
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 // StepParse 解析step
@@ -381,6 +384,8 @@ type Query struct {
 
 	// QueryString 关键字查询
 	QueryString string `json:"query_string"`
+	// SQL doris sql 解析
+	SQL string `json:"sql"`
 	// IsPrefix 是否启用前缀匹配
 	IsPrefix bool `json:"is_prefix"`
 
@@ -391,6 +396,8 @@ type Query struct {
 	ResultTableOptions metadata.ResultTableOptions `json:"-"`
 	// Scroll
 	Scroll string `json:"-"`
+	// DryRun
+	DryRun bool `json:"-"`
 	// Collapse
 	Collapse *metadata.Collapse `json:"collapse,omitempty"`
 }
@@ -896,7 +903,8 @@ func (q *Query) BuildMetadataQuery(
 	query.Condition = whereList.String()
 	query.VmCondition, query.VmConditionNum = allCondition.VMString(query.VmRt, vmMetric, q.IsRegexp)
 
-	// 写入 ES 所需内容
+	// 写入 ES / Doris 所需内容
+	query.SQL = q.SQL
 	query.QueryString = q.QueryString
 	query.IsPrefix = q.IsPrefix
 	query.Source = q.KeepColumns
@@ -904,6 +912,7 @@ func (q *Query) BuildMetadataQuery(
 	query.Collapse = q.Collapse
 
 	query.Scroll = q.Scroll
+	query.DryRun = q.DryRun
 	query.ResultTableOptions = q.ResultTableOptions
 
 	query.Size = q.Limit

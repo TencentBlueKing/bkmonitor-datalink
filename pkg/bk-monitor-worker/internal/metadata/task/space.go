@@ -168,6 +168,39 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		logger.Infof("%s success, cost: %s", name, time.Since(t1))
 	})
 
+	// 处理 result_table_detail 路由: Doris 类型
+	wg.Add(1)
+	_ = p.Submit(func() {
+		defer wg.Done()
+		t1 := time.Now()
+		name := "[task] PushAndPublishSpaceRouterInfo result_table_detail (doris)"
+
+		var tableIdList []string
+		var rtList []resulttable.ResultTable
+
+		// 查询 default_storage 为 "elasticsearch"，启用且未删除的结果表
+		if err = resulttable.NewResultTableQuerySet(db).
+			Select(resulttable.ResultTableDBSchema.TableId).
+			DefaultStorageEq("doris").
+			IsEnableEq(true).IsDeletedEq(false).
+			All(&rtList); err != nil {
+			logger.Errorf("%s error, %s", name, err)
+			return
+		}
+
+		// 提取 TableID 列表
+		for _, rt := range rtList {
+			tableIdList = append(tableIdList, rt.TableId)
+		}
+
+		// 调用 PushEsTableIdDetail 方法
+		if err = pusher.PushDorisTableIdDetail(tableIdList, true); err != nil {
+			logger.Errorf("%s error %s", name, err)
+			return
+		}
+		logger.Infof("%s success, cost: %s", name, time.Since(t1))
+	})
+
 	wg.Wait()
 	logger.Infof("push and publish space router successfully, cost: %s", time.Since(t0))
 	return nil

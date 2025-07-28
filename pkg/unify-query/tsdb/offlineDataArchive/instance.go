@@ -43,6 +43,8 @@ var (
 var _ tsdb.Instance = &Instance{}
 
 type Instance struct {
+	tsdb.DefaultInstance
+
 	Ctx           context.Context
 	Address       string
 	Timeout       time.Duration

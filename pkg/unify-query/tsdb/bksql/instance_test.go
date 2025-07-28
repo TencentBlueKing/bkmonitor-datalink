@@ -75,10 +75,10 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
 	mock.BkSQL.Set(map[string]any{
 		// doris
 		"SHOW CREATE TABLE `2_bklog_bkunify_query_doris`.doris": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":18,"external_api_call_time_mills":{"bkbase_auth_api":43,"bkbase_meta_api":0,"bkbase_apigw_api":33},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtimestamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"localtime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__shard_key__","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__ext","Type":"variant","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"cloudid","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"file","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"gseindex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"iterationindex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"level","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"log","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"message","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"path","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"report_time","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"serverip","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"time","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"trace_id","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"}],"stage_elapsed_time_mills":{"check_query_syntax":0,"query_db":5,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":45,"match_query_routing_rule":0,"check_permission":43,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["Field","Type","Null","Key","Default","Extra"],"sql":"SHOW COLUMNS FROM mapleleaf_2.bklog_bkunify_query_doris_2","total_record_size":11776,"timetaken":0.096,"result_schema":[{"field_type":"string","field_name":"Field","field_alias":"Field","field_index":0},{"field_type":"string","field_name":"Type","field_alias":"Type","field_index":1},{"field_type":"string","field_name":"Null","field_alias":"Null","field_index":2},{"field_type":"string","field_name":"Key","field_alias":"Key","field_index":3},{"field_type":"string","field_name":"Default","field_alias":"Default","field_index":4},{"field_type":"string","field_name":"Extra","field_alias":"Extra","field_index":5}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
-		"SELECT `cloudId`, COUNT(`cloudId`) AS `_value_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1730118589181 AND `dtEventTimeStamp` <= 1730118889181 AND `thedate` = '20241028' GROUP BY `cloudId` LIMIT 10005": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"2_bklog_bkunify_query_doris":{"start":"2025041100","end":"2025041123"}},"cluster":"doris-test","totalRecords":1,"external_api_call_time_mills":{"bkbase_auth_api":32,"bkbase_meta_api":0,"bkbase_apigw_api":0},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"cloudId":0.0,"_value_":6}],"stage_elapsed_time_mills":{"check_query_syntax":2,"query_db":22,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":44,"match_query_routing_rule":0,"check_permission":32,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["cloudId","_value_"],"total_record_size":456,"timetaken":0.103,"result_schema":[{"field_type":"double","field_name":"__c0","field_alias":"cloudId","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"_value_","field_index":1}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+		"SELECT `cloudId`, COUNT(`cloudId`) AS `_value_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1730118589181 AND `dtEventTimeStamp` <= 1730118889181 AND `thedate` = '20241028' GROUP BY `cloudId` ORDER BY `_timestamp_` ASC LIMIT 10005": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"2_bklog_bkunify_query_doris":{"start":"2025041100","end":"2025041123"}},"cluster":"doris-test","totalRecords":1,"external_api_call_time_mills":{"bkbase_auth_api":32,"bkbase_meta_api":0,"bkbase_apigw_api":0},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"cloudId":0.0,"_value_":6}],"stage_elapsed_time_mills":{"check_query_syntax":2,"query_db":22,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":44,"match_query_routing_rule":0,"check_permission":32,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["cloudId","_value_"],"total_record_size":456,"timetaken":0.103,"result_schema":[{"field_type":"double","field_name":"__c0","field_alias":"cloudId","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"_value_","field_index":1}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
 
 		"SHOW CREATE TABLE `5000140_bklog_container_log_demo_analysis`.doris": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris_bklog","totalRecords":19,"external_api_call_time_mills":{"bkbase_meta_api":10},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtimestamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtime","Type":"varchar(32)","Null":"NO","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"localtime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__shard_key__","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"_starttime_","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"_endtime_","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"bk_host_id","Type":"int","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__ext","Type":"variant","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"cloudid","Type":"int","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"serverip","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"path","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"gseindex","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"iterationindex","Type":"int","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"log","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"logtime","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"level","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"cid","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"time","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"}],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":4,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":10,"connect_db":43,"match_query_routing_rule":0,"check_permission":12,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["Field","Type","Null","Key","Default","Extra"],"sql":"SHOW COLUMNS FROM mapleleaf_5000140.bklog_container_log_demo_analysis_5000140__2","total_record_size":12408,"timetaken":0.071,"result_schema":[{"field_type":"string","field_name":"Field","field_alias":"Field","field_index":0},{"field_type":"string","field_name":"Type","field_alias":"Type","field_index":1},{"field_type":"string","field_name":"Null","field_alias":"Null","field_index":2},{"field_type":"string","field_name":"Key","field_alias":"Key","field_index":3},{"field_type":"string","field_name":"Default","field_alias":"Default","field_index":4},{"field_type":"string","field_name":"Extra","field_alias":"Extra","field_index":5}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["5000140_bklog_container_log_demo_analysis"]},"errors":null,"trace_id":"9ad04717f6b8da2c921d371cb3915cdf","span_id":"57ea24802f21b887"}`,
-		"SELECT `namespace`, COUNT(`login_rate`) AS `_value_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1730118589181 AND `dtEventTimeStamp` < 1730118889181 AND `thedate` = '20241028' GROUP BY `namespace` LIMIT 10005": "{\"result\":true,\"message\":\"成功\",\"code\":\"00\",\"data\":{\"result_table_scan_range\":{\"132_lol_new_login_queue_login_1min\":{}},\"cluster\":\"default2\",\"totalRecords\":11,\"resource_use_summary\":{\"cpu_time_mills\":0,\"memory_bytes\":0,\"processed_bytes\":0,\"processed_rows\":0},\"source\":\"\",\"list\":[{\"namespace\":\"bgp2\",\"_value_\":5},{\"namespace\":\"cq100\",\"_value_\":5},{\"namespace\":\"gz100\",\"_value_\":5},{\"namespace\":\"hn0-new\",\"_value_\":5},{\"namespace\":\"hn1\",\"_value_\":5},{\"namespace\":\"hn10\",\"_value_\":5},{\"namespace\":\"nj100\",\"_value_\":5},{\"namespace\":\"njloadtest\",\"_value_\":5},{\"namespace\":\"pbe\",\"_value_\":5},{\"namespace\":\"tj100\",\"_value_\":5},{\"namespace\":\"tj101\",\"_value_\":5}],\"select_fields_order\":[\"namespace\",\"_value_\"],\"sql\":\"SELECT `namespace`, COUNT(`login_rate`) AS `_value_` FROM mapleleaf_132.lol_new_login_queue_login_1min_132 WHERE (`dtEventTimeStamp` >= 1730118589181) AND (`dtEventTimeStamp` < 1730118889181) GROUP BY `namespace` LIMIT 10005\",\"total_record_size\":3216,\"timetaken\":0.24,\"bksql_call_elapsed_time\":0,\"device\":\"tspider\",\"result_table_ids\":[\"132_lol_new_login_queue_login_1min\"]},\"errors\":null,\"trace_id\":\"5c70526f101a00531ef8fbaadc783693\",\"span_id\":\"2a31369ceb208970\"}",
+		"SELECT `namespace`, COUNT(`login_rate`) AS `_value_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1730118589181 AND `dtEventTimeStamp` < 1730118889181 AND `thedate` = '20241028' GROUP BY `namespace` ORDER BY `_timestamp_` ASC LIMIT 10005": "{\"result\":true,\"message\":\"成功\",\"code\":\"00\",\"data\":{\"result_table_scan_range\":{\"132_lol_new_login_queue_login_1min\":{}},\"cluster\":\"default2\",\"totalRecords\":11,\"resource_use_summary\":{\"cpu_time_mills\":0,\"memory_bytes\":0,\"processed_bytes\":0,\"processed_rows\":0},\"source\":\"\",\"list\":[{\"namespace\":\"bgp2\",\"_value_\":5},{\"namespace\":\"cq100\",\"_value_\":5},{\"namespace\":\"gz100\",\"_value_\":5},{\"namespace\":\"hn0-new\",\"_value_\":5},{\"namespace\":\"hn1\",\"_value_\":5},{\"namespace\":\"hn10\",\"_value_\":5},{\"namespace\":\"nj100\",\"_value_\":5},{\"namespace\":\"njloadtest\",\"_value_\":5},{\"namespace\":\"pbe\",\"_value_\":5},{\"namespace\":\"tj100\",\"_value_\":5},{\"namespace\":\"tj101\",\"_value_\":5}],\"select_fields_order\":[\"namespace\",\"_value_\"],\"sql\":\"SELECT `namespace`, COUNT(`login_rate`) AS `_value_` FROM mapleleaf_132.lol_new_login_queue_login_1min_132 WHERE (`dtEventTimeStamp` >= 1730118589181) AND (`dtEventTimeStamp` < 1730118889181) GROUP BY `namespace` LIMIT 10005\",\"total_record_size\":3216,\"timetaken\":0.24,\"bksql_call_elapsed_time\":0,\"device\":\"tspider\",\"result_table_ids\":[\"132_lol_new_login_queue_login_1min\"]},\"errors\":null,\"trace_id\":\"5c70526f101a00531ef8fbaadc783693\",\"span_id\":\"2a31369ceb208970\"}",
 
 		// count by 1m with mysql
 		"SELECT COUNT(`login_rate`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 60000) * 60000 - 0) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1730118589181 AND `dtEventTimeStamp` < 1730118889181 AND `thedate` = '20241028' GROUP BY (FLOOR((dtEventTimeStamp + 0) / 60000) * 60000 - 0) ORDER BY `_timestamp_` ASC LIMIT 10005": "{\"result\":true,\"message\":\"成功\",\"code\":\"00\",\"data\":{\"result_table_scan_range\":{\"132_lol_new_login_queue_login_1min\":{}},\"cluster\":\"default2\",\"totalRecords\":5,\"resource_use_summary\":{\"cpu_time_mills\":0,\"memory_bytes\":0,\"processed_bytes\":0,\"processed_rows\":0},\"source\":\"\",\"list\":[{\"_value_\":11,\"_timestamp_\":1730118600000},{\"_value_\":11,\"_timestamp_\":1730118660000},{\"_value_\":11,\"_timestamp_\":1730118720000},{\"_value_\":11,\"_timestamp_\":1730118780000},{\"_value_\":11,\"_timestamp_\":1730118840000}],\"select_fields_order\":[\"_value_\",\"_timestamp_\"],\"sql\":\"SELECT COUNT(`login_rate`) AS `_value_`, MAX(`dtEventTimeStamp` - ((`dtEventTimeStamp` - 0) % 60000 - 0)) AS `_timestamp_` FROM mapleleaf_132.lol_new_login_queue_login_1min_132 WHERE (`dtEventTimeStamp` >= 1730118589181) AND (`dtEventTimeStamp` < 1730118889181) GROUP BY `dtEventTimeStamp` - (`dtEventTimeStamp` % 60000) ORDER BY `_timestamp_` LIMIT 10005\",\"total_record_size\":1424,\"timetaken\":0.231,\"bksql_call_elapsed_time\":0,\"device\":\"tspider\",\"result_table_ids\":[\"132_lol_new_login_queue_login_1min\"]},\"errors\":null,\"trace_id\":\"127866cb51f85a4a7f620eb0e66588b1\",\"span_id\":\"578f26767bbb78c8\"}",
@@ -263,6 +263,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 
 	for name, c := range map[string]struct {
 		query    *metadata.Query
+		options  string
 		expected string
 	}{
 		"query with in": {
@@ -594,7 +595,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "time" : 1742540045
 } ]`,
 		},
-		"query raw by doris use condition": {
+		"query raw by doris use condition and result schema": {
 			query: &metadata.Query{
 				TableID:     "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
 				DB:          "2_bklog_pure_v4_log_doris_for_unify_query",
@@ -611,6 +612,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 				},
 				Size: 5,
 			},
+			options: `{"2_bklog.bklog_pure_v4_log_doris_for_unify_query":{"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"__shard_key__","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"cloudId","field_index":2,"field_name":"__c2","field_type":"double"},{"field_alias":"serverIp","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"path","field_index":4,"field_name":"__c4","field_type":"string"},{"field_alias":"gseIndex","field_index":5,"field_name":"__c5","field_type":"double"},{"field_alias":"iterationIndex","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"dtEventTimeStamp","field_index":7,"field_name":"__c7","field_type":"long"},{"field_alias":"dtEventTime","field_index":8,"field_name":"__c8","field_type":"string"},{"field_alias":"localTime","field_index":9,"field_name":"__c9","field_type":"string"},{"field_alias":"__ext","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"file","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"level","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"log","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"message","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"report_time","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"long"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]}}`,
 			expected: `[ {
   "__data_label" : "log_index_set_1183",
   "__index" : "2_bklog_pure_v4_log_doris_for_unify_query",
@@ -723,6 +725,27 @@ func TestInstance_QueryRaw(t *testing.T) {
   "trace_id" : "adb84ecc380008245cdb800b6fd54d7f"
 } ]`,
 		},
+		"query raw by doris dry run": {
+			query: &metadata.Query{
+				TableID:     "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
+				DB:          "2_bklog_pure_v4_log_doris_for_unify_query",
+				Measurement: "doris",
+				Field:       "dtEventTimeStamp",
+				DataLabel:   "log_index_set_1183",
+				AllConditions: metadata.AllConditions{
+					{
+						{DimensionName: "message", Value: []string{"Bk-Query-Source"}, Operator: "contains"},
+					},
+					{
+						{DimensionName: "level", Value: []string{"error", "info"}, Operator: "contains"},
+					},
+				},
+				DryRun: true,
+				Size:   5,
+			},
+			options:  "{\"2_bklog.bklog_pure_v4_log_doris_for_unify_query\":{\"sql\":\"SELECT *, `dtEventTimeStamp` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_pure_v4_log_doris_for_unify_query`.doris WHERE `dtEventTimeStamp` \\u003e= 1730118589181 AND `dtEventTimeStamp` \\u003c= 1730118889181 AND `thedate` = '20241028' AND (`message` MATCH_PHRASE 'Bk-Query-Source' OR (`level` MATCH_PHRASE 'error' OR `level` MATCH_PHRASE 'info')) LIMIT 5\"}}",
+			expected: `[]`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
@@ -735,12 +758,16 @@ func TestInstance_QueryRaw(t *testing.T) {
 
 			dataCh := make(chan map[string]any)
 
+			var (
+				options metadata.ResultTableOptions
+				err     error
+			)
 			go func() {
 				defer func() {
 					close(dataCh)
 				}()
 
-				_, _, err := ins.QueryRawData(ctx, c.query, start, end, dataCh)
+				_, options, err = ins.QueryRawData(ctx, c.query, start, end, dataCh)
 				assert.Nil(t, err)
 			}()
 
@@ -753,6 +780,11 @@ func TestInstance_QueryRaw(t *testing.T) {
 			assert.Nil(t, err)
 
 			assert.JSONEq(t, c.expected, string(actual))
+
+			if c.options != "" {
+				optString, _ := json.Marshal(options)
+				assert.Equal(t, c.options, string(optString))
+			}
 		})
 	}
 }
@@ -793,7 +825,7 @@ func TestInstance_bkSql(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 15000) * 15000 - 0) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' AND `namespace` IN ('bgp2-new', 'gz100') GROUP BY `namespace`, (FLOOR((dtEventTimeStamp + 0) / 15000) * 15000 - 0) ORDER BY `_timestamp_` ASC",
+			expected: "SELECT `namespace`, COUNT(`login_rate`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 15000) * 15000 - 0) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' AND `namespace` IN ('bgp2-new', 'gz100') GROUP BY `namespace`, (FLOOR((dtEventTimeStamp + 0) / 15000) * 15000 - 0)",
 		},
 		{
 			name: "conditions with or",
@@ -994,7 +1026,7 @@ func TestInstance_bkSql(t *testing.T) {
 				},
 			},
 
-			expected: "SELECT COUNT(`gseIndex`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 300000) * 300000 - 0) AS `_timestamp_` FROM `2_bklog_bkunify_query_doris` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' GROUP BY (FLOOR((dtEventTimeStamp + 0) / 300000) * 300000 - 0) ORDER BY `_timestamp_` ASC",
+			expected: "SELECT COUNT(`gseIndex`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 300000) * 300000 - 0) AS `_timestamp_` FROM `2_bklog_bkunify_query_doris` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND `thedate` = '20240612' GROUP BY (FLOOR((dtEventTimeStamp + 0) / 300000) * 300000 - 0)",
 		},
 		{
 			name: "aggregate cardinality with doris",
@@ -1056,7 +1088,7 @@ func TestInstance_bkSql(t *testing.T) {
 				},
 			},
 
-			expected: "SELECT COUNT(`gseIndex`) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 5 AS INT) * 5 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `thedate` = '20240612' GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC",
+			expected: "SELECT COUNT(`gseIndex`) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 5 AS INT) * 5 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `thedate` = '20240612' GROUP BY _timestamp_",
 		},
 
 		//{
@@ -1180,7 +1212,7 @@ func TestInstance_bkSql(t *testing.T) {
 				},
 			},
 
-			expected: "SELECT COUNT(`matchstep_start_to_fail_0_100`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 3600000) * 3600000 - 0) AS `_timestamp_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime` WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` < 1733846399000 AND `thedate` >= '20241209' AND `thedate` <= '20241210' GROUP BY (FLOOR((dtEventTimeStamp + 0) / 3600000) * 3600000 - 0) ORDER BY `_timestamp_` ASC",
+			expected: "SELECT COUNT(`matchstep_start_to_fail_0_100`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 3600000) * 3600000 - 0) AS `_timestamp_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime` WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` < 1733846399000 AND `thedate` >= '20241209' AND `thedate` <= '20241210' GROUP BY (FLOOR((dtEventTimeStamp + 0) / 3600000) * 3600000 - 0)",
 		},
 	}
 
@@ -1446,7 +1478,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.Unix(1741334700, 0),
 			end:      time.Unix(1741335000, 0),
-			expected: "SELECT CAST(__ext['io_kubernetes_workload_name'] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, CAST(__ext['io_kubernetes_workload_type'] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_type`, COUNT(CAST(__ext['container_id'] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` <= 1741335000000 AND `thedate` = '20250307' AND CAST(__ext['io_kubernetes_workload_name'] AS STRING) = 'bkm-daemonset-worker' AND `bk_host_id` = '267730' GROUP BY __ext__bk_46__io_kubernetes_workload_name, __ext__bk_46__io_kubernetes_workload_type, _timestamp_ ORDER BY CAST(__ext['io_kubernetes_workload_name'] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
+			expected: "SELECT CAST(__ext['io_kubernetes_workload_name'] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, CAST(__ext['io_kubernetes_workload_type'] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_type`, COUNT(CAST(__ext['container_id'] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` <= 1741335000000 AND `thedate` = '20250307' AND CAST(__ext['io_kubernetes_workload_name'] AS STRING) = 'bkm-daemonset-worker' AND `bk_host_id` = '267730' GROUP BY __ext__bk_46__io_kubernetes_workload_name, __ext__bk_46__io_kubernetes_workload_type, _timestamp_ ORDER BY CAST(__ext['io_kubernetes_workload_name'] AS STRING) DESC LIMIT 3",
 		},
 		// 测试用例11: doris 处理 object 字段 + 时间聚合 5m
 		{
@@ -1472,7 +1504,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.Unix(1741334700, 0),
 			end:      time.Unix(1741335000, 0),
-			expected: "SELECT CAST(__ext['io_kubernetes_workload_name'] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, COUNT(CAST(__ext['container_id'] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 5 AS INT) * 5 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` <= 1741335000000 AND `thedate` = '20250307' GROUP BY __ext__bk_46__io_kubernetes_workload_name, _timestamp_ ORDER BY CAST(__ext['io_kubernetes_workload_name'] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
+			expected: "SELECT CAST(__ext['io_kubernetes_workload_name'] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, COUNT(CAST(__ext['container_id'] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 5 AS INT) * 5 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` <= 1741335000000 AND `thedate` = '20250307' GROUP BY __ext__bk_46__io_kubernetes_workload_name, _timestamp_ ORDER BY CAST(__ext['io_kubernetes_workload_name'] AS STRING) DESC LIMIT 3",
 		},
 		// 测试用例12: doris 处理 object 字段 + 时间聚合 15s
 		{
@@ -1498,7 +1530,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.Unix(1741334700, 0),
 			end:      time.Unix(1741335000, 0),
-			expected: "SELECT CAST(__ext['io_kubernetes_workload_name'] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, COUNT(CAST(__ext['container_id'] AS STRING)) AS `_value_`, CAST(FLOOR(dtEventTimeStamp / 15000) AS INT) * 15000  AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` <= 1741335000000 AND `thedate` = '20250307' GROUP BY __ext__bk_46__io_kubernetes_workload_name, _timestamp_ ORDER BY CAST(__ext['io_kubernetes_workload_name'] AS STRING) DESC, `_timestamp_` ASC LIMIT 3",
+			expected: "SELECT CAST(__ext['io_kubernetes_workload_name'] AS STRING) AS `__ext__bk_46__io_kubernetes_workload_name`, COUNT(CAST(__ext['container_id'] AS STRING)) AS `_value_`, CAST(FLOOR(dtEventTimeStamp / 15000) AS INT) * 15000  AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741334700000 AND `dtEventTimeStamp` <= 1741335000000 AND `thedate` = '20250307' GROUP BY __ext__bk_46__io_kubernetes_workload_name, _timestamp_ ORDER BY CAST(__ext['io_kubernetes_workload_name'] AS STRING) DESC LIMIT 3",
 		},
 		// 测试用例13: doris 处理多层级 object 字段
 		{
@@ -1532,7 +1564,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.UnixMilli(1744880448784),
 			end:      time.UnixMilli(1744884048785),
-			expected: "SELECT CAST(attributes['http.host'] AS STRING) AS `attributes__bk_46__http__bk_46__host`, COUNT(CAST(attributes['http.host'] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1744880448784 AND `dtEventTimeStamp` <= 1744884048785 AND `thedate` = '20250417' AND CAST(attributes['http.host'] AS STRING) IS NOT NULL GROUP BY attributes__bk_46__http__bk_46__host, _timestamp_ ORDER BY CAST(attributes['http.host'] AS STRING) DESC, `_timestamp_` ASC LIMIT 1",
+			expected: "SELECT CAST(attributes['http.host'] AS STRING) AS `attributes__bk_46__http__bk_46__host`, COUNT(CAST(attributes['http.host'] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1744880448784 AND `dtEventTimeStamp` <= 1744884048785 AND `thedate` = '20250417' AND CAST(attributes['http.host'] AS STRING) IS NOT NULL GROUP BY attributes__bk_46__http__bk_46__host, _timestamp_ ORDER BY CAST(attributes['http.host'] AS STRING) DESC LIMIT 1",
 		},
 		{
 			name: "nested field eq",
@@ -1692,7 +1724,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.UnixMilli(1750953836000),
 			end:      time.UnixMilli(1750953838000),
-			expected: "SELECT COUNT(CAST(events['attributes']['exception.type'] AS TEXT ARRAY)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND (ARRAY_CONTAINS(CAST(events['attributes']['exception.type'] AS TEXT ARRAY), '*errors.withMessage') == 1 OR ARRAY_CONTAINS(CAST(events['attributes']['exception.type'] AS TEXT ARRAY), 'info') == 1) GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC LIMIT 1",
+			expected: "SELECT COUNT(CAST(events['attributes']['exception.type'] AS TEXT ARRAY)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND (ARRAY_CONTAINS(CAST(events['attributes']['exception.type'] AS TEXT ARRAY), '*errors.withMessage') == 1 OR ARRAY_CONTAINS(CAST(events['attributes']['exception.type'] AS TEXT ARRAY), 'info') == 1) GROUP BY _timestamp_ LIMIT 1",
 		},
 		{
 			name: "nested field eq and aggregate",
@@ -1724,7 +1756,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.UnixMilli(1750953836000),
 			end:      time.UnixMilli(1750953838000),
-			expected: "SELECT COUNT(CAST(events['attributes']['exception.type'] AS TEXT ARRAY)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_CONTAINS(CAST(events['attributes']['exception.type'] AS TEXT ARRAY), '*errors.withMessage') == 1 AND `events` != '{}' GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC LIMIT 1",
+			expected: "SELECT COUNT(CAST(events['attributes']['exception.type'] AS TEXT ARRAY)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND ARRAY_CONTAINS(CAST(events['attributes']['exception.type'] AS TEXT ARRAY), '*errors.withMessage') == 1 AND `events` != '{}' GROUP BY _timestamp_ LIMIT 1",
 		},
 		{
 			name: "nested field eq and aggregate",
@@ -1751,7 +1783,7 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.UnixMilli(1750953836000),
 			end:      time.UnixMilli(1750953838000),
-			expected: "SELECT COUNT(CAST(resource['bk.instance.id'] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND CAST(resource['bk.instance.id'] AS STRING) IS NOT NULL GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC LIMIT 1",
+			expected: "SELECT COUNT(CAST(resource['bk.instance.id'] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND CAST(resource['bk.instance.id'] AS STRING) IS NOT NULL GROUP BY _timestamp_ LIMIT 1",
 		},
 		{
 			name: "object field eq and aggregate",
@@ -1778,7 +1810,74 @@ func TestInstance_bkSql_EdgeCases(t *testing.T) {
 			},
 			start:    time.UnixMilli(1750953836000),
 			end:      time.UnixMilli(1750953838000),
-			expected: "SELECT COUNT(CAST(extra['queueDuration'] AS INT)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND CAST(extra['queueDuration'] AS INT) IS NOT NULL GROUP BY _timestamp_ ORDER BY `_timestamp_` ASC LIMIT 1",
+			expected: "SELECT COUNT(CAST(extra['queueDuration'] AS INT)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1 AS INT) * 1 - 0) * 60 * 1000) AS `_timestamp_` FROM `2_bkapm_trace_bkop_doris`.doris WHERE `dtEventTimeStamp` >= 1750953836000 AND `dtEventTimeStamp` <= 1750953838000 AND `thedate` = '20250627' AND CAST(extra['queueDuration'] AS INT) IS NOT NULL GROUP BY _timestamp_ LIMIT 1",
+		},
+		{
+			name: "object field eq and aggregate with sql - 1",
+			query: &metadata.Query{
+				DB:          "100968_bklog_proz_ds_analysis",
+				Measurement: sql_expr.Doris,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "log",
+							Operator:      metadata.ConditionEqual,
+							Value:         []string{"MetricsOnRPCSendBunch a big bunch happen"},
+						},
+					},
+				},
+				FieldAlias: map[string]string{
+					"pod_namespace": "__ext.pod.namespace",
+				},
+				QueryString: "test",
+				SQL: `SELECT
+  pod_namespace as ns,
+  split_part (log, '|', 3) as ct,
+  count(*)
+WHERE
+ log MATCH_ALL 'Reliable RPC called out of limit'
+group by
+  ns,
+  ct
+LIMIT
+  1000`,
+			},
+			start:    time.UnixMilli(1751958582292),
+			end:      time.UnixMilli(1752563382292),
+			expected: "SELECT CAST(__ext['pod']['namespace'] AS STRING) AS ns, split_part(`log`, '|', 3) AS ct, count(*) FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_ALL 'Reliable RPC called out of limit' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND `log` = 'test' AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `ns`, `ct` LIMIT 1000",
+		},
+		{
+			name: "object field eq and aggregate with sql - 2",
+			query: &metadata.Query{
+				DB:          "100968_bklog_proz_ds_analysis",
+				Measurement: sql_expr.Doris,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "log",
+							Operator:      metadata.ConditionEqual,
+							Value:         []string{"MetricsOnRPCSendBunch a big bunch happen"},
+						},
+					},
+				},
+				FieldAlias: map[string]string{
+					"pod_namespace": "__ext.pod.namespace",
+				},
+				QueryString: "test",
+				SQL: `SELECT
+  serverIp,
+  events.attributes.exception.type AS et,
+  COUNT(*) AS log_count
+WHERE
+  log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal'
+GROUP BY
+  serverIp, et
+LIMIT
+  1000`,
+			},
+			start:    time.UnixMilli(1751958582292),
+			end:      time.UnixMilli(1752563382292),
+			expected: "SELECT `serverIp`, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS et, COUNT(*) AS log_count FROM `100968_bklog_proz_ds_analysis`.doris WHERE `log` MATCH_PHRASE 'Error' OR `log` MATCH_PHRASE 'Fatal' AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND `log` = 'test' AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `serverIp`, `et` LIMIT 1000",
 		},
 	}
 

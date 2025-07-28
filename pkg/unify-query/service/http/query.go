@@ -1112,8 +1112,8 @@ func prepareQueryList(ctx context.Context, queryTs *structured.QueryTs) (queryLi
 	return
 }
 
-func buildStorageQueryMap(queryList []*metadata.Query) map[string][]*metadata.Query {
-	storageQueryMap := make(map[string][]*metadata.Query)
+func buildStorageQueryMap(queryList []*metadata.Query) (storageQueryMap map[string][]*metadata.Query) {
+	storageQueryMap = make(map[string][]*metadata.Query)
 	for _, qry := range queryList {
 		storageIds := qry.CalcStorageIDs()
 		if storageIds == nil {
@@ -1125,20 +1125,20 @@ func buildStorageQueryMap(queryList []*metadata.Query) map[string][]*metadata.Qu
 		}
 	}
 
-	return storageQueryMap
+	return
 }
 
-func processQueryResults(dataCh <-chan map[string]any, queryTs *structured.QueryTs, ignoreDimensions []string) []map[string]any {
+func processQueryResults(dataCh <-chan map[string]any, queryTs *structured.QueryTs, ignoreDimensions []string) (list []map[string]any) {
 	var data []map[string]any
 	for d := range dataCh {
 		data = append(data, d)
 	}
-	list := make([]map[string]any, 0, len(data))
 
 	if queryTs.OrderBy != nil && len(queryTs.OrderBy.Orders()) > 0 {
 		queryTs.OrderBy.Orders().SortSliceList(data)
 	}
 
+	list = make([]map[string]any, 0, len(data))
 	for _, item := range data {
 		if item == nil {
 			continue

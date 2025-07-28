@@ -32,6 +32,11 @@ const (
 	clearCacheField = "clear_cache"
 )
 
+var (
+	ErrorOfSessionAlreadyLocked = fmt.Errorf("failed to acquire lock, already locked")
+	ErrorOfInvalidLockType      = fmt.Errorf("invalid lock type")
+)
+
 func ScrollGenerateQueryTsKey(queryTs any, userName string) (string, error) {
 	queryTsMap, err := cast.ToStringMapE(queryTs)
 	if err != nil {
@@ -62,13 +67,13 @@ func GetLockKey(queryTsKey string) string {
 }
 
 func ScrollAcquireRedisLock(ctx context.Context, lockKey string, timeout time.Duration) error {
-	result := globalInstance.client.SetNX(ctx, lockKey, "locked", timeout)
+	result := Client().SetNX(ctx, lockKey, "locked", timeout)
 	if result.Err() != nil {
 		return result.Err()
 	}
 
 	if !result.Val() {
-		return fmt.Errorf("failed to acquire lock, already locked")
+		return ErrorOfSessionAlreadyLocked
 	}
 
 	return nil
@@ -77,10 +82,10 @@ func ScrollAcquireRedisLock(ctx context.Context, lockKey string, timeout time.Du
 func ScrollReleaseRedisLock(ctx context.Context, lock interface{}) error {
 	lockKey, ok := lock.(string)
 	if !ok {
-		return fmt.Errorf("invalid lock type")
+		return ErrorOfInvalidLockType
 	}
 
-	return globalInstance.client.Del(ctx, lockKey).Err()
+	return Client().Del(ctx, lockKey).Err()
 }
 
 func ScrollGetOrCreateSession(ctx context.Context, sessionKey string, forceClear bool, timeout time.Duration, maxSlice int, limit int) (*ScrollSession, error) {
@@ -105,9 +110,7 @@ func ScrollGetOrCreateSession(ctx context.Context, sessionKey string, forceClear
 
 	var session *ScrollSession
 	if err := json.Unmarshal([]byte(result.Val()), &session); err != nil {
-		session = NewScrollSession(maxSlice, timeout, limit)
-	} else {
-		session.LastAccessAt = time.Now()
+		return nil, err
 	}
 
 	if err := scrollUpdateSession(ctx, sessionKey, session); err != nil {
@@ -124,32 +127,28 @@ func scrollUpdateSession(ctx context.Context, key string, session *ScrollSession
 		return err
 	}
 
-	return globalInstance.client.Set(ctx, key, sessionBytes, session.ScrollTimeout).Err()
+	return Client().Set(ctx, key, sessionBytes, session.ScrollTimeout).Err()
 }
 
-func UpdateSession(ctx context.Context, sessionKey string, session *ScrollSession) (err error) {
-	if globalInstance.client == nil {
-		return fmt.Errorf("redis client not available")
-	}
+func UpdateSession(ctx context.Context, sessionKey string, session *ScrollSession) error {
 	session.LastAccessAt = time.Now()
 	sessionBytes, err := json.Marshal(session)
 	if err != nil {
-		return
+		return err
 	}
 
-	err = globalInstance.client.Set(ctx, sessionKey, sessionBytes, session.ScrollTimeout).Err()
-	if err != nil {
-		return
+	if err = Client().Set(ctx, sessionKey, sessionBytes, session.ScrollTimeout).Err(); err != nil {
+		return err
 	}
 
-	return err
+	return nil
 }
 
 func ScrollProcessSliceResult(ctx context.Context, sessionKey string, session *ScrollSession, connect, tableID string, sliceIdx int, tsDbType string, size int64, options metadata.ResultTableOptions) (err error) {
 	ctx, span := trace.NewSpan(ctx, "scroll-process-slice-result")
 	defer span.End(&err)
 	isSliceDone := size == 0
-	span.Set("key", fmt.Sprintf("%s:%s:%s", connect, tableID, sliceIdx))
+	span.Set("key", fmt.Sprintf("%s:%s:%d", connect, tableID, sliceIdx))
 	span.Set("size", size)
 	if isSliceDone {
 		session.RemoveScrollID(connect, tableID, sliceIdx)

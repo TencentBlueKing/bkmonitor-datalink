@@ -143,6 +143,17 @@ func (e *ScrollQueryExecutor) submitSliceQuery(ctx context.Context, qry *metadat
 		defer e.sendWg.Done()
 		if err := processSliceQueryWithHelper(ctx, newSliceQueryContext(e, scrollSessionHelperInstance, qry, slice, storage)); err != nil {
 			log.Warnf(e.ctx, "Failed to submit slice query: %v", err)
+			result := SliceQueryResult{
+				Connect:    storage.Address,
+				TableID:    qry.TableID,
+				SliceIndex: slice.SliceIndex,
+				ScrollID:   slice.ScrollID,
+				TsDbType:   "",
+				Size:       0,
+				Error:      err,
+				Message:    fmt.Sprintf("Failed to submit slice query: %v", err),
+			}
+			e.resultCh <- result
 			return
 		}
 	})
@@ -184,6 +195,22 @@ func processSliceQueryWithHelper(ctx context.Context, queryCtx *SliceQueryContex
 			err.Error(),
 		)
 		queryCtx.ResultCh <- result
+
+		queryCtx.SessionLock.Lock()
+		queryCtx.Session.RemoveScrollID(queryCtx.Storage.Address, queryCtx.Query.TableID, queryCtx.Slice.SliceIndex)
+		queryCtx.Session.MarkSliceDone(queryCtx.Storage.Address, queryCtx.Query.TableID, queryCtx.Slice.SliceIndex)
+
+		_, hasMoreData := queryCtx.Session.HasMoreData(instance.InstanceType())
+		if !hasMoreData {
+			queryCtx.Session.Status = redisUtil.SessionStatusDone
+		}
+
+		if updateErr := redisUtil.UpdateSession(queryCtx.Ctx, queryCtx.SessionKey, queryCtx.Session); updateErr != nil {
+			err = updateErr
+
+		}
+		queryCtx.SessionLock.Unlock()
+
 		return err
 	}
 
@@ -202,7 +229,6 @@ func processSliceQueryWithHelper(ctx context.Context, queryCtx *SliceQueryContex
 	queryCtx.SessionLock.Unlock()
 
 	if err != nil {
-		log.Warnf(queryCtx.Ctx, "Failed to process slice result: %v", err)
 		result.Error = err
 		result.Message = fmt.Sprintf("Failed to process slice result: %v", err)
 	}

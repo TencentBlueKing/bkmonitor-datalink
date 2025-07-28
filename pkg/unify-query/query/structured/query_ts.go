@@ -614,7 +614,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		if buildErr != nil {
 			return nil, buildErr
 		}
-
 		query.Aggregates = aggregates
 
 		// 针对 vmRt 不为空的情况，进行 vm 判定

@@ -1016,7 +1016,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 	if err != nil {
 		return
 	}
-	span.Set("scroll-done", isDone)
+
 	if isDone {
 		done = true
 		// return empty list. list: []
@@ -1034,8 +1034,6 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 
 func executeScrollQueriesWithHelper(ctx context.Context, scrollSessionHelperInstance *redisUtil.ScrollSessionHelper, sessionKey string, session *redisUtil.ScrollSession, queryList []*metadata.Query,
 	start, end time.Time, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, done bool, err error) {
-	ctx, span := trace.NewSpan(ctx, "execute-scroll-queries")
-	defer span.End(&err)
 
 	executor := newScrollQueryExecutor(ctx, sessionKey, session, queryTs, start, end)
 	defer executor.cleanup()
@@ -1044,7 +1042,7 @@ func executeScrollQueriesWithHelper(ctx context.Context, scrollSessionHelperInst
 	ignoreDimensions := []string{elasticsearch.KeyAddress}
 
 	var wg sync.WaitGroup
-	var executeErr error
+	var executeErr, collectErr error
 
 	wg.Add(1)
 	go func() {
@@ -1055,17 +1053,25 @@ func executeScrollQueriesWithHelper(ctx context.Context, scrollSessionHelperInst
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		executeErr = executor.executeQueries(ctx, storageQueryMap, scrollSessionHelperInstance)
+		executeErr = executor.executeQueries(storageQueryMap, scrollSessionHelperInstance)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		total, collectErr = executor.collectResults()
 	}()
 
 	wg.Wait()
-	total = int64(len(list))
+
 	if executeErr != nil {
 		err = executeErr
 	}
+	if collectErr != nil {
+		err = errors.Join(err, collectErr)
+	}
 
 	resultTableOptions = executor.resultTableOptions
-	span.Set("scroll-results", executor.resultTableOptions)
 	done = executor.session.Status == redisUtil.SessionStatusDone
 	return
 }

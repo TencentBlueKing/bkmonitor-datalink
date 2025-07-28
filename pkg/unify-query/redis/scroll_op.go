@@ -21,7 +21,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 func isRedisNilError(err error) bool {
@@ -145,12 +144,8 @@ func UpdateSession(ctx context.Context, sessionKey string, session *ScrollSessio
 	return err
 }
 
-func ScrollProcessSliceResult(ctx context.Context, sessionKey string, session *ScrollSession, connect, tableID string, sliceIdx int, tsDbType string, size int64, options metadata.ResultTableOptions) (err error) {
-	ctx, span := trace.NewSpan(ctx, "scroll-process-slice-result")
-	defer span.End(&err)
+func ScrollProcessSliceResult(ctx context.Context, sessionKey string, session *ScrollSession, connect, tableID string, sliceIdx int, tsDbType string, size int64, options metadata.ResultTableOptions) error {
 	isSliceDone := size == 0
-	span.Set("key", fmt.Sprintf("%s:%s:%s", connect, tableID, sliceIdx))
-	span.Set("size", size)
 	if isSliceDone {
 		session.RemoveScrollID(connect, tableID, sliceIdx)
 		session.MarkSliceDone(connect, tableID, sliceIdx)
@@ -167,13 +162,10 @@ func ScrollProcessSliceResult(ctx context.Context, sessionKey string, session *S
 			session.SetScrollID(connect, tableID, "", sliceIdx)
 		}
 	}
-	nextScrollID, hasMoreData := session.HasMoreData(tsDbType)
-	span.Set("nextScrollID", nextScrollID)
 
-	if !hasMoreData {
+	if !session.HasMoreData(tsDbType) {
 		session.Status = SessionStatusDone
 	}
 
-	err = UpdateSession(ctx, sessionKey, session)
-	return err
+	return UpdateSession(ctx, sessionKey, session)
 }

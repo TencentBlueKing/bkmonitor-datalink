@@ -16,7 +16,6 @@ import (
 	"time"
 
 	ants "github.com/panjf2000/ants/v2"
-	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
@@ -25,22 +24,6 @@ import (
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
-
-// SyncBkccSpaceDataSource 同步bkcc数据源和空间的关系及数据源的所属类型
-func SyncBkccSpaceDataSource(ctx context.Context, t *t.Task) error {
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("SyncBkccSpaceDataSource Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Info("start sync bkcc space data source task")
-	svc := service.NewSpaceDataSourceSvc(nil)
-	if err := svc.SyncBkccSpaceDataSource(); err != nil {
-		return errors.Wrap(err, "sync bkcc space data source failed")
-	}
-	logger.Info("sync bkcc space data source successfully")
-	return nil
-}
 
 // PushAndPublishSpaceRouterInfo 推送并发布空间路由信息
 func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
@@ -135,7 +118,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			name := "[task] PushAndPublishSpaceRouterInfo result_table_detail"
 			var tableIdList []string
 			var rtList []resulttable.ResultTable
-			if err = resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).DefaultStorageEq("influxdb").IsEnableEq(true).IsDeletedEq(false).All(&rtList); err != nil {
+			if err = resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).BkTenantIdEq(bkTenantId).DefaultStorageEq("influxdb").IsEnableEq(true).IsDeletedEq(false).All(&rtList); err != nil {
 				logger.Errorf("%s error, %s", name, err)
 				return
 			}
@@ -144,7 +127,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 				tableIdList = append(tableIdList, rt.TableId)
 			}
 
-			if err = pusher.PushTableIdDetail(bkTenantId, tableIdList, true, true); err != nil {
+			if err = pusher.PushTableIdDetail(bkTenantId, tableIdList, true); err != nil {
 				logger.Errorf("%s error %s", name, err)
 				return
 			}
@@ -179,6 +162,39 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 
 		// 调用 PushEsTableIdDetail 方法
 		if err = pusher.PushEsTableIdDetail(tableIdList, true); err != nil {
+			logger.Errorf("%s error %s", name, err)
+			return
+		}
+		logger.Infof("%s success, cost: %s", name, time.Since(t1))
+	})
+
+	// 处理 result_table_detail 路由: Doris 类型
+	wg.Add(1)
+	_ = p.Submit(func() {
+		defer wg.Done()
+		t1 := time.Now()
+		name := "[task] PushAndPublishSpaceRouterInfo result_table_detail (doris)"
+
+		var tableIdList []string
+		var rtList []resulttable.ResultTable
+
+		// 查询 default_storage 为 "elasticsearch"，启用且未删除的结果表
+		if err = resulttable.NewResultTableQuerySet(db).
+			Select(resulttable.ResultTableDBSchema.TableId).
+			DefaultStorageEq("doris").
+			IsEnableEq(true).IsDeletedEq(false).
+			All(&rtList); err != nil {
+			logger.Errorf("%s error, %s", name, err)
+			return
+		}
+
+		// 提取 TableID 列表
+		for _, rt := range rtList {
+			tableIdList = append(tableIdList, rt.TableId)
+		}
+
+		// 调用 PushEsTableIdDetail 方法
+		if err = pusher.PushDorisTableIdDetail(tableIdList, true); err != nil {
 			logger.Errorf("%s error %s", name, err)
 			return
 		}

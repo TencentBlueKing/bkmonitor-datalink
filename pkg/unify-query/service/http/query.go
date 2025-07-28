@@ -196,6 +196,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 		// 排序复用
 		ql.OrderBy = queryTs.OrderBy
+		ql.DryRun = queryTs.DryRun
 
 		// 如果 qry.Step 不存在去外部统一的 step
 		if ql.Step == "" {
@@ -420,7 +421,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		resp = NewPromData(queryTs.ResultColumns)
 	)
 
-	ctx, span := trace.NewSpan(ctx, "query-reference")
+	ctx, span := trace.NewSpan(ctx, "query-reference-with-prom-engine")
 	defer func() {
 		resp.TraceID = span.TraceID()
 		resp.Status = metadata.GetStatus(ctx)

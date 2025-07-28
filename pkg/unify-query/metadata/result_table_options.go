@@ -17,14 +17,24 @@ type ResultTableOption struct {
 	SearchAfter []any  `json:"search_after,omitempty"`
 	SliceID     *int   `json:"slice_id,omitempty"`
 	SliceMax    *int   `json:"slice_max,omitempty"`
+	SQL          string           `json:"sql,omitempty"`
+	ResultSchema []map[string]any `json:"result_schema,omitempty"`
+}
+
+func (o ResultTableOptions) getKey(tableID, address string) string {
+	key := tableID
+	if address != "" {
+		key = tableID + "|" + address
+	}
+	return key
+
 }
 
 func (o ResultTableOptions) SetOption(tableID, address string, option *ResultTableOption) {
 	if option == nil {
 		return
 	}
-
-	o[tableID+"|"+address] = option
+	o[o.getKey(tableID, address)] = option
 }
 
 func (o ResultTableOptions) GetOption(tableID, address string) *ResultTableOption {
@@ -32,7 +42,7 @@ func (o ResultTableOptions) GetOption(tableID, address string) *ResultTableOptio
 		return nil
 	}
 
-	if option, ok := o[tableID+"|"+address]; ok {
+	if option, ok := o[o.getKey(tableID, address)]; ok {
 		return option
 	}
 	return nil

@@ -499,12 +499,13 @@ func HandlerQueryReference(c *gin.Context) {
 
 	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
 	res, err := queryReferenceWithPromEngine(ctx, query)
-	span.Set("resp-table-length", len(res.Tables))
-
-	span.Set("resp-size", fmt.Sprint(unsafe.Sizeof(res)))
 	if err != nil {
 		resp.failed(ctx, err)
 		return
+	}
+	if res != nil {
+		span.Set("resp-table-length", len(res.Tables))
+		span.Set("resp-size", fmt.Sprint(unsafe.Sizeof(res)))
 	}
 
 	resp.success(ctx, res)

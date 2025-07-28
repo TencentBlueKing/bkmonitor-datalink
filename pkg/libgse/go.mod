@@ -2,10 +2,8 @@ module github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse
 
 go 1.23.0
 
-toolchain go1.24.4
-
 require (
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0
 	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/containerd/cgroups v1.0.1
 	github.com/elastic/beats v7.1.1+incompatible
@@ -30,6 +28,7 @@ require (
 	github.com/spf13/cast v1.3.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.16.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.16.0
+	golang.org/x/time v0.0.0-20220609170525-579cf78fd858
 )
 
 require (
@@ -101,5 +100,3 @@ require (
 )
 
 replace github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.12-bk+incompatible
-
-replace github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils => ../utils

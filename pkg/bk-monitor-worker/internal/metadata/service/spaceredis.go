@@ -11,6 +11,7 @@ package service
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -70,6 +71,7 @@ const (
 	UsageComposeBksaasOtherTableIds
 	// UsageComposeAllTypeTableIds BKCI&BKSAAS类型 组装指定全空间的可以访问的结果表数据
 	UsageComposeAllTypeTableIds
+	UsageComposeDorisTableIds
 )
 
 type FilterBuildContext struct {
@@ -82,6 +84,36 @@ type FilterBuildContext struct {
 	IsShared       bool   // 用于判断共享集群
 	ExtraStringVal string // 用于如 spaceObj.Id 这种转字符串场景
 	FilterAlias    string // 过滤条件key的别名
+}
+
+// 基础数据表名
+var BaseReportTableNames = []string{
+	"cpu_summary",
+	"cpu_detail",
+	"disk",
+	"env",
+	"inode",
+	"io",
+	"load",
+	"mem",
+	"net",
+	"netstat",
+	"swap",
+}
+
+// 基础采集数据链路来源 -- 主机系统、DBM、DEVX、Perforce
+const (
+	BaseReportSourceSystem   = "sys"
+	BaseReportSourceDBM      = "dbm"
+	BaseReportSourceDevx     = "devx"
+	BaseReportSourcePerforce = "perforce"
+)
+
+var BaseReportSources = []string{
+	BaseReportSourceSystem,
+	BaseReportSourceDBM,
+	BaseReportSourceDevx,
+	BaseReportSourcePerforce,
 }
 
 const (
@@ -112,7 +144,7 @@ func (s *SpacePusher) buildFiltersByUsage(filterBuilderOptions FilterBuildContex
 		key := filterBuilderOptions.FilterAlias
 		return []map[string]interface{}{{key: filterBuilderOptions.SpaceId}}
 
-	case UsageComposeBkciOtherTableIds, UsageComposeBksaasOtherTableIds, UsageComposeRecordRuleTableIds, UsageComposeEsTableIds, UsageComposeEsBkciTableIds:
+	case UsageComposeBkciOtherTableIds, UsageComposeBksaasOtherTableIds, UsageComposeRecordRuleTableIds, UsageComposeEsTableIds, UsageComposeEsBkciTableIds, UsageComposeDorisTableIds:
 		return []map[string]interface{}{}
 
 	case UsageComposeAllTypeTableIds: // BKCI&BKSAAS类型，组装指定全空间的可以访问的结果表数据
@@ -146,58 +178,6 @@ func NewSpaceRedisSvc(goroutineLimit int) SpaceRedisSvc {
 		goroutineLimit = 10
 	}
 	return SpaceRedisSvc{goroutineLimit: goroutineLimit}
-}
-
-func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tableIdList []string) error {
-	startTime := time.Now() // 记录开始时间
-	logger.Infof("PushAndPublishSpaceRouter:start to push and publish space_type [%s], space_id [%s] table_ids [%v] router", spaceType, spaceId, tableIdList)
-	pusher := NewSpacePusher()
-
-	// 获取租户ID
-	bkTenantId := ""
-	if cfg.EnableMultiTenantMode {
-		var spaceObj space.Space
-		db := mysql.GetDBSession().DB
-		if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId).One(&spaceObj); err != nil {
-			return err
-		}
-		bkTenantId = spaceObj.BkTenantId
-	} else {
-		bkTenantId = tenant.DefaultTenantId
-	}
-
-	// 获取空间下的结果表，如果不存在，则获取空间下的所有
-	if len(tableIdList) == 0 {
-		tableDataIdMap, err := pusher.GetSpaceTableIdDataId(bkTenantId, spaceType, spaceId, nil, nil, nil)
-		if err != nil {
-			return errors.Wrap(err, "get space table id dataid failed")
-		}
-		for tableId := range tableDataIdMap {
-			tableIdList = append(tableIdList, tableId)
-		}
-	}
-
-	// 更新空间下的结果表相关数据
-	if spaceType != "" && spaceId != "" {
-		// 更新相关数据到 redis
-		// NOTE:这里统一根据Redis中的新老值是否存在差异决定是否需要Publish,isPublish参数不再生效
-		if err := pusher.PushSpaceTableIds(bkTenantId, spaceType, spaceId); err != nil {
-			return err
-		}
-	} else {
-		// 必须指定空间类型和空间ID
-		return errors.New("spaceType and spaceId must be specified")
-	}
-	// 更新数据
-	if err := pusher.PushDataLabelTableIds(bkTenantId, tableIdList, true); err != nil {
-		return err
-	}
-	if err := pusher.PushTableIdDetail(bkTenantId, tableIdList, true, true); err != nil {
-		return err
-	}
-	elapsedTime := time.Since(startTime) // 计算耗时
-	logger.Infof("PushAndPublishSpaceRouter:push and publish space_type: %s, space_id: %s router successfully,took %s", spaceType, spaceId, elapsedTime)
-	return nil
 }
 
 type SpacePusher struct {
@@ -313,6 +293,12 @@ func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, tableIdList []str
 			logger.Errorf("PushDataLabelTableIds: get all data label and table id map error->[%s]", err)
 			return err
 		}
+
+		// 多租户模式下添加内置数据源
+		if cfg.EnableMultiTenantMode {
+
+		}
+
 	}
 
 	// 打印结束日志
@@ -327,17 +313,10 @@ func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, tableIdList []str
 	client := redis.GetStorageRedisInstance()
 	// TODO: 待旁路没有问题，可以移除的逻辑
 	key := cfg.DataLabelToResultTableKey
-	if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-		key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-	}
 	for dl, rts := range dlRtsMap {
 		// 二段式补充
 		for idx, value := range rts {
 			rts[idx] = reformatTableId(value)
-			// 多租户模式下，需要加上租户ID后缀
-			if cfg.EnableMultiTenantMode {
-				rts[idx] = fmt.Sprintf("%s|%s", rts[idx], bkTenantId)
-			}
 		}
 
 		rtsStr, err := jsonx.MarshalString(rts)
@@ -461,7 +440,7 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 	db := mysql.GetDBSession().DB
 	var rtList []resulttable.ResultTable
 	// 过滤为结果表可用，标签不为空和null的数据记录
-	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.DataLabel).BkTenantIdEq(bkTenantId).IsEnableEq(true).IsDeletedEq(false).DataLabelIsNotNull().DataLabelNe("").All(&rtList); err != nil {
+	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.BkTenantId, resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.DataLabel).BkTenantIdEq(bkTenantId).IsEnableEq(true).IsDeletedEq(false).DataLabelIsNotNull().DataLabelNe("").All(&rtList); err != nil {
 		logger.Errorf("get all data label and table id map error, %s", err)
 		return nil, err
 	}
@@ -481,10 +460,9 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 				continue
 			}
 
-			// 多租户模式下，需要加上租户ID后缀
 			var key string
 			if cfg.EnableMultiTenantMode {
-				key = fmt.Sprintf("%s|%s", dataLabel, rt.BkTenantId)
+				key = fmt.Sprintf("%s|%s", dataLabel, bkTenantId)
 			} else {
 				key = dataLabel
 			}
@@ -496,6 +474,56 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 			}
 		}
 	}
+
+	// 多租户模式特殊处理 -- 内置系统数据路由
+	if cfg.EnableMultiTenantMode {
+		var builtInRts []resulttable.ResultTable
+
+		// 表名格式为{bk_tenant_id}_{bk_biz_id}_{source}.{table}，先进行粗略匹配
+		tablePattern := fmt.Sprintf("%s_%%_%%.%%", bkTenantId)
+		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).TableIdLike(tablePattern).BkTenantIdEq(bkTenantId).IsEnableEq(true).IsDeletedEq(false).All(&builtInRts); err != nil {
+			logger.Errorf("get built in data label and table id map error, %s", err)
+			return nil, err
+		}
+
+		tableRegex := fmt.Sprintf("^%s_\\d+_(%s)\\.(%s)$", bkTenantId, strings.Join(BaseReportSources, "|"), strings.Join(BaseReportTableNames, "|"))
+		re := regexp.MustCompile(tableRegex)
+		for _, rt := range builtInRts {
+			// 严格匹配正则表达式
+			if !re.MatchString(rt.TableId) {
+				continue
+			}
+
+			// 提取source和table
+			matches := re.FindStringSubmatch(rt.TableId)
+			if len(matches) != 3 {
+				continue
+			}
+			source := matches[1]
+			tableName := matches[2]
+
+			// 根据source和table生成数据标签
+			var dataLabel string
+			if source == BaseReportSourceSystem {
+				// 系统数据标签
+				dataLabel = fmt.Sprintf("system.%s", tableName)
+			} else {
+				// 其他数据标签
+				dataLabel = fmt.Sprintf("%s_system.%s", source, tableName)
+			}
+
+			// 多租户模式下，data_label需要加上租户ID后缀
+			key := fmt.Sprintf("%s|%s", dataLabel, bkTenantId)
+
+			// 添加到数据标签和结果表的映射关系中
+			if rts, ok := dataLabelTableIdMap[key]; ok {
+				dataLabelTableIdMap[key] = append(rts, rt.TableId)
+			} else {
+				dataLabelTableIdMap[key] = []string{rt.TableId}
+			}
+		}
+	}
+
 	return dataLabelTableIdMap, nil
 }
 
@@ -574,36 +602,8 @@ func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 	return tableIds, nil
 }
 
-func (s *SpacePusher) refineEsTableIds(tableIdList []string) ([]string, error) {
-	// 过滤写入 es 的结果表
-	db := mysql.GetDBSession().DB
-	var esStorageList []storage.ESStorage
-	qs3 := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID)
-	if len(tableIdList) != 0 {
-		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
-			var tempList []storage.ESStorage
-			qsTemp := qs3.TableIDIn(chunkTableIdList...)
-			if err := qsTemp.All(&tempList); err != nil {
-				return nil, err
-			}
-			esStorageList = append(esStorageList, tempList...)
-		}
-	} else {
-		if err := qs3.All(&esStorageList); err != nil {
-			return nil, err
-		}
-	}
-
-	var tableIds []string
-	for _, i := range esStorageList {
-		tableIds = append(tableIds, i.TableID)
-	}
-	tableIds = slicex.RemoveDuplicate(&tableIds)
-	return tableIds, nil
-}
-
 // PushTableIdDetail 推送结果表的详细信息
-func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool, useByPass bool) error {
+func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string, isPublish bool) error {
 	logger.Infof("PushTableIdDetail: start to push table_id detail data")
 
 	if len(tableIdList) == 0 {
@@ -664,9 +664,6 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 	client := redis.GetStorageRedisInstance()
 	// 推送数据
 	rtDetailKey := cfg.ResultTableDetailKey
-	if useByPass && !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-		rtDetailKey = fmt.Sprintf("%s%s", rtDetailKey, cfg.BypassSuffixPath)
-	}
 	for tableId, detail := range tableIdDetail {
 		var ok bool
 		// fields
@@ -694,11 +691,6 @@ func (s *SpacePusher) PushTableIdDetail(bkTenantId string, tableIdList []string,
 			detail["data_label"] = ""
 		} else {
 			detail["data_label"] = rt.DataLabel
-
-			// 多租户模式下，需要加上租户ID后缀
-			if cfg.EnableMultiTenantMode {
-				detail["data_label"] = fmt.Sprintf("%s|%s", *rt.DataLabel, bkTenantId)
-			}
 		}
 		detail["measurement_type"] = measurementTypeMap[tableId]
 		detail["bcs_cluster_id"] = tableIdClusterIdMap[tableId]
@@ -819,6 +811,88 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 	return nil
 }
 
+// PushDorisTableIdDetail  推送Doris结果表详情路由
+func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish bool) error {
+	logger.Infof("PushDorisTableIdDetail:start to compose doris table id detail data")
+	db := mysql.GetDBSession().DB
+
+	// 获取数据
+	var dorisStorageList []storage.DorisStorage
+	dorisQuerySet := storage.NewDorisStorageQuerySet(db).Select(
+		storage.DorisStorageDBSchema.TableID,
+		storage.DorisStorageDBSchema.BkbaseTableID,
+	)
+
+	// 如果过滤结果表存在，则添加过滤条件
+	if len(tableIdList) != 0 {
+		if err := dorisQuerySet.TableIDIn(tableIdList...).All(&dorisStorageList); err != nil {
+			logger.Errorf("PushDorisTableIdDetail: compose doris table id detail error, table_id: %v, error: %s", tableIdList, err)
+			return err
+		}
+	} else {
+		if err := dorisQuerySet.All(&dorisStorageList); err != nil {
+			logger.Errorf("PushDorisTableIdDetail: compose doris table id detail error, %s", err)
+			return err
+		}
+	}
+
+	var tidList []string
+	for _, doris := range dorisStorageList {
+		tidList = append(tidList, doris.TableID)
+	}
+
+	// 获取查询别名映射关系
+	fieldAliasMap, err := s.getFieldAliasMap(tidList)
+	if err != nil {
+		logger.Errorf("PushDorisTableIdDetail: failed to get field alias map, error: %s", err)
+	}
+
+	// 组装数据
+	client := redis.GetStorageRedisInstance()
+	wg := &sync.WaitGroup{}
+	// 因为每个处理任务完全独立，可以并发执行
+	ch := make(chan struct{}, 50)
+	wg.Add(len(dorisStorageList))
+	for _, doris := range dorisStorageList {
+		ch <- struct{}{}
+		go func(doris storage.DorisStorage, wg *sync.WaitGroup, ch chan struct{}) {
+			defer func() {
+				<-ch
+				wg.Done()
+			}()
+
+			tableId := doris.TableID
+			bkbaseTableId := doris.BkbaseTableID
+
+			logger.Infof("PushDorisTableIdDetail:start to compose doris table id detail, table_id->[%s],bkbase_table_id->[%s]", tableId, bkbaseTableId)
+
+			var fieldAliasSettings map[string]string
+			if fieldAliasMap != nil {
+				fieldAliasSettings = fieldAliasMap[tableId]
+			}
+
+			composedTableId, detailStr, err := s.composeDorisTableIdDetail(tableId, doris.BkbaseTableID, fieldAliasSettings)
+
+			if err != nil {
+				logger.Errorf("PushDorisTableIdDetail:compose doris table id detail error, table_id: %s, error: %s", tableId, err)
+				return
+			}
+			// 推送数据
+			// NOTE: HSetWithCompareAndPublish 判定新老值是否存在差异，若存在差异，则进行 Publish 操作
+			logger.Infof("PushDorisTableIdDetail:start push and publish doris table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", composedTableId, cfg.ResultTableDetailChannel, composedTableId, detailStr)
+			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, composedTableId, detailStr, cfg.ResultTableDetailChannel, composedTableId)
+			if err != nil {
+				logger.Errorf("PushDorisTableIdDetail:push and publish doris table id detail error, table_id->[%s], error->[%s]", tableId, err)
+				return
+			}
+			logger.Infof("PushDorisTableIdDetail: push doris table id detail success, table_id->[%s], is_success->[%v]", tableId, isSuccess)
+		}(doris, wg, ch)
+	}
+	wg.Wait()
+	logger.Infof("PushDorisTableIdDetail: push doris table id detail success, table_id_list [%v]", tableIdList)
+	return nil
+}
+
 // composeEsTableIdOptions 组装 es
 func (s *SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]map[string]interface{} {
 	db := mysql.GetDBSession().DB
@@ -923,13 +997,6 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		fieldAliasSettings = make(map[string]string)
 	}
 
-	// 多租户模式下，需要加上租户ID后缀
-	dataLabel := rt.DataLabel
-	if cfg.EnableMultiTenantMode && dataLabel != nil {
-		newDataLabel := fmt.Sprintf("%s|%s", *dataLabel, rt.BkTenantId)
-		dataLabel = &newDataLabel
-	}
-
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
 		"storage_type":            models.StorageTypeES,
@@ -939,7 +1006,7 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 		"source_type":             sourceType,
 		"options":                 options,
 		"storage_cluster_records": clusterRecords,
-		"data_label":              dataLabel,
+		"data_label":              rt.DataLabel,
 		"field_alias":             fieldAliasSettings, // 添加字段别名
 	})
 	if err != nil {
@@ -961,6 +1028,50 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 	// 大部份情况下,len(parts)=2，保持原样，无需显式处理
 
 	logger.Infof("composeEsTableIdDetail:compose success, table_id [%s], detail [%s]", tableId, detailStr)
+	return tableId, detailStr, err
+}
+
+func (s *SpacePusher) composeDorisTableIdDetail(tableId string, bkbaseTableId string, fieldAliasSettings map[string]string) (string, string, error) {
+	logger.Infof("composeDorisTableIdDetail: table_id [%s], bkbase_table_id [%s]", tableId, bkbaseTableId)
+
+	db := mysql.GetDBSession().DB
+
+	var rt resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).TableIdEq(tableId).One(&rt); err != nil {
+		return tableId, "", err
+	}
+
+	if fieldAliasSettings == nil {
+		fieldAliasSettings = make(map[string]string)
+	}
+
+	// 组装数据
+	detailStr, err := jsonx.MarshalString(map[string]any{
+		"storage_type": models.StorageTypeBkSql,
+		"db":           bkbaseTableId,
+		"measurement":  models.DorisMeasurement,
+		"data_label":   rt.DataLabel,
+		"field_alias":  fieldAliasSettings, // 添加字段别名
+	})
+	if err != nil {
+		return tableId, "", err
+	}
+
+	parts := strings.Split(tableId, ".")
+
+	if len(parts) == 1 {
+		// 如果长度为 1，补充 `.__default__`
+		logger.Infof("composeDorisTableIdDetail: table_id [%s] is missing '.', adding '.__default__'", tableId)
+		tableId = fmt.Sprintf("%s.__default__", tableId)
+	} else if len(parts) != 2 {
+		// 如果长度不是 2，记录错误日志并返回
+		err = errors.Errorf("invalid table_id format: too many dots in %q", tableId)
+		logger.Errorf("composeDorisTableIdDetail: table_id [%s] is invalid, contains too many dots", tableId)
+		return tableId, "", err
+	}
+	// 大部份情况下,len(parts)=2，保持原样，无需显式处理
+
+	logger.Infof("composeDorisTableIdDetail:compose success, table_id [%s], detail [%s]", tableId, detailStr)
 	return tableId, detailStr, err
 }
 
@@ -1380,10 +1491,6 @@ func (s *SpacePusher) PushBkAppToSpace() (err error) {
 
 	client := redis.GetStorageRedisInstance()
 	key := cfg.BkAppToSpaceKey
-	if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-		key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-	}
-
 	for field, value := range appSpaces.HashData() {
 		// 多租户模式下，需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
@@ -1500,6 +1607,13 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	s.composeValue(&values, &esValues)
 
+	// 追加Doris空间路由表,不需要filters
+	dorisValues, errDoris := s.ComposeDorisTableIds(spaceType, spaceId)
+	if errDoris != nil {
+		logger.Errorf("pushBkccSpaceTableIds:compose doris space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errDoris)
+	}
+	s.composeValue(&values, &dorisValues)
+
 	// 追加关联的BKCI相关的ES结果表,不需要filters
 	esBkciValues, errEsBkci := s.ComposeEsBkciTableIds(spaceType, spaceId)
 	if errEsBkci != nil {
@@ -1519,10 +1633,6 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		// 如果开启了多租户模式，则需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
 			redisKey = fmt.Sprintf("%s__%s|%s", spaceType, spaceId, bkTenantId)
-			oldValue, values := values, make(map[string]map[string]interface{})
-			for tid, val := range oldValue {
-				values[fmt.Sprintf("%s|%s", tid, bkTenantId)] = val
-			}
 		} else {
 			redisKey = fmt.Sprintf("%s__%s", spaceType, spaceId)
 		}
@@ -1534,9 +1644,6 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		}
 		// TODO: 待旁路没有问题，可以移除的逻辑
 		key := cfg.SpaceToResultTableKey
-		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-		}
 		logger.Infof("pushBkccSpaceTableIds:push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v]", key, redisKey, valuesStr)
 
 		channelName := fmt.Sprintf("%s__%s", spaceType, spaceId)
@@ -1612,6 +1719,13 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	s.composeValue(&values, &esValues)
 
+	// 追加Doris空间结果表
+	dorisValues, err := s.ComposeDorisTableIds(spaceType, spaceId)
+	if err != nil {
+		logger.Errorf("pushBkciSpaceTableIds：compose doris space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
+	}
+	s.composeValue(&values, &dorisValues)
+
 	// 追加APM全局结果表
 	apmAllTypeValues, errApmAllType := s.composeApmAllTypeTableIds(spaceType, spaceId)
 	if errApmAllType != nil {
@@ -1628,11 +1742,6 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		// 如果开启了多租户模式，则需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
 			redisKey = fmt.Sprintf("%s__%s|%s", spaceType, spaceId, bkTenantId)
-			// value需要补充租户ID前缀
-			oldValue, values := values, make(map[string]map[string]interface{})
-			for tid, val := range oldValue {
-				values[fmt.Sprintf("%s|%s", tid, bkTenantId)] = val
-			}
 		} else {
 			redisKey = fmt.Sprintf("%s__%s", spaceType, spaceId)
 		}
@@ -1643,9 +1752,6 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 		}
 		// TODO: 待旁路没有问题，可以移除的逻辑
 		key := cfg.SpaceToResultTableKey
-		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-		}
 		channelName := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Set & Publish
 		logger.Infof("pushBkciSpaceTableIds:start to push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v], channelName [%s], channelKey [%s]", key, redisKey, valuesStr, cfg.SpaceToResultTableChannel, channelName)
@@ -1691,6 +1797,13 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 	}
 	s.composeValue(&values, &esValues)
 
+	// 追加Doris空间路由表
+	dorisValues, errDoris := s.ComposeDorisTableIds(spaceType, spaceId)
+	if errDoris != nil {
+		logger.Errorf("pushBksaasSpaceTableIds: compose doris space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errDoris)
+	}
+	s.composeValue(&values, &dorisValues)
+
 	allTypeTableIdValues, allTypeErr := s.composeAllTypeTableIds(spaceType, spaceId)
 	if allTypeErr != nil {
 		logger.Errorf("pushBksaasSpaceTableIds: compose all type table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, allTypeErr)
@@ -1713,11 +1826,6 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 		// 如果开启了多租户模式，则需要加上租户ID后缀
 		if cfg.EnableMultiTenantMode {
 			redisKey = fmt.Sprintf("%s__%s|%s", spaceType, spaceId, bkTenantId)
-			// value需要补充租户ID后缀
-			oldValue, values := values, make(map[string]map[string]interface{})
-			for tid, val := range oldValue {
-				values[fmt.Sprintf("%s|%s", tid, bkTenantId)] = val
-			}
 		} else {
 			redisKey = fmt.Sprintf("%s__%s", spaceType, spaceId)
 		}
@@ -1728,9 +1836,6 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 		}
 		// TODO: 待旁路没有问题，可以移除的逻辑
 		key := cfg.SpaceToResultTableKey
-		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
-			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
-		}
 		channelName := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		// NOTE:这里的HSetWithCompareAndPublish会判定新老值是否存在差异，若存在差异，则进行Set & Publish
 		logger.Infof("pushBksaasSpaceTableIds: start to push_and_publish_space_router_info, key [%s], redisKey [%s], values [%v], channelName [%s], channelKey [%s]", key, redisKey, valuesStr, cfg.SpaceToResultTableChannel, channelName)
@@ -1807,6 +1912,43 @@ func (s *SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (map[string]m
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
 	}
+
+	return dataValuesToRedis, nil
+}
+
+// ComposeDorisTableIds 组装关联的Doris结果表
+func (s *SpacePusher) ComposeDorisTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+	logger.Infof("ComposeDorisTableIds: start to push doris table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
+	bizId, err := s.getBizIdBySpace(spaceType, spaceId)
+	if err != nil {
+		return nil, errors.Wrapf(err, "ComposeDorisTableIds: compose doris table_id, get biz_id by space failed, space_type [%s], space_id [%s]", spaceType, spaceId)
+	}
+
+	db := mysql.GetDBSession().DB
+	var rtList []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).BkBizIdEq(bizId).DefaultStorageEq(models.StorageTypeDoris).IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
+		return nil, err
+	}
+	dataValues := make(map[string]map[string]interface{})
+	for _, rt := range rtList {
+		// dataValues[rt.TableId] = map[string]interface{}{"filters": []interface{}{}}
+		options := FilterBuildContext{
+			SpaceType: spaceType,
+			SpaceId:   spaceId,
+			TableId:   rt.TableId,
+		}
+		// 使用统一抽象方法生成filters
+		filters := s.buildFiltersByUsage(options, UsageComposeDorisTableIds)
+		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
+	}
+
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]interface{})
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+	logger.Infof("ComposeDorisTableIds: compose doris table_id successfully, data_values->[%v]", dataValues)
 
 	return dataValuesToRedis, nil
 }
@@ -1965,6 +2107,12 @@ func (s *SpacePusher) getPlatformDataIds(bkTenantId, spaceType string) ([]uint, 
 	var bkDataIdList []uint
 	var dsList []resulttable.DataSource
 	qs := resulttable.NewDataSourceQuerySet(db).Select(resulttable.DataSourceDBSchema.BkDataId, resulttable.DataSourceDBSchema.SpaceTypeId).BkTenantIdEq(bkTenantId).IsPlatformDataIdEq(true)
+
+	// 多住模式下去除单租户使用的全局数据源
+	if cfg.EnableMultiTenantMode {
+		qs = qs.BkDataIdNotIn(1001, 1002, 1003, 1004, 1005, 1006, 1007, 1013, 1008, 1009, 1010, 1011, 1100003, 1100005, 1100000)
+	}
+
 	// 针对 bkcc 类型，这要是插件，不属于某个业务空间，也没有传递空间类型，因此，需要包含 all 类型
 	if spaceType != "" && spaceType != models.SpaceTypeBKCC {
 		qs = qs.SpaceTypeIdEq(spaceType)
@@ -2595,7 +2743,6 @@ func (s *SpacePusher) composeBkciLevelTableIds(bkTenantId, spaceType, spaceId st
 				continue
 			}
 			filterAlias = rt.BkBizIdAlias
-
 		}
 		options := FilterBuildContext{
 			SpaceType:   spaceType,

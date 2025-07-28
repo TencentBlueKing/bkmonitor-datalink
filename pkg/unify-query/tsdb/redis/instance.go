@@ -38,6 +38,8 @@ var _ tsdb.Instance = (*Instance)(nil)
 
 // Instance redis 查询实例
 type Instance struct {
+	tsdb.DefaultInstance
+
 	Ctx                 context.Context
 	Timeout             time.Duration
 	ClusterMetricPrefix string

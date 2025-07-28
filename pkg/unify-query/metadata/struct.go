@@ -22,7 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
@@ -146,6 +146,9 @@ type Query struct {
 	QueryString string `json:"query_string,omitempty"`
 	IsPrefix    bool   `json:"is_prefix,omitempty"`
 
+	// sql 查询
+	SQL string `json:"sql,omitempty"`
+
 	AllConditions AllConditions `json:"all_conditions,omitempty"`
 
 	Source []string `json:"source,omitempty"`
@@ -158,6 +161,8 @@ type Query struct {
 	Orders      Orders    `json:"orders,omitempty"`
 	NeedAddTime bool      `json:"need_add_time,omitempty"`
 	Collapse    *Collapse `json:"collapse,omitempty"`
+
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 func (q *Query) CalcStorageIDs() []string {
@@ -222,7 +227,7 @@ func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
 	}
 
 	if q.QueryString != "" {
-		err := querystring.LabelMap(q.QueryString, addLabel)
+		err := querystring_parser.LabelMap(q.QueryString, addLabel)
 		if err != nil {
 			return nil, err
 		}
@@ -490,7 +495,7 @@ func (os Orders) SortSliceList(list []map[string]any) {
 				}
 			}
 		}
-		return true
+		return false
 	})
 }
 

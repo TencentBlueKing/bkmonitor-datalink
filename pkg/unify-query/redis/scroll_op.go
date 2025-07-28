@@ -64,7 +64,9 @@ func GetLockKey(queryTsKey string) string {
 }
 
 func ScrollAcquireRedisLock(ctx context.Context, lockKey string, timeout time.Duration) error {
-	result := globalInstance.client.SetNX(ctx, lockKey, "locked", timeout)
+	client := globalInstance.client
+
+	result := client.SetNX(ctx, lockKey, "locked", timeout)
 	if result.Err() != nil {
 		return result.Err()
 	}
@@ -77,7 +79,8 @@ func ScrollAcquireRedisLock(ctx context.Context, lockKey string, timeout time.Du
 }
 
 func ScrollReleaseRedisLock(ctx context.Context, lock interface{}) error {
-	if globalInstance.client == nil {
+	client := globalInstance.client
+	if client == nil {
 		return fmt.Errorf("redis client not available")
 	}
 	lockKey, ok := lock.(string)
@@ -85,20 +88,21 @@ func ScrollReleaseRedisLock(ctx context.Context, lock interface{}) error {
 		return fmt.Errorf("invalid lock type")
 	}
 
-	return globalInstance.client.Del(ctx, lockKey).Err()
+	return client.Del(ctx, lockKey).Err()
 }
 
 func ScrollGetOrCreateSession(ctx context.Context, sessionKey string, forceClear bool, timeout time.Duration, maxSlice int, limit int) (*ScrollSession, error) {
-	if globalInstance.client == nil {
+	client := globalInstance.client
+	if client == nil {
 		return nil, fmt.Errorf("redis client not available")
 	}
 	if forceClear {
-		if err := globalInstance.client.Del(ctx, sessionKey).Err(); err != nil {
+		if err := client.Del(ctx, sessionKey).Err(); err != nil {
 			return nil, err
 		}
 	}
 
-	result := globalInstance.client.Get(ctx, sessionKey)
+	result := client.Get(ctx, sessionKey)
 	if result.Err() == nil {
 		var session *ScrollSession
 		if err := json.Unmarshal([]byte(result.Val()), &session); err == nil {
@@ -122,26 +126,32 @@ func ScrollGetOrCreateSession(ctx context.Context, sessionKey string, forceClear
 }
 
 func scrollUpdateSession(ctx context.Context, key string, session *ScrollSession) error {
+	client := globalInstance.client
 	session.LastAccessAt = time.Now()
 	sessionBytes, err := json.Marshal(session)
 	if err != nil {
 		return err
 	}
 
-	return globalInstance.client.Set(ctx, key, sessionBytes, session.ScrollTimeout).Err()
+	return client.Set(ctx, key, sessionBytes, session.ScrollTimeout).Err()
 }
 
 func UpdateSession(ctx context.Context, sessionKey string, session *ScrollSession) (err error) {
-	if globalInstance.client == nil {
+	if globalInstance == nil {
+		return fmt.Errorf("redis instance not initialized")
+	}
+	client := globalInstance.client
+	if client == nil {
 		return fmt.Errorf("redis client not available")
 	}
+
 	session.LastAccessAt = time.Now()
 	sessionBytes, err := json.Marshal(session)
 	if err != nil {
 		return
 	}
 
-	err = globalInstance.client.Set(ctx, sessionKey, sessionBytes, session.ScrollTimeout).Err()
+	err = client.Set(ctx, sessionKey, sessionBytes, session.ScrollTimeout).Err()
 	if err != nil {
 		return
 	}

@@ -188,6 +188,10 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 		assert.Equal(t, c.total, total, "Total should match expected value for step %d", i+1)
 		assert.Equal(t, c.done, done, "Done should match expected value for step %d", i+1)
 		assert.Equal(t, c.hasData, hasData, "HasData should match expected value for step %d", i+1)
+
+		if t.Failed() {
+			t.Fatalf("Test failed at step %d: %s", i+1, c.desc)
+		}
 	}
 }
 
@@ -329,5 +333,9 @@ func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
 		assert.Equal(t, c.total, total, "Total should match expected value for step %d", i+1)
 		assert.Equal(t, c.done, done, "Done should match expected value for step %d", i+1)
 		assert.Equal(t, c.hasData, hasData, "HasData should match expected value for step %d", i+1)
+
+		if t.Failed() {
+			t.Fatalf("Test failed at step %d: %s", i+1, c.desc)
+		}
 	}
 }

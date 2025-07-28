@@ -156,7 +156,6 @@ func (e *ScrollQueryExecutor) submitSliceQuery(
 	err := e.pool.Submit(func() {
 		defer e.sendWg.Done()
 		if err := processSliceQueryWithHelper(newSliceQueryContext(e, scrollSessionHelperInstance, qry, slice, storage)); err != nil {
-			log.Warnf(e.ctx, "Failed to submit slice query: %v", err)
 			return
 		}
 	})

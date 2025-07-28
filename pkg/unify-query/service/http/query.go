@@ -983,7 +983,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 
 	queryTsBytes, err := json.Marshal(queryTs)
 	if err != nil {
-		return
+		return 0, nil, nil, false, fmt.Errorf("failed to marshal queryTs: %v", err)
 	}
 	var queryTsMap map[string]interface{}
 	if err = json.Unmarshal(queryTsBytes, &queryTsMap); err != nil {

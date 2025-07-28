@@ -1,8 +1,0 @@
-consulDiff:
-  showAllData: true
-  srcConsul:
-    address: "127.0.0.1:8500"
-    path: "test_prefix/"
-  bypassConsul:
-    address: "127.0.0.1:8500"
-    path: "test_prefix_bypass/"

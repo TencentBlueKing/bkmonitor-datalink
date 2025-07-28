@@ -48,5 +48,5 @@ func RecordHandleMetrics(mm *metricMonitor, token define.Token, protocol define.
 	mm.ObserveBytesDistribution(float64(bs), protocol, rtype, token.Original)
 	mm.ObserveHandledDuration(t, protocol, rtype, token.Original)
 	mm.IncHandledCounter(protocol, rtype, token.Original)
-	DefaultMetricMonitor.SetTokenInfo(token)
+	define.SetTokenInfo(token)
 }

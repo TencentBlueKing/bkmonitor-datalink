@@ -146,7 +146,7 @@ func TestFormatFactory_Query(t *testing.T) {
 				{
 					{
 						DimensionName: "nested1.key",
-						Value:         []string{"val-1", "val-2"},
+						Value:         []string{"val*-1", "val\\*-2"},
 						Operator:      structured.ConditionContains,
 					},
 					{
@@ -160,7 +160,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"nested":{"query":{"bool":{"must":[{"bool":{"should":[{"wildcard":{"nested1.key":{"value":"*val-1*"}}},{"wildcard":{"nested1.key":{"value":"*val-2*"}}}]}},{"match_phrase":{"nested1.key":{"query":"val-3"}}},{"exists":{"field":"nested1.key"}}]}},"path":"nested1"}}}`,
+			expected: `{"query":{"nested":{"query":{"bool":{"must":[{"bool":{"should":[{"wildcard":{"nested1.key":{"value":"*val\\*-1*"}}},{"wildcard":{"nested1.key":{"value":"*val\\*-2*"}}}]}},{"match_phrase":{"nested1.key":{"query":"val-3"}}},{"exists":{"field":"nested1.key"}}]}},"path":"nested1"}}}`,
 		},
 		"keyword and text check wildcard": {
 			conditions: metadata.AllConditions{
@@ -560,6 +560,74 @@ func TestFormatFactory_Query(t *testing.T) {
 			bodyString := string(bodyJson)
 			assert.JSONEq(t, c.expected, bodyString)
 
+		})
+	}
+}
+
+func TestFOrmatFactory_WithMapping(t *testing.T) {
+	testCases := []struct {
+		name     string
+		mappings []map[string]any
+		expected map[string]string
+	}{
+		{
+			name: "test normal mappings",
+			mappings: []map[string]any{
+				{
+					"properties": map[string]any{
+						"nested1": map[string]any{
+							"type": "nested",
+							"properties": map[string]any{
+								"key": map[string]any{
+									"type": "keyword",
+								},
+							},
+						},
+						"keyword": map[string]any{
+							"type": "keyword",
+						},
+					},
+				},
+			},
+			expected: map[string]string{
+				"nested1":     "nested",
+				"nested1.key": "keyword",
+				"keyword":     "keyword",
+			},
+		},
+		{
+			name: "test old es version mapping",
+			mappings: []map[string]any{
+				{
+					"es_type": map[string]any{
+						"properties": map[string]any{
+							"nested1": map[string]any{
+								"type": "nested",
+								"properties": map[string]any{
+									"key": map[string]any{
+										"type": "keyword",
+									},
+								},
+							},
+							"keyword": map[string]any{
+								"type": "keyword",
+							},
+						},
+					},
+				},
+			},
+			expected: map[string]string{
+				"nested1":     "nested",
+				"nested1.key": "keyword",
+				"keyword":     "keyword",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fact := NewFormatFactory(context.Background()).WithMappings(tc.mappings...)
+			assert.Equal(t, tc.expected, fact.mapping)
 		})
 	}
 }

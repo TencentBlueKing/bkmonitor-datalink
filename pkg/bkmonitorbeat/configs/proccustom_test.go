@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package consul
+package configs
 
 import (
 	"testing"
@@ -15,8 +15,46 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestConfigForViper(t *testing.T) {
-	ConsulDiffConfigPath = "../diff_test.yaml"
-	InitConfig()
-	assert.Equal(t, Config.Src.Address, "127.0.0.1:8500")
+func TestProcCustomMatch(t *testing.T) {
+	tests := []struct {
+		Cmd     string
+		Config  *ProcCustomConfig
+		Matched bool
+	}{
+		{
+			Cmd: "/app/foo/bar",
+			Config: &ProcCustomConfig{
+				MatchPattern: "foo",
+			},
+			Matched: true,
+		},
+		{
+			Cmd: "/app/foo/bar",
+			Config: &ProcCustomConfig{
+				MatchPattern: "fox",
+			},
+			Matched: false,
+		},
+		{
+			Cmd: "/app/foo/bar",
+			Config: &ProcCustomConfig{
+				MatchPattern: ".*foo",
+			},
+			Matched: true,
+		},
+		{
+			Cmd: "/app/foo/bar",
+			Config: &ProcCustomConfig{
+				MatchPattern: "^foo$",
+			},
+			Matched: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run("", func(t *testing.T) {
+			tt.Config.Setup()
+			assert.Equal(t, tt.Matched, tt.Config.match(tt.Cmd))
+		})
+	}
 }

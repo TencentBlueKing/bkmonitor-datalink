@@ -201,7 +201,6 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 
 		selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", timeField, TimeStamp))
 		groupByFields = append(groupByFields, TimeStamp)
-		orderByFields = append(orderByFields, fmt.Sprintf("`%s` ASC", TimeStamp))
 	}
 
 	if len(selectFields) == 0 {
@@ -219,6 +218,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		}
 	}
 
+	orderNameSet := set.New[string]()
 	for _, order := range orders {
 		// 如果是聚合操作的话，只能使用维度进行排序
 		if len(aggregates) > 0 {
@@ -238,6 +238,12 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		}
 
 		orderField, _ = d.dimTransform(orderField)
+
+		// 移除重复的排序字段
+		if orderNameSet.Existed(orderField) {
+			continue
+		}
+		orderNameSet.Add(orderField)
 
 		ascName := "ASC"
 		if !order.Ast {

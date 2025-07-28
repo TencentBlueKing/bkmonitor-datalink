@@ -11,8 +11,11 @@ package function
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
 const (
@@ -83,10 +86,17 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 	})
 	var newKeywords []string
 	for _, keyword := range keywords {
+		value := strings.Trim(keyword.Value, "*")
+		// 因为高亮大小写不敏感，所以避免出现一样的关键词，需要进行转换
+		value = strings.ToLower(value)
+		if value == "" {
+			continue
+		}
+
 		check := func() bool {
 			// 检查是否已经叠加
 			for _, newKeyword := range newKeywords {
-				if strings.Contains(newKeyword, keyword.Value) {
+				if strings.Contains(newKeyword, value) {
 					return true
 				}
 			}
@@ -94,22 +104,20 @@ func (h *HighLightFactory) highlightString(text string, keywords []LabelMapValue
 		}()
 
 		if !check {
-			// 高亮替换需要把头尾的*去掉
-			nv := strings.Trim(keyword.Value, "*")
-
 			// 如果为空的情况下不要进行判定
-			if nv != "" {
-				newKeywords = append(newKeywords, nv)
-			}
+			newKeywords = append(newKeywords, value)
 		}
 	}
 
 	for _, keyword := range newKeywords {
-		if keyword == "" {
-			continue
-		}
+		re := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(keyword))
+		matchs := re.FindAllString(analyzablePart, -1)
 
-		analyzablePart = strings.ReplaceAll(analyzablePart, keyword, fmt.Sprintf("<mark>%s</mark>", keyword))
+		mset := set.New[string](matchs...)
+
+		for _, m := range mset.ToArray() {
+			analyzablePart = strings.ReplaceAll(analyzablePart, m, fmt.Sprintf("<mark>%s</mark>", m))
+		}
 	}
 
 	return analyzablePart + remainingPart

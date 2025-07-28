@@ -1047,15 +1047,11 @@ func executeScrollQueriesWithHelper(ctx context.Context, scrollSessionHelperInst
 		list = processQueryResults(executor.dataCh, queryTs, ignoreDimensions)
 	}()
 
-	var executeWg sync.WaitGroup
-	executeWg.Add(1)
 	go func() {
-		defer executeWg.Done()
 		err = executor.executeQueries(storageQueryMap, scrollSessionHelperInstance)
 	}()
 
 	receiveWg.Wait()
-	executeWg.Wait() // 等待查询执行完成
 
 	total, collectErr := executor.collectResults()
 	if collectErr != nil {

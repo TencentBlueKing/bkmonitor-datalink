@@ -67,6 +67,8 @@ type Options struct {
 
 // Instance vm 查询实例
 type Instance struct {
+	tsdb.DefaultInstance
+
 	ctx context.Context
 
 	maxConditionNum int

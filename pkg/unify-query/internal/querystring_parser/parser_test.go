@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package querystring
+package querystring_parser
 
 import (
 	"testing"
@@ -404,6 +404,18 @@ func TestParser(t *testing.T) {
 		//"test - many tPHRASE ": {
 		//	q: `loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND "game_app") AND __ext.io_kubernetes_pod: "nrc-dev-all-in-one-0" AND __ext.io_kubernetes_pod_namespace: "nrc-dev"`,
 		//},
+		"test-1": {
+			q: "\"32221112\" AND path: \"/data/home/user00/log/zonesvr*\"",
+			e: &AndExpr{
+				Left: &MatchExpr{
+					Value: "32221112",
+				},
+				Right: &WildcardExpr{
+					Field: "path",
+					Value: "/data/home/user00/log/zonesvr*",
+				},
+			},
+		},
 	}
 
 	for name, c := range testCases {

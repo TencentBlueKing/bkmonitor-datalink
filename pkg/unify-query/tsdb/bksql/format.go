@@ -408,7 +408,39 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 	return strings.Join(s, " AND "), nil
 }
 
+func (f *QueryFactory) parserSQL() (sql string, err error) {
+	var (
+		span *trace.Span
+	)
+	_, span = trace.NewSpan(f.ctx, "make-sql-with-parser")
+	defer span.End(&err)
+
+	table := f.Table()
+
+	span.Set("table", table)
+
+	where, err := f.BuildWhere()
+	if err != nil {
+		return
+	}
+	span.Set("where", where)
+	if where != "" {
+		where = fmt.Sprintf("(%s)", where)
+	}
+
+	sql, err = f.expr.ParserSQL(f.ctx, f.query.SQL, table, where)
+	span.Set("query-sql", f.query.SQL)
+
+	span.Set("sql", sql)
+	return
+}
+
 func (f *QueryFactory) SQL() (sql string, err error) {
+	// sql 解析语法不一样需要重新拼写
+	if f.query.SQL != "" {
+		return f.parserSQL()
+	}
+
 	var (
 		span       *trace.Span
 		sqlBuilder strings.Builder
@@ -422,7 +454,10 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 		return
 	}
 
+	// 用于判定字段是否需要删除
 	f.dimensionSet = dimensionSet
+
+	// 用于补零判定
 	f.timeAggregate = timeAggregate
 
 	span.Set("select-fields", selectFields)

@@ -214,32 +214,6 @@ func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []stri
 	return mappings, nil
 }
 
-func (i *Instance) esQueryWithRetry(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
-	var lastErr error
-
-	for retry := 0; retry < defaultMaxRetries; retry++ {
-		res, err := i.esQuery(ctx, qo, fact)
-		if err == nil {
-			return res, nil
-		}
-
-		if err.Error() != "EOF" {
-			return nil, err
-		}
-
-		lastErr = err
-		log.Warnf(ctx, "elasticsearch query EOF error, retry %d/%d after %v", retry+1, defaultMaxRetries, defaultRetryInterval)
-
-		select {
-		case <-time.After(defaultRetryInterval):
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-
-	return nil, fmt.Errorf("after %d retries, last error: %w", defaultMaxRetries, lastErr)
-}
-
 func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
 	var (
 		err error
@@ -407,6 +381,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			}
 
 			return nil, errors.New(msg.String())
+		} else if err.Error() == "EOF" {
+			return nil, nil
 		} else {
 			return nil, err
 		}
@@ -631,7 +607,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				WithOrders(query.Orders).
 				WithIncludeValues(queryLabelMaps)
 
-			sr, queryErr := i.esQueryWithRetry(ctx, qo, fact)
+			sr, queryErr := i.esQuery(ctx, qo, fact)
 			if queryErr != nil {
 				log.Errorf(ctx, fmt.Sprintf("es query raw data error: %s", queryErr.Error()))
 				err = queryErr

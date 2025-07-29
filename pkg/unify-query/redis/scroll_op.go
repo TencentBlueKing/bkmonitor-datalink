@@ -150,8 +150,8 @@ func ScrollProcessSliceResult(ctx context.Context, slice SliceInfo, sessionKey s
 	} else {
 		session.AddScrollId(connect, tableID, newScrollID, sliceIdx)
 	}
-
-	if !session.HasMoreData(tsDbType) {
+	isAfterSlice := slice.ScrollID != ""
+	if isAfterSlice && !session.HasMoreData(tsDbType) {
 		session.Status = SessionStatusDone
 	}
 

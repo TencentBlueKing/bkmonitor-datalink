@@ -150,25 +150,14 @@ func (e *ScrollQueryExecutor) submitSliceQuery(
 	slice redisUtil.SliceInfo,
 	storage *tsdb.Storage,
 	scrollSessionHelperInstance *redisUtil.ScrollSessionHelper,
-) {
+) error {
 	e.sendWg.Add(1)
-	err := e.pool.Submit(func() {
+	return e.pool.Submit(func() {
 		defer e.sendWg.Done()
 		if err := processSliceQueryWithHelper(newSliceQueryContext(e, scrollSessionHelperInstance, qry, slice, storage)); err != nil {
 			return
 		}
 	})
-
-	if err != nil {
-		e.message.WriteString(
-			fmt.Sprintf(
-				"failed to submit slice %d task for %s: %v ",
-				slice.SliceIndex,
-				qry.TableID,
-				err,
-			),
-		)
-	}
 }
 
 func processSliceQueryWithHelper(queryCtx *SliceQueryContext) error {
@@ -187,38 +176,27 @@ func processSliceQueryWithHelper(queryCtx *SliceQueryContext) error {
 		queryCtx.EndTime,
 		queryCtx.DataCh,
 	)
-	message := queryCtx.Message
-	slice := queryCtx.Slice
 	if err != nil {
-		message.WriteString(
+		queryCtx.Message.WriteString(
 			fmt.Sprintf(
 				"query %s:%s slice %d is error: %s ",
 				queryCtx.Query.TableID,
 				queryCtx.Query.Fields,
-				slice.SliceIndex,
+				queryCtx.Slice.SliceIndex,
 				err.Error(),
 			),
 		)
 		return err
 	}
-	lock := queryCtx.Lock
-	resultTableOptions := queryCtx.ResultTableOptions
-
-	lock.Lock()
+	queryCtx.Lock.Lock()
 	if options != nil {
-		resultTableOptions.MergeOptions(options)
+		queryCtx.ResultTableOptions.MergeOptions(options)
 	}
 	*queryCtx.Total += size
-	lock.Unlock()
-	sessionLock := queryCtx.SessionLock
-	storage := queryCtx.Storage
-	connect := storage.Address
-	tableId := queryCtx.Query.TableID
-	sessionKey := queryCtx.SessionKey
-	session := queryCtx.Session
-	sessionLock.Lock()
-	defer sessionLock.Unlock()
-	if err = redisUtil.ScrollProcessSliceResult(queryCtx.Ctx, queryCtx.Slice, sessionKey, session, connect, tableId, slice.SliceIndex, instance.InstanceType(), size, options); err != nil {
+	queryCtx.Lock.Unlock()
+	queryCtx.SessionLock.Lock()
+	defer queryCtx.SessionLock.Unlock()
+	if err = redisUtil.ScrollProcessSliceResult(queryCtx.Ctx, queryCtx.Slice, queryCtx.SessionKey, queryCtx.Session, queryCtx.Storage.Address, queryCtx.Query.TableID, queryCtx.Slice.SliceIndex, instance.InstanceType(), size, options); err != nil {
 		log.Warnf(queryCtx.Ctx, "Failed to process slice result: %v", err)
 		return err
 	}
@@ -229,10 +207,10 @@ func (e *ScrollQueryExecutor) processQueryForStorage(
 	storage *tsdb.Storage,
 	qry *metadata.Query,
 	scrollSessionHelperInstance *redisUtil.ScrollSessionHelper,
-) (err error) {
+) error {
 	instance := prometheus.GetTsDbInstance(e.ctx, qry)
 	if instance == nil {
-		return
+		return fmt.Errorf("no instance found for storage %s", qry.StorageID)
 	}
 
 	slices, err := e.session.MakeSlices(
@@ -244,7 +222,7 @@ func (e *ScrollQueryExecutor) processQueryForStorage(
 		e.message.WriteString(
 			fmt.Sprintf("failed to make slices for %s: %v ", qry.TableID, err),
 		)
-		return
+		return err
 	}
 
 	for _, slice := range slices {
@@ -253,9 +231,12 @@ func (e *ScrollQueryExecutor) processQueryForStorage(
 			e.message.WriteString(
 				fmt.Sprintf("failed to create slice query for %s: %v ", qryCp.TableID, cErr),
 			)
-			return
+			return cErr
 		}
-		e.submitSliceQuery(qryCp, slice, storage, scrollSessionHelperInstance)
+		sErr := e.submitSliceQuery(qryCp, slice, storage, scrollSessionHelperInstance)
+		if sErr != nil {
+			return sErr
+		}
 	}
 	return nil
 }
@@ -297,24 +278,24 @@ func (e *ScrollQueryExecutor) processStorageQueries(
 	storageId string,
 	queries []*metadata.Query,
 	scrollSessionHelperInstance *redisUtil.ScrollSessionHelper,
-) {
+) error {
 	storage, err := tsdb.GetStorage(storageId)
 	if err != nil {
-		e.message.WriteString(
-			fmt.Sprintf("failed to get storage for %s: %v ", storageId, err),
-		)
-		return
+		return err
 	}
 
 	for _, qry := range queries {
-		e.processQueryForStorage(storage, qry, scrollSessionHelperInstance)
+		if err = e.processQueryForStorage(storage, qry, scrollSessionHelperInstance); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (e *ScrollQueryExecutor) executeQueries(
 	storageQueryMap map[string][]*metadata.Query,
 	scrollSessionHelperInstance *redisUtil.ScrollSessionHelper,
-) {
+) error {
 	defer func() {
 		e.sendWg.Wait()
 		close(e.dataCh)
@@ -322,8 +303,11 @@ func (e *ScrollQueryExecutor) executeQueries(
 	}()
 
 	for storageId, queries := range storageQueryMap {
-		e.processStorageQueries(storageId, queries, scrollSessionHelperInstance)
+		if err := e.processStorageQueries(storageId, queries, scrollSessionHelperInstance); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (e *ScrollQueryExecutor) cleanup() {

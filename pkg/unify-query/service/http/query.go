@@ -1049,7 +1049,11 @@ func executeScrollQueriesWithHelper(ctx context.Context, scrollSessionHelperInst
 		list = processQueryResults(executor.dataCh, queryTs, ignoreDimensions)
 	}()
 
-	go executor.executeQueries(storageQueryMap, scrollSessionHelperInstance)
+	go func() {
+		if eErr := executor.executeQueries(storageQueryMap, scrollSessionHelperInstance); eErr != nil {
+			executor.message.WriteString(fmt.Sprintf("executeScrollQueriesWithHelper error: %v", eErr))
+		}
+	}()
 
 	receiveWg.Wait()
 

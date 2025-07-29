@@ -198,11 +198,11 @@ func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relatio
 			continue
 		}
 		id := strconv.Itoa(int(setId))
-		var expand map[string]map[string]string
+		var expands map[string]map[string]string
 		if expandString, ok := r[relation.ExpandInfoColumn].(string); ok {
-			err := json.Unmarshal([]byte(expandString), &expand)
+			err := json.Unmarshal([]byte(expandString), &expands)
 			if err != nil {
-				logger.Errorf("json unmarshal error with %s", expandString)
+				logger.Errorf("SetToRelationInfos json unmarshal error with %s", expandString)
 				continue
 			}
 		}
@@ -211,7 +211,7 @@ func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relatio
 			Label: map[string]string{
 				"set_id": id,
 			},
-			Expand: expand,
+			Expands: expands,
 		})
 	}
 
@@ -267,6 +267,13 @@ func (m *SetCacheManager) CleanByEvents(ctx context.Context, resourceType string
 		if setTemplateID, ok := event["set_template_id"].(float64); ok && setTemplateID > 0 {
 			needUpdateSetTemplateIds[strconv.Itoa(int(setTemplateID))] = struct{}{}
 		}
+
+		// 清理 relation 缓存
+		bizID, ok := event["bk_biz_id"].(float64)
+		if !ok {
+			continue
+		}
+		relation.GetRelationMetricsBuilder().ClearResourceWithID(int(bizID), relation.Host, fmt.Sprintf("%d", int(setID)))
 	}
 
 	setTemplateCacheData := make(map[string]string)

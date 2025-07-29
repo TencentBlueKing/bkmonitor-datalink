@@ -28,37 +28,27 @@ type Node struct {
 	Labels map[string]string
 }
 
-func (n Node) ExpandInfo() RelationMetric {
+func (n Node) ExpandInfoMetric() Metric {
 	name := fmt.Sprintf("%s_info_relation", n.Name)
-	labels := make([]RelationLabel, 0, len(n.Labels))
+	labels := make([]Label, 0, len(n.Labels))
 	for k, v := range n.Labels {
-		labels = append(labels, RelationLabel{
+		labels = append(labels, Label{
 			Name:  k,
 			Value: v,
 		})
 	}
 
-	return RelationMetric{
+	sort.SliceStable(labels, func(i, j int) bool {
+		return labels[i].Name < labels[j].Name
+	})
+
+	return Metric{
 		Name:   name,
 		Labels: labels,
 	}
 }
 
-func (ns Nodes) ToRelationMetrics() []RelationMetric {
-	// 关联节点必须要 2 个以上
-	if len(ns) < 2 {
-		return nil
-	}
-	relationMetrics := make([]RelationMetric, 0, len(ns)-1)
-	for i := 0; i < len(ns)-1; i++ {
-		relationMetrics = append(relationMetrics,
-			ns[i].RelationMetric(ns[i+1]),
-		)
-	}
-	return relationMetrics
-}
-
-func (n Node) RelationMetric(nextNode Node) RelationMetric {
+func (n Node) RelationMetric(nextNode Node) Metric {
 	names := []string{n.Name, nextNode.Name}
 	sort.Strings(names)
 
@@ -74,17 +64,17 @@ func (n Node) RelationMetric(nextNode Node) RelationMetric {
 	}
 	sort.Strings(keys)
 
-	relationLabels := make([]RelationLabel, 0, len(keys))
+	relationLabels := make([]Label, 0, len(keys))
 	for _, k := range keys {
 		relationLabels = append(relationLabels,
-			RelationLabel{
+			Label{
 				Name:  k,
 				Value: values[k],
 			},
 		)
 	}
 
-	return RelationMetric{
+	return Metric{
 		Name:   fmt.Sprintf("%s_relation", strings.Join(names, "_with_")),
 		Labels: relationLabels,
 	}

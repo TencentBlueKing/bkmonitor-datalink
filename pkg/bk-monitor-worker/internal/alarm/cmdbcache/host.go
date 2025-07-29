@@ -127,7 +127,7 @@ type AlarmHostInfo struct {
 
 	TopoLinks map[string][]map[string]interface{} `json:"topo_link"`
 
-	Expand map[string]map[string]string `json:"expand"`
+	Expands map[string]map[string]string `json:"expands"`
 }
 
 const (
@@ -356,15 +356,70 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []*relation.Info {
 	infos := make([]*relation.Info, 0, len(hosts))
 	for _, h := range hosts {
-		id := fmt.Sprintf("%d", h.BkHostId)
-		infos = append(infos, &relation.Info{
-			ID: id,
+		if h.BkHostId == 0 {
+			continue
+		}
+
+		hostID := fmt.Sprintf("%d", h.BkHostId)
+
+		if h.BkHostInnerip != "" {
+			systemInfo := &relation.Info{}
+			systemID := fmt.Sprintf("%s|%d", h.BkHostInnerip, h.BkCloudId)
+			systemInfo.ID = systemID
+			systemInfo.Resource = relation.System
+			systemInfo.Label = map[string]string{
+				"bk_target_ip": h.BkHostInnerip,
+				"bk_cloud_id":  fmt.Sprintf("%d", h.BkCloudId),
+			}
+			systemInfo.Links = []relation.Link{
+				{
+					{
+						Name: relation.Host,
+						ID:   hostID,
+					},
+				},
+			}
+			infos = append(infos, systemInfo)
+		}
+
+		hostInfo := &relation.Info{
+			ID:       hostID,
+			Resource: relation.Host,
 			Label: map[string]string{
-				"host_id": id,
+				"host_id": hostID,
 			},
-			Expand:    h.Expand,
-			TopoLinks: h.TopoLinks,
-		})
+			Expands: h.Expands,
+		}
+		for _, tplink := range h.TopoLinks {
+			var link []relation.Item
+			for _, tp := range tplink {
+				var (
+					name string
+					id   int
+					ok   bool
+				)
+				id, ok = tp["bk_inst_id"].(int)
+				if !ok {
+					continue
+				}
+				name, ok = tp["bk_obj_id"].(string)
+				if !ok {
+					continue
+				}
+
+				link = append(link, relation.Item{
+					Name: name,
+					ID:   fmt.Sprintf("%d", int(id)),
+				})
+			}
+
+			if len(link) > 0 {
+				hostInfo.Links = append(hostInfo.Links, link)
+			}
+		}
+
+		// 写入 host 数据
+		infos = append(infos, hostInfo)
 	}
 
 	return infos

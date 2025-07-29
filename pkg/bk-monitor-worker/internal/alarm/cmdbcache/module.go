@@ -213,11 +213,11 @@ func (m *ModuleCacheManager) ModuleToRelationInfos(result []map[string]any) []*r
 			continue
 		}
 		id := strconv.Itoa(int(setId))
-		var expand map[string]map[string]string
+		var expands map[string]map[string]string
 		if expandString, ok := r[relation.ExpandInfoColumn].(string); ok {
-			err := json.Unmarshal([]byte(expandString), &expand)
+			err := json.Unmarshal([]byte(expandString), &expands)
 			if err != nil {
-				logger.Errorf("json unmarshal error with %s", expandString)
+				logger.Errorf("ModuleToRelationInfos json unmarshal error with %s", expandString)
 				continue
 			}
 		}
@@ -226,7 +226,7 @@ func (m *ModuleCacheManager) ModuleToRelationInfos(result []map[string]any) []*r
 			Label: map[string]string{
 				"set_id": id,
 			},
-			Expand: expand,
+			Expands: expands,
 		})
 	}
 
@@ -286,6 +286,13 @@ func (m *ModuleCacheManager) CleanByEvents(ctx context.Context, resourceType str
 		if serviceTemplateID, ok := event["service_template_id"].(float64); ok && serviceTemplateID > 0 {
 			needUpdateServiceTemplateIds[strconv.Itoa(int(serviceTemplateID))] = struct{}{}
 		}
+
+		// 清理 relation 缓存
+		bizID, ok := event["bk_biz_id"].(float64)
+		if !ok {
+			continue
+		}
+		relation.GetRelationMetricsBuilder().ClearResourceWithID(int(bizID), relation.Host, fmt.Sprintf("%d", int(moduleID)))
 	}
 
 	// 删除服务模板关联的模块缓存

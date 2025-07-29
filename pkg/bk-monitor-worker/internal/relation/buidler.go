@@ -12,7 +12,6 @@ package relation
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"sync"
@@ -25,20 +24,16 @@ import (
 )
 
 const (
-	Set    = "set"
-	Module = "module"
-	Host   = "host"
+	Set      = "set"
+	Module   = "module"
+	Host     = "host"
+	System   = "system"
+	Business = "business"
 
 	ExpandInfoColumn = "version_meta"
 )
 
-var (
-	bkIDKeys = map[string]string{
-		Set:    "bk_set_id",
-		Module: "bk_module_id",
-		Host:   "bk_host_id",
-	}
-)
+var ExpandTopo = []string{Set, Module, Host}
 
 var (
 	defaultRelationMetricsBuilder = newRelationMetricsBuilder()
@@ -83,15 +78,14 @@ func (b *MetricsBuilder) WithSpaceReport(reporter remote.Reporter) *MetricsBuild
 	return b
 }
 
-func (b *MetricsBuilder) GetResourceInfo(bizID int, name string) *ResourceInfo {
-	b.lock.Lock()
-	defer b.lock.Unlock()
-
+func (b *MetricsBuilder) getResourceInfo(bizID int, name string) *ResourceInfo {
 	if _, ok := b.resources[bizID]; !ok {
 		b.resources[bizID] = make(map[string]*ResourceInfo)
 	}
 	if _, ok := b.resources[bizID][name]; !ok {
-		b.resources[bizID][name] = &ResourceInfo{}
+		b.resources[bizID][name] = &ResourceInfo{
+			name: name,
+		}
 	}
 
 	return b.resources[bizID][name]
@@ -99,19 +93,18 @@ func (b *MetricsBuilder) GetResourceInfo(bizID int, name string) *ResourceInfo {
 
 // ClearAllMetrics 清理全部指标
 func (b *MetricsBuilder) ClearAllMetrics() {
-	b.lock.RLock()
+	b.lock.Lock()
+	defer b.lock.Unlock()
 	b.resources = make(map[int]map[string]*ResourceInfo)
-	b.lock.RUnlock()
 }
 
 func (b *MetricsBuilder) ClearResourceWithID(bizID int, name string, ids ...string) {
-	resourceInfo := b.GetResourceInfo(bizID, name)
-
-	b.lock.RLock()
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	resourceInfo := b.getResourceInfo(bizID, name)
 	for _, id := range ids {
 		resourceInfo.Delete(id)
 	}
-	b.lock.RUnlock()
 }
 
 func (b *MetricsBuilder) toString(s any) string {
@@ -137,18 +130,119 @@ func (b *MetricsBuilder) BuildInfosCache(_ context.Context, bizID int, name stri
 		return nil
 	}
 	b.lock.Lock()
-	oldInfos := b.GetResourceInfo(bizID, name)
+	defer b.lock.Unlock()
+	oldInfos := b.getResourceInfo(bizID, name)
 	for _, info := range infos {
 		oldInfos.Add(info.ID, info)
 	}
-	b.lock.Unlock()
 
 	logger.Infof("[cmdb_relation] build info cache bkcc__%d %s %d", bizID, name, len(infos))
 	return nil
 }
 
-func (b *MetricsBuilder) ToNodeList() {
+func (b *MetricsBuilder) BizIDs() []int {
+	b.lock.RLock()
+	defer b.lock.RUnlock()
 
+	var bizIDs = make([]int, 0, len(b.resources))
+	for bizID := range b.resources {
+		bizIDs = append(bizIDs, bizID)
+	}
+	return bizIDs
+}
+
+func (b *MetricsBuilder) topoToNode(d map[string]any) {
+
+}
+
+func (b *MetricsBuilder) makeNode(resource string, labels ...map[string]string) Node {
+	label := make(map[string]string)
+	for _, lb := range labels {
+		for k, v := range lb {
+			label[k] = v
+		}
+	}
+
+	return Node{
+		Name:   resource,
+		Labels: label,
+	}
+}
+
+func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
+	if b.resources == nil {
+		return nil
+	}
+
+	metrics := make(map[string]Metric, 0)
+
+	// 默认注入业务维度
+	bizLabel := map[string]string{
+		"bk_biz_id": fmt.Sprintf("%d", bizID),
+	}
+
+	// 资源名称 (resource) -> 资源ID (ID) -> 资源扩展信息 (Expand)
+	parentExpand := make(map[string]map[string]map[string]string)
+
+	// 不同业务分开构建，方便拆分数据
+	if resources, ok := b.resources[bizID]; ok {
+		// set -> module -> host，Expand 需要按序遍历，下层需要继承上层的 Expand
+		for _, resource := range ExpandTopo {
+			if parentExpand[resource] == nil {
+				parentExpand[resource] = make(map[string]map[string]string)
+			}
+
+			if infos, ok := resources[resource]; ok {
+				infos.Range(func(info *Info) {
+					// 注入 ExpandInfo 指标
+					if len(info.Expands) > 0 {
+						for expandResource, expand := range info.Expands {
+							// 如果配置资源一致，则为自身资源的 Expand，否则使用继承池里的 Expand
+							// 这里的 info.Resource 指该实体的真是归属资源，上面的 resource 表示的是数据维护的资源
+							// 例如：host 数据，会同时维护 host 和 system 的资源，所以相关资源实体需要使用 info.Resource
+							if expandResource == info.Resource {
+								// 构建维度，注入主键和扩展维度
+								node := b.makeNode(expandResource, info.Label, bizLabel, expand)
+								metric := node.ExpandInfoMetric()
+								if _, metricOk := metrics[metric.String()]; !metricOk {
+									metrics[metric.String()] = metric
+								}
+							} else {
+								// 注入父资源的 Expand
+								parentExpand[resource][info.ID] = expand
+							}
+
+						}
+					}
+
+					sourceNode := b.makeNode(info.Resource, info.Label)
+
+					// 注入 relation 关联指标
+					for _, link := range info.Links {
+						for _, item := range link {
+							if resources[item.Name] == nil {
+								continue
+							}
+
+							itemInfo := resources[item.Name].Get(item.ID)
+							if itemInfo == nil {
+								continue
+							}
+
+							nextNode := b.makeNode(itemInfo.Resource, bizLabel, itemInfo.Label)
+							metric := sourceNode.RelationMetric(nextNode)
+							if _, metricOk := metrics[metric.String()]; !metricOk {
+								metrics[metric.String()] = metric
+							}
+							sourceNode = nextNode
+						}
+					}
+				})
+			}
+		}
+	}
+
+	return metrics
 }
 
 // String 以 string 格式获取所有指标数据
@@ -157,8 +251,10 @@ func (b *MetricsBuilder) String() string {
 	b.lock.RLock()
 	defer b.lock.RUnlock()
 
-	for bizID, infos := range b.resources {
-		for id, info := range infos {
+	for _, bkBizID := range b.BizIDs() {
+		metricList := b.toMetricList(bkBizID)
+		for _, metric := range metricList {
+			buf.WriteString(metric.String())
 			buf.WriteString("\n")
 		}
 	}
@@ -172,31 +268,21 @@ func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error
 		return fmt.Errorf("space reporter is nil")
 	}
 
-	// 提前把 bkBizIDs 取出来，缩小锁区间，控制在单业务下
-	bkBizIDs := make([]int, 0, len(b.resources))
-	b.lock.RLock()
-	for bizID := range b.resources {
-		bkBizIDs = append(bkBizIDs, bizID)
-	}
-	b.lock.RUnlock()
-
-	for bkBizID := range bkBizIDs {
+	for _, bkBizID := range b.BizIDs() {
 		ts := getTsPool()
-		metricsMap := make(map[string]struct{})
-
-		b.lock.RLock()
-		if nodeMap, ok := b.resources[bkBizID]; ok {
-			for _, nodes := range nodeMap {
-				for _, relationMetric := range nodes.toRelationMetrics() {
-					d := relationMetric.TimeSeries(bkBizID, timestamp)
-					if _, ok = metricsMap[d.String()]; !ok {
-						metricsMap[d.String()] = struct{}{}
-						ts = append(ts, d)
-					}
-				}
-			}
-		}
-		b.lock.RUnlock()
+		//metricsMap := make(map[string]struct{})
+		//
+		//b.lock.RLock()
+		//nodeList := b.toNodeList(bkBizID)
+		//for _, nodes := range nodeList {
+		//	for _, metric := range nodes.ToRelationMetrics() {
+		//		metricsMap[metric.String(Label{
+		//			Name:  "bk_biz_id",
+		//			Value: fmt.Sprintf("%d", bkBizID),
+		//		})] = struct{}{}
+		//	}
+		//}
+		//b.lock.RUnlock()
 
 		if len(ts) > 0 {
 			// 上传业务 timeSeries

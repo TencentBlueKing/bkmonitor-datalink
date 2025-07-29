@@ -332,3 +332,28 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(topoCacheKey)).Val())
 	})
 }
+
+func TestHostToRelationInfos(t *testing.T) {
+	// mock 主机和拓扑查询
+	patches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bkTenantId string, bizId int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
+		return DemoHosts, DemoTopoTree, nil
+	})
+	defer patches.Reset()
+
+	rOpts := &redis.Options{
+		Mode:  "standalone",
+		Addrs: []string{testRedisAddr},
+	}
+
+	cacheManager, err := NewHostAndTopoCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 1)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	resourceInfo := cacheManager.HostToRelationInfos(DemoHosts)
+
+	ris, err := json.Marshal(resourceInfo)
+	assert.Nil(t, err)
+	assert.Equal(t, `[{"id":"127.0.0.1|0","resource":"system","label":{"bk_cloud_id":"0","bk_target_ip":"127.0.0.1"},"links":[[{"name":"host","id":"1"}]]},{"id":"1","resource":"host","label":{"host_id":"1"},"links":[[{"name":"module","id":"3"},{"name":"set","id":"2"},{"name":"biz","id":"2"}],[{"name":"module","id":"6"},{"name":"set","id":"3"},{"name":"test","id":"2"},{"name":"biz","id":"2"}]]},{"id":"127.0.0.2|0","resource":"system","label":{"bk_cloud_id":"0","bk_target_ip":"127.0.0.2"},"links":[[{"name":"host","id":"2"}]]},{"id":"2","resource":"host","label":{"host_id":"2"},"links":[[{"name":"module","id":"4"},{"name":"set","id":"2"},{"name":"biz","id":"2"}]]},{"id":"127.0.0.3|0","resource":"system","label":{"bk_cloud_id":"0","bk_target_ip":"127.0.0.3"},"links":[[{"name":"host","id":"3"}]]},{"id":"3","resource":"host","label":{"host_id":"3"},"links":[[{"name":"module","id":"6"},{"name":"set","id":"3"},{"name":"test","id":"2"},{"name":"biz","id":"2"}]]}]`, string(ris))
+}

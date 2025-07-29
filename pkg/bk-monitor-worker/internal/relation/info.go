@@ -9,15 +9,23 @@
 
 package relation
 
+type Item struct {
+	Name string `json:"name,omitempty"`
+	ID   string `json:"id,omitempty"`
+}
+
+type Link []Item
+
 // Info
 // label 关键维度
 // expand 扩展信息 map[{资源类型}]map[{维度 Key}]{维度 value}
 // topo 拓扑关联
 type Info struct {
-	ID        string
-	Label     map[string]string
-	Expand    map[string]map[string]string
-	TopoLinks map[string][]map[string]any
+	ID       string                       `json:"id,omitempty"`
+	Resource string                       `json:"resource,omitempty"`
+	Label    map[string]string            `json:"label,omitempty"`
+	Expands  map[string]map[string]string `json:"expands,omitempty"`
+	Links    []Link                       `json:"links,omitempty"`
 }
 
 // ResourceInfo 扩展信息 map[{资源ID}]Info
@@ -54,4 +62,14 @@ func (e *ResourceInfo) Get(id string) *Info {
 	}
 
 	return nil
+}
+
+func (e *ResourceInfo) Range(fn func(info *Info)) {
+	if e.data == nil {
+		return
+	}
+
+	for _, info := range e.data {
+		fn(info)
+	}
 }

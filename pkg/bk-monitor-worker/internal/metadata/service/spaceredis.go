@@ -982,9 +982,23 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 
 	// 获取历史存储集群记录
 	db := mysql.GetDBSession().DB
-	clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, tableId)
+
+	// 若该RT是虚拟RT,则使用其关联的真实RT去查询存储集群记录信息
+	var storageIns storage.ESStorage
+	realTableId := tableId
+	if err := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.OriginTableId).TableIDEq(tableId).One(&storageIns); err != nil {
+		logger.Errorf("composeEsTableIdDetail: failed to get origin table_id for table_id [%s], error: %v", tableId, err)
+		return tableId, "", err
+	}
+
+	if storageIns.OriginTableId != "" {
+		logger.Infof("composeEsTableIdDetail: origin table_id [%s] found for table_id [%s]", storageIns.OriginTableId, tableId)
+		realTableId = storageIns.OriginTableId
+	}
+
+	clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, realTableId)
 	if err != nil {
-		logger.Errorf("composeEsTableIdDetail: failed to get storage cluster records for table_id [%s], error: %v", tableId, err)
+		logger.Errorf("composeEsTableIdDetail: failed to get storage cluster records for table_id [%s], error: %v", realTableId, err)
 		return "", "", err
 	}
 

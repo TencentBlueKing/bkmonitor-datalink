@@ -1393,6 +1393,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 			SourceType:       sourceType,
 			IndexSet:         indexSet,
 			NeedCreateIndex:  true,
+			OriginTableId:    "bklog.real_rt",
 		},
 	}
 	for _, esStorage := range esStorages {
@@ -1418,7 +1419,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 	// 插入StorageClusterRecord数据
 	testRecords := []storage.ClusterRecord{
 		{
-			TableID:     tableID,
+			TableID:     "bklog.real_rt",
 			ClusterID:   1,
 			IsDeleted:   false,
 			IsCurrent:   true,
@@ -1429,7 +1430,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 			DeleteTime:  nil,
 		},
 		{
-			TableID:     tableID,
+			TableID:     "bklog.real_rt",
 			ClusterID:   2,
 			IsDeleted:   false,
 			IsCurrent:   true,

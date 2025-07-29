@@ -992,6 +992,7 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 	}
 
 	if storageIns.OriginTableId != "" {
+		logger.Infof("composeEsTableIdDetail: origin table_id [%s] found for table_id [%s]", storageIns.OriginTableId, tableId)
 		realTableId = storageIns.OriginTableId
 	}
 

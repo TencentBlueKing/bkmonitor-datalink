@@ -1020,6 +1020,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 
 	if isDone {
 		done = true
+		list = []map[string]any{}
 		return
 	}
 

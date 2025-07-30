@@ -24,6 +24,7 @@ import (
 	"github.com/elastic/beats/libbeat/outputs"
 	"github.com/elastic/beats/libbeat/publisher"
 
+	bkcommon "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/gse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/monitoring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/monitoring/report/bkpipe"
@@ -61,7 +62,7 @@ var MarshalFunc = json.Marshal
 type Output struct {
 	cli         *gse.GseClient
 	aif         *AgentInfoFetcher
-	fl          *flowLimiter
+	fl          *bkcommon.FlowLimiter
 	fastMode    bool
 	concurrency int
 }
@@ -118,7 +119,7 @@ func MakeGSE(im outputs.IndexManager, beat beat.Info, stats outputs.Observer, cf
 	}
 
 	if c.FlowLimit > 0 {
-		output.fl = newFlowLimiter(c.FlowLimit)
+		output.fl = bkcommon.NewFlowLimiter(c.FlowLimit)
 		logp.Info("enable flowlimit, rate: %d", c.FlowLimit)
 	}
 

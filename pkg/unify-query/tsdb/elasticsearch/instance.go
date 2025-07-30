@@ -38,11 +38,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
-const (
-	defaultMaxRetries    = 3
-	defaultRetryInterval = 100 * time.Millisecond
-)
-
 var _ tsdb.Instance = (*Instance)(nil)
 
 type Instance struct {
@@ -345,9 +340,9 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 						span.Set("query-scroll-id", option.ScrollID)
 						scroll.ScrollId(option.ScrollID)
 					}
-					if option.SliceID != nil && option.SliceMax != nil {
-						span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", *option.SliceID, *option.SliceMax))
-						scroll.Slice(elastic.NewSliceQuery().Id(*option.SliceID).Max(*option.SliceMax))
+					if option.SliceIndex != nil && option.SliceMax != nil {
+						span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", *option.SliceIndex, *option.SliceMax))
+						scroll.Slice(elastic.NewSliceQuery().Id(*option.SliceIndex).Max(*option.SliceMax))
 					}
 				}
 			}
@@ -653,10 +648,19 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 					}
 				}
 
-				// ScrollID 覆盖 SearchAfter 配置
-				if sr.ScrollId != "" {
+				if query.Scroll != "" {
+					var originalOption *metadata.ResultTableOption
+					if len(query.ResultTableOptions) > 0 {
+						originalOption = query.ResultTableOptions.GetOption(query.TableID, conn.Address)
+					}
+
 					option = &metadata.ResultTableOption{
 						ScrollID: sr.ScrollId,
+					}
+
+					if originalOption != nil {
+						option.SliceIndex = originalOption.SliceIndex
+						option.SliceMax = originalOption.SliceMax
 					}
 				}
 			}

@@ -184,65 +184,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 	list = make([]map[string]any, 0)
 
-	// 构建查询路由列表
-	if queryTs.SpaceUid == "" {
-		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
-	}
-	for _, ql := range queryTs.QueryList {
-		// 时间复用
-		ql.Timezone = queryTs.Timezone
-		ql.Start = queryTs.Start
-		ql.End = queryTs.End
-
-		// 排序复用
-		ql.OrderBy = queryTs.OrderBy
-		ql.DryRun = queryTs.DryRun
-
-		// 如果 qry.Step 不存在去外部统一的 step
-		if ql.Step == "" {
-			ql.Step = queryTs.Step
-		}
-
-		if queryTs.ResultTableOptions != nil {
-			ql.ResultTableOptions = queryTs.ResultTableOptions
-		}
-
-		// 如果 Limit / From 没有单独指定的话，同时外部指定了的话，使用外部的
-		if ql.Limit == 0 && queryTs.Limit > 0 {
-			ql.Limit = queryTs.Limit
-		}
-
-		// 在使用 multiFrom 模式下，From 需要保持为 0，因为 from 存放在 resultTableOptions 里面
-		if queryTs.IsMultiFrom {
-			queryTs.From = 0
-		}
-
-		if ql.From == 0 && queryTs.From > 0 {
-			ql.From = queryTs.From
-		}
-
-		// 复用 scroll 配置，如果配置了 scroll 优先使用 scroll
-		if queryTs.Scroll != "" {
-			ql.Scroll = queryTs.Scroll
-			queryTs.IsMultiFrom = false
-		}
-
-		// 复用字段配置，没有特殊配置的情况下使用公共配置
-		if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
-			ql.KeepColumns = queryTs.ResultColumns
-		}
-
-		qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
-		if qmErr != nil {
-			err = qmErr
-			return
-		}
-
-		for _, qry := range qm.QueryList {
-			if qry != nil {
-				queryList = append(queryList, qry)
-			}
-		}
+	queryList, err = prepareQueryTs(ctx, queryTs)
+	if err != nil {
+		log.Errorf(ctx, "prepare query ts error: %s", err.Error())
+		return
 	}
 
 	receiveWg.Add(1)
@@ -411,6 +356,76 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		err = errors.New(message.String())
 	}
 
+	return
+}
+
+func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessionKeySuffix string, maxSliceCount int) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, done bool, err error) {
+	var (
+		workerWg     = sync.WaitGroup{}
+		readerWg     = sync.WaitGroup{}
+		messageMutex = sync.Mutex{}
+		message      strings.Builder
+		queryList    []*metadata.Query
+		dataCh       = make(chan []map[string]any)
+		listMutex    = sync.Mutex{}
+	)
+	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
+	defer span.End(&err)
+	_, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
+	if timeErr != nil {
+		err = timeErr
+		return
+	}
+	session, err := redisUtil.GetOrCreateScrollSession(ctx, sessionKeySuffix, maxSliceCount, queryTs.Scroll, queryTs.Limit)
+	if err != nil {
+		return
+	}
+	queryList, err = prepareQueryTs(ctx, queryTs)
+	if err != nil {
+		return
+	}
+	scrollQuery, err := collectStorageScrollQuery(ctx, session, collectStorageQuery(queryList))
+	if err != nil {
+		return
+	}
+
+	readerWg.Add(1)
+	go func() {
+		defer readerWg.Done()
+		for d := range dataCh {
+			listMutex.Lock()
+			list = append(list, d...)
+			listMutex.Unlock()
+		}
+	}()
+
+	for _, e := range scrollQuery {
+		for _, qry := range e.QueryList {
+			workerWg.Add(1)
+			go func(e StorageScrollQuery, qry *metadata.Query) {
+				defer workerWg.Done()
+				sData, sErr := scrollQueryWorker(ctx, session, e.Connect, e.TableID, qry, start, end, e.Storage.Instance)
+				if sErr != nil {
+					messageMutex.Lock()
+					message.WriteString(fmt.Sprintf("query %s:%s is error: %s ", qry.TableID, qry.Fields, sErr.Error()))
+					messageMutex.Unlock()
+					return
+				}
+				dataCh <- sData
+			}(e, qry)
+		}
+	}
+
+	workerWg.Wait()
+	close(dataCh)
+
+	readerWg.Wait()
+
+	total = int64(len(list))
+	done = session.CouldDone()
+	if message.Len() > 0 {
+		err = errors.New(message.String())
+	}
 	return
 }
 
@@ -957,196 +972,4 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 		return nil, err
 	}
 	return resp, nil
-}
-
-func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, done bool, err error) {
-	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
-	defer span.End(&err)
-
-	if queryTs.Limit == 0 {
-		queryTs.Limit = ScrollSliceLimit
-	}
-	if queryTs.Scroll == "" {
-		queryTs.Scroll = ScrollWindow
-	}
-
-	if queryTs.SpaceUid == "" {
-		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
-	}
-
-	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
-	if timeErr != nil {
-		err = fmt.Errorf("invalid time: %v", timeErr)
-		return
-	}
-	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
-	user := metadata.GetUser(ctx)
-
-	queryTsBytes, err := json.Marshal(queryTs)
-	if err != nil {
-		return 0, nil, nil, false, fmt.Errorf("failed to marshal queryTs: %v", err)
-	}
-	var queryTsMap map[string]interface{}
-	if err = json.Unmarshal(queryTsBytes, &queryTsMap); err != nil {
-		return
-	}
-
-	queryTsKey, err := redisUtil.ScrollGenerateQueryTsKey(queryTsMap, user.Name)
-	if err != nil {
-		return
-	}
-	lockKey := redisUtil.GetLockKey(queryTsKey)
-	if err = redisUtil.ScrollAcquireRedisLock(ctx, lockKey, ScrollLockTimeout); err != nil {
-		return
-	}
-	defer func() {
-		if err = redisUtil.ScrollReleaseRedisLock(ctx, lockKey); err != nil {
-			log.Warnf(ctx, "Failed to release scroll query lock, key: %s, error: %v", lockKey, err)
-			return
-		}
-	}()
-
-	scrollSessionHelperInstance := redisUtil.NewScrollSessionHelper(
-		ScrollSliceLimit,
-		ScrollWindow,
-		ScrollMaxSlice,
-		ScrollLockTimeout,
-	)
-	session, sessionKey, isDone, err := scrollSessionHelperInstance.GetOrCreateSessionByKey(ctx, queryTsKey,
-		queryTs.ClearCache, queryTs.Scroll, queryTs.Limit)
-	if err != nil {
-		return
-	}
-
-	if isDone {
-		done = true
-		list = []map[string]any{}
-		return
-	}
-
-	queryList, err := prepareQueryList(ctx, queryTs)
-	if err != nil {
-		return
-	}
-
-	return executeScrollQueriesWithHelper(ctx, scrollSessionHelperInstance, sessionKey, session, queryList, start, end, queryTs)
-}
-
-func executeScrollQueriesWithHelper(ctx context.Context, scrollSessionHelperInstance *redisUtil.ScrollSessionHelper, sessionKey string, session *redisUtil.ScrollSession, queryList []*metadata.Query,
-	start, end time.Time, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, done bool, err error) {
-
-	executor := newScrollQueryExecutor(ctx, sessionKey, session, queryTs, start, end)
-	defer executor.cleanup()
-
-	storageQueryMap := buildStorageQueryMap(queryList)
-
-	var receiveWg sync.WaitGroup
-	ignoreDimensions := []string{elasticsearch.KeyAddress}
-
-	receiveWg.Add(1)
-	go func() {
-		defer receiveWg.Done()
-		list = processQueryResults(executor.dataCh, queryTs, ignoreDimensions)
-	}()
-
-	go func() {
-		if eErr := executor.executeQueries(storageQueryMap, scrollSessionHelperInstance); eErr != nil {
-			executor.message.WriteString(fmt.Sprintf("executeScrollQueriesWithHelper error: %v", eErr))
-		}
-	}()
-
-	receiveWg.Wait()
-
-	if executor.message.Len() > 0 {
-		err = errors.New(executor.message.String())
-	}
-
-	total = executor.total
-	resultTableOptions = executor.resultTableOptions
-	done = executor.session.Status == redisUtil.SessionStatusDone
-	return
-}
-
-func prepareQueryList(ctx context.Context, queryTs *structured.QueryTs) (queryList []*metadata.Query, err error) {
-	for _, ql := range queryTs.QueryList {
-		ql.Timezone = queryTs.Timezone
-		ql.Start = queryTs.Start
-		ql.End = queryTs.End
-		ql.OrderBy = queryTs.OrderBy
-
-		if ql.Step == "" {
-			ql.Step = queryTs.Step
-		}
-		if queryTs.ResultTableOptions != nil {
-			ql.ResultTableOptions = queryTs.ResultTableOptions
-		}
-		if ql.Limit == 0 && queryTs.Limit > 0 {
-			ql.Limit = queryTs.Limit
-		}
-		if ql.From == 0 && queryTs.From > 0 {
-			ql.From = queryTs.From
-		}
-		if queryTs.Scroll != "" {
-			ql.Scroll = queryTs.Scroll
-		}
-		if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
-			ql.KeepColumns = queryTs.ResultColumns
-		}
-
-		qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
-		if qmErr != nil {
-			err = qmErr
-			return
-		}
-
-		for _, qry := range qm.QueryList {
-			if qry != nil {
-				queryList = append(queryList, qry)
-			}
-		}
-	}
-
-	return queryList, nil
-}
-
-func buildStorageQueryMap(queryList []*metadata.Query) map[string][]*metadata.Query {
-	storageQueryMap := make(map[string][]*metadata.Query)
-	for _, qry := range queryList {
-		storageIds := qry.CalcStorageIDs()
-		if storageIds == nil {
-			continue
-		}
-
-		for _, storageId := range storageIds {
-			storageQueryMap[storageId] = append(storageQueryMap[storageId], qry)
-		}
-	}
-
-	return storageQueryMap
-}
-
-func processQueryResults(dataCh <-chan map[string]any, queryTs *structured.QueryTs, ignoreDimensions []string) []map[string]any {
-	var data []map[string]any
-	for d := range dataCh {
-		data = append(data, d)
-	}
-
-	if queryTs.OrderBy != nil && len(queryTs.OrderBy.Orders()) > 0 {
-		queryTs.OrderBy.Orders().SortSliceList(data)
-	}
-
-	list := make([]map[string]any, 0, len(data))
-	for _, item := range data {
-		if item == nil {
-			continue
-		}
-
-		for _, ignoreDimension := range ignoreDimensions {
-			delete(item, ignoreDimension)
-		}
-
-		list = append(list, item)
-	}
-
-	return list
 }

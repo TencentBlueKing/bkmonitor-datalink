@@ -192,14 +192,14 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 	for i, c := range tCase.expected {
 		t.Logf("Running step %d: %s", i+1, c.desc)
 
-		//mock.Es.Set(map[string]any{})
 		mock.Es.Set(c.mockData)
 
-		queryTsBytes, _ := json.Marshal(tCase.queryTs)
+		queryTsBytes, _ := json.StableMarshal(tCase.queryTs)
 		var queryTsCopy structured.QueryTs
 		json.Unmarshal(queryTsBytes, &queryTsCopy)
+		sessionKeySuffix, _ := generateScrollSuffix(user.Name, *tCase.queryTs)
 
-		total, list, _, done, err := queryRawWithScroll(testCtx, &queryTsCopy)
+		total, list, _, done, err := queryRawWithScroll(testCtx, &queryTsCopy, sessionKeySuffix, 3)
 		hasData := len(list) > 0
 
 		assert.NoError(t, err, "QueryRawWithScroll should not return error for step %d", i+1)
@@ -340,7 +340,8 @@ func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
 		var queryTsCopy structured.QueryTs
 		json.Unmarshal(queryTsBytes, &queryTsCopy)
 
-		total, list, _, done, err := queryRawWithScroll(testCtx, &queryTsCopy)
+		sessionKeySuffix, _ := generateScrollSuffix(user.Name, *tCase.queryTs)
+		total, list, _, done, err := queryRawWithScroll(testCtx, &queryTsCopy, sessionKeySuffix, 3)
 		hasData := len(list) > 0
 
 		assert.NoError(t, err, "QueryRawWithScroll should not return error for step %d", i+1)

@@ -33,12 +33,12 @@ var stableSonicAPI = sonic.Config{
 	SortMapKeys:      true, // 确保序列化结果稳定
 }.Froze()
 
-func Marshal(v interface{}) ([]byte, error) {
-	return sonicAPI.Marshal(v)
-}
-
 func StableMarshal(v interface{}) ([]byte, error) {
 	return stableSonicAPI.Marshal(v)
+}
+
+func Marshal(v interface{}) ([]byte, error) {
+	return sonicAPI.Marshal(v)
 }
 
 func Unmarshal(data []byte, v interface{}) error {

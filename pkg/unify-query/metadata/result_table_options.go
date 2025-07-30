@@ -15,8 +15,9 @@ type ResultTableOption struct {
 	From        *int   `json:"from,omitempty"`
 	ScrollID    string `json:"scroll_id,omitempty"`
 	SearchAfter []any  `json:"search_after,omitempty"`
-	SliceID     *int   `json:"slice_id,omitempty"`
+	SliceIndex  *int   `json:"slice_index,omitempty"`
 	SliceMax    *int   `json:"slice_max,omitempty"`
+
 	SQL          string           `json:"sql,omitempty"`
 	ResultSchema []map[string]any `json:"result_schema,omitempty"`
 }
@@ -27,7 +28,6 @@ func (o ResultTableOptions) getKey(tableID, address string) string {
 		key = tableID + "|" + address
 	}
 	return key
-
 }
 
 func (o ResultTableOptions) SetOption(tableID, address string, option *ResultTableOption) {

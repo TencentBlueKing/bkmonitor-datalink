@@ -11,6 +11,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -45,6 +46,16 @@ func Client() goRedis.UniversalClient {
 		client = globalInstance.client
 	}
 	return client
+}
+
+func IsNil(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, goRedis.Nil) {
+		return true
+	}
+	return false
 }
 
 func SetInstance(ctx context.Context, serviceName string, options *goRedis.UniversalOptions) error {

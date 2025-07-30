@@ -19,16 +19,21 @@ import (
 	"testing"
 	"time"
 
+	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	goRedis "github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
+	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 type Writer struct {
@@ -544,6 +549,125 @@ func TestQueryHandler(t *testing.T) {
 				assert.Equal(t, c.expected, b)
 			}
 
+		})
+	}
+}
+
+func TestHandlerQueryRawWithScroll(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+	LoadConfig()
+
+	router, err := influxdb.GetSpaceTsDbRouter()
+	assert.NoError(t, err)
+
+	testTableId := "result_table.es"
+	err = router.Add(ctx, ir.ResultTableDetailKey, testTableId, &ir.ResultTableDetail{
+		StorageId:   3,
+		TableId:     testTableId,
+		DB:          "es_index",
+		StorageType: consul.ElasticsearchStorageType,
+		DataLabel:   "bkapm",
+	})
+	assert.NoError(t, err)
+
+	resultTableList := ir.ResultTableList{testTableId}
+	err = router.Add(ctx, ir.DataLabelToResultTableKey, "bkapm", &resultTableList)
+	assert.NoError(t, err)
+
+	mock.Es.Set(map[string]any{
+		`{"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1753840080,"include_lower":true,"include_upper":true,"to":1753843740}}}}},"size":30,"slice":{"id":0,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"scroll_id_0","hits":{"total":{"value":2,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"1","_source":{"dtEventTimeStamp":"1753840100000","data":"test_data_1","service":"test_service"}},{"_index":"result_table.es","_id":"2","_source":{"dtEventTimeStamp":"1753840200000","data":"test_data_2","service":"test_service"}}]}}`,
+		`{"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1753840080,"include_lower":true,"include_upper":true,"to":1753843740}}}}},"size":30,"slice":{"id":1,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"scroll_id_1","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"3","_source":{"dtEventTimeStamp":"1753840300000","data":"test_data_3","service":"test_service"}}]}}`,
+		`{"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1753840080,"include_lower":true,"include_upper":true,"to":1753843740}}}}},"size":30,"slice":{"id":2,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"scroll_id_2","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
+	})
+
+	s, _ := miniredis.Run()
+	defer s.Close()
+
+	options := &goRedis.UniversalOptions{
+		Addrs: []string{s.Addr()},
+		DB:    0,
+	}
+
+	redis.SetInstance(ctx, "test", options)
+	testCases := map[string]struct {
+		req              string
+		expectedContains []string
+		shouldSucceed    bool
+	}{
+		"test_with_scroll": {
+			req: `{
+    "space_uid": "bkcc__2",
+    "query_list": [
+        {
+            "data_source": "bkapm",
+            "table_id": "result_table.es"
+        }
+    ],
+    "metric_merge": "a",
+    "order_by": [
+        "-end_time"
+    ],
+    "start_time": "1753840080",
+    "end_time": "1753843740",
+    "step": "60s",
+    "timezone": "Asia/Shanghai",
+    "instant": false,
+    "limit": 30,
+    "scroll": "3m"
+}`,
+			expectedContains: []string{
+				`"total":3`,
+				`"done":false`,
+				`"list":[`,
+				`"test_data_1"`,
+				`"test_data_2"`,
+				`"test_data_3"`,
+			},
+			shouldSucceed: true,
+		},
+	}
+
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+			metadata.SetUser(ctx, &metadata.User{
+				SpaceUID: influxdb.SpaceUid,
+				Name:     "test_user",
+				Key:      "username:test_user",
+			})
+
+			body := bytes.NewReader([]byte(c.req))
+			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", body)
+			w := &Writer{}
+			ginC := &gin.Context{
+				Request: req,
+				Writer:  w,
+			}
+			HandlerQueryRawWithScroll(ginC)
+			b := w.body()
+
+			if c.shouldSucceed {
+				for _, expected := range c.expectedContains {
+					assert.Contains(t, b, expected, "Response should contain: %s", expected)
+				}
+				var result map[string]interface{}
+				err := json.Unmarshal([]byte(b), &result)
+				assert.NoError(t, err, "Response should be valid JSON")
+
+				if data, ok := result["data"].(map[string]interface{}); ok {
+					if total, ok := data["total"].(float64); ok {
+						assert.Equal(t, float64(3), total, "Total should be 3")
+					}
+					if done, ok := data["done"].(bool); ok {
+						assert.False(t, done, "Done should be false for first scroll")
+					}
+					if list, ok := data["list"].([]interface{}); ok {
+						assert.Greater(t, len(list), 0, "List should contain data")
+					}
+				}
+			}
 		})
 	}
 }

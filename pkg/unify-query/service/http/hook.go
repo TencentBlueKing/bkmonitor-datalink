@@ -45,7 +45,7 @@ func setDefaultConfig() {
 	viper.SetDefault(TSQueryPromQLHandlePathConfigPath, "/query/ts/promql")
 	viper.SetDefault(TSQueryReferenceQueryHandlePathConfigPath, "/query/ts/reference")
 	viper.SetDefault(TSQueryRawQueryHandlePathConfigPath, "/query/ts/raw")
-	viper.SetDefault(TSQueryRawWithScrollHandlePathConfigPath, "/query/ts/raw_with_scroll")
+	viper.SetDefault(TSQueryRawQueryWithScrollHandlePathConfigPath, "/query/ts/raw_with_scroll")
 	viper.SetDefault(TSQueryRawMAXLimitConfigPath, 1e2)
 	viper.SetDefault(TSQueryInfoHandlePathConfigPath, "/query/ts/info")
 	viper.SetDefault(TSQueryStructToPromQLHandlePathConfigPath, "/query/ts/struct_to_promql")
@@ -77,11 +77,12 @@ func setDefaultConfig() {
 	viper.SetDefault(ClusterMetricQueryPrefixConfigPath, "bkmonitor")
 	viper.SetDefault(ClusterMetricQueryTimeoutConfigPath, "30s")
 
-	// Scroll配置
+	// scroll
+	viper.SetDefault(ScrollSliceLimitConfigPath, 10000)
 	viper.SetDefault(ScrollMaxSliceConfigPath, 3)
-	viper.SetDefault(ScrollSliceDefaultLimitConfigPath, 10000)
-	viper.SetDefault(ScrollDefaultScrollWindowDurationConfigPath, "5m")
-	viper.SetDefault(ScrollLockTimeoutConfigPath, "60s")
+	viper.SetDefault(ScrollSessionLockTimeoutConfigPath, "60s")
+	viper.SetDefault(ScrollWindowTimeoutConfigPath, "3m")
+
 }
 
 // LoadConfig
@@ -100,6 +101,11 @@ func LoadConfig() {
 	SlowQueryThreshold = viper.GetDuration(SlowQueryThresholdConfigPath)
 	DefaultQueryListLimit = viper.GetInt(DefaultQueryListLimitPath)
 
+	ScrollSliceLimit = viper.GetInt(ScrollSliceLimitConfigPath)
+	ScrollMaxSlice = viper.GetInt(ScrollMaxSliceConfigPath)
+	ScrollSessionLockTimeout = viper.GetDuration(ScrollSessionLockTimeoutConfigPath)
+	ScrollWindowTimeout = viper.GetString(ScrollWindowTimeoutConfigPath)
+
 	QueryMaxRouting = viper.GetInt(QueryMaxRoutingConfigPath)
 
 	ClusterMetricQueryPrefix = viper.GetString(ClusterMetricQueryPrefixConfigPath)
@@ -107,11 +113,6 @@ func LoadConfig() {
 
 	JwtPublicKey = viper.GetString(JwtPublicKeyConfigPath)
 	JwtBkAppCodeSpaces = viper.GetStringMapStringSlice(JwtBkAppCodeSpacesConfigPath)
-
-	ScrollMaxSlice = viper.GetInt(ScrollMaxSliceConfigPath)
-	ScrollSliceLimit = viper.GetInt(ScrollSliceDefaultLimitConfigPath)
-	ScrollWindow = viper.GetString(ScrollDefaultScrollWindowDurationConfigPath)
-	ScrollLockTimeout = viper.GetDuration(ScrollLockTimeoutConfigPath)
 
 	promql.SetSegmented(&promql.Segmented{
 		Enable:      viper.GetBool(SegmentedEnable),

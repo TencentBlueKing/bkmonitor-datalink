@@ -12,10 +12,21 @@ package redis
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+)
+
+var (
+	ErrorOfUnSupportScrollStorageType = errors.New("UnSupportScrollStorageType")
+	ErrorOfScrollSliceStatusNotFound  = errors.New("ScrollSliceStatusNotFound")
+)
+
+const (
+	DefaultSliceMaxFailedNum = 3
 )
 
 const (
@@ -23,244 +34,244 @@ const (
 	LockKeyPrefix    = "scroll:lock:"
 )
 
-type ScrollSession struct {
-	LastAccessAt  time.Time                      `json:"last_access_at"`
-	ScrollTimeout time.Duration                  `json:"scroll_timeout"`
-	MaxSlice      int                            `json:"max_slice"`
-	Limit         int                            `json:"limit"`
-	Index         int                            `json:"index"`
-	ScrollIDs     map[string]map[string]struct{} `json:"scroll_ids"`
-	Status        string                         `json:"status"`
-}
-
-func NewScrollSession(maxSlice int, scrollTimeout time.Duration, limit int) *ScrollSession {
-	return &ScrollSession{
-		LastAccessAt:  time.Now(),
-		ScrollTimeout: scrollTimeout,
-		MaxSlice:      maxSlice,
-		Limit:         limit,
-		Index:         0,
-		ScrollIDs:     map[string]map[string]struct{}{},
-		Status:        SessionStatusRunning,
-	}
-}
-
-type SliceStatus struct {
-	Connect  string `json:"connect"`
-	TableID  string `json:"table_id"`
-	SliceIdx int    `json:"slice_idx"`
-}
-
-func (s SliceStatus) String() string {
-	return fmt.Sprintf("%s:%s:%d", s.Connect, s.TableID, s.SliceIdx)
-}
-
 const (
-	SessionStatusRunning = "RUNNING"
-	SessionStatusDone    = "DONE"
-	SessionStatusFailed  = "FAILED"
+	StatusPending   = "pending"
+	StatusRunning   = "running"
+	StatusFailed    = "failed"
+	StatusStop      = "stop" // 超过失败次数限制
+	StatusCompleted = "completed"
 )
 
-func (s *ScrollSession) getNextDorisIndex() int {
-	currentIndex := s.Index
-	s.Index++
-	return currentIndex
+type ScrollSession struct {
+	SessionKey        string        `json:"session_key"`
+	LastAccessAt      time.Time     `json:"last_access_at"`
+	ScrollTimeout     time.Duration `json:"scroll_timeout"`
+	MaxSlice          int           `json:"max_slice"`
+	SliceMaxFailedNum int           `json:"slice_max_failed_num"`
+	Limit             int           `json:"limit"`
+	Index             int           `json:"index"`
+	// map key is SliceStatusKey
+	ScrollIDs map[string]SliceStatusValue `json:"scroll_ids"`
+	Status    string                      `json:"status"`
 }
 
-func (s *ScrollSession) getNextElasticsearchScrollID(connect, tableID string, sliceIdx int) string {
-	k := SliceStatus{
-		Connect:  connect,
-		TableID:  tableID,
-		SliceIdx: sliceIdx,
-	}
-	key := k.String()
-	scrollIdSet := s.ScrollIDs[key]
-	if len(scrollIdSet) == 0 {
-		return ""
-	}
-	for scrollID := range scrollIdSet {
-		return scrollID
-	}
-	return ""
+func (s *ScrollSession) MarshalBinary() ([]byte, error) {
+	return json.Marshal(s)
 }
 
-func (s *ScrollSession) AddScrollId(connect, tableID, scrollID string, sliceIdx int) {
-	k := SliceStatus{
-		Connect:  connect,
-		TableID:  tableID,
-		SliceIdx: sliceIdx,
-	}
-	key := k.String()
+func (s *ScrollSession) UnmarshalBinary(data []byte) error {
+	return json.Unmarshal(data, s)
+}
 
-	var idToAdd string
-	if scrollID != "" {
-		idToAdd = scrollID
-		s.ScrollIDs[key] = map[string]struct{}{idToAdd: {}}
-	} else {
-		if strings.Contains(connect, "bk_data") {
-			idToAdd = fmt.Sprintf("slice_%d", sliceIdx)
+func generateScrollSliceStatusKey(storageType, connect, tableID string, sliceIdx int) string {
+	return fmt.Sprintf("%s:%s:%s:%d", storageType, connect, tableID, sliceIdx)
+}
 
-			st := s.ScrollIDs[key]
-			if st == nil {
-				st = make(map[string]struct{})
-			}
-
-			st[idToAdd] = struct{}{}
-			s.ScrollIDs[key] = st
-		}
+func NewScrollSession(sessionKeySuffix string, maxSlice int, scrollTimeout time.Duration, limit int) *ScrollSession {
+	sessionKey := SessionKeyPrefix + sessionKeySuffix
+	return &ScrollSession{
+		SessionKey:        sessionKey,
+		LastAccessAt:      time.Now(),
+		ScrollTimeout:     scrollTimeout,
+		MaxSlice:          maxSlice,
+		SliceMaxFailedNum: DefaultSliceMaxFailedNum,
+		Limit:             limit,
+		Index:             0,
+		ScrollIDs:         make(map[string]SliceStatusValue),
+		Status:            StatusRunning,
 	}
 }
 
-func (s *ScrollSession) RemoveScrollID(slice SliceInfo, connect, tableID string, sliceIdx int) {
-	k := SliceStatus{
-		Connect:  connect,
-		TableID:  tableID,
-		SliceIdx: sliceIdx,
-	}
-	key := k.String()
-	scrollIDSet := s.ScrollIDs[key]
-	if scrollIDSet != nil {
-		var idToRemove string
-		if slice.ScrollID == "" {
-			idToRemove = fmt.Sprintf("slice_%d", sliceIdx)
-		} else {
-			idToRemove = slice.ScrollID
-		}
+type SliceStatusKey struct {
+	StorageType string `json:"storagetype"`
+	Connect     string `json:"connect"`
+	TableID     string `json:"table_id"`
+	SliceIdx    int    `json:"slice_idx"`
+}
 
-		delete(scrollIDSet, idToRemove)
-
-		if len(scrollIDSet) == 0 {
-			delete(s.ScrollIDs, key)
-		}
-	}
+type SliceStatusValue struct {
+	ScrollID  string `json:"scroll_id"`
+	Offset    int    `json:"offset"`
+	Status    string `json:"status"`
+	FailedNum int    `json:"failed_num"`
+	Limit     int    `json:"limit"`
 }
 
 type SliceInfo struct {
-	SliceIndex int
-	ScrollID   string
-	Index      int
+	Connect     string
+	TableId     string
+	StorageType string
+	SliceIdx    int
+	SliceMax    int
+	ScrollID    string
+	Offset      int
 }
 
-func (s *ScrollSession) MakeSlices(storageType, connect, tableID string) (sliceInfos []SliceInfo, err error) {
+func (s *ScrollSession) MakeSlices(storageType, connect, tableID string) (slices []*SliceInfo, err error) {
 	switch storageType {
 	case consul.ElasticsearchStorageType:
-		sliceInfos = s.makeElasticsearchSlices(connect, tableID)
-		return
+		return s.makeESSlices(connect, tableID)
 	case consul.BkSqlStorageType:
-		sliceInfos = s.makeDorisSlices()
-		return
+		return s.makeDorisSlices(connect, tableID)
 	default:
-		err = fmt.Errorf("unsupported storage type for scroll: %s", storageType)
-		return
+		return nil, ErrorOfUnSupportScrollStorageType
 	}
 }
 
-func (s *ScrollSession) makeElasticsearchSlices(connect, tableID string) []SliceInfo {
-	slices := make([]SliceInfo, 0, s.MaxSlice)
+func (s *ScrollSession) makeESSlices(connect, tableID string) (slices []*SliceInfo, err error) {
+	needUpdate := false
+	for i := 0; i < s.MaxSlice; i++ {
+		key := generateScrollSliceStatusKey(consul.ElasticsearchStorageType, connect, tableID, i)
+		val, exists := s.ScrollIDs[key]
 
-	isFirstRequest := len(s.ScrollIDs) == 0
-
-	for sliceIndex := 0; sliceIndex < s.MaxSlice; sliceIndex++ {
-		scrollID := s.getNextElasticsearchScrollID(connect, tableID, sliceIndex)
-
-		if isFirstRequest || scrollID != "" {
-			slices = append(slices, SliceInfo{
-				SliceIndex: sliceIndex,
-				ScrollID:   scrollID,
-				Index:      0,
-			})
+		if !exists {
+			val = SliceStatusValue{
+				Status:    StatusPending,
+				FailedNum: 0,
+			}
+			s.ScrollIDs[key] = val
+			needUpdate = true
 		}
-	}
 
-	return slices
-}
-
-func (s *ScrollSession) makeDorisSlices() []SliceInfo {
-	slices := make([]SliceInfo, 0, s.MaxSlice)
-
-	roundNumber := 0
-	if len(s.ScrollIDs) > 0 {
-		hasActiveSlices := false
-		for _, scrollIDSet := range s.ScrollIDs {
-			if len(scrollIDSet) > 0 {
-				hasActiveSlices = true
-				break
+		if val.Status == StatusFailed {
+			if val.FailedNum < s.SliceMaxFailedNum {
+				val.Status = StatusPending
+				s.ScrollIDs[key] = val
+				needUpdate = true
+			} else {
+				val.Status = StatusStop
+				s.ScrollIDs[key] = val
+				needUpdate = true
+				continue
 			}
 		}
-		if hasActiveSlices {
-			roundNumber = s.Index + 1
-		}
-	}
 
-	for sliceIndex := 0; sliceIndex < s.MaxSlice; sliceIndex++ {
-		offsetIndex := roundNumber*s.MaxSlice + sliceIndex
-		slices = append(slices, SliceInfo{
-			SliceIndex: sliceIndex,
-			ScrollID:   "",
-			Index:      offsetIndex,
+		if val.Status == StatusStop || val.Status == StatusCompleted {
+			continue
+		}
+
+		slices = append(slices, &SliceInfo{
+			Connect:     connect,
+			TableId:     tableID,
+			StorageType: consul.ElasticsearchStorageType,
+			SliceIdx:    i,
+			SliceMax:    s.MaxSlice,
+			ScrollID:    val.ScrollID,
 		})
 	}
 
-	s.Index = roundNumber
+	if needUpdate {
+		err = Client().Set(context.Background(), s.SessionKey, s, s.ScrollTimeout).Err()
+	}
 
-	return slices
+	return
 }
 
-func (s *ScrollSession) HasMoreData(tsDbType string) bool {
-	switch tsDbType {
-	case consul.ElasticsearchStorageType:
-		for _, scrollIDSet := range s.ScrollIDs {
-			if len(scrollIDSet) > 0 {
-				for scrollID := range scrollIDSet {
-					if scrollID != "" {
-						return true
-					}
-				}
+func (s *ScrollSession) makeDorisSlices(connect, tableID string) (slices []*SliceInfo, err error) {
+	needUpdate := false
+	for i := 0; i < s.MaxSlice; i++ {
+		key := generateScrollSliceStatusKey(consul.BkSqlStorageType, "", tableID, i)
+		val, exists := s.ScrollIDs[key]
+
+		if !exists {
+			val = SliceStatusValue{
+				Status:    StatusPending,
+				FailedNum: 0,
+				Offset:    i * 10,
+				Limit:     10,
+			}
+			s.ScrollIDs[key] = val
+			needUpdate = true
+		}
+
+		if val.Status == StatusFailed {
+			if val.FailedNum < s.SliceMaxFailedNum {
+				val.Status = StatusPending
+				s.ScrollIDs[key] = val
+				needUpdate = true
+			} else {
+				val.Status = StatusStop
+				s.ScrollIDs[key] = val
+				needUpdate = true
+				continue
 			}
 		}
-		return false
-	case consul.BkSqlStorageType:
-		for _, scrollIDSet := range s.ScrollIDs {
-			if len(scrollIDSet) > 0 {
-				return true
-			}
+
+		if val.Status == StatusStop || val.Status == StatusCompleted {
+			continue
 		}
-		return false
-	default:
-		return false
+
+		slices = append(slices, &SliceInfo{
+			Connect:     "",
+			TableId:     tableID,
+			StorageType: consul.BkSqlStorageType,
+			SliceIdx:    i,
+			SliceMax:    s.MaxSlice,
+			Offset:      val.Offset,
+		})
 	}
+
+	if needUpdate {
+		err = Client().Set(context.Background(), s.SessionKey, s, s.ScrollTimeout).Err()
+	}
+
+	return
 }
 
-type ScrollSessionHelper struct {
-	scrollSliceLimit int
-	scrollWindow     string
-	scrollMaxSlice   int
-	lockTimeout      time.Duration
+func (s *ScrollSession) RollDoris(ctx context.Context, tableID string, scrollIndex *int) error {
+	sliceKey := generateScrollSliceStatusKey(consul.BkSqlStorageType, "", tableID, *scrollIndex)
+	sliceStatusValue, ok := s.ScrollIDs[sliceKey]
+	if !ok {
+		return ErrorOfScrollSliceStatusNotFound
+	}
+
+	sliceStatusValue.Status = StatusRunning
+	sliceStatusValue.Offset += s.MaxSlice * sliceStatusValue.Limit
+	return s.updateScrollSliceStatusValue(ctx, sliceKey, sliceStatusValue)
 }
 
-func NewScrollSessionHelper(scrollSliceLimit int, scrollWindow string, scrollMaxSlice int, lockTimeout time.Duration) *ScrollSessionHelper {
-	return &ScrollSessionHelper{
-		scrollSliceLimit: scrollSliceLimit,
-		scrollWindow:     scrollWindow,
-		scrollMaxSlice:   scrollMaxSlice,
-		lockTimeout:      lockTimeout,
+func (s *ScrollSession) UpdateScrollID(ctx context.Context, connect, tableID, scrollID string, scrollIndex *int, status string) error {
+	key := generateScrollSliceStatusKey(consul.ElasticsearchStorageType, connect, tableID, *scrollIndex)
+	sliceStatusValue, ok := s.ScrollIDs[key]
+	if !ok {
+		return ErrorOfScrollSliceStatusNotFound
 	}
+
+	sliceStatusValue.Status = status
+	if status == StatusFailed {
+		sliceStatusValue.FailedNum++
+	}
+
+	sliceStatusValue.ScrollID = scrollID
+	return s.updateScrollSliceStatusValue(ctx, key, sliceStatusValue)
 }
 
-func (h *ScrollSessionHelper) GetOrCreateSessionByKey(ctx context.Context, queryTsKey string, clearCache bool,
-	scrollWindow string, limit int) (*ScrollSession, string, bool, error) {
-	sessionKey := GetSessionKey(queryTsKey)
+func (s *ScrollSession) CouldDone() bool {
+	for _, val := range s.ScrollIDs {
+		if val.Status != StatusCompleted && val.Status != StatusStop {
+			return false
+		}
+	}
+	return true
+}
 
-	scrollWindowDuration, err := time.ParseDuration(scrollWindow)
-	if err != nil {
-		return nil, "", false, err
+func (s *ScrollSession) updateScrollSliceStatusValue(ctx context.Context, sliceKey string, value SliceStatusValue) error {
+	s.ScrollIDs[sliceKey] = value
+	s.LastAccessAt = time.Now()
+	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
+}
+
+func (s *ScrollSession) UpdateDoris(ctx context.Context, tableID string, sliceIndex *int, status string) error {
+	key := generateScrollSliceStatusKey(consul.BkSqlStorageType, "", tableID, *sliceIndex)
+	sliceStatusValue, ok := s.ScrollIDs[key]
+	if !ok {
+		return ErrorOfScrollSliceStatusNotFound
 	}
 
-	session, err := ScrollGetOrCreateSession(ctx, sessionKey, clearCache, scrollWindowDuration, h.scrollMaxSlice, limit)
-	if err != nil {
-		return nil, "", false, err
+	sliceStatusValue.Status = status
+	if status == StatusFailed {
+		sliceStatusValue.FailedNum++
 	}
 
-	isDone := session.Status == SessionStatusDone
-	return session, sessionKey, isDone, nil
+	return s.updateScrollSliceStatusValue(ctx, key, sliceStatusValue)
 }

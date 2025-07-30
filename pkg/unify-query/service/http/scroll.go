@@ -12,306 +12,282 @@ package http
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/jinzhu/copier"
-	ants "github.com/panjf2000/ants/v2"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
-	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 )
 
-type SliceQueryResult struct {
-	Connect    string
-	TableID    string
-	SliceIndex int
-	ScrollID   string
-	TsDbType   string
-	Size       int64
-	Options    metadata.ResultTableOptions
-	Error      error
-}
-
-type SliceQueryContext struct {
-	Ctx                 context.Context
-	Session             *redisUtil.ScrollSession
-	ScrollSessionHelper *redisUtil.ScrollSessionHelper
-	SessionKey          string
-	QueryTs             *structured.QueryTs
-
-	Query   *metadata.Query
-	Slice   redisUtil.SliceInfo
-	Storage *tsdb.Storage
-
-	StartTime time.Time
-	EndTime   time.Time
-
-	DataCh             chan<- map[string]any
-	ResultCh           chan<- SliceQueryResult
-	AllLabelMap        map[string][]function.LabelMapValue
-	ResultTableOptions metadata.ResultTableOptions
-	Total              *int64
-	Message            *strings.Builder
-
-	Lock        *sync.Mutex
-	SessionLock *sync.Mutex
-}
-
-func newSliceQueryContext(
-	executor *ScrollQueryExecutor,
-	scrollSessionHelperInstance *redisUtil.ScrollSessionHelper,
-	query *metadata.Query,
-	slice redisUtil.SliceInfo,
-	storage *tsdb.Storage,
-) *SliceQueryContext {
-	return &SliceQueryContext{
-		Ctx:                 executor.ctx,
-		Session:             executor.session,
-		ScrollSessionHelper: scrollSessionHelperInstance,
-		SessionKey:          executor.sessionKey,
-		QueryTs:             executor.queryTs,
-
-		Query:   query,
-		Slice:   slice,
-		Storage: storage,
-
-		StartTime: executor.startTime,
-		EndTime:   executor.endTime,
-
-		DataCh:             executor.dataCh,
-		AllLabelMap:        executor.allLabelMap,
-		ResultTableOptions: executor.resultTableOptions,
-		Total:              &executor.total,
-		Message:            &executor.message,
-
-		Lock:        executor.lock,
-		SessionLock: executor.sessionLock,
+func prepareQueryTs(ctx context.Context, queryTs *structured.QueryTs) (queryList []*metadata.Query, err error) {
+	if queryTs.SpaceUid == "" {
+		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
 	}
-}
+	for _, ql := range queryTs.QueryList {
+		// 时间复用
+		ql.Timezone = queryTs.Timezone
+		ql.Start = queryTs.Start
+		ql.End = queryTs.End
 
-type ScrollQueryExecutor struct {
-	ctx        context.Context
-	sessionKey string
-	session    *redisUtil.ScrollSession
-	queryTs    *structured.QueryTs
-	startTime  time.Time
-	endTime    time.Time
+		// 排序复用
+		ql.OrderBy = queryTs.OrderBy
+		ql.DryRun = queryTs.DryRun
 
-	dataCh             chan map[string]any
-	resultCh           chan SliceQueryResult
-	allLabelMap        map[string][]function.LabelMapValue
-	resultTableOptions metadata.ResultTableOptions
-	total              int64
-	message            strings.Builder
+		// 如果 qry.Step 不存在去外部统一的 step
+		if ql.Step == "" {
+			ql.Step = queryTs.Step
+		}
 
-	lock        *sync.Mutex
-	sessionLock *sync.Mutex
-	sendWg      sync.WaitGroup
-	pool        *ants.Pool
-}
+		if queryTs.ResultTableOptions != nil {
+			ql.ResultTableOptions = queryTs.ResultTableOptions
+		}
 
-func newScrollQueryExecutor(
-	ctx context.Context,
-	sessionKey string,
-	session *redisUtil.ScrollSession,
-	queryTs *structured.QueryTs,
-	start, end time.Time,
-) *ScrollQueryExecutor {
-	pool, _ := ants.NewPool(QueryMaxRouting)
+		// 如果 Limit / From 没有单独指定的话，同时外部指定了的话，使用外部的
+		if ql.Limit == 0 && queryTs.Limit > 0 {
+			ql.Limit = queryTs.Limit
+		}
 
-	return &ScrollQueryExecutor{
-		ctx:                ctx,
-		sessionKey:         sessionKey,
-		session:            session,
-		queryTs:            queryTs,
-		startTime:          start,
-		endTime:            end,
-		dataCh:             make(chan map[string]any),
-		resultCh:           make(chan SliceQueryResult),
-		allLabelMap:        make(map[string][]function.LabelMapValue),
-		resultTableOptions: make(metadata.ResultTableOptions),
-		pool:               pool,
-		lock:               &sync.Mutex{},
-		sessionLock:        &sync.Mutex{},
-	}
-}
+		// 在使用 multiFrom 模式下，From 需要保持为 0，因为 from 存放在 resultTableOptions 里面
+		if queryTs.IsMultiFrom {
+			queryTs.From = 0
+		}
 
-func (e *ScrollQueryExecutor) submitSliceQuery(
-	qry *metadata.Query,
-	slice redisUtil.SliceInfo,
-	storage *tsdb.Storage,
-	scrollSessionHelperInstance *redisUtil.ScrollSessionHelper,
-) error {
-	e.sendWg.Add(1)
-	return e.pool.Submit(func() {
-		defer e.sendWg.Done()
-		if err := processSliceQueryWithHelper(newSliceQueryContext(e, scrollSessionHelperInstance, qry, slice, storage)); err != nil {
+		if ql.From == 0 && queryTs.From > 0 {
+			ql.From = queryTs.From
+		}
+
+		// 复用 scroll 配置，如果配置了 scroll 优先使用 scroll
+		if queryTs.Scroll != "" {
+			ql.Scroll = queryTs.Scroll
+			queryTs.IsMultiFrom = false
+		}
+
+		// 复用字段配置，没有特殊配置的情况下使用公共配置
+		if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
+			ql.KeepColumns = queryTs.ResultColumns
+		}
+
+		qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
+		if qmErr != nil {
+			err = qmErr
 			return
 		}
-	})
-}
 
-func processSliceQueryWithHelper(queryCtx *SliceQueryContext) error {
-	instance := prometheus.GetTsDbInstance(queryCtx.Ctx, queryCtx.Query)
-	if instance == nil {
-		return fmt.Errorf("no instance found for storage %s", queryCtx.Query.StorageID)
-	}
-	if queryCtx.QueryTs.Scroll != "" {
-		queryCtx.Query.Scroll = queryCtx.QueryTs.Scroll
-	}
-
-	size, options, err := instance.QueryRawData(
-		queryCtx.Ctx,
-		queryCtx.Query,
-		queryCtx.StartTime,
-		queryCtx.EndTime,
-		queryCtx.DataCh,
-	)
-	if err != nil {
-		queryCtx.Message.WriteString(
-			fmt.Sprintf(
-				"query %s:%s slice %d is error: %s ",
-				queryCtx.Query.TableID,
-				queryCtx.Query.Fields,
-				queryCtx.Slice.SliceIndex,
-				err.Error(),
-			),
-		)
-		return err
-	}
-	queryCtx.Lock.Lock()
-	if options != nil {
-		queryCtx.ResultTableOptions.MergeOptions(options)
-	}
-	*queryCtx.Total += size
-	queryCtx.Lock.Unlock()
-	queryCtx.SessionLock.Lock()
-	defer queryCtx.SessionLock.Unlock()
-	if err = redisUtil.ScrollProcessSliceResult(queryCtx.Ctx, queryCtx.Slice, queryCtx.SessionKey, queryCtx.Session, queryCtx.Storage.Address, queryCtx.Query.TableID, queryCtx.Slice.SliceIndex, instance.InstanceType(), size, options); err != nil {
-		log.Warnf(queryCtx.Ctx, "Failed to process slice result: %v", err)
-		return err
-	}
-	return nil
-}
-
-func (e *ScrollQueryExecutor) processQueryForStorage(
-	storage *tsdb.Storage,
-	qry *metadata.Query,
-	scrollSessionHelperInstance *redisUtil.ScrollSessionHelper,
-) error {
-	instance := prometheus.GetTsDbInstance(e.ctx, qry)
-	if instance == nil {
-		return fmt.Errorf("no instance found for storage %s", qry.StorageID)
-	}
-
-	slices, err := e.session.MakeSlices(
-		instance.InstanceType(),
-		storage.Address,
-		qry.TableID,
-	)
-	if err != nil {
-		e.message.WriteString(
-			fmt.Sprintf("failed to make slices for %s: %v ", qry.TableID, err),
-		)
-		return err
-	}
-
-	for _, slice := range slices {
-		qryCp, cErr := e.createSliceQuery(qry, slice, instance.InstanceType(), storage)
-		if cErr != nil {
-			e.message.WriteString(
-				fmt.Sprintf("failed to create slice query for %s: %v ", qryCp.TableID, cErr),
-			)
-			return cErr
-		}
-		sErr := e.submitSliceQuery(qryCp, slice, storage, scrollSessionHelperInstance)
-		if sErr != nil {
-			return sErr
+		for _, qry := range qm.QueryList {
+			if qry != nil {
+				if qry.ResultTableOptions == nil {
+					qry.ResultTableOptions = make(metadata.ResultTableOptions)
+				}
+				queryList = append(queryList, qry)
+			}
 		}
 	}
-	return nil
+	return
 }
 
-func (e *ScrollQueryExecutor) createSliceQuery(originalQry *metadata.Query, slice redis.SliceInfo, instanceType string, storage *tsdb.Storage) (qry *metadata.Query, err error) {
-	qry = &metadata.Query{}
-	err = copier.CopyWithOption(qry, originalQry, copier.Option{
+func collectStorageQuery(qryList []*metadata.Query) map[string][]*metadata.Query {
+	storageQuery := make(map[string][]*metadata.Query)
+	for _, qry := range qryList {
+		if qry == nil || qry.StorageID == "" {
+			continue
+		}
+		storageQuery[qry.StorageID] = append(storageQuery[qry.StorageID], qry)
+	}
+	return storageQuery
+}
+
+type StorageScrollQuery struct {
+	QueryList []*metadata.Query
+	Storage   *tsdb.Storage
+	Connect   string
+	TableID   string
+}
+
+func collectStorageScrollQuery(ctx context.Context, session *redis.ScrollSession, storageQueryMap map[string][]*metadata.Query) (list []StorageScrollQuery, err error) {
+	for storageID, qryList := range storageQueryMap {
+		storage, gErr := tsdb.GetStorage(storageID)
+		if gErr != nil {
+			err = gErr
+			return
+		}
+
+		connect := storage.Address
+		for _, qry := range qryList {
+			storage.Instance = prometheus.GetTsDbInstance(ctx, qry)
+			tableID := qry.TableID
+			slices, mErr := session.MakeSlices(storage.Instance.InstanceType(), connect, tableID)
+			if mErr != nil {
+				err = mErr
+				return
+			}
+			var injectedScrollQueryList []*metadata.Query
+			for _, slice := range slices {
+				qryCp, iErr := injectScrollQuery(qry, connect, tableID, slice)
+				if iErr != nil {
+					err = iErr
+					return
+				}
+				injectedScrollQueryList = append(injectedScrollQueryList, qryCp)
+			}
+			list = append(list, StorageScrollQuery{
+				QueryList: injectedScrollQueryList,
+				Storage:   storage,
+				Connect:   connect,
+				TableID:   tableID,
+			})
+		}
+	}
+	return
+}
+
+func injectScrollQuery(qry *metadata.Query, connect, tableID string, sliceInfo *redis.SliceInfo) (*metadata.Query, error) {
+	qryCp := &metadata.Query{}
+	if err := copier.CopyWithOption(qryCp, qry, copier.Option{
 		DeepCopy: true,
-	})
-	if err != nil {
+	}); err != nil {
 		return nil, err
 	}
-	qry.ResultTableOptions = make(metadata.ResultTableOptions)
-	if e.queryTs.Scroll != "" {
-		qry.Scroll = e.queryTs.Scroll
+
+	if qryCp.ResultTableOptions == nil {
+		qryCp.ResultTableOptions = make(metadata.ResultTableOptions)
 	}
 
-	var from int
-	if slice.Index >= 0 {
-		from = slice.Index * e.session.Limit
-	}
-	fromPtr := &from
 	option := &metadata.ResultTableOption{
-		SliceID:  &slice.SliceIndex,
-		SliceMax: &e.session.MaxSlice,
-		ScrollID: slice.ScrollID,
-		From:     fromPtr,
+		ScrollID:   sliceInfo.ScrollID,
+		SliceIndex: &sliceInfo.SliceIdx,
+		SliceMax:   &sliceInfo.SliceMax,
 	}
 
-	address := storage.Address
-	if instanceType == consul.BkSqlStorageType {
-		address = ""
+	var connectKey string
+	if sliceInfo.StorageType == consul.BkSqlStorageType {
+		option.From = &sliceInfo.Offset
+		connectKey = ""
+	} else {
+		connectKey = connect
 	}
-	qry.ResultTableOptions.SetOption(qry.TableID, address, option)
-	return qry, nil
+
+	qryCp.ResultTableOptions.SetOption(tableID, connectKey, option)
+
+	return qryCp, nil
 }
 
-func (e *ScrollQueryExecutor) processStorageQueries(
-	storageId string,
-	queries []*metadata.Query,
-	scrollSessionHelperInstance *redisUtil.ScrollSessionHelper,
-) error {
-	storage, err := tsdb.GetStorage(storageId)
-	if err != nil {
-		return err
+func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connect, tableID string, qry *metadata.Query, start time.Time, end time.Time, instance tsdb.Instance) (data []map[string]any, err error) {
+	dataCh := make(chan map[string]any)
+	var oldSliceResultOption *metadata.ResultTableOption
+	if qry.ResultTableOptions != nil {
+		oldSliceResultOption = qry.ResultTableOptions.GetOption(tableID, connect)
 	}
 
-	for _, qry := range queries {
-		if err = e.processQueryForStorage(storage, qry, scrollSessionHelperInstance); err != nil {
-			return err
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for d := range dataCh {
+			data = append(data, d)
 		}
-	}
-	return nil
-}
-
-func (e *ScrollQueryExecutor) executeQueries(
-	storageQueryMap map[string][]*metadata.Query,
-	scrollSessionHelperInstance *redisUtil.ScrollSessionHelper,
-) error {
-	defer func() {
-		e.sendWg.Wait()
-		close(e.dataCh)
-		close(e.resultCh)
 	}()
 
-	for storageId, queries := range storageQueryMap {
-		if err := e.processStorageQueries(storageId, queries, scrollSessionHelperInstance); err != nil {
-			return err
+	total, option, err := instance.QueryRawData(ctx, qry, start, end, dataCh)
+	close(dataCh)
+	wg.Wait()
+	var sliceResultOption *metadata.ResultTableOption
+	if option != nil {
+		var connectKey string
+		if instance.InstanceType() == consul.BkSqlStorageType {
+			connectKey = ""
+		} else {
+			connectKey = connect
 		}
+
+		sliceResultOption = option.GetOption(tableID, connectKey)
 	}
-	return nil
+	switch instance.InstanceType() {
+	case consul.ElasticsearchStorageType:
+		if err != nil {
+			if sliceResultOption != nil && sliceResultOption.SliceIndex != nil {
+				err = session.UpdateScrollID(ctx, connect, tableID, sliceResultOption.ScrollID, sliceResultOption.SliceIndex, redis.StatusFailed)
+			}
+			return
+		}
+
+		if sliceResultOption != nil && sliceResultOption.SliceIndex != nil {
+			if oldSliceResultOption == nil || (oldSliceResultOption != nil && oldSliceResultOption.ScrollID != sliceResultOption.ScrollID) {
+				if err = session.UpdateScrollID(ctx, connect, tableID, sliceResultOption.ScrollID, sliceResultOption.SliceIndex, redis.StatusRunning); err != nil {
+					return
+				}
+			}
+		}
+
+		isEmptyData := len(data) == 0 && total == 0
+		isScrollIDEmpty := sliceResultOption != nil && sliceResultOption.ScrollID == ""
+
+		if isEmptyData && oldSliceResultOption != nil && oldSliceResultOption.SliceIndex != nil {
+			if err = session.UpdateScrollID(ctx, connect, tableID, "", oldSliceResultOption.SliceIndex, redis.StatusCompleted); err != nil {
+				return
+			}
+		}
+
+		if (isEmptyData || isScrollIDEmpty) && (sliceResultOption != nil && sliceResultOption.SliceIndex != nil) {
+			if err = session.UpdateScrollID(ctx, connect, tableID, sliceResultOption.ScrollID, sliceResultOption.SliceIndex, redis.StatusCompleted); err != nil {
+				return
+			}
+		} else if len(data) > 0 && (sliceResultOption != nil && sliceResultOption.SliceIndex != nil) && !isScrollIDEmpty {
+			if err = session.UpdateScrollID(ctx, connect, tableID, sliceResultOption.ScrollID, sliceResultOption.SliceIndex, redis.StatusRunning); err != nil {
+				return
+			}
+		}
+
+	case consul.BkSqlStorageType:
+		if err != nil {
+			var targetSliceOption *metadata.ResultTableOption
+			if sliceResultOption != nil && sliceResultOption.SliceIndex != nil {
+				targetSliceOption = sliceResultOption
+			} else if oldSliceResultOption != nil && oldSliceResultOption.SliceIndex != nil {
+				targetSliceOption = oldSliceResultOption
+			}
+			if targetSliceOption != nil {
+				err = session.UpdateDoris(ctx, tableID, targetSliceOption.SliceIndex, redis.StatusFailed)
+			}
+			return
+		}
+
+		var targetSliceOption *metadata.ResultTableOption
+		if sliceResultOption != nil && sliceResultOption.SliceIndex != nil {
+			targetSliceOption = sliceResultOption
+		} else if oldSliceResultOption != nil && oldSliceResultOption.SliceIndex != nil {
+			targetSliceOption = oldSliceResultOption
+		}
+
+		if targetSliceOption != nil && targetSliceOption.SliceIndex != nil {
+			if len(data) > 0 {
+				if err = session.RollDoris(ctx, tableID, targetSliceOption.SliceIndex); err != nil {
+					return
+				}
+			} else {
+				if err = session.UpdateDoris(ctx, tableID, targetSliceOption.SliceIndex, redis.StatusCompleted); err != nil {
+					return
+				}
+			}
+		}
+	default:
+		err = errors.New("unknown storage type")
+	}
+	return
 }
 
-func (e *ScrollQueryExecutor) cleanup() {
-	if e.pool != nil {
-		e.pool.Release()
+func generateScrollSuffix(name string, ts structured.QueryTs) (string, error) {
+	ts.ClearCache = false
+	key, err := json.StableMarshal(ts)
+	if err != nil {
+		return "", err
 	}
+	return fmt.Sprintf("%s:%s", name, key), nil
 }

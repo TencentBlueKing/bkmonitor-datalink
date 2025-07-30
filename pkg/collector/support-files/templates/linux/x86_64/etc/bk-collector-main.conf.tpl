@@ -257,6 +257,9 @@ bk-collector:
           keys:
             - "resource.bk.data.token"
             - "resource.process.pid"
+        from_token:
+          keys:
+            - "app_name"
 
     # Sampler: 采样处理器（概率采样）
     - name: "sampler/random"
@@ -364,6 +367,7 @@ bk-collector:
     - name: "metrics_pipeline/derived"
       type: "metrics.derived"
       processors:
+        - "resource_filter/metrics"
 
     - name: "logs_pipeline/common"
       type: "logs"

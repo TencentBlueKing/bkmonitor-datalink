@@ -102,7 +102,9 @@ func (to tracesOperator) Operate(record *define.Record) *define.Record {
 					// accumulator 处理
 					if to.accumulator != nil {
 						val := utils.CalcSpanDuration(spans.At(k))
-						to.accumulator.Accumulate(record.Token.MetricsDataId, dim, val)
+						dimWithAppName := utils.CloneMap(dim)
+						dimWithAppName[define.TokenAppName] = record.Token.AppName
+						to.accumulator.Accumulate(record.Token.MetricsDataId, dimWithAppName, val)
 					}
 				}
 			}

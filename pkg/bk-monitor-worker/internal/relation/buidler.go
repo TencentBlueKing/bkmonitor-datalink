@@ -95,6 +95,7 @@ func (b *MetricsBuilder) getResourceInfo(bizID int, name string) *ResourceInfo {
 func (b *MetricsBuilder) ClearAllMetrics() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
+	logger.Infof("[cmdb_relation] clear all metrics")
 	b.resources = make(map[int]map[string]*ResourceInfo)
 }
 

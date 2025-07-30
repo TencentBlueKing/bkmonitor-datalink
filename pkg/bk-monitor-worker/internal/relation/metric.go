@@ -11,7 +11,6 @@ package relation
 
 import (
 	"bytes"
-	"fmt"
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
@@ -40,16 +39,12 @@ type Metric struct {
 	Labels LabelList
 }
 
-func (m Metric) TimeSeries(bkBizID int, timestamp time.Time) prompb.TimeSeries {
+func (m Metric) TimeSeries(timestamp time.Time) prompb.TimeSeries {
 	lbs := append(
 		[]prompb.Label{
 			{
 				Name:  "__name__",
 				Value: m.Name,
-			},
-			{
-				Name:  "bk_biz_id",
-				Value: fmt.Sprintf("%d", bkBizID),
 			},
 		},
 		m.Labels.Label()...,

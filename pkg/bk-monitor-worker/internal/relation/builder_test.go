@@ -147,6 +147,12 @@ func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
 								},
 								{
 									{
+										Name: "bad",
+										ID:   "4001",
+									},
+								},
+								{
+									{
 										Name: Set,
 										ID:   "3001",
 									},
@@ -178,7 +184,7 @@ host_with_module_relation{bk_biz_id="2",host_id="1001",module_id="3001"} 1
 host_with_module_relation{bk_biz_id="2",host_id="1002",module_id="3001"} 1
 host_with_system_relation{bk_biz_id="2",bk_cloud_id="3",bk_target_ip="127.0.0.1",host_id="1001"} 1
 host_with_system_relation{bk_biz_id="2",bk_cloud_id="3",bk_target_ip="127.0.0.2",host_id="1002"} 1
-module_with_set_relation{bk_biz_id="2",bk_biz_id="2",module_id="3001",set_id="3001"} 1
+module_with_set_relation{bk_biz_id="2",module_id="3001",set_id="3001"} 1
 set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 		},
 		"测试相同业务 id，扩展信息从上游获取，指标生成规则": {
@@ -197,6 +203,9 @@ set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 								Host: {
 									"version": "v0.0.1",
 								},
+								Module: {
+									"version": "v0.1.1",
+								},
 								Set: {
 									"version": "v0.0.2",
 								},
@@ -213,6 +222,14 @@ set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 							Resource: Module,
 							Label: map[string]string{
 								"module_id": "3001",
+							},
+							Links: []Link{
+								{
+									{
+										Name: Set,
+										ID:   "3001",
+									},
+								},
 							},
 						},
 					},
@@ -310,7 +327,8 @@ host_with_module_relation{bk_biz_id="2",host_id="1001",module_id="3001"} 1
 host_with_module_relation{bk_biz_id="2",host_id="1002",module_id="3001"} 1
 host_with_system_relation{bk_biz_id="2",bk_cloud_id="3",bk_target_ip="127.0.0.1",host_id="1001"} 1
 host_with_system_relation{bk_biz_id="2",bk_cloud_id="3",bk_target_ip="127.0.0.2",host_id="1002"} 1
-module_with_set_relation{bk_biz_id="2",bk_biz_id="2",module_id="3001",set_id="3001"} 1
+module_info_relation{bk_biz_id="2",module_id="3001",version="v0.1.1"} 1
+module_with_set_relation{bk_biz_id="2",module_id="3001",set_id="3001"} 1
 set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 		},
 		"测试不同业务 id 下的指标生成规则": {

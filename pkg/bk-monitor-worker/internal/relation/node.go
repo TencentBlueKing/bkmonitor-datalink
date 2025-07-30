@@ -52,12 +52,15 @@ func (n Node) RelationMetric(nextNode Node) Metric {
 	names := []string{n.Name, nextNode.Name}
 	sort.Strings(names)
 
-	totalNum := len(n.Labels) + len(nextNode.Labels)
-	keys := make([]string, 0, totalNum)
-	values := make(map[string]string, totalNum)
+	keys := make([]string, 0)
+	values := make(map[string]string)
 
 	for _, labels := range []map[string]string{n.Labels, nextNode.Labels} {
 		for k, v := range labels {
+			if _, ok := values[k]; ok {
+				continue
+			}
+
 			keys = append(keys, k)
 			values[k] = v
 		}

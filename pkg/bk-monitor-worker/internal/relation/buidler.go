@@ -181,17 +181,14 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 		"bk_biz_id": fmt.Sprintf("%d", bizID),
 	}
 
-	// 资源名称 (resource) -> 资源ID (ID) -> 资源扩展信息 (Expand)
-	parentExpand := make(map[string]map[string]map[string]string)
+	// 资源场景（ resource) -> 资源配置 (resource) -> 资源ID (ID) -> 资源扩展信息 (Expand)
+	// 例如：set 资源配置 host 和 module 的资源场景，说明生成 host 扩展维度的时候，如果自己没有单独配置的话，需要继承 set 所配置的扩展信息
+	resourceParentExpands := make(map[string]map[string]map[string]map[string]string)
 
 	// 不同业务分开构建，方便拆分数据
 	if resources, ok := b.resources[bizID]; ok {
 		// set -> module -> host，Expand 需要按序遍历，下层需要继承上层的 Expand
 		for _, resource := range ExpandTopo {
-			if parentExpand[resource] == nil {
-				parentExpand[resource] = make(map[string]map[string]string)
-			}
-
 			if infos, ok := resources[resource]; ok {
 				infos.Range(func(info *Info) {
 					// 判断是否对该资源配置扩展
@@ -199,6 +196,7 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 
 					// 注入 ExpandInfo 指标
 					if len(info.Expands) > 0 {
+						// info.Expands 里面就是配置的资源场景，expandResource 对应场景资源名
 						for expandResource, expand := range info.Expands {
 							// 如果配置资源一致，则为自身资源的 Expand，否则使用继承池里的 Expand
 							// 这里的 info.Resource 指该实体的真是归属资源，上面的 resource 表示的是数据维护的资源
@@ -213,7 +211,14 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 								expandInfoStatus = true
 							} else {
 								// 注入父资源的 Expand
-								parentExpand[resource][info.ID] = expand
+								if _, ok := resourceParentExpands[expandResource]; !ok {
+									resourceParentExpands[expandResource] = make(map[string]map[string]map[string]string)
+								}
+								if _, ok := resourceParentExpands[expandResource][resource]; !ok {
+									resourceParentExpands[expandResource][resource] = make(map[string]map[string]string)
+								}
+
+								resourceParentExpands[expandResource][resource][info.ID] = expand
 							}
 
 						}
@@ -237,13 +242,18 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 
 							// 如果没有配置扩展信息，需要从上游找是否有配置需要继承
 							if !expandInfoStatus {
-								if expand, expandOk := parentExpand[itemInfo.Resource][item.ID]; expandOk {
+								if info.Resource == Host {
+									fmt.Println("test")
+								}
+
+								if expand, expandOk := resourceParentExpands[info.Resource][itemInfo.Resource][item.ID]; expandOk {
 									// 构建维度，注入主键和扩展维度
 									node := b.makeNode(info.Resource, info.Label, bizLabel, expand)
 									metric := node.ExpandInfoMetric()
 									if _, metricOk := metrics[metric.String()]; !metricOk {
 										metrics[metric.String()] = metric
 									}
+									expandInfoStatus = true
 								}
 							}
 
@@ -266,11 +276,13 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 // String 以 string 格式获取所有指标数据
 func (b *MetricsBuilder) String() string {
 	var buf bytes.Buffer
-	b.lock.RLock()
-	defer b.lock.RUnlock()
 
 	for _, bkBizID := range b.BizIDs() {
+
+		b.lock.RLock()
 		metricList := b.toMetricList(bkBizID)
+		b.lock.RUnlock()
+
 		for _, metric := range metricList {
 			buf.WriteString(metric.String())
 			buf.WriteString("\n")
@@ -288,19 +300,14 @@ func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error
 
 	for _, bkBizID := range b.BizIDs() {
 		ts := getTsPool()
-		//metricsMap := make(map[string]struct{})
-		//
-		//b.lock.RLock()
-		//nodeList := b.toNodeList(bkBizID)
-		//for _, nodes := range nodeList {
-		//	for _, metric := range nodes.ToRelationMetrics() {
-		//		metricsMap[metric.String(Label{
-		//			Name:  "bk_biz_id",
-		//			Value: fmt.Sprintf("%d", bkBizID),
-		//		})] = struct{}{}
-		//	}
-		//}
-		//b.lock.RUnlock()
+
+		b.lock.RLock()
+		metrics := b.toMetricList(bkBizID)
+		b.lock.RUnlock()
+
+		for _, metric := range metrics {
+			ts = append(ts, metric.TimeSeries(timestamp))
+		}
 
 		if len(ts) > 0 {
 			// 上传业务 timeSeries

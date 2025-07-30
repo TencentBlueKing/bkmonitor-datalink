@@ -34,6 +34,7 @@ import (
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
+	"github.com/spf13/cast"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
@@ -405,18 +406,19 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 					id   int
 					ok   bool
 				)
-				id, ok = tp["bk_inst_id"].(int)
-				if !ok {
+				name, ok = tp["bk_obj_id"].(string)
+				if !ok || name == "" {
 					continue
 				}
-				name, ok = tp["bk_obj_id"].(string)
+
+				id, ok = tp["bk_inst_id"].(int)
 				if !ok {
 					continue
 				}
 
 				link = append(link, relation.Item{
 					Name: name,
-					ID:   fmt.Sprintf("%d", int(id)),
+					ID:   cast.ToString(id),
 				})
 			}
 

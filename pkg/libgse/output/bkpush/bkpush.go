@@ -124,7 +124,7 @@ func New(cfg *common.Config) (*Output, error) {
 
 	if config.FlowLimit > 0 {
 		o.fl = bkcommon.NewFlowLimiter(config.FlowLimit)
-		logp.L.Info("enable flowlimit, rate: %d", config.FlowLimit)
+		logp.L.Infof("enable flowlimit, rate: %d", config.FlowLimit)
 	}
 
 	for i := 0; i < config.Concurrency; i++ {

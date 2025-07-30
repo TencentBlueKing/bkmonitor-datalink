@@ -32,6 +32,11 @@ func NewProfHttpService() *gin.Engine {
 	// metrics
 	svr.GET("/bmw/metrics", prometheusHandler())
 	svr.GET("/bmw/relation/metrics", relationHandler)
+	svr.GET("/bmw/relation/debug", func(c *gin.Context) {
+		result := relation.GetRelationMetricsBuilder().Debug()
+
+		c.String(http.StatusOK, result)
+	})
 
 	pprof.Register(svr)
 

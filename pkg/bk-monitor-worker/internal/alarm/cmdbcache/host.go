@@ -368,7 +368,7 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 			continue
 		}
 
-		hostID := fmt.Sprintf("%d", h.BkHostId)
+		hostID := cast.ToString(h.BkHostId)
 
 		if h.BkHostInnerip != "" {
 			systemInfo := &relation.Info{}

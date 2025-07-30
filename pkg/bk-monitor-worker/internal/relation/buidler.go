@@ -12,6 +12,7 @@ package relation
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"sync"
@@ -89,6 +90,14 @@ func (b *MetricsBuilder) getResourceInfo(bizID int, name string) *ResourceInfo {
 	}
 
 	return b.resources[bizID][name]
+}
+
+func (b *MetricsBuilder) Debug() string {
+	b.lock.RLock()
+	defer b.lock.RUnlock()
+
+	out, _ := json.Marshal(b.resources)
+	return string(out)
 }
 
 // ClearAllMetrics 清理全部指标

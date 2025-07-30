@@ -127,7 +127,7 @@ type AlarmHostInfo struct {
 
 	TopoLinks map[string][]map[string]interface{} `json:"topo_link"`
 
-	Expands map[string]map[string]string `json:"expands"`
+	Expands map[string]map[string]any `json:"expands"`
 }
 
 const (
@@ -197,6 +197,12 @@ func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataI
 	}
 
 	// 补充扩展信息到 host 节点
+	var expands map[string]map[string]any
+	if info.Host.VersionMeta != "" {
+		if err := json.Unmarshal([]byte(info.Host.VersionMeta), &expands); err != nil {
+			logger.Warnf("[cmdb_relation] unmarshal error: %v, version_meta: %s", err, info.Host.VersionMeta)
+		}
+	}
 
 	host := &AlarmHostInfo{
 		BkBizId:             info.Host.BkBizId,
@@ -239,6 +245,7 @@ func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataI
 		BkCloudName: "",
 		DisplayName: displayName,
 		TopoLinks:   make(map[string][]map[string]interface{}),
+		Expands:     expands,
 	}
 
 	return host
@@ -388,7 +395,7 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 			Label: map[string]string{
 				"host_id": hostID,
 			},
-			Expands: h.Expands,
+			Expands: relation.TransformExpands(h.Expands),
 		}
 		for _, tplink := range h.TopoLinks {
 			var link []relation.Item

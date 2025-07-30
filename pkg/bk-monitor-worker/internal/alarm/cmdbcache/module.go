@@ -213,11 +213,11 @@ func (m *ModuleCacheManager) ModuleToRelationInfos(result []map[string]any) []*r
 			continue
 		}
 		id := strconv.Itoa(int(setId))
-		var expands map[string]map[string]string
+		var expands map[string]map[string]any
 		if expandString, ok := r[relation.ExpandInfoColumn].(string); ok {
 			err := json.Unmarshal([]byte(expandString), &expands)
 			if err != nil {
-				logger.Errorf("ModuleToRelationInfos json unmarshal error with %s", expandString)
+				logger.Warnf("[cmdb_relation] ModuleToRelationInfos json unmarshal error with %s", expandString)
 				continue
 			}
 		}
@@ -226,7 +226,7 @@ func (m *ModuleCacheManager) ModuleToRelationInfos(result []map[string]any) []*r
 			Label: map[string]string{
 				"set_id": id,
 			},
-			Expands: expands,
+			Expands: relation.TransformExpands(expands),
 		})
 	}
 

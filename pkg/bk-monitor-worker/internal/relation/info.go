@@ -9,6 +9,18 @@
 
 package relation
 
+import (
+	"github.com/spf13/cast"
+)
+
+var allowExpandKeys = map[string]struct{}{
+	"version":         {},
+	"env_type":        {},
+	"service_type":    {},
+	"service_version": {},
+	"env_name":        {},
+}
+
 type Item struct {
 	Name string `json:"name,omitempty"`
 	ID   string `json:"id,omitempty"`
@@ -32,6 +44,30 @@ type Info struct {
 type ResourceInfo struct {
 	name string
 	data map[string]*Info
+}
+
+func TransformExpands(expands map[string]map[string]any) map[string]map[string]string {
+	result := make(map[string]map[string]string, 0)
+	for resource, expand := range expands {
+		if _, ok := result[resource]; !ok {
+			result[resource] = make(map[string]string)
+		}
+
+		for k, v := range expand {
+			if _, ok := allowExpandKeys[k]; !ok {
+				continue
+			}
+
+			nv := cast.ToString(v)
+			if nv == "" {
+				continue
+			}
+
+			result[resource][k] = nv
+		}
+	}
+
+	return result
 }
 
 func (e *ResourceInfo) Add(id string, info *Info) {

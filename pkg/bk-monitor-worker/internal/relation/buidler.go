@@ -243,10 +243,6 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 
 							// 如果没有配置扩展信息，需要从上游找是否有配置需要继承
 							if !expandInfoStatus {
-								if info.Resource == Host {
-									fmt.Println("test")
-								}
-
 								if expand, expandOk := resourceParentExpands[info.Resource][itemInfo.Resource][item.ID]; expandOk {
 									// 构建维度，注入主键和扩展维度
 									node := b.makeNode(info.Resource, info.Label, bizLabel, expand)

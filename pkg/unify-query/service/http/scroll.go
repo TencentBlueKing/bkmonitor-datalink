@@ -96,10 +96,10 @@ func prepareQueryTs(ctx context.Context, queryTs *structured.QueryTs) (queryList
 func collectStorageQuery(qryList []*metadata.Query) map[string][]*metadata.Query {
 	storageQuery := make(map[string][]*metadata.Query)
 	for _, qry := range qryList {
-		if qry == nil || qry.StorageID == "" {
-			continue
+		storageIds := qry.CollectStorageIDs()
+		for _, storageID := range storageIds {
+			storageQuery[storageID] = append(storageQuery[qry.StorageID], qry)
 		}
-		storageQuery[qry.StorageID] = append(storageQuery[qry.StorageID], qry)
 	}
 	return storageQuery
 }
@@ -283,7 +283,7 @@ func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connec
 	return
 }
 
-func generateScrollSuffix(name string, ts structured.QueryTs) (string, error) {
+func generateScrollKey(name string, ts structured.QueryTs) (string, error) {
 	ts.ClearCache = false
 	key, err := json.StableMarshal(ts)
 	if err != nil {

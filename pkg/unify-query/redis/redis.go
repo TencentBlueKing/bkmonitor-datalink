@@ -142,3 +142,11 @@ var Subscribe = func(ctx context.Context, channels ...string) <-chan *goRedis.Me
 	p := globalInstance.client.Subscribe(ctx, channels...)
 	return p.Channel()
 }
+
+func AcquireLock(ctx context.Context, key string, dur time.Duration) error {
+	return Client().SetNX(ctx, key, "1", dur).Err()
+}
+
+func ReleaseLock(ctx context.Context, key string) error {
+	return Client().Del(ctx, key).Err()
+}

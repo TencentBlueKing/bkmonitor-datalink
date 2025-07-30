@@ -30,11 +30,6 @@ const (
 )
 
 const (
-	SessionKeyPrefix = "scroll:session:"
-	LockKeyPrefix    = "scroll:lock:"
-)
-
-const (
 	StatusPending   = "pending"
 	StatusRunning   = "running"
 	StatusFailed    = "failed"
@@ -112,7 +107,7 @@ func (s *ScrollSession) MakeSlices(storageType, connect, tableID string) (slices
 	case consul.ElasticsearchStorageType:
 		return s.makeESSlices(connect, tableID)
 	case consul.BkSqlStorageType:
-		return s.makeDorisSlices(connect, tableID)
+		return s.makeDorisSlices(tableID)
 	default:
 		return nil, ErrorOfUnSupportScrollStorageType
 	}
@@ -167,7 +162,7 @@ func (s *ScrollSession) makeESSlices(connect, tableID string) (slices []*SliceIn
 	return
 }
 
-func (s *ScrollSession) makeDorisSlices(connect, tableID string) (slices []*SliceInfo, err error) {
+func (s *ScrollSession) makeDorisSlices(tableID string) (slices []*SliceInfo, err error) {
 	needUpdate := false
 	for i := 0; i < s.MaxSlice; i++ {
 		key := generateScrollSliceStatusKey(consul.BkSqlStorageType, "", tableID, i)
@@ -246,7 +241,7 @@ func (s *ScrollSession) UpdateScrollID(ctx context.Context, connect, tableID, sc
 	return s.updateScrollSliceStatusValue(ctx, key, sliceStatusValue)
 }
 
-func (s *ScrollSession) CouldDone() bool {
+func (s *ScrollSession) Done() bool {
 	for _, val := range s.ScrollIDs {
 		if val.Status != StatusCompleted && val.Status != StatusStop {
 			return false

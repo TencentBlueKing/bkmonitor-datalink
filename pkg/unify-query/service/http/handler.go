@@ -310,16 +310,18 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	}
 
 	queryStr, _ := json.StableMarshal(queryTs)
-	sessionKeySuffix, err := generateScrollSuffix(user.Name, *queryTs)
+	scrollKey, err := generateScrollKey(user.Name, *queryTs)
 	if err != nil {
 		return
 	}
-	if err = redis.AcquireScrollSessionLock(ctx, sessionLockKey, ScrollSessionLockTimeout); err != nil {
+	sessionLockKey = redis.ScrollLockKeyPrefix + scrollKey
+	if err = redis.AcquireLock(ctx, sessionLockKey, ScrollSessionLockTimeout); err != nil {
 		return
 	}
 	defer func() {
-		if err = redis.ReleaseScrollSessionLock(ctx, sessionLockKey); err != nil {
-			log.Errorf(ctx, "release scroll session lock error: %s", err.Error())
+		if rErr := redis.ReleaseLock(ctx, sessionLockKey); rErr != nil {
+			err = rErr
+			return
 		}
 	}()
 	if queryTs.ClearCache {
@@ -329,7 +331,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	}
 	span.Set("query-body", string(queryStr))
 	listData.TraceID = span.TraceID()
-	listData.Total, listData.List, listData.ResultTableOptions, listData.Done, err = queryRawWithScroll(ctx, queryTs, sessionKeySuffix, ScrollMaxSlice)
+	listData.Total, listData.List, listData.ResultTableOptions, listData.Done, err = queryRawWithScroll(ctx, queryTs, scrollKey, ScrollMaxSlice)
 	if err != nil {
 		listData.Status = &metadata.Status{
 			Code:    metadata.QueryRawError,

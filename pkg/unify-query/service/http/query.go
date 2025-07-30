@@ -174,6 +174,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	var (
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
+		errCh     = make(chan error)
 
 		message   strings.Builder
 		queryList []*metadata.Query
@@ -189,6 +190,17 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		log.Errorf(ctx, "prepare query ts error: %s", err.Error())
 		return
 	}
+
+	receiveWg.Add(1)
+	go func() {
+		defer receiveWg.Done()
+		for e := range errCh {
+			message.WriteString(fmt.Sprintf("query error: %s ", e.Error()))
+		}
+		if message.Len() > 0 {
+			err = errors.New(message.String())
+		}
+	}()
 
 	receiveWg.Add(1)
 
@@ -293,6 +305,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		defer func() {
 			sendWg.Wait()
 			close(dataCh)
+			close(errCh)
 		}()
 		for _, qry := range queryList {
 			sendWg.Add(1)
@@ -331,7 +344,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 				size, options, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
 				if queryErr != nil {
-					message.WriteString(fmt.Sprintf("query %s:%s is error: %s ", qry.TableID, qry.Fields, queryErr.Error()))
+					errCh <- queryErr
 					return
 				}
 
@@ -352,22 +365,17 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 	// 等待数据组装完毕
 	receiveWg.Wait()
-	if message.Len() > 0 {
-		err = errors.New(message.String())
-	}
-
 	return
 }
 
 func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessionKeySuffix string, maxSliceCount int) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, done bool, err error) {
 	var (
-		workerWg     = sync.WaitGroup{}
-		readerWg     = sync.WaitGroup{}
-		messageMutex = sync.Mutex{}
-		message      strings.Builder
-		queryList    []*metadata.Query
-		dataCh       = make(chan []map[string]any)
-		listMutex    = sync.Mutex{}
+		workerWg  = sync.WaitGroup{}
+		readerWg  = sync.WaitGroup{}
+		message   strings.Builder
+		queryList []*metadata.Query
+		dataCh    = make(chan []map[string]any)
+		errCh     = make(chan error)
 	)
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
 	defer span.End(&err)
@@ -392,37 +400,58 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	readerWg.Add(1)
 	go func() {
 		defer readerWg.Done()
-		for d := range dataCh {
-			listMutex.Lock()
-			list = append(list, d...)
-			listMutex.Unlock()
+
+		for {
+			select {
+			case data, ok := <-dataCh:
+				if !ok {
+					dataCh = nil
+				} else {
+					list = append(list, data...)
+				}
+			case cErr, ok := <-errCh:
+				if !ok {
+					errCh = nil
+				} else if cErr != nil {
+					message.WriteString(fmt.Sprintf("query error: %s ", cErr.Error()))
+				}
+			}
+
+			if dataCh == nil && errCh == nil {
+				return
+			}
 		}
 	}()
+
+	p, _ := ants.NewPool(QueryMaxRouting)
 
 	for _, e := range scrollQuery {
 		for _, qry := range e.QueryList {
 			workerWg.Add(1)
-			go func(e StorageScrollQuery, qry *metadata.Query) {
+			qry := qry
+			e := e
+			if sErr := p.Submit(func() {
 				defer workerWg.Done()
 				sData, sErr := scrollQueryWorker(ctx, session, e.Connect, e.TableID, qry, start, end, e.Storage.Instance)
 				if sErr != nil {
-					messageMutex.Lock()
-					message.WriteString(fmt.Sprintf("query %s:%s is error: %s ", qry.TableID, qry.Fields, sErr.Error()))
-					messageMutex.Unlock()
+					errCh <- sErr
 					return
 				}
 				dataCh <- sData
-			}(e, qry)
+			}); sErr != nil {
+				errCh <- sErr
+			}
 		}
 	}
 
 	workerWg.Wait()
 	close(dataCh)
+	close(errCh)
 
 	readerWg.Wait()
 
 	total = int64(len(list))
-	done = session.CouldDone()
+	done = session.Done()
 	if message.Len() > 0 {
 		err = errors.New(message.String())
 	}

@@ -14,13 +14,10 @@ import (
 	"time"
 )
 
-func AcquireScrollSessionLock(ctx context.Context, sessionKeySuffix string, dur time.Duration) error {
-	return Client().SetNX(ctx, LockKeyPrefix+sessionKeySuffix, "1", dur).Err()
-}
-
-func ReleaseScrollSessionLock(ctx context.Context, sessionKeySuffix string) error {
-	return Client().Del(ctx, LockKeyPrefix+sessionKeySuffix).Err()
-}
+const (
+	SessionKeyPrefix    = "scroll:session:"
+	ScrollLockKeyPrefix = "scroll:lock:"
+)
 
 func ClearScrollSession(ctx context.Context, sessionKeySuffix string) error {
 	sessionKey := SessionKeyPrefix + sessionKeySuffix

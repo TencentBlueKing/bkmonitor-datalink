@@ -165,18 +165,6 @@ type Query struct {
 	DryRun bool `json:"dry_run,omitempty"`
 }
 
-func (q *Query) CalcStorageIDs() []string {
-	if len(q.StorageIDs) > 0 {
-		return q.StorageIDs
-	}
-
-	if q.StorageID != "" {
-		return []string{q.StorageID}
-	}
-
-	return nil
-}
-
 func (q *Query) VMExpand() *VmExpand {
 	return &VmExpand{
 		ResultTableList: []string{q.VmRt},

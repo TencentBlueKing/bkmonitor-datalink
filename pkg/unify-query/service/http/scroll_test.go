@@ -96,7 +96,7 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 		DB:    0,
 	}
 
-	err = redis.SetInstance(ctx, "test", options)
+	err = redis.SetInstance(ctx, "test-scroll", options)
 	require.NoError(t, err, "Failed to set unify-query redis instance")
 
 	initEsMockData := map[string]any{
@@ -197,7 +197,7 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 		queryTsBytes, _ := json.StableMarshal(tCase.queryTs)
 		var queryTsCopy structured.QueryTs
 		json.Unmarshal(queryTsBytes, &queryTsCopy)
-		sessionKeySuffix, _ := generateScrollSuffix(user.Name, *tCase.queryTs)
+		sessionKeySuffix, _ := generateScrollKey(user.Name, *tCase.queryTs)
 
 		total, list, _, done, err := queryRawWithScroll(testCtx, &queryTsCopy, sessionKeySuffix, 3)
 		hasData := len(list) > 0
@@ -340,7 +340,7 @@ func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
 		var queryTsCopy structured.QueryTs
 		json.Unmarshal(queryTsBytes, &queryTsCopy)
 
-		sessionKeySuffix, _ := generateScrollSuffix(user.Name, *tCase.queryTs)
+		sessionKeySuffix, _ := generateScrollKey(user.Name, *tCase.queryTs)
 		total, list, _, done, err := queryRawWithScroll(testCtx, &queryTsCopy, sessionKeySuffix, 3)
 		hasData := len(list) > 0
 

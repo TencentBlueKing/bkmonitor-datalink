@@ -19,7 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/cmdbcache"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 )
 
@@ -41,7 +41,7 @@ func NewProfHttpService() *gin.Engine {
 }
 
 func relationHandler(c *gin.Context) {
-	relationMetrics := cmdbcache.GetRelationMetricsBuilder().String()
+	relationMetrics := relation.GetRelationMetricsBuilder().String()
 
 	c.String(http.StatusOK, relationMetrics)
 }

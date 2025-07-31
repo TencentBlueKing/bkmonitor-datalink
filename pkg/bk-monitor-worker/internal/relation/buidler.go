@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -92,11 +93,27 @@ func (b *MetricsBuilder) getResourceInfo(bizID int, name string) *ResourceInfo {
 	return b.resources[bizID][name]
 }
 
-func (b *MetricsBuilder) Debug() string {
+func (b *MetricsBuilder) Debug(bizID string) string {
 	b.lock.RLock()
 	defer b.lock.RUnlock()
 
-	out, _ := json.Marshal(b.resources)
+	if len(b.resources) == 0 {
+		return ""
+	}
+
+	var data map[string]*ResourceInfo
+	if bizID != "" {
+		id := cast.ToInt(bizID)
+		if resources, ok := b.resources[id]; ok {
+			data = resources
+		}
+	}
+
+	if len(data) == 0 {
+		data = b.resources[0]
+	}
+
+	out, _ := json.Marshal(data)
 	return string(out)
 }
 

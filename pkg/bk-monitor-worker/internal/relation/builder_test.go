@@ -481,7 +481,7 @@ set_info_relation{bk_biz_id="3",set_id="3001",version="v0.0.2"} 1`,
 //func TestBuildMetrics(t *testing.T) {
 //	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 //
-//	for name, c := range map[string]struct {
+//	for Name, c := range map[string]struct {
 //		bkBizID    int
 //		hosts      []HostS
 //		clearhosts []HostS
@@ -707,7 +707,7 @@ set_info_relation{bk_biz_id="3",set_id="3001",version="v0.0.2"} 1`,
 //module_with_set_relation{module_id="2003",set_id="3001",bk_biz_id="2"} 1`,
 //		},
 //	} {
-//		t.Run(name, func(t *testing.T) {
+//		t.Run(Name, func(t *testing.T) {
 //			ctx := context.Background()
 //			rmb := newRelationMetricsBuilder()
 //			err := rmb.BuildInfosCache(ctx)

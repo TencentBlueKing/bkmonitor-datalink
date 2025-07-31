@@ -42,8 +42,8 @@ type Info struct {
 
 // ResourceInfo 扩展信息 map[{资源ID}]Info
 type ResourceInfo struct {
-	name string
-	data map[string]*Info
+	Name string
+	Data map[string]*Info
 }
 
 func TransformExpands(expands map[string]map[string]any) map[string]map[string]string {
@@ -71,29 +71,29 @@ func TransformExpands(expands map[string]map[string]any) map[string]map[string]s
 }
 
 func (e *ResourceInfo) Add(id string, info *Info) {
-	if e.data == nil {
-		e.data = make(map[string]*Info)
+	if e.Data == nil {
+		e.Data = make(map[string]*Info)
 	}
-	e.data[id] = info
+	e.Data[id] = info
 }
 
 func (e *ResourceInfo) Delete(id string) {
-	if e.data == nil {
+	if e.Data == nil {
 		return
 	}
-	delete(e.data, id)
+	delete(e.Data, id)
 }
 
 func (e *ResourceInfo) Reset() {
-	e.data = make(map[string]*Info)
+	e.Data = make(map[string]*Info)
 }
 
 func (e *ResourceInfo) Get(id string) *Info {
-	if e.data == nil {
+	if e.Data == nil {
 		return nil
 	}
 
-	if v, ok := e.data[id]; ok {
+	if v, ok := e.Data[id]; ok {
 		return v
 	}
 
@@ -101,11 +101,11 @@ func (e *ResourceInfo) Get(id string) *Info {
 }
 
 func (e *ResourceInfo) Range(fn func(info *Info)) {
-	if e.data == nil {
+	if e.Data == nil {
 		return
 	}
 
-	for _, info := range e.data {
+	for _, info := range e.Data {
 		fn(info)
 	}
 }

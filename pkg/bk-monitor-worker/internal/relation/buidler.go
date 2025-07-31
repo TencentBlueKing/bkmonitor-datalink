@@ -85,7 +85,7 @@ func (b *MetricsBuilder) getResourceInfo(bizID int, name string) *ResourceInfo {
 	}
 	if _, ok := b.resources[bizID][name]; !ok {
 		b.resources[bizID][name] = &ResourceInfo{
-			name: name,
+			Name: name,
 		}
 	}
 

@@ -88,6 +88,8 @@ type ConditionField struct {
 	IsPrefix bool `json:"is_prefix,omitempty"`
 	// IsSuffix 是否是后缀
 	IsSuffix bool `json:"is_suffix,omitempty"`
+	// IsForceEq 是否强制等于
+	IsForceEq bool `json:"is_force_eq,omitempty"`
 }
 
 // String

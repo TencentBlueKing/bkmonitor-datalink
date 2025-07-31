@@ -145,6 +145,9 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 			module[field] = operators
 		}
 
+		// 注入 业务 ID
+		module["bk_biz_id"] = bizID
+
 		// 转换为json字符串
 		moduleStr, err := json.Marshal(module)
 		if err != nil {
@@ -271,6 +274,7 @@ func (m *ModuleCacheManager) CleanByEvents(ctx context.Context, resourceType str
 	// 提取模块ID及服务模板ID
 	needDeleteModuleIds := make(map[int]struct{})
 	needUpdateServiceTemplateIds := make(map[string]struct{})
+
 	for _, event := range events {
 		moduleID, ok := event["bk_module_id"].(float64)
 		if !ok {
@@ -283,13 +287,6 @@ func (m *ModuleCacheManager) CleanByEvents(ctx context.Context, resourceType str
 		if serviceTemplateID, ok := event["service_template_id"].(float64); ok && serviceTemplateID > 0 {
 			needUpdateServiceTemplateIds[strconv.Itoa(int(serviceTemplateID))] = struct{}{}
 		}
-
-		// 清理 relation 缓存
-		bizID, ok := event["bk_biz_id"].(float64)
-		if !ok {
-			continue
-		}
-		relation.GetRelationMetricsBuilder().ClearResourceWithID(int(bizID), relation.Host, fmt.Sprintf("%d", int(moduleID)))
 	}
 
 	// 删除服务模板关联的模块缓存
@@ -329,6 +326,25 @@ func (m *ModuleCacheManager) CleanByEvents(ctx context.Context, resourceType str
 		for moduleID := range needDeleteModuleIds {
 			moduleIds = append(moduleIds, strconv.Itoa(moduleID))
 		}
+
+		// 清理 relationMetrics 里的缓存数据
+		rmb := relation.GetRelationMetricsBuilder()
+		result := m.RedisClient.HMGet(ctx, m.GetCacheKey(moduleCacheKey), moduleIds...)
+		for _, value := range result.Val() {
+			if value == nil {
+				continue
+			}
+
+			var module map[string]interface{}
+			err := json.Unmarshal([]byte(cast.ToString(value)), &module)
+			if err != nil {
+				continue
+			}
+
+			// 清理 relation metrics 里面的 set 资源
+			rmb.ClearResourceWithID(cast.ToInt(module["bk_biz_id"]), relation.Module, cast.ToString(module["bk_module_id"]))
+		}
+
 		m.RedisClient.HDel(ctx, m.GetCacheKey(moduleCacheKey), moduleIds...)
 	}
 

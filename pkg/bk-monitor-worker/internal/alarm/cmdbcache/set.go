@@ -131,6 +131,9 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 	setCacheData := make(map[string]string)
 	templateToSets := make(map[string][]string)
 	for _, set := range result {
+		// 注入业务 ID 信息
+		set["bk_biz_id"] = bizID
+
 		setStr, err := json.Marshal(set)
 		if err != nil {
 			return errors.Wrap(err, "failed to marshal set")
@@ -265,13 +268,6 @@ func (m *SetCacheManager) CleanByEvents(ctx context.Context, resourceType string
 		if setTemplateID, ok := event["set_template_id"].(float64); ok && setTemplateID > 0 {
 			needUpdateSetTemplateIds[strconv.Itoa(int(setTemplateID))] = struct{}{}
 		}
-
-		// 清理 relation 缓存
-		bizID, ok := event["bk_biz_id"].(float64)
-		if !ok {
-			continue
-		}
-		relation.GetRelationMetricsBuilder().ClearResourceWithID(int(bizID), relation.Host, fmt.Sprintf("%d", int(setID)))
 	}
 
 	setTemplateCacheData := make(map[string]string)
@@ -311,6 +307,25 @@ func (m *SetCacheManager) CleanByEvents(ctx context.Context, resourceType string
 		for setID := range needDeleteSetIds {
 			setIds = append(setIds, strconv.Itoa(setID))
 		}
+
+		// 清理 relationMetrics 里的缓存数据
+		rmb := relation.GetRelationMetricsBuilder()
+		result := m.RedisClient.HMGet(ctx, m.GetCacheKey(setCacheKey), setIds...)
+		for _, value := range result.Val() {
+			if value == nil {
+				continue
+			}
+
+			var set map[string]interface{}
+			err := json.Unmarshal([]byte(cast.ToString(value)), &set)
+			if err != nil {
+				continue
+			}
+
+			// 清理 relation metrics 里面的 set 资源
+			rmb.ClearResourceWithID(cast.ToInt(set["bk_biz_id"]), relation.Set, cast.ToString(set["bk_set_id"]))
+		}
+
 		m.RedisClient.HDel(ctx, m.GetCacheKey(setCacheKey), setIds...)
 	}
 

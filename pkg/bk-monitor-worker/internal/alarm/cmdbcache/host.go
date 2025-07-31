@@ -399,18 +399,13 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 		for _, tplink := range h.TopoLinks {
 			var link []relation.Item
 			for _, tp := range tplink {
-				var (
-					resource string
-					id       int
-					ok       bool
-				)
-				resource, ok = tp["bk_obj_id"].(string)
-				if !ok || resource == "" {
+				resource := cast.ToString(tp["bk_obj_id"])
+				if resource == "" {
 					continue
 				}
 
-				id, ok = tp["bk_inst_id"].(int)
-				if !ok {
+				id := cast.ToString(tp["bk_inst_id"])
+				if id == "" {
 					continue
 				}
 
@@ -418,12 +413,11 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 					resource = relation.Business
 				}
 
-				itemID := cast.ToString(id)
 				link = append(link, relation.Item{
-					ID:       itemID,
+					ID:       id,
 					Resource: resource,
 					Label: map[string]string{
-						fmt.Sprintf("%s_id", resource): itemID,
+						fmt.Sprintf("%s_id", resource): id,
 					},
 				})
 			}
@@ -688,7 +682,6 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 	case "host":
 		agentIds := make([]string, 0)
 		hostKeys := make([]string, 0)
-		hostIDs := make([]int, 0)
 
 		// 提取需要删除的缓存key
 		for _, event := range events {
@@ -700,7 +693,6 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 			hostId, ok := event["bk_host_id"].(float64)
 			if ok && hostId != 0 {
 				hostKeys = append(hostKeys, strconv.Itoa(int(hostId)))
-				hostIDs = append(hostIDs, int(hostId))
 			}
 
 			ip, ok := event["bk_host_innerip"].(string)
@@ -719,9 +711,8 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 		}
 		if len(hostKeys) > 0 {
 			// 清理 relationMetrics 里的缓存数据
+			rmb := relation.GetRelationMetricsBuilder()
 			result := m.RedisClient.HMGet(ctx, m.GetCacheKey(hostCacheKey), hostKeys...)
-			clearNodes := make([]*AlarmHostInfo, 0)
-
 			for _, value := range result.Val() {
 				// 如果找不到对应的缓存，不需要更新
 				if value == nil {
@@ -734,9 +725,8 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 					continue
 				}
 
-				id := fmt.Sprintf("%d", host.BkHostId)
-				relation.GetRelationMetricsBuilder().ClearResourceWithID(host.BkBizId, relation.Host, id)
-				clearNodes = append(clearNodes, host)
+				// 清理 relation metrics 里面的 host
+				rmb.ClearResourceWithID(host.BkBizId, relation.Host, cast.ToString(host.BkHostId))
 			}
 
 			// 记录需要更新的业务ID

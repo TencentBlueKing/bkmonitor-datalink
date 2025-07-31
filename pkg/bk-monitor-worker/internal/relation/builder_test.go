@@ -199,7 +199,9 @@ func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
 					},
 				},
 			},
-			expected: `host_info_relation{bk_biz_id="2",host_id="1001",version="v0.0.3"} 1
+			expected: `bad_with_module_relation{bad_id="4001",bk_biz_id="2",module_id="2001"} 1
+bad_with_set_relation{bad_id="4001",bk_biz_id="2",set_id="3001"} 1
+host_info_relation{bk_biz_id="2",host_id="1001",version="v0.0.3"} 1
 host_info_relation{bk_biz_id="2",host_id="1002",version="v0.0.3"} 1
 host_with_module_relation{bk_biz_id="2",host_id="1001",module_id="2001"} 1
 host_with_module_relation{bk_biz_id="2",host_id="1002",module_id="2001"} 1
@@ -519,8 +521,12 @@ set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 			},
 			expected: `host_info_relation{bk_biz_id="2",host_id="1001",version="v0.0.3"} 1
 host_info_relation{bk_biz_id="2",host_id="1002",version="v0.0.3"} 1
+host_with_module_relation{bk_biz_id="2",host_id="1001",module_id="3001"} 1
+host_with_module_relation{bk_biz_id="2",host_id="1002",module_id="2001"} 1
 host_with_system_relation{bk_biz_id="2",bk_cloud_id="3",bk_target_ip="127.0.0.1",host_id="1001"} 1
 host_with_system_relation{bk_biz_id="2",bk_cloud_id="3",bk_target_ip="127.0.0.2",host_id="1002"} 1
+module_with_set_relation{bk_biz_id="2",module_id="2001",set_id="3001"} 1
+module_with_set_relation{bk_biz_id="2",module_id="3001",set_id="3001"} 1
 set_info_relation{bk_biz_id="3",set_id="3001",version="v0.0.2"} 1`,
 		},
 	} {

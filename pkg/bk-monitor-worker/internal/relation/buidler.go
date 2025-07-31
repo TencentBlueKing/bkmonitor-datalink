@@ -127,6 +127,14 @@ func (b *MetricsBuilder) ClearAllMetrics() {
 func (b *MetricsBuilder) ClearResourceWithID(bizID int, name string, ids ...string) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
+
+	if bizID == 0 {
+		return
+	}
+	if name == "" {
+		return
+	}
+
 	resourceInfo := b.getResourceInfo(bizID, name)
 	for _, id := range ids {
 		resourceInfo.Delete(id)

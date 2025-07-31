@@ -54,7 +54,7 @@
 
 ```go
 // 直接在 query param 中携带
-fullUrl := fmt.Sprintf("%s?x-bk-token=%s", baseUrl, url.QueryEscape(token))
+fullUrl := fmt.Sprintf("%s?X-BK-TOKEN=%s", baseUrl, url.QueryEscape(token))
 
 // 或在请求头中携带
 req.Header.Set("X-BK-TOKEN", token)

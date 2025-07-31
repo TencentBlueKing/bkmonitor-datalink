@@ -44,7 +44,14 @@
       cluster:
         disabled: true
       proxy:
-        disabled: true
+        disabled: false
+        http:
+          host: ""
+          port: 10205
+          retry_listen: true
+          middlewares:
+            - "logging"
+            - "maxconns;maxConnectionsRatio=256"
       pingserver:
         disabled: true
 

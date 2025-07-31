@@ -218,7 +218,6 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 			// 判断是否对该资源配置扩展
 			var (
 				expandInfoStatus bool
-				checkKey         bool
 			)
 
 			// 注入 ExpandInfo 指标
@@ -237,10 +236,10 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 					expandInfoStatus = true
 				} else {
 					// 注入父资源的 Expand
-					if _, checkKey = resourceParentExpands[expandResource]; !checkKey {
+					if _, ok := resourceParentExpands[expandResource]; !ok {
 						resourceParentExpands[expandResource] = make(map[string]map[string]map[string]string)
 					}
-					if _, checkKey = resourceParentExpands[expandResource][resource]; !checkKey {
+					if _, ok := resourceParentExpands[expandResource][resource]; !ok {
 						resourceParentExpands[expandResource][resource] = make(map[string]map[string]string)
 					}
 

@@ -258,49 +258,47 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		span.Set("query-list-num", len(queryList))
 		span.Set("result-data-num", len(data))
 
-		if len(queryList) > 1 {
-			queryTs.OrderBy.Orders().SortSliceList(data)
+		queryTs.OrderBy.Orders().SortSliceList(data)
 
-			span.Set("query-scroll", queryTs.Scroll)
-			span.Set("query-result-table", queryTs.ResultTableOptions)
+		span.Set("query-scroll", queryTs.Scroll)
+		span.Set("query-result-table", queryTs.ResultTableOptions)
 
-			// scroll 和 searchAfter 模式不进行裁剪
-			if queryTs.Scroll == "" && queryTs.ResultTableOptions.IsCrop() {
-				// 判定是否启用 multi from 特性
-				span.Set("query-multi-from", queryTs.IsMultiFrom)
-				span.Set("data-length", len(data))
-				span.Set("query-ts-from", queryTs.From)
-				span.Set("query-ts-limit", queryTs.Limit)
+		// scroll 和 searchAfter 模式不进行裁剪
+		if queryTs.Scroll == "" && queryTs.ResultTableOptions.IsCrop() {
+			// 判定是否启用 multi from 特性
+			span.Set("query-multi-from", queryTs.IsMultiFrom)
+			span.Set("data-length", len(data))
+			span.Set("query-ts-from", queryTs.From)
+			span.Set("query-ts-limit", queryTs.Limit)
 
-				if len(data) > queryTs.Limit && queryTs.Limit > 0 {
-					if queryTs.IsMultiFrom {
-						resultTableOptions = queryTs.ResultTableOptions
-						if resultTableOptions == nil {
-							resultTableOptions = make(metadata.ResultTableOptions)
+			if len(data) > queryTs.Limit && queryTs.Limit > 0 {
+				if queryTs.IsMultiFrom {
+					resultTableOptions = queryTs.ResultTableOptions
+					if resultTableOptions == nil {
+						resultTableOptions = make(metadata.ResultTableOptions)
+					}
+
+					data = data[0:queryTs.Limit]
+					for _, l := range data {
+						tableID := l[elasticsearch.KeyTableID].(string)
+						address := l[elasticsearch.KeyAddress].(string)
+
+						option := resultTableOptions.GetOption(tableID, address)
+						if option == nil {
+							resultTableOptions.SetOption(tableID, address, &metadata.ResultTableOption{From: function.IntPoint(1)})
+						} else {
+							*option.From++
+						}
+					}
+				} else {
+					// 只有长度符合的数据才进行裁剪
+					if len(data) > queryTs.From {
+						maxLength := queryTs.From + queryTs.Limit
+						if len(data) < maxLength {
+							maxLength = len(data)
 						}
 
-						data = data[0:queryTs.Limit]
-						for _, l := range data {
-							tableID := l[elasticsearch.KeyTableID].(string)
-							address := l[elasticsearch.KeyAddress].(string)
-
-							option := resultTableOptions.GetOption(tableID, address)
-							if option == nil {
-								resultTableOptions.SetOption(tableID, address, &metadata.ResultTableOption{From: function.IntPoint(1)})
-							} else {
-								*option.From++
-							}
-						}
-					} else {
-						// 只有长度符合的数据才进行裁剪
-						if len(data) > queryTs.From {
-							maxLength := queryTs.From + queryTs.Limit
-							if len(data) < maxLength {
-								maxLength = len(data)
-							}
-
-							data = data[queryTs.From:maxLength]
-						}
+						data = data[queryTs.From:maxLength]
 					}
 				}
 			}

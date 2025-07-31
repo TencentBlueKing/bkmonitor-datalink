@@ -597,6 +597,11 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 			var option *metadata.ResultTableOption
 
+			reverseAlias := make(map[string]string, len(query.FieldAlias))
+			for k, v := range query.FieldAlias {
+				reverseAlias[v] = k
+			}
+
 			if sr != nil {
 				if sr.Hits != nil {
 
@@ -609,6 +614,16 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 						}
 
 						fact.SetData(data)
+
+						// 注入别名
+						for k, v := range reverseAlias {
+							if _, ok := fact.data[k]; ok {
+								fact.data[v] = fact.data[k]
+								// TODO: 等前端适配之后，再移除
+								//delete(fact.data, k)
+							}
+						}
+
 						fact.data[KeyDocID] = d.Id
 						fact.data[KeyIndex] = d.Index
 						fact.data[KeyTableID] = query.TableID

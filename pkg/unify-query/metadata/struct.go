@@ -270,6 +270,9 @@ type ConditionField struct {
 
 	// IsSuffix 是否是后缀匹配
 	IsSuffix bool
+
+	// IsForceEq 是否强制等于
+	IsForceEq bool
 }
 
 // TimeAggregation 时间聚合字段

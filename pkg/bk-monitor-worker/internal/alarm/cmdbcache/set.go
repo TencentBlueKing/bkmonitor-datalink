@@ -33,6 +33,7 @@ import (
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
@@ -188,11 +189,12 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relation.Info {
 	infos := make([]*relation.Info, 0, len(result))
 	for _, r := range result {
-		setId, ok := r["bk_set_id"].(float64)
-		if !ok {
+		id := cast.ToString(r["bk_set_id"])
+
+		if id == "" {
 			continue
 		}
-		id := strconv.Itoa(int(setId))
+
 		var expands map[string]map[string]any
 		if expandString, ok := r[relation.ExpandInfoColumn].(string); ok {
 			err := json.Unmarshal([]byte(expandString), &expands)
@@ -201,6 +203,7 @@ func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relatio
 				continue
 			}
 		}
+
 		infos = append(infos, &relation.Info{
 			ID: id,
 			Label: map[string]string{

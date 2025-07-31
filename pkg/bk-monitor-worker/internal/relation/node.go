@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package cmdbcache
+package relation
 
 import (
 	"fmt"
@@ -28,47 +28,56 @@ type Node struct {
 	Labels map[string]string
 }
 
-func (ns Nodes) toRelationMetrics() []RelationMetric {
-	// 关联节点必须要 2 个以上
-	if len(ns) < 2 {
-		return nil
+func (n Node) ExpandInfoMetric() Metric {
+	name := fmt.Sprintf("%s_info_relation", n.Name)
+	labels := make([]Label, 0, len(n.Labels))
+	for k, v := range n.Labels {
+		labels = append(labels, Label{
+			Name:  k,
+			Value: v,
+		})
 	}
-	relationMetrics := make([]RelationMetric, 0, len(ns)-1)
-	for i := 0; i < len(ns)-1; i++ {
-		relationMetrics = append(relationMetrics,
-			ns[i].RelationMetric(ns[i+1]),
-		)
+
+	sort.SliceStable(labels, func(i, j int) bool {
+		return labels[i].Name < labels[j].Name
+	})
+
+	return Metric{
+		Name:   name,
+		Labels: labels,
 	}
-	return relationMetrics
 }
 
-func (n Node) RelationMetric(nextNode Node) RelationMetric {
+func (n Node) RelationMetric(nextNode Node) Metric {
 	names := []string{n.Name, nextNode.Name}
 	sort.Strings(names)
 
-	totalNum := len(n.Labels) + len(nextNode.Labels)
-	keys := make([]string, 0, totalNum)
-	values := make(map[string]string, totalNum)
+	keys := make([]string, 0)
+	values := make(map[string]string)
 
 	for _, labels := range []map[string]string{n.Labels, nextNode.Labels} {
 		for k, v := range labels {
+			if _, ok := values[k]; ok {
+				continue
+			}
+
 			keys = append(keys, k)
 			values[k] = v
 		}
 	}
 	sort.Strings(keys)
 
-	relationLabels := make([]RelationLabel, 0, len(keys))
+	relationLabels := make([]Label, 0, len(keys))
 	for _, k := range keys {
 		relationLabels = append(relationLabels,
-			RelationLabel{
+			Label{
 				Name:  k,
 				Value: values[k],
 			},
 		)
 	}
 
-	return RelationMetric{
+	return Metric{
 		Name:   fmt.Sprintf("%s_relation", strings.Join(names, "_with_")),
 		Labels: relationLabels,
 	}

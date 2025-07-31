@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/agiledragon/gomonkey/v2"
@@ -35,6 +36,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
 
@@ -47,6 +49,26 @@ var DemoHosts = []*AlarmHostInfo{
 		BkAgentId:     "12345678901234567890123456789012",
 		BkSetIds:      []int{2, 3},
 		BkModuleIds:   []int{3, 6},
+		Expands: map[string]map[string]any{
+			"set": {
+				"version":           "tlinux_update_20250729_134916_ver92184",
+				"env_type":          "prod",
+				"service_type":      "",
+				"service_version":   "",
+				"env_name":          "LIVE",
+				"finish_time":       "2025-07-30 09:32:33",
+				"finish_time_stamp": 1753839153,
+			},
+			"host": {
+				"version":           "tlinux_update_20250729_134916_ver92184",
+				"env_type":          "prod",
+				"service_type":      "",
+				"service_version":   "",
+				"env_name":          "LIVE",
+				"finish_time":       "2025-07-30 09:32:33",
+				"finish_time_stamp": 1753839153,
+			},
+		},
 		TopoLinks: map[string][]map[string]interface{}{
 			"module|3": {
 				{"bk_inst_id": 3, "bk_inst_name": "空闲机", "bk_obj_id": "module", "bk_obj_name": "模块"},
@@ -181,6 +203,22 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 			t.Error(err)
 			return
 		}
+
+		// 判断关联指标
+		metrics := strings.Split(relation.GetRelationMetricsBuilder().String(), "\n")
+		sort.Strings(metrics)
+		var metricsActual strings.Builder
+		for _, m := range metrics {
+			if m != "" {
+				metricsActual.WriteString(m + "\n")
+			}
+		}
+
+		assert.Equal(t, `host_info_relation{bk_biz_id="2",env_name="LIVE",env_type="prod",host_id="1",version="tlinux_update_20250729_134916_ver92184"} 1
+host_with_system_relation{bk_biz_id="2",bk_cloud_id="0",bk_target_ip="127.0.0.1",host_id="1"} 1
+host_with_system_relation{bk_biz_id="2",bk_cloud_id="0",bk_target_ip="127.0.0.2",host_id="2"} 1
+host_with_system_relation{bk_biz_id="2",bk_cloud_id="0",bk_target_ip="127.0.0.3",host_id="3"} 1
+`, metricsActual.String())
 
 		// 判断是否存在所有的缓存键
 		expectedHostKeys := make([]string, 0, len(DemoHosts))
@@ -331,4 +369,29 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIPCacheKey)).Val())
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(topoCacheKey)).Val())
 	})
+}
+
+func TestHostToRelationInfos(t *testing.T) {
+	// mock 主机和拓扑查询
+	patches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bkTenantId string, bizId int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
+		return DemoHosts, DemoTopoTree, nil
+	})
+	defer patches.Reset()
+
+	rOpts := &redis.Options{
+		Mode:  "standalone",
+		Addrs: []string{testRedisAddr},
+	}
+
+	cacheManager, err := NewHostAndTopoCacheManager(tenant.DefaultTenantId, t.Name(), rOpts, 1)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	resourceInfo := cacheManager.HostToRelationInfos(DemoHosts)
+
+	ris, err := json.Marshal(resourceInfo)
+	assert.Nil(t, err)
+	assert.Equal(t, `[{"id":"127.0.0.1|0","resource":"system","label":{"bk_cloud_id":"0","bk_target_ip":"127.0.0.1"},"links":[[{"name":"host","id":"1"}]]},{"id":"1","resource":"host","label":{"host_id":"1"},"expands":{"host":{"env_name":"LIVE","env_type":"prod","version":"tlinux_update_20250729_134916_ver92184"},"set":{"env_name":"LIVE","env_type":"prod","version":"tlinux_update_20250729_134916_ver92184"}},"links":[[{"name":"module","id":"3"},{"name":"set","id":"2"},{"name":"biz","id":"2"}],[{"name":"module","id":"6"},{"name":"set","id":"3"},{"name":"test","id":"2"},{"name":"biz","id":"2"}]]},{"id":"127.0.0.2|0","resource":"system","label":{"bk_cloud_id":"0","bk_target_ip":"127.0.0.2"},"links":[[{"name":"host","id":"2"}]]},{"id":"2","resource":"host","label":{"host_id":"2"},"links":[[{"name":"module","id":"4"},{"name":"set","id":"2"},{"name":"biz","id":"2"}]]},{"id":"127.0.0.3|0","resource":"system","label":{"bk_cloud_id":"0","bk_target_ip":"127.0.0.3"},"links":[[{"name":"host","id":"3"}]]},{"id":"3","resource":"host","label":{"host_id":"3"},"links":[[{"name":"module","id":"6"},{"name":"set","id":"3"},{"name":"test","id":"2"},{"name":"biz","id":"2"}]]}]`, string(ris))
 }

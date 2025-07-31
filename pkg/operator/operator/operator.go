@@ -13,20 +13,22 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"reflect"
 	"sync"
 	"time"
 
 	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
-	promversioned "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
-	prominformers "github.com/prometheus-operator/prometheus-operator/pkg/informers"
+	promcli "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
+	prominfs "github.com/prometheus-operator/prometheus-operator/pkg/informers"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/tools/cache"
 
-	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
+	bkcli "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
@@ -35,6 +37,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/helmcharts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/qcloudmonitor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -61,14 +64,16 @@ type Operator struct {
 	mm        *metricMonitor
 	buildInfo BuildInfo
 
-	client     kubernetes.Interface
-	mdClient   metadata.Interface
-	promclient promversioned.Interface
-	bkclient   bkversioned.Interface
-	srv        *http.Server
+	client  kubernetes.Interface
+	mdCli   metadata.Interface
+	promCli promcli.Interface
+	bkCli   bkcli.Interface
+	srv     *http.Server
 
-	serviceMonitorInformer *prominformers.ForResource
-	podMonitorInformer     *prominformers.ForResource
+	qmopr *qcloudmonitor.Operator
+
+	serviceMonitorInformer *prominfs.ForResource
+	podMonitorInformer     *prominfs.ForResource
 	helmchartsController   *helmcharts.Controller
 
 	statefulSetWorkerScaled time.Time
@@ -108,17 +113,17 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		return nil, err
 	}
 
-	operator.mdClient, err = k8sutils.NewMetadataClient(apiHost, configs.G().GetTLS())
+	operator.mdCli, err = k8sutils.NewMetadataClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.promclient, err = k8sutils.NewPromClient(apiHost, configs.G().GetTLS())
+	operator.promCli, err = k8sutils.NewPromClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.bkclient, err = k8sutils.NewBKClient(apiHost, configs.G().GetTLS())
+	operator.bkCli, err = k8sutils.NewBKClient(apiHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
@@ -158,11 +163,11 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	}
 
 	if configs.G().EnableServiceMonitor {
-		operator.serviceMonitorInformer, err = prominformers.NewInformersForResource(
-			prominformers.NewMonitoringInformerFactories(
+		operator.serviceMonitorInformer, err = prominfs.NewInformersForResource(
+			prominfs.NewMonitoringInformerFactories(
 				allNamespaces,
 				denyTargetNamespaces,
-				operator.promclient,
+				operator.promCli,
 				define.ReSyncPeriod,
 				nil,
 			),
@@ -174,11 +179,11 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	}
 
 	if configs.G().EnablePodMonitor {
-		operator.podMonitorInformer, err = prominformers.NewInformersForResource(
-			prominformers.NewMonitoringInformerFactories(
+		operator.podMonitorInformer, err = prominfs.NewInformersForResource(
+			prominfs.NewMonitoringInformerFactories(
 				allNamespaces,
 				denyTargetNamespaces,
-				operator.promclient,
+				operator.promCli,
 				define.ReSyncPeriod,
 				nil,
 			),
@@ -189,18 +194,30 @@ func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		}
 	}
 
+	if configs.G().QCloudMonitor.Enabled {
+		operator.qmopr, err = qcloudmonitor.New(ctx, qcloudmonitor.ClientSet{
+			Client: operator.client,
+			Meta:   operator.mdCli,
+			BK:     operator.bkCli,
+			Prom:   operator.promCli,
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "create QCloudMonitor operator failed")
+		}
+	}
+
 	operator.helmchartsController, err = helmcharts.NewController(operator.ctx, operator.client)
 	if err != nil {
 		return nil, errors.Wrap(err, "create helmchartsController failed")
 	}
 
-	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.mdClient, operator.bkclient)
+	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.mdCli, operator.bkCli)
 	if err != nil {
 		return nil, errors.Wrap(err, "create objectsController failed")
 	}
 
 	operator.recorder = newRecorder()
-	operator.dw = dataidwatcher.New(operator.ctx, operator.bkclient)
+	operator.dw = dataidwatcher.New(operator.ctx, operator.bkCli)
 	operator.mm = newMetricMonitor()
 	operator.statefulSetSecretMap = map[string]struct{}{}
 
@@ -228,6 +245,26 @@ func (c *Operator) getDiscoverCount() map[string]int {
 	return count
 }
 
+func equalDataID(a, b *v1beta1.DataID) bool {
+	// 当且仅当 DataID 实例存在且非空才可能相等
+	if a == nil || b == nil {
+		return false
+	}
+
+	// 仅比对关键字段 dataid reload 是一个`比较重`的操作 尽量减少其影响
+	if a.Name != b.Name {
+		return false
+	}
+	if !reflect.DeepEqual(a.Spec, b.Spec) {
+		return false
+	}
+	if !reflect.DeepEqual(a.Labels, b.Labels) {
+		return false
+	}
+
+	return true
+}
+
 func (c *Operator) reloadAllDiscovers() {
 	c.discoversMut.Lock()
 	defer c.discoversMut.Unlock()
@@ -239,7 +276,7 @@ func (c *Operator) reloadAllDiscovers() {
 			logger.Errorf("no dataid found, meta=%+v, discover=%s", meta, dis)
 			continue
 		}
-		if dis.DataID() == newDataID {
+		if equalDataID(dis.DataID(), newDataID) {
 			continue
 		}
 
@@ -373,6 +410,12 @@ func (c *Operator) Run() error {
 		return err
 	}
 
+	if configs.G().QCloudMonitor.Enabled {
+		if err := c.qmopr.Start(); err != nil {
+			return err
+		}
+	}
+
 	// 如果启动了 StatefulSetWorker 则需要监听 statefulset secrets 的变化以及 statefulset 本身的变化
 	// 该资源只存在于 ConfMonitorNamespace namespace
 	if configs.G().EnableStatefulSetWorker {
@@ -413,7 +456,7 @@ func (c *Operator) waitForCacheSync(ctx context.Context) error {
 
 	for _, infs := range []struct {
 		name                 string
-		informersForResource *prominformers.ForResource
+		informersForResource *prominfs.ForResource
 	}{
 		{"ServiceMonitor", c.serviceMonitorInformer},
 		{"PodMonitor", c.podMonitorInformer},

@@ -256,25 +256,24 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 					// 注入 relation 关联指标
 					for _, link := range info.Links {
 						for _, item := range link {
-							// 查找上游资源类型
-							if resources[item.Resource] == nil {
-								continue
-							}
 
 							// 如果没有自身资源下没有匹配到扩展信息，需要从上游找是否有配置需要继承
 							if !expandInfoStatus {
-								// 查找上游资源实体
-								itemInfo := resources[item.Resource].Get(item.ID)
-								if itemInfo != nil {
-									// 查找上游资源是否配置了扩展信息
-									if expand, expandOk := resourceParentExpands[info.Resource][itemInfo.Resource][item.ID]; expandOk {
-										// 构建维度，注入主键和扩展维度
-										node := b.makeNode(info.Resource, info.Label, bizLabel, expand)
-										metric := node.ExpandInfoMetric()
-										if _, metricOk := metrics[metric.String()]; !metricOk {
-											metrics[metric.String()] = metric
+								// 查找上游资源类型
+								if resources[item.Resource] != nil {
+									// 查找上游资源实体
+									itemInfo := resources[item.Resource].Get(item.ID)
+									if itemInfo != nil {
+										// 查找上游资源是否配置了扩展信息
+										if expand, expandOk := resourceParentExpands[info.Resource][itemInfo.Resource][item.ID]; expandOk {
+											// 构建维度，注入主键和扩展维度
+											node := b.makeNode(info.Resource, info.Label, bizLabel, expand)
+											metric := node.ExpandInfoMetric()
+											if _, metricOk := metrics[metric.String()]; !metricOk {
+												metrics[metric.String()] = metric
+											}
+											expandInfoStatus = true
 										}
-										expandInfoStatus = true
 									}
 								}
 							}

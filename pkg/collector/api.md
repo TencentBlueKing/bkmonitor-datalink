@@ -76,7 +76,7 @@ app.ReportPropMsgWithContext(ctx, props, map[string]string{"X-BK-TOKEN": token})
 
 ### 使用 Tenant Id Key
 
-tenant id key 支持 http/grpc 请求，具体食用方式同 Token Key
+tenant id key 支持 http/grpc 请求，具体使用方式同 Token Key
 
 - http 请求在 url query 参数或请求头中携带 `X-Tps-TenantID`
 - grpc 请求在 metadata 中携带 `X-Tps-TenantID`

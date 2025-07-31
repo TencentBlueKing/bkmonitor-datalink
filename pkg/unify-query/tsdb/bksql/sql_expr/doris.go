@@ -360,6 +360,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 		}
 		if c.IsForceEq {
 			op = "="
+			val = c.Value[0]
 			break
 		}
 

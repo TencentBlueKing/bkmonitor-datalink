@@ -130,8 +130,8 @@ type RTFBatchQueryConfig struct {
 // GetDefaultRTFBatchConfig 获取默认配置
 func GetDefaultRTFBatchConfig() *RTFBatchQueryConfig {
 	return &RTFBatchQueryConfig{
-		BatchSize:  1000,                  // 默认每批1000条记录
-		BatchDelay: 20 * time.Millisecond, // 默认延迟20毫秒
+		BatchSize:  cfg.QueryDbBatchSize,  // 默认每批1000条记录
+		BatchDelay: cfg.QueryDbBatchDelay, // 默认延迟20毫秒
 	}
 }
 

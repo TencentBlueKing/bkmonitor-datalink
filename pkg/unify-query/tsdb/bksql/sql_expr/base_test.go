@@ -150,7 +150,7 @@ func TestParserAllConditions(t *testing.T) {
 		}
 		result, err := doris.ParserAllConditions(conditions)
 		assert.NoError(t, err)
-		assert.Equal(t, "text_field` MATCH_PHRASE 'v1'", result)
+		assert.Equal(t, "`text_field` MATCH_PHRASE 'v1'", result)
 	})
 
 	t.Run("开启text强制等于", func(t *testing.T) {

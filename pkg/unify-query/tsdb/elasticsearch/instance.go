@@ -619,7 +619,8 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 						for k, v := range reverseAlias {
 							if _, ok := fact.data[k]; ok {
 								fact.data[v] = fact.data[k]
-								delete(fact.data, k)
+								// TODO: 等前端适配之后，再移除
+								//delete(fact.data, k)
 							}
 						}
 

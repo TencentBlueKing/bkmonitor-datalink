@@ -363,7 +363,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 			return nil, errors.New(msg.String())
 		} else if err.Error() == "EOF" {
-
 			return nil, nil
 		} else {
 			return nil, err

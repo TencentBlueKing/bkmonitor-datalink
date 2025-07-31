@@ -108,11 +108,11 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 		if prefix != "" {
 			k = prefix + ESStep + k
 		}
-		switch nv := v.(type) {
+		switch v.(type) {
 		case map[string]any:
-			mapData(k, nv, res)
+			mapData(k, v.(map[string]any), res)
 		default:
-			res[k] = nv
+			res[k] = v
 		}
 	}
 }

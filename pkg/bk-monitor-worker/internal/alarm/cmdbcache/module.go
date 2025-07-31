@@ -190,16 +190,11 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 	}
 
 	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
-	var wg sync.WaitGroup
-	go func() {
-		wg.Add(1)
-		infos := m.ModuleToRelationInfos(moduleList)
-		err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Module, infos)
-		if err != nil {
-			logger.Error("refresh set cache failed, err: %v", err)
-		}
-	}()
-	wg.Wait()
+	infos := m.ModuleToRelationInfos(moduleList)
+	err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Module, infos)
+	if err != nil {
+		logger.Errorf("refresh set cache failed, err: %v", err)
+	}
 
 	return nil
 }
@@ -217,7 +212,7 @@ func (m *ModuleCacheManager) ModuleToRelationInfos(result []map[string]any) []*r
 		if expandString, ok := r[relation.ExpandInfoColumn].(string); ok {
 			err := json.Unmarshal([]byte(expandString), &expands)
 			if err != nil {
-				logger.Warnf("[cmdb_relation] ModuleToRelationInfos json unmarshal error with %s", expandString)
+				logger.Warnf("[cmdb_relation] ModuleToRelationInfos json unmarshal error with %s, %s", expandString, err)
 				continue
 			}
 		}

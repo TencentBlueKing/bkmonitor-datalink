@@ -90,15 +90,7 @@ func (e *ResourceInfo) Reset() {
 }
 
 func (e *ResourceInfo) Get(id string) *Info {
-	if e.Data == nil {
-		return nil
-	}
-
-	if v, ok := e.Data[id]; ok {
-		return v
-	}
-
-	return nil
+	return e.Data[id]
 }
 
 func (e *ResourceInfo) Range(fn func(info *Info)) {

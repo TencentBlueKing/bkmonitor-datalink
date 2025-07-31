@@ -21,9 +21,9 @@ type Label struct {
 	Value string
 }
 
-type LabelList []Label
+type Labels []Label
 
-func (l LabelList) Label() []prompb.Label {
+func (l Labels) Label() []prompb.Label {
 	lbs := make([]prompb.Label, 0, len(l))
 	for _, i := range l {
 		lbs = append(lbs, prompb.Label{
@@ -36,7 +36,7 @@ func (l LabelList) Label() []prompb.Label {
 
 type Metric struct {
 	Name   string
-	Labels LabelList
+	Labels Labels
 }
 
 func (m Metric) TimeSeries(timestamp time.Time) prompb.TimeSeries {

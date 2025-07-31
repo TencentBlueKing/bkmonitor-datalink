@@ -175,16 +175,11 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 	}
 
 	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
-	var wg sync.WaitGroup
-	go func() {
-		wg.Add(1)
-		infos := m.SetToRelationInfos(result)
-		err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Set, infos)
-		if err != nil {
-			logger.Error("refresh set cache failed, err: %v", err)
-		}
-	}()
-	wg.Wait()
+	infos := m.SetToRelationInfos(result)
+	err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Set, infos)
+	if err != nil {
+		logger.Errorf("refresh set cache failed, err: %v", err)
+	}
 
 	return nil
 }
@@ -202,7 +197,7 @@ func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relatio
 		if expandString, ok := r[relation.ExpandInfoColumn].(string); ok {
 			err := json.Unmarshal([]byte(expandString), &expands)
 			if err != nil {
-				logger.Warnf("[cmdb_relation] SetToRelationInfos json unmarshal error with %s", expandString)
+				logger.Warnf("[cmdb_relation] SetToRelationInfos json unmarshal error with %s, %s", expandString, err)
 				continue
 			}
 		}

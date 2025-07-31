@@ -14,7 +14,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -134,24 +133,6 @@ func (b *MetricsBuilder) ClearResourceWithID(bizID int, name string, ids ...stri
 	}
 }
 
-func (b *MetricsBuilder) toString(s any) string {
-	var newValue string
-	switch value := s.(type) {
-	case string:
-		newValue = value
-	case int, int32, int64, uint32, uint64:
-		newValue = fmt.Sprintf("%d", value)
-	case float64:
-		newValue = strconv.FormatFloat(value, 'f', -1, 64)
-	case float32:
-		newValue = strconv.FormatFloat(float64(value), 'f', -1, 32)
-	default:
-		newValue = fmt.Sprintf("%v", value)
-	}
-
-	return newValue
-}
-
 func (b *MetricsBuilder) BuildInfosCache(_ context.Context, bizID int, name string, infos []*Info) error {
 	if infos == nil {
 		return nil
@@ -176,10 +157,6 @@ func (b *MetricsBuilder) BizIDs() []int {
 		bizIDs = append(bizIDs, bizID)
 	}
 	return bizIDs
-}
-
-func (b *MetricsBuilder) topoToNode(d map[string]any) {
-
 }
 
 func (b *MetricsBuilder) makeNode(resource string, labels ...map[string]string) Node {
@@ -216,78 +193,84 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 	if resources, ok := b.resources[bizID]; ok {
 		// set -> module -> host，Expand 需要按序遍历，下层需要继承上层的 Expand
 		for _, resource := range ExpandTopo {
-			if infos, ok := resources[resource]; ok {
-				infos.Range(func(info *Info) {
-					// 判断是否对该资源配置扩展
-					var expandInfoStatus bool
+			var (
+				infos *ResourceInfo
+				ok    bool
+			)
+			if infos, ok = resources[resource]; !ok {
+				continue
+			}
 
-					// 注入 ExpandInfo 指标
-					if len(info.Expands) > 0 {
-						// info.Expands 里面就是配置的资源场景，expandResource 对应场景资源名
-						for expandResource, expand := range info.Expands {
-							// 如果配置资源一致，则为自身资源的 Expand，否则使用继承池里的 Expand
-							// 这里的 info.Resource 指该实体的真是归属资源，上面的 resource 表示的是数据维护的资源
-							// 例如：host 数据，会同时维护 host 和 system 的资源，所以相关资源实体需要使用 info.Resource
-							if expandResource == info.Resource {
-								// 构建维度，注入主键和扩展维度
-								node := b.makeNode(expandResource, info.Label, bizLabel, expand)
-								metric := node.ExpandInfoMetric()
-								if _, metricOk := metrics[metric.String()]; !metricOk {
-									metrics[metric.String()] = metric
-								}
-								expandInfoStatus = true
-							} else {
-								// 注入父资源的 Expand
-								if _, ok := resourceParentExpands[expandResource]; !ok {
-									resourceParentExpands[expandResource] = make(map[string]map[string]map[string]string)
-								}
-								if _, ok := resourceParentExpands[expandResource][resource]; !ok {
-									resourceParentExpands[expandResource][resource] = make(map[string]map[string]string)
-								}
+			infos.Range(func(info *Info) {
+				// 判断是否对该资源配置扩展
+				var (
+					expandInfoStatus bool
+					checkKey         bool
+				)
 
-								resourceParentExpands[expandResource][resource][info.ID] = expand
-							}
-
+				// 注入 ExpandInfo 指标
+				// info.Expands 里面就是配置的资源场景，expandResource 对应场景资源名
+				for expandResource, expand := range info.Expands {
+					// 如果配置资源一致，则为自身资源的 Expand，否则使用继承池里的 Expand
+					// 这里的 info.Resource 指该实体的真是归属资源，上面的 resource 表示的是数据维护的资源
+					// 例如：host 数据，会同时维护 host 和 system 的资源，所以相关资源实体需要使用 info.Resource
+					if expandResource == info.Resource {
+						// 构建维度，注入主键和扩展维度
+						node := b.makeNode(expandResource, info.Label, bizLabel, expand)
+						metric := node.ExpandInfoMetric()
+						if _, metricOk := metrics[metric.String()]; !metricOk {
+							metrics[metric.String()] = metric
 						}
+						expandInfoStatus = true
+					} else {
+						// 注入父资源的 Expand
+						if _, checkKey = resourceParentExpands[expandResource]; !checkKey {
+							resourceParentExpands[expandResource] = make(map[string]map[string]map[string]string)
+						}
+						if _, checkKey = resourceParentExpands[expandResource][resource]; !checkKey {
+							resourceParentExpands[expandResource][resource] = make(map[string]map[string]string)
+						}
+
+						resourceParentExpands[expandResource][resource][info.ID] = expand
 					}
+				}
 
-					sourceNode := b.makeNode(info.Resource, info.Label)
+				sourceNode := b.makeNode(info.Resource, info.Label)
 
-					// 注入 relation 关联指标
-					for _, link := range info.Links {
-						for _, item := range link {
+				// 注入 relation 关联指标
+				for _, link := range info.Links {
+					for _, item := range link {
 
-							// 如果没有自身资源下没有匹配到扩展信息，需要从上游找是否有配置需要继承
-							if !expandInfoStatus {
-								// 查找上游资源类型
-								if resources[item.Resource] != nil {
-									// 查找上游资源实体
-									itemInfo := resources[item.Resource].Get(item.ID)
-									if itemInfo != nil {
-										// 查找上游资源是否配置了扩展信息
-										if expand, expandOk := resourceParentExpands[info.Resource][itemInfo.Resource][item.ID]; expandOk {
-											// 构建维度，注入主键和扩展维度
-											node := b.makeNode(info.Resource, info.Label, bizLabel, expand)
-											metric := node.ExpandInfoMetric()
-											if _, metricOk := metrics[metric.String()]; !metricOk {
-												metrics[metric.String()] = metric
-											}
-											expandInfoStatus = true
+						// 如果没有自身资源下没有匹配到扩展信息，需要从上游找是否有配置需要继承
+						if !expandInfoStatus {
+							// 查找上游资源类型
+							if resources[item.Resource] != nil {
+								// 查找上游资源实体
+								itemInfo := resources[item.Resource].Get(item.ID)
+								if itemInfo != nil {
+									// 查找上游资源是否配置了扩展信息
+									if expand, expandOk := resourceParentExpands[info.Resource][itemInfo.Resource][item.ID]; expandOk {
+										// 构建维度，注入主键和扩展维度
+										node := b.makeNode(info.Resource, info.Label, bizLabel, expand)
+										metric := node.ExpandInfoMetric()
+										if _, metricOk := metrics[metric.String()]; !metricOk {
+											metrics[metric.String()] = metric
 										}
+										expandInfoStatus = true
 									}
 								}
 							}
-
-							nextNode := b.makeNode(item.Resource, bizLabel, item.Label)
-							metric := sourceNode.RelationMetric(nextNode)
-							if _, metricOk := metrics[metric.String()]; !metricOk {
-								metrics[metric.String()] = metric
-							}
-							sourceNode = nextNode
 						}
+
+						nextNode := b.makeNode(item.Resource, bizLabel, item.Label)
+						metric := sourceNode.RelationMetric(nextNode)
+						if _, metricOk := metrics[metric.String()]; !metricOk {
+							metrics[metric.String()] = metric
+						}
+						sourceNode = nextNode
 					}
-				})
-			}
+				}
+			})
 		}
 	}
 

@@ -182,7 +182,7 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 	infos := m.SetToRelationInfos(result)
 	err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Set, infos)
 	if err != nil {
-		logger.Errorf("refresh set cache failed, err: %v", err)
+		logger.Errorf("[cmdb_relation] refresh set cache failed, err: %v", err)
 	}
 
 	return nil

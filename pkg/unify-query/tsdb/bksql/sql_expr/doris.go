@@ -383,8 +383,6 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 					op = "MATCH_PHRASE_PREFIX"
 				} else if c.IsSuffix {
 					op = "MATCH_PHRASE_EDGE"
-				} else if c.IsForceEq {
-					op = "="
 				} else {
 					if d.isText(c.DimensionName) {
 						op = "MATCH_PHRASE"

@@ -346,7 +346,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 		wg.Done()
 	}()
 
-	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
+	// 刷新 relation metrics 缓存
 	go func() {
 		infos := m.HostToRelationInfos(hosts)
 		err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bkBizId, relation.Host, infos)

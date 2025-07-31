@@ -193,11 +193,11 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 		logger.Infof("refresh service_template cache by biz: %d, service_template count: %d", bizID, len(templateToModules))
 	}
 
-	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
+	// 刷新 relation metrics 缓存
 	infos := m.ModuleToRelationInfos(moduleList)
 	err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Module, infos)
 	if err != nil {
-		logger.Errorf("refresh set cache failed, err: %v", err)
+		logger.Errorf("[cmdb_relation] refresh set cache failed, err: %v", err)
 	}
 
 	return nil

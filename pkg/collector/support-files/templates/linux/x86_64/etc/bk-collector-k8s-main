@@ -44,7 +44,14 @@
       cluster:
         disabled: true
       proxy:
-        disabled: true
+        disabled: false
+        http:
+          host: ""
+          port: 10205
+          retry_listen: true
+          middlewares:
+            - "logging"
+            - "maxconns;maxConnectionsRatio=256"
       pingserver:
         disabled: true
 
@@ -150,6 +157,9 @@
               keys:
                 - "resource.bk.data.token"
                 - "resource.process.pid"
+            from_token:
+              keys:
+                - "app_name"
 
         # Sampler: 采样处理器（概率采样）
         - name: "sampler/random"
@@ -263,6 +273,7 @@
           type: "logs"
           processors:
             - "token_checker/aes256"
+            - "rate_limiter/token_bucket"
             - "resource_filter/logs"
             - "attribute_filter/logs"
 

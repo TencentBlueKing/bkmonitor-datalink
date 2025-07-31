@@ -257,6 +257,9 @@ bk-collector:
           keys:
             - "resource.bk.data.token"
             - "resource.process.pid"
+        from_token:
+          keys:
+            - "app_name"
 
     # Sampler: 采样处理器（概率采样）
     - name: "sampler/random"

@@ -71,6 +71,12 @@ processor:
         from_metadata:
           keys: ["*"]
 
+	# FromToken Action
+	- name: "resource_filter/from_token"
+	  config:
+		from_token:
+		  keys: "app_name"
+
     # DefaultValue Action
     - name: "resource_filter/default_value"
       config:

@@ -81,6 +81,14 @@ tenant id key 支持 http/grpc 请求，具体食用方式同 Token Key
 - http 请求在 url query 参数或请求头中携带 `X-Tps-TenantID`
 - grpc 请求在 metadata 中携带 `X-Tps-TenantID`
 
+### 使用 basic auth
+
+- http 请求使用 basic auth 携带（这种方式当且仅当 username 为 bkmonitor 时有效⚠️）
+
+```go
+username := "bkmonitor"     // username 为 bkmonitor，password 填 token
+req.SetBasicAuth(username, token)
+```
 
 ### 使用 Bearer Auth
 
@@ -92,9 +100,9 @@ req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 
 ### 携带方式
 
-| 请求类型 | URL query param | Header | bearer auth | metadata | context |
-|------|-----------------|--------|-------------|----------|---------|
-| http | ✅               | ✅      | ✅           |          |         |
-| grpc |                 |        |             | ✅        |         |
-| tars |                 |        |             |          | ✅       |
+| 请求类型 | URL query param | Header | bearer auth | basic auth | metadata | context |
+|------|-----------------|--------|-------------|------------|----------|---------|
+| http | ✅               | ✅      | ✅           | ✅          |          |         |
+| grpc |                 |        |             |            | ✅        |         |
+| tars |                 |        |             |            |          | ✅       |
 

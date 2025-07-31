@@ -367,7 +367,6 @@ bk-collector:
     - name: "metrics_pipeline/derived"
       type: "metrics.derived"
       processors:
-        - "resource_filter/metrics"
 
     - name: "logs_pipeline/common"
       type: "logs"

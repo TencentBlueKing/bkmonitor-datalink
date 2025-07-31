@@ -1094,7 +1094,7 @@ bk-collector:
       type: "metrics.derived"
       processors:
 #        - "apdex_calculator/standard"
-        - "resource_filter/metrics"
+#        - "resource_filter/metrics"
 
     - name: "profiles_pipeline/common"
       type: "profiles"

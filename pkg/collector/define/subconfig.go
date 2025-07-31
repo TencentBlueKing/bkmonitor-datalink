@@ -31,6 +31,7 @@ const (
 	ConfigFieldProxy      = "proxy"
 	ConfigFieldPingserver = "pingserver"
 	ConfigFieldCluster    = "cluster"
+	ConfigFieldAlias      = "field_alias"
 )
 
 type ApmConfig struct {

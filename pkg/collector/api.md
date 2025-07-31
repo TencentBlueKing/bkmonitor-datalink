@@ -13,26 +13,26 @@
 
 - POST `/prometheus/write`
 
-### otlp (OpenTelemetry Trace / Log /Metrics)
+### otlp (OpenTelemetry Traces / Logs /Metrics)
 
 - POST `/v1/traces`
 - POST `/v1/metrics`
 - POST `/v1/logs`
 
-### jaeger (Trace)
+### jaeger (Traces)
 
 - POST `/jaeger/v1/traces`
 
-### skywalking (Trace)
+### skywalking (Traces)
 
 - POST `/v3/segment`
 - POST `/v3/segments`
 
-### zipkin (Trace)
+### zipkin (Traces)
 
 - POST `/api/v2/spans`
 
-### pyroscope (Profile)
+### pyroscope (Profiles)
 
 - POST `/pyroscope/ingest`
 
@@ -81,7 +81,7 @@ tenant id key 支持 http/grpc 请求，具体食用方式同 Token Key
 - http 请求在 url query 参数或请求头中携带 `X-Tps-TenantID`
 - grpc 请求在 metadata 中携带 `X-Tps-TenantID`
 
-### 使用 basic auth
+### 使用 Basic Auth
 
 - http 请求使用 basic auth 携带（这种方式当且仅当 username 为 bkmonitor 时有效⚠️）
 
@@ -92,7 +92,7 @@ req.SetBasicAuth(username, token)
 
 ### 使用 Bearer Auth
 
-- http 请求在请求头中使用 Bearer Auth 形式携带 token
+- http 请求在请求头中使用 bearer auth 形式携带 token
 
 ```go
 req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))

@@ -14,9 +14,10 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/TencentBlueKing/bk-log-sidecar/config"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+
+	"github.com/TencentBlueKing/bk-log-sidecar/config"
 )
 
 // IsNetworkPod is network pod

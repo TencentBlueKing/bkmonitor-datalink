@@ -15,7 +15,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/TencentBlueKing/bk-log-sidecar/define"
 	"github.com/containerd/containerd"
 	apievents "github.com/containerd/containerd/api/events"
 	"github.com/containerd/containerd/events"
@@ -23,6 +22,8 @@ import (
 	"github.com/containerd/typeurl"
 	"github.com/go-logr/logr"
 	"k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
+
+	"github.com/TencentBlueKing/bk-log-sidecar/define"
 )
 
 const (

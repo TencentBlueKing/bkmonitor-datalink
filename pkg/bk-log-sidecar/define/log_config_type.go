@@ -15,10 +15,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+
 	"github.com/TencentBlueKing/bk-log-sidecar/api/v1alpha1"
 	"github.com/TencentBlueKing/bk-log-sidecar/config"
 	"github.com/TencentBlueKing/bk-log-sidecar/utils"
-	corev1 "k8s.io/api/core/v1"
 )
 
 // LogConfigType log config type

@@ -14,13 +14,14 @@ import (
 	"context"
 	"fmt"
 
-	bluekingv1alpha1 "github.com/TencentBlueKing/bk-log-sidecar/api/v1alpha1"
-	"github.com/TencentBlueKing/bk-log-sidecar/utils"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	bluekingv1alpha1 "github.com/TencentBlueKing/bk-log-sidecar/api/v1alpha1"
+	"github.com/TencentBlueKing/bk-log-sidecar/utils"
 )
 
 // BkLogConfigReconciler reconciles a BkLogConfig object

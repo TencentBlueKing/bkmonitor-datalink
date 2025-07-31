@@ -161,6 +161,6 @@ func TestParserAllConditions(t *testing.T) {
 		}
 		result, err := doris.ParserAllConditions(conditions)
 		assert.NoError(t, err)
-		assert.Equal(t, "`text_field` = v1", result)
+		assert.Equal(t, "`text_field` = 'v1'", result)
 	})
 }

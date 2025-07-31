@@ -358,6 +358,10 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			op = "IS NULL"
 			break
 		}
+		if c.IsForceEq {
+			op = "="
+			break
+		}
 
 		if len(c.Value) > 1 && !c.IsWildcard && !d.isText(c.DimensionName) && !d.isArray(c.DimensionName) {
 			op = "IN"

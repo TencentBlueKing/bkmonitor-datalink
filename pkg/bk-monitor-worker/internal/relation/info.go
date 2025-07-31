@@ -22,8 +22,9 @@ var allowExpandKeys = map[string]struct{}{
 }
 
 type Item struct {
-	Name string `json:"name,omitempty"`
-	ID   string `json:"id,omitempty"`
+	ID       string            `json:"id,omitempty"`
+	Resource string            `json:"resource,omitempty"`
+	Label    map[string]string `json:"label,omitempty"`
 }
 
 type Link []Item
@@ -42,8 +43,8 @@ type Info struct {
 
 // ResourceInfo 扩展信息 map[{资源ID}]Info
 type ResourceInfo struct {
-	Name string
-	Data map[string]*Info
+	Name string           `json:"name,omitempty"`
+	Data map[string]*Info `json:"data,omitempty"`
 }
 
 func TransformExpands(expands map[string]map[string]any) map[string]map[string]string {

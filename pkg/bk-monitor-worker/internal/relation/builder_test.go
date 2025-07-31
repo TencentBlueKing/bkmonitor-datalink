@@ -64,7 +64,7 @@ func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
 							ID:       "2001",
 							Resource: Module,
 							Label: map[string]string{
-								"module_id": "3001",
+								"module_id": "2001",
 							},
 						},
 					},
@@ -90,14 +90,20 @@ func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
 							Links: []Link{
 								{
 									{
-										Name: Module,
-										ID:   "2001",
+										Resource: Module,
+										ID:       "2001",
+										Label: map[string]string{
+											"module_id": "2001",
+										},
 									},
 								},
 								{
 									{
-										Name: Set,
-										ID:   "3001",
+										Resource: Set,
+										ID:       "3001",
+										Label: map[string]string{
+											"set_id": "3001",
+										},
 									},
 								},
 							},
@@ -112,8 +118,11 @@ func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
 							Links: []Link{
 								{
 									{
-										Name: Host,
-										ID:   "1001",
+										Resource: Host,
+										ID:       "1001",
+										Label: map[string]string{
+											"host_id": "1001",
+										},
 									},
 								},
 							},
@@ -141,20 +150,29 @@ func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
 							Links: []Link{
 								{
 									{
-										Name: Module,
-										ID:   "2001",
+										Resource: Module,
+										ID:       "2001",
+										Label: map[string]string{
+											"module_id": "2001",
+										},
 									},
 								},
 								{
 									{
-										Name: "bad",
-										ID:   "4001",
+										Resource: "bad",
+										ID:       "4001",
+										Label: map[string]string{
+											"bad_id": "4001",
+										},
 									},
 								},
 								{
 									{
-										Name: Set,
-										ID:   "3001",
+										Resource: Set,
+										ID:       "3001",
+										Label: map[string]string{
+											"set_id": "3001",
+										},
 									},
 								},
 							},
@@ -169,8 +187,11 @@ func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
 							Links: []Link{
 								{
 									{
-										Name: Host,
-										ID:   "1002",
+										Resource: Host,
+										ID:       "1002",
+										Label: map[string]string{
+											"host_id": "1002",
+										},
 									},
 								},
 							},
@@ -180,11 +201,11 @@ func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
 			},
 			expected: `host_info_relation{bk_biz_id="2",host_id="1001",version="v0.0.3"} 1
 host_info_relation{bk_biz_id="2",host_id="1002",version="v0.0.3"} 1
-host_with_module_relation{bk_biz_id="2",host_id="1001",module_id="3001"} 1
-host_with_module_relation{bk_biz_id="2",host_id="1002",module_id="3001"} 1
+host_with_module_relation{bk_biz_id="2",host_id="1001",module_id="2001"} 1
+host_with_module_relation{bk_biz_id="2",host_id="1002",module_id="2001"} 1
 host_with_system_relation{bk_biz_id="2",bk_cloud_id="3",bk_target_ip="127.0.0.1",host_id="1001"} 1
 host_with_system_relation{bk_biz_id="2",bk_cloud_id="3",bk_target_ip="127.0.0.2",host_id="1002"} 1
-module_with_set_relation{bk_biz_id="2",module_id="3001",set_id="3001"} 1
+module_with_set_relation{bk_biz_id="2",module_id="2001",set_id="3001"} 1
 set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 		},
 		"测试相同业务 id，扩展信息从上游获取，指标生成规则": {
@@ -221,13 +242,16 @@ set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 							ID:       "2001",
 							Resource: Module,
 							Label: map[string]string{
-								"module_id": "3001",
+								"module_id": "2001",
 							},
 							Links: []Link{
 								{
 									{
-										Name: Set,
-										ID:   "3001",
+										Resource: Set,
+										ID:       "3001",
+										Label: map[string]string{
+											"set_id": "3001",
+										},
 									},
 								},
 							},
@@ -247,14 +271,20 @@ set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 							Links: []Link{
 								{
 									{
-										Name: Module,
-										ID:   "2001",
+										Resource: Module,
+										ID:       "2001",
+										Label: map[string]string{
+											"module_id": "2001",
+										},
 									},
 								},
 								{
 									{
-										Name: Set,
-										ID:   "3001",
+										Resource: Set,
+										ID:       "3001",
+										Label: map[string]string{
+											"set_id": "3001",
+										},
 									},
 								},
 							},
@@ -269,8 +299,11 @@ set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 							Links: []Link{
 								{
 									{
-										Name: Host,
-										ID:   "1001",
+										Resource: Host,
+										ID:       "1001",
+										Label: map[string]string{
+											"host_id": "1001",
+										},
 									},
 								},
 							},
@@ -290,14 +323,20 @@ set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 							Links: []Link{
 								{
 									{
-										Name: Module,
-										ID:   "2001",
+										Resource: Module,
+										ID:       "2001",
+										Label: map[string]string{
+											"module_id": "2001",
+										},
 									},
 								},
 								{
 									{
-										Name: Set,
-										ID:   "3001",
+										Resource: Set,
+										ID:       "3001",
+										Label: map[string]string{
+											"set_id": "3001",
+										},
 									},
 								},
 							},
@@ -312,8 +351,11 @@ set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 							Links: []Link{
 								{
 									{
-										Name: Host,
-										ID:   "1002",
+										Resource: Host,
+										ID:       "1002",
+										Label: map[string]string{
+											"host_id": "1002",
+										},
 									},
 								},
 							},
@@ -323,12 +365,12 @@ set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 			},
 			expected: `host_info_relation{bk_biz_id="2",host_id="1001",version="v0.0.1"} 1
 host_info_relation{bk_biz_id="2",host_id="1002",version="v0.0.1"} 1
-host_with_module_relation{bk_biz_id="2",host_id="1001",module_id="3001"} 1
-host_with_module_relation{bk_biz_id="2",host_id="1002",module_id="3001"} 1
+host_with_module_relation{bk_biz_id="2",host_id="1001",module_id="2001"} 1
+host_with_module_relation{bk_biz_id="2",host_id="1002",module_id="2001"} 1
 host_with_system_relation{bk_biz_id="2",bk_cloud_id="3",bk_target_ip="127.0.0.1",host_id="1001"} 1
 host_with_system_relation{bk_biz_id="2",bk_cloud_id="3",bk_target_ip="127.0.0.2",host_id="1002"} 1
-module_info_relation{bk_biz_id="2",module_id="3001",version="v0.1.1"} 1
-module_with_set_relation{bk_biz_id="2",module_id="3001",set_id="3001"} 1
+module_info_relation{bk_biz_id="2",module_id="2001",version="v0.1.1"} 1
+module_with_set_relation{bk_biz_id="2",module_id="2001",set_id="3001"} 1
 set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 		},
 		"测试不同业务 id 下的指标生成规则": {
@@ -375,14 +417,20 @@ set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 							Links: []Link{
 								{
 									{
-										Name: Module,
-										ID:   "2001",
+										Resource: Module,
+										ID:       "2001",
+										Label: map[string]string{
+											"module_id": "3001",
+										},
 									},
 								},
 								{
 									{
-										Name: Set,
-										ID:   "3001",
+										Resource: Set,
+										ID:       "3001",
+										Label: map[string]string{
+											"set_id": "3001",
+										},
 									},
 								},
 							},
@@ -397,8 +445,11 @@ set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 							Links: []Link{
 								{
 									{
-										Name: Host,
-										ID:   "1001",
+										Resource: Host,
+										ID:       "1001",
+										Label: map[string]string{
+											"host_id": "1001",
+										},
 									},
 								},
 							},
@@ -426,14 +477,20 @@ set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 							Links: []Link{
 								{
 									{
-										Name: Module,
-										ID:   "2001",
+										Resource: Module,
+										ID:       "2001",
+										Label: map[string]string{
+											"module_id": "2001",
+										},
 									},
 								},
 								{
 									{
-										Name: Set,
-										ID:   "3001",
+										Resource: Set,
+										ID:       "3001",
+										Label: map[string]string{
+											"set_id": "3001",
+										},
 									},
 								},
 							},
@@ -448,8 +505,11 @@ set_info_relation{bk_biz_id="2",set_id="3001",version="v0.0.2"} 1`,
 							Links: []Link{
 								{
 									{
-										Name: Host,
-										ID:   "1002",
+										Resource: Host,
+										ID:       "1002",
+										Label: map[string]string{
+											"host_id": "1002",
+										},
 									},
 								},
 							},
@@ -477,255 +537,3 @@ set_info_relation{bk_biz_id="3",set_id="3001",version="v0.0.2"} 1`,
 		})
 	}
 }
-
-//func TestBuildMetrics(t *testing.T) {
-//	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-//
-//	for Name, c := range map[string]struct {
-//		bkBizID    int
-//		hosts      []HostS
-//		clearhosts []HostS
-//		expected   string
-//	}{
-//		"test build metrics": {
-//			bkBizID: 2,
-//			hosts: []HostS{
-//				{
-//					BkHostId:      1001,
-//					BkBizId:       2,
-//					BkHostInnerip: "127.0.0.1",
-//					BkCloudId:     3,
-//					TopoLinks: map[string][]map[string]interface{}{
-//						"module|2001": {
-//							{
-//								"bk_obj_id":  "module",
-//								"bk_inst_id": 2001,
-//							},
-//							{
-//								"bk_obj_id":  "set",
-//								"bk_inst_id": 3001,
-//							},
-//							{
-//								"bk_obj_id":  "biz",
-//								"bk_inst_id": 2,
-//							},
-//						},
-//						"module|2002": {
-//							{
-//								"bk_obj_id":  "module",
-//								"bk_inst_id": 2002,
-//							},
-//							{
-//								"bk_obj_id":  "set",
-//								"bk_inst_id": 3002,
-//							},
-//							{
-//								"bk_obj_id":  "biz",
-//								"bk_inst_id": 2,
-//							},
-//						},
-//					},
-//				},
-//				{
-//					BkHostId:      1002,
-//					BkBizId:       2,
-//					BkHostInnerip: "127.0.0.2",
-//					BkCloudId:     3,
-//					TopoLinks: map[string][]map[string]interface{}{
-//						"module_2001": {
-//							{
-//								"bk_obj_id":  "module",
-//								"bk_inst_id": 2001,
-//							},
-//							{
-//								"bk_obj_id":  "set",
-//								"bk_inst_id": 3001,
-//							},
-//							{
-//								"bk_obj_id":  "biz",
-//								"bk_inst_id": 2,
-//							},
-//						},
-//					},
-//				},
-//				{
-//					BkHostId:      1004,
-//					BkBizId:       2,
-//					BkHostInnerip: "127.0.0.4",
-//					BkCloudId:     3,
-//					TopoLinks: map[string][]map[string]interface{}{
-//						"module_2001": {
-//							{
-//								"bk_obj_id":  "module",
-//								"bk_inst_id": 2001,
-//							},
-//							{
-//								"bk_obj_id":  "set",
-//								"bk_inst_id": 3001,
-//							},
-//							{
-//								"bk_obj_id":  "biz",
-//								"bk_inst_id": 2,
-//							},
-//						},
-//					},
-//				},
-//				{
-//					BkHostId:      1003,
-//					BkBizId:       2,
-//					BkHostInnerip: "127.0.0.3",
-//					BkCloudId:     3,
-//					TopoLinks: map[string][]map[string]interface{}{
-//						"module_2003": {
-//							{
-//								"bk_obj_id":  "module",
-//								"bk_inst_id": 2003,
-//							},
-//							{
-//								"bk_obj_id":  "set",
-//								"bk_inst_id": 3001,
-//							},
-//							{
-//								"bk_obj_id":  "biz",
-//								"bk_inst_id": 2,
-//							},
-//						},
-//					},
-//				},
-//			},
-//			expected: `business_with_set_relation{biz_id="2",set_id="3001",bk_biz_id="2"} 1
-//business_with_set_relation{biz_id="2",set_id="3002",bk_biz_id="2"} 1
-//host_with_module_relation{host_id="1001",module_id="2002",bk_biz_id="2"} 1
-//host_with_module_relation{host_id="1002",module_id="2001",bk_biz_id="2"} 1
-//host_with_module_relation{host_id="1003",module_id="2003",bk_biz_id="2"} 1
-//host_with_module_relation{host_id="1004",module_id="2001",bk_biz_id="2"} 1
-//host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.1",host_id="1001",bk_biz_id="2"} 1
-//host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.2",host_id="1002",bk_biz_id="2"} 1
-//host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.3",host_id="1003",bk_biz_id="2"} 1
-//host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.4",host_id="1004",bk_biz_id="2"} 1
-//module_with_set_relation{module_id="2001",set_id="3001",bk_biz_id="2"} 1
-//module_with_set_relation{module_id="2002",set_id="3002",bk_biz_id="2"} 1
-//module_with_set_relation{module_id="2003",set_id="3001",bk_biz_id="2"} 1`,
-//		},
-//		"test build and clear metrics": {
-//			bkBizID: 2,
-//			hosts: []HostS{
-//				{
-//					BkHostId:      1001,
-//					BkBizId:       2,
-//					BkHostInnerip: "127.0.0.1",
-//					BkCloudId:     3,
-//					TopoLinks: map[string][]map[string]interface{}{
-//						"module|2001": {
-//							{
-//								"bk_obj_id":  "module",
-//								"bk_inst_id": 2001,
-//							},
-//							{
-//								"bk_obj_id":  "set",
-//								"bk_inst_id": 3001,
-//							},
-//							{
-//								"bk_obj_id":  "biz",
-//								"bk_inst_id": 2,
-//							},
-//						},
-//						"module|2002": {
-//							{
-//								"bk_obj_id":  "module",
-//								"bk_inst_id": 2002,
-//							},
-//							{
-//								"bk_obj_id":  "set",
-//								"bk_inst_id": 3002,
-//							},
-//							{
-//								"bk_obj_id":  "biz",
-//								"bk_inst_id": 2,
-//							},
-//						},
-//					},
-//				},
-//				{
-//					BkHostId:      1002,
-//					BkBizId:       2,
-//					BkHostInnerip: "127.0.0.2",
-//					BkCloudId:     3,
-//					TopoLinks: map[string][]map[string]interface{}{
-//						"module_2001": {
-//							{
-//								"bk_obj_id":  "module",
-//								"bk_inst_id": 2001,
-//							},
-//							{
-//								"bk_obj_id":  "set",
-//								"bk_inst_id": 3001,
-//							},
-//							{
-//								"bk_obj_id":  "biz",
-//								"bk_inst_id": 2,
-//							},
-//						},
-//					},
-//				},
-//				{
-//					BkHostId:      1003,
-//					BkBizId:       2,
-//					BkHostInnerip: "127.0.0.3",
-//					BkCloudId:     3,
-//					TopoLinks: map[string][]map[string]interface{}{
-//						"module_2003": {
-//							{
-//								"bk_obj_id":  "module",
-//								"bk_inst_id": 2003,
-//							},
-//							{
-//								"bk_obj_id":  "set",
-//								"bk_inst_id": 3001,
-//							},
-//							{
-//								"bk_obj_id":  "biz",
-//								"bk_inst_id": 2,
-//							},
-//						},
-//					},
-//				},
-//			},
-//			clearhosts: []HostS{
-//				{
-//					BkBizId:  2,
-//					BkHostId: 1001,
-//				},
-//				{
-//					BkBizId:  2,
-//					BkHostId: 1002,
-//				},
-//			},
-//			expected: `business_with_set_relation{biz_id="2",set_id="3001",bk_biz_id="2"} 1
-//host_with_module_relation{host_id="1003",module_id="2003",bk_biz_id="2"} 1
-//host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.3",host_id="1003",bk_biz_id="2"} 1
-//module_with_set_relation{module_id="2003",set_id="3001",bk_biz_id="2"} 1`,
-//		},
-//	} {
-//		t.Run(Name, func(t *testing.T) {
-//			ctx := context.Background()
-//			rmb := newRelationMetricsBuilder()
-//			err := rmb.BuildInfosCache(ctx)
-//			assert.Nil(t, err)
-//
-//			_ = rmb.BuildMetrics(ctx, "", c.bkBizID, c.hosts)
-//			//rmb.ClearMetricsWithHostID(c.clearHosts...)
-//
-//			metrics := strings.Split(strings.Trim(rmb.String(), "\n"), "\n")
-//			sort.Strings(metrics)
-//
-//			actual := strings.Join(metrics, "\n")
-//			assert.Equal(t, c.expected, actual)
-//
-//			err := rmb.PushAll(ctx, time.Now())
-//			assert.Nil(t, err)
-//		})
-//
-//	}
-
-//}

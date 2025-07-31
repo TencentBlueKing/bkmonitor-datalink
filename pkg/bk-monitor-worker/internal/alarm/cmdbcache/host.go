@@ -369,6 +369,13 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 		}
 
 		hostID := cast.ToString(h.BkHostId)
+		hostItem := relation.Item{
+			ID:       hostID,
+			Resource: relation.Host,
+			Label: map[string]string{
+				"host_id": hostID,
+			},
+		}
 
 		if h.BkHostInnerip != "" {
 			systemInfo := &relation.Info{}
@@ -379,35 +386,26 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 				"bk_target_ip": h.BkHostInnerip,
 				"bk_cloud_id":  fmt.Sprintf("%d", h.BkCloudId),
 			}
-			systemInfo.Links = []relation.Link{
-				{
-					{
-						Name: relation.Host,
-						ID:   hostID,
-					},
-				},
-			}
+			systemInfo.Links = []relation.Link{{hostItem}}
 			infos = append(infos, systemInfo)
 		}
 
 		hostInfo := &relation.Info{
 			ID:       hostID,
 			Resource: relation.Host,
-			Label: map[string]string{
-				"host_id": hostID,
-			},
-			Expands: relation.TransformExpands(h.Expands),
+			Label:    hostItem.Label,
+			Expands:  relation.TransformExpands(h.Expands),
 		}
 		for _, tplink := range h.TopoLinks {
 			var link []relation.Item
 			for _, tp := range tplink {
 				var (
-					name string
-					id   int
-					ok   bool
+					resource string
+					id       int
+					ok       bool
 				)
-				name, ok = tp["bk_obj_id"].(string)
-				if !ok || name == "" {
+				resource, ok = tp["bk_obj_id"].(string)
+				if !ok || resource == "" {
 					continue
 				}
 
@@ -416,9 +414,17 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 					continue
 				}
 
+				if resource == "biz" {
+					resource = relation.Business
+				}
+
+				itemID := cast.ToString(id)
 				link = append(link, relation.Item{
-					Name: name,
-					ID:   cast.ToString(id),
+					ID:       itemID,
+					Resource: resource,
+					Label: map[string]string{
+						fmt.Sprintf("%s_id", resource): itemID,
+					},
 				})
 			}
 

@@ -518,6 +518,10 @@ func (i *Instance) InstanceType() string {
 	return consul.BkSqlStorageType
 }
 
+func (i *Instance) ScrollHandler() tsdb.ScrollHandler {
+	return i
+}
+
 func getValue(k string, d map[string]interface{}) (string, error) {
 	var value string
 	if v, ok := d[k]; ok {

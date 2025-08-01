@@ -873,3 +873,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 func (i *Instance) InstanceType() string {
 	return consul.ElasticsearchStorageType
 }
+
+func (i *Instance) ScrollHandler() tsdb.ScrollHandler {
+	return i
+}

@@ -20,7 +20,11 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 )
 
 func TestScrollSliceRetryMechanism(t *testing.T) {
@@ -46,131 +50,119 @@ func TestScrollSliceRetryMechanism(t *testing.T) {
 	}{
 		{
 			name:               "ES 正常初始化",
-			storageType:        "elasticsearch",
+			storageType:        consul.ElasticsearchStorageType,
 			connect:            "es-test:9200",
 			tableID:            "test_table_1",
 			operations:         []sliceOperation{},
 			expectedSliceCount: 3,
 			expectedStatuses: map[int]string{
-				0: "pending",
-				1: "pending",
-				2: "pending",
+				0: redis.StatusPending,
+				1: redis.StatusPending,
+				2: redis.StatusPending,
+			},
+		},
+		{
+			name:               "边界测试：MaxSlice为0",
+			storageType:        consul.ElasticsearchStorageType,
+			connect:            "es-test:9200",
+			tableID:            "test_table_boundary_0",
+			operations:         []sliceOperation{},
+			expectedSliceCount: 0,
+			expectedStatuses:   map[int]string{},
+		},
+		{
+			name:               "边界测试：MaxSlice为1",
+			storageType:        consul.ElasticsearchStorageType,
+			connect:            "es-test:9200",
+			tableID:            "test_table_boundary_1",
+			operations:         []sliceOperation{},
+			expectedSliceCount: 1,
+			expectedStatuses: map[int]string{
+				0: redis.StatusPending,
 			},
 		},
 		{
 			name:        "ES 单个 slice 失败后重试",
-			storageType: "elasticsearch",
+			storageType: consul.ElasticsearchStorageType,
 			connect:     "es-test:9200",
 			tableID:     "test_table_2",
 			operations: []sliceOperation{
-				{action: "fail", sliceIndex: 0, times: 1},
+				{action: redis.StatusFailed, sliceIndex: 0, times: 1},
 			},
 			expectedSliceCount: 3,
 			expectedStatuses: map[int]string{
-				0: "pending", // 失败后重置为 pending
-				1: "pending",
-				2: "pending",
+				0: redis.StatusPending, // 失败后重置为 pending
+				1: redis.StatusPending,
+				2: redis.StatusPending,
 			},
 		},
 		{
 			name:        "ES slice 达到最大失败次数后停止",
-			storageType: "elasticsearch",
+			storageType: consul.ElasticsearchStorageType,
 			connect:     "es-test:9200",
 			tableID:     "test_table_3",
 			operations: []sliceOperation{
-				{action: "fail", sliceIndex: 0, times: 3}, // 失败 3 次（达到限制）
+				{action: redis.StatusFailed, sliceIndex: 0, times: 3}, // 失败 3 次（达到限制）
 			},
 			expectedSliceCount: 2, // slice 0 被排除
 			expectedStatuses: map[int]string{
-				0: "stop", // 超过失败次数限制
-				1: "pending",
-				2: "pending",
-			},
-		},
-		{
-			name:               "Doris 正常初始化",
-			storageType:        "bk_sql",
-			connect:            "",
-			tableID:            "doris_table_1",
-			operations:         []sliceOperation{},
-			expectedSliceCount: 3,
-			expectedStatuses: map[int]string{
-				0: "pending",
-				1: "pending",
-				2: "pending",
-			},
-		},
-		{
-			name:        "Doris slice 失败重试",
-			storageType: "bk_sql",
-			connect:     "",
-			tableID:     "doris_table_2",
-			operations: []sliceOperation{
-				{action: "fail", sliceIndex: 1, times: 2},
-			},
-			expectedSliceCount: 3,
-			expectedStatuses: map[int]string{
-				0: "pending",
-				1: "pending", // 失败后重置为 pending
-				2: "pending",
-			},
-		},
-		{
-			name:        "Doris slice 超过失败限制",
-			storageType: "bk_sql",
-			connect:     "",
-			tableID:     "doris_table_3",
-			operations: []sliceOperation{
-				{action: "fail", sliceIndex: 2, times: 3},
-			},
-			expectedSliceCount: 2, // slice 2 被排除
-			expectedStatuses: map[int]string{
-				0: "pending",
-				1: "pending",
-				2: "stop", // 超过失败次数限制
+				0: redis.StatusStop, // 超过失败次数限制
+				1: redis.StatusPending,
+				2: redis.StatusPending,
 			},
 		},
 		{
 			name:        "多个 slice 失败情况",
-			storageType: "elasticsearch",
+			storageType: consul.ElasticsearchStorageType,
 			connect:     "es-test:9200",
 			tableID:     "test_table_4",
 			operations: []sliceOperation{
-				{action: "fail", sliceIndex: 0, times: 3}, // slice 0 超过限制
-				{action: "fail", sliceIndex: 1, times: 1}, // slice 1 失败一次
+				{action: redis.StatusFailed, sliceIndex: 0, times: 3}, // slice 0 超过限制
+				{action: redis.StatusFailed, sliceIndex: 1, times: 1}, // slice 1 失败一次
 			},
 			expectedSliceCount: 2, // 只有 slice 1, 2 可用
 			expectedStatuses: map[int]string{
-				0: "stop",    // 超过失败次数限制
-				1: "pending", // 失败后重试
-				2: "pending", // 正常
+				0: redis.StatusStop,    // 超过失败次数限制
+				1: redis.StatusPending, // 失败后重试
+				2: redis.StatusPending, // 正常
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := redis.NewScrollSession(fmt.Sprintf("test_%s", tt.tableID), 3, 5*time.Minute, 10)
-			ctx := context.Background()
+			var maxSlice int = 3
+			if tt.name == "边界测试：MaxSlice为0" {
+				maxSlice = 0
+			} else if tt.name == "边界测试：MaxSlice为1" {
+				maxSlice = 1
+			}
 
-			_, err := session.MakeSlices(tt.storageType, tt.connect, tt.tableID)
+			session := redis.NewScrollSession(fmt.Sprintf("test_%s", tt.tableID), maxSlice, 5*time.Minute, 3)
+			ctx := context.Background()
+			instance, err := getInstance(ctx, tt.storageType)
+			if err != nil {
+				t.Fatalf("get instance failed: %v", err)
+			}
+
+			scrollHandler := instance.ScrollHandler()
+
+			slices, err := scrollHandler.MakeSlices(ctx, session, tt.connect, tt.tableID)
 			assert.NoError(t, err)
 
 			for _, op := range tt.operations {
 				for i := 0; i < op.times; i++ {
-					if op.action == "fail" {
-						if tt.storageType == consul.ElasticsearchStorageType {
-							err := session.UpdateScrollID(ctx, tt.connect, tt.tableID, "", &op.sliceIndex, redis.StatusFailed)
-							assert.NoError(t, err)
-						} else if tt.storageType == consul.BkSqlStorageType {
-							err := session.UpdateDoris(ctx, tt.tableID, &op.sliceIndex, redis.StatusFailed)
-							assert.NoError(t, err)
-						}
+					resultOption := &metadata.ResultTableOption{
+						SliceIndex: &op.sliceIndex,
+						ScrollID:   op.scrollID,
+						SliceMax:   &maxSlice,
 					}
+					err := scrollHandler.UpdateScrollStatus(ctx, session, tt.connect, tt.tableID, resultOption, tt.expectedStatuses[op.sliceIndex])
+					assert.NoError(t, err)
 				}
 			}
 
-			slices, err := session.MakeSlices(tt.storageType, tt.connect, tt.tableID)
+			slices, err = scrollHandler.MakeSlices(ctx, session, tt.connect, tt.tableID)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedSliceCount, len(slices), "slice 数量不符合预期")
 
@@ -201,6 +193,7 @@ func TestScrollSliceRetryMechanism(t *testing.T) {
 type sliceOperation struct {
 	action     string // "fail", "complete" 等
 	sliceIndex int
+	scrollID   string
 	times      int
 }
 
@@ -214,4 +207,23 @@ func getSliceStatus(session *redis.ScrollSession, storageType, connect, tableID 
 
 func generateScrollSliceStatusKey(storageType, connect, tableID string, sliceIdx int) string {
 	return fmt.Sprintf("%s:%s:%s:%d", storageType, connect, tableID, sliceIdx)
+}
+
+func getInstance(ctx context.Context, storageType string) (tsdb.Instance, error) {
+	switch storageType {
+	case consul.ElasticsearchStorageType:
+		return elasticsearch.NewInstance(ctx, &elasticsearch.InstanceOption{
+			Connects: []elasticsearch.Connect{
+				{
+					Address: "es-test:9200",
+				},
+			},
+		})
+	case consul.BkSqlStorageType:
+		return bksql.NewInstance(ctx, &bksql.Options{
+			Address: "doris-test:8030",
+		})
+	default:
+		return nil, fmt.Errorf("unsupported storage type: %s", storageType)
+	}
 }

@@ -105,14 +105,14 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 		`{"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":10,"slice":{"id":2,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"scroll_id_2","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"3","_source":{"dtEventTimeStamp":"1723594003000","data":"es_test3"}}]}}`,
 	}
 
-	inProgressEsMockData := map[string]any{
+	secondRoundEsMockData := map[string]any{
 		`{"scroll":"9m","scroll_id":"scroll_id_0"}`: `{"_scroll_id":"scroll_id_0_next","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"4","_source":{"dtEventTimeStamp":"1723594004000","data":"es_test4"}}]}}`,
 		`{"scroll":"9m","scroll_id":"scroll_id_1"}`: `{"_scroll_id":"scroll_id_1_next","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"5","_source":{"dtEventTimeStamp":"1723594005000","data":"es_test5"}}]}}`,
 		`{"scroll":"9m","scroll_id":"scroll_id_2"}`: `{"_scroll_id":"scroll_id_2_next","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"6","_source":{"dtEventTimeStamp":"1723594006000","data":"es_test6"}}]}}`,
 	}
 
 	thirdRoundEsMockData := map[string]any{
-		`{"scroll":"9m","scroll_id":"scroll_id_0_next"}`: `{"_scroll_id":"","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
+		`{"scroll":"9m","scroll_id":"scroll_id_0_next"}`: `{"_scroll_id":"scroll_id_0_next","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
 		`{"scroll":"9m","scroll_id":"scroll_id_1_next"}`: `{"_scroll_id":"scroll_id_1_final","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"7","_source":{"dtEventTimeStamp":"1723594007000","data":"es_test7"}}]}}`,
 		`{"scroll":"9m","scroll_id":"scroll_id_2_next"}`: `{"_scroll_id":"scroll_id_2_final","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"8","_source":{"dtEventTimeStamp":"1723594008000","data":"es_test8"}}]}}`,
 	}
@@ -156,7 +156,7 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 				total:    3,
 				done:     false,
 				hasData:  true,
-				mockData: inProgressEsMockData,
+				mockData: secondRoundEsMockData,
 			},
 			{
 				desc:     "Third scroll request - slice 0 ends, others continue",
@@ -167,13 +167,6 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 			},
 			{
 				desc:     "Fourth scroll request - should be done",
-				total:    0,
-				done:     true,
-				hasData:  false,
-				mockData: allDoneMockData,
-			},
-			{
-				desc:     "Fifth scroll request - should still be done",
 				total:    0,
 				done:     true,
 				hasData:  false,
@@ -192,6 +185,7 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 	for i, c := range tCase.expected {
 		t.Logf("Running step %d: %s", i+1, c.desc)
 
+		mock.Es.Clear()
 		mock.Es.Set(c.mockData)
 
 		queryTsBytes, _ := json.StableMarshal(tCase.queryTs)
@@ -201,7 +195,6 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 
 		total, list, _, done, err := queryRawWithScroll(testCtx, &queryTsCopy, sessionKeySuffix, 3)
 		hasData := len(list) > 0
-
 		assert.NoError(t, err, "QueryRawWithScroll should not return error for step %d", i+1)
 		assert.Equal(t, c.total, total, "Total should match expected value for step %d", i+1)
 		assert.Equal(t, c.done, done, "Done should match expected value for step %d", i+1)

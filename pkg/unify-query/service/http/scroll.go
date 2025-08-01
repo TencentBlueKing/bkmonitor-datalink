@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/jinzhu/copier"
-	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -122,15 +121,14 @@ func collectStorageScrollQuery(ctx context.Context, session *redis.ScrollSession
 		connect := storage.Address
 		for _, qry := range qryList {
 			storage.Instance = prometheus.GetTsDbInstance(ctx, qry)
-			tableID := qry.TableID
-			slices, mErr := session.MakeSlices(storage.Instance.InstanceType(), connect, tableID)
+			slices, mErr := storage.Instance.ScrollHandler().MakeSlices(ctx, session, connect, qry.TableID)
 			if mErr != nil {
 				err = mErr
 				return
 			}
 			var injectedScrollQueryList []*metadata.Query
 			for _, slice := range slices {
-				qryCp, iErr := injectScrollQuery(qry, connect, tableID, slice)
+				qryCp, iErr := injectScrollQuery(qry, connect, qry.TableID, slice)
 				if iErr != nil {
 					err = iErr
 					return
@@ -141,7 +139,7 @@ func collectStorageScrollQuery(ctx context.Context, session *redis.ScrollSession
 				QueryList: injectedScrollQueryList,
 				Storage:   storage,
 				Connect:   connect,
-				TableID:   tableID,
+				TableID:   qry.TableID,
 			})
 		}
 	}
@@ -181,11 +179,6 @@ func injectScrollQuery(qry *metadata.Query, connect, tableID string, sliceInfo *
 
 func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connect, tableID string, qry *metadata.Query, start time.Time, end time.Time, instance tsdb.Instance) (data []map[string]any, err error) {
 	dataCh := make(chan map[string]any)
-	var oldSliceResultOption *metadata.ResultTableOption
-	if qry.ResultTableOptions != nil {
-		oldSliceResultOption = qry.ResultTableOptions.GetOption(tableID, connect)
-	}
-
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
@@ -195,7 +188,7 @@ func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connec
 		}
 	}()
 
-	total, option, err := instance.QueryRawData(ctx, qry, start, end, dataCh)
+	_, option, err := instance.QueryRawData(ctx, qry, start, end, dataCh)
 	close(dataCh)
 	wg.Wait()
 	var sliceResultOption *metadata.ResultTableOption
@@ -209,76 +202,35 @@ func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connec
 
 		sliceResultOption = option.GetOption(tableID, connectKey)
 	}
-	switch instance.InstanceType() {
-	case consul.ElasticsearchStorageType:
-		if err != nil {
-			if sliceResultOption != nil && sliceResultOption.SliceIndex != nil {
-				err = session.UpdateScrollID(ctx, connect, tableID, sliceResultOption.ScrollID, sliceResultOption.SliceIndex, redis.StatusFailed)
-			}
-			return
-		}
 
-		if sliceResultOption != nil && sliceResultOption.SliceIndex != nil {
-			if oldSliceResultOption == nil || (oldSliceResultOption != nil && oldSliceResultOption.ScrollID != sliceResultOption.ScrollID) {
-				if err = session.UpdateScrollID(ctx, connect, tableID, sliceResultOption.ScrollID, sliceResultOption.SliceIndex, redis.StatusRunning); err != nil {
-					return
-				}
-			}
-		}
-
-		isEmptyData := len(data) == 0 && total == 0
-		isScrollIDEmpty := sliceResultOption != nil && sliceResultOption.ScrollID == ""
-
-		if isEmptyData && oldSliceResultOption != nil && oldSliceResultOption.SliceIndex != nil {
-			if err = session.UpdateScrollID(ctx, connect, tableID, "", oldSliceResultOption.SliceIndex, redis.StatusCompleted); err != nil {
+	if err != nil {
+		if sliceResultOption != nil {
+			if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusFailed); err != nil {
 				return
 			}
 		}
+		return
+	}
 
-		if (isEmptyData || isScrollIDEmpty) && (sliceResultOption != nil && sliceResultOption.SliceIndex != nil) {
-			if err = session.UpdateScrollID(ctx, connect, tableID, sliceResultOption.ScrollID, sliceResultOption.SliceIndex, redis.StatusCompleted); err != nil {
+	if sliceResultOption != nil {
+		// 如果返回数据为空，表示这个slice已经完成
+		if len(data) == 0 {
+			// 清空scroll_id，确保这个slice不会继续查询
+			sliceResultOption.ScrollID = ""
+			if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusCompleted); err != nil {
 				return
 			}
-		} else if len(data) > 0 && (sliceResultOption != nil && sliceResultOption.SliceIndex != nil) && !isScrollIDEmpty {
-			if err = session.UpdateScrollID(ctx, connect, tableID, sliceResultOption.ScrollID, sliceResultOption.SliceIndex, redis.StatusRunning); err != nil {
+		} else if sliceResultOption.ScrollID == "" {
+			// 如果scroll_id为空，但还有数据，表示完成
+			if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusCompleted); err != nil {
+				return
+			}
+		} else {
+			// 还有数据且scroll_id不为空，继续运行
+			if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusRunning); err != nil {
 				return
 			}
 		}
-
-	case consul.BkSqlStorageType:
-		if err != nil {
-			var targetSliceOption *metadata.ResultTableOption
-			if sliceResultOption != nil && sliceResultOption.SliceIndex != nil {
-				targetSliceOption = sliceResultOption
-			} else if oldSliceResultOption != nil && oldSliceResultOption.SliceIndex != nil {
-				targetSliceOption = oldSliceResultOption
-			}
-			if targetSliceOption != nil {
-				err = session.UpdateDoris(ctx, tableID, targetSliceOption.SliceIndex, redis.StatusFailed)
-			}
-			return
-		}
-
-		var targetSliceOption *metadata.ResultTableOption
-		if sliceResultOption != nil && sliceResultOption.SliceIndex != nil {
-			targetSliceOption = sliceResultOption
-		} else if oldSliceResultOption != nil && oldSliceResultOption.SliceIndex != nil {
-			targetSliceOption = oldSliceResultOption
-		}
-
-		if targetSliceOption != nil && targetSliceOption.SliceIndex != nil {
-			if len(data) > 0 {
-				if err = session.RollDoris(ctx, tableID, targetSliceOption.SliceIndex); err != nil {
-					return
-				}
-			} else {
-				if err = session.UpdateDoris(ctx, tableID, targetSliceOption.SliceIndex, redis.StatusCompleted); err != nil {
-					return
-				}
-			}
-		}
-	default:
-		err = errors.New("unknown storage type")
 	}
 	return
 }

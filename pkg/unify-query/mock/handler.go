@@ -109,6 +109,12 @@ func (r *resultData) Set(in map[string]any) {
 	}
 }
 
+func (r *resultData) Clear() {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	r.data = make(map[string]any)
+}
+
 func (r *resultData) Get(k string) (any, bool) {
 	r.lock.RLock()
 	defer r.lock.RUnlock()

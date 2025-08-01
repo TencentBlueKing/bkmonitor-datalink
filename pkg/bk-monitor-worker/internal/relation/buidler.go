@@ -109,7 +109,10 @@ func (b *MetricsBuilder) Debug(bizID string) string {
 	}
 
 	if len(data) == 0 {
-		data = b.resources[0]
+		for _, r := range b.resources {
+			data = r
+			break
+		}
 	}
 
 	out, _ := json.Marshal(data)

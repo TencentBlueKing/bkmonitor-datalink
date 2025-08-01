@@ -51,9 +51,9 @@ func createScrollSession(ctx context.Context, sessionKeySuffix string, maxSlice 
 	return session, nil
 }
 
-func checkScrollSession(ctx context.Context, key string) (session *ScrollSession, exist bool, err error) {
-	session = &ScrollSession{}
-	err = Client().Get(ctx, SessionKeyPrefix+key).Scan(session)
+func checkScrollSession(ctx context.Context, key string) (*ScrollSession, bool, error) {
+	session := &ScrollSession{}
+	err := Client().Get(ctx, SessionKeyPrefix+key).Scan(session)
 	if err != nil {
 		if !IsNil(err) {
 			return nil, false, err

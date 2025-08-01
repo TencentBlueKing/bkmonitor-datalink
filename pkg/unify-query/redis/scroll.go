@@ -11,10 +11,11 @@ package redis
 
 import (
 	"context"
-	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -58,8 +59,14 @@ func (s *ScrollSession) UnmarshalBinary(data []byte) error {
 	return json.Unmarshal(data, s)
 }
 
-func generateScrollSliceStatusKey(storageType, connect, tableID string, sliceIdx int) string {
-	return fmt.Sprintf("%s:%s:%s:%d", storageType, connect, tableID, sliceIdx)
+func generateScrollSliceStatusKey(s ...any) string {
+	parts := make([]string, 0, len(s))
+	for _, v := range s {
+		if v != nil {
+			parts = append(parts, cast.ToString(v))
+		}
+	}
+	return strings.Join(parts, ":")
 }
 
 func NewScrollSession(sessionKeySuffix string, maxSlice int, scrollTimeout time.Duration, limit int) *ScrollSession {
@@ -102,7 +109,7 @@ type SliceInfo struct {
 	Offset      int
 }
 
-func (s *ScrollSession) MakeSlices(storageType, connect, tableID string) (slices []*SliceInfo, err error) {
+func (s *ScrollSession) MakeSlices(storageType, connect, tableID string) ([]*SliceInfo, error) {
 	switch storageType {
 	case consul.ElasticsearchStorageType:
 		return s.makeESSlices(connect, tableID)

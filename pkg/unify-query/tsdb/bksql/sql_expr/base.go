@@ -10,6 +10,7 @@
 package sql_expr
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -63,6 +64,8 @@ type SQLExpr interface {
 	ParserAllConditions(allConditions metadata.AllConditions) (string, error)
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
 	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, *set.Set[string], TimeAggregate, error)
+	// ParserSQL 解析 SQL 语句
+	ParserSQL(ctx context.Context, q, table, where string) (string, error)
 	// DescribeTableSQL 返回当前表结构
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
@@ -132,6 +135,10 @@ func (d *DefaultSQLExpr) WithFieldsMap(fieldMap map[string]string) SQLExpr {
 	return d
 }
 
+func (d *DefaultSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (string, error) {
+	return "", nil
+}
+
 func (d *DefaultSQLExpr) WithKeepColumns(cols []string) SQLExpr {
 	d.keepColumns = cols
 	return d
@@ -162,6 +169,8 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		offsetMillis int64
 		timezone     string
 	)
+
+	// 时间和值排序属于内置字段，默认需要支持
 	dimensionSet = set.New[string]([]string{FieldValue, FieldTime}...)
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
@@ -214,7 +223,6 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 
 		groupByFields = append(groupByFields, timeField)
 		selectFields = append(selectFields, fmt.Sprintf("MAX%s AS `%s`", timeField, TimeStamp))
-		orderByFields = append(orderByFields, fmt.Sprintf("`%s` ASC", TimeStamp))
 	}
 
 	if len(selectFields) == 0 {
@@ -227,6 +235,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		}
 	}
 
+	orderNameSet := set.New[string]()
 	for _, order := range orders {
 		// 如果是聚合操作的话，只能使用维度进行排序
 		if len(aggregates) > 0 {
@@ -249,6 +258,12 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		if err != nil {
 			return
 		}
+
+		// 移除重复的排序字段
+		if orderNameSet.Existed(orderField) {
+			continue
+		}
+		orderNameSet.Add(orderField)
 
 		ascName := "ASC"
 		if !order.Ast {

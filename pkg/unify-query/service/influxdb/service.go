@@ -335,15 +335,11 @@ func (s *Service) reloadSpaceTsDbRouter(ctx context.Context) error {
 				err = ir.ReloadAllKey(ctx, true)
 				if err != nil {
 					log.Errorf(ctx, "[SpaceTSDB Router] TimeTicker reload with error, %v", err)
-				} else {
-					log.Infof(ctx, "[SpaceTSDB Router] TimeTicker reload")
 				}
 			case msg := <-ch:
 				err = ir.ReloadByChannel(ctx, msg.Channel, msg.Payload)
 				if err != nil {
 					log.Errorf(ctx, "[SpaceTSDB Router] Subscribe msg with error, %s, %v", msg.String(), err)
-				} else {
-					log.Infof(ctx, "[SpaceTSDB Router] Subscribe msg: %s, key: %s", msg.String(), msg.Payload)
 				}
 			}
 		}

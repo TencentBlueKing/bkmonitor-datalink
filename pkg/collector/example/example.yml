@@ -430,6 +430,9 @@ bk-collector:
           keys:
             - "resource.bk.data.token"
             - "resource.process.pid"
+        from_token:
+          keys:
+            - "app_name"
 
     # Sampler: 采样处理器
     # StatusCode
@@ -1091,6 +1094,7 @@ bk-collector:
       type: "metrics.derived"
       processors:
 #        - "apdex_calculator/standard"
+#        - "resource_filter/metrics"
 
     - name: "profiles_pipeline/common"
       type: "profiles"

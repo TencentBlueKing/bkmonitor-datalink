@@ -43,6 +43,8 @@ const (
 )
 
 type Instance struct {
+	tsdb.DefaultInstance
+
 	ctx context.Context
 
 	querySyncUrl  string
@@ -146,6 +148,8 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	}
 
 	span.Set("result-size", len(data.List))
+	span.Set("result-sql", data.Sql)
+
 	return data, nil
 }
 
@@ -231,6 +235,15 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		}
 	}()
 
+	resultTableOptions = make(metadata.ResultTableOptions)
+	option := query.ResultTableOptions.GetOption(query.TableID, "")
+	if option == nil {
+		option = &metadata.ResultTableOption{}
+	}
+	defer func() {
+		resultTableOptions.SetOption(query.TableID, "", option)
+	}()
+
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-raw")
 	defer span.End(&err)
 
@@ -253,13 +266,8 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		}
 	}
 
-	if len(query.ResultTableOptions) > 0 {
-		option := query.ResultTableOptions.GetOption(query.TableID, "")
-		if option != nil {
-			if option.From != nil {
-				query.From = *option.From
-			}
-		}
+	if option.From != nil {
+		query.From = *option.From
 	}
 
 	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
@@ -271,6 +279,12 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		return
 	}
 
+	// 如果是 dry run 则直接返回 sql 查询语句
+	if query.DryRun {
+		option.SQL = sql
+		return
+	}
+
 	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
 		err = fmt.Errorf("sql [%s] query err: %s", sql, err.Error())
@@ -279,6 +293,10 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	if data == nil {
 		return
+	}
+
+	if data.ResultSchema != nil {
+		option.ResultSchema = data.ResultSchema
 	}
 
 	span.Set("data-total-records", data.TotalRecords)
@@ -320,6 +338,14 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 			query.Size = maxLimit
 		}
 	}
+
+	// series 计算需要按照时间排序
+	query.Orders = append(metadata.Orders{
+		{
+			Name: sql_expr.FieldTime,
+			Ast:  true,
+		},
+	}, query.Orders...)
 
 	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
 	if err != nil {

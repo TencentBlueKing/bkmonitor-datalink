@@ -107,7 +107,7 @@ func (sp *queryPromQLExpr) init() *queryPromQLExpr {
 func (sp *queryPromQLExpr) inspect() {
 	parser.Inspect(sp.expr, func(node parser.Node, _ []parser.Node) error {
 		if node != nil {
-			// 记录所有非空 Node 用于后面分析 Vector 分组情况
+			// 记录所有非空 node 用于后面分析 Vector 分组情况
 			sp.nodes = append(sp.nodes, node)
 			idx := len(sp.nodes) - 1
 
@@ -137,7 +137,7 @@ func (sp *queryPromQLExpr) isGroupMember(node parser.Node) bool {
 	}
 }
 
-// splitVecGroups 切分 vectorSelector 分组 即叶子节点的上层被哪些 Node 嵌套住
+// splitVecGroups 切分 vectorSelector 分组 即叶子节点的上层被哪些 node 嵌套住
 func (sp *queryPromQLExpr) splitVecGroups() error {
 	vecGroups := make([]vecGroup, 0)
 	preVec := 0
@@ -154,7 +154,7 @@ func (sp *queryPromQLExpr) splitVecGroups() error {
 				break
 			}
 
-			// 只有部分的 Node 类型会属于一个 VectorSelector 分组
+			// 只有部分的 node 类型会属于一个 VectorSelector 分组
 			if sp.isGroupMember(node) {
 				if int(node.PositionRange().Start) > start || int(node.PositionRange().End) < end {
 					continue
@@ -237,7 +237,7 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 		)
 		for nodeIndex, node := range group.Nodes {
 			switch e := node.(type) {
-			// 一个 vecGroup 里有且仅有一个 *parser.VectorSelector Node
+			// 一个 vecGroup 里有且仅有一个 *parser.VectorSelector node
 			case *parser.VectorSelector:
 				query, err = vectorQuery(e, query, group.ID)
 				if err != nil {

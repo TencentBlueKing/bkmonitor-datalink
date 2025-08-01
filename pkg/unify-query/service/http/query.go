@@ -195,6 +195,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 		// 排序复用
 		ql.OrderBy = queryTs.OrderBy
+		ql.DryRun = queryTs.DryRun
 
 		// 如果 qry.Step 不存在去外部统一的 step
 		if ql.Step == "" {
@@ -257,49 +258,47 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		span.Set("query-list-num", len(queryList))
 		span.Set("result-data-num", len(data))
 
-		if len(queryList) > 1 {
-			queryTs.OrderBy.Orders().SortSliceList(data)
+		queryTs.OrderBy.Orders().SortSliceList(data)
 
-			span.Set("query-scroll", queryTs.Scroll)
-			span.Set("query-result-table", queryTs.ResultTableOptions)
+		span.Set("query-scroll", queryTs.Scroll)
+		span.Set("query-result-table", queryTs.ResultTableOptions)
 
-			// scroll 和 searchAfter 模式不进行裁剪
-			if queryTs.Scroll == "" && queryTs.ResultTableOptions.IsCrop() {
-				// 判定是否启用 multi from 特性
-				span.Set("query-multi-from", queryTs.IsMultiFrom)
-				span.Set("data-length", len(data))
-				span.Set("query-ts-from", queryTs.From)
-				span.Set("query-ts-limit", queryTs.Limit)
+		// scroll 和 searchAfter 模式不进行裁剪
+		if queryTs.Scroll == "" && queryTs.ResultTableOptions.IsCrop() {
+			// 判定是否启用 multi from 特性
+			span.Set("query-multi-from", queryTs.IsMultiFrom)
+			span.Set("data-length", len(data))
+			span.Set("query-ts-from", queryTs.From)
+			span.Set("query-ts-limit", queryTs.Limit)
 
-				if len(data) > queryTs.Limit && queryTs.Limit > 0 {
-					if queryTs.IsMultiFrom {
-						resultTableOptions = queryTs.ResultTableOptions
-						if resultTableOptions == nil {
-							resultTableOptions = make(metadata.ResultTableOptions)
+			if len(data) > queryTs.Limit && queryTs.Limit > 0 {
+				if queryTs.IsMultiFrom {
+					resultTableOptions = queryTs.ResultTableOptions
+					if resultTableOptions == nil {
+						resultTableOptions = make(metadata.ResultTableOptions)
+					}
+
+					data = data[0:queryTs.Limit]
+					for _, l := range data {
+						tableID := l[elasticsearch.KeyTableID].(string)
+						address := l[elasticsearch.KeyAddress].(string)
+
+						option := resultTableOptions.GetOption(tableID, address)
+						if option == nil {
+							resultTableOptions.SetOption(tableID, address, &metadata.ResultTableOption{From: function.IntPoint(1)})
+						} else {
+							*option.From++
+						}
+					}
+				} else {
+					// 只有长度符合的数据才进行裁剪
+					if len(data) > queryTs.From {
+						maxLength := queryTs.From + queryTs.Limit
+						if len(data) < maxLength {
+							maxLength = len(data)
 						}
 
-						data = data[0:queryTs.Limit]
-						for _, l := range data {
-							tableID := l[elasticsearch.KeyTableID].(string)
-							address := l[elasticsearch.KeyAddress].(string)
-
-							option := resultTableOptions.GetOption(tableID, address)
-							if option == nil {
-								resultTableOptions.SetOption(tableID, address, &metadata.ResultTableOption{From: function.IntPoint(1)})
-							} else {
-								*option.From++
-							}
-						}
-					} else {
-						// 只有长度符合的数据才进行裁剪
-						if len(data) > queryTs.From {
-							maxLength := queryTs.From + queryTs.Limit
-							if len(data) < maxLength {
-								maxLength = len(data)
-							}
-
-							data = data[queryTs.From:maxLength]
-						}
+						data = data[queryTs.From:maxLength]
 					}
 				}
 			}
@@ -419,7 +418,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		resp = NewPromData(queryTs.ResultColumns)
 	)
 
-	ctx, span := trace.NewSpan(ctx, "query-reference")
+	ctx, span := trace.NewSpan(ctx, "query-reference-with-prom-engine")
 	defer func() {
 		resp.TraceID = span.TraceID()
 		resp.Status = metadata.GetStatus(ctx)

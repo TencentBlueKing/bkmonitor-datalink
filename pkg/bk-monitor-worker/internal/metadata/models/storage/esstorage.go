@@ -36,6 +36,7 @@ type ESStorage struct {
 	SourceType        string                       `json:"source_type" gorm:"column:source_type"`
 	IndexSet          string                       `json:"index_set" gorm:"column:index_set"`
 	NeedCreateIndex   bool                         `json:"need_create_index" gorm:"column:need_create_index;default:true"`
+	OriginTableId     string                       `json:"origin_table_id" gorm:"column:origin_table_id;size:128"`
 	esClient          *elasticsearch.Elasticsearch `gorm:"-"`
 }
 

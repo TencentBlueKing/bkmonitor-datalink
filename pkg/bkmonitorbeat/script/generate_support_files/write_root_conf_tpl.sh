@@ -96,6 +96,9 @@ bkmonitorbeat:
   # 启动模式：daemon（正常模式）,check（执行一次，测试用）
   mode: daemon
   disable_netlink: false
+  {%- if extra_vars is defined and extra_vars.metricbeat_align_ts is defined and extra_vars.metricbeat_align_ts == "true" %}
+  metricbeat_align_ts: true
+  {%- endif %}
   metrics_batch_size: 1024
 
   # 是否为多租户模式（默认不开启）

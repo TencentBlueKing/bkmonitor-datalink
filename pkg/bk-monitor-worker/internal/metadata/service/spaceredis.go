@@ -71,6 +71,7 @@ const (
 	UsageComposeBksaasOtherTableIds
 	// UsageComposeAllTypeTableIds BKCI&BKSAAS类型 组装指定全空间的可以访问的结果表数据
 	UsageComposeAllTypeTableIds
+	UsageComposeDorisTableIds
 )
 
 type FilterBuildContext struct {
@@ -120,6 +121,20 @@ const (
 	CachedSpaceBizIdKey    = "bmw_cached_space_biz_id"
 )
 
+// RTFBatchQueryConfig ResultTableField 分批查询配置
+type RTFBatchQueryConfig struct {
+	BatchSize  int           // 每批查询的记录数量
+	BatchDelay time.Duration // 批次间隔时间
+}
+
+// GetDefaultRTFBatchConfig 获取默认配置
+func GetDefaultRTFBatchConfig() *RTFBatchQueryConfig {
+	return &RTFBatchQueryConfig{
+		BatchSize:  cfg.QueryDbBatchSize,  // 默认每批1000条记录
+		BatchDelay: cfg.QueryDbBatchDelay, // 默认延迟20毫秒
+	}
+}
+
 // SpaceRedisSvc 空间Redis service
 type SpaceRedisSvc struct {
 	goroutineLimit int
@@ -143,7 +158,7 @@ func (s *SpacePusher) buildFiltersByUsage(filterBuilderOptions FilterBuildContex
 		key := filterBuilderOptions.FilterAlias
 		return []map[string]interface{}{{key: filterBuilderOptions.SpaceId}}
 
-	case UsageComposeBkciOtherTableIds, UsageComposeBksaasOtherTableIds, UsageComposeRecordRuleTableIds, UsageComposeEsTableIds, UsageComposeEsBkciTableIds:
+	case UsageComposeBkciOtherTableIds, UsageComposeBksaasOtherTableIds, UsageComposeRecordRuleTableIds, UsageComposeEsTableIds, UsageComposeEsBkciTableIds, UsageComposeDorisTableIds:
 		return []map[string]interface{}{}
 
 	case UsageComposeAllTypeTableIds: // BKCI&BKSAAS类型，组装指定全空间的可以访问的结果表数据
@@ -810,6 +825,88 @@ func (s *SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) 
 	return nil
 }
 
+// PushDorisTableIdDetail  推送Doris结果表详情路由
+func (s *SpacePusher) PushDorisTableIdDetail(tableIdList []string, isPublish bool) error {
+	logger.Infof("PushDorisTableIdDetail:start to compose doris table id detail data")
+	db := mysql.GetDBSession().DB
+
+	// 获取数据
+	var dorisStorageList []storage.DorisStorage
+	dorisQuerySet := storage.NewDorisStorageQuerySet(db).Select(
+		storage.DorisStorageDBSchema.TableID,
+		storage.DorisStorageDBSchema.BkbaseTableID,
+	)
+
+	// 如果过滤结果表存在，则添加过滤条件
+	if len(tableIdList) != 0 {
+		if err := dorisQuerySet.TableIDIn(tableIdList...).All(&dorisStorageList); err != nil {
+			logger.Errorf("PushDorisTableIdDetail: compose doris table id detail error, table_id: %v, error: %s", tableIdList, err)
+			return err
+		}
+	} else {
+		if err := dorisQuerySet.All(&dorisStorageList); err != nil {
+			logger.Errorf("PushDorisTableIdDetail: compose doris table id detail error, %s", err)
+			return err
+		}
+	}
+
+	var tidList []string
+	for _, doris := range dorisStorageList {
+		tidList = append(tidList, doris.TableID)
+	}
+
+	// 获取查询别名映射关系
+	fieldAliasMap, err := s.getFieldAliasMap(tidList)
+	if err != nil {
+		logger.Errorf("PushDorisTableIdDetail: failed to get field alias map, error: %s", err)
+	}
+
+	// 组装数据
+	client := redis.GetStorageRedisInstance()
+	wg := &sync.WaitGroup{}
+	// 因为每个处理任务完全独立，可以并发执行
+	ch := make(chan struct{}, 50)
+	wg.Add(len(dorisStorageList))
+	for _, doris := range dorisStorageList {
+		ch <- struct{}{}
+		go func(doris storage.DorisStorage, wg *sync.WaitGroup, ch chan struct{}) {
+			defer func() {
+				<-ch
+				wg.Done()
+			}()
+
+			tableId := doris.TableID
+			bkbaseTableId := doris.BkbaseTableID
+
+			logger.Infof("PushDorisTableIdDetail:start to compose doris table id detail, table_id->[%s],bkbase_table_id->[%s]", tableId, bkbaseTableId)
+
+			var fieldAliasSettings map[string]string
+			if fieldAliasMap != nil {
+				fieldAliasSettings = fieldAliasMap[tableId]
+			}
+
+			composedTableId, detailStr, err := s.composeDorisTableIdDetail(tableId, doris.BkbaseTableID, fieldAliasSettings)
+
+			if err != nil {
+				logger.Errorf("PushDorisTableIdDetail:compose doris table id detail error, table_id: %s, error: %s", tableId, err)
+				return
+			}
+			// 推送数据
+			// NOTE: HSetWithCompareAndPublish 判定新老值是否存在差异，若存在差异，则进行 Publish 操作
+			logger.Infof("PushDorisTableIdDetail:start push and publish doris table id detail, table_id->[%s],channel_name->[%s],channel_key->[%s],detail->[%v]", composedTableId, cfg.ResultTableDetailChannel, composedTableId, detailStr)
+			isSuccess, err := client.HSetWithCompareAndPublish(cfg.ResultTableDetailKey, composedTableId, detailStr, cfg.ResultTableDetailChannel, composedTableId)
+			if err != nil {
+				logger.Errorf("PushDorisTableIdDetail:push and publish doris table id detail error, table_id->[%s], error->[%s]", tableId, err)
+				return
+			}
+			logger.Infof("PushDorisTableIdDetail: push doris table id detail success, table_id->[%s], is_success->[%v]", tableId, isSuccess)
+		}(doris, wg, ch)
+	}
+	wg.Wait()
+	logger.Infof("PushDorisTableIdDetail: push doris table id detail success, table_id_list [%v]", tableIdList)
+	return nil
+}
+
 // composeEsTableIdOptions 组装 es
 func (s *SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]map[string]interface{} {
 	db := mysql.GetDBSession().DB
@@ -899,9 +996,23 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 
 	// 获取历史存储集群记录
 	db := mysql.GetDBSession().DB
-	clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, tableId)
+
+	// 若该RT是虚拟RT,则使用其关联的真实RT去查询存储集群记录信息
+	var storageIns storage.ESStorage
+	realTableId := tableId
+	if err := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.OriginTableId).TableIDEq(tableId).One(&storageIns); err != nil {
+		logger.Errorf("composeEsTableIdDetail: failed to get origin table_id for table_id [%s], error: %v", tableId, err)
+		return tableId, "", err
+	}
+
+	if storageIns.OriginTableId != "" {
+		logger.Infof("composeEsTableIdDetail: origin table_id [%s] found for table_id [%s]", storageIns.OriginTableId, tableId)
+		realTableId = storageIns.OriginTableId
+	}
+
+	clusterRecords, err := storage.ComposeTableIDStorageClusterRecords(db, realTableId)
 	if err != nil {
-		logger.Errorf("composeEsTableIdDetail: failed to get storage cluster records for table_id [%s], error: %v", tableId, err)
+		logger.Errorf("composeEsTableIdDetail: failed to get storage cluster records for table_id [%s], error: %v", realTableId, err)
 		return "", "", err
 	}
 
@@ -945,6 +1056,50 @@ func (s *SpacePusher) composeEsTableIdDetail(tableId string, options map[string]
 	// 大部份情况下,len(parts)=2，保持原样，无需显式处理
 
 	logger.Infof("composeEsTableIdDetail:compose success, table_id [%s], detail [%s]", tableId, detailStr)
+	return tableId, detailStr, err
+}
+
+func (s *SpacePusher) composeDorisTableIdDetail(tableId string, bkbaseTableId string, fieldAliasSettings map[string]string) (string, string, error) {
+	logger.Infof("composeDorisTableIdDetail: table_id [%s], bkbase_table_id [%s]", tableId, bkbaseTableId)
+
+	db := mysql.GetDBSession().DB
+
+	var rt resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).TableIdEq(tableId).One(&rt); err != nil {
+		return tableId, "", err
+	}
+
+	if fieldAliasSettings == nil {
+		fieldAliasSettings = make(map[string]string)
+	}
+
+	// 组装数据
+	detailStr, err := jsonx.MarshalString(map[string]any{
+		"storage_type": models.StorageTypeBkSql,
+		"db":           bkbaseTableId,
+		"measurement":  models.DorisMeasurement,
+		"data_label":   rt.DataLabel,
+		"field_alias":  fieldAliasSettings, // 添加字段别名
+	})
+	if err != nil {
+		return tableId, "", err
+	}
+
+	parts := strings.Split(tableId, ".")
+
+	if len(parts) == 1 {
+		// 如果长度为 1，补充 `.__default__`
+		logger.Infof("composeDorisTableIdDetail: table_id [%s] is missing '.', adding '.__default__'", tableId)
+		tableId = fmt.Sprintf("%s.__default__", tableId)
+	} else if len(parts) != 2 {
+		// 如果长度不是 2，记录错误日志并返回
+		err = errors.Errorf("invalid table_id format: too many dots in %q", tableId)
+		logger.Errorf("composeDorisTableIdDetail: table_id [%s] is invalid, contains too many dots", tableId)
+		return tableId, "", err
+	}
+	// 大部份情况下,len(parts)=2，保持原样，无需显式处理
+
+	logger.Infof("composeDorisTableIdDetail:compose success, table_id [%s], detail [%s]", tableId, detailStr)
 	return tableId, detailStr, err
 }
 
@@ -1174,12 +1329,73 @@ func (s *SpacePusher) composeTableIdFields(bkTenantId string, tableIds []string)
 	if len(tableIds) == 0 {
 		return make(map[string][]string), nil
 	}
+
 	db := mysql.GetDBSession().DB
-	// 过滤到对应的结果表字段
+
+	// 分批配置
+	queryConfig := GetDefaultRTFBatchConfig()
+
+	// 分批查询 ResultTableField,降低DB压力
 	var rtfList []resulttable.ResultTableField
-	if err := resulttable.NewResultTableFieldQuerySet(db).Select(resulttable.ResultTableFieldDBSchema.TableID, resulttable.ResultTableFieldDBSchema.FieldName).TagEq(models.ResultTableFieldTagMetric).TableIDIn(tableIds...).BkTenantIdEq(bkTenantId).All(&rtfList); err != nil {
-		return nil, err
+
+	logger.Infof("composeTableIdFields: Starting batch query for ResultTableField records, target tables: %d, batch size: %d records per batch",
+		len(tableIds), queryConfig.BatchSize)
+
+	// 记录查询开始时间
+	startTime := time.Now()
+	offset := 0
+	batchNum := 1
+	totalRecords := 0
+
+	for {
+		logger.Infof("composeTableIdFields: Querying ResultTableField batch %d, offset: %d, limit: %d", batchNum, offset, queryConfig.BatchSize)
+
+		// 执行当前批次的查询，使用 Limit 和 Offset 进行分页
+		var batchRtfList []resulttable.ResultTableField
+		query := resulttable.NewResultTableFieldQuerySet(db).
+			Select(resulttable.ResultTableFieldDBSchema.TableID, resulttable.ResultTableFieldDBSchema.FieldName).
+			TagEq(models.ResultTableFieldTagMetric).
+			TableIDIn(tableIds...).
+			BkTenantIdEq(bkTenantId).
+			Limit(queryConfig.BatchSize).
+			Offset(offset)
+
+		if err := query.All(&batchRtfList); err != nil {
+			logger.Errorf("composeTableIdFields: Failed to query ResultTableField batch %d (offset: %d): %v", batchNum, offset, err)
+			return nil, err
+		}
+
+		// 如果当前批次没有数据，说明已经查询完毕
+		if len(batchRtfList) == 0 {
+			logger.Infof("composeTableIdFields: No more ResultTableField records found, batch query completed")
+			break
+		}
+
+		// 合并当前批次的结果
+		rtfList = append(rtfList, batchRtfList...)
+		totalRecords += len(batchRtfList)
+
+		logger.Infof("composeTableIdFields: Completed ResultTableField batch %d, retrieved %d records, total so far: %d",
+			batchNum, len(batchRtfList), totalRecords)
+
+		// 如果当前批次的记录数少于批次大小，说明这是最后一批
+		if len(batchRtfList) < queryConfig.BatchSize {
+			logger.Infof("composeTableIdFields: Last batch detected (records: %d < batch_size: %d), query completed", len(batchRtfList), queryConfig.BatchSize)
+			break
+		}
+
+		// 准备下一批次
+		offset += queryConfig.BatchSize
+		batchNum++
+
+		// 批次间延迟
+		time.Sleep(queryConfig.BatchDelay)
 	}
+
+	queryDuration := time.Since(startTime)
+	logger.Infof("composeTableIdFields:: ResultTableField batch query completed, total records: %d, batches: %d, duration: %v", totalRecords, batchNum, queryDuration)
+
+	// ========== 构建 tableIdFieldMap（保持原逻辑&数据结构不变）==========
 	tableIdFieldMap := make(map[string][]string)
 	for _, field := range rtfList {
 		if fieldList, ok := tableIdFieldMap[field.TableID]; ok {
@@ -1188,11 +1404,19 @@ func (s *SpacePusher) composeTableIdFields(bkTenantId string, tableIds []string)
 			tableIdFieldMap[field.TableID] = []string{field.FieldName}
 		}
 	}
+
 	// 根据 option 过滤是否有开启黑名单，如果开启黑名单，则指标会有过期时间
 	var rtoList []resulttable.ResultTableOption
-	if err := resulttable.NewResultTableOptionQuerySet(db).Select(resulttable.ResultTableOptionDBSchema.TableID).BkTenantIdEq(bkTenantId).TableIDIn(tableIds...).NameEq(models.OptionEnableFieldBlackList).ValueEq("false").All(&rtoList); err != nil {
+	if err := resulttable.NewResultTableOptionQuerySet(db).
+		Select(resulttable.ResultTableOptionDBSchema.TableID).
+		BkTenantIdEq(bkTenantId).
+		TableIDIn(tableIds...).
+		NameEq(models.OptionEnableFieldBlackList).
+		ValueEq("false").
+		All(&rtoList); err != nil {
 		return nil, err
 	}
+
 	var whiteTableIdList []string
 	for _, o := range rtoList {
 		whiteTableIdList = append(whiteTableIdList, o.TableID)
@@ -1266,12 +1490,74 @@ func (s *SpacePusher) filterTsInfo(bkTenantId string, tableIds []string) (*TsInf
 	// NOTE: 针对自定义时序，过滤掉历史废弃的指标，时间在`TIME_SERIES_METRIC_EXPIRED_SECONDS`的为有效数据
 	// 其它类型直接获取所有指标和维度
 	beginTime := time.Now().UTC().Add(-time.Duration(cfg.GlobalTimeSeriesMetricExpiredSeconds) * time.Second)
+
+	// 分批查询 TimeSeriesMetric（优化部分
 	var tsmList []customreport.TimeSeriesMetric
+
 	if len(tsGroupIdList) != 0 {
-		if err := customreport.NewTimeSeriesMetricQuerySet(db).Select(customreport.TimeSeriesMetricDBSchema.FieldName, customreport.TimeSeriesMetricDBSchema.GroupID).GroupIDIn(tsGroupIdList...).LastModifyTimeGte(beginTime).All(&tsmList); err != nil {
-			return nil, err
+		// 分批查询配置
+		queryConfig := GetDefaultRTFBatchConfig()
+
+		logger.Infof("filterTsInfo: Starting batch query for TimeSeriesMetric records, target groups: %d, batch size: %d records per batch",
+			len(tsGroupIdList), queryConfig.BatchSize)
+
+		// 记录查询开始时间
+		startTime := time.Now()
+		offset := 0
+		batchNum := 1
+		totalRecords := 0
+
+		for {
+			logger.Infof("filterTsInfo: Querying TimeSeriesMetric batch %d, offset: %d, limit: %d",
+				batchNum, offset, queryConfig.BatchSize)
+
+			// 执行当前批次的查询，使用 Limit 和 Offset 进行分页
+			var batchTsmList []customreport.TimeSeriesMetric
+			query := customreport.NewTimeSeriesMetricQuerySet(db).
+				Select(customreport.TimeSeriesMetricDBSchema.FieldName, customreport.TimeSeriesMetricDBSchema.GroupID).
+				GroupIDIn(tsGroupIdList...).
+				LastModifyTimeGte(beginTime).
+				Limit(queryConfig.BatchSize).
+				Offset(offset)
+
+			if err := query.All(&batchTsmList); err != nil {
+				logger.Errorf("filterTsInfo: Failed to query TimeSeriesMetric batch %d (offset: %d): %v", batchNum, offset, err)
+				return nil, err
+			}
+
+			// 如果当前批次没有数据，说明已经查询完毕
+			if len(batchTsmList) == 0 {
+				logger.Infof("filterTsInfo: No more TimeSeriesMetric records found, batch query completed")
+				break
+			}
+
+			// 合并当前批次的结果
+			tsmList = append(tsmList, batchTsmList...)
+			totalRecords += len(batchTsmList)
+
+			logger.Infof("filterTsInfo: Completed TimeSeriesMetric batch %d, retrieved %d records, total so far: %d",
+				batchNum, len(batchTsmList), totalRecords)
+
+			// 如果当前批次的记录数少于批次大小，说明这是最后一批
+			if len(batchTsmList) < queryConfig.BatchSize {
+				logger.Infof("filterTsInfo: Last batch detected (records: %d < batch_size: %d), query completed",
+					len(batchTsmList), queryConfig.BatchSize)
+				break
+			}
+
+			// 准备下一批次
+			offset += queryConfig.BatchSize
+			batchNum++
+
+			// 批次间延迟
+			time.Sleep(queryConfig.BatchDelay)
 		}
+
+		queryDuration := time.Since(startTime)
+		logger.Infof("filterTsInfo: TimeSeriesMetric batch query completed, total records: %d, batches: %d, duration: %v",
+			totalRecords, batchNum, queryDuration)
 	}
+
 	groupIdFieldsMap := make(map[uint][]string)
 	for _, metric := range tsmList {
 		if fieldList, ok := groupIdFieldsMap[metric.GroupID]; ok {
@@ -1285,7 +1571,6 @@ func (s *SpacePusher) filterTsInfo(bkTenantId string, tableIds []string) (*TsInf
 		TableIdTsGroupIdMap: TableIdTsGroupIdMap,
 		GroupIdFieldsMap:    groupIdFieldsMap,
 	}, nil
-
 }
 
 // 获取结果表对应的集群 ID
@@ -1480,6 +1765,13 @@ func (s *SpacePusher) pushBkccSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	s.composeValue(&values, &esValues)
 
+	// 追加Doris空间路由表,不需要filters
+	dorisValues, errDoris := s.ComposeDorisTableIds(spaceType, spaceId)
+	if errDoris != nil {
+		logger.Errorf("pushBkccSpaceTableIds:compose doris space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errDoris)
+	}
+	s.composeValue(&values, &dorisValues)
+
 	// 追加关联的BKCI相关的ES结果表,不需要filters
 	esBkciValues, errEsBkci := s.ComposeEsBkciTableIds(spaceType, spaceId)
 	if errEsBkci != nil {
@@ -1585,6 +1877,13 @@ func (s *SpacePusher) pushBkciSpaceTableIds(bkTenantId, spaceType, spaceId strin
 	}
 	s.composeValue(&values, &esValues)
 
+	// 追加Doris空间结果表
+	dorisValues, err := s.ComposeDorisTableIds(spaceType, spaceId)
+	if err != nil {
+		logger.Errorf("pushBkciSpaceTableIds：compose doris space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
+	}
+	s.composeValue(&values, &dorisValues)
+
 	// 追加APM全局结果表
 	apmAllTypeValues, errApmAllType := s.composeApmAllTypeTableIds(spaceType, spaceId)
 	if errApmAllType != nil {
@@ -1655,6 +1954,13 @@ func (s *SpacePusher) pushBksaasSpaceTableIds(bkTenantId, spaceType, spaceId str
 		logger.Errorf("pushBksaasSpaceTableIds: compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, esErr)
 	}
 	s.composeValue(&values, &esValues)
+
+	// 追加Doris空间路由表
+	dorisValues, errDoris := s.ComposeDorisTableIds(spaceType, spaceId)
+	if errDoris != nil {
+		logger.Errorf("pushBksaasSpaceTableIds: compose doris space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errDoris)
+	}
+	s.composeValue(&values, &dorisValues)
 
 	allTypeTableIdValues, allTypeErr := s.composeAllTypeTableIds(spaceType, spaceId)
 	if allTypeErr != nil {
@@ -1764,6 +2070,43 @@ func (s *SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (map[string]m
 		reformattedTid := reformatTableId(tid)
 		dataValuesToRedis[reformattedTid] = values
 	}
+
+	return dataValuesToRedis, nil
+}
+
+// ComposeDorisTableIds 组装关联的Doris结果表
+func (s *SpacePusher) ComposeDorisTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+	logger.Infof("ComposeDorisTableIds: start to push doris table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
+	bizId, err := s.getBizIdBySpace(spaceType, spaceId)
+	if err != nil {
+		return nil, errors.Wrapf(err, "ComposeDorisTableIds: compose doris table_id, get biz_id by space failed, space_type [%s], space_id [%s]", spaceType, spaceId)
+	}
+
+	db := mysql.GetDBSession().DB
+	var rtList []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).BkBizIdEq(bizId).DefaultStorageEq(models.StorageTypeDoris).IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
+		return nil, err
+	}
+	dataValues := make(map[string]map[string]interface{})
+	for _, rt := range rtList {
+		// dataValues[rt.TableId] = map[string]interface{}{"filters": []interface{}{}}
+		options := FilterBuildContext{
+			SpaceType: spaceType,
+			SpaceId:   spaceId,
+			TableId:   rt.TableId,
+		}
+		// 使用统一抽象方法生成filters
+		filters := s.buildFiltersByUsage(options, UsageComposeDorisTableIds)
+		dataValues[rt.TableId] = map[string]interface{}{"filters": filters}
+	}
+
+	// 二段式校验&补充
+	dataValuesToRedis := make(map[string]map[string]interface{})
+	for tid, values := range dataValues {
+		reformattedTid := reformatTableId(tid)
+		dataValuesToRedis[reformattedTid] = values
+	}
+	logger.Infof("ComposeDorisTableIds: compose doris table_id successfully, data_values->[%v]", dataValues)
 
 	return dataValuesToRedis, nil
 }

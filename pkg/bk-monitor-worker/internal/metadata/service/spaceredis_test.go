@@ -26,6 +26,7 @@ import (
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/migrate"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
@@ -432,6 +433,55 @@ func TestSpacePusher_ComposeEsTableIds(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.spaceType+tt.spaceId, func(t *testing.T) {
 			datavalues, err := s.ComposeEsTableIds(tt.spaceType, tt.spaceId)
+			if tt.hasError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+			assert.Equal(t, tt.want, datavalues)
+		})
+	}
+}
+
+func TestSpacePusher_ComposeDorisTableIds(t *testing.T) {
+	t.Run("TestSpacePusher_GetBizIdBySpace", TestSpacePusher_GetBizIdBySpace)
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	obj := resulttable.ResultTable{TableId: "apache.net", BkBizId: 2, DefaultStorage: models.StorageTypeDoris, IsDeleted: false, IsEnable: true}
+	obj2 := resulttable.ResultTable{TableId: "system.mem", BkBizId: -5, DefaultStorage: models.StorageTypeDoris, IsDeleted: false, IsEnable: true}
+	obj3 := resulttable.ResultTable{TableId: "system.net", BkBizId: 2, DefaultStorage: models.StorageTypeDoris, IsDeleted: false, IsEnable: true}
+	obj4 := resulttable.ResultTable{TableId: "system.io", BkBizId: -6, DefaultStorage: models.StorageTypeDoris, IsDeleted: false, IsEnable: true}
+
+	db.Delete(obj)
+	db.Delete(obj2)
+	db.Delete(obj3)
+	db.Delete(obj4)
+
+	assert.NoError(t, obj.Create(db))
+	assert.NoError(t, obj2.Create(db))
+	assert.NoError(t, obj3.Create(db))
+	assert.NoError(t, obj4.Create(db))
+
+	var nilMap map[string]map[string]interface{}
+
+	tests := []struct {
+		spaceType string
+		spaceId   string
+		hasError  bool
+		want      map[string]map[string]interface{}
+	}{
+		{spaceType: "bkcc", spaceId: "3", hasError: true, want: nilMap}, // 数据库无该记录
+		{spaceType: "bkcc", spaceId: "2", hasError: false, want: map[string]map[string]interface{}{"apache.net": {"filters": []map[string]interface{}{}}, // bizId=2
+			"system.net": {"filters": []map[string]interface{}{}}}},
+		{spaceType: "bkci", spaceId: "test", hasError: false, want: map[string]map[string]interface{}{"system.mem": {"filters": []map[string]interface{}{}}}},   // bizId=-5
+		{spaceType: "bksaas", spaceId: "test2", hasError: false, want: map[string]map[string]interface{}{"system.io": {"filters": []map[string]interface{}{}}}}, // bizId=-6
+	}
+
+	s := &SpacePusher{}
+	for _, tt := range tests {
+		t.Run(tt.spaceType+tt.spaceId, func(t *testing.T) {
+			datavalues, err := s.ComposeDorisTableIds(tt.spaceType, tt.spaceId)
 			if tt.hasError {
 				assert.Error(t, err)
 			} else {
@@ -1344,6 +1394,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 			SourceType:       sourceType,
 			IndexSet:         indexSet,
 			NeedCreateIndex:  true,
+			OriginTableId:    "bklog.real_rt",
 		},
 	}
 	for _, esStorage := range esStorages {
@@ -1369,7 +1420,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 	// 插入StorageClusterRecord数据
 	testRecords := []storage.ClusterRecord{
 		{
-			TableID:     tableID,
+			TableID:     "bklog.real_rt",
 			ClusterID:   1,
 			IsDeleted:   false,
 			IsCurrent:   true,
@@ -1380,7 +1431,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 			DeleteTime:  nil,
 		},
 		{
-			TableID:     tableID,
+			TableID:     "bklog.real_rt",
 			ClusterID:   2,
 			IsDeleted:   false,
 			IsCurrent:   true,
@@ -1431,7 +1482,71 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 	pusher := NewSpacePusher()
 	err := pusher.PushEsTableIdDetail([]string{tableID}, false)
 	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
+}
 
+func TestSpacePusher_PushDorisTableIdDetail(t *testing.T) {
+	// 初始化数据库
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	// 准备测试数据
+	tableID := "bklog.test_rt"
+	storageClusterID := uint(1)
+	dataLabel := "test_label"
+
+	rtObj1 := resulttable.ResultTable{TableId: tableID, IsDeleted: false, IsEnable: true, DataLabel: &dataLabel}
+	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
+	assert.NoError(t, rtObj1.Create(db))
+
+	db.AutoMigrate(&storage.ESStorage{}, &resulttable.ResultTableOption{}, &storage.ClusterRecord{})
+
+	// 创建DorisStorage记录
+	dorisStorages := []storage.DorisStorage{
+		{
+			TableID:          tableID,
+			BkbaseTableID:    "bklog_test_rt_bkbase",
+			StorageClusterID: storageClusterID,
+			IndexSet:         "index_1",
+			SourceType:       "log",
+		},
+	}
+	for _, dorisStorage := range dorisStorages {
+		db.Delete(&storage.ESStorage{}, "table_id = ?", dorisStorage.TableID)
+		err := db.Create(&dorisStorage).Error
+		assert.NoError(t, err, "Failed to insert DorisStorage")
+	}
+
+	fieldAliasRecords := []resulttable.ESFieldQueryAliasOption{
+		{
+			TableID:    tableID,
+			FieldPath:  "__ext.pod_name",
+			PathType:   "keyword",
+			QueryAlias: "pod_name",
+			IsDeleted:  false,
+		},
+		{
+			TableID:    tableID,
+			FieldPath:  "__ext.pod_id",
+			PathType:   "keyword",
+			QueryAlias: "pod_id",
+			IsDeleted:  false,
+		},
+	}
+	// 执行插入
+	for _, record := range fieldAliasRecords {
+		db.Delete(&resulttable.ESFieldQueryAliasOption{}, "table_id = ? AND field_path = ?", tableID, record.FieldPath)
+		err := db.Create(&record).Error
+		assert.NoError(t, err, "Failed to insert ESFieldQueryAliasOption")
+	}
+
+	// 捕获日志输出
+	var logBuffer bytes.Buffer
+	log.SetOutput(&logBuffer) // 将日志输出到 buffer
+	defer log.SetOutput(nil)  // 恢复原始日志输出
+
+	// 执行测试方法
+	pusher := NewSpacePusher()
+	err := pusher.PushDorisTableIdDetail([]string{tableID}, false)
+	assert.NoError(t, err, "PushEsTableIdDetail should not return an error")
 }
 
 func TestSpacePusher_ComposeData(t *testing.T) {
@@ -1755,6 +1870,7 @@ func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {
 	// 准备测试数据
 	tableID1 := "1001_bkmonitor_time_series_50010.__default__"
 	tableID2 := "1001_bkmonitor_time_series_50011.__default__"
+	tableID3 := "1001_test_doris.__default__"
 	dataLabel1 := "a" // 初始化为字符串
 
 	// 插入 ResultTable 数据
@@ -1771,15 +1887,24 @@ func TestSpacePusher_pushBkccSpaceTableIds(t *testing.T) {
 			BkBizIdAlias: "",
 			DataLabel:    nil,
 		},
+		{
+			TableId:        tableID3,
+			BkBizId:        1001,
+			BkBizIdAlias:   "",
+			DataLabel:      nil,
+			DefaultStorage: models.StorageTypeDoris,
+			IsDeleted:      false,
+			IsEnable:       true,
+		},
 	}
 	for _, rt := range resultTables {
 		db.Delete(&resulttable.ResultTable{}, "table_id = ?", rt.TableId)
 		assert.NoError(t, db.Create(&rt).Error, "Failed to insert ResultTable")
 	}
 
-	obj := space.Space{Id: 1, SpaceTypeId: "bkcc", SpaceId: "1001"}
-	obj2 := space.Space{Id: 5, SpaceTypeId: "bkci", SpaceId: "bkmonitor"}
-	obj3 := space.Space{Id: 6, SpaceTypeId: "bksaas", SpaceId: "monitor_saas"}
+	obj := space.Space{Id: 1, SpaceTypeId: "bkcc", SpaceId: "1001", BkTenantId: "system"}
+	obj2 := space.Space{Id: 5, SpaceTypeId: "bkci", SpaceId: "bkmonitor", BkTenantId: "system"}
+	obj3 := space.Space{Id: 6, SpaceTypeId: "bksaas", SpaceId: "monitor_saas", BkTenantId: "system"}
 
 	db.Delete(obj)
 	db.Delete(obj2)
@@ -2246,4 +2371,121 @@ func TestSpaceRedisSvc_composeBkciLevelTableIds(t *testing.T) {
 	expected := map[string]map[string]interface{}{"bkmonitor_event_60010.__default__": {"filters": []map[string]interface{}{{"dimensions.project_id": "test_bkci_space"}}}}
 	assert.NoError(t, err)
 	assert.Equal(t, expected, bkciData, "Expected 1 table IDs for bkci space")
+}
+
+func TestSpaceRedisSvc_composeTableIdFields(t *testing.T) {
+	// 初始化数据库配置
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 清理所有相关表数据
+	cleanTestData := func() {
+		db.Delete(&space.Space{})
+		db.Delete(&resulttable.ResultTable{})
+		db.Delete(&resulttable.ResultTableField{})
+	}
+	cleanTestData()       // 测试开始前清理数据
+	defer cleanTestData() // 测试结束后清理数据
+
+	// 准备测试用数据
+	resultTableFields := []resulttable.ResultTableField{
+		{
+			TableID:        "1001_test.__default__",
+			FieldName:      "field1",
+			FieldType:      "string",
+			IsConfigByUser: true,
+			Tag:            "metric",
+			BkTenantId:     "system",
+		},
+		{
+			TableID:        "1001_test.__default__",
+			FieldName:      "field2",
+			FieldType:      "string",
+			IsConfigByUser: true,
+			Tag:            "metric",
+			BkTenantId:     "system",
+		},
+		{
+			TableID:        "1001_test.__default__",
+			FieldName:      "field3",
+			FieldType:      "string",
+			IsConfigByUser: true,
+			Tag:            "metric",
+			BkTenantId:     "system",
+		},
+		{
+			TableID:        "1001_test.__default__",
+			FieldName:      "field4",
+			FieldType:      "string",
+			IsConfigByUser: true,
+			Tag:            "metric",
+			BkTenantId:     "system",
+		},
+	}
+
+	// 插入 ResultTableField 数据
+	for _, resultTableField := range resultTableFields {
+		err := resultTableField.Create(db)
+		assert.NoError(t, err)
+	}
+
+	// 准备 ResultTable 测试数据
+	resultTable := resulttable.ResultTable{
+		TableId:        "1001_test.__default__",
+		BkBizId:        1001,
+		DefaultStorage: models.StorageTypeVM,
+		BkTenantId:     "system",
+	}
+	err := resultTable.Create(db)
+	assert.NoError(t, err)
+
+	// TimeSeriesGroup
+	timeSeriesGroup := customreport.TimeSeriesGroup{
+		CustomGroupBase: customreport.CustomGroupBase{
+			TableID:  "1001_test.__default__",
+			BkDataID: 50010,
+			BkBizID:  1001,
+		},
+		TimeSeriesGroupID:   60011,
+		TimeSeriesGroupName: "test_group",
+		BkTenantId:          "system",
+	}
+	db.Delete(&timeSeriesGroup, "table_id = ?", timeSeriesGroup.TableID)
+	err = timeSeriesGroup.Create(db)
+	assert.NoError(t, err, "Failed to insert TimeSeriesGroup")
+
+	// TimeSeriesMetric
+	timeSeriesMetrics := []customreport.TimeSeriesMetric{
+		{
+			GroupID:   60011,
+			TableID:   "1001_test.__default__",
+			FieldName: "field1",
+		},
+		{
+			GroupID:   60011,
+			TableID:   "1001_test.__default__",
+			FieldName: "field2",
+		},
+		{
+			GroupID:   60011,
+			TableID:   "1001_test.__default__",
+			FieldName: "field3",
+		},
+		{
+			GroupID:   60011,
+			TableID:   "1001_test.__default__",
+			FieldName: "field4",
+		},
+	}
+	for _, timeSeriesMetric := range timeSeriesMetrics {
+		db.Delete(&timeSeriesMetric, "table_id = ? AND field_name = ?", timeSeriesMetric.TableID, timeSeriesMetric.FieldName)
+		err = timeSeriesMetric.Create(db)
+		assert.NoError(t, err, "Failed to insert TimeSeriesMetric")
+	}
+
+	actualData, err := NewSpacePusher().composeTableIdFields("system", []string{"1001_test.__default__"})
+	assert.NoError(t, err, "composeTableIdFields should not return an error")
+	assert.Equal(t, map[string][]string{
+		"1001_test.__default__": {"field1", "field2", "field3", "field4"},
+	}, actualData, "composeTableIdFields should return the expected data")
 }

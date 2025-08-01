@@ -68,6 +68,8 @@ business_with_set_relation{bk_biz_id="138",business_id="138",set_id="25425"} 1
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			b := GetRelationMetricsBuilder()
+			b.ClearAllMetrics()
+
 			var resource map[string]*ResourceInfo
 			err := json.Unmarshal([]byte(c.resource), &resource)
 			b.resources[c.bizID] = resource

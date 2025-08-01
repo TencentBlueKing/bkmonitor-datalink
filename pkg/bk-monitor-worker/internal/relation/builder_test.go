@@ -53,9 +53,23 @@ host_with_module_relation{bk_biz_id="1",host_id="135",module_id="110"} 1
 module_with_set_relation{bk_biz_id="1",module_id="110",set_id="21"} 1
 `,
 		},
+		{
+			name:     "test-2",
+			bizID:    138,
+			resource: `{"host":{"name":"host","data":{"127.0.0.1|0":{"id":"127.0.0.1|0","resource":"system","label":{"bk_cloud_id":"0","bk_target_ip":"127.0.0.1"},"links":[[{"id":"93475","resource":"host","label":{"host_id":"93475"}}]]},"93475":{"id":"93475","resource":"host","label":{"host_id":"93475"},"links":[[{"id":"181232","resource":"module","label":{"module_id":"181232"}},{"id":"25425","resource":"set","label":{"set_id":"25425"}},{"id":"138","resource":"business","label":{"business_id":"138"}}]]}}},"module":{"name":"module","data":{"181232":{"id":"181232","resource":"module","label":{"module_id":"181232"}}}},"set":{"name":"set","data":{"25425":{"id":"25425","resource":"set","label":{"set_id":"25425"},"expands":{"host":{"env_name":"LIVE","env_type":"prod","version":"tlinux_update_20250729_134916_ver92184_127.0.0.1.tgz"},"set":{"env_name":"LIVE","env_type":"prod","version":"tlinux_update_20250729_134916_ver92184_127.0.0.1.tgz"}}}}}}`,
+			expected: `set_info_relation{bk_biz_id="138",env_name="LIVE",env_type="prod",set_id="25425",version="tlinux_update_20250729_134916_ver92184_127.0.0.1.tgz"} 1
+host_with_system_relation{bk_biz_id="138",bk_cloud_id="0",bk_target_ip="127.0.0.1",host_id="93475"} 1
+host_with_module_relation{bk_biz_id="138",host_id="93475",module_id="181232"} 1
+module_with_set_relation{bk_biz_id="138",module_id="181232",set_id="25425"} 1
+host_info_relation{bk_biz_id="138",env_name="LIVE",env_type="prod",host_id="93475",version="tlinux_update_20250729_134916_ver92184_127.0.0.1.tgz"} 1
+business_with_set_relation{bk_biz_id="138",business_id="138",set_id="25425"} 1
+`,
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			b := GetRelationMetricsBuilder()
+			b.ClearAllMetrics()
+
 			var resource map[string]*ResourceInfo
 			err := json.Unmarshal([]byte(c.resource), &resource)
 			b.resources[c.bizID] = resource

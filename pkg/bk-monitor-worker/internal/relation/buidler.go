@@ -234,6 +234,10 @@ func (b *MetricsBuilder) toMetricList(bizID int) []Metric {
 			// 注入 ExpandInfo 指标
 			// info.Expands 里面就是配置的资源场景，expandResource 对应场景资源名
 			for expandResource, expand := range info.Expands {
+				if info.Resource == "" {
+					continue
+				}
+
 				// 如果配置资源一致，则为自身资源的 Expand，否则使用继承池里的 Expand
 				// 这里的 info.Resource 指该实体的真是归属资源，上面的 resource 表示的是数据维护的资源
 				// 例如：host 数据，会同时维护 host 和 system 的资源，所以相关资源实体需要使用 info.Resource
@@ -264,7 +268,6 @@ func (b *MetricsBuilder) toMetricList(bizID int) []Metric {
 			for _, link := range info.Links {
 				sourceNode := rootNode
 				for _, item := range link {
-
 					nextNode := b.makeNode(item.Resource, bizLabel, item.Label)
 					metric := sourceNode.RelationMetric(nextNode)
 					addMetrics(metric)
@@ -275,18 +278,8 @@ func (b *MetricsBuilder) toMetricList(bizID int) []Metric {
 						continue
 					}
 
-					// 查找上游资源类型
-					if resources[item.Resource] == nil {
-						continue
-					}
-					// 查找上游资源实体
-					itemInfo := resources[item.Resource].Get(item.ID)
-					if itemInfo == nil {
-						continue
-					}
-
 					// 查找上游资源是否配置了扩展信息
-					if expand, expandOk := resourceParentExpands[info.Resource][itemInfo.Resource][item.ID]; expandOk {
+					if expand, expandOk := resourceParentExpands[info.Resource][item.Resource][item.ID]; expandOk {
 						// 构建维度，注入主键和扩展维度
 						node := b.makeNode(info.Resource, info.Label, bizLabel, expand)
 						expandMetric := node.ExpandInfoMetric()

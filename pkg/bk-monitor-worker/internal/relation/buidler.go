@@ -184,7 +184,7 @@ func (b *MetricsBuilder) makeNode(resource string, labels ...map[string]string) 
 	}
 }
 
-func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
+func (b *MetricsBuilder) toMetricList(bizID int) []Metric {
 	if b.resources == nil {
 		return nil
 	}
@@ -192,7 +192,15 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 		return nil
 	}
 
-	metrics := make(map[string]Metric)
+	metrics := make([]Metric, 0)
+	metricCheck := make(map[string]struct{})
+
+	addMetrics := func(m Metric) {
+		if _, ok := metricCheck[m.String()]; !ok {
+			metrics = append(metrics, m)
+			metricCheck[m.String()] = struct{}{}
+		}
+	}
 
 	// 默认注入业务维度
 	bizLabel := map[string]string{
@@ -233,9 +241,8 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 					// 构建维度，注入主键和扩展维度
 					node := b.makeNode(expandResource, info.Label, bizLabel, expand)
 					metric := node.ExpandInfoMetric()
-					if _, metricOk := metrics[metric.String()]; !metricOk {
-						metrics[metric.String()] = metric
-					}
+
+					addMetrics(metric)
 					expandInfoStatus = true
 				} else {
 					// 注入父资源的 Expand
@@ -250,17 +257,17 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 				}
 			}
 
-			sourceNode := b.makeNode(info.Resource, info.Label)
+			// 根节点
+			rootNode := b.makeNode(info.Resource, info.Label)
 
 			// 注入 relation 关联指标
 			for _, link := range info.Links {
+				sourceNode := rootNode
 				for _, item := range link {
 
 					nextNode := b.makeNode(item.Resource, bizLabel, item.Label)
 					metric := sourceNode.RelationMetric(nextNode)
-					if _, metricOk := metrics[metric.String()]; !metricOk {
-						metrics[metric.String()] = metric
-					}
+					addMetrics(metric)
 					sourceNode = nextNode
 
 					// 如果没有自身资源下没有匹配到扩展信息，需要从上游找是否有配置需要继承，如果已经配置了则直接退出
@@ -283,9 +290,7 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 						// 构建维度，注入主键和扩展维度
 						node := b.makeNode(info.Resource, info.Label, bizLabel, expand)
 						expandMetric := node.ExpandInfoMetric()
-						if _, metricOk := metrics[expandMetric.String()]; !metricOk {
-							metrics[expandMetric.String()] = expandMetric
-						}
+						addMetrics(expandMetric)
 						expandInfoStatus = true
 					}
 				}

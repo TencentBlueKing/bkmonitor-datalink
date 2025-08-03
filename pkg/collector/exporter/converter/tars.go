@@ -229,7 +229,7 @@ func statHeadToRPCMetricDims(head *statf.StatMicMsgHead, role string, ip string)
 func propHeadToCustomMetricDims(head *propertyf.StatPropMsgHead, ip string) map[string]string {
 	instance := head.Ip
 	if instance == "" {
-		// 没有上报 IP 字段时，使用上报 IP 填充。
+		// 原始数据中可能没有 IP 维度，使用上报 IP 填充。
 		instance = ip
 	}
 

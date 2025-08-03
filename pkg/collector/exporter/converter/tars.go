@@ -298,10 +298,12 @@ func newStat(token define.Token, role, target string, timestamp int64, dims map[
 	}
 }
 
+// GetToken 返回 Token 信息
 func (s *stat) GetToken() define.Token {
 	return s.token
 }
 
+// GetDataID 返回数据 ID
 func (s *stat) GetDataID() int32 {
 	return s.token.MetricsDataId
 }
@@ -339,6 +341,7 @@ func (s *stat) Copy() *stat {
 	return newStat
 }
 
+// DropTags 删除指定维度
 func (s *stat) DropTags(tags []string) *stat {
 	for _, tag := range tags {
 		if _, ok := s.dimensions[tag]; ok {
@@ -348,6 +351,7 @@ func (s *stat) DropTags(tags []string) *stat {
 	return s
 }
 
+// UpdateFrom 从另一个 stat 实例更新当前实例的统计数据
 func (s *stat) UpdateFrom(other *stat) {
 	s.execCount += other.execCount
 	s.timeoutCount += other.timeoutCount

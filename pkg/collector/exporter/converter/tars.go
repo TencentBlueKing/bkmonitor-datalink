@@ -426,7 +426,8 @@ func newAggregator(converter EventConverter) *aggregator {
 		interval:  200 * time.Millisecond,
 		converter: converter,
 		tagIgnoreRules: map[string][]string{
-			tarsStatTagsRoleClient: {rpcMetricTagsCalleeIp}, tarsStatTagsRoleServer: {rpcMetricTagsCallerIp},
+			tarsStatTagsRoleClient: {rpcMetricTagsCalleeIp},
+			tarsStatTagsRoleServer: {rpcMetricTagsCallerIp},
 		},
 	}
 	go a.Run()

@@ -11,6 +11,7 @@ package redis
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -46,6 +47,7 @@ type ScrollSession struct {
 	// map key is SliceStatusKey
 	ScrollIDs map[string]SliceStatusValue `json:"scroll_ids"`
 	Status    string                      `json:"status"`
+	Mu        sync.RWMutex                `json:"-"`
 }
 
 func (s *ScrollSession) MarshalBinary() ([]byte, error) {
@@ -97,6 +99,8 @@ type SliceInfo struct {
 }
 
 func (s *ScrollSession) Done() bool {
+	s.Mu.RLock()
+	defer s.Mu.RUnlock()
 	for _, val := range s.ScrollIDs {
 		if val.Status != StatusCompleted && val.Status != StatusStop {
 			return false
@@ -106,7 +110,44 @@ func (s *ScrollSession) Done() bool {
 }
 
 func (s *ScrollSession) UpdateScrollSliceStatusValue(ctx context.Context, sliceKey string, value SliceStatusValue) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	s.ScrollIDs[sliceKey] = value
 	s.LastAccessAt = time.Now()
+	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
+}
+
+func (s *ScrollSession) AtomicUpdateSliceStatus(ctx context.Context, sliceKey string, status string, scrollID string) error {
+	s.Mu.Lock()
+	sliceValue := s.ScrollIDs[sliceKey]
+	sliceValue.Status = status
+	sliceValue.ScrollID = scrollID
+
+	if status == StatusFailed {
+		sliceValue.FailedNum++
+	}
+
+	s.ScrollIDs[sliceKey] = sliceValue
+	s.LastAccessAt = time.Now()
+	s.Mu.Unlock()
+
+	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
+}
+
+func (s *ScrollSession) AtomicUpdateSliceStatusAndOffset(ctx context.Context, sliceKey string, status string, scrollID string, offset int) error {
+	s.Mu.Lock()
+	sliceValue := s.ScrollIDs[sliceKey]
+	sliceValue.Status = status
+	sliceValue.ScrollID = scrollID
+	sliceValue.Offset = offset
+
+	if status == StatusFailed {
+		sliceValue.FailedNum++
+	}
+
+	s.ScrollIDs[sliceKey] = sliceValue
+	s.LastAccessAt = time.Now()
+	s.Mu.Unlock()
+
 	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
 }

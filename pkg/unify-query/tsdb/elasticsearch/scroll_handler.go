@@ -31,6 +31,9 @@ func generateScrollID(items ...any) string {
 }
 
 func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession, connect, tableID string) ([]*redis.SliceInfo, error) {
+	session.Mu.Lock()
+	defer session.Mu.Unlock()
+
 	needUpdate := false
 	var slices []*redis.SliceInfo
 
@@ -91,17 +94,5 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 
 func (i *Instance) UpdateScrollStatus(ctx context.Context, session *redis.ScrollSession, connect, tableID string, resultOption *metadata.ResultTableOption, status string) error {
 	key := generateScrollID(consul.ElasticsearchStorageType, connect, tableID, *resultOption.SliceIndex)
-	sliceStatusValue, ok := session.ScrollIDs[key]
-	if !ok {
-		return redis.ErrorOfScrollSliceStatusNotFound
-	}
-
-	sliceStatusValue.Status = status
-	if status == redis.StatusFailed {
-		sliceStatusValue.FailedNum++
-	}
-	if sliceStatusValue.ScrollID != resultOption.ScrollID {
-		sliceStatusValue.ScrollID = resultOption.ScrollID
-	}
-	return session.UpdateScrollSliceStatusValue(ctx, key, sliceStatusValue)
+	return session.AtomicUpdateSliceStatus(ctx, key, status, resultOption.ScrollID)
 }

@@ -191,16 +191,26 @@ func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connec
 	_, option, err := instance.QueryRawData(ctx, qry, start, end, dataCh)
 	close(dataCh)
 	wg.Wait()
-	var sliceResultOption *metadata.ResultTableOption
-	if option != nil {
-		var connectKey string
-		if instance.InstanceType() == consul.BkSqlStorageType {
-			connectKey = ""
-		} else {
-			connectKey = connect
-		}
 
-		sliceResultOption = option.GetOption(tableID, connectKey)
+	// 尝试从两个可能的来源获取 sliceResultOption
+	var sliceResultOption *metadata.ResultTableOption
+
+	// 首先尝试从查询返回的 option 中获取
+	if option != nil {
+		// 尝试不同的 connectKey 组合来适配不同的存储类型
+		if opt := option.GetOption(tableID, connect); opt != nil {
+			sliceResultOption = opt
+		} else if opt := option.GetOption(tableID, ""); opt != nil {
+			sliceResultOption = opt
+		}
+	}
+
+	if sliceResultOption == nil && qry.ResultTableOptions != nil {
+		if opt := qry.ResultTableOptions.GetOption(tableID, connect); opt != nil {
+			sliceResultOption = opt
+		} else if opt := qry.ResultTableOptions.GetOption(tableID, ""); opt != nil {
+			sliceResultOption = opt
+		}
 	}
 
 	if err != nil {
@@ -213,22 +223,32 @@ func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connec
 	}
 
 	if sliceResultOption != nil {
-		// 如果返回数据为空，表示这个slice已经完成
-		if len(data) == 0 {
-			// 清空scroll_id，确保这个slice不会继续查询
-			sliceResultOption.ScrollID = ""
-			if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusCompleted); err != nil {
-				return
-			}
-		} else if sliceResultOption.ScrollID == "" {
-			// 如果scroll_id为空，但还有数据，表示完成
-			if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusCompleted); err != nil {
-				return
+		if instance.InstanceType() == consul.BkSqlStorageType {
+
+			if len(data) == 0 {
+				if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusCompleted); err != nil {
+					return
+				}
+			} else {
+				if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusRunning); err != nil {
+					return
+				}
 			}
 		} else {
-			// 还有数据且scroll_id不为空，继续运行
-			if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusRunning); err != nil {
-				return
+			if sliceResultOption.ScrollID == "" {
+				if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusCompleted); err != nil {
+					return
+				}
+			} else {
+				if len(data) == 0 {
+					if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusCompleted); err != nil {
+						return
+					}
+				} else {
+					if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusRunning); err != nil {
+						return
+					}
+				}
 			}
 		}
 	}

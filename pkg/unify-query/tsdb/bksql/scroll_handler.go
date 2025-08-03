@@ -11,6 +11,7 @@ package bksql
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/spf13/cast"
@@ -31,12 +32,13 @@ func generateScrollID(items ...any) string {
 }
 
 func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession, connect, tableID string) ([]*redis.SliceInfo, error) {
-	needUpdate := false
 	var slices []*redis.SliceInfo
 
 	for i := 0; i < session.MaxSlice; i++ {
 		key := generateScrollID(consul.BkSqlStorageType, tableID, i)
+		session.Mu.RLock()
 		val, exists := session.ScrollIDs[key]
+		session.Mu.RUnlock()
 
 		if !exists {
 			val = redis.SliceStatusValue{
@@ -45,31 +47,35 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 				Offset:    i * 10,
 				Limit:     10,
 			}
+			session.Mu.Lock()
 			session.ScrollIDs[key] = val
-			needUpdate = true
-		}
-
-		if val.Status == redis.StatusFailed {
+			session.Mu.Unlock()
+			err := session.AtomicUpdateSliceStatus(ctx, key, redis.StatusPending, "")
+			if err != nil {
+				return nil, fmt.Errorf("failed to initialize slice status: %w", err)
+			}
+		} else if val.Status == redis.StatusFailed {
 			if val.FailedNum < session.SliceMaxFailedNum {
+				err := session.AtomicUpdateSliceStatus(ctx, key, redis.StatusPending, val.ScrollID)
+				if err != nil {
+					return nil, fmt.Errorf("failed to update slice status: %w", err)
+				}
 				val.Status = redis.StatusPending
-				session.ScrollIDs[key] = val
-				needUpdate = true
 			} else {
-				val.Status = redis.StatusStop
-				session.ScrollIDs[key] = val
-				needUpdate = true
+				err := session.AtomicUpdateSliceStatus(ctx, key, redis.StatusStop, val.ScrollID)
+				if err != nil {
+					return nil, err
+				}
 				continue
 			}
-		}
-
-		// 如果状态是运行中，自动推进offset
-		if val.Status == redis.StatusRunning {
-			val.Offset += session.MaxSlice * val.Limit
-			session.ScrollIDs[key] = val
-			needUpdate = true
-		}
-
-		if val.Status == redis.StatusStop || val.Status == redis.StatusCompleted {
+		} else if val.Status == redis.StatusRunning {
+			newOffset := val.Offset + session.MaxSlice*val.Limit
+			val.Offset = newOffset
+			err := session.AtomicUpdateSliceStatusAndOffset(ctx, key, redis.StatusRunning, val.ScrollID, newOffset)
+			if err != nil {
+				return nil, err
+			}
+		} else if val.Status == redis.StatusStop || val.Status == redis.StatusCompleted {
 			continue
 		}
 
@@ -83,27 +89,16 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 		})
 	}
 
-	if needUpdate {
-		err := redis.Client().Set(ctx, session.SessionKey, session, session.ScrollTimeout).Err()
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	return slices, nil
 }
 
 func (i *Instance) UpdateScrollStatus(ctx context.Context, session *redis.ScrollSession, connect, tableID string, resultOption *metadata.ResultTableOption, status string) error {
 	key := generateScrollID(consul.BkSqlStorageType, tableID, resultOption.SliceIndex)
-	sliceStatusValue, ok := session.ScrollIDs[key]
-	if !ok {
-		return redis.ErrorOfScrollSliceStatusNotFound
+
+	var scrollID string
+	if val, exists := session.ScrollIDs[key]; exists {
+		scrollID = val.ScrollID
 	}
 
-	sliceStatusValue.Status = status
-	if status == redis.StatusFailed {
-		sliceStatusValue.FailedNum++
-	}
-
-	return session.UpdateScrollSliceStatusValue(ctx, key, sliceStatusValue)
+	return session.AtomicUpdateSliceStatus(ctx, key, status, scrollID)
 }

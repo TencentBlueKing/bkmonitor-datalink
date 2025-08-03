@@ -21,6 +21,7 @@ import (
 	"github.com/TarsCloud/TarsGo/tars/protocol/res/propertyf"
 	"github.com/TarsCloud/TarsGo/tars/protocol/res/statf"
 	"github.com/elastic/beats/libbeat/common"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
@@ -79,7 +80,7 @@ type bucket struct {
 
 // propNameToNormalizeMetricName 将属性转为标准指标名
 func propNameToNormalizeMetricName(propertyName, policy string) string {
-	name := fmt.Sprintf("%s_%s", propertyName, strings.ToLower(policy))
+	name := strings.Join([]string{propertyName, strings.ToLower(policy)}, "_")
 	// 在 NormalizeName 基础上，去掉 :
 	return utils.NormalizeName(strings.Replace(name, ":", "", -1))
 }
@@ -95,11 +96,6 @@ func splitAtLastOnce(s, sep string) (string, string) {
 	default:
 		return s[:lastIndex], s[lastIndex+1:]
 	}
-}
-
-// itoSecStr 将毫秒值转换为秒字符串
-func itoSecStr(val int) string {
-	return strconv.FormatFloat(float64(val)/1000, 'f', -1, 64)
 }
 
 // toBuckets 将分布统计数据转为符合 Prometheus Histogram 格式的分桶数据
@@ -129,7 +125,7 @@ func toIntBuckets(bucketMap map[int32]int32) []bucket {
 
 // toSecondBuckets 将分布统计数据转为符合 Prometheus Histogram 格式，且单位为 Seconds 的分桶数据
 func toSecondBuckets(bucketMap map[int32]int32) []bucket {
-	return toBuckets(bucketMap, itoSecStr)
+	return toBuckets(bucketMap, func(val int) string { return cast.ToString(float64(val) / 1000) })
 }
 
 // toBucketMap 将分布统计字符串（"0|0,50|1,100|5"）转为结构化数据
@@ -142,15 +138,7 @@ func toBucketMap(s string) map[int32]int32 {
 		if len(p) != 2 {
 			continue
 		}
-		val, err := strconv.Atoi(p[0])
-		if err != nil {
-			continue
-		}
-		cnt, err := strconv.Atoi(p[1])
-		if err != nil {
-			continue
-		}
-		bucketMap[int32(val)] = int32(cnt)
+		bucketMap[cast.ToInt32(p[0])] = cast.ToInt32(p[1])
 	}
 	return bucketMap
 }
@@ -158,8 +146,7 @@ func toBucketMap(s string) map[int32]int32 {
 // toHistogram 根据分布情况，生成统计指标
 func toHistogram(name, target string, timestamp int64, buckets []bucket, dims map[string]string) []*promMapper {
 	pms := make([]*promMapper, 0, len(buckets)+1)
-	rpcHistogramCountMetricName := stringJoiner("_", name, "count")
-	rpcHistogramBucketMetricName := stringJoiner("_", name, "bucket")
+	rpcHistogramBucketMetricName := strings.Join([]string{name, "bucket"}, "_")
 	for _, b := range buckets {
 		dims := utils.CloneMap(dims)
 		dims["le"] = b.Val
@@ -172,7 +159,7 @@ func toHistogram(name, target string, timestamp int64, buckets []bucket, dims ma
 		pms = append(pms, pm)
 	}
 	pms = append(pms, &promMapper{
-		Metrics:    common.MapStr{rpcHistogramCountMetricName: buckets[len(buckets)-1].Cnt},
+		Metrics:    common.MapStr{strings.Join([]string{name, "count"}, "_"): buckets[len(buckets)-1].Cnt},
 		Target:     target,
 		Timestamp:  timestamp,
 		Dimensions: utils.CloneMap(dims),
@@ -245,18 +232,6 @@ func propHeadToCustomMetricDims(head *propertyf.StatPropMsgHead, ip string) map[
 	}
 }
 
-// stringJoiner 将多个字符串使用指定分隔符连接成一个字符串
-func stringJoiner(sep string, strs ...string) string {
-	var builder strings.Builder
-	for i, str := range strs {
-		if i > 0 {
-			builder.WriteString(sep)
-		}
-		builder.WriteString(str)
-	}
-	return builder.String()
-}
-
 // TarsEvent is a struct that embeds CommonEvent.
 type TarsEvent struct {
 	define.CommonEvent
@@ -310,10 +285,8 @@ func (s *stat) GetDataID() int32 {
 
 // PK 返回 stat 的哈希值
 func (s *stat) PK() string {
-	return stringJoiner(
-		"_", strconv.FormatInt(int64(s.GetDataID()), 10),
-		strconv.FormatUint(labels.HashFromMap(s.dimensions), 10),
-	)
+	strs := []string{cast.ToString(s.GetDataID()), cast.ToString(labels.HashFromMap(s.dimensions))}
+	return strings.Join(strs, "_")
 }
 
 // HasErrors 判断 stat 是否有错误
@@ -381,7 +354,7 @@ func (s *stat) ToPromMapperList(metricNamePrefix string) []*promMapper {
 
 		pms = append(pms, &promMapper{
 			Metrics: common.MapStr{
-				stringJoiner("_", metricNamePrefix, s.role, "handled_total"): reqCnt,
+				strings.Join([]string{metricNamePrefix, s.role, "handled_total"}, "_"): reqCnt,
 			},
 			Target:     s.target,
 			Timestamp:  s.timestamp,
@@ -398,14 +371,15 @@ func (s *stat) ToPromMapperList(metricNamePrefix string) []*promMapper {
 		codeType = rpcMetricTagsCodeTypeTimeout
 	}
 
-	rpcHistogramMetricName := stringJoiner("_", metricNamePrefix, s.role, "handled_seconds")
+	rpcHistogramMetricName := strings.Join([]string{metricNamePrefix, s.role, "handled_seconds"}, "_")
 	dims := utils.MergeMaps(s.dimensions, map[string]string{rpcMetricTagsCodeType: codeType})
 	rpcHistogramPms := toHistogram(rpcHistogramMetricName, s.target, s.timestamp, toSecondBuckets(s.bucketMap), dims)
 	pms = append(pms, rpcHistogramPms...)
 
 	// 协议数据仅够生成 _bucket / _count 指标，这里需要使用 TotalRspTime 补充 _sum，以构造完整的 Histogram
+	rpcHistogramSumMetricName := strings.Join([]string{rpcHistogramMetricName, "sum"}, "_")
 	return append(pms, &promMapper{
-		Metrics:    common.MapStr{stringJoiner("_", rpcHistogramMetricName, "sum"): float64(s.totalRspTime) / 1000},
+		Metrics:    common.MapStr{rpcHistogramSumMetricName: float64(s.totalRspTime) / 1000},
 		Target:     s.target,
 		Timestamp:  s.timestamp,
 		Dimensions: dims,
@@ -486,10 +460,6 @@ func (a *aggregator) Aggregate(s *stat) {
 
 // ExportAndClean 导出并清理缓冲区中的数据
 func (a *aggregator) exportAndClean() {
-	if len(a.buffer) == 0 {
-		return
-	}
-
 	var events []define.Event
 	for pk, s := range a.buffer {
 		for _, p := range s.ToPromMapperList(rpcMetricAggregatePrefix) {
@@ -498,7 +468,7 @@ func (a *aggregator) exportAndClean() {
 		delete(a.buffer, pk)
 	}
 
-	if a.gatherFunc != nil {
+	if a.gatherFunc != nil && len(events) > 0 {
 		a.gatherFunc(events...)
 	}
 }
@@ -609,12 +579,8 @@ func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, d
 				)
 				pms = append(pms, customMetricHistogramPms...)
 			default: // Policy -> Max / Min / Avg / Sum / Count
-				val, err := strconv.ParseFloat(info.Value, 64)
-				if err != nil {
-					continue
-				}
 				pms = append(pms, &promMapper{
-					Metrics:    common.MapStr{propNameToNormalizeMetricName(head.PropertyName, info.Policy): val},
+					Metrics:    common.MapStr{propNameToNormalizeMetricName(head.PropertyName, info.Policy): cast.ToFloat64(info.Value)},
 					Target:     ip,
 					Timestamp:  data.Timestamp,
 					Dimensions: dims,

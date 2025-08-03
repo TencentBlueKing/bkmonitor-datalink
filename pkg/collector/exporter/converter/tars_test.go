@@ -433,9 +433,9 @@ func TestTarsStatAggregate(t *testing.T) {
 // goos: darwin
 // goarch: arm64
 // cpu: Apple M4 Pro
-// Before optimization: 			  BenchmarkTarsStat-10    	   22473	     45333 ns/op
-// After optimization:  			  BenchmarkTarsStat-10    	   34472	     35061 ns/op
-// After optimization with Aggregate: BenchmarkTarsStat-10    	   27372	     43605 ns/op
+// Before optimization:						BenchmarkTarsStat-10    	   22473	     45333 ns/op
+// After optimization:						BenchmarkTarsStat-10    	   34472	     35061 ns/op
+// After optimization with Aggregate:		BenchmarkTarsStat-10    	   27372	     43605 ns/op
 func BenchmarkTarsStat(b *testing.B) {
 	data := &define.TarsData{
 		Type:      define.TarsStatType,

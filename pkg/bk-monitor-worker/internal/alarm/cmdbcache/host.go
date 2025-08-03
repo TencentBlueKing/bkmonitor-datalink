@@ -377,7 +377,8 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 			},
 		}
 
-		if h.BkHostInnerip != "" {
+		// 忽略 ip 过长的异常数据
+		if h.BkHostInnerip != "" && len(h.BkHostInnerip) < 50 {
 			systemInfo := &relation.Info{}
 			systemID := fmt.Sprintf("%s|%d", h.BkHostInnerip, h.BkCloudId)
 			systemInfo.ID = systemID

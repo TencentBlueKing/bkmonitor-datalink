@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/TarsCloud/TarsGo/tars/protocol/res/propertyf"
@@ -74,140 +75,6 @@ const (
 type bucket struct {
 	Val string
 	Cnt int32
-}
-
-type stat struct {
-	token        define.Token
-	role         string
-	target       string
-	timestamp    int64
-	execCount    int32
-	timeoutCount int32
-	successCount int32
-	totalRspTime int64
-	bucketMap    map[int32]int32
-	dimensions   map[string]string
-}
-
-// newStat 创建一个新的 stat 实例
-func newStat(token define.Token, role, target string, timestamp int64, dims map[string]string, body statf.StatMicMsgBody) *stat {
-	return &stat{
-		token:        token,
-		role:         role,
-		target:       target,
-		timestamp:    timestamp,
-		execCount:    body.ExecCount,
-		timeoutCount: body.TimeoutCount,
-		successCount: body.Count,
-		totalRspTime: body.TotalRspTime,
-		bucketMap:    body.IntervalCount,
-		dimensions:   dims,
-	}
-}
-
-func (s *stat) GetToken() define.Token {
-	return s.token
-}
-
-func (s *stat) GetDataID() int32 {
-	return s.token.MetricsDataId
-}
-
-// PK 返回 stat 的哈希值
-func (s *stat) PK() string {
-	return fmt.Sprintf("%d_%d", s.GetDataID(), labels.HashFromMap(s.dimensions))
-}
-
-// HasErrors 判断 stat 是否有错误
-func (s *stat) HasErrors() bool {
-	return s.execCount > 0 || s.timeoutCount > 0
-}
-
-// Copy 创建一个新的 stat 实例，并复制当前实例的内容
-func (s *stat) Copy() *stat {
-	newStat := &stat{
-		token:        s.token,
-		role:         s.role,
-		target:       s.target,
-		timestamp:    s.timestamp,
-		execCount:    s.execCount,
-		timeoutCount: s.timeoutCount,
-		successCount: s.successCount,
-		totalRspTime: s.totalRspTime,
-		dimensions:   utils.CloneMap(s.dimensions),
-		bucketMap:    make(map[int32]int32, len(s.bucketMap)),
-	}
-	for k, v := range s.bucketMap {
-		newStat.bucketMap[k] = v
-	}
-	return newStat
-}
-
-func (s *stat) DropTags(tags []string) *stat {
-	for _, tag := range tags {
-		if _, ok := s.dimensions[tag]; ok {
-			delete(s.dimensions, tag)
-		}
-	}
-	return s
-}
-
-func (s *stat) UpdateFrom(other *stat) {
-	s.execCount += other.execCount
-	s.timeoutCount += other.timeoutCount
-	s.successCount += other.successCount
-	s.totalRspTime += other.totalRspTime
-	for k, v := range other.bucketMap {
-		if _, ok := s.bucketMap[k]; !ok {
-			s.bucketMap[k] = 0
-		}
-		s.bucketMap[k] += v
-	}
-}
-
-// ToPromMapperList 将 stat 转换为 Prometheus Mapper 列表
-func (s *stat) ToPromMapperList(metricNamePrefix string) []*promMapper {
-	var pms []*promMapper
-
-	codeTypeReqCntMap := map[string]int32{
-		rpcMetricTagsCodeTypeException: s.execCount,
-		rpcMetricTagsCodeTypeTimeout:   s.timeoutCount,
-		rpcMetricTagsCodeTypeSuccess:   s.successCount,
-	}
-	for codeType, reqCnt := range codeTypeReqCntMap {
-		if reqCnt == 0 {
-			continue
-		}
-
-		pms = append(pms, &promMapper{
-			Metrics:    common.MapStr{fmt.Sprintf("%s_%s_handled_total", metricNamePrefix, s.role): reqCnt},
-			Target:     s.target,
-			Timestamp:  s.timestamp,
-			Dimensions: utils.MergeMaps(s.dimensions, map[string]string{rpcMetricTagsCodeType: codeType}),
-		})
-	}
-
-	// ReturnValue = 0 也可能是超时 or 异常，而协议的分桶数据不区分返回码状态，所以此处只能大致判断，写一个预估的返回码类型。
-	codeType := rpcMetricTagsCodeTypeSuccess
-	switch {
-	case s.execCount > 0:
-		codeType = rpcMetricTagsCodeTypeException
-	case s.timeoutCount > 0:
-		codeType = rpcMetricTagsCodeTypeTimeout
-	}
-
-	rpcHistogramMetricName := fmt.Sprintf("%s_%s_handled_seconds", metricNamePrefix, s.role)
-	dims := utils.MergeMaps(s.dimensions, map[string]string{rpcMetricTagsCodeType: codeType})
-	rpcHistogramPms := toHistogram(rpcHistogramMetricName, s.target, s.timestamp, toSecondBuckets(s.bucketMap), dims)
-	pms = append(pms, rpcHistogramPms...)
-
-	// 协议数据仅够生成 _bucket / _count 指标，这里需要使用 TotalRspTime 补充 _sum，以构造完整的 Histogram
-	return append(pms, &promMapper{
-		Metrics:    common.MapStr{rpcHistogramMetricName + "_sum": float64(s.totalRspTime) / 1000},
-		Target:     s.target,
-		Timestamp:  s.timestamp,
-		Dimensions: dims,
-	})
 }
 
 // propNameToNormalizeMetricName 将属性转为标准指标名
@@ -291,11 +158,13 @@ func toBucketMap(s string) map[int32]int32 {
 // toHistogram 根据分布情况，生成统计指标
 func toHistogram(name, target string, timestamp int64, buckets []bucket, dims map[string]string) []*promMapper {
 	pms := make([]*promMapper, 0, len(buckets)+1)
+	rpcHistogramCountMetricName := stringJoiner("_", name, "count")
+	rpcHistogramBucketMetricName := stringJoiner("_", name, "bucket")
 	for _, b := range buckets {
 		dims := utils.CloneMap(dims)
 		dims["le"] = b.Val
 		pm := &promMapper{
-			Metrics:    common.MapStr{name + "_bucket": b.Cnt},
+			Metrics:    common.MapStr{rpcHistogramBucketMetricName: b.Cnt},
 			Target:     target,
 			Timestamp:  timestamp,
 			Dimensions: dims,
@@ -303,7 +172,7 @@ func toHistogram(name, target string, timestamp int64, buckets []bucket, dims ma
 		pms = append(pms, pm)
 	}
 	pms = append(pms, &promMapper{
-		Metrics:    common.MapStr{name + "_count": buckets[len(buckets)-1].Cnt},
+		Metrics:    common.MapStr{rpcHistogramCountMetricName: buckets[len(buckets)-1].Cnt},
 		Target:     target,
 		Timestamp:  timestamp,
 		Dimensions: utils.CloneMap(dims),
@@ -376,6 +245,18 @@ func propHeadToCustomMetricDims(head *propertyf.StatPropMsgHead, ip string) map[
 	}
 }
 
+// stringJoiner 将多个字符串使用指定分隔符连接成一个字符串
+func stringJoiner(sep string, strs ...string) string {
+	var builder strings.Builder
+	for i, str := range strs {
+		if i > 0 {
+			builder.WriteString(sep)
+		}
+		builder.WriteString(str)
+	}
+	return builder.String()
+}
+
 // TarsEvent is a struct that embeds CommonEvent.
 type TarsEvent struct {
 	define.CommonEvent
@@ -388,13 +269,153 @@ func (e TarsEvent) RecordType() define.RecordType {
 
 var TarsConverter EventConverter = tarsConverter{}
 
+type stat struct {
+	token        define.Token
+	role         string
+	target       string
+	timestamp    int64
+	execCount    int32
+	timeoutCount int32
+	successCount int32
+	totalRspTime int64
+	bucketMap    map[int32]int32
+	dimensions   map[string]string
+}
+
+// newStat 创建一个新的 stat 实例
+func newStat(token define.Token, role, target string, timestamp int64, dims map[string]string, body statf.StatMicMsgBody) *stat {
+	return &stat{
+		token:        token,
+		role:         role,
+		target:       target,
+		timestamp:    timestamp,
+		execCount:    body.ExecCount,
+		timeoutCount: body.TimeoutCount,
+		successCount: body.Count,
+		totalRspTime: body.TotalRspTime,
+		bucketMap:    body.IntervalCount,
+		dimensions:   dims,
+	}
+}
+
+func (s *stat) GetToken() define.Token {
+	return s.token
+}
+
+func (s *stat) GetDataID() int32 {
+	return s.token.MetricsDataId
+}
+
+// PK 返回 stat 的哈希值
+func (s *stat) PK() string {
+	return stringJoiner(
+		"_", strconv.FormatInt(int64(s.GetDataID()), 10),
+		strconv.FormatUint(labels.HashFromMap(s.dimensions), 10),
+	)
+}
+
+// HasErrors 判断 stat 是否有错误
+func (s *stat) HasErrors() bool {
+	return s.execCount > 0 || s.timeoutCount > 0
+}
+
+// Copy 创建一个新的 stat 实例，并复制当前实例的内容
+func (s *stat) Copy() *stat {
+	newStat := &stat{
+		token:        s.token,
+		role:         s.role,
+		target:       s.target,
+		timestamp:    s.timestamp,
+		execCount:    s.execCount,
+		timeoutCount: s.timeoutCount,
+		successCount: s.successCount,
+		totalRspTime: s.totalRspTime,
+		dimensions:   utils.CloneMap(s.dimensions),
+		bucketMap:    make(map[int32]int32, len(s.bucketMap)),
+	}
+	for k, v := range s.bucketMap {
+		newStat.bucketMap[k] = v
+	}
+	return newStat
+}
+
+func (s *stat) DropTags(tags []string) *stat {
+	for _, tag := range tags {
+		if _, ok := s.dimensions[tag]; ok {
+			delete(s.dimensions, tag)
+		}
+	}
+	return s
+}
+
+func (s *stat) UpdateFrom(other *stat) {
+	s.execCount += other.execCount
+	s.timeoutCount += other.timeoutCount
+	s.successCount += other.successCount
+	s.totalRspTime += other.totalRspTime
+	for k, v := range other.bucketMap {
+		if _, ok := s.bucketMap[k]; !ok {
+			s.bucketMap[k] = 0
+		}
+		s.bucketMap[k] += v
+	}
+}
+
+// ToPromMapperList 将 stat 转换为 Prometheus Mapper 列表
+func (s *stat) ToPromMapperList(metricNamePrefix string) []*promMapper {
+	var pms []*promMapper
+
+	codeTypeReqCntMap := map[string]int32{
+		rpcMetricTagsCodeTypeException: s.execCount,
+		rpcMetricTagsCodeTypeTimeout:   s.timeoutCount,
+		rpcMetricTagsCodeTypeSuccess:   s.successCount,
+	}
+	for codeType, reqCnt := range codeTypeReqCntMap {
+		if reqCnt == 0 {
+			continue
+		}
+
+		pms = append(pms, &promMapper{
+			Metrics: common.MapStr{
+				stringJoiner("_", metricNamePrefix, s.role, "handled_total"): reqCnt,
+			},
+			Target:     s.target,
+			Timestamp:  s.timestamp,
+			Dimensions: utils.MergeMaps(s.dimensions, map[string]string{rpcMetricTagsCodeType: codeType}),
+		})
+	}
+
+	// ReturnValue = 0 也可能是超时 or 异常，而协议的分桶数据不区分返回码状态，所以此处只能大致判断，写一个预估的返回码类型。
+	codeType := rpcMetricTagsCodeTypeSuccess
+	switch {
+	case s.execCount > 0:
+		codeType = rpcMetricTagsCodeTypeException
+	case s.timeoutCount > 0:
+		codeType = rpcMetricTagsCodeTypeTimeout
+	}
+
+	rpcHistogramMetricName := stringJoiner("_", metricNamePrefix, s.role, "handled_seconds")
+	dims := utils.MergeMaps(s.dimensions, map[string]string{rpcMetricTagsCodeType: codeType})
+	rpcHistogramPms := toHistogram(rpcHistogramMetricName, s.target, s.timestamp, toSecondBuckets(s.bucketMap), dims)
+	pms = append(pms, rpcHistogramPms...)
+
+	// 协议数据仅够生成 _bucket / _count 指标，这里需要使用 TotalRspTime 补充 _sum，以构造完整的 Histogram
+	return append(pms, &promMapper{
+		Metrics:    common.MapStr{stringJoiner("_", rpcHistogramMetricName, "sum"): float64(s.totalRspTime) / 1000},
+		Target:     s.target,
+		Timestamp:  s.timestamp,
+		Dimensions: dims,
+	})
+}
+
 type aggregator struct {
-	ch             chan *stat
-	buffer         map[string]*stat
-	interval       time.Duration
-	converter      EventConverter
-	gatherFunc     define.GatherFunc
-	tagIgnoreRules map[string][]string
+	ch                chan *stat
+	buffer            map[string]*stat
+	interval          time.Duration
+	converter         EventConverter
+	setGatherFuncOnce sync.Once
+	gatherFunc        define.GatherFunc
+	tagIgnoreRules    map[string][]string
 }
 
 // newAggregator 创建聚合器实例
@@ -402,7 +423,7 @@ func newAggregator(converter EventConverter) *aggregator {
 	a := &aggregator{
 		ch:        make(chan *stat, 256),
 		buffer:    make(map[string]*stat),
-		interval:  100 * time.Millisecond,
+		interval:  200 * time.Millisecond,
 		converter: converter,
 		tagIgnoreRules: map[string][]string{
 			tarsStatTagsRoleClient: {rpcMetricTagsCalleeIp}, tarsStatTagsRoleServer: {rpcMetricTagsCallerIp},
@@ -414,9 +435,7 @@ func newAggregator(converter EventConverter) *aggregator {
 
 // SetGatherFunc 设置聚合器的 GatherFunc
 func (a *aggregator) SetGatherFunc(f define.GatherFunc) {
-	if a.gatherFunc == nil {
-		a.gatherFunc = f
-	}
+	a.setGatherFuncOnce.Do(func() { a.gatherFunc = f })
 }
 
 // Run 启动聚合器
@@ -443,6 +462,7 @@ func (a *aggregator) aggregate(s *stat) {
 			events = append(events, a.converter.ToEvent(s.GetToken(), s.GetDataID(), p.AsMapStr()))
 		}
 		a.gatherFunc(events...)
+		return
 	}
 
 	stat := s.Copy()
@@ -506,6 +526,20 @@ func (c tarsConverter) Convert(record *define.Record, f define.GatherFunc) {
 	}
 }
 
+func (c tarsConverter) statToEvents(token define.Token, dataID int32, isDropOriginal bool, stat *stat) []define.Event {
+	tarsStatAggregator.Aggregate(stat)
+	if isDropOriginal {
+		return nil
+	}
+
+	var events []define.Event
+	pms := stat.ToPromMapperList(rpcMetricNamePrefix)
+	for _, pm := range pms {
+		events = append(events, c.ToEvent(token, dataID, pm.AsMapStr()))
+	}
+	return events
+}
+
 // handleStat 处理服务统计指标
 func (c tarsConverter) handleStat(token define.Token, dataID int32, ip string, data *define.TarsData) []define.Event {
 	var events []define.Event
@@ -517,14 +551,9 @@ func (c tarsConverter) handleStat(token define.Token, dataID int32, ip string, d
 	}
 
 	for head, body := range sd.Stats {
-		var pms []*promMapper
 		dims := statHeadToRPCMetricDims(&head, role, ip)
 		stat := newStat(token, role, ip, data.Timestamp, dims, body)
-
-		tarsStatAggregator.Aggregate(stat)
-		if !data.IsDropOriginal {
-			pms = append(pms, stat.ToPromMapperList(rpcMetricNamePrefix)...)
-		}
+		events = append(events, c.statToEvents(token, dataID, data.IsDropOriginal, stat)...)
 
 		if role == tarsStatTagsRoleClient {
 			calleeServer, ok := dims[rpcMetricTagsCalleeServer]
@@ -542,17 +571,8 @@ func (c tarsConverter) handleStat(token define.Token, dataID int32, ip string, d
 				resourceTagsInstance:    calleeIp,
 				resourceTagsScopeName:   "server_metrics",
 			})
-
 			serverStatFromClient := newStat(token, tarsStatTagsRoleServer, ip, data.Timestamp, serverDims, body)
-
-			tarsStatAggregator.Aggregate(serverStatFromClient)
-			if !data.IsDropOriginal {
-				pms = append(pms, serverStatFromClient.ToPromMapperList(rpcMetricNamePrefix)...)
-			}
-		}
-
-		for _, pm := range pms {
-			events = append(events, c.ToEvent(token, dataID, pm.AsMapStr()))
+			events = append(events, c.statToEvents(token, dataID, data.IsDropOriginal, serverStatFromClient)...)
 		}
 	}
 	return events

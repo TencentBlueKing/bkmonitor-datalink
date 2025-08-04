@@ -42,10 +42,8 @@ github.com/Shopify/toxiproxy v2.1.4+incompatible h1:TKdv8HiTLgE5wdJuEML90aBgNWso
 github.com/Shopify/toxiproxy v2.1.4+incompatible/go.mod h1:OXgGpZ6Cli1/URJOF1DMxUHB2q5Ap20/P/eIdh4G0pI=
 github.com/TencentBlueKing/beats v7.1.17-bk+incompatible h1:KsMFXnlBDdpgqkiLzfI57fMudfQThtJJS8ZUQ2n/Fe0=
 github.com/TencentBlueKing/beats v7.1.17-bk+incompatible/go.mod h1:ZMsX71rXxEo52YtXTamkUBNY4BmgxFY1NSZL1l1dNts=
-github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.10.0 h1:2Q9HZXDHgLeQhQDwn/Xm+jTd5RoVNIJdK5mK10kkLKI=
-github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.10.0/go.mod h1:IEmG3iVB8zpc5/vksrf2+B2mZHdBB4xB1REf0tJE+ws=
-github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0 h1:M22V54nzKf4jReUWp9+rF0255nvlQP/B4zzuXIGyBlU=
-github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0/go.mod h1:ETap19QgROaVGv9E9MRtWMeOgx/gbhbtzcjk4cgadoM=
+github.com/TencentBlueKing/bk-gse-sdk/go v0.0.3 h1:qR2sSybI2Sx/AFdje+L03mHIYlNvQ5Lqwx6+aEdCmXA=
+github.com/TencentBlueKing/bk-gse-sdk/go v0.0.3/go.mod h1:ocsvsjRwMLhVJlfty5Xwuywg8z6o1lfvzXgll9IlDS0=
 github.com/TencentBlueKing/gopsutil/v3 v3.25.6-bk h1:/TAhO8/n4mrwyIbkFDHeDCPZSSXolM+gnSbWPyau0gU=
 github.com/TencentBlueKing/gopsutil/v3 v3.25.6-bk/go.mod h1:7hmCaBn+2ZwaZOr6jmPBZDfawwMGuo1id3C6aM8EDqQ=
 github.com/TencentBlueKing/gosnmp v1.30.0-bk h1:BgXW4Vm1fr90L70lPKU+K+N3ckaz10o5a3uNDZ0yWHQ=

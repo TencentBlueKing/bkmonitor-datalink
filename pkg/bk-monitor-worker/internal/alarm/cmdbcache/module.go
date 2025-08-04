@@ -222,7 +222,8 @@ func (m *ModuleCacheManager) ModuleToRelationInfos(result []map[string]any) []*r
 			}
 		}
 		infos = append(infos, &relation.Info{
-			ID: id,
+			ID:       id,
+			Resource: relation.Module,
 			Label: map[string]string{
 				"module_id": id,
 			},

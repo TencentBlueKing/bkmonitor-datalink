@@ -208,7 +208,8 @@ func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relatio
 		}
 
 		infos = append(infos, &relation.Info{
-			ID: id,
+			ID:       id,
+			Resource: relation.Set,
 			Label: map[string]string{
 				"set_id": id,
 			},

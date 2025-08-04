@@ -11,7 +11,6 @@ package metricbeat
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -27,18 +26,19 @@ func TestMetricBeatGatherRun(t *testing.T) {
 	globalConfig := configs.NewConfig()
 	globalConfig.GatherUpBeat.DataID = 10001
 	taskConf := configs.NewMetricBeatConfig()
-	buf := []byte(`module: prometheus
+
+	buf := []byte(`
+module: prometheus
 metricsets: ["collector"]
 enabled: true
 hosts: ["http://127.0.0.1:8989/status"]
 metrics_path: ''
 namespace: namespace_0824
 dataid: 1573267`)
-	fmt.Printf("Error: %v", buf)
+
 	ucfgConfig, err := yaml.NewConfig(buf)
-	if err != nil {
-		panic(fmt.Errorf("Error config ... "))
-	}
+	assert.NoError(t, err)
+
 	t.Logf("Initial module config: %v", ucfgConfig)
 	taskConf.Module = (*common.Config)(ucfgConfig)
 
@@ -56,48 +56,12 @@ dataid: 1573267`)
 	assert.Equal(t, num, 2)
 }
 
-func TestOldVerionUrlParams(t *testing.T) {
+func TestUrlParams(t *testing.T) {
 	globalConfig := configs.NewConfig()
 	globalConfig.GatherUpBeat.DataID = 10001
 	taskConf := configs.NewMetricBeatConfig()
-	buf := []byte(`module: prometheus
-metricsets: ["collector"]
-enabled: true
-hosts: ["http://127.0.0.1:8989/status?rrr=111&bbbbb3=testContent"]
-metrics_path: ''
-namespace: namespace_0824
-dataid: 1573267`)
-	fmt.Printf("Error: %v", buf)
-	ucfgConfig, err := yaml.NewConfig(buf)
-	if err != nil {
-		panic(fmt.Errorf("Error config ... "))
-	}
-	t.Logf("Initial module config: %v", ucfgConfig)
-	taskConf.Module = (*common.Config)(ucfgConfig)
-
-	gather := New(globalConfig, taskConf)
-	e := make(chan define.Event, 100)
-	gather.Run(context.Background(), e)
-	gather.Wait()
-	close(e)
-	num := 0
-	result := false
-	for ev := range e {
-		event := ev.AsMapStr()
-		if strings.Contains(event.String(), "testContent") {
-			result = true
-		}
-		t.Logf("Event: %v\n", event)
-		num += 1
-	}
-	assert.Equal(t, result, true)
-}
-
-func TestNewVerionUrlParams(t *testing.T) {
-	globalConfig := configs.NewConfig()
-	globalConfig.GatherUpBeat.DataID = 10001
-	taskConf := configs.NewMetricBeatConfig()
-	bufNew := []byte(`module: prometheus
+	bufNew := []byte(`
+module: prometheus
 metricsets: ["collector"]
 enabled: true
 hosts: ["http://127.0.0.1:8989/status?rrr=111&bbbbb3=testContent"]
@@ -105,11 +69,10 @@ metrics_path: ''
 query: {"test":["testContent2"]}
 namespace: namespace_0824
 dataid: 1573267`)
-	fmt.Printf("Error: %v", bufNew)
+
 	ucfgConfig, err := yaml.NewConfig(bufNew)
-	if err != nil {
-		panic(fmt.Errorf("Error config ... "))
-	}
+	assert.NoError(t, err)
+
 	t.Logf("Initial module config: %v", ucfgConfig)
 	taskConf.Module = (*common.Config)(ucfgConfig)
 

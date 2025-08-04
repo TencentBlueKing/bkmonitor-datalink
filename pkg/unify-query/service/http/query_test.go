@@ -1583,7 +1583,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 				},
 			},
 			total:    1,
-			expected: `[{"__data_label":"es","__doc_id":"cT5KjpEBbwEm76LbeH3I","__highlight":{"tags":["[<mark>important</mark> urgent critical]"],"user.first":["<mark>John</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}]`,
+			expected: `[{"__data_label":"es","__doc_id":"cT5KjpEBbwEm76LbeH3I","__highlight":{"user.first":["<mark>John</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}]`,
 		},
 		"array highlight with match all": {
 			queryTs: &structured.QueryTs{

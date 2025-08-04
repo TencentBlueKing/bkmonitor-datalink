@@ -127,10 +127,11 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			Headers: bkapi.GetBkDataAPI().Headers(map[string]string{
 				bksql.ContentType: tsDBService.BkSqlContentType,
 			}),
-			Timeout:   tsDBService.BkSqlTimeout,
-			MaxLimit:  tsDBService.BkSqlLimit,
-			Tolerance: tsDBService.BkSqlTolerance,
-			Curl:      curlGet,
+			Timeout:    tsDBService.BkSqlTimeout,
+			MaxLimit:   tsDBService.BkSqlLimit,
+			Tolerance:  tsDBService.BkSqlTolerance,
+			SliceLimit: qry.Size,
+			Curl:       curlGet,
 		})
 	case consul.VictoriaMetricsStorageType:
 		instance, err = victoriaMetrics.NewInstance(ctx, &victoriaMetrics.Options{

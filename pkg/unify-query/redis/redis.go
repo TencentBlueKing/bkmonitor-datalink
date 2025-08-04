@@ -48,7 +48,7 @@ func Client() goRedis.UniversalClient {
 	return client
 }
 
-func IsNil(err error) bool {
+func IsEntryNil(err error) bool {
 	if err == nil {
 		return false
 	}

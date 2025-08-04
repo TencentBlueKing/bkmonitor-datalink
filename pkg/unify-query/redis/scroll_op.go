@@ -55,7 +55,7 @@ func checkScrollSession(ctx context.Context, key string) (*ScrollSession, bool, 
 	session := &ScrollSession{}
 	err := Client().Get(ctx, SessionKeyPrefix+key).Scan(session)
 	if err != nil {
-		if !IsNil(err) {
+		if !IsEntryNil(err) {
 			return nil, false, err
 		}
 		return nil, false, nil

@@ -34,7 +34,7 @@ func generateScrollID(items ...any) string {
 func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession, connect, tableID string) ([]*redis.SliceInfo, error) {
 	var slices []*redis.SliceInfo
 
-	for i := 0; i < session.MaxSlice; i++ {
+	for idx := 0; idx < session.MaxSlice; idx++ {
 		key := generateScrollID(consul.BkSqlStorageType, tableID, i)
 		session.Mu.RLock()
 		val, exists := session.ScrollIDs[key]
@@ -44,7 +44,7 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 			val = redis.SliceStatusValue{
 				Status:    redis.StatusPending,
 				FailedNum: 0,
-				Offset:    i * 10,
+				Offset:    idx * i.sliceLimit,
 				Limit:     10,
 			}
 			session.Mu.Lock()
@@ -83,7 +83,7 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 			Connect:     "",
 			TableId:     tableID,
 			StorageType: consul.BkSqlStorageType,
-			SliceIdx:    i,
+			SliceIdx:    idx,
 			SliceMax:    session.MaxSlice,
 			Offset:      val.Offset,
 		})

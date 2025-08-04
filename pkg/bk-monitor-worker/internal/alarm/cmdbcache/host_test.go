@@ -41,6 +41,7 @@ import (
 )
 
 var DemoHosts = []*AlarmHostInfo{
+
 	{
 		BkBizId:       2,
 		BkHostId:      1,
@@ -115,6 +116,15 @@ var DemoHosts = []*AlarmHostInfo{
 				{"bk_inst_id": 2, "bk_inst_name": "蓝鲸", "bk_obj_id": "biz", "bk_obj_name": "业务"},
 			},
 		},
+	},
+	{
+		BkBizId:       2,
+		BkHostId:      9,
+		BkHostInnerip: "127.0.1.1,127.0.2.1",
+		BkCloudId:     0,
+		BkAgentId:     "12345678901234567890123456789012",
+		BkSetIds:      []int{2, 3},
+		BkModuleIds:   []int{3, 6},
 	},
 }
 
@@ -393,5 +403,5 @@ func TestHostToRelationInfos(t *testing.T) {
 
 	ris, err := json.Marshal(resourceInfo)
 	assert.Nil(t, err)
-	assert.Equal(t, `[{"id":"127.0.0.1|0","resource":"system","label":{"bk_cloud_id":"0","bk_target_ip":"127.0.0.1"},"links":[[{"name":"host","id":"1"}]]},{"id":"1","resource":"host","label":{"host_id":"1"},"expands":{"host":{"env_name":"LIVE","env_type":"prod","version":"tlinux_update_20250729_134916_ver92184"},"set":{"env_name":"LIVE","env_type":"prod","version":"tlinux_update_20250729_134916_ver92184"}},"links":[[{"name":"module","id":"3"},{"name":"set","id":"2"},{"name":"biz","id":"2"}],[{"name":"module","id":"6"},{"name":"set","id":"3"},{"name":"test","id":"2"},{"name":"biz","id":"2"}]]},{"id":"127.0.0.2|0","resource":"system","label":{"bk_cloud_id":"0","bk_target_ip":"127.0.0.2"},"links":[[{"name":"host","id":"2"}]]},{"id":"2","resource":"host","label":{"host_id":"2"},"links":[[{"name":"module","id":"4"},{"name":"set","id":"2"},{"name":"biz","id":"2"}]]},{"id":"127.0.0.3|0","resource":"system","label":{"bk_cloud_id":"0","bk_target_ip":"127.0.0.3"},"links":[[{"name":"host","id":"3"}]]},{"id":"3","resource":"host","label":{"host_id":"3"},"links":[[{"name":"module","id":"6"},{"name":"set","id":"3"},{"name":"test","id":"2"},{"name":"biz","id":"2"}]]}]`, string(ris))
+	assert.Equal(t, `[{"id":"127.0.0.1|0","resource":"system","label":{"bk_cloud_id":"0","bk_target_ip":"127.0.0.1"},"links":[[{"id":"1","resource":"host","label":{"host_id":"1"}}]]},{"id":"1","resource":"host","label":{"host_id":"1"},"expands":{"host":{"env_name":"LIVE","env_type":"prod","version":"tlinux_update_20250729_134916_ver92184"},"set":{"env_name":"LIVE","env_type":"prod","version":"tlinux_update_20250729_134916_ver92184"}},"links":[[{"id":"3","resource":"module","label":{"module_id":"3"}},{"id":"2","resource":"set","label":{"set_id":"2"}},{"id":"2","resource":"business","label":{"business_id":"2"}}],[{"id":"6","resource":"module","label":{"module_id":"6"}},{"id":"3","resource":"set","label":{"set_id":"3"}},{"id":"2","resource":"test","label":{"test_id":"2"}},{"id":"2","resource":"business","label":{"business_id":"2"}}]]},{"id":"127.0.0.2|0","resource":"system","label":{"bk_cloud_id":"0","bk_target_ip":"127.0.0.2"},"links":[[{"id":"2","resource":"host","label":{"host_id":"2"}}]]},{"id":"2","resource":"host","label":{"host_id":"2"},"links":[[{"id":"4","resource":"module","label":{"module_id":"4"}},{"id":"2","resource":"set","label":{"set_id":"2"}},{"id":"2","resource":"business","label":{"business_id":"2"}}]]},{"id":"127.0.0.3|0","resource":"system","label":{"bk_cloud_id":"0","bk_target_ip":"127.0.0.3"},"links":[[{"id":"3","resource":"host","label":{"host_id":"3"}}]]},{"id":"3","resource":"host","label":{"host_id":"3"},"links":[[{"id":"6","resource":"module","label":{"module_id":"6"}},{"id":"3","resource":"set","label":{"set_id":"3"}},{"id":"2","resource":"test","label":{"test_id":"2"}},{"id":"2","resource":"business","label":{"business_id":"2"}}]]},{"id":"9","resource":"host","label":{"host_id":"9"}}]`, string(ris))
 }

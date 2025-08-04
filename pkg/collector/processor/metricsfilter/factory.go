@@ -88,6 +88,9 @@ func (p *metricsFilter) Process(record *define.Record) (*define.Record, error) {
 	if len(config.Replace) > 0 {
 		p.replaceAction(record, config)
 	}
+	if len(config.Relabel) > 0 {
+		p.relabelAction(record, config)
+	}
 	return nil, nil
 }
 
@@ -119,6 +122,17 @@ func (p *metricsFilter) replaceAction(record *define.Record, config Config) {
 					metric.SetName(action.Destination)
 				}
 			})
+		}
+	}
+}
+
+func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
+
+	switch record.RecordType {
+	case define.RecordMetrics:
+		for _, action := range config.Relabel {
+			pdMetrics := record.Data.(pmetric.Metrics)
+			foreach.Metrics(pdMetrics.ResourceMetrics(), action.RelabelMetricIfMatched)
 		}
 	}
 }

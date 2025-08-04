@@ -95,6 +95,41 @@ func MetricsSliceResource(resourceMetricsSlice pmetric.ResourceMetricsSlice, f f
 	}
 }
 
+func MetricsDataPointsAttrs(metric pmetric.Metric, f func(attrs pcommon.Map)) {
+	switch metric.DataType() {
+	case pmetric.MetricDataTypeGauge:
+		dps := metric.Gauge().DataPoints()
+		for i := 0; i < dps.Len(); i++ {
+			attrs := dps.At(i).Attributes()
+			f(attrs)
+		}
+	case pmetric.MetricDataTypeSum:
+		dps := metric.Sum().DataPoints()
+		for i := 0; i < dps.Len(); i++ {
+			attrs := dps.At(i).Attributes()
+			f(attrs)
+		}
+	case pmetric.MetricDataTypeSummary:
+		dps := metric.Summary().DataPoints()
+		for i := 0; i < dps.Len(); i++ {
+			attrs := dps.At(i).Attributes()
+			f(attrs)
+		}
+	case pmetric.MetricDataTypeHistogram:
+		dps := metric.Histogram().DataPoints()
+		for i := 0; i < dps.Len(); i++ {
+			attrs := dps.At(i).Attributes()
+			f(attrs)
+		}
+	case pmetric.MetricDataTypeExponentialHistogram:
+		dps := metric.ExponentialHistogram().DataPoints()
+		for i := 0; i < dps.Len(); i++ {
+			attrs := dps.At(i).Attributes()
+			f(attrs)
+		}
+	}
+}
+
 func Logs(resourceLogsSlice plog.ResourceLogsSlice, f func(logRecord plog.LogRecord)) {
 	for i := 0; i < resourceLogsSlice.Len(); i++ {
 		scopeLogsSlice := resourceLogsSlice.At(i).ScopeLogs()

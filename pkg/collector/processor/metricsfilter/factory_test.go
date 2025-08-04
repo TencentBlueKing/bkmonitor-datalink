@@ -10,6 +10,10 @@
 package metricsfilter
 
 import (
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
+	"go.opentelemetry.io/collector/pdata/pcommon"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -148,4 +152,203 @@ processor:
 
 	name := testkits.FirstMetric(metrics).Name()
 	assert.Equal(t, "my_metrics_replace", name)
+}
+
+func makeMetricsGeneratorWithAttributes(n int, attrs map[string]string) *generator.MetricsGenerator {
+	opts := define.MetricsOptions{
+		MetricName: "rpc_client_handled_total",
+		GaugeCount: n,
+		GeneratorOptions: define.GeneratorOptions{
+			Attributes: attrs,
+		},
+	}
+	return generator.NewMetricsGenerator(opts)
+}
+
+func TestMetricsRelabelAction(t *testing.T) {
+	content := `
+processor:
+  - name: "metrics_filter/relabel"
+    config:
+      relabel:
+        - metric: "rpc_client_handled_total"
+          rules:
+            - label: "callee_method"
+              op: "in"
+              values: ["hello"]
+            - label: "callee_service"
+              op: "in"
+              values: ["example.greeter"]
+            - label: "code"
+              op: "range"
+              values:
+              - prefix: "err_"
+                min: 10
+                max: 19
+              - prefix: ""
+                min: 100
+                max: 200
+              - prefix: "trpc_"
+                min: 11
+                max: 12
+              - prefix: "ret_"
+                min: 100
+                max: 200
+              - min: 100
+                max: 100
+              - min: 200
+                max: 200
+          destinations:
+            - label: "code_type"
+              value: "success"
+`
+	factory := processor.MustCreateFactory(content, NewFactory)
+
+	t.Run("rules hit op in", func(t *testing.T) {
+		g := makeMetricsGeneratorWithAttributes(1, map[string]string{
+			"callee_method":  "hello",
+			"callee_service": "example.greeter",
+			"code":           "200",
+		})
+		data := g.Generate()
+
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+		}
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		metrics := record.Data.(pmetric.Metrics)
+		foreach.Metrics(metrics.ResourceMetrics(), func(metric pmetric.Metric) {
+			foreach.MetricsDataPointsAttrs(metric, func(attrs pcommon.Map) {
+				v, exist := attrs.Get("code_type")
+				assert.True(t, exist)
+				assert.Equal(t, "success", v.AsString())
+			})
+		})
+	})
+	t.Run("rules hit op range", func(t *testing.T) {
+		g := makeMetricsGeneratorWithAttributes(1, map[string]string{
+			"callee_method":  "hello",
+			"callee_service": "example.greeter",
+			"code":           "ret_105",
+		})
+		data := g.Generate()
+
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+		}
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		metrics := record.Data.(pmetric.Metrics)
+		foreach.Metrics(metrics.ResourceMetrics(), func(metric pmetric.Metric) {
+			foreach.MetricsDataPointsAttrs(metric, func(attrs pcommon.Map) {
+				v, exist := attrs.Get("code_type")
+				assert.True(t, exist)
+				assert.Equal(t, "success", v.AsString())
+			})
+		})
+	})
+	t.Run("rules not hit", func(t *testing.T) {
+		g := makeMetricsGeneratorWithAttributes(1, map[string]string{
+			"callee_method":  "hello_1",
+			"callee_service": "example.greeter",
+			"code":           "200",
+		})
+		data := g.Generate()
+
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+		}
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		metrics := record.Data.(pmetric.Metrics)
+		foreach.Metrics(metrics.ResourceMetrics(), func(metric pmetric.Metric) {
+			foreach.MetricsDataPointsAttrs(metric, func(attrs pcommon.Map) {
+				_, exist := attrs.Get("code_type")
+				assert.False(t, exist)
+			})
+		})
+	})
+
+}
+
+func BenchmarkMapf(b *testing.B) {
+
+	value := "ret_105"
+
+	v := map[string]interface{}{
+		"prefix": "trpc_",
+		"min":    11,
+		"max":    12,
+	}
+
+	for i := 0; i < b.N; i++ {
+		mapf := func(v interface{}) {
+			val := v.(map[string]interface{})
+			prefix, ok := val["prefix"]
+			if ok {
+				if !strings.HasPrefix(value, prefix.(string)) {
+					return
+				}
+				value = strings.TrimPrefix(value, prefix.(string))
+			}
+			value, err := strconv.Atoi(value)
+			if err != nil {
+				return
+			}
+			minVal, ok := val["min"].(int)
+			if !ok {
+				return
+			}
+			maxVal, ok := val["max"].(int)
+			if !ok {
+				return
+			}
+			if value >= minVal && value <= maxVal {
+				return
+			}
+		}
+		mapf(v)
+	}
+}
+
+func BenchmarkDecodef(b *testing.B) {
+
+	value := "ret_105"
+
+	v := map[string]interface{}{
+		"prefix": "trpc_",
+		"min":    11,
+		"max":    12,
+	}
+
+	for i := 0; i < b.N; i++ {
+		decodef := func(v interface{}) {
+			rangeValue := RangeValue{}
+			err := mapstructure.Decode(v, &rangeValue)
+			if err != nil {
+				return
+			}
+			if rangeValue.Prefix != "" {
+				if !strings.HasPrefix(value, rangeValue.Prefix) {
+					return
+				}
+				value = strings.TrimPrefix(value, rangeValue.Prefix)
+			}
+			value, err := strconv.Atoi(value)
+			if err != nil {
+				return
+			}
+			if value >= rangeValue.Min && value <= rangeValue.Max {
+				return
+			}
+		}
+		decodef(v)
+	}
 }

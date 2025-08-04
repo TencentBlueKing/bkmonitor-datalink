@@ -17,13 +17,13 @@ import (
 )
 
 func TestPromEventExemplars(t *testing.T) {
-	line := `my_total{le="0.25"} 205 # {traceID="my_trace_id",spanID="my_span_id"} 0.15`
+	line := `my_count{le="0.25"} 205 # {traceID="my_trace_id",spanID="my_span_id"} 0.15`
 	event, err := NewPromEvent(line, 1637839803, time.Second, func(_ int64, ts int64, _ time.Duration) int64 {
 		return ts
 	})
 
 	assert.NoError(t, err)
-	assert.Equal(t, "my_total", event.Key)
+	assert.Equal(t, "my_count", event.Key)
 	assert.Equal(t, 1, len(event.Labels))
 	assert.Equal(t, "0.25", event.Labels["le"].(string))
 

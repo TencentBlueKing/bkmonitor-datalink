@@ -289,7 +289,7 @@ func (p *gsePusher) processLabels(name string, lps []*dto.LabelPair) labels.Labe
 		lbs = append(lbs, labels.Label{Name: lp.GetName(), Value: lp.GetValue()})
 	}
 	lbs = append(lbs, labels.Label{Name: model.MetricNameLabel, Value: name})
-	lbs = relabel.Process(lbs, p.config.MetricRelabelConfigs...)
+	lbs, _ = relabel.Process(lbs, p.config.MetricRelabelConfigs...)
 	return lbs
 }
 

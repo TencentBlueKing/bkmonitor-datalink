@@ -205,10 +205,6 @@ func getSliceStatus(session *redis.ScrollSession, storageType, connect, tableID 
 	return ""
 }
 
-func generateScrollSliceStatusKey(storageType, connect, tableID string, sliceIdx int) string {
-	return fmt.Sprintf("%s:%s:%s:%d", storageType, connect, tableID, sliceIdx)
-}
-
 func getInstance(ctx context.Context, storageType string) (tsdb.Instance, error) {
 	switch storageType {
 	case consul.ElasticsearchStorageType:

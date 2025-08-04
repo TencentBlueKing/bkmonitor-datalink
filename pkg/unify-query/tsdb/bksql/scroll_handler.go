@@ -35,7 +35,7 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 	var slices []*redis.SliceInfo
 
 	for idx := 0; idx < session.MaxSlice; idx++ {
-		key := generateScrollID(consul.BkSqlStorageType, tableID, i)
+		key := generateScrollID(consul.BkSqlStorageType, tableID, idx)
 		session.Mu.RLock()
 		val, exists := session.ScrollIDs[key]
 		session.Mu.RUnlock()
@@ -45,24 +45,24 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 				Status:    redis.StatusPending,
 				FailedNum: 0,
 				Offset:    idx * i.sliceLimit,
-				Limit:     10,
+				Limit:     session.Limit,
 			}
 			session.Mu.Lock()
 			session.ScrollIDs[key] = val
 			session.Mu.Unlock()
-			err := session.AtomicUpdateSliceStatus(ctx, key, redis.StatusPending, "")
+			err := session.UpdateSliceStatus(ctx, key, redis.StatusPending, "")
 			if err != nil {
 				return nil, fmt.Errorf("failed to initialize slice status: %w", err)
 			}
 		} else if val.Status == redis.StatusFailed {
 			if val.FailedNum < session.SliceMaxFailedNum {
-				err := session.AtomicUpdateSliceStatus(ctx, key, redis.StatusPending, val.ScrollID)
+				err := session.UpdateSliceStatus(ctx, key, redis.StatusPending, val.ScrollID)
 				if err != nil {
 					return nil, fmt.Errorf("failed to update slice status: %w", err)
 				}
 				val.Status = redis.StatusPending
 			} else {
-				err := session.AtomicUpdateSliceStatus(ctx, key, redis.StatusStop, val.ScrollID)
+				err := session.UpdateSliceStatus(ctx, key, redis.StatusStop, val.ScrollID)
 				if err != nil {
 					return nil, err
 				}
@@ -71,7 +71,7 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 		} else if val.Status == redis.StatusRunning {
 			newOffset := val.Offset + session.MaxSlice*val.Limit
 			val.Offset = newOffset
-			err := session.AtomicUpdateSliceStatusAndOffset(ctx, key, redis.StatusRunning, val.ScrollID, newOffset)
+			err := session.UpdateSliceStatusAndOffset(ctx, key, redis.StatusRunning, val.ScrollID, newOffset)
 			if err != nil {
 				return nil, err
 			}
@@ -100,5 +100,5 @@ func (i *Instance) UpdateScrollStatus(ctx context.Context, session *redis.Scroll
 		scrollID = val.ScrollID
 	}
 
-	return session.AtomicUpdateSliceStatus(ctx, key, status, scrollID)
+	return session.UpdateSliceStatus(ctx, key, status, scrollID)
 }

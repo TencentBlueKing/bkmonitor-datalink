@@ -58,6 +58,10 @@ type Instance struct {
 	maxSize int
 }
 
+func (i *Instance) IsCompleted(opt metadata.ResultTableOption, dataLen int) bool {
+	return dataLen == 0 || opt.ScrollID == ""
+}
+
 type Connects []Connect
 
 func (cs Connects) String() string {

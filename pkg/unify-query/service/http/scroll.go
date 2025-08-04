@@ -12,10 +12,12 @@ package http
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/jinzhu/copier"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -192,14 +194,12 @@ func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connec
 	close(dataCh)
 	wg.Wait()
 
-	// 尝试从两个可能的来源获取 sliceResultOption
 	var sliceResultOption *metadata.ResultTableOption
 
-	// 首先尝试从查询返回的 option 中获取
 	if option != nil {
-		// 尝试不同的 connectKey 组合来适配不同的存储类型
 		if opt := option.GetOption(tableID, connect); opt != nil {
 			sliceResultOption = opt
+			// doris 不会设置 address
 		} else if opt := option.GetOption(tableID, ""); opt != nil {
 			sliceResultOption = opt
 		}
@@ -223,32 +223,13 @@ func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connec
 	}
 
 	if sliceResultOption != nil {
-		if instance.InstanceType() == consul.BkSqlStorageType {
-
-			if len(data) == 0 {
-				if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusCompleted); err != nil {
-					return
-				}
-			} else {
-				if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusRunning); err != nil {
-					return
-				}
+		if instance.ScrollHandler().IsCompleted(*sliceResultOption, len(data)) {
+			if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusCompleted); err != nil {
+				return
 			}
 		} else {
-			if sliceResultOption.ScrollID == "" {
-				if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusCompleted); err != nil {
-					return
-				}
-			} else {
-				if len(data) == 0 {
-					if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusCompleted); err != nil {
-						return
-					}
-				} else {
-					if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusRunning); err != nil {
-						return
-					}
-				}
+			if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusRunning); err != nil {
+				return
 			}
 		}
 	}
@@ -262,4 +243,16 @@ func generateScrollKey(name string, ts structured.QueryTs) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%s:%s", name, key), nil
+}
+
+func generateScrollSliceStatusKey(args ...interface{}) string {
+	var entries []string
+	for _, arg := range args {
+		if s, err := cast.ToStringE(arg); err == nil {
+			entries = append(entries, s)
+		} else {
+			continue
+		}
+	}
+	return strings.Join(entries, ":")
 }

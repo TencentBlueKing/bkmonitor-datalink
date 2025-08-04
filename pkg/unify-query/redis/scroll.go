@@ -109,15 +109,7 @@ func (s *ScrollSession) Done() bool {
 	return true
 }
 
-func (s *ScrollSession) UpdateScrollSliceStatusValue(ctx context.Context, sliceKey string, value SliceStatusValue) error {
-	s.Mu.Lock()
-	defer s.Mu.Unlock()
-	s.ScrollIDs[sliceKey] = value
-	s.LastAccessAt = time.Now()
-	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
-}
-
-func (s *ScrollSession) AtomicUpdateSliceStatus(ctx context.Context, sliceKey string, status string, scrollID string) error {
+func (s *ScrollSession) UpdateSliceStatus(ctx context.Context, sliceKey string, status string, scrollID string) error {
 	s.Mu.Lock()
 	sliceValue := s.ScrollIDs[sliceKey]
 	sliceValue.Status = status
@@ -134,7 +126,7 @@ func (s *ScrollSession) AtomicUpdateSliceStatus(ctx context.Context, sliceKey st
 	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
 }
 
-func (s *ScrollSession) AtomicUpdateSliceStatusAndOffset(ctx context.Context, sliceKey string, status string, scrollID string, offset int) error {
+func (s *ScrollSession) UpdateSliceStatusAndOffset(ctx context.Context, sliceKey string, status string, scrollID string, offset int) error {
 	s.Mu.Lock()
 	sliceValue := s.ScrollIDs[sliceKey]
 	sliceValue.Status = status

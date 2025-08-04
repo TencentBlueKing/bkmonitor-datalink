@@ -525,6 +525,10 @@ func (i *Instance) ScrollHandler() tsdb.ScrollHandler {
 	return i
 }
 
+func (i *Instance) IsCompleted(opt metadata.ResultTableOption, dataLen int) bool {
+	return dataLen == 0
+}
+
 func getValue(k string, d map[string]interface{}) (string, error) {
 	var value string
 	if v, ok := d[k]; ok {

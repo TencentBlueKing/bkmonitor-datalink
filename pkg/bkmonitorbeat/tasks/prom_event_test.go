@@ -20,11 +20,12 @@ func TestDecodePromEvent(t *testing.T) {
 	const ts = 1637839803000
 
 	tests := []struct {
-		Line      string
-		Name      string
-		Value     float64
-		Timestamp int64
-		Exemplar  map[string]string
+		Line       string
+		Name       string
+		Value      float64
+		Timestamp  int64
+		Exemplar   map[string]string
+		ExemplarTs int64
 	}{
 		{
 			Line:      `my_histogram_bucketx{le="0.25"} 205.5`,
@@ -43,13 +44,13 @@ func TestDecodePromEvent(t *testing.T) {
 			},
 		},
 		{
-			Line:      `my_bucket{le="0.25"} 205 # {traceID="my_trace_id",spanID="my_span_id"} 0.15`,
+			Line:      `my_bucket{le="0.25"} 205 # {trace_id="my_trace_id",span_id="my_span_id"} 0.15`,
 			Name:      "my_bucket",
 			Value:     205,
 			Timestamp: ts,
 			Exemplar: map[string]string{
-				"traceID": "my_trace_id",
-				"spanID":  "my_span_id",
+				"trace_id": "my_trace_id",
+				"span_id":  "my_span_id",
 			},
 		},
 		{
@@ -61,6 +62,17 @@ func TestDecodePromEvent(t *testing.T) {
 				"traceID": "my_trace_id",
 				"spanID":  "my_span_id",
 			},
+		},
+		{
+			Line:      `my_histogram_bucket{le="0.25"} 205 1637839802 # {traceID="my_trace_id",spanID="my_span_id"} 0.15 1637839806000`,
+			Name:      "my_histogram_bucket",
+			Value:     205,
+			Timestamp: 1637839802000,
+			Exemplar: map[string]string{
+				"traceID": "my_trace_id",
+				"spanID":  "my_span_id",
+			},
+			ExemplarTs: 1637839806000000,
 		},
 		{
 			Line:      `my_histogram_bucket{le="0.25",} 205 1637839802 # {traceID="my_trace_id",spanID="my_span_id"} 0.15 1637839806000`, // backwards v1
@@ -86,6 +98,7 @@ func TestDecodePromEvent(t *testing.T) {
 					m[lb.Name] = lb.Value
 				}
 				assert.Equal(t, tt.Exemplar, m)
+				assert.Equal(t, tt.ExemplarTs, event.Exemplar.Ts)
 			} else {
 				assert.Nil(t, event.Exemplar)
 			}

@@ -308,6 +308,9 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	if queryTs.Limit == 0 {
 		queryTs.Limit = ScrollSliceLimit
 	}
+
+	queryStr, _ := json.Marshal(queryTs)
+	span.Set("query-body", string(queryStr))
 	scrollKey, err := generateScrollKey(user.Name, *queryTs)
 	if err != nil {
 		return

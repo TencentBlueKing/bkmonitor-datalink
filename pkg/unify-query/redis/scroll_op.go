@@ -32,10 +32,10 @@ func GetOrCreateScrollSession(ctx context.Context, sessionKeySuffix string, maxS
 	if !exist {
 		session, err = createScrollSession(ctx, sessionKeySuffix, maxSliceCount, scrollTimeout, sliceLimit)
 		if err != nil {
-			return nil, err
+			return
 		}
 	}
-	return session, nil
+	return
 }
 
 func createScrollSession(ctx context.Context, sessionKeySuffix string, maxSlice int, scrollTimeoutStr string, limit int) (*ScrollSession, error) {

@@ -308,8 +308,6 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	if queryTs.Limit == 0 {
 		queryTs.Limit = ScrollSliceLimit
 	}
-
-	queryStr, _ := json.StableMarshal(queryTs)
 	scrollKey, err := generateScrollKey(user.Name, *queryTs)
 	if err != nil {
 		return
@@ -329,7 +327,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 			return
 		}
 	}
-	span.Set("query-body", string(queryStr))
+	span.Set("session-lock-key", sessionLockKey)
 	listData.TraceID = span.TraceID()
 	listData.Total, listData.List, listData.ResultTableOptions, listData.Done, err = queryRawWithScroll(ctx, queryTs, scrollKey, ScrollMaxSlice)
 	if err != nil {

@@ -243,16 +243,8 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	if option == nil {
 		option = &metadata.ResultTableOption{}
 	}
-
-	resultOption := &metadata.ResultTableOption{
-		SliceIndex: option.SliceIndex,
-		SliceMax:   option.SliceMax,
-		ScrollID:   option.ScrollID,
-		From:       option.From,
-	}
-
 	defer func() {
-		resultTableOptions.SetOption(query.TableID, "", resultOption)
+		resultTableOptions.SetOption(query.TableID, "", option)
 	}()
 
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-raw")
@@ -277,8 +269,8 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		}
 	}
 
-	if resultOption.From != nil {
-		query.From = *resultOption.From
+	if option.From != nil {
+		query.From = *option.From
 	}
 
 	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
@@ -292,7 +284,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	// 如果是 dry run 则直接返回 sql 查询语句
 	if query.DryRun {
-		resultOption.SQL = sql
+		option.SQL = sql
 		return
 	}
 
@@ -307,7 +299,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 
 	if data.ResultSchema != nil {
-		resultOption.ResultSchema = data.ResultSchema
+		option.ResultSchema = data.ResultSchema
 	}
 
 	span.Set("data-total-records", data.TotalRecords)

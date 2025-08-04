@@ -41,6 +41,10 @@ type Instance interface {
 	ScrollHandler() ScrollHandler
 }
 
+var (
+	_ Instance = &DefaultInstance{}
+)
+
 type ScrollHandler interface {
 	MakeSlices(ctx context.Context, session *redis.ScrollSession, connect, tableID string) ([]*redis.SliceInfo, error)
 	IsCompleted(opt metadata.ResultTableOption, dataLen int) bool

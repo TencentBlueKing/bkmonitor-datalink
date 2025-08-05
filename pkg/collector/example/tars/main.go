@@ -179,10 +179,10 @@ func main() {
 		case <-c:
 			return
 		case <-ticker.C:
-			//reportPropsNormal()
-			//reportPropsOneway()
-			//reportStatsNormal()
-			//reportStatsOneway()
+			reportPropsNormal()
+			reportPropsOneway()
+			reportStatsNormal()
+			reportStatsOneway()
 			benchmark(reportStatsNormal, 5000, 100)
 		}
 	}

@@ -47,7 +47,12 @@ type EventConverter interface {
 	ToDataID(*define.Record) int32
 }
 
-func NewCommonConverter(conf Config) Converter {
+func NewCommonConverter(conf *Config) Converter {
+	if conf == nil {
+		conf = &Config{Tars: TarsConfig{}}
+	}
+	conf.Validate()
+
 	return commonConverter{
 		tracesConverter:      TracesConverter,
 		metricsConverter:     MetricsConverter,

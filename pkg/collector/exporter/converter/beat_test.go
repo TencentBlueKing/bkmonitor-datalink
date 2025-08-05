@@ -33,7 +33,7 @@ func TestBeat(t *testing.T) {
 		}
 	}
 
-	TestConverter.Convert(&record, gather)
+	NewCommonConverter(nil).Convert(&record, gather)
 	assert.Len(t, events, 1)
 	assert.Equal(t, common.MapStr{"foo": "bar"}, events[0].Data())
 }

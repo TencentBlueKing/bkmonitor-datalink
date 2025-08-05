@@ -1135,6 +1135,8 @@ bk-collector:
       flush_interval: 10s
     converter:
       tars:
+        # 是否关闭指标预聚合。
+        disable_aggregate: false
         # 是否丢弃原始数据，默认 false。开启后会丢弃原始数据，仅保留经过预聚合后的数据。
         is_drop_original: false
         # 聚合间隔

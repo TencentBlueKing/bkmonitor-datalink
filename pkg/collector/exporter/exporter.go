@@ -71,7 +71,7 @@ func New(conf *confengine.Config) (*Exporter, error) {
 	exp := &Exporter{
 		ctx:       ctx,
 		cancel:    cancel,
-		converter: converter.NewCommonConverter(c.Converter),
+		converter: converter.NewCommonConverter(&c.Converter),
 		cfg:       c,
 		batches:   LoadConfigFrom(conf),
 	}

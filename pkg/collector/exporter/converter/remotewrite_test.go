@@ -39,7 +39,7 @@ func TestConvert(t *testing.T) {
 		}
 	}
 
-	TestConverter.Convert(&define.Record{
+	NewCommonConverter(nil).Convert(&define.Record{
 		RecordType:  define.RecordRemoteWrite,
 		RequestType: define.RequestHttp,
 		Data:        &define.RemoteWriteData{Timeseries: wr.Timeseries},

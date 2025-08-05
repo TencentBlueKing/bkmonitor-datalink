@@ -38,11 +38,3 @@ func TestCleanAttributesMap(t *testing.T) {
 		assert.Equal(t, "bar", attrs["foo"])
 	})
 }
-
-func NewTestConverter() Converter {
-	conf := Config{Tars: TarsConfig{}}
-	conf.Validate()
-	return NewCommonConverter(conf)
-}
-
-var TestConverter = NewTestConverter()

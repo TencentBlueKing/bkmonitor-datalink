@@ -36,8 +36,6 @@ type Config struct {
 }
 
 func (c *Config) Validate() {
-	c.Converter.Validate()
-
 	if c.Queue.MetricsBatchSize <= 0 {
 		c.Queue.MetricsBatchSize = defaultMetricsBatchSize
 	}

@@ -32,12 +32,13 @@ func (c *Config) Validate() {
 }
 
 type TarsConfig struct {
-	IsDropOriginal    bool          `config:"is_drop_original"`
-	AggregateInterval time.Duration `config:"aggregate_interval"`
+	DisableAggregate  bool          `config:"disable_aggregate" mapstructure:"disable_aggregate"`
+	IsDropOriginal    bool          `config:"is_drop_original" mapstructure:"is_drop_original"`
+	AggregateInterval time.Duration `config:"aggregate_interval" mapstructure:"aggregate_interval"`
 	TagIgnores        []TagIgnore   `config:"tag_ignores" mapstructure:"tag_ignores"`
 }
 
 type TagIgnore struct {
-	ScopeName string   `json:"scope_name"`
-	Tags      []string `json:"tags"`
+	ScopeName string   `config:"scope_name" mapstructure:"scope_name"`
+	Tags      []string `config:"tags" mapstructure:"tags"`
 }

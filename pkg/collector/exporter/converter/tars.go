@@ -387,6 +387,7 @@ func (s *stat) ToEvents(metricNamePrefix string) []define.Event {
 }
 
 type aggregator struct {
+	enabled               bool
 	ch                    chan *stat
 	buffer                map[statPK]*stat
 	interval              time.Duration
@@ -396,8 +397,9 @@ type aggregator struct {
 }
 
 // newAggregator 创建聚合器实例
-func newAggregator(interval time.Duration, scopeNameToIgnoreTags map[string][]string) *aggregator {
+func newAggregator(enabled bool, interval time.Duration, scopeNameToIgnoreTags map[string][]string) *aggregator {
 	a := &aggregator{
+		enabled:               enabled,
 		ch:                    make(chan *stat, 256),
 		buffer:                make(map[statPK]*stat),
 		interval:              interval,
@@ -414,6 +416,10 @@ func (a *aggregator) SetGatherFunc(f define.GatherFunc) {
 
 // Run 启动聚合器
 func (a *aggregator) Run() {
+	if !a.enabled {
+		return
+	}
+
 	ticker := time.NewTicker(a.interval)
 	defer ticker.Stop()
 
@@ -429,6 +435,10 @@ func (a *aggregator) Run() {
 
 // Aggregate 接收 stat 并将其发送到聚合器通道
 func (a *aggregator) Aggregate(s *stat) {
+	if !a.enabled {
+		return
+	}
+
 	a.ch <- s
 }
 
@@ -464,6 +474,7 @@ func (a *aggregator) exportAndClean() {
 
 type tarsConverter struct {
 	isDropOriginal bool
+	conf           TarsConfig
 	aggregator     *aggregator
 }
 
@@ -473,8 +484,8 @@ func NewTarsConverter(config TarsConfig) EventConverter {
 		scopeNameToIgnoreTags[tagIgnore.ScopeName] = append(scopeNameToIgnoreTags[tagIgnore.ScopeName], tagIgnore.Tags...)
 	}
 	return tarsConverter{
-		isDropOriginal: config.IsDropOriginal,
-		aggregator:     newAggregator(config.AggregateInterval, scopeNameToIgnoreTags),
+		conf:       config,
+		aggregator: newAggregator(!config.DisableAggregate, config.AggregateInterval, scopeNameToIgnoreTags),
 	}
 }
 
@@ -504,7 +515,7 @@ func (c tarsConverter) Convert(record *define.Record, f define.GatherFunc) {
 
 func (c tarsConverter) statToEvents(stat *stat) []define.Event {
 	c.aggregator.Aggregate(stat)
-	if c.isDropOriginal {
+	if c.conf.IsDropOriginal {
 		return nil
 	}
 

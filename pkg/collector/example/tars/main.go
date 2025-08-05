@@ -157,24 +157,13 @@ func benchmark(task func(), n, w int) {
 		}()
 	}
 
-	// 等待请求完成，并关闭 channel
-	go func() {
-		wg.Wait()
-		end = time.Now()
-		close(elapsedTimes)
-	}()
+	wg.Wait()
+	end = time.Now()
 
-	var totalReqs int
-	var totalElapsed int64
-	for timeElapsed := range elapsedTimes {
-		totalReqs++
-		totalElapsed += timeElapsed
-	}
-
-	timeElapsedMs := float64(totalElapsed) / (1e6 * float64(n))
+	timeElapsedMs := float64(end.Sub(start).Milliseconds())
 	fmt.Printf(
 		"total -> %d, avg -> %.2f ms/op, qps -> %.2f requests/sec\n",
-		totalReqs, timeElapsedMs, float64(n)/(end.Sub(start).Seconds()),
+		n, timeElapsedMs/float64(n), float64(n)*1000/timeElapsedMs,
 	)
 }
 
@@ -190,10 +179,10 @@ func main() {
 		case <-c:
 			return
 		case <-ticker.C:
-			reportPropsNormal()
-			reportPropsOneway()
-			reportStatsNormal()
-			reportStatsOneway()
+			//reportPropsNormal()
+			//reportPropsOneway()
+			//reportStatsNormal()
+			//reportStatsOneway()
 			benchmark(reportStatsNormal, 5000, 100)
 		}
 	}

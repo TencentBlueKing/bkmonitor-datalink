@@ -156,7 +156,8 @@ func TestTarsProperty(t *testing.T) {
 		Data:          data,
 	}
 
-	TestConverter.Convert(record, func(events ...define.Event) {
+	c := NewCommonConverter(&Config{Tars: TarsConfig{DisableAggregate: true}})
+	c.Convert(record, func(events ...define.Event) {
 		assert.Len(t, events, 10)
 
 		commonDims := map[string]string{
@@ -262,7 +263,8 @@ func TestTarsStat(t *testing.T) {
 		Data:          data,
 	}
 
-	TestConverter.Convert(record, func(events ...define.Event) {
+	c := NewCommonConverter(&Config{Tars: TarsConfig{DisableAggregate: true}})
+	c.Convert(record, func(events ...define.Event) {
 		expects := []common.MapStr{
 			{
 				"dimension": rpcClientMetricDims,
@@ -375,9 +377,7 @@ func TestTarsStatAggregate(t *testing.T) {
 		totalEvents = append(totalEvents, events...)
 	}
 
-	conf := Config{Tars: TarsConfig{IsDropOriginal: true}}
-	conf.Validate()
-	c := NewCommonConverter(conf)
+	c := NewCommonConverter(&Config{Tars: TarsConfig{IsDropOriginal: true}})
 	for i := 0; i < 100000; i++ {
 		data := &define.TarsData{
 			Type:      define.TarsStatType,
@@ -461,9 +461,13 @@ func BenchmarkTarsStat(b *testing.B) {
 		Data:          data,
 	}
 
+	c := NewCommonConverter(nil)
 	for i := 0; i < b.N; i++ {
-		TestConverter.Convert(record, func(events ...define.Event) {})
+		c.Convert(record, func(events ...define.Event) {})
 	}
+
+	// 等待一段时间，确保所有事件都被处理
+	time.Sleep(200 * time.Millisecond)
 }
 
 // BenchmarkTarsProperty 基准测试 TarsProperty 转换性能
@@ -501,8 +505,8 @@ func BenchmarkTarsProperty(b *testing.B) {
 		Data:          data,
 	}
 
-	// 优化前：BenchmarkTarsProperty-10    	   39517	     28596 ns/op
+	c := NewCommonConverter(&Config{Tars: TarsConfig{DisableAggregate: true}})
 	for i := 0; i < b.N; i++ {
-		TestConverter.Convert(record, func(events ...define.Event) {})
+		c.Convert(record, func(events ...define.Event) {})
 	}
 }

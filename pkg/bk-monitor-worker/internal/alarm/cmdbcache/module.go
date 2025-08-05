@@ -207,7 +207,7 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 func (m *ModuleCacheManager) ModuleToRelationInfos(result []map[string]any) []*relation.Info {
 	infos := make([]*relation.Info, 0, len(result))
 	for _, r := range result {
-		id := cast.ToString(r["bk_module_id"])
+		id := cast.ToString(r[relation.ModuleID])
 
 		if id == "" {
 			continue
@@ -221,14 +221,22 @@ func (m *ModuleCacheManager) ModuleToRelationInfos(result []map[string]any) []*r
 				continue
 			}
 		}
-		infos = append(infos, &relation.Info{
+
+		info := &relation.Info{
 			ID:       id,
 			Resource: relation.Module,
 			Label: map[string]string{
-				"module_id": id,
+				relation.ModuleID: id,
 			},
 			Expands: relation.TransformExpands(expands),
-		})
+		}
+
+		// 如果存在 module_info 数据，则需要注入 module_name 等扩展维度
+		if info.Expands[relation.Module] != nil {
+			info.Expands[relation.Module][relation.ModuleName] = cast.ToString(r[relation.ModuleName])
+		}
+
+		infos = append(infos, info)
 	}
 
 	return infos

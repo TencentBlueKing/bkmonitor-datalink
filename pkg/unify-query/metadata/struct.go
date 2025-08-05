@@ -175,18 +175,6 @@ func (q *Query) VMExpand() *VmExpand {
 	}
 }
 
-func (q *Query) CollectStorageIDs() []string {
-	if len(q.StorageIDs) > 0 {
-		return q.StorageIDs
-	}
-
-	if q.StorageID != "" {
-		return []string{q.StorageID}
-	}
-
-	return nil
-}
-
 func (q *Query) LabelMap() (map[string][]function.LabelMapValue, error) {
 	labelMap := make(map[string][]function.LabelMapValue)
 	labelCheck := make(map[string]struct{})

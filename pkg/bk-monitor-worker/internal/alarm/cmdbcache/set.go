@@ -207,19 +207,21 @@ func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relatio
 			}
 		}
 
-		// 如果存在 set_info 数据，则需要注入 set_name 等扩展维度
-		if expands[relation.Set] != nil {
-			expands[relation.Set]["set_name"] = cast.ToString(r["bk_set_name"])
-		}
-
-		infos = append(infos, &relation.Info{
+		info := &relation.Info{
 			ID:       id,
 			Resource: relation.Set,
 			Label: map[string]string{
 				"set_id": id,
 			},
 			Expands: relation.TransformExpands(expands),
-		})
+		}
+
+		// 如果存在 set_info 数据，则需要注入 set_name 等扩展维度
+		if info.Expands[relation.Set] != nil {
+			info.Expands[relation.Set]["set_name"] = cast.ToString(r["bk_set_name"])
+		}
+
+		infos = append(infos, info)
 	}
 
 	return infos

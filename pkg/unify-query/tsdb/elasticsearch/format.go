@@ -217,6 +217,10 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 }
 
 func (f *FormatFactory) WithIncludeValues(labelMap map[string][]function.LabelMapValue) *FormatFactory {
+	if labelMap == nil {
+		return f
+	}
+
 	var newLabelMap map[string][]function.LabelMapValue
 	if f.decode == nil {
 		newLabelMap = labelMap

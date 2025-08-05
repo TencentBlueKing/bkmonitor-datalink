@@ -387,7 +387,6 @@ func (s *stat) ToEvents(metricNamePrefix string) []define.Event {
 }
 
 type aggregator struct {
-	enabled               bool
 	ch                    chan *stat
 	buffer                map[statPK]*stat
 	interval              time.Duration
@@ -397,9 +396,8 @@ type aggregator struct {
 }
 
 // newAggregator 创建聚合器实例
-func newAggregator(enabled bool, interval time.Duration, scopeNameToIgnoreTags map[string][]string) *aggregator {
+func newAggregator(interval time.Duration, scopeNameToIgnoreTags map[string][]string) *aggregator {
 	a := &aggregator{
-		enabled:               enabled,
 		ch:                    make(chan *stat, 256),
 		buffer:                make(map[statPK]*stat),
 		interval:              interval,
@@ -416,10 +414,6 @@ func (a *aggregator) SetGatherFunc(f define.GatherFunc) {
 
 // Run 启动聚合器
 func (a *aggregator) Run() {
-	if !a.enabled {
-		return
-	}
-
 	ticker := time.NewTicker(a.interval)
 	defer ticker.Stop()
 
@@ -435,10 +429,6 @@ func (a *aggregator) Run() {
 
 // Aggregate 接收 stat 并将其发送到聚合器通道
 func (a *aggregator) Aggregate(s *stat) {
-	if !a.enabled {
-		return
-	}
-
 	a.ch <- s
 }
 
@@ -483,9 +473,14 @@ func NewTarsConverter(config TarsConfig) EventConverter {
 	for _, tagIgnore := range config.TagIgnores {
 		scopeNameToIgnoreTags[tagIgnore.ScopeName] = append(scopeNameToIgnoreTags[tagIgnore.ScopeName], tagIgnore.Tags...)
 	}
+
+	if config.DisableAggregate {
+		return tarsConverter{conf: config, aggregator: nil}
+	}
+
 	return tarsConverter{
 		conf:       config,
-		aggregator: newAggregator(!config.DisableAggregate, config.AggregateInterval, scopeNameToIgnoreTags),
+		aggregator: newAggregator(config.AggregateInterval, scopeNameToIgnoreTags),
 	}
 }
 
@@ -498,7 +493,9 @@ func (c tarsConverter) ToDataID(record *define.Record) int32 {
 }
 
 func (c tarsConverter) Convert(record *define.Record, f define.GatherFunc) {
-	c.aggregator.SetGatherFunc(f)
+	if c.aggregator != nil {
+		c.aggregator.SetGatherFunc(f)
+	}
 
 	var events []define.Event
 	dataID := c.ToDataID(record)
@@ -514,7 +511,10 @@ func (c tarsConverter) Convert(record *define.Record, f define.GatherFunc) {
 }
 
 func (c tarsConverter) statToEvents(stat *stat) []define.Event {
-	c.aggregator.Aggregate(stat)
+	if c.aggregator != nil {
+		c.aggregator.Aggregate(stat)
+	}
+
 	if c.conf.IsDropOriginal {
 		return nil
 	}

@@ -138,7 +138,6 @@ func benchmark(task func(), n, w int) {
 	var (
 		wg    sync.WaitGroup
 		start = time.Now()
-		end   time.Time
 	)
 
 	wg.Add(n)
@@ -158,12 +157,10 @@ func benchmark(task func(), n, w int) {
 	}
 
 	wg.Wait()
-	end = time.Now()
-
-	timeElapsedMs := float64(end.Sub(start).Milliseconds())
+	elapsed := time.Since(start)
 	fmt.Printf(
 		"total -> %d, avg -> %.2f ms/op, qps -> %.2f requests/sec\n",
-		n, timeElapsedMs/float64(n), float64(n)*1000/timeElapsedMs,
+		n, float64(elapsed.Milliseconds())/float64(n), float64(n)/elapsed.Seconds(),
 	)
 }
 

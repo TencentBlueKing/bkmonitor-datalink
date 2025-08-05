@@ -551,8 +551,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			}
 			span.Set("mapping-length", len(mappings))
 			if len(mappings) == 0 {
-				err = fmt.Errorf("index is empty with %v，url: %s", aliases, conn.Address)
-				return
+				log.Warnf(ctx, "index is empty with %v with %s", aliases, conn.String())
 			}
 
 			if i.maxSize > 0 && query.Size > i.maxSize {

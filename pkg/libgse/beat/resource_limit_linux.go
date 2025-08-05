@@ -49,7 +49,6 @@ func setLinuxCgroups(name string, cpu float64, mem int) error {
 func setLinuxCgroupsV2(name string, cpu float64, mem int) error {
 	var cpuResource *cgroup2.CPU
 	var memResource *cgroup2.Memory
-	var unlimited int64 = -1
 
 	// cpu * Core: 小于等于 0 表示 cgroup 无 CPU 限制
 	var cpuPeriod uint64 = 100000
@@ -66,9 +65,6 @@ func setLinuxCgroupsV2(name string, cpu float64, mem int) error {
 	if memLimit > 0 {
 		memResource = &cgroup2.Memory{Max: &memLimit}
 	}
-	if memLimit < 0 {
-		memResource = &cgroup2.Memory{Max: &unlimited}
-	}
 
 	// 无任何限制 直接返回
 	if cpuResource == nil && memResource == nil {
@@ -83,26 +79,11 @@ func setLinuxCgroupsV2(name string, cpu float64, mem int) error {
 	// 分组路径
 	group := "/collector-" + name
 
-	// 先尝试加载原有的 cgroup
-	mgr, err := cgroup2.Load(group)
-	// 加载成功
-	if err == nil {
-		// 先尝试更新 cgroup 配置 可能每次启动的时候限制资源数量会不同
-		if err = mgr.Update(rs); err != nil {
-			return err
-		}
-
-		// 将进程号挂到 cgroup 下
-		return mgr.AddProc(uint64(os.Getpid()))
-	}
-
 	// 如果有问题 则尝试创建一个新的 cgroup 再挂载 实在还是不行那就木得办法了
-	mgr, err = cgroup2.NewManager("/sys/fs/cgroup", group, rs)
+	mgr, err := cgroup2.NewManager("/sys/fs/cgroup", group, rs)
 	if err != nil {
 		return err
 	}
-
-	// 创建成功 将进程号挂到 cgroup 下
 	return mgr.AddProc(uint64(os.Getpid()))
 }
 

@@ -550,6 +550,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				return
 			}
 			span.Set("mapping-length", len(mappings))
+			if len(mappings) == 0 {
+				log.Warnf(ctx, "index is empty with %v with %s", aliases, conn.String())
+			}
 
 			if i.maxSize > 0 && query.Size > i.maxSize {
 				query.Size = i.maxSize

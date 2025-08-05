@@ -392,7 +392,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	if err != nil {
 		return
 	}
-	scrollQuery, err := collectStorageScrollQuery(ctx, session, collectStorageQuery(queryList))
+	scrollQuery, err := collectStorageScrollQuery(ctx, session, queryList)
 	if err != nil {
 		return
 	}
@@ -432,7 +432,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 			e := e
 			if sErr := p.Submit(func() {
 				defer workerWg.Done()
-				sData, sErr := scrollQueryWorker(ctx, session, e.Connect, e.TableID, qry, start, end, e.Storage.Instance)
+				sData, sErr := scrollQueryWorker(ctx, session, e.Connect, e.TableID, qry, start, end, e.Instance)
 				if sErr != nil {
 					errCh <- sErr
 					return

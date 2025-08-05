@@ -38,6 +38,7 @@ type Instance interface {
 	DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error)
 
 	InstanceType() string
+	InstanceConnects() []string
 	ScrollHandler() ScrollHandler
 }
 
@@ -47,11 +48,15 @@ var (
 
 type ScrollHandler interface {
 	MakeSlices(ctx context.Context, session *redis.ScrollSession, connect, tableID string) ([]*redis.SliceInfo, error)
-	IsCompleted(opt metadata.ResultTableOption, dataLen int) bool
+	IsCompleted(opt *metadata.ResultTableOption, dataLen int) bool
 	UpdateScrollStatus(ctx context.Context, session *redis.ScrollSession, connect, tableID string, resultOption *metadata.ResultTableOption, status string) error
 }
 
 type DefaultInstance struct {
+}
+
+func (d *DefaultInstance) InstanceConnects() []string {
+	return nil
 }
 
 func (d *DefaultInstance) ScrollHandler() ScrollHandler {

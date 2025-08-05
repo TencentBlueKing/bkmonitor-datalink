@@ -106,7 +106,6 @@ func TestScrollSliceRetryMechanism(t *testing.T) {
 			},
 			expectedSliceCount: 2, // slice 0 被排除
 			expectedStatuses: map[int]string{
-				0: redis.StatusStop, // 超过失败次数限制
 				1: redis.StatusPending,
 				2: redis.StatusPending,
 			},
@@ -122,7 +121,6 @@ func TestScrollSliceRetryMechanism(t *testing.T) {
 			},
 			expectedSliceCount: 2, // 只有 slice 1, 2 可用
 			expectedStatuses: map[int]string{
-				0: redis.StatusStop,    // 超过失败次数限制
 				1: redis.StatusPending, // 失败后重试
 				2: redis.StatusPending, // 正常
 			},
@@ -157,7 +155,7 @@ func TestScrollSliceRetryMechanism(t *testing.T) {
 						ScrollID:   op.scrollID,
 						SliceMax:   &maxSlice,
 					}
-					err := scrollHandler.UpdateScrollStatus(ctx, session, tt.connect, tt.tableID, resultOption, tt.expectedStatuses[op.sliceIndex])
+					err := scrollHandler.UpdateScrollStatus(ctx, session, tt.connect, tt.tableID, resultOption, op.action)
 					assert.NoError(t, err)
 				}
 			}

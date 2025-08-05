@@ -11,7 +11,6 @@ package bksql
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/spf13/cast"
@@ -41,41 +40,16 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 		session.Mu.RUnlock()
 
 		if !exists {
-			val = redis.SliceStatusValue{
+			session.Mu.Lock()
+			session.ScrollIDs[key] = redis.SliceStatusValue{
 				Status:    redis.StatusPending,
 				FailedNum: 0,
-				Offset:    idx * i.sliceLimit,
+				Offset:    idx * session.Limit,
 				Limit:     session.Limit,
 			}
-			session.Mu.Lock()
-			session.ScrollIDs[key] = val
 			session.Mu.Unlock()
-			err := session.UpdateSliceStatus(ctx, key, redis.StatusPending, "")
-			if err != nil {
-				return nil, fmt.Errorf("failed to initialize slice status: %w", err)
-			}
-		} else if val.Status == redis.StatusFailed {
-			if val.FailedNum < session.SliceMaxFailedNum {
-				err := session.UpdateSliceStatus(ctx, key, redis.StatusPending, val.ScrollID)
-				if err != nil {
-					return nil, fmt.Errorf("failed to update slice status: %w", err)
-				}
-				val.Status = redis.StatusPending
-			} else {
-				err := session.UpdateSliceStatus(ctx, key, redis.StatusStop, val.ScrollID)
-				if err != nil {
-					return nil, err
-				}
-				continue
-			}
-		} else if val.Status == redis.StatusRunning {
-			newOffset := val.Offset + session.MaxSlice*val.Limit
-			val.Offset = newOffset
-			err := session.UpdateSliceStatusAndOffset(ctx, key, redis.StatusRunning, val.ScrollID, newOffset)
-			if err != nil {
-				return nil, err
-			}
-		} else if val.Status == redis.StatusStop || val.Status == redis.StatusCompleted {
+		}
+		if val.FailedNum >= session.SliceMaxFailedNum || val.Status == redis.StatusCompleted {
 			continue
 		}
 
@@ -93,12 +67,15 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 }
 
 func (i *Instance) UpdateScrollStatus(ctx context.Context, session *redis.ScrollSession, connect, tableID string, resultOption *metadata.ResultTableOption, status string) error {
-	key := generateScrollID(consul.BkSqlStorageType, tableID, resultOption.SliceIndex)
+	key := generateScrollID(consul.BkSqlStorageType, tableID, *resultOption.SliceIndex)
 
 	var scrollID string
+	var currentOffset int
 	if val, exists := session.ScrollIDs[key]; exists {
 		scrollID = val.ScrollID
+		currentOffset = val.Offset
 	}
 
-	return session.UpdateSliceStatus(ctx, key, status, scrollID)
+	newOffset := currentOffset + session.MaxSlice*session.Limit
+	return session.UpdateSliceStatusAndOffset(ctx, key, status, scrollID, newOffset)
 }

@@ -58,7 +58,7 @@ type Instance struct {
 	maxSize int
 }
 
-func (i *Instance) IsCompleted(opt metadata.ResultTableOption, dataLen int) bool {
+func (i *Instance) IsCompleted(opt *metadata.ResultTableOption, dataLen int) bool {
 	return dataLen == 0 || opt.ScrollID == ""
 }
 
@@ -880,4 +880,12 @@ func (i *Instance) InstanceType() string {
 
 func (i *Instance) ScrollHandler() tsdb.ScrollHandler {
 	return i
+}
+
+func (i *Instance) InstanceConnects() []string {
+	connects := make([]string, 0, len(i.connects))
+	for _, c := range i.connects {
+		connects = append(connects, c.Address)
+	}
+	return connects
 }

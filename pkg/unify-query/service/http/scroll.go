@@ -19,7 +19,6 @@ import (
 	"github.com/jinzhu/copier"
 	"github.com/spf13/cast"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -94,36 +93,23 @@ func prepareQueryTs(ctx context.Context, queryTs *structured.QueryTs) (queryList
 	return
 }
 
-func collectStorageQuery(qryList []*metadata.Query) map[string][]*metadata.Query {
-	storageQuery := make(map[string][]*metadata.Query)
-	for _, qry := range qryList {
-		storageIds := qry.CollectStorageIDs()
-		for _, storageID := range storageIds {
-			storageQuery[storageID] = append(storageQuery[qry.StorageID], qry)
-		}
-	}
-	return storageQuery
-}
-
 type StorageScrollQuery struct {
 	QueryList []*metadata.Query
-	Storage   *tsdb.Storage
+	Instance  tsdb.Instance
 	Connect   string
 	TableID   string
 }
 
-func collectStorageScrollQuery(ctx context.Context, session *redis.ScrollSession, storageQueryMap map[string][]*metadata.Query) (list []StorageScrollQuery, err error) {
-	for storageID, qryList := range storageQueryMap {
-		storage, gErr := tsdb.GetStorage(storageID)
-		if gErr != nil {
-			err = gErr
+func collectStorageScrollQuery(ctx context.Context, session *redis.ScrollSession, qryList []*metadata.Query) (list []StorageScrollQuery, err error) {
+	for _, qry := range qryList {
+		instance := prometheus.GetTsDbInstance(ctx, qry)
+		connects := instance.InstanceConnects()
+		if len(connects) == 0 {
+			err = fmt.Errorf("no connects found for query: %v", qry)
 			return
 		}
-
-		connect := storage.Address
-		for _, qry := range qryList {
-			storage.Instance = prometheus.GetTsDbInstance(ctx, qry)
-			slices, mErr := storage.Instance.ScrollHandler().MakeSlices(ctx, session, connect, qry.TableID)
+		for _, connect := range connects {
+			slices, mErr := instance.ScrollHandler().MakeSlices(ctx, session, connect, qry.TableID)
 			if mErr != nil {
 				err = mErr
 				return
@@ -139,8 +125,8 @@ func collectStorageScrollQuery(ctx context.Context, session *redis.ScrollSession
 			}
 			list = append(list, StorageScrollQuery{
 				QueryList: injectedScrollQueryList,
-				Storage:   storage,
 				Connect:   connect,
+				Instance:  instance,
 				TableID:   qry.TableID,
 			})
 		}
@@ -164,17 +150,10 @@ func injectScrollQuery(qry *metadata.Query, connect, tableID string, sliceInfo *
 		ScrollID:   sliceInfo.ScrollID,
 		SliceIndex: &sliceInfo.SliceIdx,
 		SliceMax:   &sliceInfo.SliceMax,
+		From:       &sliceInfo.Offset,
 	}
 
-	var connectKey string
-	if sliceInfo.StorageType == consul.BkSqlStorageType {
-		option.From = &sliceInfo.Offset
-		connectKey = ""
-	} else {
-		connectKey = connect
-	}
-
-	qryCp.ResultTableOptions.SetOption(tableID, connectKey, option)
+	qryCp.ResultTableOptions.SetOption(tableID, connect, option)
 
 	return qryCp, nil
 }
@@ -190,49 +169,38 @@ func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connec
 		}
 	}()
 
-	_, option, err := instance.QueryRawData(ctx, qry, start, end, dataCh)
+	_, resultOption, err := instance.QueryRawData(ctx, qry, start, end, dataCh)
 	close(dataCh)
 	wg.Wait()
 
 	var sliceResultOption *metadata.ResultTableOption
-
-	if option != nil {
-		if opt := option.GetOption(tableID, connect); opt != nil {
-			sliceResultOption = opt
-			// doris 不会设置 address
-		} else if opt := option.GetOption(tableID, ""); opt != nil {
+	if resultOption != nil {
+		if opt := resultOption.GetOption(tableID, connect); opt != nil {
 			sliceResultOption = opt
 		}
-	}
-
-	if sliceResultOption == nil && qry.ResultTableOptions != nil {
-		if opt := qry.ResultTableOptions.GetOption(tableID, connect); opt != nil {
-			sliceResultOption = opt
-		} else if opt := qry.ResultTableOptions.GetOption(tableID, ""); opt != nil {
-			sliceResultOption = opt
-		}
-	}
-
-	if err != nil {
-		if sliceResultOption != nil {
-			if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusFailed); err != nil {
-				return
-			}
-		}
-		return
-	}
-
-	if sliceResultOption != nil {
-		if instance.ScrollHandler().IsCompleted(*sliceResultOption, len(data)) {
-			if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusCompleted); err != nil {
-				return
-			}
+	} else {
+		qryOption := qry.ResultTableOptions.GetOption(tableID, connect)
+		if qryOption != nil {
+			qryOption.ScrollID = ""
+			sliceResultOption = qryOption
 		} else {
-			if err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, redis.StatusRunning); err != nil {
-				return
-			}
+			err = fmt.Errorf("no result option found for tableID: %s, connect: %s", tableID, connect)
+			return
 		}
 	}
+
+	var sliceStatus string
+	if err != nil {
+		sliceStatus = redis.StatusFailed
+	}
+	scrollHandler := instance.ScrollHandler()
+	isCompleted := scrollHandler.IsCompleted(sliceResultOption, len(data))
+	if isCompleted {
+		sliceStatus = redis.StatusCompleted
+	} else {
+		sliceStatus = redis.StatusRunning
+	}
+	err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, sliceStatus)
 	return
 }
 

@@ -112,9 +112,7 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 	}
 
 	thirdRoundEsMockData := map[string]any{
-		`{"scroll":"9m","scroll_id":"scroll_id_0"}`:      `{"_scroll_id":"scroll_id_0_next","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
-		`{"scroll":"9m","scroll_id":"scroll_id_1"}`:      `{"_scroll_id":"scroll_id_1_next","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
-		`{"scroll":"9m","scroll_id":"scroll_id_0_next"}`: `{"_scroll_id":"scroll_id_0_next","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
+		`{"scroll":"9m","scroll_id":"scroll_id_0_next"}`: `{"_scroll_id":"","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
 		`{"scroll":"9m","scroll_id":"scroll_id_1_next"}`: `{"_scroll_id":"scroll_id_1_final","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"7","_source":{"dtEventTimeStamp":"1723594007000","data":"es_test7"}}]}}`,
 		`{"scroll":"9m","scroll_id":"scroll_id_2_next"}`: `{"_scroll_id":"scroll_id_2_final","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"8","_source":{"dtEventTimeStamp":"1723594008000","data":"es_test8"}}]}}`,
 	}
@@ -181,19 +179,24 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 		SpaceUID:  spaceUid,
 		SkipSpace: "true",
 	}
-	testCtx := metadata.InitHashID(context.Background())
-	metadata.SetUser(testCtx, user)
+
+	sessionKeySuffix, err := generateScrollKey(user.Name, *tCase.queryTs)
+	require.NoError(t, err, "Failed to generate scroll key")
 
 	for i, c := range tCase.expected {
 		t.Logf("Running step %d: %s", i+1, c.desc)
 
-		mock.Es.Clear()
+		testCtx := metadata.InitHashID(context.Background())
+		metadata.SetUser(testCtx, user)
+
 		mock.Es.Set(c.mockData)
 
-		queryTsBytes, _ := json.StableMarshal(tCase.queryTs)
+		queryTsBytes, err := json.Marshal(tCase.queryTs)
+		require.NoError(t, err, "Failed to marshal queryTs")
+
 		var queryTsCopy structured.QueryTs
-		json.Unmarshal(queryTsBytes, &queryTsCopy)
-		sessionKeySuffix, _ := generateScrollKey(user.Name, *tCase.queryTs)
+		err = json.Unmarshal(queryTsBytes, &queryTsCopy)
+		require.NoError(t, err, "Failed to unmarshal queryTs")
 
 		total, list, _, done, err := queryRawWithScroll(testCtx, &queryTsCopy, sessionKeySuffix, 3)
 		hasData := len(list) > 0
@@ -201,6 +204,12 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 		assert.Equal(t, c.total, total, "Total should match expected value for step %d", i+1)
 		assert.Equal(t, c.done, done, "Done should match expected value for step %d", i+1)
 		assert.Equal(t, c.hasData, hasData, "HasData should match expected value for step %d", i+1)
+
+		if c.hasData {
+			assert.Greater(t, len(list), 0, "Should have data when hasData is true for step %d", i+1)
+		} else {
+			assert.Equal(t, 0, len(list), "Should have no data when hasData is false for step %d", i+1)
+		}
 	}
 }
 
@@ -261,11 +270,9 @@ func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
 	}
 
 	thirdRoundDorisMockData := map[string]any{
-		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 60`:  `{"result":true,"code":"00","message":"","data":{"totalRecords":0,"total_record_size":0,"list":[]}}`,
-		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 70`:  `{"result":true,"code":"00","message":"","data":{"totalRecords":0,"total_record_size":0,"list":[]}}`,
-		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 80`:  `{"result":true,"code":"00","message":"","data":{"totalRecords":0,"total_record_size":0,"list":[]}}`,
-		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 90`:  `{"result":true,"code":"00","message":"","data":{"totalRecords":0,"total_record_size":0,"list":[]}}`,
-		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 100`: `{"result":true,"code":"00","message":"","data":{"totalRecords":0,"total_record_size":0,"list":[]}}`,
+		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 60`: `{"result":true,"code":"00","message":"","data":{"totalRecords":0,"total_record_size":0,"list":[]}}`,
+		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 70`: `{"result":true,"code":"00","message":"","data":{"totalRecords":0,"total_record_size":0,"list":[]}}`,
+		`SELECT *, ` + "`dtEventTimeStamp`" + ` AS ` + "`_timestamp_`" + ` FROM ` + "`doris_db`" + ` WHERE ` + "`dtEventTimeStamp`" + ` >= 1723594000000 AND ` + "`dtEventTimeStamp`" + ` < 1723595000000 AND ` + "`thedate`" + ` = '20240814' LIMIT 10 OFFSET 80`: `{"result":true,"code":"00","message":"","data":{"totalRecords":0,"total_record_size":0,"list":[]}}`,
 	}
 
 	start := "1723594000"

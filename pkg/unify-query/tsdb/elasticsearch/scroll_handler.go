@@ -34,7 +34,6 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 	session.Mu.Lock()
 	defer session.Mu.Unlock()
 
-	needUpdate := false
 	var slices []*redis.SliceInfo
 
 	for idx := 0; idx < session.MaxSlice; idx++ {
@@ -47,28 +46,9 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 				FailedNum: 0,
 			}
 			session.ScrollIDs[key] = val
-			needUpdate = true
 		}
 
-		if val.Status == redis.StatusFailed {
-			if val.FailedNum < session.SliceMaxFailedNum {
-				val.Status = redis.StatusPending
-				session.ScrollIDs[key] = val
-				needUpdate = true
-			} else {
-				val.Status = redis.StatusStop
-				session.ScrollIDs[key] = val
-				needUpdate = true
-				continue
-			}
-		}
-
-		if val.Status == redis.StatusStop || val.Status == redis.StatusCompleted {
-			continue
-		}
-
-		// 如果scroll_id为空且状态不是pending，表示这个slice已经完成
-		if val.ScrollID == "" && val.Status != redis.StatusPending {
+		if val.FailedNum >= session.SliceMaxFailedNum || val.Status == redis.StatusCompleted {
 			continue
 		}
 
@@ -80,13 +60,6 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 			SliceMax:    session.MaxSlice,
 			ScrollID:    val.ScrollID,
 		})
-	}
-
-	if needUpdate {
-		err := redis.Client().Set(ctx, session.SessionKey, session, session.ScrollTimeout).Err()
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	return slices, nil

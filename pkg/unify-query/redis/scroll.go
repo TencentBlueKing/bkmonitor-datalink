@@ -32,7 +32,6 @@ const (
 	StatusPending   = "pending"
 	StatusRunning   = "running"
 	StatusFailed    = "failed"
-	StatusStop      = "stop" // 超过失败次数限制
 	StatusCompleted = "completed"
 )
 
@@ -102,7 +101,7 @@ func (s *ScrollSession) Done() bool {
 	s.Mu.RLock()
 	defer s.Mu.RUnlock()
 	for _, val := range s.ScrollIDs {
-		if val.Status != StatusCompleted && val.Status != StatusStop {
+		if val.Status != StatusCompleted {
 			return false
 		}
 	}
@@ -119,10 +118,17 @@ func (s *ScrollSession) UpdateSliceStatus(ctx context.Context, sliceKey string, 
 		sliceValue.FailedNum++
 	}
 
+	if sliceValue.Status == StatusFailed {
+		if sliceValue.FailedNum < s.SliceMaxFailedNum {
+			sliceValue.Status = StatusPending
+		} else {
+			sliceValue.Status = StatusCompleted
+		}
+	}
+
 	s.ScrollIDs[sliceKey] = sliceValue
 	s.LastAccessAt = time.Now()
 	s.Mu.Unlock()
-
 	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
 }
 

@@ -242,7 +242,10 @@ func (e TarsEvent) RecordType() define.RecordType {
 	return define.RecordTars
 }
 
-var TarsConverter EventConverter = tarsConverter{}
+type statPK struct {
+	dataID int32
+	hash   uint64
+}
 
 type stat struct {
 	token        define.Token
@@ -273,20 +276,14 @@ func newStat(token define.Token, role, target string, timestamp int64, dims map[
 	}
 }
 
-// GetToken 返回 Token 信息
-func (s *stat) GetToken() define.Token {
-	return s.token
-}
-
 // GetDataID 返回数据 ID
 func (s *stat) GetDataID() int32 {
 	return s.token.MetricsDataId
 }
 
 // PK 返回 stat 的哈希值
-func (s *stat) PK() string {
-	strs := []string{cast.ToString(s.GetDataID()), cast.ToString(labels.HashFromMap(s.dimensions))}
-	return strings.Join(strs, "_")
+func (s *stat) PK() statPK {
+	return statPK{s.GetDataID(), labels.HashFromMap(s.dimensions)}
 }
 
 // HasErrors 判断 stat 是否有错误
@@ -331,15 +328,12 @@ func (s *stat) UpdateFrom(other *stat) {
 	s.successCount += other.successCount
 	s.totalRspTime += other.totalRspTime
 	for k, v := range other.bucketMap {
-		if _, ok := s.bucketMap[k]; !ok {
-			s.bucketMap[k] = 0
-		}
 		s.bucketMap[k] += v
 	}
 }
 
-// ToPromMapperList 将 stat 转换为 Prometheus Mapper 列表
-func (s *stat) ToPromMapperList(metricNamePrefix string) []*promMapper {
+// ToEvents 将 stat 转换为 Event 列表
+func (s *stat) ToEvents(metricNamePrefix string) []define.Event {
 	var pms []*promMapper
 
 	codeTypeReqCntMap := map[string]int32{
@@ -378,35 +372,36 @@ func (s *stat) ToPromMapperList(metricNamePrefix string) []*promMapper {
 
 	// 协议数据仅够生成 _bucket / _count 指标，这里需要使用 TotalRspTime 补充 _sum，以构造完整的 Histogram
 	rpcHistogramSumMetricName := strings.Join([]string{rpcHistogramMetricName, "sum"}, "_")
-	return append(pms, &promMapper{
-		Metrics:    common.MapStr{rpcHistogramSumMetricName: float64(s.totalRspTime) / 1000},
+	pms = append(pms, &promMapper{
+		Metrics:    common.MapStr{rpcHistogramSumMetricName: cast.ToFloat64(s.totalRspTime) / 1000},
 		Target:     s.target,
 		Timestamp:  s.timestamp,
 		Dimensions: dims,
 	})
+
+	var events []define.Event
+	for _, pm := range pms {
+		events = append(events, TarsEvent{define.NewCommonEvent(s.token, s.GetDataID(), pm.AsMapStr())})
+	}
+	return events
 }
 
 type aggregator struct {
-	ch                chan *stat
-	buffer            map[string]*stat
-	interval          time.Duration
-	converter         EventConverter
-	setGatherFuncOnce sync.Once
-	gatherFunc        define.GatherFunc
-	tagIgnoreRules    map[string][]string
+	ch                    chan *stat
+	buffer                map[statPK]*stat
+	interval              time.Duration
+	setGatherFuncOnce     sync.Once
+	gatherFunc            define.GatherFunc
+	scopeNameToIgnoreTags map[string][]string
 }
 
 // newAggregator 创建聚合器实例
-func newAggregator(converter EventConverter) *aggregator {
+func newAggregator(interval time.Duration, scopeNameToIgnoreTags map[string][]string) *aggregator {
 	a := &aggregator{
-		ch:        make(chan *stat, 256),
-		buffer:    make(map[string]*stat),
-		interval:  200 * time.Millisecond,
-		converter: converter,
-		tagIgnoreRules: map[string][]string{
-			tarsStatTagsRoleClient: {rpcMetricTagsCalleeIp},
-			tarsStatTagsRoleServer: {rpcMetricTagsCallerIp},
-		},
+		ch:                    make(chan *stat, 256),
+		buffer:                make(map[statPK]*stat),
+		interval:              interval,
+		scopeNameToIgnoreTags: scopeNameToIgnoreTags,
 	}
 	go a.Run()
 	return a
@@ -432,20 +427,21 @@ func (a *aggregator) Run() {
 	}
 }
 
+// Aggregate 接收 stat 并将其发送到聚合器通道
+func (a *aggregator) Aggregate(s *stat) {
+	a.ch <- s
+}
+
 // aggregate 样本点聚合
 func (a *aggregator) aggregate(s *stat) {
 	if s.HasErrors() {
 		// 错误的情况全采样，无需聚合。
-		var events []define.Event
-		for _, p := range s.ToPromMapperList(rpcMetricAggregatePrefix) {
-			events = append(events, a.converter.ToEvent(s.GetToken(), s.GetDataID(), p.AsMapStr()))
-		}
-		a.gatherFunc(events...)
+		a.gatherFunc(s.ToEvents(rpcMetricAggregatePrefix)...)
 		return
 	}
 
 	stat := s.Copy()
-	pk := stat.DropTags(a.tagIgnoreRules[stat.role]).PK()
+	pk := stat.DropTags(a.scopeNameToIgnoreTags[s.dimensions[resourceTagsScopeName]]).PK()
 	if _, ok := a.buffer[pk]; !ok {
 		a.buffer[pk] = stat
 	} else {
@@ -453,18 +449,11 @@ func (a *aggregator) aggregate(s *stat) {
 	}
 }
 
-// Aggregate 接收 stat 并将其发送到聚合器通道
-func (a *aggregator) Aggregate(s *stat) {
-	a.ch <- s
-}
-
 // ExportAndClean 导出并清理缓冲区中的数据
 func (a *aggregator) exportAndClean() {
 	var events []define.Event
 	for pk, s := range a.buffer {
-		for _, p := range s.ToPromMapperList(rpcMetricAggregatePrefix) {
-			events = append(events, a.converter.ToEvent(s.GetToken(), s.GetDataID(), p.AsMapStr()))
-		}
+		events = append(events, s.ToEvents(rpcMetricAggregatePrefix)...)
 		delete(a.buffer, pk)
 	}
 
@@ -473,9 +462,21 @@ func (a *aggregator) exportAndClean() {
 	}
 }
 
-var tarsStatAggregator = newAggregator(TarsConverter)
+type tarsConverter struct {
+	isDropOriginal bool
+	aggregator     *aggregator
+}
 
-type tarsConverter struct{}
+func NewTarsConverter(config TarsConfig) EventConverter {
+	scopeNameToIgnoreTags := make(map[string][]string)
+	for _, tagIgnore := range config.TagIgnores {
+		scopeNameToIgnoreTags[tagIgnore.ScopeName] = append(scopeNameToIgnoreTags[tagIgnore.ScopeName], tagIgnore.Tags...)
+	}
+	return tarsConverter{
+		isDropOriginal: config.IsDropOriginal,
+		aggregator:     newAggregator(config.AggregateInterval, scopeNameToIgnoreTags),
+	}
+}
 
 func (c tarsConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return TarsEvent{define.NewCommonEvent(token, dataId, data)}
@@ -486,7 +487,7 @@ func (c tarsConverter) ToDataID(record *define.Record) int32 {
 }
 
 func (c tarsConverter) Convert(record *define.Record, f define.GatherFunc) {
-	tarsStatAggregator.SetGatherFunc(f)
+	c.aggregator.SetGatherFunc(f)
 
 	var events []define.Event
 	dataID := c.ToDataID(record)
@@ -494,29 +495,24 @@ func (c tarsConverter) Convert(record *define.Record, f define.GatherFunc) {
 	if data.Type == define.TarsPropertyType {
 		events = c.handleProp(record.Token, dataID, record.RequestClient.IP, data)
 	} else {
-		events = c.handleStat(record.Token, dataID, record.RequestClient.IP, data)
+		events = c.handleStat(record.Token, record.RequestClient.IP, data)
 	}
 	if len(events) > 0 {
 		f(events...)
 	}
 }
 
-func (c tarsConverter) statToEvents(token define.Token, dataID int32, isDropOriginal bool, stat *stat) []define.Event {
-	tarsStatAggregator.Aggregate(stat)
-	if isDropOriginal {
+func (c tarsConverter) statToEvents(stat *stat) []define.Event {
+	c.aggregator.Aggregate(stat)
+	if c.isDropOriginal {
 		return nil
 	}
 
-	var events []define.Event
-	pms := stat.ToPromMapperList(rpcMetricNamePrefix)
-	for _, pm := range pms {
-		events = append(events, c.ToEvent(token, dataID, pm.AsMapStr()))
-	}
-	return events
+	return stat.ToEvents(rpcMetricNamePrefix)
 }
 
 // handleStat 处理服务统计指标
-func (c tarsConverter) handleStat(token define.Token, dataID int32, ip string, data *define.TarsData) []define.Event {
+func (c tarsConverter) handleStat(token define.Token, ip string, data *define.TarsData) []define.Event {
 	var events []define.Event
 	sd := data.Data.(*define.TarsStatData)
 
@@ -528,7 +524,7 @@ func (c tarsConverter) handleStat(token define.Token, dataID int32, ip string, d
 	for head, body := range sd.Stats {
 		dims := statHeadToRPCMetricDims(&head, role, ip)
 		stat := newStat(token, role, ip, data.Timestamp, dims, body)
-		events = append(events, c.statToEvents(token, dataID, data.IsDropOriginal, stat)...)
+		events = append(events, c.statToEvents(stat)...)
 
 		if role == tarsStatTagsRoleClient {
 			calleeServer, ok := dims[rpcMetricTagsCalleeServer]
@@ -546,8 +542,9 @@ func (c tarsConverter) handleStat(token define.Token, dataID int32, ip string, d
 				resourceTagsInstance:    calleeIp,
 				resourceTagsScopeName:   "server_metrics",
 			})
-			serverStatFromClient := newStat(token, tarsStatTagsRoleServer, ip, data.Timestamp, serverDims, body)
-			events = append(events, c.statToEvents(token, dataID, data.IsDropOriginal, serverStatFromClient)...)
+			// 从 Client 切换成 Server 视角，target 取值从 ip 调整为 calleeIp，避免 target x calleeIp 不一致导致高基数。
+			serverStatFromClient := newStat(token, tarsStatTagsRoleServer, calleeIp, data.Timestamp, serverDims, body)
+			events = append(events, c.statToEvents(serverStatFromClient)...)
 		}
 	}
 	return events

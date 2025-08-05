@@ -1133,3 +1133,14 @@ bk-collector:
       metrics_batch_size: 1
       traces_batch_size: 1
       flush_interval: 10s
+    converter:
+      tars:
+        # 是否丢弃原始数据，默认 false。开启后会丢弃原始数据，仅保留经过预聚合后的数据。
+        is_drop_original: false
+        # 聚合间隔
+        aggregate_interval: 200ms
+        tag_ignores:
+          - scope_name: "server_metrics"
+            tags: ["caller_ip"]
+          - scope_name: "client_metrics"
+            tags: ["callee_ip"]

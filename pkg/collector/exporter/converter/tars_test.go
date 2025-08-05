@@ -10,11 +10,14 @@
 package converter
 
 import (
+	"fmt"
+	"math"
 	"testing"
 	"time"
 
 	"github.com/TarsCloud/TarsGo/tars/protocol/res/propertyf"
 	"github.com/TarsCloud/TarsGo/tars/protocol/res/statf"
+	"github.com/spf13/cast"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -153,7 +156,7 @@ func TestTarsProperty(t *testing.T) {
 		Data:          data,
 	}
 
-	TarsConverter.Convert(record, func(events ...define.Event) {
+	TestConverter.Convert(record, func(events ...define.Event) {
 		assert.Len(t, events, 10)
 
 		commonDims := map[string]string{
@@ -259,7 +262,7 @@ func TestTarsStat(t *testing.T) {
 		Data:          data,
 	}
 
-	TarsConverter.Convert(record, func(events ...define.Event) {
+	TestConverter.Convert(record, func(events ...define.Event) {
 		expects := []common.MapStr{
 			{
 				"dimension": rpcClientMetricDims,
@@ -312,49 +315,49 @@ func TestTarsStat(t *testing.T) {
 			{
 				"dimension": rpcServerMetricDims,
 				"metrics":   common.MapStr{"origin_rpc_server_handled_total": int32(6)},
-				"target":    "127.0.0.1",
+				"target":    "0.0.0.0",
 				"timestamp": int64(1719417736),
 			},
 			{
 				"dimension": utils.MergeMaps(rpcServerMetricDims, map[string]string{"le": "0.1"}),
 				"metrics":   common.MapStr{"origin_rpc_server_handled_seconds_bucket": int32(0)},
-				"target":    "127.0.0.1",
+				"target":    "0.0.0.0",
 				"timestamp": int64(1719417736),
 			},
 			{
 				"dimension": utils.MergeMaps(rpcServerMetricDims, map[string]string{"le": "0.2"}),
 				"metrics":   common.MapStr{"origin_rpc_server_handled_seconds_bucket": int32(2)},
-				"target":    "127.0.0.1",
+				"target":    "0.0.0.0",
 				"timestamp": int64(1719417736),
 			},
 			{
 				"dimension": utils.MergeMaps(rpcServerMetricDims, map[string]string{"le": "0.5"}),
 				"metrics":   common.MapStr{"origin_rpc_server_handled_seconds_bucket": int32(6)},
-				"target":    "127.0.0.1",
+				"target":    "0.0.0.0",
 				"timestamp": int64(1719417736),
 			},
 			{
 				"dimension": utils.MergeMaps(rpcServerMetricDims, map[string]string{"le": "1"}),
 				"metrics":   common.MapStr{"origin_rpc_server_handled_seconds_bucket": int32(6)},
-				"target":    "127.0.0.1",
+				"target":    "0.0.0.0",
 				"timestamp": int64(1719417736),
 			},
 			{
 				"dimension": utils.MergeMaps(rpcServerMetricDims, map[string]string{"le": "+Inf"}),
 				"metrics":   common.MapStr{"origin_rpc_server_handled_seconds_bucket": int32(6)},
-				"target":    "127.0.0.1",
+				"target":    "0.0.0.0",
 				"timestamp": int64(1719417736),
 			},
 			{
 				"dimension": rpcServerMetricDims,
 				"metrics":   common.MapStr{"origin_rpc_server_handled_seconds_count": int32(6)},
-				"target":    "127.0.0.1",
+				"target":    "0.0.0.0",
 				"timestamp": int64(1719417736),
 			},
 			{
 				"dimension": rpcServerMetricDims,
 				"metrics":   common.MapStr{"origin_rpc_server_handled_seconds_sum": 1.343},
-				"target":    "127.0.0.1",
+				"target":    "0.0.0.0",
 				"timestamp": int64(1719417736),
 			},
 		}
@@ -372,11 +375,13 @@ func TestTarsStatAggregate(t *testing.T) {
 		totalEvents = append(totalEvents, events...)
 	}
 
+	conf := Config{Tars: TarsConfig{IsDropOriginal: true}}
+	conf.Validate()
+	c := NewCommonConverter(conf)
 	for i := 0; i < 100000; i++ {
 		data := &define.TarsData{
-			Type:           define.TarsStatType,
-			Timestamp:      1719417736,
-			IsDropOriginal: true,
+			Type:      define.TarsStatType,
+			Timestamp: 1719417736,
 			Data: &define.TarsStatData{
 				FromClient: true,
 				Stats: map[statf.StatMicMsgHead]statf.StatMicMsgBody{
@@ -397,45 +402,38 @@ func TestTarsStatAggregate(t *testing.T) {
 			Token:         define.Token{Original: "xxx", MetricsDataId: 123},
 			Data:          data,
 		}
-		TarsConverter.Convert(record, gatherFunc)
+		c.Convert(record, gatherFunc)
 	}
 
 	// 等待一段时间，确保所有事件都被处理
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	metricAggregateSumMap := make(map[string]float64)
 	for _, event := range totalEvents {
 		for metric, value := range event.Data()["metrics"].(common.MapStr) {
-			if _, ok := metricAggregateSumMap[metric]; !ok {
-				metricAggregateSumMap[metric] = 0
-			}
-			if metric == "rpc_client_handled_seconds_sum" || metric == "rpc_server_handled_seconds_sum" {
-				metricAggregateSumMap[metric] += value.(float64)
-			} else {
-				metricAggregateSumMap[metric] += float64(value.(int32))
-			}
+			metricAggregateSumMap[metric] += cast.ToFloat64(value)
 		}
 	}
 
-	assert.Equal(t, metricAggregateSumMap, map[string]float64{
-		"rpc_client_handled_seconds_sum":    1e2,
+	for metric, value := range metricAggregateSumMap {
+		// 浮点数求和可能会有精度问题，这里使用 math.Trunc 来对浮点数进行截断，去掉不可能达到的精度。
+		shift := math.Pow10(10)
+		metricAggregateSumMap[metric] = cast.ToFloat64(fmt.Sprintf("%.9f", math.Trunc(value*shift)/shift))
+	}
+
+	assert.Equal(t, map[string]float64{
+		"rpc_client_handled_seconds_sum":    100,
 		"rpc_client_handled_seconds_count":  400000,
 		"rpc_client_handled_seconds_bucket": 1400000,
 		"rpc_client_handled_total":          400000,
-		"rpc_server_handled_seconds_sum":    1e2,
+		"rpc_server_handled_seconds_sum":    100,
 		"rpc_server_handled_seconds_count":  400000,
 		"rpc_server_handled_seconds_bucket": 1400000,
 		"rpc_server_handled_total":          400000,
-	})
+	}, metricAggregateSumMap)
 }
 
 // BenchmarkTarsStat 基准测试 TarsStat 转换性能
-// goos: darwin
-// goarch: arm64
-// cpu: Apple M4 Pro
-// Before optimization:						BenchmarkTarsStat-10    	   22473	     45333 ns/op
-// After optimization:						BenchmarkTarsStat-10    	   34472	     35061 ns/op
-// After optimization with Aggregate:		BenchmarkTarsStat-10    	   27372	     43605 ns/op
 func BenchmarkTarsStat(b *testing.B) {
 	data := &define.TarsData{
 		Type:      define.TarsStatType,
@@ -464,16 +462,11 @@ func BenchmarkTarsStat(b *testing.B) {
 	}
 
 	for i := 0; i < b.N; i++ {
-		TarsConverter.Convert(record, func(events ...define.Event) {})
+		TestConverter.Convert(record, func(events ...define.Event) {})
 	}
 }
 
 // BenchmarkTarsProperty 基准测试 TarsProperty 转换性能
-// goos: darwin
-// goarch: arm64
-// cpu: Apple M4 Pro
-// Before optimization: 			  BenchmarkTarsProperty-10    	   39517	     28596 ns/op
-// After optimization:  			  BenchmarkTarsProperty-10    	   121836	     9705  ns/op
 func BenchmarkTarsProperty(b *testing.B) {
 	data := &define.TarsData{
 		Type:      define.TarsPropertyType,
@@ -510,6 +503,6 @@ func BenchmarkTarsProperty(b *testing.B) {
 
 	// 优化前：BenchmarkTarsProperty-10    	   39517	     28596 ns/op
 	for i := 0; i < b.N; i++ {
-		TarsConverter.Convert(record, func(events ...define.Event) {})
+		TestConverter.Convert(record, func(events ...define.Event) {})
 	}
 }

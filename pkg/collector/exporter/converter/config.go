@@ -10,39 +10,34 @@
 package converter
 
 import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
+	"time"
 )
 
-func TestCleanAttributesMap(t *testing.T) {
-	t.Run("Empty", func(t *testing.T) {
-		attrs := map[string]interface{}{
-			"":    "1",
-			"foo": "bar",
-		}
+const defaultAggregateInterval = 200 * time.Millisecond
 
-		attrs = CleanAttributesMap(attrs)
-		assert.Len(t, attrs, 1)
-		assert.Equal(t, "bar", attrs["foo"])
-	})
-
-	t.Run("Trim", func(t *testing.T) {
-		attrs := map[string]interface{}{
-			" ":   "1",
-			"foo": "bar",
-		}
-
-		attrs = CleanAttributesMap(attrs)
-		assert.Len(t, attrs, 1)
-		assert.Equal(t, "bar", attrs["foo"])
-	})
+type Config struct {
+	Tars TarsConfig `config:"tars"`
 }
 
-func NewTestConverter() Converter {
-	conf := Config{Tars: TarsConfig{}}
-	conf.Validate()
-	return NewCommonConverter(conf)
+func (c *Config) Validate() {
+	if c.Tars.AggregateInterval <= 0 {
+		c.Tars.AggregateInterval = defaultAggregateInterval
+	}
+	if len(c.Tars.TagIgnores) == 0 {
+		c.Tars.TagIgnores = []TagIgnore{
+			{"server_metrics", []string{"caller_ip"}},
+			{"client_metrics", []string{"callee_ip"}},
+		}
+	}
 }
 
-var TestConverter = NewTestConverter()
+type TarsConfig struct {
+	IsDropOriginal    bool          `config:"is_drop_original"`
+	AggregateInterval time.Duration `config:"aggregate_interval"`
+	TagIgnores        []TagIgnore   `config:"tag_ignores" mapstructure:"tag_ignores"`
+}
+
+type TagIgnore struct {
+	ScopeName string   `json:"scope_name"`
+	Tags      []string `json:"tags"`
+}

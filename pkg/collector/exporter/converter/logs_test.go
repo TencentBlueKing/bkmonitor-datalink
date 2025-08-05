@@ -49,7 +49,7 @@ func TestLogsRandom(t *testing.T) {
 		}
 	}
 
-	NewCommonConverter().Convert(&record, gather)
+	TestConverter.Convert(&record, gather)
 	assert.Len(t, events, 2)
 }
 
@@ -64,7 +64,7 @@ func TestLogsTime(t *testing.T) {
 			s := evts[0].Data().String()
 			assert.True(t, strings.Contains(s, "10000000"))
 		}
-		NewCommonConverter().Convert(&record, gather)
+		TestConverter.Convert(&record, gather)
 	}
 
 	g := makeLogsGenerator(1, 20)
@@ -109,7 +109,7 @@ func TestLogsEscapeHTML(t *testing.T) {
 		}
 	}
 
-	NewCommonConverter().Convert(&record, gather)
+	TestConverter.Convert(&record, gather)
 }
 
 func BenchmarkLogsConvert_10x1KB_LogRecords(b *testing.B) {

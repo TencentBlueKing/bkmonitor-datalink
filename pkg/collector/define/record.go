@@ -181,9 +181,7 @@ type TarsData struct {
 	// 标识为 TarsStatType 或者 ProxyEvent
 	Type      string
 	Timestamp int64
-	// 是否丢弃原始样本点，如果为 true，则只保留聚合后的数据。
-	IsDropOriginal bool
-	Data           interface{}
+	Data      interface{}
 }
 
 // TarsPropertyData 属性统计数据

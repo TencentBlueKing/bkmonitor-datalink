@@ -185,6 +185,8 @@ func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []stri
 	if err != nil {
 		return nil, err
 	}
+	defer client.Stop()
+
 	mappingMap, err := client.GetMapping().Index(aliases...).Type("").Do(ctx)
 	if err != nil {
 		log.Warnf(ctx, "get mapping error: %s", err.Error())
@@ -309,6 +311,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	if err != nil {
 		return nil, err
 	}
+	defer client.Stop()
 
 	var res *elastic.SearchResult
 	func() {

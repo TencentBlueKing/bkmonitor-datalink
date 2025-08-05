@@ -10,18 +10,20 @@
 package beat
 
 import (
+	"errors"
 	"math"
 	"os"
 	"runtime"
 
 	"github.com/containerd/cgroups"
+	"github.com/containerd/cgroups/v3/cgroup2"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 // SetResourceLimit 设置进程 CPU 和内存资源限制
 // Name: cgroup 名称; CPU: core; MEM: MB
 func SetResourceLimit(name string, cpu float64, mem int) {
-	if err := linuxcgroup(name, cpu, mem); err != nil {
+	if err := setLinuxCgroups(name, cpu, mem); err != nil {
 		// CPU 核数向上取整 确保有核可用
 		// 0.1 -> 1 core
 		runtime.GOMAXPROCS(int(math.Ceil(cpu)))
@@ -32,25 +34,97 @@ func SetResourceLimit(name string, cpu float64, mem int) {
 	runtime.GOMAXPROCS(0)
 }
 
-func linuxcgroup(name string, cpu float64, mem int) error {
+func setLinuxCgroups(name string, cpu float64, mem int) error {
+	mode := cgroups.Mode()
+	switch mode {
+	case cgroups.Legacy, cgroups.Hybrid:
+		return setLinuxCgroupsV1(name, cpu, mem)
+	case cgroups.Unified:
+		return setLinuxCgroupsV2(name, cpu, mem)
+	default:
+		return errors.New("no support cgroup mode")
+	}
+}
+
+func setLinuxCgroupsV2(name string, cpu float64, mem int) error {
+	var cpuResource *cgroup2.CPU
+	var memResource *cgroup2.Memory
+	var unlimited int64 = -1
+
+	// cpu * Core: 小于等于 0 表示 cgroup 无 CPU 限制
+	var cpuPeriod uint64 = 100000
+	cpuQuota := int64(cpu * float64(cpuPeriod))
+	if cpuQuota > 0 {
+		cpuResource = &cgroup2.CPU{Max: cgroup2.NewCPUMax(&cpuQuota, &cpuPeriod)}
+	}
+	if cpuQuota < 0 {
+		cpuResource = &cgroup2.CPU{Max: "max"}
+	}
+
+	// mem * MB: 小于等于 0 表示 cgroup 无内存限制
+	memLimit := int64(mem) * 1024 * 1024
+	if memLimit > 0 {
+		memResource = &cgroup2.Memory{Max: &memLimit}
+	}
+	if memLimit < 0 {
+		memResource = &cgroup2.Memory{Max: &unlimited}
+	}
+
+	// 无任何限制 直接返回
+	if cpuResource == nil && memResource == nil {
+		return nil
+	}
+
+	rs := &cgroup2.Resources{
+		CPU:    cpuResource,
+		Memory: memResource,
+	}
+
+	// 分组路径
+	group := "/collector-" + name
+
+	// 先尝试加载原有的 cgroup
+	mgr, err := cgroup2.Load(group)
+	// 加载成功
+	if err == nil {
+		// 先尝试更新 cgroup 配置 可能每次启动的时候限制资源数量会不同
+		if err = mgr.Update(rs); err != nil {
+			return err
+		}
+
+		// 将进程号挂到 cgroup 下
+		return mgr.AddProc(uint64(os.Getpid()))
+	}
+
+	// 如果有问题 则尝试创建一个新的 cgroup 再挂载 实在还是不行那就木得办法了
+	mgr, err = cgroup2.NewManager("/sys/fs/cgroup", group, rs)
+	if err != nil {
+		return err
+	}
+
+	// 创建成功 将进程号挂到 cgroup 下
+	return mgr.AddProc(uint64(os.Getpid()))
+}
+
+func setLinuxCgroupsV1(name string, cpu float64, mem int) error {
 	resource := &specs.LinuxResources{}
 	var unlimited int64 = -1
 
 	// cpu * Core: 小于等于 0 表示 cgroup 无 CPU 限制
-	cpuquota := int64(cpu * 100000)
-	if cpuquota > 0 {
-		resource.CPU = &specs.LinuxCPU{Quota: &cpuquota}
+	cpuQuota := int64(cpu * 100000)
+	if cpuQuota > 0 {
+		resource.CPU = &specs.LinuxCPU{Quota: &cpuQuota}
 	}
-	if cpuquota < 0 {
+	if cpuQuota < 0 {
 		resource.CPU = &specs.LinuxCPU{Quota: &unlimited}
 	}
 
 	// mem * MB: 小于等于 0 表示 cgroup 无内存限制
-	memlimit := int64(mem) * 1024 * 1024
-	if memlimit > 0 {
-		resource.Memory = &specs.LinuxMemory{Limit: &memlimit}
+	memLimit := int64(mem) * 1024 * 1024
+	if memLimit > 0 {
+		resource.Memory = &specs.LinuxMemory{Limit: &memLimit}
 	}
-	if memlimit < 0 {
+	if memLimit < 0 {
 		resource.Memory = &specs.LinuxMemory{Limit: &unlimited}
 	}
 
@@ -72,10 +146,7 @@ func linuxcgroup(name string, cpu float64, mem int) error {
 		}
 
 		// 将进程号挂到 cgroup 下
-		if err = cgroup.Add(cgroups.Process{Pid: os.Getpid()}); err != nil {
-			return err
-		}
-		return nil
+		return cgroup.Add(cgroups.Process{Pid: os.Getpid()})
 	}
 
 	// 如果有问题 则尝试创建一个新的 cgroup 再挂载 实在还是不行那就木得办法了
@@ -85,9 +156,5 @@ func linuxcgroup(name string, cpu float64, mem int) error {
 	}
 
 	// 创建成功 将进程号挂到 cgroup 下
-	if err = cgroup.Add(cgroups.Process{Pid: os.Getpid()}); err != nil {
-		return err
-	}
-
-	return nil
+	return cgroup.Add(cgroups.Process{Pid: os.Getpid()})
 }

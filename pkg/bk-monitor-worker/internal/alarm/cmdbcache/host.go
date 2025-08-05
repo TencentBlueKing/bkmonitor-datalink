@@ -377,7 +377,8 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 			},
 		}
 
-		if h.BkHostInnerip != "" {
+		// 忽略 ip 过长的异常数据，使用逗号存放多 ip 的场景
+		if h.BkHostInnerip != "" && !strings.Contains(h.BkHostInnerip, ",") && len(h.BkHostInnerip) < 50 {
 			systemInfo := &relation.Info{}
 			systemID := fmt.Sprintf("%s|%d", h.BkHostInnerip, h.BkCloudId)
 			systemInfo.ID = systemID

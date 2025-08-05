@@ -179,6 +179,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		lock      sync.Mutex
 
 		allLabelMap = make(map[string][]function.LabelMapValue)
+
+		isCutData bool
 	)
 
 	list = make([]map[string]any, 0)
@@ -271,7 +273,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			span.Set("query-ts-from", queryTs.From)
 			span.Set("query-ts-limit", queryTs.Limit)
 
-			if len(data) > queryTs.Limit && queryTs.Limit > 0 {
+			if queryTs.Limit > 0 {
 				if queryTs.IsMultiFrom {
 					resultTableOptions = queryTs.ResultTableOptions
 					if resultTableOptions == nil {
@@ -291,15 +293,21 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 						}
 					}
 				} else {
-					// 只有长度符合的数据才进行裁剪
-					if len(data) > queryTs.From {
-						maxLength := queryTs.From + queryTs.Limit
-						if len(data) < maxLength {
-							maxLength = len(data)
-						}
+					// 只有合并数据才需要进行裁剪，否则原始数据里面就已经经过裁剪了
+					if isCutData {
+						// 只有长度符合的数据才进行裁剪
+						if len(data) > queryTs.From {
+							maxLength := queryTs.From + queryTs.Limit
+							if len(data) < maxLength {
+								maxLength = len(data)
+							}
 
-						data = data[queryTs.From:maxLength]
+							data = data[queryTs.From:maxLength]
+						} else {
+							data = make([]map[string]any, 0)
+						}
 					}
+
 				}
 			}
 		}
@@ -367,6 +375,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				if !queryTs.IsMultiFrom {
 					qry.Size += qry.From
 					qry.From = 0
+					isCutData = true
 				}
 			}
 

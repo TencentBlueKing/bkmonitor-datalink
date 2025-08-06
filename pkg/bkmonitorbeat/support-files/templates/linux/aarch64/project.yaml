@@ -43,6 +43,9 @@ config_templates:
             enable_audit_tasks:
               title: enable_audit_tasks
               type: string
+            metricbeat_align_ts:
+              title: metricbeat_align_ts
+              type: string
   - plugin_version: "*"
     name: bkmonitorbeat_prometheus.conf
     version: 1

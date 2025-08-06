@@ -503,11 +503,20 @@ func (v *OperatorNode) String() string {
 }
 
 func (v *OperatorNode) VisitTerminal(node antlr.TerminalNode) interface{} {
-	if v.Op == nil {
-		v.Op = &StringNode{
-			Name: node.GetText(),
+	banTokens := []string{"(", ")", ","}
+	token := node.GetText()
+
+	for _, bt := range banTokens {
+		if token == bt {
+			return nil
 		}
 	}
+
+	if v.Op == nil {
+		v.Op = &StringsNode{}
+	}
+	v.Op.(*StringsNode).add(node.GetText())
+
 	return nil
 }
 
@@ -913,21 +922,50 @@ func (v *ColumnNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 type ValueNode struct {
 	baseNode
 
-	names []string
+	nodes []Node
 }
 
 func (v *ValueNode) String() string {
-	if len(v.names) == 1 {
-		return v.names[0]
+	var names []string
+	for _, n := range v.nodes {
+		names = append(names, n.String())
 	}
-	return fmt.Sprintf("(%s)", strings.Join(v.names, ", "))
+	if len(names) == 1 {
+		return names[0]
+	}
+
+	return fmt.Sprintf("(%s)", strings.Join(names, ", "))
 }
 
 func (v *ValueNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+	var next Node
+	next = v
+
 	switch ctx.(type) {
+	case *gen.FunctionCallContext:
+		node := &FunctionNode{}
+		v.nodes = append(v.nodes, node)
+		next = node
 	case *gen.ConstantDefaultContext:
-		v.names = append(v.names, ctx.GetText())
+		v.nodes = append(v.nodes, &StringNode{Name: ctx.GetText()})
 	}
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
+}
+
+type StringsNode struct {
+	baseNode
+	Names []string
+}
+
+func (v *StringsNode) add(s string) {
+	v.Names = append(v.Names, s)
+}
+
+func (v *StringsNode) String() string {
+	return strings.Join(v.Names, " ")
+}
+
+func (v *StringsNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 	return visitChildren(v.Encode, v.SetAs, v, ctx)
 }
 

@@ -7,32 +7,48 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package mock
+package common
 
 import (
-	"testing"
+	"time"
 
-	"github.com/facebookgo/inject"
+	"golang.org/x/time/rate"
 )
 
-// TestInjectTask :
-func TestInjectTask(t *testing.T) {
-	var (
-		g    inject.Graph
-		task Task
-		err  error
-	)
-	err = g.Provide(
-		&inject.Object{Value: &task},
-	)
-	if err != nil {
-		t.Errorf("provide error: %v", err)
+// bytesRatio 等比缩小 b，即 1KB 表示 1 个 token
+// 最少保证有 1 个 token
+func bytesRatio(b int) int {
+	n := b / 1024
+	if n <= 0 {
+		n = 1
+	}
+	return n
+}
+
+type FlowLimiter struct {
+	n        int
+	consumed int
+	limiter  *rate.Limiter
+}
+
+func NewFlowLimiter(bytesRate int) *FlowLimiter {
+	n := bytesRatio(bytesRate)
+	fl := &FlowLimiter{
+		n:       n,
+		limiter: rate.NewLimiter(rate.Limit(n), n),
+	}
+	return fl
+}
+
+func (fl *FlowLimiter) Consume(n int) {
+	now := time.Now()
+	fl.consumed += n
+	tokens := bytesRatio(n)
+
+	// 确保不能超过 limiter/burst 否则会触发无限等待
+	if tokens > fl.n {
+		tokens = fl.n
 	}
 
-	err = g.Populate()
-	if err != nil {
-		t.Errorf("populate error: %v", err)
-	}
-
-	task.GlobalConfig.Task.Task = task.TaskConfig
+	time.Sleep(fl.limiter.ReserveN(now, tokens).DelayFrom(now))
 }

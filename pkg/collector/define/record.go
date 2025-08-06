@@ -276,6 +276,10 @@ func (q *RecordQueue) Get() <-chan *Record {
 	return q.records
 }
 
+const (
+	TokenAppName = "app_name"
+)
+
 // Token 描述了 Record 校验的必要信息
 type Token struct {
 	Type           string `config:"type"`

@@ -108,11 +108,11 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 		if prefix != "" {
 			k = prefix + ESStep + k
 		}
-		switch v.(type) {
+		switch nv := v.(type) {
 		case map[string]any:
-			mapData(k, v.(map[string]any), res)
+			mapData(k, nv, res)
 		default:
-			res[k] = v
+			res[k] = nv
 		}
 	}
 }
@@ -217,6 +217,10 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 }
 
 func (f *FormatFactory) WithIncludeValues(labelMap map[string][]function.LabelMapValue) *FormatFactory {
+	if labelMap == nil {
+		return f
+	}
+
 	var newLabelMap map[string][]function.LabelMapValue
 	if f.decode == nil {
 		newLabelMap = labelMap

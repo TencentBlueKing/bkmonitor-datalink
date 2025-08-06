@@ -7,24 +7,23 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package cmdbcache
+package relation
 
 import (
 	"bytes"
-	"fmt"
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
 )
 
-type RelationLabel struct {
+type Label struct {
 	Name  string
 	Value string
 }
 
-type RelationLabelList []RelationLabel
+type Labels []Label
 
-func (l RelationLabelList) Label() []prompb.Label {
+func (l Labels) Label() []prompb.Label {
 	lbs := make([]prompb.Label, 0, len(l))
 	for _, i := range l {
 		lbs = append(lbs, prompb.Label{
@@ -35,21 +34,17 @@ func (l RelationLabelList) Label() []prompb.Label {
 	return lbs
 }
 
-type RelationMetric struct {
+type Metric struct {
 	Name   string
-	Labels RelationLabelList
+	Labels Labels
 }
 
-func (m RelationMetric) TimeSeries(bkBizID int, timestamp time.Time) prompb.TimeSeries {
+func (m Metric) TimeSeries(timestamp time.Time) prompb.TimeSeries {
 	lbs := append(
 		[]prompb.Label{
 			{
 				Name:  "__name__",
 				Value: m.Name,
-			},
-			{
-				Name:  "bk_biz_id",
-				Value: fmt.Sprintf("%d", bkBizID),
 			},
 		},
 		m.Labels.Label()...,
@@ -61,15 +56,12 @@ func (m RelationMetric) TimeSeries(bkBizID int, timestamp time.Time) prompb.Time
 	}
 }
 
-func (m RelationMetric) String(bkBizID int) string {
+func (m Metric) String(labels ...Label) string {
 	var buf bytes.Buffer
 	buf.WriteString(m.Name)
 	buf.WriteString(`{`)
 
-	m.Labels = append(m.Labels, RelationLabel{
-		Name:  "bk_biz_id",
-		Value: fmt.Sprintf("%d", bkBizID),
-	})
+	m.Labels = append(m.Labels, labels...)
 
 	var n int
 	for _, label := range m.Labels {

@@ -34,11 +34,13 @@ import (
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
+	"github.com/spf13/cast"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -125,6 +127,8 @@ type AlarmHostInfo struct {
 	DisplayName string `json:"display_name"`
 
 	TopoLinks map[string][]map[string]interface{} `json:"topo_link"`
+
+	Expands map[string]map[string]any `json:"expands"`
 }
 
 const (
@@ -193,6 +197,14 @@ func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataI
 		bkIspName = *info.Host.BkIspName
 	}
 
+	// 补充扩展信息到 host 节点
+	var expands map[string]map[string]any
+	if info.Host.VersionMeta != "" {
+		if err := json.Unmarshal([]byte(info.Host.VersionMeta), &expands); err != nil {
+			logger.Warnf("[cmdb_relation] unmarshal error: %v, version_meta: %s", err, info.Host.VersionMeta)
+		}
+	}
+
 	host := &AlarmHostInfo{
 		BkBizId:             info.Host.BkBizId,
 		BkAgentId:           info.Host.BkAgentId,
@@ -234,6 +246,7 @@ func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataI
 		BkCloudName: "",
 		DisplayName: displayName,
 		TopoLinks:   make(map[string][]map[string]interface{}),
+		Expands:     expands,
 	}
 
 	return host
@@ -333,9 +346,10 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 		wg.Done()
 	}()
 
-	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
+	// 刷新 relation metrics 缓存
 	go func() {
-		err = GetRelationMetricsBuilder().BuildMetrics(ctx, bkBizId, hosts)
+		infos := m.HostToRelationInfos(hosts)
+		err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bkBizId, relation.Host, infos)
 		if err != nil {
 			logger.Error("refresh relation metrics failed, err: %v", err)
 		}
@@ -343,8 +357,82 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 	}()
 
 	wg.Wait()
-
 	return nil
+}
+
+// HostToRelationInfos 主机信息转关联缓存信息
+func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []*relation.Info {
+	infos := make([]*relation.Info, 0, len(hosts))
+	for _, h := range hosts {
+		if h.BkHostId == 0 {
+			continue
+		}
+
+		hostID := cast.ToString(h.BkHostId)
+		hostItem := relation.Item{
+			ID:       hostID,
+			Resource: relation.Host,
+			Label: map[string]string{
+				relation.HostID: hostID,
+			},
+		}
+
+		// 忽略 ip 过长的异常数据，使用逗号存放多 ip 的场景
+		if h.BkHostInnerip != "" && !strings.Contains(h.BkHostInnerip, ",") && len(h.BkHostInnerip) < 50 {
+			systemInfo := &relation.Info{}
+			systemID := fmt.Sprintf("%s|%d", h.BkHostInnerip, h.BkCloudId)
+			systemInfo.ID = systemID
+			systemInfo.Resource = relation.System
+			systemInfo.Label = map[string]string{
+				"bk_target_ip": h.BkHostInnerip,
+				"bk_cloud_id":  fmt.Sprintf("%d", h.BkCloudId),
+			}
+			systemInfo.Links = []relation.Link{{hostItem}}
+			infos = append(infos, systemInfo)
+		}
+
+		hostInfo := &relation.Info{
+			ID:       hostID,
+			Resource: relation.Host,
+			Label:    hostItem.Label,
+			Expands:  relation.TransformExpands(h.Expands),
+		}
+		if hostInfo.Expands[relation.Host] != nil {
+			hostInfo.Expands[relation.Host][relation.HostName] = h.BkHostName
+		}
+
+		for _, tplink := range h.TopoLinks {
+			var link []relation.Item
+			for _, tp := range tplink {
+				resource := cast.ToString(tp["bk_obj_id"])
+				if resource == "" {
+					continue
+				}
+
+				id := cast.ToString(tp["bk_inst_id"])
+				if id == "" {
+					continue
+				}
+
+				link = append(link, relation.Item{
+					ID:       id,
+					Resource: resource,
+					Label: map[string]string{
+						fmt.Sprintf("bk_%s_id", resource): id,
+					},
+				})
+			}
+
+			if len(link) > 0 {
+				hostInfo.Links = append(hostInfo.Links, link)
+			}
+		}
+
+		// 写入 host 数据
+		infos = append(infos, hostInfo)
+	}
+
+	return infos
 }
 
 // RefreshGlobal 刷新全局缓存
@@ -624,8 +712,8 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 		}
 		if len(hostKeys) > 0 {
 			// 清理 relationMetrics 里的缓存数据
+			rmb := relation.GetRelationMetricsBuilder()
 			result := m.RedisClient.HMGet(ctx, m.GetCacheKey(hostCacheKey), hostKeys...)
-			clearNodes := make([]*AlarmHostInfo, 0)
 			for _, value := range result.Val() {
 				// 如果找不到对应的缓存，不需要更新
 				if value == nil {
@@ -637,9 +725,10 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 				if err != nil {
 					continue
 				}
-				clearNodes = append(clearNodes, host)
+
+				// 清理 relation metrics 里面的 host
+				rmb.ClearResourceWithID(host.BkBizId, relation.Host, cast.ToString(host.BkHostId))
 			}
-			GetRelationMetricsBuilder().ClearMetricsWithHostID(clearNodes...)
 
 			// 记录需要更新的业务ID
 			err := client.HDel(ctx, m.GetCacheKey(hostCacheKey), hostKeys...).Err()

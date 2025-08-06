@@ -214,6 +214,7 @@ func (c AllConditions) MetaDataAllConditions() metadata.AllConditions {
 				IsWildcard:    cond.IsWildcard,
 				IsPrefix:      cond.IsPrefix,
 				IsSuffix:      cond.IsSuffix,
+				IsForceEq:     cond.IsForceEq,
 			})
 		}
 		allConditions = append(allConditions, conds)

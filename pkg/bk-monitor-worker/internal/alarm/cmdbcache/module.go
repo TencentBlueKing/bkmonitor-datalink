@@ -33,10 +33,12 @@ import (
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -143,6 +145,9 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 			module[field] = operators
 		}
 
+		// 注入 业务 ID
+		module["bk_biz_id"] = bizID
+
 		// 转换为json字符串
 		moduleStr, err := json.Marshal(module)
 		if err != nil {
@@ -188,7 +193,53 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 		logger.Infof("refresh service_template cache by biz: %d, service_template count: %d", bizID, len(templateToModules))
 	}
 
+	// 刷新 relation metrics 缓存
+	infos := m.ModuleToRelationInfos(moduleList)
+	err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Module, infos)
+	if err != nil {
+		logger.Errorf("[cmdb_relation] refresh set cache failed, err: %v", err)
+	}
+
 	return nil
+}
+
+// ModuleToRelationInfos 模块信息转关联缓存信息
+func (m *ModuleCacheManager) ModuleToRelationInfos(result []map[string]any) []*relation.Info {
+	infos := make([]*relation.Info, 0, len(result))
+	for _, r := range result {
+		id := cast.ToString(r[relation.ModuleID])
+
+		if id == "" {
+			continue
+		}
+
+		var expands map[string]map[string]any
+		if expandString, ok := r[relation.ExpandInfoColumn].(string); ok {
+			err := json.Unmarshal([]byte(expandString), &expands)
+			if err != nil {
+				logger.Warnf("[cmdb_relation] ModuleToRelationInfos json unmarshal error with %s, %s", expandString, err)
+				continue
+			}
+		}
+
+		info := &relation.Info{
+			ID:       id,
+			Resource: relation.Module,
+			Label: map[string]string{
+				relation.ModuleID: id,
+			},
+			Expands: relation.TransformExpands(expands),
+		}
+
+		// 如果存在 module_info 数据，则需要注入 module_name 等扩展维度
+		if info.Expands[relation.Module] != nil {
+			info.Expands[relation.Module][relation.ModuleName] = cast.ToString(r[relation.ModuleName])
+		}
+
+		infos = append(infos, info)
+	}
+
+	return infos
 }
 
 // RefreshGlobal 刷新全局模块缓存
@@ -232,6 +283,7 @@ func (m *ModuleCacheManager) CleanByEvents(ctx context.Context, resourceType str
 	// 提取模块ID及服务模板ID
 	needDeleteModuleIds := make(map[int]struct{})
 	needUpdateServiceTemplateIds := make(map[string]struct{})
+
 	for _, event := range events {
 		moduleID, ok := event["bk_module_id"].(float64)
 		if !ok {
@@ -283,6 +335,25 @@ func (m *ModuleCacheManager) CleanByEvents(ctx context.Context, resourceType str
 		for moduleID := range needDeleteModuleIds {
 			moduleIds = append(moduleIds, strconv.Itoa(moduleID))
 		}
+
+		// 清理 relationMetrics 里的缓存数据
+		rmb := relation.GetRelationMetricsBuilder()
+		result := m.RedisClient.HMGet(ctx, m.GetCacheKey(moduleCacheKey), moduleIds...)
+		for _, value := range result.Val() {
+			if value == nil {
+				continue
+			}
+
+			var module map[string]interface{}
+			err := json.Unmarshal([]byte(cast.ToString(value)), &module)
+			if err != nil {
+				continue
+			}
+
+			// 清理 relation metrics 里面的 set 资源
+			rmb.ClearResourceWithID(cast.ToInt(module["bk_biz_id"]), relation.Module, cast.ToString(module["bk_module_id"]))
+		}
+
 		m.RedisClient.HDel(ctx, m.GetCacheKey(moduleCacheKey), moduleIds...)
 	}
 

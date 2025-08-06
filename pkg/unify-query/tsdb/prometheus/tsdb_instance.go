@@ -118,7 +118,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 					Password: stg.Password,
 				})
 			}
-			opt.HealthCheck = true
+			opt.HealthCheck = false
 		}
 		instance, err = elasticsearch.NewInstance(ctx, opt)
 	case consul.BkSqlStorageType:

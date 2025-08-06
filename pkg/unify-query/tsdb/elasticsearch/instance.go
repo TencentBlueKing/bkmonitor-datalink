@@ -185,6 +185,8 @@ func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []stri
 	if err != nil {
 		return nil, err
 	}
+	defer client.Stop()
+
 	mappingMap, err := client.GetMapping().Index(aliases...).Type("").Do(ctx)
 	if err != nil {
 		log.Warnf(ctx, "get mapping error: %s", err.Error())
@@ -309,6 +311,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	if err != nil {
 		return nil, err
 	}
+	defer client.Stop()
 
 	var res *elastic.SearchResult
 	func() {
@@ -521,16 +524,16 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	span.Set("instance-query-result-table-options", query.ResultTableOptions)
 
 	if query.DB == "" {
-		err = fmt.Errorf("%s 查询别名为空", query.TableID)
+		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
 		return total, resultTableOptions, err
 	}
-	unit := metadata.GetQueryParams(ctx).TimeUnit
 
 	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
 	if err != nil {
 		return total, resultTableOptions, err
 	}
 
+	unit := metadata.GetQueryParams(ctx).TimeUnit
 	errChan := make(chan error, len(i.connects))
 
 	span.Set("aliases", aliases)
@@ -544,16 +547,20 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				wg.Done()
 			}()
 
-			mappings, mappingErr := i.getMappings(ctx, conn, aliases)
-			if mappingErr != nil {
-				err = mappingErr
+			qo := &queryOption{
+				indexes: aliases,
+				start:   start,
+				end:     end,
+				query:   query,
+				conn:    conn,
+			}
+
+			mappings, mappingErr := i.getMappings(ctx, qo.conn, aliases)
+			if len(mappings) == 0 {
+				log.Warnf(ctx, "index is empty with %v with %s error %s", aliases, qo.conn.String(), mappingErr)
 				return
 			}
 			span.Set("mapping-length", len(mappings))
-			if len(mappings) == 0 {
-				err = fmt.Errorf("index is empty with %v，url: %s", aliases, conn.Address)
-				return
-			}
 
 			if i.maxSize > 0 && query.Size > i.maxSize {
 				query.Size = i.maxSize
@@ -568,17 +575,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				}
 			}
 
-			qo := &queryOption{
-				indexes: aliases,
-				start:   start,
-				end:     end,
-				query:   query,
-				conn:    conn,
-			}
-			queryLabelMaps, err := query.LabelMap()
-			if err != nil {
-				err = fmt.Errorf("query label map error: %w", err)
-				return
+			queryLabelMaps, queryLabelErr := query.LabelMap()
+			if queryLabelErr != nil {
+				log.Warnf(ctx, "query label map error: %s", queryLabelErr)
 			}
 
 			fact := NewFormatFactory(ctx).
@@ -597,6 +596,11 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 			var option *metadata.ResultTableOption
 
+			reverseAlias := make(map[string]string, len(query.FieldAlias))
+			for k, v := range query.FieldAlias {
+				reverseAlias[v] = k
+			}
+
 			if sr != nil {
 				if sr.Hits != nil {
 
@@ -609,6 +613,16 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 						}
 
 						fact.SetData(data)
+
+						// 注入别名
+						for k, v := range reverseAlias {
+							if _, ok := fact.data[k]; ok {
+								fact.data[v] = fact.data[k]
+								// TODO: 等前端适配之后，再移除
+								//delete(fact.data, k)
+							}
+						}
+
 						fact.data[KeyDocID] = d.Id
 						fact.data[KeyIndex] = d.Index
 						fact.data[KeyTableID] = query.TableID
@@ -693,7 +707,7 @@ func (i *Instance) QuerySeriesSet(
 	}
 
 	if query.DB == "" {
-		err = fmt.Errorf("%s 查询别名为空", query.TableID)
+		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
 		return storage.ErrSeriesSet(err)
 	}
 
@@ -759,6 +773,7 @@ func (i *Instance) QuerySeriesSet(
 					log.Warnf(ctx, "index is empty with %v with %s error %v", qo.indexes, qo.conn.String(), errMapping)
 					return
 				}
+				span.Set("mapping-length", len(mappings))
 
 				if err1 != nil {
 					setCh <- storage.ErrSeriesSet(err1)
@@ -770,10 +785,10 @@ func (i *Instance) QuerySeriesSet(
 				} else {
 					size = i.maxSize
 				}
-				queryLabelMap, err := query.LabelMap()
-				if err != nil {
-					setCh <- storage.ErrSeriesSet(fmt.Errorf("query label map error: %w", err))
-					return
+
+				queryLabelMap, queryLabelErr := query.LabelMap()
+				if queryLabelErr != nil {
+					log.Warnf(ctx, "query label map error: %s", queryLabelErr)
 				}
 
 				fact := NewFormatFactory(ctx).

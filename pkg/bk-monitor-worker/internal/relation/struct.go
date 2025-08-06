@@ -7,37 +7,18 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package mock
+package relation
 
-import (
-	"testing"
+type ResourceConf struct {
+	Name  string   `json:"name"`
+	Index []string `json:"index"`
+}
 
-	"github.com/facebookgo/inject"
-)
+type RelationConf struct {
+	Resources []string `json:"resources"`
+}
 
-// TestInjectConfig :
-func TestInjectConfig(t *testing.T) {
-	var (
-		g    inject.Graph
-		conf Config
-		err  error
-	)
-	err = g.Provide(
-		&inject.Object{Value: &conf},
-	)
-	if err != nil {
-		t.Errorf("provide error: %v", err)
-	}
-
-	err = g.Populate()
-	if err != nil {
-		t.Errorf("populate error: %v", err)
-	}
-	err = conf.Clean()
-	if err != nil {
-		t.Errorf(err.Error())
-	}
-	if conf.Task.Task.GetIdent() != "test" {
-		t.Errorf("config clean error")
-	}
+type Config struct {
+	Resource []ResourceConf `json:"resource"`
+	Relation []RelationConf `json:"relation"`
 }

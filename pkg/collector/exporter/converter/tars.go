@@ -287,11 +287,6 @@ func (s *stat) PK() statPK {
 	return statPK{s.GetDataID(), labels.HashFromMap(s.dimensions)}
 }
 
-// HasErrors 判断 stat 是否有错误
-func (s *stat) HasErrors() bool {
-	return s.execCount > 0 || s.timeoutCount > 0
-}
-
 // Copy 创建一个新的 stat 实例，并复制当前实例的内容
 func (s *stat) Copy() *stat {
 	newStat := &stat{
@@ -453,12 +448,6 @@ func (a *aggregator) Aggregate(s *stat) {
 
 // aggregate 样本点聚合
 func (a *aggregator) aggregate(s *stat) {
-	if s.HasErrors() {
-		// 错误的情况全采样，无需聚合。
-		a.gatherFunc(s.ToEvents(rpcMetricAggregatePrefix)...)
-		return
-	}
-
 	stat := s.Copy()
 	pk := stat.DropTags(a.scopeNameToIgnoreTags[s.dimensions[resourceTagsScopeName]]).PK()
 	if _, ok := a.buffer[pk]; !ok {

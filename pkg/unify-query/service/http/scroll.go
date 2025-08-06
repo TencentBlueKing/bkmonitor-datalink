@@ -83,9 +83,6 @@ func prepareQueryTs(ctx context.Context, queryTs *structured.QueryTs) (queryList
 
 		for _, qry := range qm.QueryList {
 			if qry != nil {
-				if qry.ResultTableOptions == nil {
-					qry.ResultTableOptions = make(metadata.ResultTableOptions)
-				}
 				queryList = append(queryList, qry)
 			}
 		}
@@ -183,10 +180,13 @@ func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connec
 		if qryOption != nil {
 			qryOption.ScrollID = ""
 			sliceResultOption = qryOption
-		} else {
-			err = fmt.Errorf("no result option found for tableID: %s, connect: %s", tableID, connect)
-			return
 		}
+	}
+
+	// 下载逻辑一定要生成 sliceResultOption，否则无法进行下次查询
+	if sliceResultOption == nil {
+		err = fmt.Errorf("no result option found for tableID: %s, connect: %s", tableID, connect)
+		return
 	}
 
 	var sliceStatus string

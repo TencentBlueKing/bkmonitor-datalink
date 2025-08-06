@@ -72,7 +72,7 @@ func setDefaultConfig() {
 	viper.SetDefault(SegmentedMaxRoutines, 1)
 	viper.SetDefault(SegmentedMinInterval, "5m")
 
-	viper.SetDefault(QueryMaxRoutingConfigPath, 2)
+	viper.SetDefault(QueryMaxRoutingConfigPath, 4)
 
 	viper.SetDefault(ClusterMetricQueryPrefixConfigPath, "bkmonitor")
 	viper.SetDefault(ClusterMetricQueryTimeoutConfigPath, "30s")

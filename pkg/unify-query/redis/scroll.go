@@ -110,6 +110,7 @@ func (s *ScrollSession) Done() bool {
 
 func (s *ScrollSession) UpdateSliceStatus(ctx context.Context, sliceKey string, status string, scrollID string, offset int) error {
 	s.Mu.Lock()
+	defer s.Mu.Unlock()
 	sliceValue := s.ScrollIDs[sliceKey]
 	sliceValue.Status = status
 	sliceValue.ScrollID = scrollID
@@ -129,6 +130,5 @@ func (s *ScrollSession) UpdateSliceStatus(ctx context.Context, sliceKey string, 
 
 	s.ScrollIDs[sliceKey] = sliceValue
 	s.LastAccessAt = time.Now()
-	s.Mu.Unlock()
 	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
 }

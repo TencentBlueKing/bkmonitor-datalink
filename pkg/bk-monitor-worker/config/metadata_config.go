@@ -11,6 +11,7 @@ package config
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -41,6 +42,11 @@ var (
 	BcsCustomEventStorageClusterId uint
 	// BkciSpaceAccessPlugins 允许被项目空间访问业务数据的RT列表
 	BkciSpaceAccessPlugins []string
+
+	// QueryDbBatchSize 查询DB的批量大小
+	QueryDbBatchSize int
+	// QueryDbBatchDelay 查询DB的批量延迟时间
+	QueryDbBatchDelay time.Duration
 
 	// SpecialRtRouterAliasResultTableList 特殊的路由别名结果表列表
 	SpecialRtRouterAliasResultTableList []string
@@ -164,6 +170,12 @@ func initMetadataVariables() {
 	GlobalIPV6SupportBizList = GetValue("taskConfig.metadata.global.ipv6SupportBizList", []int{})
 	GlobalHostDisableMonitorStates = GetValue("taskConfig.metadata.global.hostDisableMonitorStates", []string{"备用机", "测试中", "故障中"})
 	BkciSpaceAccessPlugins = GetValue("taskConfig.metadata.bcs.bkciSpaceAccessPlugins", []string{})
+	QueryDbBatchSize = GetValue("taskConfig.metadata.bcs.queryDbBatchSize", 1000)
+
+	// 优先使用毫秒配置，如果没有配置则使用默认值
+	queryDbBatchDelayMs := GetValue("taskConfig.metadata.bcs.queryDbBatchDelayMs", 20)
+	QueryDbBatchDelay = time.Duration(queryDbBatchDelayMs) * time.Millisecond
+
 	SpecialRtRouterAliasResultTableList = GetValue("taskConfig.metadata.bcs.specialRtRouterAliasResultTableList", []string{})
 
 	PingServerEnablePingAlarm = GetValue("taskConfig.metadata.pingserver.enablePingAlarm", true)

@@ -366,6 +366,10 @@ func MockSpaceRouter(ctx context.Context) {
 					"result_table.influxdb",
 					"result_table.vm",
 				},
+				"multi_es": ir.ResultTableList{
+					ResultTableEs,
+					ResultTableEsWithTimeFiled,
+				},
 			},
 		)
 	})

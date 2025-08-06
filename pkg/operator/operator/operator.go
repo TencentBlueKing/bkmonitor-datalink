@@ -86,7 +86,7 @@ type Operator struct {
 	statefulSetTaskCache map[int]map[string]struct{}
 	eventTaskCache       string
 
-	promSdConfigsBytes        map[string][]byte              // 无并发读写
+	promSdConfigsBytes        map[SecretKey][]byte           // 无并发读写
 	prevResourceScrapeConfigs map[string]resourceScrapConfig // 无并发读写
 }
 

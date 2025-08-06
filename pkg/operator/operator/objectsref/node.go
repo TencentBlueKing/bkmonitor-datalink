@@ -98,6 +98,21 @@ func (n *NodeMap) NodeLabels(name string) map[string]string {
 	return cloned
 }
 
+func (n *NodeMap) CheckIP(s string) bool {
+	n.mut.Lock()
+	defer n.mut.Unlock()
+
+	for _, ips := range n.ips {
+		for _, ip := range ips {
+			if s == ip {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 func (n *NodeMap) CheckName(name string) (string, bool) {
 	n.mut.Lock()
 	defer n.mut.Unlock()

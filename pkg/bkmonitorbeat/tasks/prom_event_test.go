@@ -16,102 +16,92 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPromEventExemplars(t *testing.T) {
-	line := `my_total{le="0.25"} 205 # {traceID="my_trace_id",spanID="my_span_id"} 0.15`
-	event, err := NewPromEvent(line, 1637839803, time.Second, func(_ int64, ts int64, _ time.Duration) int64 {
-		return ts
-	})
+func TestDecodePromEvent(t *testing.T) {
+	const ts = 1637839803000
 
-	assert.NoError(t, err)
-	assert.Equal(t, "my_total", event.Key)
-	assert.Equal(t, 1, len(event.Labels))
-	assert.Equal(t, "0.25", event.Labels["le"].(string))
-
-	assert.Equal(t, 2, len(event.Exemplar.Labels))
-	assert.Equal(t, "spanID", event.Exemplar.Labels[0].Name)
-	assert.Equal(t, "my_span_id", event.Exemplar.Labels[0].Value)
-	assert.Equal(t, "traceID", event.Exemplar.Labels[1].Name)
-	assert.Equal(t, "my_trace_id", event.Exemplar.Labels[1].Value)
-	assert.Equal(t, 0.15, event.Exemplar.Value)
-}
-
-func TestPromEventTs(t *testing.T) {
-	timeOffset := 24 * time.Hour * 365 * 200
-	tsHandler, _ := GetTimestampHandler("s")
-
-	t.Run("Without Timestamp", func(t *testing.T) {
-		line := `my_histogram_bucketx{le="0.25"} 205.5`
-		nowTs := int64(1637839803000) // 设定为当前时间
-		event, err := NewPromEvent(line, nowTs, timeOffset, tsHandler)
-		assert.NoError(t, err)
-		assert.Equal(t, nowTs/1000, event.GetTimestamp())
-	})
-
-	t.Run("With Timestamp", func(t *testing.T) {
-		line := `my_histogram_bucketx{le="0.25"} 205.5 1637839804000`
-		nowTs := int64(1637839803000)
-		event, err := NewPromEvent(line, nowTs, timeOffset, tsHandler)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(1637839804), event.GetTimestamp())
-	})
-}
-
-func TestPromEvent(t *testing.T) {
-	line := `my_histogram_bucketx{le="0.25"} 205.5`
-	event, err := NewPromEvent(line, 1637839803, time.Second, func(_ int64, ts int64, _ time.Duration) int64 {
-		return ts
-	})
-	if err != nil {
-		panic(err)
+	tests := []struct {
+		Line       string
+		Name       string
+		Value      float64
+		Timestamp  int64
+		Exemplar   map[string]string
+		ExemplarTs int64
+	}{
+		{
+			Line:      `my_histogram_bucketx{le="0.25"} 205.5`,
+			Name:      "my_histogram_bucketx",
+			Value:     205.5,
+			Timestamp: ts,
+		},
+		{
+			Line:      `my_count{le="0.25"} 205 # {traceID="my_trace_id",spanID="my_span_id"} 0.15`,
+			Name:      "my_count",
+			Value:     205,
+			Timestamp: ts,
+			Exemplar: map[string]string{
+				"traceID": "my_trace_id",
+				"spanID":  "my_span_id",
+			},
+		},
+		{
+			Line:      `my_bucket{le="0.25"} 205 # {trace_id="my_trace_id",span_id="my_span_id"} 0.15`,
+			Name:      "my_bucket",
+			Value:     205,
+			Timestamp: ts,
+			Exemplar: map[string]string{
+				"trace_id": "my_trace_id",
+				"span_id":  "my_span_id",
+			},
+		},
+		{
+			Line:      `my_histogram_bucket{le="0.25"} 205 1637839802 # {traceID="my_trace_id",spanID="my_span_id"} 0.15`,
+			Name:      "my_histogram_bucket",
+			Value:     205,
+			Timestamp: 1637839802000,
+			Exemplar: map[string]string{
+				"traceID": "my_trace_id",
+				"spanID":  "my_span_id",
+			},
+		},
+		{
+			Line:      `my_histogram_bucket{le="0.25"} 205 1637839802 # {traceID="my_trace_id",spanID="my_span_id"} 0.15 1637839806000`,
+			Name:      "my_histogram_bucket",
+			Value:     205,
+			Timestamp: 1637839802000,
+			Exemplar: map[string]string{
+				"traceID": "my_trace_id",
+				"spanID":  "my_span_id",
+			},
+			ExemplarTs: 1637839806000000,
+		},
+		{
+			Line:      `my_histogram_bucket{le="0.25",} 205 1637839802 # {traceID="my_trace_id",spanID="my_span_id"} 0.15 1637839806000`, // backwards v1
+			Name:      "my_histogram_bucket",
+			Value:     205,
+			Timestamp: 1637839802,
+		},
 	}
 
-	assert.NoError(t, err)
-	assert.Equal(t, 205.5, event.Value)
-	assert.Equal(t, 1, len(event.Labels))
-	assert.Equal(t, "0.25", event.Labels["le"].(string))
-	assert.Equal(t, "my_histogram_bucketx", event.Key)
-}
+	for _, tt := range tests {
+		t.Run("", func(t *testing.T) {
+			event, err := NewPromEvent(tt.Line, ts, time.Second, func(_ int64, t int64, _ time.Duration) int64 {
+				return t
+			})
+			assert.NoError(t, err)
+			assert.Equal(t, tt.Timestamp, event.TS)
+			assert.Equal(t, tt.Value, event.Value)
+			assert.Equal(t, tt.Name, event.Key)
 
-func TestPromEventWithTs(t *testing.T) {
-	line := `my_histogram_bucket{le="0.25"} 205 1637839802 # {traceID="my_trace_id",spanID="my_span_id"} 0.15 1637839806000`
-	event, err := NewPromEvent(line, 1637839803, time.Second, func(_ int64, ts int64, _ time.Duration) int64 {
-		return ts
-	})
-	if err != nil {
-		panic(err)
+			if len(tt.Exemplar) > 0 {
+				m := make(map[string]string)
+				for _, lb := range event.Exemplar.Labels {
+					m[lb.Name] = lb.Value
+				}
+				assert.Equal(t, tt.Exemplar, m)
+				assert.Equal(t, tt.ExemplarTs, event.Exemplar.Ts)
+			} else {
+				assert.Nil(t, event.Exemplar)
+			}
+		})
 	}
-
-	assert.NoError(t, err)
-	assert.Equal(t, event.Key, "my_histogram_bucket")
-	assert.Equal(t, int64(1637839802000), event.TS)
-	assert.Equal(t, float64(205), event.Value)
-	assert.Equal(t, "my_span_id", event.Exemplar.Labels[0].Value)
-	assert.Equal(t, "my_trace_id", event.Exemplar.Labels[1].Value)
-	assert.Equal(t, 0.15, event.Exemplar.Value)
-	assert.Equal(t, int64(1637839806000000), event.Exemplar.Ts)
-}
-
-func TestPromEventV1(t *testing.T) {
-	line := `my_histogram_bucketx{le="0.25",} 205.5`
-	event, err := NewPromEvent(line, 1637839803, time.Second, func(_ int64, ts int64, _ time.Duration) int64 {
-		return ts
-	})
-	if err != nil {
-		panic(err)
-	}
-
-	assert.NoError(t, err)
-	assert.Equal(t, 205.5, event.Value)
-	assert.Equal(t, 1, len(event.Labels))
-	assert.Equal(t, "0.25", event.Labels["le"].(string))
-	assert.Equal(t, "my_histogram_bucketx", event.Key)
-}
-
-func TestPromEventV2(t *testing.T) {
-	// 带 exemplar 的不支持 "," 结尾的格式
-	line := `my_histogram_bucket{le="0.25",} 205 1637839802 # {traceID="my_trace_id",spanID="my_span_id"} 0.15 1637839806000`
-	_, err := NewPromEvent(line, 1637839803, time.Second, func(_ int64, ts int64, _ time.Duration) int64 {
-		return ts
-	})
-	assert.Error(t, err)
 }

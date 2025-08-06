@@ -279,6 +279,7 @@ func (s CMDBService) GetAllHost() ([]Host, error) {
 		"rack_id",
 		"bk_svr_device_cls_name",
 		"svr_device_class",
+		"version_meta",
 	}
 	var hostInfoList []Host
 	for _, info := range bizResp.Data.Info {

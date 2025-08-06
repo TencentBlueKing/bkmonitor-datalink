@@ -33,10 +33,12 @@ import (
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -129,6 +131,9 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 	setCacheData := make(map[string]string)
 	templateToSets := make(map[string][]string)
 	for _, set := range result {
+		// 注入业务 ID 信息
+		set["bk_biz_id"] = bizID
+
 		setStr, err := json.Marshal(set)
 		if err != nil {
 			return errors.Wrap(err, "failed to marshal set")
@@ -173,7 +178,53 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 		logger.Infof("refresh set_template cache by biz: %d, set_template count: %d", bizID, len(setTemplateCacheData))
 	}
 
+	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
+	infos := m.SetToRelationInfos(result)
+	err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Set, infos)
+	if err != nil {
+		logger.Errorf("[cmdb_relation] refresh set cache failed, err: %v", err)
+	}
+
 	return nil
+}
+
+// SetToRelationInfos Set 信息转关联缓存信息
+func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relation.Info {
+	infos := make([]*relation.Info, 0, len(result))
+	for _, r := range result {
+		id := cast.ToString(r[relation.SetID])
+
+		if id == "" {
+			continue
+		}
+
+		var expands map[string]map[string]any
+		if expandString, ok := r[relation.ExpandInfoColumn].(string); ok {
+			err := json.Unmarshal([]byte(expandString), &expands)
+			if err != nil {
+				logger.Warnf("[cmdb_relation] SetToRelationInfos json unmarshal error with %s, %s", expandString, err)
+				continue
+			}
+		}
+
+		info := &relation.Info{
+			ID:       id,
+			Resource: relation.Set,
+			Label: map[string]string{
+				relation.SetID: id,
+			},
+			Expands: relation.TransformExpands(expands),
+		}
+
+		// 如果存在 set_info 数据，则需要注入 set_name 等扩展维度
+		if info.Expands[relation.Set] != nil {
+			info.Expands[relation.Set][relation.SetName] = cast.ToString(r[relation.SetName])
+		}
+
+		infos = append(infos, info)
+	}
+
+	return infos
 }
 
 // RefreshGlobal 刷新全局模块缓存
@@ -264,6 +315,25 @@ func (m *SetCacheManager) CleanByEvents(ctx context.Context, resourceType string
 		for setID := range needDeleteSetIds {
 			setIds = append(setIds, strconv.Itoa(setID))
 		}
+
+		// 清理 relationMetrics 里的缓存数据
+		rmb := relation.GetRelationMetricsBuilder()
+		result := m.RedisClient.HMGet(ctx, m.GetCacheKey(setCacheKey), setIds...)
+		for _, value := range result.Val() {
+			if value == nil {
+				continue
+			}
+
+			var set map[string]interface{}
+			err := json.Unmarshal([]byte(cast.ToString(value)), &set)
+			if err != nil {
+				continue
+			}
+
+			// 清理 relation metrics 里面的 set 资源
+			rmb.ClearResourceWithID(cast.ToInt(set["bk_biz_id"]), relation.Set, cast.ToString(set["bk_set_id"]))
+		}
+
 		m.RedisClient.HDel(ctx, m.GetCacheKey(setCacheKey), setIds...)
 	}
 

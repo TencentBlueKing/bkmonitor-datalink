@@ -22,6 +22,11 @@ import (
 func TestParserAllConditions(t *testing.T) {
 	d := sql_expr.NewSQLExpr("")
 
+	doris := sql_expr.DorisSQLExpr{}
+	doris.WithFieldsMap(map[string]string{
+		"text_field": "text",
+	})
+
 	t.Run("空条件测试", func(t *testing.T) {
 		conditions := metadata.AllConditions{}
 		result, err := d.ParserAllConditions(conditions)
@@ -135,5 +140,27 @@ func TestParserAllConditions(t *testing.T) {
 		result, err := d.ParserAllConditions(conditions)
 		assert.NoError(t, err)
 		assert.Equal(t, "`path` REGEXP '^/api|v2$'", result)
+	})
+
+	t.Run("关闭text强制等于", func(t *testing.T) {
+		conditions := metadata.AllConditions{
+			{
+				{DimensionName: "text_field", Operator: metadata.ConditionEqual, Value: []string{"v1"}, IsForceEq: false},
+			},
+		}
+		result, err := doris.ParserAllConditions(conditions)
+		assert.NoError(t, err)
+		assert.Equal(t, "`text_field` MATCH_PHRASE 'v1'", result)
+	})
+
+	t.Run("开启text强制等于", func(t *testing.T) {
+		conditions := metadata.AllConditions{
+			{
+				{DimensionName: "text_field", Operator: metadata.ConditionEqual, Value: []string{"v1"}, IsForceEq: true},
+			},
+		}
+		result, err := doris.ParserAllConditions(conditions)
+		assert.NoError(t, err)
+		assert.Equal(t, "`text_field` = 'v1'", result)
 	})
 }

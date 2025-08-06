@@ -335,6 +335,10 @@ func (oc *ObjectsController) CheckPodIP(ip string) bool {
 	return oc.podObjs.CheckIP(ip)
 }
 
+func (oc *ObjectsController) CheckNodeIP(ip string) bool {
+	return oc.nodeObjs.CheckIP(ip)
+}
+
 func (oc *ObjectsController) CheckNodeName(s string) (string, bool) {
 	return oc.nodeObjs.CheckName(s)
 }

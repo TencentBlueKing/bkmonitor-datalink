@@ -26,6 +26,7 @@ import (
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/migrate"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
@@ -1393,6 +1394,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 			SourceType:       sourceType,
 			IndexSet:         indexSet,
 			NeedCreateIndex:  true,
+			OriginTableId:    "bklog.real_rt",
 		},
 	}
 	for _, esStorage := range esStorages {
@@ -1418,7 +1420,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 	// 插入StorageClusterRecord数据
 	testRecords := []storage.ClusterRecord{
 		{
-			TableID:     tableID,
+			TableID:     "bklog.real_rt",
 			ClusterID:   1,
 			IsDeleted:   false,
 			IsCurrent:   true,
@@ -1429,7 +1431,7 @@ func TestSpacePusher_PushEsTableIdDetail(t *testing.T) {
 			DeleteTime:  nil,
 		},
 		{
-			TableID:     tableID,
+			TableID:     "bklog.real_rt",
 			ClusterID:   2,
 			IsDeleted:   false,
 			IsCurrent:   true,
@@ -2369,4 +2371,121 @@ func TestSpaceRedisSvc_composeBkciLevelTableIds(t *testing.T) {
 	expected := map[string]map[string]interface{}{"bkmonitor_event_60010.__default__": {"filters": []map[string]interface{}{{"dimensions.project_id": "test_bkci_space"}}}}
 	assert.NoError(t, err)
 	assert.Equal(t, expected, bkciData, "Expected 1 table IDs for bkci space")
+}
+
+func TestSpaceRedisSvc_composeTableIdFields(t *testing.T) {
+	// 初始化数据库配置
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 清理所有相关表数据
+	cleanTestData := func() {
+		db.Delete(&space.Space{})
+		db.Delete(&resulttable.ResultTable{})
+		db.Delete(&resulttable.ResultTableField{})
+	}
+	cleanTestData()       // 测试开始前清理数据
+	defer cleanTestData() // 测试结束后清理数据
+
+	// 准备测试用数据
+	resultTableFields := []resulttable.ResultTableField{
+		{
+			TableID:        "1001_test.__default__",
+			FieldName:      "field1",
+			FieldType:      "string",
+			IsConfigByUser: true,
+			Tag:            "metric",
+			BkTenantId:     "system",
+		},
+		{
+			TableID:        "1001_test.__default__",
+			FieldName:      "field2",
+			FieldType:      "string",
+			IsConfigByUser: true,
+			Tag:            "metric",
+			BkTenantId:     "system",
+		},
+		{
+			TableID:        "1001_test.__default__",
+			FieldName:      "field3",
+			FieldType:      "string",
+			IsConfigByUser: true,
+			Tag:            "metric",
+			BkTenantId:     "system",
+		},
+		{
+			TableID:        "1001_test.__default__",
+			FieldName:      "field4",
+			FieldType:      "string",
+			IsConfigByUser: true,
+			Tag:            "metric",
+			BkTenantId:     "system",
+		},
+	}
+
+	// 插入 ResultTableField 数据
+	for _, resultTableField := range resultTableFields {
+		err := resultTableField.Create(db)
+		assert.NoError(t, err)
+	}
+
+	// 准备 ResultTable 测试数据
+	resultTable := resulttable.ResultTable{
+		TableId:        "1001_test.__default__",
+		BkBizId:        1001,
+		DefaultStorage: models.StorageTypeVM,
+		BkTenantId:     "system",
+	}
+	err := resultTable.Create(db)
+	assert.NoError(t, err)
+
+	// TimeSeriesGroup
+	timeSeriesGroup := customreport.TimeSeriesGroup{
+		CustomGroupBase: customreport.CustomGroupBase{
+			TableID:  "1001_test.__default__",
+			BkDataID: 50010,
+			BkBizID:  1001,
+		},
+		TimeSeriesGroupID:   60011,
+		TimeSeriesGroupName: "test_group",
+		BkTenantId:          "system",
+	}
+	db.Delete(&timeSeriesGroup, "table_id = ?", timeSeriesGroup.TableID)
+	err = timeSeriesGroup.Create(db)
+	assert.NoError(t, err, "Failed to insert TimeSeriesGroup")
+
+	// TimeSeriesMetric
+	timeSeriesMetrics := []customreport.TimeSeriesMetric{
+		{
+			GroupID:   60011,
+			TableID:   "1001_test.__default__",
+			FieldName: "field1",
+		},
+		{
+			GroupID:   60011,
+			TableID:   "1001_test.__default__",
+			FieldName: "field2",
+		},
+		{
+			GroupID:   60011,
+			TableID:   "1001_test.__default__",
+			FieldName: "field3",
+		},
+		{
+			GroupID:   60011,
+			TableID:   "1001_test.__default__",
+			FieldName: "field4",
+		},
+	}
+	for _, timeSeriesMetric := range timeSeriesMetrics {
+		db.Delete(&timeSeriesMetric, "table_id = ? AND field_name = ?", timeSeriesMetric.TableID, timeSeriesMetric.FieldName)
+		err = timeSeriesMetric.Create(db)
+		assert.NoError(t, err, "Failed to insert TimeSeriesMetric")
+	}
+
+	actualData, err := NewSpacePusher().composeTableIdFields("system", []string{"1001_test.__default__"})
+	assert.NoError(t, err, "composeTableIdFields should not return an error")
+	assert.Equal(t, map[string][]string{
+		"1001_test.__default__": {"field1", "field2", "field3", "field4"},
+	}, actualData, "composeTableIdFields should return the expected data")
 }

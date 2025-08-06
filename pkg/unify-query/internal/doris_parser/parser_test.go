@@ -634,6 +634,16 @@ group by
 			sql:  "SELECT ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) AS ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT()) AS pct",
 		},
 		{
+			name: "查询值支持函数模式",
+			q:    "SELECT * WHERE LOWER(log) REGEXP LOWER('LogPzRealm')",
+			sql:  "SELECT * WHERE LOWER(log) REGEXP LOWER('LogPzRealm')",
+		},
+		{
+			name: "反正则查询",
+			q:    "SELECT * WHERE log NOT REGEXP 'Operation aborted.' ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100 OFFSET 0",
+			sql:  "SELECT * WHERE log NOT REGEXP 'Operation aborted.' ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100 OFFSET 0",
+		},
+		{
 			name: "test-22",
 			q:    "SELECT namespace, workload as t1, COUNT()",
 			sql:  "SELECT namespace, workload AS t1, COUNT()",

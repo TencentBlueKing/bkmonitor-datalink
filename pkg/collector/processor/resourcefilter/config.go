@@ -25,6 +25,7 @@ type Config struct {
 	Replace      []ReplaceAction      `config:"replace" mapstructure:"replace"`
 	Add          []AddAction          `config:"add" mapstructure:"add"`
 	FromRecord   []FromRecordAction   `config:"from_record" mapstructure:"from_record"`
+	FromToken    FromTokenAction      `config:"from_token" mapstructure:"from_token"`
 	DefaultValue []DefaultValueAction `config:"default_value" mapstructure:"default_value"`
 }
 
@@ -84,6 +85,10 @@ type FromRecordAction struct {
 }
 
 type FromMetadataAction struct {
+	Keys []string `config:"keys" mapstructure:"keys"`
+}
+
+type FromTokenAction struct {
 	Keys []string `config:"keys" mapstructure:"keys"`
 }
 

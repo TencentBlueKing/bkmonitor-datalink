@@ -33,8 +33,9 @@ import (
 )
 
 type resourceScrapConfig struct {
-	Resource string
-	Config   config.ScrapeConfig
+	Namespace string
+	Resource  string
+	Config    config.ScrapeConfig
 }
 
 func (c *Operator) getPromResourceScrapeConfigs() ([]resourceScrapConfig, bool) {
@@ -43,7 +44,7 @@ func (c *Operator) getPromResourceScrapeConfigs() ([]resourceScrapConfig, bool) 
 	}
 
 	var rscs []resourceScrapConfig
-	newRound := make(map[string][]byte) // 本轮获取到的数据
+	newRound := make(map[SecretKey][]byte) // 本轮获取到的数据
 	for _, secret := range configs.G().PromSDSecrets {
 		secData, err := c.getPromSDSecretData(secret)
 		if err != nil {
@@ -54,15 +55,16 @@ func (c *Operator) getPromResourceScrapeConfigs() ([]resourceScrapConfig, bool) 
 		for resource, data := range secData {
 			sdc, err := unmarshalPromSdConfigs(data)
 			if err != nil {
-				logger.Errorf("unmarshal prom sdconfigs failed, resource=(%s): %v", resource, err)
+				logger.Errorf("unmarshal prom sdconfigs failed, resource=(%+v): %v", resource, err)
 				continue
 			}
 
 			newRound[resource] = data
 			for i := 0; i < len(sdc); i++ {
 				rscs = append(rscs, resourceScrapConfig{
-					Resource: resource,
-					Config:   sdc[i],
+					Namespace: resource.Namespace,
+					Resource:  resource.Key(),
+					Config:    sdc[i],
 				})
 			}
 		}
@@ -73,21 +75,25 @@ func (c *Operator) getPromResourceScrapeConfigs() ([]resourceScrapConfig, bool) 
 	return rscs, !eq // changed
 }
 
-func (c *Operator) getPromSDSecretDataByName(sdSecret configs.PromSDSecret) (map[string][]byte, error) {
+func (c *Operator) getPromSDSecretDataByName(sdSecret configs.PromSDSecret) (map[SecretKey][]byte, error) {
 	secretClient := c.client.CoreV1().Secrets(sdSecret.Namespace)
 	obj, err := secretClient.Get(c.ctx, sdSecret.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	secData := make(map[string][]byte)
+	secData := make(map[SecretKey][]byte)
 	for file, data := range obj.Data {
-		secData[secretKeyFunc(sdSecret.Namespace, sdSecret.Name, file)] = data
+		secData[SecretKey{
+			Namespace: sdSecret.Namespace,
+			Name:      sdSecret.Name,
+			File:      file,
+		}] = data
 	}
 	return secData, nil
 }
 
-func (c *Operator) getPromSDSecretDataBySelector(sdSecret configs.PromSDSecret) (map[string][]byte, error) {
+func (c *Operator) getPromSDSecretDataBySelector(sdSecret configs.PromSDSecret) (map[SecretKey][]byte, error) {
 	secretClient := c.client.CoreV1().Secrets(sdSecret.Namespace)
 	objList, err := secretClient.List(c.ctx, metav1.ListOptions{
 		LabelSelector: sdSecret.Selector,
@@ -96,16 +102,20 @@ func (c *Operator) getPromSDSecretDataBySelector(sdSecret configs.PromSDSecret) 
 		return nil, err
 	}
 
-	secData := make(map[string][]byte)
+	secData := make(map[SecretKey][]byte)
 	for _, obj := range objList.Items {
 		for file, data := range obj.Data {
-			secData[secretKeyFunc(obj.Namespace, obj.Name, file)] = data
+			secData[SecretKey{
+				Namespace: obj.Namespace,
+				Name:      obj.Name,
+				File:      file,
+			}] = data
 		}
 	}
 	return secData, nil
 }
 
-func (c *Operator) getPromSDSecretData(sdSecret configs.PromSDSecret) (map[string][]byte, error) {
+func (c *Operator) getPromSDSecretData(sdSecret configs.PromSDSecret) (map[SecretKey][]byte, error) {
 	if !sdSecret.Validate() {
 		return nil, fmt.Errorf("invalid sdconfig (%#v)", sdSecret)
 	}
@@ -116,8 +126,14 @@ func (c *Operator) getPromSDSecretData(sdSecret configs.PromSDSecret) (map[strin
 	return c.getPromSDSecretDataBySelector(sdSecret)
 }
 
-func secretKeyFunc(namespace, name, file string) string {
-	return fmt.Sprintf("%s/%s/%s", namespace, name, file)
+type SecretKey struct {
+	Namespace string
+	Name      string
+	File      string
+}
+
+func (sk SecretKey) Key() string {
+	return fmt.Sprintf("%s/%s", sk.Name, sk.File)
 }
 
 func unmarshalPromSdConfigs(b []byte) ([]config.ScrapeConfig, error) {
@@ -163,7 +179,7 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 	monitorMeta := define.MonitorMeta{
 		Name:      fmt.Sprintf("%s/%s", rsc.Resource, rsc.Config.JobName),
 		Kind:      kind,
-		Namespace: "-", // 不标记 namespace
+		Namespace: rsc.Namespace,
 		Index:     index,
 	}
 	// 默认使用 custommetric dataid
@@ -221,7 +237,9 @@ func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig in
 		})
 	case monitorKindEtcdSd:
 		sdc := sdConfig.(*etcdsd.SDConfig)
-		sdc.IPFilter = c.objectsController.CheckPodIP
+		sdc.IPFilter = func(s string) bool {
+			return c.objectsController.CheckPodIP(s) || c.objectsController.CheckNodeIP(s)
+		}
 		dis = etcdsd.New(c.ctx, &etcdsd.Options{
 			CommonOptions:    commonOpts,
 			SDConfig:         sdc,

@@ -207,7 +207,7 @@ func mockElasticSearchHandler(ctx context.Context) {
 		return
 	}
 
-	mappings := `{"es_index":{"mappings":{"properties":{"a":{"type":"keyword"},"b":{"type":"keyword"},"group":{"type":"keyword"},"kibana_stats":{"properties":{"kibana":{"properties":{"name":{"type":"keyword"}}}}},"timestamp":{"type":"log"},"type":{"type":"keyword"},"dtEventTimeStamp":{"type":"date"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}},"events":{"type":"nested","properties":{"name":{"type":"keyword"}}}}}}}`
+	mappings := `{"es_index":{"mappings":{"properties":{"a":{"type":"keyword"},"time":{"type":"date"},"b":{"type":"keyword"},"group":{"type":"keyword"},"kibana_stats":{"properties":{"kibana":{"properties":{"name":{"type":"keyword"}}}}},"timestamp":{"type":"log"},"type":{"type":"keyword"},"dtEventTimeStamp":{"type":"date"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}},"events":{"type":"nested","properties":{"name":{"type":"keyword"}}}}}}}`
 	mappingResp := httpmock.NewStringResponder(http.StatusOK, mappings)
 	httpmock.RegisterResponder(http.MethodGet, bkBaseEsUrl+"/es_index/_mapping/", mappingResp)
 	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/es_index/_mapping/", mappingResp)

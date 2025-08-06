@@ -786,6 +786,7 @@ func (q *Query) BuildMetadataQuery(
 						DimensionName: k,
 						Value:         []string{v},
 						Operator:      ConditionEqual,
+						IsForceEq:     true, // 如果是tsdb.Filter 则强制使用等于查询
 					})
 				}
 			}

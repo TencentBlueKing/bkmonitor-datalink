@@ -87,6 +87,7 @@ type ListBizHostsTopoDataInfoHost struct {
 	SvrDeviceClass      string  `json:"svr_device_class" mapstructure:"svr_device_class"`
 	DockerClientVersion string  `json:"docker_client_version" mapstructure:"docker_client_version"`
 	DockerServerVersion string  `json:"docker_server_version" mapstructure:"docker_server_version"`
+	VersionMeta         string  `json:"version_meta"  mapstructure:"version_meta"`
 }
 
 type ListBizHostsTopoDataInfoTopo struct {

@@ -84,8 +84,8 @@ func TestDecodePromEvent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run("", func(t *testing.T) {
-			event, err := NewPromEvent(tt.Line, ts, time.Second, func(_ int64, ts int64, _ time.Duration) int64 {
-				return ts
+			event, err := NewPromEvent(tt.Line, ts, time.Second, func(_ int64, t int64, _ time.Duration) int64 {
+				return t
 			})
 			assert.NoError(t, err)
 			assert.Equal(t, tt.Timestamp, event.TS)

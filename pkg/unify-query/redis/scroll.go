@@ -108,11 +108,12 @@ func (s *ScrollSession) Done() bool {
 	return true
 }
 
-func (s *ScrollSession) UpdateSliceStatus(ctx context.Context, sliceKey string, status string, scrollID string) error {
+func (s *ScrollSession) UpdateSliceStatus(ctx context.Context, sliceKey string, status string, scrollID string, offset int) error {
 	s.Mu.Lock()
 	sliceValue := s.ScrollIDs[sliceKey]
 	sliceValue.Status = status
 	sliceValue.ScrollID = scrollID
+	sliceValue.Offset = offset
 
 	if status == StatusFailed {
 		sliceValue.FailedNum++
@@ -129,23 +130,5 @@ func (s *ScrollSession) UpdateSliceStatus(ctx context.Context, sliceKey string, 
 	s.ScrollIDs[sliceKey] = sliceValue
 	s.LastAccessAt = time.Now()
 	s.Mu.Unlock()
-	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
-}
-
-func (s *ScrollSession) UpdateSliceStatusAndOffset(ctx context.Context, sliceKey string, status string, scrollID string, offset int) error {
-	s.Mu.Lock()
-	sliceValue := s.ScrollIDs[sliceKey]
-	sliceValue.Status = status
-	sliceValue.ScrollID = scrollID
-	sliceValue.Offset = offset
-
-	if status == StatusFailed {
-		sliceValue.FailedNum++
-	}
-
-	s.ScrollIDs[sliceKey] = sliceValue
-	s.LastAccessAt = time.Now()
-	s.Mu.Unlock()
-
 	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
 }

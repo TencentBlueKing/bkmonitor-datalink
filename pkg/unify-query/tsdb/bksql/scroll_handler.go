@@ -77,5 +77,5 @@ func (i *Instance) UpdateScrollStatus(ctx context.Context, session *redis.Scroll
 	}
 
 	newOffset := currentOffset + session.MaxSlice*session.Limit
-	return session.UpdateSliceStatusAndOffset(ctx, key, status, scrollID, newOffset)
+	return session.UpdateSliceStatus(ctx, key, status, scrollID, newOffset)
 }

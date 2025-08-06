@@ -67,5 +67,5 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 
 func (i *Instance) UpdateScrollStatus(ctx context.Context, session *redis.ScrollSession, connect, tableID string, resultOption *metadata.ResultTableOption, status string) error {
 	key := generateScrollID(consul.ElasticsearchStorageType, connect, tableID, *resultOption.SliceIndex)
-	return session.UpdateSliceStatus(ctx, key, status, resultOption.ScrollID)
+	return session.UpdateSliceStatus(ctx, key, status, resultOption.ScrollID, 0)
 }

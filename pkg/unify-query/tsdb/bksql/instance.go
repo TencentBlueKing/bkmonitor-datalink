@@ -366,7 +366,6 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	}
 
 	span.Set("data-total-records", data.TotalRecords)
-	log.Infof(ctx, "total records: %d", data.TotalRecords)
 
 	if i.maxLimit > 0 && data.TotalRecords > i.maxLimit {
 		return storage.ErrSeriesSet(fmt.Errorf("记录数(%d)超过限制(%d)", data.TotalRecords, i.maxLimit))

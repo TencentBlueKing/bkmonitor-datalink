@@ -192,7 +192,7 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relation.Info {
 	infos := make([]*relation.Info, 0, len(result))
 	for _, r := range result {
-		id := cast.ToString(r["bk_set_id"])
+		id := cast.ToString(r[relation.SetID])
 
 		if id == "" {
 			continue
@@ -207,19 +207,21 @@ func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relatio
 			}
 		}
 
-		// 如果存在 set_info 数据，则需要注入 set_name 等扩展维度
-		if expands[relation.Set] != nil {
-			expands[relation.Set]["set_name"] = cast.ToString(r["bk_set_name"])
-		}
-
-		infos = append(infos, &relation.Info{
+		info := &relation.Info{
 			ID:       id,
 			Resource: relation.Set,
 			Label: map[string]string{
-				"set_id": id,
+				relation.SetID: id,
 			},
 			Expands: relation.TransformExpands(expands),
-		})
+		}
+
+		// 如果存在 set_info 数据，则需要注入 set_name 等扩展维度
+		if info.Expands[relation.Set] != nil {
+			info.Expands[relation.Set][relation.SetName] = cast.ToString(r[relation.SetName])
+		}
+
+		infos = append(infos, info)
 	}
 
 	return infos

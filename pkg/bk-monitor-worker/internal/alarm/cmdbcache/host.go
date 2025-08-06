@@ -373,7 +373,7 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 			ID:       hostID,
 			Resource: relation.Host,
 			Label: map[string]string{
-				"host_id": hostID,
+				relation.HostID: hostID,
 			},
 		}
 
@@ -397,6 +397,10 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 			Label:    hostItem.Label,
 			Expands:  relation.TransformExpands(h.Expands),
 		}
+		if hostInfo.Expands[relation.Host] != nil {
+			hostInfo.Expands[relation.Host][relation.HostName] = h.BkHostName
+		}
+
 		for _, tplink := range h.TopoLinks {
 			var link []relation.Item
 			for _, tp := range tplink {
@@ -410,15 +414,11 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 					continue
 				}
 
-				if resource == "biz" {
-					resource = relation.Business
-				}
-
 				link = append(link, relation.Item{
 					ID:       id,
 					Resource: resource,
 					Label: map[string]string{
-						fmt.Sprintf("%s_id", resource): id,
+						fmt.Sprintf("bk_%s_id", resource): id,
 					},
 				})
 			}

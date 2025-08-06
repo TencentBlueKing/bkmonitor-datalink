@@ -12,7 +12,6 @@ package converter
 import (
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/prometheus/client_golang/prometheus"
@@ -85,15 +84,7 @@ type commonConverter struct {
 }
 
 func (c commonConverter) Clean() {
-	var wg sync.WaitGroup
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		c.tarsConverter.Clean()
-	}()
-
-	wg.Wait()
+	c.tarsConverter.Clean()
 }
 
 func (c commonConverter) Convert(record *define.Record, f define.GatherFunc) {

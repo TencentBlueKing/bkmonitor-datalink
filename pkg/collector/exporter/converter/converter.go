@@ -12,6 +12,7 @@ package converter
 import (
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/prometheus/client_golang/prometheus"
@@ -39,6 +40,7 @@ func (m *metricMonitor) IncConverterSpanKindCounter(dataId int32, kind string) {
 
 type Converter interface {
 	Convert(record *define.Record, f define.GatherFunc)
+	Clean()
 }
 
 type EventConverter interface {
@@ -80,6 +82,18 @@ type commonConverter struct {
 	ftaConverter         EventConverter
 	beatConverter        EventConverter
 	tarsConverter        EventConverter
+}
+
+func (c commonConverter) Clean() {
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		c.tarsConverter.Clean()
+	}()
+
+	wg.Wait()
 }
 
 func (c commonConverter) Convert(record *define.Record, f define.GatherFunc) {

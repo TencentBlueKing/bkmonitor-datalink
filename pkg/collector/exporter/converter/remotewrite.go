@@ -29,6 +29,8 @@ var RemoteWriteConverter EventConverter = remoteWriteConverter{}
 
 type remoteWriteConverter struct{}
 
+func (c remoteWriteConverter) Clean() {}
+
 func (c remoteWriteConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return remoteWriteEvent{define.NewCommonEvent(token, dataId, data)}
 }

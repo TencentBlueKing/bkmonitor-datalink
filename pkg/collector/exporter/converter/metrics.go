@@ -35,6 +35,8 @@ var MetricsConverter EventConverter = metricsConverter{}
 
 type metricsConverter struct{}
 
+func (c metricsConverter) Clean() {}
+
 func (c metricsConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return metricsEvent{define.NewCommonEvent(token, dataId, data)}
 }

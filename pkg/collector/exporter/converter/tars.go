@@ -10,6 +10,7 @@
 package converter
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -387,6 +388,9 @@ func (s *stat) ToEvents(metricNamePrefix string) []define.Event {
 }
 
 type aggregator struct {
+	wg                    sync.WaitGroup
+	ctx                   context.Context
+	cancel                context.CancelFunc
 	ch                    chan *stat
 	buffer                map[statPK]*stat
 	interval              time.Duration
@@ -397,13 +401,21 @@ type aggregator struct {
 
 // newAggregator 创建聚合器实例
 func newAggregator(interval time.Duration, scopeNameToIgnoreTags map[string][]string) *aggregator {
+	ctx, cancel := context.WithCancel(context.Background())
 	a := &aggregator{
+		ctx:                   ctx,
+		cancel:                cancel,
 		ch:                    make(chan *stat, 256),
 		buffer:                make(map[statPK]*stat),
 		interval:              interval,
 		scopeNameToIgnoreTags: scopeNameToIgnoreTags,
 	}
-	go a.Run()
+
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		a.Run()
+	}()
 	return a
 }
 
@@ -423,8 +435,15 @@ func (a *aggregator) Run() {
 			a.aggregate(s)
 		case <-ticker.C:
 			a.exportAndClean()
+		case <-a.ctx.Done():
+			return
 		}
 	}
+}
+
+func (a *aggregator) Stop() {
+	a.cancel()
+	a.wg.Wait()
 }
 
 // Aggregate 接收 stat 并将其发送到聚合器通道
@@ -481,6 +500,12 @@ func NewTarsConverter(config TarsConfig) EventConverter {
 	return tarsConverter{
 		conf:       config,
 		aggregator: newAggregator(config.AggregateInterval, scopeNameToIgnoreTags),
+	}
+}
+
+func (c tarsConverter) Clean() {
+	if c.aggregator != nil {
+		c.aggregator.Stop()
 	}
 }
 

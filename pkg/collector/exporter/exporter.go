@@ -151,6 +151,7 @@ func (e *Exporter) sendEvents() {
 }
 
 func (e *Exporter) Stop() {
+	e.converter.Clean()
 	e.cancel()
 	e.wg.Wait()
 }

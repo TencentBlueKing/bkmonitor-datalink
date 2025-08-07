@@ -126,6 +126,9 @@ func (rs *Rules) MatchMetricAttrs(attrs pcommon.Map) bool {
 
 // MatchRWLabels 判断 remote write data labels 是否匹配所有规则
 func (rs *Rules) MatchRWLabels(labels map[string]*prompb.Label) bool {
+	if len(*rs) == 0 {
+		return false
+	}
 	for _, rule := range *rs {
 		label, ok := labels[rule.Label]
 		if !ok {

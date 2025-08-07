@@ -23,7 +23,7 @@ import (
 )
 
 type Instance interface {
-	QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error)
+	QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, *metadata.ResultTableOption, error)
 	QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet
 	QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error)
 
@@ -38,7 +38,7 @@ type Instance interface {
 	DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error)
 
 	InstanceType() string
-	InstanceConnects() []string
+	Connect() string
 	ScrollHandler() ScrollHandler
 }
 
@@ -55,15 +55,15 @@ type ScrollHandler interface {
 type DefaultInstance struct {
 }
 
-func (d *DefaultInstance) InstanceConnects() []string {
-	return nil
-}
-
 func (d *DefaultInstance) ScrollHandler() ScrollHandler {
 	return nil
 }
 
-func (d *DefaultInstance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
+func (d *DefaultInstance) Connect() string {
+	return ""
+}
+
+func (d *DefaultInstance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, *metadata.ResultTableOption, error) {
 	return 0, nil, nil
 }
 

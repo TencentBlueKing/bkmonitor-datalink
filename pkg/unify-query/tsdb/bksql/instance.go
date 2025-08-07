@@ -91,6 +91,10 @@ func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 	return instance, nil
 }
 
+func (i *Instance) Connect() string {
+	return i.client.URL()
+}
+
 func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
 	return ""
 }
@@ -235,21 +239,17 @@ func (i *Instance) InstanceConnects() []string {
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, resultTableOptions metadata.ResultTableOptions, err error) {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, option *metadata.ResultTableOption, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("doris query panic: %s", r)
 		}
 	}()
 
-	resultTableOptions = make(metadata.ResultTableOptions)
-	option := query.ResultTableOptions.GetOption(query.TableID, i.client.url)
+	option = query.ResultTableOptions.GetOption(query.TableID, i.client.url)
 	if option == nil {
 		option = &metadata.ResultTableOption{}
 	}
-	defer func() {
-		resultTableOptions.SetOption(query.TableID, i.client.url, option)
-	}()
 
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-raw")
 	defer span.End(&err)

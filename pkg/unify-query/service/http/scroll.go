@@ -100,33 +100,26 @@ type StorageScrollQuery struct {
 func collectStorageScrollQuery(ctx context.Context, session *redis.ScrollSession, qryList []*metadata.Query) (list []StorageScrollQuery, err error) {
 	for _, qry := range qryList {
 		instance := prometheus.GetTsDbInstance(ctx, qry)
-		connects := instance.InstanceConnects()
-		if len(connects) == 0 {
-			err = fmt.Errorf("no connects found for query: %v", qry)
+		slices, mErr := instance.ScrollHandler().MakeSlices(ctx, session, qry.StorageID, qry.TableID)
+		if mErr != nil {
+			err = mErr
 			return
 		}
-		for _, connect := range connects {
-			slices, mErr := instance.ScrollHandler().MakeSlices(ctx, session, connect, qry.TableID)
-			if mErr != nil {
-				err = mErr
+		var injectedScrollQueryList []*metadata.Query
+		for _, slice := range slices {
+			qryCp, iErr := injectScrollQuery(qry, qry.StorageID, qry.TableID, slice)
+			if iErr != nil {
+				err = iErr
 				return
 			}
-			var injectedScrollQueryList []*metadata.Query
-			for _, slice := range slices {
-				qryCp, iErr := injectScrollQuery(qry, connect, qry.TableID, slice)
-				if iErr != nil {
-					err = iErr
-					return
-				}
-				injectedScrollQueryList = append(injectedScrollQueryList, qryCp)
-			}
-			list = append(list, StorageScrollQuery{
-				QueryList: injectedScrollQueryList,
-				Connect:   connect,
-				Instance:  instance,
-				TableID:   qry.TableID,
-			})
+			injectedScrollQueryList = append(injectedScrollQueryList, qryCp)
 		}
+		list = append(list, StorageScrollQuery{
+			QueryList: injectedScrollQueryList,
+			Connect:   qry.StorageID,
+			Instance:  instance,
+			TableID:   qry.TableID,
+		})
 	}
 	return
 }
@@ -166,25 +159,19 @@ func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connec
 		}
 	}()
 
-	_, resultOption, err := instance.QueryRawData(ctx, qry, start, end, dataCh)
+	_, option, err := instance.QueryRawData(ctx, qry, start, end, dataCh)
 	close(dataCh)
 	wg.Wait()
 
-	var sliceResultOption *metadata.ResultTableOption
-	if resultOption != nil {
-		if opt := resultOption.GetOption(tableID, connect); opt != nil {
-			sliceResultOption = opt
-		}
-	} else {
-		qryOption := qry.ResultTableOptions.GetOption(tableID, connect)
-		if qryOption != nil {
-			qryOption.ScrollID = ""
-			sliceResultOption = qryOption
+	if option == nil {
+		option = qry.ResultTableOptions.GetOption(tableID, connect)
+		if option != nil {
+			option.ScrollID = ""
 		}
 	}
 
 	// 下载逻辑一定要生成 sliceResultOption，否则无法进行下次查询
-	if sliceResultOption == nil {
+	if option == nil {
 		err = fmt.Errorf("no result option found for tableID: %s, connect: %s", tableID, connect)
 		return
 	}
@@ -194,13 +181,13 @@ func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connec
 		sliceStatus = redis.StatusFailed
 	}
 	scrollHandler := instance.ScrollHandler()
-	isCompleted := scrollHandler.IsCompleted(sliceResultOption, len(data))
+	isCompleted := scrollHandler.IsCompleted(option, len(data))
 	if isCompleted {
 		sliceStatus = redis.StatusCompleted
 	} else {
 		sliceStatus = redis.StatusRunning
 	}
-	err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, sliceResultOption, sliceStatus)
+	err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, option, sliceStatus)
 	return
 }
 

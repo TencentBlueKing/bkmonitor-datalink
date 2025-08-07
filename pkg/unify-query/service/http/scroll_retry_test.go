@@ -207,10 +207,8 @@ func getInstance(ctx context.Context, storageType string) (tsdb.Instance, error)
 	switch storageType {
 	case consul.ElasticsearchStorageType:
 		return elasticsearch.NewInstance(ctx, &elasticsearch.InstanceOption{
-			Connects: []elasticsearch.Connect{
-				{
-					Address: "es-test:9200",
-				},
+			Connect: elasticsearch.Connect{
+				Address: "es-test:9200",
 			},
 		})
 	case consul.BkSqlStorageType:

@@ -349,7 +349,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					return
 				}
 
-				size, options, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
+				size, option, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
 				if queryErr != nil {
 					errCh <- queryErr
 					return
@@ -361,7 +361,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 						resultTableOptions = make(metadata.ResultTableOptions)
 					}
 					lock.Lock()
-					resultTableOptions.MergeOptions(options)
+					resultTableOptions.SetOption(qry.TableID, instance.Connect(), option)
 					lock.Unlock()
 				}
 

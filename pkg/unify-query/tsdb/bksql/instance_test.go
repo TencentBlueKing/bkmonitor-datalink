@@ -759,15 +759,15 @@ func TestInstance_QueryRaw(t *testing.T) {
 			dataCh := make(chan map[string]any)
 
 			var (
-				options metadata.ResultTableOptions
-				err     error
+				option *metadata.ResultTableOption
+				err    error
 			)
 			go func() {
 				defer func() {
 					close(dataCh)
 				}()
 
-				_, options, err = ins.QueryRawData(ctx, c.query, start, end, dataCh)
+				_, option, err = ins.QueryRawData(ctx, c.query, start, end, dataCh)
 				assert.Nil(t, err)
 			}()
 
@@ -782,6 +782,9 @@ func TestInstance_QueryRaw(t *testing.T) {
 			assert.JSONEq(t, c.expected, string(actual))
 
 			if c.options != "" {
+				options := make(metadata.ResultTableOptions)
+				options.SetOption(c.query.TableID, ins.Connect(), option)
+
 				optString, _ := json.Marshal(options)
 				assert.Equal(t, c.options, string(optString))
 			}

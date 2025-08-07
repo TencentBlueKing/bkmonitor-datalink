@@ -97,9 +97,8 @@ type Query struct {
 
 	StorageType string `json:"storage_type,omitempty"` // 存储类型
 
-	StorageIDs  []string `json:"storage_ids,omitempty"`
-	StorageID   string   `json:"storage_id,omitempty"`
-	StorageName string   `json:"storage_name,omitempty"`
+	StorageID   string `json:"storage_id,omitempty"`
+	StorageName string `json:"storage_name,omitempty"`
 
 	ClusterName string   `json:"cluster_name,omitempty"`
 	TagsKey     []string `json:"tags_key,omitempty"`

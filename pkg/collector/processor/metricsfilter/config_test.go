@@ -10,10 +10,11 @@
 package metricsfilter
 
 import (
+	"testing"
+
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pcommon"
-	"testing"
 )
 
 func TestRuleMatch(t *testing.T) {
@@ -186,15 +187,6 @@ func TestConfigValidate(t *testing.T) {
 		assert.Error(t, c.Validate())
 	})
 }
-
-// 由CodeBuddy（内网版） Deepseek R1生成于2025.08.06 16:19:34
-// createTestMap 辅助函数用于快速创建测试用属性集合
-// 由CodeBuddy（内网版） Deepseek R1生成于2025.08.06 16:19:35
-
-// 定义通用测试规则
-
-// 测试规则验证逻辑
-// 由CodeBuddy（内网版） Deepseek R1生成于2025.08.06 16:19:35
 
 func TestRule_Validate(t *testing.T) {
 	type fields struct {

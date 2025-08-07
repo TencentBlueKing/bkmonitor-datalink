@@ -10,16 +10,16 @@
 package metricsfilter
 
 import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
-	"go.opentelemetry.io/collector/pdata/pcommon"
-	"strconv"
-	"strings"
 	"testing"
+	"time"
 
+	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
@@ -154,9 +154,9 @@ processor:
 	assert.Equal(t, "my_metrics_replace", name)
 }
 
-func makeMetricsGeneratorWithAttributes(n int, attrs map[string]string) *generator.MetricsGenerator {
+func makeMetricsGeneratorWithAttributes(name string, n int, attrs map[string]string) *generator.MetricsGenerator {
 	opts := define.MetricsOptions{
-		MetricName: "rpc_client_handled_total",
+		MetricName: name,
 		GaugeCount: n,
 		GeneratorOptions: define.GeneratorOptions{
 			Attributes: attrs,
@@ -165,7 +165,7 @@ func makeMetricsGeneratorWithAttributes(n int, attrs map[string]string) *generat
 	return generator.NewMetricsGenerator(opts)
 }
 
-func TestMetricsRelabelAction(t *testing.T) {
+func TestMetricsRelabelAction1(t *testing.T) {
 	content := `
 processor:
   - name: "metrics_filter/relabel"
@@ -185,17 +185,12 @@ processor:
               - prefix: "err_"
                 min: 10
                 max: 19
-              - prefix: ""
-                min: 100
-                max: 200
               - prefix: "trpc_"
                 min: 11
                 max: 12
               - prefix: "ret_"
                 min: 100
                 max: 200
-              - min: 100
-                max: 100
               - min: 200
                 max: 200
           destinations:
@@ -204,151 +199,230 @@ processor:
 `
 	factory := processor.MustCreateFactory(content, NewFactory)
 
-	t.Run("rules hit op in", func(t *testing.T) {
-		g := makeMetricsGeneratorWithAttributes(1, map[string]string{
-			"callee_method":  "hello",
-			"callee_service": "example.greeter",
-			"code":           "200",
-		})
-		data := g.Generate()
-
-		record := define.Record{
-			RecordType: define.RecordMetrics,
-			Data:       data,
-		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		metrics := record.Data.(pmetric.Metrics)
-		foreach.Metrics(metrics.ResourceMetrics(), func(metric pmetric.Metric) {
-			foreach.MetricsDataPointsAttrs(metric, func(attrs pcommon.Map) {
-				v, exist := attrs.Get("code_type")
-				assert.True(t, exist)
-				assert.Equal(t, "success", v.AsString())
-			})
-		})
-	})
-	t.Run("rules hit op range", func(t *testing.T) {
-		g := makeMetricsGeneratorWithAttributes(1, map[string]string{
-			"callee_method":  "hello",
-			"callee_service": "example.greeter",
-			"code":           "ret_105",
-		})
-		data := g.Generate()
-
-		record := define.Record{
-			RecordType: define.RecordMetrics,
-			Data:       data,
-		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		metrics := record.Data.(pmetric.Metrics)
-		foreach.Metrics(metrics.ResourceMetrics(), func(metric pmetric.Metric) {
-			foreach.MetricsDataPointsAttrs(metric, func(attrs pcommon.Map) {
-				v, exist := attrs.Get("code_type")
-				assert.True(t, exist)
-				assert.Equal(t, "success", v.AsString())
-			})
-		})
-	})
-	t.Run("rules not hit", func(t *testing.T) {
-		g := makeMetricsGeneratorWithAttributes(1, map[string]string{
-			"callee_method":  "hello_1",
-			"callee_service": "example.greeter",
-			"code":           "200",
-		})
-		data := g.Generate()
-
-		record := define.Record{
-			RecordType: define.RecordMetrics,
-			Data:       data,
-		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		metrics := record.Data.(pmetric.Metrics)
-		foreach.Metrics(metrics.ResourceMetrics(), func(metric pmetric.Metric) {
-			foreach.MetricsDataPointsAttrs(metric, func(attrs pcommon.Map) {
-				_, exist := attrs.Get("code_type")
-				assert.False(t, exist)
-			})
-		})
-	})
-
-}
-
-func BenchmarkMapf(b *testing.B) {
-
-	value := "ret_105"
-
-	v := map[string]interface{}{
-		"prefix": "trpc_",
-		"min":    11,
-		"max":    12,
+	tests := []struct {
+		name       string
+		metric     string
+		attributes map[string]string
+		wantExist  bool
+		wantValue  string
+	}{
+		{
+			name:   "rules hit op in",
+			metric: "rpc_client_handled_total",
+			attributes: map[string]string{
+				"callee_method":  "hello",
+				"callee_service": "example.greeter",
+				"code":           "200",
+			},
+			wantExist: true,
+			wantValue: "success",
+		},
+		{
+			name:   "rules hit op in but name not match",
+			metric: "test_metric",
+			attributes: map[string]string{
+				"callee_method":  "hello",
+				"callee_service": "example.greeter",
+				"code":           "200",
+			},
+			wantExist: false,
+			wantValue: "success",
+		},
+		{
+			name:   "rules hit op range",
+			metric: "rpc_client_handled_total",
+			attributes: map[string]string{
+				"callee_method":  "hello",
+				"callee_service": "example.greeter",
+				"code":           "ret_105",
+			},
+			wantExist: true,
+			wantValue: "success",
+		},
+		{
+			name:   "rules not hit",
+			metric: "rpc_client_handled_total",
+			attributes: map[string]string{
+				"callee_method":  "hello_1",
+				"callee_service": "example.greeter",
+				"code":           "200",
+			},
+			wantExist: false,
+		},
+		{
+			name:   "rules hit replace attr",
+			metric: "rpc_client_handled_total",
+			attributes: map[string]string{
+				"callee_method":  "hello",
+				"callee_service": "example.greeter",
+				"code":           "200",
+				"code_type":      "test_type",
+			},
+			wantExist: true,
+			wantValue: "success",
+		},
 	}
 
-	for i := 0; i < b.N; i++ {
-		mapf := func(v interface{}) {
-			val := v.(map[string]interface{})
-			prefix, ok := val["prefix"]
-			if ok {
-				if !strings.HasPrefix(value, prefix.(string)) {
-					return
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := makeMetricsGeneratorWithAttributes(tt.metric, 1, tt.attributes)
+			record := define.Record{
+				RecordType: define.RecordMetrics,
+				Data:       g.Generate(),
+			}
+
+			_, err := factory.Process(&record)
+			assert.NoError(t, err)
+
+			metrics := record.Data.(pmetric.Metrics)
+			foreach.MetricsSliceDataPointsAttrs(metrics.ResourceMetrics(), func(attrs pcommon.Map) {
+				v, exist := attrs.Get("code_type")
+				assert.Equal(t, tt.wantExist, exist)
+				if exist {
+					assert.Equal(t, tt.wantValue, v.AsString())
 				}
-				value = strings.TrimPrefix(value, prefix.(string))
-			}
-			value, err := strconv.Atoi(value)
-			if err != nil {
-				return
-			}
-			minVal, ok := val["min"].(int)
-			if !ok {
-				return
-			}
-			maxVal, ok := val["max"].(int)
-			if !ok {
-				return
-			}
-			if value >= minVal && value <= maxVal {
-				return
-			}
-		}
-		mapf(v)
+			})
+		})
 	}
 }
 
-func BenchmarkDecodef(b *testing.B) {
-
-	value := "ret_105"
-
-	v := map[string]interface{}{
-		"prefix": "trpc_",
-		"min":    11,
-		"max":    12,
+func TestMetricsRelabelAction_RemoteWrite(t *testing.T) {
+	content := `
+processor:
+  - name: "metrics_filter/relabel"
+    config:
+      relabel:
+        - metric: "rpc_client_handled_total"
+          rules:
+            - label: "callee_method"
+              op: "in"
+              values: ["hello"]
+            - label: "callee_service"
+              op: "in"
+              values: ["example.greeter"]
+            - label: "code"
+              op: "range"
+              values:
+              - prefix: "err_"
+                min: 10
+                max: 19
+              - prefix: "trpc_"
+                min: 11
+                max: 12
+              - prefix: "ret_"
+                min: 100
+                max: 200
+              - min: 200
+                max: 200
+          destinations:
+            - label: "code_type"
+              value: "success"
+`
+	factory := processor.MustCreateFactory(content, NewFactory)
+	tests := []struct {
+		name       string
+		metric     string
+		attributes map[string]string
+		wantExist  bool
+		wantValue  string
+	}{
+		{
+			name:   "rules hit op in",
+			metric: "rpc_client_handled_total",
+			attributes: map[string]string{
+				"callee_method":  "hello",
+				"callee_service": "example.greeter",
+				"code":           "200",
+			},
+			wantExist: true,
+			wantValue: "success",
+		},
+		{
+			name:   "rules hit op in but name not match",
+			metric: "test_metric",
+			attributes: map[string]string{
+				"callee_method":  "hello",
+				"callee_service": "example.greeter",
+				"code":           "200",
+			},
+			wantExist: false,
+			wantValue: "success",
+		},
+		{
+			name:   "rules hit op range",
+			metric: "rpc_client_handled_total",
+			attributes: map[string]string{
+				"callee_method":  "hello",
+				"callee_service": "example.greeter",
+				"code":           "ret_105",
+			},
+			wantExist: true,
+			wantValue: "success",
+		},
+		{
+			name:   "rules not hit",
+			metric: "rpc_client_handled_total",
+			attributes: map[string]string{
+				"callee_method":  "hello_1",
+				"callee_service": "example.greeter",
+				"code":           "200",
+			},
+			wantExist: false,
+		},
+		{
+			name:   "rules hit replace attr",
+			metric: "rpc_client_handled_total",
+			attributes: map[string]string{
+				"callee_method":  "hello",
+				"callee_service": "example.greeter",
+				"code":           "200",
+				"code_type":      "test_type",
+			},
+			wantExist: true,
+			wantValue: "success",
+		},
 	}
 
-	for i := 0; i < b.N; i++ {
-		decodef := func(v interface{}) {
-			rangeValue := RangeValue{}
-			err := mapstructure.Decode(v, &rangeValue)
-			if err != nil {
-				return
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			rwData := define.RemoteWriteData{
+				Timeseries: make([]prompb.TimeSeries, 0),
 			}
-			if rangeValue.Prefix != "" {
-				if !strings.HasPrefix(value, rangeValue.Prefix) {
-					return
+			labels := make([]prompb.Label, 0, 4)
+			labels = append(labels, prompb.Label{Name: "__name__", Value: tt.metric})
+			for k, v := range tt.attributes {
+				labels = append(labels, prompb.Label{
+					Name:  k,
+					Value: v,
+				})
+			}
+			rwData.Timeseries = append(rwData.Timeseries, prompb.TimeSeries{
+				Labels: labels,
+				Samples: []prompb.Sample{{
+					Value:     1,
+					Timestamp: time.Now().Unix(),
+				}},
+			})
+
+			record := define.Record{
+				RecordType: define.RecordRemoteWrite,
+				Data:       &rwData,
+			}
+
+			_, err := factory.Process(&record)
+			assert.NoError(t, err)
+
+			tss := record.Data.(*define.RemoteWriteData).Timeseries
+			for _, ts := range tss {
+				_, dims := extractDims(ts.GetLabels())
+				v, ok := dims["code_type"]
+				assert.Equal(t, tt.wantExist, ok)
+				if ok {
+					assert.Equal(t, tt.wantValue, v.GetValue())
 				}
-				value = strings.TrimPrefix(value, rangeValue.Prefix)
 			}
-			value, err := strconv.Atoi(value)
-			if err != nil {
-				return
-			}
-			if value >= rangeValue.Min && value <= rangeValue.Max {
-				return
-			}
-		}
-		decodef(v)
+
+		})
 	}
 }

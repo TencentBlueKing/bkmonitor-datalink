@@ -10,6 +10,8 @@
 package metricsfilter
 
 import (
+	"github.com/prometheus/prometheus/prompb"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
@@ -35,12 +37,19 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 	if err := mapstructure.Decode(conf, &c); err != nil {
 		return nil, err
 	}
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
 	configs.SetGlobal(c)
 
 	for _, custom := range customized {
 		var cfg Config
 		if err := mapstructure.Decode(custom.Config.Config, &cfg); err != nil {
 			logger.Errorf("failed to decode config: %v", err)
+			continue
+		}
+		if err := cfg.Validate(); err != nil {
+			logger.Errorf("invalid config: %v", err)
 			continue
 		}
 		configs.Set(custom.Token, custom.Type, custom.ID, cfg)
@@ -132,7 +141,54 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 	case define.RecordMetrics:
 		for _, action := range config.Relabel {
 			pdMetrics := record.Data.(pmetric.Metrics)
-			foreach.Metrics(pdMetrics.ResourceMetrics(), action.RelabelMetricIfMatched)
+			foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
+				if action.Metric != metric.Name() {
+					return
+				}
+				foreach.MetricDataPointsAttrs(metric, func(attrs pcommon.Map) {
+					if action.Rules.MatchMetricAttrs(attrs) {
+						for _, destination := range action.Destinations {
+							attrs.UpsertString(destination.Label, destination.Value)
+						}
+					}
+				})
+			})
+		}
+	case define.RecordRemoteWrite:
+		handle := func(ts *prompb.TimeSeries, action RelabelAction) {
+			name, labels := extractDims(ts.GetLabels())
+			if action.Metric != name {
+				return
+			}
+			if action.Rules.MatchRWLabels(labels) {
+				for _, destination := range action.Destinations {
+					// 如果已经有该label，则覆盖，否则新增
+					if _, ok := labels[destination.Label]; ok {
+						labels[destination.Label].Value = destination.Value
+					} else {
+						ts.Labels = append(ts.Labels, prompb.Label{Name: destination.Label, Value: destination.Value})
+					}
+				}
+			}
+		}
+		for _, action := range config.Relabel {
+			rwData := record.Data.(*define.RemoteWriteData)
+			for i := 0; i < len(rwData.Timeseries); i++ {
+				handle(&rwData.Timeseries[i], action)
+			}
 		}
 	}
+}
+
+func extractDims(labels []prompb.Label) (string, map[string]*prompb.Label) {
+	m := make(map[string]*prompb.Label)
+	var name string
+	for i := 0; i < len(labels); i++ {
+		if labels[i].GetName() == "__name__" {
+			name = labels[i].GetValue()
+			continue
+		}
+		m[labels[i].GetName()] = &labels[i]
+	}
+	return name, m
 }

@@ -95,7 +95,15 @@ func MetricsSliceResource(resourceMetricsSlice pmetric.ResourceMetricsSlice, f f
 	}
 }
 
-func MetricsDataPointsAttrs(metric pmetric.Metric, f func(attrs pcommon.Map)) {
+// MetricsSliceDataPointsAttrs 遍历 MetricsSlice 的所有数据点属性
+func MetricsSliceDataPointsAttrs(resourceMetricsSlice pmetric.ResourceMetricsSlice, f func(attrs pcommon.Map)) {
+	Metrics(resourceMetricsSlice, func(metric pmetric.Metric) {
+		MetricDataPointsAttrs(metric, f)
+	})
+}
+
+// MetricDataPointsAttrs 遍历单个 Metric 的数据点属性
+func MetricDataPointsAttrs(metric pmetric.Metric, f func(attrs pcommon.Map)) {
 	switch metric.DataType() {
 	case pmetric.MetricDataTypeGauge:
 		dps := metric.Gauge().DataPoints()

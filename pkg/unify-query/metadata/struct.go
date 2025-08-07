@@ -489,10 +489,13 @@ func (os Orders) SortSliceList(list []map[string]any, fieldType map[string]strin
 				case TypeDate, TypeDateNanos:
 					t1 := function.StringToNanoUnix(cast.ToString(a))
 					t2 := function.StringToNanoUnix(cast.ToString(b))
-					if o.Ast {
-						return t1 < t2
-					} else {
-						return t1 > t2
+
+					if t1 > 0 && t2 > 0 {
+						if o.Ast {
+							return t1 < t2
+						} else {
+							return t1 > t2
+						}
 					}
 				}
 			}

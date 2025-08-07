@@ -581,6 +581,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			resultTableOptions: metadata.ResultTableOptions{
 				"es_index|http://127.0.0.1:93002": &metadata.ResultTableOption{
 					FieldType: mock.FieldType,
+					From:      function.IntPoint(0),
 				},
 			},
 		},
@@ -618,6 +619,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			resultTableOptions: metadata.ResultTableOptions{
 				"bk_log_index_set_10|http://127.0.0.1:93002": &metadata.ResultTableOption{
 					FieldType: mock.FieldType,
+					From:      function.IntPoint(0),
 				},
 			},
 		},
@@ -651,6 +653,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			resultTableOptions: metadata.ResultTableOptions{
 				"bk_log_index_set_10|http://127.0.0.1:93002": &metadata.ResultTableOption{
 					FieldType: mock.FieldType,
+					From:      function.IntPoint(0),
 				},
 			},
 		},
@@ -679,6 +682,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				"bk_log_index_set_10|http://127.0.0.1:93002": {
 					ScrollID:  "scroll_id_1",
 					FieldType: mock.FieldType,
+					From:      function.IntPoint(0),
 				},
 			},
 		},
@@ -702,6 +706,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			resultTableOptions: metadata.ResultTableOptions{
 				"bk_log_index_set_10|http://127.0.0.1:93002": &metadata.ResultTableOption{
 					FieldType: mock.FieldType,
+					From:      function.IntPoint(0),
 				},
 			},
 		},
@@ -741,6 +746,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				"bk_log_index_set_10|http://127.0.0.1:93002": {
 					SearchAfter: []any{1743465616224.0, "kibana_stats", "es-os60crz7-kibana"},
 					FieldType:   mock.FieldType,
+					From:        function.IntPoint(0),
 				},
 			},
 		},

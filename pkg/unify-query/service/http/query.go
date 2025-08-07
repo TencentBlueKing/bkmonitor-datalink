@@ -263,6 +263,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 		for _, rto := range resultTableOptions {
 			for k, v := range rto.FieldType {
+				if fieldType == nil {
+					fieldType = make(map[string]string)
+				}
+
 				fieldType[k] = v
 			}
 		}
@@ -285,11 +289,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 			if queryTs.Limit > 0 {
 				if queryTs.IsMultiFrom {
-					resultTableOptions = queryTs.ResultTableOptions
-					if resultTableOptions == nil {
-						resultTableOptions = make(metadata.ResultTableOptions)
-					}
-
 					data = data[0:queryTs.Limit]
 					for _, l := range data {
 						tableID := l[elasticsearch.KeyTableID].(string)

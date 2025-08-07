@@ -596,6 +596,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 			var option = &metadata.ResultTableOption{
 				FieldType: fact.FieldType(),
+				From:      &query.From,
 			}
 
 			reverseAlias := make(map[string]string, len(query.FieldAlias))

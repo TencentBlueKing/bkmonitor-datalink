@@ -189,6 +189,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	if queryTs.SpaceUid == "" {
 		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
 	}
+
 	for _, ql := range queryTs.QueryList {
 		// 时间复用
 		ql.Timezone = queryTs.Timezone
@@ -252,15 +253,24 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	go func() {
 		defer receiveWg.Done()
 
-		var data []map[string]any
+		var (
+			data      []map[string]any
+			fieldType map[string]string
+		)
 		for d := range dataCh {
 			data = append(data, d)
+		}
+
+		for _, rto := range resultTableOptions {
+			for k, v := range rto.FieldType {
+				fieldType[k] = v
+			}
 		}
 
 		span.Set("query-list-num", len(queryList))
 		span.Set("result-data-num", len(data))
 
-		queryTs.OrderBy.Orders().SortSliceList(data)
+		queryTs.OrderBy.Orders().SortSliceList(data, fieldType)
 
 		span.Set("query-scroll", queryTs.Scroll)
 		span.Set("query-result-table", queryTs.ResultTableOptions)
@@ -397,14 +407,12 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				}
 
 				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
-				if !queryTs.IsMultiFrom {
-					if resultTableOptions == nil {
-						resultTableOptions = make(metadata.ResultTableOptions)
-					}
-					lock.Lock()
-					resultTableOptions.MergeOptions(options)
-					lock.Unlock()
+				if resultTableOptions == nil {
+					resultTableOptions = make(metadata.ResultTableOptions)
 				}
+				lock.Lock()
+				resultTableOptions.MergeOptions(options)
+				lock.Unlock()
 
 				total += size
 			})

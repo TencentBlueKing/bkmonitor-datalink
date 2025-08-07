@@ -577,7 +577,13 @@ func TestInstance_queryRawData(t *testing.T) {
 			start: defaultStart,
 			end:   defaultEnd,
 			size:  1,
-			list:  `[{"__address":"http://127.0.0.1:93002","__data_label":"es_index","__doc_id":"aS3KjpEBbwEm76LbcH1G","__index":"bk_unify_query_demo_2","__result_table":"es_index","group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]}]`},
+			list:  `[{"__address":"http://127.0.0.1:93002","__data_label":"es_index","__doc_id":"aS3KjpEBbwEm76LbcH1G","__index":"bk_unify_query_demo_2","__result_table":"es_index","group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]}]`,
+			resultTableOptions: metadata.ResultTableOptions{
+				"es_index|http://127.0.0.1:93002": &metadata.ResultTableOption{
+					FieldType: mock.FieldType,
+				},
+			},
+		},
 		"获取 10条 不 field 为空的原始数据": {
 			query: &metadata.Query{
 				DB:         db,
@@ -609,6 +615,11 @@ func TestInstance_queryRawData(t *testing.T) {
 			end:   defaultEnd,
 			size:  1e4,
 			list:  `[{"__data_label":"set_10","__address":"http://127.0.0.1:93002","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"27bdd842c5f2929cf4bd90f1e4534a9d","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10"},{"__data_label":"set_10","__address":"http://127.0.0.1:93002","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"d21cf5cf373b4a26a31774ff7ab38fad","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10"},{"__result_table":"bk_log_index_set_10","__data_label":"set_10","__address":"http://127.0.0.1:93002","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"e07e9f6437e64cc04e945dc0bf604e62","__index":"v2_2_bklog_bk_unify_query_20240814_0"},{"__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"01fb133625637ee3b0b8e689b8126da2","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"set_10","__address":"http://127.0.0.1:93002"},{"__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"7eaa9e9edfc5e6bd8ba5df06fd2d5c00","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"set_10","__address":"http://127.0.0.1:93002"},{"__data_label":"set_10","__address":"http://127.0.0.1:93002","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"bcabf17aca864416784c0b1054b6056e","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10"},{"__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"set_10","__address":"http://127.0.0.1:93002","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"3edf7236b8fc45c1aec67ea68fa92c61"},{"__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"set_10","__address":"http://127.0.0.1:93002","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"77d08d253f11554c5290b4cac515c4e1"},{"__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"9fb5bb5f9bce7e0ab59e0cd1f410c57b","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"set_10","__address":"http://127.0.0.1:93002"},{"__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"573b3e1b4a499e4b7e7fab35f316ac8a","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"set_10","__address":"http://127.0.0.1:93002"}]`,
+			resultTableOptions: metadata.ResultTableOptions{
+				"bk_log_index_set_10|http://127.0.0.1:93002": &metadata.ResultTableOption{
+					FieldType: mock.FieldType,
+				},
+			},
 		},
 		"获取 10条 原始数据": {
 			query: &metadata.Query{
@@ -637,6 +648,11 @@ func TestInstance_queryRawData(t *testing.T) {
 			end:   defaultEnd,
 			size:  1e4,
 			list:  `[{"__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"8defd23f1c2599e70f3ace3a042b2b5f","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002"},{"__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"ba0a6e66f01d6cb77ae25b13ddf4ad1b","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002"},{"__doc_id":"74ea55e7397582b101f0e21efbc876c6","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"},{"__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__ext.container_name":"unify-query","__doc_id":"084792484f943e314e31ef2b2e878115"},{"__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"0a3f47a7c57d0af7d40d82c729c37155","__index":"v2_2_bklog_bk_unify_query_20240814_0"},{"__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__ext.container_name":"unify-query","__doc_id":"85981293cca7102b9560b49a7f089737","__index":"v2_2_bklog_bk_unify_query_20240814_0"},{"__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"b429dc6611efafc4d02b90f882271dea","__index":"v2_2_bklog_bk_unify_query_20240814_0"},{"__doc_id":"01213026ae064c6726fd99dc8276e842","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"},{"__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"93027432b40ccb01b1be8f4ea06a6853","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002"},{"__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"bc31babcb5d1075fc421bd641199d3aa","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10"}]`,
+			resultTableOptions: metadata.ResultTableOptions{
+				"bk_log_index_set_10|http://127.0.0.1:93002": &metadata.ResultTableOption{
+					FieldType: mock.FieldType,
+				},
+			},
 		},
 		"query with scroll id 1 and field alias": {
 			query: &metadata.Query{
@@ -661,7 +677,8 @@ func TestInstance_queryRawData(t *testing.T) {
 			list:  `[{"__address":"http://127.0.0.1:93002","__data_label":"","__doc_id":"8defd23f1c2599e70f3ace3a042b2b5f","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","container_name":"unify-query"},{"__address":"http://127.0.0.1:93002","__data_label":"","__doc_id":"ba0a6e66f01d6cb77ae25b13ddf4ad1b","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","container_name":"unify-query"},{"__address":"http://127.0.0.1:93002","__data_label":"","__doc_id":"74ea55e7397582b101f0e21efbc876c6","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","container_name":"unify-query"},{"__address":"http://127.0.0.1:93002","__data_label":"","__doc_id":"084792484f943e314e31ef2b2e878115","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","container_name":"unify-query"},{"__address":"http://127.0.0.1:93002","__data_label":"","__doc_id":"0a3f47a7c57d0af7d40d82c729c37155","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","container_name":"unify-query"}]`,
 			resultTableOptions: map[string]*metadata.ResultTableOption{
 				"bk_log_index_set_10|http://127.0.0.1:93002": {
-					ScrollID: "scroll_id_1",
+					ScrollID:  "scroll_id_1",
+					FieldType: mock.FieldType,
 				},
 			},
 		},
@@ -682,6 +699,11 @@ func TestInstance_queryRawData(t *testing.T) {
 			start: defaultStart,
 			end:   defaultEnd,
 			size:  0,
+			resultTableOptions: metadata.ResultTableOptions{
+				"bk_log_index_set_10|http://127.0.0.1:93002": &metadata.ResultTableOption{
+					FieldType: mock.FieldType,
+				},
+			},
 		},
 		"query with search after": {
 			query: &metadata.Query{
@@ -718,6 +740,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			resultTableOptions: map[string]*metadata.ResultTableOption{
 				"bk_log_index_set_10|http://127.0.0.1:93002": {
 					SearchAfter: []any{1743465616224.0, "kibana_stats", "es-os60crz7-kibana"},
+					FieldType:   mock.FieldType,
 				},
 			},
 		},

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/spf13/cast"
 )
 
 const (
@@ -25,6 +26,76 @@ const (
 	Microsecond = "microsecond"
 	Nanosecond  = "nanosecond"
 )
+
+func StringToNanoUnix(s string) int64 {
+	if t, ok := StringToTime(s); ok {
+		return t.UnixNano()
+	}
+
+	return 0
+}
+
+func StringToTime(s string) (t time.Time, ok bool) {
+	n := cast.ToInt64(s)
+	if n > 1e18 {
+		t = time.Unix(0, n)
+	} else if n > 1e15 {
+		t = time.UnixMicro(n)
+	} else if n > 1e12 {
+		t = time.UnixMilli(n)
+	} else if n > 1e8 {
+		t = time.Unix(n, 0)
+	}
+
+	if !t.IsZero() {
+		ok = true
+		return
+	}
+
+	timeFormat := []string{
+		"2006-01-02T15:04:05.000000000Z",
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04:05,000",
+		"2006-01-02 15:04:05.000",
+		"2006-01-02 15:04:05.000000",
+		"2006-01-02 15:04:05.000000000",
+		"2006-01-02+15:04:05",
+		"01/02/2006 15:04:05",
+		"2006-01-02",
+		"20060102",
+		"20060102150405",
+		"20060102 150405",
+		"20060102 150405.000",
+		"20060102 150405.000000",
+		"2006/01/02 15:04:05",
+		"02/Jan/2006:15:04:05",
+		"02/Jan/2006:15:04:05-0700",
+		"02/Jan/2006:15:04:05 -0700",
+		"02/Jan/2006:15:04:05-07:00",
+		"02/Jan/2006:15:04:05 -07:00",
+		"2006-01-02T15:04:05Z07:00",
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04:05.000",
+		"20060102T150405.000-0700",
+		"20060102T150405-0700",
+		"20060102T150405.000000-0700",
+		"2006-01-02T15:04:05.000-07:00",
+		"2006-01-02T15:04:05-07:00",
+		"2006-01-02T15:04:05.000000-07:00",
+	}
+
+	var err error
+	for _, tf := range timeFormat {
+		t, err = time.Parse(tf, s)
+		if err == nil {
+			// 命中规则提前退出
+			ok = true
+			return
+		}
+	}
+
+	return
+}
 
 func MatcherToMetricName(matchers ...*labels.Matcher) string {
 	for _, m := range matchers {

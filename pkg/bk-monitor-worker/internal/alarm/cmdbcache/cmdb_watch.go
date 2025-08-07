@@ -76,6 +76,10 @@ const (
 	RedisKeyPrefixCmdbLastRefreshAllTime  redisKeyPrefix = "cmdb_last_refresh_all_time"
 )
 
+var (
+	FirstBatchTimeout = time.Second * 30
+)
+
 // buildRedisKey 构建带租户ID的Redis key，默认租户保持向前兼容
 func buildRedisKey(bkTenantId, prefix string, keyType redisKeyPrefix, suffix string) string {
 	if bkTenantId == "" || bkTenantId == tenant.DefaultTenantId {
@@ -538,6 +542,11 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 				return errors.Errorf("unsupported cache type: %s, bkTenantId: %s", cacheType, params.BkTenantId)
 			}
 		}
+	}
+
+	initialCacheTypes := []string{relation.Host, relation.Set, relation.Module}
+	if err = BuildAllInfosCache(ctx, params.BkTenantId, params.Prefix, &params.Redis, initialCacheTypes, bizConcurrent); err != nil {
+		return err
 	}
 
 	wg := sync.WaitGroup{}

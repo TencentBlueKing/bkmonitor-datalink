@@ -123,17 +123,6 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 
 func mapProperties(prefix string, data map[string]any, res map[string]string) {
 	if prefix != "" {
-		//for _, k := range []string{Type, Format} {
-		//	if t, ok := data[k]; ok {
-		//		switch s := t.(type) {
-		//		case string:
-		//			if res[prefix] == nil {
-		//				res[prefix] = make(map[string]string)
-		//			}
-		//			res[prefix][k] = s
-		//		}
-		//	}
-		//}
 
 		if t, ok := data[Type]; ok {
 			switch ts := t.(type) {
@@ -964,7 +953,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 							} else {
 								var format string
 								switch fieldType {
-								case "date", "date_nanos":
+								case metadata.TypeDate, metadata.TypeDateNanos:
 									if t, ok := function.StringToTime(value); ok {
 										value = t.Format(NanoTimeFormat)
 										format = NanoQueryFormat

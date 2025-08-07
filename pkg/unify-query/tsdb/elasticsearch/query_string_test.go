@@ -277,6 +277,14 @@ func TestQsToDsl(t *testing.T) {
 						}
 						}`,
 		},
+		{
+			q:        `(log:/71[6,7]|66[2,3]|70[5,7]|66[5,6,8,9]|670|75[3,4]|756|71[0,3]|709|901004|901007|901010|901016|901019/ AND (StillBirth OR NpcBirth) AND serverIp: 127.0.0.1)`,
+			expected: `{"bool":{"must":[{"regexp":{"log":{"value":"71[6,7]|66[2,3]|70[5,7]|66[5,6,8,9]|670|75[3,4]|756|71[0,3]|709|901004|901007|901010|901016|901019"}}},{"bool":{"must":[{"bool":{"should":[{"query_string":{"query":"\"StillBirth\"","fields":["*","__*"],"analyze_wildcard":true,"lenient":true}},{"query_string":{"query":"\"NpcBirth\"","fields":["*","__*"],"analyze_wildcard":true,"lenient":true}}]}},{"match_phrase":{"serverIp":{"query":"127.0.0.1"}}}]}}]}}`,
+		},
+		{
+			q:        `log:contentsauction.cpp AND /[0-9][0-9][0-9][0-9]ms/`,
+			expected: `{"bool":{"must":[{"match_phrase":{"log":{"query":"contentsauction.cpp"}}},{"query_string":{"query":"/[0-9][0-9][0-9][0-9]ms/","fields":["*","__*"],"analyze_wildcard":true,"lenient":true}}]}}`,
+		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)

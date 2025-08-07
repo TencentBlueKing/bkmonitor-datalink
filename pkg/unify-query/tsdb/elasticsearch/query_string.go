@@ -99,6 +99,16 @@ func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 		err    error
 	)
 	switch c := expr.(type) {
+	case *qs.RegexpExpr:
+		if c.Field != "" {
+			leftQ = elastic.NewRegexpQuery(c.Field, c.Value)
+			s.check(c.Field)
+		} else {
+			val := c.Value
+			// 保留正则的识别/
+			val = fmt.Sprintf(`/%s/`, val)
+			leftQ = s.queryString(val)
+		}
 	case *qs.NotExpr:
 		leftQ, err = s.walk(c.Expr)
 		if err != nil {

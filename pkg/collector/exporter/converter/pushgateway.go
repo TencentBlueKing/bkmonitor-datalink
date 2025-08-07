@@ -35,6 +35,8 @@ var PushGatewayConverter EventConverter = pushGatewayConverter{}
 
 type pushGatewayConverter struct{}
 
+func (c pushGatewayConverter) Clean() {}
+
 func (c pushGatewayConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return pushGatewayEvent{define.NewCommonEvent(token, dataId, data)}
 }

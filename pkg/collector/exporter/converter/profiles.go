@@ -32,6 +32,8 @@ var ProfilesConverter EventConverter = profilesConverter{}
 
 type profilesConverter struct{}
 
+func (c profilesConverter) Clean() {}
+
 func (c profilesConverter) ToDataID(record *define.Record) int32 {
 	return record.Token.ProfilesDataId
 }

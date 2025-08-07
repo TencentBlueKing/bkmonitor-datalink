@@ -68,7 +68,7 @@ func TestConvertProxyEventsData(t *testing.T) {
 	}
 
 	events := make([]define.Event, 0)
-	NewCommonConverter().Convert(&define.Record{
+	NewCommonConverter(nil).Convert(&define.Record{
 		RecordType: define.RecordProxy,
 		Data:       pd,
 	}, func(evts ...define.Event) {
@@ -125,7 +125,7 @@ func BenchmarkConvertProxyEventsData(b *testing.B) {
 	}
 
 	for i := 0; i < b.N; i++ {
-		NewCommonConverter().Convert(&define.Record{
+		NewCommonConverter(nil).Convert(&define.Record{
 			RecordType: define.RecordProxy,
 			Data:       pd,
 		}, func(evts ...define.Event) {})
@@ -171,7 +171,7 @@ func TestConvertProxyMetricsData(t *testing.T) {
 	}
 
 	events := make([]define.Event, 0)
-	NewCommonConverter().Convert(&define.Record{
+	NewCommonConverter(nil).Convert(&define.Record{
 		RecordType: define.RecordProxy,
 		Data:       pd,
 	}, func(evts ...define.Event) {
@@ -226,7 +226,7 @@ func BenchmarkConvertProxyMetricsData(b *testing.B) {
 	}
 
 	for i := 0; i < b.N; i++ {
-		NewCommonConverter().Convert(&define.Record{
+		NewCommonConverter(nil).Convert(&define.Record{
 			RecordType: define.RecordProxy,
 			Data:       pd,
 		}, func(evts ...define.Event) {})
@@ -243,7 +243,7 @@ func TestConvertMarshalFailed(t *testing.T) {
 		}
 
 		var seen bool
-		NewCommonConverter().Convert(&define.Record{
+		NewCommonConverter(nil).Convert(&define.Record{
 			RecordType: define.RecordProxy,
 			Data:       pd,
 		}, func(evts ...define.Event) {
@@ -263,7 +263,7 @@ func TestConvertMarshalFailed(t *testing.T) {
 		}
 
 		var seen bool
-		NewCommonConverter().Convert(&define.Record{
+		NewCommonConverter(nil).Convert(&define.Record{
 			RecordType: define.RecordProxy,
 			Data:       pd,
 		}, func(evts ...define.Event) {

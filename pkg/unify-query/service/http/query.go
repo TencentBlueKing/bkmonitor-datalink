@@ -255,7 +255,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 		var (
 			data      []map[string]any
-			fieldType map[string]string
+			fieldType = make(map[string]string)
 		)
 		for d := range dataCh {
 			data = append(data, d)
@@ -263,10 +263,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 		for _, rto := range resultTableOptions {
 			for k, v := range rto.FieldType {
-				if fieldType == nil {
-					fieldType = make(map[string]string)
-				}
-
 				fieldType[k] = v
 			}
 		}

@@ -307,8 +307,8 @@ func createTestMap(pairs ...string) pcommon.Map {
 
 func TestRules_MatchMetricAttrs(t *testing.T) {
 
-	ruleInMatch := &Rule{Label: "service", Op: "in", Values: []interface{}{"auth-service"}}
-	ruleRangeMatch := &Rule{Label: "status", Op: "range", Values: []interface{}{map[string]interface{}{"min": 0, "max": 200}}}
+	ruleInMatch := Rule{Label: "service", Op: "in", Values: []interface{}{"auth-service"}}
+	ruleRangeMatch := Rule{Label: "status", Op: "range", Values: []interface{}{map[string]interface{}{"min": 0, "max": 200}}}
 
 	tests := []struct {
 		name  string

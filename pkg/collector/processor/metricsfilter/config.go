@@ -89,7 +89,7 @@ type RangeValue struct {
 
 // Rules 规则列表
 // 使用指针方便 Validate 中修改内容
-type Rules []*Rule
+type Rules []Rule
 
 type Rule struct {
 	Label  string        `config:"label" mapstructure:"label"`
@@ -101,9 +101,9 @@ type Rule struct {
 }
 
 func (rs *Rules) Validate() error {
-	// todo 没有rules是否报错
-	for _, rule := range *rs {
-		if err := rule.Validate(); err != nil {
+	for i := 0; i < len(*rs); i++ {
+		// rule 校验的同时修改
+		if err := (*rs)[i].Validate(); err != nil {
 			return err
 		}
 	}

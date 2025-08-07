@@ -62,7 +62,7 @@ func TestTracesRandom(t *testing.T) {
 			events = append(events, evt)
 		}
 	}
-	NewCommonConverter().Convert(&record, gather)
+	NewCommonConverter(nil).Convert(&record, gather)
 	assert.Equal(t, len(events), 2)
 	assert.NotEqual(t, events[0].Data()["trace_id"], events[1].Data()["trace_id"])
 	assert.NotEqual(t, events[0].Data()["span_id"], events[1].Data()["span_id"])

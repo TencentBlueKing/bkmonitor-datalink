@@ -29,6 +29,8 @@ var TracesConverter EventConverter = tracesConverter{}
 
 type tracesConverter struct{}
 
+func (c tracesConverter) Clean() {}
+
 func (c tracesConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return tracesEvent{define.NewCommonEvent(token, dataId, data)}
 }

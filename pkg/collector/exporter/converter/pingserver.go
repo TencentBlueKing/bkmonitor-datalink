@@ -45,6 +45,8 @@ var PingserverConverter EventConverter = pingserverConverter{}
 
 type pingserverConverter struct{}
 
+func (c pingserverConverter) Clean() {}
+
 func (c pingserverConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return pingserverEvent{define.NewCommonEvent(token, dataId, data)}
 }

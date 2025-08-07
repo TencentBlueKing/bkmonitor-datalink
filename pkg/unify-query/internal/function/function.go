@@ -36,6 +36,22 @@ func StringToNanoUnix(s string) int64 {
 }
 
 func StringToTime(s string) (t time.Time, ok bool) {
+	n := cast.ToInt64(s)
+	if n > 1e18 {
+		t = time.Unix(0, n)
+	} else if n > 1e15 {
+		t = time.UnixMicro(n)
+	} else if n > 1e12 {
+		t = time.UnixMilli(n)
+	} else if n > 1e8 {
+		t = time.Unix(n, 0)
+	}
+
+	if !t.IsZero() {
+		ok = true
+		return
+	}
+
 	timeFormat := []string{
 		"2006-01-02T15:04:05.000000000Z",
 		"2006-01-02 15:04:05",
@@ -72,24 +88,10 @@ func StringToTime(s string) (t time.Time, ok bool) {
 	for _, tf := range timeFormat {
 		t, err = time.Parse(tf, s)
 		if err == nil {
+			// 命中规则提前退出
 			ok = true
 			return
 		}
-	}
-
-	n := cast.ToInt64(s)
-	if n > 1e18 {
-		t = time.Unix(0, n)
-	} else if n > 1e15 {
-		t = time.UnixMicro(n)
-	} else if n > 1e12 {
-		t = time.UnixMilli(n)
-	} else if n > 1e8 {
-		t = time.Unix(n, 0)
-	}
-
-	if !t.IsZero() {
-		ok = true
 	}
 
 	return

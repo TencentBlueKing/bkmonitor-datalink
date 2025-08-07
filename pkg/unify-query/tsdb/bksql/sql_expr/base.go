@@ -171,7 +171,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 	)
 
 	// 时间和值排序属于内置字段，默认需要支持
-	dimensionSet = set.New[string]([]string{FieldValue, FieldTime}...)
+	dimensionSet = set.New[string]([]string{FieldValue}...)
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
 			var (
@@ -223,6 +223,9 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 
 		groupByFields = append(groupByFields, timeField)
 		selectFields = append(selectFields, fmt.Sprintf("MAX%s AS `%s`", timeField, TimeStamp))
+
+		// 只有时间聚合的条件下，才可以使用时间聚合排序
+		dimensionSet.Add(FieldTime)
 	}
 
 	if len(selectFields) == 0 {

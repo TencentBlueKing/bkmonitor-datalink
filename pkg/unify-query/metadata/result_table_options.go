@@ -15,6 +15,8 @@ type ResultTableOption struct {
 	From        *int   `json:"from,omitempty"`
 	ScrollID    string `json:"scroll_id,omitempty"`
 	SearchAfter []any  `json:"search_after,omitempty"`
+	SliceIndex  *int   `json:"slice_index,omitempty"`
+	SliceMax    *int   `json:"slice_max,omitempty"`
 
 	SQL          string           `json:"sql,omitempty"`
 	ResultSchema []map[string]any `json:"result_schema,omitempty"`

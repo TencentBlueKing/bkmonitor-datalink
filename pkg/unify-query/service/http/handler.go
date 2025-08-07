@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -240,6 +241,98 @@ func HandlerQueryRaw(c *gin.Context) {
 	listData.TraceID = span.TraceID()
 
 	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithInstance(ctx, queryTs)
+	if err != nil {
+		listData.Status = &metadata.Status{
+			Code:    metadata.QueryRawError,
+			Message: err.Error(),
+		}
+		return
+	}
+
+	resp.success(ctx, listData)
+}
+
+// HandlerQueryRawWithScroll
+// @Summary query monitor by raw data with scroll
+// @ID query_raw
+// @Produce json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      structured.QueryTs  			true   "json data"
+// @Success  200                   	{object}  PromData
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/raw_with_scroll [post]
+func HandlerQueryRawWithScroll(c *gin.Context) {
+	var (
+		ctx            = c.Request.Context()
+		resp           = &response{c: c}
+		user           = metadata.GetUser(ctx)
+		err            error
+		span           *trace.Span
+		listData       ListData
+		sessionLockKey string
+	)
+
+	ctx, span = trace.NewSpan(ctx, "handler-query-raw-with-scroll")
+	defer func() {
+		if err != nil {
+			log.Errorf(ctx, err.Error())
+			resp.failed(ctx, err)
+		}
+
+		span.End(&err)
+	}()
+
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", c.Request.Header)
+
+	span.Set("query-source", user.Key)
+	span.Set("query-tenant-id", user.TenantID)
+	span.Set("query-space-uid", user.SpaceUID)
+
+	queryTs := &structured.QueryTs{}
+	err = json.NewDecoder(c.Request.Body).Decode(queryTs)
+	if err != nil {
+		return
+	}
+
+	if user.SpaceUID != "" {
+		queryTs.SpaceUid = user.SpaceUID
+	}
+
+	if queryTs.Scroll == "" {
+		queryTs.Scroll = ScrollWindowTimeout
+	}
+	if queryTs.Limit == 0 {
+		queryTs.Limit = ScrollSliceLimit
+	}
+
+	queryStr, _ := json.Marshal(queryTs)
+	span.Set("query-body", string(queryStr))
+	scrollKey, err := generateScrollKey(user.Name, *queryTs)
+	if err != nil {
+		return
+	}
+	sessionLockKey = redis.ScrollLockKeyPrefix + scrollKey
+	if err = redis.AcquireLock(ctx, sessionLockKey, ScrollSessionLockTimeout); err != nil {
+		return
+	}
+	defer func() {
+		if rErr := redis.ReleaseLock(ctx, sessionLockKey); rErr != nil {
+			err = rErr
+			return
+		}
+	}()
+	if queryTs.ClearCache {
+		if err = redis.ClearScrollSession(ctx, sessionLockKey); err != nil {
+			return
+		}
+	}
+	span.Set("session-lock-key", sessionLockKey)
+	listData.TraceID = span.TraceID()
+	listData.Total, listData.List, listData.ResultTableOptions, listData.Done, err = queryRawWithScroll(ctx, queryTs, scrollKey, ScrollMaxSlice)
 	if err != nil {
 		listData.Status = &metadata.Status{
 			Code:    metadata.QueryRawError,

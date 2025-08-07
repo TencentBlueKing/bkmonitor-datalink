@@ -32,6 +32,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
@@ -173,6 +174,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	var (
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
+		errCh     = make(chan error)
 
 		message   strings.Builder
 		queryList []*metadata.Query
@@ -185,66 +187,22 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 	list = make([]map[string]any, 0)
 
-	// 构建查询路由列表
-	if queryTs.SpaceUid == "" {
-		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
+	queryList, err = prepareQueryTs(ctx, queryTs)
+	if err != nil {
+		log.Errorf(ctx, "prepare query ts error: %s", err.Error())
+		return
 	}
-	for _, ql := range queryTs.QueryList {
-		// 时间复用
-		ql.Timezone = queryTs.Timezone
-		ql.Start = queryTs.Start
-		ql.End = queryTs.End
 
-		// 排序复用
-		ql.OrderBy = queryTs.OrderBy
-		ql.DryRun = queryTs.DryRun
-
-		// 如果 qry.Step 不存在去外部统一的 step
-		if ql.Step == "" {
-			ql.Step = queryTs.Step
+	receiveWg.Add(1)
+	go func() {
+		defer receiveWg.Done()
+		for e := range errCh {
+			message.WriteString(fmt.Sprintf("query error: %s ", e.Error()))
 		}
-
-		if queryTs.ResultTableOptions != nil {
-			ql.ResultTableOptions = queryTs.ResultTableOptions
+		if message.Len() > 0 {
+			err = errors.New(message.String())
 		}
-
-		// 如果 Limit / From 没有单独指定的话，同时外部指定了的话，使用外部的
-		if ql.Limit == 0 && queryTs.Limit > 0 {
-			ql.Limit = queryTs.Limit
-		}
-
-		// 在使用 multiFrom 模式下，From 需要保持为 0，因为 from 存放在 resultTableOptions 里面
-		if queryTs.IsMultiFrom {
-			queryTs.From = 0
-		}
-
-		if ql.From == 0 && queryTs.From > 0 {
-			ql.From = queryTs.From
-		}
-
-		// 复用 scroll 配置，如果配置了 scroll 优先使用 scroll
-		if queryTs.Scroll != "" {
-			ql.Scroll = queryTs.Scroll
-			queryTs.IsMultiFrom = false
-		}
-
-		// 复用字段配置，没有特殊配置的情况下使用公共配置
-		if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
-			ql.KeepColumns = queryTs.ResultColumns
-		}
-
-		qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
-		if qmErr != nil {
-			err = qmErr
-			return
-		}
-
-		for _, qry := range qm.QueryList {
-			if qry != nil {
-				queryList = append(queryList, qry)
-			}
-		}
-	}
+	}()
 
 	receiveWg.Add(1)
 
@@ -353,6 +311,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		defer func() {
 			sendWg.Wait()
 			close(dataCh)
+			close(errCh)
 		}()
 		for _, qry := range queryList {
 			sendWg.Add(1)
@@ -392,7 +351,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 				size, options, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
 				if queryErr != nil {
-					message.WriteString(fmt.Sprintf("query %s:%s is error: %s ", qry.TableID, qry.Fields, queryErr.Error()))
+					errCh <- queryErr
 					return
 				}
 
@@ -413,10 +372,96 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 	// 等待数据组装完毕
 	receiveWg.Wait()
+	return
+}
+
+func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessionKeySuffix string, maxSliceCount int) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, done bool, err error) {
+	var (
+		workerWg  = sync.WaitGroup{}
+		readerWg  = sync.WaitGroup{}
+		message   strings.Builder
+		queryList []*metadata.Query
+		dataCh    = make(chan []map[string]any)
+		errCh     = make(chan error)
+	)
+	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
+	defer span.End(&err)
+	_, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
+	if timeErr != nil {
+		err = timeErr
+		return
+	}
+	session, err := redisUtil.GetOrCreateScrollSession(ctx, sessionKeySuffix, maxSliceCount, queryTs.Scroll, queryTs.Limit)
+	if err != nil {
+		return
+	}
+	queryList, err = prepareQueryTs(ctx, queryTs)
+	if err != nil {
+		return
+	}
+	scrollQuery, err := collectStorageScrollQuery(ctx, session, queryList)
+	if err != nil {
+		return
+	}
+
+	readerWg.Add(1)
+	go func() {
+		defer readerWg.Done()
+
+		for {
+			select {
+			case data, ok := <-dataCh:
+				if !ok {
+					dataCh = nil
+				} else {
+					list = append(list, data...)
+				}
+			case cErr, ok := <-errCh:
+				if !ok {
+					errCh = nil
+				} else if cErr != nil {
+					message.WriteString(fmt.Sprintf("query error: %s ", cErr.Error()))
+				}
+			}
+
+			if dataCh == nil && errCh == nil {
+				return
+			}
+		}
+	}()
+
+	p, _ := ants.NewPool(QueryMaxRouting)
+
+	for _, e := range scrollQuery {
+		for _, qry := range e.QueryList {
+			workerWg.Add(1)
+			qry := qry
+			e := e
+			if sErr := p.Submit(func() {
+				defer workerWg.Done()
+				sData, sErr := scrollQueryWorker(ctx, session, e.Connect, e.TableID, qry, start, end, e.Instance)
+				if sErr != nil {
+					errCh <- sErr
+					return
+				}
+				dataCh <- sData
+			}); sErr != nil {
+				errCh <- sErr
+			}
+		}
+	}
+
+	workerWg.Wait()
+	close(dataCh)
+	close(errCh)
+
+	readerWg.Wait()
+
+	total = int64(len(list))
+	done = session.Done()
 	if message.Len() > 0 {
 		err = errors.New(message.String())
 	}
-
 	return
 }
 

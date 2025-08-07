@@ -58,6 +58,10 @@ type Instance struct {
 	maxSize int
 }
 
+func (i *Instance) IsCompleted(opt *metadata.ResultTableOption, dataLen int) bool {
+	return dataLen == 0 || opt.ScrollID == ""
+}
+
 type Connects []Connect
 
 func (cs Connects) String() string {
@@ -335,7 +339,21 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 		if qb.Scroll != "" {
 			span.Set("query-scroll", qb.Scroll)
-			res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source).Do(ctx)
+			scroll := client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source)
+			if qb.ResultTableOptions != nil {
+				option := qb.ResultTableOptions.GetOption(qb.TableID, qo.conn.Address)
+				if option != nil {
+					if option.ScrollID != "" {
+						span.Set("query-scroll-id", option.ScrollID)
+						scroll.ScrollId(option.ScrollID)
+					}
+					if option.SliceIndex != nil && option.SliceMax != nil {
+						span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", *option.SliceIndex, *option.SliceMax))
+						scroll.Slice(elastic.NewSliceQuery().Id(*option.SliceIndex).Max(*option.SliceMax))
+					}
+				}
+			}
+			res, err = scroll.Do(ctx)
 		} else {
 			span.Set("query-from", qb.From)
 			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
@@ -648,10 +666,19 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 					}
 				}
 
-				// ScrollID 覆盖 SearchAfter 配置
-				if sr.ScrollId != "" {
+				if query.Scroll != "" {
+					var originalOption *metadata.ResultTableOption
+					if len(query.ResultTableOptions) > 0 {
+						originalOption = query.ResultTableOptions.GetOption(query.TableID, conn.Address)
+					}
+
 					option = &metadata.ResultTableOption{
 						ScrollID: sr.ScrollId,
+					}
+
+					if originalOption != nil {
+						option.SliceIndex = originalOption.SliceIndex
+						option.SliceMax = originalOption.SliceMax
 					}
 				}
 			}
@@ -864,4 +891,16 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 func (i *Instance) InstanceType() string {
 	return consul.ElasticsearchStorageType
+}
+
+func (i *Instance) ScrollHandler() tsdb.ScrollHandler {
+	return i
+}
+
+func (i *Instance) InstanceConnects() []string {
+	connects := make([]string, 0, len(i.connects))
+	for _, c := range i.connects {
+		connects = append(connects, c.Address)
+	}
+	return connects
 }

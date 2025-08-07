@@ -55,8 +55,9 @@ type Instance struct {
 	timeout      time.Duration
 	intervalTime time.Duration
 
-	maxLimit  int
-	tolerance int
+	maxLimit   int
+	tolerance  int
+	sliceLimit int
 
 	client *Client
 }
@@ -67,9 +68,10 @@ type Options struct {
 	Address string
 	Headers map[string]string
 
-	Timeout   time.Duration
-	MaxLimit  int
-	Tolerance int
+	Timeout    time.Duration
+	MaxLimit   int
+	SliceLimit int
+	Tolerance  int
 
 	Curl curl.Curl
 }
@@ -79,11 +81,12 @@ func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 		return nil, fmt.Errorf("address is empty")
 	}
 	instance := &Instance{
-		ctx:       ctx,
-		timeout:   opt.Timeout,
-		maxLimit:  opt.MaxLimit,
-		tolerance: opt.Tolerance,
-		client:    (&Client{}).WithUrl(opt.Address).WithHeader(opt.Headers).WithCurl(opt.Curl),
+		ctx:        ctx,
+		timeout:    opt.Timeout,
+		maxLimit:   opt.MaxLimit,
+		tolerance:  opt.Tolerance,
+		sliceLimit: opt.SliceLimit,
+		client:     (&Client{}).WithUrl(opt.Address).WithHeader(opt.Headers).WithCurl(opt.Curl),
 	}
 	return instance, nil
 }
@@ -227,6 +230,10 @@ func (i *Instance) Table(query *metadata.Query) string {
 	return table
 }
 
+func (i *Instance) InstanceConnects() []string {
+	return []string{i.client.url}
+}
+
 // QueryRawData 直接查询原始返回
 func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, resultTableOptions metadata.ResultTableOptions, err error) {
 	defer func() {
@@ -236,12 +243,12 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}()
 
 	resultTableOptions = make(metadata.ResultTableOptions)
-	option := query.ResultTableOptions.GetOption(query.TableID, "")
+	option := query.ResultTableOptions.GetOption(query.TableID, i.client.url)
 	if option == nil {
 		option = &metadata.ResultTableOption{}
 	}
 	defer func() {
-		resultTableOptions.SetOption(query.TableID, "", option)
+		resultTableOptions.SetOption(query.TableID, i.client.url, option)
 	}()
 
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-raw")
@@ -507,6 +514,14 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 func (i *Instance) InstanceType() string {
 	return consul.BkSqlStorageType
+}
+
+func (i *Instance) ScrollHandler() tsdb.ScrollHandler {
+	return i
+}
+
+func (i *Instance) IsCompleted(opt *metadata.ResultTableOption, dataLen int) bool {
+	return dataLen == 0
 }
 
 func getValue(k string, d map[string]interface{}) (string, error) {

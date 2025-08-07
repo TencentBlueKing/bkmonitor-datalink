@@ -28,6 +28,8 @@ var BeatConverter EventConverter = beatConverter{}
 
 type beatConverter struct{}
 
+func (c beatConverter) Clean() {}
+
 func (c beatConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return beatEvent{define.NewCommonEvent(token, dataId, data)}
 }

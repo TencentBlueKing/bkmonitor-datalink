@@ -56,7 +56,7 @@ func TestConvertPushGatewayData(t *testing.T) {
 	}
 
 	events := make([]define.Event, 0)
-	NewCommonConverter().Convert(&define.Record{
+	NewCommonConverter(nil).Convert(&define.Record{
 		RecordType: define.RecordPushGateway,
 		Data:       pd,
 	}, func(evts ...define.Event) {

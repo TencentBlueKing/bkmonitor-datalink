@@ -39,6 +39,7 @@ func (m *metricMonitor) IncConverterSpanKindCounter(dataId int32, kind string) {
 
 type Converter interface {
 	Convert(record *define.Record, f define.GatherFunc)
+	Clean()
 }
 
 type EventConverter interface {
@@ -47,36 +48,69 @@ type EventConverter interface {
 	ToDataID(*define.Record) int32
 }
 
-func NewCommonConverter() Converter {
-	return commonConverter{}
+func NewCommonConverter(conf *Config) Converter {
+	if conf == nil {
+		conf = &Config{Tars: TarsConfig{}}
+	}
+	conf.Validate()
+
+	return commonConverter{
+		tracesConverter:      TracesConverter,
+		metricsConverter:     MetricsConverter,
+		logsConverter:        LogsConverter,
+		pushGatewayConverter: PushGatewayConverter,
+		remoteWriteConverter: RemoteWriteConverter,
+		proxyConverter:       ProxyConverter,
+		pingserverConverter:  PingserverConverter,
+		profilesConverter:    ProfilesConverter,
+		ftaConverter:         FtaConverter,
+		beatConverter:        BeatConverter,
+		tarsConverter:        NewTarsConverter(conf.Tars),
+	}
 }
 
-type commonConverter struct{}
+type commonConverter struct {
+	tracesConverter      EventConverter
+	metricsConverter     EventConverter
+	logsConverter        EventConverter
+	pushGatewayConverter EventConverter
+	remoteWriteConverter EventConverter
+	proxyConverter       EventConverter
+	pingserverConverter  EventConverter
+	profilesConverter    EventConverter
+	ftaConverter         EventConverter
+	beatConverter        EventConverter
+	tarsConverter        EventConverter
+}
+
+func (c commonConverter) Clean() {
+	c.tarsConverter.Clean()
+}
 
 func (c commonConverter) Convert(record *define.Record, f define.GatherFunc) {
 	switch record.RecordType {
 	case define.RecordTraces:
-		TracesConverter.Convert(record, f)
+		c.tracesConverter.Convert(record, f)
 	case define.RecordMetrics:
-		MetricsConverter.Convert(record, f)
+		c.metricsConverter.Convert(record, f)
 	case define.RecordLogs:
-		LogsConverter.Convert(record, f)
+		c.logsConverter.Convert(record, f)
 	case define.RecordPushGateway:
-		PushGatewayConverter.Convert(record, f)
+		c.pushGatewayConverter.Convert(record, f)
 	case define.RecordRemoteWrite:
-		RemoteWriteConverter.Convert(record, f)
+		c.remoteWriteConverter.Convert(record, f)
 	case define.RecordProxy:
-		ProxyConverter.Convert(record, f)
+		c.proxyConverter.Convert(record, f)
 	case define.RecordPingserver:
-		PingserverConverter.Convert(record, f)
+		c.pingserverConverter.Convert(record, f)
 	case define.RecordProfiles:
-		ProfilesConverter.Convert(record, f)
+		c.profilesConverter.Convert(record, f)
 	case define.RecordFta:
-		FtaConverter.Convert(record, f)
+		c.ftaConverter.Convert(record, f)
 	case define.RecordBeat:
-		BeatConverter.Convert(record, f)
+		c.beatConverter.Convert(record, f)
 	case define.RecordTars:
-		TarsConverter.Convert(record, f)
+		c.tarsConverter.Convert(record, f)
 	}
 }
 

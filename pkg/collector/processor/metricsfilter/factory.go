@@ -148,7 +148,10 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 				foreach.MetricDataPointsAttrs(metric, func(attrs pcommon.Map) {
 					if action.Rules.MatchMetricAttrs(attrs) {
 						for _, destination := range action.Destinations {
-							attrs.UpsertString(destination.Label, destination.Value)
+							switch destination.Action {
+							case Upsert:
+								attrs.UpsertString(destination.Label, destination.Value)
+							}
 						}
 					}
 				})
@@ -162,11 +165,13 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 			}
 			if action.Rules.MatchRWLabels(labels) {
 				for _, destination := range action.Destinations {
-					// 如果已经有该label，则覆盖，否则新增
-					if _, ok := labels[destination.Label]; ok {
-						labels[destination.Label].Value = destination.Value
-					} else {
-						ts.Labels = append(ts.Labels, prompb.Label{Name: destination.Label, Value: destination.Value})
+					switch destination.Action {
+					case Upsert:
+						if _, ok := labels[destination.Label]; ok {
+							labels[destination.Label].Value = destination.Value
+						} else {
+							ts.Labels = append(ts.Labels, prompb.Label{Name: destination.Label, Value: destination.Value})
+						}
 					}
 				}
 			}

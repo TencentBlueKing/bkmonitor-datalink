@@ -165,7 +165,7 @@ func makeMetricsGeneratorWithAttributes(name string, n int, attrs map[string]str
 	return generator.NewMetricsGenerator(opts)
 }
 
-func TestMetricsRelabelAction1(t *testing.T) {
+func TestMetricsRelabelAction(t *testing.T) {
 	content := `
 processor:
   - name: "metrics_filter/relabel"
@@ -182,19 +182,20 @@ processor:
             - label: "code"
               op: "range"
               values:
-              - prefix: "err_"
-                min: 10
-                max: 19
-              - prefix: "trpc_"
-                min: 11
-                max: 12
-              - prefix: "ret_"
-                min: 100
-                max: 200
-              - min: 200
-                max: 200
+                - prefix: "err_"
+                  min: 10
+                  max: 19
+                - prefix: "trpc_"
+                  min: 11
+                  max: 12
+                - prefix: "ret_"
+                  min: 100
+                  max: 200
+                - min: 200
+                  max: 200
           destinations:
-            - label: "code_type"
+            - action: "upsert"
+              label: "code_type"
               value: "success"
 `
 	factory := processor.MustCreateFactory(content, NewFactory)
@@ -303,19 +304,20 @@ processor:
             - label: "code"
               op: "range"
               values:
-              - prefix: "err_"
-                min: 10
-                max: 19
-              - prefix: "trpc_"
-                min: 11
-                max: 12
-              - prefix: "ret_"
-                min: 100
-                max: 200
-              - min: 200
-                max: 200
+                - prefix: "err_"
+                  min: 10
+                  max: 19
+                - prefix: "trpc_"
+                  min: 11
+                  max: 12
+                - prefix: "ret_"
+                  min: 100
+                  max: 200
+                - min: 200
+                  max: 200
           destinations:
-            - label: "code_type"
+            - action: "upsert"
+              label: "code_type"
               value: "success"
 `
 	factory := processor.MustCreateFactory(content, NewFactory)

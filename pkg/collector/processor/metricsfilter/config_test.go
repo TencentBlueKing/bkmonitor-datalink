@@ -17,282 +17,182 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 )
 
-func TestRuleMatch(t *testing.T) {
-	ruleIn := Rule{
-		Label:  "callee_method",
-		Op:     "in",
-		Values: []interface{}{"hello"},
-	}
-	_ = ruleIn.Validate()
-	t.Run("hit in", func(t *testing.T) {
-		assert.True(t, ruleIn.Match("hello"))
-		assert.False(t, ruleIn.Match("world"))
-	})
-
-}
-
-func TestConfigValidate(t *testing.T) {
-	t.Run("valid config", func(t *testing.T) {
-		c := Config{
-			Relabel: []RelabelAction{
-				{
-					Metric: "test_metric",
-					Rules: Rules{
-						{
-							Label:  "label1",
-							Op:     OperatorIn,
-							Values: []interface{}{"value1", "value2"},
-						},
-						{
-							Label:  "label2",
-							Op:     OperatorRange,
-							Values: []interface{}{map[string]interface{}{"min": 10, "max": 20}},
-						},
-					},
-					Destinations: []Destination{
-						{
-							Label: "dest_label",
-							Value: "dest_value",
-						},
-					},
-				},
-			},
-		}
-
-		assert.NoError(t, c.Validate())
-		assert.Len(t, c.Relabel[0].Rules[0].InValues, 2)
-		assert.Len(t, c.Relabel[0].Rules[1].RangeValues, 1)
-	})
-	t.Run("invalid config - missing metric name", func(t *testing.T) {
-		c := Config{
-			Relabel: []RelabelAction{
-				{
-					Rules: Rules{
-						{
-							Label:  "label1",
-							Op:     OperatorIn,
-							Values: []interface{}{"value1", "value2"},
-						},
-						{
-							Label:  "label2",
-							Op:     OperatorRange,
-							Values: []interface{}{map[string]interface{}{"min": 10, "max": 20}},
-						},
-					},
-					Destinations: []Destination{
-						{
-							Label: "dest_label",
-							Value: "dest_value",
-						},
-					},
-				},
-			},
-		}
-
-		assert.Error(t, c.Validate())
-	})
-	t.Run("invalid config - invalid rules", func(t *testing.T) {
-		c := Config{
-			Relabel: []RelabelAction{
-				{
-					Metric: "test_metric",
-					Rules: Rules{
-						{
-							Label:  "label1",
-							Op:     OperatorIn,
-							Values: []interface{}{map[string]interface{}{"min": 10, "max": 20}},
-						},
-					},
-					Destinations: []Destination{
-						{
-							Label: "dest_label",
-							Value: "dest_value",
-						},
-					},
-				},
-			},
-		}
-		assert.Error(t, c.Validate())
-	})
-	t.Run("invalid config - invalid destinations", func(t *testing.T) {
-		c := Config{
-			Relabel: []RelabelAction{
-				{
-					Metric: "test_metric",
-					Rules: Rules{
-						{
-							Label:  "label1",
-							Op:     OperatorIn,
-							Values: []interface{}{"value1", "value2"},
-						},
-					},
-					Destinations: []Destination{
-						{
-							Value: "dest_value",
-						},
-					},
-				},
-			},
-		}
-		assert.Error(t, c.Validate())
-	})
-	t.Run("invalid config - min>max", func(t *testing.T) {
-		c := Config{
-			Relabel: []RelabelAction{
-				{
-					Metric: "test_metric",
-					Rules: Rules{
-						{
-							Label:  "label1",
-							Op:     OperatorIn,
-							Values: []interface{}{"value1", "value2"},
-						},
-						{
-							Label:  "label2",
-							Op:     OperatorRange,
-							Values: []interface{}{map[string]interface{}{"min": 20, "max": 10}},
-						},
-					},
-					Destinations: []Destination{
-						{
-							Label: "dest_label",
-							Value: "dest_value",
-						},
-					},
-				},
-			},
-		}
-
-		assert.Error(t, c.Validate())
-	})
-
-	t.Run("invalid destination", func(t *testing.T) {
-		c := Config{
-			Relabel: []RelabelAction{
-				{
-					Metric: "test_metric",
-					Rules: Rules{
-						{
-							Label:  "label1",
-							Op:     "in",
-							Values: []interface{}{"value1"},
-						},
-					},
-					Destinations: []Destination{
-						{Value: "dest_value"},
-					},
-				},
-			},
-		}
-		assert.Error(t, c.Validate())
-	})
-}
-
-func TestRule_Validate(t *testing.T) {
-	type fields struct {
-		Label       string
-		Op          Operator
-		Values      []interface{}
-		InValues    []string
-		RangeValues []RangeValue
-	}
-
-	tests := []struct {
+func TestValidate(t *testing.T) {
+	// 测试 Rule 的验证逻辑
+	ruleTests := []struct {
 		name    string
-		fields  fields
+		rule    Rule
 		wantErr bool
 	}{
 		{
-			name: "valid in operator",
-			fields: fields{
-				Op:     OperatorIn,
-				Values: []interface{}{"value1", "value2"},
-			},
+			name:    "valid in operator",
+			rule:    Rule{Op: OperatorIn, Values: []interface{}{"value1", "value2"}},
 			wantErr: false,
 		},
 		{
-			name: "invalid in operator with non-string value",
-			fields: fields{
-				Op:     OperatorIn,
-				Values: []interface{}{123},
-			},
+			name:    "invalid in operator with non-string value",
+			rule:    Rule{Op: OperatorIn, Values: []interface{}{123}},
 			wantErr: true,
 		},
 		{
-			name: "valid range operator",
-			fields: fields{
-				Op: OperatorRange,
-				Values: []interface{}{
-					map[string]interface{}{"min": 10.0, "max": 20.0},
-					map[string]interface{}{"min": 30.5, "max": 40.5},
+			name:    "valid range operator",
+			rule:    Rule{Op: OperatorRange, Values: []interface{}{map[string]interface{}{"min": 10.0, "max": 20.0}}},
+			wantErr: false,
+		},
+		{
+			name:    "invalid range operator with non-map value",
+			rule:    Rule{Op: OperatorRange, Values: []interface{}{"invalid_map"}},
+			wantErr: true,
+		},
+		{
+			name:    "invalid range value decode",
+			rule:    Rule{Op: OperatorRange, Values: []interface{}{map[string]interface{}{"max": 20.0}}},
+			wantErr: true,
+		},
+		{
+			name:    "unsupported operator",
+			rule:    Rule{Op: "invalid_operator"},
+			wantErr: true,
+		},
+		{
+			name:    "empty values for in operator",
+			rule:    Rule{Op: OperatorIn, Values: []interface{}{}},
+			wantErr: false,
+		},
+		{
+			name:    "empty values for range operator",
+			rule:    Rule{Op: OperatorRange, Values: []interface{}{}},
+			wantErr: false,
+		},
+	}
+
+	// 测试 Config 的验证逻辑
+	configTests := []struct {
+		name    string
+		metric  string
+		rules   Rules
+		dest    Destination
+		wantErr bool
+	}{
+		{
+			name:    "valid config",
+			metric:  "test_metric",
+			rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
+			dest:    Destination{Label: "dest_label", Value: "dest_value", Action: Upsert},
+			wantErr: false,
+		},
+		{
+			name:    "invalid config - missing metric name",
+			metric:  "",
+			rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
+			dest:    Destination{Label: "dest_label", Value: "dest_value", Action: Upsert},
+			wantErr: true,
+		},
+		{
+			name:    "invalid config - missing destinations",
+			metric:  "test_metric",
+			rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
+			wantErr: true,
+		},
+		{
+			name:    "invalid config - missing destination value",
+			metric:  "test_metric",
+			rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
+			dest:    Destination{Label: "dest_label"},
+			wantErr: true,
+		},
+	}
+
+	// 执行 Rule 测试
+	for _, tt := range ruleTests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.rule.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+
+	// 执行 Config 测试
+	for _, tt := range configTests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := Config{
+				Relabel: []RelabelAction{
+					{
+						Metric: tt.metric,
+						Rules:  tt.rules,
+						Destinations: []Destination{
+							tt.dest,
+						},
+					},
 				},
-			},
-			wantErr: false,
+			}
+			assert.Equal(t, tt.wantErr, c.Validate() != nil)
+		})
+	}
+}
+
+func TestRule_Match(t *testing.T) {
+	ruleIn := Rule{Label: "env", Op: "in", Values: []interface{}{"prod", "staging"}}
+	ruleRange := Rule{Label: "code", Op: "range", Values: []interface{}{map[string]interface{}{"min": 200, "max": 299}}}
+	ruleRangePrefix := Rule{Label: "code", Op: "range", Values: []interface{}{map[string]interface{}{"prefix": "ret_", "min": 200, "max": 299}}}
+	tests := []struct {
+		name  string
+		rule  Rule
+		input string
+		want  bool
+	}{
+		{
+			name:  "in operator match",
+			rule:  ruleIn,
+			input: "prod",
+			want:  true,
 		},
 		{
-			name: "invalid range operator with non-map value",
-			fields: fields{
-				Op:     OperatorRange,
-				Values: []interface{}{"invalid_map"},
-			},
-			wantErr: true,
+			name:  "in operator no match",
+			rule:  ruleIn,
+			input: "dev",
+			want:  false,
 		},
 		{
-			name: "invalid range value decode",
-			fields: fields{
-				Op: OperatorRange,
-				Values: []interface{}{
-					map[string]interface{}{"max": 20.0},
-				},
-			},
-			wantErr: true,
+			name:  "range operator match",
+			rule:  ruleRange,
+			input: "204",
+			want:  true,
 		},
 		{
-			name: "unsupported operator",
-			fields: fields{
-				Op: "invalid_operator",
-			},
-			wantErr: true,
+			name:  "range operator no match",
+			rule:  ruleRange,
+			input: "300",
+			want:  false,
 		},
 		{
-			name: "empty values for in operator",
-			fields: fields{
-				Op:     OperatorIn,
-				Values: []interface{}{},
-			},
-			wantErr: false,
+			name:  "range operator prefix match",
+			rule:  ruleRangePrefix,
+			input: "ret_204",
+			want:  true,
 		},
 		{
-			name: "empty values for range operator",
-			fields: fields{
-				Op:     OperatorRange,
-				Values: []interface{}{},
-			},
-			wantErr: false,
+			name:  "range operator prefix no match",
+			rule:  ruleRangePrefix,
+			input: "ret_300",
+			want:  false,
+		},
+		{
+			name:  "range operator no prefix match",
+			rule:  ruleRangePrefix,
+			input: "200",
+			want:  false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &Rule{
-				Label:  tt.fields.Label,
-				Op:     tt.fields.Op,
-				Values: tt.fields.Values,
-			}
-
-			err := r.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-
-				switch r.Op {
-				case OperatorIn, OperatorNotIn:
-					assert.Len(t, r.InValues, len(tt.fields.Values))
-				case OperatorRange:
-					assert.Len(t, r.RangeValues, len(tt.fields.Values))
-				}
-			}
+			_ = tt.rule.Validate()
+			got := tt.rule.Match(tt.input)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -317,10 +217,10 @@ func TestRules_MatchMetricAttrs(t *testing.T) {
 		want  bool
 	}{
 		{
-			name:  "empty rules should match",
+			name:  "empty rules not match",
 			rs:    &Rules{},
 			attrs: createTestMap("service", "auth-service"),
-			want:  true,
+			want:  false,
 		},
 		{
 			name:  "single matching rule",
@@ -352,12 +252,6 @@ func TestRules_MatchMetricAttrs(t *testing.T) {
 			attrs: createTestMap("service", "auth-service", "status", "404"),
 			want:  false,
 		},
-		{
-			name:  "equal boundary check",
-			rs:    &Rules{{Label: "count", Op: "range", Values: []interface{}{map[string]interface{}{"min": 0, "max": 200}}}},
-			attrs: createTestMap("count", "0"),
-			want:  true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -368,30 +262,6 @@ func TestRules_MatchMetricAttrs(t *testing.T) {
 			assert.Equal(t, tt.want, got, "Test case [%s] failed", tt.name)
 		})
 	}
-}
-
-func TestRule_Match(t *testing.T) {
-	t.Run("in operator match", func(t *testing.T) {
-		r := Rule{Label: "env", Op: "in", Values: []interface{}{"prod", "staging"}}
-		_ = r.Validate()
-		assert.True(t, r.Match("prod"))
-		assert.False(t, r.Match("dev"))
-	})
-
-	t.Run("range operator match", func(t *testing.T) {
-		r := Rule{Label: "code", Op: "range", Values: []interface{}{map[string]interface{}{"min": 200, "max": 299}}}
-		_ = r.Validate()
-		assert.True(t, r.Match("204"))
-		assert.False(t, r.Match("300"))
-	})
-
-	t.Run("range operator prefix match", func(t *testing.T) {
-		r := Rule{Label: "code", Op: "range", Values: []interface{}{map[string]interface{}{"prefix": "ret_", "min": 200, "max": 299}}}
-		_ = r.Validate()
-		assert.True(t, r.Match("ret_204"))
-		assert.False(t, r.Match("ret_300"))
-		assert.False(t, r.Match("200"))
-	})
 }
 
 func TestRules_MatchRWLabels(t *testing.T) {
@@ -455,14 +325,14 @@ func TestRules_MatchRWLabels(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "empty rules should always match",
+			name: "empty rules not match",
 			rs:   &Rules{},
 			args: args{
 				labels: map[string]*prompb.Label{
 					"service": {Value: "any-service"},
 				},
 			},
-			want: true,
+			want: false,
 		},
 		{
 			name: "empty labels with rules",

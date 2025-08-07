@@ -69,22 +69,29 @@ func (r *RelabelAction) Validate() error {
 		return errors.Errorf("relabel action have no destination: %v", r)
 	}
 	for _, d := range r.Destinations {
-		if d.Label == "" || d.Value == "" {
+		if d.Label == "" || d.Value == "" || d.Action == "" {
 			return errors.Errorf("relabel action have invalid destination: %v", r)
 		}
 	}
 	return nil
 }
 
+type DstAction string
+
+const (
+	Upsert DstAction = "upsert"
+)
+
 type Destination struct {
-	Label string `config:"label" mapstructure:"label"`
-	Value string `config:"value" mapstructure:"value"`
+	Action DstAction `config:"action" mapstructure:"action"`
+	Label  string    `config:"label" mapstructure:"label"`
+	Value  string    `config:"value" mapstructure:"value"`
 }
 
 type RangeValue struct {
 	Prefix string `config:"prefix" mapstructure:"prefix"`
-	Min    *int   `config:"min" mapstructure:"min"`
-	Max    *int   `config:"max" mapstructure:"max"`
+	Min    int    `config:"min" mapstructure:"min"`
+	Max    int    `config:"max" mapstructure:"max"`
 }
 
 // Rules 规则列表
@@ -96,13 +103,13 @@ type Rule struct {
 	Op     Operator      `config:"op" mapstructure:"op"`
 	Values []interface{} `config:"values" mapstructure:"values"`
 
-	InValues    []string
-	RangeValues []RangeValue
+	inValues    []string
+	rangeValues []RangeValue
 }
 
 func (rs *Rules) Validate() error {
 	for i := 0; i < len(*rs); i++ {
-		// rule 校验的同时修改
+		// 校验的同时需要修改，所以不使用 range 遍历
 		if err := (*rs)[i].Validate(); err != nil {
 			return err
 		}
@@ -112,6 +119,9 @@ func (rs *Rules) Validate() error {
 
 // MatchMetricAttrs 判断 ot metric 属性是否匹配所有规则
 func (rs *Rules) MatchMetricAttrs(attrs pcommon.Map) bool {
+	if len(*rs) == 0 {
+		return false
+	}
 	for _, rule := range *rs {
 		value, exist := attrs.Get(rule.Label)
 		if !exist {
@@ -146,20 +156,20 @@ func (rs *Rules) MatchRWLabels(labels map[string]*prompb.Label) bool {
 func (r *Rule) Match(value string) bool {
 	switch r.Op {
 	case OperatorIn:
-		for _, v := range r.InValues {
+		for _, v := range r.inValues {
 			if value == v {
 				return true
 			}
 		}
 	case OperatorNotIn:
-		for _, v := range r.InValues {
+		for _, v := range r.inValues {
 			if value == v {
 				return false
 			}
 		}
 		return true
 	case OperatorRange:
-		for _, v := range r.RangeValues {
+		for _, v := range r.rangeValues {
 			if v.Prefix != "" {
 				if !strings.HasPrefix(value, v.Prefix) {
 					continue
@@ -171,7 +181,7 @@ func (r *Rule) Match(value string) bool {
 				// 非数字值属于未命中规则，跳过
 				continue
 			}
-			if value >= *v.Min && value <= *v.Max {
+			if value >= v.Min && value <= v.Max {
 				return true
 			}
 		}
@@ -191,7 +201,7 @@ func (r *Rule) Validate() error {
 			}
 			values = append(values, val)
 		}
-		r.InValues = values
+		r.inValues = values
 	case OperatorRange:
 		values := make([]RangeValue, 0, len(r.Values))
 		for _, val := range r.Values {
@@ -204,13 +214,12 @@ func (r *Rule) Validate() error {
 			if err != nil {
 				return errors.Wrapf(err, "failed to decode range value: %v", r.Values)
 			}
-
-			if rv.Min == nil || rv.Max == nil || *rv.Min > *rv.Max {
+			if rv.Min > rv.Max {
 				return errors.Errorf("invalid range value: %v", r.Values)
 			}
 			values = append(values, rv)
 		}
-		r.RangeValues = values
+		r.rangeValues = values
 	default:
 		return errors.Errorf("unsupported operator %s, only support [in, not in, range] now!", r.Op)
 	}

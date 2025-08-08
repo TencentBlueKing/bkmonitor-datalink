@@ -11,18 +11,34 @@
 # MetricsFilter: 指标过滤器
 
 processor:
-   - name: "metrics_filter/drop"
-     config:
-       # Drop Action
-       drop:
-         # metrics: metric name
-         metrics:
-           - "runtime.go.mem.live_objects"
-           - "none.exist.metric"
-       # Replace Action
-       replace:
-         - source: "previous_metric"       # 原字段
-           destination: "current_metric"   # 新字段
+  - name: "metrics_filter/drop"
+    config:
+      # Drop Action
+      drop:
+      # metrics: metric name
+      metrics:
+        - "runtime.go.mem.live_objects"
+        - "none.exist.metric"
+        # Replace Action
+      replace:
+        - source: "previous_metric"       # 原字段
+          destination: "current_metric"   # 新字段
+      relabel:
+        - metric: "test_metric"
+          rules:
+            - label: "label1"
+              op: "in"
+              values: ["value1", "value2"]
+            - label: "code"
+              op: "range"
+              values:
+                - prefix: "err_"
+                  min: 10
+                  max: 19
+          destinations:
+            - action: "upsert"
+              label: "code_type"
+              value: "success"
 */
 
 package metricsfilter

@@ -128,6 +128,14 @@ func TestQsToDsl(t *testing.T) {
 			q:        `log: ("levelname ERROR" OR "levelname INFO")`,
 			expected: `{"bool":{"should":[{"match_phrase":{"log":{"query":"levelname ERROR"}}},{"match_phrase":{"log":{"query":"levelname INFO"}}}]}}`,
 		},
+		{
+			q:        `log: (NOT "Post request fail" AND NOT "Get request fail" OR NOT "Put condition" OR "Another") AND log: (NOT "b.j.c.w.e.h.EsbExceptionControllerAdvice") AND log: (NOT "b.j.c.w.e.h.WebExceptionControllerAdvice") `,
+			expected: `{"bool":{"must":[{"bool":{"should":[{"bool":{"must_not":[{"term":{"log":"Post request fail"}},{"term":{"log":"Get request fail"}}]}},{"bool":{"must_not":{"match_phrase":{"log":{"query":"Put condition"}}}}},{"match_phrase":{"log":{"query":"Another"}}}]}},{"bool":{"must":[{"bool":{"must_not":{"match_phrase":{"log":{"query":"b.j.c.w.e.h.EsbExceptionControllerAdvice"}}}}},{"bool":{"must_not":{"match_phrase":{"log":{"query":"b.j.c.w.e.h.WebExceptionControllerAdvice"}}}}}]}}]}}`,
+		},
+		{
+			q:        `log: (NOT "testOr" AND NOT "testAnd") `,
+			expected: `{"bool":{"must_not":[{"term":{"log":"testOr"}},{"term":{"log":"testAnd"}}]}}`,
+		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)

@@ -148,23 +148,32 @@ func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 	case *qs.ConditionMatchExpr:
 		if len(c.Value.Values) == 1 {
 			row := c.Value.Values[0]
+			logic := c.Value.Logics[0]
 			if len(row) == 1 {
 				if s.isPrefix {
 					leftQ = elastic.NewMatchPhrasePrefixQuery(c.Field, row[0])
 				} else {
 					leftQ = elastic.NewMatchPhraseQuery(c.Field, row[0])
 				}
+				if !logic[0] { // not
+					leftQ = elastic.NewBoolQuery().MustNot(leftQ)
+				}
 			} else {
 				boolQuery := elastic.NewBoolQuery()
-				for _, value := range row {
-					boolQuery.Must(elastic.NewTermQuery(c.Field, value))
+				for i, value := range row {
+					termQuery := elastic.NewTermQuery(c.Field, value)
+					if logic[i] {
+						boolQuery.Must(termQuery)
+					} else {
+						boolQuery.MustNot(termQuery)
+					}
 				}
 				leftQ = boolQuery
 			}
 		} else {
 			// 多行，使用 OR 逻辑（should 查询）
 			boolQuery := elastic.NewBoolQuery()
-			for _, row := range c.Value.Values {
+			for i, row := range c.Value.Values {
 				var rowQuery elastic.Query
 				if len(row) == 1 {
 					// 单行单个值
@@ -173,11 +182,19 @@ func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 					} else {
 						rowQuery = elastic.NewMatchPhraseQuery(c.Field, row[0])
 					}
+					if !c.Value.Logics[i][0] { // not
+						rowQuery = elastic.NewBoolQuery().MustNot(rowQuery)
+					}
 				} else {
 					// 单行多个值，使用 AND 逻辑
 					rowBoolQuery := elastic.NewBoolQuery()
-					for _, value := range row {
-						rowBoolQuery.Must(elastic.NewTermQuery(c.Field, value))
+					for j, value := range row {
+						termQuery := elastic.NewTermQuery(c.Field, value)
+						if !c.Value.Logics[i][j] { // not
+							rowBoolQuery.MustNot(termQuery)
+						} else {
+							rowBoolQuery.Must(termQuery)
+						}
 					}
 					rowQuery = rowBoolQuery
 				}

@@ -352,7 +352,7 @@ searchAndExpr{
 ;
 
 searchAndExpr: 
-searchAndExpr tAND searchAtom{
+searchAtom tAND searchAndExpr{
 	$$ = AndConditionExpr($1, $3)
 }
 | 
@@ -368,6 +368,10 @@ tLEFTBRACKET searchExpr tRIGHTBRACKET {
 | 
 searchBase{
 	$$ = NewConditionExpr($1)
+}
+|
+tNOT searchBase{
+	$$ = NewConditionExpr($2,false)
 }
 ;
 

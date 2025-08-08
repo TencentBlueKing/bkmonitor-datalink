@@ -71,17 +71,22 @@ type ConditionMatchExpr struct {
 // ConditionExpr .
 type ConditionExpr struct {
 	Values [][]string
+	Logics [][]bool
 }
 
 // NewConditionExpr .
-func NewConditionExpr(a interface{}) *ConditionExpr {
+func NewConditionExpr(a interface{}, not ...bool) *ConditionExpr {
+	logic := true
+	if len(not) > 0 {
+		logic = false
+	}
 	switch v := a.(type) {
 	case *ConditionExpr:
 		return v
 	case *MatchExpr:
-		return &ConditionExpr{Values: [][]string{{v.Value}}}
+		return &ConditionExpr{Values: [][]string{{v.Value}}, Logics: [][]bool{{logic}}}
 	case string:
-		return &ConditionExpr{Values: [][]string{{v}}}
+		return &ConditionExpr{Values: [][]string{{v}}, Logics: [][]bool{{logic}}}
 	default:
 		panic(fmt.Sprintf("unsupported type for NewConditionExpr: %T", a))
 	}
@@ -89,19 +94,26 @@ func NewConditionExpr(a interface{}) *ConditionExpr {
 
 // OrConditionExpr .
 func OrConditionExpr(a, b Expr) *ConditionExpr {
-	return &ConditionExpr{Values: append(a.(*ConditionExpr).Values, b.(*ConditionExpr).Values...)}
+	return &ConditionExpr{Values: append(a.(*ConditionExpr).Values, b.(*ConditionExpr).Values...), Logics: append(a.(*ConditionExpr).Logics, b.(*ConditionExpr).Logics...)}
 }
 
 // AndConditionExpr .
 func AndConditionExpr(a, b Expr) *ConditionExpr {
-	var result [][]string
+	var values [][]string
+	var logics [][]bool
 	for _, rowA := range a.(*ConditionExpr).Values {
 		for _, rowB := range b.(*ConditionExpr).Values {
 			merged := append(append([]string{}, rowA...), rowB...)
-			result = append(result, merged)
+			values = append(values, merged)
 		}
 	}
-	return &ConditionExpr{Values: result}
+	for _, rowA := range a.(*ConditionExpr).Logics {
+		for _, rowB := range b.(*ConditionExpr).Logics {
+			merged := append(append([]bool{}, rowA...), rowB...)
+			logics = append(logics, merged)
+		}
+	}
+	return &ConditionExpr{Values: values, Logics: logics}
 }
 
 // NewConditionMatchExpr .

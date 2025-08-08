@@ -501,6 +501,13 @@ func TestParser(t *testing.T) {
 								{"WARN "},
 								{"ERROR"},
 							},
+							Logics: [][]bool{
+								{true},
+								{true},
+								{true},
+								{true},
+								{true},
+							},
 						},
 					},
 					Right: &ConditionMatchExpr{
@@ -510,6 +517,11 @@ func TestParser(t *testing.T) {
 								{"friendsvr", "game_app", "testAnd"},
 								{"friendsvr", "testOr", "testAnd"},
 								{"test111"},
+							},
+							Logics: [][]bool{
+								{true, true, true},
+								{true, true, true},
+								{true},
 							},
 						},
 					},
@@ -532,6 +544,13 @@ func TestParser(t *testing.T) {
 							{"WARN "},
 							{"ERROR"},
 						},
+						Logics: [][]bool{
+							{true},
+							{true},
+							{true},
+							{true},
+							{true},
+						},
 					},
 				},
 				Right: &ConditionMatchExpr{
@@ -541,6 +560,11 @@ func TestParser(t *testing.T) {
 							{"friendsvr", "game_app", "testAnd"},
 							{"friendsvr", "testOr", "testAnd"},
 							{"test111"},
+						},
+						Logics: [][]bool{
+							{true, true, true},
+							{true, true, true},
+							{true},
 						},
 					},
 				},
@@ -555,6 +579,11 @@ func TestParser(t *testing.T) {
 						{"TRACE", "111", "DEBUG", "INFO"},
 						{"SIMON"},
 						{"222", "333"},
+					},
+					Logics: [][]bool{
+						{true, true, true, true},
+						{true},
+						{true, true},
 					},
 				},
 			},
@@ -572,6 +601,13 @@ func TestParser(t *testing.T) {
 							{"WARN "},
 							{"ERROR"},
 						},
+						Logics: [][]bool{
+							{true},
+							{true},
+							{true},
+							{true},
+							{true},
+						},
 					},
 				},
 				Right: &ConditionMatchExpr{
@@ -581,6 +617,55 @@ func TestParser(t *testing.T) {
 							{"friendsvr", "game_app", "testAnd"},
 							{"friendsvr", "testOr", "testAnd"},
 							{"test111"},
+						},
+						Logics: [][]bool{
+							{true, true, true},
+							{true, true, true},
+							{true},
+						},
+					},
+				},
+			},
+		},
+		"test - Logic Not ConditionMatch ": {
+			q: `log: (NOT "Post request fail" AND NOT "Get request fail" OR NOT "Put condition" OR "Another") AND log: (NOT "b.j.c.w.e.h.EsbExceptionControllerAdvice") AND log: (NOT "b.j.c.w.e.h.WebExceptionControllerAdvice") `,
+			e: &AndExpr{
+				Left: &ConditionMatchExpr{
+					Field: "log",
+					Value: &ConditionExpr{
+						Values: [][]string{
+							{"Post request fail", "Get request fail"},
+							{"Put condition"},
+							{"Another"},
+						},
+						Logics: [][]bool{
+							{false, false},
+							{false},
+							{true},
+						},
+					},
+				},
+				Right: &AndExpr{
+					Left: &ConditionMatchExpr{
+						Field: "log",
+						Value: &ConditionExpr{
+							Values: [][]string{
+								{"b.j.c.w.e.h.EsbExceptionControllerAdvice"},
+							},
+							Logics: [][]bool{
+								{false},
+							},
+						},
+					},
+					Right: &ConditionMatchExpr{
+						Field: "log",
+						Value: &ConditionExpr{
+							Values: [][]string{
+								{"b.j.c.w.e.h.WebExceptionControllerAdvice"},
+							},
+							Logics: [][]bool{
+								{false},
+							},
 						},
 					},
 				},

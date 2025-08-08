@@ -355,6 +355,36 @@ func TestLabelMap(t *testing.T) {
 			expected:    map[string][]function.LabelMapValue{},
 			expectedErr: fmt.Errorf("syntax error: unexpected $end"),
 		},
+		{
+			name:        "多 and or 组合高亮",
+			queryString: `loglevel: ("TRACE" OR "DEBUG") AND log: ("friendsvr" AND ("game_app" OR "testOr"))`,
+			expected: map[string][]function.LabelMapValue{
+				"loglevel": {
+					{
+						Operator: "eq",
+						Value:    "TRACE",
+					},
+					{
+						Operator: "eq",
+						Value:    "DEBUG",
+					},
+				},
+				"log": {
+					{
+						Operator: "eq",
+						Value:    "friendsvr",
+					},
+					{
+						Operator: "eq",
+						Value:    "game_app",
+					},
+					{
+						Operator: "eq",
+						Value:    "testOr",
+					},
+				},
+			},
+		},
 	}
 
 	for _, tc := range testCases {

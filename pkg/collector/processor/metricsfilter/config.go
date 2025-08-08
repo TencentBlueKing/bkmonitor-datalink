@@ -79,7 +79,7 @@ func (r *RelabelAction) Validate() error {
 type DstAction string
 
 const (
-	Upsert DstAction = "upsert"
+	ActionUpsert DstAction = "upsert"
 )
 
 type Destination struct {
@@ -228,7 +228,7 @@ func (r *Rule) Validate() error {
 		r.rangeValues = values
 
 	default:
-		return errors.Errorf("unsupported operator %s, only support [in, not in, range] now!", r.Op)
+		return errors.Errorf("unsupported operator %s!", r.Op)
 	}
 	return nil
 }

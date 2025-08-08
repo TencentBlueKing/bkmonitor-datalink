@@ -17,7 +17,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 )
 
-func TestValidate(t *testing.T) {
+func TestRelabelConfigValidate(t *testing.T) {
 	t.Run("test rule validate", func(t *testing.T) {
 		// 测试 Rule 的验证逻辑
 		ruleTests := []struct {
@@ -137,7 +137,7 @@ func TestValidate(t *testing.T) {
 	})
 }
 
-func TestRule_Match(t *testing.T) {
+func TestRelabelRule_Match(t *testing.T) {
 
 	t.Run("in operator", func(t *testing.T) {
 		ruleIn := Rule{Label: "env", Op: "in", Values: []interface{}{"prod", "staging"}}
@@ -210,13 +210,13 @@ func TestRule_Match(t *testing.T) {
 			want  bool
 		}{
 			{
-				name:  "prefix match",
+				name:  "match",
 				rule:  ruleRangePrefix,
 				input: "ret_204",
 				want:  true,
 			},
 			{
-				name:  "prefix no match",
+				name:  "value not match",
 				rule:  ruleRangePrefix,
 				input: "ret_300",
 				want:  false,
@@ -247,7 +247,7 @@ func createTestMap(pairs ...string) pcommon.Map {
 	return m
 }
 
-func TestRules_MatchMetricAttrs(t *testing.T) {
+func TestRelabelRules_MatchMetricAttrs(t *testing.T) {
 
 	ruleInMatch := Rule{Label: "service", Op: "in", Values: []interface{}{"auth-service"}}
 	ruleRangeMatch := Rule{Label: "status", Op: "range", Values: []interface{}{map[string]interface{}{"min": 0, "max": 200}}}
@@ -309,7 +309,7 @@ func TestRules_MatchMetricAttrs(t *testing.T) {
 	}
 }
 
-func TestRules_MatchRWLabels(t *testing.T) {
+func TestRelabelRules_MatchRWLabels(t *testing.T) {
 	type args struct {
 		labels map[string]*prompb.Label
 	}

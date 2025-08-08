@@ -225,7 +225,7 @@ processor:
 		{
 			name: "rules hit op in but name not match",
 			args: args{
-				metric: "rpc_client_handled_total",
+				metric: "test_metric",
 				attributes: map[string]string{
 					"callee_method":  "hello",
 					"callee_service": "example.greeter",
@@ -358,7 +358,7 @@ processor:
 		{
 			name: "rules hit op in but name not match",
 			args: args{
-				metric: "rpc_client_handled_total",
+				metric: "test_metric",
 				attributes: map[string]string{
 					"callee_method":  "hello",
 					"callee_service": "example.greeter",

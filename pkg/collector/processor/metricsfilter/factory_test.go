@@ -276,7 +276,7 @@ processor:
 			assert.NoError(t, err)
 
 			metrics := record.Data.(pmetric.Metrics)
-			foreach.MetricsSliceDataPointsAttrs(metrics.ResourceMetrics(), func(attrs pcommon.Map) {
+			foreach.MetricsSliceDataPointsAttrs(metrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
 				v, exist := attrs.Get("code_type")
 				assert.Equal(t, tt.wantExist, exist)
 				if exist {

@@ -36,7 +36,7 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name:    "valid range operator",
-			rule:    Rule{Op: OperatorRange, Values: []interface{}{map[string]interface{}{"min": 10.0, "max": 20.0}}},
+			rule:    Rule{Op: OperatorRange, Values: []interface{}{map[string]interface{}{"min": 10, "max": 20}}},
 			wantErr: false,
 		},
 		{
@@ -45,9 +45,9 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "invalid range value decode",
-			rule:    Rule{Op: OperatorRange, Values: []interface{}{map[string]interface{}{"max": 20.0}}},
-			wantErr: true,
+			name:    "default range value decode",
+			rule:    Rule{Op: OperatorRange, Values: []interface{}{map[string]interface{}{"max": 20}}},
+			wantErr: false,
 		},
 		{
 			name:    "unsupported operator",

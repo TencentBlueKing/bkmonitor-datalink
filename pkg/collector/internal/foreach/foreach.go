@@ -96,9 +96,11 @@ func MetricsSliceResource(resourceMetricsSlice pmetric.ResourceMetricsSlice, f f
 }
 
 // MetricsSliceDataPointsAttrs 遍历 MetricsSlice 的所有数据点属性
-func MetricsSliceDataPointsAttrs(resourceMetricsSlice pmetric.ResourceMetricsSlice, f func(attrs pcommon.Map)) {
+func MetricsSliceDataPointsAttrs(resourceMetricsSlice pmetric.ResourceMetricsSlice, f func(name string, attrs pcommon.Map)) {
 	Metrics(resourceMetricsSlice, func(metric pmetric.Metric) {
-		MetricDataPointsAttrs(metric, f)
+		MetricDataPointsAttrs(metric, func(attrs pcommon.Map) {
+			f(metric.Name(), attrs)
+		})
 	})
 }
 

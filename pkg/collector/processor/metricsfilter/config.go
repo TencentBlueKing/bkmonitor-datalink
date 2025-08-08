@@ -48,7 +48,7 @@ type Operator string
 
 const (
 	OperatorIn    Operator = "in"
-	OperatorNotIn Operator = "not in"
+	OperatorNotIn Operator = "notin"
 	OperatorRange Operator = "range"
 )
 
@@ -161,6 +161,7 @@ func (r *Rule) Match(value string) bool {
 				return true
 			}
 		}
+		return false
 	case OperatorNotIn:
 		for _, v := range r.inValues {
 			if value == v {
@@ -185,6 +186,7 @@ func (r *Rule) Match(value string) bool {
 				return true
 			}
 		}
+		return false
 	}
 	return false
 }

@@ -141,20 +141,18 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 	case define.RecordMetrics:
 		for _, action := range config.Relabel {
 			pdMetrics := record.Data.(pmetric.Metrics)
-			foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
-				if action.Metric != metric.Name() {
+			foreach.MetricsSliceDataPointsAttrs(pdMetrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
+				if action.Metric != name {
 					return
 				}
-				foreach.MetricDataPointsAttrs(metric, func(attrs pcommon.Map) {
-					if action.Rules.MatchMetricAttrs(attrs) {
-						for _, destination := range action.Destinations {
-							switch destination.Action {
-							case Upsert:
-								attrs.UpsertString(destination.Label, destination.Value)
-							}
+				if action.Rules.MatchMetricAttrs(attrs) {
+					for _, destination := range action.Destinations {
+						switch destination.Action {
+						case Upsert:
+							attrs.UpsertString(destination.Label, destination.Value)
 						}
 					}
-				})
+				}
 			})
 		}
 	case define.RecordRemoteWrite:

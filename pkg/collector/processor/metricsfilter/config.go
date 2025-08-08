@@ -162,6 +162,7 @@ func (r *Rule) Match(value string) bool {
 			}
 		}
 		return false
+
 	case OperatorNotIn:
 		for _, v := range r.inValues {
 			if value == v {
@@ -169,6 +170,7 @@ func (r *Rule) Match(value string) bool {
 			}
 		}
 		return true
+
 	case OperatorRange:
 		for _, v := range r.rangeValues {
 			if v.Prefix != "" {
@@ -188,6 +190,7 @@ func (r *Rule) Match(value string) bool {
 		}
 		return false
 	}
+
 	return false
 }
 
@@ -204,6 +207,7 @@ func (r *Rule) Validate() error {
 			values = append(values, val)
 		}
 		r.inValues = values
+
 	case OperatorRange:
 		values := make([]RangeValue, 0, len(r.Values))
 		for _, val := range r.Values {
@@ -222,6 +226,7 @@ func (r *Rule) Validate() error {
 			values = append(values, rv)
 		}
 		r.rangeValues = values
+
 	default:
 		return errors.Errorf("unsupported operator %s, only support [in, not in, range] now!", r.Op)
 	}

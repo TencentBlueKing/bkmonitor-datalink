@@ -67,6 +67,11 @@ type ServiceInstanceCacheManager struct {
 	*BaseCacheManager
 }
 
+func (m *ServiceInstanceCacheManager) BuildRelationMetrics(ctx context.Context) error {
+	//TODO implement me
+	return errors.New("not implemented")
+}
+
 // NewServiceInstanceCacheManager 创建服务实例缓存管理器
 func NewServiceInstanceCacheManager(bkTenantId string, prefix string, opt *redis.Options, concurrentLimit int) (*ServiceInstanceCacheManager, error) {
 	manager, err := NewBaseCacheManager(bkTenantId, prefix, opt, concurrentLimit)

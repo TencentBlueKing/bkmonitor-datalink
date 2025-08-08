@@ -30,15 +30,9 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 )
 
 func BuildAllInfosCache(ctx context.Context, bkTenantId, prefix string, redisOpt *redis.Options, cacheTypes []string, concurrentLimit int) error {
-	bizList, err := getAllBizList(bkTenantId)
-	if err != nil {
-		return err
-	}
-
 	var wg sync.WaitGroup
 	errChan := make(chan error)
 
@@ -47,16 +41,9 @@ func BuildAllInfosCache(ctx context.Context, bkTenantId, prefix string, redisOpt
 		if err != nil {
 			return errors.Wrapf(err, "failed to create cache manager for type: %s", cacheType)
 		}
-
-		for _, bizID := range bizList {
-			wg.Add(1)
-			go func(ct string, bid int, cm Manager) {
-				defer wg.Done()
-				if err := cm.RefreshByBiz(ctx, bizID); err != nil {
-					errChan <- err
-					return
-				}
-			}(cacheType, bizID, cacheManager)
+		err = cacheManager.BuildRelationMetrics(ctx)
+		if err != nil {
+			return errors.Wrapf(err, "failed to build relation metrics for type: %s", cacheType)
 		}
 	}
 
@@ -73,21 +60,4 @@ func BuildAllInfosCache(ctx context.Context, bkTenantId, prefix string, redisOpt
 	}
 
 	return nil
-}
-
-func getAllBizList(bkTenantId string) ([]int, error) {
-	cmdbApi := getCmdbApi(bkTenantId)
-
-	var result cmdb.SearchBusinessResp
-	_, err := cmdbApi.SearchBusiness().SetResult(&result).Request()
-	if err != nil {
-		return nil, errors.Wrap(err, "search business failed")
-	}
-
-	bizList := make([]int, 0, len(result.Data.Info))
-	for _, biz := range result.Data.Info {
-		bizList = append(bizList, biz.BkBizId)
-	}
-
-	return bizList, nil
 }

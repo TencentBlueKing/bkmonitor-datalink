@@ -260,6 +260,39 @@ type HostAndTopoCacheManager struct {
 	hostIpMapLock sync.RWMutex
 }
 
+// BuildRelationMetrics 从缓存构建relation指标
+func (m *HostAndTopoCacheManager) BuildRelationMetrics(ctx context.Context) error {
+	// 1. 从缓存获取主机数据
+	cacheData, err := m.batchQuery(ctx, m.GetCacheKey(hostCacheKey), "*")
+	if err != nil {
+		return errors.Wrap(err, "get host cache failed")
+	}
+
+	// 2. 解析JSON数据并转换为AlarmHostInfo，按业务ID分组
+	bizDataMap := make(map[int][]*AlarmHostInfo)
+	for _, jsonStr := range cacheData {
+		var host AlarmHostInfo
+		if err := json.Unmarshal([]byte(jsonStr), &host); err != nil {
+			logger.Warnf("unmarshal host cache failed: %v", err)
+			continue
+		}
+
+		// 从数据中提取业务ID
+		bizID := host.BkBizId
+		bizDataMap[bizID] = append(bizDataMap[bizID], &host)
+	}
+
+	// 3. 按业务ID构建relation指标
+	for bizID, hosts := range bizDataMap {
+		infos := m.HostToRelationInfos(hosts)
+		if err := relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Host, infos); err != nil {
+			logger.Errorf("build host relation metrics failed for biz %d: %v", bizID, err)
+		}
+	}
+
+	return nil
+}
+
 // NewHostAndTopoCacheManager 创建主机及拓扑缓存管理器
 func NewHostAndTopoCacheManager(bkTenantId string, prefix string, opt *redis.Options, concurrentLimit int) (*HostAndTopoCacheManager, error) {
 	manager, err := NewBaseCacheManager(bkTenantId, prefix, opt, concurrentLimit)

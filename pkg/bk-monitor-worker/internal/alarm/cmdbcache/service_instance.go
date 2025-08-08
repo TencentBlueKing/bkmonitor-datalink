@@ -69,7 +69,7 @@ type ServiceInstanceCacheManager struct {
 
 func (m *ServiceInstanceCacheManager) BuildRelationMetrics(ctx context.Context) error {
 	//TODO implement me
-	return errors.New("not implemented")
+	return errors.New("ServiceInstanceCacheManager BuildRelationMetrics not implemented")
 }
 
 // NewServiceInstanceCacheManager 创建服务实例缓存管理器

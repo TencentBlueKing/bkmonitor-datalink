@@ -45,6 +45,11 @@ type DynamicGroupCacheManager struct {
 	*BaseCacheManager
 }
 
+func (m *DynamicGroupCacheManager) BuildRelationMetrics(ctx context.Context) error {
+	//TODO implement me
+	return errors.New("BuildRelationMetrics not implemented for DynamicGroupCacheManager")
+}
+
 // NewDynamicGroupCacheManager 创建动态分组缓存管理器
 func NewDynamicGroupCacheManager(bkTenantId string, prefix string, opt *redis.Options, concurrentLimit int) (*DynamicGroupCacheManager, error) {
 	base, err := NewBaseCacheManager(bkTenantId, prefix, opt, concurrentLimit)

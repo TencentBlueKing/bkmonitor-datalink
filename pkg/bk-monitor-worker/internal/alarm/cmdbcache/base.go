@@ -108,6 +108,8 @@ type Manager interface {
 	Type() string
 	// RefreshByBiz 按业务刷新缓存
 	RefreshByBiz(ctx context.Context, bizID int) error
+	// BuildRelationMetrics 从缓存构建relation指标
+	BuildRelationMetrics(ctx context.Context) error
 	// RefreshGlobal 刷新全局缓存
 	RefreshGlobal(ctx context.Context) error
 	// CleanByBiz 按业务清理缓存
@@ -137,6 +139,7 @@ type BaseCacheManager struct {
 	RedisClient     redis.UniversalClient
 	Expire          time.Duration
 	ConcurrentLimit int
+	BatchLimit      int64
 
 	updatedFieldSet  map[string]map[string]struct{}
 	updateFieldLocks map[string]*sync.Mutex
@@ -156,6 +159,7 @@ func NewBaseCacheManager(bkTenantId string, prefix string, opt *redis.Options, c
 		updatedFieldSet:  make(map[string]map[string]struct{}),
 		updateFieldLocks: make(map[string]*sync.Mutex),
 		ConcurrentLimit:  concurrentLimit,
+		BatchLimit:       1000,
 	}, nil
 }
 
@@ -166,6 +170,41 @@ func (c *BaseCacheManager) Reset() {
 		c.updatedFieldSet[key] = make(map[string]struct{})
 		c.updateFieldLocks[key].Unlock()
 	}
+}
+
+func (c *BaseCacheManager) batchQuery(ctx context.Context, key, matchString string) (map[string]string, error) {
+	var cursor uint64 = 0
+	result := make(map[string]string)
+
+	for {
+		iter := c.RedisClient.HScan(ctx, key, cursor, matchString, c.BatchLimit).Iterator()
+		var field string
+
+		// HScan 返回的结果是 field1, value1, field2, value2, ... 的形式
+		for iter.Next(ctx) {
+			field = iter.Val()
+			if !iter.Next(ctx) {
+				return nil, errors.New("redis HASH scan iterator returned an odd number of items")
+			}
+			value := iter.Val()
+			result[field] = value
+		}
+
+		if err := iter.Err(); err != nil {
+			return nil, err
+		}
+
+		// 获取下一个游标
+		res := c.RedisClient.HScan(ctx, key, cursor, matchString, c.BatchLimit)
+		_, nextCursor, _ := res.Result()
+
+		if nextCursor == 0 {
+			break
+		}
+		cursor = nextCursor
+	}
+
+	return result, nil
 }
 
 // initUpdatedFieldSet 初始化更新字段集合，确保后续不存在并发问题

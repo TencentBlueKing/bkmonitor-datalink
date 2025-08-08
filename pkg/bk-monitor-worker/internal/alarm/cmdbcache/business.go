@@ -51,6 +51,11 @@ type BusinessCacheManager struct {
 	*BaseCacheManager
 }
 
+func (m *BusinessCacheManager) BuildRelationMetrics(ctx context.Context) error {
+	//TODO implement me
+	return errors.New("BuildRelationMetrics not implemented for BusinessCacheManager")
+}
+
 // NewBusinessCacheManager 创建业务缓存管理器
 func NewBusinessCacheManager(bkTenantId string, prefix string, opt *redis.Options, concurrentLimit int) (*BusinessCacheManager, error) {
 	manager, err := NewBaseCacheManager(bkTenantId, prefix, opt, concurrentLimit)

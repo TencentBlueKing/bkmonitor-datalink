@@ -101,181 +101,20 @@ func TestQsToDsl(t *testing.T) {
 			expected: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log\""}},{"bool":{"must":[{"match_phrase":{"level":{"query":"error"}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"2_bklog.bkunify_query\""}}]}}]}}`,
 		},
 		{
-			q: `(loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")) AND "test111"`,
-			expected: `{
-							"bool": {
-								"must": [
-									{
-										"bool": {
-										"must": [
-											{
-											"bool": {
-												"should": [
-												{ "term": { "loglevel": "TRACE" } },
-												{ "term": { "loglevel": "DEBUG" } },
-												{ "term": { "loglevel": "INFO " } },
-												{ "term": { "loglevel": "WARN " } },
-												{ "term": { "loglevel": "ERROR" } }
-												]
-											}
-											},
-											{
-											"bool": {
-												"should": [
-												{
-													"bool": {
-													"must": [
-														{ "term": { "log": "friendsvr" } },
-														{ "term": { "log": "game_app" } },
-														{ "term": { "log": "testAnd" } }
-													]
-													}
-												},
-												{
-													"bool": {
-													"must": [
-														{ "term": { "log": "friendsvr" } },
-														{ "term": { "log": "testOr" } },
-														{ "term": { "log": "testAnd" } }
-													]
-													}
-												},
-												{ "term": { "log": "test111" } }
-												]
-											}
-											}
-										]
-										}
-									},
-									{
-										"query_string": {
-										"query": "\"test111\"",
-										"fields": ["*", "__*"],
-										"analyze_wildcard": true,
-										"lenient": true
-										}
-									}
-								]
-							}
-						}`,
+			q:        `(loglevel: ("TRACE" OR "DEBUG") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")) AND "test111"`,
+			expected: `{"bool":{"must":[{"bool":{"must":[{"bool":{"should":[{"match_phrase":{"loglevel":{"query":"TRACE"}}},{"match_phrase":{"loglevel":{"query":"DEBUG"}}}]}},{"bool":{"should":[{"bool":{"must":[{"term":{"log":"friendsvr"}},{"term":{"log":"game_app"}},{"term":{"log":"testAnd"}}]}},{"bool":{"must":[{"term":{"log":"friendsvr"}},{"term":{"log":"testOr"}},{"term":{"log":"testAnd"}}]}},{"match_phrase":{"log":{"query":"test111"}}}]}}]}},{"query_string":{"query":"\"test111\"","fields":["*","__*"],"analyze_wildcard":true,"lenient":true}}]}}`,
 		},
 		{
-			q: `loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
-			expected: `{
-				"bool": {
-				  "must": [
-					{
-					  "bool": {
-						"should": [
-						  { "term": { "loglevel": "TRACE" } },
-						  { "term": { "loglevel": "DEBUG" } },
-						  { "term": { "loglevel": "INFO " } },
-						  { "term": { "loglevel": "WARN " } },
-						  { "term": { "loglevel": "ERROR" } }
-						]
-					  }
-					},
-					{
-					  "bool": {
-						"should": [
-						  {
-							"bool": {
-							  "must": [
-								{ "term": { "log": "friendsvr" } },
-								{ "term": { "log": "game_app" } },
-								{ "term": { "log": "testAnd" } }
-							  ]
-							}
-						  },
-						  {
-							"bool": {
-							  "must": [
-								{ "term": { "log": "friendsvr" } },
-								{ "term": { "log": "testOr" } },
-								{ "term": { "log": "testAnd" } }
-							  ]
-							}
-						  },
-						  { "term": { "log": "test111" } }
-						]
-					  }
-					}
-				  ]
-				}
-			  }`,
+			q:        `loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
+			expected: `{"bool":{"must":[{"bool":{"should":[{"match_phrase":{"loglevel":{"query":"TRACE"}}},{"match_phrase":{"loglevel":{"query":"DEBUG"}}},{"match_phrase":{"loglevel":{"query":"INFO "}}},{"match_phrase":{"loglevel":{"query":"WARN "}}},{"match_phrase":{"loglevel":{"query":"ERROR"}}}]}},{"bool":{"should":[{"bool":{"must":[{"term":{"log":"friendsvr"}},{"term":{"log":"game_app"}},{"term":{"log":"testAnd"}}]}},{"bool":{"must":[{"term":{"log":"friendsvr"}},{"term":{"log":"testOr"}},{"term":{"log":"testAnd"}}]}},{"match_phrase":{"log":{"query":"test111"}}}]}}]}}`,
 		},
 		{
-			q: `loglevel: ("TRACE" AND "111" AND "DEBUG" AND "INFO" OR "SIMON" OR "222" AND "333" )`,
-			expected: `{
-						"bool": {
-							"should": [
-							{
-								"bool": {
-								"must": [
-									{ "term": { "loglevel": "TRACE" } },
-									{ "term": { "loglevel": "111" } },
-									{ "term": { "loglevel": "DEBUG" } },
-									{ "term": { "loglevel": "INFO" } }
-								]
-								}
-							},
-							{ "term": { "loglevel": "SIMON" } },
-							{
-								"bool": {
-								"must": [
-									{ "term": { "loglevel": "222" } },
-									{ "term": { "loglevel": "333" } }
-								]
-								}
-							}
-							]
-						}
-					}`,
+			q:        `loglevel: ("TRACE" AND "111" AND "DEBUG" AND "INFO" OR "SIMON" OR "222" AND "333" )`,
+			expected: `{"bool":{"should":[{"bool":{"must":[{"term":{"loglevel":"TRACE"}},{"term":{"loglevel":"111"}},{"term":{"loglevel":"DEBUG"}},{"term":{"loglevel":"INFO"}}]}},{"match_phrase":{"loglevel":{"query":"SIMON"}}},{"bool":{"must":[{"term":{"loglevel":"222"}},{"term":{"loglevel":"333"}}]}}]}}`,
 		},
 		{
-			q: `loglevel: ("TRACE" OR ("DEBUG") OR  ("INFO ") OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
-			expected: `{
-						"bool": {
-							"must": [
-							{
-								"bool": {
-								"should": [
-									{ "term": { "loglevel": "TRACE" } },
-									{ "term": { "loglevel": "DEBUG" } },
-									{ "term": { "loglevel": "INFO " } },
-									{ "term": { "loglevel": "WARN " } },
-									{ "term": { "loglevel": "ERROR" } }
-								]
-								}
-							},
-							{
-								"bool": {
-								"should": [
-									{
-									"bool": {
-										"must": [
-										{ "term": { "log": "friendsvr" } },
-										{ "term": { "log": "game_app" } },
-										{ "term": { "log": "testAnd" } }
-										]
-									}
-									},
-									{
-									"bool": {
-										"must": [
-										{ "term": { "log": "friendsvr" } },
-										{ "term": { "log": "testOr" } },
-										{ "term": { "log": "testAnd" } }
-										]
-									}
-									},
-									{ "term": { "log": "test111" } }
-								]
-								}
-							}
-							]
-						}
-						}`,
+			q:        `loglevel: ("TRACE" OR ("DEBUG") OR  ("INFO ") OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
+			expected: `{"bool":{"must":[{"bool":{"should":[{"match_phrase":{"loglevel":{"query":"TRACE"}}},{"match_phrase":{"loglevel":{"query":"DEBUG"}}},{"match_phrase":{"loglevel":{"query":"INFO "}}},{"match_phrase":{"loglevel":{"query":"WARN "}}},{"match_phrase":{"loglevel":{"query":"ERROR"}}}]}},{"bool":{"should":[{"bool":{"must":[{"term":{"log":"friendsvr"}},{"term":{"log":"game_app"}},{"term":{"log":"testAnd"}}]}},{"bool":{"must":[{"term":{"log":"friendsvr"}},{"term":{"log":"testOr"}},{"term":{"log":"testAnd"}}]}},{"match_phrase":{"log":{"query":"test111"}}}]}}]}}`,
 		},
 		{
 			q:        `(log:/71[6,7]|66[2,3]|70[5,7]|66[5,6,8,9]|670|75[3,4]|756|71[0,3]|709|901004|901007|901010|901016|901019/ AND (StillBirth OR NpcBirth) AND serverIp: 127.0.0.1)`,
@@ -284,6 +123,10 @@ func TestQsToDsl(t *testing.T) {
 		{
 			q:        `log:contentsauction.cpp AND /[0-9][0-9][0-9][0-9]ms/`,
 			expected: `{"bool":{"must":[{"match_phrase":{"log":{"query":"contentsauction.cpp"}}},{"query_string":{"query":"/[0-9][0-9][0-9][0-9]ms/","fields":["*","__*"],"analyze_wildcard":true,"lenient":true}}]}}`,
+		},
+		{
+			q:        `log: ("levelname ERROR" OR "levelname INFO")`,
+			expected: `{"bool":{"should":[{"match_phrase":{"log":{"query":"levelname ERROR"}}},{"match_phrase":{"log":{"query":"levelname INFO"}}}]}}`,
 		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {

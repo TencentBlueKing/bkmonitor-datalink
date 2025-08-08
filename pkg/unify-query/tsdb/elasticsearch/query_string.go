@@ -104,10 +104,8 @@ func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 			leftQ = elastic.NewRegexpQuery(c.Field, c.Value)
 			s.check(c.Field)
 		} else {
-			val := c.Value
 			// 保留正则的识别/
-			val = fmt.Sprintf(`/%s/`, val)
-			leftQ = s.queryString(val)
+			leftQ = s.queryString(fmt.Sprintf(`/%s/`, c.Value))
 		}
 	case *qs.NotExpr:
 		leftQ, err = s.walk(c.Expr)
@@ -144,16 +142,18 @@ func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 			}
 			s.check(c.Field)
 		} else {
-			val := c.Value
 			// 为了保证保留传递的双引号，所以进来必须拼接一个，保证字符串的完整
-			val = fmt.Sprintf(`"%s"`, val)
-			leftQ = s.queryString(val)
+			leftQ = s.queryString(fmt.Sprintf(`"%s"`, c.Value))
 		}
 	case *qs.ConditionMatchExpr:
 		if len(c.Value.Values) == 1 {
 			row := c.Value.Values[0]
 			if len(row) == 1 {
-				leftQ = elastic.NewTermQuery(c.Field, row[0])
+				if s.isPrefix {
+					leftQ = elastic.NewMatchPhrasePrefixQuery(c.Field, row[0])
+				} else {
+					leftQ = elastic.NewMatchPhraseQuery(c.Field, row[0])
+				}
 			} else {
 				boolQuery := elastic.NewBoolQuery()
 				for _, value := range row {
@@ -168,7 +168,11 @@ func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 				var rowQuery elastic.Query
 				if len(row) == 1 {
 					// 单行单个值
-					rowQuery = elastic.NewTermQuery(c.Field, row[0])
+					if s.isPrefix {
+						rowQuery = elastic.NewMatchPhrasePrefixQuery(c.Field, row[0])
+					} else {
+						rowQuery = elastic.NewMatchPhraseQuery(c.Field, row[0])
+					}
 				} else {
 					// 单行多个值，使用 AND 逻辑
 					rowBoolQuery := elastic.NewBoolQuery()

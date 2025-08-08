@@ -125,7 +125,7 @@ func (q *ConditionMatchExpr) SetField(expr Expr) {
 	case *WildcardExpr:
 		q.Field = e.Value
 	default:
-		fmt.Println("Parse Error")
+		panic(fmt.Sprintf("unsupported type for ConditionMatchExpr field : %T", e))
 	}
 }
 

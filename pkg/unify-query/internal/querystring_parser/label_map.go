@@ -50,6 +50,12 @@ func parseExprToKeyValue(expr Expr, addLabel func(key string, operator string, v
 		addLabel(e.Field, "contains", e.Value)
 	case *MatchExpr:
 		addLabel(e.Field, "eq", e.Value)
+	case *ConditionMatchExpr:
+		for _, arr := range e.Value.Values {
+			for _, v := range arr {
+				addLabel(e.Field, "eq", v)
+			}
+		}
 	default:
 		return nil
 	}

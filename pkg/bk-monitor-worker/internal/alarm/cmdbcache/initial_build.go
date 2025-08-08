@@ -47,5 +47,6 @@ func buildAllInfosCache(ctx context.Context, bkTenantId, prefix string, redisOpt
 			}
 		}(cacheType)
 	}
+	logger.Info("[cmdb_relation] building all infos cache manager")
 	wg.Wait()
 }

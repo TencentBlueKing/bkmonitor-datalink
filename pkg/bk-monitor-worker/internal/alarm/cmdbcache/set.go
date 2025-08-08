@@ -80,6 +80,7 @@ func (m *SetCacheManager) BuildRelationMetrics(ctx context.Context) error {
 			logger.Errorf("build set relation metrics failed for biz %d: %v", bizID, err)
 		}
 	}
+	logger.Infof("[cmdb_relation] build set relation metrics success, total biz count: %d", len(bizDataMap))
 
 	return nil
 }

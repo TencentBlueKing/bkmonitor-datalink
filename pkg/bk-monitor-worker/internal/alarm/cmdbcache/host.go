@@ -290,6 +290,7 @@ func (m *HostAndTopoCacheManager) BuildRelationMetrics(ctx context.Context) erro
 		}
 	}
 
+	logger.Infof("[cmdb_relation] build host relation metrics from cache, total biz: %d", len(bizDataMap))
 	return nil
 }
 

@@ -80,6 +80,7 @@ func (m *ModuleCacheManager) BuildRelationMetrics(ctx context.Context) error {
 			logger.Errorf("build module relation metrics failed for biz %d: %v", bizID, err)
 		}
 	}
+	logger.Infof("[cmdb_relation] build module relation metrics, total biz count: %d", len(bizDataMap))
 
 	return nil
 }

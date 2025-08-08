@@ -148,7 +148,7 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 				if action.Rules.MatchMetricAttrs(attrs) {
 					for _, destination := range action.Destinations {
 						switch destination.Action {
-						case Upsert:
+						case ActionUpsert:
 							attrs.UpsertString(destination.Label, destination.Value)
 						}
 					}
@@ -164,7 +164,7 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 			if action.Rules.MatchRWLabels(labels) {
 				for _, destination := range action.Destinations {
 					switch destination.Action {
-					case Upsert:
+					case ActionUpsert:
 						if _, ok := labels[destination.Label]; ok {
 							labels[destination.Label].Value = destination.Value
 						} else {

@@ -10,6 +10,8 @@
 package metricsfilter
 
 import (
+	"github.com/prometheus/prometheus/prompb"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
@@ -35,12 +37,19 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 	if err := mapstructure.Decode(conf, &c); err != nil {
 		return nil, err
 	}
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
 	configs.SetGlobal(c)
 
 	for _, custom := range customized {
 		var cfg Config
 		if err := mapstructure.Decode(custom.Config.Config, &cfg); err != nil {
 			logger.Errorf("failed to decode config: %v", err)
+			continue
+		}
+		if err := cfg.Validate(); err != nil {
+			logger.Errorf("invalid config: %v", err)
 			continue
 		}
 		configs.Set(custom.Token, custom.Type, custom.ID, cfg)
@@ -88,6 +97,9 @@ func (p *metricsFilter) Process(record *define.Record) (*define.Record, error) {
 	if len(config.Replace) > 0 {
 		p.replaceAction(record, config)
 	}
+	if len(config.Relabel) > 0 {
+		p.relabelAction(record, config)
+	}
 	return nil, nil
 }
 
@@ -121,4 +133,64 @@ func (p *metricsFilter) replaceAction(record *define.Record, config Config) {
 			})
 		}
 	}
+}
+
+func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
+
+	switch record.RecordType {
+	case define.RecordMetrics:
+		for _, action := range config.Relabel {
+			pdMetrics := record.Data.(pmetric.Metrics)
+			foreach.MetricsSliceDataPointsAttrs(pdMetrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
+				if action.Metric != name {
+					return
+				}
+				if action.Rules.MatchMetricAttrs(attrs) {
+					for _, destination := range action.Destinations {
+						switch destination.Action {
+						case ActionUpsert:
+							attrs.UpsertString(destination.Label, destination.Value)
+						}
+					}
+				}
+			})
+		}
+	case define.RecordRemoteWrite:
+		handle := func(ts *prompb.TimeSeries, action RelabelAction) {
+			lbs := ts.GetLabels()
+			nameLabel, ok := getValueFromLabels(lbs, "__name__")
+			if !ok || nameLabel.GetValue() != action.Metric {
+				return
+			}
+			if action.Rules.MatchRWLabels(lbs) {
+				for _, destination := range action.Destinations {
+					switch destination.Action {
+					case ActionUpsert:
+						label, ok := getValueFromLabels(lbs, destination.Label)
+						if ok {
+							label.Value = destination.Value
+						} else {
+							ts.Labels = append(ts.Labels, prompb.Label{Name: destination.Label, Value: destination.Value})
+						}
+					}
+				}
+			}
+		}
+		for _, action := range config.Relabel {
+			rwData := record.Data.(*define.RemoteWriteData)
+			for i := 0; i < len(rwData.Timeseries); i++ {
+				handle(&rwData.Timeseries[i], action)
+			}
+		}
+	}
+}
+
+// getValueFromLabels 获取 labels 中指定 key 的 value，本场景下直接遍历比转成 map 更快，见 config_test.go benchmark
+func getValueFromLabels(labels []prompb.Label, key string) (*prompb.Label, bool) {
+	for i := 0; i < len(labels); i++ {
+		if labels[i].GetName() == key {
+			return &labels[i], true
+		}
+	}
+	return nil, false
 }

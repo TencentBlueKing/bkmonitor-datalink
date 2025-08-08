@@ -83,15 +83,15 @@ func makeRequest() *prompb.WriteRequest {
 	labels := []prompb.Label{
 		{
 			Name:  "__name__",
-			Value: "cpu_usage",
+			Value: "gauge_int",
 		},
 		{
-			Name:  "zone",
-			Value: "gz",
+			Name:  "callee_service",
+			Value: "hello",
 		},
 		{
-			Name:  "biz",
-			Value: "foo",
+			Name:  "code",
+			Value: "ret_100",
 		},
 	}
 

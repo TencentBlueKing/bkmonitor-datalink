@@ -100,6 +100,183 @@ func TestQsToDsl(t *testing.T) {
 			q:        `"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log" and level: "error" and "2_bklog.bkunify_query"`,
 			expected: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log\""}},{"bool":{"must":[{"match_phrase":{"level":{"query":"error"}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"2_bklog.bkunify_query\""}}]}}]}}`,
 		},
+		{
+			q: `(loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")) AND "test111"`,
+			expected: `{
+							"bool": {
+								"must": [
+									{
+										"bool": {
+										"must": [
+											{
+											"bool": {
+												"should": [
+												{ "term": { "loglevel": "TRACE" } },
+												{ "term": { "loglevel": "DEBUG" } },
+												{ "term": { "loglevel": "INFO " } },
+												{ "term": { "loglevel": "WARN " } },
+												{ "term": { "loglevel": "ERROR" } }
+												]
+											}
+											},
+											{
+											"bool": {
+												"should": [
+												{
+													"bool": {
+													"must": [
+														{ "term": { "log": "friendsvr" } },
+														{ "term": { "log": "game_app" } },
+														{ "term": { "log": "testAnd" } }
+													]
+													}
+												},
+												{
+													"bool": {
+													"must": [
+														{ "term": { "log": "friendsvr" } },
+														{ "term": { "log": "testOr" } },
+														{ "term": { "log": "testAnd" } }
+													]
+													}
+												},
+												{ "term": { "log": "test111" } }
+												]
+											}
+											}
+										]
+										}
+									},
+									{
+										"query_string": {
+										"query": "\"test111\"",
+										"fields": ["*", "__*"],
+										"analyze_wildcard": true,
+										"lenient": true
+										}
+									}
+								]
+							}
+						}`,
+		},
+		{
+			q: `loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
+			expected: `{
+				"bool": {
+				  "must": [
+					{
+					  "bool": {
+						"should": [
+						  { "term": { "loglevel": "TRACE" } },
+						  { "term": { "loglevel": "DEBUG" } },
+						  { "term": { "loglevel": "INFO " } },
+						  { "term": { "loglevel": "WARN " } },
+						  { "term": { "loglevel": "ERROR" } }
+						]
+					  }
+					},
+					{
+					  "bool": {
+						"should": [
+						  {
+							"bool": {
+							  "must": [
+								{ "term": { "log": "friendsvr" } },
+								{ "term": { "log": "game_app" } },
+								{ "term": { "log": "testAnd" } }
+							  ]
+							}
+						  },
+						  {
+							"bool": {
+							  "must": [
+								{ "term": { "log": "friendsvr" } },
+								{ "term": { "log": "testOr" } },
+								{ "term": { "log": "testAnd" } }
+							  ]
+							}
+						  },
+						  { "term": { "log": "test111" } }
+						]
+					  }
+					}
+				  ]
+				}
+			  }`,
+		},
+		{
+			q: `loglevel: ("TRACE" AND "111" AND "DEBUG" AND "INFO" OR "SIMON" OR "222" AND "333" )`,
+			expected: `{
+						"bool": {
+							"should": [
+							{
+								"bool": {
+								"must": [
+									{ "term": { "loglevel": "TRACE" } },
+									{ "term": { "loglevel": "111" } },
+									{ "term": { "loglevel": "DEBUG" } },
+									{ "term": { "loglevel": "INFO" } }
+								]
+								}
+							},
+							{ "term": { "loglevel": "SIMON" } },
+							{
+								"bool": {
+								"must": [
+									{ "term": { "loglevel": "222" } },
+									{ "term": { "loglevel": "333" } }
+								]
+								}
+							}
+							]
+						}
+					}`,
+		},
+		{
+			q: `loglevel: ("TRACE" OR ("DEBUG") OR  ("INFO ") OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
+			expected: `{
+						"bool": {
+							"must": [
+							{
+								"bool": {
+								"should": [
+									{ "term": { "loglevel": "TRACE" } },
+									{ "term": { "loglevel": "DEBUG" } },
+									{ "term": { "loglevel": "INFO " } },
+									{ "term": { "loglevel": "WARN " } },
+									{ "term": { "loglevel": "ERROR" } }
+								]
+								}
+							},
+							{
+								"bool": {
+								"should": [
+									{
+									"bool": {
+										"must": [
+										{ "term": { "log": "friendsvr" } },
+										{ "term": { "log": "game_app" } },
+										{ "term": { "log": "testAnd" } }
+										]
+									}
+									},
+									{
+									"bool": {
+										"must": [
+										{ "term": { "log": "friendsvr" } },
+										{ "term": { "log": "testOr" } },
+										{ "term": { "log": "testAnd" } }
+										]
+									}
+									},
+									{ "term": { "log": "test111" } }
+								]
+								}
+							}
+							]
+						}
+						}`,
+		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)

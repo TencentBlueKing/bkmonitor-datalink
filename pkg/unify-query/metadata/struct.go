@@ -13,12 +13,12 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/VictoriaMetrics/metricsql"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -52,6 +52,11 @@ const (
 
 const (
 	DefaultReferenceName = "a"
+)
+
+const (
+	TypeDate      = "date"
+	TypeDateNanos = "date_nanos"
 )
 
 type VmCondition string
@@ -461,7 +466,7 @@ func (a Aggregates) LastAggName() string {
 	return a[len(a)-1].Name
 }
 
-func (os Orders) SortSliceList(list []map[string]any) {
+func (os Orders) SortSliceList(list []map[string]any, fieldType map[string]string) {
 	if len(os) == 0 {
 		return
 	}
@@ -474,102 +479,48 @@ func (os Orders) SortSliceList(list []map[string]any) {
 			a := list[i][o.Name]
 			b := list[j][o.Name]
 
-			if a != b {
-				result := lessFunc(a, b)
-				if result != 0 {
-					if o.Ast {
-						return result < 0
-					} else {
-						return result > 0
+			if a == b {
+				continue
+			}
+
+			if ft, ok := fieldType[o.Name]; ok {
+				switch ft {
+				case TypeDate, TypeDateNanos:
+					t1 := function.StringToNanoUnix(cast.ToString(a))
+					t2 := function.StringToNanoUnix(cast.ToString(b))
+
+					if t1 > 0 && t2 > 0 {
+						if o.Ast {
+							return t1 < t2
+						} else {
+							return t1 > t2
+						}
 					}
 				}
+			}
+
+			// 如果是 float 格式则使用 float 进行对比
+			f1, f1Err := cast.ToFloat64E(a)
+			f2, f2Err := cast.ToFloat64E(b)
+			if f1Err == nil && f2Err == nil {
+				if o.Ast {
+					return f1 < f2
+				} else {
+					return f1 > f2
+				}
+			}
+
+			// 最后使用 string 的方式进行排序
+			t1 := cast.ToString(a)
+			t2 := cast.ToString(b)
+			if o.Ast {
+				return t1 < t2
+			} else {
+				return t1 > t2
 			}
 		}
 		return false
 	})
-}
-
-func lessFunc(a, b interface{}) int {
-	if a == nil && b == nil {
-		return 0
-	}
-	if a == nil {
-		return -1
-	}
-	if b == nil {
-		return 1
-	}
-
-	aNum, aIsNum := convertToFloat64(a)
-	bNum, bIsNum := convertToFloat64(b)
-
-	if aIsNum && bIsNum {
-		if aNum < bNum {
-			return -1
-		} else if aNum > bNum {
-			return 1
-		}
-		return 0
-	}
-
-	aStr := convertToString(a)
-	bStr := convertToString(b)
-
-	if aStr < bStr {
-		return -1
-	} else if aStr > bStr {
-		return 1
-	}
-	return 0
-}
-
-func convertToFloat64(value interface{}) (float64, bool) {
-	switch v := value.(type) {
-	case int:
-		return float64(v), true
-	case int8:
-		return float64(v), true
-	case int16:
-		return float64(v), true
-	case int32:
-		return float64(v), true
-	case int64:
-		return float64(v), true
-	case uint:
-		return float64(v), true
-	case uint8:
-		return float64(v), true
-	case uint16:
-		return float64(v), true
-	case uint32:
-		return float64(v), true
-	case uint64:
-		return float64(v), true
-	case float32:
-		return float64(v), true
-	case float64:
-		return v, true
-	case string:
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			return f, true
-		}
-	}
-	return 0, false
-}
-
-func convertToString(value interface{}) string {
-	switch v := value.(type) {
-	case string:
-		return v
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return fmt.Sprintf("%d", v)
-	case float32, float64:
-		return fmt.Sprintf("%g", v)
-	case bool:
-		return fmt.Sprintf("%t", v)
-	default:
-		return fmt.Sprintf("%v", v)
-	}
 }
 
 func (fa FieldAlias) Alias(f string) string {

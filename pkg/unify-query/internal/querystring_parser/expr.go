@@ -10,6 +10,7 @@
 package querystring_parser
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -59,6 +60,73 @@ type FieldableExpr interface {
 type MatchExpr struct {
 	Field string
 	Value string
+}
+
+// ConditionMatchExpr .
+type ConditionMatchExpr struct {
+	Field string
+	Value *ConditionExpr
+}
+
+// ConditionExpr .
+type ConditionExpr struct {
+	Values [][]string
+}
+
+// NewConditionExpr .
+func NewConditionExpr(a interface{}) *ConditionExpr {
+	switch v := a.(type) {
+	case *ConditionExpr:
+		return v
+	case *MatchExpr:
+		return &ConditionExpr{Values: [][]string{{v.Value}}}
+	case string:
+		return &ConditionExpr{Values: [][]string{{v}}}
+	default:
+		panic(fmt.Sprintf("unsupported type for NewConditionExpr: %T", a))
+	}
+}
+
+// OrConditionExpr .
+func OrConditionExpr(a, b Expr) *ConditionExpr {
+	return &ConditionExpr{Values: append(a.(*ConditionExpr).Values, b.(*ConditionExpr).Values...)}
+}
+
+// AndConditionExpr .
+func AndConditionExpr(a, b Expr) *ConditionExpr {
+	var result [][]string
+	for _, rowA := range a.(*ConditionExpr).Values {
+		for _, rowB := range b.(*ConditionExpr).Values {
+			merged := append(append([]string{}, rowA...), rowB...)
+			result = append(result, merged)
+		}
+	}
+	return &ConditionExpr{Values: result}
+}
+
+// NewConditionMatchExpr .
+func NewConditionMatchExpr(value Expr) *ConditionMatchExpr {
+	v, ok := value.(*ConditionExpr)
+	if !ok {
+		panic("value is not *ConditionExpr")
+	}
+	return &ConditionMatchExpr{
+		Value: v,
+	}
+}
+
+// SetField .
+func (q *ConditionMatchExpr) SetField(expr Expr) {
+	switch e := expr.(type) {
+	case string:
+		q.Field = e
+	case *MatchExpr:
+		q.Field = e.Value
+	case *WildcardExpr:
+		q.Field = e.Value
+	default:
+		fmt.Println("Parse Error")
+	}
 }
 
 // NewMatchExpr .

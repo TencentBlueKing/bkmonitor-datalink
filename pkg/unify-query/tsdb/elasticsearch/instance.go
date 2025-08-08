@@ -577,6 +577,11 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		return
 	}
 
+	option = &metadata.ResultTableOption{
+		FieldType: fact.FieldType(),
+		From:      &query.From,
+	}
+
 	reverseAlias := make(map[string]string, len(query.FieldAlias))
 	for k, v := range query.FieldAlias {
 		reverseAlias[v] = k
@@ -616,9 +621,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				}
 
 				if idx == len(sr.Hits.Hits)-1 && d.Sort != nil {
-					option = &metadata.ResultTableOption{
-						SearchAfter: d.Sort,
-					}
+					option.SearchAfter = d.Sort
 				}
 
 				dataCh <- fact.data

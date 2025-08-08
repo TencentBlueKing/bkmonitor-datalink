@@ -15,6 +15,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"time"
 
 	"github.com/TarsCloud/TarsGo/tars"
@@ -98,6 +99,8 @@ func reportStats(f func(context.Context, map[statf.StatMicMsgHead]statf.StatMicM
 	}
 
 	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
 	_, err := f(ctx, stats, false, map[string]string{"X-BK-TOKEN": MockToken})
 	if err != nil {
 		log.Printf("failed to invoke err=%v", err)
@@ -124,11 +127,48 @@ func reportStatsOneway() {
 	reportStats(app.ReportMicMsgOneWayWithContext)
 }
 
+func benchmark(task func(), n, w int) {
+	if n <= 0 || w <= 0 {
+		return
+	}
+
+	sem := make(chan struct{}, w)
+	elapsedTimes := make(chan int64, n)
+
+	var (
+		wg    sync.WaitGroup
+		start = time.Now()
+	)
+
+	wg.Add(n)
+
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+
+			// 获取并发令牌
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			reqStart := time.Now()
+			task()
+			elapsedTimes <- time.Since(reqStart).Nanoseconds()
+		}()
+	}
+
+	wg.Wait()
+	elapsed := time.Since(start)
+	fmt.Printf(
+		"total -> %d, avg -> %.2f ms/op, qps -> %.2f requests/sec\n",
+		n, float64(elapsed.Milliseconds())/float64(n), float64(n)/elapsed.Seconds(),
+	)
+}
+
 func main() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -140,6 +180,7 @@ func main() {
 			reportPropsOneway()
 			reportStatsNormal()
 			reportStatsOneway()
+			benchmark(reportStatsNormal, 5000, 100)
 		}
 	}
 }

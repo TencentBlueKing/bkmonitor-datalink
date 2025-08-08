@@ -219,6 +219,81 @@ func TestParser(t *testing.T) {
 				},
 			},
 		},
+		"嵌套逻辑表达式 - 2": {
+			q: `a:1 OR b:2 OR (c:3 OR d:4)`,
+			e: &OrExpr{
+				Left: &MatchExpr{
+					Field: "a",
+					Value: "1",
+				},
+				Right: &OrExpr{
+					Left: &MatchExpr{
+						Field: "b",
+						Value: "2",
+					},
+					Right: &OrExpr{
+						Left: &MatchExpr{
+							Field: "c",
+							Value: "3",
+						},
+						Right: &MatchExpr{
+							Field: "d",
+							Value: "4",
+						},
+					},
+				},
+			},
+		},
+		"嵌套逻辑表达式 - 3": {
+			q: `a:1 OR (b:2 OR c:3) OR d:4`,
+			e: &OrExpr{
+				Left: &MatchExpr{
+					Field: "a",
+					Value: "1",
+				},
+				Right: &OrExpr{
+					Left: &OrExpr{
+						Left: &MatchExpr{
+							Field: "b",
+							Value: "2",
+						},
+						Right: &MatchExpr{
+							Field: "c",
+							Value: "3",
+						},
+					},
+					Right: &MatchExpr{
+						Field: "d",
+						Value: "4",
+					},
+				},
+			},
+		},
+		"嵌套逻辑表达式 - 4": {
+			q: `a:1 OR (b:2 OR c:3) AND d:4`,
+			e: &OrExpr{
+				Left: &MatchExpr{
+					Field: "a",
+					Value: "1",
+				},
+				Right: &AndExpr{
+					Left: &OrExpr{
+						Left: &MatchExpr{
+							Field: "b",
+							Value: "2",
+						},
+						Right: &MatchExpr{
+							Field: "c",
+							Value: "3",
+						},
+					},
+					Right: &MatchExpr{
+						Field: "d",
+						Value: "4",
+					},
+				},
+			},
+		},
 		"new-1": {
 			q: `quick brown +fox -news`,
 			e: &OrExpr{
@@ -400,10 +475,6 @@ func TestParser(t *testing.T) {
 				Value: "/proz/logds/ds-5910974792526317*",
 			},
 		},
-		// TODO: 待解决的解析问题
-		//"test - many tPHRASE ": {
-		//	q: `loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND "game_app") AND __ext.io_kubernetes_pod: "nrc-dev-all-in-one-0" AND __ext.io_kubernetes_pod_namespace: "nrc-dev"`,
-		//},
 		"test-1": {
 			q: "\"32221112\" AND path: \"/data/home/user00/log/zonesvr*\"",
 			e: &AndExpr{
@@ -413,6 +484,105 @@ func TestParser(t *testing.T) {
 				Right: &WildcardExpr{
 					Field: "path",
 					Value: "/data/home/user00/log/zonesvr*",
+				},
+			},
+		},
+		"test - Many Brack ": {
+			q: `(loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")) AND "test111"`,
+			e: &AndExpr{
+				Left: &AndExpr{
+					Left: &ConditionMatchExpr{
+						Field: "loglevel",
+						Value: &ConditionExpr{
+							Values: [][]string{
+								{"TRACE"},
+								{"DEBUG"},
+								{"INFO "},
+								{"WARN "},
+								{"ERROR"},
+							},
+						},
+					},
+					Right: &ConditionMatchExpr{
+						Field: "log",
+						Value: &ConditionExpr{
+							Values: [][]string{
+								{"friendsvr", "game_app", "testAnd"},
+								{"friendsvr", "testOr", "testAnd"},
+								{"test111"},
+							},
+						},
+					},
+				},
+				Right: &MatchExpr{
+					Value: "test111",
+				},
+			},
+		},
+		"test - many tPHRASE ": {
+			q: `loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
+			e: &AndExpr{
+				Left: &ConditionMatchExpr{
+					Field: "loglevel",
+					Value: &ConditionExpr{
+						Values: [][]string{
+							{"TRACE"},
+							{"DEBUG"},
+							{"INFO "},
+							{"WARN "},
+							{"ERROR"},
+						},
+					},
+				},
+				Right: &ConditionMatchExpr{
+					Field: "log",
+					Value: &ConditionExpr{
+						Values: [][]string{
+							{"friendsvr", "game_app", "testAnd"},
+							{"friendsvr", "testOr", "testAnd"},
+							{"test111"},
+						},
+					},
+				},
+			},
+		},
+		"test - Single Bracket And  ": {
+			q: `loglevel: ("TRACE" AND "111" AND "DEBUG" AND "INFO" OR "SIMON" OR "222" AND "333" )`,
+			e: &ConditionMatchExpr{
+				Field: "loglevel",
+				Value: &ConditionExpr{
+					Values: [][]string{
+						{"TRACE", "111", "DEBUG", "INFO"},
+						{"SIMON"},
+						{"222", "333"},
+					},
+				},
+			},
+		},
+		"test - Self Bracket ": {
+			q: `loglevel: ("TRACE" OR ("DEBUG") OR  ("INFO ") OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
+			e: &AndExpr{
+				Left: &ConditionMatchExpr{
+					Field: "loglevel",
+					Value: &ConditionExpr{
+						Values: [][]string{
+							{"TRACE"},
+							{"DEBUG"},
+							{"INFO "},
+							{"WARN "},
+							{"ERROR"},
+						},
+					},
+				},
+				Right: &ConditionMatchExpr{
+					Field: "log",
+					Value: &ConditionExpr{
+						Values: [][]string{
+							{"friendsvr", "game_app", "testAnd"},
+							{"friendsvr", "testOr", "testAnd"},
+							{"test111"},
+						},
+					},
 				},
 			},
 		},

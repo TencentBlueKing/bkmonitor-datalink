@@ -487,6 +487,10 @@ func (m *HostAndTopoCacheManager) CleanGlobal(ctx context.Context) error {
 	return nil
 }
 
+func (m *HostAndTopoCacheManager) refreshRelationMetricsCache(bkbizid int, hosts []*AlarmHostInfo) {
+
+}
+
 // 刷新拓扑缓存
 func (m *HostAndTopoCacheManager) refreshTopoCache(ctx context.Context, bkBizId int, topo *cmdb.SearchBizInstTopoData) error {
 	key := m.GetCacheKey(topoCacheKey)

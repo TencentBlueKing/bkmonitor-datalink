@@ -18,6 +18,8 @@ type ResultTableOption struct {
 	SliceIndex  *int   `json:"slice_index,omitempty"`
 	SliceMax    *int   `json:"slice_max,omitempty"`
 
+	FieldType map[string]string `json:"-"`
+
 	SQL          string           `json:"sql,omitempty"`
 	ResultSchema []map[string]any `json:"result_schema,omitempty"`
 }

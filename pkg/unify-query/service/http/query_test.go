@@ -1221,11 +1221,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    1e4,
 			expected: `[{"__data_label":"es","__doc_id":"bf6477880e7abd183119c150ea1447db","__highlight":{"app_name":["<mark>bkop</mark>"],"biz_id":["<mark>2</mark>"]},"__index":"v2_apm_global_precalculate_storage_new_1_20250609_0","__result_table":"result_table.es","app_id":"3","app_name":"bkop","biz_id":"2","biz_name":"蓝鲸","category_statistics.async_backend":0,"category_statistics.db":0,"category_statistics.http":120,"category_statistics.messaging":0,"category_statistics.other":0,"category_statistics.rpc":0,"collections.attributes.http.method":["POST"],"collections.attributes.http.scheme":["http"],"collections.attributes.net.peer.port":["44024","46284","46272","44026","44020","44048","46290","37374","37442","46360","44088","44114","37490","44152","37504","46278","44034","46288","37424","46358","44072","46366","44100","44138","46408","37526","37542","52822","52854","37616","52878","46286","37410","46356","46364","44098","37498","44136","44158","46432","46448","52850","37612","52872","52898","44056","37386","37446","46362","44094","44120","46404","44154","46414","37536","52846","37608","37620","52866","52892","46442","52834","52862","37606","37618","52882","43598","43938","43354","43816","44934","45806","45906","43642","44884","44974","45858","43788","44894","45020","45888","44948","45808","45950","48902","48944","48994","49058","49068","48922","48990","49012","49062","48918","48970","49008","49060","49070","48942","48992","49014","49064"],"collections.resource.k8s.pod.name":["bk-datalink-unify-query-6595d74cbf-mzl4x","bk-datalink-unify-query-6595d74cbf-g2q2p","bk-datalink-unify-query-6595d74cbf-zbg52","bk-datalink-unify-query-6595d74cbf-klqkz"],"error":false,"error_count":0,"hierarchy_count":9,"kind_statistics.async":0,"kind_statistics.interval":1626,"kind_statistics.sync":120,"kind_statistics.unspecified":0,"root_service":"unify-query","root_service_category":"http","root_service_kind":2,"root_service_span_id":"0db6f409a4b7b759","root_service_span_name":"/query/ts/promql","root_service_status_code":200,"root_span_id":"0db6f409a4b7b759","root_span_kind":2,"root_span_name":"/query/ts/promql","root_span_service":"unify-query","service_count":1,"span_count":1746,"span_max_duration":316009,"span_min_duration":0,"trace_id":"bf6477880e7abd183119c150ea1447db"}]`,
-			options: `{
-  "result_table.es|http://127.0.0.1:93002" : {
-    "search_after" : [ 1749460179462463 ]
-  }
-}`,
+			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":0,"search_after":[1749460179462463]}}`,
 		},
 		"query with EpochMillis": {
 			queryTs: &structured.QueryTs{
@@ -1244,6 +1240,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    1e4,
 			expected: `[{"__data_label":"bkbase_es","__doc_id":"e058129ae18bff87c95e83f24584e654","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__data_label":"bkbase_es","__doc_id":"c124dae69af9b86a7128ee4281820158","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__data_label":"bkbase_es","__doc_id":"c7f73abf7e865a4b4d7fc608387d01cf","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__data_label":"bkbase_es","__doc_id":"39c3ec662881e44bf26d2a6bfc0e35c3","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__data_label":"bkbase_es","__doc_id":"58e03ce0b9754bf0657d49a5513adcb5","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__data_label":"bkbase_es","__doc_id":"43a36f412886bf30b0746562513638d3","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__data_label":"bkbase_es","__doc_id":"218ceafd04f89b39cda7954e51f4a48a","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__data_label":"bkbase_es","__doc_id":"8d9abe9b782fe3a1272c93f0af6b39e1","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594211000","dtEventTimeStamp":"1723594211000"},{"__data_label":"bkbase_es","__doc_id":"0826407be7f04f19086774ed68eac8dd","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594224000","dtEventTimeStamp":"1723594224000"},{"__data_label":"bkbase_es","__doc_id":"d56b4120194eb37f53410780da777d43","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-llp94","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.bk_base_es","_time":"1723594224000","dtEventTimeStamp":"1723594224000"}]`,
+			options:  `{"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"from":1}}`,
 		},
 		"query es with multi rt and multi from 0 - 5": {
 			queryTs: &structured.QueryTs{
@@ -1282,7 +1279,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    246,
 			expected: `[{"__data_label":"es","__doc_id":"1","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"1"},{"__data_label":"es","__doc_id":"2","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"2"},{"__data_label":"es","__doc_id":"3","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"3"},{"__data_label":"es","__doc_id":"4","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"4"},{"__data_label":"es","__doc_id":"5","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"5"}]`,
-			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":5},"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"from":5}}`,
+			options:  `{"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"from":5,"search_after":["2","5"]},"result_table.es|http://127.0.0.1:93002":{"from":5,"search_after":["1","5"]}}`,
 		},
 		"query es with multi rt and multi from 5 - 10": {
 			queryTs: &structured.QueryTs{
@@ -1322,7 +1319,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    246,
 			expected: `[{"__data_label":"bkbase_es","__doc_id":"6","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"1"},{"__data_label":"es","__doc_id":"6","__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"1"},{"__data_label":"bkbase_es","__doc_id":"7","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"2"},{"__data_label":"es","__doc_id":"7","__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"2"},{"__data_label":"bkbase_es","__doc_id":"8","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"3"}]`,
-			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":7},"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"from":8}}`,
+			options:  `{"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"from":8,"search_after":["2","5"]},"result_table.es|http://127.0.0.1:93002":{"from":7,"search_after":["2","5"]}}`,
 		},
 		"query es with multi rt and one from 0 - 5": {
 			queryTs: &structured.QueryTs{
@@ -1354,7 +1351,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    246,
 			expected: `[{"__data_label":"bkbase_es","__doc_id":"1","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"1"},{"__data_label":"es","__doc_id":"1","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"1"},{"__data_label":"bkbase_es","__doc_id":"2","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"2"},{"__data_label":"es","__doc_id":"2","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"2"},{"__data_label":"bkbase_es","__doc_id":"3","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"3"}]`,
-			options:  `{"result_table.es|http://127.0.0.1:93002":{"search_after":["1","5"]},"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"search_after":["1","5"]}}`,
+			options:  `{"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"from":0,"search_after":["1","5"]},"result_table.es|http://127.0.0.1:93002":{"from":0,"search_after":["1","5"]}}`,
 		},
 		"query es with multi rt and one from 5 - 10": {
 			queryTs: &structured.QueryTs{
@@ -1386,7 +1383,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    246,
 			expected: `[{"__data_label":"es","__doc_id":"3","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"3"},{"__data_label":"bkbase_es","__doc_id":"4","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"4"},{"__data_label":"es","__doc_id":"4","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"4"},{"__data_label":"bkbase_es","__doc_id":"5","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"5"},{"__data_label":"es","__doc_id":"5","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"5"}]`,
-			options:  `{"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"search_after":["2","5"]},"result_table.es|http://127.0.0.1:93002":{"search_after":["2","5"]}}`,
+			options:  `{"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"from":0,"search_after":["2","5"]},"result_table.es|http://127.0.0.1:93002":{"from":0,"search_after":["2","5"]}}`,
 		},
 		"query_bk_base_es_1 to 1": {
 			queryTs: &structured.QueryTs{
@@ -1405,6 +1402,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    1e4,
 			expected: `[{"__data_label":"es","__doc_id":"4f3a5e9c167097c9658e88b2f32364b2","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"result_table.es","_time":"1723594209000","dtEventTimeStamp":"1723594209000"}]`,
+			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":1}}`,
 		},
 		"query with scroll - 1": {
 			queryTs: &structured.QueryTs{
@@ -1437,7 +1435,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			expected: `[{"__data_label":"bkbase_es","__doc_id":"1","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"1"},{"__data_label":"es","__doc_id":"1","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"1"},{"__data_label":"bkbase_es","__doc_id":"2","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"2"},{"__data_label":"es","__doc_id":"2","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"2"},{"__data_label":"bkbase_es","__doc_id":"3","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"3"},{"__data_label":"es","__doc_id":"3","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"3"},{"__data_label":"bkbase_es","__doc_id":"4","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"4"},{"__data_label":"es","__doc_id":"4","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"4"},{"__data_label":"bkbase_es","__doc_id":"5","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"5"},{"__data_label":"es","__doc_id":"5","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"5"}]`,
 			total:    246,
-			options:  `{"result_table.es|http://127.0.0.1:93002":{"scroll_id":"one"},"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"scroll_id":"one"}}`,
+			options:  `{"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"from":0,"scroll_id":"one"},"result_table.es|http://127.0.0.1:93002":{"from":0,"scroll_id":"one"}}`,
 		},
 		"query with scroll - 2": {
 			queryTs: &structured.QueryTs{
@@ -1478,7 +1476,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			expected: `[{"__data_label":"bkbase_es","__doc_id":"6","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"1"},{"__data_label":"es","__doc_id":"6","__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"1"},{"__data_label":"bkbase_es","__doc_id":"7","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"2"},{"__data_label":"es","__doc_id":"7","__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"2"},{"__data_label":"bkbase_es","__doc_id":"8","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"3"},{"__data_label":"es","__doc_id":"8","__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"3"},{"__data_label":"bkbase_es","__doc_id":"9","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"4"},{"__data_label":"es","__doc_id":"9","__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"4"},{"__data_label":"bkbase_es","__doc_id":"10","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"2","b":"5"},{"__data_label":"es","__doc_id":"10","__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"5"}]`,
 			total:    246,
-			options:  `{"result_table.es|http://127.0.0.1:93002":{"scroll_id":"two"},"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"scroll_id":"two"}}`,
+			options:  `{"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"from":0,"scroll_id":"two"},"result_table.es|http://127.0.0.1:93002":{"from":0,"scroll_id":"two"}}`,
 		},
 		"nested query + query string 测试 + highlight": {
 			queryTs: &structured.QueryTs{
@@ -1509,6 +1507,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    1,
 			expected: `[{"__data_label":"es","__doc_id":"aS3KjpEBbwEm76LbcH1G","__highlight":{"group":["<mark>fans</mark>"],"user.first":["<mark>John</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","group":"fans","user.first":"John","user.last":"Smith"}]`,
+			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 		"high light from condition": {
 			queryTs: &structured.QueryTs{
@@ -1538,6 +1537,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    1,
 			expected: `[{"__data_label":"es","__doc_id":"bT4KjpEBbwEm76LbdH2H","__highlight":{"status":["<mark>error</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","message":"Something went wrong","status":"error"}]`,
+			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 		"debug highlight": {
 			queryTs: &structured.QueryTs{
@@ -1566,6 +1566,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    1e4,
 			expected: `[{"__data_label":"es","__doc_id":"14712105480911733430","__highlight":{"resource.k8s.bcs.cluster.id":["<mark>BCS-K8S-00000</mark>"]},"__index":"v2_2_bkapm_trace_bk_monitor_20250604_0","__result_table":"result_table.es","attributes.apdex_type":"satisfied","attributes.req-http-method":"POST","attributes.req-http-path":"https://bkapi.paas3-dev.bktencent.com/api/bk-base/prod/v3/queryengine/query_sync","elapsed_time":38027,"end_time":1.749006597019296e+15,"events":[],"kind":1,"links":[],"parent_span_id":"6f15efc54fedfebe","resource.bk.instance.id":":unify-query::192.168.1.100:","resource.k8s.bcs.cluster.id":"BCS-K8S-00000","resource.k8s.namespace.name":"blueking","resource.k8s.pod.ip":"192.168.1.100","resource.k8s.pod.name":"bk-monitor-unify-query-5c685b56f-n4b6d","resource.net.host.ip":"192.168.1.100","resource.service.name":"unify-query","span_id":"4a5f6170ae000a3f","span_name":"http-curl","start_time":1.749006596981268e+15,"status.code":0,"status.message":"","time":"1749006604000","trace_id":"5c999893cdbc41390c5ff8f3be5f62a9","trace_state":""}]`,
+			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 		"array highlight test": {
 			queryTs: &structured.QueryTs{
@@ -1596,6 +1597,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    1,
 			expected: `[{"__data_label":"es","__doc_id":"cT5KjpEBbwEm76LbeH3I","__highlight":{"user.first":["<mark>John</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}]`,
+			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 		"array highlight with match all": {
 			queryTs: &structured.QueryTs{
@@ -1626,6 +1628,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    1,
 			expected: `[{"__data_label":"es","__doc_id":"cT5KjpEBbwEm76LbeH3I","__highlight":{"user.first":["<mark>John</mark>"],"user.last":["<mark>Smi</mark>th"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}]`,
+			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 		"array highlight with wildcard all": {
 			queryTs: &structured.QueryTs{
@@ -1656,6 +1659,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    1,
 			expected: `[{"__data_label":"es","__doc_id":"cT5KjpEBbwEm76LbeH3I","__highlight":{"user.first":["<mark>John</mark>"],"user.last":["<mark>Smi</mark>th"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","tags":["important","urgent","critical"],"user.first":"John","user.last":"Smith"}]`,
+			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 		"include basic test with contains operator": {
 			queryTs: &structured.QueryTs{
@@ -1692,6 +1696,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    3,
 			expected: `[{"__data_label":"es","__doc_id":"test1","__highlight":{"level":["<mark>error</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","level":"error","message":"Error occurred"},{"__data_label":"es","__doc_id":"test2","__highlight":{"level":["<mark>warn</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","level":"warn","message":"Warning message"},{"__data_label":"es","__doc_id":"test3","__highlight":{"level":["<mark>info</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","level":"info","message":"Info message"}]`,
+			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 
 		"include with nested field and contains": {
@@ -1722,6 +1727,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    2,
 			expected: `[{"__data_label":"es","__doc_id":"nested1","__highlight":{"user.role":["<mark>admin</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","user.department":"IT","user.role":"admin"},{"__data_label":"es","__doc_id":"nested2","__highlight":{"user.role":["<mark>user</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","user.department":"Sales","user.role":"user"}]`,
+			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 
 		"include with contains and exclude pattern": {
@@ -1758,6 +1764,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    3,
 			expected: `[{"__data_label":"es","__doc_id":"app1","__highlight":{"application":["<mark>web-app</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","application":"web-app","log_level":"info","message":"User login successful"},{"__data_label":"es","__doc_id":"app2","__highlight":{"application":["<mark>mobile-app</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","application":"mobile-app","log_level":"warn","message":"Low battery warning"},{"__data_label":"es","__doc_id":"app3","__highlight":{"application":["<mark>desktop-app</mark>"]},"__index":"bk_unify_query_demo_2","__result_table":"result_table.es","application":"desktop-app","log_level":"error","message":"File not found"}]`,
+			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 
 		"highlight with int field": {
@@ -1790,6 +1797,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    3,
 			expected: `[{"__data_label":"es","__doc_id":"6","__highlight":{"a":["<mark>2</mark>"],"gseIndex":["<mark>12345</mark>"]},"__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"1","gseIndex":12345},{"__data_label":"es","__doc_id":"7","__highlight":{"a":["<mark>2</mark>"],"b":["<mark>2</mark>"],"gseIndex":["<mark>12345</mark>"]},"__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"2","gseIndex":12345},{"__data_label":"es","__doc_id":"9","__highlight":{"a":["<mark>2</mark>"],"gseIndex":["<mark>12345</mark>"]},"__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"4","gseIndex":12345}]`,
+			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 		"highlight with gseIndex 8019256.12": {
 			queryTs: &structured.QueryTs{
@@ -1819,6 +1827,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    16,
 			expected: `[{"__data_label":"es","__doc_id":"3440427488472403621","__highlight":{"gseIndex":["<mark>8019256.12</mark>"]},"__index":"v2_2_bklog_bkunify_query_20250710_0","__result_table":"result_table.es","_time":"1752115579000","cloudId":0,"dtEventTimeStamp":"1752115579000","file":"victoriaMetrics/instance.go:397","gseIndex":8.01925612e+06,"iterationIndex":15,"level":"info","report_time":"2025-07-10T02:46:19.443Z","time":"1752115579000","trace_id":"af754e7bbf629abaee3499638974dda9"}]`,
+			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 		"highlight with gseIndex 8019256": {
 			queryTs: &structured.QueryTs{
@@ -1848,6 +1857,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    16,
 			expected: `[{"__data_label":"es","__doc_id":"3440427488472403621","__highlight":{"gseIndex":["<mark>8019256</mark>"]},"__index":"v2_2_bklog_bkunify_query_20250710_0","__result_table":"result_table.es","_time":"1752115579000","cloudId":0,"dtEventTimeStamp":"1752115579000","file":"victoriaMetrics/instance.go:397","gseIndex":8.019256e+06,"iterationIndex":15,"level":"info","report_time":"2025-07-10T02:46:19.443Z","time":"1752115579000","trace_id":"af754e7bbf629abaee3499638974dda9"}]`,
+			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 		"query string ": {
 			queryTs: &structured.QueryTs{
@@ -1877,6 +1887,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    16,
 			expected: `[{"__data_label":"es","__doc_id":"3440427488472403621","__highlight":{"gseIndex":["<mark>8019256</mark>"]},"__index":"v2_2_bklog_bkunify_query_20250710_0","__result_table":"result_table.es","_time":"1752115579000","cloudId":0,"dtEventTimeStamp":"1752115579000","file":"victoriaMetrics/instance.go:397","gseIndex":8.019256e+06,"iterationIndex":15,"level":"info","report_time":"2025-07-10T02:46:19.443Z","time":"1752115579000","trace_id":"af754e7bbf629abaee3499638974dda9"}]`,
+			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 		"query raw by doris": {
 			queryTs: &structured.QueryTs{
@@ -1915,6 +1926,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    20,
 			expected: `[]`,
+			options:  `{"result_table.es_with_time_filed|http://127.0.0.1:93002":{"from":0},"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 		"query raw multi query from + size": {
 			queryTs: &structured.QueryTs{
@@ -1936,6 +1948,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    20,
 			expected: `[{"__data_label":"es","__doc_id":"10002","__index":"","__result_table":"result_table.es","time":"10002"},{"__data_label":"es","__doc_id":"10001","__index":"","__result_table":"result_table.es_with_time_filed","time":"10001"}]`,
+			options:  `{"result_table.es_with_time_filed|http://127.0.0.1:93002":{"from":0},"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 		"query raw multi query from + size 数量刚好结束": {
 			queryTs: &structured.QueryTs{
@@ -1957,6 +1970,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    20,
 			expected: `[]`,
+			options:  `{"result_table.es_with_time_filed|http://127.0.0.1:93002":{"from":0},"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 		"query raw multi query from + size 数量剩余 1 个": {
 			queryTs: &structured.QueryTs{
@@ -1978,6 +1992,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    20,
 			expected: `[{"__data_label":"es","__doc_id":"00001","__index":"","__result_table":"result_table.es_with_time_filed","time":"00001"}]`,
+			options:  `{"result_table.es_with_time_filed|http://127.0.0.1:93002":{"from":0},"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 	}
 

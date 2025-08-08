@@ -159,6 +159,7 @@ func NewBaseCacheManager(bkTenantId string, prefix string, opt *redis.Options, c
 		updatedFieldSet:  make(map[string]map[string]struct{}),
 		updateFieldLocks: make(map[string]*sync.Mutex),
 		ConcurrentLimit:  concurrentLimit,
+		BatchLimit:       1000,
 	}, nil
 }
 

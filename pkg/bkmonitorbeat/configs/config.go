@@ -124,6 +124,7 @@ type Config struct {
 	RpmPackageTask     *RpmPackageConfig      `config:"rpmpackage_task"`
 	TimeSyncTask       *TimeSyncConfig        `config:"timesync_task"`
 	DmesgTask          *DmesgConfig           `config:"dmesg_task"`
+	SelfStatsTask      *SelfStatsConfig       `config:"selfstats_task"`
 }
 
 // NewConfig : new config struct
@@ -163,6 +164,7 @@ func NewConfig() *Config {
 	config.RpmPackageTask = NewRpmPackageConfig(config)
 	config.TimeSyncTask = NewTimeSyncConfig(config)
 	config.DmesgTask = NewDmesgConfig(config)
+	config.SelfStatsTask = NewSelfStatsConfig(config)
 
 	return config
 }

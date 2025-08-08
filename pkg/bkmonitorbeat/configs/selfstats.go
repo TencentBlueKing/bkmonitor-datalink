@@ -7,51 +7,52 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package selfstats
+package configs
 
 import (
-	"time"
-
-	"github.com/elastic/beats/libbeat/common"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
 
-type Metric struct {
-	Metrics   map[string]float64
-	Timestamp int64
-	Dimension map[string]string
+const (
+	ConfigTypeSelfStats = define.ModuleSelfStats
+)
+
+type SelfStatsConfig struct {
+	BaseTaskParam `config:"_,inline"`
 }
 
-func (m Metric) AsMapStr() common.MapStr {
-	return common.MapStr{
-		"metrics":   m.Metrics,
-		"target":    "bkmonitorbeat",
-		"timestamp": m.Timestamp,
-		"dimension": m.Dimension,
+func (c *SelfStatsConfig) GetTaskConfigList() []define.TaskConfig {
+	tasks := make([]define.TaskConfig, 0)
+	// 说明没有任务
+	if c.DataID <= 0 {
+		return tasks
 	}
+
+	tasks = append(tasks, c)
+	return tasks
 }
 
-type Event struct {
-	BizID  int32
-	DataID int32
-	Data   []common.MapStr
+func (c *SelfStatsConfig) InitIdent() error {
+	return c.initIdent(c)
 }
 
-func (e *Event) GetType() string {
-	return define.ModuleSelfStats
+func (c *SelfStatsConfig) GetType() string {
+	return ConfigTypeSelfStats
 }
 
-func (e *Event) IgnoreCMDBLevel() bool {
-	return true
+func (c *SelfStatsConfig) Clean() error {
+	return nil
 }
 
-func (e *Event) AsMapStr() common.MapStr {
-	ts := time.Now().Unix()
-	return common.MapStr{
-		"dataid":    e.DataID,
-		"data":      e.Data,
-		"time":      ts,
-		"timestamp": ts,
+func (c *SelfStatsConfig) GetIdent() string {
+	return ConfigTypeSelfStats
+}
+
+func NewSelfStatsConfig(root *Config) *SelfStatsConfig {
+	config := &SelfStatsConfig{
+		BaseTaskParam: NewBaseTaskParam(),
 	}
+	root.TaskTypeMapping[ConfigTypeSelfStats] = config
+
+	return config
 }

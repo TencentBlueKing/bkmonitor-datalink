@@ -18,183 +18,225 @@ import (
 )
 
 func TestValidate(t *testing.T) {
-	// 测试 Rule 的验证逻辑
-	ruleTests := []struct {
-		name    string
-		rule    Rule
-		wantErr bool
-	}{
-		{
-			name:    "valid in operator",
-			rule:    Rule{Op: OperatorIn, Values: []interface{}{"value1", "value2"}},
-			wantErr: false,
-		},
-		{
-			name:    "invalid in operator with non-string value",
-			rule:    Rule{Op: OperatorIn, Values: []interface{}{123}},
-			wantErr: true,
-		},
-		{
-			name:    "valid range operator",
-			rule:    Rule{Op: OperatorRange, Values: []interface{}{map[string]interface{}{"min": 10, "max": 20}}},
-			wantErr: false,
-		},
-		{
-			name:    "invalid range operator with non-map value",
-			rule:    Rule{Op: OperatorRange, Values: []interface{}{"invalid_map"}},
-			wantErr: true,
-		},
-		{
-			name:    "default range value decode",
-			rule:    Rule{Op: OperatorRange, Values: []interface{}{map[string]interface{}{"max": 20}}},
-			wantErr: false,
-		},
-		{
-			name:    "unsupported operator",
-			rule:    Rule{Op: "invalid_operator"},
-			wantErr: true,
-		},
-		{
-			name:    "empty values for in operator",
-			rule:    Rule{Op: OperatorIn, Values: []interface{}{}},
-			wantErr: false,
-		},
-		{
-			name:    "empty values for range operator",
-			rule:    Rule{Op: OperatorRange, Values: []interface{}{}},
-			wantErr: false,
-		},
-	}
+	t.Run("test rule validate", func(t *testing.T) {
+		// 测试 Rule 的验证逻辑
+		ruleTests := []struct {
+			name    string
+			rule    Rule
+			wantErr bool
+		}{
+			{
+				name:    "valid in operator",
+				rule:    Rule{Op: OperatorIn, Values: []interface{}{"value1", "value2"}},
+				wantErr: false,
+			},
+			{
+				name:    "invalid in operator with non-string value",
+				rule:    Rule{Op: OperatorIn, Values: []interface{}{123}},
+				wantErr: true,
+			},
+			{
+				name:    "valid range operator",
+				rule:    Rule{Op: OperatorRange, Values: []interface{}{map[string]interface{}{"min": 10, "max": 20}}},
+				wantErr: false,
+			},
+			{
+				name:    "invalid range operator with non-map value",
+				rule:    Rule{Op: OperatorRange, Values: []interface{}{"invalid_map"}},
+				wantErr: true,
+			},
+			{
+				name:    "default range value decode",
+				rule:    Rule{Op: OperatorRange, Values: []interface{}{map[string]interface{}{"max": 20}}},
+				wantErr: false,
+			},
+			{
+				name:    "unsupported operator",
+				rule:    Rule{Op: "invalid_operator"},
+				wantErr: true,
+			},
+			{
+				name:    "empty values for in operator",
+				rule:    Rule{Op: OperatorIn, Values: []interface{}{}},
+				wantErr: false,
+			},
+			{
+				name:    "empty values for range operator",
+				rule:    Rule{Op: OperatorRange, Values: []interface{}{}},
+				wantErr: false,
+			},
+		}
 
-	// 测试 Config 的验证逻辑
-	configTests := []struct {
-		name    string
-		metric  string
-		rules   Rules
-		dest    Destination
-		wantErr bool
-	}{
-		{
-			name:    "valid config",
-			metric:  "test_metric",
-			rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
-			dest:    Destination{Label: "dest_label", Value: "dest_value", Action: Upsert},
-			wantErr: false,
-		},
-		{
-			name:    "invalid config - missing metric name",
-			metric:  "",
-			rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
-			dest:    Destination{Label: "dest_label", Value: "dest_value", Action: Upsert},
-			wantErr: true,
-		},
-		{
-			name:    "invalid config - missing destinations",
-			metric:  "test_metric",
-			rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
-			wantErr: true,
-		},
-		{
-			name:    "invalid config - missing destination value",
-			metric:  "test_metric",
-			rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
-			dest:    Destination{Label: "dest_label"},
-			wantErr: true,
-		},
-	}
+		// 执行 Rule 测试
+		for _, tt := range ruleTests {
+			t.Run(tt.name, func(t *testing.T) {
+				err := tt.rule.Validate()
+				if tt.wantErr {
+					assert.Error(t, err)
+				} else {
+					assert.NoError(t, err)
+				}
+			})
+		}
+	})
 
-	// 执行 Rule 测试
-	for _, tt := range ruleTests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.rule.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-
-	// 执行 Config 测试
-	for _, tt := range configTests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := Config{
-				Relabel: []RelabelAction{
-					{
-						Metric: tt.metric,
-						Rules:  tt.rules,
-						Destinations: []Destination{
-							tt.dest,
+	t.Run("test config validate", func(t *testing.T) {
+		// 测试 Config 的验证逻辑
+		configTests := []struct {
+			name    string
+			metric  string
+			rules   Rules
+			dest    Destination
+			wantErr bool
+		}{
+			{
+				name:    "valid config",
+				metric:  "test_metric",
+				rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
+				dest:    Destination{Label: "dest_label", Value: "dest_value", Action: Upsert},
+				wantErr: false,
+			},
+			{
+				name:    "invalid config - missing metric name",
+				metric:  "",
+				rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
+				dest:    Destination{Label: "dest_label", Value: "dest_value", Action: Upsert},
+				wantErr: true,
+			},
+			{
+				name:    "invalid config - missing destinations",
+				metric:  "test_metric",
+				rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
+				wantErr: true,
+			},
+			{
+				name:    "invalid config - missing destination value",
+				metric:  "test_metric",
+				rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
+				dest:    Destination{Label: "dest_label"},
+				wantErr: true,
+			},
+		}
+		// 执行 Config 测试
+		for _, tt := range configTests {
+			t.Run(tt.name, func(t *testing.T) {
+				c := Config{
+					Relabel: []RelabelAction{
+						{
+							Metric: tt.metric,
+							Rules:  tt.rules,
+							Destinations: []Destination{
+								tt.dest,
+							},
 						},
 					},
-				},
-			}
-			assert.Equal(t, tt.wantErr, c.Validate() != nil)
-		})
-	}
+				}
+				assert.Equal(t, tt.wantErr, c.Validate() != nil)
+			})
+		}
+	})
 }
 
 func TestRule_Match(t *testing.T) {
-	ruleIn := Rule{Label: "env", Op: "in", Values: []interface{}{"prod", "staging"}}
-	ruleRange := Rule{Label: "code", Op: "range", Values: []interface{}{map[string]interface{}{"min": 200, "max": 299}}}
-	ruleRangePrefix := Rule{Label: "code", Op: "range", Values: []interface{}{map[string]interface{}{"prefix": "ret_", "min": 200, "max": 299}}}
-	tests := []struct {
-		name  string
-		rule  Rule
-		input string
-		want  bool
-	}{
-		{
-			name:  "in operator match",
-			rule:  ruleIn,
-			input: "prod",
-			want:  true,
-		},
-		{
-			name:  "in operator no match",
-			rule:  ruleIn,
-			input: "dev",
-			want:  false,
-		},
-		{
-			name:  "range operator match",
-			rule:  ruleRange,
-			input: "204",
-			want:  true,
-		},
-		{
-			name:  "range operator no match",
-			rule:  ruleRange,
-			input: "300",
-			want:  false,
-		},
-		{
-			name:  "range operator prefix match",
-			rule:  ruleRangePrefix,
-			input: "ret_204",
-			want:  true,
-		},
-		{
-			name:  "range operator prefix no match",
-			rule:  ruleRangePrefix,
-			input: "ret_300",
-			want:  false,
-		},
-		{
-			name:  "range operator no prefix match",
-			rule:  ruleRangePrefix,
-			input: "200",
-			want:  false,
-		},
-	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_ = tt.rule.Validate()
-			got := tt.rule.Match(tt.input)
-			assert.Equal(t, tt.want, got)
-		})
-	}
+	t.Run("in operator", func(t *testing.T) {
+		ruleIn := Rule{Label: "env", Op: "in", Values: []interface{}{"prod", "staging"}}
+		tests := []struct {
+			name  string
+			rule  Rule
+			input string
+			want  bool
+		}{
+			{
+				name:  "match",
+				rule:  ruleIn,
+				input: "prod",
+				want:  true,
+			},
+			{
+				name:  "no match",
+				rule:  ruleIn,
+				input: "dev",
+				want:  false,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				_ = tt.rule.Validate()
+				got := tt.rule.Match(tt.input)
+				assert.Equal(t, tt.want, got)
+			})
+		}
+	})
+
+	t.Run("range operator", func(t *testing.T) {
+		ruleRange := Rule{Label: "code", Op: "range", Values: []interface{}{map[string]interface{}{"min": 200, "max": 299}}}
+		tests := []struct {
+			name  string
+			rule  Rule
+			input string
+			want  bool
+		}{
+			{
+				name:  "match",
+				rule:  ruleRange,
+				input: "204",
+				want:  true,
+			},
+			{
+				name:  "no match",
+				rule:  ruleRange,
+				input: "300",
+				want:  false,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				_ = tt.rule.Validate()
+				got := tt.rule.Match(tt.input)
+				assert.Equal(t, tt.want, got)
+			})
+		}
+	})
+
+	t.Run("range operator with prefix", func(t *testing.T) {
+		ruleRangePrefix := Rule{Label: "code", Op: "range", Values: []interface{}{map[string]interface{}{"prefix": "ret_", "min": 200, "max": 299}}}
+		tests := []struct {
+			name  string
+			rule  Rule
+			input string
+			want  bool
+		}{
+			{
+				name:  "prefix match",
+				rule:  ruleRangePrefix,
+				input: "ret_204",
+				want:  true,
+			},
+			{
+				name:  "prefix no match",
+				rule:  ruleRangePrefix,
+				input: "ret_300",
+				want:  false,
+			},
+			{
+				name:  "no prefix match",
+				rule:  ruleRangePrefix,
+				input: "200",
+				want:  false,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				_ = tt.rule.Validate()
+				got := tt.rule.Match(tt.input)
+				assert.Equal(t, tt.want, got)
+			})
+		}
+	})
 }
 
 func createTestMap(pairs ...string) pcommon.Map {
@@ -210,47 +252,50 @@ func TestRules_MatchMetricAttrs(t *testing.T) {
 	ruleInMatch := Rule{Label: "service", Op: "in", Values: []interface{}{"auth-service"}}
 	ruleRangeMatch := Rule{Label: "status", Op: "range", Values: []interface{}{map[string]interface{}{"min": 0, "max": 200}}}
 
-	tests := []struct {
-		name  string
-		rs    *Rules
+	type args struct {
 		attrs pcommon.Map
-		want  bool
+	}
+	tests := []struct {
+		name string
+		rs   *Rules
+		args args
+		want bool
 	}{
 		{
-			name:  "empty rules not match",
-			rs:    &Rules{},
-			attrs: createTestMap("service", "auth-service"),
-			want:  false,
+			name: "empty rules not match",
+			rs:   &Rules{},
+			args: args{attrs: createTestMap("service", "auth-service")},
+			want: false,
 		},
 		{
-			name:  "single matching rule",
-			rs:    &Rules{ruleInMatch},
-			attrs: createTestMap("service", "auth-service"),
-			want:  true,
+			name: "single matching rule",
+			rs:   &Rules{ruleInMatch},
+			args: args{attrs: createTestMap("service", "auth-service")},
+			want: true,
 		},
 		{
-			name:  "single non-existing label",
-			rs:    &Rules{ruleInMatch},
-			attrs: createTestMap("app", "payment-service"),
-			want:  false,
+			name: "single non-existing label",
+			rs:   &Rules{ruleInMatch},
+			args: args{attrs: createTestMap("app", "payment-service")},
+			want: false,
 		},
 		{
-			name:  "multiple rules all match",
-			rs:    &Rules{ruleInMatch, ruleRangeMatch},
-			attrs: createTestMap("service", "auth-service", "status", "200"),
-			want:  true,
+			name: "multiple rules all match",
+			rs:   &Rules{ruleInMatch, ruleRangeMatch},
+			args: args{attrs: createTestMap("service", "auth-service", "status", "200")},
+			want: true,
 		},
 		{
-			name:  "range rule mismatch",
-			rs:    &Rules{ruleRangeMatch},
-			attrs: createTestMap("status", "500"),
-			want:  false,
+			name: "range rule mismatch",
+			rs:   &Rules{ruleRangeMatch},
+			args: args{attrs: createTestMap("status", "500")},
+			want: false,
 		},
 		{
-			name:  "mixed rules partial match",
-			rs:    &Rules{ruleInMatch, ruleRangeMatch},
-			attrs: createTestMap("service", "auth-service", "status", "404"),
-			want:  false,
+			name: "mixed rules partial match",
+			rs:   &Rules{ruleInMatch, ruleRangeMatch},
+			args: args{attrs: createTestMap("service", "auth-service", "status", "404")},
+			want: false,
 		},
 	}
 
@@ -258,7 +303,7 @@ func TestRules_MatchMetricAttrs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.rs.Validate()
 			assert.NoError(t, err)
-			got := tt.rs.MatchMetricAttrs(tt.attrs)
+			got := tt.rs.MatchMetricAttrs(tt.args.attrs)
 			assert.Equal(t, tt.want, got, "Test case [%s] failed", tt.name)
 		})
 	}

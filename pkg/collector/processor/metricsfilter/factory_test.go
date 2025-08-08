@@ -199,65 +199,76 @@ processor:
               value: "success"
 `
 	factory := processor.MustCreateFactory(content, NewFactory)
-
-	tests := []struct {
-		name       string
+	type args struct {
 		metric     string
 		attributes map[string]string
-		wantExist  bool
-		wantValue  string
+	}
+	tests := []struct {
+		name      string
+		args      args
+		wantExist bool
+		wantValue string
 	}{
 		{
-			name:   "rules hit op in",
-			metric: "rpc_client_handled_total",
-			attributes: map[string]string{
-				"callee_method":  "hello",
-				"callee_service": "example.greeter",
-				"code":           "200",
+			name: "rules hit op in",
+			args: args{
+				metric: "rpc_client_handled_total",
+				attributes: map[string]string{
+					"callee_method":  "hello",
+					"callee_service": "example.greeter",
+					"code":           "200",
+				},
 			},
 			wantExist: true,
 			wantValue: "success",
 		},
 		{
-			name:   "rules hit op in but name not match",
-			metric: "test_metric",
-			attributes: map[string]string{
-				"callee_method":  "hello",
-				"callee_service": "example.greeter",
-				"code":           "200",
+			name: "rules hit op in but name not match",
+			args: args{
+				metric: "rpc_client_handled_total",
+				attributes: map[string]string{
+					"callee_method":  "hello",
+					"callee_service": "example.greeter",
+					"code":           "200",
+				},
 			},
 			wantExist: false,
-			wantValue: "success",
 		},
 		{
-			name:   "rules hit op range",
-			metric: "rpc_client_handled_total",
-			attributes: map[string]string{
-				"callee_method":  "hello",
-				"callee_service": "example.greeter",
-				"code":           "ret_105",
+			name: "rules hit op range",
+			args: args{
+				metric: "rpc_client_handled_total",
+				attributes: map[string]string{
+					"callee_method":  "hello",
+					"callee_service": "example.greeter",
+					"code":           "ret_105",
+				},
 			},
 			wantExist: true,
 			wantValue: "success",
 		},
 		{
-			name:   "rules not hit",
-			metric: "rpc_client_handled_total",
-			attributes: map[string]string{
-				"callee_method":  "hello_1",
-				"callee_service": "example.greeter",
-				"code":           "200",
+			name: "rules not hit",
+			args: args{
+				metric: "rpc_client_handled_total",
+				attributes: map[string]string{
+					"callee_method":  "hello_1",
+					"callee_service": "example.greeter",
+					"code":           "200",
+				},
 			},
 			wantExist: false,
 		},
 		{
-			name:   "rules hit replace attr",
-			metric: "rpc_client_handled_total",
-			attributes: map[string]string{
-				"callee_method":  "hello",
-				"callee_service": "example.greeter",
-				"code":           "200",
-				"code_type":      "test_type",
+			name: "rules hit replace attr",
+			args: args{
+				metric: "rpc_client_handled_total",
+				attributes: map[string]string{
+					"callee_method":  "hello",
+					"callee_service": "example.greeter",
+					"code":           "200",
+					"code_type":      "test_type",
+				},
 			},
 			wantExist: true,
 			wantValue: "success",
@@ -266,7 +277,7 @@ processor:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := makeMetricsGeneratorWithAttributes(tt.metric, 1, tt.attributes)
+			g := makeMetricsGeneratorWithAttributes(tt.args.metric, 1, tt.args.attributes)
 			record := define.Record{
 				RecordType: define.RecordMetrics,
 				Data:       g.Generate(),
@@ -321,64 +332,76 @@ processor:
               value: "success"
 `
 	factory := processor.MustCreateFactory(content, NewFactory)
-	tests := []struct {
-		name       string
+	type args struct {
 		metric     string
 		attributes map[string]string
-		wantExist  bool
-		wantValue  string
+	}
+	tests := []struct {
+		name      string
+		args      args
+		wantExist bool
+		wantValue string
 	}{
 		{
-			name:   "rules hit op in",
-			metric: "rpc_client_handled_total",
-			attributes: map[string]string{
-				"callee_method":  "hello",
-				"callee_service": "example.greeter",
-				"code":           "200",
+			name: "rules hit op in",
+			args: args{
+				metric: "rpc_client_handled_total",
+				attributes: map[string]string{
+					"callee_method":  "hello",
+					"callee_service": "example.greeter",
+					"code":           "200",
+				},
 			},
 			wantExist: true,
 			wantValue: "success",
 		},
 		{
-			name:   "rules hit op in but name not match",
-			metric: "test_metric",
-			attributes: map[string]string{
-				"callee_method":  "hello",
-				"callee_service": "example.greeter",
-				"code":           "200",
+			name: "rules hit op in but name not match",
+			args: args{
+				metric: "rpc_client_handled_total",
+				attributes: map[string]string{
+					"callee_method":  "hello",
+					"callee_service": "example.greeter",
+					"code":           "200",
+				},
 			},
 			wantExist: false,
-			wantValue: "success",
 		},
 		{
-			name:   "rules hit op range",
-			metric: "rpc_client_handled_total",
-			attributes: map[string]string{
-				"callee_method":  "hello",
-				"callee_service": "example.greeter",
-				"code":           "ret_105",
+			name: "rules hit op range",
+			args: args{
+				metric: "rpc_client_handled_total",
+				attributes: map[string]string{
+					"callee_method":  "hello",
+					"callee_service": "example.greeter",
+					"code":           "ret_105",
+				},
 			},
 			wantExist: true,
 			wantValue: "success",
 		},
 		{
-			name:   "rules not hit",
-			metric: "rpc_client_handled_total",
-			attributes: map[string]string{
-				"callee_method":  "hello_1",
-				"callee_service": "example.greeter",
-				"code":           "200",
+			name: "rules not hit",
+			args: args{
+				metric: "rpc_client_handled_total",
+				attributes: map[string]string{
+					"callee_method":  "hello_1",
+					"callee_service": "example.greeter",
+					"code":           "200",
+				},
 			},
 			wantExist: false,
 		},
 		{
-			name:   "rules hit replace attr",
-			metric: "rpc_client_handled_total",
-			attributes: map[string]string{
-				"callee_method":  "hello",
-				"callee_service": "example.greeter",
-				"code":           "200",
-				"code_type":      "test_type",
+			name: "rules hit replace attr",
+			args: args{
+				metric: "rpc_client_handled_total",
+				attributes: map[string]string{
+					"callee_method":  "hello",
+					"callee_service": "example.greeter",
+					"code":           "200",
+					"code_type":      "test_type",
+				},
 			},
 			wantExist: true,
 			wantValue: "success",
@@ -392,8 +415,8 @@ processor:
 				Timeseries: make([]prompb.TimeSeries, 0),
 			}
 			labels := make([]prompb.Label, 0, 4)
-			labels = append(labels, prompb.Label{Name: "__name__", Value: tt.metric})
-			for k, v := range tt.attributes {
+			labels = append(labels, prompb.Label{Name: "__name__", Value: tt.args.metric})
+			for k, v := range tt.args.attributes {
 				labels = append(labels, prompb.Label{
 					Name:  k,
 					Value: v,

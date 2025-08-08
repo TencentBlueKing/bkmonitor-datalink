@@ -284,14 +284,18 @@ func (m *HostAndTopoCacheManager) BuildRelationMetrics(ctx context.Context) erro
 
 	// 3. 按业务ID构建relation指标
 	for bizID, hosts := range bizDataMap {
-		infos := m.HostToRelationInfos(hosts)
-		if err := relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Host, infos); err != nil {
-			logger.Errorf("build host relation metrics failed for biz %d: %v", bizID, err)
-		}
+		m.buildRelationMetrics(ctx, hosts, bizID)
 	}
 
 	logger.Infof("[cmdb_relation] build host relation metrics from cache, total biz: %d", len(bizDataMap))
 	return nil
+}
+
+func (m *HostAndTopoCacheManager) buildRelationMetrics(ctx context.Context, hosts []*AlarmHostInfo, bizID int) {
+	infos := m.HostToRelationInfos(hosts)
+	if err := relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Host, infos); err != nil {
+		logger.Errorf("build host relation metrics failed for biz %d: %v", bizID, err)
+	}
 }
 
 // NewHostAndTopoCacheManager 创建主机及拓扑缓存管理器

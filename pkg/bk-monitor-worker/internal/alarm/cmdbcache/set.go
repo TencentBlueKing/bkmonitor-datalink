@@ -75,14 +75,18 @@ func (m *SetCacheManager) BuildRelationMetrics(ctx context.Context) error {
 
 	// 3. 按业务ID构建relation指标
 	for bizID, data := range bizDataMap {
-		infos := m.SetToRelationInfos(data)
-		if err := relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Set, infos); err != nil {
-			logger.Errorf("build set relation metrics failed for biz %d: %v", bizID, err)
-		}
+		m.buildRelationMetrics(ctx, data, bizID)
 	}
 	logger.Infof("[cmdb_relation] build set relation metrics success, total biz count: %d", len(bizDataMap))
 
 	return nil
+}
+
+func (m *SetCacheManager) buildRelationMetrics(ctx context.Context, data []map[string]interface{}, bizID int) {
+	infos := m.SetToRelationInfos(data)
+	if err := relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Set, infos); err != nil {
+		logger.Errorf("build set relation metrics failed for biz %d: %v", bizID, err)
+	}
 }
 
 // NewSetCacheManager 创建模块缓存管理器

@@ -225,24 +225,18 @@ func updateNetSpeed(once *NetReport, interval uint64) {
 		return
 	}
 
+	lastNetStatMap = make(map[string]net.IOCountersStat)
+	for _, val := range once.Stat {
+		lastNetStatMap[val.Name] = val.IOCountersStat
+	}
+
 	// 处理错误恢复场景
 	if errCount > 0 {
-		// 出现过错误的首次恢复,覆盖lastNetStatMap
-		lastNetStatMap = make(map[string]net.IOCountersStat)
-		for _, val := range once.Stat {
-			lastNetStatMap[val.Name] = val.IOCountersStat
-		}
 		// 该次数据不用来计算速率与包数,可能错误周期较长，导致算出的值不准确，不如扔掉
 		resetNetSpeedRate(once)
 		errCount = 0
 		logger.Debugf("Nic backflow recovery")
 		return
-	}
-
-	// 正常情况下更新lastNetStatMap
-	lastNetStatMap = make(map[string]net.IOCountersStat)
-	for _, val := range once.Stat {
-		lastNetStatMap[val.Name] = val.IOCountersStat
 	}
 }
 

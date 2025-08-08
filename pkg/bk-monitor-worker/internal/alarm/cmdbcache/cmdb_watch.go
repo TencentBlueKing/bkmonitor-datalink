@@ -539,11 +539,9 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 			}
 		}
 	}
-
-	initialCacheTypes := []string{relation.Host, relation.Set, relation.Module}
-	if err = BuildAllInfosCache(ctx, params.BkTenantId, params.Prefix, &params.Redis, initialCacheTypes, bizConcurrent); err != nil {
-		return err
-	}
+	initialCtx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	buildAllInfosCache(initialCtx, params.BkTenantId, params.Prefix, &params.Redis, bizConcurrent, relation.Host, relation.Set, relation.Module)
 
 	wg := sync.WaitGroup{}
 	cancelCtx, cancel := context.WithCancel(ctx)

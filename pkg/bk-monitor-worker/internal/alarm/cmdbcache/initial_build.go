@@ -24,40 +24,28 @@ package cmdbcache
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
-	"github.com/pkg/errors"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-func BuildAllInfosCache(ctx context.Context, bkTenantId, prefix string, redisOpt *redis.Options, cacheTypes []string, concurrentLimit int) error {
+func buildAllInfosCache(ctx context.Context, bkTenantId, prefix string, redisOpt *redis.Options, concurrentLimit int, cacheTypes ...string) {
 	var wg sync.WaitGroup
-	errChan := make(chan error)
-
 	for _, cacheType := range cacheTypes {
-		cacheManager, err := NewCacheManagerByType(bkTenantId, redisOpt, prefix, cacheType, concurrentLimit)
-		if err != nil {
-			return errors.Wrapf(err, "failed to create cache manager for type: %s", cacheType)
-		}
-		err = cacheManager.BuildRelationMetrics(ctx)
-		if err != nil {
-			return errors.Wrapf(err, "failed to build relation metrics for type: %s", cacheType)
-		}
+		wg.Add(1)
+		go func(cacheType string) {
+			defer wg.Done()
+			cacheManager, err := NewCacheManagerByType(bkTenantId, redisOpt, prefix, cacheType, concurrentLimit)
+			if err != nil {
+				logger.Warn("[cmdb_relation] failed to create cache manager for type: %s, error: %v", cacheType, err)
+				return
+			}
+			err = cacheManager.BuildRelationMetrics(ctx)
+			if err != nil {
+				logger.Warnf("[cmdb_relation] failed to build relation metrics for type: %s, error: %v", cacheType, err)
+			}
+		}(cacheType)
 	}
-
 	wg.Wait()
-	close(errChan)
-
-	var errs []error
-	for err := range errChan {
-		errs = append(errs, err)
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("some errors occurred: %v", errs)
-	}
-
-	return nil
 }

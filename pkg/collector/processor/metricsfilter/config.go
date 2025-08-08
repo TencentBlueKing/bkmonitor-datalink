@@ -135,16 +135,15 @@ func (rs *Rules) MatchMetricAttrs(attrs pcommon.Map) bool {
 }
 
 // MatchRWLabels 判断 remote write data labels 是否匹配所有规则
-func (rs *Rules) MatchRWLabels(labels map[string]*prompb.Label) bool {
+func (rs *Rules) MatchRWLabels(labels []prompb.Label) bool {
 	if len(*rs) == 0 {
 		return false
 	}
 	for _, rule := range *rs {
-		label, ok := labels[rule.Label]
+		label, ok := getValueFromLabels(labels, rule.Label)
 		if !ok {
 			return false
 		}
-		// 某条规则未命中直接返回
 		if matched := rule.Match(label.GetValue()); !matched {
 			return false
 		}

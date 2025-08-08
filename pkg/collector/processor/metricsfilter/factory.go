@@ -157,16 +157,18 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 		}
 	case define.RecordRemoteWrite:
 		handle := func(ts *prompb.TimeSeries, action RelabelAction) {
-			name, labels := extractDims(ts.GetLabels())
-			if action.Metric != name {
+			lbs := ts.GetLabels()
+			nameLabel, ok := getValueFromLabels(lbs, "__name__")
+			if !ok || nameLabel.GetValue() != action.Metric {
 				return
 			}
-			if action.Rules.MatchRWLabels(labels) {
+			if action.Rules.MatchRWLabels(lbs) {
 				for _, destination := range action.Destinations {
 					switch destination.Action {
 					case ActionUpsert:
-						if _, ok := labels[destination.Label]; ok {
-							labels[destination.Label].Value = destination.Value
+						label, ok := getValueFromLabels(lbs, destination.Label)
+						if ok {
+							label.Value = destination.Value
 						} else {
 							ts.Labels = append(ts.Labels, prompb.Label{Name: destination.Label, Value: destination.Value})
 						}
@@ -183,15 +185,12 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 	}
 }
 
-func extractDims(labels []prompb.Label) (string, map[string]*prompb.Label) {
-	m := make(map[string]*prompb.Label)
-	var name string
+// getValueFromLabels 获取 labels 中指定 key 的 value，本场景下直接遍历比转成 map 更快，见 config_test.go benchmark
+func getValueFromLabels(labels []prompb.Label, key string) (*prompb.Label, bool) {
 	for i := 0; i < len(labels); i++ {
-		if labels[i].GetName() == "__name__" {
-			name = labels[i].GetValue()
-			continue
+		if labels[i].GetName() == key {
+			return &labels[i], true
 		}
-		m[labels[i].GetName()] = &labels[i]
 	}
-	return name, m
+	return nil, false
 }

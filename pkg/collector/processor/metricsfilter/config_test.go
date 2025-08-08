@@ -10,6 +10,7 @@
 package metricsfilter
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/prometheus/prometheus/prompb"
@@ -222,7 +223,7 @@ func TestRelabelRule_Match(t *testing.T) {
 				want:  false,
 			},
 			{
-				name:  "no prefix match",
+				name:  "prefix not match",
 				rule:  ruleRangePrefix,
 				input: "200",
 				want:  false,
@@ -311,7 +312,7 @@ func TestRelabelRules_MatchMetricAttrs(t *testing.T) {
 
 func TestRelabelRules_MatchRWLabels(t *testing.T) {
 	type args struct {
-		labels map[string]*prompb.Label
+		labels []prompb.Label
 	}
 	tests := []struct {
 		name string
@@ -326,9 +327,9 @@ func TestRelabelRules_MatchRWLabels(t *testing.T) {
 				{Label: "status", Op: "range", Values: []interface{}{map[string]interface{}{"min": 200, "max": 299}}},
 			},
 			args: args{
-				labels: map[string]*prompb.Label{
-					"service": {Value: "auth-service"},
-					"status":  {Value: "200"},
+				labels: []prompb.Label{
+					{Name: "service", Value: "auth-service"},
+					{Name: "status", Value: "200"},
 				},
 			},
 			want: true,
@@ -339,8 +340,8 @@ func TestRelabelRules_MatchRWLabels(t *testing.T) {
 				{Label: "service", Op: "in", Values: []interface{}{"auth-service"}},
 			},
 			args: args{
-				labels: map[string]*prompb.Label{
-					"status": {Value: "500"},
+				labels: []prompb.Label{
+					{Name: "status", Value: "500"},
 				},
 			},
 			want: false,
@@ -351,8 +352,8 @@ func TestRelabelRules_MatchRWLabels(t *testing.T) {
 				{Label: "status", Op: "range", Values: []interface{}{map[string]interface{}{"min": 200, "max": 299}}},
 			},
 			args: args{
-				labels: map[string]*prompb.Label{
-					"status": {Value: "503"},
+				labels: []prompb.Label{
+					{Name: "status", Value: "500"},
 				},
 			},
 			want: false,
@@ -363,8 +364,8 @@ func TestRelabelRules_MatchRWLabels(t *testing.T) {
 				{Label: "status", Op: "range", Values: []interface{}{map[string]interface{}{"min": 200, "max": 299, "prefix": "ret_"}}},
 			},
 			args: args{
-				labels: map[string]*prompb.Label{
-					"status": {Value: "503"},
+				labels: []prompb.Label{
+					{Name: "status", Value: "503"},
 				},
 			},
 			want: false,
@@ -373,8 +374,8 @@ func TestRelabelRules_MatchRWLabels(t *testing.T) {
 			name: "empty rules not match",
 			rs:   &Rules{},
 			args: args{
-				labels: map[string]*prompb.Label{
-					"service": {Value: "any-service"},
+				labels: []prompb.Label{
+					{Name: "service", Value: "any-service"},
 				},
 			},
 			want: false,
@@ -385,7 +386,7 @@ func TestRelabelRules_MatchRWLabels(t *testing.T) {
 				{Label: "service", Op: "in", Values: []interface{}{"auth-service"}},
 			},
 			args: args{
-				labels: map[string]*prompb.Label{},
+				labels: []prompb.Label{},
 			},
 			want: false,
 		},
@@ -396,8 +397,8 @@ func TestRelabelRules_MatchRWLabels(t *testing.T) {
 				{Label: "env", Op: "in", Values: []interface{}{"prod"}},
 			},
 			args: args{
-				labels: map[string]*prompb.Label{
-					"service": {Value: "auth-service"},
+				labels: []prompb.Label{
+					{Name: "service", Value: "auth-service"},
 				},
 			},
 			want: false,
@@ -411,5 +412,71 @@ func TestRelabelRules_MatchRWLabels(t *testing.T) {
 				t.Errorf("MatchRWLabels() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func makeRWDataAndRule(numExtraLabel int) ([]prompb.Label, Rules) {
+	var labels []prompb.Label
+	for i := 0; i < numExtraLabel; i++ {
+		labels = append(labels, prompb.Label{
+			Name:  fmt.Sprintf("label_%d", i),
+			Value: fmt.Sprintf("value_%d", i),
+		})
+	}
+	labels = append(labels, prompb.Label{
+		Name:  "service",
+		Value: "auth-service",
+	}, prompb.Label{
+		Name:  "env",
+		Value: "prod",
+	}, prompb.Label{
+		Name:  "status",
+		Value: "200",
+	})
+	rules := Rules{
+		{Label: "service", Op: "in", Values: []interface{}{"auth-service"}},
+		{Label: "env", Op: "in", Values: []interface{}{"prod"}},
+		{Label: "status", Op: "range", Values: []interface{}{map[string]interface{}{"min": 200, "max": 299, "prefix": "ret_"}}},
+	}
+	return labels, rules
+}
+
+func extractDims(labels []prompb.Label) (string, map[string]*prompb.Label) {
+	m := make(map[string]*prompb.Label, len(labels))
+	var name string
+	for i := 0; i < len(labels); i++ {
+		if labels[i].GetName() == "__name__" {
+			name = labels[i].GetValue()
+			continue
+		}
+		m[labels[i].GetName()] = &labels[i]
+	}
+	return name, m
+}
+
+// 直接遍历 labels，时间复杂度 o(n^2), 但是实际 n(rules) 一般比较小，性能更好
+func BenchmarkMatchRWLabelsSlice(b *testing.B) {
+	labels, rules := makeRWDataAndRule(10)
+
+	for i := 0; i < b.N; i++ {
+		rules.MatchRWLabels(labels)
+	}
+}
+
+// 遍历一次 labels，构建 map，时间复杂度 o(n)，但申请内存造成的开销远大于遍历
+func BenchmarkMatchRWLabelsMap(b *testing.B) {
+	lbs, rules := makeRWDataAndRule(10)
+
+	for i := 0; i < b.N; i++ {
+		_, labels := extractDims(lbs)
+		for _, rule := range rules {
+			label, ok := labels[rule.Label]
+			if !ok {
+				continue
+			}
+			if matched := rule.Match(label.GetValue()); !matched {
+				continue
+			}
+		}
 	}
 }

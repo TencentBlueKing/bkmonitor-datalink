@@ -447,7 +447,6 @@ processor:
 					assert.Equal(t, tt.wantValue, v.GetValue())
 				}
 			}
-
 		})
 	}
 }

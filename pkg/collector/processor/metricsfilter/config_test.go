@@ -93,14 +93,14 @@ func TestValidate(t *testing.T) {
 				name:    "valid config",
 				metric:  "test_metric",
 				rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
-				dest:    Destination{Label: "dest_label", Value: "dest_value", Action: Upsert},
+				dest:    Destination{Label: "dest_label", Value: "dest_value", Action: ActionUpsert},
 				wantErr: false,
 			},
 			{
 				name:    "invalid config - missing metric name",
 				metric:  "",
 				rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
-				dest:    Destination{Label: "dest_label", Value: "dest_value", Action: Upsert},
+				dest:    Destination{Label: "dest_label", Value: "dest_value", Action: ActionUpsert},
 				wantErr: true,
 			},
 			{

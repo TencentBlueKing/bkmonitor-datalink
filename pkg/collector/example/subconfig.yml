@@ -187,7 +187,7 @@ default:
     - name: "metrics_filter/relabel"
       config:
         relabel:
-          - metric: "gauge_int"
+          - metrics: ["gauge_int"]
             rules:
               - label: "callee_service"
                 op: "in"

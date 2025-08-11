@@ -53,13 +53,13 @@ const (
 )
 
 type RelabelAction struct {
-	Metric       string        `config:"metric" mapstructure:"metric"`
+	Metrics      Metrics       `config:"metrics" mapstructure:"metrics"`
 	Rules        Rules         `config:"rules" mapstructure:"rules"`
 	Destinations []Destination `config:"destinations" mapstructure:"destinations"`
 }
 
 func (r *RelabelAction) Validate() error {
-	if r.Metric == "" {
+	if len(r.Metrics) == 0 {
 		return errors.Errorf("relabel action have no metric name")
 	}
 	if err := r.Rules.Validate(); err != nil {
@@ -74,6 +74,17 @@ func (r *RelabelAction) Validate() error {
 		}
 	}
 	return nil
+}
+
+type Metrics []string
+
+func (ms *Metrics) Contains(s string) bool {
+	for _, metric := range *ms {
+		if metric == s {
+			return true
+		}
+	}
+	return false
 }
 
 type DstAction string

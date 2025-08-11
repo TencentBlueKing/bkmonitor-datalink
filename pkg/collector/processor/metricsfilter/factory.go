@@ -142,15 +142,16 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 		for _, action := range config.Relabel {
 			pdMetrics := record.Data.(pmetric.Metrics)
 			foreach.MetricsSliceDataPointsAttrs(pdMetrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
-				if action.Metric != name {
+				if !action.Metrics.Contains(name) {
 					return
 				}
-				if action.Rules.MatchMetricAttrs(attrs) {
-					for _, destination := range action.Destinations {
-						switch destination.Action {
-						case ActionUpsert:
-							attrs.UpsertString(destination.Label, destination.Value)
-						}
+				if !action.Rules.MatchMetricAttrs(attrs) {
+					return
+				}
+				for _, destination := range action.Destinations {
+					switch destination.Action {
+					case ActionUpsert:
+						attrs.UpsertString(destination.Label, destination.Value)
 					}
 				}
 			})
@@ -159,20 +160,16 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 		handle := func(ts *prompb.TimeSeries, action RelabelAction) {
 			lbs := ts.GetLabels()
 			nameLabel, ok := getValueFromLabels(lbs, "__name__")
-			if !ok || nameLabel.GetValue() != action.Metric {
+			if !ok || !action.Metrics.Contains(nameLabel.GetValue()) {
 				return
 			}
-			if action.Rules.MatchRWLabels(lbs) {
-				for _, destination := range action.Destinations {
-					switch destination.Action {
-					case ActionUpsert:
-						label, ok := getValueFromLabels(lbs, destination.Label)
-						if ok {
-							label.Value = destination.Value
-						} else {
-							ts.Labels = append(ts.Labels, prompb.Label{Name: destination.Label, Value: destination.Value})
-						}
-					}
+			if !action.Rules.MatchRWLabels(lbs) {
+				return
+			}
+			for _, destination := range action.Destinations {
+				switch destination.Action {
+				case ActionUpsert:
+					upsertLabel(ts, destination.Label, destination.Value)
 				}
 			}
 		}
@@ -182,6 +179,16 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 				handle(&rwData.Timeseries[i], action)
 			}
 		}
+	}
+}
+
+// upsertLabel 提供类似 ot 的 upsert 方法，在 remotewrite timeseries 中插入或更新指定 label
+func upsertLabel(ts *prompb.TimeSeries, k string, v string) {
+	label, ok := getValueFromLabels(ts.GetLabels(), k)
+	if ok {
+		label.Value = v
+	} else {
+		ts.Labels = append(ts.Labels, prompb.Label{Name: k, Value: v})
 	}
 }
 

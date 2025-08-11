@@ -85,34 +85,34 @@ func TestRelabelConfigValidate(t *testing.T) {
 		// 测试 Config 的验证逻辑
 		configTests := []struct {
 			name    string
-			metric  string
+			metrics []string
 			rules   Rules
 			dest    Destination
 			wantErr bool
 		}{
 			{
 				name:    "valid config",
-				metric:  "test_metric",
+				metrics: []string{"test_metric"},
 				rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
 				dest:    Destination{Label: "dest_label", Value: "dest_value", Action: ActionUpsert},
 				wantErr: false,
 			},
 			{
 				name:    "invalid config - missing metric name",
-				metric:  "",
+				metrics: []string{},
 				rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
 				dest:    Destination{Label: "dest_label", Value: "dest_value", Action: ActionUpsert},
 				wantErr: true,
 			},
 			{
 				name:    "invalid config - missing destinations",
-				metric:  "test_metric",
+				metrics: []string{"test_metric"},
 				rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
 				wantErr: true,
 			},
 			{
 				name:    "invalid config - missing destination value",
-				metric:  "test_metric",
+				metrics: []string{"test_metric"},
 				rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
 				dest:    Destination{Label: "dest_label"},
 				wantErr: true,
@@ -124,8 +124,8 @@ func TestRelabelConfigValidate(t *testing.T) {
 				c := Config{
 					Relabel: []RelabelAction{
 						{
-							Metric: tt.metric,
-							Rules:  tt.rules,
+							Metrics: tt.metrics,
+							Rules:   tt.rules,
 							Destinations: []Destination{
 								tt.dest,
 							},

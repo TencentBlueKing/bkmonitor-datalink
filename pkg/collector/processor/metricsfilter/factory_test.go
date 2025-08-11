@@ -171,7 +171,7 @@ processor:
   - name: "metrics_filter/relabel"
     config:
       relabel:
-        - metric: "rpc_client_handled_total"
+        - metrics: ["rpc_client_handled_total"]
           rules:
             - label: "callee_method"
               op: "in"
@@ -304,7 +304,7 @@ processor:
   - name: "metrics_filter/relabel"
     config:
       relabel:
-        - metric: "rpc_client_handled_total"
+        - metrics: ["rpc_client_handled_total"]
           rules:
             - label: "callee_method"
               op: "in"

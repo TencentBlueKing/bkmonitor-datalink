@@ -45,9 +45,79 @@ type NetInfo struct {
 	Collisions uint64 `json:"collisions"`
 }
 
-var virtualInterfaceSet = common.NewSet()
+type NetFIFOQueue struct {
+	queue [][]Stat
+	max   int
+}
 
-var lastNetStatMap map[string]net.IOCountersStat
+// 初始化队列
+func NewNetFIFOQueue(max int) *NetFIFOQueue {
+	return &NetFIFOQueue{
+		queue: make([][]Stat, 0, max),
+		max:   max,
+	}
+}
+
+// Push 方法，将一组 Stat 对象加入队列
+func (f *NetFIFOQueue) Push(stats []Stat) {
+	if len(f.queue) >= f.max {
+		f.queue = f.queue[1:] // 如果队列已满，移除最早的一轮数据
+	}
+	f.queue = append(f.queue, stats) // 添加新的数据轮
+}
+
+// CheckMonotonicIncrease 方法，判断是否满足单调递增条件
+func (f *NetFIFOQueue) CheckMonotonicIncrease() bool {
+	// 如果队列长度小于 max，直接返回 false
+	if len(f.queue) < f.max {
+		return false
+	}
+
+	// 构建每个网卡在各轮次中的数据序列
+	networkStats := make(map[string][]Stat)
+	for _, round := range f.queue {
+		for _, stat := range round {
+			networkStats[stat.Name] = append(networkStats[stat.Name], stat)
+		}
+	}
+
+	// 检查每个网卡的属性是否单调递增
+	for _, stats := range networkStats {
+		if !f.isNetworkStatsMonotonic(stats) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isNetworkStatsMonotonic 检查单个网卡的统计数据是否单调递增
+func (f *NetFIFOQueue) isNetworkStatsMonotonic(stats []Stat) bool {
+	if len(stats) < 2 {
+		return true // 数据不足，认为是单调的
+	}
+
+	for i := 1; i < len(stats); i++ {
+		prev := stats[i-1]
+		curr := stats[i]
+
+		if curr.BytesSent <= prev.BytesSent ||
+			curr.BytesRecv <= prev.BytesRecv ||
+			curr.PacketsSent <= prev.PacketsSent ||
+			curr.PacketsRecv <= prev.PacketsRecv {
+			return false
+		}
+	}
+
+	return true
+}
+
+var (
+	virtualInterfaceSet = common.NewSet()
+	netStatFIFOQueue    = NewNetFIFOQueue(5)
+	lastNetStatMap      map[string]net.IOCountersStat
+	errCount            int
+)
 
 var lastStatTime time.Time
 
@@ -112,11 +182,32 @@ func getStatByIOCounterStat(stat []net.IOCountersStat) ([]Stat, error) {
 	return s, nil
 }
 
+func resetNetSpeedRate(once *NetReport) {
+	for i := range once.Stat {
+		once.Stat[i].SpeedRecv = 0
+		once.Stat[i].SpeedSent = 0
+		once.Stat[i].SpeedPacketsRecv = 0
+		once.Stat[i].SpeedPacketsSent = 0
+	}
+}
+
 func updateNetSpeed(once *NetReport, interval uint64) {
+	// 速率计算需要保证数据单调递增，不能出现倒流
+	netStatFIFOQueue.Push(once.Stat)
+	hasBackflow := false
+
 	if len(lastNetStatMap) > 0 {
 		for i := range once.Stat {
 			// net devices maybe changed, should check net name
 			if val, ok := lastNetStatMap[once.Stat[i].Name]; ok {
+				// 当任何一次出现倒流认为该次错误
+				if once.Stat[i].BytesSent < val.BytesSent ||
+					once.Stat[i].BytesRecv < val.BytesRecv ||
+					once.Stat[i].PacketsRecv < val.PacketsRecv ||
+					once.Stat[i].PacketsSent < val.PacketsSent {
+					hasBackflow = true
+					break
+				}
 				once.Stat[i].SpeedRecv = (CounterDiff(once.Stat[i].BytesRecv, val.BytesRecv)) / interval
 				once.Stat[i].SpeedSent = (CounterDiff(once.Stat[i].BytesSent, val.BytesSent)) / interval
 				once.Stat[i].SpeedPacketsRecv = (CounterDiff(once.Stat[i].PacketsRecv, val.PacketsRecv)) / interval
@@ -125,9 +216,27 @@ func updateNetSpeed(once *NetReport, interval uint64) {
 		}
 	}
 
+	// 检查是否有倒流且FIFO队列不满足单调递增
+	if hasBackflow && !netStatFIFOQueue.CheckMonotonicIncrease() {
+		// 速率与包数全部置0,错误次数加1,且保留上次lastNetStatMap
+		errCount++
+		logger.Errorf("The NIC traffic reverts for %d times", errCount)
+		resetNetSpeedRate(once)
+		return
+	}
+
 	lastNetStatMap = make(map[string]net.IOCountersStat)
 	for _, val := range once.Stat {
 		lastNetStatMap[val.Name] = val.IOCountersStat
+	}
+
+	// 处理错误恢复场景
+	if errCount > 0 {
+		// 该次数据不用来计算速率与包数,可能错误周期较长，导致算出的值不准确，不如扔掉
+		resetNetSpeedRate(once)
+		errCount = 0
+		logger.Debugf("Nic backflow recovery")
+		return
 	}
 }
 
@@ -139,11 +248,11 @@ func updateMaxNetStatMap(stats []Stat, maxNetStatMap map[string]Stat) {
 			max := common.MaxUInt(maxStat.SpeedRecv, maxStat.SpeedSent)
 			if currentMax > max {
 				maxNetStatMap[maxStat.Name] = currentStat
-				logger.Debugf("update max net dev %s io, %d > %d", maxStat.Name, currentMax, max)
+				logger.Infof("update max net dev %s io, %d > %d", maxStat.Name, currentMax, max)
 			}
 		} else {
 			maxNetStatMap[currentStat.Name] = currentStat
-			logger.Debugf("first net dev %s", currentStat.Name)
+			logger.Infof("first net dev %s", currentStat.Name)
 		}
 	}
 }
@@ -167,8 +276,6 @@ func GetNetInfo(config configs.NetConfig) (*NetReport, error) {
 	ticker := time.NewTicker(config.StatPeriod)
 	defer ticker.Stop()
 	for {
-		logger.Debug("collect net io")
-
 		var once NetReport
 
 		now := time.Now()
@@ -177,16 +284,12 @@ func GetNetInfo(config configs.NetConfig) (*NetReport, error) {
 			logger.Errorf("get net IOCounters fail for->[%s]", err)
 			return nil, err
 		}
-
 		stat = FilterNetIOStats(stat, config)
 
 		once.Stat, err = getStatByIOCounterStat(stat)
 		if err != nil {
 			return nil, err
 		}
-
-		logger.Debugf("net get io %+v", once.Stat)
-
 		interval := uint64(now.Sub(lastStatTime).Seconds())
 		if interval == 0 {
 			// in case devide 0
@@ -194,11 +297,10 @@ func GetNetInfo(config configs.NetConfig) (*NetReport, error) {
 		}
 		logger.Debugf("net interval=%d", interval)
 		lastStatTime = now
-
 		updateNetSpeed(&once, interval)
-
 		// select max net io report
 		updateMaxNetStatMap(once.Stat, maxNetStatMap)
+		logger.Debugf("There are %d rounds left to end this collection:net get io %v", count, once.Stat)
 
 		count--
 		if count <= 0 {

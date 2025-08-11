@@ -7,51 +7,17 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package selfstats
+//go:build selfstats || basetask
+
+package taskfactory
 
 import (
-	"time"
-
-	"github.com/elastic/beats/libbeat/common"
-
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/selfstats"
 )
 
-type Metric struct {
-	Metrics   map[string]float64
-	Timestamp int64
-	Dimension map[string]string
-}
-
-func (m Metric) AsMapStr() common.MapStr {
-	return common.MapStr{
-		"metrics":   m.Metrics,
-		"target":    "selfstats",
-		"timestamp": m.Timestamp,
-		"dimension": m.Dimension,
-	}
-}
-
-type Event struct {
-	BizID  int32
-	DataID int32
-	Data   []common.MapStr
-}
-
-func (e *Event) GetType() string {
-	return define.ModuleSelfStats
-}
-
-func (e *Event) IgnoreCMDBLevel() bool {
-	return true
-}
-
-func (e *Event) AsMapStr() common.MapStr {
-	ts := time.Now().Unix()
-	return common.MapStr{
-		"dataid":    e.DataID,
-		"data":      e.Data,
-		"time":      ts,
-		"timestamp": ts,
-	}
+func init() {
+	SetTaskConfigByName(define.ModuleSelfStats, func() define.TaskMetaConfig { return new(configs.SelfStatsConfig) })
+	Register(define.ModuleSelfStats, selfstats.New)
 }

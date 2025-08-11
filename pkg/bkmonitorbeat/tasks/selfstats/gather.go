@@ -13,19 +13,19 @@ import (
 	"context"
 	"math"
 	"strconv"
+	"time"
 
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"golang.org/x/exp/maps"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type Gather struct {
-	config *configs.SelfStatsConfig
 	tasks.BaseTask
 }
 
@@ -34,14 +34,6 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather.GlobalConfig = globalConfig
 	gather.TaskConfig = taskConfig
 	gather.Init()
-
-	taskConf := taskConfig.(*configs.SelfStatsConfig)
-	//gather.cli = NewClient(&Option{
-	//	NtpdPath:   taskConf.NtpdPath,
-	//	ChronyAddr: taskConf.ChronyAddress,
-	//	Timeout:    taskConf.QueryTimeout,
-	//})
-
 	return gather
 }
 
@@ -51,7 +43,8 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 	metrics, err := prometheus.DefaultGatherer.Gather()
 	if err != nil {
-
+		logger.Errorf("failed to load prometheus gather: %v", err)
+		return
 	}
 
 	var data []common.MapStr
@@ -60,15 +53,27 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 
 	e <- &Event{
-		BizID:  0,
-		DataID: 0,
+		BizID:  g.TaskConfig.GetBizID(),
+		DataID: g.TaskConfig.GetDataID(),
 		Data:   data,
 	}
 }
 
+func getTimestampMs(now int64, t *int64) int64 {
+	if t != nil {
+		return *t
+	}
+	return now
+}
+
+func isValidFloat64(f float64) bool {
+	return !(math.IsNaN(f) || math.IsInf(f, 0))
+}
+
 func decodePromMetricFamily(mf *dto.MetricFamily) []common.MapStr {
+	var ms []Metric
 	name := *mf.Name
-	var ms []common.MapStr
+	now := time.Now().UnixMilli()
 
 	for _, metric := range mf.GetMetric() {
 		lbs := map[string]string{}
@@ -80,40 +85,39 @@ func decodePromMetricFamily(mf *dto.MetricFamily) []common.MapStr {
 			}
 		}
 
+		ts := getTimestampMs(now, metric.TimestampMs)
+
 		// 处理 Counter 类型数据
 		counter := metric.GetCounter()
 		if counter != nil && isValidFloat64(counter.GetValue()) {
-			m := Metric{
+			ms = append(ms, Metric{
 				Metrics:   map[string]float64{name: counter.GetValue()},
-				Timestamp: *metric.TimestampMs,
+				Timestamp: ts,
 				Dimension: maps.Clone(lbs),
-			}
-			ms = append(ms, m.AsMapStr())
+			})
 		}
 
 		// 处理 Gauge 类型数据
 		gauge := metric.GetGauge()
 		if gauge != nil && isValidFloat64(gauge.GetValue()) {
-			m := Metric{
+			ms = append(ms, Metric{
 				Metrics:   map[string]float64{name: gauge.GetValue()},
-				Timestamp: *metric.TimestampMs,
+				Timestamp: ts,
 				Dimension: maps.Clone(lbs),
-			}
-			ms = append(ms, m.AsMapStr())
+			})
 		}
 
 		// 处理 Summary 类型数据
 		summary := metric.GetSummary()
 		if summary != nil && isValidFloat64(summary.GetSampleSum()) {
-			m := Metric{
+			ms = append(ms, Metric{
 				Metrics: map[string]float64{
 					name + "_sum":   summary.GetSampleSum(),
 					name + "_count": float64(summary.GetSampleCount()),
 				},
-				Timestamp: *metric.TimestampMs,
+				Timestamp: ts,
 				Dimension: maps.Clone(lbs),
-			}
-			ms = append(ms, m.AsMapStr())
+			})
 
 			for _, quantile := range summary.GetQuantile() {
 				if !isValidFloat64(quantile.GetValue()) {
@@ -122,28 +126,26 @@ func decodePromMetricFamily(mf *dto.MetricFamily) []common.MapStr {
 
 				quantileLabels := maps.Clone(lbs)
 				quantileLabels["quantile"] = strconv.FormatFloat(quantile.GetQuantile(), 'f', -1, 64)
-				m := Metric{
+				ms = append(ms, Metric{
 					Metrics: map[string]float64{
 						name: quantile.GetValue(),
 					},
-					Timestamp: *metric.TimestampMs,
+					Timestamp: ts,
 					Dimension: quantileLabels,
-				}
-				ms = append(ms, m.AsMapStr())
+				})
 			}
 
 			// 处理 Histogram 类型数据
 			histogram := metric.GetHistogram()
 			if histogram != nil && isValidFloat64(histogram.GetSampleSum()) {
-				m := Metric{
+				ms = append(ms, Metric{
 					Metrics: map[string]float64{
 						name + "_sum":   histogram.GetSampleSum(),
 						name + "_count": float64(histogram.GetSampleCount()),
 					},
-					Timestamp: *metric.TimestampMs,
+					Timestamp: ts,
 					Dimension: maps.Clone(lbs),
-				}
-				ms = append(ms, m.AsMapStr())
+				})
 
 				infSeen := false
 				for _, bucket := range histogram.GetBucket() {
@@ -153,15 +155,14 @@ func decodePromMetricFamily(mf *dto.MetricFamily) []common.MapStr {
 
 					bucketLabels := maps.Clone(lbs)
 					bucketLabels["le"] = strconv.FormatFloat(bucket.GetUpperBound(), 'f', -1, 64)
-					m := Metric{
+					ms = append(ms, Metric{
 						Metrics: map[string]float64{
 							name + "_sum":   histogram.GetSampleSum(),
 							name + "_count": float64(histogram.GetSampleCount()),
 						},
-						Timestamp: *metric.TimestampMs,
-						Dimension: lbs,
-					}
-					ms = append(ms, m.AsMapStr())
+						Timestamp: ts,
+						Dimension: bucketLabels,
+					})
 				}
 
 				// 仅 expfmt.FmtText 格式支持 inf
@@ -169,34 +170,32 @@ func decodePromMetricFamily(mf *dto.MetricFamily) []common.MapStr {
 				if !infSeen {
 					bucketLabels := maps.Clone(lbs)
 					bucketLabels["le"] = strconv.FormatFloat(math.Inf(+1), 'f', -1, 64)
-					m := Metric{
+					ms = append(ms, Metric{
 						Metrics: map[string]float64{
 							name + "_sum":   histogram.GetSampleSum(),
 							name + "_count": float64(histogram.GetSampleCount()),
 						},
-						Timestamp: *metric.TimestampMs,
+						Timestamp: ts,
 						Dimension: bucketLabels,
-					}
-					ms = append(ms, m.AsMapStr())
+					})
 				}
 			}
 
 			// 处理未知类型数据
 			untyped := metric.GetUntyped()
 			if untyped != nil && isValidFloat64(untyped.GetValue()) {
-				m := Metric{
+				ms = append(ms, Metric{
 					Metrics:   map[string]float64{name: untyped.GetValue()},
-					Timestamp: *metric.TimestampMs,
+					Timestamp: ts,
 					Dimension: maps.Clone(lbs),
-				}
-				ms = append(ms, m.AsMapStr())
+				})
 			}
 		}
 	}
 
-	return ms
-}
-
-func isValidFloat64(f float64) bool {
-	return !(math.IsNaN(f) || math.IsInf(f, 0))
+	ret := make([]common.MapStr, 0, len(ms))
+	for i := 0; i < len(ms); i++ {
+		ret = append(ret, ms[i].AsMapStr())
+	}
+	return ret
 }

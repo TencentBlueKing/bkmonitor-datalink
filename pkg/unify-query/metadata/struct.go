@@ -102,6 +102,8 @@ type Query struct {
 
 	StorageType string `json:"storage_type,omitempty"` // 存储类型
 
+	SliceID string `json:"slice_id,omitempty"`
+
 	StorageID   string `json:"storage_id,omitempty"`
 	StorageName string `json:"storage_name,omitempty"`
 

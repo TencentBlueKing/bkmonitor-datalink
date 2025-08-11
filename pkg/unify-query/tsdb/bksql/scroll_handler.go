@@ -30,11 +30,11 @@ func generateScrollID(items ...any) string {
 	return strings.Join(strs, ":")
 }
 
-func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession, connect, tableID string) ([]*redis.SliceInfo, error) {
+func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession, tableUUID string) ([]*redis.SliceInfo, error) {
 	var slices []*redis.SliceInfo
 
 	for idx := 0; idx < session.MaxSlice; idx++ {
-		key := generateScrollID(consul.BkSqlStorageType, tableID, idx)
+		key := generateScrollID(consul.BkSqlStorageType, tableUUID, idx)
 		session.Mu.RLock()
 		val, exists := session.ScrollIDs[key]
 		session.Mu.RUnlock()
@@ -55,7 +55,7 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 
 		slices = append(slices, &redis.SliceInfo{
 			Connect:     "",
-			TableId:     tableID,
+			TableId:     tableUUID,
 			StorageType: consul.BkSqlStorageType,
 			SliceIdx:    idx,
 			SliceMax:    session.MaxSlice,
@@ -66,8 +66,8 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 	return slices, nil
 }
 
-func (i *Instance) UpdateScrollStatus(ctx context.Context, session *redis.ScrollSession, connect, tableID string, resultOption *metadata.ResultTableOption, status string) error {
-	key := generateScrollID(consul.BkSqlStorageType, tableID, *resultOption.SliceIndex)
+func (i *Instance) UpdateScrollStatus(ctx context.Context, session *redis.ScrollSession, tableUUID string, resultOption *metadata.ResultTableOption, status string) error {
+	key := generateScrollID(consul.BkSqlStorageType, tableUUID, *resultOption.SliceIndex)
 
 	var scrollID string
 	var currentOffset int

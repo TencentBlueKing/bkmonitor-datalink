@@ -35,7 +35,6 @@ import (
 	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
@@ -159,7 +158,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 }
 
 func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
-	ignoreDimensions := []string{elasticsearch.KeyAddress}
+	ignoreDimensions := []string{metadata.KeyTableUUID}
 
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
@@ -244,12 +243,11 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				if queryTs.IsMultiFrom {
 					data = data[0:queryTs.Limit]
 					for _, l := range data {
-						tableID := l[elasticsearch.KeyTableID].(string)
-						address := l[elasticsearch.KeyAddress].(string)
+						tableUUID := l[metadata.KeyTableUUID].(string)
 
-						option := resultTableOptions.GetOption(tableID, address)
-						if option == nil {
-							resultTableOptions.SetOption(tableID, address, &metadata.ResultTableOption{From: function.IntPoint(1)})
+						option := resultTableOptions.GetOption(tableUUID)
+						if option == nil || option.From == nil {
+							resultTableOptions.SetOption(tableUUID, &metadata.ResultTableOption{From: function.IntPoint(1)})
 						} else {
 							*option.From++
 						}
@@ -364,7 +362,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					resultTableOptions = make(metadata.ResultTableOptions)
 				}
 				lock.Lock()
-				resultTableOptions.SetOption(qry.TableID, instance.Connect(), option)
+				resultTableOptions.SetOption(qry.TableUUID(), option)
 				lock.Unlock()
 
 				total += size

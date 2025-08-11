@@ -783,7 +783,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 
 			if c.options != "" {
 				options := make(metadata.ResultTableOptions)
-				options.SetOption(c.query.TableID, ins.Connect(), option)
+				options.SetOption(c.query.TableUUID(), option)
 
 				optString, _ := json.Marshal(options)
 				assert.Equal(t, c.options, string(optString))

@@ -31,10 +31,8 @@ func TestInstance_getAlias(t *testing.T) {
 	metadata.InitMetadata()
 	ctx := metadata.InitHashID(context.Background())
 	inst, err := NewInstance(ctx, &InstanceOption{
-		Connects: []Connect{
-			{
-				Address: mock.EsUrl,
-			},
+		Connect: Connect{
+			Address: mock.EsUrl,
 		},
 		Timeout: time.Minute,
 	})
@@ -145,10 +143,8 @@ func TestInstance_queryReference(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 
 	ins, err := NewInstance(ctx, &InstanceOption{
-		Connects: []Connect{
-			{
-				Address: mock.EsUrl,
-			},
+		Connect: Connect{
+			Address: mock.EsUrl,
 		},
 		Timeout: 3 * time.Second,
 	})
@@ -485,10 +481,8 @@ func TestInstance_queryRawData(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 
 	ins, err := NewInstance(ctx, &InstanceOption{
-		Connects: []Connect{
-			{
-				Address: mock.EsUrl,
-			},
+		Connect: Connect{
+			Address: mock.EsUrl,
 		},
 		Timeout: 3 * time.Second,
 	})
@@ -558,6 +552,7 @@ func TestInstance_queryRawData(t *testing.T) {
 						Ast:  false,
 					},
 				},
+				StorageID:   "log",
 				DataSource:  structured.BkLog,
 				TableID:     "es_index",
 				DataLabel:   "es_index",
@@ -593,6 +588,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				Size:       10,
 				DataSource: structured.BkLog,
 				TableID:    "bk_log_index_set_10",
+				StorageID:  "log",
 				DataLabel:  "set_10",
 				Orders: metadata.Orders{
 					{
@@ -632,6 +628,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				Source:      []string{"__ext.io_kubernetes_pod", "__ext.container_name"},
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
+				StorageID:   "log",
 				DataLabel:   "bk_log",
 				StorageType: consul.ElasticsearchStorageType,
 				TimeField: metadata.TimeField{
@@ -663,6 +660,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				Field:       field,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
+				StorageID:   "log",
 				StorageType: consul.ElasticsearchStorageType,
 				ResultTableOptions: metadata.ResultTableOptions{
 					"bk_log_index_set_10|http://127.0.0.1:93002": &metadata.ResultTableOption{
@@ -692,6 +690,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				Field:       field,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
+				StorageID:   "log",
 				StorageType: consul.ElasticsearchStorageType,
 				ResultTableOptions: metadata.ResultTableOptions{
 					"bk_log_index_set_10|http://127.0.0.1:93002": &metadata.ResultTableOption{
@@ -716,6 +715,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				Field:       field,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
+				StorageID:   "log",
 				StorageType: consul.ElasticsearchStorageType,
 				Orders: []metadata.Order{
 					{
@@ -766,7 +766,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				}
 			}()
 
-			size, options, err := ins.QueryRawData(ctx, c.query, c.start, c.end, dataCh)
+			size, option, err := ins.QueryRawData(ctx, c.query, c.start, c.end, dataCh)
 			close(dataCh)
 
 			wg.Wait()
@@ -782,6 +782,9 @@ func TestInstance_queryRawData(t *testing.T) {
 				} else {
 					assert.Nil(t, list)
 				}
+
+				options := make(metadata.ResultTableOptions)
+				options.SetOption(c.query.TableUUID(), option)
 
 				assert.Equal(t, c.size, size)
 				assert.Equal(t, c.resultTableOptions, options)

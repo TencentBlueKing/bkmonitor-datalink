@@ -35,6 +35,7 @@ const (
 	KeyIndex     = "__index"
 	KeyTableID   = "__result_table"
 	KeyDataLabel = "__data_label"
+	KeyTableUUID = "__table_uuid"
 
 	TableFieldName = "Field"
 	TableFieldType = "Type"
@@ -234,10 +235,6 @@ func (i *Instance) Table(query *metadata.Query) string {
 	return table
 }
 
-func (i *Instance) InstanceConnects() []string {
-	return []string{i.client.url}
-}
-
 // QueryRawData 直接查询原始返回
 func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, option *metadata.ResultTableOption, err error) {
 	defer func() {
@@ -246,7 +243,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		}
 	}()
 
-	option = query.ResultTableOptions.GetOption(query.TableID, i.client.url)
+	option = query.ResultTableOptions.GetOption(query.TableUUID())
 	if option == nil {
 		option = &metadata.ResultTableOption{}
 	}
@@ -314,6 +311,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		newData[KeyIndex] = query.DB
 		newData[KeyTableID] = query.TableID
 		newData[KeyDataLabel] = query.DataLabel
+		newData[KeyTableUUID] = query.TableUUID()
 		dataCh <- newData
 	}
 

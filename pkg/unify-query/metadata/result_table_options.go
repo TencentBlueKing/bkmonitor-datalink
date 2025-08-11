@@ -24,27 +24,15 @@ type ResultTableOption struct {
 	ResultSchema []map[string]any `json:"result_schema,omitempty"`
 }
 
-func (o ResultTableOptions) getKey(tableID, address string) string {
-	key := tableID
-	if address != "" {
-		key = tableID + "|" + address
-	}
-	return key
-}
-
-func (o ResultTableOptions) SetOption(tableID, address string, option *ResultTableOption) {
+func (o ResultTableOptions) SetOption(tableUUID string, option *ResultTableOption) {
 	if option == nil {
 		return
 	}
-	o[o.getKey(tableID, address)] = option
+	o[tableUUID] = option
 }
 
-func (o ResultTableOptions) GetOption(tableID, address string) *ResultTableOption {
-	if o == nil {
-		return nil
-	}
-
-	if option, ok := o[o.getKey(tableID, address)]; ok {
+func (o ResultTableOptions) GetOption(tableUUID string) *ResultTableOption {
+	if option, ok := o[tableUUID]; ok {
 		return option
 	}
 	return nil

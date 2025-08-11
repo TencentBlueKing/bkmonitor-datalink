@@ -136,6 +136,8 @@ func TestScrollSliceRetryMechanism(t *testing.T) {
 				maxSlice = 1
 			}
 
+			tableUUID := fmt.Sprintf("%s|%s", tt.tableID, tt.connect)
+
 			session := redis.NewScrollSession(fmt.Sprintf("test_%s", tt.tableID), maxSlice, 5*time.Minute, 3)
 			ctx := context.Background()
 			instance, err := getInstance(ctx, tt.storageType)
@@ -145,7 +147,7 @@ func TestScrollSliceRetryMechanism(t *testing.T) {
 
 			scrollHandler := instance.ScrollHandler()
 
-			slices, err := scrollHandler.MakeSlices(ctx, session, tt.connect, tt.tableID)
+			slices, err := scrollHandler.MakeSlices(ctx, session, tableUUID)
 			assert.NoError(t, err)
 
 			for _, op := range tt.operations {
@@ -155,12 +157,12 @@ func TestScrollSliceRetryMechanism(t *testing.T) {
 						ScrollID:   op.scrollID,
 						SliceMax:   &maxSlice,
 					}
-					err := scrollHandler.UpdateScrollStatus(ctx, session, tt.connect, tt.tableID, resultOption, op.action)
+					err := scrollHandler.UpdateScrollStatus(ctx, session, tableUUID, resultOption, op.action)
 					assert.NoError(t, err)
 				}
 			}
 
-			slices, err = scrollHandler.MakeSlices(ctx, session, tt.connect, tt.tableID)
+			slices, err = scrollHandler.MakeSlices(ctx, session, tableUUID)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedSliceCount, len(slices), "slice 数量不符合预期")
 

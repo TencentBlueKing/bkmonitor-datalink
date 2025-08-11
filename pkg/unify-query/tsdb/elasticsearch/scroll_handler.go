@@ -30,14 +30,14 @@ func generateScrollID(items ...any) string {
 	return strings.Join(strs, ":")
 }
 
-func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession, connect, tableID string) ([]*redis.SliceInfo, error) {
+func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession, tableUUID string) ([]*redis.SliceInfo, error) {
 	session.Mu.Lock()
 	defer session.Mu.Unlock()
 
 	var slices []*redis.SliceInfo
 
 	for idx := 0; idx < session.MaxSlice; idx++ {
-		key := generateScrollID(consul.ElasticsearchStorageType, connect, tableID, idx)
+		key := generateScrollID(consul.ElasticsearchStorageType, tableUUID, idx)
 		val, exists := session.ScrollIDs[key]
 
 		if !exists {
@@ -53,8 +53,7 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 		}
 
 		slices = append(slices, &redis.SliceInfo{
-			Connect:     connect,
-			TableId:     tableID,
+			TableId:     tableUUID,
 			StorageType: consul.ElasticsearchStorageType,
 			SliceIdx:    idx,
 			SliceMax:    session.MaxSlice,
@@ -65,7 +64,7 @@ func (i *Instance) MakeSlices(ctx context.Context, session *redis.ScrollSession,
 	return slices, nil
 }
 
-func (i *Instance) UpdateScrollStatus(ctx context.Context, session *redis.ScrollSession, connect, tableID string, resultOption *metadata.ResultTableOption, status string) error {
-	key := generateScrollID(consul.ElasticsearchStorageType, connect, tableID, *resultOption.SliceIndex)
+func (i *Instance) UpdateScrollStatus(ctx context.Context, session *redis.ScrollSession, tableUUID string, resultOption *metadata.ResultTableOption, status string) error {
+	key := generateScrollID(consul.ElasticsearchStorageType, tableUUID, *resultOption.SliceIndex)
 	return session.UpdateSliceStatus(ctx, key, status, resultOption.ScrollID, 0)
 }

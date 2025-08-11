@@ -55,6 +55,12 @@ func prepareQueryTs(ctx context.Context, queryTs *structured.QueryTs) (queryList
 			ql.Limit = queryTs.Limit
 		}
 
+		// 复用 scroll 配置，如果配置了 scroll 优先使用 scroll
+		if queryTs.Scroll != "" {
+			ql.Scroll = queryTs.Scroll
+			queryTs.IsMultiFrom = false
+		}
+
 		// 在使用 multiFrom 模式下，From 需要保持为 0，因为 from 存放在 resultTableOptions 里面
 		if queryTs.IsMultiFrom {
 			queryTs.From = 0
@@ -62,12 +68,6 @@ func prepareQueryTs(ctx context.Context, queryTs *structured.QueryTs) (queryList
 
 		if ql.From == 0 && queryTs.From > 0 {
 			ql.From = queryTs.From
-		}
-
-		// 复用 scroll 配置，如果配置了 scroll 优先使用 scroll
-		if queryTs.Scroll != "" {
-			ql.Scroll = queryTs.Scroll
-			queryTs.IsMultiFrom = false
 		}
 
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
@@ -100,14 +100,14 @@ type StorageScrollQuery struct {
 func collectStorageScrollQuery(ctx context.Context, session *redis.ScrollSession, qryList []*metadata.Query) (list []StorageScrollQuery, err error) {
 	for _, qry := range qryList {
 		instance := prometheus.GetTsDbInstance(ctx, qry)
-		slices, mErr := instance.ScrollHandler().MakeSlices(ctx, session, qry.StorageID, qry.TableID)
+		slices, mErr := instance.ScrollHandler().MakeSlices(ctx, session, qry.TableUUID())
 		if mErr != nil {
 			err = mErr
 			return
 		}
 		var injectedScrollQueryList []*metadata.Query
 		for _, slice := range slices {
-			qryCp, iErr := injectScrollQuery(qry, qry.StorageID, qry.TableID, slice)
+			qryCp, iErr := injectScrollQuery(qry, slice)
 			if iErr != nil {
 				err = iErr
 				return
@@ -124,7 +124,7 @@ func collectStorageScrollQuery(ctx context.Context, session *redis.ScrollSession
 	return
 }
 
-func injectScrollQuery(qry *metadata.Query, connect, tableID string, sliceInfo *redis.SliceInfo) (*metadata.Query, error) {
+func injectScrollQuery(qry *metadata.Query, sliceInfo *redis.SliceInfo) (*metadata.Query, error) {
 	qryCp := &metadata.Query{}
 	if err := copier.CopyWithOption(qryCp, qry, copier.Option{
 		DeepCopy: true,
@@ -143,12 +143,12 @@ func injectScrollQuery(qry *metadata.Query, connect, tableID string, sliceInfo *
 		From:       &sliceInfo.Offset,
 	}
 
-	qryCp.ResultTableOptions.SetOption(tableID, connect, option)
+	qryCp.ResultTableOptions.SetOption(qry.TableUUID(), option)
 
 	return qryCp, nil
 }
 
-func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connect, tableID string, qry *metadata.Query, start time.Time, end time.Time, instance tsdb.Instance) (data []map[string]any, err error) {
+func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, qry *metadata.Query, start time.Time, end time.Time, instance tsdb.Instance) (data []map[string]any, err error) {
 	dataCh := make(chan map[string]any)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
@@ -164,7 +164,7 @@ func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connec
 	wg.Wait()
 
 	if option == nil {
-		option = qry.ResultTableOptions.GetOption(tableID, connect)
+		option = qry.ResultTableOptions.GetOption(qry.TableUUID())
 		if option != nil {
 			option.ScrollID = ""
 		}
@@ -172,7 +172,7 @@ func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connec
 
 	// 下载逻辑一定要生成 sliceResultOption，否则无法进行下次查询
 	if option == nil {
-		err = fmt.Errorf("no result option found for tableID: %s, connect: %s", tableID, connect)
+		err = fmt.Errorf("no result option found for table_uuid: %s", qry.TableUUID())
 		return
 	}
 
@@ -187,7 +187,7 @@ func scrollQueryWorker(ctx context.Context, session *redis.ScrollSession, connec
 	} else {
 		sliceStatus = redis.StatusRunning
 	}
-	err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, connect, tableID, option, sliceStatus)
+	err = instance.ScrollHandler().UpdateScrollStatus(ctx, session, qry.TableUUID(), option, sliceStatus)
 	return
 }
 

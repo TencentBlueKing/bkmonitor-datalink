@@ -68,9 +68,10 @@ const (
 	KeyDocID = "__doc_id"
 	KeySort  = "sort"
 
+	KeyTableUUID = "__table_uuid"
+
 	KeyIndex   = "__index"
 	KeyTableID = "__result_table"
-	KeyAddress = "__address"
 
 	KeyDataLabel = "__data_label"
 )

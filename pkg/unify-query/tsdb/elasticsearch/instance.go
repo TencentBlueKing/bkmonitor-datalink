@@ -20,13 +20,10 @@ import (
 	"time"
 
 	elastic "github.com/olivere/elastic/v7"
-	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -306,7 +303,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	var res *elastic.SearchResult
 	func() {
 		if qb.ResultTableOptions != nil {
-			opt := qb.ResultTableOptions.GetOption(qb.TableID, qo.conn.Address)
+			opt := qb.ResultTableOptions.GetOption(qb.TableUUID())
 			if opt != nil {
 				if opt.ScrollID != "" {
 					span.Set("query-scroll-id", opt.ScrollID)
@@ -327,7 +324,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			span.Set("query-scroll", qb.Scroll)
 			scroll := client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source)
 			if qb.ResultTableOptions != nil {
-				option := qb.ResultTableOptions.GetOption(qb.TableID, qo.conn.Address)
+				option := qb.ResultTableOptions.GetOption(qb.TableUUID())
 				if option != nil {
 					if option.ScrollID != "" {
 						span.Set("query-scroll-id", option.ScrollID)
@@ -551,7 +548,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 
 	if len(query.ResultTableOptions) > 0 {
-		option = query.ResultTableOptions.GetOption(query.TableID, i.connect.Address)
+		option = query.ResultTableOptions.GetOption(query.TableUUID())
 		if option != nil {
 			if option.From != nil {
 				query.From = *option.From
@@ -614,7 +611,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				fact.data[KeyTableID] = query.TableID
 				fact.data[KeyDataLabel] = query.DataLabel
 
-				fact.data[KeyAddress] = i.connect.Address
+				fact.data[KeyTableUUID] = query.TableUUID()
 
 				if timeValue, ok := data[fact.GetTimeField().Name]; ok {
 					fact.data[FieldTime] = timeValue
@@ -635,7 +632,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		if query.Scroll != "" {
 			var originalOption *metadata.ResultTableOption
 			if len(query.ResultTableOptions) > 0 {
-				originalOption = query.ResultTableOptions.GetOption(query.TableID, i.connect.Address)
+				originalOption = query.ResultTableOptions.GetOption(query.TableUUID())
 			}
 
 			option.ScrollID = sr.ScrollId
@@ -752,55 +749,10 @@ func (i *Instance) QuerySeriesSet(
 	return i.queryWithAgg(ctx, qo, fact)
 }
 
-// QueryRange 使用 es 直接查询引擎
-func (i *Instance) DirectQueryRange(ctx context.Context, referenceName string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
 func (i *Instance) InstanceType() string {
 	return consul.ElasticsearchStorageType
 }
 
 func (i *Instance) ScrollHandler() tsdb.ScrollHandler {
 	return i
-}
-
-func (i *Instance) Connect() string {
-	return i.connect.String()
 }

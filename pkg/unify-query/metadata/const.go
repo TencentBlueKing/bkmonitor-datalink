@@ -34,4 +34,6 @@ const (
 	TableIDProxyISNotExists      = "TABLE_ID_PROXY_IS_NOT_EXISTS"
 
 	QueryRawError = "QUERY_RAW_ERROR"
+
+	KeyTableUUID = "__table_uuid"
 )

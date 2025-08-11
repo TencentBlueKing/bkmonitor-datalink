@@ -11,7 +11,6 @@ package metadata
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -88,13 +87,11 @@ func (q *Query) ConfigureAlias(ctx context.Context) {
 	span.Set("query-json", string(qStr))
 }
 
-// UUID 获取唯一性
-func (q *Query) UUID(prefix string) string {
-	str := fmt.Sprintf("%s%s%s%s%s%s%s%s%s%s",
-		prefix, q.SourceType, q.ClusterID, q.ClusterName, q.TagsKey,
-		q.RetentionPolicy, q.DB, q.Measurement, q.Field, q.Condition,
-	)
-	return str
+// TableUUID 查询主体 tableID + storageID + sliceID 作为查询主体的唯一标识
+func (q *Query) TableUUID() string {
+	return strings.Join([]string{
+		q.TableID, q.StorageID, q.SliceID,
+	}, "|")
 }
 
 // MetricLabels 获取真实指标名称

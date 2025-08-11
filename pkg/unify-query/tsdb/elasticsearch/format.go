@@ -953,7 +953,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 							} else {
 								var format string
 								switch fieldType {
-								case metadata.TypeDate, metadata.TypeDateNanos:
+								case metadata.TypeDateNanos:
 									if t, ok := function.StringToTime(value); ok {
 										value = t.Format(NanoTimeFormat)
 										format = NanoQueryFormat

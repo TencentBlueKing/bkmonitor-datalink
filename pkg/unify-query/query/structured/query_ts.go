@@ -159,6 +159,15 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 
 		if q.Scroll != "" {
 			query.Scroll = q.Scroll
+			q.IsMultiFrom = false
+		}
+
+		if q.IsMultiFrom {
+			q.From = 0
+		}
+
+		if query.From == 0 && q.From > 0 {
+			query.From = q.From
 		}
 
 		// 复用字段配置，没有特殊配置的情况下使用公共配置
@@ -641,6 +650,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			query.Aggregates = aggregates
 			query.Timezone = timezone
 			query.StorageID = storageID
+			query.ResultTableOption = q.ResultTableOptions.GetOption(query.TableUUID())
 
 			// 如果没有指定查询类型，则通过 storageID 获取
 			if query.StorageType == "" {
@@ -917,7 +927,6 @@ func (q *Query) BuildMetadataQuery(
 
 	query.Scroll = q.Scroll
 	query.DryRun = q.DryRun
-	query.ResultTableOptions = q.ResultTableOptions
 
 	query.Size = q.Limit
 	query.From = q.From

@@ -12,11 +12,13 @@ package metadata
 type ResultTableOptions map[string]*ResultTableOption
 
 type ResultTableOption struct {
-	From        *int   `json:"from,omitempty"`
+	From *int `json:"from,omitempty"`
+
 	ScrollID    string `json:"scroll_id,omitempty"`
 	SearchAfter []any  `json:"search_after,omitempty"`
-	SliceIndex  *int   `json:"slice_index,omitempty"`
-	SliceMax    *int   `json:"slice_max,omitempty"`
+
+	SliceIndex *int `json:"slice_index,omitempty"`
+	SliceMax   *int `json:"slice_max,omitempty"`
 
 	FieldType map[string]string `json:"-"`
 

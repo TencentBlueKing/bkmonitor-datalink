@@ -238,7 +238,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		}
 	}()
 
-	option = query.ResultTableOptions.GetOption(query.TableUUID())
+	option = query.ResultTableOption
 	if option == nil {
 		option = &metadata.ResultTableOption{}
 	}

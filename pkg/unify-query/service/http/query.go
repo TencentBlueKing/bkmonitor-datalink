@@ -175,20 +175,16 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		dataCh    = make(chan map[string]any)
 		errCh     = make(chan error)
 
-		message   strings.Builder
-		queryList []*metadata.Query
-		lock      sync.Mutex
+		message strings.Builder
+		lock    sync.Mutex
 
 		allLabelMap = make(map[string][]function.LabelMapValue)
 
-		isCutData bool
+		queryRef metadata.QueryReference
 	)
 
-	list = make([]map[string]any, 0)
-
-	queryList, err = prepareQueryTs(ctx, queryTs)
+	queryRef, err = queryTs.ToQueryReference(ctx)
 	if err != nil {
-		log.Errorf(ctx, "prepare query ts error: %s", err.Error())
 		return
 	}
 
@@ -223,7 +219,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			}
 		}
 
-		span.Set("query-list-num", len(queryList))
+		span.Set("query-list-num", queryRef.Count())
 		span.Set("result-data-num", len(data))
 
 		queryTs.OrderBy.Orders().SortSliceList(data, fieldType)
@@ -254,7 +250,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					}
 				} else {
 					// 只有合并数据才需要进行裁剪，否则原始数据里面就已经经过裁剪了
-					if isCutData {
+					if queryRef.Count() > 1 {
 						// 只有长度符合的数据才进行裁剪
 						if len(data) > queryTs.From {
 							maxLength := queryTs.From + queryTs.Limit
@@ -267,7 +263,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 							data = make([]map[string]any, 0)
 						}
 					}
-
 				}
 			}
 		}
@@ -315,9 +310,9 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			close(dataCh)
 			close(errCh)
 		}()
-		for _, qry := range queryList {
+
+		queryRef.Range("", func(qry *metadata.Query) {
 			sendWg.Add(1)
-			qry := qry
 
 			labelMap, err := qry.LabelMap()
 			if err == nil {
@@ -332,15 +327,14 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			}
 
 			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
-			if len(queryList) > 1 {
+			if queryRef.Count() > 1 {
 				if !queryTs.IsMultiFrom {
 					qry.Size += qry.From
 					qry.From = 0
-					isCutData = true
 				}
 			}
 
-			err = p.Submit(func() {
+			_ = p.Submit(func() {
 				defer func() {
 					sendWg.Done()
 				}()
@@ -367,7 +361,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 				total += size
 			})
-		}
+		})
 	}()
 
 	// 等待数据组装完毕
@@ -375,14 +369,16 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	return
 }
 
-func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessionKeySuffix string, maxSliceCount int) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, done bool, err error) {
+func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, done bool, err error) {
 	var (
-		workerWg  = sync.WaitGroup{}
-		readerWg  = sync.WaitGroup{}
-		message   strings.Builder
-		queryList []*metadata.Query
-		dataCh    = make(chan []map[string]any)
+		receiveWg sync.WaitGroup
+		dataCh    = make(chan map[string]any)
 		errCh     = make(chan error)
+
+		message strings.Builder
+		lock    sync.Mutex
+
+		queryRef metadata.QueryReference
 	)
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
 	defer span.End(&err)
@@ -391,77 +387,93 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 		err = timeErr
 		return
 	}
+
+	sessionKeySuffix := ""
+	maxSliceCount := 3
+
 	session, err := redisUtil.GetOrCreateScrollSession(ctx, sessionKeySuffix, maxSliceCount, queryTs.Scroll, queryTs.Limit)
 	if err != nil {
 		return
 	}
-	queryList, err = prepareQueryTs(ctx, queryTs)
-	if err != nil {
-		return
-	}
-	scrollQuery, err := collectStorageScrollQuery(ctx, session, queryList)
+
+	queryRef, err = queryTs.ToQueryReference(ctx)
 	if err != nil {
 		return
 	}
 
-	readerWg.Add(1)
+	receiveWg.Add(1)
 	go func() {
-		defer readerWg.Done()
-
-		for {
-			select {
-			case data, ok := <-dataCh:
-				if !ok {
-					dataCh = nil
-				} else {
-					list = append(list, data...)
-				}
-			case cErr, ok := <-errCh:
-				if !ok {
-					errCh = nil
-				} else if cErr != nil {
-					message.WriteString(fmt.Sprintf("query error: %s ", cErr.Error()))
-				}
-			}
-
-			if dataCh == nil && errCh == nil {
-				return
-			}
+		defer receiveWg.Done()
+		for e := range errCh {
+			message.WriteString(fmt.Sprintf("query error: %s ", e.Error()))
+		}
+		if message.Len() > 0 {
+			err = errors.New(message.String())
 		}
 	}()
 
-	p, _ := ants.NewPool(QueryMaxRouting)
+	receiveWg.Add(1)
 
-	for _, e := range scrollQuery {
-		for _, qry := range e.QueryList {
-			workerWg.Add(1)
-			qry := qry
-			e := e
-			if sErr := p.Submit(func() {
-				defer workerWg.Done()
-				sData, sErr := scrollQueryWorker(ctx, session, qry, start, end, e.Instance)
-				if sErr != nil {
-					errCh <- sErr
+	go func() {
+		defer receiveWg.Done()
+
+		for d := range dataCh {
+			list = append(list, d)
+		}
+	}()
+
+	// 多协程查询数据
+	var (
+		sendWg sync.WaitGroup
+	)
+
+	p, _ := ants.NewPool(QueryMaxRouting)
+	defer p.Release()
+
+	queryRef.Range("", func(qry *metadata.Query) {
+		for _, s := range session.ScrollIDs {
+			sendWg.Add(1)
+
+			_ = p.Submit(func() {
+				defer func() {
+					sendWg.Done()
+				}()
+
+				newQry := &(*qry)
+				newQry.SliceID = fmt.Sprintf("%d", s.SliceIdx)
+				newQry.ResultTableOption = &metadata.ResultTableOption{
+					ScrollID:   s.ScrollID,
+					SliceIndex: &s.SliceIdx,
+					SliceMax:   &s.SliceMax,
+					From:       &s.Offset,
+				}
+
+				instance := prometheus.GetTsDbInstance(ctx, newQry)
+				if instance == nil {
+					log.Warnf(ctx, "not instance in %s", newQry.StorageID)
 					return
 				}
-				dataCh <- sData
-			}); sErr != nil {
-				errCh <- sErr
-			}
+
+				size, option, queryErr := instance.QueryRawData(ctx, newQry, start, end, dataCh)
+				if queryErr != nil {
+					errCh <- queryErr
+					return
+				}
+
+				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
+				if resultTableOptions == nil {
+					resultTableOptions = make(metadata.ResultTableOptions)
+				}
+				lock.Lock()
+				resultTableOptions.SetOption(newQry.TableUUID(), option)
+				lock.Unlock()
+
+				total += size
+			})
 		}
-	}
-
-	workerWg.Wait()
-	close(dataCh)
-	close(errCh)
-
-	readerWg.Wait()
-
-	total = int64(len(list))
-	done = session.Done()
-	if message.Len() > 0 {
-		err = errors.New(message.String())
-	}
+	})
+	// 等待数据组装完毕
+	receiveWg.Wait()
 	return
 }
 

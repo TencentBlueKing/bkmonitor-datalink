@@ -302,38 +302,34 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	var res *elastic.SearchResult
 	func() {
-		if qb.ResultTableOptions != nil {
-			opt := qb.ResultTableOptions.GetOption(qb.TableUUID())
-			if opt != nil {
-				if opt.ScrollID != "" {
-					span.Set("query-scroll-id", opt.ScrollID)
-					res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).ScrollId(opt.ScrollID).Do(ctx)
-					return
-				}
+		opt := qb.ResultTableOption
+		if opt != nil {
+			if opt.ScrollID != "" {
+				span.Set("query-scroll-id", opt.ScrollID)
+				res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).ScrollId(opt.ScrollID).Do(ctx)
+				return
+			}
 
-				if len(opt.SearchAfter) > 0 {
-					span.Set("query-search-after", opt.SearchAfter)
-					source.SearchAfter(opt.SearchAfter...)
-					res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
-					return
-				}
+			if len(opt.SearchAfter) > 0 {
+				span.Set("query-search-after", opt.SearchAfter)
+				source.SearchAfter(opt.SearchAfter...)
+				res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
+				return
 			}
 		}
 
 		if qb.Scroll != "" {
 			span.Set("query-scroll", qb.Scroll)
 			scroll := client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source)
-			if qb.ResultTableOptions != nil {
-				option := qb.ResultTableOptions.GetOption(qb.TableUUID())
-				if option != nil {
-					if option.ScrollID != "" {
-						span.Set("query-scroll-id", option.ScrollID)
-						scroll.ScrollId(option.ScrollID)
-					}
-					if option.SliceIndex != nil && option.SliceMax != nil {
-						span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", *option.SliceIndex, *option.SliceMax))
-						scroll.Slice(elastic.NewSliceQuery().Id(*option.SliceIndex).Max(*option.SliceMax))
-					}
+			option := qb.ResultTableOption
+			if option != nil {
+				if option.ScrollID != "" {
+					span.Set("query-scroll-id", option.ScrollID)
+					scroll.ScrollId(option.ScrollID)
+				}
+				if option.SliceIndex != nil && option.SliceMax != nil {
+					span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", *option.SliceIndex, *option.SliceMax))
+					scroll.Slice(elastic.NewSliceQuery().Id(*option.SliceIndex).Max(*option.SliceMax))
 				}
 			}
 			res, err = scroll.Do(ctx)
@@ -513,7 +509,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	defer span.End(&err)
 
 	span.Set("instance-connect", i.connect.String())
-	span.Set("instance-query-result-table-options", query.ResultTableOptions)
+	span.Set("instance-query-result-table-option", query.ResultTableOption)
 
 	if query.DB == "" {
 		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
@@ -547,12 +543,10 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		query.Size = i.maxSize
 	}
 
-	if len(query.ResultTableOptions) > 0 {
-		option = query.ResultTableOptions.GetOption(query.TableUUID())
-		if option != nil {
-			if option.From != nil {
-				query.From = *option.From
-			}
+	option = query.ResultTableOption
+	if option != nil {
+		if option.From != nil {
+			query.From = *option.From
 		}
 	}
 
@@ -628,9 +622,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 		if query.Scroll != "" {
 			var originalOption *metadata.ResultTableOption
-			if len(query.ResultTableOptions) > 0 {
-				originalOption = query.ResultTableOptions.GetOption(query.TableUUID())
-			}
+			originalOption = query.ResultTableOption
 
 			option.ScrollID = sr.ScrollId
 

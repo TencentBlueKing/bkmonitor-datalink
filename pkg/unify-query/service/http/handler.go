@@ -309,13 +309,24 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 		queryTs.Limit = ScrollSliceLimit
 	}
 
-	queryStr, _ := json.Marshal(queryTs)
-	span.Set("query-body", string(queryStr))
-	scrollKey, err := generateScrollKey(user.Name, *queryTs)
-	if err != nil {
-		return
+	// 把是否清理的标记位提取出来，避免后续生成的 key 不一致
+	isClearCache := queryTs.ClearCache
+
+	queryTs.ClearCache = false
+	queryByte, _ := json.StableMarshal(queryTs)
+	queryStr := string(queryByte)
+
+	span.Set("query-body", queryStr)
+
+	sessionKey := fmt.Sprintf("%s:%s", user.Name, queryStr)
+
+	if isClearCache {
+		if err = redis.ClearScrollSession(ctx, sessionLockKey); err != nil {
+			return
+		}
 	}
-	sessionLockKey = redis.ScrollLockKeyPrefix + scrollKey
+
+	sessionLockKey = redis.ScrollLockKeyPrefix + sessionKey
 	if err = redis.AcquireLock(ctx, sessionLockKey, ScrollSessionLockTimeout); err != nil {
 		return
 	}
@@ -332,7 +343,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	}
 	span.Set("session-lock-key", sessionLockKey)
 	listData.TraceID = span.TraceID()
-	listData.Total, listData.List, listData.ResultTableOptions, listData.Done, err = queryRawWithScroll(ctx, queryTs, scrollKey, ScrollMaxSlice)
+	listData.Total, listData.List, listData.ResultTableOptions, listData.Done, err = queryRawWithScroll(ctx, queryTs)
 	if err != nil {
 		listData.Status = &metadata.Status{
 			Code:    metadata.QueryRawError,

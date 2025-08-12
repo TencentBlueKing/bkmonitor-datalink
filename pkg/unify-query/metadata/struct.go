@@ -161,8 +161,8 @@ type Query struct {
 	From   int      `json:"from,omitempty"`
 	Size   int      `json:"size,omitempty"`
 
-	Scroll             string             `json:"scroll,omitempty"`
-	ResultTableOptions ResultTableOptions `json:"result_table_options,omitempty"`
+	Scroll            string             `json:"scroll,omitempty"`
+	ResultTableOption *ResultTableOption `json:"result_table_option,omitempty"`
 
 	Orders      Orders    `json:"orders,omitempty"`
 	NeedAddTime bool      `json:"need_add_time,omitempty"`
@@ -373,6 +373,15 @@ func (qMetric *QueryMetric) ToJson(isSort bool) string {
 
 	s, _ := json.Marshal(qMetric)
 	return string(s)
+}
+
+func (qRef QueryReference) Count() int {
+	var i int
+	qRef.Range("", func(qry *Query) {
+		i++
+	})
+
+	return i
 }
 
 // Range 遍历查询列表

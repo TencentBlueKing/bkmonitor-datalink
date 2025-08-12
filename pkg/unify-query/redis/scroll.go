@@ -80,6 +80,9 @@ type SliceStatusKey struct {
 }
 
 type SliceStatusValue struct {
+	SliceIdx int `json:"slice_idx"`
+	SliceMax int `json:"slice_max"`
+
 	ScrollID  string `json:"scroll_id"`
 	Offset    int    `json:"offset"`
 	Status    string `json:"status"`

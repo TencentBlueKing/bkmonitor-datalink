@@ -826,10 +826,8 @@ func TestInstance_queryRawData(t *testing.T) {
 				TableID:     "bk_log_index_set_10",
 				StorageID:   "log",
 				StorageType: consul.ElasticsearchStorageType,
-				ResultTableOptions: metadata.ResultTableOptions{
-					"bk_log_index_set_10|log": &metadata.ResultTableOption{
-						ScrollID: "scroll_id_1",
-					},
+				ResultTableOption: &metadata.ResultTableOption{
+					ScrollID: "scroll_id_1",
 				},
 				FieldAlias: map[string]string{
 					"container_name": "__ext.container_name",
@@ -901,10 +899,8 @@ func TestInstance_queryRawData(t *testing.T) {
 				TableID:     "bk_log_index_set_10",
 				StorageID:   "log",
 				StorageType: consul.ElasticsearchStorageType,
-				ResultTableOptions: metadata.ResultTableOptions{
-					"bk_log_index_set_10|log": &metadata.ResultTableOption{
-						ScrollID: "scroll_id_2",
-					},
+				ResultTableOption: &metadata.ResultTableOption{
+					ScrollID: "scroll_id_2",
 				},
 				Scroll: "10m",
 			},
@@ -941,10 +937,8 @@ func TestInstance_queryRawData(t *testing.T) {
 					},
 				},
 				Size: 5,
-				ResultTableOptions: metadata.ResultTableOptions{
-					"bk_log_index_set_10|log": &metadata.ResultTableOption{
-						SearchAfter: []any{1743465646224, "kibana_settings", nil},
-					},
+				ResultTableOption: &metadata.ResultTableOption{
+					SearchAfter: []any{1743465646224, "kibana_settings", nil},
 				},
 			},
 			start: defaultStart,

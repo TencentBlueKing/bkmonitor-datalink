@@ -117,7 +117,6 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 	// query/apigw
 	handlerPath = viper.GetString(ApiGwConfigPath)
 	registerHandler.register(http.MethodPost, handlerPath, HandleAPIGW)
-	registerHandler.register(http.MethodPost, "/query/apigw_health", HandleApiGWHealth)
 }
 
 func registerOtherHandlers(ctx context.Context, g *gin.RouterGroup) {

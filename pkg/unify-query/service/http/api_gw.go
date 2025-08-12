@@ -86,7 +86,7 @@ func HandleAPIGW(c *gin.Context) {
 	if err != nil {
 		return
 	}
-
+	c.Set(ContextConfigUnifyResponseProcess, true)
 	handlers, exist := metadata.GetHandler(query.Path)
 	if !exist {
 		err = fmt.Errorf("not exist handler for path: %s", query.Path)

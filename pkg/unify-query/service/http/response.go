@@ -52,32 +52,17 @@ func (r *response) success(ctx context.Context, data interface{}) {
 	log.Debugf(ctx, "query data size is %s", fmt.Sprint(unsafe.Sizeof(data)))
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUID, user.Source)
-	dtr, isUnifyRespProcess := r.handleOnUnifyResponseProcess(r.c, data)
+	isUnifyRespProcess := r.isConfigUnifyRespProcess(r.c)
 	if isUnifyRespProcess {
-		r.c.Set(ContextKeyResponseData, dtr)
+		r.c.Set(ContextKeyResponseData, data)
 		return
 	}
 	r.c.JSON(http.StatusOK, data)
 }
 
-func (r *response) handleOnUnifyResponseProcess(c *gin.Context, data interface{}) (interface{}, bool) {
+func (r *response) isConfigUnifyRespProcess(c *gin.Context) bool {
 	_, isUnifyRespProcess := c.Get(ContextConfigUnifyResponseProcess)
-	if !isUnifyRespProcess {
-		return nil, false
-	}
-
-	var dataToReturn interface{}
-	if m, isMap := data.(map[string]any); !isMap {
-		dataToReturn = data
-	} else {
-		if mData, isMapInnerData := m[dataFieldName]; !isMapInnerData {
-			dataToReturn = data
-		} else {
-			dataToReturn = mData
-		}
-	}
-	return dataToReturn, true
-
+	return isUnifyRespProcess
 }
 
 // ListData 数据返回格式

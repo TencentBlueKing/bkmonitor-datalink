@@ -162,7 +162,7 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 	handlerPath = viper.GetString(ESHandlePathConfigPath)
 	registerHandler.register(http.MethodPost, handlerPath, WithHandler(HandleESQueryRequest))
 
-	// query/proxy
+	// proxy
 	handlerPath = viper.GetString(ProxyConfigPath)
 	registerHandler.register(http.MethodPost, handlerPath, WithHandler(proxy.HandleAPIGW), WithProxyEndpoint())
 

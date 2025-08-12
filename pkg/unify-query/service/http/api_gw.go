@@ -41,7 +41,6 @@ type apiGwResponse struct {
 	Result  bool         `json:"result"`
 	Data    interface{}  `json:"data"`
 	Message string       `json:"message"`
-	TraceIO string       `json:"trace_id"`
 }
 
 func (a *apiGwResponse) failed(msg error) {
@@ -78,7 +77,6 @@ func HandleAPIGW(c *gin.Context) {
 		span.End(&err)
 	}()
 
-	resp.TraceIO = span.TraceID()
 	span.Set("request-url", c.Request.URL.String())
 	span.Set("request-header", c.Request.Header)
 	query := &apiGwRequest{}

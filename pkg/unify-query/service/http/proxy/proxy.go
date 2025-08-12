@@ -59,14 +59,14 @@ func (a *apiGwResponse) success(data interface{}) {
 	})
 }
 
-func HandleAPIGW(c *gin.Context) {
+func HandleProxy(c *gin.Context) {
 	var (
 		ctx  = c.Request.Context()
 		resp = &apiGwResponse{c: c}
 		err  error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "handler-api-gw")
+	ctx, span := trace.NewSpan(ctx, "handler-proxy")
 
 	defer func() {
 		if err != nil {

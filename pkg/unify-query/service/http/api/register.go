@@ -15,16 +15,14 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/endpoint"
 )
 
 func RegisterRelation(ctx context.Context, g *gin.RouterGroup) {
+	registerHandler := endpoint.NewRegisterHandler(ctx, g)
 
-	metadata.AddHandler(RelationMultiResource, HandlerAPIRelationMultiResource)
-	g.POST(RelationMultiResource, HandlerAPIRelationMultiResource)
-	metadata.AddHandler(RelationMultiResourceRange, HandlerAPIRelationMultiResourceRange)
-	g.POST(RelationMultiResourceRange, HandlerAPIRelationMultiResourceRange)
-
+	registerHandler.Register("POST", RelationMultiResource, HandlerAPIRelationMultiResource)
+	registerHandler.Register("POST", RelationMultiResourceRange, HandlerAPIRelationMultiResourceRange)
 	log.Infof(ctx, "RegisterRelation => [POST] %s", RelationMultiResource)
 	log.Infof(ctx, "RegisterRelation => [POST] %s", RelationMultiResourceRange)
 }

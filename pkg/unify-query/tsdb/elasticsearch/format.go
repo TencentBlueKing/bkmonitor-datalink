@@ -958,6 +958,11 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 										value = t.Format(NanoTimeFormat)
 										format = NanoQueryFormat
 									}
+								case metadata.TypeDate:
+									if t, ok := function.StringToTime(value); ok {
+										value = fmt.Sprintf("%d", t.UnixMilli())
+										format = EpochMillis
+									}
 								}
 
 								// 非空才进行验证

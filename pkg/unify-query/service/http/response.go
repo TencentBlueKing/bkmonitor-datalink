@@ -23,10 +23,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
-var (
-	dataFieldName = "data"
-)
-
 type response struct {
 	c *gin.Context
 }

@@ -98,6 +98,13 @@ func TestRelabelConfigValidate(t *testing.T) {
 				wantErr: false,
 			},
 			{
+				name:    "valid config - multiple metrics",
+				metrics: []string{"test_metric", "test_metric_1"},
+				rules:   Rules{},
+				dest:    Destination{Label: "dest_label", Value: "dest_value", Action: ActionUpsert},
+				wantErr: false,
+			},
+			{
 				name:    "invalid config - missing metric name",
 				metrics: []string{},
 				rules:   Rules{{Label: "label1", Op: OperatorIn, Values: []interface{}{"value1", "value2"}}},
@@ -479,4 +486,41 @@ func BenchmarkMatchRWLabelsMap(b *testing.B) {
 			}
 		}
 	}
+}
+
+func BenchmarkMetricNames(b *testing.B) {
+
+	var metrics []string
+	num := 100
+	for i := 0; i < num; i++ {
+		metrics = append(metrics, fmt.Sprintf("metric_%d", i))
+	}
+	m := make(map[string]bool, len(metrics))
+	for _, v := range metrics {
+		m[v] = true
+	}
+	contains := func(slice []string, item string) bool {
+		for _, v := range slice {
+			if v == item {
+				return true
+			}
+		}
+		return false
+	}
+	contains4Map := func(item string) bool {
+		_, ok := m[item]
+		return ok
+	}
+	b.Run("iter", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			contains(metrics, fmt.Sprintf("metric_%d", i%(2*num)))
+		}
+	})
+
+	b.Run("map", func(b *testing.B) {
+
+		for i := 0; i < b.N; i++ {
+			contains4Map(fmt.Sprintf("metric_%d", i%(2*num)))
+		}
+	})
 }

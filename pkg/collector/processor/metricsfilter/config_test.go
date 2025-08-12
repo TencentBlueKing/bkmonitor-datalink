@@ -11,6 +11,7 @@ package metricsfilter
 
 import (
 	"fmt"
+	"sort"
 	"testing"
 
 	"github.com/prometheus/prometheus/prompb"
@@ -491,7 +492,7 @@ func BenchmarkMatchRWLabelsMap(b *testing.B) {
 func BenchmarkMetricNames(b *testing.B) {
 
 	var metrics []string
-	num := 100
+	num := 50
 	for i := 0; i < num; i++ {
 		metrics = append(metrics, fmt.Sprintf("metric_%d", i))
 	}
@@ -499,6 +500,7 @@ func BenchmarkMetricNames(b *testing.B) {
 	for _, v := range metrics {
 		m[v] = true
 	}
+	sort.Strings(metrics)
 	contains := func(slice []string, item string) bool {
 		for _, v := range slice {
 			if v == item {
@@ -511,6 +513,26 @@ func BenchmarkMetricNames(b *testing.B) {
 		_, ok := m[item]
 		return ok
 	}
+	containsBinary := func(slice []string, item string) bool {
+		// 首先确保 slice 是有序的
+		// 如果 slice 可能无序，需要先排序
+
+		low := 0
+		high := len(slice) - 1
+
+		for low <= high {
+			mid := (low + high) / 2
+			if slice[mid] == item {
+				return true
+			}
+			if slice[mid] < item {
+				low = mid + 1
+			} else {
+				high = mid - 1
+			}
+		}
+		return false
+	}
 	b.Run("iter", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			contains(metrics, fmt.Sprintf("metric_%d", i%(2*num)))
@@ -521,6 +543,12 @@ func BenchmarkMetricNames(b *testing.B) {
 
 		for i := 0; i < b.N; i++ {
 			contains4Map(fmt.Sprintf("metric_%d", i%(2*num)))
+		}
+	})
+	b.Run("binary", func(b *testing.B) {
+
+		for i := 0; i < b.N; i++ {
+			containsBinary(metrics, fmt.Sprintf("metric_%d", i%(2*num)))
 		}
 	})
 }

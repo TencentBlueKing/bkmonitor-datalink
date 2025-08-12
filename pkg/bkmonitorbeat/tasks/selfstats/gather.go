@@ -11,6 +11,7 @@ package selfstats
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"time"
@@ -22,8 +23,11 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
+
+var startTime = time.Now()
 
 type Gather struct {
 	tasks.BaseTask
@@ -47,10 +51,32 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		return
 	}
 
+	info, _ := gse.GetAgentInfo()
+	extLabels := map[string]string{
+		"bk_cloud_id":  strconv.Itoa(int(info.Cloudid)),
+		"bk_target_ip": info.IP,
+		"bk_agent_id":  info.BKAgentID,
+		"bk_host_id":   strconv.Itoa(int(info.HostID)),
+		"bk_biz_id":    strconv.Itoa(int(info.BKBizID)),
+		"node_id":      fmt.Sprintf("%d:%s", info.Cloudid, info.IP),
+		"hostname":     info.Hostname,
+	}
+
 	var data []common.MapStr
 	for i := 0; i < len(metrics); i++ {
-		data = append(data, decodePromMetricFamily(metrics[i])...)
+		data = append(data, decodePromMetricFamily(metrics[i], extLabels)...)
 	}
+
+	lbs := make(map[string]string)
+	for k, v := range extLabels {
+		lbs[k] = v
+	}
+	rs := define.GetRuntimeStats()
+	lbs["version"] = rs.Version
+	data = append(data, buildMetrics("bkmonitorbeat_version", 1, lbs))
+
+	data = append(data, buildMetrics("bkmonitorbeat_uptime", time.Since(startTime).Seconds(), extLabels))
+	data = append(data, buildMetrics("bkmonitorbeat_reload_total", float64(rs.Reload), extLabels))
 
 	e <- &Event{
 		BizID:  g.TaskConfig.GetBizID(),
@@ -70,7 +96,21 @@ func isValidFloat64(f float64) bool {
 	return !(math.IsNaN(f) || math.IsInf(f, 0))
 }
 
-func decodePromMetricFamily(mf *dto.MetricFamily) []common.MapStr {
+func buildMetrics(name string, value float64, labels map[string]string) common.MapStr {
+	lbs := make(map[string]string)
+	for k, v := range labels {
+		lbs[k] = v
+	}
+
+	m := Metric{
+		Metrics:   map[string]float64{name: value},
+		Timestamp: time.Now().UnixMilli(),
+		Dimension: labels,
+	}
+	return m.AsMapStr()
+}
+
+func decodePromMetricFamily(mf *dto.MetricFamily, extLabels map[string]string) []common.MapStr {
 	var ms []Metric
 	name := *mf.Name
 	now := time.Now().UnixMilli()
@@ -83,6 +123,9 @@ func decodePromMetricFamily(mf *dto.MetricFamily) []common.MapStr {
 					lbs[label.GetName()] = label.GetValue()
 				}
 			}
+		}
+		for k, v := range extLabels {
+			lbs[k] = v
 		}
 
 		ts := getTimestampMs(now, metric.TimestampMs)

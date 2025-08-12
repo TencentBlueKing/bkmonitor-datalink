@@ -174,6 +174,7 @@ func main() {
 		MaxBackups: logCfg.Backups,
 		Level:      logCfg.Level,
 	})
+	define.SetVersion(Version)
 
 	bt, err := beater.New(config, BeatName, Version)
 	if err != nil {

@@ -564,6 +564,7 @@ func (bt *MonitorBeater) Stop() {
 // Reload : reload conf
 func (bt *MonitorBeater) Reload(cfg *common.Config) {
 	logger.Info("MonitorBeater reload")
+	define.IncReload()
 
 	oldState := bt.beaterState
 	oldConfig := bt.config

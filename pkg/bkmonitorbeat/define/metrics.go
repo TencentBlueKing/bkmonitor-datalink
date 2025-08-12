@@ -18,3 +18,22 @@ type MetricsReaderFunc func() (<-chan []common.MapStr, error)
 func (m MetricsReaderFunc) MarshalJSON() ([]byte, error) {
 	return []byte("\"func:metricsReaderFunc\""), nil
 }
+
+type RuntimeStats struct {
+	Reload  int
+	Version string
+}
+
+var rs = &RuntimeStats{}
+
+func GetRuntimeStats() RuntimeStats {
+	return *rs
+}
+
+func IncReload() {
+	rs.Reload++
+}
+
+func SetVersion(v string) {
+	rs.Version = v
+}

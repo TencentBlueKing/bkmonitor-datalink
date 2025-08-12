@@ -62,7 +62,7 @@ func setDefaultConfig() {
 
 	viper.SetDefault(CheckQueryTsConfigPath, "/check/query/ts")
 	viper.SetDefault(CheckQueryPromQLConfigPath, "/check/query/ts/promql")
-	viper.SetDefault(ApiGwConfigPath, "/query/apigw")
+	viper.SetDefault(ProxyConfigPath, "/proxy")
 
 	viper.SetDefault(AlignInfluxdbResultConfigPath, true)
 	viper.SetDefault(InfoDefaultLimit, 100)

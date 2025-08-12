@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/proxy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -32,8 +33,8 @@ func (r *response) failed(ctx context.Context, err error) {
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUID, user.Source)
 
-	if _, ok := r.c.Get(ContextConfigUnifyResponseProcess); ok {
-		r.c.Set(ContextKeyResponseError, err)
+	if _, ok := r.c.Get(proxy.ContextConfigUnifyResponseProcess); ok {
+		r.c.Set(proxy.ContextKeyResponseError, err)
 		return
 	}
 
@@ -50,14 +51,14 @@ func (r *response) success(ctx context.Context, data interface{}) {
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUID, user.Source)
 	isUnifyRespProcess := r.isConfigUnifyRespProcess(r.c)
 	if isUnifyRespProcess {
-		r.c.Set(ContextKeyResponseData, data)
+		r.c.Set(proxy.ContextKeyResponseData, data)
 		return
 	}
 	r.c.JSON(http.StatusOK, data)
 }
 
 func (r *response) isConfigUnifyRespProcess(c *gin.Context) bool {
-	_, isUnifyRespProcess := c.Get(ContextConfigUnifyResponseProcess)
+	_, isUnifyRespProcess := c.Get(proxy.ContextConfigUnifyResponseProcess)
 	return isUnifyRespProcess
 }
 

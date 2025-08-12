@@ -32,6 +32,11 @@ func (r *response) failed(ctx context.Context, err error) {
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUID, user.Source)
 
+	if _, ok := r.c.Get(ContextConfigUnifyResponseProcess); ok {
+		r.c.Set(ContextKeyResponseError, err)
+		return
+	}
+
 	_, span := trace.NewSpan(ctx, "response-failed")
 	r.c.JSON(http.StatusBadRequest, ErrResponse{
 		TraceID: span.TraceID(),
@@ -43,6 +48,11 @@ func (r *response) success(ctx context.Context, data interface{}) {
 	log.Debugf(ctx, "query data size is %s", fmt.Sprint(unsafe.Sizeof(data)))
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUID, user.Source)
+
+	if _, ok := r.c.Get(ContextConfigUnifyResponseProcess); ok {
+		r.c.Set(ContextKeyResponseData, data)
+		return
+	}
 	r.c.JSON(http.StatusOK, data)
 }
 

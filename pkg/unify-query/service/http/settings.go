@@ -54,6 +54,7 @@ const (
 	TsDBPrintHandlePathConfigPath             = "http.path.tsdb_print"
 	FeatureFlagHandlePathConfigPath           = "http.path.feature_flag_path"
 	ESHandlePathConfigPath                    = "http.path.es"
+	ApiGwConfigPath                           = "http.path.api_gw"
 	TSQueryRawMAXLimitConfigPath              = "http.query.raw.max_limit"
 
 	CheckQueryTsConfigPath     = "http.path.check_query_ts"

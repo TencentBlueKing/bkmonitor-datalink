@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 )
 
@@ -42,6 +43,8 @@ func (r *RegisterHandlers) register(method, handlerPath string, handlerFunc ...g
 	}
 
 	log.Infof(r.ctx, "registerHandlers => [%s] %s", method, handlerPath)
+
+	metadata.AddHandler(handlerPath, handlerFunc...)
 }
 
 func getRegisterHandlers(ctx context.Context, g *gin.RouterGroup) *RegisterHandlers {
@@ -110,6 +113,11 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 	// query/es/
 	handlerPath = viper.GetString(ESHandlePathConfigPath)
 	registerHandler.register(http.MethodPost, handlerPath, HandleESQueryRequest)
+
+	// query/apigw
+	handlerPath = viper.GetString(ApiGwConfigPath)
+	registerHandler.register(http.MethodPost, handlerPath, HandleAPIGW)
+	registerHandler.register(http.MethodPost, "/query/apigw_health", HandleApiGWHealth)
 }
 
 func registerOtherHandlers(ctx context.Context, g *gin.RouterGroup) {

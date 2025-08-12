@@ -65,18 +65,6 @@ const (
 )
 
 const (
-	KeyDocID = "__doc_id"
-	KeySort  = "sort"
-
-	KeyTableUUID = "__table_uuid"
-
-	KeyIndex   = "__index"
-	KeyTableID = "__result_table"
-
-	KeyDataLabel = "__data_label"
-)
-
-const (
 	KeyWord = "keyword"
 	Text    = "text"
 	Integer = "integer"

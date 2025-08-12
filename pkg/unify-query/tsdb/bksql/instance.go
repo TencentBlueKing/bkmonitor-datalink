@@ -32,11 +32,6 @@ import (
 )
 
 const (
-	KeyIndex     = "__index"
-	KeyTableID   = "__result_table"
-	KeyDataLabel = "__data_label"
-	KeyTableUUID = "__table_uuid"
-
 	TableFieldName = "Field"
 	TableFieldType = "Type"
 
@@ -308,10 +303,10 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	for _, list := range data.List {
 		newData := queryFactory.ReloadListData(list, false)
-		newData[KeyIndex] = query.DB
-		newData[KeyTableID] = query.TableID
-		newData[KeyDataLabel] = query.DataLabel
-		newData[KeyTableUUID] = query.TableUUID()
+		newData[metadata.KeyIndex] = query.DB
+		// 注入原始数据需要的字段
+		query.DataReload(newData)
+
 		dataCh <- newData
 	}
 

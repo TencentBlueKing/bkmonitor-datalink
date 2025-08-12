@@ -439,7 +439,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 			e := e
 			if sErr := p.Submit(func() {
 				defer workerWg.Done()
-				sData, sErr := scrollQueryWorker(ctx, session, e.Connect, e.TableID, qry, start, end, e.Instance)
+				sData, sErr := scrollQueryWorker(ctx, session, qry, start, end, e.Instance)
 				if sErr != nil {
 					errCh <- sErr
 					return

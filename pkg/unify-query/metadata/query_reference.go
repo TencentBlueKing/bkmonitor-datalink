@@ -36,6 +36,16 @@ func GetQueryReference(ctx context.Context) QueryReference {
 	return nil
 }
 
+func (q *Query) DataReload(data map[string]any) {
+	if data == nil {
+		return
+	}
+
+	data[KeyTableID] = q.TableID
+	data[KeyDataLabel] = q.DataLabel
+	data[KeyTableUUID] = q.TableUUID()
+}
+
 // ConfigureAlias 根据别名把 query 里面涉及到的字段都转换成别名查询
 func (q *Query) ConfigureAlias(ctx context.Context) {
 	if len(q.FieldAlias) == 0 {
@@ -89,9 +99,16 @@ func (q *Query) ConfigureAlias(ctx context.Context) {
 
 // TableUUID 查询主体 tableID + storageID + sliceID 作为查询主体的唯一标识
 func (q *Query) TableUUID() string {
-	return strings.Join([]string{
+	var l []string
+	for _, s := range []string{
 		q.TableID, q.StorageID, q.SliceID,
-	}, "|")
+	} {
+		if s != "" {
+			l = append(l, s)
+		}
+	}
+
+	return strings.Join(l, "|")
 }
 
 // MetricLabels 获取真实指标名称

@@ -35,5 +35,9 @@ const (
 
 	QueryRawError = "QUERY_RAW_ERROR"
 
+	KeyDocID     = "__doc_id"
 	KeyTableUUID = "__table_uuid"
+	KeyTableID   = "__result_table"
+	KeyDataLabel = "__data_label"
+	KeyIndex     = "__index"
 )

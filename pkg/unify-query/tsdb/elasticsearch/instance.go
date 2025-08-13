@@ -567,10 +567,10 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			}
 
 			if len(query.ResultTableOptions) > 0 {
-				option := query.ResultTableOptions.GetOption(query.TableID, conn.Address)
-				if option != nil {
-					if option.From != nil {
-						query.From = *option.From
+				queryResultTableOption := query.ResultTableOptions.GetOption(query.TableID, conn.Address)
+				if queryResultTableOption != nil {
+					if queryResultTableOption.From != nil {
+						query.From = *queryResultTableOption.From
 					}
 				}
 			}
@@ -594,7 +594,10 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 				return
 			}
 
-			var option *metadata.ResultTableOption
+			var option = &metadata.ResultTableOption{
+				FieldType: fact.FieldType(),
+				From:      &query.From,
+			}
 
 			reverseAlias := make(map[string]string, len(query.FieldAlias))
 			for k, v := range query.FieldAlias {
@@ -635,9 +638,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 						}
 
 						if idx == len(sr.Hits.Hits)-1 && d.Sort != nil {
-							option = &metadata.ResultTableOption{
-								SearchAfter: d.Sort,
-							}
+							option.SearchAfter = d.Sort
 						}
 
 						dataCh <- fact.data
@@ -650,22 +651,17 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 				// ScrollID 覆盖 SearchAfter 配置
 				if sr.ScrollId != "" {
-					option = &metadata.ResultTableOption{
-						ScrollID: sr.ScrollId,
-					}
+					option.ScrollID = sr.ScrollId
 				}
 			}
 
-			if option != nil {
-				if resultTableOptions == nil {
-					resultTableOptions = metadata.ResultTableOptions{}
-				}
-
-				lock.Lock()
-				resultTableOptions.SetOption(query.TableID, conn.Address, option)
-				lock.Unlock()
-
+			if resultTableOptions == nil {
+				resultTableOptions = metadata.ResultTableOptions{}
 			}
+
+			lock.Lock()
+			resultTableOptions.SetOption(query.TableID, conn.Address, option)
+			lock.Unlock()
 		}()
 	}
 	wg.Wait()

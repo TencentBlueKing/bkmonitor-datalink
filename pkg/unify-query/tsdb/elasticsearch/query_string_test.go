@@ -136,6 +136,10 @@ func TestQsToDsl(t *testing.T) {
 			q:        `log: (NOT "testOr" AND NOT "testAnd") `,
 			expected: `{"bool":{"must_not":[{"term":{"log":"testOr"}},{"term":{"log":"testAnd"}}]}}`,
 		},
+		{
+			q:        `70844424976344173 AND`,
+			expected: `{"query_string":{"query":"\"70844424976344173\"","fields":["*","__*"],"analyze_wildcard":true,"lenient":true}}`,
+		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)

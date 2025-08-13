@@ -14,6 +14,7 @@ package querystring_parser
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -29,6 +30,8 @@ func Parse(query string) (Expr, error) {
 	if query == "" || query == "*" {
 		return nil, nil
 	}
+
+	query = regexp.MustCompile(`(?i)(\s+\b(?:AND|OR)\b\s*)+$`).ReplaceAllString(query, "")
 
 	lex := newLexerWrapper(newExprStringLex(strings.NewReader(query)))
 	doParse(lex)

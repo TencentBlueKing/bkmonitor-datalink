@@ -671,6 +671,33 @@ func TestParser(t *testing.T) {
 				},
 			},
 		},
+		"test - Tail Unuse And_Or ": {
+			q: `70844424976344173 AND `,
+			e: &MatchExpr{
+				Field: "",
+				Value: "70844424976344173",
+			},
+		},
+		"test - Tail Unuse Many And_Or ": {
+			q: `70844424976344173 AND OR AND AND OR `,
+			e: &MatchExpr{
+				Field: "",
+				Value: "70844424976344173",
+			},
+		},
+		"test - tail contains and or": {
+			q: `andand AND ororor OR AND OR`,
+			e: &AndExpr{
+				Left: &MatchExpr{
+					Field: "",
+					Value: "andand",
+				},
+				Right: &MatchExpr{
+					Field: "",
+					Value: "ororor",
+				},
+			},
+		},
 	}
 
 	for name, c := range testCases {

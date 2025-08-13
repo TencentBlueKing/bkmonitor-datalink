@@ -87,7 +87,7 @@ func HandleProxy(c *gin.Context) {
 	c.Set(ContextConfigUnifyResponseProcess, true)
 	handlers, exist := metadata.GetHandler(query.Path)
 	if !exist {
-		err = fmt.Errorf("not exist handler for path: %s", query.Path)
+		c.Status(http.StatusNotFound)
 		return
 	}
 	log.Debugf(ctx, "api gw request path: %s, data: %s", query.Path, query.Data)

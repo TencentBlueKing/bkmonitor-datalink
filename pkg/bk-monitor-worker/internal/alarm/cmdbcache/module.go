@@ -75,14 +75,14 @@ func (m *ModuleCacheManager) BuildRelationMetrics(ctx context.Context) error {
 
 	// 3. 按业务ID构建relation指标
 	for bizID, data := range bizDataMap {
-		m.buildRelationMetrics(ctx, data, bizID)
+		m.buildRelationMetricsByBizAndData(ctx, data, bizID)
 	}
 	logger.Infof("[cmdb_relation] build module relation metrics, total biz count: %d", len(bizDataMap))
 
 	return nil
 }
 
-func (m *ModuleCacheManager) buildRelationMetrics(ctx context.Context, data []map[string]interface{}, bizID int) {
+func (m *ModuleCacheManager) buildRelationMetricsByBizAndData(ctx context.Context, data []map[string]interface{}, bizID int) {
 	infos := m.ModuleToRelationInfos(data)
 	if err := relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Module, infos); err != nil {
 		logger.Errorf("build module relation metrics failed for biz %d: %v", bizID, err)

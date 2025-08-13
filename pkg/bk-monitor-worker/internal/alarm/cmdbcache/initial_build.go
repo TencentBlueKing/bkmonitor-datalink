@@ -25,6 +25,7 @@ package cmdbcache
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -32,13 +33,14 @@ import (
 
 func buildAllInfosCache(ctx context.Context, bkTenantId, prefix string, redisOpt *redis.Options, concurrentLimit int, cacheTypes ...string) {
 	var wg sync.WaitGroup
+	s := time.Now()
 	for _, cacheType := range cacheTypes {
 		wg.Add(1)
 		go func(cacheType string) {
 			defer wg.Done()
 			cacheManager, err := NewCacheManagerByType(bkTenantId, redisOpt, prefix, cacheType, concurrentLimit)
 			if err != nil {
-				logger.Warn("[cmdb_relation] failed to create cache manager for type: %s, error: %v", cacheType, err)
+				logger.Warnf("[cmdb_relation] failed to create cache manager for type: %s, error: %v", cacheType, err)
 				return
 			}
 			err = cacheManager.BuildRelationMetrics(ctx)
@@ -47,6 +49,6 @@ func buildAllInfosCache(ctx context.Context, bkTenantId, prefix string, redisOpt
 			}
 		}(cacheType)
 	}
-	logger.Info("[cmdb_relation] building all infos cache manager")
+	logger.Infof("[cmdb_relation] building all infos cache manager, cost: %s", time.Since(s))
 	wg.Wait()
 }

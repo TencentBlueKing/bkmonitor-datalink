@@ -17,8 +17,8 @@ var (
 	handlerMap = make(map[string][]gin.HandlerFunc)
 )
 
-func AddHandler(routePath string, handler ...gin.HandlerFunc) {
-	handlerMap[routePath] = append(handlerMap[routePath], handler...)
+func AddHandler(handlerPath string, handler ...gin.HandlerFunc) {
+	handlerMap[handlerPath] = append(handlerMap[handlerPath], handler...)
 }
 
 func GetHandler(key string) ([]gin.HandlerFunc, bool) {

@@ -156,5 +156,5 @@ func registerProxyHandler(ctx context.Context, g *gin.RouterGroup) {
 	registerHandler := endpoint.NewRegisterHandler(ctx, g)
 
 	handlerPath = viper.GetString(ProxyConfigPath)
-	registerHandler.RegisterWithoutRecord(http.MethodPost, handlerPath, proxy.HandleProxy)
+	registerHandler.RegisterWithOutHandlerMap(http.MethodPost, handlerPath, proxy.HandleProxy)
 }

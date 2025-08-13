@@ -191,13 +191,13 @@ func (p *procPerfMgr) cpu(pid int32) (define.ProcTime, error) {
 		return define.ProcTime{}, err
 	}
 
-	// 单位均为 ms
+	// 单位均转换为 ms
 	ct, _ := proc.CreateTime()
 	return define.ProcTime{
 		StartTime: uint64(ct),
-		User:      uint64(t.User) * 1000,
-		Sys:       uint64(t.System) * 1000,
-		Total:     (uint64(t.User) + uint64(t.System)) * 1000,
+		User:      uint64(t.User * 1000),
+		Sys:       uint64(t.System * 1000),
+		Total:     uint64((t.User + t.System) * 1000),
 	}, nil
 }
 

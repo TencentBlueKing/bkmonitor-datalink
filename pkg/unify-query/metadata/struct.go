@@ -101,9 +101,7 @@ type Query struct {
 	ClusterID string `json:"cluster_id,omitempty"` // 存储 ID
 
 	StorageType string `json:"storage_type,omitempty"` // 存储类型
-
-	SliceID string `json:"slice_id,omitempty"`
-
+	SliceID     string `json:"slice_id,omitempty"`     // 切片 ID
 	StorageID   string `json:"storage_id,omitempty"`
 	StorageName string `json:"storage_name,omitempty"`
 

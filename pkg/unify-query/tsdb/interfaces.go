@@ -19,7 +19,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
 
 type Instance interface {
@@ -38,25 +37,13 @@ type Instance interface {
 	DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error)
 
 	InstanceType() string
-
-	ScrollHandler() ScrollHandler
 }
 
 var (
 	_ Instance = &DefaultInstance{}
 )
 
-type ScrollHandler interface {
-	MakeSlices(ctx context.Context, session *redis.ScrollSession, tableUUID string) ([]*redis.SliceInfo, error)
-	IsCompleted(opt *metadata.ResultTableOption, dataLen int) bool
-	UpdateScrollStatus(ctx context.Context, session *redis.ScrollSession, tableUUID string, resultOption *metadata.ResultTableOption, status string) error
-}
-
 type DefaultInstance struct {
-}
-
-func (d *DefaultInstance) ScrollHandler() ScrollHandler {
-	return nil
 }
 
 func (d *DefaultInstance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, *metadata.ResultTableOption, error) {

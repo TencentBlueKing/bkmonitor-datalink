@@ -741,7 +741,3 @@ func (i *Instance) QuerySeriesSet(
 func (i *Instance) InstanceType() string {
 	return consul.ElasticsearchStorageType
 }
-
-func (i *Instance) ScrollHandler() tsdb.ScrollHandler {
-	return i
-}

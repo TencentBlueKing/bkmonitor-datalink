@@ -509,10 +509,6 @@ func (i *Instance) InstanceType() string {
 	return consul.BkSqlStorageType
 }
 
-func (i *Instance) ScrollHandler() tsdb.ScrollHandler {
-	return i
-}
-
 func (i *Instance) IsCompleted(opt *metadata.ResultTableOption, dataLen int) bool {
 	return dataLen == 0
 }

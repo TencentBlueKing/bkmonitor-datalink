@@ -266,13 +266,12 @@ func HandlerQueryRaw(c *gin.Context) {
 // @Router   /query/raw_with_scroll [post]
 func HandlerQueryRawWithScroll(c *gin.Context) {
 	var (
-		ctx            = c.Request.Context()
-		resp           = &response{c: c}
-		user           = metadata.GetUser(ctx)
-		err            error
-		span           *trace.Span
-		listData       ListData
-		sessionLockKey string
+		ctx      = c.Request.Context()
+		resp     = &response{c: c}
+		user     = metadata.GetUser(ctx)
+		err      error
+		span     *trace.Span
+		listData ListData
 	)
 
 	ctx, span = trace.NewSpan(ctx, "handler-query-raw-with-scroll")
@@ -315,35 +314,29 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	queryTs.ClearCache = false
 	queryByte, _ := json.StableMarshal(queryTs)
 	queryStr := string(queryByte)
+	queryStrWithUserName := fmt.Sprintf("%s:%s", user.Name, queryStr)
+	session, err := redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollMaxSlice, 3, ScrollSliceLimit)
+	if err != nil {
+		return
+	}
 
 	span.Set("query-body", queryStr)
 
-	sessionKey := fmt.Sprintf("%s:%s", user.Name, queryStr)
-
 	if isClearCache {
-		if err = redis.ClearScrollSession(ctx, sessionLockKey); err != nil {
-			return
-		}
+		session.ReleaseLock()
 	}
 
-	sessionLockKey = redis.ScrollLockKeyPrefix + sessionKey
-	if err = redis.AcquireLock(ctx, sessionLockKey, ScrollSessionLockTimeout); err != nil {
+	if err = session.AcquireLock(ctx); err != nil {
 		return
 	}
 	defer func() {
-		if rErr := redis.ReleaseLock(ctx, sessionLockKey); rErr != nil {
-			err = rErr
-			return
-		}
+		session.ReleaseLock()
 	}()
-	if queryTs.ClearCache {
-		if err = redis.ClearScrollSession(ctx, sessionLockKey); err != nil {
-			return
-		}
-	}
-	span.Set("session-lock-key", sessionLockKey)
+
+	span.Set("session-lock-key", queryStrWithUserName)
 	listData.TraceID = span.TraceID()
-	listData.Total, listData.List, listData.ResultTableOptions, listData.Done, err = queryRawWithScroll(ctx, queryTs)
+	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithScroll(ctx, queryTs, session)
+	listData.Done = session.Done()
 	if err != nil {
 		listData.Status = &metadata.Status{
 			Code:    metadata.QueryRawError,

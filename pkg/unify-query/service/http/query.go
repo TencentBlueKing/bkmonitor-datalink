@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jinzhu/copier"
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
@@ -369,7 +370,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	return
 }
 
-func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, done bool, err error) {
+func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
 	var (
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
@@ -385,14 +386,6 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 	_, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if timeErr != nil {
 		err = timeErr
-		return
-	}
-
-	sessionKeySuffix := ""
-	maxSliceCount := 3
-
-	session, err := redisUtil.GetOrCreateScrollSession(ctx, sessionKeySuffix, maxSliceCount, queryTs.Scroll, queryTs.Limit)
-	if err != nil {
 		return
 	}
 
@@ -431,22 +424,32 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 	defer p.Release()
 
 	queryRef.Range("", func(qry *metadata.Query) {
-		for _, s := range session.ScrollIDs {
+		for k, s := range session.ScrollIDs {
+			if s.Status == redisUtil.StatusCompleted || s.FailedNum > session.SliceMaxFailedNum {
+				continue
+			}
+			log.Infof(ctx, "query with sliceID: %s, sliceMax: %d, offset: %d, limit: %d", s.ScrollID, s.SliceMax, s.Offset, s.Limit)
 			sendWg.Add(1)
 
 			_ = p.Submit(func() {
 				defer func() {
 					sendWg.Done()
 				}()
-
-				newQry := &(*qry)
-				newQry.SliceID = fmt.Sprintf("%d", s.SliceIdx)
+				newQry := &metadata.Query{}
+				err = copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true})
+				if err != nil {
+					log.Errorf(ctx, "copy query ts error: %s", err.Error())
+					errCh <- err
+					return
+				}
+				newQry.SliceID = s.ScrollID
 				newQry.ResultTableOption = &metadata.ResultTableOption{
 					ScrollID:   s.ScrollID,
 					SliceIndex: &s.SliceIdx,
 					SliceMax:   &s.SliceMax,
 					From:       &s.Offset,
 				}
+				newQry.Size = s.Limit
 
 				instance := prometheus.GetTsDbInstance(ctx, newQry)
 				if instance == nil {
@@ -456,6 +459,11 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 
 				size, option, queryErr := instance.QueryRawData(ctx, newQry, start, end, dataCh)
 				if queryErr != nil {
+					s.FailedNum++
+					if s.FailedNum > session.SliceMaxFailedNum {
+						s.Status = redisUtil.StatusFailed
+						session.UpdateSliceStatus(k, s)
+					}
 					errCh <- queryErr
 					return
 				}
@@ -464,15 +472,47 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs) (total
 				if resultTableOptions == nil {
 					resultTableOptions = make(metadata.ResultTableOptions)
 				}
-				lock.Lock()
-				resultTableOptions.SetOption(newQry.TableUUID(), option)
-				lock.Unlock()
+
+				if option != nil {
+					s.ScrollID = option.ScrollID
+					s.Offset = s.Offset + s.Limit
+					lock.Lock()
+					resultTableOptions.SetOption(newQry.TableUUID(), option)
+					lock.Unlock()
+				}
+
+				// Handle scroll completion based on ES response
+				if size == 0 {
+					// When no data is returned, mark this slice as completed
+					s.Status = redisUtil.StatusCompleted
+					s.ScrollID = ""
+				} else if option != nil {
+					if option.ScrollID == "" {
+						// When ES returns empty scroll_id, mark this slice as completed
+						s.Status = redisUtil.StatusCompleted
+						s.ScrollID = ""
+					} else {
+						// Normal case - update scroll ID for next iteration
+						s.Status = redisUtil.StatusRunning
+						s.ScrollID = option.ScrollID
+					}
+				} else {
+					// When option is nil, consider it completed
+					s.Status = redisUtil.StatusCompleted
+					s.ScrollID = ""
+				}
+				session.UpdateSliceStatus(k, s)
 
 				total += size
 			})
 		}
 	})
-	// 等待数据组装完毕
+
+	sendWg.Wait()
+
+	close(dataCh)
+	close(errCh)
+
 	receiveWg.Wait()
 	return
 }

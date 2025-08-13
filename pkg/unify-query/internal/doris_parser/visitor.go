@@ -122,7 +122,7 @@ func (v *Statement) String() string {
 	sql := strings.Join(result, " ")
 
 	if v.isSubQuery {
-		return fmt.Sprintf("(%s)", sql)
+		sql = fmt.Sprintf("(%s)", sql)
 	}
 
 	return sql

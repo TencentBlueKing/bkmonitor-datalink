@@ -232,11 +232,7 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 	}
 
 	// 刷新 relation metrics 缓存
-	infos := m.ModuleToRelationInfos(moduleList)
-	err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Module, infos)
-	if err != nil {
-		logger.Errorf("[cmdb_relation] refresh set cache failed, err: %v", err)
-	}
+	m.buildRelationMetricsByBizAndData(ctx, moduleList, bizID)
 
 	return nil
 }

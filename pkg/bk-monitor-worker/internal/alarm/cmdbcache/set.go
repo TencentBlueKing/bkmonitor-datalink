@@ -219,11 +219,7 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 	}
 
 	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
-	infos := m.SetToRelationInfos(result)
-	err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Set, infos)
-	if err != nil {
-		logger.Errorf("[cmdb_relation] refresh set cache failed, err: %v", err)
-	}
+	m.buildRelationMetricsByBizAndData(ctx, result, bizID)
 
 	return nil
 }

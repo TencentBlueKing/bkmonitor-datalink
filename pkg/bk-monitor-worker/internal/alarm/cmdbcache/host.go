@@ -386,11 +386,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 
 	// 刷新 relation metrics 缓存
 	go func() {
-		infos := m.HostToRelationInfos(hosts)
-		err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bkBizId, relation.Host, infos)
-		if err != nil {
-			logger.Error("refresh relation metrics failed, err: %v", err)
-		}
+		m.buildRelationMetricsByBizAndData(ctx, hosts, bkBizId)
 		wg.Done()
 	}()
 

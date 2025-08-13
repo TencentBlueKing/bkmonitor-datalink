@@ -73,10 +73,10 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 	rs := define.GetRuntimeStats()
 	lbs["version"] = rs.Version
-	data = append(data, buildMetrics("bkmonitorbeat_version", 1, lbs))
+	data = append(data, buildMetrics("version", 1, lbs))
 
-	data = append(data, buildMetrics("bkmonitorbeat_uptime", time.Since(startTime).Seconds(), extLabels))
-	data = append(data, buildMetrics("bkmonitorbeat_reload_total", float64(rs.Reload), extLabels))
+	data = append(data, buildMetrics("uptime", time.Since(startTime).Seconds(), extLabels))
+	data = append(data, buildMetrics("reload_total", float64(rs.Reload), extLabels))
 
 	e <- &Event{
 		BizID:  g.TaskConfig.GetBizID(),
@@ -103,7 +103,7 @@ func buildMetrics(name string, value float64, labels map[string]string) common.M
 	}
 
 	m := Metric{
-		Metrics:   map[string]float64{name: value},
+		Metrics:   map[string]float64{"bkmonitorbeat_" + name: value},
 		Timestamp: time.Now().UnixMilli(),
 		Dimension: labels,
 	}

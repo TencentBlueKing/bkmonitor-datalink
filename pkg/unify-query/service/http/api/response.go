@@ -36,7 +36,7 @@ func (r *response) failed(ctx context.Context, err error) {
 	log.Errorf(ctx, err.Error())
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUID, user.Source)
-
+	// 需要阻止响应返回, 交给统一响应处理
 	if _, ok := r.c.Get(proxy.ContextConfigUnifyResponseProcess); ok {
 		r.c.Set(proxy.ContextKeyResponseError, err)
 		return
@@ -51,8 +51,8 @@ func (r *response) success(ctx context.Context, data interface{}) {
 	log.Debugf(ctx, "query data size is %s", fmt.Sprint(unsafe.Sizeof(data)))
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUID, user.Source)
-	isUnifyRespProcess := r.isConfigUnifyRespProcess(r.c)
-	if isUnifyRespProcess {
+	// 同上
+	if r.isConfigUnifyRespProcess(r.c) {
 		r.c.Set(proxy.ContextKeyResponseData, data)
 		return
 	}

@@ -28,7 +28,8 @@ type RegisterHandler struct {
 	g   *gin.RouterGroup
 }
 
-func (r *RegisterHandler) Register(method, handlerPath string, handlerFunc ...gin.HandlerFunc) {
+func (r *RegisterHandler) register(method, handlerPath string, handlerFunc ...gin.HandlerFunc) {
+	// 记录注册的路由和处理函数,方便进行统一处理
 	metadata.AddHandler(handlerPath, handlerFunc...)
 	switch method {
 	case http.MethodGet:
@@ -43,18 +44,14 @@ func (r *RegisterHandler) Register(method, handlerPath string, handlerFunc ...gi
 	}
 }
 
+func (r *RegisterHandler) Register(method, handlerPath string, handlerFunc ...gin.HandlerFunc) {
+	// 记录注册的路由和处理函数,方便进行统一处理
+	metadata.AddHandler(handlerPath, handlerFunc...)
+	r.register(method, handlerPath, handlerFunc...)
+}
+
 func (r *RegisterHandler) RegisterWithoutRecord(method, handlerPath string, handlerFunc ...gin.HandlerFunc) {
-	switch method {
-	case http.MethodGet:
-		r.g.GET(handlerPath, handlerFunc...)
-	case http.MethodPost:
-		r.g.POST(handlerPath, handlerFunc...)
-	case http.MethodHead:
-		r.g.HEAD(handlerPath, handlerFunc...)
-	default:
-		log.Errorf(r.ctx, "registerHandlers error type is error %s", method)
-		return
-	}
+	r.register(method, handlerPath, handlerFunc...)
 }
 
 func NewRegisterHandler(ctx context.Context, g *gin.RouterGroup) *RegisterHandler {

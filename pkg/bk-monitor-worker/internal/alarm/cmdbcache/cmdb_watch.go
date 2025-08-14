@@ -545,7 +545,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	}
 	initialCtx, cancel := context.WithTimeout(ctx, initialMaxWaitTime)
 	defer cancel()
-	buildAllInfosCache(initialCtx, params.BkTenantId, params.Prefix, &params.Redis, bizConcurrent, relation.Host, relation.Set, relation.Module)
+	buildAllInfosCache(initialCtx, params.BkTenantId, params.Prefix, &params.Redis, bizConcurrent, "host_topo", "set", "module")
 
 	wg := sync.WaitGroup{}
 	cancelCtx, cancel := context.WithCancel(ctx)
@@ -577,7 +577,6 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 				return
 			case <-ticker.C:
 				// 上报指标
-				logger.Infof("[cmdb_relation] space report push all")
 				if err = spaceReport.PushAll(cancelCtx, time.Now()); err != nil {
 					logger.Errorf("[cmdb_relation] relation metrics builder push all error: %v", err.Error())
 				}
@@ -604,9 +603,6 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 				cancel()
 				return
 			}
-
-			logger.Infof("[cmdb_relation] start handle cmdb resource(%s) event", cacheType)
-			defer logger.Infof("[cmdb_relation] end handle cmdb resource(%s) event", cacheType)
 
 			for {
 				tn := time.Now()

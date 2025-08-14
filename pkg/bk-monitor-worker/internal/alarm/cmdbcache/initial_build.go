@@ -34,7 +34,6 @@ import (
 func buildAllInfosCache(ctx context.Context, bkTenantId, prefix string, redisOpt *redis.Options, concurrentLimit int, cacheTypes ...string) {
 	var wg sync.WaitGroup
 	n := time.Now()
-	logger.Infof("[cmdb_relation] build_all_cache action:start")
 
 	for _, cacheType := range cacheTypes {
 		wg.Add(1)
@@ -51,6 +50,7 @@ func buildAllInfosCache(ctx context.Context, bkTenantId, prefix string, redisOpt
 			}
 		}(cacheType)
 	}
-	logger.Infof("[cmdb_relation] build_all_cache action:end cost: %s", time.Since(n))
 	wg.Wait()
+
+	logger.Infof("[cmdb_relation] build_all_cache action:end cost: %s", time.Since(n))
 }

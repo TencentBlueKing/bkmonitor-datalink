@@ -55,7 +55,6 @@ type SetCacheManager struct {
 // BuildRelationMetrics 从缓存构建relation指标
 func (m *SetCacheManager) BuildRelationMetrics(ctx context.Context) error {
 	n := time.Now()
-	logger.Infof("[cmdb_relation] build_cache type:set action:start")
 
 	// 1. 从缓存获取数据（自动滚动获取所有数据）
 	cacheData, err := m.batchQuery(ctx, m.GetCacheKey(setCacheKey), "*")

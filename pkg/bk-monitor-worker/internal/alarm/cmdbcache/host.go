@@ -263,7 +263,6 @@ type HostAndTopoCacheManager struct {
 // BuildRelationMetrics 从缓存构建relation指标
 func (m *HostAndTopoCacheManager) BuildRelationMetrics(ctx context.Context) error {
 	n := time.Now()
-	logger.Infof("[cmdb_relation] build_cache type:host action:start")
 
 	// 1. 从缓存获取主机数据
 	cacheData, err := m.batchQuery(ctx, m.GetCacheKey(hostCacheKey), "*")

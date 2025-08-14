@@ -65,7 +65,11 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 	var data []common.MapStr
 	for i := 0; i < len(metrics); i++ {
-		data = append(data, decodePromMetricFamily(metrics[i], lbs)...)
+		pmf := decodePromMetricFamily(metrics[i], lbs)
+		if len(pmf) == 0 {
+			continue
+		}
+		data = append(data, pmf...)
 	}
 
 	s := stats.Default()
@@ -113,11 +117,30 @@ func buildMetrics(name string, value float64, labels map[string]string) common.M
 	return m.AsMapStr()
 }
 
-func decodePromMetricFamily(mf *dto.MetricFamily, extLabels map[string]string) []common.MapStr {
-	var ms []Metric
-	name := *mf.Name
-	now := time.Now().UnixMilli()
+// metricsWhileList 指标白名单 避免自监控整体数据量过大
+var metricsWhileList = map[string]struct{}{
+	"go_gc_duration_seconds_count":    {},
+	"go_gc_duration_seconds_sum":      {},
+	"go_goroutines":                   {},
+	"go_info":                         {},
+	"go_memstats_alloc_bytes_total":   {},
+	"go_memstats_heap_idle_bytes":     {},
+	"go_memstats_heap_released_bytes": {},
+	"go_memstats_next_gc_bytes":       {},
+	"go_threads":                      {},
+	"process_cpu_seconds_total":       {},
+	"process_open_fds":                {},
+	"process_resident_memory_bytes":   {},
+}
 
+func decodePromMetricFamily(mf *dto.MetricFamily, extLabels map[string]string) []common.MapStr {
+	name := *mf.Name
+	if _, ok := metricsWhileList[name]; !ok {
+		return nil
+	}
+
+	var ms []Metric
+	now := time.Now().UnixMilli()
 	for _, metric := range mf.GetMetric() {
 		lbs := map[string]string{}
 		if len(metric.Label) != 0 {

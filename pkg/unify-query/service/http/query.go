@@ -238,7 +238,9 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 			if queryTs.Limit > 0 {
 				if queryTs.IsMultiFrom {
-					data = data[0:queryTs.Limit]
+					if len(data) > 0 && len(data) > queryTs.Limit {
+						data = data[0:queryTs.Limit]
+					}
 					for _, l := range data {
 						tableUUID := l[metadata.KeyTableUUID].(string)
 
@@ -475,7 +477,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				if option != nil {
 					s.ScrollID = option.ScrollID
-					s.Offset = s.Offset + s.Limit
+					s.Offset = s.Offset + s.Limit*s.SliceMax
 					lock.Lock()
 					resultTableOptions.SetOption(newQry.TableUUID(), option)
 					lock.Unlock()

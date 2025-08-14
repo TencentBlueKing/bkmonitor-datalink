@@ -11,7 +11,6 @@ package redis
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 
@@ -46,16 +45,6 @@ func Client() goRedis.UniversalClient {
 		client = globalInstance.client
 	}
 	return client
-}
-
-func IsEntryNil(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, goRedis.Nil) {
-		return true
-	}
-	return false
 }
 
 func SetInstance(ctx context.Context, serviceName string, options *goRedis.UniversalOptions) error {
@@ -141,12 +130,4 @@ var Subscribe = func(ctx context.Context, channels ...string) <-chan *goRedis.Me
 	log.Debugf(ctx, "[redis] subscribe %s", channels)
 	p := globalInstance.client.Subscribe(ctx, channels...)
 	return p.Channel()
-}
-
-func AcquireLock(ctx context.Context, key string, dur time.Duration) error {
-	return Client().SetNX(ctx, key, "1", dur).Err()
-}
-
-func ReleaseLock(ctx context.Context, key string) error {
-	return Client().Del(ctx, key).Err()
 }

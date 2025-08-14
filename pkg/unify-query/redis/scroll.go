@@ -11,14 +11,12 @@ package redis
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const (
@@ -38,23 +36,23 @@ const (
 )
 
 type ScrollSession struct {
-	Ctx               context.Context `json:"-"`
-	SessionKey        string          `json:"session_key"`
-	LockKey           string          `json:"lock_key"`
-	LastAccessAt      time.Time       `json:"last_access_at"`
-	ScrollTimeout     time.Duration   `json:"scroll_timeout"`
-	MaxSlice          int             `json:"max_slice"`
-	SliceMaxFailedNum int             `json:"slice_max_failed_num"`
-	Limit             int             `json:"limit"`
-	// map key is SliceStatusKey
-	ScrollIDs map[string]SliceStatusValue `json:"scroll_ids"`
-	Mu        sync.RWMutex                `json:"-"`
+	Ctx               context.Context    `json:"-"`
+	SessionKey        string             `json:"session_key"`
+	LockKey           string             `json:"lock_key"`
+	LastAccessAt      time.Time          `json:"last_access_at"`
+	ScrollTimeout     time.Duration      `json:"scroll_timeout"`
+	MaxSlice          int                `json:"max_slice"`
+	SliceMaxFailedNum int                `json:"slice_max_failed_num"`
+	Limit             int                `json:"limit"`
+	ScrollIDs         []SliceStatusValue `json:"scroll_ids"`
+
+	Mu sync.RWMutex `json:"-"`
 }
 
-func (s *ScrollSession) UpdateSliceStatus(key string, value SliceStatusValue) {
+func (s *ScrollSession) UpdateSliceStatus(idx int, value SliceStatusValue) {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
-	s.ScrollIDs[key] = value
+	s.ScrollIDs[idx] = value
 	s.LastAccessAt = time.Now()
 }
 
@@ -68,7 +66,7 @@ func newScrollSession(ctx context.Context, queryTsStr string, scrollTimeout time
 		MaxSlice:          maxSlice,
 		SliceMaxFailedNum: sliceMaxFailedNum,
 		Limit:             Limit,
-		ScrollIDs:         make(map[string]SliceStatusValue),
+		ScrollIDs:         []SliceStatusValue{},
 		Mu:                sync.RWMutex{},
 	}
 	session.makeSlices()
@@ -155,50 +153,24 @@ type SliceInfo struct {
 	Offset      int
 }
 
-func (s *ScrollSession) makeSlices() []*SliceInfo {
+func (s *ScrollSession) makeSlices() []SliceStatusValue {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 
-	var slices []*SliceInfo
-
-	if len(s.ScrollIDs) > 0 {
-		for _, sliceValue := range s.ScrollIDs {
-			slice := &SliceInfo{
-				SliceIdx:    sliceValue.SliceIdx,
-				SliceMax:    sliceValue.SliceMax,
-				Offset:      sliceValue.Offset,
-				Connect:     "",
-				TableId:     "",
-				StorageType: "",
-				ScrollID:    sliceValue.ScrollID,
-			}
-			slices = append(slices, slice)
-		}
-		return slices
-	}
-
 	for idx := 0; idx < s.MaxSlice; idx++ {
-		sliceKey := fmt.Sprintf("slice_%d", idx)
 		sliceValue := SliceStatusValue{
 			SliceIdx:  idx,
 			SliceMax:  s.MaxSlice,
 			ScrollID:  "",
-			Offset:    0,
+			Offset:    idx * s.Limit,
 			Status:    StatusPending,
 			FailedNum: 0,
 			Limit:     s.Limit,
 		}
-		s.ScrollIDs[sliceKey] = sliceValue
-
-		slice := &SliceInfo{
-			SliceIdx: idx,
-			SliceMax: s.MaxSlice,
-			Offset:   0,
-		}
-		slices = append(slices, slice)
+		s.ScrollIDs = append(s.ScrollIDs, sliceValue)
 	}
 
-	return slices
+	return s.ScrollIDs
 }
 
 func (s *ScrollSession) Done() bool {
@@ -210,22 +182,4 @@ func (s *ScrollSession) Done() bool {
 		}
 	}
 	return true
-}
-
-func (s *SliceInfo) Update(opt *metadata.ResultTableOption) error {
-	s.ScrollID = opt.ScrollID
-	if opt.SliceIndex != nil {
-		s.SliceIdx = *opt.SliceIndex
-	}
-	if opt.SliceMax != nil {
-		s.SliceMax = *opt.SliceMax
-	}
-	if opt.From != nil {
-		s.Offset = *opt.From
-	}
-	if opt.ScrollID != "" {
-		s.ScrollID = opt.ScrollID
-	}
-
-	return nil
 }

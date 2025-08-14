@@ -149,6 +149,11 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		if query.Step == "" {
 			query.Step = q.Step
 		}
+
+		if query.Limit == 0 {
+			query.Limit = q.Limit
+		}
+
 		if q.SpaceUid == "" {
 			q.SpaceUid = metadata.GetUser(ctx).SpaceUID
 		}

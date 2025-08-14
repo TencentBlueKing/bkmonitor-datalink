@@ -633,6 +633,11 @@ group by
 			sql:  "SELECT ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)), 2) AS ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT()) AS pct",
 		},
 		{
+			name: "子查询验证 - 1",
+			q:    "select ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)), 2) as ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT() where a > 1 limit 1) AS pct",
+			sql:  "SELECT ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)), 2) AS ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT() WHERE a > 1 LIMIT 1) AS pct",
+		},
+		{
 			name: "查询值支持函数模式",
 			q:    "SELECT * WHERE LOWER(log) REGEXP LOWER('LogPzRealm')",
 			sql:  "SELECT * WHERE LOWER(log) REGEXP LOWER('LogPzRealm')",

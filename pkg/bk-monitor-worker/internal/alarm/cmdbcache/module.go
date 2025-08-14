@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/mitchellh/mapstructure"
@@ -49,6 +50,46 @@ const (
 
 type ModuleCacheManager struct {
 	*BaseCacheManager
+}
+
+// BuildRelationMetrics 从缓存构建relation指标
+func (m *ModuleCacheManager) BuildRelationMetrics(ctx context.Context) error {
+	n := time.Now()
+
+	// 1. 从缓存获取数据（自动滚动获取所有数据）
+	cacheData, err := m.batchQuery(ctx, m.GetCacheKey(moduleCacheKey), "*")
+	if err != nil {
+		return errors.Wrap(err, "get module cache failed")
+	}
+
+	// 2. 解析JSON数据并按业务ID分组
+	bizDataMap := make(map[int][]map[string]interface{})
+	for _, jsonStr := range cacheData {
+		var item map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &item); err != nil {
+			logger.Warnf("unmarshal module cache failed: %v", err)
+			continue
+		}
+
+		// 从数据中提取业务ID
+		bizID := int(item["bk_biz_id"].(float64))
+		bizDataMap[bizID] = append(bizDataMap[bizID], item)
+	}
+
+	// 3. 按业务ID构建relation指标
+	for bizID, data := range bizDataMap {
+		m.buildRelationMetricsByBizAndData(ctx, data, bizID)
+	}
+	logger.Infof("[cmdb_relation] build cache type:module action:end biz_count: %d cost: %s", len(bizDataMap), time.Since(n))
+
+	return nil
+}
+
+func (m *ModuleCacheManager) buildRelationMetricsByBizAndData(ctx context.Context, data []map[string]interface{}, bizID int) {
+	infos := m.ModuleToRelationInfos(data)
+	if err := relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Module, infos); err != nil {
+		logger.Errorf("build module relation metrics failed for biz %d: %v", bizID, err)
+	}
 }
 
 // NewModuleCacheManager 创建模块缓存管理器
@@ -194,11 +235,7 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 	}
 
 	// 刷新 relation metrics 缓存
-	infos := m.ModuleToRelationInfos(moduleList)
-	err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Module, infos)
-	if err != nil {
-		logger.Errorf("[cmdb_relation] refresh set cache failed, err: %v", err)
-	}
+	m.buildRelationMetricsByBizAndData(ctx, moduleList, bizID)
 
 	return nil
 }

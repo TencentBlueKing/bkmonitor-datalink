@@ -143,6 +143,9 @@ var (
 	SloPushGatewayToken string
 	// SloPushGatewayEndpoint slo数据上报端点
 	SloPushGatewayEndpoint string
+
+	// InitialMaxWaitTime 初始最大等待时间
+	InitialMaxWaitTime string
 )
 
 func initMetadataVariables() {
@@ -214,4 +217,6 @@ func initMetadataVariables() {
 
 	SloPushGatewayToken = GetValue("taskConfig.metadata.slo.sloPushGatewayToken", "")
 	SloPushGatewayEndpoint = GetValue("taskConfig.metadata.slo.sloPushGatewayEndpoint", "")
+
+	InitialMaxWaitTime = GetValue("taskConfig.metadata.initialMaxWaitTime", "10m")
 }

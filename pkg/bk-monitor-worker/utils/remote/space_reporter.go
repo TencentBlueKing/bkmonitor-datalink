@@ -52,7 +52,7 @@ func NewSpaceReporter(key string, writerUrl string) (Reporter, error) {
 		key:    key,
 	}
 
-	logger.Infof("[cmdb_relation] start space reporter in %s, %s", key, writerUrl)
+	logger.Infof("[cmdb_relation] start_space_reporter key: %s url: %s", key, writerUrl)
 	return report, nil
 }
 

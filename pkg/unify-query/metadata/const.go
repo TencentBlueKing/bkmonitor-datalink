@@ -40,4 +40,7 @@ const (
 	KeyTableID   = "__result_table"
 	KeyDataLabel = "__data_label"
 	KeyIndex     = "__index"
+
+	HandlerMapKey = "handler_map_key"
+
 )

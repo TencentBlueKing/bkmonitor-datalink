@@ -63,6 +63,7 @@ func setDefaultConfig() {
 
 	viper.SetDefault(CheckQueryTsConfigPath, "/check/query/ts")
 	viper.SetDefault(CheckQueryPromQLConfigPath, "/check/query/ts/promql")
+	viper.SetDefault(ProxyConfigPath, "/proxy")
 
 	viper.SetDefault(AlignInfluxdbResultConfigPath, true)
 	viper.SetDefault(InfoDefaultLimit, 100)
@@ -82,7 +83,6 @@ func setDefaultConfig() {
 	viper.SetDefault(ScrollMaxSliceConfigPath, 3)
 	viper.SetDefault(ScrollSessionLockTimeoutConfigPath, "60s")
 	viper.SetDefault(ScrollWindowTimeoutConfigPath, "3m")
-
 }
 
 // LoadConfig

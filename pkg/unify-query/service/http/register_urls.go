@@ -19,58 +19,30 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/viper"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/endpoint"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/proxy"
 )
-
-type RegisterHandlers struct {
-	ctx context.Context
-	g   *gin.RouterGroup
-}
-
-func (r *RegisterHandlers) register(method, handlerPath string, handlerFunc ...gin.HandlerFunc) {
-	switch method {
-	case http.MethodGet:
-		r.g.GET(handlerPath, handlerFunc...)
-	case http.MethodPost:
-		r.g.POST(handlerPath, handlerFunc...)
-	case http.MethodHead:
-		r.g.HEAD(handlerPath, handlerFunc...)
-	default:
-		log.Errorf(r.ctx, "registerHandlers error type is error %s", method)
-		return
-	}
-
-	log.Infof(r.ctx, "registerHandlers => [%s] %s", method, handlerPath)
-}
-
-func getRegisterHandlers(ctx context.Context, g *gin.RouterGroup) *RegisterHandlers {
-	return &RegisterHandlers{
-		ctx: ctx,
-		g:   g,
-	}
-}
 
 func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 	var handlerPath string
-
-	registerHandler := getRegisterHandlers(ctx, g)
+	registerHandler := endpoint.NewRegisterHandler(ctx, g)
 
 	// query/ts
 	handlerPath = viper.GetString(TSQueryHandlePathConfigPath)
-	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryTs)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryTs)
 
 	// query/ts/promql
 	handlerPath = viper.GetString(TSQueryPromQLHandlePathConfigPath)
-	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryPromQL)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryPromQL)
 
 	// query/reference
 	handlerPath = viper.GetString(TSQueryReferenceQueryHandlePathConfigPath)
-	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryReference)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryReference)
 
 	// query/raw
 	handlerPath = viper.GetString(TSQueryRawQueryHandlePathConfigPath)
-	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryRaw)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryRaw)
 
 	// query/raw/with_scroll
 	handlerPath = viper.GetString(TSQueryRawQueryWithScrollHandlePathConfigPath)
@@ -78,53 +50,54 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 
 	// query/ts/exemplar
 	handlerPath = viper.GetString(TSQueryExemplarHandlePathConfigPath)
-	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryExemplar)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryExemplar)
 
 	// query/ts/info
 	infoPath := viper.GetString(TSQueryInfoHandlePathConfigPath)
 
 	// query/ts/info/field_keys
 	handlerPath = path.Join(infoPath, string(infos.FieldKeys))
-	registerHandler.register(http.MethodPost, handlerPath, HandlerFieldKeys)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerFieldKeys)
 
 	// query/ts/info/tag_keys
 	handlerPath = path.Join(infoPath, string(infos.TagKeys))
-	registerHandler.register(http.MethodPost, handlerPath, HandlerTagKeys)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerTagKeys)
 
 	// query/ts/info/tag_values
 	handlerPath = path.Join(infoPath, string(infos.TagValues))
-	registerHandler.register(http.MethodPost, handlerPath, HandlerTagValues)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerTagValues)
 
 	// query/ts/info/series
 	handlerPath = path.Join(infoPath, string(infos.Series))
-	registerHandler.register(http.MethodPost, handlerPath, HandlerSeries)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerSeries)
 
 	// query/ts/info/time_series
 	handlerPath = path.Join(infoPath, string(infos.TimeSeries))
-	registerHandler.register(http.MethodPost, handlerPath, HandleTimeSeries)
+	registerHandler.Register(http.MethodPost, handlerPath, HandleTimeSeries)
 
 	// query/ts/label/:label_name/values
 	handlerPath = viper.GetString(TSQueryLabelValuesPathConfigPath)
-	registerHandler.register(http.MethodGet, handlerPath, HandlerLabelValues)
+	registerHandler.Register(http.MethodGet, handlerPath, HandlerLabelValues)
 
 	// query/ts/cluster_metrics/
 	handlerPath = viper.GetString(TSQueryClusterMetricsPathConfigPath)
-	registerHandler.register(http.MethodPost, handlerPath, HandlerQueryTsClusterMetrics)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryTsClusterMetrics)
 
 	// query/es/
 	handlerPath = viper.GetString(ESHandlePathConfigPath)
-	registerHandler.register(http.MethodPost, handlerPath, HandleESQueryRequest)
+	registerHandler.Register(http.MethodPost, handlerPath, HandleESQueryRequest)
+
 }
 
 func registerOtherHandlers(ctx context.Context, g *gin.RouterGroup) {
 	var handlerPath string
 
-	registerHandler := getRegisterHandlers(ctx, g)
+	registerHandler := endpoint.NewRegisterHandler(ctx, g)
 
 	// register prometheus metrics
 	if viper.GetBool(EnablePrometheusConfigPath) {
 		handlerPath = viper.GetString(PrometheusPathConfigPath)
-		registerHandler.register(http.MethodGet, handlerPath, gin.WrapH(
+		registerHandler.Register(http.MethodGet, handlerPath, gin.WrapH(
 			promhttp.HandlerFor(
 				prometheus.DefaultGatherer,
 				promhttp.HandlerOpts{
@@ -136,49 +109,57 @@ func registerOtherHandlers(ctx context.Context, g *gin.RouterGroup) {
 
 	// query/ts/struct_to_promql
 	handlerPath = viper.GetString(TSQueryStructToPromQLHandlePathConfigPath)
-	registerHandler.register(http.MethodPost, handlerPath, HandlerStructToPromQL)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerStructToPromQL)
 
 	// query/ts/promql_to_struct
 	handlerPath = viper.GetString(TSQueryPromQLToStructHandlePathConfigPath)
-	registerHandler.register(http.MethodPost, handlerPath, HandlerPromQLToStruct)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerPromQLToStruct)
 
 	// check/query/ts
 	handlerPath = viper.GetString(CheckQueryTsConfigPath)
-	registerHandler.register(http.MethodPost, handlerPath, HandlerCheckQueryTs)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerCheckQueryTs)
 
 	// check/query/ts/promql
 	handlerPath = viper.GetString(CheckQueryPromQLConfigPath)
-	registerHandler.register(http.MethodPost, handlerPath, HandlerCheckQueryPromQL)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerCheckQueryPromQL)
 
 	// print
 	handlerPath = viper.GetString(PrintHandlePathConfigPath)
-	registerHandler.register(http.MethodGet, handlerPath, HandlePrint)
+	registerHandler.Register(http.MethodGet, handlerPath, HandlePrint)
 
 	// influxdb_print
 	handlerPath = viper.GetString(InfluxDBPrintHandlePathConfigPath)
-	registerHandler.register(http.MethodGet, handlerPath, HandleInfluxDBPrint)
+	registerHandler.Register(http.MethodGet, handlerPath, HandleInfluxDBPrint)
 
 	// ff
 	handlerPath = viper.GetString(FeatureFlagHandlePathConfigPath)
-	registerHandler.register(http.MethodGet, handlerPath, HandleFeatureFlag)
+	registerHandler.Register(http.MethodGet, handlerPath, HandleFeatureFlag)
 
 	// space_print
 	handlerPath = viper.GetString(SpacePrintHandlePathConfigPath)
-	registerHandler.register(http.MethodGet, handlerPath, HandleSpacePrint)
+	registerHandler.Register(http.MethodGet, handlerPath, HandleSpacePrint)
 
 	// space_key_print
 	handlerPath = viper.GetString(SpaceKeyPrintHandlePathConfigPath)
-	registerHandler.register(http.MethodGet, handlerPath, HandleSpaceKeyPrint)
+	registerHandler.Register(http.MethodGet, handlerPath, HandleSpaceKeyPrint)
 
 	// tsdb_print
 	handlerPath = viper.GetString(TsDBPrintHandlePathConfigPath)
-	registerHandler.register(http.MethodGet, handlerPath, HandleTsDBPrint)
+	registerHandler.Register(http.MethodGet, handlerPath, HandleTsDBPrint)
 
 	// HEAD
-	registerHandler.register(http.MethodHead, "", HandlerHealth)
+	registerHandler.Register(http.MethodHead, "", HandlerHealth)
 
 	// profile
 	if viper.GetBool(EnableProfileConfigPath) {
 		registerProfile(ctx, g)
 	}
+}
+
+func registerProxyHandler(ctx context.Context, g *gin.RouterGroup) {
+	var handlerPath string
+	registerHandler := endpoint.NewRegisterHandler(ctx, g)
+
+	handlerPath = viper.GetString(ProxyConfigPath)
+	registerHandler.RegisterWithOutHandlerMap(http.MethodPost, handlerPath, proxy.HandleProxy)
 }

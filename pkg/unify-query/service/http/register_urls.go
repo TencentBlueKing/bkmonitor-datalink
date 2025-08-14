@@ -30,6 +30,7 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 
 	// query/ts
 	handlerPath = viper.GetString(TSQueryHandlePathConfigPath)
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryTs)
 
 	// query/ts/promql
 	handlerPath = viper.GetString(TSQueryPromQLHandlePathConfigPath)

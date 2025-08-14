@@ -539,6 +539,13 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 			}
 		}
 	}
+	initialMaxWaitTime, err := time.ParseDuration(config.InitialMaxWaitTime)
+	if err != nil {
+		return err
+	}
+	initialCtx, cancel := context.WithTimeout(ctx, initialMaxWaitTime)
+	defer cancel()
+	buildAllInfosCache(initialCtx, params.BkTenantId, params.Prefix, &params.Redis, bizConcurrent, relation.Host, relation.Set, relation.Module)
 
 	wg := sync.WaitGroup{}
 	cancelCtx, cancel := context.WithCancel(ctx)

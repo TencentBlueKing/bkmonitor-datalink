@@ -7,22 +7,21 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package api
+package metadata
 
 import (
-	"context"
-
 	"github.com/gin-gonic/gin"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/endpoint"
 )
 
-func RegisterRelation(ctx context.Context, g *gin.RouterGroup) {
-	registerHandler := endpoint.NewRegisterHandler(ctx, g)
+var (
+	handlerMap = make(map[string][]gin.HandlerFunc)
+)
 
-	registerHandler.Register("POST", RelationMultiResource, HandlerAPIRelationMultiResource)
-	registerHandler.Register("POST", RelationMultiResourceRange, HandlerAPIRelationMultiResourceRange)
-	log.Infof(ctx, "RegisterRelation => [POST] %s", RelationMultiResource)
-	log.Infof(ctx, "RegisterRelation => [POST] %s", RelationMultiResourceRange)
+func AddHandler(handlerPath string, handler ...gin.HandlerFunc) {
+	handlerMap[handlerPath] = append(handlerMap[handlerPath], handler...)
+}
+
+func GetHandler(key string) ([]gin.HandlerFunc, bool) {
+	r, ok := handlerMap[key]
+	return r, ok
 }

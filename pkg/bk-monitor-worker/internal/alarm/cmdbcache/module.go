@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/mitchellh/mapstructure"
@@ -53,6 +54,8 @@ type ModuleCacheManager struct {
 
 // BuildRelationMetrics 从缓存构建relation指标
 func (m *ModuleCacheManager) BuildRelationMetrics(ctx context.Context) error {
+	n := time.Now()
+
 	// 1. 从缓存获取数据（自动滚动获取所有数据）
 	cacheData, err := m.batchQuery(ctx, m.GetCacheKey(moduleCacheKey), "*")
 	if err != nil {
@@ -77,7 +80,7 @@ func (m *ModuleCacheManager) BuildRelationMetrics(ctx context.Context) error {
 	for bizID, data := range bizDataMap {
 		m.buildRelationMetricsByBizAndData(ctx, data, bizID)
 	}
-	logger.Infof("[cmdb_relation] build module relation metrics, total biz count: %d", len(bizDataMap))
+	logger.Infof("[cmdb_relation] build cache type:module action:end biz_count: %d cost: %s", len(bizDataMap), time.Since(n))
 
 	return nil
 }

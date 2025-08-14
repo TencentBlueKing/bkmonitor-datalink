@@ -481,25 +481,8 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					lock.Unlock()
 				}
 
-				// Handle scroll completion based on ES response
 				if size == 0 {
-					// When no data is returned, mark this slice as completed
 					s.Status = redisUtil.StatusCompleted
-					s.ScrollID = ""
-				} else if option != nil {
-					if option.ScrollID == "" {
-						// When ES returns empty scroll_id, mark this slice as completed
-						s.Status = redisUtil.StatusCompleted
-						s.ScrollID = ""
-					} else {
-						// Normal case - update scroll ID for next iteration
-						s.Status = redisUtil.StatusRunning
-						s.ScrollID = option.ScrollID
-					}
-				} else {
-					// When option is nil, consider it completed
-					s.Status = redisUtil.StatusCompleted
-					s.ScrollID = ""
 				}
 				session.UpdateSliceStatus(k, s)
 

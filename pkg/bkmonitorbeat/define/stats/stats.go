@@ -7,14 +7,40 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package define
+package stats
 
-import (
-	"github.com/elastic/beats/libbeat/common"
-)
+type Stats struct {
+	Reload       int
+	Version      string
+	RunningTasks map[string]int
+}
 
-type MetricsReaderFunc func() (<-chan []common.MapStr, error)
+func (s Stats) Copy() Stats {
+	newStats := Stats{
+		Reload:  s.Reload,
+		Version: s.Version,
+	}
+	for k, v := range s.RunningTasks {
+		newStats.RunningTasks[k] = v
+	}
+	return newStats
+}
 
-func (m MetricsReaderFunc) MarshalJSON() ([]byte, error) {
-	return []byte("\"func:metricsReaderFunc\""), nil
+var stats = &Stats{}
+
+// Default 返回默认 Stats 副本 避免数据被修改
+func Default() Stats {
+	return stats.Copy()
+}
+
+func IncReload() {
+	stats.Reload++
+}
+
+func SetVersion(v string) {
+	stats.Version = v
+}
+
+func SetRunningTasks(tasks map[string]int) {
+	stats.RunningTasks = tasks
 }

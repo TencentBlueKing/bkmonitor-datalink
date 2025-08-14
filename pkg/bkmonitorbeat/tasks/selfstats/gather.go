@@ -22,6 +22,7 @@ import (
 	"golang.org/x/exp/maps"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define/stats"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -52,7 +53,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 
 	info, _ := gse.GetAgentInfo()
-	extLabels := map[string]string{
+	lbs := map[string]string{
 		"bk_cloud_id":  strconv.Itoa(int(info.Cloudid)),
 		"bk_target_ip": info.IP,
 		"bk_agent_id":  info.BKAgentID,
@@ -64,19 +65,16 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 	var data []common.MapStr
 	for i := 0; i < len(metrics); i++ {
-		data = append(data, decodePromMetricFamily(metrics[i], extLabels)...)
+		data = append(data, decodePromMetricFamily(metrics[i], lbs)...)
 	}
 
-	lbs := make(map[string]string)
-	for k, v := range extLabels {
-		lbs[k] = v
+	s := stats.Default()
+	data = append(data, buildMetrics("version", 1, mergeMap(lbs, map[string]string{"version": s.Version})))
+	data = append(data, buildMetrics("uptime", time.Since(startTime).Seconds(), lbs))
+	data = append(data, buildMetrics("reload_total", float64(s.Reload), lbs))
+	for k, v := range s.RunningTasks {
+		data = append(data, buildMetrics("running_tasks", float64(v), mergeMap(lbs, map[string]string{"task_type": k})))
 	}
-	rs := define.GetRuntimeStats()
-	lbs["version"] = rs.Version
-	data = append(data, buildMetrics("version", 1, lbs))
-
-	data = append(data, buildMetrics("uptime", time.Since(startTime).Seconds(), extLabels))
-	data = append(data, buildMetrics("reload_total", float64(rs.Reload), extLabels))
 
 	e <- &Event{
 		BizID:  g.TaskConfig.GetBizID(),
@@ -96,12 +94,17 @@ func isValidFloat64(f float64) bool {
 	return !(math.IsNaN(f) || math.IsInf(f, 0))
 }
 
-func buildMetrics(name string, value float64, labels map[string]string) common.MapStr {
-	lbs := make(map[string]string)
-	for k, v := range labels {
-		lbs[k] = v
+func mergeMap(labels ...map[string]string) map[string]string {
+	dst := make(map[string]string)
+	for _, lbs := range labels {
+		for k, v := range lbs {
+			dst[k] = v
+		}
 	}
+	return dst
+}
 
+func buildMetrics(name string, value float64, labels map[string]string) common.MapStr {
 	m := Metric{
 		Metrics:   map[string]float64{"bkmonitorbeat_" + name: value},
 		Timestamp: time.Now().UnixMilli(),

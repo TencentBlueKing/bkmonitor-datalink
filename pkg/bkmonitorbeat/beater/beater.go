@@ -567,7 +567,7 @@ func updateRunningTasks(tasks []define.Task) {
 	count := make(map[string]int)
 	for i := 0; i < len(tasks); i++ {
 		task := tasks[i]
-		if task.GetConfig() != nil {
+		if task != nil && task.GetConfig() != nil {
 			count[task.GetConfig().GetType()]++
 		}
 	}

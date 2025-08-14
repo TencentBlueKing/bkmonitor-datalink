@@ -17,9 +17,11 @@ type Stats struct {
 
 func (s Stats) Copy() Stats {
 	newStats := Stats{
-		Reload:  s.Reload,
-		Version: s.Version,
+		Reload:       s.Reload,
+		Version:      s.Version,
+		RunningTasks: make(map[string]int),
 	}
+
 	for k, v := range s.RunningTasks {
 		newStats.RunningTasks[k] = v
 	}

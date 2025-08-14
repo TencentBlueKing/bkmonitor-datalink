@@ -7,9 +7,9 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package doris_parser
+package lucene_parser
 
-// https://github.com/apache/doris/tree/master/fe/fe-core/src/main/antlr4/org/apache/doris/nereids
+// https://github.com/antlr/grammars-v4/tree/ed6e09ef939ee85fc7ace557461733a530452a19/antlr/antlr4/examples/grammars-v4/lucene
 //go:generate antlr4 -Dlanguage=Go -no-listener -visitor -package gen *.g4 -o ../gen
 //go:generate antlr4 -Dlanguage=Go -listener -no-visitor -package gen *.g4 -o ../gen
 

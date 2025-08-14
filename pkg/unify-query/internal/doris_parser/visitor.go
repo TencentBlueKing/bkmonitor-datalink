@@ -68,6 +68,8 @@ func (n *baseNode) WithSetAs(setAs bool) {
 type Statement struct {
 	baseNode
 
+	isSubQuery bool
+
 	nodeMap map[string]Node
 
 	Table string
@@ -84,7 +86,7 @@ func (v *Statement) ItemString(name string) string {
 	return ""
 }
 
-func (v *Statement) SQL() (string, error) {
+func (v *Statement) String() string {
 	var (
 		result []string
 	)
@@ -117,7 +119,13 @@ func (v *Statement) SQL() (string, error) {
 			result = append(result, res)
 		}
 	}
-	return strings.Join(result, " "), nil
+
+	sql := strings.Join(result, " ")
+	if v.isSubQuery {
+		sql = fmt.Sprintf("(%s)", sql)
+	}
+
+	return sql
 }
 
 func (v *Statement) Error() error {
@@ -987,6 +995,11 @@ func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
 	next = node
 
 	switch ctx.(type) {
+	case *gen.SubqueryExpressionContext:
+		node.node = &Statement{
+			isSubQuery: true,
+		}
+		next = node.node
 	case *gen.SearchedCaseContext:
 		node.node = &SearchCaseNode{}
 		next = node.node

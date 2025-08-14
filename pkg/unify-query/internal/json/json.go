@@ -24,6 +24,7 @@ var sonicAPI = sonic.Config{
 	EscapeHTML:       true, // 安全性
 	CompactMarshaler: true, // 兼容性
 	CopyString:       true, // 正确性
+	SortMapKeys:      true, // 确保序列化结果稳定
 }.Froze()
 
 func Marshal(v interface{}) ([]byte, error) {

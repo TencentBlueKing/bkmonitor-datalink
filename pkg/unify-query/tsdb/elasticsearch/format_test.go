@@ -500,7 +500,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"strict_date_optional_time_nanos","from":null,"include_lower":true,"include_upper":true,"to":"2025-08-06T15:49:29.000000002Z"}}}}`,
+			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":null,"include_lower":true,"include_upper":true,"to":"1754466569000"}}}}`,
 		},
 		"dtEventTimeStamp's value is milli unix": {
 			conditions: metadata.AllConditions{
@@ -512,7 +512,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"strict_date_optional_time_nanos","from":null,"include_lower":true,"include_upper":true,"to":"2025-08-06T15:49:29.000000000Z"}}}}`,
+			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":null,"include_lower":true,"include_upper":true,"to":"1754466569000"}}}}`,
 		},
 		"dtEventTimeStamp's value is unix": {
 			conditions: metadata.AllConditions{
@@ -524,7 +524,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"strict_date_optional_time_nanos","from":null,"include_lower":true,"include_upper":true,"to":"2025-08-06T15:49:29.000000000Z"}}}}`,
+			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":null,"include_lower":true,"include_upper":true,"to":"1754466569000"}}}}`,
 		},
 		"dtEventTimeStamp's value is error unix": {
 			conditions: metadata.AllConditions{
@@ -548,7 +548,7 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"strict_date_optional_time_nanos","from":null,"include_lower":true,"include_upper":true,"to":"2025-08-06T07:49:29.000000001Z"}}}}`,
+			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":null,"include_lower":true,"include_upper":true,"to":"1754466569000"}}}}`,
 		},
 		"dtEventTimeNanoStamp's value is string": {
 			conditions: metadata.AllConditions{

@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/converter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/queue"
 )
 
@@ -29,8 +30,9 @@ const (
 )
 
 type Config struct {
-	MaxMessageBytes int          `config:"max_message_bytes"`
-	Queue           queue.Config `config:"queue"`
+	MaxMessageBytes int              `config:"max_message_bytes"`
+	Queue           queue.Config     `config:"queue"`
+	Converter       converter.Config `config:"converter"`
 }
 
 func (c *Config) Validate() {

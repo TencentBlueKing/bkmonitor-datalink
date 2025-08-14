@@ -16,9 +16,9 @@ package querystring
 %type <s>                tSTRING
 %type <s>                tPHRASE
 %type <s>                tNUMBER
-%type <s>		 tSLASH tREGEX
+%type <s>		 		 tSLASH tREGEX
 %type <s>                posOrNegNumber
-%type <e>                searchBase searchLogicParts searchPart searchLogicPart searchLogicSimplePart
+%type <e>                searchBase searchLogicParts searchPart searchLogicPart searchLogicSimplePart  searchAndExpr searchExpr searchAtom
 %type <n>                searchPrefix
 
 %left tOR
@@ -40,6 +40,7 @@ searchLogicPart searchLogicParts {
 searchLogicPart {
 	$$ = $1
 }
+;
 
 searchLogicPart:
 searchLogicSimplePart {
@@ -52,7 +53,8 @@ searchLogicSimplePart tOR searchLogicPart {
 |
 searchLogicSimplePart tAND searchLogicPart {
 	$$ = NewAndExpr($1, $3)
-};
+}
+;
 
 searchLogicSimplePart:
 searchPart {
@@ -330,7 +332,44 @@ tSTRING tCOLON tLEFTRANGE tPHRASE tTO tPHRASE tRIGHTRANGE {
 	q := NewTimeRangeExpr(&min, &max, true, true)
 	q.SetField($1)
 	$$ = q
-};
+}
+|
+tSTRING tCOLON tLEFTBRACKET searchExpr tRIGHTBRACKET {
+	q := NewConditionMatchExpr($4)
+	q.SetField($1)
+	$$ = q
+}
+;
+
+searchExpr :
+searchExpr tOR searchAndExpr {
+	$$ = OrConditionExpr($1, $3)
+}
+|
+searchAndExpr{
+	$$ = $1
+}
+;
+
+searchAndExpr: 
+searchAndExpr tAND searchAtom{
+	$$ = AndConditionExpr($1, $3)
+}
+| 
+searchAtom{
+	$$ = $1
+}
+;
+
+searchAtom: 
+tLEFTBRACKET searchExpr tRIGHTBRACKET {
+	$$ = $2
+}
+| 
+searchBase{
+	$$ = NewConditionExpr($1)
+}
+;
 
 posOrNegNumber:
 tNUMBER {

@@ -25,13 +25,23 @@ import (
 )
 
 const (
-	Set      = "set"
-	Module   = "module"
-	Host     = "host"
-	System   = "system"
-	Business = "business"
+	Set    = "set"
+	Module = "module"
+	Host   = "host"
+	System = "system"
+	Biz    = "biz"
 
 	ExpandInfoColumn = "version_meta"
+)
+
+const (
+	SetID      = "bk_set_id"
+	SetName    = "bk_set_name"
+	ModuleID   = "bk_module_id"
+	ModuleName = "bk_module_name"
+	HostID     = "bk_host_id"
+	HostName   = "bk_host_name"
+	BizID      = "bk_biz_id"
 )
 
 var ExpandTopo = []string{Set, Module, Host}
@@ -109,7 +119,10 @@ func (b *MetricsBuilder) Debug(bizID string) string {
 	}
 
 	if len(data) == 0 {
-		data = b.resources[0]
+		for _, r := range b.resources {
+			data = r
+			break
+		}
 	}
 
 	out, _ := json.Marshal(data)
@@ -120,7 +133,7 @@ func (b *MetricsBuilder) Debug(bizID string) string {
 func (b *MetricsBuilder) ClearAllMetrics() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
-	logger.Infof("[cmdb_relation] clear all metrics")
+	logger.Infof("[cmdb_relation] clear_all_metrics")
 	b.resources = make(map[int]map[string]*ResourceInfo)
 }
 
@@ -152,7 +165,6 @@ func (b *MetricsBuilder) BuildInfosCache(_ context.Context, bizID int, name stri
 		oldInfos.Add(info.ID, info)
 	}
 
-	logger.Infof("[cmdb_relation] build info cache bkcc__%d %s %d", bizID, name, len(infos))
 	return nil
 }
 
@@ -181,7 +193,7 @@ func (b *MetricsBuilder) makeNode(resource string, labels ...map[string]string) 
 	}
 }
 
-func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
+func (b *MetricsBuilder) toMetricList(bizID int) []Metric {
 	if b.resources == nil {
 		return nil
 	}
@@ -189,11 +201,19 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 		return nil
 	}
 
-	metrics := make(map[string]Metric)
+	metrics := make([]Metric, 0)
+	metricCheck := make(map[string]struct{})
+
+	addMetrics := func(m Metric) {
+		if _, ok := metricCheck[m.String()]; !ok {
+			metrics = append(metrics, m)
+			metricCheck[m.String()] = struct{}{}
+		}
+	}
 
 	// 默认注入业务维度
 	bizLabel := map[string]string{
-		"bk_biz_id": fmt.Sprintf("%d", bizID),
+		BizID: fmt.Sprintf("%d", bizID),
 	}
 
 	// 资源场景（ resource) -> 资源配置 (resource) -> 资源ID (ID) -> 资源扩展信息 (Expand)
@@ -223,6 +243,10 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 			// 注入 ExpandInfo 指标
 			// info.Expands 里面就是配置的资源场景，expandResource 对应场景资源名
 			for expandResource, expand := range info.Expands {
+				if info.Resource == "" {
+					continue
+				}
+
 				// 如果配置资源一致，则为自身资源的 Expand，否则使用继承池里的 Expand
 				// 这里的 info.Resource 指该实体的真是归属资源，上面的 resource 表示的是数据维护的资源
 				// 例如：host 数据，会同时维护 host 和 system 的资源，所以相关资源实体需要使用 info.Resource
@@ -230,9 +254,8 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 					// 构建维度，注入主键和扩展维度
 					node := b.makeNode(expandResource, info.Label, bizLabel, expand)
 					metric := node.ExpandInfoMetric()
-					if _, metricOk := metrics[metric.String()]; !metricOk {
-						metrics[metric.String()] = metric
-					}
+
+					addMetrics(metric)
 					expandInfoStatus = true
 				} else {
 					// 注入父资源的 Expand
@@ -247,17 +270,20 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 				}
 			}
 
-			sourceNode := b.makeNode(info.Resource, info.Label)
+			// 根节点
+			rootNode := b.makeNode(info.Resource, info.Label)
 
 			// 注入 relation 关联指标
 			for _, link := range info.Links {
+				sourceNode := rootNode
 				for _, item := range link {
+					if item.Resource == Biz {
+						continue
+					}
 
 					nextNode := b.makeNode(item.Resource, bizLabel, item.Label)
 					metric := sourceNode.RelationMetric(nextNode)
-					if _, metricOk := metrics[metric.String()]; !metricOk {
-						metrics[metric.String()] = metric
-					}
+					addMetrics(metric)
 					sourceNode = nextNode
 
 					// 如果没有自身资源下没有匹配到扩展信息，需要从上游找是否有配置需要继承，如果已经配置了则直接退出
@@ -265,24 +291,12 @@ func (b *MetricsBuilder) toMetricList(bizID int) map[string]Metric {
 						continue
 					}
 
-					// 查找上游资源类型
-					if resources[item.Resource] == nil {
-						continue
-					}
-					// 查找上游资源实体
-					itemInfo := resources[item.Resource].Get(item.ID)
-					if itemInfo == nil {
-						continue
-					}
-
 					// 查找上游资源是否配置了扩展信息
-					if expand, expandOk := resourceParentExpands[info.Resource][itemInfo.Resource][item.ID]; expandOk {
+					if expand, expandOk := resourceParentExpands[info.Resource][item.Resource][item.ID]; expandOk {
 						// 构建维度，注入主键和扩展维度
 						node := b.makeNode(info.Resource, info.Label, bizLabel, expand)
 						expandMetric := node.ExpandInfoMetric()
-						if _, metricOk := metrics[expandMetric.String()]; !metricOk {
-							metrics[expandMetric.String()] = expandMetric
-						}
+						addMetrics(expandMetric)
 						expandInfoStatus = true
 					}
 				}
@@ -318,7 +332,11 @@ func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error
 		return fmt.Errorf("space reporter is nil")
 	}
 
-	for _, bkBizID := range b.BizIDs() {
+	n := time.Now()
+
+	bizs := b.BizIDs()
+	pushCount := 0
+	for _, bkBizID := range bizs {
 		ts := getTsPool()
 
 		b.lock.RLock()
@@ -335,11 +353,12 @@ func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error
 			if err := b.spaceReport.Do(ctx, spaceUID, ts...); err != nil {
 				return err
 			}
-			logger.Infof("[cmdb_relation] push %s cmdb relation metrics %d", spaceUID, len(ts))
+			pushCount += len(ts)
 		}
 
 		putTsPool(ts)
 	}
+	logger.Infof("[cmdb_relation] push_all_metrics biz_count: %d ts_count: %d cost: %s", len(bizs), pushCount, time.Since(n))
 
 	return nil
 }

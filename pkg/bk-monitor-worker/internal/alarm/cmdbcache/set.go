@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/mitchellh/mapstructure"
@@ -49,6 +50,46 @@ const (
 
 type SetCacheManager struct {
 	*BaseCacheManager
+}
+
+// BuildRelationMetrics 从缓存构建relation指标
+func (m *SetCacheManager) BuildRelationMetrics(ctx context.Context) error {
+	n := time.Now()
+
+	// 1. 从缓存获取数据（自动滚动获取所有数据）
+	cacheData, err := m.batchQuery(ctx, m.GetCacheKey(setCacheKey), "*")
+	if err != nil {
+		return errors.Wrap(err, "get set cache failed")
+	}
+
+	// 2. 解析JSON数据并按业务ID分组
+	bizDataMap := make(map[int][]map[string]interface{})
+	for _, jsonStr := range cacheData {
+		var item map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &item); err != nil {
+			logger.Warnf("unmarshal set cache failed: %v", err)
+			continue
+		}
+
+		// 从数据中提取业务ID
+		bizID := int(item["bk_biz_id"].(float64))
+		bizDataMap[bizID] = append(bizDataMap[bizID], item)
+	}
+
+	// 3. 按业务ID构建relation指标
+	for bizID, data := range bizDataMap {
+		m.buildRelationMetricsByBizAndData(ctx, data, bizID)
+	}
+	logger.Infof("[cmdb_relation] build cache type:set action:end biz_count: %d cost: %s", len(bizDataMap), time.Since(n))
+
+	return nil
+}
+
+func (m *SetCacheManager) buildRelationMetricsByBizAndData(ctx context.Context, data []map[string]interface{}, bizID int) {
+	infos := m.SetToRelationInfos(data)
+	if err := relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Set, infos); err != nil {
+		logger.Errorf("build set relation metrics failed for biz %d: %v", bizID, err)
+	}
 }
 
 // NewSetCacheManager 创建模块缓存管理器
@@ -179,11 +220,7 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 	}
 
 	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
-	infos := m.SetToRelationInfos(result)
-	err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Set, infos)
-	if err != nil {
-		logger.Errorf("[cmdb_relation] refresh set cache failed, err: %v", err)
-	}
+	m.buildRelationMetricsByBizAndData(ctx, result, bizID)
 
 	return nil
 }
@@ -192,7 +229,7 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relation.Info {
 	infos := make([]*relation.Info, 0, len(result))
 	for _, r := range result {
-		id := cast.ToString(r["bk_set_id"])
+		id := cast.ToString(r[relation.SetID])
 
 		if id == "" {
 			continue
@@ -207,13 +244,21 @@ func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relatio
 			}
 		}
 
-		infos = append(infos, &relation.Info{
-			ID: id,
+		info := &relation.Info{
+			ID:       id,
+			Resource: relation.Set,
 			Label: map[string]string{
-				"set_id": id,
+				relation.SetID: id,
 			},
 			Expands: relation.TransformExpands(expands),
-		})
+		}
+
+		// 如果存在 set_info 数据，则需要注入 set_name 等扩展维度
+		if info.Expands[relation.Set] != nil {
+			info.Expands[relation.Set][relation.SetName] = cast.ToString(r[relation.SetName])
+		}
+
+		infos = append(infos, info)
 	}
 
 	return infos

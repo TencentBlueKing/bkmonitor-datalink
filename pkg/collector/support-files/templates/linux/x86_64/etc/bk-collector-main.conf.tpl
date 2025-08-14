@@ -261,6 +261,9 @@ bk-collector:
           keys:
             - "app_name"
 
+    # MetricsFilter: 指标过滤处理器
+    - name: "metrics_filter/relabel"
+
     # Sampler: 采样处理器（概率采样）
     - name: "sampler/random"
       config:
@@ -363,6 +366,7 @@ bk-collector:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
         - "resource_filter/metrics"
+        - "metrics_filter/relabel"
 
     - name: "metrics_pipeline/derived"
       type: "metrics.derived"
@@ -387,6 +391,7 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
+        - "metrics_filter/relabel"
 
     - name: "proxy_pipeline/common"
       type: "proxy"

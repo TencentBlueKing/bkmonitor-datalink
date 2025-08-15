@@ -119,8 +119,7 @@ func buildMetrics(name string, value float64, labels map[string]string) common.M
 
 // metricsWhileList 指标白名单 避免自监控整体数据量过大
 var metricsWhileList = map[string]struct{}{
-	"go_gc_duration_seconds_count":    {},
-	"go_gc_duration_seconds_sum":      {},
+	"go_gc_duration_seconds":          {},
 	"go_goroutines":                   {},
 	"go_info":                         {},
 	"go_memstats_alloc_bytes_total":   {},

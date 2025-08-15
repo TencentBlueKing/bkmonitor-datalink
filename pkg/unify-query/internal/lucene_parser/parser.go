@@ -48,12 +48,24 @@ func ParseLuceneWithVisitor(ctx context.Context, q string, opt *Option) (string,
 	log.Debugf(ctx, `"action","type","text"`)
 
 	// 开始解析
-	parser.Query().Accept(stmt)
-
-	err := stmt.Error()
-	if err != nil {
-		return "", fmt.Errorf("parse doris sql (%s) error: %v", q, err.Error())
+	tree := parser.TopLevelQuery()
+	if tree == nil {
+		return "", fmt.Errorf("parse doris sql (%s) error: nil tree", q)
 	}
 
-	return stmt.String(), nil
+	result := tree.Accept(stmt)
+	if result == nil {
+		return q, nil
+	}
+
+	strResult, ok := result.(string)
+	if !ok {
+		return q, nil
+	}
+
+	if strResult == "" {
+		return q, nil
+	}
+
+	return strResult, nil
 }

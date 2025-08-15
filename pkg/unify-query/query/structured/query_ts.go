@@ -150,10 +150,6 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 			query.Step = q.Step
 		}
 
-		if query.Limit == 0 {
-			query.Limit = q.Limit
-		}
-
 		if q.SpaceUid == "" {
 			q.SpaceUid = metadata.GetUser(ctx).SpaceUID
 		}
@@ -173,6 +169,10 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 
 		if query.From == 0 && q.From > 0 {
 			query.From = q.From
+		}
+
+		if query.Limit == 0 && q.Limit > 0 {
+			query.Limit = q.Limit
 		}
 
 		// 复用字段配置，没有特殊配置的情况下使用公共配置

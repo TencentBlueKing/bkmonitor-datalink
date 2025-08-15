@@ -43,8 +43,6 @@ func ParseLuceneWithVisitor(ctx context.Context, q string, opt *Option) (string,
 	stmt := &Statement{}
 	if opt != nil {
 		stmt.WithEncode(opt.DimensionTransform)
-		stmt.Table = opt.Table
-		stmt.Where = opt.Where
 	}
 
 	log.Debugf(ctx, `"action","type","text"`)

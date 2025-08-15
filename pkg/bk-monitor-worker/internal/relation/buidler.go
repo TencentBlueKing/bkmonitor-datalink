@@ -133,7 +133,7 @@ func (b *MetricsBuilder) Debug(bizID string) string {
 func (b *MetricsBuilder) ClearAllMetrics() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
-	logger.Infof("[cmdb_relation] clear all metrics")
+	logger.Infof("[cmdb_relation] clear_all_metrics")
 	b.resources = make(map[int]map[string]*ResourceInfo)
 }
 
@@ -165,7 +165,6 @@ func (b *MetricsBuilder) BuildInfosCache(_ context.Context, bizID int, name stri
 		oldInfos.Add(info.ID, info)
 	}
 
-	logger.Infof("[cmdb_relation] build info cache bkcc__%d %s %d", bizID, name, len(infos))
 	return nil
 }
 
@@ -333,7 +332,11 @@ func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error
 		return fmt.Errorf("space reporter is nil")
 	}
 
-	for _, bkBizID := range b.BizIDs() {
+	n := time.Now()
+
+	bizs := b.BizIDs()
+	pushCount := 0
+	for _, bkBizID := range bizs {
 		ts := getTsPool()
 
 		b.lock.RLock()
@@ -350,11 +353,12 @@ func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error
 			if err := b.spaceReport.Do(ctx, spaceUID, ts...); err != nil {
 				return err
 			}
-			logger.Infof("[cmdb_relation] push %s cmdb relation metrics %d", spaceUID, len(ts))
+			pushCount += len(ts)
 		}
 
 		putTsPool(ts)
 	}
+	logger.Infof("[cmdb_relation] push_all_metrics biz_count: %d ts_count: %d cost: %s", len(bizs), pushCount, time.Since(n))
 
 	return nil
 }

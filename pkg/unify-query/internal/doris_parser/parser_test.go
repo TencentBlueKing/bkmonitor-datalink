@@ -627,11 +627,10 @@ group by
 			q:    "SELECT * WHERE name IN ('test', 'test-1') ORDER BY time desc, name limit 1000",
 			sql:  "SELECT * WHERE name IN ('test', 'test-1') ORDER BY time DESC, name LIMIT 1000",
 		},
-		// TODO: 子查询暂时先忽略，后续版本支持
 		{
 			name: "子查询验证",
-			q:    "select ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) as ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT()) AS pct",
-			sql:  "SELECT ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) AS ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT()) AS pct",
+			q:    "select ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)), 2) as ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT()) AS pct",
+			sql:  "SELECT ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)), 2) AS ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT()) AS pct",
 		},
 		{
 			name: "查询值支持函数模式",

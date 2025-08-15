@@ -24,10 +24,25 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// Gather :
 type Gather struct {
 	tasks.BaseTask
 	cli *Client
+}
+
+func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
+	gather := &Gather{}
+	gather.GlobalConfig = globalConfig
+	gather.TaskConfig = taskConfig
+	gather.Init()
+
+	taskConf := taskConfig.(*configs.TimeSyncConfig)
+	gather.cli = NewClient(&Option{
+		NtpdPath:   taskConf.NtpdPath,
+		ChronyAddr: taskConf.ChronyAddress,
+		Timeout:    taskConf.QueryTimeout,
+	})
+
+	return gather
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
@@ -48,22 +63,6 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		Labels: g.TaskConfig.GetLabels(),
 		Data:   stats2Metrics(taskConf.Env, stat),
 	}
-}
-
-func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
-	gather := &Gather{}
-	gather.GlobalConfig = globalConfig
-	gather.TaskConfig = taskConfig
-	gather.Init()
-
-	taskConf := taskConfig.(*configs.TimeSyncConfig)
-	gather.cli = NewClient(&Option{
-		NtpdPath:   taskConf.NtpdPath,
-		ChronyAddr: taskConf.ChronyAddress,
-		Timeout:    taskConf.QueryTimeout,
-	})
-
-	return gather
 }
 
 type Metrics struct {

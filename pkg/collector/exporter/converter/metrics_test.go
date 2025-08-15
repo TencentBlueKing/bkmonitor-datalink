@@ -58,7 +58,7 @@ func TestConvertGaugeMetrics(t *testing.T) {
 		dp.SetDoubleVal(1024)
 		assert.Equal(t, pmetric.NumberDataPointValueTypeDouble, dp.ValueType())
 
-		NewCommonConverter().Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
+		NewCommonConverter(nil).Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
 		event := events[0]
 		event.Data()
 
@@ -78,7 +78,7 @@ func TestConvertGaugeMetrics(t *testing.T) {
 		dp.SetIntVal(1024)
 		assert.Equal(t, pmetric.NumberDataPointValueTypeInt, dp.ValueType())
 
-		NewCommonConverter().Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
+		NewCommonConverter(nil).Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
 		event := events[0]
 		event.Data()
 

@@ -21,7 +21,7 @@ import (
 func TestConvertProfilesData(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		var events []define.Event
-		NewCommonConverter().Convert(&define.Record{
+		NewCommonConverter(nil).Convert(&define.Record{
 			RecordType: define.RecordProfiles,
 			Data: &define.ProfilesData{Profiles: []*profile.Profile{{
 				TimeNanos:     time.Now().UnixNano(),
@@ -52,7 +52,7 @@ func TestConvertProfilesData(t *testing.T) {
 
 	t.Run("Empty Profiles", func(t *testing.T) {
 		var hit bool
-		NewCommonConverter().Convert(&define.Record{
+		NewCommonConverter(nil).Convert(&define.Record{
 			RecordType: define.RecordProfiles,
 			Data:       &define.ProfilesData{Profiles: nil},
 			Token: define.Token{

@@ -290,7 +290,8 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 	}
 
 	if ep.RelabelConfigs != nil {
-		for _, c := range ep.RelabelConfigs {
+		for i := 0; i < len(ep.RelabelConfigs); i++ {
+			c := ep.RelabelConfigs[i]
 			relabelings = append(relabelings, generatePromv1RelabelConfig(c))
 		}
 	}
@@ -432,7 +433,8 @@ func getPodMonitorRelabels(m *promv1.PodMonitor, ep *promv1.PodMetricsEndpoint) 
 	}
 
 	if ep.RelabelConfigs != nil {
-		for _, c := range ep.RelabelConfigs {
+		for i := 0; i < len(ep.RelabelConfigs); i++ {
+			c := ep.RelabelConfigs[i]
 			relabelings = append(relabelings, generatePromv1RelabelConfig(c))
 		}
 	}

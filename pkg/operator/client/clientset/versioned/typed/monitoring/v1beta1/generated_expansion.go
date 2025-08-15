@@ -12,3 +12,5 @@
 package v1beta1
 
 type DataIDExpansion interface{}
+
+type QCloudMonitorExpansion interface{}

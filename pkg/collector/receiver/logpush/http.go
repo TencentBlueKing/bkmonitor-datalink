@@ -76,7 +76,7 @@ func (s HttpService) LogPush(w http.ResponseWriter, req *http.Request) {
 		RecordType:    define.RecordLogPush,
 		Data: &define.LogPushData{
 			Data:   []string{buf.String()},
-			Labels: extractLabel(req.Header),
+			Labels: tokenparser.FromHttpUserMetadata(req),
 		},
 	}
 	tk := tokenparser.FromHttpRequest(req)
@@ -95,10 +95,4 @@ func (s HttpService) LogPush(w http.ResponseWriter, req *http.Request) {
 	s.Publish(r)
 	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordLogPush, buf.Len(), start)
 	receiver.WriteResponse(w, define.ContentTypeText, http.StatusOK, nil)
-}
-
-func extractLabel(header http.Header) map[string]string {
-	lbs := make(map[string]string)
-	// TODO(mando): 待实现
-	return lbs
 }

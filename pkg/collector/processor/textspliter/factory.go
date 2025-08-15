@@ -88,8 +88,16 @@ func (p *textSpliter) Process(record *define.Record) (*define.Record, error) {
 	switch record.RecordType {
 	case define.RecordLogPush:
 		data := record.Data.(*define.LogPushData)
-		if len(data.Data) > 0 {
-			data.Data = strings.Split(data.Data[0], config.Separator)
+		if len(data.Data) == 0 {
+			return nil, nil
+		}
+		split := strings.Split(data.Data[0], config.Separator)
+		data.Data = make([]string, 0, len(split))
+		for i := 0; i < len(split); i++ {
+			// 仅保留有内容的数据
+			if len(split[i]) > 0 {
+				data.Data = append(data.Data, split[i])
+			}
 		}
 	}
 	return nil, nil

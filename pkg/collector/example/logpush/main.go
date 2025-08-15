@@ -23,18 +23,22 @@ import (
 const (
 	URL = "http://localhost:4318/v1/logpush"
 
-	template = `{"ip":"127.0.0.1","source_id":"123456","source_time":"%s","alarm_context":{"key1":"value1","key2":"value2"},"target_type":"HOST"}`
+	template = `{"source_id":"123456","source_time":"%s","alarm_context":{"key1":"value1","key2":"value2"},"target_type":"HOST","message":"Now is %s","my-index":%d}
+`
 )
 
 func doRequest(n int) {
 	buf := &bytes.Buffer{}
 	for i := 0; i < n; i++ {
-		buf.WriteString(fmt.Sprintf(template, time.Now().Format(time.RFC3339)))
+		t := time.Now().Format(time.RFC3339Nano)
+		buf.WriteString(fmt.Sprintf(template, t, t, i))
 	}
 
 	request, _ := http.NewRequest(http.MethodPost, URL, buf)
-	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Type", "application/jsonl")
 	request.Header.Set("X-BK-TOKEN", "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==")
+
+	request.Header.Set("X-BK-METADATA", "user=mando,env=fortest")
 
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {

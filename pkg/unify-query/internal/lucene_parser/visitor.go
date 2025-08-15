@@ -75,14 +75,6 @@ type Statement struct {
 	errNode []string
 }
 
-func (v *Statement) ItemString(name string) string {
-	if n, ok := v.nodeMap[name]; ok {
-		return nodeToString(n)
-	}
-
-	return ""
-}
-
 func (v *Statement) String() string {
 	var s []string
 	for _, n := range v.nodes {
@@ -109,7 +101,7 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) interface{} {
 	next = v
 
 	switch ctx.(type) {
-	case *gen.ConjQueryContext:
+	case *gen.DisjQueryContext:
 		node := &LogicNode{}
 		v.nodes = append(v.nodes, node)
 		next = node
@@ -146,18 +138,33 @@ func (v *LogicNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 	var next Node
 	next = v
 
+	var node Node
+
 	switch ctx.(type) {
+	case *gen.ConjQueryContext:
+		node = &LogicNode{}
+		next = node
 	case *gen.ModClauseContext:
-		node := &ConditionNode{}
-		if v.Left == nil {
-			v.Left = node
-		} else if v.Right == nil {
-			v.Right = node
-		}
+		node = &ConditionNode{}
 		next = node
 	}
 
+	if v.Left == nil {
+		v.Left = node
+	} else if v.Right == nil {
+		v.Right = node
+	}
+
 	return visitChildren(v.Encode, next, ctx)
+}
+
+type StringNode struct {
+	baseNode
+	Name string
+}
+
+func (v *StringNode) String() string {
+	return v.Name
 }
 
 type ConditionNode struct {
@@ -165,10 +172,20 @@ type ConditionNode struct {
 
 	field string
 	value string
+	op    string
 }
 
 func (v *ConditionNode) String() string {
-	return fmt.Sprintf("%s:%s", v.field, v.value)
+	if v.value == "" {
+		return ""
+	}
+
+	s := v.value
+	if v.field != "" {
+		s = fmt.Sprintf("%s:%s", v.field, s)
+	}
+
+	return s
 }
 
 func (v *ConditionNode) VisitChildren(ctx antlr.RuleNode) interface{} {

@@ -51,7 +51,12 @@ func TestParseWithVisitor(t *testing.T) {
 		{
 			name: "test - 4",
 			q:    `log:test AND message:"bm"`,
-			sql:  "",
+			sql:  `log:test AND message:"bm"`,
+		},
+		{
+			name: "test - 5",
+			q:    `log:test AND message:"bm" OR "test"`,
+			sql:  `log:test AND message:"bm" OR "test"`,
 		},
 	}
 

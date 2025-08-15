@@ -37,7 +37,6 @@ func doRequest(n int) {
 	request, _ := http.NewRequest(http.MethodPost, URL, buf)
 	request.Header.Set("Content-Type", "application/jsonl")
 	request.Header.Set("X-BK-TOKEN", "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==")
-
 	request.Header.Set("X-BK-METADATA", "user=mando,env=fortest")
 
 	response, err := http.DefaultClient.Do(request)
@@ -47,12 +46,12 @@ func doRequest(n int) {
 	}
 	defer response.Body.Close()
 
-	b, err := io.ReadAll(response.Body)
+	_, err = io.ReadAll(response.Body)
 	if err != nil {
 		log.Printf("read response failed, err: %v\n", err)
 		return
 	}
-	log.Println(string(b))
+	log.Println("request success")
 }
 
 func main() {

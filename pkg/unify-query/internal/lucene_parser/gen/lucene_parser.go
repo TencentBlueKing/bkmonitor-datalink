@@ -597,7 +597,6 @@ func (s *DisjQueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitDisjQuery(s)
-
 	default:
 		return t.VisitChildren(s)
 	}

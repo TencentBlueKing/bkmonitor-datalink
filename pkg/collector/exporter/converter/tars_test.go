@@ -87,7 +87,7 @@ func TestSplitAtLastOnce(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run("input -> "+tt.input, func(t *testing.T) {
+		t.Run(tt.input, func(t *testing.T) {
 			actualLeft, actualRight := splitAtLastOnce(tt.input, tt.separator)
 			assert.Equal(t, tt.expectLeft, actualLeft)
 			assert.Equal(t, tt.expectRight, actualRight)
@@ -470,6 +470,8 @@ func BenchmarkTarsStat(b *testing.B) {
 	}
 
 	conv := newTarsConverter(nil)
+	defer conv.Clean()
+
 	for i := 0; i < b.N; i++ {
 		conv.Convert(record, func(events ...define.Event) {})
 	}

@@ -7,31 +7,42 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//go:build linux
+package stats
 
-package collector
-
-import (
-	"testing"
-
-	"github.com/shirou/gopsutil/v3/mem"
-	"github.com/stretchr/testify/assert"
-)
-
-func TestPhysicalMemoryInfo(t *testing.T) {
-	testInfo, err := PhysicalMemoryInfo(true)
-	assert.NoError(t, err)
-
-	vInfo, err := mem.VirtualMemory()
-	assert.NoError(t, err)
-	assert.Equal(t, testInfo.UsedPercent, float64(vInfo.Used)/float64(vInfo.Total)*100.0)
+type Stats struct {
+	Reload       int
+	Version      string
+	RunningTasks map[string]int
 }
 
-func TestGetSwapInfo(t *testing.T) {
-	in, out, err := GetSwapInfo()
-	assert.NoError(t, err)
-
-	if in <= 0 || out <= 0 {
-		t.Errorf("Invalid swap info: in=%f, out=%f", in, out)
+func (s Stats) Copy() Stats {
+	newStats := Stats{
+		Reload:       s.Reload,
+		Version:      s.Version,
+		RunningTasks: make(map[string]int),
 	}
+
+	for k, v := range s.RunningTasks {
+		newStats.RunningTasks[k] = v
+	}
+	return newStats
+}
+
+var stats = &Stats{}
+
+// Default 返回默认 Stats 副本 避免数据被修改
+func Default() Stats {
+	return stats.Copy()
+}
+
+func IncReload() {
+	stats.Reload++
+}
+
+func SetVersion(v string) {
+	stats.Version = v
+}
+
+func SetRunningTasks(tasks map[string]int) {
+	stats.RunningTasks = tasks
 }

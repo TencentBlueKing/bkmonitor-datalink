@@ -143,11 +143,9 @@ func decodePromMetricFamily(mf *dto.MetricFamily, extLabels map[string]string) [
 	now := time.Now().UnixMilli()
 	for _, metric := range mf.GetMetric() {
 		lbs := map[string]string{}
-		if len(metric.Label) != 0 {
-			for _, label := range metric.Label {
-				if label.GetName() != "" && label.GetValue() != "" {
-					lbs[label.GetName()] = label.GetValue()
-				}
+		for _, label := range metric.Label {
+			if label.GetName() != "" && label.GetValue() != "" {
+				lbs[label.GetName()] = label.GetValue()
 			}
 		}
 		for k, v := range extLabels {

@@ -7,31 +7,17 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//go:build linux
+//go:build selfstats || basetask
 
-package collector
+package taskfactory
 
 import (
-	"testing"
-
-	"github.com/shirou/gopsutil/v3/mem"
-	"github.com/stretchr/testify/assert"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/selfstats"
 )
 
-func TestPhysicalMemoryInfo(t *testing.T) {
-	testInfo, err := PhysicalMemoryInfo(true)
-	assert.NoError(t, err)
-
-	vInfo, err := mem.VirtualMemory()
-	assert.NoError(t, err)
-	assert.Equal(t, testInfo.UsedPercent, float64(vInfo.Used)/float64(vInfo.Total)*100.0)
-}
-
-func TestGetSwapInfo(t *testing.T) {
-	in, out, err := GetSwapInfo()
-	assert.NoError(t, err)
-
-	if in <= 0 || out <= 0 {
-		t.Errorf("Invalid swap info: in=%f, out=%f", in, out)
-	}
+func init() {
+	SetTaskConfigByName(define.ModuleSelfStats, func() define.TaskMetaConfig { return new(configs.SelfStatsConfig) })
+	Register(define.ModuleSelfStats, selfstats.New)
 }

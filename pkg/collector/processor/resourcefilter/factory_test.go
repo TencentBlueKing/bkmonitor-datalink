@@ -525,7 +525,6 @@ processor:
 
 		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
 		assertFromTokenAction(t, attrs)
-
 	})
 
 	t.Run("metrics from_token", func(t *testing.T) {

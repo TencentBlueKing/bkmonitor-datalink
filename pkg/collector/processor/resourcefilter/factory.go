@@ -396,7 +396,6 @@ func (p *resourceFilter) fromTokenAction(record *define.Record, config Config) {
 			handle(rs, config.FromToken)
 		})
 	}
-
 }
 
 // defaultValueAction 补充默认值

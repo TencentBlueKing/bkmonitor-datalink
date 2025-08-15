@@ -31,8 +31,6 @@ func (e pushGatewayEvent) RecordType() define.RecordType {
 	return define.RecordPushGateway
 }
 
-var PushGatewayConverter EventConverter = pushGatewayConverter{}
-
 type pushGatewayConverter struct{}
 
 func (c pushGatewayConverter) Clean() {}
@@ -266,7 +264,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 	}
 
 	pms = c.compactTrpcOTFilter(pms)
-	if len(pms) <= 0 {
+	if len(pms) == 0 {
 		return
 	}
 

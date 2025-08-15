@@ -156,7 +156,7 @@ func (tc *timeSeriesValidator) Validate(pd *define.ProxyData) error {
 	if !ok {
 		return errors.Errorf("timeseries data expected []interface{}, got %T", pd.Data)
 	}
-	if len(objs) <= 0 {
+	if len(objs) == 0 {
 		return errors.New("timeseries data cannot be empty")
 	}
 
@@ -175,7 +175,7 @@ func (tc *timeSeriesValidator) Validate(pd *define.ProxyData) error {
 		if !ok {
 			return errors.Errorf("metrics expected map[string]interface{} type, got %T", metricsObj)
 		}
-		if len(metrics) <= 0 {
+		if len(metrics) == 0 {
 			return errors.New("metrics cannot be empty")
 		}
 
@@ -227,7 +227,7 @@ func (tc *eventValidator) Validate(pd *define.ProxyData) error {
 	if !ok {
 		return errors.Errorf("event data expected []interface{}, got %T", pd.Data)
 	}
-	if len(objs) <= 0 {
+	if len(objs) == 0 {
 		return errors.New("event data cannot be empty")
 	}
 
@@ -246,7 +246,7 @@ func (tc *eventValidator) Validate(pd *define.ProxyData) error {
 		if !ok {
 			return errors.Errorf("target expected string type, got %T", targetObj)
 		}
-		if len(target) <= 0 {
+		if len(target) == 0 {
 			return errors.New("target cannot be empty")
 		}
 

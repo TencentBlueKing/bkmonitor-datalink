@@ -25,7 +25,8 @@ func TestConvertPingserverData(t *testing.T) {
 	}
 
 	events := make([]define.Event, 0)
-	NewCommonConverter(nil).Convert(&define.Record{
+	var conv pingserverConverter
+	conv.Convert(&define.Record{
 		RecordType: define.RecordPingserver,
 		Data:       pd,
 	}, func(evts ...define.Event) {

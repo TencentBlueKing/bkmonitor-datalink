@@ -24,8 +24,6 @@ func (e beatEvent) RecordType() define.RecordType {
 	return define.RecordBeat
 }
 
-var BeatConverter EventConverter = beatConverter{}
-
 type beatConverter struct{}
 
 func (c beatConverter) Clean() {}

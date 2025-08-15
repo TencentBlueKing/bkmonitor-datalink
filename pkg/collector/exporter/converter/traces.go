@@ -25,8 +25,6 @@ func (e tracesEvent) RecordType() define.RecordType {
 	return define.RecordTraces
 }
 
-var TracesConverter EventConverter = tracesConverter{}
-
 type tracesConverter struct{}
 
 func (c tracesConverter) Clean() {}

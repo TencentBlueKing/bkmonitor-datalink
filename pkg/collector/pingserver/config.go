@@ -132,7 +132,7 @@ func LoadConfig(conf *confengine.Config) ([]string, *Config, error) {
 		return nil, nil, err
 	}
 
-	if len(mc.Patterns) <= 0 {
+	if len(mc.Patterns) == 0 {
 		return nil, &Config{Main: mc, Sub: &SubConfig{Period: time.Minute}}, nil
 	}
 

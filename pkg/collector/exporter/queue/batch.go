@@ -198,7 +198,7 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 			}
 
 		case <-ticker.C:
-			if len(data) <= 0 {
+			if len(data) == 0 {
 				continue
 			}
 			sentOut()
@@ -220,7 +220,7 @@ func (bq *BatchQueue) Close() {
 }
 
 func (bq *BatchQueue) Put(events ...define.Event) {
-	if len(events) <= 0 {
+	if len(events) == 0 {
 		return
 	}
 

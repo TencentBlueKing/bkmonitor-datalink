@@ -45,6 +45,7 @@ func TestConvertGaugeMetrics(t *testing.T) {
 	}
 
 	g := generator.NewMetricsGenerator(opts)
+	var conv metricsConverter
 
 	t.Run("DoubleValue", func(t *testing.T) {
 		events := make([]define.Event, 0)
@@ -58,7 +59,7 @@ func TestConvertGaugeMetrics(t *testing.T) {
 		dp.SetDoubleVal(1024)
 		assert.Equal(t, pmetric.NumberDataPointValueTypeDouble, dp.ValueType())
 
-		NewCommonConverter(nil).Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
+		conv.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
 		event := events[0]
 		event.Data()
 
@@ -78,7 +79,7 @@ func TestConvertGaugeMetrics(t *testing.T) {
 		dp.SetIntVal(1024)
 		assert.Equal(t, pmetric.NumberDataPointValueTypeInt, dp.ValueType())
 
-		NewCommonConverter(nil).Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
+		conv.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
 		event := events[0]
 		event.Data()
 
@@ -114,7 +115,8 @@ func TestConvertHistogramMetrics(t *testing.T) {
 	dp.SetMin(1)
 	dp.SetMax(66)
 
-	MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
+	var conv metricsConverter
+	conv.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
 	excepted := []common.MapStr{
 		{
 			"metrics": map[string]float64{

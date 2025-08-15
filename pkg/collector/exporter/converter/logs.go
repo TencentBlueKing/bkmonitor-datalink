@@ -28,8 +28,6 @@ func (e logsEvent) RecordType() define.RecordType {
 	return define.RecordLogs
 }
 
-var LogsConverter EventConverter = logsConverter{}
-
 type logsConverter struct{}
 
 func (c logsConverter) Clean() {}

@@ -16,19 +16,7 @@ import (
 const defaultAggregateInterval = 200 * time.Millisecond
 
 type Config struct {
-	Tars TarsConfig `config:"tars"`
-}
-
-func (c *Config) Validate() {
-	if c.Tars.AggregateInterval <= 0 {
-		c.Tars.AggregateInterval = defaultAggregateInterval
-	}
-	if len(c.Tars.TagIgnores) == 0 {
-		c.Tars.TagIgnores = []TagIgnore{
-			{"server_metrics", []string{"caller_ip"}},
-			{"client_metrics", []string{"callee_ip"}},
-		}
-	}
+	Tars *TarsConfig `config:"tars" mapstructure:"tars"`
 }
 
 type TarsConfig struct {
@@ -36,6 +24,18 @@ type TarsConfig struct {
 	IsDropOriginal    bool          `config:"is_drop_original" mapstructure:"is_drop_original"`
 	AggregateInterval time.Duration `config:"aggregate_interval" mapstructure:"aggregate_interval"`
 	TagIgnores        []TagIgnore   `config:"tag_ignores" mapstructure:"tag_ignores"`
+}
+
+func (c *TarsConfig) Validate() {
+	if c.AggregateInterval <= 0 {
+		c.AggregateInterval = defaultAggregateInterval
+	}
+	if len(c.TagIgnores) == 0 {
+		c.TagIgnores = []TagIgnore{
+			{ScopeName: "server_metrics", Tags: []string{"caller_ip"}},
+			{ScopeName: "client_metrics", Tags: []string{"callee_ip"}},
+		}
+	}
 }
 
 type TagIgnore struct {

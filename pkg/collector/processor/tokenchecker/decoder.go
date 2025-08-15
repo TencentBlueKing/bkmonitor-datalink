@@ -456,7 +456,7 @@ func (d beatDecoder) Skip() bool {
 
 func (d beatDecoder) Decode(s string) (define.Token, error) {
 	logger.Debugf("beat dataid=%s", s)
-	if len(s) <= 0 {
+	if len(s) == 0 {
 		return define.Token{}, errors.New("reject empty dataid")
 	}
 

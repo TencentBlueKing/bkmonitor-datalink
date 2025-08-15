@@ -29,4 +29,5 @@ const (
 	ProcessorDbFilter        = "db_filter"
 	ProcessorProbeFilter     = "probe_filter"
 	ProcessorPprofTranslator = "pprof_translator"
+	ProcessorTextSpliter     = "text_spliter"
 )

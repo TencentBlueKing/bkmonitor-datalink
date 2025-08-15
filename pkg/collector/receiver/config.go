@@ -28,6 +28,7 @@ type ComponentConfig struct {
 	Fta         ComponentCommon `config:"fta"`
 	Beat        ComponentCommon `config:"beat"`
 	Tars        ComponentCommon `config:"tars"`
+	LogPsuh     ComponentCommon `config:"logpush"`
 }
 
 type ComponentCommon struct {

@@ -103,7 +103,7 @@ func (e *Exporter) consumeEvents() {
 	for {
 		select {
 		case events := <-globalEvents.Get():
-			if len(events) <= 0 {
+			if len(events) == 0 {
 				continue
 			}
 			event := events[0]

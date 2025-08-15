@@ -33,18 +33,18 @@ func NewFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*metricsFilter, error) {
 	configs := confengine.NewTierConfig()
 
-	var c Config
-	if err := mapstructure.Decode(conf, &c); err != nil {
+	c := &Config{}
+	if err := mapstructure.Decode(conf, c); err != nil {
 		return nil, err
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	configs.SetGlobal(c)
+	configs.SetGlobal(*c)
 
 	for _, custom := range customized {
-		var cfg Config
-		if err := mapstructure.Decode(custom.Config.Config, &cfg); err != nil {
+		cfg := &Config{}
+		if err := mapstructure.Decode(custom.Config.Config, cfg); err != nil {
 			logger.Errorf("failed to decode config: %v", err)
 			continue
 		}
@@ -52,7 +52,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 			logger.Errorf("invalid config: %v", err)
 			continue
 		}
-		configs.Set(custom.Token, custom.Type, custom.ID, cfg)
+		configs.Set(custom.Token, custom.Type, custom.ID, *cfg)
 	}
 
 	return &metricsFilter{
@@ -136,13 +136,12 @@ func (p *metricsFilter) replaceAction(record *define.Record, config Config) {
 }
 
 func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
-
 	switch record.RecordType {
 	case define.RecordMetrics:
 		for _, action := range config.Relabel {
 			pdMetrics := record.Data.(pmetric.Metrics)
 			foreach.MetricsSliceDataPointsAttrs(pdMetrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
-				if !action.Metrics.Contains(name) {
+				if !action.IsMetricIn(name) {
 					return
 				}
 				if !action.Rules.MatchMetricAttrs(attrs) {
@@ -156,11 +155,12 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 				}
 			})
 		}
+
 	case define.RecordRemoteWrite:
 		handle := func(ts *prompb.TimeSeries, action RelabelAction) {
-			lbs := ts.GetLabels()
-			nameLabel, ok := getValueFromLabels(lbs, "__name__")
-			if !ok || !action.Metrics.Contains(nameLabel.GetValue()) {
+			lbs := PromLabels(ts.GetLabels())
+			nameLabel, ok := lbs.Get("__name__")
+			if !ok || !action.IsMetricIn(nameLabel.GetValue()) {
 				return
 			}
 			if !action.Rules.MatchRWLabels(lbs) {
@@ -169,9 +169,10 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 			for _, destination := range action.Destinations {
 				switch destination.Action {
 				case ActionUpsert:
-					upsertLabel(ts, destination.Label, destination.Value)
+					lbs.Upsert(destination.Label, destination.Value)
 				}
 			}
+			ts.Labels = lbs
 		}
 		for _, action := range config.Relabel {
 			rwData := record.Data.(*define.RemoteWriteData)
@@ -180,24 +181,4 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 			}
 		}
 	}
-}
-
-// upsertLabel 提供类似 ot 的 upsert 方法，在 remotewrite timeseries 中插入或更新指定 label
-func upsertLabel(ts *prompb.TimeSeries, k string, v string) {
-	label, ok := getValueFromLabels(ts.GetLabels(), k)
-	if ok {
-		label.Value = v
-	} else {
-		ts.Labels = append(ts.Labels, prompb.Label{Name: k, Value: v})
-	}
-}
-
-// getValueFromLabels 获取 labels 中指定 key 的 value，本场景下直接遍历比转成 map 更快，见 config_test.go benchmark
-func getValueFromLabels(labels []prompb.Label, key string) (*prompb.Label, bool) {
-	for i := 0; i < len(labels); i++ {
-		if labels[i].GetName() == key {
-			return &labels[i], true
-		}
-	}
-	return nil, false
 }

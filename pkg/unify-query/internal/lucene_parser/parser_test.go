@@ -38,6 +38,21 @@ func TestParseWithVisitor(t *testing.T) {
 			q:    `loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
 			sql:  "",
 		},
+		{
+			name: "test - 3",
+			q:    `"test" AND`,
+			sql:  "",
+		},
+		{
+			name: "test - 3",
+			q:    `test`,
+			sql:  "",
+		},
+		{
+			name: "test - 4",
+			q:    `log:test AND message:"bm"`,
+			sql:  "",
+		},
 	}
 
 	mock.Init()

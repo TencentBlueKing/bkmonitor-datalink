@@ -129,11 +129,6 @@ func (i *Instance) Check(ctx context.Context, q string, start, end time.Time, st
 	return output.String()
 }
 
-// QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
-	return 0, nil, nil
-}
-
 // QuerySeriesSet 给 PromEngine 提供查询接口
 func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	return storage.EmptySeriesSet()

@@ -68,7 +68,7 @@ func (n *baseNode) WithSetAs(setAs bool) {
 type Statement struct {
 	baseNode
 
-	node Node
+	nodes []Node
 
 	nodeMap map[string]Node
 
@@ -84,7 +84,12 @@ func (v *Statement) ItemString(name string) string {
 }
 
 func (v *Statement) String() string {
-	return ""
+	var s []string
+	for _, n := range v.nodes {
+		s = append(s, nodeToString(n))
+	}
+
+	return strings.Join(s, " ")
 }
 
 func (v *Statement) Error() error {
@@ -104,9 +109,14 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) interface{} {
 	next = v
 
 	switch ctx.(type) {
-	case *gen.ModClauseContext:
-		v.node = &ConditionNode{}
-		next = v.node
+	case *gen.ConjQueryContext:
+		node := &LogicNode{}
+		v.nodes = append(v.nodes, node)
+		next = node
+		//case *gen.ModClauseContext:
+		//	node := &ConditionNode{}
+		//	v.nodes = append(v.nodes, node)
+		//	next = node
 	}
 
 	return visitChildren(v.Encode, next, ctx)
@@ -114,6 +124,40 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) interface{} {
 
 type LogicNode struct {
 	baseNode
+
+	Left  Node
+	Right Node
+	Op    string
+}
+
+func (v *LogicNode) String() string {
+	return fmt.Sprintf("%s %s %s", nodeToString(v.Left), v.Op, nodeToString(v.Right))
+}
+
+func (v *LogicNode) VisitTerminal(node antlr.TerminalNode) interface{} {
+	result := strings.ToUpper(node.GetText())
+	if v.Op == "" {
+		v.Op = result
+	}
+	return nil
+}
+
+func (v *LogicNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+	var next Node
+	next = v
+
+	switch ctx.(type) {
+	case *gen.ModClauseContext:
+		node := &ConditionNode{}
+		if v.Left == nil {
+			v.Left = node
+		} else if v.Right == nil {
+			v.Right = node
+		}
+		next = node
+	}
+
+	return visitChildren(v.Encode, next, ctx)
 }
 
 type ConditionNode struct {
@@ -121,6 +165,10 @@ type ConditionNode struct {
 
 	field string
 	value string
+}
+
+func (v *ConditionNode) String() string {
+	return fmt.Sprintf("%s:%s", v.field, v.value)
 }
 
 func (v *ConditionNode) VisitChildren(ctx antlr.RuleNode) interface{} {

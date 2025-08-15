@@ -18,23 +18,33 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-func TestBeat(t *testing.T) {
-	record := define.Record{
-		RecordType: define.RecordBeat,
-		Data:       &define.BeatData{Data: []byte(`{"foo":"bar"}`)},
+func TestConvertLogPush(t *testing.T) {
+	data := &define.LogPushData{
+		Data: []string{"message1", "message2"},
+		Labels: map[string]string{
+			"zone": "gz",
+			"id":   "my-id",
+		},
 	}
 
-	events := make([]define.Event, 0)
+	record := define.Record{
+		RecordType: define.RecordLogPush,
+		Data:       data,
+	}
+
+	expected := []common.MapStr{
+		{"data": "message1", "ext": map[string]string{"zone": "gz", "id": "my-id"}},
+		{"data": "message2", "ext": map[string]string{"zone": "gz", "id": "my-id"}},
+	}
+
+	events := make([]common.MapStr, 0, len(expected))
 	gather := func(evts ...define.Event) {
 		for i := 0; i < len(evts); i++ {
-			evt := evts[i]
-			assert.Equal(t, define.RecordBeat, evt.RecordType())
-			events = append(events, evt)
+			events = append(events, evts[i].Data())
 		}
 	}
 
-	var conv beatConverter
+	var conv logPushConverter
 	conv.Convert(&record, gather)
-	assert.Len(t, events, 1)
-	assert.Equal(t, common.MapStr{"foo": "bar"}, events[0].Data())
+	assert.Equal(t, expected, events)
 }

@@ -15,36 +15,39 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-type FtaEvent struct {
-	define.CommonEvent
+type logPushConverter struct{}
+
+func (c logPushConverter) Clean() {}
+
+func (c logPushConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
+	return logsEvent{define.NewCommonEvent(token, dataId, data)}
 }
 
-func (e FtaEvent) RecordType() define.RecordType {
-	return define.RecordFta
+func (c logPushConverter) ToDataID(record *define.Record) int32 {
+	return record.Token.LogsDataId
 }
 
-type ftaConverter struct{}
+func (c logPushConverter) Convert(record *define.Record, f define.GatherFunc) {
+	lpData := record.Data.(*define.LogPushData)
+	data := lpData.Data
+	if len(data) == 0 {
+		return
+	}
 
-func (c ftaConverter) Clean() {}
-
-func (c ftaConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
-	return FtaEvent{define.NewCommonEvent(token, dataId, data)}
-}
-
-func (c ftaConverter) ToDataID(record *define.Record) int32 {
-	return record.Token.MetricsDataId
-}
-
-func (c ftaConverter) Convert(record *define.Record, f define.GatherFunc) {
 	dataId := c.ToDataID(record)
-	data := record.Data.(*define.FtaData)
-	events := []define.Event{c.ToEvent(record.Token, dataId, common.MapStr{
-		"dataid":          dataId,
-		"bk_data_id":      dataId,
-		"bk_plugin_id":    data.PluginId,
-		"bk_ingest_time":  data.IngestTime,
-		"data":            data.Data,
-		"__bk_event_id__": data.EventId,
-	})}
+	events := make([]define.Event, 0, len(data))
+	for i := 0; i < len(data); i++ {
+		events = append(events, c.ToEvent(record.Token, dataId, c.Extract(data[i], lpData.Labels)))
+	}
 	f(events...)
+}
+
+func (c logPushConverter) Extract(data string, lbs map[string]string) common.MapStr {
+	if lbs == nil {
+		lbs = make(map[string]string)
+	}
+	return common.MapStr{
+		"data": data,
+		"ext":  lbs,
+	}
 }

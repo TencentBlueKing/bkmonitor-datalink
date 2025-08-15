@@ -183,6 +183,8 @@ bk-collector:
         enabled: true
       tars:
         enabled: true
+      logpush:
+        enabled: true
 
   # =============================== Processor ================================
   # name: 名称规则为 ${processor}[/${id}]，id 字段为可选项
@@ -519,6 +521,11 @@ bk-collector:
 
     # ProxyValidator: proxy 数据校验器
     - name: "proxy_validator/common"
+
+    # TextSpliter: 文本分割器
+    - name: "text_spliter/common"
+      config:
+        separator: "\n"
 
     # Forwarder: 数据转发器
     # Traces
@@ -1125,6 +1132,12 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
+
+    - name: "logpush_pipeline/common"
+      type: "logpush"
+      processors:
+        - "token_checker/aes256"
+        - "text_spliter/common"
 
   # =============================== Exporter =================================
   exporter:

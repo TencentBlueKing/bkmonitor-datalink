@@ -133,15 +133,12 @@ func benchmark(task func(), n, w int) {
 	}
 
 	sem := make(chan struct{}, w)
-	elapsedTimes := make(chan int64, n)
-
 	var (
 		wg    sync.WaitGroup
 		start = time.Now()
 	)
 
 	wg.Add(n)
-
 	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
@@ -149,16 +146,13 @@ func benchmark(task func(), n, w int) {
 			// 获取并发令牌
 			sem <- struct{}{}
 			defer func() { <-sem }()
-
-			reqStart := time.Now()
 			task()
-			elapsedTimes <- time.Since(reqStart).Nanoseconds()
 		}()
 	}
-
 	wg.Wait()
+
 	elapsed := time.Since(start)
-	fmt.Printf(
+	log.Printf(
 		"total -> %d, avg -> %.2f ms/op, qps -> %.2f requests/sec\n",
 		n, float64(elapsed.Milliseconds())/float64(n), float64(n)/elapsed.Seconds(),
 	)

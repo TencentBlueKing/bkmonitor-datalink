@@ -386,6 +386,8 @@ func TestTarsStatAggregate(t *testing.T) {
 	}
 
 	conv := newTarsConverter(&TarsConfig{IsDropOriginal: true})
+	defer conv.Clean()
+
 	for i := 0; i < 100000; i++ {
 		data := &define.TarsData{
 			Type:      define.TarsStatType,

@@ -126,9 +126,7 @@ func TestFromHttpRequest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := FromHttpRequest(tt.req); got != tt.want {
-				t.Errorf("FromHttpRequest() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, FromHttpRequest(tt.req))
 		})
 	}
 }
@@ -187,9 +185,7 @@ func TestFromGrpcMetadata(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := FromGrpcMetadata(tt.md); got != tt.want {
-				t.Errorf("FromGrpcMetadata() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, FromGrpcMetadata(tt.md))
 		})
 	}
 }

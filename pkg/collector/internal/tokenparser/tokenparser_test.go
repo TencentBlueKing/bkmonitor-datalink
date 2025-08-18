@@ -10,23 +10,186 @@
 package tokenparser
 
 import (
+	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
 func TestFromString(t *testing.T) {
-	t.Run("invalid", func(t *testing.T) {
-		a, b := FromString("x")
-		assert.Equal(t, "x", a)
-		assert.Empty(t, b)
-	})
+	tests := []struct {
+		name      string
+		input     string
+		wantValue string
+		wantToken string
+	}{
+		{
+			name:      "invalid",
+			input:     "x",
+			wantValue: "x",
+		},
+		{
+			name:      "success",
+			input:     define.KeyToken + ":" + "token:value",
+			wantValue: "value",
+			wantToken: "token",
+		},
+	}
 
-	t.Run("success", func(t *testing.T) {
-		a, b := FromString(define.KeyToken + ":" + "token:value")
-		assert.Equal(t, "value", a)
-		assert.Equal(t, "token", b)
-	})
+	for _, tt := range tests {
+		value, token := FromString(tt.input)
+		assert.Equal(t, tt.wantValue, value)
+		assert.Equal(t, tt.wantToken, token)
+	}
+}
+
+func makeHttpRequest(params, headers map[string]string, basicUser, basicPassword string) *http.Request {
+	req := &http.Request{
+		Header: make(http.Header),
+		URL:    &url.URL{},
+	}
+
+	q := req.URL.Query()
+	for k, v := range params {
+		q.Add(k, v)
+	}
+	req.URL.RawQuery = q.Encode()
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	if basicUser != "" || basicPassword != "" {
+		req.SetBasicAuth(basicUser, basicPassword)
+	}
+	return req
+}
+
+func TestFromHttpRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *http.Request
+		want string
+	}{
+		{
+			name: "token from url query",
+			req:  makeHttpRequest(map[string]string{define.KeyToken: "foo"}, nil, "", ""),
+			want: "foo",
+		},
+		{
+			name: "token from header",
+			req:  makeHttpRequest(nil, map[string]string{define.KeyToken: "bar"}, "", ""),
+			want: "bar",
+		},
+		{
+			name: "tenant from url query",
+			req:  makeHttpRequest(map[string]string{define.KeyTenantID: "foo"}, nil, "", ""),
+			want: "foo",
+		},
+		{
+			name: "tenant from header",
+			req:  makeHttpRequest(nil, map[string]string{define.KeyTenantID: "bar"}, "", ""),
+			want: "bar",
+		},
+		{
+			name: "valid basic auth",
+			req:  makeHttpRequest(nil, nil, basicAuthUsername, "token1"),
+			want: "token1",
+		},
+		{
+			name: "invalid basic auth username",
+			req:  makeHttpRequest(nil, nil, "foobar", ""),
+		},
+		{
+			name: "invalid basic auth password",
+			req:  makeHttpRequest(nil, nil, basicAuthUsername, ""),
+		},
+		{
+			name: "valid bearer token",
+			req:  makeHttpRequest(nil, map[string]string{"Authorization": "Bearer " + "foo"}, "", ""),
+			want: "foo",
+		},
+		{
+			name: "invalid bearer token format",
+			req:  makeHttpRequest(nil, map[string]string{"Authorization": "InvalidToken"}, "", ""),
+		},
+		{
+			name: "no token found",
+			req:  makeHttpRequest(nil, nil, "", ""),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FromHttpRequest(tt.req); got != tt.want {
+				t.Errorf("FromHttpRequest() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFromGrpcMetadata(t *testing.T) {
+	tests := []struct {
+		name string
+		md   metadata.MD
+		want string
+	}{
+		{
+			name: "valid KeyToken",
+			md:   metadata.Pairs(define.KeyToken, "token"),
+			want: "token",
+		},
+		{
+			name: "valid KeyTenantID",
+			md:   metadata.Pairs(define.KeyTenantID, "tenant"),
+			want: "tenant",
+		},
+		{
+			name: "both keys exist, prefer KeyToken",
+			md: metadata.New(map[string]string{
+				define.KeyToken:    "token",
+				define.KeyTenantID: "tenant",
+			}),
+			want: "token",
+		},
+		{
+			name: "multiple values in KeyToken",
+			md: metadata.MD{
+				strings.ToLower(define.KeyToken): []string{"tokenA", "tokenB"},
+			},
+			want: "tokenA",
+		},
+		{
+			name: "multiple values in KeyTenantID",
+			md: metadata.MD{
+				strings.ToLower(define.KeyTenantID): []string{"tenantA", "tenantB"},
+			},
+			want: "tenantA",
+		},
+		{
+			name: "no keys present",
+			md:   metadata.New(nil),
+		},
+		{
+			name: "empty KeyToken value",
+			md:   metadata.Pairs(define.KeyToken, ""),
+		},
+		{
+			name: "empty KeyTenantID value",
+			md:   metadata.Pairs(define.KeyTenantID, ""),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FromGrpcMetadata(tt.md); got != tt.want {
+				t.Errorf("FromGrpcMetadata() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }

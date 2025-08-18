@@ -633,6 +633,11 @@ group by
 			sql:  "SELECT ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)), 2) AS ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT()) AS pct",
 		},
 		{
+			name: "子查询验证 - 1",
+			q:    "select ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)), 2) as ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT() where a > 1 limit 1) AS pct",
+			sql:  "SELECT ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)), 2) AS ct, CAST(__ext['cluster']['extra.name_space'] AS TEXT) AS ns, COUNT() / (SELECT COUNT() WHERE a > 1 LIMIT 1) AS pct",
+		},
+		{
 			name: "查询值支持函数模式",
 			q:    "SELECT * WHERE LOWER(log) REGEXP LOWER('LogPzRealm')",
 			sql:  "SELECT * WHERE LOWER(log) REGEXP LOWER('LogPzRealm')",
@@ -750,6 +755,28 @@ group by
 			name: `test-40`,
 			q:    `select count(pod_namespace) where log like 'test*'`,
 			sql:  `SELECT count(__ext.io_kubernetes_pod_namespace) WHERE log like 'test*'`,
+		},
+		{
+			name: `test-41`,
+			q:    `select DISTINCT(a),b`,
+			sql:  `SELECT DISTINCT(a), b`,
+		},
+		{
+			name: `test-42`,
+			q:    `SELECT DISTINCT a`,
+			sql:  `SELECT DISTINCT(a)`,
+		},
+		{
+			name: `test-43`,
+			q: `SELECT
+  COUNT(
+    DISTINCT (
+      cast(
+        regexp_extract (log, 'openid=(\\d+)', 1) AS bigint
+      )
+    )
+  ) AS openid`,
+			sql: `SELECT COUNT(DISTINCT(CAST(regexp_extract(log, 'openid=(\\d+)', 1) AS bigint))) AS openid`,
 		},
 	}
 

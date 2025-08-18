@@ -427,7 +427,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	queryRef.Range("", func(qry *metadata.Query) {
 		for k, s := range session.ScrollIDs {
-			if s.Status == redisUtil.StatusCompleted || s.FailedNum > session.SliceMaxFailedNum {
+			if s.Done() {
 				continue
 			}
 			log.Infof(ctx, "query with sliceID: %s, sliceMax: %d, offset: %d, limit: %d", s.ScrollID, s.SliceMax, s.Offset, s.Limit)

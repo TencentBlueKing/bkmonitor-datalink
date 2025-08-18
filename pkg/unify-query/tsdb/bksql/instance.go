@@ -87,10 +87,6 @@ func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 	return instance, nil
 }
 
-func (i *Instance) Connect() string {
-	return i.client.URL()
-}
-
 func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
 	return ""
 }
@@ -507,10 +503,6 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 func (i *Instance) InstanceType() string {
 	return consul.BkSqlStorageType
-}
-
-func (i *Instance) IsCompleted(opt *metadata.ResultTableOption, dataLen int) bool {
-	return dataLen == 0
 }
 
 func getValue(k string, d map[string]interface{}) (string, error) {

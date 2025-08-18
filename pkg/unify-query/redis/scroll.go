@@ -36,7 +36,6 @@ const (
 )
 
 type ScrollSession struct {
-	Ctx               context.Context    `json:"-"`
 	SessionKey        string             `json:"session_key"`
 	LockKey           string             `json:"lock_key"`
 	LastAccessAt      time.Time          `json:"last_access_at"`
@@ -56,9 +55,8 @@ func (s *ScrollSession) UpdateSliceStatus(idx int, value SliceStatusValue) {
 	s.LastAccessAt = time.Now()
 }
 
-func newScrollSession(ctx context.Context, queryTsStr string, scrollTimeout time.Duration, maxSlice, sliceMaxFailedNum, Limit int) *ScrollSession {
+func newScrollSession(queryTsStr string, scrollTimeout time.Duration, maxSlice, sliceMaxFailedNum, Limit int) *ScrollSession {
 	session := &ScrollSession{
-		Ctx:               ctx,
 		SessionKey:        SessionKeyPrefix + queryTsStr,
 		LockKey:           ScrollLockKeyPrefix + queryTsStr,
 		LastAccessAt:      time.Now(),
@@ -82,18 +80,17 @@ func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollTime
 	if err != nil {
 		return nil, err
 	}
-	return newScrollSession(ctx, queryTsStr, scrollTimeoutDuration, maxSlice, sliceMaxFailedNum, Limit), nil
+	return newScrollSession(queryTsStr, scrollTimeoutDuration, maxSlice, sliceMaxFailedNum, Limit), nil
 }
 
 func checkScrollSession(ctx context.Context, queryTsStr string) (*ScrollSession, bool) {
-	var session ScrollSession
-	err := Client().Get(ctx, SessionKeyPrefix+queryTsStr).Scan(&session)
+	session := &ScrollSession{}
+	err := Client().Get(ctx, SessionKeyPrefix+queryTsStr).Scan(session)
 	if err != nil {
 		return nil, false
-	} else {
-		session.Ctx = ctx
-		return &session, true
 	}
+
+	return session, true
 }
 
 func (s *ScrollSession) AcquireLock(ctx context.Context) error {
@@ -109,12 +106,12 @@ func (s *ScrollSession) AcquireLock(ctx context.Context) error {
 	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
 }
 
-func (s *ScrollSession) ReleaseLock() {
+func (s *ScrollSession) ReleaseLock(ctx context.Context) {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
-	Client().Del(s.Ctx, s.LockKey).Err()
+	Client().Del(ctx, s.LockKey).Err()
 	s.LastAccessAt = time.Now()
-	Client().Set(s.Ctx, s.SessionKey, s, s.ScrollTimeout).Err()
+	Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
 }
 
 func (s *ScrollSession) MarshalBinary() ([]byte, error) {
@@ -141,6 +138,10 @@ type SliceStatusValue struct {
 	Status    string `json:"status"`
 	FailedNum int    `json:"failed_num"`
 	Limit     int    `json:"limit"`
+}
+
+func (s *SliceStatusValue) Done() bool {
+	return s.Status == StatusCompleted || s.FailedNum >= DefaultSliceMaxFailedNum
 }
 
 type SliceInfo struct {

@@ -46,7 +46,10 @@ func TestMetrics(t *testing.T) {
 
 	n = 0
 	MetricDataPointsAttrs(testkits.FirstMetric(g.Generate()), func(attrs pcommon.Map) { n++ })
-	assert.Equal(t, 1, n)
+
+	n = 0
+	MetricsSliceDataPointsAttrs(g.Generate().ResourceMetrics(), func(name string, attrs pcommon.Map) { n++ })
+	assert.Equal(t, 8, n)
 }
 
 func TestTraces(t *testing.T) {

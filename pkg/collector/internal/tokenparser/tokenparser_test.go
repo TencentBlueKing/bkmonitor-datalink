@@ -193,3 +193,42 @@ func TestFromGrpcMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestSplitKv(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  map[string]string
+	}{
+		{
+			name:  "empty string",
+			input: "",
+		},
+		{
+			name:  "single valid pair",
+			input: "key=value",
+			want:  map[string]string{"key": "value"},
+		},
+		{
+			name:  "multiple valid pairs",
+			input: "a=1,b=2,c=3",
+			want:  map[string]string{"a": "1", "b": "2", "c": "3"},
+		},
+		{
+			name:  "with whitespace",
+			input: "  name = John  ,  age=30  ",
+			want:  map[string]string{"name": "John", "age": "30"},
+		},
+		{
+			name:  "mixed valid and invalid",
+			input: "valid=1,=emptykey,emptyval=,invalid,invalid=format=here",
+			want:  map[string]string{"valid": "1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, splitKv(tt.input))
+		})
+	}
+}

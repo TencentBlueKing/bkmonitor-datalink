@@ -11,13 +11,36 @@ package lucene_parser
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
+	"github.com/olivere/elastic/v7"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
+
+// queryToJSON converts elastic.Query to JSON string for comparison
+func queryToJSON(query elastic.Query) (string, error) {
+	if query == nil {
+		return "null", nil
+	}
+
+	// Get the source for the query
+	src, err := query.Source()
+	if err != nil {
+		return "", err
+	}
+
+	// Marshal to JSON
+	jsonBytes, err := json.Marshal(src)
+	if err != nil {
+		return "", err
+	}
+
+	return string(jsonBytes), nil
+}
 
 func TestParseWithVisitor(t *testing.T) {
 	testCases := []struct {
@@ -32,13 +55,13 @@ func TestParseWithVisitor(t *testing.T) {
 			name: "基础查询 - 单字段",
 			q:    `status:200`,
 			sql:  `"status" = '200'`,
-			es:   `{"term":{"status":"200"}}`,
+			es:   `{"term":{"status":200}}`,
 		},
 		{
 			name: "基础查询 - 多字段",
 			q:    `host:server1 AND port:80 AND protocol:http`,
 			sql:  `"host" = 'server1' AND "port" = '80' AND "protocol" = 'http'`,
-			es:   `{"bool":{"must":[{"term":{"host":"server1"}},{"term":{"port":"80"}},{"term":{"protocol":"http"}}]}}`,
+			es:   `{"bool":{"must":[{"term":{"host":"server1"}},{"term":{"port":80}},{"term":{"protocol":"http"}}]}}`,
 		},
 		{
 			name: "基础查询 - 无字段名",
@@ -52,13 +75,13 @@ func TestParseWithVisitor(t *testing.T) {
 			name: "优先级测试 - AND优先于OR",
 			q:    `a:1 OR b:2 AND c:3 OR d:4`,
 			sql:  `"a" = '1' OR "b" = '2' AND "c" = '3' OR "d" = '4'`,
-			es:   `{"bool":{"should":[{"term":{"a":"1"}},{"bool":{"must":[{"term":{"b":"2"}},{"term":{"c":"3"}}]}},{"term":{"d":"4"}}]}}`,
+			es:   `{"bool":{"should":[{"term":{"a":1}},{"bool":{"must":[{"term":{"b":2}},{"term":{"c":3}}]}},{"term":{"d":4}}]}}`,
 		},
 		{
 			name: "优先级测试 - 多个AND和OR混合",
 			q:    `host:web AND status:500 OR host:db AND status:503`,
 			sql:  `"host" = 'web' AND "status" = '500' OR "host" = 'db' AND "status" = '503'`,
-			es:   `{"bool":{"should":[{"bool":{"must":[{"term":{"host":"web"}},{"term":{"status":"500"}}]}},{"bool":{"must":[{"term":{"host":"db"}},{"term":{"status":"503"}}]}}]}}`,
+			es:   `{"bool":{"should":[{"bool":{"must":[{"term":{"host":"web"}},{"term":{"status":500}}]}},{"bool":{"must":[{"term":{"host":"db"}},{"term":{"status":503}}]}}]}}`,
 		},
 
 		// 修饰符测试（+ - NOT）
@@ -66,19 +89,19 @@ func TestParseWithVisitor(t *testing.T) {
 			name: "修饰符测试 - 必须包含",
 			q:    `+status:200 +method:GET`,
 			sql:  `"status" = '200' AND "method" = 'GET'`,
-			es:   `{"bool":{"must":[{"term":{"status":"200"}},{"term":{"method":"GET"}}]}}`,
+			es:   `{"bool":{"must":[{"term":{"status":200}},{"term":{"method":"GET"}}]}}`,
 		},
 		{
 			name: "修饰符测试 - 必须排除",
 			q:    `status:200 -error:true`,
 			sql:  `"status" = '200' AND "error" != 'true'`,
-			es:   `{"bool":{"must":[{"term":{"status":"200"}},{"bool":{"must_not":{"term":{"error":"true"}}}}]}}`,
+			es:   `{"bool":{"must":[{"term":{"status":200}},{"bool":{"must_not":{"term":{"error":"true"}}}}]}}`,
 		},
 		{
 			name: "修饰符测试 - NOT运算符",
 			q:    `NOT status:404 AND host:web`,
 			sql:  `"status" != '404' AND "host" = 'web'`,
-			es:   `{"bool":{"must":[{"bool":{"must_not":{"term":{"status":"404"}}}},{"term":{"host":"web"}}]}}`,
+			es:   `{"bool":{"must":[{"bool":{"must_not":{"term":{"status":404}}}},{"term":{"host":"web"}}]}}`,
 		},
 
 		// 分组测试（括号优先级）
@@ -86,13 +109,13 @@ func TestParseWithVisitor(t *testing.T) {
 			name: "分组测试 - 简单括号",
 			q:    `(a:1 OR b:2) AND c:3`,
 			sql:  `"a" = '1' OR "b" = '2' AND "c" = '3'`,
-			es:   `{"bool":{"must":[{"bool":{"should":[{"term":{"a":"1"}},{"term":{"b":"2"}}]}},{"term":{"c":"3"}}]}}`,
+			es:   `{"bool":{"must":[{"bool":{"should":[{"term":{"a":1}},{"term":{"b":2}}]}},{"term":{"c":3}}]}}`,
 		},
 		{
 			name: "分组测试 - 多层括号",
 			q:    `(a:1 AND (b:2 OR c:3)) OR d:4`,
 			sql:  `"a" = '1' AND "b" = '2' OR "c" = '3' OR "d" = '4'`,
-			es:   `{"bool":{"should":[{"bool":{"must":[{"term":{"a":"1"}},{"bool":{"should":[{"term":{"b":"2"}},{"term":{"c":"3"}}]}}]}},{"term":{"d":"4"}}]}}`,
+			es:   `{"bool":{"should":[{"bool":{"must":[{"term":{"a":1}},{"bool":{"should":[{"term":{"b":2}},{"term":{"c":3}}]}}]}},{"term":{"d":4}}]}}`,
 		},
 
 		// 范围查询测试（数字、字符串、日期）
@@ -100,13 +123,13 @@ func TestParseWithVisitor(t *testing.T) {
 			name: "范围查询 - 数字闭区间",
 			q:    `price:[100 TO 500]`,
 			sql:  `"price" BETWEEN 100 AND 500`,
-			es:   `{"range":{"price":{"gte":100,"lte":500}}}`,
+			es:   `{"range":{"price":{"from":100,"include_lower":true,"include_upper":true,"to":500}}}`,
 		},
 		{
 			name: "范围查询 - 字符串范围",
 			q:    `name:[Alice TO Bob]`,
 			sql:  `"name" BETWEEN 'Alice' AND 'Bob'`,
-			es:   `{"range":{"name":{"gte":"Alice","lte":"Bob"}}}`,
+			es:   `{"range":{"name":{"from":"Alice","include_lower":true,"include_upper":true,"to":"Bob"}}}`,
 		},
 
 		// 特殊查询测试（正则、模糊、权重）
@@ -114,19 +137,19 @@ func TestParseWithVisitor(t *testing.T) {
 			name: "特殊查询 - 正则表达式",
 			q:    `path:/.*\.log/`,
 			sql:  `"path" REGEXP '.*\.log'`,
-			es:   `{"regexp":{"path":".*\.log"}}`,
+			es:   `{"regexp":{"path":{"value":".*\\.log"}}}`,
 		},
 		{
 			name: "特殊查询 - 权重查询",
 			q:    `title:important`,
 			sql:  `"title" = 'important'`,
-			es:   `{"term":{"title":{"value":"important"}}}`,
+			es:   `{"term":{"title":"important"}}`,
 		},
 		{
 			name: "特殊查询 - 引号短语",
 			q:    `message:"user login failed"`,
 			sql:  `"message" = 'user login failed'`,
-			es:   `{"match_phrase":{"message":"user login failed"}}`,
+			es:   `{"match_phrase":{"message":{"query":"user login failed"}}}`,
 		},
 
 		// 函数查询测试（fn:func）
@@ -134,7 +157,7 @@ func TestParseWithVisitor(t *testing.T) {
 			name: "复杂组合 - 短语查询",
 			q:    `content:"quick brown fox"`,
 			sql:  `"content" = 'quick brown fox'`,
-			es:   `{"match_phrase":{"content":"quick brown fox"}}`,
+			es:   `{"match_phrase":{"content":{"query":"quick brown fox"}}}`,
 		},
 
 		// 复杂组合测试
@@ -142,7 +165,7 @@ func TestParseWithVisitor(t *testing.T) {
 			name: "复杂组合 - 所有特性混合",
 			q:    `host:web AND status:[200 TO 299]`,
 			sql:  `"host" = 'web' AND "status" BETWEEN 200 AND 299`,
-			es:   `{"bool":{"must":[{"term":{"host":"web"}},{"range":{"status":{"gte":200,"lte":299}}}]}}`,
+			es:   `{"bool":{"must":[{"term":{"host":"web"}},{"range":{"status":{"from":200,"include_lower":true,"include_upper":true,"to":299}}}]}}`,
 		},
 	}
 
@@ -173,6 +196,22 @@ func TestParseWithVisitor(t *testing.T) {
 				assert.Nil(t, err)
 				assert.NotEmpty(t, sql)
 				assert.Equal(t, c.sql, sql)
+			}
+
+			// Test ES DSL conversion
+			esQuery, err := ParseLuceneToES(ctx, c.q, opt)
+			if c.err != nil {
+				assert.Equal(t, c.err, err)
+			} else {
+				assert.Nil(t, err)
+				assert.NotNil(t, esQuery)
+
+				// Convert to JSON for comparison
+				actualJSON, err := queryToJSON(esQuery.(elastic.Query))
+				assert.Nil(t, err)
+
+				// Compare JSON strings
+				assert.Equal(t, c.es, actualJSON)
 			}
 		})
 	}

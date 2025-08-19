@@ -323,14 +323,20 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	span.Set("query-body", queryStr)
 
 	if isClearCache {
-		session.ReleaseLock(ctx)
+		err = session.ReleaseLock(ctx)
+		if err != nil {
+			return
+		}
 	}
 
 	if err = session.AcquireLock(ctx); err != nil {
 		return
 	}
 	defer func() {
-		session.ReleaseLock(ctx)
+		err = session.ReleaseLock(ctx)
+		if err != nil {
+			return
+		}
 	}()
 
 	span.Set("session-lock-key", queryStrWithUserName)

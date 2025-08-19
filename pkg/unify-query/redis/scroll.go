@@ -106,12 +106,19 @@ func (s *ScrollSession) AcquireLock(ctx context.Context) error {
 	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
 }
 
-func (s *ScrollSession) ReleaseLock(ctx context.Context) {
+func (s *ScrollSession) ReleaseLock(ctx context.Context) (err error) {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
-	Client().Del(ctx, s.LockKey).Err()
+	err = Client().Del(ctx, s.LockKey).Err()
+	if err != nil {
+		return
+	}
 	s.LastAccessAt = time.Now()
-	Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
+	err = Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
+	if err != nil {
+		return
+	}
+	return
 }
 
 func (s *ScrollSession) MarshalBinary() ([]byte, error) {

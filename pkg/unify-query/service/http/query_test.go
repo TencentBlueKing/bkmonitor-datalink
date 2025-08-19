@@ -4314,7 +4314,8 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 		} else {
 			assert.Equal(t, 0, len(list), "Should have no data when hasData is false for step %d", i+1)
 		}
-		session.ReleaseLock(ctx)
+		err = session.ReleaseLock(ctx)
+		require.NoError(t, err, "Failed to release lock for scroll session in step %d", i+1)
 		t.Logf("Session: %+v", session)
 	}
 }
@@ -4463,7 +4464,8 @@ func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
 		total, list, _, err := queryRawWithScroll(testCtx, &queryTsCopy, session)
 		done := session.Done()
 		t.Logf("queryRawWithScroll returned: total=%d, len(list)=%d, done=%v, err=%v", total, len(list), done, err)
-		session.ReleaseLock(ctx)
+		err = session.ReleaseLock(ctx)
+		require.NoError(t, err, "Failed to release lock for scroll session in step %d", i+1)
 		hasData := len(list) > 0
 		t.Logf("Session: %+v", session)
 		assert.NoError(t, err, "QueryRawWithScroll should not return error for step %d", i+1)

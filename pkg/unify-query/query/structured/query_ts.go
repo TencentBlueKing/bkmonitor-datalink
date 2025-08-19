@@ -648,9 +648,8 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		storageIDs := tsDB.GetStorageIDs(start, end)
 
 		for _, storageID := range storageIDs {
-			query, buildErr := q.BuildMetadataQuery(ctx, tsDB, allConditions)
-			if buildErr != nil {
-				return nil, buildErr
+			query, err := q.BuildMetadataQuery(ctx, tsDB, allConditions)
+			if err != nil {
 			}
 			query.Aggregates = aggregates
 			query.Timezone = timezone

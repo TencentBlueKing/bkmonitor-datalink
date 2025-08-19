@@ -33,6 +33,9 @@ func (c logPushConverter) Convert(record *define.Record, f define.GatherFunc) {
 	if len(data) == 0 {
 		return
 	}
+	if lpData.Labels == nil {
+		lpData.Labels = make(map[string]string)
+	}
 
 	dataId := c.ToDataID(record)
 	events := make([]define.Event, 0, len(data))
@@ -43,11 +46,8 @@ func (c logPushConverter) Convert(record *define.Record, f define.GatherFunc) {
 }
 
 func (c logPushConverter) Extract(data string, lbs map[string]string) common.MapStr {
-	if lbs == nil {
-		lbs = make(map[string]string)
-	}
 	return common.MapStr{
 		"data": data,
-		"ext":  lbs,
+		"ext":  lbs, // 扩展维度
 	}
 }

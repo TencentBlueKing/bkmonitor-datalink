@@ -103,6 +103,12 @@ bkmonitorbeat:
   gather_up_beat:
     dataid: 1100017
 
+  # 自监控指标采集
+  selfstats_task:
+    dataid: 1100030
+    task_id: 88
+    period: 1m
+
   # 静态资源采集配置
   static_task:
     dataid: 1100010

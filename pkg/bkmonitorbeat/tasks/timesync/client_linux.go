@@ -60,6 +60,7 @@ func (c *Client) Query() (*Stat, error) {
 		if err == nil {
 			return stat, nil
 		}
+		logger.Warnf("failed to query ntpd: %v", err)
 	}
 
 	return nil, errors.New("no source available")
@@ -82,7 +83,7 @@ func (c *Client) queryNtpd() (*Stat, error) {
 			continue
 		}
 		parts := strings.Fields(line)
-		if len(parts) != 3 {
+		if len(parts) < 3 {
 			continue
 		}
 		rsp, err := ntp.QueryWithOptions(parts[1], ntp.QueryOptions{Timeout: c.opt.Timeout})

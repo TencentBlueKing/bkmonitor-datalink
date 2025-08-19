@@ -310,8 +310,6 @@ func getValueNodeValue(node Node) (*ValueNode, bool) {
 	return nil, false
 }
 
-// Node implementations
-
 type FieldNode struct {
 	baseNode
 	field  string

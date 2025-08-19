@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package zipkin
+package logpush
 
 import (
 	"bytes"
@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/atomic"
 
@@ -25,12 +26,12 @@ import (
 )
 
 const (
-	localV2SpansURL = "http://localhost/v2/spans"
+	localV1LogPushURL = "http://localhost/v1/logpush"
 )
 
 func TestReady(t *testing.T) {
 	assert.NotPanics(t, func() {
-		Ready(receiver.ComponentConfig{Zipkin: receiver.ComponentCommon{Enabled: true}})
+		Ready(receiver.ComponentConfig{LogPsuh: receiver.ComponentCommon{Enabled: true}})
 	})
 }
 
@@ -46,25 +47,36 @@ func newSvc(code define.StatusCode, msg string, err error) (HttpService, *atomic
 }
 
 func TestHttpRequest(t *testing.T) {
-	t.Run("invalid body", func(t *testing.T) {
-		buf := bytes.NewBufferString("{-}")
-		req := httptest.NewRequest(http.MethodPost, localV2SpansURL, buf)
+	t.Run("read failed", func(t *testing.T) {
+		buf := testkits.NewBrokenReader()
+		req := httptest.NewRequest(http.MethodPut, localV1LogPushURL, buf)
 
 		svc, n := newSvc(define.StatusCodeOK, "", nil)
 		rw := httptest.NewRecorder()
-		svc.V2Spans(rw, req)
-		assert.Equal(t, rw.Code, http.StatusBadRequest)
+		svc.LogPush(rw, req)
+		assert.Equal(t, rw.Code, http.StatusInternalServerError)
 		assert.Equal(t, int64(0), n.Load())
 	})
 
-	t.Run("read failed", func(t *testing.T) {
-		buf := testkits.NewBrokenReader()
-		req := httptest.NewRequest(http.MethodPost, localV2SpansURL, buf)
+	t.Run("precheck failed", func(t *testing.T) {
+		buf := bytes.NewBuffer([]byte(`foobar`))
+		req := httptest.NewRequest(http.MethodPut, localV1LogPushURL, buf)
+
+		svc, n := newSvc(define.StatusCodeUnauthorized, "", errors.New("MUST ERROR"))
+		rw := httptest.NewRecorder()
+		svc.LogPush(rw, req)
+		assert.Equal(t, rw.Code, http.StatusUnauthorized)
+		assert.Equal(t, int64(0), n.Load())
+	})
+
+	t.Run("success", func(t *testing.T) {
+		buf := bytes.NewBuffer([]byte(`foobar`))
+		req := httptest.NewRequest(http.MethodPut, localV1LogPushURL, buf)
 
 		svc, n := newSvc(define.StatusCodeOK, "", nil)
 		rw := httptest.NewRecorder()
-		svc.V2Spans(rw, req)
-		assert.Equal(t, rw.Code, http.StatusInternalServerError)
-		assert.Equal(t, int64(0), n.Load())
+		svc.LogPush(rw, req)
+		assert.Equal(t, rw.Code, http.StatusOK)
+		assert.Equal(t, int64(1), n.Load())
 	})
 }

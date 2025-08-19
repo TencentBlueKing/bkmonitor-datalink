@@ -41,8 +41,6 @@ func (p pingserverMapper) AsMapStr() common.MapStr {
 	}
 }
 
-var PingserverConverter EventConverter = pingserverConverter{}
-
 type pingserverConverter struct{}
 
 func (c pingserverConverter) Clean() {}

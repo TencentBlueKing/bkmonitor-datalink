@@ -44,6 +44,10 @@
 
 - POST `/fta/v1/event`
 
+### logpush
+
+- POST `/v1/logpush`
+
 ## 鉴权
 
 在上报数据到 bk-collector 时需要带上 token 进行鉴权，目前支持以下上报方式:
@@ -74,7 +78,7 @@ response, err := client.YourMethod(ctx, &YourRequest{})
 app.ReportPropMsgWithContext(ctx, props, map[string]string{"X-BK-TOKEN": token})
 ```
 
-### 使用 Tenant Id Key
+### 使用 TenantId Key
 
 tenant id key 支持 http/grpc 请求，具体使用方式同 Token Key
 
@@ -105,4 +109,3 @@ req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 | http | ✅               | ✅      | ✅           | ✅          |          |         |
 | grpc |                 |        |             |            | ✅        |         |
 | tars |                 |        |             |            |          | ✅       |
-

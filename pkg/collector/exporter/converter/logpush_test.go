@@ -12,40 +12,39 @@ package converter
 import (
 	"testing"
 
+	"github.com/elastic/beats/libbeat/common"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-func TestConvertPingserverData(t *testing.T) {
-	pd := &define.PingserverData{
-		DataId:  1001,
-		Version: "1.0",
-		Data:    map[string]interface{}{"data": "data"},
+func TestConvertLogPush(t *testing.T) {
+	data := &define.LogPushData{
+		Data: []string{"message1", "message2"},
+		Labels: map[string]string{
+			"zone": "gz",
+			"id":   "my-id",
+		},
 	}
 
-	events := make([]define.Event, 0)
-	var conv pingserverConverter
-	defer conv.Clean()
+	record := define.Record{
+		RecordType: define.RecordLogPush,
+		Data:       data,
+	}
 
-	conv.Convert(&define.Record{
-		RecordType: define.RecordPingserver,
-		Data:       pd,
-	}, func(evts ...define.Event) {
-		for _, evt := range evts {
-			assert.Equal(t, define.RecordPingserver, evt.RecordType())
-			assert.Equal(t, int32(1001), evt.DataId())
-			events = append(events, evt)
+	expected := []common.MapStr{
+		{"data": "message1", "ext": map[string]string{"zone": "gz", "id": "my-id"}},
+		{"data": "message2", "ext": map[string]string{"zone": "gz", "id": "my-id"}},
+	}
+
+	events := make([]common.MapStr, 0, len(expected))
+	gather := func(evts ...define.Event) {
+		for i := 0; i < len(evts); i++ {
+			events = append(events, evts[i].Data())
 		}
-	})
+	}
 
-	assert.Len(t, events, 1)
-
-	event := events[0]
-	assert.Equal(t, event.DataId(), int32(1001))
-
-	data := event.Data()
-	assert.Equal(t, data["dataid"], int64(1001))
-	assert.Equal(t, data["data"], []map[string]interface{}{{"data": "data"}})
-	assert.Equal(t, data["version"], "1.0")
+	var conv logPushConverter
+	conv.Convert(&record, gather)
+	assert.Equal(t, expected, events)
 }

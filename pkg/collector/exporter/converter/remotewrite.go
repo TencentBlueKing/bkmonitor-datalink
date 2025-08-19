@@ -25,8 +25,6 @@ func (e remoteWriteEvent) RecordType() define.RecordType {
 	return define.RecordRemoteWrite
 }
 
-var RemoteWriteConverter EventConverter = remoteWriteConverter{}
-
 type remoteWriteConverter struct{}
 
 func (c remoteWriteConverter) Clean() {}

@@ -67,7 +67,7 @@ func ParseLuceneWithVisitor(ctx context.Context, q string, opt *Option) (string,
 		return "", fmt.Errorf("parse lucene query (%s) error: %v", q, err)
 	}
 
-	return visitor.ToSQL(), nil
+	return visitor.ToSQLString(), nil
 }
 
 func ParseLuceneToES(ctx context.Context, q string, opt *Option) (interface{}, error) {

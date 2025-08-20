@@ -139,6 +139,12 @@ bkmonitorbeat:
   gather_up_beat:
     dataid: 1100017
 
+  # 自监控指标采集
+  selfstats_task:
+    dataid: 1100030
+    task_id: 88
+    period: 1m
+
 EOF
   cat <<EOF >> "$path"
   # 静态资源采集配置

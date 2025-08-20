@@ -41,7 +41,8 @@ const (
 
 	DefaultReverseAggName = "reverse_nested"
 
-	Type       = "type"
+	Type = "type"
+
 	Properties = "properties"
 
 	Min         = "min"
@@ -58,6 +59,9 @@ const (
 	Terms  = "terms"
 
 	ESStep = "."
+
+	NanoTimeFormat  = "2006-01-02T15:04:05.000000000Z"
+	NanoQueryFormat = "strict_date_optional_time_nanos"
 )
 
 const (
@@ -119,6 +123,7 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 
 func mapProperties(prefix string, data map[string]any, res map[string]string) {
 	if prefix != "" {
+
 		if t, ok := data[Type]; ok {
 			switch ts := t.(type) {
 			case string:
@@ -217,6 +222,10 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 }
 
 func (f *FormatFactory) WithIncludeValues(labelMap map[string][]function.LabelMapValue) *FormatFactory {
+	if labelMap == nil {
+		return f
+	}
+
 	var newLabelMap map[string][]function.LabelMapValue
 	if f.decode == nil {
 		newLabelMap = labelMap
@@ -357,6 +366,10 @@ func (f *FormatFactory) WithMappings(mappings ...map[string]any) *FormatFactory 
 		}
 	}
 	return f
+}
+
+func (f *FormatFactory) FieldType() map[string]string {
+	return f.mapping
 }
 
 func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
@@ -938,6 +951,20 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 								}
 								return nil
 							} else {
+								var format string
+								switch fieldType {
+								case metadata.TypeDateNanos:
+									if t, ok := function.StringToTime(value); ok {
+										value = t.Format(NanoTimeFormat)
+										format = NanoQueryFormat
+									}
+								case metadata.TypeDate:
+									if t, ok := function.StringToTime(value); ok {
+										value = fmt.Sprintf("%d", t.UnixMilli())
+										format = EpochMillis
+									}
+								}
+
 								// 非空才进行验证
 								switch con.Operator {
 								case structured.ConditionEqual, structured.ConditionNotEqual:
@@ -977,13 +1004,13 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 								case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
 									query = elastic.NewRegexpQuery(key, value)
 								case structured.ConditionGt:
-									query = elastic.NewRangeQuery(key).Gt(value)
+									query = elastic.NewRangeQuery(key).Gt(value).Format(format)
 								case structured.ConditionGte:
-									query = elastic.NewRangeQuery(key).Gte(value)
+									query = elastic.NewRangeQuery(key).Gte(value).Format(format)
 								case structured.ConditionLt:
-									query = elastic.NewRangeQuery(key).Lt(value)
+									query = elastic.NewRangeQuery(key).Lt(value).Format(format)
 								case structured.ConditionLte:
-									query = elastic.NewRangeQuery(key).Lte(value)
+									query = elastic.NewRangeQuery(key).Lte(value).Format(format)
 								default:
 									return fmt.Errorf("operator is not support, %+v", con)
 								}

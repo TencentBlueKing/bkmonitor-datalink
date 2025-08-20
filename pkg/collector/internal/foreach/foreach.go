@@ -95,6 +95,50 @@ func MetricsSliceResource(resourceMetricsSlice pmetric.ResourceMetricsSlice, f f
 	}
 }
 
+// MetricsSliceDataPointsAttrs 遍历 MetricsSlice 的所有数据点属性
+func MetricsSliceDataPointsAttrs(resourceMetricsSlice pmetric.ResourceMetricsSlice, f func(name string, attrs pcommon.Map)) {
+	Metrics(resourceMetricsSlice, func(metric pmetric.Metric) {
+		MetricDataPointsAttrs(metric, func(attrs pcommon.Map) {
+			f(metric.Name(), attrs)
+		})
+	})
+}
+
+// MetricDataPointsAttrs 遍历单个 Metric 的数据点属性
+func MetricDataPointsAttrs(metric pmetric.Metric, f func(attrs pcommon.Map)) {
+	switch metric.DataType() {
+	case pmetric.MetricDataTypeGauge:
+		dps := metric.Gauge().DataPoints()
+		for i := 0; i < dps.Len(); i++ {
+			f(dps.At(i).Attributes())
+		}
+
+	case pmetric.MetricDataTypeSum:
+		dps := metric.Sum().DataPoints()
+		for i := 0; i < dps.Len(); i++ {
+			f(dps.At(i).Attributes())
+		}
+
+	case pmetric.MetricDataTypeSummary:
+		dps := metric.Summary().DataPoints()
+		for i := 0; i < dps.Len(); i++ {
+			f(dps.At(i).Attributes())
+		}
+
+	case pmetric.MetricDataTypeHistogram:
+		dps := metric.Histogram().DataPoints()
+		for i := 0; i < dps.Len(); i++ {
+			f(dps.At(i).Attributes())
+		}
+
+	case pmetric.MetricDataTypeExponentialHistogram:
+		dps := metric.ExponentialHistogram().DataPoints()
+		for i := 0; i < dps.Len(); i++ {
+			f(dps.At(i).Attributes())
+		}
+	}
+}
+
 func Logs(resourceLogsSlice plog.ResourceLogsSlice, f func(logRecord plog.LogRecord)) {
 	for i := 0; i < resourceLogsSlice.Len(); i++ {
 		scopeLogsSlice := resourceLogsSlice.At(i).ScopeLogs()

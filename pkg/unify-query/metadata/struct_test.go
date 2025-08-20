@@ -237,11 +237,62 @@ func TestOrders_SortSliceList(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "test - time",
+			orders: Orders{
+				{
+					Name: "time",
+					Ast:  false,
+				},
+			},
+			list: []map[string]any{
+				{
+					"time": "1754466569000000002", // 2025-08-06 15:49:29
+				},
+				{
+					"time": "2025-08-06T17:49:29.000000001Z",
+				},
+				{
+					"time": "2025-08-06T17:49:29.000000002Z",
+				},
+				{
+					"time": "1754466568000", // 2025-08-06 15:49:28
+				},
+				{
+					"time": "2025-08-06T17:46:29.000000002Z",
+				},
+				{
+					"time": "1754866568000", // 2025-08-11 06:56:08
+				},
+			},
+			expected: []map[string]any{
+				{
+					"time": "1754866568000", // 2025-08-11 06:56:08
+				},
+				{
+					"time": "2025-08-06T17:49:29.000000002Z",
+				},
+				{
+					"time": "2025-08-06T17:49:29.000000001Z",
+				},
+				{
+					"time": "2025-08-06T17:46:29.000000002Z",
+				},
+				{
+					"time": "1754466569000000002", // 2025-08-06 15:49:29
+				},
+				{
+					"time": "1754466568000", // 2025-08-06 15:49:28
+				},
+			},
+		},
 	}
 
 	for _, c := range testCases {
 		t.Run(c.name, func(t *testing.T) {
-			c.orders.SortSliceList(c.list)
+			c.orders.SortSliceList(c.list, map[string]string{
+				"time": TypeDate,
+			})
 
 			assert.Equal(t, c.expected, c.list)
 		})

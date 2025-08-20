@@ -68,6 +68,8 @@ func (n *baseNode) WithSetAs(setAs bool) {
 type Statement struct {
 	baseNode
 
+	isSubQuery bool
+
 	nodeMap map[string]Node
 
 	Table string
@@ -84,7 +86,7 @@ func (v *Statement) ItemString(name string) string {
 	return ""
 }
 
-func (v *Statement) SQL() (string, error) {
+func (v *Statement) String() string {
 	var (
 		result []string
 	)
@@ -117,7 +119,13 @@ func (v *Statement) SQL() (string, error) {
 			result = append(result, res)
 		}
 	}
-	return strings.Join(result, " "), nil
+
+	sql := strings.Join(result, " ")
+	if v.isSubQuery {
+		sql = fmt.Sprintf("(%s)", sql)
+	}
+
+	return sql
 }
 
 func (v *Statement) Error() error {
@@ -567,14 +575,29 @@ func (v *TableNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 type SelectNode struct {
 	baseNode
 
-	fieldsNode []Node
+	DistinctIndex int
+	Distinct      bool
+	fieldsNode    []Node
+}
+
+func (v *SelectNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+	name := ctx.GetText()
+	switch name {
+	case "DISTINCT":
+		v.Distinct = true
+		v.DistinctIndex = len(v.fieldsNode)
+	}
+	return nil
 }
 
 func (v *SelectNode) String() string {
 	var ns []string
-	for _, fn := range v.fieldsNode {
+	for idx, fn := range v.fieldsNode {
 		ss := nodeToString(fn)
 		if ss != "" {
+			if v.Distinct && idx == v.DistinctIndex {
+				ss = fmt.Sprintf("DISTINCT(%s)", ss)
+			}
 			ns = append(ns, ss)
 		}
 	}
@@ -704,6 +727,8 @@ func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 
 type FunctionNode struct {
 	baseNode
+
+	Distinct bool
 	FuncName string
 	Values   []Node
 }
@@ -721,10 +746,23 @@ func (v *FunctionNode) String() string {
 
 	result = strings.Join(cols, ", ")
 
+	if v.Distinct {
+		result = fmt.Sprintf("DISTINCT(%s)", result)
+	}
+
 	if v.FuncName != "" {
 		result = fmt.Sprintf("%s(%s)", v.FuncName, result)
 	}
 	return result
+}
+
+func (v *FunctionNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+	name := ctx.GetText()
+	switch name {
+	case "DISTINCT":
+		v.Distinct = true
+	}
+	return nil
 }
 
 func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) interface{} {
@@ -987,6 +1025,11 @@ func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
 	next = node
 
 	switch ctx.(type) {
+	case *gen.SubqueryExpressionContext:
+		node.node = &Statement{
+			isSubQuery: true,
+		}
+		next = node.node
 	case *gen.SearchedCaseContext:
 		node.node = &SearchCaseNode{}
 		next = node.node

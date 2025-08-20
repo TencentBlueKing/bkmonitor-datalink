@@ -29,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater/taskfactory"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define/stats"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/http"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
@@ -298,6 +299,7 @@ func (bt *MonitorBeater) PreRun() error {
 	bt.ListenScheduler = schedulerfactory.New(bt, bt.config, schedulerfactory.SchedulerTypeListen)
 
 	tasks := bt.GetTasks()
+	updateRunningTasks(tasks)
 	bt.loadedTasks += int32(len(tasks))
 
 	for _, task := range tasks {
@@ -595,9 +597,21 @@ func (bt *MonitorBeater) Stop() {
 	}
 }
 
+func updateRunningTasks(tasks []define.Task) {
+	count := make(map[string]int)
+	for i := 0; i < len(tasks); i++ {
+		task := tasks[i]
+		if task != nil && task.GetConfig() != nil {
+			count[task.GetConfig().GetType()]++
+		}
+	}
+	stats.SetRunningTasks(count)
+}
+
 // Reload : reload conf
 func (bt *MonitorBeater) Reload(cfg *common.Config) {
 	logger.Info("MonitorBeater reload")
+	stats.IncReload()
 
 	oldState := bt.beaterState
 	oldConfig := bt.config
@@ -621,6 +635,7 @@ func (bt *MonitorBeater) Reload(cfg *common.Config) {
 	}
 
 	tasks := bt.GetTasks()
+	updateRunningTasks(tasks)
 	bt.loadedTasks += int32(len(tasks))
 	beatTasks := make([]define.Task, 0)
 	keywordTasks := make([]define.Task, 0)

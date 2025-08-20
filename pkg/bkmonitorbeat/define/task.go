@@ -44,6 +44,7 @@ const (
 	ModuleTimeSync        = "timesync"
 	ModuleDmesg           = "dmesg"
 	ModuleGatherUpBeat    = "gather_up_beat"
+	ModuleSelfStats       = "selfstats"
 )
 
 const (

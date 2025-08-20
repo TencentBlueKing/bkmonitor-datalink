@@ -71,7 +71,7 @@ func New(conf *confengine.Config) (*Exporter, error) {
 	exp := &Exporter{
 		ctx:       ctx,
 		cancel:    cancel,
-		converter: converter.NewCommonConverter(),
+		converter: converter.NewCommonConverter(&c.Converter),
 		cfg:       c,
 		batches:   LoadConfigFrom(conf),
 	}
@@ -103,7 +103,7 @@ func (e *Exporter) consumeEvents() {
 	for {
 		select {
 		case events := <-globalEvents.Get():
-			if len(events) <= 0 {
+			if len(events) == 0 {
 				continue
 			}
 			event := events[0]
@@ -151,6 +151,7 @@ func (e *Exporter) sendEvents() {
 }
 
 func (e *Exporter) Stop() {
+	e.converter.Clean()
 	e.cancel()
 	e.wg.Wait()
 }

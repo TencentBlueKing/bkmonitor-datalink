@@ -479,7 +479,7 @@ func TestFormatFactory_Query(t *testing.T) {
 		},
 		"* with prefix use": {
 			conditions: metadata.AllConditions{
-				[]metadata.ConditionField{
+				{
 					{
 						DimensionName: "*",
 						Operator:      structured.ConditionNotEqual,
@@ -490,12 +490,93 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"bool":{"must_not":{"multi_match":{"fields":["*","__*"],"lenient":true,"query":"test","type":"phrase_prefix"}}}}}`,
 		},
+		"dtEventTimeStamp's value is nano unix": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "dtEventTimeStamp",
+						Operator:      structured.ConditionLte,
+						Value:         []string{"1754466569000000002"},
+					},
+				},
+			},
+			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":null,"include_lower":true,"include_upper":true,"to":"1754466569000"}}}}`,
+		},
+		"dtEventTimeStamp's value is milli unix": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "dtEventTimeStamp",
+						Operator:      structured.ConditionLte,
+						Value:         []string{"1754466569000"},
+					},
+				},
+			},
+			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":null,"include_lower":true,"include_upper":true,"to":"1754466569000"}}}}`,
+		},
+		"dtEventTimeStamp's value is unix": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "dtEventTimeStamp",
+						Operator:      structured.ConditionLte,
+						Value:         []string{"1754466569"},
+					},
+				},
+			},
+			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":null,"include_lower":true,"include_upper":true,"to":"1754466569000"}}}}`,
+		},
+		"dtEventTimeStamp's value is error unix": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "dtEventTimeStamp",
+						Operator:      structured.ConditionLte,
+						Value:         []string{"175446656a"},
+					},
+				},
+			},
+			expected: `{"query":{"range":{"dtEventTimeStamp":{"from":null,"include_lower":true,"include_upper":true,"to":"175446656a"}}}}`,
+		},
+		"dtEventTimeStamp's value is string": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "dtEventTimeStamp",
+						Operator:      structured.ConditionLte,
+						Value:         []string{"2025-08-06T07:49:29.000000001Z"},
+					},
+				},
+			},
+			expected: `{"query":{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":null,"include_lower":true,"include_upper":true,"to":"1754466569000"}}}}`,
+		},
+		"dtEventTimeNanoStamp's value is string": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "dtEventTimeNanoStamp",
+						Operator:      structured.ConditionLte,
+						Value:         []string{"2025-08-06T07:49:29.000000000Z"},
+					},
+				},
+			},
+			expected: `{"query":{"range":{"dtEventTimeNanoStamp":{"format":"strict_date_optional_time_nanos","from":null,"include_lower":true,"include_upper":true,"to":"2025-08-06T07:49:29.000000000Z"}}}}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			mappings := []map[string]any{
 				{
 					"properties": map[string]any{
+						"dtEventTimeStamp": map[string]any{
+							"type":           "date",
+							"include_in_all": false,
+							"format":         "epoch_millis",
+						},
+						"dtEventTimeNanoStamp": map[string]any{
+							"type":   "date_nanos",
+							"format": "strict_date_optional_time_nanos",
+						},
 						"nested1": map[string]any{
 							"type": "nested",
 							"properties": map[string]any{
@@ -558,6 +639,7 @@ func TestFormatFactory_Query(t *testing.T) {
 			body, _ := ss.Source()
 			bodyJson, _ := json.Marshal(body)
 			bodyString := string(bodyJson)
+			assert.NotEmpty(t, c.expected)
 			assert.JSONEq(t, c.expected, bodyString)
 
 		})

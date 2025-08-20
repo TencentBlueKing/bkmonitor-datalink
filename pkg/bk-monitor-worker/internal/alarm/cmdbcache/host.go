@@ -1,24 +1,11 @@
-// MIT License
-
-// Copyright (c) 2021~2022 腾讯蓝鲸
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
 
 package cmdbcache
 
@@ -260,6 +247,46 @@ type HostAndTopoCacheManager struct {
 	hostIpMapLock sync.RWMutex
 }
 
+// BuildRelationMetrics 从缓存构建relation指标
+func (m *HostAndTopoCacheManager) BuildRelationMetrics(ctx context.Context) error {
+	n := time.Now()
+
+	// 1. 从缓存获取主机数据
+	cacheData, err := m.batchQuery(ctx, m.GetCacheKey(hostCacheKey), "*")
+	if err != nil {
+		return errors.Wrap(err, "get host cache failed")
+	}
+
+	// 2. 解析JSON数据并转换为AlarmHostInfo，按业务ID分组
+	bizDataMap := make(map[int][]*AlarmHostInfo)
+	for _, jsonStr := range cacheData {
+		var host AlarmHostInfo
+		if err := json.Unmarshal([]byte(jsonStr), &host); err != nil {
+			logger.Warnf("unmarshal host cache failed: %v", err)
+			continue
+		}
+
+		// 从数据中提取业务ID
+		bizID := host.BkBizId
+		bizDataMap[bizID] = append(bizDataMap[bizID], &host)
+	}
+
+	// 3. 按业务ID构建relation指标
+	for bizID, hosts := range bizDataMap {
+		m.buildRelationMetricsByBizAndData(ctx, hosts, bizID)
+	}
+
+	logger.Infof("[cmdb_relation] build_cache type:host action:end biz_count: %d cost: %s", len(bizDataMap), time.Since(n))
+	return nil
+}
+
+func (m *HostAndTopoCacheManager) buildRelationMetricsByBizAndData(ctx context.Context, hosts []*AlarmHostInfo, bizID int) {
+	infos := m.HostToRelationInfos(hosts)
+	if err := relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bizID, relation.Host, infos); err != nil {
+		logger.Errorf("build host relation metrics failed for biz %d: %v", bizID, err)
+	}
+}
+
 // NewHostAndTopoCacheManager 创建主机及拓扑缓存管理器
 func NewHostAndTopoCacheManager(bkTenantId string, prefix string, opt *redis.Options, concurrentLimit int) (*HostAndTopoCacheManager, error) {
 	manager, err := NewBaseCacheManager(bkTenantId, prefix, opt, concurrentLimit)
@@ -348,11 +375,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 
 	// 刷新 relation metrics 缓存
 	go func() {
-		infos := m.HostToRelationInfos(hosts)
-		err = relation.GetRelationMetricsBuilder().BuildInfosCache(ctx, bkBizId, relation.Host, infos)
-		if err != nil {
-			logger.Error("refresh relation metrics failed, err: %v", err)
-		}
+		m.buildRelationMetricsByBizAndData(ctx, hosts, bkBizId)
 		wg.Done()
 	}()
 
@@ -373,11 +396,12 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 			ID:       hostID,
 			Resource: relation.Host,
 			Label: map[string]string{
-				"host_id": hostID,
+				relation.HostID: hostID,
 			},
 		}
 
-		if h.BkHostInnerip != "" {
+		// 忽略 ip 过长的异常数据，使用逗号存放多 ip 的场景
+		if h.BkHostInnerip != "" && !strings.Contains(h.BkHostInnerip, ",") && len(h.BkHostInnerip) < 50 {
 			systemInfo := &relation.Info{}
 			systemID := fmt.Sprintf("%s|%d", h.BkHostInnerip, h.BkCloudId)
 			systemInfo.ID = systemID
@@ -396,6 +420,10 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 			Label:    hostItem.Label,
 			Expands:  relation.TransformExpands(h.Expands),
 		}
+		if hostInfo.Expands[relation.Host] != nil {
+			hostInfo.Expands[relation.Host][relation.HostName] = h.BkHostName
+		}
+
 		for _, tplink := range h.TopoLinks {
 			var link []relation.Item
 			for _, tp := range tplink {
@@ -409,15 +437,11 @@ func (m *HostAndTopoCacheManager) HostToRelationInfos(hosts []*AlarmHostInfo) []
 					continue
 				}
 
-				if resource == "biz" {
-					resource = relation.Business
-				}
-
 				link = append(link, relation.Item{
 					ID:       id,
 					Resource: resource,
 					Label: map[string]string{
-						fmt.Sprintf("%s_id", resource): id,
+						fmt.Sprintf("bk_%s_id", resource): id,
 					},
 				})
 			}

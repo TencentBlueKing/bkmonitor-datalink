@@ -151,6 +151,7 @@ type VmResponse struct {
 			IsPartial bool   `json:"isPartial,omitempty"`
 			Status    string `json:"status,omitempty"`
 		} `json:"list,omitempty"`
+		BkBizIDs             []string      `json:"bk_biz_ids,omitempty"`
 		BksqlCallElapsedTime int           `json:"bksql_call_elapsed_time"`
 		Device               string        `json:"device"`
 		ResultTableIds       []string      `json:"result_table_ids"`
@@ -178,6 +179,7 @@ type VmLableValuesResponse struct {
 			IsPartial bool     `json:"isPartial,omitempty"`
 			Status    string   `json:"status,omitempty"`
 		} `json:"list,omitempty"`
+		BkBizIDs             []string      `json:"bk_biz_ids,omitempty"`
 		BksqlCallElapsedTime int           `json:"bksql_call_elapsed_time"`
 		Device               string        `json:"device"`
 		ResultTableIds       []string      `json:"result_table_ids"`
@@ -205,6 +207,7 @@ type VmSeriesResponse struct {
 			IsPartial bool                `json:"isPartial,omitempty"`
 			Status    string              `json:"status,omitempty"`
 		} `json:"list,omitempty"`
+		BkBizIDs             []string      `json:"bk_biz_ids,omitempty"`
 		BksqlCallElapsedTime int           `json:"bksql_call_elapsed_time"`
 		Device               string        `json:"device"`
 		ResultTableIds       []string      `json:"result_table_ids"`

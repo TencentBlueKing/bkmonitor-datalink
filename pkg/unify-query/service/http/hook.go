@@ -62,6 +62,7 @@ func setDefaultConfig() {
 
 	viper.SetDefault(CheckQueryTsConfigPath, "/check/query/ts")
 	viper.SetDefault(CheckQueryPromQLConfigPath, "/check/query/ts/promql")
+	viper.SetDefault(ProxyConfigPath, "/proxy")
 
 	viper.SetDefault(AlignInfluxdbResultConfigPath, true)
 	viper.SetDefault(InfoDefaultLimit, 100)
@@ -75,7 +76,6 @@ func setDefaultConfig() {
 
 	viper.SetDefault(ClusterMetricQueryPrefixConfigPath, "bkmonitor")
 	viper.SetDefault(ClusterMetricQueryTimeoutConfigPath, "30s")
-
 }
 
 // LoadConfig

@@ -159,6 +159,7 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 	span.Set(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime)
 	span.Set(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords)
 	span.Set(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds)
+	span.Set(fmt.Sprintf("%s-bk-biz-ids", prefix), resp.Data.BkBizIDs)
 
 	if len(resp.Data.List) > 0 {
 		data := resp.Data.List[0].Data
@@ -223,6 +224,7 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 	span.Set(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime)
 	span.Set(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords)
 	span.Set(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds)
+	span.Set(fmt.Sprintf("%s-bk-biz-ids", prefix), resp.Data.BkBizIDs)
 
 	if len(resp.Data.List) > 0 {
 		data := resp.Data.List[0].Data
@@ -303,6 +305,7 @@ func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse,
 	span.Set(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime)
 	span.Set(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords)
 	span.Set(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds)
+	span.Set(fmt.Sprintf("%s-bk-biz-ids", prefix), resp.Data.BkBizIDs)
 
 	lbsMap := set.New[string]()
 	for _, d := range resp.Data.List {
@@ -332,6 +335,7 @@ func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, spa
 	span.Set(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime)
 	span.Set(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords)
 	span.Set(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds)
+	span.Set(fmt.Sprintf("%s-bk-biz-ids", prefix), resp.Data.BkBizIDs)
 
 	series := make([]map[string]string, 0)
 	for _, d := range resp.Data.List {

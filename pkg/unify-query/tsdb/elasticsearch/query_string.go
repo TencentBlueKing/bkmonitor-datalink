@@ -139,6 +139,40 @@ func (s *QueryString) walk(expr qs.Expr) (elastic.Query, error) {
 			val = fmt.Sprintf(`"%s"`, val)
 			leftQ = s.queryString(val)
 		}
+	case *qs.ConditionMatchExpr:
+		if len(c.Value.Values) == 1 {
+			row := c.Value.Values[0]
+			if len(row) == 1 {
+				leftQ = elastic.NewTermQuery(c.Field, row[0])
+			} else {
+				boolQuery := elastic.NewBoolQuery()
+				for _, value := range row {
+					boolQuery.Must(elastic.NewTermQuery(c.Field, value))
+				}
+				leftQ = boolQuery
+			}
+		} else {
+			// 多行，使用 OR 逻辑（should 查询）
+			boolQuery := elastic.NewBoolQuery()
+			for _, row := range c.Value.Values {
+				var rowQuery elastic.Query
+				if len(row) == 1 {
+					// 单行单个值
+					rowQuery = elastic.NewTermQuery(c.Field, row[0])
+				} else {
+					// 单行多个值，使用 AND 逻辑
+					rowBoolQuery := elastic.NewBoolQuery()
+					for _, value := range row {
+						rowBoolQuery.Must(elastic.NewTermQuery(c.Field, value))
+					}
+					rowQuery = rowBoolQuery
+				}
+				boolQuery.Should(rowQuery)
+			}
+			leftQ = boolQuery
+		}
+		s.check(c.Field)
+
 	case *qs.NumberRangeExpr:
 		q := elastic.NewRangeQuery(c.Field)
 		if c.Start == nil && c.End == nil {

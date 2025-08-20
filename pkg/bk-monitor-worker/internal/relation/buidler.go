@@ -25,13 +25,23 @@ import (
 )
 
 const (
-	Set      = "set"
-	Module   = "module"
-	Host     = "host"
-	System   = "system"
-	Business = "business"
+	Set    = "set"
+	Module = "module"
+	Host   = "host"
+	System = "system"
+	Biz    = "biz"
 
 	ExpandInfoColumn = "version_meta"
+)
+
+const (
+	SetID      = "bk_set_id"
+	SetName    = "bk_set_name"
+	ModuleID   = "bk_module_id"
+	ModuleName = "bk_module_name"
+	HostID     = "bk_host_id"
+	HostName   = "bk_host_name"
+	BizID      = "bk_biz_id"
 )
 
 var ExpandTopo = []string{Set, Module, Host}
@@ -123,7 +133,7 @@ func (b *MetricsBuilder) Debug(bizID string) string {
 func (b *MetricsBuilder) ClearAllMetrics() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
-	logger.Infof("[cmdb_relation] clear all metrics")
+	logger.Infof("[cmdb_relation] clear_all_metrics")
 	b.resources = make(map[int]map[string]*ResourceInfo)
 }
 
@@ -155,7 +165,6 @@ func (b *MetricsBuilder) BuildInfosCache(_ context.Context, bizID int, name stri
 		oldInfos.Add(info.ID, info)
 	}
 
-	logger.Infof("[cmdb_relation] build info cache bkcc__%d %s %d", bizID, name, len(infos))
 	return nil
 }
 
@@ -204,7 +213,7 @@ func (b *MetricsBuilder) toMetricList(bizID int) []Metric {
 
 	// 默认注入业务维度
 	bizLabel := map[string]string{
-		"bk_biz_id": fmt.Sprintf("%d", bizID),
+		BizID: fmt.Sprintf("%d", bizID),
 	}
 
 	// 资源场景（ resource) -> 资源配置 (resource) -> 资源ID (ID) -> 资源扩展信息 (Expand)
@@ -268,6 +277,10 @@ func (b *MetricsBuilder) toMetricList(bizID int) []Metric {
 			for _, link := range info.Links {
 				sourceNode := rootNode
 				for _, item := range link {
+					if item.Resource == Biz {
+						continue
+					}
+
 					nextNode := b.makeNode(item.Resource, bizLabel, item.Label)
 					metric := sourceNode.RelationMetric(nextNode)
 					addMetrics(metric)
@@ -319,7 +332,11 @@ func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error
 		return fmt.Errorf("space reporter is nil")
 	}
 
-	for _, bkBizID := range b.BizIDs() {
+	n := time.Now()
+
+	bizs := b.BizIDs()
+	pushCount := 0
+	for _, bkBizID := range bizs {
 		ts := getTsPool()
 
 		b.lock.RLock()
@@ -336,11 +353,12 @@ func (b *MetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error
 			if err := b.spaceReport.Do(ctx, spaceUID, ts...); err != nil {
 				return err
 			}
-			logger.Infof("[cmdb_relation] push %s cmdb relation metrics %d", spaceUID, len(ts))
+			pushCount += len(ts)
 		}
 
 		putTsPool(ts)
 	}
+	logger.Infof("[cmdb_relation] push_all_metrics biz_count: %d ts_count: %d cost: %s", len(bizs), pushCount, time.Since(n))
 
 	return nil
 }

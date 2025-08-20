@@ -13,83 +13,63 @@ package elasticsearch
 
 import (
 	"context"
-	"fmt"
-	"strings"
+	"sync"
 
 	"github.com/dgraph-io/ristretto/v2"
 	"github.com/spf13/viper"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
-type FieldTypesCache interface {
-	GetAliasMappings(ctx context.Context, alias []string) ([]map[string]any, bool)
-	SetAliasMappings(ctx context.Context, alias []string, mappings []map[string]any)
-	ClearFieldTypesCache()
-}
+var (
+	fieldTypesCache *MappingCache
+	once            sync.Once
+)
 
 type MappingCache struct {
-	fieldTypesCache *ristretto.Cache[string, []map[string]any]
+	fieldTypesCache *ristretto.Cache[string, map[string]any]
 }
 
 func (m *MappingCache) ClearFieldTypesCache() {
 	m.fieldTypesCache.Clear()
 }
 
-func NewMappingCache() (cache FieldTypesCache, err error) {
-	c, err := ristretto.NewCache(&ristretto.Config[string, []map[string]any]{
+func NewMappingCache() (cache *MappingCache) {
+	c, _ := ristretto.NewCache(&ristretto.Config[string, []map[string]any]{
 		MaxCost:     viper.GetInt64(MappingCacheMaxCostPath),
 		NumCounters: viper.GetInt64(MappingCacheNumCountersPath),
 		BufferItems: viper.GetInt64(MappingCacheBufferItemsPath),
-		Cost: func(value []map[string]any) int64 {
+		Cost: func(value map[string]any) int64 {
 			return int64(len(value))
 		},
 		IgnoreInternalCost: false,
 	})
-	if err != nil {
-		return
-	}
 
 	return &MappingCache{
 		fieldTypesCache: c,
-	}, nil
+	}
 }
 
-func (m *MappingCache) SetAliasMappings(ctx context.Context, alias []string, mappings []map[string]any) {
-	var err error
-	ctx, span := trace.NewSpan(ctx, "set-alias-mappings")
-	defer span.End(&err)
-
-	span.Set("alias", fmt.Sprintf("%v", alias))
-	span.Set("mappings_count", fmt.Sprintf("%d", len(mappings)))
-
-	if len(mappings) == 0 {
-		return
+func (m *MappingCache) GetAliasMappings(alias []string, fetchAliasMapping func(alias string) (map[string]any, error)) ([]map[string]any, error) {
+	var res []map[string]any
+	for _, a := range alias {
+		if mapping, ok := m.fieldTypesCache.Get(a); ok {
+			res = append(res, mapping)
+		} else {
+			fetchedMapping, err := fetchAliasMapping(a)
+			if err != nil {
+				return nil, err
+			}
+			ttl := viper.GetDuration(MappingCacheTTLPath)
+			m.fieldTypesCache.SetWithTTL(a, fetchedMapping, int64(len(mapping)), ttl)
+			res = append(res, fetchedMapping)
+		}
 	}
-
-	ttl := viper.GetDuration(MappingCacheTTLPath)
-	key := strings.Join(alias, ",")
-	success := m.fieldTypesCache.SetWithTTL(key, mappings, int64(len(mappings)), ttl)
-	if !success {
-		return
-	}
-	m.fieldTypesCache.Wait()
+	return res, nil
 }
 
-func (m *MappingCache) GetAliasMappings(ctx context.Context, alias []string) ([]map[string]any, bool) {
-	var err error
-	ctx, span := trace.NewSpan(ctx, "get-alias-mappings")
-	defer span.End(&err)
-	span.Set("alias", fmt.Sprintf("%v", alias))
-	key := strings.Join(alias, ",")
-	mapping, found := m.fieldTypesCache.Get(key)
-	if !found {
-		span.Set("cache_hit", "false")
-		return nil, false
-	}
-	span.Set("cache_hit", "true")
-	span.Set("fields_count", fmt.Sprintf("%d", len(mapping)))
-	return mapping, true
-}
+func GetMappingCache() *MappingCache {
+	once.Do(func() {
+		fieldTypesCache = NewMappingCache()
+	})
 
-var fieldTypesCache FieldTypesCache
+	return fieldTypesCache
+}

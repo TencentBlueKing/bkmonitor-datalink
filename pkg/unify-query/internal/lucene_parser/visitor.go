@@ -25,7 +25,7 @@ type Encode func(string) (string, bool)
 
 type Node interface {
 	antlr.ParseTreeVisitor
-	ToSQL() string
+	ToSQLString() string
 	ToES() elastic.Query
 	Error() error
 	WithEncode(Encode)
@@ -36,7 +36,7 @@ type baseNode struct {
 	Encode Encode
 }
 
-func (n *baseNode) ToSQL() string {
+func (n *baseNode) ToSQLString() string {
 	return ""
 }
 
@@ -70,9 +70,9 @@ func (v *QueryVisitor) WithEncode(encode Encode) {
 	v.Encode = encode
 }
 
-func (v *QueryVisitor) ToSQL() string {
+func (v *QueryVisitor) ToSQLString() string {
 	if v.root != nil {
-		return v.root.ToSQL()
+		return v.root.ToSQLString()
 	}
 	return ""
 }
@@ -317,10 +317,10 @@ type FieldNode struct {
 	encode Encode
 }
 
-func (n *FieldNode) ToSQL() string {
+func (n *FieldNode) ToSQLString() string {
 	builder := NewFieldSQLBuilder(n.field, n.encode)
 
-	value := n.value.ToSQL()
+	value := n.value.ToSQLString()
 	if value == "" {
 		return ""
 	}
@@ -446,7 +446,7 @@ type RangeNode struct {
 	encode Encode
 }
 
-func (n *RangeNode) ToSQL() string {
+func (n *RangeNode) ToSQLString() string {
 	return n.value
 }
 
@@ -609,7 +609,7 @@ type ValueNode struct {
 	isNumber bool
 }
 
-func (n *ValueNode) ToSQL() string {
+func (n *ValueNode) ToSQLString() string {
 	if n.isQuoted {
 		return strings.Trim(n.value, `"'`)
 	}
@@ -653,12 +653,12 @@ type AndNode struct {
 	children []Node
 }
 
-func (n *AndNode) ToSQL() string {
+func (n *AndNode) ToSQLString() string {
 	// 使用LogicSQLBuilder进行map-based构建
 	builder := NewLogicSQLBuilder()
 
 	for _, child := range n.children {
-		childSQL := child.ToSQL()
+		childSQL := child.ToSQLString()
 		if childSQL != "" {
 			builder.AddCondition(childSQL)
 		}
@@ -694,12 +694,12 @@ type OrNode struct {
 	children []Node
 }
 
-func (n *OrNode) ToSQL() string {
+func (n *OrNode) ToSQLString() string {
 	// 使用LogicSQLBuilder进行map-based构建
 	builder := NewLogicSQLBuilder()
 
 	for _, child := range n.children {
-		childSQL := child.ToSQL()
+		childSQL := child.ToSQLString()
 		if childSQL != "" {
 			builder.AddCondition(childSQL)
 		}
@@ -735,8 +735,8 @@ type NotNode struct {
 	child Node
 }
 
-func (n *NotNode) ToSQL() string {
-	childSQL := n.child.ToSQL()
+func (n *NotNode) ToSQLString() string {
+	childSQL := n.child.ToSQLString()
 	if childSQL == "" {
 		return ""
 	}
@@ -746,7 +746,7 @@ func (n *NotNode) ToSQL() string {
 		// 使用FieldSQLBuilder处理字段NOT
 		builder := NewFieldSQLBuilder(fieldNode.field, nil)
 		builder.SetOp("!=")
-		builder.AddValue(fieldNode.value.ToSQL())
+		builder.AddValue(fieldNode.value.ToSQLString())
 		return builder.Build()
 	}
 
@@ -774,8 +774,8 @@ type GroupNode struct {
 	child Node
 }
 
-func (n *GroupNode) ToSQL() string {
-	return n.child.ToSQL()
+func (n *GroupNode) ToSQLString() string {
+	return n.child.ToSQLString()
 }
 
 func (n *GroupNode) ToES() elastic.Query {

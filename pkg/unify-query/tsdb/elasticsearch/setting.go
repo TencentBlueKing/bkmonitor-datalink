@@ -29,10 +29,10 @@ const (
 	MaxSizePath   = "elasticsearch.max_size"
 	KeepAlivePath = "elasticsearch.keep_alive"
 
-	MappingCacheMaxCostPath     = "es_mapping_cache.max_cost"
-	MappingCacheNumCountersPath = "es_mapping_cache.num_counters"
-	MappingCacheBufferItemsPath = "es_mapping_cache.buffer_items"
-	MappingCacheTTLPath         = "es_mapping_cache.ttl"
+	MappingCacheMaxCostPath     = "elasticsearch.mapping_cache.max_cost"
+	MappingCacheNumCountersPath = "elasticsearch.mapping_cache.num_counters"
+	MappingCacheBufferItemsPath = "elasticsearch.mapping_cache.buffer_items"
+	MappingCacheTTLPath         = "elasticsearch.mapping_cache.ttl"
 )
 
 func init() {

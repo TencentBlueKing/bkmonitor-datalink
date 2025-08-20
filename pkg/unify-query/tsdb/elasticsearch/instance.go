@@ -167,13 +167,13 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 
 func (i *Instance) fetchAliasMappings(ctx context.Context, conn Connect, alias []string) (mappingMap []map[string]any, err error) {
 	mappingCache := GetMappingCache()
-	fetchMappingHandler := func(alias string) (map[string]any, error) {
+	fetchMappingHandler := func(alias []string) (map[string]any, error) {
 		client, err := i.getClient(ctx, conn)
 		if err != nil {
 			return nil, err
 		}
 		defer client.Stop()
-		mapping, err := client.GetMapping().Index(alias).Type("").Do(ctx)
+		mapping, err := client.GetMapping().Index(alias...).Type("").Do(ctx)
 		if err != nil {
 			log.Warnf(ctx, "get mapping error: %s", err.Error())
 			return nil, err
@@ -182,7 +182,6 @@ func (i *Instance) fetchAliasMappings(ctx context.Context, conn Connect, alias [
 	}
 
 	mappingMap, err = mappingCache.GetAliasMappings(alias, fetchMappingHandler)
-
 	return
 }
 

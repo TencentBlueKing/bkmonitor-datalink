@@ -12,10 +12,9 @@
 package elasticsearch
 
 import (
-	"context"
 	"sync"
 
-	"github.com/dgraph-io/ristretto/v2"
+	ristretto "github.com/dgraph-io/ristretto/v2"
 	"github.com/spf13/viper"
 )
 
@@ -28,12 +27,8 @@ type MappingCache struct {
 	fieldTypesCache *ristretto.Cache[string, map[string]any]
 }
 
-func (m *MappingCache) ClearFieldTypesCache() {
-	m.fieldTypesCache.Clear()
-}
-
 func NewMappingCache() (cache *MappingCache) {
-	c, _ := ristretto.NewCache(&ristretto.Config[string, []map[string]any]{
+	c, _ := ristretto.NewCache(&ristretto.Config[string, map[string]any]{
 		MaxCost:     viper.GetInt64(MappingCacheMaxCostPath),
 		NumCounters: viper.GetInt64(MappingCacheNumCountersPath),
 		BufferItems: viper.GetInt64(MappingCacheBufferItemsPath),
@@ -48,22 +43,41 @@ func NewMappingCache() (cache *MappingCache) {
 	}
 }
 
-func (m *MappingCache) GetAliasMappings(alias []string, fetchAliasMapping func(alias string) (map[string]any, error)) ([]map[string]any, error) {
+func (m *MappingCache) GetAliasMappings(alias []string, fetchAliasMapping func(alias []string) (map[string]any, error)) ([]map[string]any, error) {
 	var res []map[string]any
+	var missingAlias []string
+
 	for _, a := range alias {
 		if mapping, ok := m.fieldTypesCache.Get(a); ok {
 			res = append(res, mapping)
 		} else {
-			fetchedMapping, err := fetchAliasMapping(a)
-			if err != nil {
-				return nil, err
+			missingAlias = append(missingAlias, a)
+		}
+	}
+
+	if len(missingAlias) > 0 {
+		mappings, err := fetchAliasMapping(missingAlias)
+		if err != nil {
+			return nil, err
+		}
+
+		for indexName, value := range mappings {
+			mappingData, ok := fetchMappingData(value)
+			if ok {
+				res = append(res, mappingData)
 			}
-			ttl := viper.GetDuration(MappingCacheTTLPath)
-			m.fieldTypesCache.SetWithTTL(a, fetchedMapping, int64(len(mapping)), ttl)
-			res = append(res, fetchedMapping)
+			cost := int64(len(mappingData))
+			m.fieldTypesCache.SetWithTTL(indexName, mappingData, cost, viper.GetDuration(MappingCacheTTLPath))
 		}
 	}
 	return res, nil
+}
+
+func fetchMappingData(value interface{}) (map[string]any, bool) {
+	if mappingData, ok := value.(map[string]any)["mappings"].(map[string]any); ok {
+		return mappingData, true
+	}
+	return nil, false
 }
 
 func GetMappingCache() *MappingCache {

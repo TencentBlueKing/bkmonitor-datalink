@@ -198,7 +198,7 @@ func (i Instance) QuerySeriesSet(
 	)
 }
 
-func (i Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+func (i Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, bool, error) {
 	panic("implement me")
 }
 

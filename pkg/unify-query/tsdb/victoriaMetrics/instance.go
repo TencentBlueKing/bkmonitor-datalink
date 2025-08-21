@@ -204,14 +204,14 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 	return nil, nil
 }
 
-func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Matrix, error) {
+func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Matrix, bool, error) {
 	if !resp.Result {
-		return nil, fmt.Errorf(
+		return nil, false, fmt.Errorf(
 			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
 		)
 	}
 	if resp.Code != OK {
-		return nil, fmt.Errorf(
+		return nil, false, fmt.Errorf(
 			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
 		)
 	}
@@ -230,6 +230,7 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 		data := resp.Data.List[0].Data
 		seriesNum := 0
 		pointNum := 0
+		isPartial := resp.Data.List[0].IsPartial
 
 		matrix := make(promql.Matrix, 0, len(data.Result))
 		for _, series := range data.Result {
@@ -278,10 +279,10 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 
 		span.Set("resp-series-num", seriesNum)
 		span.Set("resp-point-num", pointNum)
-		return matrix, nil
+		return matrix, isPartial, nil
 	}
 
-	return nil, nil
+	return nil, false, nil
 }
 
 func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse, span *trace.Span) ([]string, error) {
@@ -429,7 +430,7 @@ func (i *Instance) vmQuery(
 func (i *Instance) DirectQueryRange(
 	ctx context.Context, promqlStr string,
 	start, end time.Time, step time.Duration,
-) (promql.Matrix, error) {
+) (promql.Matrix, bool, error) {
 	var (
 		vmExpand *metadata.VmExpand
 
@@ -454,7 +455,7 @@ func (i *Instance) DirectQueryRange(
 	span.Set("query-match", promqlStr)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
-		return promql.Matrix{}, nil
+		return promql.Matrix{}, false, nil
 	}
 
 	span.Set("vm-expand-cluster-name", vmExpand.ClusterName)
@@ -488,12 +489,12 @@ func (i *Instance) DirectQueryRange(
 
 	sql, err := json.Marshal(paramsQueryRange)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	err = i.vmQuery(ctx, string(sql), vmResp, span)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	return i.matrixFormat(ctx, vmResp, span)
@@ -729,7 +730,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 
 		err = i.vmQuery(ctx, string(sql), resp, span)
 		if err == nil {
-			series, err := i.matrixFormat(ctx, resp, span)
+			series, _, err := i.matrixFormat(ctx, resp, span)
 			if err == nil {
 				lbsMap := set.New[string]()
 				for _, s := range series {

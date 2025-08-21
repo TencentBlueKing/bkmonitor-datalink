@@ -23,6 +23,7 @@ type PromData struct {
 	Tables     []*TablesItem    `json:"series"`
 	Status     *metadata.Status `json:"status,omitempty"`
 	TraceID    string           `json:"trace_id,omitempty"`
+	IsPartial  bool             `json:"is_partial"`
 }
 
 // NewPromData

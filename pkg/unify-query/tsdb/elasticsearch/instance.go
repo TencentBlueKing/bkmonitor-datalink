@@ -818,7 +818,7 @@ func (i *Instance) QuerySeriesSet(
 }
 
 // QueryRange 使用 es 直接查询引擎
-func (i *Instance) DirectQueryRange(ctx context.Context, referenceName string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+func (i *Instance) DirectQueryRange(ctx context.Context, referenceName string, start, end time.Time, step time.Duration) (promql.Matrix, bool, error) {
 	//TODO implement me
 	panic("implement me")
 }

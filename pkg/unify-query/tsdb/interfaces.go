@@ -31,7 +31,7 @@ type Instance interface {
 	QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error)
 
 	Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string
-	DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error)
+	DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, bool, error)
 	DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error)
 	DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error)
 	DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error)
@@ -74,8 +74,8 @@ func (d *DefaultInstance) Check(ctx context.Context, promql string, start, end t
 	return ""
 }
 
-func (d *DefaultInstance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
-	return nil, nil
+func (d *DefaultInstance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, bool, error) {
+	return nil, false, nil
 }
 
 func (d *DefaultInstance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {

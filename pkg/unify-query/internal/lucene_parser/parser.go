@@ -16,6 +16,7 @@ import (
 	antlr "github.com/antlr4-go/antlr/v4"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
@@ -23,7 +24,8 @@ type Option struct {
 	DimensionTransform Encode
 }
 
-func ParseLuceneWithVisitor(ctx context.Context, q string, opt *Option) (string, error) {
+// ParseLuceneToSQL parses lucene query and returns querystring_parser.Expr
+func ParseLuceneToSQL(ctx context.Context, q string, opt *Option) (querystring_parser.Expr, error) {
 	defer func() {
 		if r := recover(); r != nil {
 			// 处理异常
@@ -52,7 +54,7 @@ func ParseLuceneWithVisitor(ctx context.Context, q string, opt *Option) (string,
 	// 开始解析
 	query := parser.TopLevelQuery()
 	if query == nil {
-		return "", fmt.Errorf("parse lucene query (%s) error: query is nil", q)
+		return nil, fmt.Errorf("parse lucene query (%s) error: query is nil", q)
 	}
 
 	result := query.Accept(visitor)
@@ -64,10 +66,10 @@ func ParseLuceneWithVisitor(ctx context.Context, q string, opt *Option) (string,
 
 	err := visitor.Error()
 	if err != nil {
-		return "", fmt.Errorf("parse lucene query (%s) error: %v", q, err)
+		return nil, fmt.Errorf("parse lucene query (%s) error: %v", q, err)
 	}
 
-	return visitor.ToSQLString(), nil
+	return visitor.ToSQL(), nil
 }
 
 func ParseLuceneToES(ctx context.Context, q string, opt *Option) (interface{}, error) {

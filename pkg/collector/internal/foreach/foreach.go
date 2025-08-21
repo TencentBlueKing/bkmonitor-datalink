@@ -110,32 +110,31 @@ func MetricDataPointsAttrs(metric pmetric.Metric, f func(attrs pcommon.Map)) {
 	case pmetric.MetricDataTypeGauge:
 		dps := metric.Gauge().DataPoints()
 		for i := 0; i < dps.Len(); i++ {
-			attrs := dps.At(i).Attributes()
-			f(attrs)
+			f(dps.At(i).Attributes())
 		}
+
 	case pmetric.MetricDataTypeSum:
 		dps := metric.Sum().DataPoints()
 		for i := 0; i < dps.Len(); i++ {
-			attrs := dps.At(i).Attributes()
-			f(attrs)
+			f(dps.At(i).Attributes())
 		}
+
 	case pmetric.MetricDataTypeSummary:
 		dps := metric.Summary().DataPoints()
 		for i := 0; i < dps.Len(); i++ {
-			attrs := dps.At(i).Attributes()
-			f(attrs)
+			f(dps.At(i).Attributes())
 		}
+
 	case pmetric.MetricDataTypeHistogram:
 		dps := metric.Histogram().DataPoints()
 		for i := 0; i < dps.Len(); i++ {
-			attrs := dps.At(i).Attributes()
-			f(attrs)
+			f(dps.At(i).Attributes())
 		}
+
 	case pmetric.MetricDataTypeExponentialHistogram:
 		dps := metric.ExponentialHistogram().DataPoints()
 		for i := 0; i < dps.Len(); i++ {
-			attrs := dps.At(i).Attributes()
-			f(attrs)
+			f(dps.At(i).Attributes())
 		}
 	}
 }

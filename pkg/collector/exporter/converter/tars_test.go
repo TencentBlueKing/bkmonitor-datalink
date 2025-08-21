@@ -87,7 +87,7 @@ func TestSplitAtLastOnce(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run("input -> "+tt.input, func(t *testing.T) {
+		t.Run(tt.input, func(t *testing.T) {
 			actualLeft, actualRight := splitAtLastOnce(tt.input, tt.separator)
 			assert.Equal(t, tt.expectLeft, actualLeft)
 			assert.Equal(t, tt.expectRight, actualRight)
@@ -101,8 +101,16 @@ func TestPropNameToNormalizeMetricName(t *testing.T) {
 		expect       string
 		policy       string
 	}{
-		{propertyName: "ErrLog:", expect: "ErrLog_count", policy: "Count"},
-		{propertyName: "Exception-Log", expect: "Exception_Log_count", policy: "Count"},
+		{
+			propertyName: "ErrLog:",
+			expect:       "ErrLog_count",
+			policy:       "Count",
+		},
+		{
+			propertyName: "Exception-Log",
+			expect:       "Exception_Log_count",
+			policy:       "Count",
+		},
 		{
 			propertyName: "TestApp.HelloGo.HelloGoObjAdapter.connectRate",
 			expect:       "TestApp_HelloGo_HelloGoObjAdapter_connectRate_count",
@@ -116,7 +124,7 @@ func TestPropNameToNormalizeMetricName(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run("input -> "+tt.propertyName, func(t *testing.T) {
+		t.Run(tt.propertyName, func(t *testing.T) {
 			assert.Equal(t, propNameToNormalizeMetricName(tt.propertyName, tt.policy), tt.expect)
 		})
 	}
@@ -156,8 +164,8 @@ func TestTarsProperty(t *testing.T) {
 		Data:          data,
 	}
 
-	c := NewCommonConverter(&Config{Tars: TarsConfig{DisableAggregate: true}})
-	c.Convert(record, func(events ...define.Event) {
+	conv := newTarsConverter(&TarsConfig{DisableAggregate: true})
+	conv.Convert(record, func(events ...define.Event) {
 		assert.Len(t, events, 10)
 
 		commonDims := map[string]string{
@@ -263,8 +271,8 @@ func TestTarsStat(t *testing.T) {
 		Data:          data,
 	}
 
-	c := NewCommonConverter(&Config{Tars: TarsConfig{DisableAggregate: true}})
-	c.Convert(record, func(events ...define.Event) {
+	conv := newTarsConverter(&TarsConfig{DisableAggregate: true})
+	conv.Convert(record, func(events ...define.Event) {
 		expects := []common.MapStr{
 			{
 				"dimension": rpcClientMetricDims,
@@ -377,7 +385,9 @@ func TestTarsStatAggregate(t *testing.T) {
 		totalEvents = append(totalEvents, events...)
 	}
 
-	c := NewCommonConverter(&Config{Tars: TarsConfig{IsDropOriginal: true}})
+	conv := newTarsConverter(&TarsConfig{IsDropOriginal: true})
+	defer conv.Clean()
+
 	for i := 0; i < 100000; i++ {
 		data := &define.TarsData{
 			Type:      define.TarsStatType,
@@ -402,7 +412,7 @@ func TestTarsStatAggregate(t *testing.T) {
 			Token:         define.Token{Original: "xxx", MetricsDataId: 123},
 			Data:          data,
 		}
-		c.Convert(record, gatherFunc)
+		conv.Convert(record, gatherFunc)
 	}
 
 	// 等待一段时间，确保所有事件都被处理
@@ -461,9 +471,11 @@ func BenchmarkTarsStat(b *testing.B) {
 		Data:          data,
 	}
 
-	c := NewCommonConverter(nil)
+	conv := newTarsConverter(nil)
+	defer conv.Clean()
+
 	for i := 0; i < b.N; i++ {
-		c.Convert(record, func(events ...define.Event) {})
+		conv.Convert(record, func(events ...define.Event) {})
 	}
 }
 
@@ -502,8 +514,8 @@ func BenchmarkTarsProperty(b *testing.B) {
 		Data:          data,
 	}
 
-	c := NewCommonConverter(&Config{Tars: TarsConfig{DisableAggregate: true}})
+	conv := newTarsConverter(&TarsConfig{DisableAggregate: true})
 	for i := 0; i < b.N; i++ {
-		c.Convert(record, func(events ...define.Event) {})
+		conv.Convert(record, func(events ...define.Event) {})
 	}
 }

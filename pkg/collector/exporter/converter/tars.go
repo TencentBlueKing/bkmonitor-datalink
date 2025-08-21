@@ -83,7 +83,7 @@ type bucket struct {
 func propNameToNormalizeMetricName(propertyName, policy string) string {
 	name := strings.Join([]string{propertyName, strings.ToLower(policy)}, "_")
 	// 在 NormalizeName 基础上，去掉 :
-	return utils.NormalizeName(strings.Replace(name, ":", "", -1))
+	return utils.NormalizeName(strings.ReplaceAll(name, ":", ""))
 }
 
 // splitAtLastOnce 根据指定 sep 从右往左切割 s 一次
@@ -110,8 +110,7 @@ func toBuckets(bucketMap map[int32]int32, itoFunc func(int) string) []bucket {
 	var count int32
 	buckets := make([]bucket, 0, len(bucketMap)+1)
 	for _, val := range bucketValList {
-		cnt, _ := bucketMap[int32(val)]
-		count += cnt
+		count += bucketMap[int32(val)]
 		buckets = append(buckets, bucket{itoFunc(val), count})
 	}
 	inf := strconv.FormatFloat(math.Inf(+1), 'f', -1, 64)
@@ -310,9 +309,7 @@ func (s *stat) Copy() *stat {
 // DropTags 删除指定维度
 func (s *stat) DropTags(tags []string) *stat {
 	for _, tag := range tags {
-		if _, ok := s.dimensions[tag]; ok {
-			delete(s.dimensions, tag)
-		}
+		delete(s.dimensions, tag)
 	}
 	return s
 }
@@ -471,12 +468,16 @@ func (a *aggregator) exportAndClean() {
 }
 
 type tarsConverter struct {
-	isDropOriginal bool
-	conf           TarsConfig
-	aggregator     *aggregator
+	conf       *TarsConfig
+	aggregator *aggregator
 }
 
-func NewTarsConverter(config TarsConfig) EventConverter {
+func newTarsConverter(config *TarsConfig) EventConverter {
+	if config == nil {
+		config = &TarsConfig{}
+	}
+	config.Validate()
+
 	scopeNameToIgnoreTags := make(map[string][]string)
 	for _, tagIgnore := range config.TagIgnores {
 		scopeNameToIgnoreTags[tagIgnore.ScopeName] = append(scopeNameToIgnoreTags[tagIgnore.ScopeName], tagIgnore.Tags...)

@@ -102,8 +102,9 @@ bkmonitorbeat:
   metrics_batch_size: 1024
 
   # 是否为多租户模式（默认不开启）
-  # TODO(mando): 合并分之前需要调整为 false
+  {%- if nodeman is defined and nodeman.is_multi_tenant is defined and nodeman.is_multi_tenant == "true" %}
   enable_multi_tenant: true
+  {%- endif %}
   # 多租户场景下需要映射的 tasks 列表
   multi_tenant_tasks: ["basereport","exceptionbeat","processbeat_perf","processbeat_port","global_heartbeat","gather_up_beat","timesync","dmesg"]
   # 多租户场景下 gse 新的通信管道 ipc 地址

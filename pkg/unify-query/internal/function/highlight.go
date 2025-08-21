@@ -13,8 +13,9 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
+
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
@@ -66,20 +67,7 @@ func (h *HighLightFactory) processField(fieldValue any, keywords []LabelMapValue
 		return nil
 	}
 
-	var newValue string
-	switch value := fieldValue.(type) {
-	case string:
-		newValue = value
-	case int, int32, int64, uint32, uint64:
-		newValue = fmt.Sprintf("%d", value)
-	case float64:
-		newValue = strconv.FormatFloat(value, 'f', -1, 64)
-	case float32:
-		newValue = strconv.FormatFloat(float64(value), 'f', -1, 32)
-	default:
-		newValue = fmt.Sprintf("%v", value)
-	}
-
+	newValue := cast.ToString(fieldValue)
 	if highlighted := h.highlightString(newValue, keywords); highlighted != newValue {
 		return []string{highlighted}
 	}

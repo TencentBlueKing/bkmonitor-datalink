@@ -162,7 +162,8 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		timezone string
 	)
 
-	dimensionSet = set.New[string]([]string{FieldValue, FieldTime}...)
+	dimensionSet = set.New[string]([]string{FieldValue}...)
+
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
 			var (
@@ -229,6 +230,9 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 
 		selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", timeField, TimeStamp))
 		groupByFields = append(groupByFields, TimeStamp)
+
+		// 只有时间聚合的条件下，才可以使用时间聚合排序
+		dimensionSet.Add(FieldTime)
 	}
 
 	if len(selectFields) == 0 {
@@ -383,6 +387,8 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 					op = "MATCH_PHRASE_PREFIX"
 				} else if c.IsSuffix {
 					op = "MATCH_PHRASE_EDGE"
+				} else if c.IsForceEq {
+					op = "="
 				} else {
 					if d.isText(c.DimensionName) {
 						op = "MATCH_PHRASE"

@@ -42,6 +42,7 @@ const (
 	SourceSkywalking  = "skywalking"
 	SourceBeat        = "beat"
 	SourceTars        = "tars"
+	SourceLogPush     = "logpush"
 
 	KeyToken        = "X-BK-TOKEN"
 	KeyDataID       = "X-BK-DATA-ID"
@@ -69,6 +70,7 @@ const (
 	RecordPingserver     RecordType = "pingserver"
 	RecordBeat           RecordType = "beat"
 	RecordTars           RecordType = "tars"
+	RecordLogPush        RecordType = "logpush"
 )
 
 // IntoRecordType 将字符串描述转换为 RecordType 并返回是否为 Derived 类型
@@ -103,6 +105,8 @@ func IntoRecordType(s string) (RecordType, bool) {
 		t = RecordBeat
 	case RecordTars.S():
 		t = RecordTars
+	case RecordLogPush.S():
+		t = RecordLogPush
 	default:
 		t = RecordUndefined
 	}
@@ -156,6 +160,11 @@ type PushGatewayData struct {
 
 type RemoteWriteData struct {
 	Timeseries []prompb.TimeSeries
+}
+
+type LogPushData struct {
+	Data   []string
+	Labels map[string]string
 }
 
 const (
@@ -275,6 +284,10 @@ func (q *RecordQueue) Push(r *Record) {
 func (q *RecordQueue) Get() <-chan *Record {
 	return q.records
 }
+
+const (
+	TokenAppName = "app_name"
+)
 
 // Token 描述了 Record 校验的必要信息
 type Token struct {

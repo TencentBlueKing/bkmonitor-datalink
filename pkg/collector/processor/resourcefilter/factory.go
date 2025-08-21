@@ -149,6 +149,9 @@ func (p *resourceFilter) Process(record *define.Record) (*define.Record, error) 
 	if len(config.FromMetadata.Keys) > 0 {
 		p.fromMetadataAction(record, config)
 	}
+	if len(config.FromToken.Keys) > 0 {
+		p.fromTokenAction(record, config)
+	}
 	if len(config.DefaultValue) > 0 {
 		p.defaultValueAction(record, config)
 	}
@@ -361,6 +364,36 @@ func (p *resourceFilter) fromMetadataAction(record *define.Record, config Config
 		pdTraces := record.Data.(ptrace.Traces)
 		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
 			handle(rs, config.FromMetadata)
+		})
+	}
+}
+
+// fromTokenAction 补充 token 信息, 目前仅支持 bk_app_name
+func (p *resourceFilter) fromTokenAction(record *define.Record, config Config) {
+	handle := func(rs pcommon.Resource, action FromTokenAction) {
+		for _, field := range action.Keys {
+			switch field {
+			case define.TokenAppName:
+				rs.Attributes().InsertString(field, record.Token.AppName)
+			}
+		}
+	}
+
+	switch record.RecordType {
+	case define.RecordMetrics, define.RecordMetricsDerived:
+		pdMetrics := record.Data.(pmetric.Metrics)
+		foreach.MetricsSliceResource(pdMetrics.ResourceMetrics(), func(rs pcommon.Resource) {
+			handle(rs, config.FromToken)
+		})
+	case define.RecordTraces:
+		pdTraces := record.Data.(ptrace.Traces)
+		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+			handle(rs, config.FromToken)
+		})
+	case define.RecordLogs:
+		pdLogs := record.Data.(plog.Logs)
+		foreach.LogsSliceResource(pdLogs.ResourceLogs(), func(rs pcommon.Resource) {
+			handle(rs, config.FromToken)
 		})
 	}
 }

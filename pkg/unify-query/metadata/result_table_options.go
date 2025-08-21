@@ -16,6 +16,8 @@ type ResultTableOption struct {
 	ScrollID    string `json:"scroll_id,omitempty"`
 	SearchAfter []any  `json:"search_after,omitempty"`
 
+	FieldType map[string]string `json:"-"`
+
 	SQL          string           `json:"sql,omitempty"`
 	ResultSchema []map[string]any `json:"result_schema,omitempty"`
 }

@@ -87,6 +87,9 @@ func (to tracesOperator) Operate(record *define.Record) *define.Record {
 						}
 					}
 
+					// 派生指标补充 token app_name 维度 (´･_･) 此处硬编码
+					dim[define.TokenAppName] = record.Token.AppName
+
 					// extractor 处理
 					if to.extractor != nil {
 						if to.extractor.Set(record.Token.MetricsDataId, dim) {
@@ -107,6 +110,7 @@ func (to tracesOperator) Operate(record *define.Record) *define.Record {
 				}
 			}
 		}
+
 	}
 
 	for k, v := range metricItems {

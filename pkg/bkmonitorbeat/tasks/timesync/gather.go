@@ -24,10 +24,25 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// Gather :
 type Gather struct {
 	tasks.BaseTask
 	cli *Client
+}
+
+func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
+	gather := &Gather{}
+	gather.GlobalConfig = globalConfig
+	gather.TaskConfig = taskConfig
+	gather.Init()
+
+	taskConf := taskConfig.(*configs.TimeSyncConfig)
+	gather.cli = NewClient(&Option{
+		NtpdPath:   taskConf.NtpdPath,
+		ChronyAddr: taskConf.ChronyAddress,
+		Timeout:    taskConf.QueryTimeout,
+	})
+
+	return gather
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
@@ -50,22 +65,6 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 }
 
-func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
-	gather := &Gather{}
-	gather.GlobalConfig = globalConfig
-	gather.TaskConfig = taskConfig
-	gather.Init()
-
-	taskConf := taskConfig.(*configs.TimeSyncConfig)
-	gather.cli = NewClient(&Option{
-		NtpdPath:   taskConf.NtpdPath,
-		ChronyAddr: taskConf.ChronyAddress,
-		Timeout:    taskConf.QueryTimeout,
-	})
-
-	return gather
-}
-
 type Metrics struct {
 	Metrics   map[string]float64
 	Target    string
@@ -86,10 +85,16 @@ func stats2Metrics(env string, stat *Stat) *Metrics {
 	named := func(s string) string {
 		return env + "_" + s
 	}
+
+	var avg float64
+	if stat.Count > 0 {
+		avg = stat.Sum / float64(stat.Count)
+	}
+
 	metrics := map[string]float64{
 		named("timesync_query_seconds_min"): stat.Min,
 		named("timesync_query_seconds_max"): stat.Max,
-		named("timesync_query_seconds_avg"): stat.Sum / float64(stat.Count),
+		named("timesync_query_seconds_avg"): avg,
 		named("timesync_query_count"):       float64(stat.Count),
 		named("timesync_query_err"):         float64(stat.Err),
 	}

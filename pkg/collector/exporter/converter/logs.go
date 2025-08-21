@@ -28,9 +28,9 @@ func (e logsEvent) RecordType() define.RecordType {
 	return define.RecordLogs
 }
 
-var LogsConverter EventConverter = logsConverter{}
-
 type logsConverter struct{}
+
+func (c logsConverter) Clean() {}
 
 func (c logsConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return logsEvent{define.NewCommonEvent(token, dataId, data)}

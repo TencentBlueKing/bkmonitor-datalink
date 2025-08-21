@@ -68,7 +68,8 @@ func TestConvertProxyEventsData(t *testing.T) {
 	}
 
 	events := make([]define.Event, 0)
-	NewCommonConverter().Convert(&define.Record{
+	var conv proxyConverter
+	conv.Convert(&define.Record{
 		RecordType: define.RecordProxy,
 		Data:       pd,
 	}, func(evts ...define.Event) {
@@ -124,8 +125,9 @@ func BenchmarkConvertProxyEventsData(b *testing.B) {
 		Data:        unmarshalProxyData(proxyEventData),
 	}
 
+	var conv proxyConverter
 	for i := 0; i < b.N; i++ {
-		NewCommonConverter().Convert(&define.Record{
+		conv.Convert(&define.Record{
 			RecordType: define.RecordProxy,
 			Data:       pd,
 		}, func(evts ...define.Event) {})
@@ -170,8 +172,9 @@ func TestConvertProxyMetricsData(t *testing.T) {
 		Data:        unmarshalProxyData(proxyMetricData),
 	}
 
+	var conv proxyConverter
 	events := make([]define.Event, 0)
-	NewCommonConverter().Convert(&define.Record{
+	conv.Convert(&define.Record{
 		RecordType: define.RecordProxy,
 		Data:       pd,
 	}, func(evts ...define.Event) {
@@ -225,8 +228,9 @@ func BenchmarkConvertProxyMetricsData(b *testing.B) {
 		Data:        unmarshalProxyData(proxyMetricData),
 	}
 
+	var conv proxyConverter
 	for i := 0; i < b.N; i++ {
-		NewCommonConverter().Convert(&define.Record{
+		conv.Convert(&define.Record{
 			RecordType: define.RecordProxy,
 			Data:       pd,
 		}, func(evts ...define.Event) {})
@@ -234,6 +238,7 @@ func BenchmarkConvertProxyMetricsData(b *testing.B) {
 }
 
 func TestConvertMarshalFailed(t *testing.T) {
+	var conv proxyConverter
 	t.Run("EventType", func(t *testing.T) {
 		pd := &define.ProxyData{
 			DataId:      1001,
@@ -243,7 +248,7 @@ func TestConvertMarshalFailed(t *testing.T) {
 		}
 
 		var seen bool
-		NewCommonConverter().Convert(&define.Record{
+		conv.Convert(&define.Record{
 			RecordType: define.RecordProxy,
 			Data:       pd,
 		}, func(evts ...define.Event) {
@@ -263,7 +268,7 @@ func TestConvertMarshalFailed(t *testing.T) {
 		}
 
 		var seen bool
-		NewCommonConverter().Convert(&define.Record{
+		conv.Convert(&define.Record{
 			RecordType: define.RecordProxy,
 			Data:       pd,
 		}, func(evts ...define.Event) {

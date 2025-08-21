@@ -347,6 +347,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
+											IsForceEq:     true,
 										},
 									},
 								},
@@ -381,6 +382,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
+											IsForceEq:     true,
 										},
 									},
 								},
@@ -445,6 +447,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
+											IsForceEq:     true,
 										},
 									},
 								},
@@ -479,6 +482,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
+											IsForceEq:     true,
 										},
 									},
 								},
@@ -530,6 +534,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
+											IsForceEq:     true,
 										},
 									},
 								},
@@ -553,6 +558,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								DimensionName: "bk_obj_id",
 								Operator:      Ncontains,
 								Value:         []string{"0"},
+								IsForceEq:     true,
 							},
 						}},
 					},
@@ -593,11 +599,13 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
+											IsForceEq:     true,
 										},
 										{
 											DimensionName: "bk_obj_id",
 											Operator:      Ncontains,
 											Value:         []string{"0"},
+											IsForceEq:     true,
 										},
 									},
 								},
@@ -621,6 +629,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								DimensionName: "bk_obj_id",
 								Operator:      Ncontains,
 								Value:         []string{"0"},
+								IsForceEq:     true,
 							},
 						}},
 					},
@@ -660,11 +669,13 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
+											IsForceEq:     true,
 										},
 										{
 											DimensionName: "bk_obj_id",
 											Operator:      Ncontains,
 											Value:         []string{"0"},
+											IsForceEq:     true,
 										},
 									},
 								},
@@ -732,6 +743,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
+											IsForceEq:     true,
 										},
 									},
 								},
@@ -800,6 +812,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
+											IsForceEq:     true,
 										},
 									},
 								},
@@ -876,6 +889,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
+											IsForceEq:     true,
 										},
 									},
 								},
@@ -951,6 +965,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
+											IsForceEq:     true,
 										},
 									},
 								},
@@ -1024,6 +1039,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
+											IsForceEq:     true,
 										},
 									},
 								},
@@ -1096,6 +1112,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
+											IsForceEq:     true,
 										},
 									},
 								},
@@ -1168,6 +1185,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
+											IsForceEq:     true,
 										},
 									},
 								},
@@ -1619,21 +1637,25 @@ func TestOrderBy(t *testing.T) {
 			"log_count":    499,
 			"minute1":      "202507221018",
 		},
+		{
+			"__data_label": "bkdata_index_set_627506",
+			"log_count":    499,
+			"minute1":      "202507221019",
+		},
 	}
 
 	queryTs := &QueryTs{OrderBy: OrderBy{
 		"-gseIndex",
 		"-iterationIndex",
+		"-log_count",
+		"-minute1",
 	}}
 
-	queryTs.OrderBy.Orders().SortSliceList(data)
+	queryTs.OrderBy.Orders().SortSliceList(data, map[string]string{
+		"minute1": md.TypeDateNanos,
+	})
 
 	assert.Equal(t, []map[string]any{
-		{
-			"__data_label": "bkdata_index_set_627506",
-			"log_count":    292,
-			"minute1":      "202507221020",
-		},
 		{
 			"__data_label": "bkdata_index_set_627506",
 			"log_count":    1909,
@@ -1642,7 +1664,17 @@ func TestOrderBy(t *testing.T) {
 		{
 			"__data_label": "bkdata_index_set_627506",
 			"log_count":    499,
+			"minute1":      "202507221019",
+		},
+		{
+			"__data_label": "bkdata_index_set_627506",
+			"log_count":    499,
 			"minute1":      "202507221018",
+		},
+		{
+			"__data_label": "bkdata_index_set_627506",
+			"log_count":    292,
+			"minute1":      "202507221020",
 		},
 	}, data)
 }

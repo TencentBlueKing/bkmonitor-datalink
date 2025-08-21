@@ -7,32 +7,13 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package mock
+/*
+# TextFilter: 文本切割器
 
-import (
-	"testing"
+processor:
+    - name: "text_spliter/logpush"
+      config:
+        separator: "\n"
+*/
 
-	"github.com/facebookgo/inject"
-)
-
-// TestInjectTask :
-func TestInjectTask(t *testing.T) {
-	var (
-		g    inject.Graph
-		task Task
-		err  error
-	)
-	err = g.Provide(
-		&inject.Object{Value: &task},
-	)
-	if err != nil {
-		t.Errorf("provide error: %v", err)
-	}
-
-	err = g.Populate()
-	if err != nil {
-		t.Errorf("populate error: %v", err)
-	}
-
-	task.GlobalConfig.Task.Task = task.TaskConfig
-}
+package textspliter

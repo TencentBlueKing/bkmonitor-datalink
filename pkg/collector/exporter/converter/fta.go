@@ -23,9 +23,9 @@ func (e FtaEvent) RecordType() define.RecordType {
 	return define.RecordFta
 }
 
-var FtaConverter EventConverter = ftaConverter{}
-
 type ftaConverter struct{}
+
+func (c ftaConverter) Clean() {}
 
 func (c ftaConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return FtaEvent{define.NewCommonEvent(token, dataId, data)}

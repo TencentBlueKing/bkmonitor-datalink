@@ -84,6 +84,7 @@ func (s *Service) Reload(ctx context.Context) {
 	)
 	registerDefaultHandlers(ctx, public)
 	api.RegisterRelation(ctx, public)
+	registerProxyHandler(ctx, public)
 
 	private := s.g.Group("/")
 	registerOtherHandlers(ctx, private)

@@ -19,33 +19,32 @@ import (
 )
 
 func TestConvertFtaEvent(t *testing.T) {
-	t.Run("test convert fta event", func(t *testing.T) {
-		record := &define.Record{
-			RecordType:  define.RecordFta,
-			RequestType: define.RequestHttp,
-			Token:       define.Token{Original: "xxx", MetricsDataId: 123},
-			Data: &define.FtaData{
-				PluginId:   "plugin_id",
-				IngestTime: 123456789,
-				Data:       []map[string]interface{}{{"key": "value"}},
-				EventId:    "event_id",
-			},
-		}
+	record := &define.Record{
+		RecordType:  define.RecordFta,
+		RequestType: define.RequestHttp,
+		Token:       define.Token{Original: "xxx", MetricsDataId: 123},
+		Data: &define.FtaData{
+			PluginId:   "plugin_id",
+			IngestTime: 123456789,
+			Data:       []map[string]interface{}{{"key": "value"}},
+			EventId:    "event_id",
+		},
+	}
 
-		FtaConverter.Convert(record, func(events ...define.Event) {
-			assert.Len(t, events, 1)
-			event := events[0].(FtaEvent)
-			assert.Equal(t, define.Token{Original: "xxx", MetricsDataId: 123}, event.Token())
-			assert.Equal(t, int32(123), event.DataId())
-			assert.Equal(t, define.RecordFta, event.RecordType())
-			assert.Equal(t, common.MapStr{
-				"bk_data_id":      int32(123),
-				"bk_plugin_id":    "plugin_id",
-				"bk_ingest_time":  int64(123456789),
-				"data":            []map[string]interface{}{{"key": "value"}},
-				"__bk_event_id__": "event_id",
-				"dataid":          int32(123),
-			}, event.Data())
-		})
+	var conv ftaConverter
+	conv.Convert(record, func(events ...define.Event) {
+		assert.Len(t, events, 1)
+		event := events[0].(FtaEvent)
+		assert.Equal(t, define.Token{Original: "xxx", MetricsDataId: 123}, event.Token())
+		assert.Equal(t, int32(123), event.DataId())
+		assert.Equal(t, define.RecordFta, event.RecordType())
+		assert.Equal(t, common.MapStr{
+			"bk_data_id":      int32(123),
+			"bk_plugin_id":    "plugin_id",
+			"bk_ingest_time":  int64(123456789),
+			"data":            []map[string]interface{}{{"key": "value"}},
+			"__bk_event_id__": "event_id",
+			"dataid":          int32(123),
+		}, event.Data())
 	})
 }

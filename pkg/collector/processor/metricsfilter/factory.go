@@ -10,6 +10,8 @@
 package metricsfilter
 
 import (
+	"github.com/prometheus/prometheus/prompb"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
@@ -31,19 +33,26 @@ func NewFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*metricsFilter, error) {
 	configs := confengine.NewTierConfig()
 
-	var c Config
-	if err := mapstructure.Decode(conf, &c); err != nil {
+	c := &Config{}
+	if err := mapstructure.Decode(conf, c); err != nil {
 		return nil, err
 	}
-	configs.SetGlobal(c)
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	configs.SetGlobal(*c)
 
 	for _, custom := range customized {
-		var cfg Config
-		if err := mapstructure.Decode(custom.Config.Config, &cfg); err != nil {
+		cfg := &Config{}
+		if err := mapstructure.Decode(custom.Config.Config, cfg); err != nil {
 			logger.Errorf("failed to decode config: %v", err)
 			continue
 		}
-		configs.Set(custom.Token, custom.Type, custom.ID, cfg)
+		if err := cfg.Validate(); err != nil {
+			logger.Errorf("invalid config: %v", err)
+			continue
+		}
+		configs.Set(custom.Token, custom.Type, custom.ID, *cfg)
 	}
 
 	return &metricsFilter{
@@ -88,6 +97,9 @@ func (p *metricsFilter) Process(record *define.Record) (*define.Record, error) {
 	if len(config.Replace) > 0 {
 		p.replaceAction(record, config)
 	}
+	if len(config.Relabel) > 0 {
+		p.relabelAction(record, config)
+	}
 	return nil, nil
 }
 
@@ -119,6 +131,54 @@ func (p *metricsFilter) replaceAction(record *define.Record, config Config) {
 					metric.SetName(action.Destination)
 				}
 			})
+		}
+	}
+}
+
+func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
+	switch record.RecordType {
+	case define.RecordMetrics:
+		for _, action := range config.Relabel {
+			pdMetrics := record.Data.(pmetric.Metrics)
+			foreach.MetricsSliceDataPointsAttrs(pdMetrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
+				if !action.IsMetricIn(name) {
+					return
+				}
+				if !action.Rules.MatchMetricAttrs(attrs) {
+					return
+				}
+				for _, destination := range action.Destinations {
+					switch destination.Action {
+					case ActionUpsert:
+						attrs.UpsertString(destination.Label, destination.Value)
+					}
+				}
+			})
+		}
+
+	case define.RecordRemoteWrite:
+		handle := func(ts *prompb.TimeSeries, action RelabelAction) {
+			lbs := PromLabels(ts.GetLabels())
+			nameLabel, ok := lbs.Get("__name__")
+			if !ok || !action.IsMetricIn(nameLabel.GetValue()) {
+				return
+			}
+			if !action.Rules.MatchRWLabels(lbs) {
+				return
+			}
+			for _, destination := range action.Destinations {
+				switch destination.Action {
+				case ActionUpsert:
+					lbs.Upsert(destination.Label, destination.Value)
+				}
+			}
+			ts.Labels = lbs
+		}
+		for _, action := range config.Relabel {
+			rwData := record.Data.(*define.RemoteWriteData)
+			for i := 0; i < len(rwData.Timeseries); i++ {
+				handle(&rwData.Timeseries[i], action)
+			}
 		}
 	}
 }

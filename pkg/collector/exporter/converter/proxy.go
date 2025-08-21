@@ -24,9 +24,9 @@ func (e proxyEvent) RecordType() define.RecordType {
 	return define.RecordProxy
 }
 
-var ProxyConverter EventConverter = proxyConverter{}
-
 type proxyConverter struct{}
+
+func (c proxyConverter) Clean() {}
 
 func (c proxyConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	return proxyEvent{define.NewCommonEvent(token, dataId, data)}

@@ -179,6 +179,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		lock      sync.Mutex
 
 		allLabelMap = make(map[string][]function.LabelMapValue)
+
+		isCutData bool
 	)
 
 	list = make([]map[string]any, 0)
@@ -187,6 +189,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	if queryTs.SpaceUid == "" {
 		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
 	}
+
 	for _, ql := range queryTs.QueryList {
 		// 时间复用
 		ql.Timezone = queryTs.Timezone
@@ -250,48 +253,53 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	go func() {
 		defer receiveWg.Done()
 
-		var data []map[string]any
+		var (
+			data      []map[string]any
+			fieldType = make(map[string]string)
+		)
 		for d := range dataCh {
 			data = append(data, d)
+		}
+
+		for _, rto := range resultTableOptions {
+			for k, v := range rto.FieldType {
+				fieldType[k] = v
+			}
 		}
 
 		span.Set("query-list-num", len(queryList))
 		span.Set("result-data-num", len(data))
 
-		if len(queryList) > 1 {
-			queryTs.OrderBy.Orders().SortSliceList(data)
+		queryTs.OrderBy.Orders().SortSliceList(data, fieldType)
 
-			span.Set("query-scroll", queryTs.Scroll)
-			span.Set("query-result-table", queryTs.ResultTableOptions)
+		span.Set("query-scroll", queryTs.Scroll)
+		span.Set("query-result-table", queryTs.ResultTableOptions)
 
-			// scroll 和 searchAfter 模式不进行裁剪
-			if queryTs.Scroll == "" && queryTs.ResultTableOptions.IsCrop() {
-				// 判定是否启用 multi from 特性
-				span.Set("query-multi-from", queryTs.IsMultiFrom)
-				span.Set("data-length", len(data))
-				span.Set("query-ts-from", queryTs.From)
-				span.Set("query-ts-limit", queryTs.Limit)
+		// scroll 和 searchAfter 模式不进行裁剪
+		if queryTs.Scroll == "" && queryTs.ResultTableOptions.IsCrop() {
+			// 判定是否启用 multi from 特性
+			span.Set("query-multi-from", queryTs.IsMultiFrom)
+			span.Set("data-length", len(data))
+			span.Set("query-ts-from", queryTs.From)
+			span.Set("query-ts-limit", queryTs.Limit)
 
-				if len(data) > queryTs.Limit && queryTs.Limit > 0 {
-					if queryTs.IsMultiFrom {
-						resultTableOptions = queryTs.ResultTableOptions
-						if resultTableOptions == nil {
-							resultTableOptions = make(metadata.ResultTableOptions)
+			if queryTs.Limit > 0 {
+				if queryTs.IsMultiFrom {
+					data = data[0:queryTs.Limit]
+					for _, l := range data {
+						tableID := l[elasticsearch.KeyTableID].(string)
+						address := l[elasticsearch.KeyAddress].(string)
+
+						option := resultTableOptions.GetOption(tableID, address)
+						if option == nil {
+							resultTableOptions.SetOption(tableID, address, &metadata.ResultTableOption{From: function.IntPoint(1)})
+						} else {
+							*option.From++
 						}
-
-						data = data[0:queryTs.Limit]
-						for _, l := range data {
-							tableID := l[elasticsearch.KeyTableID].(string)
-							address := l[elasticsearch.KeyAddress].(string)
-
-							option := resultTableOptions.GetOption(tableID, address)
-							if option == nil {
-								resultTableOptions.SetOption(tableID, address, &metadata.ResultTableOption{From: function.IntPoint(1)})
-							} else {
-								*option.From++
-							}
-						}
-					} else {
+					}
+				} else {
+					// 只有合并数据才需要进行裁剪，否则原始数据里面就已经经过裁剪了
+					if isCutData {
 						// 只有长度符合的数据才进行裁剪
 						if len(data) > queryTs.From {
 							maxLength := queryTs.From + queryTs.Limit
@@ -300,8 +308,11 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 							}
 
 							data = data[queryTs.From:maxLength]
+						} else {
+							data = make([]map[string]any, 0)
 						}
 					}
+
 				}
 			}
 		}
@@ -369,6 +380,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				if !queryTs.IsMultiFrom {
 					qry.Size += qry.From
 					qry.From = 0
+					isCutData = true
 				}
 			}
 
@@ -390,14 +402,12 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				}
 
 				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
-				if !queryTs.IsMultiFrom {
-					if resultTableOptions == nil {
-						resultTableOptions = make(metadata.ResultTableOptions)
-					}
-					lock.Lock()
-					resultTableOptions.MergeOptions(options)
-					lock.Unlock()
+				if resultTableOptions == nil {
+					resultTableOptions = make(metadata.ResultTableOptions)
 				}
+				lock.Lock()
+				resultTableOptions.MergeOptions(options)
+				lock.Unlock()
 
 				total += size
 			})

@@ -68,6 +68,8 @@ func (n *baseNode) WithSetAs(setAs bool) {
 type Statement struct {
 	baseNode
 
+	isSubQuery bool
+
 	nodeMap map[string]Node
 
 	Table string
@@ -84,7 +86,7 @@ func (v *Statement) ItemString(name string) string {
 	return ""
 }
 
-func (v *Statement) SQL() (string, error) {
+func (v *Statement) String() string {
 	var (
 		result []string
 	)
@@ -117,7 +119,13 @@ func (v *Statement) SQL() (string, error) {
 			result = append(result, res)
 		}
 	}
-	return strings.Join(result, " "), nil
+
+	sql := strings.Join(result, " ")
+	if v.isSubQuery {
+		sql = fmt.Sprintf("(%s)", sql)
+	}
+
+	return sql
 }
 
 func (v *Statement) Error() error {
@@ -503,11 +511,20 @@ func (v *OperatorNode) String() string {
 }
 
 func (v *OperatorNode) VisitTerminal(node antlr.TerminalNode) interface{} {
-	if v.Op == nil {
-		v.Op = &StringNode{
-			Name: node.GetText(),
+	banTokens := []string{"(", ")", ","}
+	token := node.GetText()
+
+	for _, bt := range banTokens {
+		if token == bt {
+			return nil
 		}
 	}
+
+	if v.Op == nil {
+		v.Op = &StringsNode{}
+	}
+	v.Op.(*StringsNode).add(node.GetText())
+
 	return nil
 }
 
@@ -558,14 +575,29 @@ func (v *TableNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 type SelectNode struct {
 	baseNode
 
-	fieldsNode []Node
+	DistinctIndex int
+	Distinct      bool
+	fieldsNode    []Node
+}
+
+func (v *SelectNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+	name := ctx.GetText()
+	switch name {
+	case "DISTINCT":
+		v.Distinct = true
+		v.DistinctIndex = len(v.fieldsNode)
+	}
+	return nil
 }
 
 func (v *SelectNode) String() string {
 	var ns []string
-	for _, fn := range v.fieldsNode {
+	for idx, fn := range v.fieldsNode {
 		ss := nodeToString(fn)
 		if ss != "" {
+			if v.Distinct && idx == v.DistinctIndex {
+				ss = fmt.Sprintf("DISTINCT(%s)", ss)
+			}
 			ns = append(ns, ss)
 		}
 	}
@@ -695,6 +727,8 @@ func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 
 type FunctionNode struct {
 	baseNode
+
+	Distinct bool
 	FuncName string
 	Values   []Node
 }
@@ -712,10 +746,23 @@ func (v *FunctionNode) String() string {
 
 	result = strings.Join(cols, ", ")
 
+	if v.Distinct {
+		result = fmt.Sprintf("DISTINCT(%s)", result)
+	}
+
 	if v.FuncName != "" {
 		result = fmt.Sprintf("%s(%s)", v.FuncName, result)
 	}
 	return result
+}
+
+func (v *FunctionNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+	name := ctx.GetText()
+	switch name {
+	case "DISTINCT":
+		v.Distinct = true
+	}
+	return nil
 }
 
 func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) interface{} {
@@ -913,21 +960,50 @@ func (v *ColumnNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 type ValueNode struct {
 	baseNode
 
-	names []string
+	nodes []Node
 }
 
 func (v *ValueNode) String() string {
-	if len(v.names) == 1 {
-		return v.names[0]
+	var names []string
+	for _, n := range v.nodes {
+		names = append(names, n.String())
 	}
-	return fmt.Sprintf("(%s)", strings.Join(v.names, ", "))
+	if len(names) == 1 {
+		return names[0]
+	}
+
+	return fmt.Sprintf("(%s)", strings.Join(names, ", "))
 }
 
 func (v *ValueNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+	var next Node
+	next = v
+
 	switch ctx.(type) {
+	case *gen.FunctionCallContext:
+		node := &FunctionNode{}
+		v.nodes = append(v.nodes, node)
+		next = node
 	case *gen.ConstantDefaultContext:
-		v.names = append(v.names, ctx.GetText())
+		v.nodes = append(v.nodes, &StringNode{Name: ctx.GetText()})
 	}
+	return visitChildren(v.Encode, v.SetAs, next, ctx)
+}
+
+type StringsNode struct {
+	baseNode
+	Names []string
+}
+
+func (v *StringsNode) add(s string) {
+	v.Names = append(v.Names, s)
+}
+
+func (v *StringsNode) String() string {
+	return strings.Join(v.Names, " ")
+}
+
+func (v *StringsNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 	return visitChildren(v.Encode, v.SetAs, v, ctx)
 }
 
@@ -949,6 +1025,11 @@ func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
 	next = node
 
 	switch ctx.(type) {
+	case *gen.SubqueryExpressionContext:
+		node.node = &Statement{
+			isSubQuery: true,
+		}
+		next = node.node
 	case *gen.SearchedCaseContext:
 		node.node = &SearchCaseNode{}
 		next = node.node

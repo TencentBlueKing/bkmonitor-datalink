@@ -19,9 +19,10 @@ import (
 )
 
 func TestConvertProfilesData(t *testing.T) {
+	var conv profilesConverter
 	t.Run("Success", func(t *testing.T) {
 		var events []define.Event
-		NewCommonConverter().Convert(&define.Record{
+		conv.Convert(&define.Record{
 			RecordType: define.RecordProfiles,
 			Data: &define.ProfilesData{Profiles: []*profile.Profile{{
 				TimeNanos:     time.Now().UnixNano(),
@@ -52,7 +53,7 @@ func TestConvertProfilesData(t *testing.T) {
 
 	t.Run("Empty Profiles", func(t *testing.T) {
 		var hit bool
-		NewCommonConverter().Convert(&define.Record{
+		conv.Convert(&define.Record{
 			RecordType: define.RecordProfiles,
 			Data:       &define.ProfilesData{Profiles: nil},
 			Token: define.Token{
@@ -68,7 +69,7 @@ func TestConvertProfilesData(t *testing.T) {
 }
 
 func TestGetSvrNameAndTags(t *testing.T) {
-	p := profilesConverter{}
+	var conv profilesConverter
 	t.Run("Success", func(t *testing.T) {
 		metadata := define.ProfileMetadata{
 			StartTime: time.Now(),
@@ -88,7 +89,7 @@ func TestGetSvrNameAndTags(t *testing.T) {
 			Metadata: metadata,
 		}
 
-		svrName, tags := p.getSvrNameAndTags(&profilesData)
+		svrName, tags := conv.getSvrNameAndTags(&profilesData)
 		assert.Equal(t, "testService", svrName)
 		assert.Len(t, tags, 2)
 		assert.Equal(t, []string{"production"}, tags["env"])
@@ -113,7 +114,7 @@ func TestGetSvrNameAndTags(t *testing.T) {
 			Metadata: metadata,
 		}
 
-		svrName, tags := p.getSvrNameAndTags(&profilesData)
+		svrName, tags := conv.getSvrNameAndTags(&profilesData)
 		assert.Equal(t, "testApp", svrName)
 		assert.Len(t, tags, 2)
 		assert.Equal(t, []string{"production"}, tags["env"])
@@ -138,7 +139,7 @@ func TestGetSvrNameAndTags(t *testing.T) {
 			Metadata: metadata,
 		}
 
-		svrName, tags := p.getSvrNameAndTags(&profilesData)
+		svrName, tags := conv.getSvrNameAndTags(&profilesData)
 		assert.Equal(t, "default", svrName)
 		assert.Len(t, tags, 2)
 		assert.Equal(t, []string{"production"}, tags["env"])
@@ -147,37 +148,21 @@ func TestGetSvrNameAndTags(t *testing.T) {
 }
 
 func TestProfilesConverterMergeTagsToLabels(t *testing.T) {
-	converter := profilesConverter{}
-
+	var conv profilesConverter
 	profileData := &profile.Profile{
 		Sample: []*profile.Sample{
-			{
-				Label: map[string][]string{
-					"key1": {"value1"},
-				},
-			},
-			{
-				Label: nil,
-			},
+			{Label: map[string][]string{"key1": {"value1"}}},
+			{},
 		},
 	}
 	tags := map[string][]string{
 		"key2": {"value2"},
 	}
 
-	converter.mergeTagsToLabels(profileData, tags)
+	conv.mergeTagsToLabels(profileData, tags)
 	expected := []*profile.Sample{
-		{
-			Label: map[string][]string{
-				"key1": {"value1"},
-				"key2": {"value2"},
-			},
-		},
-		{
-			Label: map[string][]string{
-				"key2": {"value2"},
-			},
-		},
+		{Label: map[string][]string{"key1": {"value1"}, "key2": {"value2"}}},
+		{Label: map[string][]string{"key2": {"value2"}}},
 	}
 	assert.Equal(t, profileData.Sample, expected)
 }

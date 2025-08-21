@@ -1,24 +1,11 @@
-// MIT License
-
-// Copyright (c) 2021~2022 腾讯蓝鲸
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
 
 package cmdbcache
 
@@ -36,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -323,7 +311,7 @@ func NewCmdbEventHandler(bkTenantId string, prefix string, rOpt *redis.Options, 
 
 // Close 关闭操作
 func (h *CmdbEventHandler) Close() {
-	GetRelationMetricsBuilder().ClearAllMetrics()
+	relation.GetRelationMetricsBuilder().ClearAllMetrics()
 }
 
 // getBkEvents 获取全部资源变更事件
@@ -538,6 +526,13 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 			}
 		}
 	}
+	initialMaxWaitTime, err := time.ParseDuration(config.InitialMaxWaitTime)
+	if err != nil {
+		return err
+	}
+	initialCtx, cancel := context.WithTimeout(ctx, initialMaxWaitTime)
+	defer cancel()
+	buildAllInfosCache(initialCtx, params.BkTenantId, params.Prefix, &params.Redis, bizConcurrent, "host_topo", "set", "module")
 
 	wg := sync.WaitGroup{}
 	cancelCtx, cancel := context.WithCancel(ctx)
@@ -556,7 +551,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 		defer func() {
 			err = reporter.Close(ctx)
 		}()
-		spaceReport := GetRelationMetricsBuilder().WithSpaceReport(reporter)
+		spaceReport := relation.GetRelationMetricsBuilder().WithSpaceReport(reporter)
 
 		for {
 			ticker := time.NewTicker(time.Minute)
@@ -564,12 +559,11 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 			// 事件处理间隔时间
 			select {
 			case <-cancelCtx.Done():
-				GetRelationMetricsBuilder().ClearAllMetrics()
+				relation.GetRelationMetricsBuilder().ClearAllMetrics()
 				ticker.Stop()
 				return
 			case <-ticker.C:
 				// 上报指标
-				logger.Infof("[cmdb_relation] space report push all")
 				if err = spaceReport.PushAll(cancelCtx, time.Now()); err != nil {
 					logger.Errorf("[cmdb_relation] relation metrics builder push all error: %v", err.Error())
 				}
@@ -596,9 +590,6 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 				cancel()
 				return
 			}
-
-			logger.Infof("[cmdb_relation] start handle cmdb resource(%s) event", cacheType)
-			defer logger.Infof("[cmdb_relation] end handle cmdb resource(%s) event", cacheType)
 
 			for {
 				tn := time.Now()

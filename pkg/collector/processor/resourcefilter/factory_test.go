@@ -497,6 +497,79 @@ processor:
 	})
 }
 
+func TestFromTokenAction(t *testing.T) {
+	const content = `
+processor:
+    - name: "resource_filter/from_token"
+      config:
+        from_token:
+          keys:
+            - "app_name"
+`
+
+	assertFromTokenAction := func(t *testing.T, attrs pcommon.Map) {
+		testkits.AssertAttrsFoundStringVal(t, attrs, "app_name", "test_app")
+	}
+
+	t.Run("traces from_token", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		g := makeTracesGenerator(1, "string")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+			Token:      define.Token{AppName: "test_app"},
+		}
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+		assertFromTokenAction(t, attrs)
+	})
+
+	t.Run("metrics from_token", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		g := makeMetricsGenerator(1, "string")
+		data := g.Generate()
+		record1 := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+			Token:      define.Token{AppName: "test_app"},
+		}
+		record2 := define.Record{
+			RecordType: define.RecordMetricsDerived,
+			Data:       data,
+			Token:      define.Token{AppName: "test_app"},
+		}
+		_, err := factory.Process(&record1)
+		assert.NoError(t, err)
+		_, err = factory.Process(&record2)
+		assert.NoError(t, err)
+
+		attrs := record1.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
+		assertFromTokenAction(t, attrs)
+		attrs = record2.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
+		assertFromTokenAction(t, attrs)
+	})
+
+	t.Run("logs from_token", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		g := makeLogsGenerator(1, 10, "string")
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       data,
+			Token:      define.Token{AppName: "test_app"},
+		}
+
+		_, err := factory.Process(&record)
+		assert.NoError(t, err)
+
+		attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
+		assertFromTokenAction(t, attrs)
+	})
+}
+
 func TestDefaultValueAction(t *testing.T) {
 	const content = `
 processor:

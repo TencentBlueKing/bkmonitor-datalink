@@ -7,37 +7,21 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package mock
+package metadata
 
 import (
-	"testing"
-
-	"github.com/facebookgo/inject"
+	"github.com/gin-gonic/gin"
 )
 
-// TestInjectConfig :
-func TestInjectConfig(t *testing.T) {
-	var (
-		g    inject.Graph
-		conf Config
-		err  error
-	)
-	err = g.Provide(
-		&inject.Object{Value: &conf},
-	)
-	if err != nil {
-		t.Errorf("provide error: %v", err)
-	}
+var (
+	handlerMap = make(map[string][]gin.HandlerFunc)
+)
 
-	err = g.Populate()
-	if err != nil {
-		t.Errorf("populate error: %v", err)
-	}
-	err = conf.Clean()
-	if err != nil {
-		t.Errorf(err.Error())
-	}
-	if conf.Task.Task.GetIdent() != "test" {
-		t.Errorf("config clean error")
-	}
+func AddHandler(handlerPath string, handler ...gin.HandlerFunc) {
+	handlerMap[handlerPath] = append(handlerMap[handlerPath], handler...)
+}
+
+func GetHandler(key string) ([]gin.HandlerFunc, bool) {
+	r, ok := handlerMap[key]
+	return r, ok
 }

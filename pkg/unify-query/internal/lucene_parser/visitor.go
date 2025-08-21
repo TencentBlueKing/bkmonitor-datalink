@@ -65,7 +65,7 @@ func (n *baseNode) WithEncode(encode Encode) {
 	n.Encode = encode
 }
 
-type QueryVisitor struct {
+type Statement struct {
 	*gen.BaseLuceneParserVisitor
 
 	root    Node
@@ -73,38 +73,38 @@ type QueryVisitor struct {
 	Encode  Encode
 }
 
-func NewQueryVisitor(ctx context.Context) *QueryVisitor {
-	return &QueryVisitor{
+func NewQueryVisitor(ctx context.Context) *Statement {
+	return &Statement{
 		BaseLuceneParserVisitor: &gen.BaseLuceneParserVisitor{},
 	}
 }
 
-func (v *QueryVisitor) WithEncode(encode Encode) {
-	v.Encode = encode
+func (s *Statement) WithEncode(encode Encode) {
+	s.Encode = encode
 }
 
-func (v *QueryVisitor) ToSQL() querystring_parser.Expr {
-	if v.root != nil {
-		return v.root.ToSQL()
+func (s *Statement) ToSQL() querystring_parser.Expr {
+	if s.root != nil {
+		return s.root.ToSQL()
 	}
 	return nil
 }
 
-func (v *QueryVisitor) ToES() elastic.Query {
-	if v.root != nil {
-		return v.root.ToES()
+func (s *Statement) ToES() elastic.Query {
+	if s.root != nil {
+		return s.root.ToES()
 	}
 	return nil
 }
 
-func (v *QueryVisitor) Error() error {
-	if len(v.errNode) > 0 {
-		return fmt.Errorf("parse errors: %s", strings.Join(v.errNode, "; "))
+func (s *Statement) Error() error {
+	if len(s.errNode) > 0 {
+		return fmt.Errorf("parse errors: %s", strings.Join(s.errNode, "; "))
 	}
 	return nil
 }
 
-func (v *QueryVisitor) shouldFilterLowercaseKeyword(node Node) bool {
+func (s *Statement) shouldFilterLowercaseKeyword(node Node) bool {
 	if fieldNode, ok := node.(*FieldNode); ok && fieldNode.field == "" {
 		if valueNode, ok := fieldNode.value.(*ValueNode); ok {
 			value := strings.ToLower(strings.TrimSpace(valueNode.value))
@@ -114,33 +114,33 @@ func (v *QueryVisitor) shouldFilterLowercaseKeyword(node Node) bool {
 	return false
 }
 
-func (v *QueryVisitor) VisitErrorNode(ctx antlr.ErrorNode) interface{} {
-	v.errNode = append(v.errNode, ctx.GetText())
+func (s *Statement) VisitErrorNode(ctx antlr.ErrorNode) interface{} {
+	s.errNode = append(s.errNode, ctx.GetText())
 	return nil
 }
 
 // VisitTopLevelQuery 处理顶层查询规则
 // 语法规则: topLevelQuery : query EOF
-func (v *QueryVisitor) VisitTopLevelQuery(ctx *gen.TopLevelQueryContext) interface{} {
+func (s *Statement) VisitTopLevelQuery(ctx *gen.TopLevelQueryContext) interface{} {
 	topQuery := ctx.Query()
 	if topQuery != nil {
-		v.root = topQuery.Accept(v).(Node)
+		s.root = topQuery.Accept(s).(Node)
 	}
-	return v.root
+	return s.root
 }
 
 // VisitQuery 处理查询规则
 // 语法规则: query : disjQuery+
-func (v *QueryVisitor) VisitQuery(ctx *gen.QueryContext) interface{} {
+func (s *Statement) VisitQuery(ctx *gen.QueryContext) interface{} {
 	disjQueries := ctx.AllDisjQuery()
 	if len(disjQueries) == 1 {
-		return disjQueries[0].Accept(v).(Node)
+		return disjQueries[0].Accept(s).(Node)
 	}
 
 	orNode := &OrNode{}
 	for _, dq := range disjQueries {
-		child := dq.Accept(v).(Node)
-		if v.shouldFilterLowercaseKeyword(child) {
+		child := dq.Accept(s).(Node)
+		if s.shouldFilterLowercaseKeyword(child) {
 			continue
 		}
 
@@ -156,15 +156,15 @@ func (v *QueryVisitor) VisitQuery(ctx *gen.QueryContext) interface{} {
 
 // VisitDisjQuery 处理析取查询规则
 // 语法规则: disjQuery : conjQuery (OR conjQuery)*
-func (v *QueryVisitor) VisitDisjQuery(ctx *gen.DisjQueryContext) interface{} {
+func (s *Statement) VisitDisjQuery(ctx *gen.DisjQueryContext) interface{} {
 	conjQueries := ctx.AllConjQuery()
 	if len(conjQueries) == 1 {
-		return conjQueries[0].Accept(v).(Node)
+		return conjQueries[0].Accept(s).(Node)
 	}
 
 	orNode := &OrNode{}
 	for _, cq := range conjQueries {
-		child := cq.Accept(v).(Node)
+		child := cq.Accept(s).(Node)
 		orNode.children = append(orNode.children, child)
 	}
 	return orNode
@@ -172,15 +172,15 @@ func (v *QueryVisitor) VisitDisjQuery(ctx *gen.DisjQueryContext) interface{} {
 
 // VisitConjQuery 处理合取查询规则
 // 语法规则: conjQuery : modClause (AND modClause)*
-func (v *QueryVisitor) VisitConjQuery(ctx *gen.ConjQueryContext) interface{} {
+func (s *Statement) VisitConjQuery(ctx *gen.ConjQueryContext) interface{} {
 	modClauses := ctx.AllModClause()
 	if len(modClauses) == 1 {
-		return modClauses[0].Accept(v).(Node)
+		return modClauses[0].Accept(s).(Node)
 	}
 
 	andNode := &AndNode{}
 	for _, mc := range modClauses {
-		child := mc.Accept(v).(Node)
+		child := mc.Accept(s).(Node)
 		andNode.children = append(andNode.children, child)
 	}
 	return andNode
@@ -188,8 +188,8 @@ func (v *QueryVisitor) VisitConjQuery(ctx *gen.ConjQueryContext) interface{} {
 
 // VisitModClause 处理修饰子句规则
 // 语法规则: modClause : modifier? clause
-func (v *QueryVisitor) VisitModClause(ctx *gen.ModClauseContext) interface{} {
-	clause := ctx.Clause().Accept(v).(Node)
+func (s *Statement) VisitModClause(ctx *gen.ModClauseContext) interface{} {
+	clause := ctx.Clause().Accept(s).(Node)
 
 	if modifier := ctx.Modifier(); modifier != nil {
 		modText := modifier.GetText()
@@ -209,49 +209,49 @@ func (v *QueryVisitor) VisitModClause(ctx *gen.ModClauseContext) interface{} {
 
 // VisitClause 处理子句规则
 // 语法规则: clause : fieldRangeExpr | (fieldName (OP_COLON | OP_EQUAL))? (term | groupingExpr)
-func (v *QueryVisitor) VisitClause(ctx *gen.ClauseContext) interface{} {
+func (s *Statement) VisitClause(ctx *gen.ClauseContext) interface{} {
 	if ctx.FieldRangeExpr() != nil {
-		return ctx.FieldRangeExpr().Accept(v).(Node)
+		return ctx.FieldRangeExpr().Accept(s).(Node)
 	}
 
-	fieldName := v.extractFieldName(ctx)
-	value := v.extractFieldValue(ctx)
+	fieldName := s.extractFieldName(ctx)
+	value := s.extractFieldValue(ctx)
 
 	return &FieldNode{
 		field:  fieldName,
 		value:  value,
-		encode: v.Encode,
+		encode: s.Encode,
 	}
 }
 
-func (v *QueryVisitor) extractFieldName(ctx *gen.ClauseContext) string {
+func (s *Statement) extractFieldName(ctx *gen.ClauseContext) string {
 	if ctx.FieldName() == nil {
 		return ""
 	}
 
 	fieldName := ctx.FieldName().GetText()
-	if v.Encode != nil {
-		if encoded, ok := v.Encode(fieldName); ok {
+	if s.Encode != nil {
+		if encoded, ok := s.Encode(fieldName); ok {
 			return encoded
 		}
 	}
 	return fieldName
 }
 
-func (v *QueryVisitor) extractFieldValue(ctx *gen.ClauseContext) Node {
+func (s *Statement) extractFieldValue(ctx *gen.ClauseContext) Node {
 	if term := ctx.Term(); term != nil {
-		return v.processTermNode(term)
+		return s.processTermNode(term)
 	}
 
 	if groupingExpr := ctx.GroupingExpr(); groupingExpr != nil {
-		return v.processGroupingNode(groupingExpr)
+		return s.processGroupingNode(groupingExpr)
 	}
 
 	return &ValueNode{value: ""}
 }
 
-func (v *QueryVisitor) processTermNode(term antlr.ParseTree) Node {
-	if result := term.Accept(v); result != nil {
+func (s *Statement) processTermNode(term antlr.ParseTree) Node {
+	if result := term.Accept(s); result != nil {
 		if node, ok := result.(Node); ok {
 			return node
 		}
@@ -259,8 +259,8 @@ func (v *QueryVisitor) processTermNode(term antlr.ParseTree) Node {
 	return &ValueNode{value: ""}
 }
 
-func (v *QueryVisitor) processGroupingNode(groupingExpr antlr.ParseTree) Node {
-	if result := groupingExpr.Accept(v); result != nil {
+func (s *Statement) processGroupingNode(groupingExpr antlr.ParseTree) Node {
+	if result := groupingExpr.Accept(s); result != nil {
 		if node, ok := result.(Node); ok {
 			return node
 		}
@@ -268,10 +268,10 @@ func (v *QueryVisitor) processGroupingNode(groupingExpr antlr.ParseTree) Node {
 	return &GroupNode{child: &ValueNode{value: ""}}
 }
 
-func (v *QueryVisitor) VisitFieldRangeExpr(ctx *gen.FieldRangeExprContext) interface{} {
+func (s *Statement) VisitFieldRangeExpr(ctx *gen.FieldRangeExprContext) interface{} {
 	fieldName := ctx.FieldName().GetText()
-	if v.Encode != nil {
-		if encoded, ok := v.Encode(fieldName); ok {
+	if s.Encode != nil {
+		if encoded, ok := s.Encode(fieldName); ok {
 			fieldName = encoded
 		}
 	}
@@ -283,19 +283,19 @@ func (v *QueryVisitor) VisitFieldRangeExpr(ctx *gen.FieldRangeExprContext) inter
 		field:  fieldName,
 		op:     op,
 		value:  value,
-		encode: v.Encode,
+		encode: s.Encode,
 	}
 }
 
-func (v *QueryVisitor) VisitTerm(ctx *gen.TermContext) interface{} {
+func (s *Statement) VisitTerm(ctx *gen.TermContext) interface{} {
 	if quoted := ctx.QuotedTerm(); quoted != nil {
-		return quoted.Accept(v).(Node)
+		return quoted.Accept(s).(Node)
 	}
 	if regex := ctx.REGEXPTERM(); regex != nil {
 		return &ValueNode{value: regex.GetText(), isRegex: true}
 	}
 	if termRange := ctx.TermRangeExpr(); termRange != nil {
-		return v.VisitTermRangeExpr(termRange.(*gen.TermRangeExprContext))
+		return s.VisitTermRangeExpr(termRange.(*gen.TermRangeExprContext))
 	}
 	if number := ctx.NUMBER(0); number != nil {
 		return &ValueNode{value: number.GetText(), isNumber: true}
@@ -309,15 +309,15 @@ func (v *QueryVisitor) VisitTerm(ctx *gen.TermContext) interface{} {
 
 // VisitTermRangeExpr 处理术语范围表达式规则
 // 语法规则: termRangeExpr : (RANGEIN_START | RANGEEX_START) left=(RANGE_GOOP | RANGE_QUOTED | RANGE_TO) RANGE_TO right=(RANGE_GOOP | RANGE_QUOTED | RANGE_TO) (RANGEIN_END | RANGEEX_END)
-func (v *QueryVisitor) VisitTermRangeExpr(ctx *gen.TermRangeExprContext) interface{} {
+func (s *Statement) VisitTermRangeExpr(ctx *gen.TermRangeExprContext) interface{} {
 	children := ctx.GetChildren()
 	if len(children) < 5 {
 		return &ValueNode{value: ""}
 	}
 
 	return &RangeNode{
-		value:  v.buildRangeText(v.parseRangeParams(children)),
-		encode: v.Encode,
+		value:  s.buildRangeText(s.parseRangeParams(children)),
+		encode: s.Encode,
 	}
 }
 
@@ -328,21 +328,21 @@ type rangeParams struct {
 	endInclusive   bool
 }
 
-func (v *QueryVisitor) parseRangeParams(children []antlr.Tree) *rangeParams {
+func (s *Statement) parseRangeParams(children []antlr.Tree) *rangeParams {
 	params := &rangeParams{}
 	for i, child := range children {
 		if termNode, ok := child.(*antlr.TerminalNodeImpl); ok {
 			text := termNode.GetSymbol().GetText()
-			v.processRangeChild(params, i, len(children), text)
+			s.processRangeChild(params, i, len(children), text)
 		}
 	}
-	params.start = v.cleanAndUnescapeValue(params.start)
-	params.end = v.cleanAndUnescapeValue(params.end)
+	params.start = s.cleanAndUnescapeValue(params.start)
+	params.end = s.cleanAndUnescapeValue(params.end)
 
 	return params
 }
 
-func (v *QueryVisitor) processRangeChild(params *rangeParams, index, totalChildren int, text string) {
+func (s *Statement) processRangeChild(params *rangeParams, index, totalChildren int, text string) {
 	switch index {
 	case 0:
 		params.startInclusive = text == "["
@@ -357,7 +357,7 @@ func (v *QueryVisitor) processRangeChild(params *rangeParams, index, totalChildr
 	}
 }
 
-func (v *QueryVisitor) cleanAndUnescapeValue(value string) string {
+func (s *Statement) cleanAndUnescapeValue(value string) string {
 	if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
 		value = value[1 : len(value)-1]
 	}
@@ -365,14 +365,14 @@ func (v *QueryVisitor) cleanAndUnescapeValue(value string) string {
 	return unescapeString(value)
 }
 
-func (v *QueryVisitor) buildRangeText(params *rangeParams) string {
-	startBracket := v.getBracket(params.startInclusive, true)
-	endBracket := v.getBracket(params.endInclusive, false)
+func (s *Statement) buildRangeText(params *rangeParams) string {
+	startBracket := s.getBracket(params.startInclusive, true)
+	endBracket := s.getBracket(params.endInclusive, false)
 
 	return fmt.Sprintf("%s%s TO %s%s", startBracket, params.start, params.end, endBracket)
 }
 
-func (v *QueryVisitor) getBracket(inclusive, isStart bool) string {
+func (s *Statement) getBracket(inclusive, isStart bool) string {
 	if inclusive {
 		if isStart {
 			return "["
@@ -387,10 +387,10 @@ func (v *QueryVisitor) getBracket(inclusive, isStart bool) string {
 
 // VisitGroupingExpr 处理分组表达式规则
 // 语法规则: groupingExpr : LPAREN query RPAREN (CARAT NUMBER)?
-func (v *QueryVisitor) VisitGroupingExpr(ctx *gen.GroupingExprContext) interface{} {
+func (s *Statement) VisitGroupingExpr(ctx *gen.GroupingExprContext) interface{} {
 	query := ctx.Query()
 	if query != nil {
-		if result := query.Accept(v); result != nil {
+		if result := query.Accept(s); result != nil {
 			if child, ok := result.(Node); ok {
 				return &GroupNode{child: child}
 			}
@@ -401,7 +401,7 @@ func (v *QueryVisitor) VisitGroupingExpr(ctx *gen.GroupingExprContext) interface
 
 // VisitQuotedTerm 处理引用项规则
 // 语法规则: quotedTerm : QUOTED (CARAT NUMBER)?
-func (v *QueryVisitor) VisitQuotedTerm(ctx *gen.QuotedTermContext) interface{} {
+func (s *Statement) VisitQuotedTerm(ctx *gen.QuotedTermContext) interface{} {
 	if quoted := ctx.QUOTED(); quoted != nil {
 		// Remove quotes and unescape the content
 		text := quoted.GetText()
@@ -685,6 +685,10 @@ func (n *FieldNode) ToES() elastic.Query {
 		return n.buildValueQuery(valNode)
 	}
 
+	if groupNode, ok := n.value.(*GroupNode); ok {
+		return n.buildGroupQuery(groupNode)
+	}
+
 	return elastic.NewTermQuery(n.field, "")
 }
 
@@ -738,6 +742,20 @@ func (n *FieldNode) isWildcardValue(value string) bool {
 
 func (n *FieldNode) cleanQuotes(value string) string {
 	return strings.Trim(value, `"'`)
+}
+
+func (n *FieldNode) buildGroupQuery(groupNode *GroupNode) elastic.Query {
+	if groupNode.child != nil {
+		if valNode, ok := groupNode.child.(*ValueNode); ok {
+			return n.buildValueQuery(valNode)
+		}
+	}
+	childQuery := groupNode.ToES()
+	if childQuery == nil {
+		return elastic.NewTermQuery(n.field, "")
+	}
+
+	return childQuery
 }
 
 type RangeNode struct {
@@ -809,6 +827,9 @@ func (n *RangeNode) isDateRange(start, end string) bool {
 }
 
 func (n *RangeNode) ToES() elastic.Query {
+	if n.field != "" {
+		return n.ToESForField(n.field)
+	}
 	return nil
 }
 
@@ -828,20 +849,14 @@ func (n *RangeNode) ToESForField(field string) elastic.Query {
 func (n *RangeNode) tryBuildRangeQuery(field string) elastic.Query {
 	text := n.value
 
-	// 检查包含范围: [start TO end]
-	if strings.HasPrefix(text, "[") && strings.Contains(text, " TO ") {
-		return n.buildBracketRange(field, text, true) // inclusive
-	}
-
-	// 检查排斥范围: {start TO end}
-	if strings.HasPrefix(text, "{") && strings.Contains(text, " TO ") {
-		return n.buildBracketRange(field, text, false) // exclusive
+	if n.isRangeFormat(text) {
+		return n.buildBracketRange(field, text)
 	}
 
 	return nil
 }
 
-func (n *RangeNode) buildBracketRange(field, text string, inclusive bool) elastic.Query {
+func (n *RangeNode) buildBracketRange(field, text string) elastic.Query {
 	content := text[1 : len(text)-1]
 	parts := strings.Split(content, " TO ")
 	if len(parts) != 2 {
@@ -855,33 +870,63 @@ func (n *RangeNode) buildBracketRange(field, text string, inclusive bool) elasti
 		return elastic.NewMatchAllQuery()
 	}
 
-	if numQuery := n.tryBuildNumericRange(field, start, end, inclusive); numQuery != nil {
+	if numQuery := n.buildOptimizedNumericRange(field, start, end, strings.HasPrefix(text, "["), strings.HasSuffix(text, "]")); numQuery != nil {
 		return numQuery
 	}
 
-	return n.buildStringRange(field, start, end, inclusive)
+	return n.buildStringRange(field, start, end, strings.HasPrefix(text, "["), strings.HasSuffix(text, "]"))
 }
 
-func (n *RangeNode) tryBuildNumericRange(field, start, end string, inclusive bool) elastic.Query {
-	startNum, err1 := strconv.ParseFloat(start, 64)
-	endNum, err2 := strconv.ParseFloat(end, 64)
+func (n *RangeNode) buildOptimizedNumericRange(field, start, end string, startInc, endInc bool) elastic.Query {
+	startNum, startIsNum := n.tryParseNumber(start)
+	endNum, endIsNum := n.tryParseNumber(end)
 
-	if err1 != nil || err2 != nil {
+	if !startIsNum && !endIsNum {
 		return nil
 	}
 
 	query := elastic.NewRangeQuery(field)
-	if inclusive {
-		return query.Gte(startNum).Lte(endNum)
+
+	if start != WildcardAsterisk {
+		if startIsNum {
+			if startInc {
+				query.Gte(startNum)
+			} else {
+				query.Gt(startNum)
+			}
+		} else {
+			if startInc {
+				query.Gte(start)
+			} else {
+				query.Gt(start)
+			}
+		}
 	}
-	return query.Gt(startNum).Lt(endNum)
+
+	if end != WildcardAsterisk {
+		if endIsNum {
+			if endInc {
+				query.Lte(endNum)
+			} else {
+				query.Lt(endNum)
+			}
+		} else {
+			if endInc {
+				query.Lte(end)
+			} else {
+				query.Lt(end)
+			}
+		}
+	}
+
+	return query
 }
 
-func (n *RangeNode) buildStringRange(field, start, end string, inclusive bool) elastic.Query {
+func (n *RangeNode) buildStringRange(field, start, end string, startInc, endInc bool) elastic.Query {
 	query := elastic.NewRangeQuery(field)
 
 	if start != WildcardAsterisk {
-		if inclusive {
+		if startInc {
 			query.Gte(start)
 		} else {
 			query.Gt(start)
@@ -889,7 +934,7 @@ func (n *RangeNode) buildStringRange(field, start, end string, inclusive bool) e
 	}
 
 	if end != WildcardAsterisk {
-		if inclusive {
+		if endInc {
 			query.Lte(end)
 		} else {
 			query.Lt(end)
@@ -917,6 +962,26 @@ func (n *RangeNode) buildNumericComparison(field string, num float64) elastic.Qu
 
 func (n *RangeNode) buildStringComparison(field string) elastic.Query {
 	return n.applyComparisonOperator(elastic.NewRangeQuery(field), n.value, n.value)
+}
+
+func (n *RangeNode) parseNumericValue(value string) (float64, error) {
+	if value == WildcardAsterisk {
+		return 0, fmt.Errorf("wildcard value")
+	}
+	return strconv.ParseFloat(value, 64)
+}
+
+func (n *RangeNode) tryParseNumber(value string) (float64, bool) {
+	if value == WildcardAsterisk {
+		return 0, false
+	}
+	num, err := strconv.ParseFloat(value, 64)
+	return num, err == nil
+}
+
+func (n *RangeNode) isRangeFormat(text string) bool {
+	return (strings.HasPrefix(text, "[") || strings.HasPrefix(text, "{")) &&
+		strings.Contains(text, " TO ")
 }
 
 func (n *RangeNode) applyComparisonOperator(query *elastic.RangeQuery, gtValue, gteValue interface{}) elastic.Query {
@@ -990,9 +1055,20 @@ func (n *ValueNode) ToSQLString() string {
 }
 
 func (n *ValueNode) ToES() elastic.Query {
-	// ValueNode不应该直接生成ES查询，应该由FieldNode处理
-	// 这里返回nil，让调用者处理
-	return nil
+	if n.isRegex {
+		return nil
+	}
+
+	if n.isQuoted {
+		cleaned := strings.Trim(n.value, `"'`)
+		return elastic.NewQueryStringQuery(fmt.Sprintf("\"%s\"", cleaned))
+	}
+
+	if strings.Contains(n.value, WildcardAsterisk) || strings.Contains(n.value, WildcardQuestion) {
+		return elastic.NewQueryStringQuery(n.value)
+	}
+
+	return elastic.NewQueryStringQuery(n.value)
 }
 
 type AndNode struct {
@@ -1061,18 +1137,19 @@ func (n *OrNode) ToSQL() querystring_parser.Expr {
 func (n *OrNode) ToES() elastic.Query {
 	var queries []elastic.Query
 	for _, child := range n.children {
-		childES := child.ToES()
-		if childES != nil {
+		if childES := child.ToES(); childES != nil {
 			queries = append(queries, childES)
 		}
 	}
-	if len(queries) == 0 {
+
+	switch len(queries) {
+	case 0:
 		return nil
-	}
-	if len(queries) == 1 {
+	case 1:
 		return queries[0]
+	default:
+		return elastic.NewBoolQuery().Should(queries...)
 	}
-	return elastic.NewBoolQuery().Should(queries...)
 }
 
 type NotNode struct {

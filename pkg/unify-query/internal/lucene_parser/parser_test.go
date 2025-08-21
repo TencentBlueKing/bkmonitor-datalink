@@ -13,9 +13,11 @@ import (
 	"encoding/json"
 	"testing"
 
+	antlr "github.com/antlr4-go/antlr/v4"
 	elastic "github.com/olivere/elastic/v7"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring_parser"
 )
 
@@ -42,14 +44,16 @@ func queryToJSON(query elastic.Query) (string, error) {
 
 func TestParser(t *testing.T) {
 	testCases := map[string]struct {
-		q string
-		e querystring_parser.Expr
+		q  string
+		e  querystring_parser.Expr
+		es string
 	}{
 		"正常查询": {
 			q: `test`,
 			e: &querystring_parser.MatchExpr{
 				Value: `test`,
 			},
+			es: `{"query_string":{"query":"test"}}`,
 		},
 		"负数查询": {
 			q: `-test`,
@@ -58,6 +62,7 @@ func TestParser(t *testing.T) {
 					Value: `test`,
 				},
 			},
+			es: `{"bool":{"must_not":{"query_string":{"query":"test"}}}}`,
 		},
 		"负数查询多条件": {
 			q: `-test AND good`,
@@ -71,6 +76,7 @@ func TestParser(t *testing.T) {
 					Value: `good`,
 				},
 			},
+			es: `{"bool":{"must":[{"bool":{"must_not":{"query_string":{"query":"test"}}}},{"query_string":{"query":"good"}}]}}`,
 		},
 		"通配符匹配": {
 			q: `qu?ck bro*`,
@@ -82,12 +88,14 @@ func TestParser(t *testing.T) {
 					Value: "bro*",
 				},
 			},
+			es: `{"bool":{"should":[{"query_string":{"query":"qu?ck"}},{"query_string":{"query":"bro*"}}]}}`,
 		},
 		"无条件正则匹配": {
 			q: `/joh?n(ath[oa]n)/`,
 			e: &querystring_parser.RegexpExpr{
 				Value: "joh?n(ath[oa]n)",
 			},
+			es: `{"query_string":{"query":"/joh?n(ath[oa]n)/"}}`,
 		},
 		"正则匹配": {
 			q: `name: /joh?n(ath[oa]n)/`,
@@ -95,6 +103,7 @@ func TestParser(t *testing.T) {
 				Field: "name",
 				Value: "joh?n(ath[oa]n)",
 			},
+			es: `{"regexp":{"name":{"value":"joh?n(ath[oa]n)"}}}`,
 		},
 		"范围匹配，左闭右开": {
 			q: `count:[1 TO 5}`,
@@ -105,6 +114,7 @@ func TestParser(t *testing.T) {
 				IncludeStart: true,
 				IncludeEnd:   false,
 			},
+			es: `{"range":{"count":{"from":1,"include_lower":true,"include_upper":false,"to":5}}}`,
 		},
 		"范围匹配": {
 			q: `count:[1 TO 5]`,
@@ -115,6 +125,7 @@ func TestParser(t *testing.T) {
 				IncludeStart: true,
 				IncludeEnd:   true,
 			},
+			es: `{"range":{"count":{"from":1,"include_lower":true,"include_upper":true,"to":5}}}`,
 		},
 		"范围匹配（无下限） - 1": {
 			q: `count:{* TO 10]`,
@@ -125,6 +136,7 @@ func TestParser(t *testing.T) {
 				IncludeStart: false,
 				IncludeEnd:   false,
 			},
+			es: `{"range":{"count":{"from":null,"include_lower":true,"include_upper":true,"to":10}}}`,
 		},
 		"范围匹配（无下限）": {
 			q: `count:[* TO 10]`,
@@ -135,6 +147,7 @@ func TestParser(t *testing.T) {
 				IncludeStart: true,
 				IncludeEnd:   true,
 			},
+			es: `{"range":{"count":{"from":null,"include_lower":true,"include_upper":true,"to":10}}}`,
 		},
 		"范围匹配（无上限）": {
 			q: `count:[10 TO *]`,
@@ -145,6 +158,7 @@ func TestParser(t *testing.T) {
 				IncludeStart: true,
 				IncludeEnd:   true,
 			},
+			es: `{"range":{"count":{"from":10,"include_lower":true,"include_upper":true,"to":null}}}`,
 		},
 		"范围匹配（无上限）- 1": {
 			q: `count:[10 TO *}`,
@@ -155,6 +169,7 @@ func TestParser(t *testing.T) {
 				IncludeStart: true,
 				IncludeEnd:   false,
 			},
+			es: `{"range":{"count":{"from":10,"include_lower":true,"include_upper":true,"to":null}}}`,
 		},
 		"字段匹配": {
 			q: `status:active`,
@@ -162,6 +177,7 @@ func TestParser(t *testing.T) {
 				Field: "status",
 				Value: "active",
 			},
+			es: `{"term":{"status":"active"}}`,
 		},
 		"字段匹配 + 括号": {
 			q: `status:(active)`,
@@ -169,6 +185,7 @@ func TestParser(t *testing.T) {
 				Field: "status",
 				Value: "active",
 			},
+			es: `{"query_string":{"query":"active"}}`,
 		},
 		"多条件组合，括号调整优先级": {
 			q: `author:"John Smith" AND (age:20 OR status:active)`,
@@ -188,6 +205,7 @@ func TestParser(t *testing.T) {
 					},
 				},
 			},
+			es: `{"bool":{"must":[{"match_phrase":{"author":{"query":"John Smith"}}},{"bool":{"should":[{"term":{"age":20}},{"term":{"status":"active"}}]}}]}}`,
 		},
 		"多条件组合，and 和 or 的优先级": {
 			q: `(author:"John Smith" AND age:20) OR status:active`,
@@ -207,6 +225,7 @@ func TestParser(t *testing.T) {
 					Value: "active",
 				},
 			},
+			es: `{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"author":{"query":"John Smith"}}},{"term":{"age":20}}]}},{"term":{"status":"active"}}]}}`,
 		},
 		"嵌套逻辑表达式": {
 			q: `a:1 AND (b:2 OR c:3)`,
@@ -226,6 +245,7 @@ func TestParser(t *testing.T) {
 					},
 				},
 			},
+			es: `{"bool":{"must":[{"term":{"a":1}},{"bool":{"should":[{"term":{"b":2}},{"term":{"c":3}}]}}]}}`,
 		},
 		"嵌套逻辑表达式 - 2": {
 			q: `a:1 OR b:2 OR (c:3 OR d:4)`,
@@ -251,6 +271,7 @@ func TestParser(t *testing.T) {
 					},
 				},
 			},
+			es: `{"bool":{"should":[{"term":{"a":1}},{"term":{"b":2}},{"bool":{"should":[{"term":{"c":3}},{"term":{"d":4}}]}}]}}`,
 		},
 		"嵌套逻辑表达式 - 3": {
 			q: `a:1 OR (b:2 OR c:3) OR d:4`,
@@ -276,6 +297,7 @@ func TestParser(t *testing.T) {
 					Value: "4",
 				},
 			},
+			es: `{"bool":{"should":[{"term":{"a":1}},{"bool":{"should":[{"term":{"b":2}},{"term":{"c":3}}]}},{"term":{"d":4}}]}}`,
 		},
 		"嵌套逻辑表达式 - 4": {
 			q: `a:1 OR (b:2 OR c:3) AND d:4`,
@@ -301,6 +323,7 @@ func TestParser(t *testing.T) {
 					},
 				},
 			},
+			es: `{"bool":{"should":[{"term":{"a":1}},{"bool":{"must":[{"bool":{"should":[{"term":{"b":2}},{"term":{"c":3}}]}},{"term":{"d":4}}]}}]}}`,
 		},
 		"new-1": {
 			q: `quick brown +fox -news`,
@@ -325,6 +348,7 @@ func TestParser(t *testing.T) {
 					},
 				},
 			},
+			es: `{"bool":{"should":[{"query_string":{"query":"quick"}},{"query_string":{"query":"brown"}},{"query_string":{"query":"fox"}},{"bool":{"must_not":{"query_string":{"query":"news"}}}}]}}`,
 		},
 		"模糊匹配": {
 			q: `quick brown fox`,
@@ -341,6 +365,7 @@ func TestParser(t *testing.T) {
 					Value: "fox",
 				},
 			},
+			es: `{"bool":{"should":[{"query_string":{"query":"quick"}},{"query_string":{"query":"brown"}},{"query_string":{"query":"fox"}}]}}`,
 		},
 		"单个条件精确匹配": {
 			q: `log: "ERROR MSG"`,
@@ -348,6 +373,7 @@ func TestParser(t *testing.T) {
 				Field: "log",
 				Value: "ERROR MSG",
 			},
+			es: `{"match_phrase":{"log":{"query":"ERROR MSG"}}}`,
 		},
 		"match and time range": {
 			q: "message: test\\ value AND datetime: [\"2020-01-01T00:00:00\" TO \"2020-12-31T00:00:00\"]",
@@ -364,6 +390,7 @@ func TestParser(t *testing.T) {
 					IncludeEnd:   true,
 				},
 			},
+			es: `{"bool":{"must":[{"term":{"message":"test value"}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
 		},
 		"mixed or / and": {
 			q: "a:1 OR (b:2 AND c:4)",
@@ -383,67 +410,77 @@ func TestParser(t *testing.T) {
 					},
 				},
 			},
+			es: `{"bool":{"should":[{"term":{"a":1}},{"bool":{"must":[{"term":{"b":2}},{"term":{"c":4}}]}}]}}`,
 		},
-		// "start without tCOLON": {
-		// 	q: "a > 100",
-		// 	e: &querystring_parser.NumberRangeExpr{
-		// 		Field: "a",
-		// 		Start: pointer("100"),
-		// 	},
-		// },
-		// "end without tCOLON": {
-		// 	q: "a < 100",
-		// 	e: &querystring_parser.NumberRangeExpr{
-		// 		Field: "a",
-		// 		End:   pointer("100"),
-		// 	},
-		// },
-		// "start and eq without tCOLON": {
-		// 	q: "a >= 100",
-		// 	e: &querystring_parser.NumberRangeExpr{
-		// 		Field:        "a",
-		// 		Start:        pointer("100"),
-		// 		IncludeStart: true,
-		// 	},
-		// },
-		// "end and eq without tCOLON": {
-		// 	q: "a <= 100",
-		// 	e: &querystring_parser.NumberRangeExpr{
-		// 		Field:      "a",
-		// 		End:        pointer("100"),
-		// 		IncludeEnd: true,
-		// 	},
-		// },
-		// "start": {
-		// 	q: "a:>100",
-		// 	e: &querystring_parser.NumberRangeExpr{
-		// 		Field: "a",
-		// 		Start: pointer("100"),
-		// 	},
-		// },
+		"start without tCOLON": {
+			q: "a > 100",
+			e: &querystring_parser.NumberRangeExpr{
+				Field: "a",
+				Start: pointer("100"),
+			},
+			es: `{"range":{"a":{"from":100,"include_lower":false,"include_upper":true,"to":null}}}`,
+		},
+		"end without tCOLON": {
+			q: "a < 100",
+			e: &querystring_parser.NumberRangeExpr{
+				Field: "a",
+				End:   pointer("100"),
+			},
+			es: `{"range":{"a":{"from":null,"include_lower":true,"include_upper":false,"to":100}}}`,
+		},
+		"start and eq without tCOLON": {
+			q: "a >= 100",
+			e: &querystring_parser.NumberRangeExpr{
+				Field:        "a",
+				Start:        pointer("100"),
+				IncludeStart: true,
+			},
+			es: `{"range":{"a":{"from":100,"include_lower":true,"include_upper":true,"to":null}}}`,
+		},
+		"end and eq without tCOLON": {
+			q: "a <= 100",
+			e: &querystring_parser.NumberRangeExpr{
+				Field:      "a",
+				End:        pointer("100"),
+				IncludeEnd: true,
+			},
+			es: `{"range":{"a":{"from":null,"include_lower":true,"include_upper":true,"to":100}}}`,
+		},
+		"start": {
+			q: "a>100",
+			e: &querystring_parser.NumberRangeExpr{
+				Field: "a",
+				Start: pointer("100"),
+			},
+			es: `{"range":{"a":{"from":100,"include_lower":false,"include_upper":true,"to":null}}}`,
+		},
 		"one word left star": {
 			q: "*test",
 			e: &querystring_parser.WildcardExpr{
 				Value: "*test",
 			},
+			es: `{"query_string":{"query":"*test"}}`,
 		},
 		"one word right star": {
 			q: "test*",
 			e: &querystring_parser.WildcardExpr{
 				Value: "test*",
 			},
+			es: `{"query_string":{"query":"test*"}}`,
 		},
 		"one word double star": {
 			q: "*test*",
 			e: &querystring_parser.WildcardExpr{
 				Value: "*test*",
 			},
+			es: `{"query_string":{"query":"*test*"}}`,
 		},
 		"one int double star": {
 			q: "*123*",
 			e: &querystring_parser.WildcardExpr{
 				Value: "*123*",
 			},
+			es: `{"query_string":{"query":"*123*"}}`,
 		},
 		"key value with star": {
 			q: "events.attributes.message.detail: *66036*",
@@ -451,6 +488,7 @@ func TestParser(t *testing.T) {
 				Field: "events.attributes.message.detail",
 				Value: "*66036*",
 			},
+			es: `{"wildcard":{"events.attributes.message.detail":{"value":"*66036*"}}}`,
 		},
 		"value like regex": {
 			q: `"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log" and level: "error" and "2_bklog.bkunify_query"`,
@@ -468,6 +506,7 @@ func TestParser(t *testing.T) {
 					Value: "2_bklog.bkunify_query",
 				},
 			},
+			es: `{"bool":{"should":[{"match_phrase":{"":{"query":"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log"}}},{"match_phrase":{"level":{"query":"error"}}},{"match_phrase":{"":{"query":"2_bklog.bkunify_query"}}}]}}`,
 		},
 		"双引号转义符号支持": {
 			q: `log: "(reading \\\"remove\\\")"`,
@@ -475,6 +514,7 @@ func TestParser(t *testing.T) {
 				Field: "log",
 				Value: `(reading \"remove\")`,
 			},
+			es: `{"match_phrase":{"log":{"query":"(reading \\\"remove\\\")"}}}`,
 		},
 		"test": {
 			q: `path: "/proz/logds/ds-5910974792526317*"`,
@@ -482,6 +522,7 @@ func TestParser(t *testing.T) {
 				Field: "path",
 				Value: "/proz/logds/ds-5910974792526317*",
 			},
+			es: `{"match_phrase":{"path":{"query":"/proz/logds/ds-5910974792526317*"}}}`,
 		},
 		"test-1": {
 			q: "\"32221112\" AND path: \"/data/home/user00/log/zonesvr*\"",
@@ -494,6 +535,7 @@ func TestParser(t *testing.T) {
 					Value: "/data/home/user00/log/zonesvr*",
 				},
 			},
+			es: `{"bool":{"must":[{"match_phrase":{"":{"query":"32221112"}}},{"match_phrase":{"path":{"query":"/data/home/user00/log/zonesvr*"}}}]}}`,
 		},
 		//Complex bracket expressions with ConditionMatchExpr are not yet supported
 		"test - Many Brack ": {
@@ -567,6 +609,7 @@ func TestParser(t *testing.T) {
 					},
 				},
 			},
+			es: `{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"":{"query":"TRACE"}}},{"match_phrase":{"":{"query":"111"}}},{"match_phrase":{"":{"query":"DEBUG"}}},{"match_phrase":{"":{"query":"INFO"}}}]}},{"match_phrase":{"":{"query":"SIMON"}}},{"bool":{"must":[{"match_phrase":{"":{"query":"222"}}},{"match_phrase":{"":{"query":"333"}}}]}}]}}`,
 		},
 		"test - Self Bracket ": {
 			q: `loglevel: ("TRACE" OR ("DEBUG") OR  ("INFO ") OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
@@ -605,6 +648,38 @@ func TestParser(t *testing.T) {
 				return
 			}
 			assert.Equal(t, c.e, expr)
+
+			if c.es != "" {
+				visitor := NewQueryVisitor(t.Context())
+				lexer := gen.NewLuceneLexer(antlr.NewInputStream(c.q))
+				stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
+				parser := gen.NewLuceneParser(stream)
+				tree := parser.TopLevelQuery()
+
+				result := tree.Accept(visitor)
+				if result != nil {
+					if node, ok := result.(Node); ok {
+						visitor.root = node
+					}
+				}
+
+				if visitor.Error() != nil {
+					t.Errorf("visitor error: %s", visitor.Error())
+					return
+				}
+
+				esQuery := visitor.ToES()
+				if esQuery != nil {
+					esJSON, err := queryToJSON(esQuery)
+					if err != nil {
+						t.Errorf("failed to convert ES query to JSON: %s", err)
+						return
+					}
+					assert.JSONEq(t, c.es, esJSON)
+				} else if c.es != "null" {
+					t.Errorf("expected ES query but got nil, root: %T", visitor.root)
+				}
+			}
 		})
 	}
 }

@@ -425,9 +425,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.QueryTs) (*PromData, error) {
 	var (
-		res  any
-		err  error
-		resp = NewPromData(queryTs.ResultColumns)
+		res       any
+		err       error
+		resp      = NewPromData(queryTs.ResultColumns)
+		isPartial bool
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-reference-with-prom-engine")
@@ -519,7 +520,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	if queryTs.Instant {
 		res, err = instance.DirectQuery(ctx, queryTs.MetricMerge, startTime)
 	} else {
-		res, _, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, endTime, step)
+		res, isPartial, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, endTime, step)
 	}
 	if err != nil {
 		return nil, err
@@ -555,6 +556,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	span.Set("resp-series-num", seriesNum)
 	span.Set("resp-points-num", pointsNum)
 
+	resp.IsPartial = isPartial
 	err = resp.Fill(tables)
 	if err != nil {
 		return nil, err

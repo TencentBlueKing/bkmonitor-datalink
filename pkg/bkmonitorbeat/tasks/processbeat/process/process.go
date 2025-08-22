@@ -197,12 +197,7 @@ func (pc *ProcCollector) CollectProcStat(metas []define.ProcStat) ([]common.MapS
 		names := pc.cmdbConf.MatchNames(metaMapStr)
 
 		for _, matched := range pc.cmdbConf.MatchRegex(names, metaMapStr["cmdline"].(string)) {
-			perf, err := pc.GetOnePerfStat(meta.Pid)
-			if err != nil {
-				logger.Warnf("failed to fetch process perf meta: %+v id: %s stat: %+v", meta, err)
-				continue
-			}
-
+			perf := pc.GetOnePerfStat(meta.Pid)
 			cloned := pc.AsOneCmdbConfMapStr(pc.MergeMetaDataPerfStat(meta, perf))
 			cloned["name"] = matched.Name
 			cloned["exists"] = true
@@ -263,7 +258,7 @@ func (pc *ProcCollector) Snapshot() ([]define.ProcStat, int64, error) {
 	return pc.snapshot, pc.updatedTs, pc.updatedErr
 }
 
-func (pc *ProcCollector) GetOnePerfStat(pid int32) (define.ProcStat, error) {
+func (pc *ProcCollector) GetOnePerfStat(pid int32) define.ProcStat {
 	return pc.mgr.GetOnePerfStat(pid)
 }
 

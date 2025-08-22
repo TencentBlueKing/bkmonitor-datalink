@@ -242,7 +242,7 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 	params.Condition.ChannelId = d.BkDataId
 	params.Condition.PlatName = "bkmonitor"
 	params.Operation.OperatorName = "admin"
-	data, err := apiservice.Gse.QueryRoute(params)
+	data, err := apiservice.Gse.QueryRoute(d.BkTenantId, params)
 	if err != nil {
 		return errors.Wrapf(err, "data_id [%v] query gse route failed", d.BkDataId)
 	}
@@ -316,7 +316,7 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 		Operation:     bkgse.Operation{OperatorName: "admin"},
 	}
 
-	if _, err = apiservice.Gse.UpdateRoute(updateParam); err != nil {
+	if _, err = apiservice.Gse.UpdateRoute(d.BkTenantId, updateParam); err != nil {
 		return errors.Wrapf(err, "UpdateRoute for data_id [%d] failed", d.BkDataId)
 	}
 	logger.Infof("data_id [%d] success to push route info to gse", d.BkDataId)
@@ -345,7 +345,7 @@ func (d DataSourceSvc) AddBuiltInChannelIdToGse() error {
 		Operation: bkgse.Operation{OperatorName: "admin"},
 	}
 
-	data, err := apiservice.Gse.AddRoute(params)
+	data, err := apiservice.Gse.AddRoute(d.BkTenantId, params)
 	if err != nil {
 		return err
 	}

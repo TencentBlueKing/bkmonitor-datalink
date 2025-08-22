@@ -772,8 +772,8 @@ func (i *Instance) QuerySeriesSet(
 func (i *Instance) DirectQueryRange(
 	ctx context.Context, promql string,
 	start, end time.Time, step time.Duration,
-) (promPromql.Matrix, error) {
-	return nil, nil
+) (promPromql.Matrix, bool, error) {
+	return nil, false, nil
 }
 
 // Query instant 查询

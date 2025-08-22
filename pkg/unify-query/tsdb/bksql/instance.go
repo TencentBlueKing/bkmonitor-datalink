@@ -379,9 +379,9 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	return remote.FromQueryResult(true, qr)
 }
 
-func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, bool, error) {
 	log.Warnf(ctx, "%s not support direct query range", i.InstanceType())
-	return nil, nil
+	return nil, false, nil
 }
 
 func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {

@@ -425,9 +425,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.QueryTs) (*PromData, error) {
 	var (
-		res  any
-		err  error
-		resp = NewPromData(queryTs.ResultColumns)
+		res       any
+		err       error
+		resp      = NewPromData(queryTs.ResultColumns)
+		isPartial bool
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-reference-with-prom-engine")
@@ -519,7 +520,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	if queryTs.Instant {
 		res, err = instance.DirectQuery(ctx, queryTs.MetricMerge, startTime)
 	} else {
-		res, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, endTime, step)
+		res, isPartial, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, endTime, step)
 	}
 	if err != nil {
 		return nil, err
@@ -555,6 +556,7 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 	span.Set("resp-series-num", seriesNum)
 	span.Set("resp-points-num", pointsNum)
 
+	resp.IsPartial = isPartial
 	err = resp.Fill(tables)
 	if err != nil {
 		return nil, err
@@ -686,8 +688,9 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 		instance tsdb.Instance
 		stmt     string
 
-		res  any
-		resp = NewPromData(query.ResultColumns)
+		res       any
+		resp      = NewPromData(query.ResultColumns)
+		isPartial bool
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-ts")
@@ -721,7 +724,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	if query.Instant {
 		res, err = instance.DirectQuery(ctx, stmt, end)
 	} else {
-		res, err = instance.DirectQueryRange(ctx, stmt, start, end, step)
+		res, isPartial, err = instance.DirectQueryRange(ctx, stmt, start, end, step)
 	}
 	if err != nil {
 		return nil, err
@@ -762,6 +765,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	span.Set("resp-series-num", seriesNum)
 	span.Set("resp-points-num", pointsNum)
 
+	resp.IsPartial = isPartial
 	err = resp.Fill(tables)
 	if err != nil {
 		return nil, err
@@ -895,8 +899,9 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 
 func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
 	var (
-		err error
-		res any
+		err       error
+		res       any
+		isPartial bool
 	)
 	ctx, span := trace.NewSpan(ctx, "query-ts-cluster-metrics")
 	defer span.End(&err)
@@ -924,7 +929,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	if query.Instant {
 		res, err = instance.DirectQuery(ctx, "", end)
 	} else {
-		res, err = instance.DirectQueryRange(ctx, "", start, end, step)
+		res, isPartial, err = instance.DirectQueryRange(ctx, "", start, end, step)
 	}
 	if err != nil {
 		return nil, err
@@ -961,6 +966,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	span.Set("resp-points-num", pointsNum)
 
 	resp := NewPromData(query.ResultColumns)
+	resp.IsPartial = isPartial
 	err = resp.Fill(tables)
 	if err != nil {
 		return nil, err

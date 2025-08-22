@@ -91,6 +91,7 @@ func TestQueryTsWithDoris(t *testing.T) {
 				SpaceUid:    spaceUid,
 			},
 			result: `{
+  "is_partial":false,
   "series" : [ {
     "name" : "_result0",
     "metric_name" : "",
@@ -139,6 +140,7 @@ func TestQueryTsWithDoris(t *testing.T) {
 				Step:        "30s",
 			},
 			result: `{
+  "is_partial":false,
   "series" : [ {
     "name" : "_result0",
     "metric_name" : "",
@@ -1025,32 +1027,32 @@ func TestQueryTs(t *testing.T) {
 	}{
 		"test query": {
 			query:  `{"query_list":[{"data_source":"","table_id":"system.cpu_summary","field_name":"usage","field_list":null,"function":[{"method":"mean","without":false,"dimensions":[],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"avg_over_time","window":"60s","position":0,"vargs_list":null},"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":[],"group_values":[],"values":[[1677081600000,30],[1677081660000,21],[1677081720000,1],[1677081780000,7],[1677081840000,4],[1677081900000,2],[1677081960000,100],[1677082020000,94],[1677082080000,34]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":[],"group_values":[],"values":[[1677081600000,30],[1677081660000,21],[1677081720000,1],[1677081780000,7],[1677081840000,4],[1677081900000,2],[1677081960000,100],[1677082020000,94],[1677082080000,34]]}],"is_partial":false}`,
 		},
 		"test lost sample in increase": {
 			query:  `{"query_list":[{"data_source":"bkmonitor","table_id":"system.cpu_summary","field_name":"usage","field_list":null,"function":null,"time_aggregation":{"function":"increase","window":"5m0s","position":0,"vargs_list":null},"reference_name":"a","dimensions":null,"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"notice_way","value":["weixin"],"op":"eq"},{"field_name":"status","value":["failed"],"op":"eq"}],"condition_list":["and"]},"keep_columns":null}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["job","notice_way","status"],"group_values":["SLI","weixin","failed"],"values":[[1677081660000,52.499649999999995],[1677081720000,38.49981666666667],[1677081780000,46.66666666666667],[1677081840000,40],[1677081900000,16.25],[1677081960000,137.5],[1677082020000,247.5],[1677082080000,285],[1677082140000,263.6679222222223],[1677082200000,160.00106666666667],[1677082260000,51.00056666666667]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["job","notice_way","status"],"group_values":["SLI","weixin","failed"],"values":[[1677081660000,52.499649999999995],[1677081720000,38.49981666666667],[1677081780000,46.66666666666667],[1677081840000,40],[1677081900000,16.25],[1677081960000,137.5],[1677082020000,247.5],[1677082080000,285],[1677082140000,263.6679222222223],[1677082200000,160.00106666666667],[1677082260000,51.00056666666667]]}],"is_partial":false}`,
 		},
 		"test query support fuzzy __name__ with count": {
 			query:  `{"query_list":[{"data_source":"","table_id":"system.cpu_summary","field_name":".*","is_regexp":true,"field_list":null,"function":[{"method":"sum","without":false,"dimensions":["status"],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"count_over_time","window":"60s","position":0,"vargs_list":null},"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["status"],"group_values":["failed"],"values":[[1677081600000,30],[1677081660000,21],[1677081720000,1],[1677081780000,7],[1677081840000,4],[1677081900000,2],[1677081960000,100],[1677082020000,94],[1677082080000,34]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["status"],"group_values":["failed"],"values":[[1677081600000,30],[1677081660000,21],[1677081720000,1],[1677081780000,7],[1677081840000,4],[1677081900000,2],[1677081960000,100],[1677082020000,94],[1677082080000,34]]}],"is_partial":false}`,
 		},
 		"test query  __name__ with raw 多指标单表": {
 			query:  `{"query_list":[{"data_source":"","table_id":"system.cpu_summary","field_name":".*","is_regexp":true,"field_list":null,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"10m"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","status"],"group_values":["bkmonitor:system:cpu_summary:free","failed"],"values":[[1677082200000,68]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","status"],"group_values":["bkmonitor:system:cpu_summary:usage","failed"],"values":[[1677082200000,34]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","status"],"group_values":["bkmonitor:system:cpu_summary:free","failed"],"values":[[1677082200000,68]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","status"],"group_values":["bkmonitor:system:cpu_summary:usage","failed"],"values":[[1677082200000,34]]}],"is_partial":false}`,
 		},
 
 		"test query  __name__ with raw 多指标单表 exporter": {
 			query:  `{"query_list":[{"data_source":"","table_id":"bk.exporter","field_name":".*","is_regexp":true,"field_list":null,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"10m"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:exporter:free","buzzy"],"values":[[1677082200000,70]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:exporter:usage","buzzy"],"values":[[1677082200000,68]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:exporter:free","buzzy"],"values":[[1677082200000,70]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:exporter:usage","buzzy"],"values":[[1677082200000,68]]}],"is_partial":false}`,
 		},
 		"test query  __name__ with raw 多指标单表 standard_v2_time_series": {
 			query:  `{"query_list":[{"data_source":"","table_id":"bk.standard_v2_time_series","field_name":".*","is_regexp":true,"field_list":null,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"10m"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:standard_v2_time_series:usage","buzzy"],"values":[[1677082200000,68]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:standard_v2_time_series:usage","buzzy"],"values":[[1677082200000,68]]}],"is_partial":false}`,
 		},
 		"test regx with __name__ 单指标单表": {
 			query:  `{"query_list":[{"data_source":"","field_name":"merltrics_rest_request_status_.+_count","is_regexp":true,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","container","namespace"],"group_values":["merltrics_rest_request_status_200_count","message-history","lolstage"],"values":[[1677082080000,68],[1677082140000,68],[1677082200000,68],[1677082260000,68],[1677082320000,68],[1677082380000,68]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","container","namespace"],"group_values":["merltrics_rest_request_status_200_count","message-history","lolstage"],"values":[[1677082080000,68],[1677082140000,68],[1677082200000,68],[1677082260000,68],[1677082320000,68],[1677082380000,68]]}],"is_partial":false}`,
 		},
 	}
 
@@ -2088,7 +2090,7 @@ func TestQueryExemplar(t *testing.T) {
 	out, err := json.Marshal(res)
 	assert.Nil(t, err)
 	actual := string(out)
-	assert.Equal(t, `{"series":[{"name":"_result0","metric_name":"usage","columns":["_value","_time","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"types":["float","float","string","string","float","float"],"group_keys":[],"group_values":[],"values":[[30,1677081600000000000,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],[21,1677081660000000000,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],[1,1677081720000000000,"771073eb573336a6d3365022a512d6d8","fca46f1c065452e8",1,1682150008969]]}]}`, actual)
+	assert.Equal(t, `{"series":[{"name":"_result0","metric_name":"usage","columns":["_value","_time","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"types":["float","float","string","string","float","float"],"group_keys":[],"group_values":[],"values":[[30,1677081600000000000,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],[21,1677081660000000000,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],[1,1677081720000000000,"771073eb573336a6d3365022a512d6d8","fca46f1c065452e8",1,1682150008969]]}],"is_partial":false}`, actual)
 }
 
 func TestVmQueryParams(t *testing.T) {
@@ -3728,7 +3730,7 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 					"instant": false
                 }
 			`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster"],"group_values":["default"],"values":[[1700903220000,1498687],[1700903340000,1499039.5]]}]}`,
+			result: `{"is_partial":false,"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster"],"group_values":["default"],"values":[[1700903220000,1498687],[1700903340000,1499039.5]]}]}`,
 		},
 		"instanceCase": {
 			query: `
@@ -3772,7 +3774,7 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 					"instant": true
                 }
 			`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","43","inmem","/var/lib/influxdb/data/_internal/monitor/43","monitor","/var/lib/influxdb/wal/_internal/monitor/43"],"values":[[1700903220000,1498687]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","44","inmem","/var/lib/influxdb/data/_internal/monitor/44","monitor","/var/lib/influxdb/wal/_internal/monitor/44"],"values":[[1700903340000,1499039.5]]}]}`,
+			result: `{"is_partial":false,"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","43","inmem","/var/lib/influxdb/data/_internal/monitor/43","monitor","/var/lib/influxdb/wal/_internal/monitor/43"],"values":[[1700903220000,1498687]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","44","inmem","/var/lib/influxdb/data/_internal/monitor/44","monitor","/var/lib/influxdb/wal/_internal/monitor/44"],"values":[[1700903340000,1499039.5]]}]}`,
 		},
 	}
 	for name, c := range testCases {

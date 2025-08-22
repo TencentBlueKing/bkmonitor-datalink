@@ -378,7 +378,7 @@ func initVariables() {
 	// BkMonitorApiGatewayBaseUrl 监控的apiGateway
 	BkMonitorApiGatewayBaseUrl = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayBaseUrl", "")
 	// BkMonitorApiGatewayStage 监控的apiGateway的环境
-	BkMonitorApiGatewayStage = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayStage", "stag")
+	BkMonitorApiGatewayStage = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayStage", "prod")
 
 	GoroutineLimit = GetValue("taskConfig.common.goroutineLimit", map[string]string{}, viper.GetStringMapString)
 

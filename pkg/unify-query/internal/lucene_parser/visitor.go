@@ -15,13 +15,14 @@ import (
 	"strconv"
 	"strings"
 
-	antlr "github.com/antlr4-go/antlr/v4"
+	"github.com/antlr4-go/antlr/v4"
 	elastic "github.com/olivere/elastic/v7"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring_parser"
 )
 
+// Global constants for special characters used in Lucene syntax.
 const (
 	WildcardAsterisk    = "*"
 	WildcardQuestion    = "?"
@@ -30,19 +31,56 @@ const (
 	DateSeparatorColon  = ":"
 )
 
+// Encode defines a function type for optional field name encoding.
 type Encode func(string) (string, bool)
 
+const (
+	TypeKeyword = "keyword"
+	TypeText    = "text"
+	TypeInteger = "integer"
+	TypeLong    = "long"
+	TypeDate    = "date"
+)
+
+type SchemaConfig struct {
+	Mapping map[string]string `json:"mapping"` // Field name(flat) to Elasticsearch type mapping. E.g., {"status": "keyword", "message": "text","field1.field2": "keyword"}
+}
+
+// NewSchemaConfig creates a new, empty schema configuration.
+func NewSchemaConfig() *SchemaConfig {
+	return &SchemaConfig{
+		Mapping: make(map[string]string),
+	}
+}
+
+// WithMappings allows chaining to set the schema mappings.
+func (sc *SchemaConfig) WithMappings(mappings map[string]string) *SchemaConfig {
+	sc.Mapping = mappings
+	return sc
+}
+
+// GetFieldType retrieves the Elasticsearch type for a given field.
+func (sc *SchemaConfig) GetFieldType(field string) (string, bool) {
+	fieldType, exists := sc.Mapping[field]
+	return fieldType, exists
+}
+
+// Node is the interface for all nodes in our Abstract Syntax Tree (AST).
+// Each node must be able to convert itself to a SQL expression and an Elasticsearch query.
 type Node interface {
 	antlr.ParseTreeVisitor
 	ToSQL() querystring_parser.Expr
 	ToES() elastic.Query
 	Error() error
 	WithEncode(Encode)
+	WithSchema(*SchemaConfig)
 }
 
+// baseNode provides a default implementation for the Node interface.
 type baseNode struct {
 	antlr.BaseParseTreeVisitor
 	Encode Encode
+	Schema *SchemaConfig
 }
 
 func (n *baseNode) ToSQLString() string {
@@ -65,24 +103,40 @@ func (n *baseNode) WithEncode(encode Encode) {
 	n.Encode = encode
 }
 
+func (n *baseNode) WithSchema(schema *SchemaConfig) {
+	n.Schema = schema
+}
+
+// Statement is the main visitor struct that walks the ANTLR parse tree
+// and builds our custom AST. It holds the final root of the AST.
 type Statement struct {
 	*gen.BaseLuceneParserVisitor
 
 	root    Node
 	errNode []string
 	Encode  Encode
+	Schema  *SchemaConfig
 }
 
-func NewQueryVisitor(ctx context.Context) *Statement {
+// NewStatementVisitor creates a new visitor instance.
+func NewStatementVisitor(ctx context.Context) *Statement {
 	return &Statement{
 		BaseLuceneParserVisitor: &gen.BaseLuceneParserVisitor{},
+		Schema:                  NewSchemaConfig(),
 	}
 }
 
+// WithEncode sets the field name encoder function.
 func (s *Statement) WithEncode(encode Encode) {
 	s.Encode = encode
 }
 
+// WithSchema sets the schema configuration.
+func (s *Statement) WithSchema(schema *SchemaConfig) {
+	s.Schema = schema
+}
+
+// ToSQL converts the entire AST to a SQL expression tree.
 func (s *Statement) ToSQL() querystring_parser.Expr {
 	if s.root != nil {
 		return s.root.ToSQL()
@@ -90,6 +144,7 @@ func (s *Statement) ToSQL() querystring_parser.Expr {
 	return nil
 }
 
+// ToES converts the entire AST to an Elasticsearch query object.
 func (s *Statement) ToES() elastic.Query {
 	if s.root != nil {
 		return s.root.ToES()
@@ -97,6 +152,7 @@ func (s *Statement) ToES() elastic.Query {
 	return nil
 }
 
+// Error returns any collected parsing errors.
 func (s *Statement) Error() error {
 	if len(s.errNode) > 0 {
 		return fmt.Errorf("parse errors: %s", strings.Join(s.errNode, "; "))
@@ -104,6 +160,8 @@ func (s *Statement) Error() error {
 	return nil
 }
 
+// shouldFilterLowercaseKeyword checks for and filters out standalone keywords
+// like 'and', 'or', 'not' that are not part of a larger expression.
 func (s *Statement) shouldFilterLowercaseKeyword(node Node) bool {
 	if fieldNode, ok := node.(*FieldNode); ok && fieldNode.field == "" {
 		if valueNode, ok := fieldNode.value.(*ValueNode); ok {
@@ -114,13 +172,77 @@ func (s *Statement) shouldFilterLowercaseKeyword(node Node) bool {
 	return false
 }
 
+// hasRequiredModifier checks if a node is marked with a '+' (must).
+func (s *Statement) hasRequiredModifier(node Node) bool {
+	_, isRequiredNode := node.(*RequiredNode)
+	return isRequiredNode
+}
+
+// hasNotModifier checks if a node is marked with a '-' or 'NOT' (must not).
+func (s *Statement) hasNotModifier(node Node) bool {
+	_, isNotNode := node.(*NotNode)
+	return isNotNode
+}
+
+// unwrapModifier returns the child node from within a RequiredNode.
+func (s *Statement) unwrapModifier(node Node) Node {
+	if requiredNode, ok := node.(*RequiredNode); ok {
+		return requiredNode.child
+	}
+	return node
+}
+
+// unwrapNotModifier returns the child node from within a NotNode.
+func (s *Statement) unwrapNotModifier(node Node) Node {
+	if notNode, ok := node.(*NotNode); ok {
+		return notNode.child
+	}
+	return node
+}
+
+// buildMixedQuery constructs the appropriate boolean node (AndNode, OrNode, or BoolNode)
+// based on the combination of must, must_not, and should clauses found.
+func (s *Statement) buildMixedQuery(mustClauses, mustNotClauses, shouldClauses []Node) Node {
+	// Simplify if only one type of clause exists.
+	if len(mustClauses) > 0 && len(mustNotClauses) == 0 && len(shouldClauses) == 0 {
+		if len(mustClauses) == 1 {
+			return mustClauses[0]
+		}
+		return &AndNode{children: mustClauses}
+	}
+	if len(mustClauses) == 0 && len(mustNotClauses) > 0 && len(shouldClauses) == 0 {
+		var nottedChildren []Node
+		for _, child := range mustNotClauses {
+			nottedChildren = append(nottedChildren, &NotNode{child: child})
+		}
+		if len(nottedChildren) == 1 {
+			return nottedChildren[0]
+		}
+		return &AndNode{children: nottedChildren}
+	}
+	if len(mustClauses) == 0 && len(mustNotClauses) == 0 && len(shouldClauses) > 0 {
+		if len(shouldClauses) == 1 {
+			return shouldClauses[0]
+		}
+		return &OrNode{children: shouldClauses}
+	}
+
+	// For mixed types, use the comprehensive BoolNode.
+	return &BoolNode{
+		MustClauses:    mustClauses,
+		MustNotClauses: mustNotClauses,
+		ShouldClauses:  shouldClauses,
+	}
+}
+
+// VisitErrorNode is called by ANTLR when a syntax error is encountered.
 func (s *Statement) VisitErrorNode(ctx antlr.ErrorNode) interface{} {
 	s.errNode = append(s.errNode, ctx.GetText())
 	return nil
 }
 
-// VisitTopLevelQuery 处理顶层查询规则
-// 语法规则: topLevelQuery : query EOF
+// VisitTopLevelQuery is the entry point for visiting the parse tree.
+// It simply traverses down to the main query rule.
 func (s *Statement) VisitTopLevelQuery(ctx *gen.TopLevelQueryContext) interface{} {
 	topQuery := ctx.Query()
 	if topQuery != nil {
@@ -129,33 +251,40 @@ func (s *Statement) VisitTopLevelQuery(ctx *gen.TopLevelQueryContext) interface{
 	return s.root
 }
 
-// VisitQuery 处理查询规则
-// 语法规则: query : disjQuery+
+// VisitQuery handles the top-level logic of a query, which can consist of
+// multiple sub-queries with different modifiers (+, -). This is where the
+// logic for must, must_not, and should is primarily handled.
 func (s *Statement) VisitQuery(ctx *gen.QueryContext) interface{} {
 	disjQueries := ctx.AllDisjQuery()
 	if len(disjQueries) == 1 {
 		return disjQueries[0].Accept(s).(Node)
 	}
 
-	orNode := &OrNode{}
+	// Separate clauses based on their modifiers.
+	var mustClauses []Node
+	var mustNotClauses []Node
+	var shouldClauses []Node
+
 	for _, dq := range disjQueries {
 		child := dq.Accept(s).(Node)
 		if s.shouldFilterLowercaseKeyword(child) {
 			continue
 		}
 
-		orNode.children = append(orNode.children, child)
+		if s.hasRequiredModifier(child) {
+			mustClauses = append(mustClauses, s.unwrapModifier(child))
+		} else if s.hasNotModifier(child) {
+			mustNotClauses = append(mustNotClauses, s.unwrapNotModifier(child))
+		} else {
+			shouldClauses = append(shouldClauses, child)
+		}
 	}
 
-	if len(orNode.children) == 1 {
-		return orNode.children[0]
-	}
-
-	return orNode
+	return s.buildMixedQuery(mustClauses, mustNotClauses, shouldClauses)
 }
 
-// VisitDisjQuery 处理析取查询规则
-// 语法规则: disjQuery : conjQuery (OR conjQuery)*
+// VisitDisjQuery handles OR logic. A DisjQuery is one or more ConjQuery nodes
+// joined by the OR operator.
 func (s *Statement) VisitDisjQuery(ctx *gen.DisjQueryContext) interface{} {
 	conjQueries := ctx.AllConjQuery()
 	if len(conjQueries) == 1 {
@@ -170,8 +299,8 @@ func (s *Statement) VisitDisjQuery(ctx *gen.DisjQueryContext) interface{} {
 	return orNode
 }
 
-// VisitConjQuery 处理合取查询规则
-// 语法规则: conjQuery : modClause (AND modClause)*
+// VisitConjQuery handles AND logic. A ConjQuery is one or more ModClause nodes
+// joined by the AND operator. This reflects the higher precedence of AND over OR.
 func (s *Statement) VisitConjQuery(ctx *gen.ConjQueryContext) interface{} {
 	modClauses := ctx.AllModClause()
 	if len(modClauses) == 1 {
@@ -186,8 +315,8 @@ func (s *Statement) VisitConjQuery(ctx *gen.ConjQueryContext) interface{} {
 	return andNode
 }
 
-// VisitModClause 处理修饰子句规则
-// 语法规则: modClause : modifier? clause
+// VisitModClause handles modifiers (+, -, NOT) attached to a clause.
+// It wraps the clause node in a special node (RequiredNode, NotNode) to preserve the modifier's intent.
 func (s *Statement) VisitModClause(ctx *gen.ModClauseContext) interface{} {
 	clause := ctx.Clause().Accept(s).(Node)
 
@@ -195,9 +324,8 @@ func (s *Statement) VisitModClause(ctx *gen.ModClauseContext) interface{} {
 		modText := modifier.GetText()
 		switch modText {
 		case "+":
-			// Must include - no change needed for SQL/ES
+			return &RequiredNode{child: clause}
 		case "-":
-			// Must exclude - wrap in NOT
 			return &NotNode{child: clause}
 		case "NOT":
 			return &NotNode{child: clause}
@@ -207,23 +335,41 @@ func (s *Statement) VisitModClause(ctx *gen.ModClauseContext) interface{} {
 	return clause
 }
 
-// VisitClause 处理子句规则
-// 语法规则: clause : fieldRangeExpr | (fieldName (OP_COLON | OP_EQUAL))? (term | groupingExpr)
+// VisitClause handles the fundamental building block of a query: a field-value pair,
+// a range expression, or a grouped expression.
 func (s *Statement) VisitClause(ctx *gen.ClauseContext) interface{} {
 	if ctx.FieldRangeExpr() != nil {
 		return ctx.FieldRangeExpr().Accept(s).(Node)
 	}
 
 	fieldName := s.extractFieldName(ctx)
-	value := s.extractFieldValue(ctx)
 
-	return &FieldNode{
+	// Special handling for complex grouped expressions like `field:(a AND (b OR c))`.
+	// This requires transforming the boolean logic inside the group.
+	groupingExpr := ctx.GroupingExpr()
+	if fieldName != "" && groupingExpr != nil {
+		childNode := groupingExpr.Accept(s).(Node)
+		// convertNodeToConditionExpr will expand the boolean logic.
+		if conditionExpr := s.convertNodeToConditionExpr(childNode); conditionExpr != nil {
+			conditionFieldNode := &ConditionFieldNode{
+				field:      fieldName,
+				conditions: conditionExpr,
+			}
+			conditionFieldNode.WithSchema(s.Schema)
+			return conditionFieldNode
+		}
+	}
+
+	fieldNode := &FieldNode{
 		field:  fieldName,
-		value:  value,
+		value:  s.extractFieldValue(ctx),
 		encode: s.Encode,
 	}
+	fieldNode.WithSchema(s.Schema)
+	return fieldNode
 }
 
+// extractFieldName is a helper to get the field name text from a clause.
 func (s *Statement) extractFieldName(ctx *gen.ClauseContext) string {
 	if ctx.FieldName() == nil {
 		return ""
@@ -238,6 +384,7 @@ func (s *Statement) extractFieldName(ctx *gen.ClauseContext) string {
 	return fieldName
 }
 
+// extractFieldValue is a helper to get the value node (term, group, etc.) from a clause.
 func (s *Statement) extractFieldValue(ctx *gen.ClauseContext) Node {
 	if term := ctx.Term(); term != nil {
 		return s.processTermNode(term)
@@ -250,6 +397,7 @@ func (s *Statement) extractFieldValue(ctx *gen.ClauseContext) Node {
 	return &ValueNode{value: ""}
 }
 
+// processTermNode is a helper to visit a term node.
 func (s *Statement) processTermNode(term antlr.ParseTree) Node {
 	if result := term.Accept(s); result != nil {
 		if node, ok := result.(Node); ok {
@@ -259,6 +407,7 @@ func (s *Statement) processTermNode(term antlr.ParseTree) Node {
 	return &ValueNode{value: ""}
 }
 
+// processGroupingNode is a helper to visit a grouping node.
 func (s *Statement) processGroupingNode(groupingExpr antlr.ParseTree) Node {
 	if result := groupingExpr.Accept(s); result != nil {
 		if node, ok := result.(Node); ok {
@@ -268,6 +417,7 @@ func (s *Statement) processGroupingNode(groupingExpr antlr.ParseTree) Node {
 	return &GroupNode{child: &ValueNode{value: ""}}
 }
 
+// VisitFieldRangeExpr handles simple range expressions like `field > 10`.
 func (s *Statement) VisitFieldRangeExpr(ctx *gen.FieldRangeExprContext) interface{} {
 	fieldName := ctx.FieldName().GetText()
 	if s.Encode != nil {
@@ -279,14 +429,18 @@ func (s *Statement) VisitFieldRangeExpr(ctx *gen.FieldRangeExprContext) interfac
 	op := ctx.GetChild(1).(*antlr.TerminalNodeImpl).GetText()
 	value := ctx.GetChild(2).(*antlr.TerminalNodeImpl).GetText()
 
-	return &RangeNode{
+	node := &RangeNode{
 		field:  fieldName,
 		op:     op,
 		value:  value,
 		encode: s.Encode,
 	}
+	node.WithSchema(s.Schema)
+	return node
 }
 
+// VisitTerm handles a single term, which could be a simple word, a quoted phrase,
+// a regex, a number, or a bracketed range expression.
 func (s *Statement) VisitTerm(ctx *gen.TermContext) interface{} {
 	if quoted := ctx.QuotedTerm(); quoted != nil {
 		return quoted.Accept(s).(Node)
@@ -307,20 +461,38 @@ func (s *Statement) VisitTerm(ctx *gen.TermContext) interface{} {
 	return &ValueNode{value: ""}
 }
 
-// VisitTermRangeExpr 处理术语范围表达式规则
-// 语法规则: termRangeExpr : (RANGEIN_START | RANGEEX_START) left=(RANGE_GOOP | RANGE_QUOTED | RANGE_TO) RANGE_TO right=(RANGE_GOOP | RANGE_QUOTED | RANGE_TO) (RANGEIN_END | RANGEEX_END)
+// VisitTermRangeExpr handles bracketed range expressions like `[10 TO 20}`.
 func (s *Statement) VisitTermRangeExpr(ctx *gen.TermRangeExprContext) interface{} {
 	children := ctx.GetChildren()
 	if len(children) < 5 {
 		return &ValueNode{value: ""}
 	}
 
-	return &RangeNode{
-		value:  s.buildRangeText(s.parseRangeParams(children)),
-		encode: s.Encode,
+	params := s.parseRangeParams(children)
+
+	node := &RangeNode{
+		startInclusive: params.startInclusive,
+		endInclusive:   params.endInclusive,
+		encode:         s.Encode,
 	}
+
+	// Only set start/end if they are not unbounded ('*').
+	if params.start != WildcardAsterisk {
+		node.start = &params.start
+	}
+	if params.end != WildcardAsterisk {
+		node.end = &params.end
+	} else {
+		// Even if end is *, we still need to track the original inclusivity
+		// for proper ES query generation
+		node.hasUnboundedEnd = true
+	}
+
+	node.WithSchema(s.Schema)
+	return node
 }
 
+// rangeParams is a temporary struct to hold parsed range information.
 type rangeParams struct {
 	start          string
 	end            string
@@ -328,11 +500,14 @@ type rangeParams struct {
 	endInclusive   bool
 }
 
+// parseRangeParams extracts the start, end, and inclusivity from a range expression's tokens.
 func (s *Statement) parseRangeParams(children []antlr.Tree) *rangeParams {
 	params := &rangeParams{}
 	for i, child := range children {
 		if termNode, ok := child.(*antlr.TerminalNodeImpl); ok {
 			text := termNode.GetSymbol().GetText()
+			// Debug output - remove after debugging
+			fmt.Printf("Child %d: '%s'\n", i, text)
 			s.processRangeChild(params, i, len(children), text)
 		}
 	}
@@ -342,9 +517,11 @@ func (s *Statement) parseRangeParams(children []antlr.Tree) *rangeParams {
 	return params
 }
 
+// processRangeChild sets the range parameters based on the token's text and position.
 func (s *Statement) processRangeChild(params *rangeParams, index, totalChildren int, text string) {
 	switch index {
 	case 0:
+		// Check if the opening bracket is '[' for inclusive.
 		params.startInclusive = text == "["
 	case 1:
 		params.start = text
@@ -352,26 +529,30 @@ func (s *Statement) processRangeChild(params *rangeParams, index, totalChildren 
 		params.end = text
 	}
 
+	// Check the last child to determine end inclusivity.
 	if index == totalChildren-1 {
+		// ']' means inclusive, '}' means exclusive
 		params.endInclusive = text == "]"
+		fmt.Printf("Setting endInclusive: text='%s', endInclusive=%t\n", text, params.endInclusive)
 	}
 }
 
+// cleanAndUnescapeValue removes surrounding quotes and unescapes characters.
 func (s *Statement) cleanAndUnescapeValue(value string) string {
 	if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
 		value = value[1 : len(value)-1]
 	}
-
 	return unescapeString(value)
 }
 
+// buildRangeText is a helper function (currently unused) to reconstruct a range string.
 func (s *Statement) buildRangeText(params *rangeParams) string {
 	startBracket := s.getBracket(params.startInclusive, true)
 	endBracket := s.getBracket(params.endInclusive, false)
-
 	return fmt.Sprintf("%s%s TO %s%s", startBracket, params.start, params.end, endBracket)
 }
 
+// getBracket returns the correct bracket character based on inclusivity.
 func (s *Statement) getBracket(inclusive, isStart bool) string {
 	if inclusive {
 		if isStart {
@@ -385,8 +566,7 @@ func (s *Statement) getBracket(inclusive, isStart bool) string {
 	return "}"
 }
 
-// VisitGroupingExpr 处理分组表达式规则
-// 语法规则: groupingExpr : LPAREN query RPAREN (CARAT NUMBER)?
+// VisitGroupingExpr handles expressions inside parentheses.
 func (s *Statement) VisitGroupingExpr(ctx *gen.GroupingExprContext) interface{} {
 	query := ctx.Query()
 	if query != nil {
@@ -399,11 +579,92 @@ func (s *Statement) VisitGroupingExpr(ctx *gen.GroupingExprContext) interface{} 
 	return &GroupNode{child: &ValueNode{value: ""}}
 }
 
-// VisitQuotedTerm 处理引用项规则
-// 语法规则: quotedTerm : QUOTED (CARAT NUMBER)?
+// convertNodeToConditionExpr is a key function that expands boolean logic
+// for use in ConditionFieldNode.
+func (s *Statement) convertNodeToConditionExpr(node Node) *querystring_parser.ConditionExpr {
+	sqlExpr := node.ToSQL()
+	if sqlExpr == nil {
+		return nil
+	}
+	return s.buildConditionExprFromSQL(sqlExpr)
+}
+
+// buildConditionExprFromSQL recursively builds the condition expression from a SQL expression tree.
+func (s *Statement) buildConditionExprFromSQL(expr querystring_parser.Expr) *querystring_parser.ConditionExpr {
+	switch e := expr.(type) {
+	case *querystring_parser.MatchExpr:
+		return nil // Simple matches are handled by FieldNode.
+	case *querystring_parser.OrExpr:
+		return s.buildOrCondition(e)
+	case *querystring_parser.AndExpr:
+		return s.buildAndCondition(e)
+	default:
+		return nil
+	}
+}
+
+// buildOrCondition handles OR logic in the condition expression tree.
+func (s *Statement) buildOrCondition(orExpr *querystring_parser.OrExpr) *querystring_parser.ConditionExpr {
+	condition := &querystring_parser.ConditionExpr{Values: [][]string{}}
+	condition.Values = s.decomposeOrExpression(orExpr)
+	if len(condition.Values) == 0 {
+		return nil
+	}
+	return condition
+}
+
+// buildAndCondition handles AND logic by triggering the Cartesian product calculation.
+func (s *Statement) buildAndCondition(andExpr *querystring_parser.AndExpr) *querystring_parser.ConditionExpr {
+	conditionGroups := s.calculateCartesianProduct(andExpr)
+	if len(conditionGroups) == 0 {
+		return nil
+	}
+	return &querystring_parser.ConditionExpr{Values: conditionGroups}
+}
+
+// decomposeOrExpression breaks down a complex expression into a list of OR-groups.
+func (s *Statement) decomposeOrExpression(expr querystring_parser.Expr) [][]string {
+	switch e := expr.(type) {
+	case *querystring_parser.OrExpr:
+		// For OR, simply concatenate the results from both sides.
+		return append(s.decomposeOrExpression(e.Left), s.decomposeOrExpression(e.Right)...)
+	case *querystring_parser.AndExpr:
+		// For AND, we must calculate the Cartesian product.
+		return s.calculateCartesianProduct(e)
+	case *querystring_parser.MatchExpr:
+		// The base case: a single value is a group of one.
+		return [][]string{{e.Value}}
+	default:
+		return [][]string{}
+	}
+}
+
+// calculateCartesianProduct applies the distributive law to expand boolean expressions.
+// For example, (a OR b) AND (c OR d) becomes (a AND c) OR (a AND d) OR (b AND c) OR (b AND d).
+func (s *Statement) calculateCartesianProduct(andExpr *querystring_parser.AndExpr) [][]string {
+	leftOptions := s.decomposeOrExpression(andExpr.Left)
+	rightOptions := s.decomposeOrExpression(andExpr.Right)
+	if len(leftOptions) == 0 || len(rightOptions) == 0 {
+		return [][]string{}
+	}
+
+	var result [][]string
+	// Create all possible combinations of left and right groups.
+	for _, leftGroup := range leftOptions {
+		for _, rightGroup := range rightOptions {
+			combined := make([]string, 0, len(leftGroup)+len(rightGroup))
+			combined = append(combined, leftGroup...)
+			combined = append(combined, rightGroup...)
+			result = append(result, combined)
+		}
+	}
+
+	return result
+}
+
+// VisitQuotedTerm handles quoted strings, unescaping their content.
 func (s *Statement) VisitQuotedTerm(ctx *gen.QuotedTermContext) interface{} {
 	if quoted := ctx.QUOTED(); quoted != nil {
-		// Remove quotes and unescape the content
 		text := quoted.GetText()
 		if len(text) >= 2 && text[0] == '"' && text[len(text)-1] == '"' {
 			content := text[1 : len(text)-1]
@@ -414,6 +675,7 @@ func (s *Statement) VisitQuotedTerm(ctx *gen.QuotedTermContext) interface{} {
 	return &ValueNode{value: ""}
 }
 
+// FieldNode represents a field-value pair, e.g., `status:active`.
 type FieldNode struct {
 	baseNode
 	field  string
@@ -421,22 +683,7 @@ type FieldNode struct {
 	encode Encode
 }
 
-func (n *FieldNode) buildBraceRangeSQL(value string) string {
-	content := strings.Trim(value, "{}")
-	if !strings.Contains(content, " TO ") {
-		return ""
-	}
-
-	parts := strings.Split(content, " TO ")
-	if len(parts) != 2 {
-		return ""
-	}
-
-	start := strings.TrimSpace(parts[0])
-	end := strings.TrimSpace(parts[1])
-	return fmt.Sprintf(`"%s" > '%s' AND "%s" < '%s'`, n.field, start, n.field, end)
-}
-
+// ToSQL converts the FieldNode to a SQL expression.
 func (n *FieldNode) ToSQL() querystring_parser.Expr {
 	switch node := n.value.(type) {
 	case *ValueNode:
@@ -450,30 +697,28 @@ func (n *FieldNode) ToSQL() querystring_parser.Expr {
 	}
 }
 
+// handleValueNodeSQL determines the correct SQL expression type for a value (match, regex, wildcard).
 func (n *FieldNode) handleValueNodeSQL(valNode *ValueNode) querystring_parser.Expr {
 	if valNode.isRegex {
 		return n.createRegexExpr(valNode)
 	}
-
 	if n.containsWildcards(valNode.ToSQLString()) {
 		return n.createWildcardExpr(valNode)
 	}
-
 	return n.createMatchExpr(valNode)
 }
 
+// handleRangeNodeSQL delegates SQL conversion to the RangeNode.
 func (n *FieldNode) handleRangeNodeSQL(rangeNode *RangeNode) querystring_parser.Expr {
-	text := rangeNode.value
-
-	if n.isInclusiveRange(text) {
-		return n.parseRangeWithBrackets(text, true)
+	rangeNode.field = n.field
+	expr := rangeNode.ToSQL()
+	if expr == nil {
+		return nil
 	}
-
-	if n.isExclusiveRange(text) {
-		return n.parseRangeWithBrackets(text, false)
+	if fieldSetter, ok := expr.(interface{ SetField(string) }); ok && n.field != "" {
+		fieldSetter.SetField(n.field)
 	}
-
-	return nil
+	return expr
 }
 
 func (n *FieldNode) createRegexExpr(valNode *ValueNode) querystring_parser.Expr {
@@ -505,194 +750,52 @@ func (n *FieldNode) containsWildcards(value string) bool {
 	return strings.Contains(value, WildcardAsterisk) || strings.Contains(value, WildcardQuestion)
 }
 
-func (n *FieldNode) isInclusiveRange(text string) bool {
-	return strings.HasPrefix(text, "[") && strings.Contains(text, " TO ")
-}
-
-func (n *FieldNode) isExclusiveRange(text string) bool {
-	return strings.HasPrefix(text, "{") && strings.Contains(text, " TO ")
-}
-
-func (n *FieldNode) parseRangeWithBrackets(text string, startInclusive bool) querystring_parser.Expr {
-	content := text[1 : len(text)-1]
-	parts := strings.Split(content, " TO ")
-	if len(parts) != 2 {
-		return nil
-	}
-
-	start := strings.TrimSpace(parts[0])
-	end := strings.TrimSpace(parts[1])
-
-	endInclusive := n.determineEndInclusive(text, startInclusive)
-
-	if looksLikeDate(start) && looksLikeDate(end) {
-		expr := querystring_parser.NewTimeRangeExpr(&start, &end, startInclusive, endInclusive)
-		expr.SetField(n.field)
-		return expr
-	}
-
-	expr := querystring_parser.NewNumberRangeExpr(&start, &end, startInclusive, endInclusive)
-	expr.SetField(n.field)
-	return expr
-}
-
-func (n *FieldNode) determineEndInclusive(text string, startInclusive bool) bool {
-	if startInclusive {
-		return strings.HasSuffix(text, "]")
-	}
-	return strings.HasSuffix(text, "}")
-}
-
-func (n *FieldNode) createMatchExprFromValue(node *ValueNode) querystring_parser.Expr {
-	return n.createMatchExpr(node)
-}
-
+// handleGroupNode handles SQL conversion for a grouped expression, propagating the field name down.
 func (n *FieldNode) handleGroupNode(node *GroupNode) querystring_parser.Expr {
 	childExpr := node.ToSQL()
 	if childExpr == nil {
 		return nil
 	}
-
 	if n.field == "" {
 		return childExpr
 	}
-
-	if conditionExpr := n.convertToConditionExpr(childExpr); conditionExpr != nil {
-		return &querystring_parser.ConditionMatchExpr{
-			Field: n.field,
-			Value: conditionExpr,
-		}
-	}
-
 	if matchExpr, ok := childExpr.(*querystring_parser.MatchExpr); ok {
 		newExpr := querystring_parser.NewMatchExpr(matchExpr.Value)
 		newExpr.SetField(n.field)
 		return newExpr
 	}
-
+	if fieldSetter, ok := childExpr.(interface{ SetField(string) }); ok {
+		fieldSetter.SetField(n.field)
+	}
 	return childExpr
 }
 
-func (n *FieldNode) convertToConditionExpr(expr querystring_parser.Expr) *querystring_parser.ConditionExpr {
-	return n.buildConditionExpr(expr)
-}
-
-func (n *FieldNode) buildConditionExpr(expr querystring_parser.Expr) *querystring_parser.ConditionExpr {
-	switch e := expr.(type) {
-	case *querystring_parser.MatchExpr:
-		return nil
-	case *querystring_parser.OrExpr:
-		return n.buildOrCondition(e)
-	case *querystring_parser.AndExpr:
-		return n.buildAndCondition(e)
-	default:
-		return nil
-	}
-}
-
-func (n *FieldNode) buildOrCondition(orExpr *querystring_parser.OrExpr) *querystring_parser.ConditionExpr {
-	condition := &querystring_parser.ConditionExpr{Values: [][]string{}}
-	condition.Values = n.decomposeOrExpression(orExpr)
-	if len(condition.Values) == 0 {
-		return nil
-	}
-	return condition
-}
-
-func (n *FieldNode) buildAndCondition(andExpr *querystring_parser.AndExpr) *querystring_parser.ConditionExpr {
-	conditionGroups := n.calculateCartesianProduct(andExpr)
-	if len(conditionGroups) == 0 {
-		return nil
-	}
-
-	return &querystring_parser.ConditionExpr{Values: conditionGroups}
-}
-
-func (n *FieldNode) decomposeOrExpression(expr querystring_parser.Expr) [][]string {
-	switch e := expr.(type) {
-	case *querystring_parser.OrExpr:
-		leftResults := n.decomposeOrExpression(e.Left)
-		rightResults := n.decomposeOrExpression(e.Right)
-		return append(leftResults, rightResults...)
-
-	case *querystring_parser.AndExpr:
-		return n.calculateCartesianProduct(e)
-
-	case *querystring_parser.MatchExpr:
-		return [][]string{{e.Value}}
-
-	case *GroupNode:
-		if childExpr := e.child.ToSQL(); childExpr != nil {
-			return n.decomposeOrExpression(childExpr)
-		}
-
-	default:
-		return [][]string{}
-	}
-
-	return [][]string{}
-}
-
-func (n *FieldNode) calculateCartesianProduct(andExpr *querystring_parser.AndExpr) [][]string {
-	leftOptions := n.decomposeOrExpression(andExpr.Left)
-	rightOptions := n.decomposeOrExpression(andExpr.Right)
-
-	if len(leftOptions) == 0 || len(rightOptions) == 0 {
-		return [][]string{}
-	}
-
-	var result [][]string
-	for _, leftGroup := range leftOptions {
-		for _, rightGroup := range rightOptions {
-			combined := make([]string, 0, len(leftGroup)+len(rightGroup))
-			combined = append(combined, leftGroup...)
-			combined = append(combined, rightGroup...)
-			result = append(result, combined)
-		}
-	}
-
-	return result
-}
-
-func (n *FieldNode) decomposeAndExpression(expr querystring_parser.Expr) []string {
-	switch e := expr.(type) {
-	case *querystring_parser.AndExpr:
-		left := n.decomposeAndExpression(e.Left)
-		right := n.decomposeAndExpression(e.Right)
-		return append(left, right...)
-	case *querystring_parser.MatchExpr:
-		return []string{e.Value}
-	default:
-		return []string{}
-	}
-}
-
+// looksLikeDate is a simple heuristic to guess if a string might be a date.
 func looksLikeDate(s string) bool {
 	if s == WildcardAsterisk {
 		return false
 	}
 	return strings.Contains(s, DateSeparatorHyphen) ||
-		strings.Contains(s, DateSeparatorT) ||
-		strings.Contains(s, DateSeparatorColon)
+		strings.Contains(s, DateSeparatorT) || strings.Contains(s, DateSeparatorColon)
 }
 
+// ToES converts the FieldNode to an Elasticsearch query.
 func (n *FieldNode) ToES() elastic.Query {
 	if rangeNode, ok := n.value.(*RangeNode); ok {
 		return rangeNode.ToESForField(n.field)
 	}
-
 	if valNode, ok := n.value.(*ValueNode); ok {
 		return n.buildValueQuery(valNode)
 	}
-
 	if groupNode, ok := n.value.(*GroupNode); ok {
 		return n.buildGroupQuery(groupNode)
 	}
-
 	return elastic.NewTermQuery(n.field, "")
 }
 
+// buildValueQuery selects the appropriate ES query type based on the value's properties and the schema.
 func (n *FieldNode) buildValueQuery(valNode *ValueNode) elastic.Query {
+	// If no field is specified, use a general query_string query.
 	if n.field == "" {
 		return n.buildGlobalQuery(valNode)
 	}
@@ -704,17 +807,48 @@ func (n *FieldNode) buildValueQuery(valNode *ValueNode) elastic.Query {
 		return n.buildPhraseQuery(valNode)
 	case n.isWildcardValue(valNode.value):
 		return elastic.NewWildcardQuery(n.field, valNode.value)
-	case valNode.isNumber:
-		return n.buildNumericQuery(valNode)
+	}
+
+	// Use schema information to generate a more precise query.
+	if fieldType, exist := n.Schema.GetFieldType(n.field); exist {
+		return n.buildQueryByFieldType(fieldType, valNode)
+	}
+
+	return n.buildFallbackQuery(valNode)
+}
+
+// buildQueryByFieldType generates an ES query based on the field's mapped type.
+func (n *FieldNode) buildQueryByFieldType(fieldType string, valNode *ValueNode) elastic.Query {
+	switch fieldType {
+	case TypeKeyword:
+		return elastic.NewTermQuery(n.field, valNode.value)
+	case TypeText:
+		return elastic.NewMatchQuery(n.field, valNode.value)
+	case TypeInteger, TypeLong:
+		if num, err := strconv.ParseFloat(valNode.value, 64); err == nil {
+			return elastic.NewTermQuery(n.field, num)
+		}
+		return elastic.NewTermQuery(n.field, valNode.value)
+	case TypeDate:
+		return elastic.NewTermQuery(n.field, valNode.value)
 	default:
 		return elastic.NewTermQuery(n.field, valNode.value)
 	}
 }
 
+// fallback query when no schema mapping is available.
+func (n *FieldNode) buildFallbackQuery(valNode *ValueNode) elastic.Query {
+	if valNode.isNumber {
+		return n.buildNumericQuery(valNode)
+	}
+	return elastic.NewTermQuery(n.field, valNode.value)
+}
+
+// buildGlobalQuery creates a query_string query for field-less searches.
 func (n *FieldNode) buildGlobalQuery(valNode *ValueNode) elastic.Query {
 	if valNode.isQuoted {
 		cleaned := n.cleanQuotes(valNode.value)
-		return elastic.NewMatchPhraseQuery("", cleaned)
+		return elastic.NewQueryStringQuery(fmt.Sprintf("\"%s\"", cleaned))
 	}
 	return elastic.NewQueryStringQuery(valNode.value)
 }
@@ -726,6 +860,9 @@ func (n *FieldNode) buildRegexQuery(valNode *ValueNode) elastic.Query {
 
 func (n *FieldNode) buildPhraseQuery(valNode *ValueNode) elastic.Query {
 	cleaned := n.cleanQuotes(valNode.value)
+	if n.isWildcardValue(cleaned) {
+		return elastic.NewWildcardQuery(n.field, cleaned)
+	}
 	return elastic.NewMatchPhraseQuery(n.field, cleaned)
 }
 
@@ -744,88 +881,188 @@ func (n *FieldNode) cleanQuotes(value string) string {
 	return strings.Trim(value, `"'`)
 }
 
+// buildGroupQuery handles ES conversion for a grouped expression.
 func (n *FieldNode) buildGroupQuery(groupNode *GroupNode) elastic.Query {
-	if groupNode.child != nil {
-		if valNode, ok := groupNode.child.(*ValueNode); ok {
-			return n.buildValueQuery(valNode)
-		}
+	if groupNode.child == nil {
+		return elastic.NewTermQuery(n.field, "")
 	}
-	childQuery := groupNode.ToES()
-	if childQuery == nil {
+	return n.buildChildQueryWithField(groupNode.child)
+}
+
+// buildChildQueryWithField recursively builds the query for a child node,
+// propagating the parent's field name if the child doesn't have its own.
+func (n *FieldNode) buildChildQueryWithField(child Node) elastic.Query {
+	if child == nil {
+		return nil
+	}
+
+	switch node := child.(type) {
+	case *FieldNode:
+		if node.field == "" {
+			childCopy := *node
+			childCopy.field = n.field
+			childCopy.Schema = n.Schema
+			return childCopy.ToES()
+		}
+		return node.ToES()
+	case *ValueNode:
+		return n.buildValueQuery(node)
+	case *GroupNode:
+		return n.buildGroupQuery(node)
+	default:
+		return child.ToES()
+	}
+}
+
+// ConditionFieldNode is a special node for fields with complex boolean conditions,
+// resulting from the expansion done by calculateCartesianProduct.
+type ConditionFieldNode struct {
+	baseNode
+	field      string
+	conditions *querystring_parser.ConditionExpr
+}
+
+// ToSQL converts the ConditionFieldNode to its SQL representation.
+func (n *ConditionFieldNode) ToSQL() querystring_parser.Expr {
+	return &querystring_parser.ConditionMatchExpr{
+		Field: n.field,
+		Value: n.conditions,
+	}
+}
+
+// ToES converts the expanded boolean logic into a nested ES bool query.
+func (n *ConditionFieldNode) ToES() elastic.Query {
+	if n.conditions == nil || len(n.conditions.Values) == 0 {
 		return elastic.NewTermQuery(n.field, "")
 	}
 
-	return childQuery
+	// Optimization: If it's a simple list of ORs for a keyword field, use a `terms` query.
+	canUseTerms := true
+	values := make([]interface{}, 0, len(n.conditions.Values))
+	for _, group := range n.conditions.Values {
+		if len(group) != 1 {
+			canUseTerms = false
+			break
+		}
+		values = append(values, group[0])
+	}
+	if canUseTerms && len(values) > 1 && n.Schema != nil {
+		if fieldType, exists := n.Schema.GetFieldType(n.field); exists && fieldType == TypeKeyword {
+			return elastic.NewTermsQuery(n.field, values...)
+		}
+	}
+
+	// Helper to create the right query type based on schema.
+	createQueryForItem := func(value string) elastic.Query {
+		if n.Schema != nil {
+			if fieldType, exists := n.Schema.GetFieldType(n.field); exists && fieldType == TypeText {
+				return elastic.NewMatchPhraseQuery(n.field, value)
+			}
+		}
+		return elastic.NewTermQuery(n.field, value)
+	}
+
+	// Build the bool query from the expanded groups.
+	shouldQueries := make([]elastic.Query, 0, len(n.conditions.Values))
+	for _, group := range n.conditions.Values {
+		if len(group) == 1 { // A single item is a direct should clause.
+			shouldQueries = append(shouldQueries, createQueryForItem(group[0]))
+		} else if len(group) > 1 { // A group of items represents an inner AND.
+			mustQueries := make([]elastic.Query, len(group))
+			for i, val := range group {
+				mustQueries[i] = createQueryForItem(val)
+			}
+			shouldQueries = append(shouldQueries, elastic.NewBoolQuery().Must(mustQueries...))
+		}
+	}
+
+	if len(shouldQueries) == 1 {
+		return shouldQueries[0]
+	}
+
+	return elastic.NewBoolQuery().Should(shouldQueries...).MinimumShouldMatch(strconv.Itoa(1))
 }
 
+// RangeNode represents any range or comparison query.
 type RangeNode struct {
 	baseNode
-	field  string
-	op     string
-	value  string
-	encode Encode
+	field           string
+	start           *string
+	end             *string
+	startInclusive  bool
+	endInclusive    bool
+	hasUnboundedEnd bool // tracks if original end was '*' but we still need endInclusive
+	op              string
+	value           string
+	encode          Encode
 }
 
+// ToSQL converts the RangeNode to a SQL range expression.
 func (n *RangeNode) ToSQL() querystring_parser.Expr {
 	if n.op != "" {
 		return n.buildComparisonExpr()
 	}
 
-	if strings.Contains(n.value, " TO ") {
-		return n.buildRangeExpr()
+	if n.start != nil || n.end != nil {
+		startPtr, endPtr := n.start, n.end
+
+		if startPtr == nil {
+			wildcard := WildcardAsterisk
+			startPtr = &wildcard
+		}
+		if endPtr == nil {
+			wildcard := WildcardAsterisk
+			endPtr = &wildcard
+		}
+
+		if n.isDateRange() {
+			expr := querystring_parser.NewTimeRangeExpr(
+				startPtr, endPtr,
+				n.startInclusive, n.endInclusive)
+			if n.field != "" {
+				expr.SetField(n.field)
+			}
+			return expr
+		}
+		expr := querystring_parser.NewNumberRangeExpr(
+			startPtr, endPtr,
+			n.startInclusive, n.endInclusive)
+		if n.field != "" {
+			expr.SetField(n.field)
+		}
+		return expr
 	}
 
 	return nil
 }
 
+// isDateRange checks if the range boundaries look like dates.
+func (n *RangeNode) isDateRange() bool {
+	if n.start != nil && looksLikeDate(*n.start) {
+		return true
+	}
+	if n.end != nil && looksLikeDate(*n.end) {
+		return true
+	}
+	return false
+}
+
+// buildComparisonExpr creates a SQL range expression from simple operators.
 func (n *RangeNode) buildComparisonExpr() querystring_parser.Expr {
-	exprMap := map[string]*querystring_parser.NumberRangeExpr{
-		">":  {Field: n.field, Start: &n.value},
-		"<":  {Field: n.field, End: &n.value},
-		">=": {Field: n.field, Start: &n.value, IncludeStart: true},
-		"<=": {Field: n.field, End: &n.value, IncludeEnd: true},
+	switch n.op {
+	case ">":
+		return &querystring_parser.NumberRangeExpr{Field: n.field, Start: &n.value, IncludeStart: false}
+	case "<":
+		return &querystring_parser.NumberRangeExpr{Field: n.field, End: &n.value, IncludeEnd: false}
+	case ">=":
+		return &querystring_parser.NumberRangeExpr{Field: n.field, Start: &n.value, IncludeStart: true}
+	case "<=":
+		return &querystring_parser.NumberRangeExpr{Field: n.field, End: &n.value, IncludeEnd: true}
 	}
-	return exprMap[n.op]
+	return nil
 }
 
-func (n *RangeNode) buildRangeExpr() querystring_parser.Expr {
-	rp := n.parseRangeValue()
-	if n.isDateRange(rp.start, rp.end) {
-		return querystring_parser.NewTimeRangeExpr(
-			&rp.start, &rp.end,
-			rp.startInclusive, rp.endInclusive)
-	}
-
-	return querystring_parser.NewNumberRangeExpr(
-		&rp.start, &rp.end,
-		rp.startInclusive, rp.endInclusive)
-}
-
-func (n *RangeNode) parseRangeValue() *rangeParams {
-	parts := strings.Split(n.extractRangeContent(n.value), " TO ")
-	if len(parts) != 2 {
-		return &rangeParams{}
-	}
-
-	return &rangeParams{
-		start:          strings.TrimSpace(parts[0]),
-		end:            strings.TrimSpace(parts[1]),
-		startInclusive: strings.HasPrefix(n.value, "["),
-		endInclusive:   strings.HasSuffix(n.value, "]"),
-	}
-}
-
-func (n *RangeNode) extractRangeContent(text string) string {
-	if strings.HasPrefix(text, "[") || strings.HasPrefix(text, "{") {
-		return text[1 : len(text)-1]
-	}
-	return text
-}
-
-func (n *RangeNode) isDateRange(start, end string) bool {
-	return looksLikeDate(start) && looksLikeDate(end)
-}
-
+// ToES converts the RangeNode to an Elasticsearch query.
 func (n *RangeNode) ToES() elastic.Query {
 	if n.field != "" {
 		return n.ToESForField(n.field)
@@ -833,172 +1070,89 @@ func (n *RangeNode) ToES() elastic.Query {
 	return nil
 }
 
+// ToESForField builds the ES range query for a specific field.
 func (n *RangeNode) ToESForField(field string) elastic.Query {
-	// 尝试处理范围查询 [start TO end] 或 {start TO end}
-	if rangeQuery := n.tryBuildRangeQuery(field); rangeQuery != nil {
-		return rangeQuery
+	if n.op != "" {
+		return n.buildComparisonQueryES(field)
 	}
 
-	if compQuery := n.tryBuildComparisonQuery(field); compQuery != nil {
-		return compQuery
+	if n.start != nil || n.end != nil {
+		query := elastic.NewRangeQuery(field)
+
+		shouldUseNumeric := false
+		if n.Schema != nil {
+			if fieldType, exists := n.Schema.GetFieldType(field); exists && (fieldType == TypeLong || fieldType == TypeInteger) {
+				shouldUseNumeric = true
+			}
+		}
+
+		if n.start != nil {
+			var startVal interface{} = *n.start
+			if shouldUseNumeric && *n.start != WildcardAsterisk {
+				if num, err := strconv.ParseFloat(*n.start, 64); err == nil {
+					startVal = num
+				}
+			}
+			if n.startInclusive {
+				query.Gte(startVal)
+			} else {
+				query.Gt(startVal)
+			}
+		}
+		if n.end != nil {
+			var endVal interface{} = *n.end
+			if shouldUseNumeric && *n.end != WildcardAsterisk {
+				if num, err := strconv.ParseFloat(*n.end, 64); err == nil {
+					endVal = num
+				}
+			}
+			fmt.Printf("ES Query build: endInclusive=%t, endVal=%v\n", n.endInclusive, endVal)
+			if n.endInclusive {
+				query.Lte(endVal)
+			} else {
+				query.Lt(endVal)
+			}
+		} else if n.hasUnboundedEnd {
+			if n.endInclusive {
+				query.Lte(nil)
+			} else {
+				query.Lt(nil)
+			}
+		}
+		return query
 	}
 
 	return elastic.NewTermQuery(field, n.value)
 }
 
-func (n *RangeNode) tryBuildRangeQuery(field string) elastic.Query {
-	text := n.value
-
-	if n.isRangeFormat(text) {
-		return n.buildBracketRange(field, text)
-	}
-
-	return nil
-}
-
-func (n *RangeNode) buildBracketRange(field, text string) elastic.Query {
-	content := text[1 : len(text)-1]
-	parts := strings.Split(content, " TO ")
-	if len(parts) != 2 {
-		return nil
-	}
-
-	start := strings.TrimSpace(parts[0])
-	end := strings.TrimSpace(parts[1])
-
-	if start == WildcardAsterisk && end == WildcardAsterisk {
-		return elastic.NewMatchAllQuery()
-	}
-
-	if numQuery := n.buildOptimizedNumericRange(field, start, end, strings.HasPrefix(text, "["), strings.HasSuffix(text, "]")); numQuery != nil {
-		return numQuery
-	}
-
-	return n.buildStringRange(field, start, end, strings.HasPrefix(text, "["), strings.HasSuffix(text, "]"))
-}
-
-func (n *RangeNode) buildOptimizedNumericRange(field, start, end string, startInc, endInc bool) elastic.Query {
-	startNum, startIsNum := n.tryParseNumber(start)
-	endNum, endIsNum := n.tryParseNumber(end)
-
-	if !startIsNum && !endIsNum {
-		return nil
-	}
-
+// buildComparisonQueryES builds an ES range query from simple operators.
+func (n *RangeNode) buildComparisonQueryES(field string) elastic.Query {
 	query := elastic.NewRangeQuery(field)
 
-	if start != WildcardAsterisk {
-		if startIsNum {
-			if startInc {
-				query.Gte(startNum)
-			} else {
-				query.Gt(startNum)
-			}
-		} else {
-			if startInc {
-				query.Gte(start)
-			} else {
-				query.Gt(start)
+	var compVal interface{} = n.value
+	if n.Schema != nil {
+		if fieldType, exists := n.Schema.GetFieldType(field); exists && (fieldType == TypeLong || fieldType == TypeInteger) {
+			if num, err := strconv.ParseFloat(n.value, 64); err == nil {
+				compVal = num
 			}
 		}
 	}
 
-	if end != WildcardAsterisk {
-		if endIsNum {
-			if endInc {
-				query.Lte(endNum)
-			} else {
-				query.Lt(endNum)
-			}
-		} else {
-			if endInc {
-				query.Lte(end)
-			} else {
-				query.Lt(end)
-			}
-		}
-	}
-
-	return query
-}
-
-func (n *RangeNode) buildStringRange(field, start, end string, startInc, endInc bool) elastic.Query {
-	query := elastic.NewRangeQuery(field)
-
-	if start != WildcardAsterisk {
-		if startInc {
-			query.Gte(start)
-		} else {
-			query.Gt(start)
-		}
-	}
-
-	if end != WildcardAsterisk {
-		if endInc {
-			query.Lte(end)
-		} else {
-			query.Lt(end)
-		}
-	}
-
-	return query
-}
-
-func (n *RangeNode) tryBuildComparisonQuery(field string) elastic.Query {
-	if n.op == "" {
-		return nil
-	}
-
-	if num, err := strconv.ParseFloat(n.value, 64); err == nil {
-		return n.buildNumericComparison(field, num)
-	}
-
-	return n.buildStringComparison(field)
-}
-
-func (n *RangeNode) buildNumericComparison(field string, num float64) elastic.Query {
-	return n.applyComparisonOperator(elastic.NewRangeQuery(field), num, num)
-}
-
-func (n *RangeNode) buildStringComparison(field string) elastic.Query {
-	return n.applyComparisonOperator(elastic.NewRangeQuery(field), n.value, n.value)
-}
-
-func (n *RangeNode) parseNumericValue(value string) (float64, error) {
-	if value == WildcardAsterisk {
-		return 0, fmt.Errorf("wildcard value")
-	}
-	return strconv.ParseFloat(value, 64)
-}
-
-func (n *RangeNode) tryParseNumber(value string) (float64, bool) {
-	if value == WildcardAsterisk {
-		return 0, false
-	}
-	num, err := strconv.ParseFloat(value, 64)
-	return num, err == nil
-}
-
-func (n *RangeNode) isRangeFormat(text string) bool {
-	return (strings.HasPrefix(text, "[") || strings.HasPrefix(text, "{")) &&
-		strings.Contains(text, " TO ")
-}
-
-func (n *RangeNode) applyComparisonOperator(query *elastic.RangeQuery, gtValue, gteValue interface{}) elastic.Query {
 	switch n.op {
 	case ">":
-		return query.Gt(gtValue)
+		return query.Gt(compVal)
 	case "<":
-		return query.Lt(gtValue)
+		return query.Lt(compVal)
 	case ">=":
-		return query.Gte(gteValue)
+		return query.Gte(compVal)
 	case "<=":
-		return query.Lte(gteValue)
+		return query.Lte(compVal)
 	default:
 		return query
 	}
 }
 
+// ValueNode represents a literal value (string, number, etc.).
 type ValueNode struct {
 	baseNode
 	value    string
@@ -1007,75 +1161,46 @@ type ValueNode struct {
 	isNumber bool
 }
 
+// ToSQL converts the value to its SQL expression representation.
 func (n *ValueNode) ToSQL() querystring_parser.Expr {
 	value := n.ToSQLString()
-
 	if n.isRegex {
 		return querystring_parser.NewRegexpExpr(strings.Trim(n.value, "/"))
 	}
-
 	if strings.Contains(value, WildcardAsterisk) || strings.Contains(value, WildcardQuestion) {
 		return querystring_parser.NewWildcardExpr(value)
 	}
-
 	return querystring_parser.NewMatchExpr(value)
 }
 
+// ToSQLString returns the raw string value, with quotes removed.
 func (n *ValueNode) ToSQLString() string {
 	if n.isQuoted {
 		return strings.Trim(n.value, `"'`)
 	}
-
-	// 检查是否为范围表达式
-	if strings.HasPrefix(n.value, "[") && strings.HasSuffix(n.value, "]") {
-		// 包含范围：[start TO end]
-		content := strings.Trim(n.value, "[]")
-		if strings.Contains(content, " TO ") {
-			parts := strings.Split(content, " TO ")
-			if len(parts) == 2 {
-				start := strings.TrimSpace(parts[0])
-				end := strings.TrimSpace(parts[1])
-				return fmt.Sprintf("%s TO %s", start, end)
-			}
-		}
-	} else if strings.HasPrefix(n.value, "{") && strings.HasSuffix(n.value, "}") {
-		// 排除范围：{start TO end}
-		content := strings.Trim(n.value, "{}")
-		if strings.Contains(content, " TO ") {
-			parts := strings.Split(content, " TO ")
-			if len(parts) == 2 {
-				start := strings.TrimSpace(parts[0])
-				end := strings.TrimSpace(parts[1])
-				return fmt.Sprintf("%s TO %s", start, end)
-			}
-		}
-	}
-
 	return n.value
 }
 
+// ToES converts the ValueNode to an ES query.
 func (n *ValueNode) ToES() elastic.Query {
 	if n.isRegex {
+		// Regex without a field is not directly supported in this context; handled by FieldNode.
 		return nil
 	}
-
 	if n.isQuoted {
 		cleaned := strings.Trim(n.value, `"'`)
 		return elastic.NewQueryStringQuery(fmt.Sprintf("\"%s\"", cleaned))
 	}
-
-	if strings.Contains(n.value, WildcardAsterisk) || strings.Contains(n.value, WildcardQuestion) {
-		return elastic.NewQueryStringQuery(n.value)
-	}
-
 	return elastic.NewQueryStringQuery(n.value)
 }
 
+// AndNode represents a list of clauses joined by AND.
 type AndNode struct {
 	baseNode
 	children []Node
 }
 
+// ToSQL combines child nodes with AND expressions.
 func (n *AndNode) ToSQL() querystring_parser.Expr {
 	if len(n.children) == 0 {
 		return nil
@@ -1086,19 +1211,18 @@ func (n *AndNode) ToSQL() querystring_parser.Expr {
 
 	result := n.children[0].ToSQL()
 	for i := 1; i < len(n.children); i++ {
-		child := n.children[i].ToSQL()
-		if child != nil {
+		if child := n.children[i].ToSQL(); child != nil {
 			result = querystring_parser.NewAndExpr(result, child)
 		}
 	}
 	return result
 }
 
+// ToES combines child nodes into an ES bool query with `must` clauses.
 func (n *AndNode) ToES() elastic.Query {
 	var queries []elastic.Query
 	for _, child := range n.children {
-		childES := child.ToES()
-		if childES != nil {
+		if childES := child.ToES(); childES != nil {
 			queries = append(queries, childES)
 		}
 	}
@@ -1111,11 +1235,13 @@ func (n *AndNode) ToES() elastic.Query {
 	return elastic.NewBoolQuery().Must(queries...)
 }
 
+// OrNode represents a list of clauses joined by OR.
 type OrNode struct {
 	baseNode
 	children []Node
 }
 
+// ToSQL combines child nodes with OR expressions.
 func (n *OrNode) ToSQL() querystring_parser.Expr {
 	if len(n.children) == 0 {
 		return nil
@@ -1126,15 +1252,19 @@ func (n *OrNode) ToSQL() querystring_parser.Expr {
 
 	result := n.children[0].ToSQL()
 	for i := 1; i < len(n.children); i++ {
-		child := n.children[i].ToSQL()
-		if child != nil {
+		if child := n.children[i].ToSQL(); child != nil {
 			result = querystring_parser.NewOrExpr(result, child)
 		}
 	}
 	return result
 }
 
+// ToES combines child nodes into an ES bool query with `should` clauses.
 func (n *OrNode) ToES() elastic.Query {
+	if termsQuery := n.tryOptimizeToTermsQuery(); termsQuery != nil {
+		return termsQuery
+	}
+
 	var queries []elastic.Query
 	for _, child := range n.children {
 		if childES := child.ToES(); childES != nil {
@@ -1152,41 +1282,220 @@ func (n *OrNode) ToES() elastic.Query {
 	}
 }
 
+// tryOptimizeToTermsQuery attempts to convert a simple OR of terms on the same keyword field
+// into a more efficient ES `terms` query.
+func (n *OrNode) tryOptimizeToTermsQuery() elastic.Query {
+	if len(n.children) < 2 {
+		return nil
+	}
+
+	var (
+		fieldName     string
+		values        []interface{}
+		schema        *SchemaConfig
+		allFieldNodes = true
+	)
+
+	for i, child := range n.children {
+		fieldNode, ok := child.(*FieldNode)
+		if !ok {
+			allFieldNodes = false
+			break
+		}
+		valueNode, ok := fieldNode.value.(*ValueNode)
+		if !ok {
+			allFieldNodes = false
+			break
+		}
+		if i == 0 {
+			fieldName = fieldNode.field
+			schema = fieldNode.Schema
+		} else if fieldNode.field != fieldName {
+			allFieldNodes = false
+			break
+		}
+
+		// Optimization only applies to simple, non-wildcard, non-regex terms.
+		if !valueNode.isRegex && !valueNode.isQuoted && !fieldNode.isWildcardValue(valueNode.value) {
+			values = append(values, valueNode.value)
+		} else {
+			allFieldNodes = false
+			break
+		}
+	}
+
+	if allFieldNodes && fieldName != "" && len(values) > 1 {
+		if fieldType, exist := schema.GetFieldType(fieldName); exist {
+			if fieldType == TypeKeyword {
+				return elastic.NewTermsQuery(fieldName, values...)
+			}
+		}
+	}
+
+	return nil
+}
+
+// NotNode represents a negated clause.
 type NotNode struct {
 	baseNode
 	child Node
 }
 
+// BoolNode represents a complex boolean query with a mix of must, must_not, and should clauses.
+type BoolNode struct {
+	baseNode
+	MustClauses    []Node
+	MustNotClauses []Node
+	ShouldClauses  []Node
+}
+
+// ToSQL translates the boolean logic into a SQL WHERE clause.
+// Note: This translation is a compromise, as SQL lacks a native "should" for scoring.
+// Here, `should` is combined with `must` using AND, prioritizing precision.
+func (n *BoolNode) ToSQL() querystring_parser.Expr {
+	var mustExprs []querystring_parser.Expr
+	var finalExpr querystring_parser.Expr
+
+	if len(n.MustClauses) > 0 {
+		mustAndExpr := n.MustClauses[0].ToSQL()
+		for i := 1; i < len(n.MustClauses); i++ {
+			mustAndExpr = querystring_parser.NewAndExpr(mustAndExpr, n.MustClauses[i].ToSQL())
+		}
+		mustExprs = append(mustExprs, mustAndExpr)
+	}
+
+	for _, node := range n.MustNotClauses {
+		mustExprs = append(mustExprs, querystring_parser.NewNotExpr(node.ToSQL()))
+	}
+
+	var shouldOrExpr querystring_parser.Expr
+	if len(n.ShouldClauses) > 0 {
+		shouldOrExpr = n.ShouldClauses[0].ToSQL()
+		for i := 1; i < len(n.ShouldClauses); i++ {
+			shouldOrExpr = querystring_parser.NewOrExpr(shouldOrExpr, n.ShouldClauses[i].ToSQL())
+		}
+	}
+
+	if len(mustExprs) > 0 {
+		finalExpr = mustExprs[0]
+		for i := 1; i < len(mustExprs); i++ {
+			finalExpr = querystring_parser.NewAndExpr(finalExpr, mustExprs[i])
+		}
+	}
+
+	if shouldOrExpr != nil {
+		if finalExpr != nil {
+			finalExpr = querystring_parser.NewAndExpr(finalExpr, shouldOrExpr)
+		} else {
+			finalExpr = shouldOrExpr
+		}
+	}
+
+	return finalExpr
+}
+
+// ToES perfectly translates the must, must_not, and should logic into an ES bool query.
+func (n *BoolNode) ToES() elastic.Query {
+	boolQuery := elastic.NewBoolQuery()
+	hasClauses := false
+
+	// Collect all 'must' clauses into a slice first. This ensures that even a single
+	// clause is rendered as a JSON array, matching test expectations.
+	if len(n.MustClauses) > 0 {
+		hasClauses = true
+		queries := make([]elastic.Query, 0, len(n.MustClauses))
+		for _, child := range n.MustClauses {
+			if esQuery := child.ToES(); esQuery != nil {
+				queries = append(queries, esQuery)
+			}
+		}
+		if len(queries) > 0 {
+			boolQuery.Must(queries...)
+		}
+	}
+
+	if len(n.MustNotClauses) > 0 {
+		hasClauses = true
+		queries := make([]elastic.Query, 0, len(n.MustNotClauses))
+		for _, child := range n.MustNotClauses {
+			if esQuery := child.ToES(); esQuery != nil {
+				queries = append(queries, esQuery)
+			}
+		}
+		if len(queries) > 0 {
+			boolQuery.MustNot(queries...)
+		}
+	}
+
+	if len(n.ShouldClauses) > 0 {
+		hasClauses = true
+		queries := make([]elastic.Query, 0, len(n.ShouldClauses))
+		for _, child := range n.ShouldClauses {
+			if esQuery := child.ToES(); esQuery != nil {
+				queries = append(queries, esQuery)
+			}
+		}
+		if len(queries) > 0 {
+			boolQuery.Should(queries...)
+		}
+	}
+
+	if !hasClauses {
+		return nil
+	}
+	return boolQuery
+}
+
+// RequiredNode is a wrapper node indicating a `+` modifier.
+type RequiredNode struct {
+	baseNode
+	child Node
+}
+
+// ToSQL for a NotNode.
 func (n *NotNode) ToSQL() querystring_parser.Expr {
-	child := n.child.ToSQL()
-	if child == nil {
-		return nil
+	if child := n.child.ToSQL(); child != nil {
+		return querystring_parser.NewNotExpr(child)
 	}
-	return querystring_parser.NewNotExpr(child)
+	return nil
 }
 
+// ToES for a NotNode.
 func (n *NotNode) ToES() elastic.Query {
-	childES := n.child.ToES()
-	if childES == nil {
-		return nil
+	if childES := n.child.ToES(); childES != nil {
+		return elastic.NewBoolQuery().MustNot(childES)
 	}
-
-	return elastic.NewBoolQuery().MustNot(childES)
+	return nil
 }
 
+// ToSQL for a RequiredNode just passes through to its child.
+// The "must" logic is handled at a higher level in the boolean query construction.
+func (n *RequiredNode) ToSQL() querystring_parser.Expr {
+	return n.child.ToSQL()
+}
+
+// ToES for a RequiredNode also passes through to its child.
+func (n *RequiredNode) ToES() elastic.Query {
+	return n.child.ToES()
+}
+
+// GroupNode represents a parenthesized expression.
 type GroupNode struct {
 	baseNode
 	child Node
 }
 
+// ToSQL for a GroupNode simply returns its child's SQL.
 func (n *GroupNode) ToSQL() querystring_parser.Expr {
 	return n.child.ToSQL()
 }
 
+// ToES for a GroupNode returns its child's ES query.
 func (n *GroupNode) ToES() elastic.Query {
 	return n.child.ToES()
 }
 
+// unescapeString handles backslash-escaped characters in Lucene strings.
 func unescapeString(s string) string {
 	if s == "" {
 		return s
@@ -1197,7 +1506,7 @@ func unescapeString(s string) string {
 
 	for i := 0; i < len(runes); i++ {
 		if runes[i] == '\\' && i+1 < len(runes) {
-			// Skip the backslash and use the next character literally
+			// Skip the backslash and take the next character literally.
 			i++
 			result = append(result, runes[i])
 		} else {

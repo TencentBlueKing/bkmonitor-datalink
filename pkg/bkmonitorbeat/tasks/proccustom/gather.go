@@ -64,11 +64,8 @@ func (g *Gather) AsPerfEvents(metas []define.ProcStat) []Event {
 
 	for _, meta := range metas {
 		procname := g.config.ExtractProcessName(meta.Cmd)
-		perfstat, err := g.ctr.GetOnePerfStat(meta.Pid)
-		if err != nil {
-			logger.Warnf("failed to fetch process perf stat: %+v", err)
-			continue
-		}
+		perfstat := g.ctr.GetOnePerfStat(meta.Pid)
+
 		e := perfEvent{
 			stat:     g.ctr.MergeMetaDataPerfStat(meta, perfstat),
 			procName: procname,

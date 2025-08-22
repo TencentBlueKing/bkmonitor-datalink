@@ -6,10 +6,10 @@
 // Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
-
 package lucene_parser
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -26,19 +26,14 @@ func queryToJSON(query elastic.Query) (string, error) {
 	if query == nil {
 		return "null", nil
 	}
-
-	// Get the source for the query
 	src, err := query.Source()
 	if err != nil {
 		return "", err
 	}
-
-	// Marshal to JSON
 	jsonBytes, err := json.Marshal(src)
 	if err != nil {
 		return "", err
 	}
-
 	return string(jsonBytes), nil
 }
 
@@ -134,7 +129,7 @@ func TestParser(t *testing.T) {
 				Start:        pointer("*"),
 				End:          pointer("10"),
 				IncludeStart: false,
-				IncludeEnd:   false,
+				IncludeEnd:   true,
 			},
 			es: `{"range":{"count":{"from":null,"include_lower":true,"include_upper":true,"to":10}}}`,
 		},
@@ -169,7 +164,7 @@ func TestParser(t *testing.T) {
 				IncludeStart: true,
 				IncludeEnd:   false,
 			},
-			es: `{"range":{"count":{"from":10,"include_lower":true,"include_upper":true,"to":null}}}`,
+			es: `{"range":{"count":{"from":10,"include_lower":true,"include_upper":false,"to":null}}}`,
 		},
 		"字段匹配": {
 			q: `status:active`,
@@ -185,7 +180,7 @@ func TestParser(t *testing.T) {
 				Field: "status",
 				Value: "active",
 			},
-			es: `{"query_string":{"query":"active"}}`,
+			es: `{"term":{"status":"active"}}`,
 		},
 		"多条件组合，括号调整优先级": {
 			q: `author:"John Smith" AND (age:20 OR status:active)`,
@@ -327,28 +322,27 @@ func TestParser(t *testing.T) {
 		},
 		"new-1": {
 			q: `quick brown +fox -news`,
-			e: &querystring_parser.OrExpr{
-				Left: &querystring_parser.OrExpr{
-					Left: &querystring_parser.OrExpr{
-						Left: &querystring_parser.MatchExpr{
-							Value: "quick",
-						},
-						Right: &querystring_parser.MatchExpr{
-							Value: "brown",
-						},
-					},
-					Right: &querystring_parser.MatchExpr{
+			e: &querystring_parser.AndExpr{
+				Left: &querystring_parser.AndExpr{
+					Left: &querystring_parser.MatchExpr{
 						Value: "fox",
 					},
+					Right: &querystring_parser.NotExpr{
+						Expr: &querystring_parser.MatchExpr{
+							Value: "news",
+						},
+					},
 				},
-				Right: &querystring_parser.NotExpr{
-					Expr: &querystring_parser.MatchExpr{
-						Field: "",
-						Value: "news",
+				Right: &querystring_parser.OrExpr{
+					Left: &querystring_parser.MatchExpr{
+						Value: "quick",
+					},
+					Right: &querystring_parser.MatchExpr{
+						Value: "brown",
 					},
 				},
 			},
-			es: `{"bool":{"should":[{"query_string":{"query":"quick"}},{"query_string":{"query":"brown"}},{"query_string":{"query":"fox"}},{"bool":{"must_not":{"query_string":{"query":"news"}}}}]}}`,
+			es: `{"bool":{"must":{"query_string":{"query":"fox"}},"must_not":{"query_string":{"query":"news"}},"should":[{"query_string":{"query":"quick"}},{"query_string":{"query":"brown"}}]}}`,
 		},
 		"模糊匹配": {
 			q: `quick brown fox`,
@@ -390,7 +384,29 @@ func TestParser(t *testing.T) {
 					IncludeEnd:   true,
 				},
 			},
-			es: `{"bool":{"must":[{"term":{"message":"test value"}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
+			es: `{
+			  "bool": {
+				"must": [
+				  {
+					"match": {
+					  "message": {
+						"query": "test value"
+					  }
+					}
+				  },
+				  {
+					"range": {
+					  "datetime": {
+						"from": "2020-01-01T00:00:00",
+						"include_lower": true,
+						"include_upper": true,
+						"to": "2020-12-31T00:00:00"
+					  }
+					}
+				  }
+				]
+			  }
+			}`,
 		},
 		"mixed or / and": {
 			q: "a:1 OR (b:2 AND c:4)",
@@ -491,9 +507,9 @@ func TestParser(t *testing.T) {
 			es: `{"wildcard":{"events.attributes.message.detail":{"value":"*66036*"}}}`,
 		},
 		"value like regex": {
-			q: `"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log" and level: "error" and "2_bklog.bkunify_query"`,
-			e: &querystring_parser.OrExpr{
-				Left: &querystring_parser.OrExpr{
+			q: `"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log" AND level: "error" AND "2_bklog.bkunify_query"`,
+			e: &querystring_parser.AndExpr{
+				Left: &querystring_parser.AndExpr{
 					Left: &querystring_parser.MatchExpr{
 						Value: "/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log",
 					},
@@ -506,7 +522,7 @@ func TestParser(t *testing.T) {
 					Value: "2_bklog.bkunify_query",
 				},
 			},
-			es: `{"bool":{"should":[{"match_phrase":{"":{"query":"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log"}}},{"match_phrase":{"level":{"query":"error"}}},{"match_phrase":{"":{"query":"2_bklog.bkunify_query"}}}]}}`,
+			es: `{"bool":{"must":[{"query_string":{"query":"\"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log\""}},{"match_phrase":{"level":{"query":"error"}}},{"query_string":{"query":"\"2_bklog.bkunify_query\""}}]}}`,
 		},
 		"双引号转义符号支持": {
 			q: `log: "(reading \\\"remove\\\")"`,
@@ -522,7 +538,7 @@ func TestParser(t *testing.T) {
 				Field: "path",
 				Value: "/proz/logds/ds-5910974792526317*",
 			},
-			es: `{"match_phrase":{"path":{"query":"/proz/logds/ds-5910974792526317*"}}}`,
+			es: `{"wildcard":{"path":{"value":"/proz/logds/ds-5910974792526317*"}}}`,
 		},
 		"test-1": {
 			q: "\"32221112\" AND path: \"/data/home/user00/log/zonesvr*\"",
@@ -535,33 +551,22 @@ func TestParser(t *testing.T) {
 					Value: "/data/home/user00/log/zonesvr*",
 				},
 			},
-			es: `{"bool":{"must":[{"match_phrase":{"":{"query":"32221112"}}},{"match_phrase":{"path":{"query":"/data/home/user00/log/zonesvr*"}}}]}}`,
+			es: `{"bool":{"must":[{"query_string":{"query":"\"32221112\""}},{"wildcard":{"path":{"value":"/data/home/user00/log/zonesvr*"}}}]}}`,
 		},
-		//Complex bracket expressions with ConditionMatchExpr are not yet supported
 		"test - Many Brack ": {
-			q: `(loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")) AND "test111"`,
+			q: `(loglevel: ("TRACE" OR "DEBUG" OR "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")) AND "test111"`,
 			e: &querystring_parser.AndExpr{
 				Left: &querystring_parser.AndExpr{
 					Left: &querystring_parser.ConditionMatchExpr{
 						Field: "loglevel",
 						Value: &querystring_parser.ConditionExpr{
-							Values: [][]string{
-								{"TRACE"},
-								{"DEBUG"},
-								{"INFO "},
-								{"WARN "},
-								{"ERROR"},
-							},
+							Values: [][]string{{"TRACE"}, {"DEBUG"}, {"INFO "}, {"WARN "}, {"ERROR"}},
 						},
 					},
 					Right: &querystring_parser.ConditionMatchExpr{
 						Field: "log",
 						Value: &querystring_parser.ConditionExpr{
-							Values: [][]string{
-								{"friendsvr", "game_app", "testAnd"},
-								{"friendsvr", "testOr", "testAnd"},
-								{"test111"},
-							},
+							Values: [][]string{{"friendsvr", "game_app", "testAnd"}, {"friendsvr", "testOr", "testAnd"}, {"test111"}},
 						},
 					},
 				},
@@ -569,88 +574,89 @@ func TestParser(t *testing.T) {
 					Value: "test111",
 				},
 			},
+			es: `{"bool":{"must":[{"bool":{"must":[{"terms":{"loglevel":["TRACE","DEBUG","INFO ","WARN ","ERROR"]}},{"bool":{"minimum_should_match":"1","should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"testOr"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"match_phrase":{"log":{"query":"test111"}}}]}}]}},{"query_string":{"query":"\"test111\""}}]}}`,
 		},
 		"test - many tPHRASE ": {
-			q: `loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
+			q: `loglevel: ("TRACE" OR "DEBUG" OR "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
 			e: &querystring_parser.AndExpr{
 				Left: &querystring_parser.ConditionMatchExpr{
 					Field: "loglevel",
 					Value: &querystring_parser.ConditionExpr{
-						Values: [][]string{
-							{"TRACE"},
-							{"DEBUG"},
-							{"INFO "},
-							{"WARN "},
-							{"ERROR"},
-						},
+						Values: [][]string{{"TRACE"}, {"DEBUG"}, {"INFO "}, {"WARN "}, {"ERROR"}},
 					},
 				},
 				Right: &querystring_parser.ConditionMatchExpr{
 					Field: "log",
 					Value: &querystring_parser.ConditionExpr{
-						Values: [][]string{
-							{"friendsvr", "game_app", "testAnd"},
-							{"friendsvr", "testOr", "testAnd"},
-							{"test111"},
-						},
+						Values: [][]string{{"friendsvr", "game_app", "testAnd"}, {"friendsvr", "testOr", "testAnd"}, {"test111"}},
 					},
 				},
 			},
+			es: `{"bool":{"must":[{"terms":{"loglevel":["TRACE","DEBUG","INFO ","WARN ","ERROR"]}},{"bool":{"minimum_should_match":"1","should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"testOr"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"match_phrase":{"log":{"query":"test111"}}}]}}]}}`,
 		},
 		"test - Single Bracket And  ": {
 			q: `loglevel: ("TRACE" AND "111" AND "DEBUG" AND "INFO" OR "SIMON" OR "222" AND "333" )`,
 			e: &querystring_parser.ConditionMatchExpr{
 				Field: "loglevel",
 				Value: &querystring_parser.ConditionExpr{
-					Values: [][]string{
-						{"TRACE", "111", "DEBUG", "INFO"},
-						{"SIMON"},
-						{"222", "333"},
-					},
+					Values: [][]string{{"TRACE", "111", "DEBUG", "INFO"}, {"SIMON"}, {"222", "333"}},
 				},
 			},
-			es: `{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"":{"query":"TRACE"}}},{"match_phrase":{"":{"query":"111"}}},{"match_phrase":{"":{"query":"DEBUG"}}},{"match_phrase":{"":{"query":"INFO"}}}]}},{"match_phrase":{"":{"query":"SIMON"}}},{"bool":{"must":[{"match_phrase":{"":{"query":"222"}}},{"match_phrase":{"":{"query":"333"}}}]}}]}}`,
+			es: `{"bool":{"minimum_should_match":"1","should":[{"bool":{"must":[{"term":{"loglevel":"TRACE"}},{"term":{"loglevel":"111"}},{"term":{"loglevel":"DEBUG"}},{"term":{"loglevel":"INFO"}}]}},{"term":{"loglevel":"SIMON"}},{"bool":{"must":[{"term":{"loglevel":"222"}},{"term":{"loglevel":"333"}}]}}]}}`,
 		},
 		"test - Self Bracket ": {
-			q: `loglevel: ("TRACE" OR ("DEBUG") OR  ("INFO ") OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
+			q: `loglevel: ("TRACE" OR ("DEBUG") OR ("INFO ") OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
 			e: &querystring_parser.AndExpr{
 				Left: &querystring_parser.ConditionMatchExpr{
 					Field: "loglevel",
 					Value: &querystring_parser.ConditionExpr{
-						Values: [][]string{
-							{"TRACE"},
-							{"DEBUG"},
-							{"INFO "},
-							{"WARN "},
-							{"ERROR"},
-						},
+						Values: [][]string{{"TRACE"}, {"DEBUG"}, {"INFO "}, {"WARN "}, {"ERROR"}},
 					},
 				},
 				Right: &querystring_parser.ConditionMatchExpr{
 					Field: "log",
 					Value: &querystring_parser.ConditionExpr{
-						Values: [][]string{
-							{"friendsvr", "game_app", "testAnd"},
-							{"friendsvr", "testOr", "testAnd"},
-							{"test111"},
-						},
+						Values: [][]string{{"friendsvr", "game_app", "testAnd"}, {"friendsvr", "testOr", "testAnd"}, {"test111"}},
 					},
 				},
 			},
+			es: `{"bool":{"must":[{"terms":{"loglevel":["TRACE","DEBUG","INFO ","WARN ","ERROR"]}},{"bool":{"minimum_should_match":"1","should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"testOr"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"match_phrase":{"log":{"query":"test111"}}}]}}]}}`,
 		},
+	}
+
+	testMapping := map[string]string{
+		"age":      "long",
+		"count":    "long",
+		"a":        "long",
+		"b":        "long",
+		"c":        "long",
+		"d":        "long",
+		"status":   "keyword",
+		"level":    "keyword",
+		"loglevel": "keyword",
+		"author":   "text",
+		"message":  "text",
+		"log":      "text",
+		"path":     "keyword",
 	}
 
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
-			expr, err := ParseLuceneToSQL(t.Context(), c.q, nil)
+			// Test SQL Conversion
+			ctx := context.Background()
+			expr, err := ParseLuceneToSQL(ctx, c.q, nil)
 			if err != nil {
-				t.Errorf("parse return error, %s", err)
+				t.Errorf("ParseLuceneToSQL returned an error: %s", err)
 				return
 			}
-			assert.Equal(t, c.e, expr)
+			assert.Equal(t, c.e, expr, "SQL Expression mismatch")
 
+			// Test ES Conversion
 			if c.es != "" {
-				visitor := NewQueryVisitor(t.Context())
+				visitor := NewStatementVisitor(ctx)
+
+				visitor.Schema.Mapping = testMapping
+
 				lexer := gen.NewLuceneLexer(antlr.NewInputStream(c.q))
 				stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
 				parser := gen.NewLuceneParser(stream)
@@ -675,7 +681,7 @@ func TestParser(t *testing.T) {
 						t.Errorf("failed to convert ES query to JSON: %s", err)
 						return
 					}
-					assert.JSONEq(t, c.es, esJSON)
+					assert.JSONEq(t, c.es, esJSON, "ES JSON mismatch")
 				} else if c.es != "null" {
 					t.Errorf("expected ES query but got nil, root: %T", visitor.root)
 				}

@@ -44,7 +44,7 @@ func ParseLuceneToSQL(ctx context.Context, q string, opt *Option) (querystring_p
 	parser := gen.NewLuceneParser(tokens)
 
 	// 创建解析树
-	visitor := NewQueryVisitor(ctx)
+	visitor := NewStatementVisitor(ctx)
 	if opt != nil {
 		visitor.WithEncode(opt.DimensionTransform)
 	}
@@ -91,7 +91,7 @@ func ParseLuceneToES(ctx context.Context, q string, opt *Option) (interface{}, e
 	parser := gen.NewLuceneParser(tokens)
 
 	// 创建解析树
-	visitor := NewQueryVisitor(ctx)
+	visitor := NewStatementVisitor(ctx)
 	if opt != nil {
 		visitor.WithEncode(opt.DimensionTransform)
 	}

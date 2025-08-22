@@ -209,26 +209,12 @@ var (
 	BkApiAppCode string
 	// BkApiAppSecret bk-apigw app secret
 	BkApiAppSecret string
-	// BkApiBcsApiMicroGwUrl bk-apigw bcs micro gateway url
-	BkApiBcsApiMicroGwUrl string
-	// BkApiBcsApiGatewayToken bk-apigw bcs token
-	BkApiBcsApiGatewayToken string
-	// BkApiBcsApiGatewayBaseUrl bk-apigw bcs base url
-	BkApiBcsApiGatewayBaseUrl string
-	// BkApiNodemanApiBaseUrl bk-apigw nodeman base url
-	BkApiNodemanApiBaseUrl string
 	// BkApiBkdataApiBaseUrl bk-apigw bkdata base url
 	BkApiBkdataApiBaseUrl string
-	// BkApiBkssmUrl bk-api bkssm url
-	BkApiBkssmUrl string
-	// BkApiBcsCcApiUrl bk-api bcs cc url
-	BkApiBcsCcApiUrl string
 	// BkApiGseApiGwUrl bk-apigw bkgse base url
 	BkApiGseApiGwUrl string
 	// BkApiCmdbApiGatewayUrl bk-apigw cmdb base url
 	BkApiCmdbApiGatewayUrl string
-	// SloPushGatewayApi 是否启用监控的apiGateway
-	BkMonitorApiGatewayEnabled bool
 	// BkMonitorApiGatewayBaseUrl 监控的apiGateway
 	BkMonitorApiGatewayBaseUrl string
 	// BkMonitorApiGatewayStage 监控的apiGateway的环境
@@ -385,20 +371,12 @@ func initVariables() {
 	BkApiStage = GetValue("taskConfig.common.bkapi.stage", "stag")
 	BkApiAppCode = GetValue("taskConfig.common.bkapi.appCode", "appCode")
 	BkApiAppSecret = GetValue("taskConfig.common.bkapi.appSecret", "appSecret")
-	BkApiBcsApiMicroGwUrl = GetValue("taskConfig.common.bkapi.bcsApiMicroGwUrl", "")
-	BkApiBcsApiGatewayToken = GetValue("taskConfig.common.bkapi.bcsApiGatewayToken", "")
-	BkApiBcsApiGatewayBaseUrl = GetValue("taskConfig.common.bkapi.bcsApiGatewayBaseUrl", "")
-	BkApiNodemanApiBaseUrl = GetValue("taskConfig.common.bkapi.nodemanApiBaseUrl", "")
 	BkApiBkdataApiBaseUrl = GetValue("taskConfig.common.bkapi.bkdataApiBaseUrl", "")
-	BkApiBkssmUrl = GetValue("taskConfig.common.bkapi.bkssmUrl", "")
-	BkApiBcsCcApiUrl = GetValue("taskConfig.common.bkapi.bcsCcApiUrl", "")
 	BkApiGseApiGwUrl = GetValue("taskConfig.common.bkapi.bkgseApiGwUrl", "")
 	BkApiCmdbApiGatewayUrl = GetValue("taskConfig.common.bkapi.cmdbApiGatewayUrl", "")
 
-	// SloPushGatewayApi 是否启用监控的apiGateway
-	BkMonitorApiGatewayEnabled = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayEnabled", false)
 	// BkMonitorApiGatewayBaseUrl 监控的apiGateway
-	BkMonitorApiGatewayBaseUrl = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayBaseUrl", BkApiUrl)
+	BkMonitorApiGatewayBaseUrl = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayBaseUrl", "")
 	// BkMonitorApiGatewayStage 监控的apiGateway的环境
 	BkMonitorApiGatewayStage = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayStage", "stag")
 

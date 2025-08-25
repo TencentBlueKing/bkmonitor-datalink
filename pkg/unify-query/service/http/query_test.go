@@ -4291,7 +4291,7 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 
 		mock.Es.Set(c.mockData)
 
-		session, err := redisUtil.GetOrCreateScrollSession(testCtx, queryTsStr, ScrollWindowTimeout, ScrollMaxSlice, 3, 10)
+		session, err := redisUtil.GetOrCreateScrollSession(testCtx, queryTsStr, ScrollWindowTimeout, ScrollMaxSlice, 10)
 		err = session.AcquireLock(testCtx)
 		require.NoErrorf(t, err, "Failed to acquire lock for scroll session in step %d", i+1)
 		require.NoError(t, err, "Failed to get scroll session")
@@ -4445,7 +4445,7 @@ func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
 		SpaceUID:  spaceUid,
 		SkipSpace: "true",
 	}
-	session, err := redisUtil.GetOrCreateScrollSession(t.Context(), queryTsStr, ScrollWindowTimeout, ScrollMaxSlice, 3, 10)
+	session, err := redisUtil.GetOrCreateScrollSession(t.Context(), queryTsStr, ScrollWindowTimeout, ScrollMaxSlice, 10)
 	require.NoError(t, err, "Failed to get scroll session")
 
 	for i, c := range tCase.expected {

@@ -28,6 +28,11 @@ const (
 
 	MaxSizePath   = "elasticsearch.max_size"
 	KeepAlivePath = "elasticsearch.keep_alive"
+
+	MappingCacheMaxCostPath     = "elasticsearch.mapping_cache.max_cost"
+	MappingCacheNumCountersPath = "elasticsearch.mapping_cache.num_counters"
+	MappingCacheBufferItemsPath = "elasticsearch.mapping_cache.buffer_items"
+	MappingCacheTTLPath         = "elasticsearch.mapping_cache.ttl"
 )
 
 func init() {
@@ -38,4 +43,9 @@ func init() {
 	viper.SetDefault(MaxRoutingPath, 10)
 	viper.SetDefault(MaxSizePath, 1e4)
 	viper.SetDefault(KeepAlivePath, "5s")
+
+	viper.SetDefault(MappingCacheMaxCostPath, 1000000)
+	viper.SetDefault(MappingCacheNumCountersPath, 10000000)
+	viper.SetDefault(MappingCacheBufferItemsPath, 64)
+	viper.SetDefault(MappingCacheTTLPath, "30m")
 }

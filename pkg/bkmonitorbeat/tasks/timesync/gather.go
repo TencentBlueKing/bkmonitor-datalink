@@ -85,10 +85,16 @@ func stats2Metrics(env string, stat *Stat) *Metrics {
 	named := func(s string) string {
 		return env + "_" + s
 	}
+
+	var avg float64
+	if stat.Count > 0 {
+		avg = stat.Sum / float64(stat.Count)
+	}
+
 	metrics := map[string]float64{
 		named("timesync_query_seconds_min"): stat.Min,
 		named("timesync_query_seconds_max"): stat.Max,
-		named("timesync_query_seconds_avg"): stat.Sum / float64(stat.Count),
+		named("timesync_query_seconds_avg"): avg,
 		named("timesync_query_count"):       float64(stat.Count),
 		named("timesync_query_err"):         float64(stat.Err),
 	}

@@ -698,7 +698,6 @@ func (i *Instance) QuerySeriesSet(
 		query:   query,
 		conn:    i.connect,
 	}
-
 	mappings, errMapping := i.getMappings(ctx, qo.conn, qo.indexes)
 	// index 不存在，mappings 获取异常直接返回空
 	if len(mappings) == 0 {

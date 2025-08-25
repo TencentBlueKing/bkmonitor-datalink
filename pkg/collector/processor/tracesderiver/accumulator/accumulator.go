@@ -136,7 +136,6 @@ type recorder struct {
 
 	metricName          string
 	dataID              int32
-	storID              string
 	gcInterval          time.Duration
 	maxSeries           int
 	buckets             []float64

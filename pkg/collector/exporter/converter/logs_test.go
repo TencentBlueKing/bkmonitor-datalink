@@ -49,7 +49,8 @@ func TestLogsRandom(t *testing.T) {
 		}
 	}
 
-	NewCommonConverter(nil).Convert(&record, gather)
+	var conv logsConverter
+	conv.Convert(&record, gather)
 	assert.Len(t, events, 2)
 }
 
@@ -64,7 +65,8 @@ func TestLogsTime(t *testing.T) {
 			s := evts[0].Data().String()
 			assert.True(t, strings.Contains(s, "10000000"))
 		}
-		NewCommonConverter(nil).Convert(&record, gather)
+		var conv logsConverter
+		conv.Convert(&record, gather)
 	}
 
 	g := makeLogsGenerator(1, 20)
@@ -109,7 +111,8 @@ func TestLogsEscapeHTML(t *testing.T) {
 		}
 	}
 
-	NewCommonConverter(nil).Convert(&record, gather)
+	var conv logsConverter
+	conv.Convert(&record, gather)
 }
 
 func BenchmarkLogsConvert_10x1KB_LogRecords(b *testing.B) {
@@ -121,8 +124,9 @@ func BenchmarkLogsConvert_10x1KB_LogRecords(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv logsConverter
 	for i := 0; i < b.N; i++ {
-		LogsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -135,8 +139,9 @@ func BenchmarkLogsConvert_10x10KB_LogRecords(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv logsConverter
 	for i := 0; i < b.N; i++ {
-		LogsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -149,8 +154,9 @@ func BenchmarkLogsConvert_10x100KB_LogRecords(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv logsConverter
 	for i := 0; i < b.N; i++ {
-		LogsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -163,8 +169,9 @@ func BenchmarkLogsConvert_100x1KB_LogRecords(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv logsConverter
 	for i := 0; i < b.N; i++ {
-		LogsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -177,8 +184,9 @@ func BenchmarkLogsConvert_100x10KB_LogRecords(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv logsConverter
 	for i := 0; i < b.N; i++ {
-		LogsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -191,7 +199,8 @@ func BenchmarkLogsConvert_100x100KB_LogRecords(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv logsConverter
 	for i := 0; i < b.N; i++ {
-		LogsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }

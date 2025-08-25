@@ -83,7 +83,7 @@ func (i *Instance) QuerySeriesSet(
 func (i *Instance) DirectQueryRange(
 	ctx context.Context, stmt string,
 	start, end time.Time, step time.Duration,
-) (promql.Matrix, error) {
+) (promql.Matrix, bool, error) {
 
 	var (
 		err error
@@ -104,26 +104,26 @@ func (i *Instance) DirectQueryRange(
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, false, err
 	}
 	result := query.Exec(ctx)
 	if result.Err != nil {
 		log.Errorf(ctx, result.Err.Error())
-		return nil, result.Err
+		return nil, false, result.Err
 	}
 
 	for _, err = range result.Warnings {
 		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, false, err
 	}
 
 	matrix, err := result.Matrix()
 	if err != nil {
 		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, false, err
 	}
 
-	return matrix, nil
+	return matrix, false, nil
 }
 
 // Query instant 查询

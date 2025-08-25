@@ -195,7 +195,7 @@ func (r *Rule) AutoMatched(val string) (map[string]string, bool) {
 			groups[name] = match[i]
 		}
 	}
-	if len(groups) <= 0 {
+	if len(groups) == 0 {
 		return nil, false
 	}
 

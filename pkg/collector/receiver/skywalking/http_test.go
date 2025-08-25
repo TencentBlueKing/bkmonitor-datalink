@@ -37,7 +37,7 @@ const (
 
 func TestReady(t *testing.T) {
 	assert.NotPanics(t, func() {
-		Ready(receiver.ComponentConfig{})
+		Ready(receiver.ComponentConfig{Skywalking: receiver.ComponentCommon{Enabled: true}})
 	})
 }
 

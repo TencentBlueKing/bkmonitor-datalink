@@ -63,7 +63,7 @@ func MustLoadConfigs(content string) Configs {
 	if err != nil {
 		panic(err)
 	}
-	if len(psc) <= 0 {
+	if len(psc) == 0 {
 		panic("no processor configs found")
 	}
 

@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
 func TestCleanAttributesMap(t *testing.T) {
@@ -37,4 +39,16 @@ func TestCleanAttributesMap(t *testing.T) {
 		assert.Len(t, attrs, 1)
 		assert.Equal(t, "bar", attrs["foo"])
 	})
+}
+
+func TestCommonConverter(t *testing.T) {
+	conv := NewCommonConverter(&Config{})
+	defer conv.Clean()
+
+	conv.Convert(&define.Record{
+		RecordType: define.RecordLogPush,
+		Data: &define.LogPushData{
+			Data: []string{"hello", "world"},
+		},
+	}, func(events ...define.Event) {})
 }

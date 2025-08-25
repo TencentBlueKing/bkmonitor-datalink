@@ -56,7 +56,7 @@ func TestReceiver(t *testing.T) {
     tars_server:
       # 是否启动 Tars 服务
       # default: false
-      enabled: false
+      enabled: true
       # 传输协议，目前支持 tcp
       # default: ""
       transport: "tcp"

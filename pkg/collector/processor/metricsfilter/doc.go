@@ -15,20 +15,24 @@ processor:
     config:
       # Drop Action
       drop:
-      # metrics: metric name
-      metrics:
+        metrics:
         - "runtime.go.mem.live_objects"
         - "none.exist.metric"
-        # Replace Action
+
+      # Replace Action
       replace:
         - source: "previous_metric"       # 原字段
           destination: "current_metric"   # 新字段
+
+      # Relabel Action
       relabel:
-        - metric: "test_metric"			# 指标名称
+        - metrics:
+          - "test_metric1"
+          - "test_metric2"
           rules:						# 规则之间为 && 关系
-            - label: "label1"				# 字段名
-              op: "in"						# 操作符，支持 in, notin, range
-              values: ["value1", "value2"]	# in, notin 操作时，values 为字符串列表，range 操作时，values 为范围列表
+            - label: "label1"			# 字段名
+              op: "in"					# 操作符，支持 in, notin, range
+              values: ["val1", "val2"]	# in, notin 操作时，values 为字符串列表，range 操作时，values 为范围列表
             - label: "code"
               op: "range"
               values:

@@ -24,8 +24,6 @@ func (e proxyEvent) RecordType() define.RecordType {
 	return define.RecordProxy
 }
 
-var ProxyConverter EventConverter = proxyConverter{}
-
 type proxyConverter struct{}
 
 func (c proxyConverter) Clean() {}

@@ -165,49 +165,71 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 	return ""
 }
 
+func (i *Instance) fetchAliasMappings(ctx context.Context, conn Connect, alias []string) (mappingMap []map[string]any, err error) {
+	mappingCache := GetMappingCache()
+	fetchMappingHandler := func(alias []string) (map[string]any, error) {
+		client, err := i.getClient(ctx, conn)
+		if err != nil {
+			return nil, err
+		}
+		defer client.Stop()
+		mapping, err := client.GetMapping().Index(alias...).Type("").Do(ctx)
+		if err != nil {
+			log.Warnf(ctx, "get mapping error: %s", err.Error())
+			return nil, err
+		}
+		return mapping, nil
+	}
+
+	mappingMap, err = mappingCache.GetAliasMappings(alias, fetchMappingHandler)
+	return
+}
+
 func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []string) ([]map[string]any, error) {
 	var (
 		err error
 	)
-
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-get-mapping")
 	defer span.End(&err)
+
+	mappingSlice, err := i.fetchAliasMappings(ctx, conn, aliases)
+	if err != nil {
+		return nil, err
+	}
 
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("get mapping error: %s", r)
 		}
-		span.End(&err)
 	}()
 
 	span.Set("alias", aliases)
-	client, err := i.getClient(ctx, conn)
-	if err != nil {
-		return nil, err
-	}
-	defer client.Stop()
 
-	mappingMap, err := client.GetMapping().Index(aliases...).Type("").Do(ctx)
-	if err != nil {
-		log.Warnf(ctx, "get mapping error: %s", err.Error())
-		return nil, err
-	}
-
-	indexes := make([]string, 0, len(mappingMap))
-	for index := range mappingMap {
-		indexes = append(indexes, index)
-	}
-	// 按照正序排列，最新的覆盖老的
-	sort.Strings(indexes)
-	span.Set("indexes", indexes)
-
-	mappings := make([]map[string]any, 0, len(mappingMap))
-	for _, index := range indexes {
-		if mapping, ok := mappingMap[index].(map[string]any)["mappings"].(map[string]any); ok {
-			mappings = append(mappings, mapping)
+	combinedIndexMappings := make(map[string]any)
+	for _, mappingData := range mappingSlice {
+		for indexName, indexMapping := range mappingData {
+			combinedIndexMappings[indexName] = indexMapping
 		}
 	}
 
+	indexes := make([]string, 0, len(combinedIndexMappings))
+	for indexName := range combinedIndexMappings {
+		indexes = append(indexes, indexName)
+	}
+	sort.Strings(indexes)
+	span.Set("indexes", indexes)
+
+	mappings := make([]map[string]any, 0, len(indexes))
+	for _, indexName := range indexes {
+		indexData, ok := combinedIndexMappings[indexName].(map[string]any)
+		if !ok {
+			continue
+		}
+
+		if mapping, ok := indexData["mappings"].(map[string]any); ok {
+			mappings = append(mappings, mapping)
+		}
+	}
 	return mappings, nil
 }
 

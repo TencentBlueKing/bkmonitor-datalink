@@ -117,7 +117,6 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		return nil
 	}
 
-	span.Set("result_table_detail", rtDetail)
 	span.Set("is_k8s", isK8s)
 
 	// 只有在容器场景下的特殊逻辑
@@ -202,17 +201,22 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 			if sepRt != nil {
 				defaultTsDB.ExpandMetricNames = []string{mName}
 				sepTsDB := s.getTsDBWithResultTableDetail(defaultTsDB, sepRt)
+
+				span.Set(fmt.Sprintf("table_id_change_%s", mName), fmt.Sprintf("%s => %s", defaultTsDB.TableID, sepTsDB.TableID))
+
 				tsDBs = append(tsDBs, &sepTsDB)
 			} else {
 				defaultMetricNames = append(defaultMetricNames, mName)
 			}
 		}
 	}
+
 	// 如果这里出现指标列表为空，则说明指标都有独立的配置，不需要将默认的结果表配置写入
 	if len(defaultMetricNames) > 0 {
 		defaultTsDB.ExpandMetricNames = defaultMetricNames
 		tsDBs = append(tsDBs, &defaultTsDB)
 	}
+
 	return tsDBs
 }
 
@@ -252,7 +256,6 @@ func (s *SpaceFilter) GetSpaceRtIDs() []string {
 func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	var (
 		routerMessage string
-		err           error
 	)
 
 	defer func() {
@@ -291,16 +294,10 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	tableIDs := set.New[string]()
 	isK8s := false
 
-	ctx, span := trace.NewSpan(s.ctx, "space-filter-data-list")
-	defer span.End(&err)
-
 	if db != "" {
 		// 指标二段式，仅传递 data-label， datalabel 支持各种格式
-		tIDs := s.router.GetDataLabelRelatedRts(ctx, string(opt.TableID))
+		tIDs := s.router.GetDataLabelRelatedRts(s.ctx, string(opt.TableID))
 		tableIDs.Add(tIDs...)
-
-		span.Set("data-label", opt.TableID)
-		span.Set("data-label-table-id-list", tIDs)
 
 		// 只有当 db 和 measurement 都不为空时，才是 tableID，为了兼容，同时也接入到 tableID  list
 		if measurement != "" {
@@ -323,8 +320,6 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 		}
 	}
 
-	span.Set("table-id-list", tableIDs.ToArray())
-
 	isK8sFeatureFlag := metadata.GetIsK8sFeatureFlag(s.ctx)
 
 	for _, tID := range tableIDs.ToArray() {
@@ -339,8 +334,6 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			tsDBs = append(tsDBs, newTsDB)
 		}
 	}
-
-	span.Set("tsdb-list", tsDBs)
 
 	if len(tsDBs) == 0 {
 		routerMessage = fmt.Sprintf("tableID with field is empty with tableID: %s, field: %s, isSkipField: %v", opt.TableID, opt.FieldName, opt.IsSkipField)

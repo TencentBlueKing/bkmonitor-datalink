@@ -115,6 +115,8 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 	ctx, span := trace.NewSpan(q.ctx, "prometheus-querier-select-fn")
 	defer span.End(&err)
 
+	qp := metadata.GetQueryParams(ctx)
+
 	go func() {
 		defer func() {
 			recvDone <- struct{}{}
@@ -157,7 +159,6 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 					startTime time.Time
 					endTime   time.Time
 				)
-				qp := metadata.GetQueryParams(ctx)
 				if qp.IsReference {
 					startTime = qp.Start
 					endTime = qp.End

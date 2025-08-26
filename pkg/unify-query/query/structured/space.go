@@ -199,10 +199,10 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		for _, mName := range metricNames {
 			sepRt := s.GetMetricSepRT(tableID, mName)
 			if sepRt != nil {
+				span.Set(fmt.Sprintf("table_id_change_%s", mName), fmt.Sprintf("%s => %s", defaultTsDB.TableID, sepRt.TableId))
+
 				defaultTsDB.ExpandMetricNames = []string{mName}
 				sepTsDB := s.getTsDBWithResultTableDetail(defaultTsDB, sepRt)
-
-				span.Set(fmt.Sprintf("table_id_change_%s", mName), fmt.Sprintf("%s => %s", defaultTsDB.TableID, sepTsDB.TableID))
 
 				tsDBs = append(tsDBs, &sepTsDB)
 			} else {

@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
@@ -105,10 +106,19 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, allConditions AllConditions,
 	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool) []*query.TsDBV2 {
-	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
+
+	var err error
+
+	ctx, span := trace.NewSpan(s.ctx, "build-metadata-query")
+	defer span.End(&err)
+
+	rtDetail := s.router.GetResultTable(ctx, tableID, false)
 	if rtDetail == nil {
 		return nil
 	}
+
+	span.Set("result_table_detail", rtDetail)
+	span.Set("is_k8s", isK8s)
 
 	// 只有在容器场景下的特殊逻辑
 	if isK8s {
@@ -240,7 +250,11 @@ func (s *SpaceFilter) GetSpaceRtIDs() []string {
 }
 
 func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
-	var routerMessage string
+	var (
+		routerMessage string
+		err           error
+	)
+
 	defer func() {
 		if routerMessage != "" {
 			metric.SpaceRouterNotExistInc(s.ctx, opt.SpaceUid, string(opt.TableID), opt.FieldName, metadata.SpaceTableIDFieldIsNotExists)
@@ -277,10 +291,16 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	tableIDs := set.New[string]()
 	isK8s := false
 
+	ctx, span := trace.NewSpan(s.ctx, "build-metadata-query")
+	defer span.End(&err)
+
 	if db != "" {
 		// 指标二段式，仅传递 data-label， datalabel 支持各种格式
-		tIDs := s.router.GetDataLabelRelatedRts(s.ctx, string(opt.TableID))
+		tIDs := s.router.GetDataLabelRelatedRts(ctx, string(opt.TableID))
 		tableIDs.Add(tIDs...)
+
+		span.Set("data-label", opt.TableID)
+		span.Set("data-label-table-id-list", tIDs)
 
 		// 只有当 db 和 measurement 都不为空时，才是 tableID，为了兼容，同时也接入到 tableID  list
 		if measurement != "" {
@@ -302,6 +322,8 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			return nil, nil
 		}
 	}
+
+	span.Set("table-id-list", tableIDs.ToArray())
 
 	isK8sFeatureFlag := metadata.GetIsK8sFeatureFlag(s.ctx)
 

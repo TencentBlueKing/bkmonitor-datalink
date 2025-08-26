@@ -16,7 +16,6 @@ import (
 	antlr "github.com/antlr4-go/antlr/v4"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
@@ -24,8 +23,8 @@ type Option struct {
 	DimensionTransform Encode
 }
 
-// ParseLuceneToSQL parses lucene query and returns querystring_parser.Expr
-func ParseLuceneToSQL(ctx context.Context, q string, opt *Option) (querystring_parser.Expr, error) {
+// ToExpr parses lucene query and returns Expr
+func ToExpr(ctx context.Context, q string, opt *Option) (Expr, error) {
 	defer func() {
 		if r := recover(); r != nil {
 			// 处理异常
@@ -43,12 +42,7 @@ func ParseLuceneToSQL(ctx context.Context, q string, opt *Option) (querystring_p
 	tokens := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
 	parser := gen.NewLuceneParser(tokens)
 
-	// 创建解析树
-	visitor := NewStatementVisitor(ctx)
-	if opt != nil {
-		visitor.WithEncode(opt.DimensionTransform)
-	}
-
+	visitor := NewStatementVisitor()
 	log.Debugf(ctx, `"action","type","text"`)
 
 	// 开始解析
@@ -60,7 +54,7 @@ func ParseLuceneToSQL(ctx context.Context, q string, opt *Option) (querystring_p
 	result := query.Accept(visitor)
 	if result != nil {
 		if node, ok := result.(Node); ok {
-			visitor.root = node
+			visitor.node = node
 		}
 	}
 
@@ -69,53 +63,5 @@ func ParseLuceneToSQL(ctx context.Context, q string, opt *Option) (querystring_p
 		return nil, fmt.Errorf("parse lucene query (%s) error: %v", q, err)
 	}
 
-	return visitor.ToSQL(), nil
-}
-
-func ParseLuceneToES(ctx context.Context, q string, opt *Option) (interface{}, error) {
-	defer func() {
-		if r := recover(); r != nil {
-			// 处理异常
-			log.Errorf(ctx, "parse lucene query error: %v", r)
-		}
-	}()
-
-	// 创建输入流
-	is := antlr.NewInputStream(q)
-
-	// 创建词法分析器
-	lexer := gen.NewLuceneLexer(is)
-
-	// 创建Token流
-	tokens := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
-	parser := gen.NewLuceneParser(tokens)
-
-	// 创建解析树
-	visitor := NewStatementVisitor(ctx)
-	if opt != nil {
-		visitor.WithEncode(opt.DimensionTransform)
-	}
-
-	log.Debugf(ctx, `"action","type","text"`)
-
-	// 开始解析
-	query := parser.TopLevelQuery()
-	if query == nil {
-		return nil, fmt.Errorf("parse lucene query (%s) error: query is nil", q)
-	}
-
-	result := query.Accept(visitor)
-	if result != nil {
-		if node, ok := result.(Node); ok {
-			visitor.root = node
-		}
-	}
-
-	err := visitor.Error()
-	if err != nil {
-		return nil, fmt.Errorf("parse lucene query (%s) error: %v", q, err)
-	}
-
-	esQuery := visitor.ToES()
-	return esQuery, nil
+	return visitor.Expr(), nil
 }

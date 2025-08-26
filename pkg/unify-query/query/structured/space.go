@@ -109,7 +109,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 
 	var err error
 
-	ctx, span := trace.NewSpan(s.ctx, "build-metadata-query")
+	ctx, span := trace.NewSpan(s.ctx, "space-filter-new-ts-dbs")
 	defer span.End(&err)
 
 	rtDetail := s.router.GetResultTable(ctx, tableID, false)
@@ -291,7 +291,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	tableIDs := set.New[string]()
 	isK8s := false
 
-	ctx, span := trace.NewSpan(s.ctx, "build-metadata-query")
+	ctx, span := trace.NewSpan(s.ctx, "space-filter-data-list")
 	defer span.End(&err)
 
 	if db != "" {

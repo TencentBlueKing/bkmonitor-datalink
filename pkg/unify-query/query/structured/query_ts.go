@@ -691,23 +691,7 @@ func (q *Query) BuildMetadataQuery(
 		measurements = []string{measurement}
 	}
 
-	span.Set("tsdb-table-id", tsDB.TableID)
-	span.Set("tsdb-field-alias", tsDB.FieldAlias)
-	span.Set("tsdb-measurement-type", tsDB.MeasurementType)
-	span.Set("tsdb-filters", tsDB.Filters)
-	span.Set("tsdb-data-label", tsDB.DataLabel)
-	span.Set("tsdb-storage-type", tsDB.StorageType)
-	span.Set("tsdb-storage-id", tsDB.StorageID)
-	span.Set("tsdb-storage-cluster-records", tsDB.StorageClusterRecords)
-	span.Set("tsdb-storage-name", tsDB.StorageName)
-	span.Set("tsdb-cluster-name", tsDB.ClusterName)
-	span.Set("tsdb-tag-keys", tsDB.TagsKey)
-	span.Set("tsdb-vm-rt", tsDB.VmRt)
-	span.Set("tsdb-db", tsDB.DB)
-	span.Set("tsdb-measurements", measurements)
-	span.Set("tsdb-time-field", tsDB.TimeField)
-	span.Set("tsdb-need-add-time", tsDB.NeedAddTime)
-	span.Set("tsdb-source-type", tsDB.SourceType)
+	span.Set("tsdb", tsDB)
 
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)

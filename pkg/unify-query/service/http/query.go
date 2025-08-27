@@ -419,7 +419,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	// 多协程查询数据
 	var (
-		sendWg sync.WaitGroup
+		wg sync.WaitGroup
 	)
 
 	p, _ := ants.NewPool(QueryMaxRouting)
@@ -430,13 +430,16 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 			if s.Status == redisUtil.StatusCompleted || s.FailedNum > session.SliceMaxFailedNum {
 				continue
 			}
-			log.Infof(ctx, "query with sliceID: %s, sliceMax: %d, offset: %d, limit: %d", s.ScrollID, s.SliceMax, s.Offset, s.Limit)
-			sendWg.Add(1)
 
-			_ = p.Submit(func() {
+			log.Infof(ctx, "query with sliceID: %s, sliceMax: %d, offset: %d, limit: %d", s.ScrollID, s.SliceMax, s.Offset, s.Limit)
+			wg.Add(1)
+
+			err = p.Submit(func() {
 				defer func() {
-					sendWg.Done()
+					session.UpdateSliceStatus(k, s)
+					wg.Done()
 				}()
+
 				newQry := &metadata.Query{}
 				err = copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true})
 				if err != nil {
@@ -444,14 +447,16 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					errCh <- err
 					return
 				}
+
+				// 使用 slice 配置查询
 				newQry.SliceID = s.ScrollID
+				newQry.Size = s.Limit
 				newQry.ResultTableOption = &metadata.ResultTableOption{
 					ScrollID:   s.ScrollID,
 					SliceIndex: &s.SliceIdx,
 					SliceMax:   &s.SliceMax,
 					From:       &s.Offset,
 				}
-				newQry.Size = s.Limit
 
 				instance := prometheus.GetTsDbInstance(ctx, newQry)
 				if instance == nil {
@@ -459,14 +464,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					return
 				}
 
-				size, option, queryErr := instance.QueryRawData(ctx, newQry, start, end, dataCh)
-				if queryErr != nil {
+				size, option, err := instance.QueryRawData(ctx, newQry, start, end, dataCh)
+				if err != nil {
 					s.FailedNum++
-					if s.FailedNum > session.SliceMaxFailedNum {
-						s.Status = redisUtil.StatusFailed
-						session.UpdateSliceStatus(k, s)
-					}
-					errCh <- queryErr
+					errCh <- err
 					return
 				}
 
@@ -476,7 +477,9 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				}
 
 				if option != nil {
-					s.ScrollID = option.ScrollID
+					if option.ScrollID != "" {
+						s.ScrollID = option.ScrollID
+					}
 					s.Offset = s.Offset + s.Limit*s.SliceMax
 					lock.Lock()
 					resultTableOptions.SetOption(newQry.TableUUID(), option)
@@ -486,14 +489,16 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				if size == 0 {
 					s.Status = redisUtil.StatusCompleted
 				}
-				session.UpdateSliceStatus(k, s)
-
 				total += size
 			})
+			if err != nil {
+				errCh <- err
+				wg.Done()
+			}
 		}
 	})
 
-	sendWg.Wait()
+	wg.Wait()
 
 	close(dataCh)
 	close(errCh)

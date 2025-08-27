@@ -4284,23 +4284,23 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 	for i, c := range tCase.expected {
 		t.Logf("Running step %d: %s", i+1, c.desc)
 
-		testCtx := metadata.InitHashID(context.Background())
-		metadata.SetUser(testCtx, user)
+		ctx = metadata.InitHashID(context.Background())
+
+		metadata.SetUser(ctx, user)
 
 		mock.Es.Set(c.mockData)
 
-		session, err := redisUtil.GetOrCreateScrollSession(testCtx, queryTsStr, ScrollWindowTimeout, ScrollMaxSlice, 3, 10)
-		err = session.AcquireLock(testCtx)
-		require.NoErrorf(t, err, "Failed to acquire lock for scroll session in step %d", i+1)
+		session, err := redisUtil.GetOrCreateScrollSession(ctx, queryTsStr, ScrollWindowTimeout, ScrollMaxSlice, 3, 10)
 		require.NoError(t, err, "Failed to get scroll session")
-		require.NoError(t, err, "Failed to make slices")
+		err = session.AcquireLock(ctx)
+		require.NoErrorf(t, err, "Failed to acquire lock for scroll session in step %d", i+1)
 
 		var queryTsCopy structured.QueryTs
 		err = json.Unmarshal([]byte(queryTsStr), &queryTsCopy)
 		require.NoError(t, err, "Failed to unmarshal queryTs")
 
 		t.Logf("Starting queryRawWithScroll with session: %+v", session)
-		total, list, _, err := queryRawWithScroll(testCtx, &queryTsCopy, session)
+		total, list, _, err := queryRawWithScroll(ctx, &queryTsCopy, session)
 		done := session.Done()
 		t.Logf("queryRawWithScroll returned: total=%d, len(list)=%d, done=%v, err=%v", total, len(list), done, err)
 		hasData := len(list) > 0
@@ -4448,8 +4448,8 @@ func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
 	for i, c := range tCase.expected {
 		t.Logf("Running step %d: %s", i+1, c.desc)
 
-		testCtx := metadata.InitHashID(context.Background())
-		metadata.SetUser(testCtx, user)
+		ctx = metadata.InitHashID(context.Background())
+		metadata.SetUser(ctx, user)
 
 		mock.BkSQL.Set(c.mockData)
 
@@ -4458,9 +4458,9 @@ func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
 		var queryTsCopy structured.QueryTs
 		err = json.Unmarshal([]byte(queryTsStr), &queryTsCopy)
 		require.NoError(t, err, "Failed to unmarshal queryTs")
-		err = session.AcquireLock(testCtx)
+		err = session.AcquireLock(ctx)
 		require.NoErrorf(t, err, "Failed to acquire lock for scroll session in step %d", i+1)
-		total, list, _, err := queryRawWithScroll(testCtx, &queryTsCopy, session)
+		total, list, _, err := queryRawWithScroll(ctx, &queryTsCopy, session)
 		done := session.Done()
 		t.Logf("queryRawWithScroll returned: total=%d, len(list)=%d, done=%v, err=%v", total, len(list), done, err)
 		session.ReleaseLock()

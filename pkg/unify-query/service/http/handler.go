@@ -312,7 +312,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	isClearCache := queryTs.ClearCache
 
 	queryTs.ClearCache = false
-	queryByte, _ := json.StableMarshal(queryTs)
+	queryByte, _ := json.Marshal(queryTs)
 	queryStr := string(queryByte)
 	queryStrWithUserName := fmt.Sprintf("%s:%s", user.Name, queryStr)
 	session, err := redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollMaxSlice, 3, ScrollSliceLimit)

@@ -42,5 +42,4 @@ const (
 	KeyIndex     = "__index"
 
 	HandlerMapKey = "handler_map_key"
-
 )

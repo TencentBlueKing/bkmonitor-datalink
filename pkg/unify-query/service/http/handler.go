@@ -315,7 +315,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	queryByte, _ := json.Marshal(queryTs)
 	queryStr := string(queryByte)
 	queryStrWithUserName := fmt.Sprintf("%s:%s", user.Name, queryStr)
-	session, err := redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollMaxSlice, 3, ScrollSliceLimit)
+	session, err := redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollMaxSlice, ScrollSliceLimit)
 	if err != nil {
 		return
 	}
@@ -323,14 +323,20 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	span.Set("query-body", queryStr)
 
 	if isClearCache {
-		session.ReleaseLock()
+		err = session.ReleaseLock(ctx)
+		if err != nil {
+			return
+		}
 	}
 
 	if err = session.AcquireLock(ctx); err != nil {
 		return
 	}
 	defer func() {
-		session.ReleaseLock()
+		err = session.ReleaseLock(ctx)
+		if err != nil {
+			return
+		}
 	}()
 
 	span.Set("session-lock-key", queryStrWithUserName)

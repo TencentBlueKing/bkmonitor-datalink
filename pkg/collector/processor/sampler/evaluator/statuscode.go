@@ -117,7 +117,7 @@ func (e *statusCodeEvaluator) processTraces(record *define.Record) {
 	})
 
 	// 没有 batch 则无须后续处理流程
-	if len(batch) <= 0 {
+	if len(batch) == 0 {
 		return
 	}
 

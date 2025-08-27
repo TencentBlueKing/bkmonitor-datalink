@@ -14,8 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
@@ -42,7 +40,6 @@ type SliceStatusValue struct {
 }
 
 type ScrollSession struct {
-	Ctx               context.Context    `json:"-"`
 	SessionKey        string             `json:"session_key"`
 	LockKey           string             `json:"lock_key"`
 	LastAccessAt      time.Time          `json:"last_access_at"`
@@ -52,12 +49,12 @@ type ScrollSession struct {
 	Limit             int                `json:"limit"`
 	ScrollIDs         []SliceStatusValue `json:"scroll_ids"`
 
-	Mu sync.RWMutex `json:"-"`
+	mu sync.RWMutex `json:"-"`
 }
 
 func (s *ScrollSession) UpdateSliceStatus(idx int, value SliceStatusValue) {
-	s.Mu.Lock()
-	defer s.Mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	// 重试次数超过先定之后，直接算失败
 	if value.FailedNum > s.SliceMaxFailedNum {
@@ -151,12 +148,11 @@ func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollTime
 }
 
 func checkScrollSession(ctx context.Context, queryTsStr string) (*ScrollSession, bool) {
-	var session ScrollSession
-	err := Client().Get(ctx, SessionKeyPrefix+queryTsStr).Scan(&session)
+	session := &ScrollSession{}
+	err := Client().Get(ctx, SessionKeyPrefix+queryTsStr).Scan(session)
 	if err != nil {
 		return nil, false
-	} else {
-		session.Ctx = ctx
-		return &session, true
 	}
+
+	return session, true
 }

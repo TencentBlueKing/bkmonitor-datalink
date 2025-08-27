@@ -86,6 +86,17 @@ func makeMetricsGenerator(n int) *generator.MetricsGenerator {
 	return generator.NewMetricsGenerator(opts)
 }
 
+func makeMetricsGeneratorWithAttrs(name string, n int, attrs map[string]string) *generator.MetricsGenerator {
+	opts := define.MetricsOptions{
+		MetricName: name,
+		GaugeCount: n,
+		GeneratorOptions: define.GeneratorOptions{
+			Attributes: attrs,
+		},
+	}
+	return generator.NewMetricsGenerator(opts)
+}
+
 func TestMetricsNoAction(t *testing.T) {
 	g := makeMetricsGenerator(1)
 	data := g.Generate()
@@ -154,19 +165,28 @@ processor:
 	assert.Equal(t, "my_metrics_replace", name)
 }
 
-func makeMetricsGeneratorWithAttributes(name string, n int, attrs map[string]string) *generator.MetricsGenerator {
-	opts := define.MetricsOptions{
-		MetricName: name,
-		GaugeCount: n,
-		GeneratorOptions: define.GeneratorOptions{
-			Attributes: attrs,
-		},
+func makeRemoteWriteData(name string, attrs map[string]string) define.RemoteWriteData {
+	labels := []prompb.Label{{Name: "__name__", Value: name}}
+	for k, v := range attrs {
+		labels = append(labels, prompb.Label{
+			Name:  k,
+			Value: v,
+		})
 	}
-	return generator.NewMetricsGenerator(opts)
+
+	var rwData define.RemoteWriteData
+	rwData.Timeseries = append(rwData.Timeseries, prompb.TimeSeries{
+		Labels: labels,
+		Samples: []prompb.Sample{{
+			Value:     1,
+			Timestamp: time.Now().Unix(),
+		}},
+	})
+	return rwData
 }
 
-func TestMetricsRelabelAction(t *testing.T) {
-	content := `
+const (
+	relabelActionContent = `
 processor:
   - name: "metrics_filter/relabel"
     config:
@@ -198,7 +218,10 @@ processor:
               label: "code_type"
               value: "success"
 `
-	factory := processor.MustCreateFactory(content, NewFactory)
+)
+
+func TestRelabelActionMetrics(t *testing.T) {
+	factory := processor.MustCreateFactory(relabelActionContent, NewFactory)
 	type args struct {
 		metric     string
 		attributes map[string]string
@@ -206,7 +229,6 @@ processor:
 	tests := []struct {
 		name      string
 		args      args
-		wantExist bool
 		wantValue string
 	}{
 		{
@@ -219,7 +241,6 @@ processor:
 					"code":           "200",
 				},
 			},
-			wantExist: true,
 			wantValue: "success",
 		},
 		{
@@ -232,7 +253,6 @@ processor:
 					"code":           "200",
 				},
 			},
-			wantExist: false,
 		},
 		{
 			name: "rules hit op range",
@@ -244,7 +264,6 @@ processor:
 					"code":           "ret_105",
 				},
 			},
-			wantExist: true,
 			wantValue: "success",
 		},
 		{
@@ -257,7 +276,6 @@ processor:
 					"code":           "200",
 				},
 			},
-			wantExist: false,
 		},
 		{
 			name: "rules hit replace attr",
@@ -270,14 +288,13 @@ processor:
 					"code_type":      "test_type",
 				},
 			},
-			wantExist: true,
 			wantValue: "success",
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := makeMetricsGeneratorWithAttributes(tt.args.metric, 1, tt.args.attributes)
+		t.Run("metrics_"+tt.name, func(t *testing.T) {
+			g := makeMetricsGeneratorWithAttrs(tt.args.metric, 1, tt.args.attributes)
 			record := define.Record{
 				RecordType: define.RecordMetrics,
 				Data:       g.Generate(),
@@ -288,148 +305,12 @@ processor:
 
 			metrics := record.Data.(pmetric.Metrics)
 			foreach.MetricsSliceDataPointsAttrs(metrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
-				v, exist := attrs.Get("code_type")
-				assert.Equal(t, tt.wantExist, exist)
-				if exist {
-					assert.Equal(t, tt.wantValue, v.AsString())
-				}
+				testkits.AssertAttrsStringVal(t, attrs, "code_type", tt.wantValue)
 			})
 		})
-	}
-}
 
-func TestMetricsRelabelAction_RemoteWrite(t *testing.T) {
-	content := `
-processor:
-  - name: "metrics_filter/relabel"
-    config:
-      relabel:
-        - metrics: ["rpc_client_handled_total"]
-          rules:
-            - label: "callee_method"
-              op: "in"
-              values: ["hello"]
-            - label: "callee_service"
-              op: "in"
-              values: ["example.greeter"]
-            - label: "code"
-              op: "range"
-              values:
-                - prefix: "err_"
-                  min: 10
-                  max: 19
-                - prefix: "trpc_"
-                  min: 11
-                  max: 12
-                - prefix: "ret_"
-                  min: 100
-                  max: 200
-                - min: 200
-                  max: 200
-          destinations:
-            - action: "upsert"
-              label: "code_type"
-              value: "success"
-`
-	factory := processor.MustCreateFactory(content, NewFactory)
-	type args struct {
-		metric     string
-		attributes map[string]string
-	}
-	tests := []struct {
-		name      string
-		args      args
-		wantExist bool
-		wantValue string
-	}{
-		{
-			name: "rules hit op in",
-			args: args{
-				metric: "rpc_client_handled_total",
-				attributes: map[string]string{
-					"callee_method":  "hello",
-					"callee_service": "example.greeter",
-					"code":           "200",
-				},
-			},
-			wantExist: true,
-			wantValue: "success",
-		},
-		{
-			name: "rules hit op in but name not match",
-			args: args{
-				metric: "test_metric",
-				attributes: map[string]string{
-					"callee_method":  "hello",
-					"callee_service": "example.greeter",
-					"code":           "200",
-				},
-			},
-			wantExist: false,
-		},
-		{
-			name: "rules hit op range",
-			args: args{
-				metric: "rpc_client_handled_total",
-				attributes: map[string]string{
-					"callee_method":  "hello",
-					"callee_service": "example.greeter",
-					"code":           "ret_105",
-				},
-			},
-			wantExist: true,
-			wantValue: "success",
-		},
-		{
-			name: "rules not hit",
-			args: args{
-				metric: "rpc_client_handled_total",
-				attributes: map[string]string{
-					"callee_method":  "hello_1",
-					"callee_service": "example.greeter",
-					"code":           "200",
-				},
-			},
-			wantExist: false,
-		},
-		{
-			name: "rules hit replace attr",
-			args: args{
-				metric: "rpc_client_handled_total",
-				attributes: map[string]string{
-					"callee_method":  "hello",
-					"callee_service": "example.greeter",
-					"code":           "200",
-					"code_type":      "test_type",
-				},
-			},
-			wantExist: true,
-			wantValue: "success",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-
-			rwData := define.RemoteWriteData{
-				Timeseries: make([]prompb.TimeSeries, 0),
-			}
-			labels := make([]prompb.Label, 0, 4)
-			labels = append(labels, prompb.Label{Name: "__name__", Value: tt.args.metric})
-			for k, v := range tt.args.attributes {
-				labels = append(labels, prompb.Label{
-					Name:  k,
-					Value: v,
-				})
-			}
-			rwData.Timeseries = append(rwData.Timeseries, prompb.TimeSeries{
-				Labels: labels,
-				Samples: []prompb.Sample{{
-					Value:     1,
-					Timestamp: time.Now().Unix(),
-				}},
-			})
-
+		t.Run("remotewrite_"+tt.name, func(t *testing.T) {
+			rwData := makeRemoteWriteData(tt.args.metric, tt.args.attributes)
 			record := define.Record{
 				RecordType: define.RecordRemoteWrite,
 				Data:       &rwData,
@@ -440,10 +321,9 @@ processor:
 
 			tss := record.Data.(*define.RemoteWriteData).Timeseries
 			for _, ts := range tss {
-				_, dims := extractDims(ts.GetLabels())
-				v, ok := dims["code_type"]
-				assert.Equal(t, tt.wantExist, ok)
-				if ok {
+				labels := makeLabelMap(ts.GetLabels())
+				v := labels["code_type"]
+				if len(tt.wantValue) > 0 {
 					assert.Equal(t, tt.wantValue, v.GetValue())
 				}
 			}

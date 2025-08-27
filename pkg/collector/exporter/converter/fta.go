@@ -23,8 +23,6 @@ func (e FtaEvent) RecordType() define.RecordType {
 	return define.RecordFta
 }
 
-var FtaConverter EventConverter = ftaConverter{}
-
 type ftaConverter struct{}
 
 func (c ftaConverter) Clean() {}

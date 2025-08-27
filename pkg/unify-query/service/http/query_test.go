@@ -93,6 +93,7 @@ func TestQueryTsWithDoris(t *testing.T) {
 				SpaceUid:    spaceUid,
 			},
 			result: `{
+  "is_partial":false,
   "series" : [ {
     "name" : "_result0",
     "metric_name" : "",
@@ -141,6 +142,7 @@ func TestQueryTsWithDoris(t *testing.T) {
 				Step:        "30s",
 			},
 			result: `{
+  "is_partial":false,
   "series" : [ {
     "name" : "_result0",
     "metric_name" : "",
@@ -1027,32 +1029,32 @@ func TestQueryTs(t *testing.T) {
 	}{
 		"test query": {
 			query:  `{"query_list":[{"data_source":"","table_id":"system.cpu_summary","field_name":"usage","field_list":null,"function":[{"method":"mean","without":false,"dimensions":[],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"avg_over_time","window":"60s","position":0,"vargs_list":null},"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":[],"group_values":[],"values":[[1677081600000,30],[1677081660000,21],[1677081720000,1],[1677081780000,7],[1677081840000,4],[1677081900000,2],[1677081960000,100],[1677082020000,94],[1677082080000,34]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":[],"group_values":[],"values":[[1677081600000,30],[1677081660000,21],[1677081720000,1],[1677081780000,7],[1677081840000,4],[1677081900000,2],[1677081960000,100],[1677082020000,94],[1677082080000,34]]}],"is_partial":false}`,
 		},
 		"test lost sample in increase": {
 			query:  `{"query_list":[{"data_source":"bkmonitor","table_id":"system.cpu_summary","field_name":"usage","field_list":null,"function":null,"time_aggregation":{"function":"increase","window":"5m0s","position":0,"vargs_list":null},"reference_name":"a","dimensions":null,"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"notice_way","value":["weixin"],"op":"eq"},{"field_name":"status","value":["failed"],"op":"eq"}],"condition_list":["and"]},"keep_columns":null}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["job","notice_way","status"],"group_values":["SLI","weixin","failed"],"values":[[1677081660000,52.499649999999995],[1677081720000,38.49981666666667],[1677081780000,46.66666666666667],[1677081840000,40],[1677081900000,16.25],[1677081960000,137.5],[1677082020000,247.5],[1677082080000,285],[1677082140000,263.6679222222223],[1677082200000,160.00106666666667],[1677082260000,51.00056666666667]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["job","notice_way","status"],"group_values":["SLI","weixin","failed"],"values":[[1677081660000,52.499649999999995],[1677081720000,38.49981666666667],[1677081780000,46.66666666666667],[1677081840000,40],[1677081900000,16.25],[1677081960000,137.5],[1677082020000,247.5],[1677082080000,285],[1677082140000,263.6679222222223],[1677082200000,160.00106666666667],[1677082260000,51.00056666666667]]}],"is_partial":false}`,
 		},
 		"test query support fuzzy __name__ with count": {
 			query:  `{"query_list":[{"data_source":"","table_id":"system.cpu_summary","field_name":".*","is_regexp":true,"field_list":null,"function":[{"method":"sum","without":false,"dimensions":["status"],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"count_over_time","window":"60s","position":0,"vargs_list":null},"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["status"],"group_values":["failed"],"values":[[1677081600000,30],[1677081660000,21],[1677081720000,1],[1677081780000,7],[1677081840000,4],[1677081900000,2],[1677081960000,100],[1677082020000,94],[1677082080000,34]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["status"],"group_values":["failed"],"values":[[1677081600000,30],[1677081660000,21],[1677081720000,1],[1677081780000,7],[1677081840000,4],[1677081900000,2],[1677081960000,100],[1677082020000,94],[1677082080000,34]]}],"is_partial":false}`,
 		},
 		"test query  __name__ with raw 多指标单表": {
 			query:  `{"query_list":[{"data_source":"","table_id":"system.cpu_summary","field_name":".*","is_regexp":true,"field_list":null,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"10m"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","status"],"group_values":["bkmonitor:system:cpu_summary:free","failed"],"values":[[1677082200000,68]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","status"],"group_values":["bkmonitor:system:cpu_summary:usage","failed"],"values":[[1677082200000,34]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","status"],"group_values":["bkmonitor:system:cpu_summary:free","failed"],"values":[[1677082200000,68]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","status"],"group_values":["bkmonitor:system:cpu_summary:usage","failed"],"values":[[1677082200000,34]]}],"is_partial":false}`,
 		},
 
 		"test query  __name__ with raw 多指标单表 exporter": {
 			query:  `{"query_list":[{"data_source":"","table_id":"bk.exporter","field_name":".*","is_regexp":true,"field_list":null,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"10m"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:exporter:free","buzzy"],"values":[[1677082200000,70]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:exporter:usage","buzzy"],"values":[[1677082200000,68]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:exporter:free","buzzy"],"values":[[1677082200000,70]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:exporter:usage","buzzy"],"values":[[1677082200000,68]]}],"is_partial":false}`,
 		},
 		"test query  __name__ with raw 多指标单表 standard_v2_time_series": {
 			query:  `{"query_list":[{"data_source":"","table_id":"bk.standard_v2_time_series","field_name":".*","is_regexp":true,"field_list":null,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"10m"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:standard_v2_time_series:usage","buzzy"],"values":[[1677082200000,68]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","name"],"group_values":["bkmonitor:bk:standard_v2_time_series:usage","buzzy"],"values":[[1677082200000,68]]}],"is_partial":false}`,
 		},
 		"test regx with __name__ 单指标单表": {
 			query:  `{"query_list":[{"data_source":"","field_name":"merltrics_rest_request_status_.+_count","is_regexp":true,"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[],"condition_list":[]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1677081600","end_time":"1677085600","step":"60s"}`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","container","namespace"],"group_values":["merltrics_rest_request_status_200_count","message-history","lolstage"],"values":[[1677082080000,68],[1677082140000,68],[1677082200000,68],[1677082260000,68],[1677082320000,68],[1677082380000,68]]}]}`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["__name__","container","namespace"],"group_values":["merltrics_rest_request_status_200_count","message-history","lolstage"],"values":[[1677082080000,68],[1677082140000,68],[1677082200000,68],[1677082260000,68],[1677082320000,68],[1677082380000,68]]}],"is_partial":false}`,
 		},
 	}
 
@@ -1162,6 +1164,11 @@ func TestQueryRawWithInstance(t *testing.T) {
 		// query raw multi query from + size 数量刚好结束
 		`{"from":0,"query":{"bool":{"filter":{"range":{"end_time":{"from":1723595000000000,"include_lower":true,"include_upper":true,"to":1723595000000000}}}}},"size":12,"sort":[{"time":{"order":"desc"}}]}`:                     `{"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},"hits":{"total":{"value":10,"relation":"eq"},"hits":[{"_type":"_doc","_id":"00001","_source":{"time":"00001"}},{"_type":"_doc","_id":"10001","_source":{"time":"10001"}},{"_type":"_doc","_id":"20001","_source":{"time":"20001"}}]}}`,
 		`{"from":0,"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723595000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":12,"sort":[{"time":{"order":"desc"}}]}`: `{"_shards":{"total":2,"successful":2,"skipped":0,"failed":0},"hits":{"total":{"value":10,"relation":"eq"},"hits":[{"_type":"_doc","_id":"00002","_source":{"time":"00002"}},{"_type":"_doc","_id":"10002","_source":{"time":"10002"}},{"_type":"_doc","_id":"20002","_source":{"time":"20002"}}]}}`,
+	})
+
+	mock.BkSQL.Set(map[string]any{
+		// query object field is null
+		"SELECT * FROM `2_bklog_bkunify_query_doris`.doris WHERE (`dtEventTimeStamp` >= 1723595000000 AND `dtEventTimeStamp` <= 1723595000000 AND `thedate` = '20240814') ORDER BY `dtEventTimeStamp` DESC, `gseIndex` DESC, `iterationIndex` DESC LIMIT 100 OFFSET 0": `{"result":true,"message":"成功","code":"00","data":{"cluster":"codev_doris2","totalRecords":100,"external_api_call_time_mills":{"bkbase_meta_api":10},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"dtEventTime":1756175592000,"__shard_key__":5853918203,"__unique_key__":"12395782465323060901","dtEventTimeStamp":1756175592000,"thedate":20250826,"localTime":"2025-08-26 10:33:12","iterationIndex":7,"__ext":null,"cloudId":0,"gseIndex":11483283,"path":"/data/home/user00/pangusvr/bin/log/httpgatesvr.log","time":1756175592,"log":"[20250826 10:33:11:328884][INFO    ][httpgatesvr][(httpgatesvr/cos_file_ci_callback.lua:167) (Lua)] [on_update_cos_ci_info] success uid: 2199033031264, path_name: highlight/1/2199033031264/649651764779846687_c133e9abb8b600235143a96366a6ac03.jpg","content":" [on_update_cos_ci_info] success uid: 2199033031264, path_name: highlight/1/2199033031264/649651764779846687_c133e9abb8b600235143a96366a6ac03.jpg","func":"Lua","level":"INFO","log_file":"httpgatesvr/cos_file_ci_callback.lua:167","log_time":"20250826 10:33:11:328884","svr":"httpgatesvr"}],"bk_biz_ids":[],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":3049,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":11,"connect_db":66,"match_query_routing_rule":0,"check_permission":11,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["dtEventTime","__shard_key__","__unique_key__","dtEventTimeStamp","thedate","localTime","iterationIndex","__ext","bk_host_id","cloudId","gseIndex","path","serverIp","time","log","content","func","level","log_file","log_time","svr"],"total_record_size":327384,"trino_cluster_host":"","timetaken":3.139,"result_schema":[{"field_type":"long","field_name":"__c0","field_alias":"dtEventTime","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"__shard_key__","field_index":1},{"field_type":"string","field_name":"__c2","field_alias":"__unique_key__","field_index":2},{"field_type":"long","field_name":"__c3","field_alias":"dtEventTimeStamp","field_index":3},{"field_type":"int","field_name":"__c4","field_alias":"thedate","field_index":4},{"field_type":"string","field_name":"__c5","field_alias":"localTime","field_index":5},{"field_type":"long","field_name":"__c6","field_alias":"iterationIndex","field_index":6},{"field_type":"string","field_name":"__c7","field_alias":"__ext","field_index":7},{"field_type":"long","field_name":"__c8","field_alias":"bk_host_id","field_index":8},{"field_type":"long","field_name":"__c9","field_alias":"cloudId","field_index":9},{"field_type":"long","field_name":"__c10","field_alias":"gseIndex","field_index":10},{"field_type":"string","field_name":"__c11","field_alias":"path","field_index":11},{"field_type":"string","field_name":"__c12","field_alias":"serverIp","field_index":12},{"field_type":"long","field_name":"__c13","field_alias":"time","field_index":13},{"field_type":"string","field_name":"__c14","field_alias":"log","field_index":14},{"field_type":"string","field_name":"__c15","field_alias":"content","field_index":15},{"field_type":"string","field_name":"__c16","field_alias":"func","field_index":16},{"field_type":"string","field_name":"__c17","field_alias":"level","field_index":17},{"field_type":"string","field_name":"__c18","field_alias":"log_file","field_index":18},{"field_type":"string","field_name":"__c19","field_alias":"log_time","field_index":19},{"field_type":"string","field_name":"__c20","field_alias":"svr","field_index":20}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["100915_bklog_pub_svrlog_pangusvr_other_other_analysis"]},"errors":null,"trace_id":"0816890bc718ec5786d469e9a79110d2","span_id":"6d04c0ddf758c603"}`,
 	})
 
 	tcs := map[string]struct {
@@ -1996,6 +2003,23 @@ func TestQueryRawWithInstance(t *testing.T) {
 			expected: `[{"__data_label":"es","__doc_id":"00001","__index":"","__result_table":"result_table.es_with_time_filed","time":"00001"}]`,
 			options:  `{"result_table.es_with_time_filed|3":{"from":0},"result_table.es|3":{"from":0}}`,
 		},
+		"query object field is null": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource: structured.BkLog,
+						TableID:    influxdb.ResultTableDoris,
+						SQL:        "SELECT *  ORDER BY dtEventTimeStamp DESC, gseIndex DESC, iterationIndex DESC LIMIT 100 OFFSET 0",
+					},
+				},
+				Step: start,
+				End:  end,
+			},
+			total:    327384,
+			expected: `[{"__data_label":"bksql","__ext":<nil>,"__index":"2_bklog_bkunify_query_doris","__result_table":"result_table.doris","__shard_key__":5.853918203e+09,"__unique_key__":"12395782465323060901","cloudId":0,"content":" [on_update_cos_ci_info] success uid: 2199033031264, path_name: highlight/1/2199033031264/649651764779846687_c133e9abb8b600235143a96366a6ac03.jpg","dtEventTime":1.756175592e+12,"dtEventTimeStamp":1.756175592e+12,"func":"Lua","gseIndex":1.1483283e+07,"iterationIndex":7,"level":"INFO","localTime":"2025-08-26 10:33:12","log":"[20250826 10:33:11:328884][INFO    ][httpgatesvr][(httpgatesvr/cos_file_ci_callback.lua:167) (Lua)] [on_update_cos_ci_info] success uid: 2199033031264, path_name: highlight/1/2199033031264/649651764779846687_c133e9abb8b600235143a96366a6ac03.jpg","log_file":"httpgatesvr/cos_file_ci_callback.lua:167","log_time":"20250826 10:33:11:328884","path":"/data/home/user00/pangusvr/bin/log/httpgatesvr.log","svr":"httpgatesvr","thedate":2.0250826e+07,"time":1.756175592e+09}]`,
+			options:  `{"result_table.doris":{"result_schema":[{"field_alias":"dtEventTime","field_index":0,"field_name":"__c0","field_type":"long"},{"field_alias":"__shard_key__","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"__unique_key__","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"dtEventTimeStamp","field_index":3,"field_name":"__c3","field_type":"long"},{"field_alias":"thedate","field_index":4,"field_name":"__c4","field_type":"int"},{"field_alias":"localTime","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"iterationIndex","field_index":6,"field_name":"__c6","field_type":"long"},{"field_alias":"__ext","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"bk_host_id","field_index":8,"field_name":"__c8","field_type":"long"},{"field_alias":"cloudId","field_index":9,"field_name":"__c9","field_type":"long"},{"field_alias":"gseIndex","field_index":10,"field_name":"__c10","field_type":"long"},{"field_alias":"path","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"serverIp","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"time","field_index":13,"field_name":"__c13","field_type":"long"},{"field_alias":"log","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"content","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"func","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"level","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"log_file","field_index":18,"field_name":"__c18","field_type":"string"},{"field_alias":"log_time","field_index":19,"field_name":"__c19","field_type":"string"},{"field_alias":"svr","field_index":20,"field_name":"__c20","field_type":"string"}]}}`,
+		},
 	}
 
 	for name, c := range tcs {
@@ -2090,7 +2114,7 @@ func TestQueryExemplar(t *testing.T) {
 	out, err := json.Marshal(res)
 	assert.Nil(t, err)
 	actual := string(out)
-	assert.Equal(t, `{"series":[{"name":"_result0","metric_name":"usage","columns":["_value","_time","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"types":["float","float","string","string","float","float"],"group_keys":[],"group_values":[],"values":[[30,1677081600000000000,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],[21,1677081660000000000,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],[1,1677081720000000000,"771073eb573336a6d3365022a512d6d8","fca46f1c065452e8",1,1682150008969]]}]}`, actual)
+	assert.Equal(t, `{"series":[{"name":"_result0","metric_name":"usage","columns":["_value","_time","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"types":["float","float","string","string","float","float"],"group_keys":[],"group_values":[],"values":[[30,1677081600000000000,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],[21,1677081660000000000,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],[1,1677081720000000000,"771073eb573336a6d3365022a512d6d8","fca46f1c065452e8",1,1682150008969]]}],"is_partial":false}`, actual)
 }
 
 func TestVmQueryParams(t *testing.T) {
@@ -3730,7 +3754,7 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 					"instant": false
                 }
 			`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster"],"group_values":["default"],"values":[[1700903220000,1498687],[1700903340000,1499039.5]]}]}`,
+			result: `{"is_partial":false,"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster"],"group_values":["default"],"values":[[1700903220000,1498687],[1700903340000,1499039.5]]}]}`,
 		},
 		"instanceCase": {
 			query: `
@@ -3774,7 +3798,7 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 					"instant": true
                 }
 			`,
-			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","43","inmem","/var/lib/influxdb/data/_internal/monitor/43","monitor","/var/lib/influxdb/wal/_internal/monitor/43"],"values":[[1700903220000,1498687]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","44","inmem","/var/lib/influxdb/data/_internal/monitor/44","monitor","/var/lib/influxdb/wal/_internal/monitor/44"],"values":[[1700903340000,1499039.5]]}]}`,
+			result: `{"is_partial":false,"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","43","inmem","/var/lib/influxdb/data/_internal/monitor/43","monitor","/var/lib/influxdb/wal/_internal/monitor/43"],"values":[[1700903220000,1498687]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","44","inmem","/var/lib/influxdb/data/_internal/monitor/44","monitor","/var/lib/influxdb/wal/_internal/monitor/44"],"values":[[1700903340000,1499039.5]]}]}`,
 		},
 	}
 	for name, c := range testCases {
@@ -4314,7 +4338,8 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 		} else {
 			assert.Equal(t, 0, len(list), "Should have no data when hasData is false for step %d", i+1)
 		}
-		session.ReleaseLock()
+		err = session.ReleaseLock(ctx)
+		require.NoError(t, err, "Failed to release lock for scroll session in step %d", i+1)
 		t.Logf("Session: %+v", session)
 	}
 }
@@ -4442,7 +4467,7 @@ func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
 		SpaceUID:  spaceUid,
 		SkipSpace: "true",
 	}
-	session, err := redisUtil.GetOrCreateScrollSession(t.Context(), queryTsStr, ScrollWindowTimeout, ScrollMaxSlice, 3, 10)
+	session, err := redisUtil.GetOrCreateScrollSession(t.Context(), queryTsStr, ScrollWindowTimeout, ScrollMaxSlice, 10)
 	require.NoError(t, err, "Failed to get scroll session")
 
 	for i, c := range tCase.expected {
@@ -4463,7 +4488,8 @@ func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
 		total, list, _, err := queryRawWithScroll(ctx, &queryTsCopy, session)
 		done := session.Done()
 		t.Logf("queryRawWithScroll returned: total=%d, len(list)=%d, done=%v, err=%v", total, len(list), done, err)
-		session.ReleaseLock()
+		err = session.ReleaseLock(ctx)
+		require.NoError(t, err, "Failed to release lock for scroll session in step %d", i+1)
 		hasData := len(list) > 0
 		t.Logf("Session: %+v", session)
 		assert.NoError(t, err, "QueryRawWithScroll should not return error for step %d", i+1)

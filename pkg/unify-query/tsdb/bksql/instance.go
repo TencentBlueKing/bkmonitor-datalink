@@ -87,10 +87,6 @@ func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 	return instance, nil
 }
 
-func (i *Instance) Connect() string {
-	return i.client.URL()
-}
-
 func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
 	return ""
 }
@@ -379,9 +375,9 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	return remote.FromQueryResult(true, qr)
 }
 
-func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, bool, error) {
 	log.Warnf(ctx, "%s not support direct query range", i.InstanceType())
-	return nil, nil
+	return nil, false, nil
 }
 
 func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
@@ -507,10 +503,6 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 func (i *Instance) InstanceType() string {
 	return consul.BkSqlStorageType
-}
-
-func (i *Instance) IsCompleted(opt *metadata.ResultTableOption, dataLen int) bool {
-	return dataLen == 0
 }
 
 func getValue(k string, d map[string]interface{}) (string, error) {

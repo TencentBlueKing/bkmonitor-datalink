@@ -49,68 +49,67 @@ type EventConverter interface {
 }
 
 func NewCommonConverter(conf *Config) Converter {
-	if conf == nil {
-		conf = &Config{Tars: TarsConfig{}}
-	}
-	conf.Validate()
-
 	return commonConverter{
-		tracesConverter:      TracesConverter,
-		metricsConverter:     MetricsConverter,
-		logsConverter:        LogsConverter,
-		pushGatewayConverter: PushGatewayConverter,
-		remoteWriteConverter: RemoteWriteConverter,
-		proxyConverter:       ProxyConverter,
-		pingserverConverter:  PingserverConverter,
-		profilesConverter:    ProfilesConverter,
-		ftaConverter:         FtaConverter,
-		beatConverter:        BeatConverter,
-		tarsConverter:        NewTarsConverter(conf.Tars),
+		traces:      tracesConverter{},
+		metrics:     metricsConverter{},
+		logs:        logsConverter{},
+		pushGateway: pushGatewayConverter{},
+		remoteWrite: remoteWriteConverter{},
+		proxy:       proxyConverter{},
+		pingserver:  pingserverConverter{},
+		profiles:    profilesConverter{},
+		fta:         ftaConverter{},
+		beat:        beatConverter{},
+		logPush:     logPushConverter{},
+		tars:        newTarsConverter(conf.Tars),
 	}
 }
 
 type commonConverter struct {
-	tracesConverter      EventConverter
-	metricsConverter     EventConverter
-	logsConverter        EventConverter
-	pushGatewayConverter EventConverter
-	remoteWriteConverter EventConverter
-	proxyConverter       EventConverter
-	pingserverConverter  EventConverter
-	profilesConverter    EventConverter
-	ftaConverter         EventConverter
-	beatConverter        EventConverter
-	tarsConverter        EventConverter
+	traces      EventConverter
+	metrics     EventConverter
+	logs        EventConverter
+	pushGateway EventConverter
+	remoteWrite EventConverter
+	proxy       EventConverter
+	pingserver  EventConverter
+	profiles    EventConverter
+	fta         EventConverter
+	beat        EventConverter
+	logPush     EventConverter
+	tars        EventConverter
 }
 
 func (c commonConverter) Clean() {
-	c.tarsConverter.Clean()
+	c.tars.Clean()
 }
 
 func (c commonConverter) Convert(record *define.Record, f define.GatherFunc) {
 	switch record.RecordType {
 	case define.RecordTraces:
-		c.tracesConverter.Convert(record, f)
+		c.traces.Convert(record, f)
 	case define.RecordMetrics:
-		c.metricsConverter.Convert(record, f)
+		c.metrics.Convert(record, f)
 	case define.RecordLogs:
-		c.logsConverter.Convert(record, f)
+		c.logs.Convert(record, f)
 	case define.RecordPushGateway:
-		c.pushGatewayConverter.Convert(record, f)
+		c.pushGateway.Convert(record, f)
 	case define.RecordRemoteWrite:
-		c.remoteWriteConverter.Convert(record, f)
+		c.remoteWrite.Convert(record, f)
 	case define.RecordProxy:
-		c.proxyConverter.Convert(record, f)
+		c.proxy.Convert(record, f)
 	case define.RecordPingserver:
-		c.pingserverConverter.Convert(record, f)
+		c.pingserver.Convert(record, f)
 	case define.RecordProfiles:
-		c.profilesConverter.Convert(record, f)
+		c.profiles.Convert(record, f)
 	case define.RecordFta:
-		c.ftaConverter.Convert(record, f)
+		c.fta.Convert(record, f)
 	case define.RecordBeat:
-		c.beatConverter.Convert(record, f)
+		c.beat.Convert(record, f)
 	case define.RecordTars:
-		c.tarsConverter.Convert(record, f)
+		c.tars.Convert(record, f)
+	case define.RecordLogPush:
+		c.logPush.Convert(record, f)
 	}
 }
 

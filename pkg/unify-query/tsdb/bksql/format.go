@@ -147,9 +147,9 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 			continue
 		}
 
-		if v, ok := fieldMap[k]; ok {
-			if v == TableTypeVariant {
-				objectData, err := json.ParseObject(k, d.(string))
+		if fieldType, existed := fieldMap[k]; existed && fieldType == TableTypeVariant {
+			if nd, ok := d.(string); ok {
+				objectData, err := json.ParseObject(k, nd)
 				if err != nil {
 					log.Errorf(f.ctx, "json.ParseObject err: %v", err)
 					continue

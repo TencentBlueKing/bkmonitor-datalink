@@ -190,6 +190,7 @@ func (i Instance) QuerySeriesSet(
 	)
 }
 
+
 func (i Instance) InstanceType() string {
 	return consul.OfflineDataArchive
 }

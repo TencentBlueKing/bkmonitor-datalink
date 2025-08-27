@@ -713,7 +713,7 @@ NaN @[360000]`,
 		t.Run(k, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 
-			res, err := ins.DirectQueryRange(ctx, c.q, c.start, c.end, c.step)
+			res, _, err := ins.DirectQueryRange(ctx, c.q, c.start, c.end, c.step)
 
 			a := res.String()
 			assert.Nil(t, err)

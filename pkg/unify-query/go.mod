@@ -27,6 +27,7 @@ require (
 	github.com/influxdata/influxdb1-client v0.0.0-20200827194710-b269163b24ab
 	github.com/influxdata/influxql v1.1.1-0.20200828144457-65d3ef77d385
 	github.com/jarcoal/httpmock v1.3.1
+	github.com/jinzhu/copier v0.4.0
 	github.com/likexian/gokit v0.24.7
 	github.com/magiconair/properties v1.8.7
 	github.com/mitchellh/go-homedir v1.1.0

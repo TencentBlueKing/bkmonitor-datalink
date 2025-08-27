@@ -26,9 +26,9 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 		if prefix != "" {
 			k = prefix + StepString + k
 		}
-		switch v.(type) {
+		switch nv := v.(type) {
 		case map[string]any:
-			mapData(k, v.(map[string]any), res)
+			mapData(k, nv, res)
 		default:
 			res[k] = v
 		}

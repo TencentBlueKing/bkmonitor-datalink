@@ -14,12 +14,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
 const (
 	SessionKeyPrefix    = "scroll:session:"
 	ScrollLockKeyPrefix = "scroll:lock:"
+)
+
+const (
+	DefaultSliceMaxFailedNum = 3
 )
 
 const (
@@ -32,11 +38,16 @@ type SliceStatusValue struct {
 	SliceIdx int `json:"slice_idx"`
 	SliceMax int `json:"slice_max"`
 
-	ScrollID  string `json:"scroll_id"`
-	Offset    int    `json:"offset"`
-	Status    string `json:"status"`
-	FailedNum int    `json:"failed_num"`
-	Limit     int    `json:"limit"`
+	ScrollID     string `json:"scroll_id"`
+	Offset       int    `json:"offset"`
+	Status       string `json:"status"`
+	FailedNum    int    `json:"failed_num"`
+	MaxFailedNum int    `json:"max_failed_num"`
+	Limit        int    `json:"limit"`
+}
+
+func (s *SliceStatusValue) Done() bool {
+	return s.Status == StatusCompleted || s.Status == StatusFailed
 }
 
 type ScrollSession struct {
@@ -49,7 +60,7 @@ type ScrollSession struct {
 	Limit             int                `json:"limit"`
 	ScrollIDs         []SliceStatusValue `json:"scroll_ids"`
 
-	mu sync.RWMutex `json:"-"`
+	mu sync.RWMutex
 }
 
 func (s *ScrollSession) UpdateSliceStatus(idx int, value SliceStatusValue) {
@@ -66,8 +77,8 @@ func (s *ScrollSession) UpdateSliceStatus(idx int, value SliceStatusValue) {
 }
 
 func (s *ScrollSession) AcquireLock(ctx context.Context) error {
-	s.Mu.Lock()
-	defer s.Mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	err := Client().SetNX(ctx, s.LockKey, "locked", s.ScrollTimeout).Err()
 	if err != nil {
@@ -78,12 +89,15 @@ func (s *ScrollSession) AcquireLock(ctx context.Context) error {
 	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
 }
 
-func (s *ScrollSession) ReleaseLock() {
-	s.Mu.Lock()
-	defer s.Mu.Unlock()
-	Client().Del(s.Ctx, s.LockKey).Err()
+func (s *ScrollSession) ReleaseLock(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err := Client().Del(ctx, s.LockKey).Err()
+	if err != nil {
+		return err
+	}
 	s.LastAccessAt = time.Now()
-	Client().Set(s.Ctx, s.SessionKey, s, s.ScrollTimeout).Err()
+	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
 }
 
 func (s *ScrollSession) MarshalBinary() ([]byte, error) {
@@ -95,8 +109,8 @@ func (s *ScrollSession) UnmarshalBinary(data []byte) error {
 }
 
 func (s *ScrollSession) Done() bool {
-	s.Mu.RLock()
-	defer s.Mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	for _, sliceValue := range s.ScrollIDs {
 		if sliceValue.Status != StatusCompleted && sliceValue.FailedNum < s.SliceMaxFailedNum {
@@ -106,9 +120,8 @@ func (s *ScrollSession) Done() bool {
 	return true
 }
 
-func newScrollSession(ctx context.Context, queryTsStr string, scrollTimeout time.Duration, maxSlice, sliceMaxFailedNum, Limit int) *ScrollSession {
+func newScrollSession(queryTsStr string, scrollTimeout time.Duration, maxSlice, sliceMaxFailedNum, Limit int) *ScrollSession {
 	session := &ScrollSession{
-		Ctx:               ctx,
 		SessionKey:        SessionKeyPrefix + queryTsStr,
 		LockKey:           ScrollLockKeyPrefix + queryTsStr,
 		LastAccessAt:      time.Now(),
@@ -122,20 +135,21 @@ func newScrollSession(ctx context.Context, queryTsStr string, scrollTimeout time
 	// 根据 maxSlice 初始化 ScrollIDs
 	for idx := 0; idx < maxSlice; idx++ {
 		session.ScrollIDs[idx] = SliceStatusValue{
-			SliceIdx:  idx,
-			SliceMax:  maxSlice,
-			ScrollID:  "",
-			Offset:    idx * Limit,
-			Status:    StatusPending,
-			FailedNum: 0,
-			Limit:     Limit,
+			SliceIdx:     idx,
+			SliceMax:     maxSlice,
+			ScrollID:     "",
+			Offset:       idx * Limit,
+			Status:       StatusPending,
+			FailedNum:    0,
+			MaxFailedNum: sliceMaxFailedNum,
+			Limit:        Limit,
 		}
 	}
 
 	return session
 }
 
-func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollTimeout string, maxSlice, sliceMaxFailedNum, Limit int) (*ScrollSession, error) {
+func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollTimeout string, maxSlice, Limit int) (*ScrollSession, error) {
 	session, exist := checkScrollSession(ctx, queryTsStr)
 	if exist {
 		return session, nil
@@ -144,7 +158,7 @@ func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollTime
 	if err != nil {
 		return nil, err
 	}
-	return newScrollSession(ctx, queryTsStr, scrollTimeoutDuration, maxSlice, sliceMaxFailedNum, Limit), nil
+	return newScrollSession(queryTsStr, scrollTimeoutDuration, maxSlice, DefaultSliceMaxFailedNum, Limit), nil
 }
 
 func checkScrollSession(ctx context.Context, queryTsStr string) (*ScrollSession, bool) {

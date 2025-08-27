@@ -134,14 +134,6 @@ const (
 	DorisMeasurement          = "doris"
 )
 
-// ReplaceConfig
-const (
-	ReplaceTypesMetric          = "metric"
-	ReplaceTypesDimension       = "dimension"
-	ReplaceCustomLevelsCluster  = "cluster"
-	ReplaceCustomLevelsResource = "resource"
-)
-
 // Datasource
 const (
 	MinDataId = 1500000 // DATA_ID最小值
@@ -159,13 +151,12 @@ const (
 
 // root consul path template
 const (
-	DataSourceConsulPathTemplate          = "%s/metadata/v1"                            // DataSource的consul根路径
-	InfluxdbClusterInfoConsulPathTemplate = "%s%s/metadata/influxdb_info/cluster_info"  // InfluxdbClusterInfo的consul根路径
-	InfluxdbStorageConsulPathTemplate     = "%s%s/metadata/influxdb_info/router"        // InfluxdbStorage router的consul根路径
-	InfluxdbHostInfoConsulPathTemplate    = "%s%s/metadata/influxdb_info/host_info"     // InfluxdbHostInfo的consul根路径
-	InfluxdbTagInfoConsulPathTemplate     = "%s%s/metadata/influxdb_info/tag_info"      // InfluxdbTagInfo的consul根路径
-	InfluxdbInfoVersionConsulPathTemplate = "%s%s/metadata/influxdb_info/version/"      // InfluxdbInfoVersion的consul路径
-	BcsResourceConsulPathTemplate         = "%s%s/metadata/project_id/%s/cluster_id/%s" // bcs资源与集群对应data_id的consul路径
+	DataSourceConsulPathTemplate          = "%s/metadata/v1"                           // DataSource的consul根路径
+	InfluxdbClusterInfoConsulPathTemplate = "%s%s/metadata/influxdb_info/cluster_info" // InfluxdbClusterInfo的consul根路径
+	InfluxdbStorageConsulPathTemplate     = "%s%s/metadata/influxdb_info/router"       // InfluxdbStorage router的consul根路径
+	InfluxdbHostInfoConsulPathTemplate    = "%s%s/metadata/influxdb_info/host_info"    // InfluxdbHostInfo的consul根路径
+	InfluxdbTagInfoConsulPathTemplate     = "%s%s/metadata/influxdb_info/tag_info"     // InfluxdbTagInfo的consul根路径
+	InfluxdbInfoVersionConsulPathTemplate = "%s%s/metadata/influxdb_info/version/"     // InfluxdbInfoVersion的consul路径
 )
 
 const RecommendedBkCollectorVersion = "0.16.1061" // 推荐的bkcollector版本

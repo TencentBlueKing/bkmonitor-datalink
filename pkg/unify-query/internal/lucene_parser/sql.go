@@ -23,7 +23,7 @@ const (
 	opTypeAnd
 )
 
-func ToSQL(expr Expr) string {
+func toSql(expr Expr) string {
 	if expr == nil {
 		return ""
 	}

@@ -10,45 +10,65 @@
 package lucene_parser
 
 import (
-	"context"
 	"fmt"
 
 	antlr "github.com/antlr4-go/antlr/v4"
+	"github.com/olivere/elastic/v7"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
-type Option struct {
-	DimensionTransform Encode
+type Parser struct {
+	EsSchemas []FieldSchema
 }
 
-// ToExpr parses lucene query and returns Expr
-func ToExpr(ctx context.Context, q string, opt *Option) (Expr, error) {
-	defer func() {
-		if r := recover(); r != nil {
-			// 处理异常
-			log.Errorf(ctx, "parse lucene query error: %v", r)
-		}
-	}()
+type ParserOption struct {
+	EsSchema []FieldSchema
+}
 
-	// 创建输入流
-	is := antlr.NewInputStream(q)
+func WithEsSchema(esSchema FieldSchema) func(*Parser) {
+	return func(p *Parser) {
+		p.EsSchemas = append(p.EsSchemas, esSchema)
+	}
+}
 
-	// 创建词法分析器
+type Option func(*Parser)
+
+func NewParser(opts ...Option) *Parser {
+	p := &Parser{}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
+}
+
+type ParseResult struct {
+	Expr Expr
+	ES   elastic.Query
+	SQL  string
+}
+
+func (p *Parser) Do(q string) (rt ParseResult, err error) {
+	expr, err := buildExpr(q)
+	if err != nil {
+		return
+	}
+	return ParseResult{
+		Expr: expr,
+		ES:   es(expr, p.EsSchemas...),
+		SQL:  toSql(expr),
+	}, nil
+}
+
+func buildExpr(queryString string) (Expr, error) {
+	is := antlr.NewInputStream(queryString)
 	lexer := gen.NewLuceneLexer(is)
-
-	// 创建Token流
 	tokens := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
 	parser := gen.NewLuceneParser(tokens)
-
 	visitor := NewStatementVisitor()
-	log.Debugf(ctx, `"action","type","text"`)
-
-	// 开始解析
 	query := parser.TopLevelQuery()
 	if query == nil {
-		return nil, fmt.Errorf("parse lucene query (%s) error: query is nil", q)
+		return nil, fmt.Errorf("parse lucene query (%s) error: query is nil", queryString)
 	}
 
 	result := query.Accept(visitor)
@@ -59,9 +79,5 @@ func ToExpr(ctx context.Context, q string, opt *Option) (Expr, error) {
 	}
 
 	err := visitor.Error()
-	if err != nil {
-		return nil, fmt.Errorf("parse lucene query (%s) error: %v", q, err)
-	}
-
-	return visitor.Expr(), nil
+	return visitor.Expr(), err
 }

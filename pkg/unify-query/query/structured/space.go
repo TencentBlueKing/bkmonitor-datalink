@@ -24,7 +24,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
@@ -107,17 +106,10 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, allConditions AllConditions,
 	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool) []*query.TsDBV2 {
 
-	var err error
-
-	ctx, span := trace.NewSpan(s.ctx, "space-filter-new-ts-dbs")
-	defer span.End(&err)
-
-	rtDetail := s.router.GetResultTable(ctx, tableID, false)
+	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
 		return nil
 	}
-
-	span.Set("is_k8s", isK8s)
 
 	// 只有在容器场景下的特殊逻辑
 	if isK8s {
@@ -199,7 +191,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		for _, mName := range metricNames {
 			sepRt := s.GetMetricSepRT(tableID, mName)
 			if sepRt != nil {
-				span.Set(fmt.Sprintf("table_id_change_%s", mName), fmt.Sprintf("%s => %s", defaultTsDB.TableID, sepRt.TableId))
+				log.Infof(s.ctx, "table_id_change: (%s: %s => %s)", mName, defaultTsDB.TableID, sepRt.TableId)
 
 				defaultTsDB.ExpandMetricNames = []string{mName}
 				sepTsDB := s.getTsDBWithResultTableDetail(defaultTsDB, sepRt)

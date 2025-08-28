@@ -96,20 +96,27 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		}
 
 		if qry.SourceType == structured.BkData {
-			opt.Connect = elasticsearch.Connect{Address: bkapi.GetBkDataAPI().QueryUrlForES(user.SpaceUID)}
+			opt.Connects = append(opt.Connects, elasticsearch.Connect{Address: bkapi.GetBkDataAPI().QueryUrlForES(user.SpaceUID)})
 			opt.Headers = bkapi.GetBkDataAPI().Headers(nil)
 			opt.HealthCheck = false
 		} else {
-			stg, _ := tsdb.GetStorage(qry.StorageID)
-			if stg == nil {
-				err = fmt.Errorf("%s storage list is empty in %s", consul.ElasticsearchStorageType, qry.StorageID)
-				return instance
+			storages := qry.StorageIDs
+			if len(storages) == 0 {
+				storages = []string{qry.StorageID}
 			}
 
-			opt.Connect = elasticsearch.Connect{
-				Address:  stg.Address,
-				UserName: stg.Username,
-				Password: stg.Password,
+			for _, sid := range storages {
+				stg, _ := tsdb.GetStorage(sid)
+				if stg == nil {
+					err = fmt.Errorf("%s storage list is empty in %s", consul.ElasticsearchStorageType, qry.StorageID)
+					continue
+				}
+
+				opt.Connects = append(opt.Connects, elasticsearch.Connect{
+					Address:  stg.Address,
+					UserName: stg.Username,
+					Password: stg.Password,
+				})
 			}
 			opt.HealthCheck = false
 		}
@@ -120,11 +127,10 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			Headers: bkapi.GetBkDataAPI().Headers(map[string]string{
 				bksql.ContentType: tsDBService.BkSqlContentType,
 			}),
-			Timeout:    tsDBService.BkSqlTimeout,
-			MaxLimit:   tsDBService.BkSqlLimit,
-			Tolerance:  tsDBService.BkSqlTolerance,
-			SliceLimit: qry.Size,
-			Curl:       curlGet,
+			Timeout:   tsDBService.BkSqlTimeout,
+			MaxLimit:  tsDBService.BkSqlLimit,
+			Tolerance: tsDBService.BkSqlTolerance,
+			Curl:      curlGet,
 		})
 	case consul.VictoriaMetricsStorageType:
 		instance, err = victoriaMetrics.NewInstance(ctx, &victoriaMetrics.Options{

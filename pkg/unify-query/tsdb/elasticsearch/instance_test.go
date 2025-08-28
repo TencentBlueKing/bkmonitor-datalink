@@ -31,8 +31,10 @@ func TestInstance_getAlias(t *testing.T) {
 	metadata.InitMetadata()
 	ctx := metadata.InitHashID(context.Background())
 	inst, err := NewInstance(ctx, &InstanceOption{
-		Connect: Connect{
-			Address: mock.EsUrl,
+		Connects: []Connect{
+			{
+				Address: mock.EsUrl,
+			},
 		},
 		Timeout: time.Minute,
 	})
@@ -143,8 +145,10 @@ func TestInstance_queryReference(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 
 	ins, err := NewInstance(ctx, &InstanceOption{
-		Connect: Connect{
-			Address: mock.EsUrl,
+		Connects: []Connect{
+			{
+				Address: mock.EsUrl,
+			},
 		},
 		Timeout: 3 * time.Second,
 	})
@@ -481,8 +485,10 @@ func TestInstance_queryRawData(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 
 	ins, err := NewInstance(ctx, &InstanceOption{
-		Connect: Connect{
-			Address: mock.EsUrl,
+		Connects: []Connect{
+			{
+				Address: mock.EsUrl,
+			},
 		},
 		Timeout: 3 * time.Second,
 	})
@@ -552,7 +558,6 @@ func TestInstance_queryRawData(t *testing.T) {
 						Ast:  false,
 					},
 				},
-				StorageID:   "log",
 				DataSource:  structured.BkLog,
 				TableID:     "es_index",
 				DataLabel:   "es_index",
@@ -572,23 +577,9 @@ func TestInstance_queryRawData(t *testing.T) {
 			start: defaultStart,
 			end:   defaultEnd,
 			size:  1,
-			list: `[ {
-  "__data_label" : "es_index",
-  "__doc_id" : "aS3KjpEBbwEm76LbcH1G",
-  "__index" : "bk_unify_query_demo_2",
-  "__result_table" : "es_index",
-  "__table_uuid" : "es_index|log",
-  "group" : "fans",
-  "user" : [ {
-    "first" : "John",
-    "last" : "Smith"
-  }, {
-    "first" : "Alice",
-    "last" : "White"
-  } ]
-} ]`,
+			list:  `[{"__address":"http://127.0.0.1:93002","__data_label":"es_index","__doc_id":"aS3KjpEBbwEm76LbcH1G","__index":"bk_unify_query_demo_2","__result_table":"es_index","group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]}]`,
 			resultTableOptions: metadata.ResultTableOptions{
-				"es_index|log": &metadata.ResultTableOption{
+				"es_index|http://127.0.0.1:93002": &metadata.ResultTableOption{
 					FieldType: mock.FieldType,
 					From:      function.IntPoint(0),
 				},
@@ -602,7 +593,6 @@ func TestInstance_queryRawData(t *testing.T) {
 				Size:       10,
 				DataSource: structured.BkLog,
 				TableID:    "bk_log_index_set_10",
-				StorageID:  "log",
 				DataLabel:  "set_10",
 				Orders: metadata.Orders{
 					{
@@ -625,79 +615,9 @@ func TestInstance_queryRawData(t *testing.T) {
 			start: defaultStart,
 			end:   defaultEnd,
 			size:  1e4,
-			list: `[ {
-  "__data_label" : "set_10",
-  "__doc_id" : "27bdd842c5f2929cf4bd90f1e4534a9d",
-  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "set_10",
-  "__doc_id" : "d21cf5cf373b4a26a31774ff7ab38fad",
-  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "set_10",
-  "__doc_id" : "e07e9f6437e64cc04e945dc0bf604e62",
-  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "set_10",
-  "__doc_id" : "01fb133625637ee3b0b8e689b8126da2",
-  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "set_10",
-  "__doc_id" : "7eaa9e9edfc5e6bd8ba5df06fd2d5c00",
-  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "set_10",
-  "__doc_id" : "bcabf17aca864416784c0b1054b6056e",
-  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "set_10",
-  "__doc_id" : "3edf7236b8fc45c1aec67ea68fa92c61",
-  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "set_10",
-  "__doc_id" : "77d08d253f11554c5290b4cac515c4e1",
-  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "set_10",
-  "__doc_id" : "9fb5bb5f9bce7e0ab59e0cd1f410c57b",
-  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "set_10",
-  "__doc_id" : "573b3e1b4a499e4b7e7fab35f316ac8a",
-  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-} ]`,
+			list:  `[{"__data_label":"set_10","__address":"http://127.0.0.1:93002","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"27bdd842c5f2929cf4bd90f1e4534a9d","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10"},{"__data_label":"set_10","__address":"http://127.0.0.1:93002","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"d21cf5cf373b4a26a31774ff7ab38fad","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10"},{"__result_table":"bk_log_index_set_10","__data_label":"set_10","__address":"http://127.0.0.1:93002","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"e07e9f6437e64cc04e945dc0bf604e62","__index":"v2_2_bklog_bk_unify_query_20240814_0"},{"__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"01fb133625637ee3b0b8e689b8126da2","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"set_10","__address":"http://127.0.0.1:93002"},{"__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"7eaa9e9edfc5e6bd8ba5df06fd2d5c00","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"set_10","__address":"http://127.0.0.1:93002"},{"__data_label":"set_10","__address":"http://127.0.0.1:93002","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"bcabf17aca864416784c0b1054b6056e","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10"},{"__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"set_10","__address":"http://127.0.0.1:93002","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"3edf7236b8fc45c1aec67ea68fa92c61"},{"__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"set_10","__address":"http://127.0.0.1:93002","__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"77d08d253f11554c5290b4cac515c4e1"},{"__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"9fb5bb5f9bce7e0ab59e0cd1f410c57b","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"set_10","__address":"http://127.0.0.1:93002"},{"__ext.container_id":"77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f","__doc_id":"573b3e1b4a499e4b7e7fab35f316ac8a","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"set_10","__address":"http://127.0.0.1:93002"}]`,
 			resultTableOptions: metadata.ResultTableOptions{
-				"bk_log_index_set_10|log": &metadata.ResultTableOption{
+				"bk_log_index_set_10|http://127.0.0.1:93002": &metadata.ResultTableOption{
 					FieldType: mock.FieldType,
 					From:      function.IntPoint(0),
 				},
@@ -712,7 +632,6 @@ func TestInstance_queryRawData(t *testing.T) {
 				Source:      []string{"__ext.io_kubernetes_pod", "__ext.container_name"},
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageID:   "log",
 				DataLabel:   "bk_log",
 				StorageType: consul.ElasticsearchStorageType,
 				TimeField: metadata.TimeField{
@@ -730,89 +649,9 @@ func TestInstance_queryRawData(t *testing.T) {
 			start: defaultStart,
 			end:   defaultEnd,
 			size:  1e4,
-			list: `[ {
-  "__data_label" : "bk_log",
-  "__doc_id" : "8defd23f1c2599e70f3ace3a042b2b5f",
-  "__ext.container_name" : "unify-query",
-  "__ext.io_kubernetes_pod" : "bkmonitor-unify-query-64bd4f5df4-599f9",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "bk_log",
-  "__doc_id" : "ba0a6e66f01d6cb77ae25b13ddf4ad1b",
-  "__ext.container_name" : "unify-query",
-  "__ext.io_kubernetes_pod" : "bkmonitor-unify-query-64bd4f5df4-599f9",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "bk_log",
-  "__doc_id" : "74ea55e7397582b101f0e21efbc876c6",
-  "__ext.container_name" : "unify-query",
-  "__ext.io_kubernetes_pod" : "bkmonitor-unify-query-64bd4f5df4-599f9",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "bk_log",
-  "__doc_id" : "084792484f943e314e31ef2b2e878115",
-  "__ext.container_name" : "unify-query",
-  "__ext.io_kubernetes_pod" : "bkmonitor-unify-query-64bd4f5df4-599f9",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "bk_log",
-  "__doc_id" : "0a3f47a7c57d0af7d40d82c729c37155",
-  "__ext.container_name" : "unify-query",
-  "__ext.io_kubernetes_pod" : "bkmonitor-unify-query-64bd4f5df4-599f9",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "bk_log",
-  "__doc_id" : "85981293cca7102b9560b49a7f089737",
-  "__ext.container_name" : "unify-query",
-  "__ext.io_kubernetes_pod" : "bkmonitor-unify-query-64bd4f5df4-599f9",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "bk_log",
-  "__doc_id" : "b429dc6611efafc4d02b90f882271dea",
-  "__ext.container_name" : "unify-query",
-  "__ext.io_kubernetes_pod" : "bkmonitor-unify-query-64bd4f5df4-599f9",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "bk_log",
-  "__doc_id" : "01213026ae064c6726fd99dc8276e842",
-  "__ext.container_name" : "unify-query",
-  "__ext.io_kubernetes_pod" : "bkmonitor-unify-query-64bd4f5df4-599f9",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "bk_log",
-  "__doc_id" : "93027432b40ccb01b1be8f4ea06a6853",
-  "__ext.container_name" : "unify-query",
-  "__ext.io_kubernetes_pod" : "bkmonitor-unify-query-64bd4f5df4-599f9",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-}, {
-  "__data_label" : "bk_log",
-  "__doc_id" : "bc31babcb5d1075fc421bd641199d3aa",
-  "__ext.container_name" : "unify-query",
-  "__ext.io_kubernetes_pod" : "bkmonitor-unify-query-64bd4f5df4-599f9",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log"
-} ]`,
+			list:  `[{"__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"8defd23f1c2599e70f3ace3a042b2b5f","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002"},{"__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"ba0a6e66f01d6cb77ae25b13ddf4ad1b","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002"},{"__doc_id":"74ea55e7397582b101f0e21efbc876c6","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"},{"__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__ext.container_name":"unify-query","__doc_id":"084792484f943e314e31ef2b2e878115"},{"__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"0a3f47a7c57d0af7d40d82c729c37155","__index":"v2_2_bklog_bk_unify_query_20240814_0"},{"__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__ext.container_name":"unify-query","__doc_id":"85981293cca7102b9560b49a7f089737","__index":"v2_2_bklog_bk_unify_query_20240814_0"},{"__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"b429dc6611efafc4d02b90f882271dea","__index":"v2_2_bklog_bk_unify_query_20240814_0"},{"__doc_id":"01213026ae064c6726fd99dc8276e842","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9"},{"__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"93027432b40ccb01b1be8f4ea06a6853","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","__data_label":"bk_log","__address":"http://127.0.0.1:93002"},{"__data_label":"bk_log","__address":"http://127.0.0.1:93002","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__doc_id":"bc31babcb5d1075fc421bd641199d3aa","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10"}]`,
 			resultTableOptions: metadata.ResultTableOptions{
-				"bk_log_index_set_10|log": &metadata.ResultTableOption{
+				"bk_log_index_set_10|http://127.0.0.1:93002": &metadata.ResultTableOption{
 					FieldType: mock.FieldType,
 					From:      function.IntPoint(0),
 				},
@@ -824,10 +663,11 @@ func TestInstance_queryRawData(t *testing.T) {
 				Field:       field,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageID:   "log",
 				StorageType: consul.ElasticsearchStorageType,
-				ResultTableOption: &metadata.ResultTableOption{
-					ScrollID: "scroll_id_1",
+				ResultTableOptions: metadata.ResultTableOptions{
+					"bk_log_index_set_10|http://127.0.0.1:93002": &metadata.ResultTableOption{
+						ScrollID: "scroll_id_1",
+					},
 				},
 				FieldAlias: map[string]string{
 					"container_name": "__ext.container_name",
@@ -837,54 +677,9 @@ func TestInstance_queryRawData(t *testing.T) {
 			start: defaultStart,
 			end:   defaultEnd,
 			size:  1e4,
-			list: `[ {
-  "__data_label" : "",
-  "__doc_id" : "8defd23f1c2599e70f3ace3a042b2b5f",
-  "__ext.container_name" : "unify-query",
-  "__ext.io_kubernetes_pod" : "bkmonitor-unify-query-64bd4f5df4-599f9",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log",
-  "container_name" : "unify-query"
-}, {
-  "__data_label" : "",
-  "__doc_id" : "ba0a6e66f01d6cb77ae25b13ddf4ad1b",
-  "__ext.container_name" : "unify-query",
-  "__ext.io_kubernetes_pod" : "bkmonitor-unify-query-64bd4f5df4-599f9",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log",
-  "container_name" : "unify-query"
-}, {
-  "__data_label" : "",
-  "__doc_id" : "74ea55e7397582b101f0e21efbc876c6",
-  "__ext.container_name" : "unify-query",
-  "__ext.io_kubernetes_pod" : "bkmonitor-unify-query-64bd4f5df4-599f9",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log",
-  "container_name" : "unify-query"
-}, {
-  "__data_label" : "",
-  "__doc_id" : "084792484f943e314e31ef2b2e878115",
-  "__ext.container_name" : "unify-query",
-  "__ext.io_kubernetes_pod" : "bkmonitor-unify-query-64bd4f5df4-599f9",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log",
-  "container_name" : "unify-query"
-}, {
-  "__data_label" : "",
-  "__doc_id" : "0a3f47a7c57d0af7d40d82c729c37155",
-  "__ext.container_name" : "unify-query",
-  "__ext.io_kubernetes_pod" : "bkmonitor-unify-query-64bd4f5df4-599f9",
-  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log",
-  "container_name" : "unify-query"
-} ]`,
+			list:  `[{"__address":"http://127.0.0.1:93002","__data_label":"","__doc_id":"8defd23f1c2599e70f3ace3a042b2b5f","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","container_name":"unify-query"},{"__address":"http://127.0.0.1:93002","__data_label":"","__doc_id":"ba0a6e66f01d6cb77ae25b13ddf4ad1b","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","container_name":"unify-query"},{"__address":"http://127.0.0.1:93002","__data_label":"","__doc_id":"74ea55e7397582b101f0e21efbc876c6","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","container_name":"unify-query"},{"__address":"http://127.0.0.1:93002","__data_label":"","__doc_id":"084792484f943e314e31ef2b2e878115","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","container_name":"unify-query"},{"__address":"http://127.0.0.1:93002","__data_label":"","__doc_id":"0a3f47a7c57d0af7d40d82c729c37155","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bkmonitor-unify-query-64bd4f5df4-599f9","__index":"v2_2_bklog_bk_unify_query_20240814_0","__result_table":"bk_log_index_set_10","container_name":"unify-query"}]`,
 			resultTableOptions: map[string]*metadata.ResultTableOption{
-				"bk_log_index_set_10|log": {
+				"bk_log_index_set_10|http://127.0.0.1:93002": {
 					ScrollID:  "scroll_id_1",
 					FieldType: mock.FieldType,
 					From:      function.IntPoint(0),
@@ -897,10 +692,11 @@ func TestInstance_queryRawData(t *testing.T) {
 				Field:       field,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageID:   "log",
 				StorageType: consul.ElasticsearchStorageType,
-				ResultTableOption: &metadata.ResultTableOption{
-					ScrollID: "scroll_id_2",
+				ResultTableOptions: metadata.ResultTableOptions{
+					"bk_log_index_set_10|http://127.0.0.1:93002": &metadata.ResultTableOption{
+						ScrollID: "scroll_id_2",
+					},
 				},
 				Scroll: "10m",
 			},
@@ -908,7 +704,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			end:   defaultEnd,
 			size:  0,
 			resultTableOptions: metadata.ResultTableOptions{
-				"bk_log_index_set_10|log": &metadata.ResultTableOption{
+				"bk_log_index_set_10|http://127.0.0.1:93002": &metadata.ResultTableOption{
 					FieldType: mock.FieldType,
 					From:      function.IntPoint(0),
 				},
@@ -920,7 +716,6 @@ func TestInstance_queryRawData(t *testing.T) {
 				Field:       field,
 				DataSource:  structured.BkLog,
 				TableID:     "bk_log_index_set_10",
-				StorageID:   "log",
 				StorageType: consul.ElasticsearchStorageType,
 				Orders: []metadata.Order{
 					{
@@ -937,59 +732,18 @@ func TestInstance_queryRawData(t *testing.T) {
 					},
 				},
 				Size: 5,
-				ResultTableOption: &metadata.ResultTableOption{
-					SearchAfter: []any{1743465646224, "kibana_settings", nil},
+				ResultTableOptions: metadata.ResultTableOptions{
+					"bk_log_index_set_10|http://127.0.0.1:93002": &metadata.ResultTableOption{
+						SearchAfter: []any{1743465646224, "kibana_settings", nil},
+					},
 				},
 			},
 			start: defaultStart,
 			end:   defaultEnd,
 			size:  1e4,
-			list: `[ {
-  "__data_label" : "",
-  "__doc_id" : "rYSm7pUBxj8-27WaYRCB",
-  "__index" : ".monitoring-kibana-7-2025.04.01",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log",
-  "kibana_stats.kibana.name" : "es-os60crz7-kibana",
-  "timestamp" : "2025-04-01T00:00:36.224Z",
-  "type" : "kibana_stats"
-}, {
-  "__data_label" : "",
-  "__doc_id" : "roSm7pUBxj8-27WaYRCB",
-  "__index" : ".monitoring-kibana-7-2025.04.01",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log",
-  "timestamp" : "2025-04-01T00:00:36.224Z",
-  "type" : "kibana_settings"
-}, {
-  "__data_label" : "",
-  "__doc_id" : "q4Sm7pUBxj8-27WaOhBx",
-  "__index" : ".monitoring-kibana-7-2025.04.01",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log",
-  "kibana_stats.kibana.name" : "es-os60crz7-kibana",
-  "timestamp" : "2025-04-01T00:00:26.225Z",
-  "type" : "kibana_stats"
-}, {
-  "__data_label" : "",
-  "__doc_id" : "rISm7pUBxj8-27WaOhBx",
-  "__index" : ".monitoring-kibana-7-2025.04.01",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log",
-  "timestamp" : "2025-04-01T00:00:26.225Z",
-  "type" : "kibana_settings"
-}, {
-  "__data_label" : "",
-  "__doc_id" : "8DSm7pUBipSLyy3IEwRg",
-  "__index" : ".monitoring-kibana-7-2025.04.01",
-  "__result_table" : "bk_log_index_set_10",
-  "__table_uuid" : "bk_log_index_set_10|log",
-  "kibana_stats.kibana.name" : "es-os60crz7-kibana",
-  "timestamp" : "2025-04-01T00:00:16.224Z",
-  "type" : "kibana_stats"
-} ]`,
+			list:  `[{"__data_label":"","__address":"http://127.0.0.1:93002","timestamp":"2025-04-01T00:00:36.224Z","type":"kibana_stats","kibana_stats.kibana.name":"es-os60crz7-kibana","__doc_id":"rYSm7pUBxj8-27WaYRCB","__index":".monitoring-kibana-7-2025.04.01","__result_table":"bk_log_index_set_10"},{"__address":"http://127.0.0.1:93002","timestamp":"2025-04-01T00:00:36.224Z","type":"kibana_settings","__doc_id":"roSm7pUBxj8-27WaYRCB","__index":".monitoring-kibana-7-2025.04.01","__result_table":"bk_log_index_set_10","__data_label":""},{"__address":"http://127.0.0.1:93002","timestamp":"2025-04-01T00:00:26.225Z","type":"kibana_stats","kibana_stats.kibana.name":"es-os60crz7-kibana","__doc_id":"q4Sm7pUBxj8-27WaOhBx","__index":".monitoring-kibana-7-2025.04.01","__result_table":"bk_log_index_set_10","__data_label":""},{"__address":"http://127.0.0.1:93002","timestamp":"2025-04-01T00:00:26.225Z","type":"kibana_settings","__doc_id":"rISm7pUBxj8-27WaOhBx","__index":".monitoring-kibana-7-2025.04.01","__result_table":"bk_log_index_set_10","__data_label":""},{"__doc_id":"8DSm7pUBipSLyy3IEwRg","__index":".monitoring-kibana-7-2025.04.01","__result_table":"bk_log_index_set_10","__data_label":"","__address":"http://127.0.0.1:93002","timestamp":"2025-04-01T00:00:16.224Z","type":"kibana_stats","kibana_stats.kibana.name":"es-os60crz7-kibana"}]`,
 			resultTableOptions: map[string]*metadata.ResultTableOption{
-				"bk_log_index_set_10|log": {
+				"bk_log_index_set_10|http://127.0.0.1:93002": {
 					SearchAfter: []any{1743465616224.0, "kibana_stats", "es-os60crz7-kibana"},
 					FieldType:   mock.FieldType,
 					From:        function.IntPoint(0),
@@ -1012,7 +766,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				}
 			}()
 
-			size, option, err := ins.QueryRawData(ctx, c.query, c.start, c.end, dataCh)
+			size, options, err := ins.QueryRawData(ctx, c.query, c.start, c.end, dataCh)
 			close(dataCh)
 
 			wg.Wait()
@@ -1028,9 +782,6 @@ func TestInstance_queryRawData(t *testing.T) {
 				} else {
 					assert.Nil(t, list)
 				}
-
-				options := make(metadata.ResultTableOptions)
-				options.SetOption(c.query.TableUUID(), option)
 
 				assert.Equal(t, c.size, size)
 				assert.Equal(t, c.resultTableOptions, options)

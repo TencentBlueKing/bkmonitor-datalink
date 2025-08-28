@@ -101,9 +101,10 @@ type Query struct {
 	ClusterID string `json:"cluster_id,omitempty"` // 存储 ID
 
 	StorageType string `json:"storage_type,omitempty"` // 存储类型
-	SliceID     string `json:"slice_id,omitempty"`     // 切片 ID
-	StorageID   string `json:"storage_id,omitempty"`
-	StorageName string `json:"storage_name,omitempty"`
+
+	StorageIDs  []string `json:"storage_ids,omitempty"`
+	StorageID   string   `json:"storage_id,omitempty"`
+	StorageName string   `json:"storage_name,omitempty"`
 
 	ClusterName string   `json:"cluster_name,omitempty"`
 	TagsKey     []string `json:"tags_key,omitempty"`
@@ -159,8 +160,8 @@ type Query struct {
 	From   int      `json:"from,omitempty"`
 	Size   int      `json:"size,omitempty"`
 
-	Scroll            string             `json:"scroll,omitempty"`
-	ResultTableOption *ResultTableOption `json:"result_table_option,omitempty"`
+	Scroll             string             `json:"scroll,omitempty"`
+	ResultTableOptions ResultTableOptions `json:"result_table_options,omitempty"`
 
 	Orders      Orders    `json:"orders,omitempty"`
 	NeedAddTime bool      `json:"need_add_time,omitempty"`
@@ -371,15 +372,6 @@ func (qMetric *QueryMetric) ToJson(isSort bool) string {
 
 	s, _ := json.Marshal(qMetric)
 	return string(s)
-}
-
-func (qRef QueryReference) Count() int {
-	var i int
-	qRef.Range("", func(qry *Query) {
-		i++
-	})
-
-	return i
 }
 
 // Range 遍历查询列表

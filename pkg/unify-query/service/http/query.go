@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jinzhu/copier"
 	ants "github.com/panjf2000/ants/v2"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
@@ -32,9 +33,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
@@ -158,7 +159,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 }
 
 func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
-	ignoreDimensions := []string{elasticsearch.KeyAddress}
+	ignoreDimensions := []string{metadata.KeyTableUUID}
 
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
@@ -173,79 +174,31 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	var (
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
+		errCh     = make(chan error)
 
-		message   strings.Builder
-		queryList []*metadata.Query
-		lock      sync.Mutex
+		message strings.Builder
+		lock    sync.Mutex
 
 		allLabelMap = make(map[string][]function.LabelMapValue)
 
-		isCutData bool
+		queryRef metadata.QueryReference
 	)
 
-	list = make([]map[string]any, 0)
-
-	// 构建查询路由列表
-	if queryTs.SpaceUid == "" {
-		queryTs.SpaceUid = metadata.GetUser(ctx).SpaceUID
+	queryRef, err = queryTs.ToQueryReference(ctx)
+	if err != nil {
+		return
 	}
 
-	for _, ql := range queryTs.QueryList {
-		// 时间复用
-		ql.Timezone = queryTs.Timezone
-		ql.Start = queryTs.Start
-		ql.End = queryTs.End
-
-		// 排序复用
-		ql.OrderBy = queryTs.OrderBy
-		ql.DryRun = queryTs.DryRun
-
-		// 如果 qry.Step 不存在去外部统一的 step
-		if ql.Step == "" {
-			ql.Step = queryTs.Step
+	receiveWg.Add(1)
+	go func() {
+		defer receiveWg.Done()
+		for e := range errCh {
+			message.WriteString(fmt.Sprintf("query error: %s ", e.Error()))
 		}
-
-		if queryTs.ResultTableOptions != nil {
-			ql.ResultTableOptions = queryTs.ResultTableOptions
+		if message.Len() > 0 {
+			err = errors.New(message.String())
 		}
-
-		// 如果 Limit / From 没有单独指定的话，同时外部指定了的话，使用外部的
-		if ql.Limit == 0 && queryTs.Limit > 0 {
-			ql.Limit = queryTs.Limit
-		}
-
-		// 在使用 multiFrom 模式下，From 需要保持为 0，因为 from 存放在 resultTableOptions 里面
-		if queryTs.IsMultiFrom {
-			queryTs.From = 0
-		}
-
-		if ql.From == 0 && queryTs.From > 0 {
-			ql.From = queryTs.From
-		}
-
-		// 复用 scroll 配置，如果配置了 scroll 优先使用 scroll
-		if queryTs.Scroll != "" {
-			ql.Scroll = queryTs.Scroll
-			queryTs.IsMultiFrom = false
-		}
-
-		// 复用字段配置，没有特殊配置的情况下使用公共配置
-		if len(ql.KeepColumns) == 0 && len(queryTs.ResultColumns) != 0 {
-			ql.KeepColumns = queryTs.ResultColumns
-		}
-
-		qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
-		if qmErr != nil {
-			err = qmErr
-			return
-		}
-
-		for _, qry := range qm.QueryList {
-			if qry != nil {
-				queryList = append(queryList, qry)
-			}
-		}
-	}
+	}()
 
 	receiveWg.Add(1)
 
@@ -267,7 +220,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			}
 		}
 
-		span.Set("query-list-num", len(queryList))
+		span.Set("query-list-num", queryRef.Count())
 		span.Set("result-data-num", len(data))
 
 		queryTs.OrderBy.Orders().SortSliceList(data, fieldType)
@@ -285,21 +238,22 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 			if queryTs.Limit > 0 {
 				if queryTs.IsMultiFrom {
-					data = data[0:queryTs.Limit]
+					if len(data) > 0 && len(data) > queryTs.Limit {
+						data = data[0:queryTs.Limit]
+					}
 					for _, l := range data {
-						tableID := l[elasticsearch.KeyTableID].(string)
-						address := l[elasticsearch.KeyAddress].(string)
+						tableUUID := l[metadata.KeyTableUUID].(string)
 
-						option := resultTableOptions.GetOption(tableID, address)
-						if option == nil {
-							resultTableOptions.SetOption(tableID, address, &metadata.ResultTableOption{From: function.IntPoint(1)})
+						option := resultTableOptions.GetOption(tableUUID)
+						if option == nil || option.From == nil {
+							resultTableOptions.SetOption(tableUUID, &metadata.ResultTableOption{From: function.IntPoint(1)})
 						} else {
 							*option.From++
 						}
 					}
 				} else {
 					// 只有合并数据才需要进行裁剪，否则原始数据里面就已经经过裁剪了
-					if isCutData {
+					if queryRef.Count() > 1 {
 						// 只有长度符合的数据才进行裁剪
 						if len(data) > queryTs.From {
 							maxLength := queryTs.From + queryTs.Limit
@@ -312,7 +266,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 							data = make([]map[string]any, 0)
 						}
 					}
-
 				}
 			}
 		}
@@ -358,10 +311,11 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		defer func() {
 			sendWg.Wait()
 			close(dataCh)
+			close(errCh)
 		}()
-		for _, qry := range queryList {
+
+		queryRef.Range("", func(qry *metadata.Query) {
 			sendWg.Add(1)
-			qry := qry
 
 			labelMap, err := qry.LabelMap()
 			if err == nil {
@@ -376,15 +330,14 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			}
 
 			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
-			if len(queryList) > 1 {
+			if queryRef.Count() > 1 {
 				if !queryTs.IsMultiFrom {
 					qry.Size += qry.From
 					qry.From = 0
-					isCutData = true
 				}
 			}
 
-			err = p.Submit(func() {
+			_ = p.Submit(func() {
 				defer func() {
 					sendWg.Done()
 				}()
@@ -395,9 +348,9 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					return
 				}
 
-				size, options, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
+				size, option, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
 				if queryErr != nil {
-					message.WriteString(fmt.Sprintf("query %s:%s is error: %s ", qry.TableID, qry.Fields, queryErr.Error()))
+					errCh <- queryErr
 					return
 				}
 
@@ -406,20 +359,151 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					resultTableOptions = make(metadata.ResultTableOptions)
 				}
 				lock.Lock()
-				resultTableOptions.MergeOptions(options)
+				resultTableOptions.SetOption(qry.TableUUID(), option)
 				lock.Unlock()
 
 				total += size
 			})
-		}
+		})
 	}()
 
 	// 等待数据组装完毕
 	receiveWg.Wait()
-	if message.Len() > 0 {
-		err = errors.New(message.String())
+	return
+}
+
+func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
+	var (
+		receiveWg sync.WaitGroup
+		dataCh    = make(chan map[string]any)
+		errCh     = make(chan error)
+
+		message strings.Builder
+		lock    sync.Mutex
+
+		queryRef metadata.QueryReference
+	)
+	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
+	defer span.End(&err)
+	_, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
+	if timeErr != nil {
+		err = timeErr
+		return
 	}
 
+	queryRef, err = queryTs.ToQueryReference(ctx)
+	if err != nil {
+		return
+	}
+
+	receiveWg.Add(1)
+	go func() {
+		defer receiveWg.Done()
+		for e := range errCh {
+			message.WriteString(fmt.Sprintf("query error: %s ", e.Error()))
+		}
+		if message.Len() > 0 {
+			err = errors.New(message.String())
+		}
+	}()
+
+	receiveWg.Add(1)
+
+	go func() {
+		defer receiveWg.Done()
+
+		for d := range dataCh {
+			list = append(list, d)
+		}
+	}()
+
+	// 多协程查询数据
+	var (
+		wg sync.WaitGroup
+	)
+
+	p, _ := ants.NewPool(QueryMaxRouting)
+	defer p.Release()
+
+	queryRef.Range("", func(qry *metadata.Query) {
+		for k, s := range session.ScrollIDs {
+			if s.Done() {
+				continue
+			}
+
+			log.Infof(ctx, "query with sliceID: %s, sliceMax: %d, offset: %d, limit: %d", s.ScrollID, s.SliceMax, s.Offset, s.Limit)
+			wg.Add(1)
+
+			err = p.Submit(func() {
+				defer func() {
+					session.UpdateSliceStatus(k, s)
+					wg.Done()
+				}()
+
+				newQry := &metadata.Query{}
+				err = copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true})
+				if err != nil {
+					log.Errorf(ctx, "copy query ts error: %s", err.Error())
+					errCh <- err
+					return
+				}
+
+				// 使用 slice 配置查询
+				newQry.SliceID = s.ScrollID
+				newQry.Size = s.Limit
+				newQry.ResultTableOption = &metadata.ResultTableOption{
+					ScrollID:   s.ScrollID,
+					SliceIndex: &s.SliceIdx,
+					SliceMax:   &s.SliceMax,
+					From:       &s.Offset,
+				}
+
+				instance := prometheus.GetTsDbInstance(ctx, newQry)
+				if instance == nil {
+					log.Warnf(ctx, "not instance in %s", newQry.StorageID)
+					return
+				}
+
+				size, option, err := instance.QueryRawData(ctx, newQry, start, end, dataCh)
+				if err != nil {
+					s.FailedNum++
+					errCh <- err
+					return
+				}
+
+				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
+				if resultTableOptions == nil {
+					resultTableOptions = make(metadata.ResultTableOptions)
+				}
+
+				if option != nil {
+					if option.ScrollID != "" {
+						s.ScrollID = option.ScrollID
+					}
+					s.Offset = s.Offset + s.Limit*s.SliceMax
+					lock.Lock()
+					resultTableOptions.SetOption(newQry.TableUUID(), option)
+					lock.Unlock()
+				}
+
+				if size == 0 {
+					s.Status = redisUtil.StatusCompleted
+				}
+				total += size
+			})
+			if err != nil {
+				errCh <- err
+				wg.Done()
+			}
+		}
+	})
+
+	wg.Wait()
+
+	close(dataCh)
+	close(errCh)
+
+	receiveWg.Wait()
 	return
 }
 

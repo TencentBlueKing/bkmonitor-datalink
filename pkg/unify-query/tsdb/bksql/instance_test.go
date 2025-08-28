@@ -290,6 +290,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__data_label" : "132_lol_new_login_queue_login_1min",
   "__index" : "132_lol_new_login_queue_login_1min",
   "__result_table" : "132_lol_new_login_queue_login_1min.default",
+  "__table_uuid" : "132_lol_new_login_queue_login_1min.default",
   "_endTime_" : "2024-10-28 20:32:00",
   "_startTime_" : "2024-10-28 20:31:00",
   "_timestamp_" : 1730118660000,
@@ -304,6 +305,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__data_label" : "132_lol_new_login_queue_login_1min",
   "__index" : "132_lol_new_login_queue_login_1min",
   "__result_table" : "132_lol_new_login_queue_login_1min.default",
+  "__table_uuid" : "132_lol_new_login_queue_login_1min.default",
   "_endTime_" : "2024-10-28 20:29:00",
   "_startTime_" : "2024-10-28 20:28:00",
   "_timestamp_" : 1730118480000,
@@ -318,6 +320,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__data_label" : "132_lol_new_login_queue_login_1min",
   "__index" : "132_lol_new_login_queue_login_1min",
   "__result_table" : "132_lol_new_login_queue_login_1min.default",
+  "__table_uuid" : "132_lol_new_login_queue_login_1min.default",
   "_endTime_" : "2024-10-28 20:30:00",
   "_startTime_" : "2024-10-28 20:29:00",
   "_timestamp_" : 1730118540000,
@@ -332,6 +335,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__data_label" : "132_lol_new_login_queue_login_1min",
   "__index" : "132_lol_new_login_queue_login_1min",
   "__result_table" : "132_lol_new_login_queue_login_1min.default",
+  "__table_uuid" : "132_lol_new_login_queue_login_1min.default",
   "_endTime_" : "2024-10-28 20:31:00",
   "_startTime_" : "2024-10-28 20:30:00",
   "_timestamp_" : 1730118600000,
@@ -346,6 +350,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__data_label" : "132_lol_new_login_queue_login_1min",
   "__index" : "132_lol_new_login_queue_login_1min",
   "__result_table" : "132_lol_new_login_queue_login_1min.default",
+  "__table_uuid" : "132_lol_new_login_queue_login_1min.default",
   "_endTime_" : "2024-10-28 20:28:00",
   "_startTime_" : "2024-10-28 20:27:00",
   "_timestamp_" : 1730118420000,
@@ -383,6 +388,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "5000140_bklog_container_log_demo_analysis",
   "__result_table" : "5000140_bklog_container_log_demo_analysis.doris",
   "__shard_key__" : 29042334000,
+  "__table_uuid" : "5000140_bklog_container_log_demo_analysis.doris",
   "_endtime_" : "2025-03-21 14:54:03",
   "_starttime_" : "2025-03-21 14:54:03",
   "_timestamp_" : 1742540043000,
@@ -417,6 +423,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "5000140_bklog_container_log_demo_analysis",
   "__result_table" : "5000140_bklog_container_log_demo_analysis.doris",
   "__shard_key__" : 29042334000,
+  "__table_uuid" : "5000140_bklog_container_log_demo_analysis.doris",
   "_endtime_" : "2025-03-21 14:54:03",
   "_starttime_" : "2025-03-21 14:54:03",
   "_timestamp_" : 1742540043000,
@@ -463,6 +470,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "5000140_bklog_container_log_demo_analysis",
   "__result_table" : "5000140_bklog_container_log_demo_analysis.doris",
   "__shard_key__" : 29042334000,
+  "__table_uuid" : "5000140_bklog_container_log_demo_analysis.doris",
   "_endtime_" : "2025-03-21 14:54:03",
   "_starttime_" : "2025-03-21 14:54:03",
   "_timestamp_" : 1742540043000,
@@ -497,6 +505,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "5000140_bklog_container_log_demo_analysis",
   "__result_table" : "5000140_bklog_container_log_demo_analysis.doris",
   "__shard_key__" : 29042334000,
+  "__table_uuid" : "5000140_bklog_container_log_demo_analysis.doris",
   "_endtime_" : "2025-03-21 14:54:03",
   "_starttime_" : "2025-03-21 14:54:03",
   "_timestamp_" : 1742540043000,
@@ -543,6 +552,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "5000140_bklog_container_log_demo_analysis",
   "__result_table" : "5000140_bklog_container_log_demo_analysis.doris",
   "__shard_key__" : 29042334000,
+  "__table_uuid" : "5000140_bklog_container_log_demo_analysis.doris",
   "_endtime_" : "2025-03-21 14:54:03",
   "_starttime_" : "2025-03-21 14:54:03",
   "_timestamp_" : 1742540043000,
@@ -577,6 +587,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "5000140_bklog_container_log_demo_analysis",
   "__result_table" : "5000140_bklog_container_log_demo_analysis.doris",
   "__shard_key__" : 29042334000,
+  "__table_uuid" : "5000140_bklog_container_log_demo_analysis.doris",
   "_endtime_" : "2025-03-21 14:54:03",
   "_starttime_" : "2025-03-21 14:54:03",
   "_timestamp_" : 1742540043000,
@@ -620,6 +631,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "2_bklog_pure_v4_log_doris_for_unify_query",
   "__result_table" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "__shard_key__" : 29087245464,
+  "__table_uuid" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "_timestamp_" : 1745234704000,
   "_value_" : 1745234704000,
   "cloudId" : 0,
@@ -642,6 +654,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "2_bklog_pure_v4_log_doris_for_unify_query",
   "__result_table" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "__shard_key__" : 29087245464,
+  "__table_uuid" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "_timestamp_" : 1745234704000,
   "_value_" : 1745234704000,
   "cloudId" : 0,
@@ -664,6 +677,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "2_bklog_pure_v4_log_doris_for_unify_query",
   "__result_table" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "__shard_key__" : 29087245464,
+  "__table_uuid" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "_timestamp_" : 1745234704000,
   "_value_" : 1745234704000,
   "cloudId" : 0,
@@ -686,6 +700,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "2_bklog_pure_v4_log_doris_for_unify_query",
   "__result_table" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "__shard_key__" : 29087245464,
+  "__table_uuid" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "_timestamp_" : 1745234704000,
   "_value_" : 1745234704000,
   "cloudId" : 0,
@@ -708,6 +723,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "2_bklog_pure_v4_log_doris_for_unify_query",
   "__result_table" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "__shard_key__" : 29087245464,
+  "__table_uuid" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "_timestamp_" : 1745234704000,
   "_value_" : 1745234704000,
   "cloudId" : 0,
@@ -761,15 +777,15 @@ func TestInstance_QueryRaw(t *testing.T) {
 			dataCh := make(chan map[string]any)
 
 			var (
-				options metadata.ResultTableOptions
-				err     error
+				option *metadata.ResultTableOption
+				err    error
 			)
 			go func() {
 				defer func() {
 					close(dataCh)
 				}()
 
-				_, options, err = ins.QueryRawData(ctx, c.query, start, end, dataCh)
+				_, option, err = ins.QueryRawData(ctx, c.query, start, end, dataCh)
 				assert.Nil(t, err)
 			}()
 
@@ -784,6 +800,9 @@ func TestInstance_QueryRaw(t *testing.T) {
 			assert.JSONEq(t, c.expected, string(actual))
 
 			if c.options != "" {
+				options := make(metadata.ResultTableOptions)
+				options.SetOption(c.query.TableUUID(), option)
+
 				optString, _ := json.Marshal(options)
 				assert.Equal(t, c.options, string(optString))
 			}

@@ -36,29 +36,29 @@ const (
 
 	AlignInfluxdbResultConfigPath = "http.ts.align_influxdb_result"
 
-	TSQueryHandlePathConfigPath               = "http.path.ts"
-	TSQueryInfoHandlePathConfigPath           = "http.path.ts_info"
-	TSQueryExemplarHandlePathConfigPath       = "http.path.ts_exemplar"
-	TSQueryPromQLHandlePathConfigPath         = "http.path.ts_promql"
-	TSQueryReferenceQueryHandlePathConfigPath = "http.path.ts_reference"
-	TSQueryRawQueryHandlePathConfigPath       = "http.path.ts_raw"
-	TSQueryStructToPromQLHandlePathConfigPath = "http.path.ts_struct_to_promql"
-	TSQueryPromQLToStructHandlePathConfigPath = "http.path.ts_promql_to_struct"
-	TSQueryLabelValuesPathConfigPath          = "http.path.ts_label_values"
-	TSQueryClusterMetricsPathConfigPath       = "http.path.ts_cluster_metrics"
-	FluxHandlePromqlPathConfigPath            = "http.path.promql"
-	PrintHandlePathConfigPath                 = "http.path.print"
-	InfluxDBPrintHandlePathConfigPath         = "http.path.influxdb_print"
-	SpacePrintHandlePathConfigPath            = "http.path.space_print"
-	SpaceKeyPrintHandlePathConfigPath         = "http.path.space_key_print"
-	TsDBPrintHandlePathConfigPath             = "http.path.tsdb_print"
-	FeatureFlagHandlePathConfigPath           = "http.path.feature_flag_path"
-	ESHandlePathConfigPath                    = "http.path.es"
-	ProxyConfigPath                           = "http.path.proxy"
-	TSQueryRawMAXLimitConfigPath              = "http.query.raw.max_limit"
-
-	CheckQueryTsConfigPath     = "http.path.check_query_ts"
-	CheckQueryPromQLConfigPath = "http.path.check_query_promql"
+	TSQueryHandlePathConfigPath                   = "http.path.ts"
+	TSQueryInfoHandlePathConfigPath               = "http.path.ts_info"
+	TSQueryExemplarHandlePathConfigPath           = "http.path.ts_exemplar"
+	TSQueryPromQLHandlePathConfigPath             = "http.path.ts_promql"
+	TSQueryReferenceQueryHandlePathConfigPath     = "http.path.ts_reference"
+	TSQueryRawQueryHandlePathConfigPath           = "http.path.ts_raw"
+	TSQueryStructToPromQLHandlePathConfigPath     = "http.path.ts_struct_to_promql"
+	TSQueryPromQLToStructHandlePathConfigPath     = "http.path.ts_promql_to_struct"
+	TSQueryLabelValuesPathConfigPath              = "http.path.ts_label_values"
+	TSQueryClusterMetricsPathConfigPath           = "http.path.ts_cluster_metrics"
+	FluxHandlePromqlPathConfigPath                = "http.path.promql"
+	PrintHandlePathConfigPath                     = "http.path.print"
+	InfluxDBPrintHandlePathConfigPath             = "http.path.influxdb_print"
+	SpacePrintHandlePathConfigPath                = "http.path.space_print"
+	SpaceKeyPrintHandlePathConfigPath             = "http.path.space_key_print"
+	TsDBPrintHandlePathConfigPath                 = "http.path.tsdb_print"
+	FeatureFlagHandlePathConfigPath               = "http.path.feature_flag_path"
+	ESHandlePathConfigPath                        = "http.path.es"
+	ProxyConfigPath                               = "http.path.proxy"
+	TSQueryRawMAXLimitConfigPath                  = "http.query.raw.max_limit"
+	TSQueryRawQueryWithScrollHandlePathConfigPath = "http.path.ts_raw_with_scroll"
+	CheckQueryTsConfigPath                        = "http.path.check_query_ts"
+	CheckQueryPromQLConfigPath                    = "http.path.check_query_promql"
 
 	// 查询配置
 	InfoDefaultLimit = "http.info.limit"
@@ -68,6 +68,11 @@ const (
 	SegmentedMaxRoutines = "http.segmented.max_routines"
 	SegmentedMinInterval = "http.segmented.min_interval"
 
+	// 滚动查询配置
+	ScrollSliceLimitConfigPath         = "scroll.slice_limit"
+	ScrollMaxSliceConfigPath           = "scroll.max_slice"
+	ScrollSessionLockTimeoutConfigPath = "scroll.session_lock_timeout"
+	ScrollWindowTimeoutConfigPath      = "scroll.window_timeout"
 	// 集群指标查询配置
 	ClusterMetricQueryPrefixConfigPath  = "http.cluster_metric.prefix"
 	ClusterMetricQueryTimeoutConfigPath = "http.cluster_metric.timeout"
@@ -97,4 +102,9 @@ var (
 
 	JwtPublicKey       string
 	JwtBkAppCodeSpaces map[string][]string
+
+	ScrollMaxSlice           int
+	ScrollSessionLockTimeout time.Duration
+	ScrollWindowTimeout      string
+	ScrollSliceLimit         int
 )

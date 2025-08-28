@@ -48,6 +48,7 @@ func (m *MappingCache) GetAliasMappings(alias []string, fetchAliasMapping func(a
 	var missingAlias []string
 
 	for _, a := range alias {
+		// 优先从缓存获取，如果缓存没有，则加入到 missingAlias 列表中
 		if mapping, ok := m.fieldTypesCache.Get(a); ok {
 			res = append(res, mapping)
 		} else {

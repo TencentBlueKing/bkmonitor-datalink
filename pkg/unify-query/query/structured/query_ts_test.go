@@ -1252,8 +1252,11 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum: 1,
 								VmCondition:    `__name__="usage_value"`,
 								StorageID:      "3",
-								Field:          "usage",
-								StorageType:    consul.ElasticsearchStorageType,
+								StorageIDs: []string{
+									"3",
+								},
+								Field:       "usage",
+								StorageType: consul.ElasticsearchStorageType,
 								Aggregates: md.Aggregates{
 									{
 										Name:       "sum",
@@ -1319,10 +1322,13 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmConditionNum: 1,
 								VmCondition:    `__name__="usage_value"`,
 								StorageID:      "3",
-								Field:          "usage",
-								Fields:         []string{"usage"},
-								MetricNames:    []string{"bklog:result_table:es:usage"},
-								StorageType:    consul.ElasticsearchStorageType,
+								StorageIDs: []string{
+									"3",
+								},
+								Field:       "usage",
+								Fields:      []string{"usage"},
+								MetricNames: []string{"bklog:result_table:es:usage"},
+								StorageType: consul.ElasticsearchStorageType,
 								Aggregates: md.Aggregates{
 									{
 										Name:       "sum",

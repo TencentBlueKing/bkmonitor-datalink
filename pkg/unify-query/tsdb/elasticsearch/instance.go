@@ -89,12 +89,6 @@ type queryOption struct {
 	query *metadata.Query
 }
 
-var TimeSeriesResultPool = sync.Pool{
-	New: func() any {
-		return &TimeSeriesResult{}
-	},
-}
-
 func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	ins := &Instance{
 		ctx:     ctx,
@@ -150,7 +144,7 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 
 // 获取别名对应的 mapping
 func (i *Instance) fetchAliasMappings(ctx context.Context, conn Connect, alias []string) ([]map[string]any, error) {
-	return GetMappingCache().GetAliasMappings(alias, func(alias []string) (map[string]any, error) {
+	return GetMappingCache().GetAliasMappings(ctx, alias, func(alias []string) (map[string]any, error) {
 		client, err := i.getClient(ctx, conn)
 		if err != nil {
 			return nil, err
@@ -160,6 +154,7 @@ func (i *Instance) fetchAliasMappings(ctx context.Context, conn Connect, alias [
 		if err != nil {
 			return nil, err
 		}
+
 		return mapping, nil
 	})
 }

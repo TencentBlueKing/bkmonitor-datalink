@@ -12,10 +12,13 @@
 package elasticsearch
 
 import (
+	"context"
 	"sync"
 
 	ristretto "github.com/dgraph-io/ristretto/v2"
 	"github.com/spf13/viper"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 var (
@@ -43,30 +46,33 @@ func mappingSize(value map[string]any) int64 {
 	return int64(total)
 }
 
-func NewMappingCache() (cache *MappingCache) {
-	c, _ := ristretto.NewCache(&ristretto.Config[string, map[string]any]{
-		MaxCost:     viper.GetInt64(MappingCacheMaxCostPath),
-		NumCounters: viper.GetInt64(MappingCacheNumCountersPath),
-		BufferItems: viper.GetInt64(MappingCacheBufferItemsPath),
-		Cost:        mappingSize})
+func (m *MappingCache) GetAliasMappings(ctx context.Context, alias []string, fetchAliasMapping func(alias []string) (map[string]any, error)) ([]map[string]any, error) {
+	var (
+		res []map[string]any
 
-	return &MappingCache{
-		fieldTypesCache: c,
-	}
-}
+		missingAlias []string
+		hitAlias     []string
+	)
 
-func (m *MappingCache) GetAliasMappings(alias []string, fetchAliasMapping func(alias []string) (map[string]any, error)) ([]map[string]any, error) {
-	var res []map[string]any
-	var missingAlias []string
+	var (
+		err  error
+		span *trace.Span
+	)
+	ctx, span = trace.NewSpan(ctx, "get-alias-mapping")
+	defer span.End(&err)
 
 	for _, a := range alias {
 		// 优先从缓存获取，如果缓存没有，则加入到 missingAlias 列表中
 		if mapping, ok := m.fieldTypesCache.Get(a); ok {
+			hitAlias = append(hitAlias, a)
 			res = append(res, mapping)
 		} else {
 			missingAlias = append(missingAlias, a)
 		}
 	}
+
+	span.Set("cache-alias", hitAlias)
+	span.Set("missing-alias", missingAlias)
 
 	if len(missingAlias) > 0 {
 		mappings, err := fetchAliasMapping(missingAlias)
@@ -83,6 +89,7 @@ func (m *MappingCache) GetAliasMappings(alias []string, fetchAliasMapping func(a
 			m.fieldTypesCache.SetWithTTL(indexName, mappingData, mappingSize(mappingData), viper.GetDuration(MappingCacheTTLPath))
 		}
 	}
+
 	return res, nil
 }
 
@@ -95,7 +102,15 @@ func fetchMappingData(value interface{}) (map[string]any, bool) {
 
 func GetMappingCache() *MappingCache {
 	once.Do(func() {
-		fieldTypesCache = NewMappingCache()
+		c, _ := ristretto.NewCache(&ristretto.Config[string, map[string]any]{
+			MaxCost:     viper.GetInt64(MappingCacheMaxCostPath),
+			NumCounters: viper.GetInt64(MappingCacheNumCountersPath),
+			BufferItems: viper.GetInt64(MappingCacheBufferItemsPath),
+			Cost:        mappingSize})
+
+		fieldTypesCache = &MappingCache{
+			fieldTypesCache: c,
+		}
 	})
 
 	return fieldTypesCache

@@ -350,14 +350,6 @@ type TsDBOption struct {
 
 type TsDBs []*query.TsDBV2
 
-func (t TsDBs) StringSlice() []string {
-	arr := make([]string, len(t))
-	for i, tsDB := range t {
-		arr[i] = tsDB.String()
-	}
-	return arr
-}
-
 // GetTsDBList : 通过 spaceUid  约定该空间查询范围
 func GetTsDBList(ctx context.Context, option *TsDBOption) (TsDBs, error) {
 	spaceFilter, err := NewSpaceFilter(ctx, option)

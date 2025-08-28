@@ -249,6 +249,14 @@ func HandlerQueryRaw(c *gin.Context) {
 		return
 	}
 
+	// 避免空切片被解析成 null 的问题
+	if listData.List == nil {
+		listData.List = make([]map[string]any, 0)
+	}
+	if listData.ResultTableOptions == nil {
+		listData.ResultTableOptions = make(metadata.ResultTableOptions)
+	}
+
 	resp.success(ctx, listData)
 }
 
@@ -349,6 +357,11 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 			Message: err.Error(),
 		}
 		return
+	}
+
+	// 避免空切片被解析成 null 的问题
+	if listData.List == nil {
+		listData.List = make([]map[string]any, 0)
 	}
 
 	resp.success(ctx, listData)

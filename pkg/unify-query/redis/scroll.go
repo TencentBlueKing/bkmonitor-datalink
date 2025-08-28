@@ -120,7 +120,7 @@ func (s *ScrollSession) Done() bool {
 	return true
 }
 
-func newScrollSession(queryTsStr string, scrollTimeout time.Duration, maxSlice, sliceMaxFailedNum, Limit int) *ScrollSession {
+func newScrollSession(queryTsStr string, scrollTimeout time.Duration, maxSlice, sliceMaxFailedNum, limit int) *ScrollSession {
 	session := &ScrollSession{
 		SessionKey:        SessionKeyPrefix + queryTsStr,
 		LockKey:           ScrollLockKeyPrefix + queryTsStr,
@@ -128,7 +128,7 @@ func newScrollSession(queryTsStr string, scrollTimeout time.Duration, maxSlice, 
 		ScrollTimeout:     scrollTimeout,
 		MaxSlice:          maxSlice,
 		SliceMaxFailedNum: sliceMaxFailedNum,
-		Limit:             Limit,
+		Limit:             limit,
 		ScrollIDs:         make([]SliceStatusValue, maxSlice),
 	}
 
@@ -138,18 +138,18 @@ func newScrollSession(queryTsStr string, scrollTimeout time.Duration, maxSlice, 
 			SliceIdx:     idx,
 			SliceMax:     maxSlice,
 			ScrollID:     "",
-			Offset:       idx * Limit,
+			Offset:       idx * limit,
 			Status:       StatusPending,
 			FailedNum:    0,
 			MaxFailedNum: sliceMaxFailedNum,
-			Limit:        Limit,
+			Limit:        limit,
 		}
 	}
 
 	return session
 }
 
-func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollTimeout string, maxSlice, Limit int) (*ScrollSession, error) {
+func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollTimeout string, maxSlice, limit int) (*ScrollSession, error) {
 	session, exist := checkScrollSession(ctx, queryTsStr)
 	if exist {
 		return session, nil
@@ -158,7 +158,7 @@ func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollTime
 	if err != nil {
 		return nil, err
 	}
-	return newScrollSession(queryTsStr, scrollTimeoutDuration, maxSlice, DefaultSliceMaxFailedNum, Limit), nil
+	return newScrollSession(queryTsStr, scrollTimeoutDuration, maxSlice, DefaultSliceMaxFailedNum, limit), nil
 }
 
 func checkScrollSession(ctx context.Context, queryTsStr string) (*ScrollSession, bool) {

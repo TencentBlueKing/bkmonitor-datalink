@@ -9,7 +9,6 @@
 package lucene_parser
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -430,29 +429,7 @@ func TestParser(t *testing.T) {
 					IncludeEnd:   &BoolExpr{Value: true},
 				},
 			},
-			es: `{
-			  "bool": {
-				"must": [
-				  {
-					"match": {
-					  "message": {
-						"query": "test node"
-					  }
-					}
-				  },
-				  {
-					"range": {
-					  "datetime": {
-						"from": "2020-01-01T00:00:00",
-						"include_lower": true,
-						"include_upper": true,
-						"to": "2020-12-31T00:00:00"
-					  }
-					}
-				  }
-				]
-			  }
-			}`,
+			es: `{"bool":{"must":[{"match":{"message":{"query":"test node"}}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
 		},
 		"mixed or / and": {
 			q: "a:1 OR (b:2 AND c:4)",
@@ -698,37 +675,25 @@ func TestParser(t *testing.T) {
 			sql: "(`loglevel` LIKE '%TRACE%' OR `loglevel` LIKE '%DEBUG%' OR `loglevel` LIKE '%INFO %' OR `loglevel` LIKE '%WARN %' OR `loglevel` LIKE '%ERROR%') AND ((`log` LIKE '%friendsvr%' AND `log` LIKE '%game_app%' AND `log` LIKE '%testAnd%') OR (`log` LIKE '%friendsvr%' AND `log` LIKE '%testOr%' AND `log` LIKE '%testAnd%') OR `log` LIKE '%test111%')",
 		},
 	}
-
+	parser := NewParser(WithEsSchema(loadEsMapping()))
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
-			// Test Expression parsing
-			ctx := context.Background()
-			expr, err := ToExpr(ctx, c.q, nil)
+			rt, err := parser.Do(c.q)
 			if err != nil {
-				t.Errorf("ToExpr returned an error: %s", err)
+				t.Errorf("Parse returned an error: %s", err)
 				return
 			}
-			assert.Equal(t, c.e, expr, "Expression mismatch")
+			assert.Equal(t, c.e, rt.Expr, "Expression mismatch")
 
 			// Test SQL conversion if expected SQL is provided
 			if c.sql != "" {
-				actualSQL := ToSQL(expr)
-				assert.Equal(t, c.sql, actualSQL, "SQL conversion mismatch for query: %s", c.q)
+				assert.Equal(t, c.sql, rt.SQL, "SQL conversion mismatch for query: %s", c.q)
 			}
 
-			// Test ES Conversion with schema
 			if c.es != "" {
-				esQuery := ToES(expr, loadEsMapping())
-				if esQuery != nil {
-					esJSON, err := queryToJSON(esQuery)
-					if err != nil {
-						t.Errorf("failed to convert ES query to JSON: %s", err)
-						return
-					}
-					assert.JSONEq(t, c.es, esJSON, "ES JSON mismatch for query: %s", c.q)
-				} else if c.es != "null" {
-					t.Errorf("expected ES query but got nil for query: %s", c.q)
-				}
+				esStr, err := queryToJSON(rt.ES)
+				assert.Nil(t, err, "ES JSON marshal error for query: %s", c.q)
+				assert.Equal(t, c.es, esStr, "ES conversion mismatch for query: %s", c.q)
 			}
 		})
 	}

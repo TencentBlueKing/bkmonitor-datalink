@@ -46,7 +46,7 @@ func (d *Schema) SetFieldType(fieldName string, fieldType FieldType) {
 	d.fieldTypes[fieldName] = fieldType
 }
 
-func ToES(expr Expr, mappings ...FieldSchema) elastic.Query {
+func es(expr Expr, mappings ...FieldSchema) elastic.Query {
 	var schema FieldSchema
 	if len(mappings) > 0 {
 		schema = mappings[0]

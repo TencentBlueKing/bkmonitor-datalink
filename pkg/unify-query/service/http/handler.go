@@ -363,9 +363,6 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	if listData.List == nil {
 		listData.List = make([]map[string]any, 0)
 	}
-	if listData.ResultTableOptions == nil {
-		listData.ResultTableOptions = make(metadata.ResultTableOptions)
-	}
 
 	resp.success(ctx, listData)
 }

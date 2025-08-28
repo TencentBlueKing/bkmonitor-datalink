@@ -160,6 +160,8 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 
 func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
 	ignoreDimensions := []string{metadata.KeyTableUUID}
+	list = make([]map[string]any, 0)
+	resultTableOptions = make(metadata.ResultTableOptions)
 
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
@@ -355,9 +357,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				}
 
 				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
-				if resultTableOptions == nil {
-					resultTableOptions = make(metadata.ResultTableOptions)
-				}
 				lock.Lock()
 				resultTableOptions.SetOption(qry.TableUUID(), option)
 				lock.Unlock()
@@ -383,6 +382,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 		queryRef metadata.QueryReference
 	)
+
+	list = make([]map[string]any, 0)
+	resultTableOptions = make(metadata.ResultTableOptions)
+
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
 	defer span.End(&err)
 	_, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
@@ -472,10 +475,6 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				}
 
 				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
-				if resultTableOptions == nil {
-					resultTableOptions = make(metadata.ResultTableOptions)
-				}
-
 				if option != nil {
 					if option.ScrollID != "" {
 						s.ScrollID = option.ScrollID

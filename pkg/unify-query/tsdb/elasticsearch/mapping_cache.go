@@ -27,16 +27,28 @@ type MappingCache struct {
 	fieldTypesCache *ristretto.Cache[string, map[string]any]
 }
 
+func mappingSize(value map[string]any) int64 {
+	var total int
+	for k, v := range value {
+		total += len(k)
+		switch v := v.(type) {
+		case string:
+			total += len(v)
+		case []byte:
+			total += len(v)
+		case map[string]any:
+			total += int(mappingSize(v))
+		}
+	}
+	return int64(total)
+}
+
 func NewMappingCache() (cache *MappingCache) {
 	c, _ := ristretto.NewCache(&ristretto.Config[string, map[string]any]{
 		MaxCost:     viper.GetInt64(MappingCacheMaxCostPath),
 		NumCounters: viper.GetInt64(MappingCacheNumCountersPath),
 		BufferItems: viper.GetInt64(MappingCacheBufferItemsPath),
-		Cost: func(value map[string]any) int64 {
-			return int64(len(value))
-		},
-		IgnoreInternalCost: false,
-	})
+		Cost:        mappingSize})
 
 	return &MappingCache{
 		fieldTypesCache: c,
@@ -68,8 +80,7 @@ func (m *MappingCache) GetAliasMappings(alias []string, fetchAliasMapping func(a
 				continue
 			}
 			res = append(res, mappingData)
-			cost := int64(len(mappingData))
-			m.fieldTypesCache.SetWithTTL(indexName, mappingData, cost, viper.GetDuration(MappingCacheTTLPath))
+			m.fieldTypesCache.SetWithTTL(indexName, mappingData, mappingSize(mappingData), viper.GetDuration(MappingCacheTTLPath))
 		}
 	}
 	return res, nil

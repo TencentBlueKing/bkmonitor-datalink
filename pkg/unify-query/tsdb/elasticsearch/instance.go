@@ -20,10 +20,13 @@ import (
 	"time"
 
 	elastic "github.com/olivere/elastic/v7"
+	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -45,7 +48,7 @@ type Instance struct {
 
 	lock sync.Mutex
 
-	connect Connect
+	connects Connects
 
 	healthCheck bool
 
@@ -53,6 +56,16 @@ type Instance struct {
 
 	timeout time.Duration
 	maxSize int
+}
+
+type Connects []Connect
+
+func (cs Connects) String() string {
+	var s strings.Builder
+	for _, c := range cs {
+		s.WriteString(c.String())
+	}
+	return s.String()
 }
 
 type Connect struct {
@@ -68,7 +81,7 @@ func (c Connect) String() string {
 }
 
 type InstanceOption struct {
-	Connect Connect
+	Connects []Connect
 
 	MaxSize     int
 	MaxRouting  int
@@ -97,13 +110,17 @@ var TimeSeriesResultPool = sync.Pool{
 
 func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	ins := &Instance{
-		ctx:     ctx,
-		maxSize: opt.MaxSize,
-		connect: opt.Connect,
+		ctx:      ctx,
+		maxSize:  opt.MaxSize,
+		connects: opt.Connects,
 
 		headers:     opt.Headers,
 		healthCheck: opt.HealthCheck,
 		timeout:     opt.Timeout,
+	}
+
+	if len(ins.connects) == 0 {
+		return ins, errors.New("empty es client options")
 	}
 
 	if opt.MaxRouting > 0 {
@@ -298,37 +315,27 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	var res *elastic.SearchResult
 	func() {
-		opt := qb.ResultTableOption
-		if opt != nil {
-			if opt.ScrollID != "" {
-				span.Set("query-scroll-id", opt.ScrollID)
-				res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).ScrollId(opt.ScrollID).Do(ctx)
-				return
-			}
+		if qb.ResultTableOptions != nil {
+			opt := qb.ResultTableOptions.GetOption(qb.TableID, qo.conn.Address)
+			if opt != nil {
+				if opt.ScrollID != "" {
+					span.Set("query-scroll-id", opt.ScrollID)
+					res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).ScrollId(opt.ScrollID).Do(ctx)
+					return
+				}
 
-			if len(opt.SearchAfter) > 0 {
-				span.Set("query-search-after", opt.SearchAfter)
-				source.SearchAfter(opt.SearchAfter...)
-				res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
-				return
+				if len(opt.SearchAfter) > 0 {
+					span.Set("query-search-after", opt.SearchAfter)
+					source.SearchAfter(opt.SearchAfter...)
+					res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
+					return
+				}
 			}
 		}
 
 		if qb.Scroll != "" {
 			span.Set("query-scroll", qb.Scroll)
-			scroll := client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source)
-			option := qb.ResultTableOption
-			if option != nil {
-				if option.ScrollID != "" {
-					span.Set("query-scroll-id", option.ScrollID)
-					scroll.ScrollId(option.ScrollID)
-				}
-				if option.SliceIndex != nil && option.SliceMax != nil {
-					span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", *option.SliceIndex, *option.SliceMax))
-					scroll.Slice(elastic.NewSliceQuery().Id(*option.SliceIndex).Max(*option.SliceMax))
-				}
-			}
-			res, err = scroll.Do(ctx)
+			res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source).Do(ctx)
 		} else {
 			span.Set("query-from", qb.From)
 			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
@@ -494,7 +501,16 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, option *metadata.ResultTableOption, err error) {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
+	var (
+		err error
+		wg  sync.WaitGroup
+
+		total              int64
+		lock               sync.Mutex
+		resultTableOptions metadata.ResultTableOptions
+	)
+
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("es query error: %s", r)
@@ -504,135 +520,162 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-raw")
 	defer span.End(&err)
 
-	span.Set("instance-connect", i.connect.String())
-	span.Set("instance-query-result-table-option", query.ResultTableOption)
+	span.Set("instance-connects", i.connects.String())
+	span.Set("instance-query-result-table-options", query.ResultTableOptions)
 
 	if query.DB == "" {
 		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
-		return
+		return total, resultTableOptions, err
 	}
 
 	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
 	if err != nil {
-		return
+		return total, resultTableOptions, err
 	}
 
 	unit := metadata.GetQueryParams(ctx).TimeUnit
+	errChan := make(chan error, len(i.connects))
+
 	span.Set("aliases", aliases)
 
-	qo := &queryOption{
-		indexes: aliases,
-		start:   start,
-		end:     end,
-		query:   query,
-		conn:    i.connect,
-	}
+	for _, conn := range i.connects {
+		wg.Add(1)
+		conn := conn
+		go func() {
+			defer func() {
+				errChan <- err
+				wg.Done()
+			}()
 
-	mappings, mappingErr := i.getMappings(ctx, qo.conn, aliases)
-	if len(mappings) == 0 {
-		log.Warnf(ctx, "index is empty with %v with %s error %s", aliases, qo.conn.String(), mappingErr)
-		return
-	}
-	span.Set("mapping-length", len(mappings))
+			qo := &queryOption{
+				indexes: aliases,
+				start:   start,
+				end:     end,
+				query:   query,
+				conn:    conn,
+			}
 
-	if i.maxSize > 0 && query.Size > i.maxSize {
-		query.Size = i.maxSize
-	}
+			mappings, mappingErr := i.getMappings(ctx, qo.conn, aliases)
+			if len(mappings) == 0 {
+				log.Warnf(ctx, "index is empty with %v with %s error %s", aliases, qo.conn.String(), mappingErr)
+				return
+			}
+			span.Set("mapping-length", len(mappings))
 
-	option = query.ResultTableOption
-	if option != nil {
-		if option.From != nil {
-			query.From = *option.From
-		}
-	}
+			if i.maxSize > 0 && query.Size > i.maxSize {
+				query.Size = i.maxSize
+			}
 
-	queryLabelMaps, queryLabelErr := query.LabelMap()
-	if queryLabelErr != nil {
-		log.Warnf(ctx, "query label map error: %s", queryLabelErr)
-	}
-
-	fact := NewFormatFactory(ctx).
-		WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-		WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.Size).
-		WithMappings(mappings...).
-		WithOrders(query.Orders).
-		WithIncludeValues(queryLabelMaps)
-
-	sr, err := i.esQuery(ctx, qo, fact)
-	if err != nil {
-		log.Errorf(ctx, fmt.Sprintf("es query raw data error: %s", err.Error()))
-		return
-	}
-
-	option = &metadata.ResultTableOption{
-		FieldType: fact.FieldType(),
-		From:      &query.From,
-	}
-
-	reverseAlias := make(map[string]string, len(query.FieldAlias))
-	for k, v := range query.FieldAlias {
-		reverseAlias[v] = k
-	}
-
-	if sr != nil {
-		if sr.Hits != nil {
-
-			span.Set("instance-out-list-size", len(sr.Hits.Hits))
-
-			for idx, d := range sr.Hits.Hits {
-				data := make(map[string]any)
-				if err = json.Unmarshal(d.Source, &data); err != nil {
-					return
+			if len(query.ResultTableOptions) > 0 {
+				queryResultTableOption := query.ResultTableOptions.GetOption(query.TableID, conn.Address)
+				if queryResultTableOption != nil {
+					if queryResultTableOption.From != nil {
+						query.From = *queryResultTableOption.From
+					}
 				}
+			}
 
-				fact.SetData(data)
+			queryLabelMaps, queryLabelErr := query.LabelMap()
+			if queryLabelErr != nil {
+				log.Warnf(ctx, "query label map error: %s", queryLabelErr)
+			}
 
-				// 注入别名
-				for k, v := range reverseAlias {
-					if _, ok := fact.data[k]; ok {
-						fact.data[v] = fact.data[k]
-						// TODO: 等前端适配之后，再移除
-						//delete(fact.data, k)
+			fact := NewFormatFactory(ctx).
+				WithIsReference(metadata.GetQueryParams(ctx).IsReference).
+				WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.Size).
+				WithMappings(mappings...).
+				WithOrders(query.Orders).
+				WithIncludeValues(queryLabelMaps)
+
+			sr, queryErr := i.esQuery(ctx, qo, fact)
+			if queryErr != nil {
+				log.Errorf(ctx, fmt.Sprintf("es query raw data error: %s", queryErr.Error()))
+				err = queryErr
+				return
+			}
+
+			var option = &metadata.ResultTableOption{
+				FieldType: fact.FieldType(),
+				From:      &query.From,
+			}
+
+			reverseAlias := make(map[string]string, len(query.FieldAlias))
+			for k, v := range query.FieldAlias {
+				reverseAlias[v] = k
+			}
+
+			if sr != nil {
+				if sr.Hits != nil {
+
+					span.Set("instance-out-list-size", len(sr.Hits.Hits))
+
+					for idx, d := range sr.Hits.Hits {
+						data := make(map[string]any)
+						if err = json.Unmarshal(d.Source, &data); err != nil {
+							return
+						}
+
+						fact.SetData(data)
+
+						// 注入别名
+						for k, v := range reverseAlias {
+							if _, ok := fact.data[k]; ok {
+								fact.data[v] = fact.data[k]
+								// TODO: 等前端适配之后，再移除
+								//delete(fact.data, k)
+							}
+						}
+
+						fact.data[KeyDocID] = d.Id
+						fact.data[KeyIndex] = d.Index
+						fact.data[KeyTableID] = query.TableID
+						fact.data[KeyDataLabel] = query.DataLabel
+
+						fact.data[KeyAddress] = conn.Address
+
+						if timeValue, ok := data[fact.GetTimeField().Name]; ok {
+							fact.data[FieldTime] = timeValue
+						}
+
+						if idx == len(sr.Hits.Hits)-1 && d.Sort != nil {
+							option.SearchAfter = d.Sort
+						}
+
+						dataCh <- fact.data
+					}
+
+					if sr.Hits.TotalHits != nil {
+						total += sr.Hits.TotalHits.Value
 					}
 				}
 
-				fact.data[metadata.KeyDocID] = d.Id
-				fact.data[metadata.KeyIndex] = d.Index
-				query.DataReload(fact.data)
-
-				if timeValue, ok := data[fact.GetTimeField().Name]; ok {
-					fact.data[FieldTime] = timeValue
+				// ScrollID 覆盖 SearchAfter 配置
+				if sr.ScrollId != "" {
+					option.ScrollID = sr.ScrollId
 				}
-
-				if idx == len(sr.Hits.Hits)-1 && d.Sort != nil {
-					option.SearchAfter = d.Sort
-				}
-
-				dataCh <- fact.data
 			}
 
-			if sr.Hits.TotalHits != nil {
-				total += sr.Hits.TotalHits.Value
+			if resultTableOptions == nil {
+				resultTableOptions = metadata.ResultTableOptions{}
 			}
-		}
 
-		if query.Scroll != "" {
-			var originalOption *metadata.ResultTableOption
-			originalOption = query.ResultTableOption
+			lock.Lock()
+			resultTableOptions.SetOption(query.TableID, conn.Address, option)
+			lock.Unlock()
+		}()
+	}
+	wg.Wait()
+	close(errChan)
 
-			option.ScrollID = sr.ScrollId
-
-			if originalOption != nil {
-				option.SliceIndex = originalOption.SliceIndex
-				option.SliceMax = originalOption.SliceMax
-			}
+	for e := range errChan {
+		if e != nil {
+			return total, resultTableOptions, e
 		}
 	}
-
 	span.Set("instance-out-total", total)
-	span.Set("instance-out-result-table-option", option)
+	span.Set("instance-out-result-table-options", resultTableOptions)
 
-	return
+	return total, resultTableOptions, nil
 }
 
 // QuerySeriesSet 给 PromEngine 提供查询接口
@@ -673,9 +716,10 @@ func (i *Instance) QuerySeriesSet(
 	span.Set("query-space-uid", user.SpaceUID)
 	span.Set("query-source", user.Source)
 	span.Set("query-username", user.Name)
-	span.Set("query-connects", i.connect.String())
+	span.Set("query-connects", i.connects.String())
 
 	span.Set("query-storage-id", query.StorageID)
+	span.Set("query-storage-ids", query.StorageIDs)
 
 	span.Set("query-max-size", i.maxSize)
 	span.Set("query-db", query.DB)
@@ -684,53 +728,134 @@ func (i *Instance) QuerySeriesSet(
 	span.Set("query-field", query.Field)
 	span.Set("query-fields", query.Fields)
 
-	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
-	if err != nil {
-		return storage.ErrSeriesSet(err)
+	setCh := make(chan storage.SeriesSet, len(i.connects))
+
+	go func() {
+		defer func() {
+			// es 查询有很多结构体无法判断的，会导致 panic
+			if r := recover(); r != nil {
+				setCh <- storage.ErrSeriesSet(fmt.Errorf("es query error: %s", r))
+			}
+
+			close(setCh)
+		}()
+
+		aliases, err1 := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
+		if err1 != nil {
+			setCh <- storage.ErrSeriesSet(err1)
+		}
+
+		span.Set("query-aliases", aliases)
+
+		var wg sync.WaitGroup
+		for _, conn := range i.connects {
+			conn := conn
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+
+				qo := &queryOption{
+					indexes: aliases,
+					start:   start,
+					end:     end,
+					query:   query,
+					conn:    conn,
+				}
+
+				mappings, errMapping := i.getMappings(ctx, qo.conn, qo.indexes)
+				// index 不存在，mappings 获取异常直接返回空
+				if len(mappings) == 0 {
+					log.Warnf(ctx, "index is empty with %v with %s error %v", qo.indexes, qo.conn.String(), errMapping)
+					return
+				}
+				span.Set("mapping-length", len(mappings))
+
+				if err1 != nil {
+					setCh <- storage.ErrSeriesSet(err1)
+					return
+				}
+				var size int
+				if query.Size > 0 && query.Size < i.maxSize {
+					size = query.Size
+				} else {
+					size = i.maxSize
+				}
+
+				queryLabelMap, queryLabelErr := query.LabelMap()
+				if queryLabelErr != nil {
+					log.Warnf(ctx, "query label map error: %s", queryLabelErr)
+				}
+
+				fact := NewFormatFactory(ctx).
+					WithIsReference(metadata.GetQueryParams(ctx).IsReference).
+					WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
+					WithMappings(mappings...).
+					WithOrders(query.Orders).
+					WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc()).
+					WithIncludeValues(queryLabelMap)
+
+				if len(query.Aggregates) == 0 {
+					setCh <- storage.ErrSeriesSet(fmt.Errorf("aggregates is empty"))
+					return
+				}
+
+				setCh <- i.queryWithAgg(ctx, qo, fact)
+			}()
+		}
+
+		wg.Wait()
+	}()
+
+	var sets []storage.SeriesSet
+	for s := range setCh {
+		if s != nil {
+			sets = append(sets, s)
+		}
 	}
 
-	span.Set("query-aliases", aliases)
+	return storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSort(query.Aggregates.LastAggName()))
+}
 
-	qo := &queryOption{
-		indexes: aliases,
-		start:   start,
-		end:     end,
-		query:   query,
-		conn:    i.connect,
-	}
-	mappings, errMapping := i.getMappings(ctx, qo.conn, qo.indexes)
-	// index 不存在，mappings 获取异常直接返回空
-	if len(mappings) == 0 {
-		log.Warnf(ctx, "index is empty with %v with %s error %v", qo.indexes, qo.conn.String(), errMapping)
-		return storage.EmptySeriesSet()
-	}
-	span.Set("mapping-length", len(mappings))
+// QueryRange 使用 es 直接查询引擎
+func (i *Instance) DirectQueryRange(ctx context.Context, referenceName string, start, end time.Time, step time.Duration) (promql.Matrix, bool, error) {
+	//TODO implement me
+	panic("implement me")
+}
 
-	var size int
-	if query.Size > 0 && query.Size < i.maxSize {
-		size = query.Size
-	} else {
-		size = i.maxSize
-	}
+func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
+	//TODO implement me
+	panic("implement me")
+}
 
-	queryLabelMap, queryLabelErr := query.LabelMap()
-	if queryLabelErr != nil {
-		log.Warnf(ctx, "query label map error: %s", queryLabelErr)
-	}
+func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
+	//TODO implement me
+	panic("implement me")
+}
 
-	fact := NewFormatFactory(ctx).
-		WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-		WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
-		WithMappings(mappings...).
-		WithOrders(query.Orders).
-		WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc()).
-		WithIncludeValues(queryLabelMap)
+func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
 
-	if len(query.Aggregates) == 0 {
-		return storage.ErrSeriesSet(fmt.Errorf("aggregates is empty"))
-	}
+func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
 
-	return i.queryWithAgg(ctx, qo, fact)
+func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
 }
 
 func (i *Instance) InstanceType() string {

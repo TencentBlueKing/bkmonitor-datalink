@@ -32,6 +32,10 @@ import (
 )
 
 const (
+	KeyIndex     = "__index"
+	KeyTableID   = "__result_table"
+	KeyDataLabel = "__data_label"
+
 	TableFieldName = "Field"
 	TableFieldType = "Type"
 
@@ -51,9 +55,8 @@ type Instance struct {
 	timeout      time.Duration
 	intervalTime time.Duration
 
-	maxLimit   int
-	tolerance  int
-	sliceLimit int
+	maxLimit  int
+	tolerance int
 
 	client *Client
 }
@@ -64,10 +67,9 @@ type Options struct {
 	Address string
 	Headers map[string]string
 
-	Timeout    time.Duration
-	MaxLimit   int
-	SliceLimit int
-	Tolerance  int
+	Timeout   time.Duration
+	MaxLimit  int
+	Tolerance int
 
 	Curl curl.Curl
 }
@@ -77,12 +79,11 @@ func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 		return nil, fmt.Errorf("address is empty")
 	}
 	instance := &Instance{
-		ctx:        ctx,
-		timeout:    opt.Timeout,
-		maxLimit:   opt.MaxLimit,
-		tolerance:  opt.Tolerance,
-		sliceLimit: opt.SliceLimit,
-		client:     (&Client{}).WithUrl(opt.Address).WithHeader(opt.Headers).WithCurl(opt.Curl),
+		ctx:       ctx,
+		timeout:   opt.Timeout,
+		maxLimit:  opt.MaxLimit,
+		tolerance: opt.Tolerance,
+		client:    (&Client{}).WithUrl(opt.Address).WithHeader(opt.Headers).WithCurl(opt.Curl),
 	}
 	return instance, nil
 }
@@ -227,17 +228,21 @@ func (i *Instance) Table(query *metadata.Query) string {
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, option *metadata.ResultTableOption, err error) {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, resultTableOptions metadata.ResultTableOptions, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("doris query panic: %s", r)
 		}
 	}()
 
-	option = query.ResultTableOption
+	resultTableOptions = make(metadata.ResultTableOptions)
+	option := query.ResultTableOptions.GetOption(query.TableID, "")
 	if option == nil {
 		option = &metadata.ResultTableOption{}
 	}
+	defer func() {
+		resultTableOptions.SetOption(query.TableID, "", option)
+	}()
 
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-raw")
 	defer span.End(&err)
@@ -299,10 +304,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	for _, list := range data.List {
 		newData := queryFactory.ReloadListData(list, false)
-		newData[metadata.KeyIndex] = query.DB
-		// 注入原始数据需要的字段
-		query.DataReload(newData)
-
+		newData[KeyIndex] = query.DB
+		newData[KeyTableID] = query.TableID
+		newData[KeyDataLabel] = query.DataLabel
 		dataCh <- newData
 	}
 

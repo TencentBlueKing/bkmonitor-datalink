@@ -691,8 +691,8 @@ func TestParser(t *testing.T) {
 					Value: &StringExpr{Value: "/data/home/user00/log/zonesvr*"},
 				},
 			},
-			es:  `{"bool":{"must":[{"query_string":{"query":"\"32221112\""}},{"wildcard":{"path":{"value":"/data/home/user00/log/zonesvr*"}}}]}}`,
-			sql: "`log` = '32221112' AND `path` LIKE '/data/home/user00/log/zonesvr%'",
+			es:  `{"bool":{"must":[{"query_string":{"query":32221112}},{"wildcard":{"path":{"value":"/data/home/user00/log/zonesvr*"}}}]}}`,
+			sql: "`log` = 32221112 AND `path` LIKE '/data/home/user00/log/zonesvr%'",
 		},
 		"test - Many Brack ": {
 			q: `(loglevel: ("TRACE" OR "DEBUG" OR "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")) AND "test111"`,

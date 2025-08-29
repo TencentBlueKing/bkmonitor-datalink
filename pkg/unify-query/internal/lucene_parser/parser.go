@@ -13,7 +13,7 @@ import (
 	"fmt"
 
 	antlr "github.com/antlr4-go/antlr/v4"
-	"github.com/olivere/elastic/v7"
+	elastic "github.com/olivere/elastic/v7"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
 )

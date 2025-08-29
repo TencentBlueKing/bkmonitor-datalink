@@ -11,6 +11,7 @@ package lucene_parser
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	antlr "github.com/antlr4-go/antlr/v4"
@@ -129,9 +130,9 @@ func (n *QueryNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 
 	switch ctx.(type) {
 	case *gen.DisjQueryContext:
-		disjNode := &OrNode{}
-		n.nodes = append(n.nodes, disjNode)
-		next = disjNode
+		node := &OrNode{}
+		n.nodes = append(n.nodes, node)
+		next = node
 	}
 
 	return visitChildren(next, ctx)
@@ -252,9 +253,9 @@ func (n *OrNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 
 	switch ctx.(type) {
 	case *gen.ConjQueryContext:
-		conjNode := &AndNode{}
-		n.nodes = append(n.nodes, conjNode)
-		next = conjNode
+		node := &AndNode{}
+		n.nodes = append(n.nodes, node)
+		next = node
 	}
 
 	return visitChildren(next, ctx)
@@ -297,9 +298,9 @@ func (n *AndNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 
 	switch ctx.(type) {
 	case *gen.ModClauseContext:
-		modClauseNode := &ModClauseNode{}
-		n.nodes = append(n.nodes, modClauseNode)
-		next = modClauseNode
+		node := &ModClauseNode{}
+		n.nodes = append(n.nodes, node)
+		next = node
 	}
 
 	return visitChildren(next, ctx)
@@ -445,21 +446,28 @@ type TermNode struct {
 }
 
 func (n *TermNode) Expr() Expr {
-	var expr Expr
+	var expr *OperatorExpr
 	if n.isRegex {
 		regexValue := strings.Trim(n.value, "/")
-		expr = &RegexpExpr{Value: &StringExpr{Value: regexValue}}
+		expr = &OperatorExpr{
+			Op:    OpRegex,
+			Value: &StringExpr{Value: regexValue},
+		}
 	} else if n.isWildcard {
-		expr = &WildcardExpr{Value: &StringExpr{Value: n.value}}
+		expr = &OperatorExpr{
+			Op:    OpWildcard,
+			Value: &StringExpr{Value: n.value},
+		}
 	} else {
-		expr = &MatchExpr{Value: &StringExpr{Value: n.value}, IsQuoted: n.isQuoted}
+		expr = &OperatorExpr{
+			Op:       OpMatch,
+			Value:    n.createValueExpr(),
+			IsQuoted: n.isQuoted,
+		}
 	}
 
 	if n.field != "" {
-		switch fieldSetter := expr.(type) {
-		case FieldSetter:
-			fieldSetter.SetField(n.field)
-		}
+		expr.SetField(n.field)
 	}
 
 	return expr
@@ -536,30 +544,36 @@ type RangeNode struct {
 func (n *RangeNode) Expr() Expr {
 	if n.op != "" {
 		// Handle comparison operators
+		var rangeExpr *RangeExpr
 		switch n.op {
 		case ">":
-			return &NumberRangeExpr{
-				Field: &StringExpr{Value: n.field},
-				Start: &StringExpr{Value: n.value},
+			rangeExpr = &RangeExpr{
+				Start: n.createValueExpr(n.value),
 			}
 		case "<":
-			return &NumberRangeExpr{
-				Field: &StringExpr{Value: n.field},
-				End:   &StringExpr{Value: n.value},
+			rangeExpr = &RangeExpr{
+				End: n.createValueExpr(n.value),
 			}
 		case ">=":
-			return &NumberRangeExpr{
-				Field:        &StringExpr{Value: n.field},
-				Start:        &StringExpr{Value: n.value},
+			rangeExpr = &RangeExpr{
+				Start:        n.createValueExpr(n.value),
 				IncludeStart: &BoolExpr{Value: true},
 			}
 		case "<=":
-			return &NumberRangeExpr{
-				Field:      &StringExpr{Value: n.field},
-				End:        &StringExpr{Value: n.value},
+			rangeExpr = &RangeExpr{
+				End:        n.createValueExpr(n.value),
 				IncludeEnd: &BoolExpr{Value: true},
 			}
 		}
+
+		expr := &OperatorExpr{
+			Op:    OpRange,
+			Value: rangeExpr,
+		}
+		if n.field != "" {
+			expr.SetField(n.field)
+		}
+		return expr
 	}
 
 	// Handle range expressions
@@ -575,31 +589,21 @@ func (n *RangeNode) Expr() Expr {
 		endPtr = &wildcard
 	}
 
-	isDateRange := (startPtr != nil && looksLikeDate(*startPtr)) || (endPtr != nil && looksLikeDate(*endPtr))
-
-	if isDateRange {
-		expr := &TimeRangeExpr{
-			Start:        &StringExpr{Value: *startPtr},
-			End:          &StringExpr{Value: *endPtr},
-			IncludeStart: &BoolExpr{Value: n.includeStart},
-			IncludeEnd:   &BoolExpr{Value: n.includeEnd},
-		}
-		if n.field != "" {
-			expr.Field = &StringExpr{Value: n.field}
-		}
-		return expr
-	} else {
-		expr := &NumberRangeExpr{
-			Start:        &StringExpr{Value: *startPtr},
-			End:          &StringExpr{Value: *endPtr},
-			IncludeStart: &BoolExpr{Value: n.includeStart},
-			IncludeEnd:   &BoolExpr{Value: n.includeEnd},
-		}
-		if n.field != "" {
-			expr.Field = &StringExpr{Value: n.field}
-		}
-		return expr
+	rangeExpr := &RangeExpr{
+		Start:        n.createValueExpr(*startPtr),
+		End:          n.createValueExpr(*endPtr),
+		IncludeStart: &BoolExpr{Value: n.includeStart},
+		IncludeEnd:   &BoolExpr{Value: n.includeEnd},
 	}
+
+	expr := &OperatorExpr{
+		Op:    OpRange,
+		Value: rangeExpr,
+	}
+	if n.field != "" {
+		expr.SetField(n.field)
+	}
+	return expr
 }
 
 func (n *RangeNode) VisitChildren(ctx antlr.RuleNode) interface{} {
@@ -890,4 +894,30 @@ func parseAndClassifyString(text string) (value string, isWildcard bool, isQuote
 		isQuoted = true
 	}
 	return
+}
+
+// createValueExpr creates a NumberExpr for numeric values, StringExpr otherwise
+func (n *RangeNode) createValueExpr(value string) Expr {
+	if value == "*" {
+		return &StringExpr{Value: value}
+	}
+
+	// Try to parse as number
+	if numValue, err := strconv.ParseFloat(value, 64); err == nil {
+		return &NumberExpr{Value: numValue}
+	}
+
+	// If not a number, treat as string
+	return &StringExpr{Value: value}
+}
+
+// createValueExpr creates appropriate Expr based on value type
+func (n *TermNode) createValueExpr() Expr {
+	// Try to parse as number regardless of whether it's quoted
+	if numValue, err := strconv.ParseFloat(n.value, 64); err == nil {
+		return &NumberExpr{Value: numValue}
+	}
+
+	// If not a number, treat as string
+	return &StringExpr{Value: n.value}
 }

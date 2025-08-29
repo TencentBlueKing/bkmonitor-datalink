@@ -223,7 +223,7 @@ func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relatio
 		}
 
 		var expands map[string]map[string]any
-		if expandString, ok := r[relation.ExpandInfoColumn].(string); ok {
+		if expandString, ok := r[relation.ExpandInfoColumn].(string); ok && expandString != "" {
 			err := json.Unmarshal([]byte(expandString), &expands)
 			if err != nil {
 				logger.Warnf("[cmdb_relation] SetToRelationInfos json unmarshal error with %s, %s", expandString, err)

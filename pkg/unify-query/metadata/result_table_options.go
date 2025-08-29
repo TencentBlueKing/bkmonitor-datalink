@@ -12,9 +12,13 @@ package metadata
 type ResultTableOptions map[string]*ResultTableOption
 
 type ResultTableOption struct {
-	From        *int   `json:"from,omitempty"`
+	From *int `json:"from,omitempty"`
+
 	ScrollID    string `json:"scroll_id,omitempty"`
 	SearchAfter []any  `json:"search_after,omitempty"`
+
+	SliceIndex *int `json:"slice_index,omitempty"`
+	SliceMax   *int `json:"slice_max,omitempty"`
 
 	FieldType map[string]string `json:"-"`
 
@@ -22,27 +26,15 @@ type ResultTableOption struct {
 	ResultSchema []map[string]any `json:"result_schema,omitempty"`
 }
 
-func (o ResultTableOptions) getKey(tableID, address string) string {
-	key := tableID
-	if address != "" {
-		key = tableID + "|" + address
-	}
-	return key
-}
-
-func (o ResultTableOptions) SetOption(tableID, address string, option *ResultTableOption) {
+func (o ResultTableOptions) SetOption(tableUUID string, option *ResultTableOption) {
 	if option == nil {
 		return
 	}
-	o[o.getKey(tableID, address)] = option
+	o[tableUUID] = option
 }
 
-func (o ResultTableOptions) GetOption(tableID, address string) *ResultTableOption {
-	if o == nil {
-		return nil
-	}
-
-	if option, ok := o[o.getKey(tableID, address)]; ok {
+func (o ResultTableOptions) GetOption(tableUUID string) *ResultTableOption {
+	if option, ok := o[tableUUID]; ok {
 		return option
 	}
 	return nil

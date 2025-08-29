@@ -37,6 +37,8 @@ const (
 	startTime        = "_startTime_"
 	endTime          = "_endTime_"
 	theDate          = "thedate"
+
+	dtEventTimeFormat = "2006-01-02 15:04:05"
 )
 
 var (
@@ -147,9 +149,9 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 			continue
 		}
 
-		if v, ok := fieldMap[k]; ok {
-			if v == TableTypeVariant {
-				objectData, err := json.ParseObject(k, d.(string))
+		if fieldType, existed := fieldMap[k]; existed && fieldType == TableTypeVariant {
+			if nd, ok := d.(string); ok {
+				objectData, err := json.ParseObject(k, nd)
 				if err != nil {
 					log.Errorf(f.ctx, "json.ParseObject err: %v", err)
 					continue
@@ -343,29 +345,32 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 	return res, nil
 }
 
-func (f *QueryFactory) getTheDateIndexFilters() (theDateFilter string, err error) {
+func (f *QueryFactory) getTheDateIndexFilters() (string, error) {
+	var conditions []string
+
 	// bkbase 使用 时区东八区 转换为 thedate
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
-		return
+		return "", err
 	}
 
 	start := f.start.In(loc)
 	end := f.end.In(loc)
 
+	conditions = append(conditions, fmt.Sprintf("`%s` >= '%s'", dtEventTime, start.Format(dtEventTimeFormat)))
+	// 为了兼容毫秒纳秒等单位，需要+1s
+	conditions = append(conditions, fmt.Sprintf("`%s` <= '%s'", dtEventTime, end.Add(time.Second).Format(dtEventTimeFormat)))
+
 	dates := function.RangeDateWithUnit("day", start, end, 1)
 
-	if len(dates) == 0 {
-		return
-	}
-
 	if len(dates) == 1 {
-		theDateFilter = fmt.Sprintf("`%s` = '%s'", theDate, dates[0])
-		return
+		conditions = append(conditions, fmt.Sprintf("`%s` = '%s'", theDate, dates[0]))
+	} else if len(dates) > 1 {
+		conditions = append(conditions, fmt.Sprintf("`%s` >= '%s'", theDate, dates[0]))
+		conditions = append(conditions, fmt.Sprintf("`%s` <= '%s'", theDate, dates[len(dates)-1]))
 	}
 
-	theDateFilter = fmt.Sprintf("`%s` >= '%s' AND `%s` <= '%s'", theDate, dates[0], theDate, dates[len(dates)-1])
-	return
+	return strings.Join(conditions, " AND "), nil
 }
 
 func (f *QueryFactory) BuildWhere() (string, error) {

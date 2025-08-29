@@ -1495,8 +1495,8 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				IgnoreTimeAggregationEnable: !isDirectQuery,
 			}
 
-			promql, _ := tc.ts.ToPromExpr(ctx, promExprOpt)
-			assert.Equal(t, tc.promql, promql.String())
+			pl, _ := tc.ts.ToPromExpr(ctx, promExprOpt)
+			assert.Equal(t, tc.promql, pl.String())
 		})
 	}
 }
@@ -1535,87 +1535,6 @@ func TestAggregations(t *testing.T) {
 			aggs, err := c.query.Aggregates()
 			assert.Nil(t, err)
 			assert.Equal(t, c.aggs, aggs)
-		})
-	}
-}
-
-func TestGetMaxWindow(t *testing.T) {
-	tests := []struct {
-		name        string
-		queryList   []*Query
-		expected    time.Duration
-		expectError bool
-	}{
-		{
-			name: "Normal case with multiple windows",
-			queryList: []*Query{
-				{
-					AggregateMethodList: []AggregateMethod{
-						{Window: "5m"},
-						{Window: "10m"},
-					},
-				},
-				{
-					AggregateMethodList: []AggregateMethod{
-						{Window: "15m"},
-						{Window: "20m"},
-					},
-				},
-			},
-			expected:    20 * time.Minute,
-			expectError: false,
-		},
-		{
-			name:        "Empty QueryList",
-			queryList:   []*Query{},
-			expected:    0,
-			expectError: false,
-		},
-		{
-			name: "Invalid Window",
-			queryList: []*Query{
-				{
-					AggregateMethodList: []AggregateMethod{
-						{Window: "invalid"},
-					},
-				},
-			},
-			expected:    0,
-			expectError: true,
-		},
-		{
-			name: "Multiple Windows with one invalid",
-			queryList: []*Query{
-				{
-					AggregateMethodList: []AggregateMethod{
-						{Window: "5m"},
-						{Window: "invalid"},
-					},
-				},
-				{
-					AggregateMethodList: []AggregateMethod{
-						{Window: "15m"},
-						{Window: "20m"},
-					},
-				},
-			},
-			expected:    0,
-			expectError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			q := &QueryTs{
-				QueryList: tt.queryList,
-			}
-			result, err := q.GetMaxWindow()
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

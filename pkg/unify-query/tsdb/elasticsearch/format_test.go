@@ -1072,7 +1072,8 @@ func TestBuildQuery(t *testing.T) {
 						},
 						"field": "time",
 						"interval": "1h",
-						"min_doc_count": 0
+						"min_doc_count": 0,
+						"time_zone": "Asia/Shanghai"
 					}
 				}
 			},

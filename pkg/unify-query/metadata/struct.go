@@ -398,6 +398,23 @@ func (qRef QueryReference) Range(name string, fn func(qry *Query)) {
 	}
 }
 
+func (qRef QueryReference) GetMaxWindowAndTimezone() (time.Duration, string) {
+	var (
+		window   time.Duration = 0
+		timezone string
+	)
+	qRef.Range("", func(q *Query) {
+		for _, a := range q.Aggregates {
+			if a.Window > window {
+				window = a.Window
+				timezone = a.TimeZone
+			}
+		}
+	})
+
+	return window, timezone
+}
+
 // ToVmExpand 判断是否是直查，如果都是 vm 查询的情况下，则使用直查模式
 func (qRef QueryReference) ToVmExpand(_ context.Context) (vmExpand *VmExpand) {
 	vmClusterNames := set.New[string]()

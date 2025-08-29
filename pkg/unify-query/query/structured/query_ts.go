@@ -112,26 +112,6 @@ func AlignTime(start, end time.Time, stepStr, timezone string) (time.Time, time.
 	return newStart, end, step, newTimezone, nil
 }
 
-// GetMaxWindow 获取最大聚合时间
-func (q *QueryTs) GetMaxWindow() (time.Duration, error) {
-	var window time.Duration = 0
-	for _, query := range q.QueryList {
-		for _, agg := range query.AggregateMethodList {
-			if agg.Window != "" {
-				aw, err := agg.Window.Duration()
-				if err != nil {
-					return 0, err
-				}
-
-				if aw > window {
-					window = aw
-				}
-			}
-		}
-	}
-	return window, nil
-}
-
 func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference, error) {
 	queryReference := make(metadata.QueryReference)
 	for _, query := range q.QueryList {

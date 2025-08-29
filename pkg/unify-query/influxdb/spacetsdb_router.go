@@ -190,6 +190,24 @@ func (r *SpaceTsDbRouter) Add(ctx context.Context, stoPrefix string, stoKey stri
 	return r.BatchAdd(ctx, stoPrefix, entities, true, true)
 }
 
+// Delete a space data from db
+func (r *SpaceTsDbRouter) Delete(ctx context.Context, stoPrefix string, stoKey string) error {
+	fullKey := fmt.Sprintf("%s:%s", stoPrefix, stoKey)
+
+	err := r.kvClient.Delete(kvstore.String2byte(fullKey))
+	if err != nil {
+		log.Warnf(ctx, "Failed to delete key(%s) from kvClient: %v", fullKey, err)
+		return err
+	}
+
+	if r.isCache {
+		r.cache.Del(fullKey)
+	}
+
+	log.Debugf(ctx, "[SpaceTSDB] Deleted key from storage and cache: %s", fullKey)
+	return nil
+}
+
 // Get a space data from db
 func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey string, cached bool, ignoreKeyNotFound bool) influxdb.GenericValue {
 	stoKey = fmt.Sprintf("%s:%s", stoPrefix, stoKey)
@@ -322,6 +340,11 @@ func (r *SpaceTsDbRouter) ReloadByChannel(ctx context.Context, channelKey string
 			return err
 		}
 		err = r.Add(ctx, influxdb.DataLabelToResultTableKey, hashKey, &tableIds)
+		if err != nil {
+			return err
+		}
+	case influxdb.ResultTableDetailChannelDeleteKey:
+		err := r.Delete(ctx, influxdb.ResultTableDetailKey, hashKey)
 		if err != nil {
 			return err
 		}

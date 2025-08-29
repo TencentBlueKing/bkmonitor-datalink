@@ -290,6 +290,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__data_label" : "132_lol_new_login_queue_login_1min",
   "__index" : "132_lol_new_login_queue_login_1min",
   "__result_table" : "132_lol_new_login_queue_login_1min.default",
+  "__table_uuid" : "132_lol_new_login_queue_login_1min.default",
   "_endTime_" : "2024-10-28 20:32:00",
   "_startTime_" : "2024-10-28 20:31:00",
   "_timestamp_" : 1730118660000,
@@ -304,6 +305,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__data_label" : "132_lol_new_login_queue_login_1min",
   "__index" : "132_lol_new_login_queue_login_1min",
   "__result_table" : "132_lol_new_login_queue_login_1min.default",
+  "__table_uuid" : "132_lol_new_login_queue_login_1min.default",
   "_endTime_" : "2024-10-28 20:29:00",
   "_startTime_" : "2024-10-28 20:28:00",
   "_timestamp_" : 1730118480000,
@@ -318,6 +320,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__data_label" : "132_lol_new_login_queue_login_1min",
   "__index" : "132_lol_new_login_queue_login_1min",
   "__result_table" : "132_lol_new_login_queue_login_1min.default",
+  "__table_uuid" : "132_lol_new_login_queue_login_1min.default",
   "_endTime_" : "2024-10-28 20:30:00",
   "_startTime_" : "2024-10-28 20:29:00",
   "_timestamp_" : 1730118540000,
@@ -332,6 +335,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__data_label" : "132_lol_new_login_queue_login_1min",
   "__index" : "132_lol_new_login_queue_login_1min",
   "__result_table" : "132_lol_new_login_queue_login_1min.default",
+  "__table_uuid" : "132_lol_new_login_queue_login_1min.default",
   "_endTime_" : "2024-10-28 20:31:00",
   "_startTime_" : "2024-10-28 20:30:00",
   "_timestamp_" : 1730118600000,
@@ -346,6 +350,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__data_label" : "132_lol_new_login_queue_login_1min",
   "__index" : "132_lol_new_login_queue_login_1min",
   "__result_table" : "132_lol_new_login_queue_login_1min.default",
+  "__table_uuid" : "132_lol_new_login_queue_login_1min.default",
   "_endTime_" : "2024-10-28 20:28:00",
   "_startTime_" : "2024-10-28 20:27:00",
   "_timestamp_" : 1730118420000,
@@ -383,6 +388,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "5000140_bklog_container_log_demo_analysis",
   "__result_table" : "5000140_bklog_container_log_demo_analysis.doris",
   "__shard_key__" : 29042334000,
+  "__table_uuid" : "5000140_bklog_container_log_demo_analysis.doris",
   "_endtime_" : "2025-03-21 14:54:03",
   "_starttime_" : "2025-03-21 14:54:03",
   "_timestamp_" : 1742540043000,
@@ -417,6 +423,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "5000140_bklog_container_log_demo_analysis",
   "__result_table" : "5000140_bklog_container_log_demo_analysis.doris",
   "__shard_key__" : 29042334000,
+  "__table_uuid" : "5000140_bklog_container_log_demo_analysis.doris",
   "_endtime_" : "2025-03-21 14:54:03",
   "_starttime_" : "2025-03-21 14:54:03",
   "_timestamp_" : 1742540043000,
@@ -463,6 +470,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "5000140_bklog_container_log_demo_analysis",
   "__result_table" : "5000140_bklog_container_log_demo_analysis.doris",
   "__shard_key__" : 29042334000,
+  "__table_uuid" : "5000140_bklog_container_log_demo_analysis.doris",
   "_endtime_" : "2025-03-21 14:54:03",
   "_starttime_" : "2025-03-21 14:54:03",
   "_timestamp_" : 1742540043000,
@@ -497,6 +505,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "5000140_bklog_container_log_demo_analysis",
   "__result_table" : "5000140_bklog_container_log_demo_analysis.doris",
   "__shard_key__" : 29042334000,
+  "__table_uuid" : "5000140_bklog_container_log_demo_analysis.doris",
   "_endtime_" : "2025-03-21 14:54:03",
   "_starttime_" : "2025-03-21 14:54:03",
   "_timestamp_" : 1742540043000,
@@ -543,6 +552,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "5000140_bklog_container_log_demo_analysis",
   "__result_table" : "5000140_bklog_container_log_demo_analysis.doris",
   "__shard_key__" : 29042334000,
+  "__table_uuid" : "5000140_bklog_container_log_demo_analysis.doris",
   "_endtime_" : "2025-03-21 14:54:03",
   "_starttime_" : "2025-03-21 14:54:03",
   "_timestamp_" : 1742540043000,
@@ -577,6 +587,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "5000140_bklog_container_log_demo_analysis",
   "__result_table" : "5000140_bklog_container_log_demo_analysis.doris",
   "__shard_key__" : 29042334000,
+  "__table_uuid" : "5000140_bklog_container_log_demo_analysis.doris",
   "_endtime_" : "2025-03-21 14:54:03",
   "_starttime_" : "2025-03-21 14:54:03",
   "_timestamp_" : 1742540043000,
@@ -620,6 +631,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "2_bklog_pure_v4_log_doris_for_unify_query",
   "__result_table" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "__shard_key__" : 29087245464,
+  "__table_uuid" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "_timestamp_" : 1745234704000,
   "_value_" : 1745234704000,
   "cloudId" : 0,
@@ -642,6 +654,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "2_bklog_pure_v4_log_doris_for_unify_query",
   "__result_table" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "__shard_key__" : 29087245464,
+  "__table_uuid" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "_timestamp_" : 1745234704000,
   "_value_" : 1745234704000,
   "cloudId" : 0,
@@ -664,6 +677,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "2_bklog_pure_v4_log_doris_for_unify_query",
   "__result_table" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "__shard_key__" : 29087245464,
+  "__table_uuid" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "_timestamp_" : 1745234704000,
   "_value_" : 1745234704000,
   "cloudId" : 0,
@@ -686,6 +700,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "2_bklog_pure_v4_log_doris_for_unify_query",
   "__result_table" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "__shard_key__" : 29087245464,
+  "__table_uuid" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "_timestamp_" : 1745234704000,
   "_value_" : 1745234704000,
   "cloudId" : 0,
@@ -708,6 +723,7 @@ func TestInstance_QueryRaw(t *testing.T) {
   "__index" : "2_bklog_pure_v4_log_doris_for_unify_query",
   "__result_table" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "__shard_key__" : 29087245464,
+  "__table_uuid" : "2_bklog.bklog_pure_v4_log_doris_for_unify_query",
   "_timestamp_" : 1745234704000,
   "_value_" : 1745234704000,
   "cloudId" : 0,
@@ -761,15 +777,15 @@ func TestInstance_QueryRaw(t *testing.T) {
 			dataCh := make(chan map[string]any)
 
 			var (
-				options metadata.ResultTableOptions
-				err     error
+				option *metadata.ResultTableOption
+				err    error
 			)
 			go func() {
 				defer func() {
 					close(dataCh)
 				}()
 
-				_, options, err = ins.QueryRawData(ctx, c.query, start, end, dataCh)
+				_, option, err = ins.QueryRawData(ctx, c.query, start, end, dataCh)
 				assert.Nil(t, err)
 			}()
 
@@ -784,6 +800,9 @@ func TestInstance_QueryRaw(t *testing.T) {
 			assert.JSONEq(t, c.expected, string(actual))
 
 			if c.options != "" {
+				options := make(metadata.ResultTableOptions)
+				options.SetOption(c.query.TableUUID(), option)
+
 				optString, _ := json.Marshal(options)
 				assert.Equal(t, c.options, string(optString))
 			}
@@ -1993,7 +2012,12 @@ func TestInstance_QueryLabelValues_Normal(t *testing.T) {
 	// mock 查询数据
 	mock.BkSQL.Set(map[string]any{
 		"SHOW CREATE TABLE `5000140_bklog_container_log_demo_analysis`.doris": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris_bklog","totalRecords":19,"external_api_call_time_mills":{"bkbase_meta_api":10},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtimestamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtime","Type":"varchar(32)","Null":"NO","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"localtime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__shard_key__","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"_starttime_","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"_endtime_","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"bk_host_id","Type":"int","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__ext","Type":"variant","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"cloudid","Type":"int","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"serverip","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"path","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"gseindex","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"iterationindex","Type":"int","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"log","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"logtime","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"level","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"cid","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"time","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"}],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":4,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":10,"connect_db":43,"match_query_routing_rule":0,"check_permission":12,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["Field","Type","Null","Key","Default","Extra"],"sql":"SHOW COLUMNS FROM mapleleaf_5000140.bklog_container_log_demo_analysis_5000140__2","total_record_size":12408,"timetaken":0.071,"result_schema":[{"field_type":"string","field_name":"Field","field_alias":"Field","field_index":0},{"field_type":"string","field_name":"Type","field_alias":"Type","field_index":1},{"field_type":"string","field_name":"Null","field_alias":"Null","field_index":2},{"field_type":"string","field_name":"Key","field_alias":"Key","field_index":3},{"field_type":"string","field_name":"Default","field_alias":"Default","field_index":4},{"field_type":"string","field_name":"Extra","field_alias":"Extra","field_index":5}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["5000140_bklog_container_log_demo_analysis"]},"errors":null,"trace_id":"9ad04717f6b8da2c921d371cb3915cdf","span_id":"57ea24802f21b887"}`,
+
+		// normal-case
 		"SELECT `bk_host_id`, COUNT(*) AS `_value_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1740551971000 AND `dtEventTimeStamp` <= 1740553771000 AND `dtEventTime` >= '2025-02-26 14:39:31' AND `dtEventTime` <= '2025-02-26 15:09:32' AND `thedate` = '20250226' GROUP BY `bk_host_id` LIMIT 2": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"5000140_bklog_container_log_demo_analysis":{"start":"2025022600","end":"2025022623"}},"cluster":"doris_bklog","totalRecords":26,"external_api_call_time_mills":{"bkbase_meta_api":6},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"bk_host_id":5843771,"_value_":6520005},{"bk_host_id":4580470,"_value_":703143}],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":204,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":6,"connect_db":39,"match_query_routing_rule":0,"check_permission":6,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["bk_host_id","_value_"],"total_record_size":6952,"timetaken":0.257,"result_schema":[{"field_type":"int","field_name":"__c0","field_alias":"bk_host_id","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"_value_","field_index":1}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["5000140_bklog_container_log_demo_analysis"]},"errors":null,"trace_id":"3592ea81c52ab826aba587d91e5054b6","span_id":"f21eca23481c778d"}`,
+
+		// object field
+		"SELECT CAST(dimensions['pipelineName'] AS STRING) AS `dimensions__bk_46__pipelineName`, COUNT(*) AS `_value_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1740551971000 AND `dtEventTimeStamp` <= 1740553771000 AND `dtEventTime` >= '2025-02-26 14:39:31' AND `dtEventTime` <= '2025-02-26 15:09:32' AND `thedate` = '20250226' GROUP BY dimensions__bk_46__pipelineName LIMIT 3": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"100147_apm_devops_event":{"start":"2025082900","end":"2025082923"}},"cluster":"monitor-log1","totalRecords":5,"external_api_call_time_mills":{"bkbase_meta_api":0},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"dimensions__bk_46__pipelineName":"Arashi 配置热刷","_value_":46},{"dimensions__bk_46__pipelineName":"PAC-free-bird-mr-V2","_value_":1229},{"dimensions__bk_46__pipelineName":"[子流水线]free-bird-unittest","_value_":132},{"dimensions__bk_46__pipelineName":"free-bird-unittest@MERGE_REQUEST","_value_":96},{"dimensions__bk_46__pipelineName":"【Server】变更TcaplusDB","_value_":21}],"bk_biz_ids":[],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":37,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":35,"match_query_routing_rule":0,"check_permission":1,"check_query_semantic":0,"pick_valid_storage":0},"select_fields_order":["dimensions__bk_46__pipelineName","_value_"],"total_record_size":1856,"trino_cluster_host":"","timetaken":0.076,"result_schema":[{"field_type":"string","field_name":"__c0","field_alias":"dimensions__bk_46__pipelineName","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"_value_","field_index":1}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["100147_apm_devops_event"]},"errors":null,"trace_id":"606f1e90be4b2ceb050ee8e176bf1164","span_id":"b181deac3ae9807c"}`,
 	})
 
 	// 测试用例
@@ -2015,6 +2039,22 @@ func TestInstance_QueryLabelValues_Normal(t *testing.T) {
 			key: "bk_host_id",
 			expectedNames: []string{
 				"5843771", "4580470",
+			},
+		},
+		{
+			name: "object field",
+			qry: &metadata.Query{
+				DB:          "5000140_bklog_container_log_demo_analysis",
+				Measurement: "doris",
+				Size:        3,
+			},
+			key: "dimensions.pipelineName",
+			expectedNames: []string{
+				"Arashi 配置热刷",
+				"PAC-free-bird-mr-V2",
+				"[子流水线]free-bird-unittest",
+				"free-bird-unittest@MERGE_REQUEST",
+				"【Server】变更TcaplusDB",
 			},
 		},
 	}

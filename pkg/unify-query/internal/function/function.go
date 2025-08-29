@@ -234,9 +234,14 @@ func MsIntMergeNs(ms int64, ns time.Time) time.Time {
 }
 
 // IsAlignTime 判断该聚合是否需要进行对齐
+// 如果是按天聚合，则增加时区偏移量（修改该逻辑为只要有聚合就进行偏移量处理）
 func IsAlignTime(t time.Duration) bool {
 	if t == 0 {
 		return false
+	}
+
+	if t.Seconds() > 0 {
+		return true
 	}
 
 	// 只有按天的聚合才需要对齐时间

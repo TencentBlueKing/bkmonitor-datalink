@@ -14,7 +14,10 @@ import (
 	"strings"
 
 	elastic "github.com/olivere/elastic/v7"
+	"github.com/spf13/cast"
 )
+
+const DefaultEmptyField = ""
 
 type FieldType string
 
@@ -84,20 +87,18 @@ func walkESWithSchema(expr Expr, schema FieldSchema) elastic.Query {
 	case *GroupingExpr:
 		return walkESWithSchema(e.Expr, schema)
 
-	case *MatchExpr:
-		return buildMatchQueryWithSchema(e, schema)
-
-	case *WildcardExpr:
-		return buildWildcardQueryWithSchema(e)
-
-	case *RegexpExpr:
-		return buildRegexpQueryWithSchema(e)
-
-	case *NumberRangeExpr:
-		return buildNumberRangeQueryWithSchema(e)
-
-	case *TimeRangeExpr:
-		return buildTimeRangeQueryWithSchema(e)
+	case *OperatorExpr:
+		switch e.Op {
+		case OpMatch:
+			return buildOperatorMatchQueryWithSchema(e, schema)
+		case OpWildcard:
+			return buildOperatorWildcardQueryWithSchema(e)
+		case OpRegex:
+			return buildOperatorRegexpQueryWithSchema(e)
+		case OpRange:
+			return buildOperatorRangeQueryWithSchema(e)
+		}
+		return nil
 
 	case *ConditionMatchExpr:
 		return buildConditionMatchQueryWithSchema(e, schema)
@@ -113,17 +114,41 @@ func getESFieldName(fieldExpr Expr) string {
 			return s.Value
 		}
 	}
-	return DefaultLogField
+	return DefaultEmptyField
 }
 
 func getESValue(expr Expr) string {
 	if expr == nil {
 		return ""
 	}
-	if s, ok := expr.(*StringExpr); ok {
-		return s.Value
+	switch e := expr.(type) {
+	case *StringExpr:
+		return e.Value
+	case *NumberExpr:
+		return cast.ToString(e.Value)
+	case *BoolExpr:
+		return cast.ToString(e.Value)
 	}
 	return ""
+}
+
+// getESValueInterface returns the interface{} value for ES queries
+func getESValueInterface(expr Expr) interface{} {
+	if expr == nil {
+		return nil
+	}
+	switch e := expr.(type) {
+	case *StringExpr:
+		if e.Value == "*" {
+			return nil
+		}
+		return e.Value
+	case *NumberExpr:
+		return e.Value
+	case *BoolExpr:
+		return e.Value
+	}
+	return nil
 }
 
 func isNumeric(value string) bool {
@@ -207,188 +232,6 @@ func buildOrQueryWithSchema(e *OrExpr, schema FieldSchema) elastic.Query {
 	return elastic.NewBoolQuery().Should(clauses...)
 }
 
-func buildMatchQueryWithSchema(e *MatchExpr, schema FieldSchema) elastic.Query {
-	field := getESFieldName(e.Field)
-	value := getESValue(e.Value)
-
-	fieldType, hasSchema := schema.GetFieldType(field)
-	if e.IsQuoted {
-		if field == DefaultLogField && e.Field == nil {
-			return elastic.NewQueryStringQuery("\"" + value + "\"")
-		}
-
-		if hasSchema {
-			switch fieldType {
-			case FieldTypeKeyword:
-				return elastic.NewTermQuery(field, value)
-			case FieldTypeText:
-				return elastic.NewMatchPhraseQuery(field, value)
-			default:
-				return elastic.NewMatchPhraseQuery(field, value)
-			}
-		}
-
-		return elastic.NewMatchPhraseQuery(field, value)
-	}
-
-	if hasSchema {
-		switch fieldType {
-		case FieldTypeKeyword:
-			return elastic.NewTermQuery(field, value)
-		case FieldTypeText:
-			if field == DefaultLogField {
-				return elastic.NewQueryStringQuery(value)
-			}
-			if strings.Contains(value, " ") {
-				return elastic.NewMatchQuery(field, value)
-			}
-			return elastic.NewMatchQuery(field, value)
-		case FieldTypeLong, FieldTypeInteger:
-			if num, err := strconv.ParseInt(value, 10, 64); err == nil {
-				return elastic.NewTermQuery(field, num)
-			}
-			return elastic.NewTermQuery(field, value)
-		case FieldTypeFloat, FieldTypeDouble:
-			if num, err := strconv.ParseFloat(value, 64); err == nil {
-				return elastic.NewTermQuery(field, num)
-			}
-			return elastic.NewTermQuery(field, value)
-		case FieldTypeBoolean:
-			if value == "true" || value == "false" {
-				return elastic.NewTermQuery(field, value == "true")
-			}
-			return elastic.NewTermQuery(field, value)
-		case FieldTypeDate:
-			return elastic.NewRangeQuery(field).Gte(value).Lte(value)
-		default:
-			return elastic.NewTermQuery(field, value)
-		}
-	}
-
-	if field == DefaultLogField {
-		return elastic.NewQueryStringQuery(value)
-	}
-
-	if strings.Contains(value, " ") {
-		return elastic.NewMatchQuery(field, value)
-	}
-
-	if isNumeric(value) {
-		if num, err := strconv.ParseFloat(value, 64); err == nil {
-			return elastic.NewTermQuery(field, num)
-		}
-	}
-
-	return elastic.NewTermQuery(field, value)
-}
-
-func buildWildcardQueryWithSchema(e *WildcardExpr) elastic.Query {
-	field := getESFieldName(e.Field)
-	value := getESValue(e.Value)
-
-	if field == DefaultLogField {
-		return elastic.NewQueryStringQuery(value)
-	}
-
-	return elastic.NewWildcardQuery(field, value)
-}
-
-func buildRegexpQueryWithSchema(e *RegexpExpr) elastic.Query {
-	field := getESFieldName(e.Field)
-	value := getESValue(e.Value)
-
-	if field == DefaultLogField {
-		return elastic.NewQueryStringQuery("/" + value + "/")
-	}
-
-	return elastic.NewRegexpQuery(field, value)
-}
-
-func buildNumberRangeQueryWithSchema(e *NumberRangeExpr) elastic.Query {
-	field := getESFieldName(e.Field)
-	rangeQuery := elastic.NewRangeQuery(field)
-
-	if e.Start != nil {
-		startValue := getESValue(e.Start)
-		if startValue != "*" {
-			if num, err := strconv.ParseFloat(startValue, 64); err == nil {
-				if e.IncludeStart != nil {
-					if b, ok := e.IncludeStart.(*BoolExpr); ok && b.Value {
-						rangeQuery = rangeQuery.Gte(num)
-					} else {
-						rangeQuery = rangeQuery.Gt(num)
-					}
-				} else {
-					rangeQuery = rangeQuery.Gt(num)
-				}
-			}
-		} else {
-			if e.IncludeStart != nil {
-				if b, ok := e.IncludeStart.(*BoolExpr); ok {
-					rangeQuery = rangeQuery.IncludeLower(b.Value)
-				}
-			} else {
-				rangeQuery = rangeQuery.IncludeLower(true)
-			}
-		}
-	}
-
-	if e.End != nil {
-		endValue := getESValue(e.End)
-		if endValue != "*" {
-			if num, err := strconv.ParseFloat(endValue, 64); err == nil {
-				if e.IncludeEnd != nil {
-					if b, ok := e.IncludeEnd.(*BoolExpr); ok && b.Value {
-						rangeQuery = rangeQuery.Lte(num)
-					} else {
-						rangeQuery = rangeQuery.Lt(num)
-					}
-				} else {
-					rangeQuery = rangeQuery.Lt(num)
-				}
-			}
-		} else {
-			if e.IncludeEnd != nil {
-				if b, ok := e.IncludeEnd.(*BoolExpr); ok {
-					rangeQuery = rangeQuery.IncludeUpper(b.Value)
-				}
-			}
-		}
-	}
-
-	return rangeQuery
-}
-
-func buildTimeRangeQueryWithSchema(e *TimeRangeExpr) elastic.Query {
-	field := getESFieldName(e.Field)
-	if field == DefaultLogField {
-		field = "datetime"
-	}
-	rangeQuery := elastic.NewRangeQuery(field)
-
-	if e.Start != nil {
-		startValue := getESValue(e.Start)
-		if startValue != "*" {
-			rangeQuery.From(startValue)
-			if b, ok := e.IncludeStart.(*BoolExpr); ok {
-				rangeQuery.IncludeLower(b.Value)
-			}
-		}
-	}
-
-	if e.End != nil {
-		endValue := getESValue(e.End)
-		if endValue != "*" {
-			rangeQuery.To(endValue)
-			if b, ok := e.IncludeEnd.(*BoolExpr); ok {
-				rangeQuery.IncludeUpper(b.Value)
-			}
-		}
-	}
-
-	return rangeQuery
-}
-
 func buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, schema FieldSchema) elastic.Query {
 	field := getESFieldName(e.Field)
 
@@ -446,4 +289,128 @@ func buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, schema FieldSchem
 	}
 
 	return boolQuery
+}
+
+// 新的 OperatorExpr 构建函数
+func buildOperatorMatchQueryWithSchema(e *OperatorExpr, schema FieldSchema) elastic.Query {
+	field := getESFieldName(e.Field)
+	value := getESValue(e.Value)
+	valueInterface := getESValueInterface(e.Value)
+
+	fieldType, hasSchema := schema.GetFieldType(field)
+	if e.IsQuoted {
+		if field == DefaultEmptyField && e.Field == nil {
+			return elastic.NewQueryStringQuery("\"" + value + "\"")
+		}
+
+		if hasSchema {
+			switch fieldType {
+			case FieldTypeKeyword:
+				return elastic.NewTermQuery(field, valueInterface)
+			case FieldTypeText:
+				return elastic.NewMatchPhraseQuery(field, value)
+			default:
+				return elastic.NewMatchPhraseQuery(field, value)
+			}
+		}
+
+		return elastic.NewMatchPhraseQuery(field, value)
+	}
+
+	if hasSchema {
+		switch fieldType {
+		case FieldTypeKeyword:
+			return elastic.NewTermQuery(field, valueInterface)
+		case FieldTypeText:
+			if field == DefaultEmptyField {
+				return elastic.NewQueryStringQuery(value)
+			}
+			if strings.Contains(value, " ") {
+				return elastic.NewMatchQuery(field, value)
+			}
+			return elastic.NewMatchQuery(field, value)
+		case FieldTypeLong, FieldTypeInteger:
+			return elastic.NewTermQuery(field, valueInterface)
+		case FieldTypeFloat, FieldTypeDouble:
+			return elastic.NewTermQuery(field, valueInterface)
+		case FieldTypeBoolean:
+			return elastic.NewTermQuery(field, valueInterface)
+		case FieldTypeDate:
+			return elastic.NewRangeQuery(field).Gte(valueInterface).Lte(valueInterface)
+		default:
+			return elastic.NewTermQuery(field, valueInterface)
+		}
+	}
+
+	if field == DefaultEmptyField {
+		return elastic.NewQueryStringQuery(value)
+	}
+
+	if strings.Contains(value, " ") {
+		return elastic.NewMatchQuery(field, value)
+	}
+
+	if _, ok := e.Value.(*NumberExpr); ok {
+		return elastic.NewTermQuery(field, valueInterface)
+	}
+
+	return elastic.NewTermQuery(field, valueInterface)
+}
+
+func buildOperatorWildcardQueryWithSchema(e *OperatorExpr) elastic.Query {
+	field := getESFieldName(e.Field)
+	value := getESValue(e.Value)
+
+	return elastic.NewWildcardQuery(field, value)
+}
+
+func buildOperatorRegexpQueryWithSchema(e *OperatorExpr) elastic.Query {
+	field := getESFieldName(e.Field)
+	value := getESValue(e.Value)
+
+	return elastic.NewRegexpQuery(field, value)
+}
+
+func buildOperatorRangeQueryWithSchema(e *OperatorExpr) elastic.Query {
+	field := getESFieldName(e.Field)
+	rangeExpr, ok := e.Value.(*RangeExpr)
+	if !ok {
+		return nil
+	}
+
+	query := elastic.NewRangeQuery(field)
+
+	if rangeExpr.Start != nil {
+		startValue := getESValueInterface(rangeExpr.Start)
+		if startValue != nil {
+			if b, ok := rangeExpr.IncludeStart.(*BoolExpr); ok && b.Value {
+				query = query.Gte(startValue)
+			} else {
+				query = query.Gt(startValue)
+			}
+		} else {
+			// When start is "*", we still need to set the include_lower based on IncludeStart
+			if b, ok := rangeExpr.IncludeStart.(*BoolExpr); ok {
+				query = query.IncludeLower(b.Value)
+			}
+		}
+	}
+
+	if rangeExpr.End != nil {
+		endValue := getESValueInterface(rangeExpr.End)
+		if endValue != nil {
+			if b, ok := rangeExpr.IncludeEnd.(*BoolExpr); ok && b.Value {
+				query = query.Lte(endValue)
+			} else {
+				query = query.Lt(endValue)
+			}
+		} else {
+			// When end is "*", we still need to set the include_upper based on IncludeEnd
+			if b, ok := rangeExpr.IncludeEnd.(*BoolExpr); ok {
+				query = query.IncludeUpper(b.Value)
+			}
+		}
+	}
+
+	return query
 }

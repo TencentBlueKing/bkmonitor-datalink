@@ -11,8 +11,9 @@ package lucene_parser
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
+
+	"github.com/spf13/cast"
 )
 
 const DefaultLogField = "log"
@@ -62,90 +63,82 @@ func walkSQL(expr Expr, parentOpType int) string {
 	case *GroupingExpr:
 		return fmt.Sprintf("(%s)", walkSQL(e.Expr, opTypeNone))
 
-	case *MatchExpr:
-		if parentOpType == opTypeNone && expr != nil {
-			if _, ok := expr.(*NotExpr); ok {
-				return fmt.Sprintf("(%s)", fmt.Sprintf("%s = '%s'", getFieldName(e.Field), escapeSQL(getValue(e.Value))))
-			}
-		}
-		return fmt.Sprintf("%s = '%s'", getFieldName(e.Field), escapeSQL(getValue(e.Value)))
-
-	case *WildcardExpr:
+	case *OperatorExpr:
 		field := getFieldName(e.Field)
-		value := getValue(e.Value)
-		value = strings.ReplaceAll(value, "?", "_")
-		if !strings.Contains(value, "*") {
-			value = "%" + value + "%"
-		} else {
-			value = strings.ReplaceAll(value, "*", "%")
-		}
-		return fmt.Sprintf("%s LIKE '%s'", field, escapeSQL(value))
+		switch e.Op {
+		case OpMatch:
+			if parentOpType == opTypeNone && expr != nil {
+				if _, ok := expr.(*NotExpr); ok {
+					return fmt.Sprintf("(%s)", fmt.Sprintf("%s = '%s'", field, escapeSQL(getValue(e.Value))))
+				}
+			}
+			return fmt.Sprintf("%s = '%s'", field, escapeSQL(getValue(e.Value)))
 
-	case *RegexpExpr:
-		field := getFieldName(e.Field)
-		value := getValue(e.Value)
-		return fmt.Sprintf("%s REGEXP '%s'", field, escapeSQL(value))
+		case OpWildcard:
+			value := getValue(e.Value)
+			value = strings.ReplaceAll(value, "?", "_")
+			if !strings.Contains(value, "*") {
+				value = "%" + value + "%"
+			} else {
+				value = strings.ReplaceAll(value, "*", "%")
+			}
+			return fmt.Sprintf("%s LIKE '%s'", field, escapeSQL(value))
 
-	case *NumberRangeExpr:
-		field := getFieldName(e.Field)
-		var conditions []string
-		if e.Start != nil {
-			startValue := getValue(e.Start)
-			if startValue != "*" {
-				op := ">"
-				if b, ok := e.IncludeStart.(*BoolExpr); ok && b.Value {
-					op = ">="
-				}
-				conditions = append(conditions, fmt.Sprintf("%s %s %s", field, op, startValue))
-			}
-		}
-		if e.End != nil {
-			endValue := getValue(e.End)
-			if endValue != "*" {
-				op := "<"
-				if b, ok := e.IncludeEnd.(*BoolExpr); ok && b.Value {
-					op = "<="
-				}
-				conditions = append(conditions, fmt.Sprintf("%s %s %s", field, op, endValue))
-			}
-		}
-		sql := strings.Join(conditions, " AND ")
-		if parentOpType != opTypeNone && len(conditions) > 1 {
-			return fmt.Sprintf("(%s)", sql)
-		}
-		return sql
+		case OpRegex:
+			value := getValue(e.Value)
+			return fmt.Sprintf("%s REGEXP '%s'", field, escapeSQL(value))
 
-	case *TimeRangeExpr:
-		field := getFieldName(e.Field)
-		if field == fmt.Sprintf("`%s`", DefaultLogField) {
-			field = "`datetime`"
-		}
-		var conditions []string
-		if e.Start != nil {
-			startValue := getValue(e.Start)
-			if startValue != "*" {
-				op := ">"
-				if b, ok := e.IncludeStart.(*BoolExpr); ok && b.Value {
-					op = ">="
-				}
-				conditions = append(conditions, fmt.Sprintf("%s %s '%s'", field, op, escapeSQL(startValue)))
+		case OpRange:
+			rangeExpr, ok := e.Value.(*RangeExpr)
+			if !ok {
+				return ""
 			}
-		}
-		if e.End != nil {
-			endValue := getValue(e.End)
-			if endValue != "*" {
-				op := "<"
-				if b, ok := e.IncludeEnd.(*BoolExpr); ok && b.Value {
-					op = "<="
-				}
-				conditions = append(conditions, fmt.Sprintf("%s %s '%s'", field, op, escapeSQL(endValue)))
+
+			// Check if this is a time range (for datetime field handling)
+			isTimeRange := field == fmt.Sprintf("`%s`", DefaultLogField) ||
+				(rangeExpr.Start != nil && looksLikeDate(getValue(rangeExpr.Start))) ||
+				(rangeExpr.End != nil && looksLikeDate(getValue(rangeExpr.End)))
+
+			if isTimeRange && field == fmt.Sprintf("`%s`", DefaultLogField) {
+				field = "`datetime`"
 			}
+
+			var conditions []string
+			if rangeExpr.Start != nil {
+				startValue := getValue(rangeExpr.Start)
+				if startValue != "*" {
+					op := ">"
+					if b, ok := rangeExpr.IncludeStart.(*BoolExpr); ok && b.Value {
+						op = ">="
+					}
+					if isTimeRange {
+						conditions = append(conditions, fmt.Sprintf("%s %s '%s'", field, op, escapeSQL(startValue)))
+					} else {
+						conditions = append(conditions, fmt.Sprintf("%s %s %s", field, op, startValue))
+					}
+				}
+			}
+			if rangeExpr.End != nil {
+				endValue := getValue(rangeExpr.End)
+				if endValue != "*" {
+					op := "<"
+					if b, ok := rangeExpr.IncludeEnd.(*BoolExpr); ok && b.Value {
+						op = "<="
+					}
+					if isTimeRange {
+						conditions = append(conditions, fmt.Sprintf("%s %s '%s'", field, op, escapeSQL(endValue)))
+					} else {
+						conditions = append(conditions, fmt.Sprintf("%s %s %s", field, op, endValue))
+					}
+				}
+			}
+			sql := strings.Join(conditions, " AND ")
+			if parentOpType != opTypeNone && len(conditions) > 1 {
+				return fmt.Sprintf("(%s)", sql)
+			}
+			return sql
 		}
-		sql := strings.Join(conditions, " AND ")
-		if parentOpType != opTypeNone && len(conditions) > 1 {
-			return fmt.Sprintf("(%s)", sql)
-		}
-		return sql
+		return ""
 
 	case *ConditionMatchExpr:
 		field := getFieldName(e.Field)
@@ -181,7 +174,7 @@ func walkSQL(expr Expr, parentOpType int) string {
 		return fmt.Sprintf("%v", e.Value)
 
 	case *NumberExpr:
-		return strconv.FormatFloat(e.Value, 'f', -1, 64)
+		return cast.ToString(e.Value)
 
 	default:
 		return fmt.Sprintf("UNSUPPORTED_EXPR_TYPE:%T", expr)

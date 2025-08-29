@@ -63,24 +63,6 @@ func (r ResultTableSvc) RealStorageList() ([]Storage, error) {
 	} else {
 		storageList = append(storageList, NewKafkaStorageSvc(&kafkaStorage))
 	}
-	// redis storage
-	var redisStorage storage.RedisStorage
-	if err := storage.NewRedisStorageQuerySet(db).TableIDEq(r.TableId).One(&redisStorage); err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, err
-		}
-	} else {
-		storageList = append(storageList, NewRedisStorageSvc(&redisStorage))
-	}
-	// argus storage
-	var argusStorage storage.ArgusStorage
-	if err := storage.NewArgusStorageQuerySet(db).TableIDEq(r.TableId).One(&argusStorage); err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, err
-		}
-	} else {
-		storageList = append(storageList, NewArgusStorageSvc(&argusStorage))
-	}
 
 	return storageList, nil
 }

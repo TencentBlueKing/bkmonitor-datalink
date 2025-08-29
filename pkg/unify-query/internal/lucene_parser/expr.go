@@ -30,56 +30,34 @@ type GroupingExpr struct {
 	Expr Expr
 }
 
-type MatchExpr struct {
+// OpType defines the operation type for OperatorExpr
+type OpType string
+
+const (
+	OpMatch    OpType = "match"    // 精确匹配
+	OpWildcard OpType = "wildcard" // 通配符匹配
+	OpRegex    OpType = "regex"    // 正则表达式匹配
+	OpRange    OpType = "range"    // 范围查询
+)
+
+// OperatorExpr represents a unified operator expression
+type OperatorExpr struct {
 	Field    Expr
-	Value    Expr
+	Op       OpType
+	Value    Expr // 可以是StringExpr、NumberExpr或RangeExpr
 	IsQuoted bool
 }
 
-func (m *MatchExpr) SetField(field string) {
-	m.Field = &StringExpr{Value: field}
+func (o *OperatorExpr) SetField(field string) {
+	o.Field = &StringExpr{Value: field}
 }
 
-type WildcardExpr struct {
-	Field Expr
-	Value Expr
-}
-
-func (w *WildcardExpr) SetField(field string) {
-	w.Field = &StringExpr{Value: field}
-}
-
-type RegexpExpr struct {
-	Field Expr
-	Value Expr
-}
-
-func (r *RegexpExpr) SetField(field string) {
-	r.Field = &StringExpr{Value: field}
-}
-
-type NumberRangeExpr struct {
-	Field        Expr
+// RangeExpr represents range values used in OperatorExpr
+type RangeExpr struct {
 	Start        Expr
 	End          Expr
 	IncludeStart Expr
 	IncludeEnd   Expr
-}
-
-func (nr *NumberRangeExpr) SetField(field string) {
-	nr.Field = &StringExpr{Value: field}
-}
-
-type TimeRangeExpr struct {
-	Field        Expr
-	Start        Expr
-	End          Expr
-	IncludeStart Expr
-	IncludeEnd   Expr
-}
-
-func (tr *TimeRangeExpr) SetField(field string) {
-	tr.Field = &StringExpr{Value: field}
 }
 
 type ConditionExpr struct {

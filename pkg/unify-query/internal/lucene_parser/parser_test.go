@@ -40,7 +40,8 @@ func TestParser(t *testing.T) {
 	}{
 		"正常查询": {
 			q: `test`,
-			e: &MatchExpr{
+			e: &OperatorExpr{
+				Op:    OpMatch,
 				Value: &StringExpr{Value: `test`},
 			},
 			es:  `{"query_string":{"query":"test"}}`,
@@ -49,7 +50,8 @@ func TestParser(t *testing.T) {
 		"负数查询": {
 			q: `-test`,
 			e: &NotExpr{
-				Expr: &MatchExpr{
+				Expr: &OperatorExpr{
+					Op:    OpMatch,
 					Value: &StringExpr{Value: `test`},
 				},
 			},
@@ -60,11 +62,13 @@ func TestParser(t *testing.T) {
 			q: `-test AND good`,
 			e: &AndExpr{
 				Left: &NotExpr{
-					Expr: &MatchExpr{
+					Expr: &OperatorExpr{
+						Op:    OpMatch,
 						Value: &StringExpr{Value: `test`},
 					},
 				},
-				Right: &MatchExpr{
+				Right: &OperatorExpr{
+					Op:    OpMatch,
 					Value: &StringExpr{Value: `good`},
 				},
 			},
@@ -74,10 +78,12 @@ func TestParser(t *testing.T) {
 		"通配符匹配": {
 			q: `qu?ck bro*`,
 			e: &OrExpr{
-				Left: &WildcardExpr{
+				Left: &OperatorExpr{
+					Op:    OpWildcard,
 					Value: &StringExpr{Value: "qu?ck"},
 				},
-				Right: &WildcardExpr{
+				Right: &OperatorExpr{
+					Op:    OpWildcard,
 					Value: &StringExpr{Value: "bro*"},
 				},
 			},
@@ -86,7 +92,8 @@ func TestParser(t *testing.T) {
 		},
 		"无条件正则匹配": {
 			q: `/joh?n(ath[oa]n)/`,
-			e: &RegexpExpr{
+			e: &OperatorExpr{
+				Op:    OpRegex,
 				Value: &StringExpr{Value: "joh?n(ath[oa]n)"},
 			},
 			es:  `{"query_string":{"query":"/joh?n(ath[oa]n)/"}}`,
@@ -94,8 +101,9 @@ func TestParser(t *testing.T) {
 		},
 		"正则匹配": {
 			q: `name: /joh?n(ath[oa]n)/`,
-			e: &RegexpExpr{
+			e: &OperatorExpr{
 				Field: &StringExpr{Value: "name"},
+				Op:    OpRegex,
 				Value: &StringExpr{Value: "joh?n(ath[oa]n)"},
 			},
 			es:  `{"regexp":{"name":{"value":"joh?n(ath[oa]n)"}}}`,
@@ -103,80 +111,99 @@ func TestParser(t *testing.T) {
 		},
 		"范围匹配，左闭右开": {
 			q: `count:[1 TO 5}`,
-			e: &NumberRangeExpr{
-				Field:        &StringExpr{Value: "count"},
-				Start:        &StringExpr{Value: "1"},
-				End:          &StringExpr{Value: "5"},
-				IncludeStart: &BoolExpr{Value: true},
-				IncludeEnd:   &BoolExpr{Value: false},
+			e: &OperatorExpr{
+				Field: &StringExpr{Value: "count"},
+				Op:    OpRange,
+				Value: &RangeExpr{
+					Start:        &NumberExpr{Value: 1},
+					End:          &NumberExpr{Value: 5},
+					IncludeStart: &BoolExpr{Value: true},
+					IncludeEnd:   &BoolExpr{Value: false},
+				},
 			},
 			es:  `{"range":{"count":{"from":1,"include_lower":true,"include_upper":false,"to":5}}}`,
 			sql: "`count` >= 1 AND `count` < 5",
 		},
 		"范围匹配": {
 			q: `count:[1 TO 5]`,
-			e: &NumberRangeExpr{
-				Field:        &StringExpr{Value: "count"},
-				Start:        &StringExpr{Value: "1"},
-				End:          &StringExpr{Value: "5"},
-				IncludeStart: &BoolExpr{Value: true},
-				IncludeEnd:   &BoolExpr{Value: true},
+			e: &OperatorExpr{
+				Field: &StringExpr{Value: "count"},
+				Op:    OpRange,
+				Value: &RangeExpr{
+					Start:        &NumberExpr{Value: 1},
+					End:          &NumberExpr{Value: 5},
+					IncludeStart: &BoolExpr{Value: true},
+					IncludeEnd:   &BoolExpr{Value: true},
+				},
 			},
 			es:  `{"range":{"count":{"from":1,"include_lower":true,"include_upper":true,"to":5}}}`,
 			sql: "`count` >= 1 AND `count` <= 5",
 		},
 		"范围匹配（无下限） - 1": {
 			q: `count:{* TO 10]`,
-			e: &NumberRangeExpr{
-				Field:        &StringExpr{Value: "count"},
-				Start:        &StringExpr{Value: "*"},
-				End:          &StringExpr{Value: "10"},
-				IncludeStart: &BoolExpr{Value: false},
-				IncludeEnd:   &BoolExpr{Value: true},
+			e: &OperatorExpr{
+				Field: &StringExpr{Value: "count"},
+				Op:    OpRange,
+				Value: &RangeExpr{
+					Start:        &StringExpr{Value: "*"},
+					End:          &NumberExpr{Value: 10},
+					IncludeStart: &BoolExpr{Value: false},
+					IncludeEnd:   &BoolExpr{Value: true},
+				},
 			},
 			es:  `{"range":{"count":{"from":null,"include_lower":false,"include_upper":true,"to":10}}}`,
 			sql: "`count` <= 10",
 		},
 		"范围匹配（无下限）": {
 			q: `count:[* TO 10]`,
-			e: &NumberRangeExpr{
-				Field:        &StringExpr{Value: "count"},
-				Start:        &StringExpr{Value: "*"},
-				End:          &StringExpr{Value: "10"},
-				IncludeStart: &BoolExpr{Value: true},
-				IncludeEnd:   &BoolExpr{Value: true},
+			e: &OperatorExpr{
+				Field: &StringExpr{Value: "count"},
+				Op:    OpRange,
+				Value: &RangeExpr{
+					Start:        &StringExpr{Value: "*"},
+					End:          &NumberExpr{Value: 10},
+					IncludeStart: &BoolExpr{Value: true},
+					IncludeEnd:   &BoolExpr{Value: true},
+				},
 			},
 			es:  `{"range":{"count":{"from":null,"include_lower":true,"include_upper":true,"to":10}}}`,
 			sql: "`count` <= 10",
 		},
 		"范围匹配（无上限）": {
 			q: `count:[10 TO *]`,
-			e: &NumberRangeExpr{
-				Field:        &StringExpr{Value: "count"},
-				Start:        &StringExpr{Value: "10"},
-				End:          &StringExpr{Value: "*"},
-				IncludeStart: &BoolExpr{Value: true},
-				IncludeEnd:   &BoolExpr{Value: true},
+			e: &OperatorExpr{
+				Field: &StringExpr{Value: "count"},
+				Op:    OpRange,
+				Value: &RangeExpr{
+					Start:        &NumberExpr{Value: 10},
+					End:          &StringExpr{Value: "*"},
+					IncludeStart: &BoolExpr{Value: true},
+					IncludeEnd:   &BoolExpr{Value: true},
+				},
 			},
 			es:  `{"range":{"count":{"from":10,"include_lower":true,"include_upper":true,"to":null}}}`,
 			sql: "`count` >= 10",
 		},
 		"范围匹配（无上限）- 1": {
 			q: `count:[10 TO *}`,
-			e: &NumberRangeExpr{
-				Field:        &StringExpr{Value: "count"},
-				Start:        &StringExpr{Value: "10"},
-				End:          &StringExpr{Value: "*"},
-				IncludeStart: &BoolExpr{Value: true},
-				IncludeEnd:   &BoolExpr{Value: false},
+			e: &OperatorExpr{
+				Field: &StringExpr{Value: "count"},
+				Op:    OpRange,
+				Value: &RangeExpr{
+					Start:        &NumberExpr{Value: 10},
+					End:          &StringExpr{Value: "*"},
+					IncludeStart: &BoolExpr{Value: true},
+					IncludeEnd:   &BoolExpr{Value: false},
+				},
 			},
 			es:  `{"range":{"count":{"from":10,"include_lower":true,"include_upper":false,"to":null}}}`,
 			sql: "`count` >= 10",
 		},
 		"字段匹配": {
 			q: `status:active`,
-			e: &MatchExpr{
+			e: &OperatorExpr{
 				Field: &StringExpr{Value: "status"},
+				Op:    OpMatch,
 				Value: &StringExpr{Value: "active"},
 			},
 			es:  `{"term":{"status":"active"}}`,
@@ -185,8 +212,9 @@ func TestParser(t *testing.T) {
 		"字段匹配 + 括号": {
 			q: `status:(active)`,
 			e: &GroupingExpr{
-				Expr: &MatchExpr{
+				Expr: &OperatorExpr{
 					Field: &StringExpr{Value: "status"},
+					Op:    OpMatch,
 					Value: &StringExpr{Value: "active"},
 				},
 			},
@@ -196,160 +224,181 @@ func TestParser(t *testing.T) {
 		"多条件组合，括号调整优先级": {
 			q: `author:"John Smith" AND (age:20 OR status:active)`,
 			e: &AndExpr{
-				Left: &MatchExpr{
+				Left: &OperatorExpr{
 					Field:    &StringExpr{Value: "author"},
+					Op:       OpMatch,
 					Value:    &StringExpr{Value: "John Smith"},
 					IsQuoted: true,
 				},
 				Right: &GroupingExpr{ // Wrap the OR expression
 					Expr: &OrExpr{
-						Left: &MatchExpr{
+						Left: &OperatorExpr{
 							Field: &StringExpr{Value: "age"},
-							Value: &StringExpr{Value: "20"},
+							Op:    OpMatch,
+							Value: &NumberExpr{Value: 20},
 						},
-						Right: &MatchExpr{
+						Right: &OperatorExpr{
 							Field: &StringExpr{Value: "status"},
+							Op:    OpMatch,
 							Value: &StringExpr{Value: "active"},
 						},
 					},
 				},
 			},
 			es:  `{"bool":{"must":[{"match_phrase":{"author":{"query":"John Smith"}}},{"bool":{"should":[{"term":{"age":20}},{"term":{"status":"active"}}]}}]}}`,
-			sql: "`author` = 'John Smith' AND (`age` = '20' OR `status` = 'active')",
+			sql: "`author` = 'John Smith' AND (`age` = 20 OR `status` = 'active')",
 		},
 		"多条件组合，and 和 or 的优先级": {
 			q: `(author:"John Smith" AND age:20) OR status:active`,
 			e: &OrExpr{
 				Left: &GroupingExpr{ // Wrap the AND expression
 					Expr: &AndExpr{
-						Left: &MatchExpr{
+						Left: &OperatorExpr{
 							Field:    &StringExpr{Value: "author"},
+							Op:       OpMatch,
 							Value:    &StringExpr{Value: "John Smith"},
 							IsQuoted: true,
 						},
-						Right: &MatchExpr{
+						Right: &OperatorExpr{
 							Field: &StringExpr{Value: "age"},
-							Value: &StringExpr{Value: "20"},
+							Op:    OpMatch,
+							Value: &NumberExpr{Value: 20},
 						},
 					},
 				},
-				Right: &MatchExpr{
+				Right: &OperatorExpr{
 					Field: &StringExpr{Value: "status"},
+					Op:    OpMatch,
 					Value: &StringExpr{Value: "active"},
 				},
 			},
 			es:  `{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"author":{"query":"John Smith"}}},{"term":{"age":20}}]}},{"term":{"status":"active"}}]}}`,
-			sql: "(`author` = 'John Smith' AND `age` = '20') OR `status` = 'active'",
+			sql: "(`author` = 'John Smith' AND `age` = 20) OR `status` = 'active'",
 		},
 		"嵌套逻辑表达式": {
 			q: `a:1 AND (b:2 OR c:3)`,
 			e: &AndExpr{
-				Left: &MatchExpr{
+				Left: &OperatorExpr{
 					Field: &StringExpr{Value: "a"},
-					Value: &StringExpr{Value: "1"},
+					Op:    OpMatch,
+					Value: &NumberExpr{Value: 1},
 				},
 				Right: &GroupingExpr{
 					Expr: &OrExpr{
-						Left: &MatchExpr{
+						Left: &OperatorExpr{
 							Field: &StringExpr{Value: "b"},
-							Value: &StringExpr{Value: "2"},
+							Op:    OpMatch,
+							Value: &NumberExpr{Value: 2},
 						},
-						Right: &MatchExpr{
+						Right: &OperatorExpr{
 							Field: &StringExpr{Value: "c"},
-							Value: &StringExpr{Value: "3"},
+							Op:    OpMatch,
+							Value: &NumberExpr{Value: 3},
 						},
 					},
 				},
 			},
 			es:  `{"bool":{"must":[{"term":{"a":1}},{"bool":{"should":[{"term":{"b":2}},{"term":{"c":3}}]}}]}}`,
-			sql: "`a` = '1' AND (`b` = '2' OR `c` = '3')",
+			sql: "`a` = 1 AND (`b` = 2 OR `c` = 3)",
 		},
 		"嵌套逻辑表达式 - 2": {
 			q: `a:1 OR b:2 OR (c:3 OR d:4)`,
 			e: &OrExpr{
-				Left: &MatchExpr{
+				Left: &OperatorExpr{
 					Field: &StringExpr{Value: "a"},
-					Value: &StringExpr{Value: "1"},
+					Op:    OpMatch,
+					Value: &NumberExpr{Value: 1},
 				},
 				Right: &OrExpr{
-					Left: &MatchExpr{
+					Left: &OperatorExpr{
 						Field: &StringExpr{Value: "b"},
-						Value: &StringExpr{Value: "2"},
+						Op:    OpMatch,
+						Value: &NumberExpr{Value: 2},
 					},
 					Right: &GroupingExpr{
 						Expr: &OrExpr{
-							Left: &MatchExpr{
+							Left: &OperatorExpr{
 								Field: &StringExpr{Value: "c"},
-								Value: &StringExpr{Value: "3"},
+								Op:    OpMatch,
+								Value: &NumberExpr{Value: 3},
 							},
-							Right: &MatchExpr{
+							Right: &OperatorExpr{
 								Field: &StringExpr{Value: "d"},
-								Value: &StringExpr{Value: "4"},
+								Op:    OpMatch,
+								Value: &NumberExpr{Value: 4},
 							},
 						},
 					},
 				},
 			},
 			es:  `{"bool":{"should":[{"term":{"a":1}},{"term":{"b":2}},{"bool":{"should":[{"term":{"c":3}},{"term":{"d":4}}]}}]}}`,
-			sql: "`a` = '1' OR `b` = '2' OR (`c` = '3' OR `d` = '4')",
+			sql: "`a` = 1 OR `b` = 2 OR (`c` = 3 OR `d` = 4)",
 		},
 		"嵌套逻辑表达式 - 3": {
 			q: `a:1 OR (b:2 OR c:3) OR d:4`,
 			e: &OrExpr{
-				Left: &MatchExpr{
+				Left: &OperatorExpr{
 					Field: &StringExpr{Value: "a"},
-					Value: &StringExpr{Value: "1"},
+					Op:    OpMatch,
+					Value: &NumberExpr{Value: 1},
 				},
 				Right: &OrExpr{
 					Left: &GroupingExpr{
 						Expr: &OrExpr{
-							Left: &MatchExpr{
+							Left: &OperatorExpr{
 								Field: &StringExpr{Value: "b"},
-								Value: &StringExpr{Value: "2"},
+								Op:    OpMatch,
+								Value: &NumberExpr{Value: 2},
 							},
-							Right: &MatchExpr{
+							Right: &OperatorExpr{
 								Field: &StringExpr{Value: "c"},
-								Value: &StringExpr{Value: "3"},
+								Op:    OpMatch,
+								Value: &NumberExpr{Value: 3},
 							},
 						},
 					},
-					Right: &MatchExpr{
+					Right: &OperatorExpr{
 						Field: &StringExpr{Value: "d"},
-						Value: &StringExpr{Value: "4"},
+						Op:    OpMatch,
+						Value: &NumberExpr{Value: 4},
 					},
 				},
 			},
 			es:  `{"bool":{"should":[{"term":{"a":1}},{"bool":{"should":[{"term":{"b":2}},{"term":{"c":3}}]}},{"term":{"d":4}}]}}`,
-			sql: "`a` = '1' OR (`b` = '2' OR `c` = '3') OR `d` = '4'",
+			sql: "`a` = 1 OR (`b` = 2 OR `c` = 3) OR `d` = 4",
 		},
 		"嵌套逻辑表达式 - 4": {
 			q: `a:1 OR (b:2 OR c:3) AND d:4`,
 			e: &OrExpr{
-				Left: &MatchExpr{
+				Left: &OperatorExpr{
 					Field: &StringExpr{Value: "a"},
-					Value: &StringExpr{Value: "1"},
+					Op:    OpMatch,
+					Value: &NumberExpr{Value: 1},
 				},
 				Right: &AndExpr{
 					Left: &GroupingExpr{
 						Expr: &OrExpr{
-							Left: &MatchExpr{
+							Left: &OperatorExpr{
 								Field: &StringExpr{Value: "b"},
-								Value: &StringExpr{Value: "2"},
+								Op:    OpMatch,
+								Value: &NumberExpr{Value: 2},
 							},
-							Right: &MatchExpr{
+							Right: &OperatorExpr{
 								Field: &StringExpr{Value: "c"},
-								Value: &StringExpr{Value: "3"},
+								Op:    OpMatch,
+								Value: &NumberExpr{Value: 3},
 							},
 						},
 					},
-					Right: &MatchExpr{
+					Right: &OperatorExpr{
 						Field: &StringExpr{Value: "d"},
-						Value: &StringExpr{Value: "4"},
+						Op:    OpMatch,
+						Value: &NumberExpr{Value: 4},
 					},
 				},
 			},
 			es:  `{"bool":{"should":[{"term":{"a":1}},{"bool":{"must":[{"bool":{"should":[{"term":{"b":2}},{"term":{"c":3}}]}},{"term":{"d":4}}]}}]}}`,
-			sql: "`a` = '1' OR ((`b` = '2' OR `c` = '3') AND `d` = '4')",
+			sql: "`a` = 1 OR ((`b` = 2 OR `c` = 3) AND `d` = 4)",
 		},
 		"new-1": {
 			q: `quick brown +fox -news`,
@@ -357,28 +406,34 @@ func TestParser(t *testing.T) {
 				Left: &OrExpr{
 					Left: &OrExpr{
 						Left: &AndExpr{
-							Left: &MatchExpr{
+							Left: &OperatorExpr{
+								Op:    OpMatch,
 								Value: &StringExpr{Value: "quick"},
 							},
-							Right: &MatchExpr{
+							Right: &OperatorExpr{
+								Op:    OpMatch,
 								Value: &StringExpr{Value: "fox"},
 							},
 						},
 						Right: &AndExpr{
-							Left: &MatchExpr{
+							Left: &OperatorExpr{
+								Op:    OpMatch,
 								Value: &StringExpr{Value: "brown"},
 							},
-							Right: &MatchExpr{
+							Right: &OperatorExpr{
+								Op:    OpMatch,
 								Value: &StringExpr{Value: "fox"},
 							},
 						},
 					},
-					Right: &MatchExpr{
+					Right: &OperatorExpr{
+						Op:    OpMatch,
 						Value: &StringExpr{Value: "fox"},
 					},
 				},
 				Right: &NotExpr{
-					Expr: &MatchExpr{
+					Expr: &OperatorExpr{
+						Op:    OpMatch,
 						Value: &StringExpr{Value: "news"},
 					},
 				},
@@ -390,14 +445,17 @@ func TestParser(t *testing.T) {
 			q: `quick brown fox`,
 			e: &OrExpr{
 				Left: &OrExpr{
-					Left: &MatchExpr{
+					Left: &OperatorExpr{
+						Op:    OpMatch,
 						Value: &StringExpr{Value: "quick"},
 					},
-					Right: &MatchExpr{
+					Right: &OperatorExpr{
+						Op:    OpMatch,
 						Value: &StringExpr{Value: "brown"},
 					},
 				},
-				Right: &MatchExpr{
+				Right: &OperatorExpr{
+					Op:    OpMatch,
 					Value: &StringExpr{Value: "fox"},
 				},
 			},
@@ -406,8 +464,9 @@ func TestParser(t *testing.T) {
 		},
 		"单个条件精确匹配": {
 			q: `log: "ERROR MSG"`,
-			e: &MatchExpr{
+			e: &OperatorExpr{
 				Field:    &StringExpr{Value: "log"},
+				Op:       OpMatch,
 				Value:    &StringExpr{Value: "ERROR MSG"},
 				IsQuoted: true,
 			},
@@ -417,16 +476,20 @@ func TestParser(t *testing.T) {
 		"match and time range": {
 			q: "message: test\\ node AND datetime: [\"2020-01-01T00:00:00\" TO \"2020-12-31T00:00:00\"]",
 			e: &AndExpr{
-				Left: &MatchExpr{
+				Left: &OperatorExpr{
 					Field: &StringExpr{Value: "message"},
+					Op:    OpMatch,
 					Value: &StringExpr{Value: "test node"},
 				},
-				Right: &TimeRangeExpr{
-					Field:        &StringExpr{Value: "datetime"},
-					Start:        &StringExpr{Value: "2020-01-01T00:00:00"},
-					End:          &StringExpr{Value: "2020-12-31T00:00:00"},
-					IncludeStart: &BoolExpr{Value: true},
-					IncludeEnd:   &BoolExpr{Value: true},
+				Right: &OperatorExpr{
+					Field: &StringExpr{Value: "datetime"},
+					Op:    OpRange,
+					Value: &RangeExpr{
+						Start:        &StringExpr{Value: "2020-01-01T00:00:00"},
+						End:          &StringExpr{Value: "2020-12-31T00:00:00"},
+						IncludeStart: &BoolExpr{Value: true},
+						IncludeEnd:   &BoolExpr{Value: true},
+					},
 				},
 			},
 			es: `{"bool":{"must":[{"match":{"message":{"query":"test node"}}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
@@ -434,76 +497,98 @@ func TestParser(t *testing.T) {
 		"mixed or / and": {
 			q: "a:1 OR (b:2 AND c:4)",
 			e: &OrExpr{
-				Left: &MatchExpr{
+				Left: &OperatorExpr{
 					Field: &StringExpr{Value: "a"},
-					Value: &StringExpr{Value: "1"},
+					Op:    OpMatch,
+					Value: &NumberExpr{Value: 1},
 				},
 				Right: &GroupingExpr{
 					Expr: &AndExpr{
-						Left: &MatchExpr{
+						Left: &OperatorExpr{
 							Field: &StringExpr{Value: "b"},
-							Value: &StringExpr{Value: "2"},
+							Op:    OpMatch,
+							Value: &NumberExpr{Value: 2},
 						},
-						Right: &MatchExpr{
+						Right: &OperatorExpr{
 							Field: &StringExpr{Value: "c"},
-							Value: &StringExpr{Value: "4"},
+							Op:    OpMatch,
+							Value: &NumberExpr{Value: 4},
 						},
 					},
 				},
 			},
 			es:  `{"bool":{"should":[{"term":{"a":1}},{"bool":{"must":[{"term":{"b":2}},{"term":{"c":4}}]}}]}}`,
-			sql: "`a` = '1' OR (`b` = '2' AND `c` = '4')",
+			sql: "`a` = 1 OR (`b` = 2 AND `c` = 4)",
 		},
 		"start without tCOLON": {
 			q: "a > 100",
-			e: &NumberRangeExpr{
+			e: &OperatorExpr{
 				Field: &StringExpr{Value: "a"},
-				Start: &StringExpr{Value: "100"},
+				Op:    OpRange,
+				Value: &RangeExpr{
+					Start:        &NumberExpr{Value: 100},
+					IncludeStart: &BoolExpr{Value: false},
+				},
 			},
 			es:  `{"range":{"a":{"from":100,"include_lower":false,"include_upper":true,"to":null}}}`,
 			sql: "`a` > 100",
 		},
 		"end without tCOLON": {
 			q: "a < 100",
-			e: &NumberRangeExpr{
+			e: &OperatorExpr{
 				Field: &StringExpr{Value: "a"},
-				End:   &StringExpr{Value: "100"},
+				Op:    OpRange,
+				Value: &RangeExpr{
+					End:        &NumberExpr{Value: 100},
+					IncludeEnd: &BoolExpr{Value: false},
+				},
 			},
 			es:  `{"range":{"a":{"from":null,"include_lower":true,"include_upper":false,"to":100}}}`,
 			sql: "`a` < 100",
 		},
 		"start and eq without tCOLON": {
 			q: "a >= 100",
-			e: &NumberRangeExpr{
-				Field:        &StringExpr{Value: "a"},
-				Start:        &StringExpr{Value: "100"},
-				IncludeStart: &BoolExpr{Value: true},
+			e: &OperatorExpr{
+				Field: &StringExpr{Value: "a"},
+				Op:    OpRange,
+				Value: &RangeExpr{
+					Start:        &NumberExpr{Value: 100},
+					IncludeStart: &BoolExpr{Value: true},
+				},
 			},
 			es:  `{"range":{"a":{"from":100,"include_lower":true,"include_upper":true,"to":null}}}`,
 			sql: "`a` >= 100",
 		},
 		"end and eq without tCOLON": {
 			q: "a <= 100",
-			e: &NumberRangeExpr{
-				Field:      &StringExpr{Value: "a"},
-				End:        &StringExpr{Value: "100"},
-				IncludeEnd: &BoolExpr{Value: true},
+			e: &OperatorExpr{
+				Field: &StringExpr{Value: "a"},
+				Op:    OpRange,
+				Value: &RangeExpr{
+					End:        &NumberExpr{Value: 100},
+					IncludeEnd: &BoolExpr{Value: true},
+				},
 			},
 			es:  `{"range":{"a":{"from":null,"include_lower":true,"include_upper":true,"to":100}}}`,
 			sql: "`a` <= 100",
 		},
 		"start": {
 			q: "a>100",
-			e: &NumberRangeExpr{
+			e: &OperatorExpr{
 				Field: &StringExpr{Value: "a"},
-				Start: &StringExpr{Value: "100"},
+				Op:    OpRange,
+				Value: &RangeExpr{
+					Start:        &NumberExpr{Value: 100},
+					IncludeStart: &BoolExpr{Value: false},
+				},
 			},
 			es:  `{"range":{"a":{"from":100,"include_lower":false,"include_upper":true,"to":null}}}`,
 			sql: "`a` > 100",
 		},
 		"one word left star": {
 			q: "*test",
-			e: &WildcardExpr{
+			e: &OperatorExpr{
+				Op:    OpWildcard,
 				Value: &StringExpr{Value: "*test"},
 			},
 			es:  `{"query_string":{"query":"*test"}}`,
@@ -511,7 +596,8 @@ func TestParser(t *testing.T) {
 		},
 		"one word right star": {
 			q: "test*",
-			e: &WildcardExpr{
+			e: &OperatorExpr{
+				Op:    OpWildcard,
 				Value: &StringExpr{Value: "test*"},
 			},
 			es:  `{"query_string":{"query":"test*"}}`,
@@ -519,7 +605,8 @@ func TestParser(t *testing.T) {
 		},
 		"one word double star": {
 			q: "*test*",
-			e: &WildcardExpr{
+			e: &OperatorExpr{
+				Op:    OpWildcard,
 				Value: &StringExpr{Value: "*test*"},
 			},
 			es:  `{"query_string":{"query":"*test*"}}`,
@@ -527,7 +614,8 @@ func TestParser(t *testing.T) {
 		},
 		"one int double star": {
 			q: "*123*",
-			e: &WildcardExpr{
+			e: &OperatorExpr{
+				Op:    OpWildcard,
 				Value: &StringExpr{Value: "*123*"},
 			},
 			es:  `{"query_string":{"query":"*123*"}}`,
@@ -535,8 +623,9 @@ func TestParser(t *testing.T) {
 		},
 		"key node with star": {
 			q: "events.attributes.message.detail: *66036*",
-			e: &WildcardExpr{
+			e: &OperatorExpr{
 				Field: &StringExpr{Value: "events.attributes.message.detail"},
+				Op:    OpWildcard,
 				Value: &StringExpr{Value: "*66036*"},
 			},
 			es:  `{"wildcard":{"events.attributes.message.detail":{"value":"*66036*"}}}`,
@@ -546,17 +635,20 @@ func TestParser(t *testing.T) {
 			q: `"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log" AND level: "error" AND "2_bklog.bkunify_query"`,
 			e: &AndExpr{
 				Left: &AndExpr{
-					Left: &MatchExpr{
+					Left: &OperatorExpr{
+						Op:       OpMatch,
 						Value:    &StringExpr{Value: "/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log"},
 						IsQuoted: true,
 					},
-					Right: &MatchExpr{
+					Right: &OperatorExpr{
 						Field:    &StringExpr{Value: "level"},
+						Op:       OpMatch,
 						Value:    &StringExpr{Value: "error"},
 						IsQuoted: true,
 					},
 				},
-				Right: &MatchExpr{
+				Right: &OperatorExpr{
+					Op:       OpMatch,
 					Value:    &StringExpr{Value: "2_bklog.bkunify_query"},
 					IsQuoted: true,
 				},
@@ -566,8 +658,9 @@ func TestParser(t *testing.T) {
 		},
 		"双引号转义符号支持": {
 			q: `log: "(reading \\\"remove\\\")"`,
-			e: &MatchExpr{
+			e: &OperatorExpr{
 				Field:    &StringExpr{Value: "log"},
+				Op:       OpMatch,
 				Value:    &StringExpr{Value: `(reading \"remove\")`},
 				IsQuoted: true,
 			},
@@ -576,8 +669,9 @@ func TestParser(t *testing.T) {
 		},
 		"test": {
 			q: `path: "/proz/logds/ds-5910974792526317*"`,
-			e: &WildcardExpr{
+			e: &OperatorExpr{
 				Field: &StringExpr{Value: "path"},
+				Op:    OpWildcard,
 				Value: &StringExpr{Value: "/proz/logds/ds-5910974792526317*"},
 			},
 			es:  `{"wildcard":{"path":{"value":"/proz/logds/ds-5910974792526317*"}}}`,
@@ -586,12 +680,14 @@ func TestParser(t *testing.T) {
 		"test-1": {
 			q: "\"32221112\" AND path: \"/data/home/user00/log/zonesvr*\"",
 			e: &AndExpr{
-				Left: &MatchExpr{
-					Value:    &StringExpr{Value: "32221112"},
+				Left: &OperatorExpr{
+					Op:       OpMatch,
+					Value:    &NumberExpr{Value: 32221112},
 					IsQuoted: true,
 				},
-				Right: &WildcardExpr{
+				Right: &OperatorExpr{
 					Field: &StringExpr{Value: "path"},
+					Op:    OpWildcard,
 					Value: &StringExpr{Value: "/data/home/user00/log/zonesvr*"},
 				},
 			},
@@ -617,7 +713,8 @@ func TestParser(t *testing.T) {
 						},
 					},
 				},
-				Right: &MatchExpr{
+				Right: &OperatorExpr{
+					Op:       OpMatch,
 					Value:    &StringExpr{Value: "test111"},
 					IsQuoted: true,
 				},

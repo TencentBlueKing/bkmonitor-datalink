@@ -701,7 +701,7 @@ func (n *GroupNode) Expr() Expr {
 }
 
 // buildConditionExpr recursively builds a ConditionExpr and reports success
-func (n *GroupNode) buildConditionExpr(node Node) (*ConditionExpr, bool) {
+func (n *GroupNode) buildConditionExpr(node Node) (*ConditionsExpr, bool) {
 	var result [][]Expr
 	switch v := node.(type) {
 	case *QueryNode:
@@ -719,7 +719,7 @@ func (n *GroupNode) buildConditionExpr(node Node) (*ConditionExpr, bool) {
 				return nil, false
 			}
 		}
-		return &ConditionExpr{Values: result}, true
+		return &ConditionsExpr{Values: result}, true
 
 	case *OrNode:
 		// OR node - combine all values as separate arrays
@@ -732,7 +732,7 @@ func (n *GroupNode) buildConditionExpr(node Node) (*ConditionExpr, bool) {
 				return nil, false
 			}
 		}
-		return &ConditionExpr{Values: result}, true
+		return &ConditionsExpr{Values: result}, true
 
 	case *AndNode:
 		// AND node - cartesian product of all node values
@@ -758,7 +758,7 @@ func (n *GroupNode) buildConditionExpr(node Node) (*ConditionExpr, bool) {
 				return nil, false
 			}
 		}
-		return &ConditionExpr{Values: result}, true
+		return &ConditionsExpr{Values: result}, true
 
 	case *ModClauseNode:
 		if v.node != nil && v.modifier == "" {
@@ -778,7 +778,7 @@ func (n *GroupNode) buildConditionExpr(node Node) (*ConditionExpr, bool) {
 	case *TermNode:
 		if v.isQuoted {
 			cleanValue := strings.Trim(v.value, `"'`)
-			return &ConditionExpr{
+			return &ConditionsExpr{
 				Values: [][]Expr{{&StringExpr{Value: cleanValue}}},
 			}, true
 		}

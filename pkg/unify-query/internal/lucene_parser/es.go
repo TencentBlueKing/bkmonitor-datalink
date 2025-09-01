@@ -300,7 +300,7 @@ func buildOperatorMatchQueryWithSchema(e *OperatorExpr, schema FieldSchema) elas
 	fieldType, hasSchema := schema.GetFieldType(field)
 	if e.IsQuoted {
 		if field == DefaultEmptyField && e.Field == nil {
-			return elastic.NewQueryStringQuery("\"" + value + "\"")
+			return createEnhancedQueryStringQuery("\"" + value + "\"")
 		}
 
 		if hasSchema {
@@ -323,7 +323,7 @@ func buildOperatorMatchQueryWithSchema(e *OperatorExpr, schema FieldSchema) elas
 			return elastic.NewTermQuery(field, valueInterface)
 		case FieldTypeText:
 			if field == DefaultEmptyField {
-				return elastic.NewQueryStringQuery(value)
+				return createEnhancedQueryStringQuery(value)
 			}
 			if strings.Contains(value, " ") {
 				return elastic.NewMatchQuery(field, value)
@@ -343,7 +343,7 @@ func buildOperatorMatchQueryWithSchema(e *OperatorExpr, schema FieldSchema) elas
 	}
 
 	if field == DefaultEmptyField {
-		return elastic.NewQueryStringQuery(value)
+		return createEnhancedQueryStringQuery(value)
 	}
 
 	if strings.Contains(value, " ") {
@@ -362,7 +362,7 @@ func buildOperatorWildcardQueryWithSchema(e *OperatorExpr) elastic.Query {
 	value := getESValue(e.Value)
 
 	if field == DefaultEmptyField {
-		return elastic.NewQueryStringQuery(value)
+		return createEnhancedQueryStringQuery(value)
 	}
 
 	return elastic.NewWildcardQuery(field, value)
@@ -373,7 +373,7 @@ func buildOperatorRegexpQueryWithSchema(e *OperatorExpr) elastic.Query {
 	value := getESValue(e.Value)
 
 	if field == DefaultEmptyField {
-		return elastic.NewQueryStringQuery("/" + value + "/")
+		return createEnhancedQueryStringQuery("/" + value + "/")
 	}
 
 	return elastic.NewRegexpQuery(field, value)
@@ -421,4 +421,12 @@ func buildOperatorRangeQueryWithSchema(e *OperatorExpr) elastic.Query {
 	}
 
 	return query
+}
+
+func createEnhancedQueryStringQuery(query string) elastic.Query {
+	return elastic.NewQueryStringQuery(query).
+		AnalyzeWildcard(true).
+		Field(DefaultEmptyField).
+		Field("__").
+		Lenient(true)
 }

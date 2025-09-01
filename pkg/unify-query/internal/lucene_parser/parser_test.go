@@ -44,7 +44,7 @@ func TestParser(t *testing.T) {
 				Op:    OpMatch,
 				Value: &StringExpr{Value: `test`},
 			},
-			es:  `{"query_string":{"query":"test"}}`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"test"}}`,
 			sql: "`log` = 'test'",
 		},
 		"负数查询": {
@@ -55,7 +55,7 @@ func TestParser(t *testing.T) {
 					Value: &StringExpr{Value: `test`},
 				},
 			},
-			es:  `{"bool":{"must_not":{"query_string":{"query":"test"}}}}`,
+			es:  `{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"test"}}}}`,
 			sql: "NOT (`log` = 'test')",
 		},
 		"负数查询多条件": {
@@ -72,7 +72,7 @@ func TestParser(t *testing.T) {
 					Value: &StringExpr{Value: `good`},
 				},
 			},
-			es:  `{"bool":{"must":[{"bool":{"must_not":{"query_string":{"query":"test"}}}},{"query_string":{"query":"good"}}]}}`,
+			es:  `{"bool":{"must":[{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"test"}}}},{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"good"}}]}}`,
 			sql: "NOT (`log` = 'test') AND `log` = 'good'",
 		},
 		"通配符匹配": {
@@ -87,7 +87,7 @@ func TestParser(t *testing.T) {
 					Value: &StringExpr{Value: "bro*"},
 				},
 			},
-			es:  `{"bool":{"should":[{"query_string":{"query":"qu?ck"}},{"query_string":{"query":"bro*"}}]}}`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"qu?ck"}},{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"bro*"}}]}}`,
 			sql: "`log` LIKE '%qu_ck%' OR `log` LIKE 'bro%'",
 		},
 		"无条件正则匹配": {
@@ -96,7 +96,7 @@ func TestParser(t *testing.T) {
 				Op:    OpRegex,
 				Value: &StringExpr{Value: "joh?n(ath[oa]n)"},
 			},
-			es:  `{"query_string":{"query":"/joh?n(ath[oa]n)/"}}`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"/joh?n(ath[oa]n)/"}}`,
 			sql: "`log` REGEXP 'joh?n(ath[oa]n)'",
 		},
 		"正则匹配": {
@@ -438,7 +438,7 @@ func TestParser(t *testing.T) {
 					},
 				},
 			},
-			es:  `{"bool":{"must":[{"bool":{"should":[{"bool":{"must":[{"query_string":{"query":"quick"}},{"query_string":{"query":"fox"}}]}},{"bool":{"must":[{"query_string":{"query":"brown"}},{"query_string":{"query":"fox"}}]}},{"query_string":{"query":"fox"}}]}},{"bool":{"must_not":{"query_string":{"query":"news"}}}}]}}`,
+			es:  `{"bool":{"must":[{"bool":{"should":[{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"quick"}},{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"fox"}}]}},{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"brown"}},{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"fox"}}]}},{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"fox"}}]}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"news"}}}}]}}`,
 			sql: "((`log` = 'quick' AND `log` = 'fox') OR (`log` = 'brown' AND `log` = 'fox') OR `log` = 'fox') AND NOT (`log` = 'news')",
 		},
 		"模糊匹配": {
@@ -459,7 +459,7 @@ func TestParser(t *testing.T) {
 					Value: &StringExpr{Value: "fox"},
 				},
 			},
-			es:  `{"bool":{"should":[{"query_string":{"query":"quick"}},{"query_string":{"query":"brown"}},{"query_string":{"query":"fox"}}]}}`,
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"quick"}},{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"brown"}},{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"fox"}}]}}`,
 			sql: "`log` = 'quick' OR `log` = 'brown' OR `log` = 'fox'",
 		},
 		"单个条件精确匹配": {
@@ -591,7 +591,7 @@ func TestParser(t *testing.T) {
 				Op:    OpWildcard,
 				Value: &StringExpr{Value: "*test"},
 			},
-			es:  `{"query_string":{"query":"*test"}}`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"*test"}}`,
 			sql: "`log` LIKE '%test'",
 		},
 		"one word right star": {
@@ -600,7 +600,7 @@ func TestParser(t *testing.T) {
 				Op:    OpWildcard,
 				Value: &StringExpr{Value: "test*"},
 			},
-			es:  `{"query_string":{"query":"test*"}}`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"test*"}}`,
 			sql: "`log` LIKE 'test%'",
 		},
 		"one word double star": {
@@ -609,7 +609,7 @@ func TestParser(t *testing.T) {
 				Op:    OpWildcard,
 				Value: &StringExpr{Value: "*test*"},
 			},
-			es:  `{"query_string":{"query":"*test*"}}`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"*test*"}}`,
 			sql: "`log` LIKE '%test%'",
 		},
 		"one int double star": {
@@ -618,7 +618,7 @@ func TestParser(t *testing.T) {
 				Op:    OpWildcard,
 				Value: &StringExpr{Value: "*123*"},
 			},
-			es:  `{"query_string":{"query":"*123*"}}`,
+			es:  `{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"*123*"}}`,
 			sql: "`log` LIKE '%123%'",
 		},
 		"key node with star": {
@@ -653,7 +653,7 @@ func TestParser(t *testing.T) {
 					IsQuoted: true,
 				},
 			},
-			es:  `{"bool":{"must":[{"query_string":{"query":"\"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log\""}},{"match_phrase":{"level":{"query":"error"}}},{"query_string":{"query":"\"2_bklog.bkunify_query\""}}]}}`,
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"\"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log\""}},{"match_phrase":{"level":{"query":"error"}}},{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"\"2_bklog.bkunify_query\""}}]}}`,
 			sql: "`log` = '/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log' AND `level` = 'error' AND `log` = '2_bklog.bkunify_query'",
 		},
 		"双引号转义符号支持": {
@@ -691,7 +691,7 @@ func TestParser(t *testing.T) {
 					Value: &StringExpr{Value: "/data/home/user00/log/zonesvr*"},
 				},
 			},
-			es:  `{"bool":{"must":[{"query_string":{"query":"\"32221112\""}},{"wildcard":{"path":{"value":"/data/home/user00/log/zonesvr*"}}}]}}`,
+			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"\"32221112\""}},{"wildcard":{"path":{"value":"/data/home/user00/log/zonesvr*"}}}]}}`,
 			sql: "`log` = 32221112 AND `path` LIKE '/data/home/user00/log/zonesvr%'",
 		},
 		"test - Many Brack ": {
@@ -701,13 +701,13 @@ func TestParser(t *testing.T) {
 					Expr: &AndExpr{
 						Left: &ConditionMatchExpr{
 							Field: &StringExpr{Value: "loglevel"},
-							Value: &ConditionExpr{
+							Value: &ConditionsExpr{
 								Values: [][]Expr{{&StringExpr{Value: "TRACE"}}, {&StringExpr{Value: "DEBUG"}}, {&StringExpr{Value: "INFO "}}, {&StringExpr{Value: "WARN "}}, {&StringExpr{Value: "ERROR"}}},
 							},
 						},
 						Right: &ConditionMatchExpr{
 							Field: &StringExpr{Value: "log"},
-							Value: &ConditionExpr{
+							Value: &ConditionsExpr{
 								Values: [][]Expr{{&StringExpr{Value: "friendsvr"}, &StringExpr{Value: "game_app"}, &StringExpr{Value: "testAnd"}}, {&StringExpr{Value: "friendsvr"}, &StringExpr{Value: "testOr"}, &StringExpr{Value: "testAnd"}}, {&StringExpr{Value: "test111"}}},
 							},
 						},
@@ -719,7 +719,7 @@ func TestParser(t *testing.T) {
 					IsQuoted: true,
 				},
 			},
-			es:  `{"bool":{"must":[{"bool":{"must":[{"terms":{"loglevel":["TRACE","DEBUG","INFO ","WARN ","ERROR"]}},{"bool":{"minimum_should_match":"1","should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"testOr"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"match_phrase":{"log":{"query":"test111"}}}]}}]}},{"query_string":{"query":"\"test111\""}}]}}`,
+			es:  `{"bool":{"must":[{"bool":{"must":[{"terms":{"loglevel":["TRACE","DEBUG","INFO ","WARN ","ERROR"]}},{"bool":{"minimum_should_match":"1","should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"testOr"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"match_phrase":{"log":{"query":"test111"}}}]}}]}},{"query_string":{"analyze_wildcard":true,"fields":["","__"],"lenient":true,"query":"\"test111\""}}]}}`,
 			sql: "((`loglevel` LIKE '%TRACE%' OR `loglevel` LIKE '%DEBUG%' OR `loglevel` LIKE '%INFO %' OR `loglevel` LIKE '%WARN %' OR `loglevel` LIKE '%ERROR%') AND ((`log` LIKE '%friendsvr%' AND `log` LIKE '%game_app%' AND `log` LIKE '%testAnd%') OR (`log` LIKE '%friendsvr%' AND `log` LIKE '%testOr%' AND `log` LIKE '%testAnd%') OR `log` LIKE '%test111%')) AND `log` = 'test111'",
 		},
 		"test - many tPHRASE ": {
@@ -727,13 +727,13 @@ func TestParser(t *testing.T) {
 			e: &AndExpr{
 				Left: &ConditionMatchExpr{
 					Field: &StringExpr{Value: "loglevel"},
-					Value: &ConditionExpr{
+					Value: &ConditionsExpr{
 						Values: [][]Expr{{&StringExpr{Value: "TRACE"}}, {&StringExpr{Value: "DEBUG"}}, {&StringExpr{Value: "INFO "}}, {&StringExpr{Value: "WARN "}}, {&StringExpr{Value: "ERROR"}}},
 					},
 				},
 				Right: &ConditionMatchExpr{
 					Field: &StringExpr{Value: "log"},
-					Value: &ConditionExpr{
+					Value: &ConditionsExpr{
 						Values: [][]Expr{{&StringExpr{Value: "friendsvr"}, &StringExpr{Value: "game_app"}, &StringExpr{Value: "testAnd"}}, {&StringExpr{Value: "friendsvr"}, &StringExpr{Value: "testOr"}, &StringExpr{Value: "testAnd"}}, {&StringExpr{Value: "test111"}}},
 					},
 				},
@@ -745,7 +745,7 @@ func TestParser(t *testing.T) {
 			q: `loglevel: ("TRACE" AND "111" AND "DEBUG" AND "INFO" OR "SIMON" OR "222" AND "333" )`,
 			e: &ConditionMatchExpr{
 				Field: &StringExpr{Value: "loglevel"},
-				Value: &ConditionExpr{
+				Value: &ConditionsExpr{
 					Values: [][]Expr{{&StringExpr{Value: "TRACE"}, &StringExpr{Value: "111"}, &StringExpr{Value: "DEBUG"}, &StringExpr{Value: "INFO"}}, {&StringExpr{Value: "SIMON"}}, {&StringExpr{Value: "222"}, &StringExpr{Value: "333"}}},
 				},
 			},
@@ -757,13 +757,13 @@ func TestParser(t *testing.T) {
 			e: &AndExpr{
 				Left: &ConditionMatchExpr{
 					Field: &StringExpr{Value: "loglevel"},
-					Value: &ConditionExpr{
+					Value: &ConditionsExpr{
 						Values: [][]Expr{{&StringExpr{Value: "TRACE"}}, {&StringExpr{Value: "DEBUG"}}, {&StringExpr{Value: "INFO "}}, {&StringExpr{Value: "WARN "}}, {&StringExpr{Value: "ERROR"}}},
 					},
 				},
 				Right: &ConditionMatchExpr{
 					Field: &StringExpr{Value: "log"},
-					Value: &ConditionExpr{
+					Value: &ConditionsExpr{
 						Values: [][]Expr{{&StringExpr{Value: "friendsvr"}, &StringExpr{Value: "game_app"}, &StringExpr{Value: "testAnd"}}, {&StringExpr{Value: "friendsvr"}, &StringExpr{Value: "testOr"}, &StringExpr{Value: "testAnd"}}, {&StringExpr{Value: "test111"}}},
 					},
 				},

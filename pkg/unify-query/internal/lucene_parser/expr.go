@@ -60,13 +60,13 @@ type RangeExpr struct {
 	IncludeEnd   Expr
 }
 
-type ConditionExpr struct {
+type ConditionsExpr struct {
 	Values [][]Expr
 }
 
 type ConditionMatchExpr struct {
 	Field Expr
-	Value *ConditionExpr
+	Value *ConditionsExpr
 }
 
 func (cm *ConditionMatchExpr) SetField(field string) {

@@ -204,7 +204,6 @@ func (r *SpaceTsDbRouter) Delete(ctx context.Context, stoPrefix string, stoKey s
 		r.cache.Del(fullKey)
 	}
 
-	log.Debugf(ctx, "[SpaceTSDB] Deleted key from storage and cache: %s", fullKey)
 	log.Infof(ctx, "Deleted key from storage and cache: %s", fullKey)
 	return nil
 }

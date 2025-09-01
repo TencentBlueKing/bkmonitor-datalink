@@ -63,7 +63,7 @@ func GetGseApi(bkTenantId string) (*bkgse.Client, error) {
 		endpoint = fmt.Sprintf("%s/api/c/compapi/v2/gse/", cfg.BkApiUrl)
 	}
 	config = bkapi.ClientConfig{
-		Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/gse/", cfg.BkApiUrl),
+		Endpoint:            endpoint,
 		Stage:               cfg.BkApiStage,
 		AppCode:             cfg.BkApiAppCode,
 		AppSecret:           cfg.BkApiAppSecret,

@@ -548,11 +548,13 @@ func (n *RangeNode) Expr() Expr {
 		switch n.op {
 		case ">":
 			rangeExpr = &RangeExpr{
-				Start: n.createValueExpr(n.value),
+				Start:        n.createValueExpr(n.value),
+				IncludeStart: &BoolExpr{Value: false},
 			}
 		case "<":
 			rangeExpr = &RangeExpr{
-				End: n.createValueExpr(n.value),
+				End:        n.createValueExpr(n.value),
+				IncludeEnd: &BoolExpr{Value: false},
 			}
 		case ">=":
 			rangeExpr = &RangeExpr{

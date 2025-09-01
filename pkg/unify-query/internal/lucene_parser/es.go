@@ -361,12 +361,20 @@ func buildOperatorWildcardQueryWithSchema(e *OperatorExpr) elastic.Query {
 	field := getESFieldName(e.Field)
 	value := getESValue(e.Value)
 
+	if field == DefaultEmptyField {
+		return elastic.NewQueryStringQuery(value)
+	}
+
 	return elastic.NewWildcardQuery(field, value)
 }
 
 func buildOperatorRegexpQueryWithSchema(e *OperatorExpr) elastic.Query {
 	field := getESFieldName(e.Field)
 	value := getESValue(e.Value)
+
+	if field == DefaultEmptyField {
+		return elastic.NewQueryStringQuery("/" + value + "/")
+	}
 
 	return elastic.NewRegexpQuery(field, value)
 }

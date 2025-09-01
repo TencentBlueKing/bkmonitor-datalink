@@ -67,12 +67,21 @@ func walkSQL(expr Expr, parentOpType int) string {
 		field := getFieldName(e.Field)
 		switch e.Op {
 		case OpMatch:
+			value := getValue(e.Value)
+			var formattedValue string
+
+			if _, ok := e.Value.(*NumberExpr); ok {
+				formattedValue = value
+			} else {
+				formattedValue = fmt.Sprintf("'%s'", escapeSQL(value))
+			}
+
 			if parentOpType == opTypeNone && expr != nil {
 				if _, ok := expr.(*NotExpr); ok {
-					return fmt.Sprintf("(%s)", fmt.Sprintf("%s = '%s'", field, escapeSQL(getValue(e.Value))))
+					return fmt.Sprintf("(%s)", fmt.Sprintf("%s = %s", field, formattedValue))
 				}
 			}
-			return fmt.Sprintf("%s = '%s'", field, escapeSQL(getValue(e.Value)))
+			return fmt.Sprintf("%s = %s", field, formattedValue)
 
 		case OpWildcard:
 			value := getValue(e.Value)

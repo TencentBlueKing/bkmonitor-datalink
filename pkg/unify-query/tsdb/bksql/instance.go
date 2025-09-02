@@ -32,8 +32,9 @@ import (
 )
 
 const (
-	TableFieldName = "Field"
-	TableFieldType = "Type"
+	TableFieldName     = "Field"
+	TableFieldType     = "Type"
+	TableFieldAnalyzed = "Analyzed"
 
 	TableTypeVariant = "variant"
 )
@@ -152,8 +153,8 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	return data, nil
 }
 
-func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]string, error) {
-	fieldsMap := make(map[string]string)
+func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]sql_expr.FieldOption, error) {
+	fieldsMap := make(map[string]sql_expr.FieldOption)
 
 	if sql == "" {
 		return nil, nil
@@ -166,8 +167,10 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]str
 
 	for _, list := range data.List {
 		var (
-			k  string
-			v  string
+			k             string
+			fieldType     string
+			fieldAnalyzed string
+
 			ok bool
 		)
 		k, ok = list[TableFieldName].(string)
@@ -175,12 +178,22 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]str
 			continue
 		}
 
-		v, ok = list[TableFieldType].(string)
+		fieldType, ok = list[TableFieldType].(string)
 		if !ok {
 			continue
 		}
 
-		fieldsMap[k] = v
+		opt := sql_expr.FieldOption{
+			Type: fieldType,
+		}
+
+		if fieldAnalyzed, ok = list[TableFieldAnalyzed].(string); ok {
+			if fieldAnalyzed == "true" {
+				opt.Analyzed = true
+			}
+		}
+
+		fieldsMap[k] = opt
 	}
 
 	return fieldsMap, nil

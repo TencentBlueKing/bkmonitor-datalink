@@ -38,6 +38,11 @@ var (
 	ErrorMatchAll = "不支持全字段检索"
 )
 
+type FieldOption struct {
+	Type     string
+	Analyzed bool
+}
+
 type TimeAggregate struct {
 	Window       time.Duration
 	OffsetMillis int64
@@ -51,7 +56,7 @@ type SQLExpr interface {
 	// WithFieldAlias 设置字段别名
 	WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr
 	// WithFieldsMap 设置字段类型
-	WithFieldsMap(fieldsMap map[string]string) SQLExpr
+	WithFieldsMap(fieldsMap map[string]FieldOption) SQLExpr
 	// WithEncode 字段转换方法
 	WithEncode(func(string) string) SQLExpr
 	// WithInternalFields 设置内部字段
@@ -69,7 +74,7 @@ type SQLExpr interface {
 	// DescribeTableSQL 返回当前表结构
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
-	FieldMap() map[string]string
+	FieldMap() map[string]FieldOption
 	// Type 返回表达式类型
 	Type() string
 }
@@ -101,7 +106,7 @@ type DefaultSQLExpr struct {
 	encodeFunc func(string) string
 
 	keepColumns []string
-	fieldMap    map[string]string
+	fieldMap    map[string]FieldOption
 	fieldAlias  metadata.FieldAlias
 
 	timeField  string
@@ -130,7 +135,7 @@ func (d *DefaultSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 	return d
 }
 
-func (d *DefaultSQLExpr) WithFieldsMap(fieldMap map[string]string) SQLExpr {
+func (d *DefaultSQLExpr) WithFieldsMap(fieldMap map[string]FieldOption) SQLExpr {
 	d.fieldMap = fieldMap
 	return d
 }
@@ -148,7 +153,7 @@ func (d *DefaultSQLExpr) GetLabelMap() map[string][]string {
 	return nil
 }
 
-func (d *DefaultSQLExpr) FieldMap() map[string]string {
+func (d *DefaultSQLExpr) FieldMap() map[string]FieldOption {
 	return d.fieldMap
 }
 

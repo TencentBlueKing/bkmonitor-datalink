@@ -191,11 +191,11 @@ func (c *ConditionField) ContainsToPromReg() *ConditionField {
 	// 防止contains中含有特殊字符，导致错误的正则匹配，需要预先转义一下
 	var resultValues = make([]string, 0, len(c.Value))
 	for _, v := range c.Value {
-		if v == "" {
-			continue
-		}
 		var nv string
 		if isRegx {
+			if v == "" {
+				continue
+			}
 			nv = v
 		} else {
 			nv = regexp.QuoteMeta(v)

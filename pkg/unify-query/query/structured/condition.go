@@ -297,6 +297,9 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.Vm
 		lbl := make([]string, 0, len(cond)+len(defaultLabels))
 		for _, f := range cond {
 			nf := f.ContainsToPromReg()
+			if len(nf.Value) == 0 {
+				continue
+			}
 			val := nf.Value[0]
 			val = strings.ReplaceAll(val, `\`, `\\`)
 			val = strings.ReplaceAll(val, `"`, `\"`)

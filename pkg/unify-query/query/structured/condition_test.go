@@ -925,6 +925,30 @@ func TestAllConditions_VMString(t *testing.T) {
 			isRegex:     true,
 			vmCondition: `dim-1=~"^(val-1|val-2)$", result_table_id="rt-n", __name__=~"metric_.*" or dim-2!~"^(val-1|val-2)$", result_table_id="rt-n", __name__=~"metric_.*"`,
 		},
+		{
+			allConditions: AllConditions{
+				{
+					{
+						DimensionName: "zone",
+						Value:         []string{},
+						Operator:      ConditionRegEqual,
+					},
+					{
+						DimensionName: "nonzero",
+						Value:         []string{"1"},
+						Operator:      ConditionRegEqual,
+					},
+					{
+						DimensionName: "cluster",
+						Value:         []string{"test-cluster"},
+						Operator:      ConditionEqual,
+					},
+				},
+			},
+			metric:      "cpu_usage",
+			rt:          "test_rt",
+			vmCondition: `nonzero=~"1", cluster="test-cluster", result_table_id="test_rt", __name__="cpu_usage"`,
+		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			actual, _ := c.allConditions.VMString(c.rt, c.metric, c.isRegex)

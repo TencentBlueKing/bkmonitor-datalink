@@ -1437,21 +1437,23 @@ func (s *SpacePusher) composeTableIdFields(bkTenantId string, tableIds []string)
 	}
 	// 组装结果表对应的指标数据
 	tableIdMetrics := make(map[string][]string)
-	if tsInfo == nil {
-		return tableIdMetrics, nil
-	}
-	var existTableIdList []string
-	for tableId, groupId := range tsInfo.TableIdTsGroupIdMap {
-		if metrics, ok := tsInfo.GroupIdFieldsMap[groupId]; ok {
-			tableIdMetrics[tableId] = metrics
-		} else {
-			tableIdMetrics[tableId] = []string{}
+	existTableIdList := make(map[string]bool)
+
+	// 如果是自定义指标，优先使用自定义指标的字段信息
+	if tsInfo != nil {
+		for tableId, groupId := range tsInfo.TableIdTsGroupIdMap {
+			if metrics, ok := tsInfo.GroupIdFieldsMap[groupId]; ok {
+				tableIdMetrics[tableId] = metrics
+			} else {
+				tableIdMetrics[tableId] = []string{}
+			}
+			existTableIdList[tableId] = true
 		}
-		existTableIdList = append(existTableIdList, tableId)
 	}
-	// 处理非时序结果表指标
+
+	// 处理非自定义指标
 	for tableId, fieldList := range tableIdFieldMap {
-		if !stringx.StringInSlice(tableId, existTableIdList) {
+		if !existTableIdList[tableId] {
 			tableIdMetrics[tableId] = fieldList
 		}
 	}

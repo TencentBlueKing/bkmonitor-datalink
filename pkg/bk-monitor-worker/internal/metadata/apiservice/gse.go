@@ -23,8 +23,8 @@ var Gse GseService
 type GseService struct{}
 
 // QueryRoute 查询路由配置
-func (GseService) QueryRoute(params bkgse.QueryRouteParams) (interface{}, error) {
-	gseApi, err := api.GetGseApi()
+func (GseService) QueryRoute(bkTenantId string, params bkgse.QueryRouteParams) (interface{}, error) {
+	gseApi, err := api.GetGseApi(bkTenantId)
 	if err != nil {
 		return nil, errors.Wrap(err, "get gse api failed")
 	}
@@ -48,8 +48,8 @@ func (GseService) QueryRoute(params bkgse.QueryRouteParams) (interface{}, error)
 }
 
 // AddRoute 注册路由配置
-func (GseService) AddRoute(params bkgse.AddRouteParams) (interface{}, error) {
-	gseApi, err := api.GetGseApi()
+func (GseService) AddRoute(bkTenantId string, params bkgse.AddRouteParams) (interface{}, error) {
+	gseApi, err := api.GetGseApi(bkTenantId)
 	if err != nil {
 		return nil, errors.Wrap(err, "get gse api failed")
 	}
@@ -70,8 +70,8 @@ func (GseService) AddRoute(params bkgse.AddRouteParams) (interface{}, error) {
 }
 
 // UpdateRoute 更新路由配置
-func (GseService) UpdateRoute(params bkgse.UpdateRouteParams) (interface{}, error) {
-	gseApi, err := api.GetGseApi()
+func (GseService) UpdateRoute(bkTenantId string, params bkgse.UpdateRouteParams) (interface{}, error) {
+	gseApi, err := api.GetGseApi(bkTenantId)
 	if err != nil {
 		return nil, errors.Wrap(err, "get gse api failed")
 	}

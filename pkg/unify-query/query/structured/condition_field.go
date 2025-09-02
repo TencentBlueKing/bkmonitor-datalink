@@ -113,13 +113,17 @@ func (c *ConditionField) ToPromOperator() labels.MatchType {
 		return labels.MatchRegexp
 	case ConditionNotRegEqual:
 		return labels.MatchNotRegexp
+	case ConditionExisted:
+		return labels.MatchRegexp
+	case ConditionNotExisted:
+		return labels.MatchNotRegexp
 	default:
 		return labels.MatchEqual
 	}
 }
 
 func (c *ConditionField) BkSql() *ConditionField {
-	if len(c.Value) == 0 {
+	if len(c.Value) == 0 && c.Operator != ConditionExisted && c.Operator != ConditionNotExisted {
 		return nil
 	}
 
@@ -155,8 +159,8 @@ func (c *ConditionField) BkSql() *ConditionField {
 
 // ContainsToPromReg 将结构化查询中的contains条件改为 正则 "x|y" 的方式
 func (c *ConditionField) ContainsToPromReg() *ConditionField {
-	// value 个数为 0, 不处理
-	if len(c.Value) == 0 {
+	// value 个数为 0, 对于 existed/nexisted 操作符仍需处理，其他情况不处理
+	if len(c.Value) == 0 && c.Operator != ConditionExisted && c.Operator != ConditionNotExisted {
 		return c
 	}
 
@@ -193,9 +197,6 @@ func (c *ConditionField) ContainsToPromReg() *ConditionField {
 	for _, v := range c.Value {
 		var nv string
 		if isRegx {
-			if v == "" {
-				continue
-			}
 			nv = v
 		} else {
 			nv = regexp.QuoteMeta(v)

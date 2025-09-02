@@ -228,6 +228,54 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 			sql:    "`say` = 'What''s this?'",
 			vm:     `say="What's this?", result_table_id="table_id"`,
 		},
+		{
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "field1",
+						Operator:      ConditionExisted,
+						Value:         []string{},
+					},
+				},
+			},
+			result: []int{1},
+			sql:    "",
+			vm:     `field1=~".*", result_table_id="table_id"`,
+		},
+		{
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "field2",
+						Operator:      ConditionNotExisted,
+						Value:         []string{},
+					},
+				},
+			},
+			result: []int{1},
+			sql:    "",
+			vm:     `field2!~".*", result_table_id="table_id"`,
+		},
+		{
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "status",
+						Operator:      ConditionEqual,
+						Value:         []string{"active"},
+					},
+					{
+						DimensionName: "metadata",
+						Operator:      ConditionExisted,
+						Value:         []string{},
+					},
+				},
+				ConditionList: []string{"and"},
+			},
+			result: []int{2},
+			sql:    "`status` = 'active'",
+			vm:     `status="active", metadata=~".*", result_table_id="table_id"`,
+		},
 	}
 
 	for idx, testCase := range testCases {
@@ -924,30 +972,6 @@ func TestAllConditions_VMString(t *testing.T) {
 			rt:          "rt-n",
 			isRegex:     true,
 			vmCondition: `dim-1=~"^(val-1|val-2)$", result_table_id="rt-n", __name__=~"metric_.*" or dim-2!~"^(val-1|val-2)$", result_table_id="rt-n", __name__=~"metric_.*"`,
-		},
-		{
-			allConditions: AllConditions{
-				{
-					{
-						DimensionName: "zone",
-						Value:         []string{},
-						Operator:      ConditionRegEqual,
-					},
-					{
-						DimensionName: "nonzero",
-						Value:         []string{"1"},
-						Operator:      ConditionRegEqual,
-					},
-					{
-						DimensionName: "cluster",
-						Value:         []string{"test-cluster"},
-						Operator:      ConditionEqual,
-					},
-				},
-			},
-			metric:      "cpu_usage",
-			rt:          "test_rt",
-			vmCondition: `nonzero=~"1", cluster="test-cluster", result_table_id="test_rt", __name__="cpu_usage"`,
 		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {

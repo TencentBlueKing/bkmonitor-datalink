@@ -78,8 +78,8 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 
 	// 先循环遍历所有的内容，加入到各个列表中
 	for index, field := range c.FieldList {
-		// 当 value 为空的时候，直接忽略该查询条件
-		if len(field.Value) == 0 {
+		// 当 value 为空的时候，如果不是 existed/nexisted 操作符，则直接忽略该查询条件
+		if len(field.Value) == 0 && field.Operator != ConditionExisted && field.Operator != ConditionNotExisted {
 			continue
 		}
 
@@ -297,7 +297,12 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.Vm
 		lbl := make([]string, 0, len(cond)+len(defaultLabels))
 		for _, f := range cond {
 			nf := f.ContainsToPromReg()
+			// 对于 existed/nexisted 操作符，使用正则表达式检查字段存在性
 			if len(nf.Value) == 0 {
+				if nf.Operator == ConditionExisted || nf.Operator == ConditionNotExisted {
+					lbl = append(lbl, fmt.Sprintf(`%s%s".*"`, nf.DimensionName, nf.ToPromOperator()))
+					continue
+				}
 				continue
 			}
 			val := nf.Value[0]

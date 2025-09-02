@@ -3670,6 +3670,56 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 	assert.True(t, metadata.GetQueryParams(ctx).IsDirectQuery())
 }
 
+func TestQueryTs_ExistedOperators(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+
+	mock.Init()
+	influxdb.MockSpaceRouter(ctx)
+
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid})
+
+	testCases := []struct {
+		name       string
+		jsonData   string
+		expectedVM string
+	}{
+		{
+			name:       "existed operator with empty value",
+			jsonData:   `{"query_list":[{"data_source":"","table_id":"","field_name":"container_cpu_usage_seconds_total","is_regexp":false,"field_list":null,"function":[{"method":"sum","without":false,"dimensions":["namespace"],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"rate","window":"5m","node_index":0,"position":0,"vargs_list":[],"is_sub_query":false,"step":""},"reference_name":"a","dimensions":["namespace"],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"metadata","value":[],"op":"existed"}],"condition_list":[]},"keep_columns":["_time","a","namespace"],"step":""}],"metric_merge":"a","result_columns":null,"start_time":"1702266900","end_time":"1702871700","step":"150s","down_sample_range":"5m","timezone":"Asia/Shanghai","look_back_delta":"","instant":false}`,
+			expectedVM: `metadata=~".*", result_table_id="2_bcs_prom_computation_result_table", __name__="container_cpu_usage_seconds_total_value"`,
+		},
+		{
+			name:       "nexisted operator with empty value",
+			jsonData:   `{"query_list":[{"data_source":"","table_id":"","field_name":"container_cpu_usage_seconds_total","is_regexp":false,"field_list":null,"function":[{"method":"sum","without":false,"dimensions":["namespace"],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"rate","window":"5m","node_index":0,"position":0,"vargs_list":[],"is_sub_query":false,"step":""},"reference_name":"a","dimensions":["namespace"],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"optional_field","value":[],"op":"nexisted"}],"condition_list":[]},"keep_columns":["_time","a","namespace"],"step":""}],"metric_merge":"a","result_columns":null,"start_time":"1702266900","end_time":"1702871700","step":"150s","down_sample_range":"5m","timezone":"Asia/Shanghai","look_back_delta":"","instant":false}`,
+			expectedVM: `optional_field!~".*", result_table_id="2_bcs_prom_computation_result_table", __name__="container_cpu_usage_seconds_total_value"`,
+		},
+		{
+			name:       "eq operator with non-empty array but empty string element",
+			jsonData:   `{"query_list":[{"data_source":"","table_id":"","field_name":"container_cpu_usage_seconds_total","is_regexp":false,"field_list":null,"function":[{"method":"sum","without":false,"dimensions":["namespace"],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"rate","window":"5m","node_index":0,"position":0,"vargs_list":[],"is_sub_query":false,"step":""},"reference_name":"a","dimensions":["namespace"],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"container","value":[""],"op":"eq"}],"condition_list":[]},"keep_columns":["_time","a","namespace"],"step":""}],"metric_merge":"a","result_columns":null,"start_time":"1702266900","end_time":"1702871700","step":"150s","down_sample_range":"5m","timezone":"Asia/Shanghai","look_back_delta":"","instant":false}`,
+			expectedVM: `container="", result_table_id="2_bcs_prom_computation_result_table", __name__="container_cpu_usage_seconds_total_value"`,
+		},
+		{
+			name:       "contains operator with non-empty array but empty string element",
+			jsonData:   `{"query_list":[{"data_source":"","table_id":"","field_name":"container_cpu_usage_seconds_total","is_regexp":false,"field_list":null,"function":[{"method":"sum","without":false,"dimensions":["namespace"],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"rate","window":"5m","node_index":0,"position":0,"vargs_list":[],"is_sub_query":false,"step":""},"reference_name":"a","dimensions":["namespace"],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"image","value":[""],"op":"contains"}],"condition_list":[]},"keep_columns":["_time","a","namespace"],"step":""}],"metric_merge":"a","result_columns":null,"start_time":"1702266900","end_time":"1702871700","step":"150s","down_sample_range":"5m","timezone":"Asia/Shanghai","look_back_delta":"","instant":false}`,
+			expectedVM: `image="", result_table_id="2_bcs_prom_computation_result_table", __name__="container_cpu_usage_seconds_total_value"`,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var query *structured.QueryTs
+			err := json.Unmarshal([]byte(tc.jsonData), &query)
+			assert.Nil(t, err)
+
+			queryReference, err := query.ToQueryReference(ctx)
+			assert.Nil(t, err)
+
+			vmExpand := queryReference.ToVmExpand(ctx)
+			assert.Equal(t, tc.expectedVM, vmExpand.MetricFilterCondition["a"])
+		})
+	}
+}
+
 func TestQueryTsClusterMetrics(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 

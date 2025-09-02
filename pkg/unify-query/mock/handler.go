@@ -186,6 +186,7 @@ const (
 var FieldType = map[string]string{
 	"a":                        "keyword",
 	"b":                        "keyword",
+	"level":                    "keyword",
 	"dtEventTimeStamp":         "date",
 	"events":                   "nested",
 	"events.name":              "keyword",

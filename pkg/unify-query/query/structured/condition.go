@@ -78,7 +78,7 @@ func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 
 	// 先循环遍历所有的内容，加入到各个列表中
 	for index, field := range c.FieldList {
-		// 当 value 为空的时候，直接忽略该查询条件
+		// 当 value 为空的时候，直接忽略该查询条件，如果 operator 为存在或者不存在，则忽略 values 的值
 		if len(field.Value) == 0 && field.Operator != ConditionExisted && field.Operator != ConditionNotExisted {
 			continue
 		}

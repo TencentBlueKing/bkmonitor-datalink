@@ -470,6 +470,11 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		return nil, err
 	}
 
+	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
+	if encodeFunc != nil {
+		name = encodeFunc(name)
+	}
+
 	for _, d := range data.List {
 		value, err := getValue(name, d)
 		if err != nil {

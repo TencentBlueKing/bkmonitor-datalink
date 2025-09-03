@@ -208,7 +208,6 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 
 	if window > 0 {
 		// 获取时区偏移量
-		// 如果是按天聚合，则增加时区偏移量
 		if function.IsAlignTime(window) {
 			// 时间聚合函数兼容时区
 			loc, locErr := time.LoadLocation(timezone)

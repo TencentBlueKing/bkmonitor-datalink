@@ -114,26 +114,6 @@ func AlignTime(start, end time.Time, stepStr, timezone string) (time.Time, time.
 	return newStart, end, step, newTimezone, nil
 }
 
-// GetMaxWindow 获取最大聚合时间
-func (q *QueryTs) GetMaxWindow() (time.Duration, error) {
-	var window time.Duration = 0
-	for _, query := range q.QueryList {
-		for _, agg := range query.AggregateMethodList {
-			if agg.Window != "" {
-				aw, err := agg.Window.Duration()
-				if err != nil {
-					return 0, err
-				}
-
-				if aw > window {
-					window = aw
-				}
-			}
-		}
-	}
-	return window, nil
-}
-
 func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference, error) {
 	queryReference := make(metadata.QueryReference)
 	for _, query := range q.QueryList {
@@ -641,6 +621,20 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
+	}
+
+	// 注入时区和时区偏移，用于聚合处理
+	var timeZoneOffset int64
+	if timezone != "UTC" {
+		utcStart, _, _, _, _ := AlignTime(startTime, endTime, q.Step, "UTC")
+		timeZoneOffset = start.UnixMilli() - utcStart.UnixMilli()
+	}
+	for idx, agg := range aggregates {
+		if agg.Window > 0 {
+			agg.TimeZone = timezone
+			agg.TimeZoneOffset = timeZoneOffset
+			aggregates[idx] = agg
+		}
 	}
 
 	// 查询路由匹配中的 tsDB 列表

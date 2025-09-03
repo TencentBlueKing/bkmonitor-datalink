@@ -810,6 +810,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 										Name:       "count",
 										Dimensions: []string{"ip"},
 										Window:     time.Minute,
+										TimeZone:   "UTC",
 									},
 								},
 							},
@@ -961,6 +962,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 										Name:       "sum",
 										Dimensions: []string{"ip", "service"},
 										Window:     time.Minute,
+										TimeZone:   "UTC",
 									},
 								},
 							},
@@ -1034,6 +1036,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 										Name:       "count",
 										Dimensions: []string{"ip"},
 										Window:     time.Minute,
+										TimeZone:   "UTC",
 									},
 								},
 							},
@@ -1178,6 +1181,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 										Name:       "sum",
 										Dimensions: []string{"ip"},
 										Window:     time.Minute,
+										TimeZone:   "UTC",
 									},
 								},
 							},
@@ -1246,6 +1250,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 										Name:       "sum",
 										Dimensions: []string{"__ext.container"},
 										Window:     time.Minute,
+										TimeZone:   "UTC",
 									},
 								},
 							},
@@ -1318,6 +1323,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 										Name:       "sum",
 										Dimensions: []string{"__ext.container"},
 										Window:     time.Minute,
+										TimeZone:   "UTC",
 									},
 								},
 							},
@@ -1382,6 +1388,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 										Name:       "count",
 										Dimensions: []string{"ip"},
 										Window:     time.Minute,
+										TimeZone:   "UTC",
 									},
 								},
 							},
@@ -1446,6 +1453,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 										Name:       "count",
 										Dimensions: []string{"ip"},
 										Window:     time.Minute,
+										TimeZone:   "UTC",
 									},
 								},
 							},
@@ -1498,7 +1506,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			},
 			isDirectQuery: false,
 			promql:        `topk(1, sum by (alias_ns) (last_over_time(a[1m])))`,
-			refString:     `{"a":[{"QueryList":[{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es","db":"es_index","field":"__ext.host.bk_set_name","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es:alias_ns"],"aggregates":[{"name":"sum","dimensions":["__ext.host.bk_set_name"],"window":60000000000}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"__ext.host.bk_set_name","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false,"IsForceEq":false}]]},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"alias_es_1","db":"es_index","field":"__ext.namespace","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.namespace"},"metric_names":["bklog:alias_es_1:alias_ns"],"aggregates":[{"name":"sum","dimensions":["__ext.namespace"],"window":60000000000}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"__ext.namespace","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false,"IsForceEq":false}]]}],"ReferenceName":"a","MetricName":"alias_ns","IsCount":false}]}`,
+			refString:     `{"a":[{"QueryList":[{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es","db":"es_index","field":"__ext.host.bk_set_name","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es:alias_ns"],"aggregates":[{"name":"sum","dimensions":["__ext.host.bk_set_name"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"__ext.host.bk_set_name","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]]},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"alias_es_1","db":"es_index","field":"__ext.namespace","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.namespace"},"metric_names":["bklog:alias_es_1:alias_ns"],"aggregates":[{"name":"sum","dimensions":["__ext.namespace"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"__ext.namespace","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]]}],"ReferenceName":"a","MetricName":"alias_ns","IsCount":false}]}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1531,8 +1539,8 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				IgnoreTimeAggregationEnable: !isDirectQuery,
 			}
 
-			promql, _ := tc.ts.ToPromExpr(ctx, promExprOpt)
-			assert.Equal(t, tc.promql, promql.String())
+			pl, _ := tc.ts.ToPromExpr(ctx, promExprOpt)
+			assert.Equal(t, tc.promql, pl.String())
 		})
 	}
 }
@@ -1571,87 +1579,6 @@ func TestAggregations(t *testing.T) {
 			aggs, err := c.query.Aggregates()
 			assert.Nil(t, err)
 			assert.Equal(t, c.aggs, aggs)
-		})
-	}
-}
-
-func TestGetMaxWindow(t *testing.T) {
-	tests := []struct {
-		name        string
-		queryList   []*Query
-		expected    time.Duration
-		expectError bool
-	}{
-		{
-			name: "Normal case with multiple windows",
-			queryList: []*Query{
-				{
-					AggregateMethodList: []AggregateMethod{
-						{Window: "5m"},
-						{Window: "10m"},
-					},
-				},
-				{
-					AggregateMethodList: []AggregateMethod{
-						{Window: "15m"},
-						{Window: "20m"},
-					},
-				},
-			},
-			expected:    20 * time.Minute,
-			expectError: false,
-		},
-		{
-			name:        "Empty QueryList",
-			queryList:   []*Query{},
-			expected:    0,
-			expectError: false,
-		},
-		{
-			name: "Invalid Window",
-			queryList: []*Query{
-				{
-					AggregateMethodList: []AggregateMethod{
-						{Window: "invalid"},
-					},
-				},
-			},
-			expected:    0,
-			expectError: true,
-		},
-		{
-			name: "Multiple Windows with one invalid",
-			queryList: []*Query{
-				{
-					AggregateMethodList: []AggregateMethod{
-						{Window: "5m"},
-						{Window: "invalid"},
-					},
-				},
-				{
-					AggregateMethodList: []AggregateMethod{
-						{Window: "15m"},
-						{Window: "20m"},
-					},
-				},
-			},
-			expected:    0,
-			expectError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			q := &QueryTs{
-				QueryList: tt.queryList,
-			}
-			result, err := q.GetMaxWindow()
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

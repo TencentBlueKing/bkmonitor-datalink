@@ -91,6 +91,8 @@ github.com/OneOfOne/xxhash v1.2.2 h1:KMrpdQIwFcEqXDklaen+P1axHaj9BSKzvpUUfnHldSE
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=
 github.com/TencentBlueKing/influxdb v1.8.14 h1:nSs2ADSZCHHXry1P7XJxBm2qyLhMNPackGhltslW5Jg=
 github.com/TencentBlueKing/influxdb v1.8.14/go.mod h1:CBU2DhSPf8HAIacI40MKUCFzHyDB9tzZZmmkFZdSPZ4=
+github.com/TingYunGo/goagent v1.8.8 h1:GwKX91Wdumpe62W+QKzlY4PrkzUeF5KLOm/8OXNHstk=
+github.com/TingYunGo/goagent v1.8.8/go.mod h1:FLj0Wwlp857+4sfRu9O2cfRh3iLpqmaHre1E4hBFT4k=
 github.com/VictoriaMetrics/metrics v1.24.0 h1:ILavebReOjYctAGY5QU2F9X0MYvkcrG3aEn2RKa1Zkw=
 github.com/VictoriaMetrics/metrics v1.24.0/go.mod h1:eFT25kvsTidQFHb6U0oa0rTrDRdz4xTYjpL8+UPohys=
 github.com/VictoriaMetrics/metricsql v0.69.0 h1:6np68zGOnMiGEJR/rCvywS1gbLGXVrmQC3BKydsbWHw=

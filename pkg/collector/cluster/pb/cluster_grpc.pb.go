@@ -71,7 +71,7 @@ func RegisterClusterServer(s grpc.ServiceRegistrar, srv ClusterServer) {
 	s.RegisterService(&Cluster_ServiceDesc, srv)
 }
 
-func _Cluster_Forward_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Cluster_Forward_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(ForwardRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -83,7 +83,7 @@ func _Cluster_Forward_Handler(srv interface{}, ctx context.Context, dec func(int
 		Server:     srv,
 		FullMethod: "/cluster.Cluster/Forward",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(ClusterServer).Forward(ctx, req.(*ForwardRequest))
 	}
 	return interceptor(ctx, in, info, handler)

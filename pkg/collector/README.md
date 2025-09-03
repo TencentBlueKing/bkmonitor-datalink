@@ -182,10 +182,10 @@ type Processor interface {
 	// Reload 重载 processor 配置
 	// 对于无状态的 processor 可支持替换实例所有变量
 	// 对于有状态的 processor 需要`谨慎地`处理所有变量 避免内存/goroutines 泄漏
-	Reload(config map[string]interface{}, customized []SubConfigProcessor)
+	Reload(config map[string]any, customized []SubConfigProcessor)
 
 	// MainConfig 获取主配置信息
-	MainConfig() map[string]interface{}
+	MainConfig() map[string]any
 
 	// SubConfigs 获取子配置信息
 	SubConfigs() []SubConfigProcessor

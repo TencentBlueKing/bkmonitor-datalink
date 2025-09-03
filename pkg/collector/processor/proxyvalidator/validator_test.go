@@ -120,7 +120,7 @@ func TestTimeSeriesDataType(t *testing.T) {
 	})
 	var pb define.ProxyData
 	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
-	msg := "timeseries data expected []interface{}, got map[string]interface {}"
+	msg := "timeseries data expected []any, got map[string]interface {}"
 	assert.Equal(t, msg, validator.Validate(&pb).Error())
 }
 
@@ -185,7 +185,7 @@ func TestTimeSeriesIllegalMetricsItemType(t *testing.T) {
 	})
 	var pb define.ProxyData
 	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
-	msg := "timeseries each item expected map[string]interface{} type, got string"
+	msg := "timeseries each item expected map[string]any type, got string"
 	assert.Equal(t, msg, validator.Validate(&pb).Error())
 }
 
@@ -267,7 +267,7 @@ func TestTimeSeriesDimensionType(t *testing.T) {
 	})
 	var pb define.ProxyData
 	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
-	msg := "dimension expected map[string]interface{} type, got string"
+	msg := "dimension expected map[string]any type, got string"
 	assert.Equal(t, msg, validator.Validate(&pb).Error())
 }
 
@@ -589,7 +589,7 @@ func TestEventDataType(t *testing.T) {
 	})
 	var pb define.ProxyData
 	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
-	msg := "event data expected []interface{}, got map[string]interface {}"
+	msg := "event data expected []any, got map[string]interface {}"
 	assert.Equal(t, msg, validator.Validate(&pb).Error())
 }
 
@@ -636,7 +636,7 @@ func TestEventEventType(t *testing.T) {
 	})
 	var pb define.ProxyData
 	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
-	msg := "event expected map[string]interface{} type, got string"
+	msg := "event expected map[string]any type, got string"
 	assert.Equal(t, msg, validator.Validate(&pb).Error())
 }
 

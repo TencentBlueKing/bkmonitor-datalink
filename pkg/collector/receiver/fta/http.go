@@ -101,7 +101,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// 将数据转换为 map
-	var data map[string]interface{}
+	var data map[string]any
 	err = json.Unmarshal(buf, &data)
 	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordFta)
@@ -135,7 +135,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 	event := &define.FtaData{
 		PluginId:   "",
 		IngestTime: time.Now().Unix(),
-		Data:       []map[string]interface{}{data},
+		Data:       []map[string]any{data},
 		EventId:    uuid.New().String(),
 	}
 

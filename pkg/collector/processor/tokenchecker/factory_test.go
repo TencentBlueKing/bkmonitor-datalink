@@ -526,7 +526,7 @@ func TestFtaAes256Token(t *testing.T) {
 				Original: "Ymtia2JrYmtia2JrYmtiaxJ3i4amfEBRpRly3svdCllhrOjDgm6IjwqqIVKwzKN5",
 			},
 			Data: &define.FtaData{
-				Data: []map[string]interface{}{
+				Data: []map[string]any{
 					{"test": "test"},
 				},
 				EventId:    "1",
@@ -548,7 +548,7 @@ func TestFtaAes256Token(t *testing.T) {
 				Original: "12345",
 			},
 			Data: &define.FtaData{
-				Data: []map[string]interface{}{
+				Data: []map[string]any{
 					{"test": "test"},
 				},
 				EventId:    "1",
@@ -568,7 +568,7 @@ func TestFtaAes256Token(t *testing.T) {
 				Original: "Ymtia2JrYmtia2JrYmtia/r4wM8mjJnSo8oBqbclwaCY2AaNBAvhq1T48ZO09PSe",
 			},
 			Data: &define.FtaData{
-				Data: []map[string]interface{}{
+				Data: []map[string]any{
 					{"test": "test"},
 				},
 				EventId:    "1",
@@ -588,7 +588,7 @@ func TestFtaAes256Token(t *testing.T) {
 				Original: "Ymtia2JrYmtia2JrYmtia5GdDXVAdxBFaOaaHF6kHUNG/yhSoPsPwAr1WfIhU8gc",
 			},
 			Data: &define.FtaData{
-				Data: []map[string]interface{}{
+				Data: []map[string]any{
 					{"test": "test"},
 				},
 				EventId:    "1",

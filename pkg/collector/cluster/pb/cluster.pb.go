@@ -170,7 +170,7 @@ func file_cluster_proto_rawDescGZIP() []byte {
 
 var file_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 
-var file_cluster_proto_goTypes = []interface{}{
+var file_cluster_proto_goTypes = []any{
 	(*ForwardRequest)(nil), // 0: cluster.ForwardRequest
 	(*ForwardReply)(nil),   // 1: cluster.ForwardReply
 }
@@ -192,7 +192,7 @@ func file_cluster_proto_init() {
 		return
 	}
 	if !protoimpl.UnsafeEnabled {
-		file_cluster_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
+		file_cluster_proto_msgTypes[0].Exporter = func(v any, i int) any {
 			switch v := v.(*ForwardRequest); i {
 			case 0:
 				return &v.state
@@ -204,7 +204,7 @@ func file_cluster_proto_init() {
 				return nil
 			}
 		}
-		file_cluster_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
+		file_cluster_proto_msgTypes[1].Exporter = func(v any, i int) any {
 			switch v := v.(*ForwardReply); i {
 			case 0:
 				return &v.state

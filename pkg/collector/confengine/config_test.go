@@ -63,10 +63,10 @@ proxy:
 	cfg := config.MustChild("proxy")
 	assert.True(t, cfg.Disabled("server"))
 
-	m1 := make(map[string]interface{})
+	m1 := make(map[string]any)
 	assert.NoError(t, config.UnpackChild("proxy", m1))
 
-	m2 := make(map[string]interface{})
+	m2 := make(map[string]any)
 	assert.NoError(t, config.Unpack(m2))
 	assert.Equal(t, 8080, config.UnpackIntWithDefault("proxy.server.port", 8080))
 	assert.Equal(t, 10, config.UnpackIntWithDefault("proxy.server.num", 0))

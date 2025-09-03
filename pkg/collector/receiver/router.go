@@ -97,7 +97,7 @@ func RegisterRecvGrpcRoute(register func(s *grpc.Server)) {
 }
 
 // registerRecvTarsRoute 注册 Tars Servant
-func registerRecvTarsRoute(o string, server string, impl interface{}, dispatch TarsDispatch, mgr *serviceManager) error {
+func registerRecvTarsRoute(o string, server string, impl any, dispatch TarsDispatch, mgr *serviceManager) error {
 	s := NewTarsServant(o, server, impl, dispatch)
 	if _, ok := mgr.tarsServants[s.Obj]; ok {
 		return errors.Errorf("duplicated tars servant '%v'", s.Obj)
@@ -107,7 +107,7 @@ func registerRecvTarsRoute(o string, server string, impl interface{}, dispatch T
 }
 
 // RegisterRecvTarsRoute 注册 Tars Servant
-func RegisterRecvTarsRoute(o string, server string, impl interface{}, dispatch TarsDispatch) {
+func RegisterRecvTarsRoute(o string, server string, impl any, dispatch TarsDispatch) {
 	if err := registerRecvTarsRoute(o, server, impl, dispatch, serviceMgr); err != nil {
 		panic(err)
 	}

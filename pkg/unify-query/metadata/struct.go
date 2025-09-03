@@ -275,9 +275,6 @@ type ConditionField struct {
 
 	// IsSuffix 是否是后缀匹配
 	IsSuffix bool
-
-	// IsForceEq 是否强制等于
-	IsForceEq bool
 }
 
 // TimeAggregation 时间聚合字段
@@ -491,6 +488,22 @@ func (a Aggregates) LastAggName() string {
 	}
 
 	return a[len(a)-1].Name
+}
+
+func (a Aggregates) Copy() Aggregates {
+	aggs := make(Aggregates, len(a))
+	for i, agg := range a {
+		aggs[i] = Aggregate{
+			Name:           agg.Name,
+			Field:          agg.Field,
+			Dimensions:     append([]string{}, agg.Dimensions...),
+			Window:         agg.Window,
+			TimeZone:       agg.TimeZone,
+			TimeZoneOffset: agg.TimeZoneOffset,
+			Args:           append([]any{}, agg.Args...),
+		}
+	}
+	return aggs
 }
 
 func (os Orders) SortSliceList(list []map[string]any, fieldType map[string]string) {

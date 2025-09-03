@@ -68,7 +68,7 @@ type DorisSQLExpr struct {
 	valueField string
 
 	keepColumns []string
-	fieldsMap   map[string]string
+	fieldsMap   map[string]FieldOption
 	fieldAlias  metadata.FieldAlias
 
 	isSetLabels bool
@@ -97,7 +97,7 @@ func (d *DorisSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 	return d
 }
 
-func (d *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]string) SQLExpr {
+func (d *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]FieldOption) SQLExpr {
 	d.fieldsMap = fieldsMap
 	return d
 }
@@ -107,7 +107,7 @@ func (d *DorisSQLExpr) WithKeepColumns(cols []string) SQLExpr {
 	return d
 }
 
-func (d *DorisSQLExpr) FieldMap() map[string]string {
+func (d *DorisSQLExpr) FieldMap() map[string]FieldOption {
 	return d.fieldsMap
 }
 
@@ -386,13 +386,15 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 					op = "MATCH_PHRASE_PREFIX"
 				} else if c.IsSuffix {
 					op = "MATCH_PHRASE_EDGE"
-				} else if c.IsForceEq {
-					op = "="
 				} else {
-					if d.isText(c.DimensionName) {
+					if c.Operator == metadata.ConditionContains {
 						op = "MATCH_PHRASE"
 					} else {
-						op = "="
+						if d.isAnalyzed(c.DimensionName) {
+							op = "MATCH_PHRASE"
+						} else {
+							op = "="
+						}
 					}
 				}
 			}
@@ -443,10 +445,14 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 				} else if c.IsSuffix {
 					op = "NOT MATCH_PHRASE_EDGE"
 				} else {
-					if d.isText(c.DimensionName) {
+					if c.Operator == metadata.ConditionNotContains {
 						op = "NOT MATCH_PHRASE"
 					} else {
-						op = "!="
+						if d.isAnalyzed(c.DimensionName) {
+							op = "NOT MATCH_PHRASE"
+						} else {
+							op = "!="
+						}
 					}
 				}
 			}
@@ -513,12 +519,16 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 func (d *DorisSQLExpr) isArray(k string) bool {
 	fieldType := d.getFieldType(k)
-	_, ok := d.caseAs(fieldType)
+	_, ok := d.caseAs(fieldType.Type)
 	return ok
 }
 
 func (d *DorisSQLExpr) isText(k string) bool {
-	return d.getFieldType(k) == DorisTypeText
+	return d.getFieldType(k).Type == DorisTypeText
+}
+
+func (d *DorisSQLExpr) isAnalyzed(k string) bool {
+	return d.getFieldType(k).Analyzed
 }
 
 func (d *DorisSQLExpr) likeValue(s string) string {
@@ -638,14 +648,14 @@ func (d *DorisSQLExpr) walk(e querystring_parser.Expr) (string, error) {
 	return "", err
 }
 
-func (d *DorisSQLExpr) getFieldType(s string) (fieldType string) {
+func (d *DorisSQLExpr) getFieldType(s string) (opt FieldOption) {
 	if d.fieldsMap == nil {
 		return
 	}
 
 	var ok bool
-	if fieldType, ok = d.fieldsMap[s]; ok {
-		fieldType = strings.ToUpper(fieldType)
+	if opt, ok = d.fieldsMap[s]; ok {
+		opt.Type = strings.ToUpper(opt.Type)
 	}
 	return
 }
@@ -679,7 +689,7 @@ func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
 	}
 
 	fieldType := d.getFieldType(s)
-	castType, _ := d.caseAs(fieldType)
+	castType, _ := d.caseAs(fieldType.Type)
 
 	fs := strings.Split(s, ".")
 	if len(fs) == 1 {

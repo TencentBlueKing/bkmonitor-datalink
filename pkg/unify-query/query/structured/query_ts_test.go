@@ -11,6 +11,7 @@ package structured
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -293,6 +294,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 
 		isDirectQuery bool
 		expand        *md.VmExpand
+		refString     string
 		ref           md.QueryReference
 		promql        string
 	}{
@@ -347,7 +349,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
-											IsForceEq:     true,
 										},
 									},
 								},
@@ -382,7 +383,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
-											IsForceEq:     true,
 										},
 									},
 								},
@@ -447,7 +447,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
-											IsForceEq:     true,
 										},
 									},
 								},
@@ -482,7 +481,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
-											IsForceEq:     true,
 										},
 									},
 								},
@@ -534,7 +532,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
-											IsForceEq:     true,
 										},
 									},
 								},
@@ -558,7 +555,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								DimensionName: "bk_obj_id",
 								Operator:      Ncontains,
 								Value:         []string{"0"},
-								IsForceEq:     true,
 							},
 						}},
 					},
@@ -599,13 +595,11 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
-											IsForceEq:     true,
 										},
 										{
 											DimensionName: "bk_obj_id",
 											Operator:      Ncontains,
 											Value:         []string{"0"},
-											IsForceEq:     true,
 										},
 									},
 								},
@@ -629,7 +623,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								DimensionName: "bk_obj_id",
 								Operator:      Ncontains,
 								Value:         []string{"0"},
-								IsForceEq:     true,
 							},
 						}},
 					},
@@ -669,13 +662,11 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
-											IsForceEq:     true,
 										},
 										{
 											DimensionName: "bk_obj_id",
 											Operator:      Ncontains,
 											Value:         []string{"0"},
-											IsForceEq:     true,
 										},
 									},
 								},
@@ -743,7 +734,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
-											IsForceEq:     true,
 										},
 									},
 								},
@@ -812,7 +802,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
-											IsForceEq:     true,
 										},
 									},
 								},
@@ -890,7 +879,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
-											IsForceEq:     true,
 										},
 									},
 								},
@@ -966,7 +954,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
-											IsForceEq:     true,
 										},
 									},
 								},
@@ -1041,7 +1028,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
-											IsForceEq:     true,
 										},
 									},
 								},
@@ -1115,7 +1101,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
-											IsForceEq:     true,
 										},
 									},
 								},
@@ -1188,7 +1173,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 											DimensionName: "bk_biz_id",
 											Operator:      ConditionEqual,
 											Value:         []string{"2"},
-											IsForceEq:     true,
 										},
 									},
 								},
@@ -1257,7 +1241,10 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmCondition:    `__name__="usage_value"`,
 								StorageID:      "3",
 								Field:          "usage",
-								StorageType:    consul.ElasticsearchStorageType,
+								FieldAlias: md.FieldAlias{
+									"alias_ns": "__ext.host.bk_set_name",
+								},
+								StorageType: consul.ElasticsearchStorageType,
 								Aggregates: md.Aggregates{
 									{
 										Name:       "sum",
@@ -1326,8 +1313,11 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								StorageID:      "3",
 								Field:          "usage",
 								Fields:         []string{"usage"},
-								MetricNames:    []string{"bklog:result_table:es:usage"},
-								StorageType:    consul.ElasticsearchStorageType,
+								FieldAlias: md.FieldAlias{
+									"alias_ns": "__ext.host.bk_set_name",
+								},
+								MetricNames: []string{"bklog:result_table:es:usage"},
+								StorageType: consul.ElasticsearchStorageType,
 								Aggregates: md.Aggregates{
 									{
 										Name:       "sum",
@@ -1474,6 +1464,50 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				},
 			},
 		},
+		"别名转换": {
+			ts: &QueryTs{
+				QueryList: []*Query{
+					{
+						DataSource:    BkLog,
+						TableID:       "alias_es",
+						FieldName:     "alias_ns",
+						ReferenceName: "a",
+						TimeAggregation: TimeAggregation{
+							Function: "sum_over_time",
+							Window:   "1m",
+						},
+						Conditions: Conditions{
+							FieldList: []ConditionField{
+								{
+									DimensionName: "alias_ns",
+									Operator:      ConditionNotEqual,
+									Value:         []string{""},
+								},
+							},
+						},
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"alias_ns"},
+							},
+							{
+								Method: "topk",
+								VArgsList: []interface{}{
+									1,
+								},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			isDirectQuery: false,
+			promql:        `topk(1, sum by (alias_ns) (last_over_time(a[1m])))`,
+			refString:     `{"a":[{"QueryList":[{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es","db":"es_index","field":"__ext.host.bk_set_name","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es:alias_ns"],"aggregates":[{"name":"sum","dimensions":["__ext.host.bk_set_name"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"__ext.host.bk_set_name","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]]},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"alias_es_1","db":"es_index","field":"__ext.namespace","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.namespace"},"metric_names":["bklog:alias_es_1:alias_ns"],"aggregates":[{"name":"sum","dimensions":["__ext.namespace"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"__ext.namespace","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]]}],"ReferenceName":"a","MetricName":"alias_ns","IsCount":false}]}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var (
@@ -1484,8 +1518,16 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 
 			md.SetUser(ctx, &md.User{SpaceUID: influxdb.SpaceUid})
 			ref, err := tc.ts.ToQueryReference(ctx)
+
 			assert.Nil(t, err)
-			assert.Equal(t, tc.ref, ref)
+			refJson, _ := json.Marshal(ref)
+
+			if tc.refString == "" {
+				refString, _ := json.Marshal(tc.ref)
+				tc.refString = string(refString)
+			}
+
+			assert.JSONEq(t, tc.refString, string(refJson))
 
 			vmExpand = ref.ToVmExpand(ctx)
 			isDirectQuery := md.GetQueryParams(ctx).IsDirectQuery()

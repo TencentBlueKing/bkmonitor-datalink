@@ -99,8 +99,8 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NewSQLExpr(Doris).WithFieldsMap(map[string]string{
-				"text": DorisTypeText,
+			got, err := NewSQLExpr(Doris).WithFieldsMap(map[string]FieldOption{
+				"text": {Type: DorisTypeText},
 			}).ParserQueryString(tt.input)
 			if err != nil {
 				assert.Equal(t, tt.err, err.Error())
@@ -145,6 +145,13 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					{
 						DimensionName: "object.field",
 						Value:         []string{"What's UP"},
+						Operator:      metadata.ConditionContains,
+					},
+				},
+				{
+					{
+						DimensionName: "object.field",
+						Value:         []string{"What's UP"},
 						Operator:      metadata.ConditionEqual,
 					},
 					{
@@ -154,7 +161,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "CAST(object['field'] AS TEXT) MATCH_PHRASE 'What''s UP' AND `tag` != 'test'",
+			want: "(CAST(object['field'] AS TEXT) MATCH_PHRASE 'What''s UP' OR CAST(object['field'] AS TEXT) = 'What''s UP' AND `tag` != 'test')",
 		},
 		{
 			name: "doris test object field condition",
@@ -334,11 +341,11 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 		},
 	}
 
-	e := NewSQLExpr(Doris).WithFieldsMap(map[string]string{
-		"object.field":                     DorisTypeText,
-		"tag.city.town.age":                DorisTypeTinyInt,
-		"events.attributes.exception.type": fmt.Sprintf(DorisTypeArray, DorisTypeText),
-		"events.timestamp":                 fmt.Sprintf(DorisTypeArray, DorisTypeBigInt),
+	e := NewSQLExpr(Doris).WithFieldsMap(map[string]FieldOption{
+		"object.field":                     {Type: DorisTypeText},
+		"tag.city.town.age":                {Type: DorisTypeTinyInt},
+		"events.attributes.exception.type": {Type: fmt.Sprintf(DorisTypeArray, DorisTypeText)},
+		"events.timestamp":                 {Type: fmt.Sprintf(DorisTypeArray, DorisTypeBigInt)},
 	})
 
 	for _, tt := range tests {

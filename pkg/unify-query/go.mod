@@ -6,6 +6,7 @@ require (
 	github.com/Knetic/govaluate v3.0.0+incompatible
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive v0.0.0-00010101000000-000000000000
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
+	github.com/TingYunGo/goagent v1.8.8
 	github.com/VictoriaMetrics/metricsql v0.69.0
 	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/antlr4-go/antlr/v4 v4.13.1

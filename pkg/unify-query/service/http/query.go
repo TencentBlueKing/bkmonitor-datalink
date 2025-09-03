@@ -584,14 +584,12 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		step time.Duration
 	)
 
-	// 只有聚合场景需要对齐
-	if window, windowErr := queryTs.GetMaxWindow(); windowErr == nil && window.Seconds() > 0 {
-		timezone := "UTC"
-		// 只有按天聚合的时候才启用时区对齐偏移量，否则一律使用 UTC
-		if window.Milliseconds()%(24*time.Hour).Milliseconds() == 0 {
-			timezone = queryTs.Timezone
-		}
+	// 获取配置里面的最大时间聚合以及时区
+	window, timezone := queryRef.GetMaxWindowAndTimezone()
 
+	// 只有聚合场景需要对齐
+	if window.Seconds() > 0 {
+		// 移除按天整除逻辑，使用用户传过来的时区
 		startTime, endTime, step, _, err = structured.AlignTime(startTime, endTime, queryTs.Step, timezone)
 		if err != nil {
 			return nil, err

@@ -77,8 +77,9 @@ type Aggregate struct {
 	Dimensions []string `json:"dimensions,omitempty"`
 	Without    bool     `json:"without,omitempty"`
 
-	Window   time.Duration `json:"window,omitempty"`
-	TimeZone string        `json:"time_zone,omitempty"`
+	Window         time.Duration `json:"window,omitempty"`
+	TimeZone       string        `json:"time_zone,omitempty"`
+	TimeZoneOffset int64         `json:"time_zone_offset,omitempty"`
 
 	Args []interface{} `json:"args,omitempty"`
 }
@@ -404,6 +405,23 @@ func (qRef QueryReference) Range(name string, fn func(qry *Query)) {
 			}
 		}
 	}
+}
+
+func (qRef QueryReference) GetMaxWindowAndTimezone() (time.Duration, string) {
+	var (
+		window   time.Duration = 0
+		timezone string
+	)
+	qRef.Range("", func(q *Query) {
+		for _, a := range q.Aggregates {
+			if a.Window > window {
+				window = a.Window
+				timezone = a.TimeZone
+			}
+		}
+	})
+
+	return window, timezone
 }
 
 // ToVmExpand 判断是否是直查，如果都是 vm 查询的情况下，则使用直查模式

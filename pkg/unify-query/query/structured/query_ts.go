@@ -75,6 +75,8 @@ type QueryTs struct {
 
 	// Scroll 是否启用 Scroll 查询
 	Scroll string `json:"scroll,omitempty"`
+	// SliceMax 最大切片数量
+	SliceMax int `json:"slice_max,omitempty"`
 	// IsMultiFrom 是否启用 MultiFrom 查询
 	IsMultiFrom bool `json:"is_multi_from,omitempty"`
 	// ClearCache 是否强制清理已存在的缓存会话
@@ -411,7 +413,8 @@ type Query struct {
 	// ResultTableOptions
 	ResultTableOptions metadata.ResultTableOptions `json:"-"`
 	// Scroll
-	Scroll string `json:"-"`
+	Scroll   string `json:"-"`
+	SliceMax int    `json:"-"`
 	// DryRun
 	DryRun bool `json:"-"`
 	// Collapse
@@ -914,6 +917,7 @@ func (q *Query) BuildMetadataQuery(
 	query.Collapse = q.Collapse
 
 	query.Scroll = q.Scroll
+	query.SliceMax = q.SliceMax
 	query.DryRun = q.DryRun
 
 	query.Size = q.Limit

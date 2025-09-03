@@ -144,9 +144,10 @@ type ValueAgg struct {
 }
 
 type TimeAgg struct {
-	Name     string
-	Window   time.Duration
-	Timezone string
+	Name           string
+	Window         time.Duration
+	TimeZone       string
+	TimeZoneOffset int64
 }
 
 type TermAgg struct {
@@ -388,10 +389,10 @@ func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
 	return query, err
 }
 
-func (f *FormatFactory) timeAgg(name string, window time.Duration, timezone string) {
+func (f *FormatFactory) timeAgg(name string, window time.Duration, timezoneOffset int64, timezone string) {
 	f.aggInfoList = append(
 		f.aggInfoList, TimeAgg{
-			Name: name, Window: window, Timezone: timezone,
+			Name: name, Window: window, TimeZoneOffset: timezoneOffset, TimeZone: timezone,
 		},
 	)
 	f.nestedAgg(name)
@@ -700,7 +701,10 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		case TimeAgg:
 			curName := info.Name
 
-			var interval string
+			var (
+				interval string
+				offset   string
+			)
 
 			if f.timeField.Type == TimeFieldTypeInt {
 				interval, err = f.toFixInterval(info.Window)
@@ -715,9 +719,34 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				Field(f.timeField.Name).Interval(interval).MinDocCount(0).
 				ExtendedBounds(f.timeFieldUnix(f.start), f.timeFieldUnix(f.end))
 
+			if function.IsAlignTime(info.Window) {
+				if f.timeField.Type == TimeFieldTypeTime {
+					// https://github.com/elastic/elasticsearch/issues/42270 非date类型不支持timezone, time format也无效
+					curAgg = curAgg.TimeZone(info.TimeZone)
+				} else {
+					//https://www.elastic.co/docs/reference/aggregations/search-aggregations-bucket-datehistogram-aggregation#search-aggregations-bucket-datehistogram-offset
+					var (
+						fh = "+"
+						ot = info.TimeZoneOffset
+					)
+					if info.TimeZoneOffset < 0 {
+						fh = "-"
+						ot = -ot
+					}
+
+					if ot > 0 {
+						offset, err = f.toFixInterval(time.Duration(ot) * time.Millisecond)
+						if err != nil {
+							return
+						}
+						curAgg = curAgg.Offset(fmt.Sprintf("%s%s", fh, offset))
+					}
+				}
+			}
+
 			// https://github.com/elastic/elasticsearch/issues/42270 非date类型不支持timezone, time format也无效
 			if f.timeField.Type == TimeFieldTypeTime && function.IsAlignTime(info.Window) {
-				curAgg = curAgg.TimeZone(info.Timezone)
+				curAgg = curAgg.TimeZone(info.TimeZone)
 			}
 			if agg != nil {
 				curAgg = curAgg.SubAggregation(name, agg)
@@ -782,13 +811,13 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 	for _, am := range aggregates {
 		switch am.Name {
 		case DateHistogram:
-			f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
+			f.timeAgg(f.timeField.Name, am.Window, am.TimeZoneOffset, am.TimeZone)
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
 			f.valueAgg(f.valueField, FieldValue, am.Name, am.Args...)
 
 			if am.Window > 0 && !am.Without {
 				// 增加时间函数
-				f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
+				f.timeAgg(f.timeField.Name, am.Window, am.TimeZoneOffset, am.TimeZone)
 			}
 
 			for idx, dim := range am.Dimensions {
@@ -935,6 +964,8 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 									q = f.getQuery(MustNot, query)
 								case structured.ConditionNotEqual, structured.Ncontains:
 									q = query
+								case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
+									continue
 								default:
 									return fmt.Errorf("operator is not support with empty, %+v", con)
 								}

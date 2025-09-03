@@ -623,6 +623,20 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		return nil, err
 	}
 
+	// 注入时区和时区偏移，用于聚合处理
+	var timeZoneOffset int64
+	if timezone != "UTC" {
+		utcStart, _, _, _, _ := AlignTime(startTime, endTime, q.Step, "UTC")
+		timeZoneOffset = start.UnixMilli() - utcStart.UnixMilli()
+	}
+	for idx, agg := range aggregates {
+		if agg.Window > 0 {
+			agg.TimeZone = timezone
+			agg.TimeZoneOffset = timeZoneOffset
+			aggregates[idx] = agg
+		}
+	}
+
 	// 查询路由匹配中的 tsDB 列表
 	for _, tsDB := range tsDBs {
 		storageIDs := tsDB.GetStorageIDs(start, end)

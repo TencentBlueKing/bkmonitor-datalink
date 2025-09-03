@@ -77,8 +77,9 @@ type Aggregate struct {
 	Dimensions []string `json:"dimensions,omitempty"`
 	Without    bool     `json:"without,omitempty"`
 
-	Window   time.Duration `json:"window,omitempty"`
-	TimeZone string        `json:"time_zone,omitempty"`
+	Window         time.Duration `json:"window,omitempty"`
+	TimeZone       string        `json:"time_zone,omitempty"`
+	TimeZoneOffset int64         `json:"time_zone_offset,omitempty"`
 
 	Args []interface{} `json:"args,omitempty"`
 }

@@ -18,7 +18,8 @@ type ResultTableOption struct {
 	SearchAfter []any  `json:"search_after,omitempty"`
 
 	SliceIndex *int `json:"slice_index,omitempty"`
-	SliceMax   *int `json:"slice_max,omitempty"`
+	SliceMax   int  `json:"slice_max,omitempty"`
+	Hit        int  `json:"hit,omitempty"`
 
 	FieldType map[string]string `json:"-"`
 
@@ -52,7 +53,7 @@ func (o ResultTableOptions) MergeOptions(options ResultTableOptions) {
 // IsCrop 是否裁剪数据
 func (o ResultTableOptions) IsCrop() bool {
 	for _, v := range o {
-		if v.ScrollID != "" || len(v.SearchAfter) > 0 {
+		if v.SliceMax > 0 || (*v.SliceIndex) > 0 || v.ScrollID != "" || len(v.SearchAfter) > 0 {
 			return false
 		}
 	}

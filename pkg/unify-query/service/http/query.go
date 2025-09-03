@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
@@ -434,7 +435,6 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				continue
 			}
 
-			log.Infof(ctx, "query with sliceID: %s, sliceMax: %d, offset: %d, limit: %d", s.ScrollID, s.SliceMax, s.Offset, s.Limit)
 			wg.Add(1)
 
 			err = p.Submit(func() {
@@ -450,14 +450,15 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					errCh <- err
 					return
 				}
-
+				log.Infof(ctx, "[scroll] session: %v", session)
+				log.Infof(ctx, "[scroll] query with sliceID: %s, sliceIdx:%d ,sliceMax: %d, offset: %d, limit: %d", s.ScrollID, s.SliceIdx, s.SliceMax, s.Offset, s.Limit)
 				// 使用 slice 配置查询
-				newQry.SliceID = s.ScrollID
+				newQry.SliceID = cast.ToString(s.SliceIdx)
 				newQry.Size = s.Limit
 				newQry.ResultTableOption = &metadata.ResultTableOption{
 					ScrollID:   s.ScrollID,
 					SliceIndex: &s.SliceIdx,
-					SliceMax:   &s.SliceMax,
+					SliceMax:   s.SliceMax,
 					From:       &s.Offset,
 				}
 
@@ -479,9 +480,11 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					if option.ScrollID != "" {
 						s.ScrollID = option.ScrollID
 					}
+					s.Count += option.Hit
 					s.Offset = s.Offset + s.Limit*s.SliceMax
 					lock.Lock()
 					resultTableOptions.SetOption(newQry.TableUUID(), option)
+					log.Infof(ctx, "[scroll] tableUUID: %s, option: %v, total:%d", newQry.TableUUID(), option, size)
 					lock.Unlock()
 				}
 

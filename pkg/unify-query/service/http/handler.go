@@ -323,7 +323,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	queryByte, _ := json.Marshal(queryTs)
 	queryStr := string(queryByte)
 	queryStrWithUserName := fmt.Sprintf("%s:%s", user.Name, queryStr)
-	session, err := redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollMaxSlice, ScrollSliceLimit)
+	session, err := redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollSessionLockTimeout, queryTs.SliceMax, queryTs.Limit)
 	if err != nil {
 		return
 	}
@@ -331,17 +331,30 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	span.Set("query-body", queryStr)
 
 	if isClearCache {
-		err = session.ReleaseLock(ctx)
+		err = session.Clear(ctx)
 		if err != nil {
+			log.Errorf(ctx, "clear scroll session failed, err: %v", err)
 			return
 		}
 	}
 
-	if err = session.AcquireLock(ctx); err != nil {
+	if err = session.Lock(ctx); err != nil {
 		return
 	}
 	defer func() {
-		err = session.ReleaseLock(ctx)
+		if listData.Done {
+			err = session.Clear(ctx)
+			if err != nil {
+				log.Errorf(ctx, "clear scroll session failed, err: %v", err)
+				return
+			}
+		}
+		err = session.Update(ctx)
+		if err != nil {
+			log.Errorf(ctx, "update scroll session failed, err: %v", err)
+			return
+		}
+		err = session.UnLock(ctx)
 		if err != nil {
 			return
 		}

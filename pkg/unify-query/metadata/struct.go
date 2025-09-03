@@ -161,6 +161,7 @@ type Query struct {
 	Size   int      `json:"size,omitempty"`
 
 	Scroll            string             `json:"scroll,omitempty"`
+	SliceMax          int                `json:"slice_max,omitempty"`
 	ResultTableOption *ResultTableOption `json:"result_table_option,omitempty"`
 
 	Orders      Orders    `json:"orders,omitempty"`

@@ -4313,6 +4313,7 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 			Limit:    10,
 			Start:    start,
 			End:      end,
+			SliceMax: 3,
 		},
 		expected: []expectResult{
 			{
@@ -4361,12 +4362,12 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 		ctx = metadata.InitHashID(context.Background())
 
 		metadata.SetUser(ctx, user)
-
+		mock.Es.Clear()
 		mock.Es.Set(c.mockData)
 
-		session, err := redisUtil.GetOrCreateScrollSession(ctx, queryTsStr, ScrollWindowTimeout, ScrollMaxSlice, 10)
+		session, err := redisUtil.GetOrCreateScrollSession(ctx, queryTsStr, ScrollWindowTimeout, ScrollSessionLockTimeout, 3, 10)
 		require.NoError(t, err, "Failed to get scroll session")
-		err = session.AcquireLock(ctx)
+		err = session.Lock(ctx)
 		require.NoErrorf(t, err, "Failed to acquire lock for scroll session in step %d", i+1)
 
 		var queryTsCopy structured.QueryTs
@@ -4388,7 +4389,9 @@ func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 		} else {
 			assert.Equal(t, 0, len(list), "Should have no data when hasData is false for step %d", i+1)
 		}
-		err = session.ReleaseLock(ctx)
+		err = session.Update(ctx)
+		require.NoError(t, err, "Failed to update session")
+		err = session.UnLock(ctx)
 		require.NoError(t, err, "Failed to release lock for scroll session in step %d", i+1)
 		t.Logf("Session: %+v", session)
 	}
@@ -4517,7 +4520,7 @@ func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
 		SpaceUID:  spaceUid,
 		SkipSpace: "true",
 	}
-	session, err := redisUtil.GetOrCreateScrollSession(t.Context(), queryTsStr, ScrollWindowTimeout, ScrollMaxSlice, 10)
+	session, err := redisUtil.GetOrCreateScrollSession(t.Context(), queryTsStr, ScrollWindowTimeout, ScrollSessionLockTimeout, 3, 10)
 	require.NoError(t, err, "Failed to get scroll session")
 
 	for i, c := range tCase.expected {
@@ -4533,12 +4536,14 @@ func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
 		var queryTsCopy structured.QueryTs
 		err = json.Unmarshal([]byte(queryTsStr), &queryTsCopy)
 		require.NoError(t, err, "Failed to unmarshal queryTs")
-		err = session.AcquireLock(ctx)
+		err = session.Lock(ctx)
 		require.NoErrorf(t, err, "Failed to acquire lock for scroll session in step %d", i+1)
 		total, list, _, err := queryRawWithScroll(ctx, &queryTsCopy, session)
 		done := session.Done()
 		t.Logf("queryRawWithScroll returned: total=%d, len(list)=%d, done=%v, err=%v", total, len(list), done, err)
-		err = session.ReleaseLock(ctx)
+		err = session.Update(ctx)
+		require.NoError(t, err, "Failed to update session")
+		err = session.UnLock(ctx)
 		require.NoError(t, err, "Failed to release lock for scroll session in step %d", i+1)
 		hasData := len(list) > 0
 		t.Logf("Session: %+v", session)

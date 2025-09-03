@@ -935,6 +935,8 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 									q = f.getQuery(MustNot, query)
 								case structured.ConditionNotEqual, structured.Ncontains:
 									q = query
+								case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
+									continue
 								default:
 									return fmt.Errorf("operator is not support with empty, %+v", con)
 								}

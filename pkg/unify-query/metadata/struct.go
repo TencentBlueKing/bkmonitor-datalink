@@ -475,6 +475,21 @@ func (a Aggregates) LastAggName() string {
 	return a[len(a)-1].Name
 }
 
+func (a Aggregates) Copy() Aggregates {
+	aggs := make(Aggregates, len(a))
+	for i, agg := range a {
+		aggs[i] = Aggregate{
+			Name:       agg.Name,
+			Field:      agg.Field,
+			Dimensions: append([]string{}, agg.Dimensions...),
+			Window:     agg.Window,
+			TimeZone:   agg.TimeZone,
+			Args:       append([]any{}, agg.Args...),
+		}
+	}
+	return aggs
+}
+
 func (os Orders) SortSliceList(list []map[string]any, fieldType map[string]string) {
 	if len(os) == 0 {
 		return

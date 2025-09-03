@@ -316,6 +316,10 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 		queryTs.Limit = ScrollSliceLimit
 	}
 
+	if queryTs.SliceMax == 0 {
+		queryTs.SliceMax = ScrollMaxSlice
+	}
+
 	// 把是否清理的标记位提取出来，避免后续生成的 key 不一致
 	isClearCache := queryTs.ClearCache
 
@@ -323,7 +327,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	queryByte, _ := json.Marshal(queryTs)
 	queryStr := string(queryByte)
 	queryStrWithUserName := fmt.Sprintf("%s:%s", user.Name, queryStr)
-	session, err := redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollMaxSlice, ScrollSliceLimit)
+	session, err := redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollSessionLockTimeout, queryTs.SliceMax, ScrollSliceLimit)
 	if err != nil {
 		return
 	}

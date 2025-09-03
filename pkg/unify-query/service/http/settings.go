@@ -104,7 +104,7 @@ var (
 	JwtBkAppCodeSpaces map[string][]string
 
 	ScrollMaxSlice           int
-	ScrollSessionLockTimeout time.Duration
 	ScrollWindowTimeout      string
+	ScrollSessionLockTimeout string
 	ScrollSliceLimit         int
 )

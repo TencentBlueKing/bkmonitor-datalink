@@ -103,8 +103,8 @@ func LoadConfig() {
 
 	ScrollSliceLimit = viper.GetInt(ScrollSliceLimitConfigPath)
 	ScrollMaxSlice = viper.GetInt(ScrollMaxSliceConfigPath)
-	ScrollSessionLockTimeout = viper.GetDuration(ScrollSessionLockTimeoutConfigPath)
 	ScrollWindowTimeout = viper.GetString(ScrollWindowTimeoutConfigPath)
+	ScrollSessionLockTimeout = viper.GetString(ScrollSessionLockTimeoutConfigPath)
 
 	QueryMaxRouting = viper.GetInt(QueryMaxRoutingConfigPath)
 

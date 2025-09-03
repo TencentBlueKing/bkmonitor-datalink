@@ -51,14 +51,15 @@ func (s *SliceStatusValue) Done() bool {
 }
 
 type ScrollSession struct {
-	SessionKey        string             `json:"session_key"`
-	LockKey           string             `json:"lock_key"`
-	LastAccessAt      time.Time          `json:"last_access_at"`
-	ScrollTimeout     time.Duration      `json:"scroll_timeout"`
-	MaxSlice          int                `json:"max_slice"`
-	SliceMaxFailedNum int                `json:"slice_max_failed_num"`
-	Limit             int                `json:"limit"`
-	ScrollIDs         []SliceStatusValue `json:"scroll_ids"`
+	SessionKey          string             `json:"session_key"`
+	LockKey             string             `json:"lock_key"`
+	LastAccessAt        time.Time          `json:"last_access_at"`
+	ScrollWindowTimeout time.Duration      `json:"scroll_window_timeout"`
+	ScrollLockTimeout   time.Duration      `json:"scroll_lock_timeout"`
+	MaxSlice            int                `json:"max_slice"`
+	SliceMaxFailedNum   int                `json:"slice_max_failed_num"`
+	Limit               int                `json:"limit"`
+	ScrollIDs           []SliceStatusValue `json:"scroll_ids"`
 
 	mu sync.RWMutex
 }
@@ -80,13 +81,13 @@ func (s *ScrollSession) AcquireLock(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	err := Client().SetNX(ctx, s.LockKey, "locked", s.ScrollTimeout).Err()
+	err := Client().SetNX(ctx, s.LockKey, "locked", s.ScrollLockTimeout).Err()
 	if err != nil {
 		return errors.Wrap(err, "failed to acquire lock")
 	}
 
 	s.LastAccessAt = time.Now()
-	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
+	return Client().Set(ctx, s.SessionKey, s, s.ScrollLockTimeout).Err()
 }
 
 func (s *ScrollSession) ReleaseLock(ctx context.Context) error {
@@ -97,7 +98,7 @@ func (s *ScrollSession) ReleaseLock(ctx context.Context) error {
 		return err
 	}
 	s.LastAccessAt = time.Now()
-	return Client().Set(ctx, s.SessionKey, s, s.ScrollTimeout).Err()
+	return Client().Set(ctx, s.SessionKey, s, s.ScrollWindowTimeout).Err()
 }
 
 func (s *ScrollSession) MarshalBinary() ([]byte, error) {
@@ -120,16 +121,17 @@ func (s *ScrollSession) Done() bool {
 	return true
 }
 
-func newScrollSession(queryTsStr string, scrollTimeout time.Duration, maxSlice, sliceMaxFailedNum, limit int) *ScrollSession {
+func newScrollSession(queryTsStr string, scrollTimeout, scrollLockTimeout time.Duration, maxSlice, sliceMaxFailedNum, Limit int) *ScrollSession {
 	session := &ScrollSession{
-		SessionKey:        SessionKeyPrefix + queryTsStr,
-		LockKey:           ScrollLockKeyPrefix + queryTsStr,
-		LastAccessAt:      time.Now(),
-		ScrollTimeout:     scrollTimeout,
-		MaxSlice:          maxSlice,
-		SliceMaxFailedNum: sliceMaxFailedNum,
-		Limit:             limit,
-		ScrollIDs:         make([]SliceStatusValue, maxSlice),
+		SessionKey:          SessionKeyPrefix + queryTsStr,
+		LockKey:             ScrollLockKeyPrefix + queryTsStr,
+		LastAccessAt:        time.Now(),
+		ScrollWindowTimeout: scrollTimeout,
+		ScrollLockTimeout:   scrollLockTimeout,
+		MaxSlice:            maxSlice,
+		SliceMaxFailedNum:   sliceMaxFailedNum,
+		Limit:               Limit,
+		ScrollIDs:           make([]SliceStatusValue, maxSlice),
 	}
 
 	// 根据 maxSlice 初始化 ScrollIDs
@@ -138,27 +140,37 @@ func newScrollSession(queryTsStr string, scrollTimeout time.Duration, maxSlice, 
 			SliceIdx:     idx,
 			SliceMax:     maxSlice,
 			ScrollID:     "",
-			Offset:       idx * limit,
+			Offset:       idx * Limit,
 			Status:       StatusPending,
 			FailedNum:    0,
 			MaxFailedNum: sliceMaxFailedNum,
-			Limit:        limit,
+			Limit:        Limit,
 		}
 	}
 
 	return session
 }
 
-func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollTimeout string, maxSlice, limit int) (*ScrollSession, error) {
+func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollWindowTimeout, scrollLockTimeout string, maxSlice, Limit int) (session *ScrollSession, err error) {
 	session, exist := checkScrollSession(ctx, queryTsStr)
 	if exist {
-		return session, nil
+		return
 	}
-	scrollTimeoutDuration, err := time.ParseDuration(scrollTimeout)
+	scrollWindowTimeoutDuration, err := time.ParseDuration(scrollWindowTimeout)
 	if err != nil {
-		return nil, err
+		return
 	}
-	return newScrollSession(queryTsStr, scrollTimeoutDuration, maxSlice, DefaultSliceMaxFailedNum, limit), nil
+	scrollLockTimeoutDuration, err := time.ParseDuration(scrollLockTimeout)
+	if err != nil {
+		return
+	}
+
+	session = newScrollSession(queryTsStr, scrollWindowTimeoutDuration, scrollLockTimeoutDuration, maxSlice, DefaultSliceMaxFailedNum, Limit)
+	err = Client().SetNX(ctx, session.SessionKey, session, scrollWindowTimeoutDuration).Err()
+	if err != nil {
+		return
+	}
+	return
 }
 
 func checkScrollSession(ctx context.Context, queryTsStr string) (*ScrollSession, bool) {

@@ -276,14 +276,16 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		return nil, fmt.Errorf("empty query body")
 	}
 
-	bodyJson, _ := json.Marshal(body)
-	bodyString := string(bodyJson)
+	qbString, _ := json.Marshal(qb)
 
-	span.Set("metadata-query", qb)
+	span.Set("metadata-query", qbString)
 	span.Set("query-connect", qo.conn.String())
 	span.Set("query-headers", i.headers)
 
 	span.Set("query-indexes", qo.indexes)
+
+	bodyJson, _ := json.Marshal(body)
+	bodyString := string(bodyJson)
 	span.Set("query-body", bodyString)
 
 	log.Infof(ctx, "elasticsearch-query indexes: %s", qo.indexes)

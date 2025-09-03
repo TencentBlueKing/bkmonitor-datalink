@@ -651,7 +651,8 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			query, err := q.BuildMetadataQuery(ctx, tsDB, allConditions)
 			if err != nil {
 			}
-			query.Aggregates = aggregates
+
+			query.Aggregates = aggregates.Copy()
 			query.Timezone = timezone
 			query.StorageID = storageID
 			query.ResultTableOption = q.ResultTableOptions.GetOption(query.TableUUID())

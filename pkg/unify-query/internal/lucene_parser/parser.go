@@ -20,6 +20,7 @@ import (
 
 type Parser struct {
 	EsSchemas []FieldSchema
+	IsPrefix  bool
 }
 
 type ParserOption struct {
@@ -29,6 +30,12 @@ type ParserOption struct {
 func WithEsSchema(esSchema FieldSchema) func(*Parser) {
 	return func(p *Parser) {
 		p.EsSchemas = append(p.EsSchemas, esSchema)
+	}
+}
+
+func WithIsPrefix(isPrefix bool) func(*Parser) {
+	return func(p *Parser) {
+		p.IsPrefix = isPrefix
 	}
 }
 
@@ -49,13 +56,21 @@ type ParseResult struct {
 }
 
 func (p *Parser) Do(q string) (rt ParseResult, err error) {
+	if q == "" || q == "*" {
+		return ParseResult{
+			Expr: nil,
+			ES:   nil,
+			SQL:  "",
+		}, nil
+	}
+
 	expr, err := buildExpr(q)
 	if err != nil {
 		return
 	}
 	return ParseResult{
 		Expr: expr,
-		ES:   es(expr, p.EsSchemas...),
+		ES:   es(expr, p.IsPrefix, p.EsSchemas...),
 		SQL:  toSql(expr),
 	}, nil
 }

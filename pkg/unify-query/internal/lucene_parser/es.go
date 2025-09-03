@@ -49,59 +49,59 @@ func (d *Schema) SetFieldType(fieldName string, fieldType FieldType) {
 	d.fieldTypes[fieldName] = fieldType
 }
 
-func es(expr Expr, mappings ...FieldSchema) elastic.Query {
+func es(expr Expr, isPrefix bool, mappings ...FieldSchema) elastic.Query {
 	var schema FieldSchema
 	if len(mappings) > 0 {
 		schema = mappings[0]
 	} else {
 		schema = &Schema{fieldTypes: make(map[string]FieldType)}
 	}
-	return ToESWithSchema(expr, schema)
+	return ToESWithSchemaAndPrefix(expr, schema, isPrefix)
 }
 
-func ToESWithSchema(expr Expr, schema FieldSchema) elastic.Query {
+func ToESWithSchemaAndPrefix(expr Expr, schema FieldSchema, isPrefix bool) elastic.Query {
 	if expr == nil {
 		return nil
 	}
-	return walkESWithSchema(expr, schema)
+	return walkESWithSchema(expr, schema, isPrefix)
 }
 
-func walkESWithSchema(expr Expr, schema FieldSchema) elastic.Query {
+func walkESWithSchema(expr Expr, schema FieldSchema, isPrefix bool) elastic.Query {
 	if expr == nil {
 		return nil
 	}
 
 	switch e := expr.(type) {
 	case *AndExpr:
-		return buildAndQueryWithSchema(e, schema)
+		return buildAndQueryWithSchema(e, schema, isPrefix)
 
 	case *OrExpr:
-		return buildOrQueryWithSchema(e, schema)
+		return buildOrQueryWithSchema(e, schema, isPrefix)
 
 	case *NotExpr:
-		innerQuery := walkESWithSchema(e.Expr, schema)
+		innerQuery := walkESWithSchema(e.Expr, schema, isPrefix)
 		if innerQuery == nil {
 			return nil
 		}
 		return elastic.NewBoolQuery().MustNot(innerQuery)
 	case *GroupingExpr:
-		return walkESWithSchema(e.Expr, schema)
+		return walkESWithSchema(e.Expr, schema, isPrefix)
 
 	case *OperatorExpr:
 		switch e.Op {
 		case OpMatch:
-			return buildOperatorMatchQueryWithSchema(e, schema)
+			return buildOperatorMatchQueryWithSchema(e, schema, isPrefix)
 		case OpWildcard:
-			return buildOperatorWildcardQueryWithSchema(e)
+			return buildOperatorWildcardQueryWithSchema(e, isPrefix)
 		case OpRegex:
-			return buildOperatorRegexpQueryWithSchema(e)
+			return buildOperatorRegexpQueryWithSchema(e, isPrefix)
 		case OpRange:
 			return buildOperatorRangeQueryWithSchema(e)
 		}
 		return nil
 
 	case *ConditionMatchExpr:
-		return buildConditionMatchQueryWithSchema(e, schema)
+		return buildConditionMatchQueryWithSchema(e, schema, isPrefix)
 
 	default:
 		return nil
@@ -165,51 +165,51 @@ func isSimpleTermsQuery(e *ConditionMatchExpr) bool {
 	return true
 }
 
-func collectAndClauses(expr Expr, schema FieldSchema) []elastic.Query {
+func collectAndClauses(expr Expr, schema FieldSchema, isPrefix bool) []elastic.Query {
 	clauses := make([]elastic.Query, 0)
 
 	if _, ok := expr.(*GroupingExpr); ok {
-		if q := walkESWithSchema(expr, schema); q != nil {
+		if q := walkESWithSchema(expr, schema, isPrefix); q != nil {
 			clauses = append(clauses, q)
 		}
 		return clauses
 	}
 
 	if e, ok := expr.(*AndExpr); ok {
-		clauses = append(clauses, collectAndClauses(e.Left, schema)...)
-		clauses = append(clauses, collectAndClauses(e.Right, schema)...)
+		clauses = append(clauses, collectAndClauses(e.Left, schema, isPrefix)...)
+		clauses = append(clauses, collectAndClauses(e.Right, schema, isPrefix)...)
 	} else {
-		if q := walkESWithSchema(expr, schema); q != nil {
+		if q := walkESWithSchema(expr, schema, isPrefix); q != nil {
 			clauses = append(clauses, q)
 		}
 	}
 	return clauses
 }
 
-func collectOrClauses(expr Expr, schema FieldSchema) []elastic.Query {
+func collectOrClauses(expr Expr, schema FieldSchema, isPrefix bool) []elastic.Query {
 	clauses := make([]elastic.Query, 0)
 
 	if _, ok := expr.(*GroupingExpr); ok {
-		if q := walkESWithSchema(expr, schema); q != nil {
+		if q := walkESWithSchema(expr, schema, isPrefix); q != nil {
 			clauses = append(clauses, q)
 		}
 		return clauses
 	}
 
 	if e, ok := expr.(*OrExpr); ok {
-		clauses = append(clauses, collectOrClauses(e.Left, schema)...)
-		clauses = append(clauses, collectOrClauses(e.Right, schema)...)
+		clauses = append(clauses, collectOrClauses(e.Left, schema, isPrefix)...)
+		clauses = append(clauses, collectOrClauses(e.Right, schema, isPrefix)...)
 	} else {
 		// When a non-OrExpr (like a grouped AND) is found, convert it as a single unit
-		if q := walkESWithSchema(expr, schema); q != nil {
+		if q := walkESWithSchema(expr, schema, isPrefix); q != nil {
 			clauses = append(clauses, q)
 		}
 	}
 	return clauses
 }
 
-func buildAndQueryWithSchema(e *AndExpr, schema FieldSchema) elastic.Query {
-	clauses := collectAndClauses(e, schema)
+func buildAndQueryWithSchema(e *AndExpr, schema FieldSchema, isPrefix bool) elastic.Query {
+	clauses := collectAndClauses(e, schema, isPrefix)
 	if len(clauses) == 0 {
 		return nil
 	}
@@ -220,8 +220,8 @@ func buildAndQueryWithSchema(e *AndExpr, schema FieldSchema) elastic.Query {
 	return elastic.NewBoolQuery().Must(clauses...)
 }
 
-func buildOrQueryWithSchema(e *OrExpr, schema FieldSchema) elastic.Query {
-	clauses := collectOrClauses(e, schema)
+func buildOrQueryWithSchema(e *OrExpr, schema FieldSchema, isPrefix bool) elastic.Query {
+	clauses := collectOrClauses(e, schema, isPrefix)
 	if len(clauses) == 0 {
 		return nil
 	}
@@ -232,7 +232,7 @@ func buildOrQueryWithSchema(e *OrExpr, schema FieldSchema) elastic.Query {
 	return elastic.NewBoolQuery().Should(clauses...)
 }
 
-func buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, schema FieldSchema) elastic.Query {
+func buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, schema FieldSchema, isPrefix bool) elastic.Query {
 	field := getESFieldName(e.Field)
 
 	if e.Value == nil || len(e.Value.Values) == 0 {
@@ -266,12 +266,24 @@ func buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, schema FieldSchem
 				case FieldTypeKeyword:
 					boolQuery.Should(elastic.NewTermQuery(field, value))
 				case FieldTypeText:
-					boolQuery.Should(elastic.NewMatchPhraseQuery(field, value))
+					if isPrefix {
+						boolQuery.Should(elastic.NewMatchPhrasePrefixQuery(field, value))
+					} else {
+						boolQuery.Should(elastic.NewMatchPhraseQuery(field, value))
+					}
 				default:
-					boolQuery.Should(elastic.NewMatchPhraseQuery(field, value))
+					if isPrefix {
+						boolQuery.Should(elastic.NewMatchPhrasePrefixQuery(field, value))
+					} else {
+						boolQuery.Should(elastic.NewMatchPhraseQuery(field, value))
+					}
 				}
 			} else {
-				boolQuery.Should(elastic.NewMatchPhraseQuery(field, value))
+				if isPrefix {
+					boolQuery.Should(elastic.NewMatchPhrasePrefixQuery(field, value))
+				} else {
+					boolQuery.Should(elastic.NewMatchPhraseQuery(field, value))
+				}
 			}
 		} else {
 			andBoolQuery := elastic.NewBoolQuery()
@@ -281,7 +293,11 @@ func buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, schema FieldSchem
 				if hasSchema && fieldType == FieldTypeKeyword {
 					andBoolQuery.Must(elastic.NewTermQuery(field, value))
 				} else {
-					andBoolQuery.Must(elastic.NewMatchPhraseQuery(field, value))
+					if isPrefix {
+						andBoolQuery.Must(elastic.NewMatchPhrasePrefixQuery(field, value))
+					} else {
+						andBoolQuery.Must(elastic.NewMatchPhraseQuery(field, value))
+					}
 				}
 			}
 			boolQuery.Should(andBoolQuery)
@@ -292,7 +308,7 @@ func buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, schema FieldSchem
 }
 
 // 新的 OperatorExpr 构建函数
-func buildOperatorMatchQueryWithSchema(e *OperatorExpr, schema FieldSchema) elastic.Query {
+func buildOperatorMatchQueryWithSchema(e *OperatorExpr, schema FieldSchema, isPrefix bool) elastic.Query {
 	field := getESFieldName(e.Field)
 	value := getESValue(e.Value)
 	valueInterface := getESValueInterface(e.Value)
@@ -300,7 +316,7 @@ func buildOperatorMatchQueryWithSchema(e *OperatorExpr, schema FieldSchema) elas
 	fieldType, hasSchema := schema.GetFieldType(field)
 	if e.IsQuoted {
 		if field == DefaultEmptyField && e.Field == nil {
-			return createEnhancedQueryStringQuery("\"" + value + "\"")
+			return createEnhancedQueryStringQuery("\""+value+"\"", isPrefix)
 		}
 
 		if hasSchema {
@@ -308,12 +324,21 @@ func buildOperatorMatchQueryWithSchema(e *OperatorExpr, schema FieldSchema) elas
 			case FieldTypeKeyword:
 				return elastic.NewTermQuery(field, valueInterface)
 			case FieldTypeText:
+				if isPrefix {
+					return elastic.NewMatchPhrasePrefixQuery(field, value)
+				}
 				return elastic.NewMatchPhraseQuery(field, value)
 			default:
+				if isPrefix {
+					return elastic.NewMatchPhrasePrefixQuery(field, value)
+				}
 				return elastic.NewMatchPhraseQuery(field, value)
 			}
 		}
 
+		if isPrefix {
+			return elastic.NewMatchPhrasePrefixQuery(field, value)
+		}
 		return elastic.NewMatchPhraseQuery(field, value)
 	}
 
@@ -323,10 +348,16 @@ func buildOperatorMatchQueryWithSchema(e *OperatorExpr, schema FieldSchema) elas
 			return elastic.NewTermQuery(field, valueInterface)
 		case FieldTypeText:
 			if field == DefaultEmptyField {
-				return createEnhancedQueryStringQuery(value)
+				return createEnhancedQueryStringQuery(value, isPrefix)
 			}
 			if strings.Contains(value, " ") {
+				if isPrefix {
+					return elastic.NewMatchPhrasePrefixQuery(field, value)
+				}
 				return elastic.NewMatchQuery(field, value)
+			}
+			if isPrefix {
+				return elastic.NewMatchPhrasePrefixQuery(field, value)
 			}
 			return elastic.NewMatchQuery(field, value)
 		case FieldTypeLong, FieldTypeInteger:
@@ -343,10 +374,13 @@ func buildOperatorMatchQueryWithSchema(e *OperatorExpr, schema FieldSchema) elas
 	}
 
 	if field == DefaultEmptyField {
-		return createEnhancedQueryStringQuery(value)
+		return createEnhancedQueryStringQuery(value, isPrefix)
 	}
 
 	if strings.Contains(value, " ") {
+		if isPrefix {
+			return elastic.NewMatchPhrasePrefixQuery(field, value)
+		}
 		return elastic.NewMatchQuery(field, value)
 	}
 
@@ -357,23 +391,23 @@ func buildOperatorMatchQueryWithSchema(e *OperatorExpr, schema FieldSchema) elas
 	return elastic.NewTermQuery(field, valueInterface)
 }
 
-func buildOperatorWildcardQueryWithSchema(e *OperatorExpr) elastic.Query {
+func buildOperatorWildcardQueryWithSchema(e *OperatorExpr, isPrefix bool) elastic.Query {
 	field := getESFieldName(e.Field)
 	value := getESValue(e.Value)
 
 	if field == DefaultEmptyField {
-		return createEnhancedQueryStringQuery(value)
+		return createEnhancedQueryStringQuery(value, isPrefix)
 	}
 
 	return elastic.NewWildcardQuery(field, value)
 }
 
-func buildOperatorRegexpQueryWithSchema(e *OperatorExpr) elastic.Query {
+func buildOperatorRegexpQueryWithSchema(e *OperatorExpr, isPrefix bool) elastic.Query {
 	field := getESFieldName(e.Field)
 	value := getESValue(e.Value)
 
 	if field == DefaultEmptyField {
-		return createEnhancedQueryStringQuery("/" + value + "/")
+		return createEnhancedQueryStringQuery("/"+value+"/", isPrefix)
 	}
 
 	return elastic.NewRegexpQuery(field, value)
@@ -423,10 +457,14 @@ func buildOperatorRangeQueryWithSchema(e *OperatorExpr) elastic.Query {
 	return query
 }
 
-func createEnhancedQueryStringQuery(query string) elastic.Query {
-	return elastic.NewQueryStringQuery(query).
+func createEnhancedQueryStringQuery(query string, isPrefix ...bool) elastic.Query {
+	q := elastic.NewQueryStringQuery(query).
 		AnalyzeWildcard(true).
-		Field(DefaultEmptyField).
+		Field("").
 		Field("__").
 		Lenient(true)
+	if len(isPrefix) > 0 && isPrefix[0] {
+		q.Type("phrase_prefix")
+	}
+	return q
 }

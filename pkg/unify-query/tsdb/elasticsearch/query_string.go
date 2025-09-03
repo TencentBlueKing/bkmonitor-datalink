@@ -45,7 +45,7 @@ func (s *QueryString) NestedFields() map[string]struct{} {
 }
 
 func (s *QueryString) queryString(str string) elastic.Query {
-	q := elastic.NewQueryStringQuery(str).AnalyzeWildcard(true).Field("*").Field("__*").Lenient(true)
+	q := elastic.NewQueryStringQuery(str).AnalyzeWildcard(true).Field("").Field("__").Lenient(true)
 	if s.isPrefix {
 		q.Type("phrase_prefix")
 	}

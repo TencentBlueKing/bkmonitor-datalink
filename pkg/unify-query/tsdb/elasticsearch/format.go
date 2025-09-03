@@ -1032,7 +1032,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 							}
 						} else {
 							if con.IsPrefix {
-								query = elastic.NewMultiMatchQuery(value, "*", "__*").Type("phrase_prefix").Lenient(true)
+								query = elastic.NewMultiMatchQuery(value, "", "__").Type("phrase_prefix").Lenient(true)
 							} else {
 								query = elastic.NewQueryStringQuery(value)
 							}

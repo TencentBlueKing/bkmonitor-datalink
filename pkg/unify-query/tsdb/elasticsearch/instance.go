@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -249,13 +250,13 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
-		qs := NewQueryString(qb.QueryString, qb.IsPrefix, fact.NestedField)
-		q, qsErr := qs.ToDSL(ctx, qb.FieldAlias)
-		if qsErr != nil {
-			return nil, qsErr
+		parser := lucene_parser.NewParser(lucene_parser.WithIsPrefix(qb.IsPrefix))
+		result, err := parser.Do(qb.QueryString)
+		if err != nil {
+			return nil, err
 		}
-		if q != nil {
-			filterQueries = append(filterQueries, q)
+		if result.ES != nil {
+			filterQueries = append(filterQueries, result.ES)
 		}
 	}
 

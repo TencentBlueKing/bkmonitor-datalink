@@ -113,7 +113,7 @@ func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 	return f
 }
 
-func (f *QueryFactory) WithFieldsMap(m map[string]string) *QueryFactory {
+func (f *QueryFactory) WithFieldsMap(m map[string]sql_expr.FieldOption) *QueryFactory {
 	f.expr.WithFieldsMap(m)
 	return f
 }
@@ -135,7 +135,7 @@ func (f *QueryFactory) DescribeTableSQL() string {
 	return f.expr.DescribeTableSQL(f.Table())
 }
 
-func (f *QueryFactory) FieldMap() map[string]string {
+func (f *QueryFactory) FieldMap() map[string]sql_expr.FieldOption {
 	return f.expr.FieldMap()
 }
 
@@ -149,7 +149,7 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 			continue
 		}
 
-		if fieldType, existed := fieldMap[k]; existed && fieldType == TableTypeVariant {
+		if fieldOpt, existed := fieldMap[k]; existed && fieldOpt.Type == TableTypeVariant {
 			if nd, ok := d.(string); ok {
 				objectData, err := json.ParseObject(k, nd)
 				if err != nil {

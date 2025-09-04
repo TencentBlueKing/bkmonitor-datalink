@@ -67,13 +67,13 @@ func (s *QueryString) ToDSL(ctx context.Context, fieldAlias metadata.FieldAlias)
 	q := s.queryString(s.q)
 	ast, err := qs.ParseWithFieldAlias(s.q, fieldAlias)
 	if err != nil {
-		log.Errorf(ctx, "querystring(%s) parse error: %v", s.q, err)
+		log.Warnf(ctx, "querystring(%s) parse error: %v", s.q, err)
 		return q, nil
 	}
 
 	conditionQuery, err := s.walk(ast)
 	if err != nil {
-		log.Errorf(ctx, "querystring(%s) walk error: %v", s.q, err)
+		log.Warnf(ctx, "querystring(%s) walk error: %v", s.q, err)
 		return q, nil
 	}
 

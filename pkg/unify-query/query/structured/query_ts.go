@@ -579,9 +579,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 		metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 
-		// 配置别名
-		query.ConfigureAlias(ctx)
-
 		queryMetric.QueryList = []*metadata.Query{query}
 		return queryMetric, nil
 	}
@@ -718,8 +715,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 			metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 
-			// 配置别名
-			query.ConfigureAlias(ctx)
 			queryMetric.QueryList = append(queryMetric.QueryList, query)
 		}
 	}

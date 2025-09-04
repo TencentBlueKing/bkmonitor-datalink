@@ -330,3 +330,117 @@ func TestRelabelActionMetrics(t *testing.T) {
 		})
 	}
 }
+
+/// -----
+
+const (
+	relabelActionContent1 = `
+processor:
+  - name: "metrics_filter/code_relabel"
+    config:
+      code_relabel:
+        - metrics: ["rpc_client_handled_total"]
+          source: "my.service.name"
+          services:
+          - name: "my.server;my.service;my.method"
+            codes: 
+            - rule: "err_200~300"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "success"
+`
+)
+
+func TestRelabelActionMetricsV1(t *testing.T) {
+	factory := processor.MustCreateFactory(relabelActionContent1, NewFactory)
+	type args struct {
+		metric     string
+		attributes map[string]string
+	}
+	tests := []struct {
+		name      string
+		args      args
+		wantValue string
+	}{
+		{
+			name: "rules hit op in",
+			args: args{
+				metric: "rpc_client_handled_total",
+				attributes: map[string]string{
+					"callee_server":  "my.server",
+					"callee_service": "my.service",
+					"callee_method":  "my.method",
+					"service_name":   "my.service.name",
+					"code":           "err_200",
+				},
+			},
+			wantValue: "success",
+		},
+		//{
+		//	name: "rules hit op in but name not match",
+		//	args: args{
+		//		metric: "test_metric",
+		//		attributes: map[string]string{
+		//			"callee_method":  "hello",
+		//			"callee_service": "example.greeter",
+		//			"code":           "200",
+		//		},
+		//	},
+		//},
+		//{
+		//	name: "rules hit op range",
+		//	args: args{
+		//		metric: "rpc_client_handled_total",
+		//		attributes: map[string]string{
+		//			"callee_method":  "hello",
+		//			"callee_service": "example.greeter",
+		//			"code":           "ret_105",
+		//		},
+		//	},
+		//	wantValue: "success",
+		//},
+		//{
+		//	name: "rules not hit",
+		//	args: args{
+		//		metric: "rpc_client_handled_total",
+		//		attributes: map[string]string{
+		//			"callee_method":  "hello_1",
+		//			"callee_service": "example.greeter",
+		//			"code":           "200",
+		//		},
+		//	},
+		//},
+		//{
+		//	name: "rules hit replace attr",
+		//	args: args{
+		//		metric: "rpc_client_handled_total",
+		//		attributes: map[string]string{
+		//			"callee_method":  "hello",
+		//			"callee_service": "example.greeter",
+		//			"code":           "200",
+		//			"code_type":      "test_type",
+		//		},
+		//	},
+		//	wantValue: "success",
+		//},
+	}
+
+	for _, tt := range tests {
+		t.Run("metrics_"+tt.name, func(t *testing.T) {
+			g := makeMetricsGeneratorWithAttrs(tt.args.metric, 1, tt.args.attributes)
+			record := define.Record{
+				RecordType: define.RecordMetrics,
+				Data:       g.Generate(),
+			}
+
+			_, err := factory.Process(&record)
+			assert.NoError(t, err)
+
+			metrics := record.Data.(pmetric.Metrics)
+			foreach.MetricsSliceDataPointsAttrs(metrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
+				testkits.AssertAttrsStringVal(t, attrs, "code_type", tt.wantValue)
+			})
+		})
+	}
+}

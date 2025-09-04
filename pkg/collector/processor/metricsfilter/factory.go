@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/promlabels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -100,6 +101,9 @@ func (p *metricsFilter) Process(record *define.Record) (*define.Record, error) {
 	if len(config.Relabel) > 0 {
 		p.relabelAction(record, config)
 	}
+	if len(config.CodeRelabel) > 0 {
+		p.codeRelabelAction(record, config)
+	}
 	return nil, nil
 }
 
@@ -141,16 +145,14 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 		for _, action := range config.Relabel {
 			pdMetrics := record.Data.(pmetric.Metrics)
 			foreach.MetricsSliceDataPointsAttrs(pdMetrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
-				if !action.IsMetricIn(name) {
+				if !action.IsMetricIn(name) || !action.Rules.MatchMetricAttrs(attrs) {
 					return
 				}
-				if !action.Rules.MatchMetricAttrs(attrs) {
-					return
-				}
-				for _, destination := range action.Destinations {
-					switch destination.Action {
-					case ActionUpsert:
-						attrs.UpsertString(destination.Label, destination.Value)
+
+				for _, target := range action.Targets {
+					switch target.Action {
+					case relabelUpsert:
+						attrs.UpsertString(target.Label, target.Value)
 					}
 				}
 			})
@@ -158,7 +160,7 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 
 	case define.RecordRemoteWrite:
 		handle := func(ts *prompb.TimeSeries, action RelabelAction) {
-			lbs := PromLabels(ts.GetLabels())
+			lbs := promlabels.Labels(ts.GetLabels())
 			nameLabel, ok := lbs.Get("__name__")
 			if !ok || !action.IsMetricIn(nameLabel.GetValue()) {
 				return
@@ -166,10 +168,10 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 			if !action.Rules.MatchRWLabels(lbs) {
 				return
 			}
-			for _, destination := range action.Destinations {
-				switch destination.Action {
-				case ActionUpsert:
-					lbs.Upsert(destination.Label, destination.Value)
+			for _, target := range action.Targets {
+				switch target.Action {
+				case relabelUpsert:
+					lbs.Upsert(target.Label, target.Value)
 				}
 			}
 			ts.Labels = lbs
@@ -179,6 +181,39 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 			for i := 0; i < len(rwData.Timeseries); i++ {
 				handle(&rwData.Timeseries[i], action)
 			}
+		}
+	}
+}
+
+func (p *metricsFilter) codeRelabelAction(record *define.Record, config Config) {
+	switch record.RecordType {
+	case define.RecordMetrics:
+		for _, action := range config.CodeRelabel {
+			pdMetrics := record.Data.(pmetric.Metrics)
+			foreach.MetricsSliceDataPointsAttrs(pdMetrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
+				if !action.IsMetricIn(name) || !action.MatchMetricAttrs(attrs) {
+					return
+				}
+
+				for _, service := range action.Services {
+					if !service.MatchMetricAttrs(attrs) {
+						continue
+					}
+
+					for _, code := range service.Codes {
+						if !code.MatchMetricAttrs(attrs) {
+							continue
+						}
+
+						target := code.Target
+						switch target.Action {
+						case relabelUpsert:
+							attrs.UpsertString(target.Label, target.Value)
+							return
+						}
+					}
+				}
+			})
 		}
 	}
 }

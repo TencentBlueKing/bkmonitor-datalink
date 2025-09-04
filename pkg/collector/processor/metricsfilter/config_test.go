@@ -16,6 +16,8 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pcommon"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/promlabels"
 )
 
 func TestRelabelRuleValidate(t *testing.T) {
@@ -73,26 +75,26 @@ func TestRelabelConfigValidate(t *testing.T) {
 		name    string
 		metrics []string
 		rules   RelabelRules
-		dest    []RelabelDestination
+		dest    []RelabelTarget
 		wantErr bool
 	}{
 		{
 			name:    "valid config",
 			metrics: []string{"test_metric"},
 			rules:   RelabelRules{{Label: "label1", Op: OpIn, Values: []any{"value1", "value2"}}},
-			dest:    []RelabelDestination{{Label: "dest_label", Value: "dest_value", Action: ActionUpsert}},
+			dest:    []RelabelTarget{{Label: "target_label", Value: "foo", Action: relabelUpsert}},
 			wantErr: false,
 		},
 		{
 			name:    "valid config - multiple metrics",
 			metrics: []string{"test_metric", "test_metric_1"},
-			dest:    []RelabelDestination{{Label: "dest_label", Value: "dest_value", Action: ActionUpsert}},
+			dest:    []RelabelTarget{{Label: "dest_label", Value: "foo", Action: relabelUpsert}},
 			wantErr: false,
 		},
 		{
 			name:    "invalid config - missing metric name",
 			rules:   RelabelRules{{Label: "label1", Op: OpIn, Values: []any{"value1", "value2"}}},
-			dest:    []RelabelDestination{{Label: "dest_label", Value: "dest_value", Action: ActionUpsert}},
+			dest:    []RelabelTarget{{Label: "dest_label", Value: "foo", Action: relabelUpsert}},
 			wantErr: true,
 		},
 		{
@@ -106,9 +108,9 @@ func TestRelabelConfigValidate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := Config{
 				Relabel: []RelabelAction{{
-					Metrics:      tt.metrics,
-					Rules:        tt.rules,
-					Destinations: tt.dest,
+					Metrics: tt.metrics,
+					Rules:   tt.rules,
+					Targets: tt.dest,
 				}},
 			}
 			assert.Equal(t, tt.wantErr, c.Validate() != nil)
@@ -120,7 +122,7 @@ func TestRelabelRuleMatch(t *testing.T) {
 	t.Run("opIn", func(t *testing.T) {
 		rule := RelabelRule{
 			Label:  "env",
-			Op:     "in",
+			Op:     OpIn,
 			Values: []any{"prod", "staging"},
 		}
 		tests := []struct {
@@ -154,7 +156,7 @@ func TestRelabelRuleMatch(t *testing.T) {
 	t.Run("opRange", func(t *testing.T) {
 		rule := RelabelRule{
 			Label:  "code",
-			Op:     "range",
+			Op:     OpRange,
 			Values: []any{map[string]any{"min": 200, "max": 299}},
 		}
 		tests := []struct {
@@ -188,7 +190,7 @@ func TestRelabelRuleMatch(t *testing.T) {
 	t.Run("opRange with prefix", func(t *testing.T) {
 		rule := RelabelRule{
 			Label:  "code",
-			Op:     "range",
+			Op:     OpRange,
 			Values: []any{map[string]any{"prefix": "ret_", "min": 200, "max": 299}},
 		}
 		tests := []struct {
@@ -235,12 +237,12 @@ func createTestMap(pairs ...string) pcommon.Map {
 }
 
 func TestRelabelRuleMatchMetricAttrs(t *testing.T) {
-	ruleOpIn := RelabelRule{
+	ruleOpIn := &RelabelRule{
 		Label:  "service",
 		Op:     "in",
 		Values: []any{"auth-service"},
 	}
-	ruleOpRange := RelabelRule{
+	ruleOpRange := &RelabelRule{
 		Label:  "status",
 		Op:     "range",
 		Values: []any{map[string]any{"min": 0, "max": 200}},
@@ -290,7 +292,7 @@ func TestRelabelRuleMatchMetricAttrs(t *testing.T) {
 		},
 	}
 
-	attrsToLabels := func(attrs pcommon.Map) PromLabels {
+	attrsToLabels := func(attrs pcommon.Map) promlabels.Labels {
 		labels := make([]prompb.Label, 0)
 		attrs.Range(func(k string, v pcommon.Value) bool {
 			labels = append(labels, prompb.Label{Name: k, Value: v.AsString()})
@@ -332,7 +334,6 @@ func makeRWDataAndRule(numExtraLabel int) ([]prompb.Label, RelabelRules) {
 	return labels, rules
 }
 
-// 直接遍历 labels，时间复杂度 o(n^2), 但是实际 n(rules) 一般比较小，性能更好
 func BenchmarkMatchRWLabelsSlice(b *testing.B) {
 	labels, rules := makeRWDataAndRule(10)
 	for i := 0; i < b.N; i++ {

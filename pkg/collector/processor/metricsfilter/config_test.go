@@ -75,26 +75,26 @@ func TestRelabelConfigValidate(t *testing.T) {
 		name    string
 		metrics []string
 		rules   RelabelRules
-		targets []RelabelTarget
+		target  RelabelTarget
 		wantErr bool
 	}{
 		{
 			name:    "valid config",
 			metrics: []string{"test_metric"},
 			rules:   RelabelRules{{Label: "label1", Op: OpIn, Values: []any{"value1", "value2"}}},
-			targets: []RelabelTarget{{Label: "target_label", Value: "foo", Action: relabelUpsert}},
+			target:  RelabelTarget{Label: "target_label", Value: "foo", Action: relabelUpsert},
 			wantErr: false,
 		},
 		{
 			name:    "valid config - multiple metrics",
 			metrics: []string{"test_metric", "test_metric_1"},
-			targets: []RelabelTarget{{Label: "dest_label", Value: "foo", Action: relabelUpsert}},
+			target:  RelabelTarget{Label: "target_label", Value: "foo", Action: relabelUpsert},
 			wantErr: false,
 		},
 		{
 			name:    "invalid config - missing metric name",
 			rules:   RelabelRules{{Label: "label1", Op: OpIn, Values: []any{"value1", "value2"}}},
-			targets: []RelabelTarget{{Label: "dest_label", Value: "foo", Action: relabelUpsert}},
+			target:  RelabelTarget{Label: "target_label", Value: "foo", Action: relabelUpsert},
 			wantErr: true,
 		},
 		{
@@ -110,7 +110,7 @@ func TestRelabelConfigValidate(t *testing.T) {
 				Relabel: []RelabelAction{{
 					Metrics: tt.metrics,
 					Rules:   tt.rules,
-					Targets: tt.targets,
+					Target:  tt.target,
 				}},
 			}
 			assert.Equal(t, tt.wantErr, c.Validate() != nil)
@@ -124,7 +124,7 @@ func TestCodeRelabelConfigValidate(t *testing.T) {
 		metrics  []string
 		source   string
 		services []*CodeRelabelService
-		targets  []RelabelTarget
+		targets  RelabelTarget
 		wantErr  bool
 	}{
 		{
@@ -142,7 +142,7 @@ func TestCodeRelabelConfigValidate(t *testing.T) {
 					},
 				}},
 			}},
-			targets: []RelabelTarget{{Label: "target_label", Value: "foo", Action: relabelUpsert}},
+			targets: RelabelTarget{Label: "target_label", Value: "foo", Action: relabelUpsert},
 			wantErr: false,
 		},
 		{
@@ -382,7 +382,7 @@ func TestRelabelRuleMatchMetricAttrs(t *testing.T) {
 	for _, tt := range tests {
 		assert.NoError(t, tt.rules.Validate())
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.rules.MatchMetricAttrs(tt.attrs))
+			assert.Equal(t, tt.want, tt.rules.MatchOTAttrs(tt.attrs))
 		})
 
 		t.Run(tt.name, func(t *testing.T) {

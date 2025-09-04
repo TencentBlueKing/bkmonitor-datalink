@@ -145,15 +145,14 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 		for _, action := range config.Relabel {
 			pdMetrics := record.Data.(pmetric.Metrics)
 			foreach.MetricsSliceDataPointsAttrs(pdMetrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
-				if !action.IsMetricIn(name) || !action.Rules.MatchMetricAttrs(attrs) {
+				if !action.IsMetricIn(name) || !action.Rules.MatchOTAttrs(attrs) {
 					return
 				}
 
-				for _, target := range action.Targets {
-					switch target.Action {
-					case relabelUpsert:
-						attrs.UpsertString(target.Label, target.Value)
-					}
+				target := action.Target
+				switch action.Target.Action {
+				case relabelUpsert:
+					attrs.UpsertString(target.Label, target.Value)
 				}
 			})
 		}
@@ -168,11 +167,11 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 			if !action.Rules.MatchRWLabels(lbs) {
 				return
 			}
-			for _, target := range action.Targets {
-				switch target.Action {
-				case relabelUpsert:
-					lbs.Upsert(target.Label, target.Value)
-				}
+
+			target := action.Target
+			switch target.Action {
+			case relabelUpsert:
+				lbs.Upsert(target.Label, target.Value)
 			}
 			ts.Labels = lbs
 		}
@@ -191,17 +190,17 @@ func (p *metricsFilter) codeRelabelAction(record *define.Record, config Config) 
 		for _, action := range config.CodeRelabel {
 			pdMetrics := record.Data.(pmetric.Metrics)
 			foreach.MetricsSliceDataPointsAttrs(pdMetrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
-				if !action.IsMetricIn(name) || !action.MatchMetricAttrs(attrs) {
+				if !action.IsMetricIn(name) || !action.MatchOTAttrs(attrs) {
 					return
 				}
 
 				for _, service := range action.Services {
-					if !service.MatchMetricAttrs(attrs) {
+					if !service.MatchOTAttrs(attrs) {
 						continue
 					}
 
 					for _, code := range service.Codes {
-						if !code.MatchMetricAttrs(attrs) {
+						if !code.MatchOTAttrs(attrs) {
 							continue
 						}
 
@@ -209,7 +208,7 @@ func (p *metricsFilter) codeRelabelAction(record *define.Record, config Config) 
 						switch target.Action {
 						case relabelUpsert:
 							attrs.UpsertString(target.Label, target.Value)
-							return
+							return // 每个指标只可能命中一次
 						}
 					}
 				}

@@ -191,7 +191,7 @@ processor:
   - name: "metrics_filter/relabel"
     config:
       relabel:
-        - metrics: ["rpc_client_handled_total"]
+        - metrics: ["rpc_client_handled_total","rpc_client_dropped_total"]
           rules:
             - label: "callee_method"
               op: "in"
@@ -213,15 +213,14 @@ processor:
                   max: 200
                 - min: 200
                   max: 200
-          destinations:
-            - action: "upsert"
-              label: "code_type"
-              value: "success"
+          target:
+            action: "upsert"
+            label: "code_type"
+            value: "success"
 `
 )
 
-func TestRelabelActionMetrics(t *testing.T) {
-	factory := processor.MustCreateFactory(relabelActionContent, NewFactory)
+func TestRelabelAction(t *testing.T) {
 	type args struct {
 		metric     string
 		attributes map[string]string
@@ -232,7 +231,7 @@ func TestRelabelActionMetrics(t *testing.T) {
 		wantValue string
 	}{
 		{
-			name: "rules hit op in",
+			name: "hit op in",
 			args: args{
 				metric: "rpc_client_handled_total",
 				attributes: map[string]string{
@@ -244,7 +243,7 @@ func TestRelabelActionMetrics(t *testing.T) {
 			wantValue: "success",
 		},
 		{
-			name: "rules hit op in but name not match",
+			name: "hit op in but metric not match",
 			args: args{
 				metric: "test_metric",
 				attributes: map[string]string{
@@ -255,7 +254,7 @@ func TestRelabelActionMetrics(t *testing.T) {
 			},
 		},
 		{
-			name: "rules hit op range",
+			name: "hit op range",
 			args: args{
 				metric: "rpc_client_handled_total",
 				attributes: map[string]string{
@@ -267,7 +266,7 @@ func TestRelabelActionMetrics(t *testing.T) {
 			wantValue: "success",
 		},
 		{
-			name: "rules not hit",
+			name: "miss",
 			args: args{
 				metric: "rpc_client_handled_total",
 				attributes: map[string]string{
@@ -278,7 +277,7 @@ func TestRelabelActionMetrics(t *testing.T) {
 			},
 		},
 		{
-			name: "rules hit replace attr",
+			name: "hit replace attrs",
 			args: args{
 				metric: "rpc_client_handled_total",
 				attributes: map[string]string{
@@ -292,8 +291,9 @@ func TestRelabelActionMetrics(t *testing.T) {
 		},
 	}
 
+	factory := processor.MustCreateFactory(relabelActionContent, NewFactory)
 	for _, tt := range tests {
-		t.Run("metrics_"+tt.name, func(t *testing.T) {
+		t.Run("opentelemry:"+tt.name, func(t *testing.T) {
 			g := makeMetricsGeneratorWithAttrs(tt.args.metric, 1, tt.args.attributes)
 			record := define.Record{
 				RecordType: define.RecordMetrics,
@@ -309,7 +309,7 @@ func TestRelabelActionMetrics(t *testing.T) {
 			})
 		})
 
-		t.Run("remotewrite_"+tt.name, func(t *testing.T) {
+		t.Run("remotewrite:"+tt.name, func(t *testing.T) {
 			rwData := makeRemoteWriteData(tt.args.metric, tt.args.attributes)
 			record := define.Record{
 				RecordType: define.RecordRemoteWrite,
@@ -331,15 +331,13 @@ func TestRelabelActionMetrics(t *testing.T) {
 	}
 }
 
-/// -----
-
 const (
-	relabelActionContent1 = `
+	codeRelabelActionContent = `
 processor:
   - name: "metrics_filter/code_relabel"
     config:
       code_relabel:
-        - metrics: ["rpc_client_handled_total"]
+        - metrics: ["rpc_client_handled_total","rpc_client_dropped_total"]
           source: "my.service.name"
           services:
           - name: "my.server;my.service;my.method"
@@ -349,11 +347,20 @@ processor:
                  action: "upsert"
                  label: "code_type"
                  value: "success"
+            - rule: "err_400~500"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "error"
+            - rule: "600"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "normal"
 `
 )
 
-func TestRelabelActionMetricsV1(t *testing.T) {
-	factory := processor.MustCreateFactory(relabelActionContent1, NewFactory)
+func TestCodeRelabelAction(t *testing.T) {
 	type args struct {
 		metric     string
 		attributes map[string]string
@@ -364,7 +371,7 @@ func TestRelabelActionMetricsV1(t *testing.T) {
 		wantValue string
 	}{
 		{
-			name: "rules hit op in",
+			name: "rule err_200~300",
 			args: args{
 				metric: "rpc_client_handled_total",
 				attributes: map[string]string{
@@ -377,57 +384,63 @@ func TestRelabelActionMetricsV1(t *testing.T) {
 			},
 			wantValue: "success",
 		},
-		//{
-		//	name: "rules hit op in but name not match",
-		//	args: args{
-		//		metric: "test_metric",
-		//		attributes: map[string]string{
-		//			"callee_method":  "hello",
-		//			"callee_service": "example.greeter",
-		//			"code":           "200",
-		//		},
-		//	},
-		//},
-		//{
-		//	name: "rules hit op range",
-		//	args: args{
-		//		metric: "rpc_client_handled_total",
-		//		attributes: map[string]string{
-		//			"callee_method":  "hello",
-		//			"callee_service": "example.greeter",
-		//			"code":           "ret_105",
-		//		},
-		//	},
-		//	wantValue: "success",
-		//},
-		//{
-		//	name: "rules not hit",
-		//	args: args{
-		//		metric: "rpc_client_handled_total",
-		//		attributes: map[string]string{
-		//			"callee_method":  "hello_1",
-		//			"callee_service": "example.greeter",
-		//			"code":           "200",
-		//		},
-		//	},
-		//},
-		//{
-		//	name: "rules hit replace attr",
-		//	args: args{
-		//		metric: "rpc_client_handled_total",
-		//		attributes: map[string]string{
-		//			"callee_method":  "hello",
-		//			"callee_service": "example.greeter",
-		//			"code":           "200",
-		//			"code_type":      "test_type",
-		//		},
-		//	},
-		//	wantValue: "success",
-		//},
+		{
+			name: "rule err_400~500",
+			args: args{
+				metric: "rpc_client_handled_total",
+				attributes: map[string]string{
+					"callee_server":  "my.server",
+					"callee_service": "my.service",
+					"callee_method":  "my.method",
+					"service_name":   "my.service.name",
+					"code":           "err_500",
+				},
+			},
+			wantValue: "error",
+		},
+		{
+			name: "rule 600",
+			args: args{
+				metric: "rpc_client_handled_total",
+				attributes: map[string]string{
+					"callee_server":  "my.server",
+					"callee_service": "my.service",
+					"callee_method":  "my.method",
+					"service_name":   "my.service.name",
+					"code":           "600",
+				},
+			},
+			wantValue: "normal",
+		},
+		{
+			name: "missing callee_service",
+			args: args{
+				metric: "rpc_client_handled_total",
+				attributes: map[string]string{
+					"callee_server": "my.server",
+					"callee_method": "my.method",
+					"service_name":  "my.service.name",
+					"code":          "600",
+				},
+			},
+		},
+		{
+			name: "missing service_name",
+			args: args{
+				metric: "rpc_client_handled_total",
+				attributes: map[string]string{
+					"callee_server":  "my.server",
+					"callee_method":  "my.method",
+					"callee_service": "my.service",
+					"code":           "600",
+				},
+			},
+		},
 	}
 
+	factory := processor.MustCreateFactory(codeRelabelActionContent, NewFactory)
 	for _, tt := range tests {
-		t.Run("metrics_"+tt.name, func(t *testing.T) {
+		t.Run("opentelemry:"+tt.name, func(t *testing.T) {
 			g := makeMetricsGeneratorWithAttrs(tt.args.metric, 1, tt.args.attributes)
 			record := define.Record{
 				RecordType: define.RecordMetrics,

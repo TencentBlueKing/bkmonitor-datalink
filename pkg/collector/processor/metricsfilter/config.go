@@ -68,9 +68,9 @@ type ReplaceAction struct {
 }
 
 type RelabelAction struct {
-	Metrics []string        `config:"metrics" mapstructure:"metrics"`
-	Rules   RelabelRules    `config:"nameRules" mapstructure:"nameRules"`
-	Targets []RelabelTarget `config:"targets" mapstructure:"targets"`
+	Metrics []string      `config:"metrics" mapstructure:"metrics"`
+	Rules   RelabelRules  `config:"rules" mapstructure:"rules"`
+	Target  RelabelTarget `config:"target" mapstructure:"target"`
 }
 
 func (r *RelabelAction) IsMetricIn(name string) bool {
@@ -78,8 +78,8 @@ func (r *RelabelAction) IsMetricIn(name string) bool {
 }
 
 func (r *RelabelAction) Validate() error {
-	if len(r.Metrics) == 0 || len(r.Targets) == 0 {
-		return errors.New("relabel action: no metrics or targets")
+	if len(r.Metrics) == 0 {
+		return errors.New("relabel action: no metrics specified")
 	}
 	return r.Rules.Validate()
 }
@@ -192,8 +192,8 @@ func (rs RelabelRules) MatchRWLabels(labels promlabels.Labels) bool {
 	return true
 }
 
-// MatchMetricAttrs 判断 OT Metrics 属性是否匹配所有规则
-func (rs RelabelRules) MatchMetricAttrs(attrs pcommon.Map) bool {
+// MatchOTAttrs 判断 OpenTelemetry Metrics 属性是否匹配所有规则
+func (rs RelabelRules) MatchOTAttrs(attrs pcommon.Map) bool {
 	if len(rs) == 0 {
 		return false
 	}
@@ -252,8 +252,8 @@ func (c *CodeRelabelAction) MatchRWLabels(labels promlabels.Labels) bool {
 	return c.rrs.MatchRWLabels(labels)
 }
 
-func (c *CodeRelabelAction) MatchMetricAttrs(attrs pcommon.Map) bool {
-	return c.rrs.MatchMetricAttrs(attrs)
+func (c *CodeRelabelAction) MatchOTAttrs(attrs pcommon.Map) bool {
+	return c.rrs.MatchOTAttrs(attrs)
 }
 
 type CodeRelabelService struct {
@@ -310,8 +310,8 @@ func (c *CodeRelabelService) MatchRWLabels(labels promlabels.Labels) bool {
 	return c.rrs.MatchRWLabels(labels)
 }
 
-func (c *CodeRelabelService) MatchMetricAttrs(attrs pcommon.Map) bool {
-	return c.rrs.MatchMetricAttrs(attrs)
+func (c *CodeRelabelService) MatchOTAttrs(attrs pcommon.Map) bool {
+	return c.rrs.MatchOTAttrs(attrs)
 }
 
 type CodeRelabelCode struct {
@@ -388,6 +388,6 @@ func (c *CodeRelabelCode) MatchRWLabels(labels promlabels.Labels) bool {
 	return c.rrs.MatchRWLabels(labels)
 }
 
-func (c *CodeRelabelCode) MatchMetricAttrs(attrs pcommon.Map) bool {
-	return c.rrs.MatchMetricAttrs(attrs)
+func (c *CodeRelabelCode) MatchOTAttrs(attrs pcommon.Map) bool {
+	return c.rrs.MatchOTAttrs(attrs)
 }

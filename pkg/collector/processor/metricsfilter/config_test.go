@@ -75,26 +75,26 @@ func TestRelabelConfigValidate(t *testing.T) {
 		name    string
 		metrics []string
 		rules   RelabelRules
-		dest    []RelabelTarget
+		targets []RelabelTarget
 		wantErr bool
 	}{
 		{
 			name:    "valid config",
 			metrics: []string{"test_metric"},
 			rules:   RelabelRules{{Label: "label1", Op: OpIn, Values: []any{"value1", "value2"}}},
-			dest:    []RelabelTarget{{Label: "target_label", Value: "foo", Action: relabelUpsert}},
+			targets: []RelabelTarget{{Label: "target_label", Value: "foo", Action: relabelUpsert}},
 			wantErr: false,
 		},
 		{
 			name:    "valid config - multiple metrics",
 			metrics: []string{"test_metric", "test_metric_1"},
-			dest:    []RelabelTarget{{Label: "dest_label", Value: "foo", Action: relabelUpsert}},
+			targets: []RelabelTarget{{Label: "dest_label", Value: "foo", Action: relabelUpsert}},
 			wantErr: false,
 		},
 		{
 			name:    "invalid config - missing metric name",
 			rules:   RelabelRules{{Label: "label1", Op: OpIn, Values: []any{"value1", "value2"}}},
-			dest:    []RelabelTarget{{Label: "dest_label", Value: "foo", Action: relabelUpsert}},
+			targets: []RelabelTarget{{Label: "dest_label", Value: "foo", Action: relabelUpsert}},
 			wantErr: true,
 		},
 		{
@@ -110,7 +110,85 @@ func TestRelabelConfigValidate(t *testing.T) {
 				Relabel: []RelabelAction{{
 					Metrics: tt.metrics,
 					Rules:   tt.rules,
-					Targets: tt.dest,
+					Targets: tt.targets,
+				}},
+			}
+			assert.Equal(t, tt.wantErr, c.Validate() != nil)
+		})
+	}
+}
+
+func TestCodeRelabelConfigValidate(t *testing.T) {
+	tests := []struct {
+		name     string
+		metrics  []string
+		source   string
+		services []*CodeRelabelService
+		targets  []RelabelTarget
+		wantErr  bool
+	}{
+		{
+			name:    "valid config",
+			metrics: []string{"test_metric"},
+			source:  "test.service",
+			services: []*CodeRelabelService{{
+				Name: "my.server;my.service;my.method",
+				Codes: []*CodeRelabelCode{{
+					Rule: "err_200~300",
+					Target: RelabelTarget{
+						Label:  "code_type",
+						Value:  "success",
+						Action: relabelUpsert,
+					},
+				}},
+			}},
+			targets: []RelabelTarget{{Label: "target_label", Value: "foo", Action: relabelUpsert}},
+			wantErr: false,
+		},
+		{
+			name:    "invalid no metrics",
+			metrics: []string{},
+			source:  "test.service",
+			wantErr: true,
+		},
+		{
+			name:    "invalid no service",
+			metrics: []string{"test_metric"},
+			source:  "test.service",
+			wantErr: true,
+		},
+		{
+			name:    "invalid service name",
+			metrics: []string{"test_metric"},
+			source:  "test.service",
+			services: []*CodeRelabelService{{
+				Name: "my.server;my.service",
+				Codes: []*CodeRelabelCode{{
+					Rule: "err_200~300",
+				}},
+			}},
+			wantErr: true,
+		},
+		{
+			name:    "invalid rule",
+			metrics: []string{"test_metric"},
+			source:  "test.service",
+			services: []*CodeRelabelService{{
+				Name: "my.server;my.service;my.method",
+				Codes: []*CodeRelabelCode{{
+					Rule: "err_200~!300",
+				}},
+			}},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := Config{
+				CodeRelabel: []CodeRelabelAction{{
+					Metrics:  tt.metrics,
+					Source:   tt.source,
+					Services: tt.services,
 				}},
 			}
 			assert.Equal(t, tt.wantErr, c.Validate() != nil)

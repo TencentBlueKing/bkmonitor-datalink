@@ -230,6 +230,10 @@ func (c *CodeRelabelAction) IsMetricIn(name string) bool {
 }
 
 func (c *CodeRelabelAction) Validate() error {
+	if len(c.Metrics) == 0 || len(c.Services) == 0 {
+		return errors.New("relabel action: no metrics or services")
+	}
+
 	for i := 0; i < len(c.Services); i++ {
 		if err := c.Services[i].Validate(); err != nil {
 			return err

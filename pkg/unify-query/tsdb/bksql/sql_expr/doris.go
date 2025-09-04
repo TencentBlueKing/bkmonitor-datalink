@@ -608,7 +608,7 @@ func (d *DorisSQLExpr) walk(e querystring_parser.Expr) (string, error) {
 			c.Field = DefaultKey
 		}
 		field, _ := d.dimTransform(c.Field)
-		if d.isText(c.Field) {
+		if d.isAnalyzed(c.Field) {
 			return fmt.Sprintf("%s MATCH_PHRASE '%s'", field, c.Value), nil
 		}
 

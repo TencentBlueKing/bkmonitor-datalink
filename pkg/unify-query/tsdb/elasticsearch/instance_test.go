@@ -674,6 +674,129 @@ func TestInstance_queryRawData(t *testing.T) {
 				},
 			},
 		},
+		"获取 10条 不 field 为空的原始数据，使用别名": {
+			query: &metadata.Query{
+				DB:         db,
+				Field:      field,
+				From:       0,
+				Size:       10,
+				DataSource: structured.BkLog,
+				TableID:    "bk_log_index_set_10",
+				StorageID:  "log",
+				DataLabel:  "set_10",
+				Orders: metadata.Orders{
+					{
+						Name: FieldTime,
+						Ast:  false,
+					},
+				},
+				FieldAlias: map[string]string{
+					"id":   "__ext.container_id",
+					"time": "dtEventTimeStamp",
+				},
+				Source:      []string{"id"},
+				StorageType: consul.ElasticsearchStorageType,
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "time",
+							Operator:      "ncontains",
+							Value:         []string{""},
+						},
+					},
+				},
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+			size:  1e4,
+			list: `[ {
+  "__data_label" : "set_10",
+  "__doc_id" : "27bdd842c5f2929cf4bd90f1e4534a9d",
+  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
+  "__result_table" : "bk_log_index_set_10",
+  "__table_uuid" : "bk_log_index_set_10|log"
+}, {
+  "__data_label" : "set_10",
+  "__doc_id" : "d21cf5cf373b4a26a31774ff7ab38fad",
+  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
+  "__result_table" : "bk_log_index_set_10",
+  "__table_uuid" : "bk_log_index_set_10|log"
+}, {
+  "__data_label" : "set_10",
+  "__doc_id" : "e07e9f6437e64cc04e945dc0bf604e62",
+  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
+  "__result_table" : "bk_log_index_set_10",
+  "__table_uuid" : "bk_log_index_set_10|log"
+}, {
+  "__data_label" : "set_10",
+  "__doc_id" : "01fb133625637ee3b0b8e689b8126da2",
+  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
+  "__result_table" : "bk_log_index_set_10",
+  "__table_uuid" : "bk_log_index_set_10|log"
+}, {
+  "__data_label" : "set_10",
+  "__doc_id" : "7eaa9e9edfc5e6bd8ba5df06fd2d5c00",
+  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
+  "__result_table" : "bk_log_index_set_10",
+  "__table_uuid" : "bk_log_index_set_10|log"
+}, {
+  "__data_label" : "set_10",
+  "__doc_id" : "bcabf17aca864416784c0b1054b6056e",
+  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
+  "__result_table" : "bk_log_index_set_10",
+  "__table_uuid" : "bk_log_index_set_10|log"
+}, {
+  "__data_label" : "set_10",
+  "__doc_id" : "3edf7236b8fc45c1aec67ea68fa92c61",
+  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
+  "__result_table" : "bk_log_index_set_10",
+  "__table_uuid" : "bk_log_index_set_10|log"
+}, {
+  "__data_label" : "set_10",
+  "__doc_id" : "77d08d253f11554c5290b4cac515c4e1",
+  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
+  "__result_table" : "bk_log_index_set_10",
+  "__table_uuid" : "bk_log_index_set_10|log"
+}, {
+  "__data_label" : "set_10",
+  "__doc_id" : "9fb5bb5f9bce7e0ab59e0cd1f410c57b",
+  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
+  "__result_table" : "bk_log_index_set_10",
+  "__table_uuid" : "bk_log_index_set_10|log"
+}, {
+  "__data_label" : "set_10",
+  "__doc_id" : "573b3e1b4a499e4b7e7fab35f316ac8a",
+  "__ext.container_id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "id" : "77bd897e66402eb66ee97a1f832fb55b2114d83dc369f01e36ce4cec8483786f",
+  "__index" : "v2_2_bklog_bk_unify_query_20240814_0",
+  "__result_table" : "bk_log_index_set_10",
+  "__table_uuid" : "bk_log_index_set_10|log"
+} ]`,
+			resultTableOptions: metadata.ResultTableOptions{
+				"bk_log_index_set_10|log": &metadata.ResultTableOption{
+					FieldType: mock.FieldType,
+					From:      function.IntPoint(0),
+				},
+			},
+		},
 		"获取 10条 不 field 为空的原始数据": {
 			query: &metadata.Query{
 				DB:         db,

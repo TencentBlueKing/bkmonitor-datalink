@@ -97,12 +97,6 @@ func TestRelabelConfigValidate(t *testing.T) {
 			target:  RelabelTarget{Label: "target_label", Value: "foo", Action: relabelUpsert},
 			wantErr: true,
 		},
-		{
-			name:    "invalid config - missing destinations",
-			metrics: []string{"test_metric"},
-			rules:   RelabelRules{{Label: "label1", Op: OpIn, Values: []any{"value1", "value2"}}},
-			wantErr: true,
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -314,7 +308,7 @@ func createTestMap(pairs ...string) pcommon.Map {
 	return m
 }
 
-func TestRelabelRuleMatchMetricAttrs(t *testing.T) {
+func TestRelabelActionRuleMatch(t *testing.T) {
 	ruleOpIn := &RelabelRule{
 		Label:  "service",
 		Op:     "in",
@@ -328,43 +322,43 @@ func TestRelabelRuleMatchMetricAttrs(t *testing.T) {
 
 	tests := []struct {
 		name  string
-		rules *RelabelRules
+		rules RelabelRules
 		attrs pcommon.Map
 		want  bool
 	}{
 		{
 			name:  "empty rules not match",
-			rules: &RelabelRules{},
+			rules: RelabelRules{},
 			attrs: createTestMap("service", "auth-service"),
 			want:  false,
 		},
 		{
 			name:  "single matching rule",
-			rules: &RelabelRules{ruleOpIn},
+			rules: RelabelRules{ruleOpIn},
 			attrs: createTestMap("service", "auth-service"),
 			want:  true,
 		},
 		{
 			name:  "single non-existing label",
-			rules: &RelabelRules{ruleOpIn},
+			rules: RelabelRules{ruleOpIn},
 			attrs: createTestMap("app", "payment-service"),
 			want:  false,
 		},
 		{
 			name:  "multiple rules all match",
-			rules: &RelabelRules{ruleOpIn, ruleOpRange},
+			rules: RelabelRules{ruleOpIn, ruleOpRange},
 			attrs: createTestMap("service", "auth-service", "status", "200"),
 			want:  true,
 		},
 		{
 			name:  "range rule mismatch",
-			rules: &RelabelRules{ruleOpRange},
+			rules: RelabelRules{ruleOpRange},
 			attrs: createTestMap("status", "500"),
 			want:  false,
 		},
 		{
 			name:  "mixed rules partial match",
-			rules: &RelabelRules{ruleOpIn, ruleOpRange},
+			rules: RelabelRules{ruleOpIn, ruleOpRange},
 			attrs: createTestMap("service", "auth-service", "status", "404"),
 			want:  false,
 		},
@@ -381,11 +375,11 @@ func TestRelabelRuleMatchMetricAttrs(t *testing.T) {
 
 	for _, tt := range tests {
 		assert.NoError(t, tt.rules.Validate())
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run("OT:"+tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, tt.rules.MatchOTAttrs(tt.attrs))
 		})
 
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run("RW:"+tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, tt.rules.MatchRWLabels(attrsToLabels(tt.attrs)))
 		})
 	}

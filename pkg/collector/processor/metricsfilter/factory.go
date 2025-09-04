@@ -214,5 +214,43 @@ func (p *metricsFilter) codeRelabelAction(record *define.Record, config Config) 
 				}
 			})
 		}
+
+	case define.RecordRemoteWrite:
+		handle := func(ts *prompb.TimeSeries, action CodeRelabelAction) {
+			lbs := promlabels.Labels(ts.GetLabels())
+			nameLabel, ok := lbs.Get("__name__")
+			if !ok || !action.IsMetricIn(nameLabel.GetValue()) {
+				return
+			}
+			if !action.MatchRWLabels(lbs) {
+				return
+			}
+
+			for _, service := range action.Services {
+				if !service.MatchRWLabels(lbs) {
+					continue
+				}
+
+				for _, code := range service.Codes {
+					if !code.MatchRWLabels(lbs) {
+						continue
+					}
+
+					target := code.Target
+					switch target.Action {
+					case relabelUpsert:
+						lbs.Upsert(target.Label, target.Value)
+						ts.Labels = lbs
+						return // 每个指标只可能命中一次
+					}
+				}
+			}
+		}
+		for _, action := range config.CodeRelabel {
+			rwData := record.Data.(*define.RemoteWriteData)
+			for i := 0; i < len(rwData.Timeseries); i++ {
+				handle(&rwData.Timeseries[i], action)
+			}
+		}
 	}
 }

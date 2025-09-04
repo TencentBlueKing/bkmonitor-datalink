@@ -238,6 +238,44 @@ func testRelabelBasedFactory(t *testing.T, content string, tests []relabelBasedC
 }
 
 func TestRelabelAction(t *testing.T) {
+	const (
+		content = `
+processor:
+  - name: "metrics_filter/relabel"
+    config:
+      relabel:
+        - metrics: ["rpc_client_handled_total","rpc_client_dropped_total"]
+          rules:
+            - label: "callee_method"
+              op: "in"
+              values: ["hello"]
+            - label: "callee_service"
+              op: "in"
+              values: ["example.greeter"]
+            - label: "code"
+              op: "range"
+              values:
+                - prefix: "err_"
+                  min: 10
+                  max: 19
+                - prefix: "trpc_"
+                  min: 11
+                  max: 12
+                - prefix: "ret_"
+                  min: 100
+                  max: 200
+                - min: 200
+                  max: 200
+                - prefix: ""
+                  min: 2000
+                  max: 3000
+          target:
+            action: "upsert"
+            label: "code_type"
+            value: "success"
+`
+	)
+
 	tests := []relabelBasedCase{
 		{
 			name: "hit op in",
@@ -298,47 +336,78 @@ func TestRelabelAction(t *testing.T) {
 			},
 			wantValue: "success",
 		},
+		{
+			name: "hit noprefix",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				attrs: map[string]string{
+					"callee_method":  "hello",
+					"callee_service": "example.greeter",
+					"code":           "2009",
+				},
+			},
+			wantValue: "success",
+		},
+		{
+			name: "miss noprefix",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				attrs: map[string]string{
+					"callee_method":  "hello",
+					"callee_service": "example.greeter",
+					"code":           "3001",
+				},
+			},
+		},
 	}
-
-	const (
-		content = `
-processor:
-  - name: "metrics_filter/relabel"
-    config:
-      relabel:
-        - metrics: ["rpc_client_handled_total","rpc_client_dropped_total"]
-          rules:
-            - label: "callee_method"
-              op: "in"
-              values: ["hello"]
-            - label: "callee_service"
-              op: "in"
-              values: ["example.greeter"]
-            - label: "code"
-              op: "range"
-              values:
-                - prefix: "err_"
-                  min: 10
-                  max: 19
-                - prefix: "trpc_"
-                  min: 11
-                  max: 12
-                - prefix: "ret_"
-                  min: 100
-                  max: 200
-                - min: 200
-                  max: 200
-          target:
-            action: "upsert"
-            label: "code_type"
-            value: "success"
-`
-	)
 
 	testRelabelBasedFactory(t, content, tests)
 }
 
 func TestCodeRelabelAction(t *testing.T) {
+	const (
+		content = `
+processor:
+  - name: "metrics_filter/code_relabel"
+    config:
+      code_relabel:
+        - metrics: ["rpc_client_handled_total","rpc_client_dropped_total"]
+          source: "my.service.name"
+          services:
+          - name: "my.server;my.service;my.method"
+            codes: 
+            - rule: "err_200~300"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "success"
+            - rule: "err_400~500"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "error"
+            - rule: "600"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "normal"
+          - name: "my.server;*;my.method1"
+            codes: 
+            - rule: "err_200~300"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "success"
+          - name: "my.server;*;my.method3"
+            codes: 
+            - rule: "2000~3000"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "noprefix"
+`
+	)
+
 	tests := []relabelBasedCase{
 		{
 			name: "rule err_200~300",
@@ -433,43 +502,21 @@ func TestCodeRelabelAction(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "rule noprofix",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				attrs: map[string]string{
+					"callee_server":  "my.server",
+					"callee_service": "anything?",
+					"callee_method":  "my.method3",
+					"service_name":   "my.service.name",
+					"code":           "2000",
+				},
+			},
+			wantValue: "noprefix",
+		},
 	}
-
-	const (
-		content = `
-processor:
-  - name: "metrics_filter/code_relabel"
-    config:
-      code_relabel:
-        - metrics: ["rpc_client_handled_total","rpc_client_dropped_total"]
-          source: "my.service.name"
-          services:
-          - name: "my.server;my.service;my.method"
-            codes: 
-            - rule: "err_200~300"
-              target:
-                 action: "upsert"
-                 label: "code_type"
-                 value: "success"
-            - rule: "err_400~500"
-              target:
-                 action: "upsert"
-                 label: "code_type"
-                 value: "error"
-            - rule: "600"
-              target:
-                 action: "upsert"
-                 label: "code_type"
-                 value: "normal"
-          - name: "my.server;*;my.method1"
-            codes: 
-            - rule: "err_200~300"
-              target:
-                 action: "upsert"
-                 label: "code_type"
-                 value: "success"
-`
-	)
 
 	testRelabelBasedFactory(t, content, tests)
 }

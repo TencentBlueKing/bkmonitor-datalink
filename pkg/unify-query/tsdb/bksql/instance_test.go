@@ -1235,6 +1235,37 @@ func TestInstance_bkSql(t *testing.T) {
 
 			expected: "SELECT COUNT(`matchstep_start_to_fail_0_100`) AS `_value_`, MAX(FLOOR((dtEventTimeStamp + 0) / 3600000) * 3600000 - 0) AS `_timestamp_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime` WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` < 1733846399000 AND `dtEventTime` >= '2024-12-09 23:00:00' AND `dtEventTime` <= '2024-12-11 00:00:00' AND `thedate` >= '20241209' AND `thedate` <= '20241210' GROUP BY (FLOOR((dtEventTimeStamp + 0) / 3600000) * 3600000 - 0)",
 		},
+		{
+			name:  "query aggregate count with window hour and alias field",
+			start: time.Unix(1733756400, 0),
+			end:   time.Unix(1733846399, 0),
+			query: &metadata.Query{
+				DB:          "101068_MatchFullLinkTimeConsumptionFlow_CostTime",
+				Measurement: sql_expr.Doris,
+				Field:       "origin_field",
+				FieldAlias: map[string]string{
+					"origin_field": "new_field",
+				},
+				Aggregates: metadata.Aggregates{
+					{
+						Name:       "count",
+						Window:     time.Hour,
+						Dimensions: []string{"origin_field"},
+					},
+				},
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "origin_field",
+							Operator:      "eq",
+							Value:         []string{"123"},
+						},
+					},
+				},
+			},
+
+			expected: "SELECT `new_field` AS `origin_field`, COUNT(`new_field`) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 60 AS INT) * 60 - 0) * 60 * 1000) AS `_timestamp_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime`.doris WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` <= 1733846399000 AND `dtEventTime` >= '2024-12-09 23:00:00' AND `dtEventTime` <= '2024-12-11 00:00:00' AND `thedate` >= '20241209' AND `thedate` <= '20241210' AND `new_field` = '123' GROUP BY origin_field, _timestamp_",
+		},
 	}
 
 	for _, c := range testCases {

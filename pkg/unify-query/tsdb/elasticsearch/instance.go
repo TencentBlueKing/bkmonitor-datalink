@@ -720,12 +720,45 @@ func (i *Instance) QuerySeriesSet(
 		log.Warnf(ctx, "query label map error: %s", queryLabelErr)
 	}
 
+	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
+
+	reverseAlias := make(map[string]string, len(query.FieldAlias))
+	for k, v := range query.FieldAlias {
+		reverseAlias[v] = k
+	}
+
 	fact := NewFormatFactory(ctx).
 		WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 		WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
 		WithMappings(mappings...).
 		WithOrders(query.Orders).
-		WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc()).
+		WithTransform(func(s string) string {
+			// 别名替换
+			ns := s
+			if alias, ok := query.FieldAlias[ns]; ok {
+				ns = alias
+			}
+
+			// 格式转换
+			if encodeFunc != nil {
+				ns = encodeFunc(ns)
+			}
+			return ns
+		}, func(s string) string {
+			ns := s
+			// 格式转换
+			if decodeFunc != nil {
+				ns = decodeFunc(ns)
+			}
+
+			// 别名替换
+			if alias, ok := reverseAlias[ns]; ok {
+				ns = alias
+			}
+			return ns
+		},
+		).
 		WithIncludeValues(queryLabelMap)
 
 	if len(query.Aggregates) == 0 {

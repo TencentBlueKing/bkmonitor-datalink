@@ -121,6 +121,7 @@ func (i *Instance) getClient(ctx context.Context, connect Connect) (*elastic.Cli
 		elastic.SetURL(connect.Address),
 		elastic.SetSniff(false),
 		elastic.SetHealthcheck(i.healthCheck),
+		elastic.SetInfoLog(log.DefaultLogger),
 	}
 	ctx, cancel := context.WithTimeout(ctx, i.timeout)
 	defer cancel()

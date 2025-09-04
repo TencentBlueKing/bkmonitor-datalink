@@ -53,7 +53,7 @@ func (o ResultTableOptions) MergeOptions(options ResultTableOptions) {
 // IsCrop 是否裁剪数据
 func (o ResultTableOptions) IsCrop() bool {
 	for _, v := range o {
-		if v.SliceMax > 0 || (*v.SliceIndex) > 0 || v.ScrollID != "" || len(v.SearchAfter) > 0 {
+		if v.ScrollID != "" || len(v.SearchAfter) > 0 {
 			return false
 		}
 	}

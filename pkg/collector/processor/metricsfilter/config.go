@@ -33,7 +33,7 @@ const (
 	OpNotIn Op = "notin"
 	OpRange Op = "range"
 
-	opSkip Op = ".*" // 内部逻辑 表示匹配所有内容
+	opSkip Op = "*" // 内部逻辑 表示匹配所有内容
 )
 
 type Config struct {
@@ -158,6 +158,7 @@ func (r *RelabelRule) Validate() error {
 		}
 		r.rangeValues = values
 
+	case opSkip:
 	default:
 		return errors.Errorf("unsupported operator %s", r.Op)
 	}

@@ -406,6 +406,33 @@ func TestCodeRelabelAction(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "rule skip",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				attrs: map[string]string{
+					"callee_server":  "my.server",
+					"callee_service": "anything?",
+					"callee_method":  "my.method1",
+					"service_name":   "my.service.name",
+					"code":           "err_200",
+				},
+			},
+			wantValue: "success",
+		},
+		{
+			name: "rule skip but not method",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				attrs: map[string]string{
+					"callee_server":  "my.server",
+					"callee_service": "anything?",
+					"callee_method":  "my.method2",
+					"service_name":   "my.service.name",
+					"code":           "err_200",
+				},
+			},
+		},
 	}
 
 	const (
@@ -434,6 +461,13 @@ processor:
                  action: "upsert"
                  label: "code_type"
                  value: "normal"
+          - name: "my.server;*;my.method1"
+            codes: 
+            - rule: "err_200~300"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "success"
 `
 	)
 

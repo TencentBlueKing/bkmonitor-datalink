@@ -3863,7 +3863,6 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 			out, err := json.Marshal(res)
 			actual := string(out)
 			assert.Nil(t, err)
-			fmt.Printf("ActualResult: %v\n", actual)
 			assert.JSONEq(t, c.result, actual)
 		})
 	}

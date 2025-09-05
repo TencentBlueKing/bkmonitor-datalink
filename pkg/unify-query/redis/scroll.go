@@ -119,7 +119,7 @@ func (s *ScrollSession) Update(ctx context.Context) error {
 }
 
 func (s *ScrollSession) Clear(ctx context.Context) error {
-	return Client().Set(ctx, s.SessionKey, "", s.ScrollWindowTimeout).Err()
+	return Client().Del(ctx, s.SessionKey).Err()
 }
 
 func (s *ScrollSession) MarshalBinary() ([]byte, error) {

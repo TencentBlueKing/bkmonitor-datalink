@@ -357,12 +357,14 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 				log.Errorf(ctx, "clear scroll session failed, err: %v", err)
 				return
 			}
+		} else {
+			err = session.Update(ctx)
+			if err != nil {
+				log.Errorf(ctx, "update scroll session failed, err: %v", err)
+				return
+			}
 		}
-		err = session.Update(ctx)
-		if err != nil {
-			log.Errorf(ctx, "update scroll session failed, err: %v", err)
-			return
-		}
+
 		err = session.UnLock(ctx)
 		if err != nil {
 			return

@@ -487,7 +487,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					if option.ScrollID != "" {
 						slice.ScrollID = option.ScrollID
 					}
-					slice.Offset = slice.Offset + slice.Limit*slice.SliceMax
+					slice.Offset = slice.Offset + slice.Limit*session.SliceLength()
 					lock.Lock()
 					resultTableOptions.SetOption(newQry.TableUUID(), option)
 					lock.Unlock()

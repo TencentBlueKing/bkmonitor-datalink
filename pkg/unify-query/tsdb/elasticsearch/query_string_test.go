@@ -33,6 +33,13 @@ func createTestSchema() lucene_parser.FieldSchema {
 	schema.SetFieldType("events.attributes.message.detail", lucene_parser.FieldTypeText)
 	schema.SetFieldType("event_detail", lucene_parser.FieldTypeText)
 	schema.SetFieldType("nested.key", lucene_parser.FieldTypeText)
+
+	schema.SetNestedField("events")
+	schema.SetNestedField("nested")
+	schema.SetNestedField("user")
+
+	schema.SetFieldAlias("event_detail", "events.attributes.message.detail")
+
 	return schema
 }
 
@@ -63,8 +70,36 @@ func TestQsToDsl(t *testing.T) {
 			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"\"message queue conflict\""}}`,
 		},
 		{
-			q:        `nested.key: test AND demo`,
-			expected: `{"nested":{"path":"nested","query":{"bool":{"must":[{"match_phrase":{"nested.key":{"query":"test"}}},{"query_string":{"analyze_wildcard":true,"fields":["*", "__*"],"lenient":true,"query":"\"demo\""}}]}}}}`,
+			q: `nested.key: test AND demo`,
+			expected: `{
+  "bool": {
+    "must": [
+      {
+        "nested": {
+          "path": "nested",
+          "query": {
+            "match_phrase": {
+              "nested.key": {
+                "query": "test"
+              }
+            }
+          }
+        }
+      }, 
+		{
+        "query_string": {
+          "analyze_wildcard": true,
+          "fields": [
+            "*",
+            "__*"
+          ],
+          "lenient": true,
+          "query": "demo"
+        }
+      }
+    ]
+  }
+}`,
 		},
 		{
 			q:        `sync_spaces AND -keyword AND -BKLOGAPI`,

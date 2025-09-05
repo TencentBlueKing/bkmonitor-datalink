@@ -492,7 +492,7 @@ func TestParser(t *testing.T) {
 					},
 				},
 			},
-			es: `{"bool":{"must":[{"match":{"message":{"query":"test node"}}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
+			es: `{"bool":{"must":[{"match_phrase":{"message":{"query":"test node"}}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
 		},
 		"mixed or / and": {
 			q: "a:1 OR (b:2 AND c:4)",

@@ -331,6 +331,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	span.Set("query-body", queryStr)
 
 	if queryTs.ClearCache {
+		span.Set("clear-cache", "true")
 		err = session.Clear(ctx)
 		if err != nil {
 			log.Errorf(ctx, "clear scroll session failed, err: %v", err)
@@ -351,6 +352,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	defer func() {
 		if listData.Done {
 			err = session.Clear(ctx)
+			span.Set("clear-cache", "true")
 			if err != nil {
 				log.Errorf(ctx, "clear scroll session failed, err: %v", err)
 				return

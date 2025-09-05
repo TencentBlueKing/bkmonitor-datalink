@@ -53,7 +53,7 @@ func (s *SliceStatusValue) Done() bool {
 type ScrollSession struct {
 	SessionKey          string             `json:"session_key"`
 	LockKey             string             `json:"lock_key"`
-	LastAccessAt        time.Time          `json:"last_access_at"`
+	LastAccessAt        time.Time          `json:"-"`
 	ScrollWindowTimeout time.Duration      `json:"scroll_window_timeout"`
 	ScrollLockTimeout   time.Duration      `json:"scroll_lock_timeout"`
 	MaxSlice            int                `json:"max_slice"`
@@ -130,7 +130,7 @@ func calcSliceLength(maxSlice int) int {
 	return maxSlice
 }
 
-func newScrollSession(queryTsStr string, scrollTimeout, scrollLockTimeout time.Duration, maxSlice, sliceMaxFailedNum, limit int) *ScrollSession {
+func NewScrollSession(queryTsStr string, scrollTimeout, scrollLockTimeout time.Duration, maxSlice, sliceMaxFailedNum, limit int) *ScrollSession {
 	sliceLength := calcSliceLength(maxSlice)
 	session := &ScrollSession{
 		SessionKey:          SessionKeyPrefix + queryTsStr,
@@ -202,7 +202,7 @@ func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollWind
 		return
 	}
 
-	session = newScrollSession(queryTsStr, scrollWindowTimeoutDuration, scrollLockTimeoutDuration, maxSlice, DefaultSliceMaxFailedNum, Limit)
+	session = NewScrollSession(queryTsStr, scrollWindowTimeoutDuration, scrollLockTimeoutDuration, maxSlice, DefaultSliceMaxFailedNum, Limit)
 	err = Client().SetNX(ctx, session.SessionKey, session, scrollWindowTimeoutDuration).Err()
 	if err != nil {
 		return

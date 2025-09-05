@@ -431,18 +431,10 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	defer p.Release()
 
 	queryRef.Range("", func(qry *metadata.Query) {
-		for k, s := range session.ScrollIDs {
-			if s.Done() {
-				continue
-			}
-
+		for i := 0; i < session.SliceLength(); i++ {
 			wg.Add(1)
 
 			err = p.Submit(func() {
-				defer func() {
-					session.UpdateSliceStatus(k, s)
-					wg.Done()
-				}()
 
 				newQry := &metadata.Query{}
 				err = copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true})
@@ -451,16 +443,27 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					errCh <- err
 					return
 				}
-				log.Infof(ctx, "[scroll] session: %v", session)
-				log.Infof(ctx, "[scroll] query with sliceID: %s, sliceIdx:%d ,sliceMax: %d, offset: %d, limit: %d", s.ScrollID, s.SliceIdx, s.SliceMax, s.Offset, s.Limit)
+
 				// 使用 slice 配置查询
-				newQry.SliceID = cast.ToString(s.SliceIdx)
-				newQry.Size = s.Limit
+				newQry.SliceID = cast.ToString(i)
+
+				// slice info
+				slice := session.Slice(newQry.TableUUID())
+				if slice.Done() {
+					return
+				}
+
+				defer func() {
+					session.UpdateSliceStatus(newQry.TableUUID(), slice)
+					wg.Done()
+				}()
+
+				newQry.Size = slice.Limit
 				newQry.ResultTableOption = &metadata.ResultTableOption{
-					ScrollID:   s.ScrollID,
-					SliceIndex: &s.SliceIdx,
-					SliceMax:   s.SliceMax,
-					From:       &s.Offset,
+					SliceIndex: i,
+					ScrollID:   slice.ScrollID,
+					SliceMax:   slice.SliceMax,
+					From:       &slice.Offset,
 				}
 
 				instance := prometheus.GetTsDbInstance(ctx, newQry)
@@ -471,7 +474,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				size, option, err := instance.QueryRawData(ctx, newQry, start, end, dataCh)
 				if err != nil {
-					s.FailedNum++
+					slice.FailedNum++
 					errCh <- err
 					return
 				}
@@ -479,9 +482,9 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
 				if option != nil {
 					if option.ScrollID != "" {
-						s.ScrollID = option.ScrollID
+						slice.ScrollID = option.ScrollID
 					}
-					s.Offset = s.Offset + s.Limit*s.SliceMax
+					slice.Offset = slice.Offset + slice.Limit*slice.SliceMax
 					lock.Lock()
 					resultTableOptions.SetOption(newQry.TableUUID(), option)
 					log.Infof(ctx, "[scroll] tableUUID: %s, option: %v, total:%d", newQry.TableUUID(), option, size)
@@ -489,7 +492,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				}
 
 				if size == 0 {
-					s.Status = redisUtil.StatusCompleted
+					slice.Status = redisUtil.StatusCompleted
 				}
 				total += size
 			})

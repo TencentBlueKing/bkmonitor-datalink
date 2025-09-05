@@ -4202,6 +4202,58 @@ func getIntValue(value interface{}) int64 {
 	}
 }
 
+func TestQueryRawWithScroll(t *testing.T) {
+	type Case struct {
+		name    string
+		queryTs *structured.QueryTs
+	}
+
+	mock.Es.Set(map[string]any{
+		`{"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1757051309,"include_lower":true,"include_upper":true,"to":1757054909}}}}},"size":100,"slice":{"id":1,"max":3},"sort":["_doc"]}`: "",
+	})
+
+	ctx := metadata.InitHashID(context.Background())
+	mock.Init()
+	influxdb.MockSpaceRouter(ctx)
+
+	for _, c := range []Case{
+		{
+			name: "test-1",
+			queryTs: &structured.QueryTs{
+				SpaceUid: influxdb.SpaceUid,
+				QueryList: []*structured.Query{
+					{
+						TableID: "multi_es",
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1757051309",
+				End:         "1757054909",
+				Step:        "1m",
+				Limit:       100,
+				Scroll:      "1m",
+				SliceMax:    3,
+			},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+
+			queryByte, _ := json.Marshal(c.queryTs)
+			queryStr := string(queryByte)
+			session, err := redisUtil.GetOrCreateScrollSession(ctx, queryStr, ScrollWindowTimeout, ScrollSessionLockTimeout, c.queryTs.SliceMax, c.queryTs.Limit)
+			if err != nil {
+				return
+			}
+
+			total, list, option, err := queryRawWithScroll(ctx, c.queryTs, session)
+			assert.Nil(t, err)
+
+			fmt.Println(total, list, option, err)
+		})
+	}
+}
+
 func TestQueryRawWithScroll_ESFlow(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 

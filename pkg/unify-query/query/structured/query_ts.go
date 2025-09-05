@@ -80,7 +80,7 @@ type QueryTs struct {
 	// IsMultiFrom 是否启用 MultiFrom 查询
 	IsMultiFrom bool `json:"is_multi_from,omitempty"`
 	// ClearCache 是否强制清理已存在的缓存会话
-	ClearCache bool `json:"clear_cache,omitempty"`
+	ClearCache bool `json:"-"`
 
 	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`
 

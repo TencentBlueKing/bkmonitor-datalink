@@ -14,10 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/cast"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 const (
@@ -35,8 +32,8 @@ const (
 	StatusCompleted = "completed"
 )
 
-type SliceStatusValue struct {
-	SliceIdx     int    `json:"slice_idx"`
+type SliceStatus struct {
+	SliceKey     string `json:"slice_key"`
 	SliceMax     int    `json:"slice_max"`
 	ScrollID     string `json:"scroll_id"`
 	Offset       int    `json:"offset"`
@@ -46,25 +43,53 @@ type SliceStatusValue struct {
 	Limit        int    `json:"limit"`
 }
 
-func (s *SliceStatusValue) Done() bool {
+func (s *SliceStatus) Done() bool {
 	return s.Status == StatusCompleted || s.Status == StatusFailed
 }
 
 type ScrollSession struct {
-	SessionKey          string             `json:"session_key"`
-	LockKey             string             `json:"lock_key"`
-	LastAccessAt        time.Time          `json:"-"`
-	ScrollWindowTimeout time.Duration      `json:"scroll_window_timeout"`
-	ScrollLockTimeout   time.Duration      `json:"scroll_lock_timeout"`
-	MaxSlice            int                `json:"max_slice"`
-	SliceMaxFailedNum   int                `json:"slice_max_failed_num"`
-	Limit               int                `json:"limit"`
-	ScrollIDs           []SliceStatusValue `json:"scroll_ids"`
+	SessionKey          string        `json:"session_key"`
+	LockKey             string        `json:"lock_key"`
+	LastAccessAt        time.Time     `json:"-"`
+	ScrollWindowTimeout time.Duration `json:"scroll_window_timeout"`
+	ScrollLockTimeout   time.Duration `json:"scroll_lock_timeout"`
+	MaxSlice            int           `json:"max_slice"`
+	SliceMaxFailedNum   int           `json:"slice_max_failed_num"`
+	Limit               int           `json:"limit"`
+
+	SlicesMap map[string]*SliceStatus `json:"slices_map"`
 
 	mu sync.RWMutex
 }
 
-func (s *ScrollSession) UpdateSliceStatus(idx int, value SliceStatusValue) {
+func (s *ScrollSession) Slice(key string) *SliceStatus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if slice, ok := s.SlicesMap[key]; ok {
+		return slice
+	}
+
+	return &SliceStatus{
+		SliceKey:     key,
+		SliceMax:     s.MaxSlice,
+		MaxFailedNum: s.SliceMaxFailedNum,
+		Limit:        s.Limit,
+	}
+}
+
+func (s *ScrollSession) SliceLength() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.MaxSlice < 2 {
+		return 1
+	}
+
+	return s.MaxSlice
+}
+
+func (s *ScrollSession) UpdateSliceStatus(key string, value *SliceStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -73,17 +98,8 @@ func (s *ScrollSession) UpdateSliceStatus(idx int, value SliceStatusValue) {
 		value.Status = StatusFailed
 	}
 
-	s.ScrollIDs[idx] = value
+	s.SlicesMap[key] = value
 	s.LastAccessAt = time.Now()
-	s.print()
-}
-
-func (s *ScrollSession) print() {
-	sessionStr := cast.ToString(s)
-	for _, v := range s.ScrollIDs {
-		log.Infof(context.Background(), "[SCROLL] session: %s ,slice_idx: %d, slice_max: %d, scroll_id: %s, offset: %d, status: %s, failed_num: %d, max_failed_num: %d, limit: %d",
-			sessionStr, v.SliceIdx, v.SliceMax, v.ScrollID, v.Offset, v.Status, v.FailedNum, v.MaxFailedNum, v.Limit)
-	}
 }
 
 func (s *ScrollSession) Lock(ctx context.Context) error {
@@ -114,7 +130,7 @@ func (s *ScrollSession) Done() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for _, sliceValue := range s.ScrollIDs {
+	for _, sliceValue := range s.SlicesMap {
 		if sliceValue.Status != StatusCompleted && sliceValue.FailedNum < s.SliceMaxFailedNum {
 			return false
 		}
@@ -122,16 +138,7 @@ func (s *ScrollSession) Done() bool {
 	return true
 }
 
-func calcSliceLength(maxSlice int) int {
-	// 最大分片数小于2时，表示不使用分片
-	if maxSlice < 2 {
-		return 1
-	}
-	return maxSlice
-}
-
 func NewScrollSession(queryTsStr string, scrollTimeout, scrollLockTimeout time.Duration, maxSlice, sliceMaxFailedNum, limit int) *ScrollSession {
-	sliceLength := calcSliceLength(maxSlice)
 	session := &ScrollSession{
 		SessionKey:          SessionKeyPrefix + queryTsStr,
 		LockKey:             ScrollLockKeyPrefix + queryTsStr,
@@ -141,50 +148,9 @@ func NewScrollSession(queryTsStr string, scrollTimeout, scrollLockTimeout time.D
 		MaxSlice:            maxSlice,
 		SliceMaxFailedNum:   sliceMaxFailedNum,
 		Limit:               limit,
+		SlicesMap:           make(map[string]*SliceStatus),
 	}
 
-	// 根据 maxSlice 初始化 ScrollIDs
-	// 将总的 limit 平均分配给各个 slice
-	sliceLimit := limit / sliceLength
-	remainder := limit % sliceLength
-
-	// 如果 limit 小于 slice 数量，只激活前 limit 个 slice
-	activeSlices := sliceLength
-	if limit < sliceLength {
-		activeSlices = limit
-		sliceLimit = 1
-		remainder = 0
-	}
-
-	scrollIDs := make([]SliceStatusValue, sliceLength)
-	currentOffset := 0
-	for idx := 0; idx < sliceLength; idx++ {
-		currentSliceLimit := 0
-		status := StatusCompleted // 默认为已完成（不活跃）
-		sliceOffset := currentOffset
-
-		if idx < activeSlices {
-			currentSliceLimit = sliceLimit
-			// 将余数分配给前面的 slice
-			if idx < remainder {
-				currentSliceLimit++
-			}
-			status = StatusPending             // 活跃的 slice 设为待处理
-			currentOffset += currentSliceLimit // 为下一个slice设置offset
-		}
-
-		scrollIDs[idx] = SliceStatusValue{
-			ScrollID:     "",
-			Offset:       sliceOffset,
-			Status:       status,
-			FailedNum:    0,
-			MaxFailedNum: session.SliceMaxFailedNum,
-			Limit:        currentSliceLimit,
-			SliceMax:     sliceLength,
-			SliceIdx:     idx,
-		}
-	}
-	session.ScrollIDs = scrollIDs
 	return session
 }
 

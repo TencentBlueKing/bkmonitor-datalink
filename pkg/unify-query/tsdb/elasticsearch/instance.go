@@ -324,9 +324,9 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 					span.Set("query-scroll-id", option.ScrollID)
 					scroll.ScrollId(option.ScrollID)
 				}
-				if option.SliceIndex != nil && option.SliceMax > 1 {
-					span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", *option.SliceIndex, option.SliceMax))
-					scroll.Slice(elastic.NewSliceQuery().Id(*option.SliceIndex).Max(option.SliceMax))
+				if option.SliceMax > 1 {
+					span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", option.SliceIndex, option.SliceMax))
+					scroll.Slice(elastic.NewSliceQuery().Id(option.SliceIndex).Max(option.SliceMax))
 				}
 
 			}

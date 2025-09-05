@@ -389,11 +389,12 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
 	defer span.End(&err)
-	_, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
+	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if timeErr != nil {
 		err = timeErr
 		return
 	}
+	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 
 	queryRef, err = queryTs.ToQueryReference(ctx)
 	if err != nil {
@@ -480,7 +481,6 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					if option.ScrollID != "" {
 						s.ScrollID = option.ScrollID
 					}
-					s.Count += option.Hit
 					s.Offset = s.Offset + s.Limit*s.SliceMax
 					lock.Lock()
 					resultTableOptions.SetOption(newQry.TableUUID(), option)

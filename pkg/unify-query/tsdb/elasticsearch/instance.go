@@ -121,7 +121,6 @@ func (i *Instance) getClient(ctx context.Context, connect Connect) (*elastic.Cli
 		elastic.SetURL(connect.Address),
 		elastic.SetSniff(false),
 		elastic.SetHealthcheck(i.healthCheck),
-		elastic.SetTraceLog(log.DefaultLogger),
 	}
 	ctx, cancel := context.WithTimeout(ctx, i.timeout)
 	defer cancel()
@@ -616,8 +615,6 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			if sr.Hits.TotalHits != nil {
 				total += sr.Hits.TotalHits.Value
 			}
-
-			option.Hit = len(sr.Hits.Hits)
 		}
 
 		if query.Scroll != "" {

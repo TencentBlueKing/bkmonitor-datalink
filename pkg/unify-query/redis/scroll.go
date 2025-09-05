@@ -44,7 +44,6 @@ type SliceStatusValue struct {
 	FailedNum    int    `json:"failed_num"`
 	MaxFailedNum int    `json:"max_failed_num"`
 	Limit        int    `json:"limit"`
-	Count        int    `json:"count"`
 }
 
 func (s *SliceStatusValue) Done() bool {
@@ -82,8 +81,8 @@ func (s *ScrollSession) UpdateSliceStatus(idx int, value SliceStatusValue) {
 func (s *ScrollSession) print() {
 	sessionStr := cast.ToString(s)
 	for _, v := range s.ScrollIDs {
-		log.Infof(context.Background(), "[SCROLL] session: %s ,slice_idx: %d, slice_max: %d, scroll_id: %s, offset: %d, status: %s, failed_num: %d, max_failed_num: %d, limit: %d, count: %d",
-			sessionStr, v.SliceIdx, v.SliceMax, v.ScrollID, v.Offset, v.Status, v.FailedNum, v.MaxFailedNum, v.Limit, v.Count)
+		log.Infof(context.Background(), "[SCROLL] session: %s ,slice_idx: %d, slice_max: %d, scroll_id: %s, offset: %d, status: %s, failed_num: %d, max_failed_num: %d, limit: %d",
+			sessionStr, v.SliceIdx, v.SliceMax, v.ScrollID, v.Offset, v.Status, v.FailedNum, v.MaxFailedNum, v.Limit)
 	}
 }
 
@@ -145,15 +144,42 @@ func newScrollSession(queryTsStr string, scrollTimeout, scrollLockTimeout time.D
 	}
 
 	// 根据 maxSlice 初始化 ScrollIDs
+	// 将总的 limit 平均分配给各个 slice
+	sliceLimit := limit / sliceLength
+	remainder := limit % sliceLength
+
+	// 如果 limit 小于 slice 数量，只激活前 limit 个 slice
+	activeSlices := sliceLength
+	if limit < sliceLength {
+		activeSlices = limit
+		sliceLimit = 1
+		remainder = 0
+	}
+
 	scrollIDs := make([]SliceStatusValue, sliceLength)
+	currentOffset := 0
 	for idx := 0; idx < sliceLength; idx++ {
+		currentSliceLimit := 0
+		status := StatusCompleted // 默认为已完成（不活跃）
+		sliceOffset := currentOffset
+
+		if idx < activeSlices {
+			currentSliceLimit = sliceLimit
+			// 将余数分配给前面的 slice
+			if idx < remainder {
+				currentSliceLimit++
+			}
+			status = StatusPending             // 活跃的 slice 设为待处理
+			currentOffset += currentSliceLimit // 为下一个slice设置offset
+		}
+
 		scrollIDs[idx] = SliceStatusValue{
 			ScrollID:     "",
-			Offset:       session.Limit,
-			Status:       StatusPending,
+			Offset:       sliceOffset,
+			Status:       status,
 			FailedNum:    0,
 			MaxFailedNum: session.SliceMaxFailedNum,
-			Limit:        session.Limit,
+			Limit:        currentSliceLimit,
 			SliceMax:     sliceLength,
 			SliceIdx:     idx,
 		}

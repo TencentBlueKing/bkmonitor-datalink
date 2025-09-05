@@ -452,13 +452,13 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				// slice info
 				slice := session.Slice(newQry.TableUUID())
-				if slice.Done() {
-					return
-				}
-
 				defer func() {
 					session.UpdateSliceStatus(newQry.TableUUID(), slice)
 				}()
+
+				if slice.Done() {
+					return
+				}
 
 				from := slice.Offset + i*slice.Limit
 				newQry.Size = slice.Limit

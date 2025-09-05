@@ -325,9 +325,6 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 		return
 	}
 
-	sessionStr, _ := json.Marshal(session)
-
-	span.Set("session-object", sessionStr)
 	span.Set("query-body", queryStr)
 
 	if queryTs.ClearCache {
@@ -345,6 +342,9 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 			return
 		}
 	}
+
+	sessionStr, _ := json.Marshal(session)
+	span.Set("session-object", sessionStr)
 
 	if err = session.Lock(ctx); err != nil {
 		return

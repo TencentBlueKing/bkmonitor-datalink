@@ -22,7 +22,7 @@ import (
 )
 
 type Instance interface {
-	QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, *metadata.ResultTableOption, error)
+	QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, int64, *metadata.ResultTableOption, error)
 	QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet
 	QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error)
 
@@ -46,8 +46,8 @@ var (
 type DefaultInstance struct {
 }
 
-func (d *DefaultInstance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, *metadata.ResultTableOption, error) {
-	return 0, nil, nil
+func (d *DefaultInstance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, int64, *metadata.ResultTableOption, error) {
+	return 0, 0, nil, nil
 }
 
 func (d *DefaultInstance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {

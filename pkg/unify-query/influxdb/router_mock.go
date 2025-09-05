@@ -403,6 +403,10 @@ func MockSpaceRouter(ctx context.Context) {
 					ResultTableEs,
 					ResultTableEsWithTimeFiled,
 				},
+				"es_and_doris": ir.ResultTableList{
+					ResultTableEs,
+					ResultTableDoris,
+				},
 			},
 		)
 	})

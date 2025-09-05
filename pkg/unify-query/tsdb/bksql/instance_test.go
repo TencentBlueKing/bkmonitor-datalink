@@ -785,7 +785,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 					close(dataCh)
 				}()
 
-				_, option, err = ins.QueryRawData(ctx, c.query, start, end, dataCh)
+				_, _, option, err = ins.QueryRawData(ctx, c.query, start, end, dataCh)
 				assert.Nil(t, err)
 			}()
 

@@ -40,6 +40,10 @@ type Schema struct {
 	fieldTypes map[string]FieldType
 }
 
+func NewSchema() *Schema {
+	return &Schema{fieldTypes: make(map[string]FieldType)}
+}
+
 func (d *Schema) GetFieldType(fieldName string) (FieldType, bool) {
 	fieldType, exists := d.fieldTypes[fieldName]
 	return fieldType, exists
@@ -460,8 +464,8 @@ func buildOperatorRangeQueryWithSchema(e *OperatorExpr) elastic.Query {
 func createEnhancedQueryStringQuery(query string, isPrefix ...bool) elastic.Query {
 	q := elastic.NewQueryStringQuery(query).
 		AnalyzeWildcard(true).
-		Field("").
-		Field("__").
+		Field("*").
+		Field("__*").
 		Lenient(true)
 	if len(isPrefix) > 0 && isPrefix[0] {
 		q.Type("phrase_prefix")

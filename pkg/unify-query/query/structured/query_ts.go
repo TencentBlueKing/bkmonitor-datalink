@@ -127,6 +127,11 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		// 排序复用
 		query.OrderBy = q.OrderBy
 
+		// dry-run 复用
+		if q.DryRun {
+			query.DryRun = q.DryRun
+		}
+
 		// 如果 query.Step 不存在去外部统一的 step
 		if query.Step == "" {
 			query.Step = q.Step

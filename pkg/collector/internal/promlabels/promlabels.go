@@ -7,28 +7,33 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package json
+package promlabels
 
-import (
-	"io"
+import "github.com/prometheus/prometheus/prompb"
 
-	"github.com/bytedance/sonic"
-)
+type Labels []prompb.Label
 
-var sonicAPI = sonic.Config{
-	EscapeHTML:       true, // 安全性
-	CompactMarshaler: true, // 兼容性
-	CopyString:       true, // 正确性
-}.Froze()
-
-func Marshal(v any) ([]byte, error) {
-	return sonicAPI.Marshal(v)
+func (ls *Labels) Get(name string) (prompb.Label, bool) {
+	if ls == nil {
+		return prompb.Label{}, false
+	}
+	for i := 0; i < len(*ls); i++ {
+		if (*ls)[i].Name == name {
+			return (*ls)[i], true
+		}
+	}
+	return prompb.Label{}, false
 }
 
-func Unmarshal(data []byte, v any) error {
-	return sonicAPI.Unmarshal(data, v)
-}
-
-func NewEncoder(w io.Writer) sonic.Encoder {
-	return sonicAPI.NewEncoder(w)
+func (ls *Labels) Upsert(name, value string) {
+	if ls == nil {
+		return
+	}
+	for i := 0; i < len(*ls); i++ {
+		if (*ls)[i].Name == name {
+			(*ls)[i].Value = value
+			return
+		}
+	}
+	*ls = append(*ls, prompb.Label{Name: name, Value: value})
 }

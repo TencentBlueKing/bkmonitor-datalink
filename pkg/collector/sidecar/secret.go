@@ -191,7 +191,7 @@ func (sm *secretManager) createOrUpdateFiles(secret *corev1.Secret) {
 	sm.files[secret.Name] = data
 }
 
-func (sm *secretManager) handleSecretAdd(obj interface{}) {
+func (sm *secretManager) handleSecretAdd(obj any) {
 	secret, ok := obj.(*corev1.Secret)
 	if !ok {
 		logger.Errorf("excepted Secret type, got %T", obj)
@@ -202,7 +202,7 @@ func (sm *secretManager) handleSecretAdd(obj interface{}) {
 	sm.createOrUpdateFiles(secret)
 }
 
-func (sm *secretManager) handleSecretUpdate(oldObj interface{}, newObj interface{}) {
+func (sm *secretManager) handleSecretUpdate(oldObj any, newObj any) {
 	prevSecret, ok := oldObj.(*corev1.Secret)
 	if !ok {
 		logger.Errorf("excepted Secret type, got %T", oldObj)
@@ -224,7 +224,7 @@ func (sm *secretManager) handleSecretUpdate(oldObj interface{}, newObj interface
 	sm.createOrUpdateFiles(currSecret)
 }
 
-func (sm *secretManager) handleSecretDelete(obj interface{}) {
+func (sm *secretManager) handleSecretDelete(obj any) {
 	secret, ok := obj.(*corev1.Secret)
 	if !ok {
 		logger.Errorf("excepted Secret type, got %T", obj)

@@ -109,11 +109,11 @@ func NameOpts(s string) (string, string) {
 }
 
 type OptMap struct {
-	m map[string]interface{} // 不会有并发读写
+	m map[string]any // 不会有并发读写
 }
 
 func NewOptMap(s string) *OptMap {
-	m := make(map[string]interface{})
+	m := make(map[string]any)
 	pairs := strings.Split(s, ",")
 	for _, pair := range pairs {
 		kv := strings.Split(strings.TrimSpace(pair), "=")

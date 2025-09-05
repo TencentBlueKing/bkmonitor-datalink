@@ -25,10 +25,10 @@ type ResponseHandler interface {
 	Response(rtype define.RecordType) ([]byte, error)
 
 	// ErrorStatus 返回 status 序列化后内容
-	ErrorStatus(status interface{}) ([]byte, error)
+	ErrorStatus(status any) ([]byte, error)
 
 	// Unmarshal 根据 recordType 反序列化数据
-	Unmarshal(rtype define.RecordType, b []byte) (interface{}, error)
+	Unmarshal(rtype define.RecordType, b []byte) (any, error)
 }
 
 func WriteResponse(w http.ResponseWriter, contentType string, statusCode int, msg []byte) {

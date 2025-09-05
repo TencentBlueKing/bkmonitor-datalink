@@ -35,7 +35,7 @@ func (p pingserverMapper) AsMapStr() common.MapStr {
 	return common.MapStr{
 		"dataid":    p.pd.DataId,
 		"version":   p.pd.Version,
-		"data":      []map[string]interface{}{p.pd.Data},
+		"data":      []map[string]any{p.pd.Data},
 		"time":      now,
 		"timestamp": now,
 	}

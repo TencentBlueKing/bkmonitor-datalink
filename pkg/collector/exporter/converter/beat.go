@@ -39,7 +39,7 @@ func (c beatConverter) ToDataID(record *define.Record) int32 {
 func (c beatConverter) Convert(record *define.Record, f define.GatherFunc) {
 	dataID := c.ToDataID(record)
 	data := record.Data.(*define.BeatData)
-	dst := make(map[string]interface{})
+	dst := make(map[string]any)
 	if err := json.Unmarshal(data.Data, &dst); err != nil {
 		return
 	}

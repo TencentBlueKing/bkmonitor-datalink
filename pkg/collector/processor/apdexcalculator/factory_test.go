@@ -88,8 +88,8 @@ processor:
 	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
-func testMetricsDimension(t *testing.T, data interface{}, conf *Config, exist bool) {
-	confMap := make(map[string]interface{})
+func testMetricsDimension(t *testing.T, data any, conf *Config, exist bool) {
+	confMap := make(map[string]any)
 	assert.NoError(t, mapstructure.Decode(conf, &confMap))
 
 	factory, _ := NewFactory(confMap, nil)
@@ -211,7 +211,7 @@ func testProcessMetricsStandardCalculator(val time.Duration, threshold float64, 
 		}},
 	}
 
-	confMap := make(map[string]interface{})
+	confMap := make(map[string]any)
 	if err := mapstructure.Decode(config, &confMap); err != nil {
 		return false, err
 	}
@@ -296,7 +296,7 @@ func testProcessTracesStandardCalculator(startTime, endTime time.Duration, thres
 		}},
 	}
 
-	confMap := make(map[string]interface{})
+	confMap := make(map[string]any)
 	if err := mapstructure.Decode(config, &confMap); err != nil {
 		return "", err
 	}

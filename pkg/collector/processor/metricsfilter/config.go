@@ -14,22 +14,44 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	"github.com/prometheus/prometheus/prompb"
+	"github.com/spf13/cast"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"golang.org/x/exp/slices"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/promlabels"
+)
+
+const (
+	relabelUpsert = "upsert"
+)
+
+type Op string
+
+const (
+	OpIn    Op = "in"
+	OpNotIn Op = "notin"
+	OpRange Op = "range"
+
+	opSkip Op = "*" // 内部逻辑 表示匹配所有内容
 )
 
 type Config struct {
-	Drop    DropAction      `config:"drop" mapstructure:"drop"`
-	Replace []ReplaceAction `config:"replace" mapstructure:"replace"`
-	Relabel []RelabelAction `config:"relabel" mapstructure:"relabel"`
+	Drop        DropAction          `config:"drop" mapstructure:"drop"`
+	Replace     []ReplaceAction     `config:"replace" mapstructure:"replace"`
+	Relabel     []RelabelAction     `config:"relabel" mapstructure:"relabel"`
+	CodeRelabel []CodeRelabelAction `config:"code_relabel" mapstructure:"code_relabel"`
 }
 
 func (c *Config) Validate() error {
 	for i := 0; i < len(c.Relabel); i++ {
 		if err := c.Relabel[i].Validate(); err != nil {
+			return err
+		}
+	}
+
+	for i := 0; i < len(c.CodeRelabel); i++ {
+		if err := c.CodeRelabel[i].Validate(); err != nil {
 			return err
 		}
 	}
@@ -46,9 +68,9 @@ type ReplaceAction struct {
 }
 
 type RelabelAction struct {
-	Metrics      []string      `config:"metrics" mapstructure:"metrics"`
-	Rules        Rules         `config:"rules" mapstructure:"rules"`
-	Destinations []Destination `config:"destinations" mapstructure:"destinations"`
+	Metrics []string      `config:"metrics" mapstructure:"metrics"`
+	Rules   RelabelRules  `config:"rules" mapstructure:"rules"`
+	Target  RelabelTarget `config:"target" mapstructure:"target"`
 }
 
 func (r *RelabelAction) IsMetricIn(name string) bool {
@@ -56,57 +78,43 @@ func (r *RelabelAction) IsMetricIn(name string) bool {
 }
 
 func (r *RelabelAction) Validate() error {
-	if len(r.Metrics) == 0 || len(r.Destinations) == 0 {
-		return errors.New("relabel action: no metrics/destinations")
+	if len(r.Metrics) == 0 {
+		return errors.New("relabel action: no metrics specified")
 	}
 	return r.Rules.Validate()
 }
 
-type DstAction string
-
-const (
-	ActionUpsert DstAction = "upsert"
-)
-
-type Operator string
-
-const (
-	OperatorIn    Operator = "in"
-	OperatorNotIn Operator = "notin"
-	OperatorRange Operator = "range"
-)
-
-type Destination struct {
-	Action DstAction `config:"action" mapstructure:"action"`
-	Label  string    `config:"label" mapstructure:"label"`
-	Value  string    `config:"value" mapstructure:"value"`
+type RelabelTarget struct {
+	Action string `config:"action" mapstructure:"action"`
+	Label  string `config:"label" mapstructure:"label"`
+	Value  string `config:"value" mapstructure:"value"`
 }
 
-type RangeValue struct {
+type RelabelRangeValue struct {
 	Prefix string `config:"prefix" mapstructure:"prefix"`
 	Min    int    `config:"min" mapstructure:"min"`
 	Max    int    `config:"max" mapstructure:"max"`
 }
 
-type Rule struct {
-	Label  string        `config:"label" mapstructure:"label"`
-	Op     Operator      `config:"op" mapstructure:"op"`
-	Values []interface{} `config:"values" mapstructure:"values"`
+type RelabelRule struct {
+	Label  string `config:"label" mapstructure:"label"`
+	Op     Op     `config:"op" mapstructure:"op"`
+	Values []any  `config:"values" mapstructure:"values"`
 
 	inValues    []string
-	rangeValues []RangeValue
+	rangeValues []RelabelRangeValue
 }
 
 // Match 判断某个值是否命中本规则
-func (r *Rule) Match(value string) bool {
+func (r *RelabelRule) Match(value string) bool {
 	switch r.Op {
-	case OperatorIn:
+	case OpIn:
 		return slices.Contains(r.inValues, value)
 
-	case OperatorNotIn:
+	case OpNotIn:
 		return !slices.Contains(r.inValues, value)
 
-	case OperatorRange:
+	case OpRange:
 		for _, v := range r.rangeValues {
 			if v.Prefix != "" {
 				if !strings.HasPrefix(value, v.Prefix) {
@@ -116,66 +124,52 @@ func (r *Rule) Match(value string) bool {
 			}
 			i, err := strconv.Atoi(value)
 			if err != nil {
-				// 非数字值属于未命中规则，跳过
-				continue
+				continue // 非数字值属于未命中规则，跳过
 			}
 			if i >= v.Min && i <= v.Max {
 				return true
 			}
 		}
-		return false
-	}
 
+	case opSkip:
+		return true
+	}
 	return false
 }
 
 // Validate 验证规则是否合法，并转换为对应的值
-func (r *Rule) Validate() error {
+func (r *RelabelRule) Validate() error {
 	switch r.Op {
-	case OperatorIn, OperatorNotIn:
+	case OpIn, OpNotIn:
 		values := make([]string, 0, len(r.Values))
 		for _, val := range r.Values {
-			v, ok := val.(string)
-			if !ok {
-				return errors.Errorf("expected type string, but got %T", val)
-			}
-			values = append(values, v)
+			values = append(values, cast.ToString(val))
 		}
 		r.inValues = values
 
-	case OperatorRange:
-		values := make([]RangeValue, 0, len(r.Values))
+	case OpRange:
+		values := make([]RelabelRangeValue, 0, len(r.Values))
 		for _, val := range r.Values {
-			v, ok := val.(map[string]interface{})
-			if !ok {
-				return errors.Errorf("expected type map, but got %T", val)
-			}
-			var rv RangeValue
-			err := mapstructure.Decode(v, &rv)
-			if err != nil {
-				return errors.Wrapf(err, "failed to decode range value: %v", v)
-			}
-			if rv.Min > rv.Max {
-				return errors.Errorf("invalid range value: %v", rv)
+			var rv RelabelRangeValue
+			if err := mapstructure.Decode(val, &rv); err != nil {
+				return errors.Wrapf(err, "failed to decode range value: %v", val)
 			}
 			values = append(values, rv)
 		}
 		r.rangeValues = values
 
+	case opSkip:
 	default:
 		return errors.Errorf("unsupported operator %s", r.Op)
 	}
 	return nil
 }
 
-// Rules 规则列表
-// 使用指针方便 Validate 中修改内容
-type Rules []Rule
+type RelabelRules []*RelabelRule
 
-func (rs *Rules) Validate() error {
-	for i := 0; i < len(*rs); i++ {
-		// 校验的同时需要修改，所以不使用 range 遍历
-		if err := (*rs)[i].Validate(); err != nil {
+func (rs RelabelRules) Validate() error {
+	for i := 0; i < len(rs); i++ {
+		if err := (rs)[i].Validate(); err != nil {
 			return err
 		}
 	}
@@ -183,11 +177,11 @@ func (rs *Rules) Validate() error {
 }
 
 // MatchRWLabels 判断 RemoteWrite labels 是否匹配所有规则
-func (rs *Rules) MatchRWLabels(labels PromLabels) bool {
-	if len(*rs) == 0 {
+func (rs RelabelRules) MatchRWLabels(labels promlabels.Labels) bool {
+	if len(rs) == 0 {
 		return false
 	}
-	for _, rule := range *rs {
+	for _, rule := range rs {
 		label, ok := labels.Get(rule.Label)
 		if !ok {
 			return false
@@ -199,12 +193,12 @@ func (rs *Rules) MatchRWLabels(labels PromLabels) bool {
 	return true
 }
 
-// MatchMetricAttrs 判断 OT Metrics 属性是否匹配所有规则
-func (rs *Rules) MatchMetricAttrs(attrs pcommon.Map) bool {
-	if len(*rs) == 0 {
+// MatchOTAttrs 判断 OpenTelemetry Metrics 属性是否匹配所有规则
+func (rs RelabelRules) MatchOTAttrs(attrs pcommon.Map) bool {
+	if len(rs) == 0 {
 		return false
 	}
-	for _, rule := range *rs {
+	for _, rule := range rs {
 		label, ok := attrs.Get(rule.Label)
 		if !ok {
 			return false
@@ -216,29 +210,185 @@ func (rs *Rules) MatchMetricAttrs(attrs pcommon.Map) bool {
 	return true
 }
 
-type PromLabels []prompb.Label
+const (
+	labelServiceName   = "service_name"
+	labelCalleeServer  = "callee_server"
+	labelCalleeService = "callee_service"
+	labelCalleeMethod  = "callee_method"
+	labelCode          = "code"
+)
 
-func (ls *PromLabels) Get(name string) (prompb.Label, bool) {
-	if ls == nil {
-		return prompb.Label{}, false
-	}
-	for i := 0; i < len(*ls); i++ {
-		if (*ls)[i].Name == name {
-			return (*ls)[i], true
-		}
-	}
-	return prompb.Label{}, false
+type CodeRelabelAction struct {
+	Metrics  []string              `config:"metrics" mapstructure:"metrics"`
+	Source   string                `config:"source" mapstructure:"source"`
+	Services []*CodeRelabelService `config:"services" mapstructure:"services"`
+
+	rrs RelabelRules
 }
 
-func (ls *PromLabels) Upsert(name, value string) {
-	if ls == nil {
-		return
+func (c *CodeRelabelAction) IsMetricIn(name string) bool {
+	return slices.Contains(c.Metrics, name)
+}
+
+func (c *CodeRelabelAction) Validate() error {
+	if len(c.Metrics) == 0 || len(c.Services) == 0 {
+		return errors.New("relabel action: no metrics or services")
 	}
-	for i := 0; i < len(*ls); i++ {
-		if (*ls)[i].Name == name {
-			(*ls)[i].Value = value
-			return
+
+	for i := 0; i < len(c.Services); i++ {
+		if err := c.Services[i].Validate(); err != nil {
+			return err
 		}
 	}
-	*ls = append(*ls, prompb.Label{Name: name, Value: value})
+
+	c.rrs = RelabelRules{{
+		Label:  labelServiceName,
+		Op:     OpIn,
+		Values: []any{c.Source},
+	}}
+	return c.rrs.Validate()
+}
+
+func (c *CodeRelabelAction) MatchRWLabels(labels promlabels.Labels) bool {
+	return c.rrs.MatchRWLabels(labels)
+}
+
+func (c *CodeRelabelAction) MatchOTAttrs(attrs pcommon.Map) bool {
+	return c.rrs.MatchOTAttrs(attrs)
+}
+
+type CodeRelabelService struct {
+	Name  string             `config:"name" mapstructure:"name"`
+	Codes []*CodeRelabelCode `config:"codes" mapstructure:"codes"`
+
+	rrs RelabelRules
+}
+
+func (c *CodeRelabelService) Validate() error {
+	for i := 0; i < len(c.Codes); i++ {
+		if err := c.Codes[i].Validate(); err != nil {
+			return err
+		}
+	}
+
+	toOpVal := func(s string) (Op, []any) {
+		if s == string(opSkip) {
+			return opSkip, nil
+		}
+		return OpIn, []any{s}
+	}
+
+	parts := strings.Split(c.Name, ";")
+	if len(parts) != 3 {
+		return errors.New("source must be in format (server;service;method)")
+	}
+
+	var rrs []*RelabelRule
+	for i, part := range parts {
+		var label string
+		switch i {
+		case 0:
+			label = labelCalleeServer
+		case 1:
+			label = labelCalleeService
+		case 2:
+			label = labelCalleeMethod
+		}
+
+		op, values := toOpVal(part)
+		rrs = append(rrs, &RelabelRule{
+			Label:  label,
+			Op:     op,
+			Values: values,
+		})
+	}
+
+	c.rrs = rrs
+	return c.rrs.Validate()
+}
+
+func (c *CodeRelabelService) MatchRWLabels(labels promlabels.Labels) bool {
+	return c.rrs.MatchRWLabels(labels)
+}
+
+func (c *CodeRelabelService) MatchOTAttrs(attrs pcommon.Map) bool {
+	return c.rrs.MatchOTAttrs(attrs)
+}
+
+type CodeRelabelCode struct {
+	Rule   string        `config:"rule" mapstructure:"rule"`
+	Target RelabelTarget `config:"target" mapstructure:"target"`
+
+	rrs RelabelRules
+}
+
+func (c *CodeRelabelCode) Validate() error {
+	toRangeVal := func(s string) (*RelabelRangeValue, error) {
+		lst := strings.Split(s, "_")
+		if len(lst) >= 3 {
+			return nil, errors.New("rangeValue must be in format ([prefix_]code.min[~code.max])")
+		}
+
+		var prefix string
+		if len(lst) == 2 {
+			prefix = lst[0] + "_"
+		}
+
+		last := lst[len(lst)-1]
+		var minVal, maxVal int
+		var err error
+		isRange := strings.Contains(last, "~")
+		if isRange {
+			for i, v := range strings.Split(last, "~") {
+				if i == 0 {
+					minVal, err = strconv.Atoi(v)
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					maxVal, err = strconv.Atoi(v)
+					if err != nil {
+						return nil, err
+					}
+				}
+			}
+		} else {
+			val, err := strconv.Atoi(last)
+			if err != nil {
+				return nil, err
+			}
+			minVal = val
+			maxVal = val
+		}
+
+		return &RelabelRangeValue{
+			Prefix: prefix,
+			Min:    minVal,
+			Max:    maxVal,
+		}, nil
+	}
+
+	var rrs []*RelabelRule
+	for _, part := range strings.Split(c.Rule, ",") {
+		rv, err := toRangeVal(part)
+		if err != nil {
+			return err
+		}
+		rrs = append(rrs, &RelabelRule{
+			Label:  labelCode,
+			Op:     OpRange,
+			Values: []any{rv},
+		})
+	}
+
+	c.rrs = rrs
+	return c.rrs.Validate()
+}
+
+func (c *CodeRelabelCode) MatchRWLabels(labels promlabels.Labels) bool {
+	return c.rrs.MatchRWLabels(labels)
+}
+
+func (c *CodeRelabelCode) MatchOTAttrs(attrs pcommon.Map) bool {
+	return c.rrs.MatchOTAttrs(attrs)
 }

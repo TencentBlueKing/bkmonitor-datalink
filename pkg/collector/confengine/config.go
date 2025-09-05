@@ -52,7 +52,7 @@ func (c *Config) MustChild(s string) *Config {
 	return child
 }
 
-func (c *Config) Unpack(to interface{}) error {
+func (c *Config) Unpack(to any) error {
 	return c.conf.Unpack(to)
 }
 
@@ -64,7 +64,7 @@ func (c *Config) Disabled(s string) bool {
 	return ok
 }
 
-func (c *Config) UnpackChild(s string, to interface{}) error {
+func (c *Config) UnpackChild(s string, to any) error {
 	content, err := c.conf.Child(s, -1)
 	if err != nil {
 		return err
@@ -98,7 +98,7 @@ const (
 //
 // 一个子配置文件描述了某个唯一标识的应用的自定义配置
 type TierConfig struct {
-	m map[tierKey]interface{}
+	m map[tierKey]any
 }
 
 type tierKey struct {
@@ -108,22 +108,22 @@ type tierKey struct {
 }
 
 func NewTierConfig() *TierConfig {
-	return &TierConfig{m: map[tierKey]interface{}{}}
+	return &TierConfig{m: map[tierKey]any{}}
 }
 
-func (tc *TierConfig) All() []interface{} {
-	objs := make([]interface{}, 0)
+func (tc *TierConfig) All() []any {
+	objs := make([]any, 0)
 	for _, v := range tc.m {
 		objs = append(objs, v)
 	}
 	return objs
 }
 
-func (tc *TierConfig) Set(token, typ, id string, val interface{}) {
+func (tc *TierConfig) Set(token, typ, id string, val any) {
 	tc.m[tierKey{Token: token, Type: typ, ID: id}] = val
 }
 
-func (tc *TierConfig) SetGlobal(val interface{}) {
+func (tc *TierConfig) SetGlobal(val any) {
 	tc.m[tierKey{Type: keyGlobal}] = val
 }
 
@@ -135,21 +135,21 @@ func (tc *TierConfig) DelGlobal() {
 	delete(tc.m, tierKey{Type: keyGlobal})
 }
 
-func (tc *TierConfig) GetGlobal() interface{} {
+func (tc *TierConfig) GetGlobal() any {
 	return tc.m[tierKey{Type: keyGlobal}]
 }
 
-func (tc *TierConfig) GetByToken(token string) interface{} {
+func (tc *TierConfig) GetByToken(token string) any {
 	return tc.Get(token, "", "")
 }
 
-func (tc *TierConfig) Get(token, serviceID, instanceID string) interface{} {
+func (tc *TierConfig) Get(token, serviceID, instanceID string) any {
 	val, typ := tc.get(token, serviceID, instanceID)
 	logger.Debugf("tier config(token=%s, serviceID=%s, instanceID=%s), type: %s", token, serviceID, instanceID, typ)
 	return val
 }
 
-func (tc *TierConfig) get(token, serviceID, instanceID string) (interface{}, string) {
+func (tc *TierConfig) get(token, serviceID, instanceID string) (any, string) {
 	// 1) subconfigs.instance
 	if instanceID != "" {
 		v, ok := tc.m[tierKey{Token: token, Type: define.SubConfigFieldInstance, ID: instanceID}]

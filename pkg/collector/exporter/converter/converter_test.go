@@ -19,7 +19,7 @@ import (
 
 func TestCleanAttributesMap(t *testing.T) {
 	t.Run("Empty", func(t *testing.T) {
-		attrs := map[string]interface{}{
+		attrs := map[string]any{
 			"":    "1",
 			"foo": "bar",
 		}
@@ -30,7 +30,7 @@ func TestCleanAttributesMap(t *testing.T) {
 	})
 
 	t.Run("Trim", func(t *testing.T) {
-		attrs := map[string]interface{}{
+		attrs := map[string]any{
 			" ":   "1",
 			"foo": "bar",
 		}

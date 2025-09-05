@@ -84,9 +84,9 @@ func LoadConfigFrom(conf *confengine.Config) map[string]SkywalkingConfig {
 	}
 
 	type T struct {
-		Type           string                 `config:"type"`
-		Token          string                 `config:"token"`
-		SkywalkingConf map[string]interface{} `config:"skywalking_agent"`
+		Type           string         `config:"type"`
+		Token          string         `config:"token"`
+		SkywalkingConf map[string]any `config:"skywalking_agent"`
 	}
 
 	subConfig := confengine.LoadConfigPatterns(apmConf.Patterns)

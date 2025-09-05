@@ -113,7 +113,7 @@ func (c commonConverter) Convert(record *define.Record, f define.GatherFunc) {
 	}
 }
 
-func CleanAttributesMap(attrs map[string]interface{}) map[string]interface{} {
+func CleanAttributesMap(attrs map[string]any) map[string]any {
 	for k := range attrs {
 		if strings.TrimSpace(k) == "" {
 			delete(attrs, k)

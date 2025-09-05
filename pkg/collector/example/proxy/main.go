@@ -24,30 +24,30 @@ import (
 const URL = "http://localhost:10205/v2/push/"
 
 type Request struct {
-	DataID      int64                    `json:"data_id"`
-	AccessToken string                   `json:"access_token"`
-	Data        []map[string]interface{} `json:"data"`
+	DataID      int64            `json:"data_id"`
+	AccessToken string           `json:"access_token"`
+	Data        []map[string]any `json:"data"`
 }
 
 func buildInvalidTokenRequest() []byte {
 	bs, _ := json.Marshal(Request{
 		DataID:      10010,
 		AccessToken: "non_exist",
-		Data:        []map[string]interface{}{},
+		Data:        []map[string]any{},
 	})
 	return bs
 }
 
 func buildEmptyTokenRequest() []byte {
 	bs, _ := json.Marshal(Request{
-		Data: []map[string]interface{}{},
+		Data: []map[string]any{},
 	})
 	return bs
 }
 
 func buildTimeSeriesData() []byte {
-	items := make([]map[string]interface{}, 0, 1)
-	items = append(items, map[string]interface{}{
+	items := make([]map[string]any, 0, 1)
+	items = append(items, map[string]any{
 		"metrics":   map[string]float64{"cpu_load1": 1.0},
 		"dimension": map[string]string{"vm": "node1"},
 		"timestamp": time.Now().UnixMilli() + int64(rand.Int31n(200)),
@@ -63,8 +63,8 @@ func buildTimeSeriesData() []byte {
 }
 
 func buildEventData() []byte {
-	items := make([]map[string]interface{}, 0, 1)
-	items = append(items, map[string]interface{}{
+	items := make([]map[string]any, 0, 1)
+	items = append(items, map[string]any{
 		"event_name": "alarm",
 		"event":      map[string]string{"content": time.Now().Format(time.RFC3339)},
 		"dimension":  map[string]string{"vm": "node1"},
@@ -84,7 +84,7 @@ func doRequest(b []byte) {
 	buf := bytes.NewBuffer(b)
 	response, err := http.Post(URL, "", buf)
 	if err != nil {
-		log.Printf("failed to post data, err: %v\n", err.Error())
+		log.Println("failed to post data, err: ", err)
 		return
 	}
 	defer response.Body.Close()

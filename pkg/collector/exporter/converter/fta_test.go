@@ -26,7 +26,7 @@ func TestConvertFtaEvent(t *testing.T) {
 		Data: &define.FtaData{
 			PluginId:   "plugin_id",
 			IngestTime: 123456789,
-			Data:       []map[string]interface{}{{"key": "value"}},
+			Data:       []map[string]any{{"key": "value"}},
 			EventId:    "event_id",
 		},
 	}
@@ -42,7 +42,7 @@ func TestConvertFtaEvent(t *testing.T) {
 			"bk_data_id":      int32(123),
 			"bk_plugin_id":    "plugin_id",
 			"bk_ingest_time":  int64(123456789),
-			"data":            []map[string]interface{}{{"key": "value"}},
+			"data":            []map[string]any{{"key": "value"}},
 			"__bk_event_id__": "event_id",
 			"dataid":          int32(123),
 		}, event.Data())

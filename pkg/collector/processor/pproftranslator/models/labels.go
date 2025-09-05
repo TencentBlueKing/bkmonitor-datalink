@@ -35,7 +35,7 @@ func (l Labels) Less(i, j int) bool { return l.Items[i].Key < l.Items[j].Key }
 func (l Labels) Swap(i, j int) { l.Items[i], l.Items[j] = l.Items[j], l.Items[i] }
 
 var bytesPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return make([]byte, 0, 1024)
 	},
 }

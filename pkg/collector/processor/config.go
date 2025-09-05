@@ -12,8 +12,8 @@ package processor
 type Configs []Config
 
 type Config struct {
-	Name   string                 `config:"name"`
-	Config map[string]interface{} `config:"config"`
+	Name   string         `config:"name"`
+	Config map[string]any `config:"config"`
 }
 
 type IDConfig struct {

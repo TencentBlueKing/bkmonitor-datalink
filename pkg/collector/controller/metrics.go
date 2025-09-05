@@ -113,7 +113,7 @@ var (
 )
 
 func init() {
-	maxprocs.Logger(func(s string, i ...interface{}) {
+	maxprocs.Logger(func(s string, i ...any) {
 		logger.Infof(s, i...)
 	})
 }

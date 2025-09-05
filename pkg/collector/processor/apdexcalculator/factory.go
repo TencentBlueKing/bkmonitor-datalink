@@ -27,11 +27,11 @@ func init() {
 	processor.Register(define.ProcessorApdexCalculator, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*apdexCalculator, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*apdexCalculator, error) {
 	configs := confengine.NewTierConfig()
 	calculators := confengine.NewTierConfig()
 
@@ -79,7 +79,7 @@ func (p *apdexCalculator) IsPreCheck() bool {
 	return false
 }
 
-func (p *apdexCalculator) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *apdexCalculator) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)

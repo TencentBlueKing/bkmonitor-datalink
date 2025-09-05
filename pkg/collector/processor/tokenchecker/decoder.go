@@ -14,6 +14,7 @@ import (
 	"crypto/cipher"
 	"crypto/sha256"
 	"encoding/base64"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -461,7 +462,7 @@ func (d beatDecoder) Decode(s string) (define.Token, error) {
 	}
 
 	i, _ := strconv.Atoi(s)
-	if i <= 0 {
+	if i <= 0 || i > math.MaxInt32 {
 		return define.Token{}, errors.Errorf("reject invalid dataid: %s", s)
 	}
 	return define.Token{

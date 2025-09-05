@@ -28,18 +28,18 @@ var tarsApp = "collector"
 
 // TarsDispatch is an interface for handling dispatch operations using the Tars protocol.
 type TarsDispatch interface {
-	Dispatch(context.Context, interface{}, *requestf.RequestPacket, *requestf.ResponsePacket, bool) error
+	Dispatch(context.Context, any, *requestf.RequestPacket, *requestf.ResponsePacket, bool) error
 }
 
 // TarsServant is a struct that represents a Tars service with its object name, implementation, and dispatch handler.
 type TarsServant struct {
 	Obj      string
-	Impl     interface{}
+	Impl     any
 	Dispatch TarsDispatch
 }
 
 // NewTarsServant creates and returns a new TarsServant instance.
-func NewTarsServant(o string, server string, impl interface{}, dispatch TarsDispatch) *TarsServant {
+func NewTarsServant(o string, server string, impl any, dispatch TarsDispatch) *TarsServant {
 	s := &TarsServant{Obj: fmt.Sprintf("%s.%s.%s", tarsApp, server, o), Impl: impl, Dispatch: dispatch}
 	return s
 }

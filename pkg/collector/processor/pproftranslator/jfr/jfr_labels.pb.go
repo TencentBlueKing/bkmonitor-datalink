@@ -139,7 +139,7 @@ var (
 )
 
 var file_jfr_labels_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
-var file_jfr_labels_proto_goTypes = []interface{}{
+var file_jfr_labels_proto_goTypes = []any{
 	(*Context)(nil),        // 0: Context
 	(*LabelsSnapshot)(nil), // 1: LabelsSnapshot
 	nil,                    // 2: Context.LabelsEntry

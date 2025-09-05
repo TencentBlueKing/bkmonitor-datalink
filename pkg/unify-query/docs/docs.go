@@ -95,7 +95,7 @@ const docTemplate = `{
                         "in": "header"
                     },
                     {
-						Code   : 触发代码提示              " 切换到上一个标签页"
+						"description": "json data",
                         "name": "data",
                         "in": "body",
                         "required": true,

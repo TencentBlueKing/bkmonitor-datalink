@@ -351,7 +351,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					return
 				}
 
-				size, option, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
+				_, size, option, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
 				if queryErr != nil {
 					errCh <- queryErr
 					return
@@ -435,6 +435,9 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 			wg.Add(1)
 
 			err = p.Submit(func() {
+				defer func() {
+					wg.Done()
+				}()
 
 				newQry := &metadata.Query{}
 				err = copier.CopyWithOption(newQry, qry, copier.Option{DeepCopy: true})
@@ -455,15 +458,15 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 				defer func() {
 					session.UpdateSliceStatus(newQry.TableUUID(), slice)
-					wg.Done()
 				}()
 
+				from := slice.Offset + i*slice.Limit
 				newQry.Size = slice.Limit
 				newQry.ResultTableOption = &metadata.ResultTableOption{
 					SliceIndex: i,
 					ScrollID:   slice.ScrollID,
 					SliceMax:   slice.SliceMax,
-					From:       &slice.Offset,
+					From:       &from,
 				}
 
 				instance := prometheus.GetTsDbInstance(ctx, newQry)
@@ -472,7 +475,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					return
 				}
 
-				size, option, err := instance.QueryRawData(ctx, newQry, start, end, dataCh)
+				size, _, option, err := instance.QueryRawData(ctx, newQry, start, end, dataCh)
 				if err != nil {
 					slice.FailedNum++
 					errCh <- err
@@ -487,7 +490,6 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					slice.Offset = slice.Offset + slice.Limit*slice.SliceMax
 					lock.Lock()
 					resultTableOptions.SetOption(newQry.TableUUID(), option)
-					log.Infof(ctx, "[scroll] tableUUID: %s, option: %v, total:%d", newQry.TableUUID(), option, size)
 					lock.Unlock()
 				}
 

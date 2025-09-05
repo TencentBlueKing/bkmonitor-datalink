@@ -535,7 +535,7 @@ func TestInstance_queryRawData(t *testing.T) {
 
 		isReference bool
 
-		size               int64
+		total              int64
 		list               string
 		resultTableOptions metadata.ResultTableOptions
 		err                error
@@ -571,7 +571,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			},
 			start: defaultStart,
 			end:   defaultEnd,
-			size:  1,
+			total: 1,
 			list: `[ {
   "__data_label" : "es_index",
   "__doc_id" : "aS3KjpEBbwEm76LbcH1G",
@@ -624,7 +624,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			},
 			start: defaultStart,
 			end:   defaultEnd,
-			size:  1e4,
+			total: 1e4,
 			list: `[ {
   "__data_label" : "set_10",
   "__doc_id" : "27bdd842c5f2929cf4bd90f1e4534a9d",
@@ -729,7 +729,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			},
 			start: defaultStart,
 			end:   defaultEnd,
-			size:  1e4,
+			total: 1e4,
 			list: `[ {
   "__data_label" : "bk_log",
   "__doc_id" : "8defd23f1c2599e70f3ace3a042b2b5f",
@@ -836,7 +836,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			},
 			start: defaultStart,
 			end:   defaultEnd,
-			size:  1e4,
+			total: 1e4,
 			list: `[ {
   "__data_label" : "",
   "__doc_id" : "8defd23f1c2599e70f3ace3a042b2b5f",
@@ -906,7 +906,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			},
 			start: defaultStart,
 			end:   defaultEnd,
-			size:  0,
+			total: 0,
 			resultTableOptions: metadata.ResultTableOptions{
 				"bk_log_index_set_10|log": &metadata.ResultTableOption{
 					FieldType: mock.FieldType,
@@ -943,7 +943,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			},
 			start: defaultStart,
 			end:   defaultEnd,
-			size:  1e4,
+			total: 1e4,
 			list: `[ {
   "__data_label" : "",
   "__doc_id" : "rYSm7pUBxj8-27WaYRCB",
@@ -1012,7 +1012,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				}
 			}()
 
-			size, option, err := ins.QueryRawData(ctx, c.query, c.start, c.end, dataCh)
+			_, total, option, err := ins.QueryRawData(ctx, c.query, c.start, c.end, dataCh)
 			close(dataCh)
 
 			wg.Wait()
@@ -1032,7 +1032,7 @@ func TestInstance_queryRawData(t *testing.T) {
 				options := make(metadata.ResultTableOptions)
 				options.SetOption(c.query.TableUUID(), option)
 
-				assert.Equal(t, c.size, size)
+				assert.Equal(t, c.total, total)
 				assert.Equal(t, c.resultTableOptions, options)
 			}
 		})

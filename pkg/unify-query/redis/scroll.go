@@ -75,6 +75,7 @@ func (s *ScrollSession) Slice(key string) *SliceStatus {
 		SliceMax:     s.MaxSlice,
 		MaxFailedNum: s.SliceMaxFailedNum,
 		Limit:        s.Limit,
+		Status:       StatusPending,
 	}
 }
 
@@ -129,6 +130,10 @@ func (s *ScrollSession) UnmarshalBinary(data []byte) error {
 func (s *ScrollSession) Done() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	if len(s.SlicesMap) == 0 {
+		return false
+	}
 
 	for _, sliceValue := range s.SlicesMap {
 		if sliceValue.Status != StatusCompleted && sliceValue.FailedNum < s.SliceMaxFailedNum {

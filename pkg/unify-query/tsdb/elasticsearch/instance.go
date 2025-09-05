@@ -495,7 +495,7 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, option *metadata.ResultTableOption, err error) {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (size int64, total int64, option *metadata.ResultTableOption, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("es query error: %s", r)
@@ -613,8 +613,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			}
 
 			if sr.Hits.TotalHits != nil {
-				total += sr.Hits.TotalHits.Value
+				total = sr.Hits.TotalHits.Value
 			}
+			size = int64(len(sr.Hits.Hits))
 		}
 
 		if query.Scroll != "" {

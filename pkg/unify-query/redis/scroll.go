@@ -58,6 +58,8 @@ type ScrollSession struct {
 	SliceMaxFailedNum   int           `json:"slice_max_failed_num"`
 	Limit               int           `json:"limit"`
 
+	Cache bool `json:"cache"`
+
 	SlicesMap map[string]*SliceStatus `json:"slices_map"`
 
 	mu sync.RWMutex
@@ -117,7 +119,7 @@ func (s *ScrollSession) Update(ctx context.Context) error {
 }
 
 func (s *ScrollSession) Clear(ctx context.Context) error {
-	return Client().Del(ctx, s.SessionKey).Err()
+	return Client().Set(ctx, s.SessionKey, "", s.ScrollWindowTimeout).Err()
 }
 
 func (s *ScrollSession) MarshalBinary() ([]byte, error) {
@@ -173,6 +175,7 @@ func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollWind
 	session := NewScrollSession(queryTsStr, scrollWindowTimeoutDuration, scrollLockTimeoutDuration, maxSlice, DefaultSliceMaxFailedNum, Limit)
 	if sessionCache, ok := checkScrollSession(ctx, session.SessionKey); ok {
 		log.Debugf(ctx, "session cache")
+		sessionCache.Cache = true
 		return sessionCache, nil
 	}
 

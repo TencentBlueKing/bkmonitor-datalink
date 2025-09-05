@@ -371,6 +371,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	listData.TraceID = span.TraceID()
 	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithScroll(ctx, queryTs, session)
 	listData.Done = session.Done()
+	listData.Cache = session.Cache
 	if err != nil {
 		listData.Status = &metadata.Status{
 			Code:    metadata.QueryRawError,

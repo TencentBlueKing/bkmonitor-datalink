@@ -4202,8 +4202,8 @@ func getIntValue(value interface{}) int64 {
 
 func TestRedis(t *testing.T) {
 	mock.Init()
-	newSession := `{"session_key":"scroll:session:test","lock_key":"scroll:lock:test","scroll_window_timeout":180000000000,"scroll_lock_timeout":60000000000,"max_slice":3,"slice_max_failed_num":3,"limit":100,"slices_map":{}}`
-	cacheSession := `{"session_key":"scroll:session:test","lock_key":"scroll:lock:test","scroll_window_timeout":180000000000,"scroll_lock_timeout":60000000000,"max_slice":3,"slice_max_failed_num":3,"limit":100,"slices_map":{"test":{"slice_key":"","slice_max":0,"scroll_id":"test","offset":0,"status":"Pending","failed_num":0,"max_failed_num":0,"limit":0}}}`
+	newSession := `{"session_key":"scroll:session:test","lock_key":"scroll:lock:test","scroll_window_timeout":180000000000,"scroll_lock_timeout":60000000000,"max_slice":3,"slice_max_failed_num":3,"limit":100,"cache":false,"slices_map":{}}`
+	cacheSession := `{"session_key":"scroll:session:test","lock_key":"scroll:lock:test","scroll_window_timeout":180000000000,"scroll_lock_timeout":60000000000,"max_slice":3,"slice_max_failed_num":3,"limit":100,"cache":true,"slices_map":{"test":{"slice_key":"","slice_max":0,"scroll_id":"test","offset":0,"status":"Pending","failed_num":0,"max_failed_num":0,"limit":0}}}`
 
 	ctx := metadata.InitHashID(context.Background())
 	influxdb.MockSpaceRouter(ctx)

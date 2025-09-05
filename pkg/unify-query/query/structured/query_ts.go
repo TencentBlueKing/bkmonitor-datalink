@@ -916,7 +916,6 @@ func (q *Query) BuildMetadataQuery(
 	query.Collapse = q.Collapse
 
 	query.Scroll = q.Scroll
-	query.SliceMax = q.SliceMax
 	query.DryRun = q.DryRun
 
 	query.Size = q.Limit

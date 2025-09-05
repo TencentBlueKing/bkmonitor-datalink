@@ -317,9 +317,6 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	}
 
 	// 把是否清理的标记位提取出来，避免后续生成的 key 不一致
-	isClearCache := queryTs.ClearCache
-
-	queryTs.ClearCache = false
 	queryByte, _ := json.Marshal(queryTs)
 	queryStr := string(queryByte)
 	queryStrWithUserName := fmt.Sprintf("%s:%s", user.Name, queryStr)
@@ -328,9 +325,12 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 		return
 	}
 
+	sessionStr, _ := json.Marshal(session)
+
+	span.Set("session-object", sessionStr)
 	span.Set("query-body", queryStr)
 
-	if isClearCache {
+	if queryTs.ClearCache {
 		err = session.Clear(ctx)
 		if err != nil {
 			log.Errorf(ctx, "clear scroll session failed, err: %v", err)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 const (
@@ -159,34 +160,40 @@ func NewScrollSession(queryTsStr string, scrollTimeout, scrollLockTimeout time.D
 	return session
 }
 
-func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollWindowTimeout, scrollLockTimeout string, maxSlice, Limit int) (session *ScrollSession, err error) {
-	session, exist := checkScrollSession(ctx, queryTsStr)
-	if exist {
-		return
-	}
+func GetOrCreateScrollSession(ctx context.Context, queryTsStr string, scrollWindowTimeout, scrollLockTimeout string, maxSlice, Limit int) (*ScrollSession, error) {
 	scrollWindowTimeoutDuration, err := time.ParseDuration(scrollWindowTimeout)
 	if err != nil {
-		return
+		return nil, err
 	}
 	scrollLockTimeoutDuration, err := time.ParseDuration(scrollLockTimeout)
 	if err != nil {
-		return
+		return nil, err
 	}
 
-	session = NewScrollSession(queryTsStr, scrollWindowTimeoutDuration, scrollLockTimeoutDuration, maxSlice, DefaultSliceMaxFailedNum, Limit)
+	session := NewScrollSession(queryTsStr, scrollWindowTimeoutDuration, scrollLockTimeoutDuration, maxSlice, DefaultSliceMaxFailedNum, Limit)
+	if sessionCache, ok := checkScrollSession(ctx, session.SessionKey); ok {
+		log.Debugf(ctx, "session cache")
+		return sessionCache, nil
+	}
+
+	// set session cache
 	err = Client().SetNX(ctx, session.SessionKey, session, scrollWindowTimeoutDuration).Err()
 	if err != nil {
-		return
+		return nil, err
 	}
-	return
+
+	log.Debugf(ctx, "session new")
+	return session, nil
 }
 
-func checkScrollSession(ctx context.Context, queryTsStr string) (*ScrollSession, bool) {
+func checkScrollSession(ctx context.Context, key string) (*ScrollSession, bool) {
 	session := &ScrollSession{}
-	err := Client().Get(ctx, SessionKeyPrefix+queryTsStr).Scan(session)
-	if err != nil {
-		return nil, false
+	res := Client().Get(ctx, key).Val()
+	if res != "" {
+		err := json.Unmarshal([]byte(res), &session)
+		if err == nil {
+			return session, true
+		}
 	}
-
-	return session, true
+	return nil, false
 }

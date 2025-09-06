@@ -21,31 +21,15 @@ import (
 )
 
 const (
-	sampleTypeCPU        = 0
-	sampleTypeWall       = 1
-	sampleTypeInTLAB     = 2
-	sampleTypeOutTLAB    = 3
-	sampleTypeLock       = 4
-	sampleTypeThreadPark = 5
-	sampleTypeLiveObject = 6
-
-	TypeCpu            = "cpu"
-	TypeWall           = "wall"
-	TypeInTlabObjects  = "alloc_in_new_tlab_objects"
-	TypeInTlabBytes    = "alloc_in_new_tlab_bytes"
-	TypeSpace          = "space"
-	TypeOutTlabObjects = "alloc_outside_tlab_objects"
-	TypeOutTlabBytes   = "alloc_outside_tlab_bytes"
-	TypeContentions    = "contentions"
-	TypeDelay          = "delay"
-	TypeMutex          = "mutex"
-	TypeBlock          = "block"
-	TypeLive           = "live"
-	TypeObjects        = "objects"
-
-	UnitNanoseconds = "nanoseconds"
-	UnitCount       = "count"
-	UnitBytes       = "bytes"
+	sampleTypeCPU         = 0
+	sampleTypeWall        = 1
+	sampleTypeInTLAB      = 2
+	sampleTypeOutTLAB     = 3
+	sampleTypeLock        = 4
+	sampleTypeThreadPark  = 5
+	sampleTypeLiveObject  = 6
+	sampleTypeAllocSample = 7
+	sampleTypeMalloc      = 8
 )
 
 // Translator JFR 数据解析器
@@ -98,50 +82,55 @@ func (c *Translator) Translate(pd define.ProfilesRawData) (*define.ProfilesData,
 		switch eventType {
 		case jfrParser.TypeMap.T_EXECUTION_SAMPLE:
 			ts := jfrParser.GetThreadState(jfrParser.ExecutionSample.State)
-			if ts != nil && ts.Name == "STATE_RUNNABLE" {
-				builders.addStacktrace(
-					sampleTypeCPU,
-					jfrParser.ExecutionSample.ContextId,
-					jfrParser.ExecutionSample.StackTrace, values[:1],
-				)
+			correlation := StacktraceCorrelation{
+				ContextId: jfrParser.ExecutionSample.ContextId,
+				SpanId:    jfrParser.ExecutionSample.SpanId,
+				SpanName:  jfrParser.ExecutionSample.SpanName,
+			}
+			if ts != nil && ts.Name != "STATE_SLEEPING" {
+				builders.addStacktrace(sampleTypeCPU, correlation, jfrParser.ExecutionSample.StackTrace, values[:1])
 			}
 			if event == "wall" {
-				builders.addStacktrace(
-					sampleTypeWall,
-					jfrParser.ExecutionSample.ContextId,
-					jfrParser.ExecutionSample.StackTrace, values[:1],
-				)
+				builders.addStacktrace(sampleTypeWall, correlation, jfrParser.ExecutionSample.StackTrace, values[:1])
 			}
+		case jfrParser.TypeMap.T_WALL_CLOCK_SAMPLE:
+			values[0] = int64(jfrParser.WallClockSample.Samples)
+			builders.addStacktrace(sampleTypeWall, StacktraceCorrelation{}, jfrParser.WallClockSample.StackTrace, values[:1])
 		case jfrParser.TypeMap.T_ALLOC_IN_NEW_TLAB:
 			values[1] = int64(jfrParser.ObjectAllocationInNewTLAB.TlabSize)
-			builders.addStacktrace(
-				sampleTypeInTLAB,
-				jfrParser.ObjectAllocationInNewTLAB.ContextId,
-				jfrParser.ObjectAllocationInNewTLAB.StackTrace, values[:2],
-			)
+			correlation := StacktraceCorrelation{
+				ContextId: jfrParser.ObjectAllocationInNewTLAB.ContextId,
+				SpanId:    jfrParser.ObjectAllocationInNewTLAB.SpanId,
+				SpanName:  jfrParser.ObjectAllocationInNewTLAB.SpanName,
+			}
+			builders.addStacktrace(sampleTypeInTLAB, correlation, jfrParser.ObjectAllocationInNewTLAB.StackTrace, values[:2])
 		case jfrParser.TypeMap.T_ALLOC_OUTSIDE_TLAB:
 			values[1] = int64(jfrParser.ObjectAllocationOutsideTLAB.AllocationSize)
-			builders.addStacktrace(
-				sampleTypeOutTLAB,
-				jfrParser.ObjectAllocationOutsideTLAB.ContextId,
-				jfrParser.ObjectAllocationOutsideTLAB.StackTrace, values[:2],
-			)
+			correlation := StacktraceCorrelation{
+				ContextId: jfrParser.ObjectAllocationOutsideTLAB.ContextId,
+				SpanId:    jfrParser.ObjectAllocationOutsideTLAB.SpanId,
+				SpanName:  jfrParser.ObjectAllocationOutsideTLAB.SpanName,
+			}
+			builders.addStacktrace(sampleTypeOutTLAB, correlation, jfrParser.ObjectAllocationOutsideTLAB.StackTrace, values[:2])
+		case jfrParser.TypeMap.T_ALLOC_SAMPLE:
+			values[1] = int64(jfrParser.ObjectAllocationSample.Weight)
+			builders.addStacktrace(sampleTypeAllocSample, StacktraceCorrelation{}, jfrParser.ObjectAllocationSample.StackTrace, values[:2])
 		case jfrParser.TypeMap.T_MONITOR_ENTER:
 			values[1] = int64(jfrParser.JavaMonitorEnter.Duration)
-			builders.addStacktrace(
-				sampleTypeLock,
-				jfrParser.JavaMonitorEnter.ContextId,
-				jfrParser.JavaMonitorEnter.StackTrace, values[:2],
-			)
+			correlation := StacktraceCorrelation{
+				ContextId: jfrParser.JavaMonitorEnter.ContextId,
+				SpanId:    jfrParser.JavaMonitorEnter.SpanId,
+				SpanName:  jfrParser.JavaMonitorEnter.SpanName,
+			}
+			builders.addStacktrace(sampleTypeLock, correlation, jfrParser.JavaMonitorEnter.StackTrace, values[:2])
 		case jfrParser.TypeMap.T_THREAD_PARK:
 			values[1] = int64(jfrParser.ThreadPark.Duration)
-			builders.addStacktrace(
-				sampleTypeThreadPark,
-				jfrParser.ThreadPark.ContextId,
-				jfrParser.ThreadPark.StackTrace, values[:2],
-			)
+			builders.addStacktrace(sampleTypeThreadPark, StacktraceCorrelation{}, jfrParser.ThreadPark.StackTrace, values[:2])
 		case jfrParser.TypeMap.T_LIVE_OBJECT:
-			builders.addStacktrace(sampleTypeLiveObject, 0, jfrParser.LiveObject.StackTrace, values[:1])
+			builders.addStacktrace(sampleTypeLiveObject, StacktraceCorrelation{}, jfrParser.LiveObject.StackTrace, values[:1])
+		case jfrParser.TypeMap.T_MALLOC:
+			values[1] = int64(jfrParser.Malloc.Size)
+			builders.addStacktrace(sampleTypeMalloc, StacktraceCorrelation{}, jfrParser.Malloc.StackTrace, values[:2])
 		case jfrParser.TypeMap.T_ACTIVE_SETTING:
 			if jfrParser.ActiveSetting.Name == "event" {
 				event = jfrParser.ActiveSetting.Value

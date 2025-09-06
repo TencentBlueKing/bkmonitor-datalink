@@ -7,9 +7,11 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package builder
+package jfr
 
 import (
+	"fmt"
+
 	"github.com/google/pprof/profile"
 	"github.com/grafana/jfr-parser/parser/types"
 )
@@ -68,6 +70,63 @@ func (p *ProfileBuilder) AddPeriodType(typ, unit string) {
 		Type: typ,
 		Unit: unit,
 	}
+}
+
+func (p *ProfileBuilder) AddExternalSampleWithLabels(
+	locations []*profile.Location,
+	values []int64,
+	stacktraceRef types.StackTraceRef,
+	labelsCtx *Context,
+	labelsSnapshot *LabelsSnapshot,
+	correlation StacktraceCorrelation,
+) {
+	sample := &profile.Sample{
+		Location: locations,
+		Value:    values,
+	}
+
+	p.visitedSampleIdMapping[stacktraceRef] = sample
+	p.Profile.Sample = append(p.Profile.Sample, sample)
+	if labelsSnapshot == nil {
+		return
+	}
+	const LabelProfileId = "profile_id"
+	const LabelSpanName = "span_name"
+	capacity := 0
+	if labelsCtx != nil {
+		capacity += len(labelsCtx.Labels)
+	}
+	if correlation.SpanId != 0 {
+		capacity++
+	}
+	if correlation.SpanName != 0 {
+		capacity++
+	}
+	if labelsCtx != nil {
+		sample.Label = make(map[string][]string, capacity)
+		for k, v := range labelsCtx.Labels {
+			sample.Label[labelsSnapshot.Strings[k]] = []string{labelsSnapshot.Strings[v]}
+		}
+	}
+	if correlation.SpanId != 0 {
+		sample.Label[LabelProfileId] = []string{profileIdString(correlation.SpanId)}
+	}
+	if correlation.SpanName != 0 {
+		spanName := labelsSnapshot.Strings[int64(correlation.SpanName)]
+		if spanName != "" {
+			sample.Label[LabelSpanName] = []string{spanName}
+		}
+	}
+}
+
+func profileIdString(profileId uint64) string {
+	return fmt.Sprintf("%016x", profileId)
+}
+
+type StacktraceCorrelation struct {
+	ContextId uint64
+	SpanId    uint64
+	SpanName  uint64
 }
 
 func NewProfileBuilder() *ProfileBuilder {

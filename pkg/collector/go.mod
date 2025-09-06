@@ -20,7 +20,7 @@ require (
 	github.com/google/pprof v0.0.0-20230912144702-c363fe2c2ed8
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.0
-	github.com/grafana/jfr-parser v0.7.2-0.20230831140626-08fa3a941bf8
+	github.com/grafana/jfr-parser v0.11.0
 	github.com/jaegertracing/jaeger v1.34.1
 	github.com/klauspost/pgzip v1.2.6
 	github.com/liuwenping/go-fastping v0.0.0-20201022032547-03cfc2cff8ee
@@ -38,7 +38,7 @@ require (
 	github.com/prometheus/prometheus v1.99.0
 	github.com/rs/cors v1.8.2
 	github.com/spf13/cast v1.5.0
-	github.com/stretchr/testify v1.8.4
+	github.com/stretchr/testify v1.9.0
 	github.com/tinylib/msgp v1.1.6
 	go.opentelemetry.io/collector/pdata v0.52.0
 	go.opentelemetry.io/collector/semconv v0.52.0

@@ -105,6 +105,7 @@ github.com/gorilla/securecookie v1.1.1/go.mod h1:ra0sb63/xPlUeL+yeDciTfxMRAA+MP+
 github.com/gorilla/sessions v1.2.1/go.mod h1:dk2InVEVJ0sfLlnXv9EAgkf6ecYs/i80K/zI+bUmuGM=
 github.com/grafana/jfr-parser v0.7.2-0.20230831140626-08fa3a941bf8 h1:Cod+QZWJXGLoCfKfuH66J3iSQ/WWw+R03R6QCwm8IB8=
 github.com/grafana/jfr-parser v0.7.2-0.20230831140626-08fa3a941bf8/go.mod h1:M5u1ux34Qo47ZBWksbMYVk40s7dvU3WMVYpxweEu4R0=
+github.com/grafana/jfr-parser v0.11.0/go.mod h1:dA1xlm2np8htvSmEVMPMLqG6ad40Y1bpdn5cG0eEJXk=
 github.com/grafana/regexp v0.0.0-20240518133315-a468a5bfb3bc h1:GN2Lv3MGO7AS6PrRoT6yV5+wkrOpcszoIsO4+4ds248=
 github.com/grafana/regexp v0.0.0-20240518133315-a468a5bfb3bc/go.mod h1:+JKpmjMGhpgPL+rXZ5nsZieVzvarn86asRlBg4uNGnk=
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.24.0 h1:TmHmbvxPmaegwhDubVz0lICL0J5Ka2vwTzhoePEXsGE=

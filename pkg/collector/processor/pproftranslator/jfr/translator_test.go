@@ -50,7 +50,7 @@ func TestTranslator(t *testing.T) {
 			SpyName:         "testSpy",
 			Format:          define.FormatJFR,
 			SampleRate:      100,
-			Units:           UnitNanoseconds,
+			Units:           "nanoseconds",
 			AggregationType: "testAggregation",
 			Tags:            map[string]string{"tag1": "value1"},
 		},

@@ -18,33 +18,35 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
 )
 
+type Schema struct {
+	mapping map[string]string
+	encode  func(k string) string
+	decode  func(k string) string
+}
+
 type Parser struct {
-	EsSchemas []FieldSchema
-	IsPrefix  bool
+	schema   Schema
+	IsPrefix bool
 }
 
-type ParserOption struct {
-	EsSchema []FieldSchema
-}
-
-func WithEsSchema(esSchema FieldSchema) func(*Parser) {
-	return func(p *Parser) {
-		p.EsSchemas = append(p.EsSchemas, esSchema)
+func (s *Schema) GetActualFieldName(field string) string {
+	if actual, ok := s.mapping[field]; ok {
+		if s.decode != nil {
+			return s.decode(field)
+		}
+		return actual
 	}
+	return field
 }
 
-func WithIsPrefix(isPrefix bool) func(*Parser) {
-	return func(p *Parser) {
-		p.IsPrefix = isPrefix
-	}
-}
-
-type Option func(*Parser)
-
-func NewParser(opts ...Option) *Parser {
-	p := &Parser{}
-	for _, opt := range opts {
-		opt(p)
+func NewParser(mapping map[string]string, encode, decode func(k string) string) *Parser {
+	p := &Parser{
+		schema: Schema{
+			mapping: mapping,
+			encode:  encode,
+			decode:  decode,
+		},
+		IsPrefix: false,
 	}
 	return p
 }
@@ -55,7 +57,7 @@ type ParseResult struct {
 	SQL  string
 }
 
-func (p *Parser) Do(q string) (rt ParseResult, err error) {
+func (p *Parser) Do(q string, isPrefix bool) (rt ParseResult, err error) {
 	if q == "" || q == "*" {
 		return ParseResult{
 			Expr: nil,
@@ -70,7 +72,7 @@ func (p *Parser) Do(q string) (rt ParseResult, err error) {
 	}
 	return ParseResult{
 		Expr: expr,
-		ES:   es(expr, p.IsPrefix, p.EsSchemas...),
+		ES:   walkESWithSchema(expr, p.schema, isPrefix, true),
 		SQL:  toSql(expr),
 	}, nil
 }

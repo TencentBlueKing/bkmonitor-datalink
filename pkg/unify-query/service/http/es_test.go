@@ -50,9 +50,9 @@ func TestHandleESRequest(t *testing.T) {
 	aliases := []string{startTime, nowTime}
 	aliasInfo := map[string]*es.AliasInfo{
 		"testbb_ttt_20210407_01": {
-			Aliases: map[string]interface{}{
-				startTime: map[string]interface{}{},
-				nowTime:   map[string]interface{}{},
+			Aliases: map[string]any{
+				startTime: map[string]any{},
+				nowTime:   map[string]any{},
 			},
 		},
 	}

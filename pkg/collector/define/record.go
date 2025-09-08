@@ -139,7 +139,7 @@ type Record struct {
 	RequestClient RequestClient
 	Token         Token
 	Metadata      map[string]string
-	Data          interface{}
+	Data          any
 }
 
 func (r *Record) Unwrap() {
@@ -190,7 +190,7 @@ type TarsData struct {
 	// 标识为 TarsStatType 或者 ProxyEvent
 	Type      string
 	Timestamp int64
-	Data      interface{}
+	Data      any
 }
 
 // TarsPropertyData 属性统计数据
@@ -205,11 +205,11 @@ type TarsStatData struct {
 }
 
 type ProxyData struct {
-	DataId      int64       `json:"data_id"`
-	AccessToken string      `json:"access_token"`
-	Version     string      `json:"version"`
-	Data        interface{} `json:"data"`
-	Type        string      // 标识为 ProxyMetric 或者 ProxyEvent
+	DataId      int64  `json:"data_id"`
+	AccessToken string `json:"access_token"`
+	Version     string `json:"version"`
+	Data        any    `json:"data"`
+	Type        string // 标识为 ProxyMetric 或者 ProxyEvent
 }
 
 type BeatData struct {
@@ -229,24 +229,24 @@ type ProxyMetric struct {
 }
 
 type ProxyEvent struct {
-	EventName string                 `json:"event_name"`
-	Event     map[string]interface{} `json:"event"`
-	Target    string                 `json:"target"`
-	Dimension map[string]string      `json:"dimension"`
-	Timestamp int64                  `json:"timestamp"`
+	EventName string            `json:"event_name"`
+	Event     map[string]any    `json:"event"`
+	Target    string            `json:"target"`
+	Dimension map[string]string `json:"dimension"`
+	Timestamp int64             `json:"timestamp"`
 }
 
 type PingserverData struct {
-	DataId  int64                  `json:"data_id"`
-	Version string                 `json:"version"`
-	Data    map[string]interface{} `json:"data"`
+	DataId  int64          `json:"data_id"`
+	Version string         `json:"version"`
+	Data    map[string]any `json:"data"`
 }
 
 type FtaData struct {
-	PluginId   string                   `json:"bk_plugin_id"`
-	IngestTime int64                    `json:"bk_ingest_time"`
-	Data       []map[string]interface{} `json:"data"`
-	EventId    string                   `json:"__bk_event_id__"`
+	PluginId   string           `json:"bk_plugin_id"`
+	IngestTime int64            `json:"bk_ingest_time"`
+	Data       []map[string]any `json:"data"`
+	EventId    string           `json:"__bk_event_id__"`
 }
 
 type PushMode string

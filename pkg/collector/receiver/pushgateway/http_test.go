@@ -28,7 +28,7 @@ import (
 
 func TestReady(t *testing.T) {
 	assert.NotPanics(t, func() {
-		Ready(receiver.ComponentConfig{PushGateway: receiver.ComponentCommon{Enabled: true}})
+		Ready()
 	})
 }
 

@@ -317,31 +317,53 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	}
 
 	// 把是否清理的标记位提取出来，避免后续生成的 key 不一致
-	isClearCache := queryTs.ClearCache
-
+	clearCache := queryTs.ClearCache
 	queryTs.ClearCache = false
 	queryByte, _ := json.Marshal(queryTs)
 	queryStr := string(queryByte)
 	queryStrWithUserName := fmt.Sprintf("%s:%s", user.Name, queryStr)
-	session, err := redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollMaxSlice, ScrollSliceLimit)
+	session, err := redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollSessionLockTimeout, queryTs.SliceMax, queryTs.Limit)
 	if err != nil {
 		return
 	}
 
 	span.Set("query-body", queryStr)
 
-	if isClearCache {
-		err = session.ReleaseLock(ctx)
+	if clearCache {
+		span.Set("clear-cache", "true")
+		err = session.Clear(ctx)
+		if err != nil {
+			return
+		}
+		// 清理后需要重新初始化 session，确保从头开始查询
+		// 重新创建一个新的 session 来替换被清理的 session
+		session, err = redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollSessionLockTimeout, queryTs.SliceMax, queryTs.Limit)
 		if err != nil {
 			return
 		}
 	}
 
-	if err = session.AcquireLock(ctx); err != nil {
+	sessionStr, _ := json.Marshal(session)
+	span.Set("session-object", sessionStr)
+
+	if err = session.Lock(ctx); err != nil {
 		return
 	}
 	defer func() {
-		err = session.ReleaseLock(ctx)
+		if listData.Done {
+			err = session.Clear(ctx)
+			span.Set("clear-cache", "true")
+			if err != nil {
+				return
+			}
+		} else {
+			err = session.Update(ctx)
+			if err != nil {
+				return
+			}
+		}
+
+		err = session.UnLock(ctx)
 		if err != nil {
 			return
 		}
@@ -351,6 +373,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	listData.TraceID = span.TraceID()
 	listData.Total, listData.List, listData.ResultTableOptions, err = queryRawWithScroll(ctx, queryTs, session)
 	listData.Done = session.Done()
+	listData.Cache = session.Cache
 	if err != nil {
 		listData.Status = &metadata.Status{
 			Code:    metadata.QueryRawError,

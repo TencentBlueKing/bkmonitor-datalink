@@ -16,8 +16,7 @@ import (
 )
 
 // Expr .
-type Expr interface {
-}
+type Expr any
 
 // AndExpr .
 type AndExpr struct {
@@ -74,7 +73,7 @@ type ConditionExpr struct {
 }
 
 // NewConditionExpr .
-func NewConditionExpr(a interface{}) *ConditionExpr {
+func NewConditionExpr(a any) *ConditionExpr {
 	switch v := a.(type) {
 	case *ConditionExpr:
 		return v

@@ -37,7 +37,7 @@ swag:
 
 .PHONY: fmt
 fmt:
-	gofmt -w -s .
+	gofmt -r 'interface{} -> any' -w . && gofmt -w -s .
 
 .PHONY: lint
 lint:

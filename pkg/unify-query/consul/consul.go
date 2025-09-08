@@ -73,7 +73,7 @@ func StopAwakeService() error {
 }
 
 // WatchChange 监听指定地址，监听触发时，channel将会传出信息
-var WatchChange = func(ctx context.Context, watchPath string) (<-chan interface{}, error) {
+var WatchChange = func(ctx context.Context, watchPath string) (<-chan any, error) {
 	kvChan, err := globalInstance.Watch(watchPath)
 	if err != nil {
 		return nil, err
@@ -82,7 +82,7 @@ var WatchChange = func(ctx context.Context, watchPath string) (<-chan interface{
 }
 
 // WatchChangeOnce 监听指定地址，监听触发时，channel将会传出信息
-var WatchChangeOnce = func(ctx context.Context, watchPath, separator string) (<-chan interface{}, error) {
+var WatchChangeOnce = func(ctx context.Context, watchPath, separator string) (<-chan any, error) {
 	kvChan, err := globalInstance.WatchOnce(watchPath, separator)
 	if err != nil {
 		return nil, err

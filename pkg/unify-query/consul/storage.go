@@ -58,7 +58,7 @@ func GetStorageInfo() (map[string]*Storage, error) {
 }
 
 // WatchStorageInfo
-func WatchStorageInfo(ctx context.Context) (<-chan interface{}, error) {
+func WatchStorageInfo(ctx context.Context) (<-chan any, error) {
 	path := fmt.Sprintf("%s/%s/%s", basePath, versionPath, storagePath)
 	return WatchChange(ctx, path)
 }

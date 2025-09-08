@@ -167,17 +167,16 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
 			var (
-				isObject = false
-
+				as          string
 				newDim      string
 				selectAlias string
 			)
 
 			dimensionSet.Add(dim)
 
-			newDim, isObject = d.dimTransform(dim)
-			if isObject && d.encodeFunc != nil {
-				selectAlias = fmt.Sprintf("%s AS `%s`", newDim, d.encodeFunc(dim))
+			newDim, as = d.dimTransform(dim)
+			if as != "" {
+				selectAlias = fmt.Sprintf("%s AS `%s`", newDim, as)
 				newDim = d.encodeFunc(dim)
 			} else {
 				selectAlias = newDim
@@ -609,7 +608,7 @@ func (d *DorisSQLExpr) walk(e querystring_parser.Expr) (string, error) {
 			c.Field = DefaultKey
 		}
 		field, _ := d.dimTransform(c.Field)
-		if d.isText(c.Field) {
+		if d.isAnalyzed(c.Field) {
 			return fmt.Sprintf("%s MATCH_PHRASE '%s'", field, c.Value), nil
 		}
 
@@ -683,9 +682,14 @@ func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
 	return fmt.Sprintf(DorisTypeArrayTransform, s)
 }
 
-func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
+func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
+	ns = s
 	if s == "" || s == "*" {
-		return s, false
+		return
+	}
+	if alias, ok := d.fieldAlias[s]; ok {
+		ns = alias
+		as = s
 	}
 
 	fieldType := d.getFieldType(s)
@@ -693,7 +697,8 @@ func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
 
 	fs := strings.Split(s, ".")
 	if len(fs) == 1 {
-		return fmt.Sprintf("`%s`", s), false
+		ns = fmt.Sprintf("`%s`", ns)
+		return
 	}
 
 	// 如果是 resource 或 attributes 字段里都是用户上报的内容，采用 . 作为 key 上报，所以这里增加了特殊处理
@@ -723,7 +728,15 @@ func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
 		}
 	}
 
-	return fmt.Sprintf(`CAST(%s AS %s)`, suffixFields.String(), castType), true
+	if as == "" {
+		as = s
+	}
+	if d.encodeFunc != nil {
+		as = d.encodeFunc(as)
+	}
+
+	ns = fmt.Sprintf(`CAST(%s AS %s)`, suffixFields.String(), castType)
+	return
 }
 
 func (d *DorisSQLExpr) valueTransform(s string) string {

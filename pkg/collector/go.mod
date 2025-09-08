@@ -9,7 +9,6 @@ require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator v1.0.0
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0
 	github.com/apache/thrift v0.16.0
-	github.com/buraksezer/consistent v0.10.0
 	github.com/bytedance/sonic v1.13.3
 	github.com/cespare/xxhash/v2 v2.2.0
 	github.com/elastic/beats v7.1.1+incompatible

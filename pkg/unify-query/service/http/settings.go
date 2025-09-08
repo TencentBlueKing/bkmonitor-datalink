@@ -70,7 +70,6 @@ const (
 
 	// 滚动查询配置
 	ScrollSliceLimitConfigPath         = "scroll.slice_limit"
-	ScrollMaxSliceConfigPath           = "scroll.max_slice"
 	ScrollSessionLockTimeoutConfigPath = "scroll.session_lock_timeout"
 	ScrollWindowTimeoutConfigPath      = "scroll.window_timeout"
 	// 集群指标查询配置
@@ -103,8 +102,7 @@ var (
 	JwtPublicKey       string
 	JwtBkAppCodeSpaces map[string][]string
 
-	ScrollMaxSlice           int
-	ScrollSessionLockTimeout time.Duration
 	ScrollWindowTimeout      string
+	ScrollSessionLockTimeout string
 	ScrollSliceLimit         int
 )

@@ -36,7 +36,7 @@ var Print = func() string {
 	// tsDBRouter:  dataID -> [tableInfo]
 	res += fmt.Sprintln("tsDBRouter:  dataID => [tableInfo]")
 	res += fmt.Sprintln("----------------------------------------")
-	tsDBRouter.Range(func(k, v interface{}) bool {
+	tsDBRouter.Range(func(k, v any) bool {
 		if tableInfos, ok := v.([]*consul.TableID); ok {
 			res += fmt.Sprintf("%v => %v\n", k, tableInfos)
 		}
@@ -47,7 +47,7 @@ var Print = func() string {
 	// metricRouter: metric -> [dataID]
 	res += fmt.Sprintln("metricRouter: metric => [dataID]")
 	res += fmt.Sprintln("----------------------------------------")
-	metricRouter.Range(func(k, v interface{}) bool {
+	metricRouter.Range(func(k, v any) bool {
 		if dataID, ok := v.(consul.DataIDs); ok {
 			res += fmt.Sprintf("%v => %v\n", k, dataID)
 		}
@@ -58,7 +58,7 @@ var Print = func() string {
 	// bizRouter:  bizID -> [dataID]
 	res += fmt.Sprintln(" bizRouter:  bizID => [dataID]")
 	res += fmt.Sprintln("----------------------------------------")
-	bizRouter.Range(func(k, v interface{}) bool {
+	bizRouter.Range(func(k, v any) bool {
 		if dataID, ok := v.(consul.DataIDs); ok {
 			res += fmt.Sprintf("%v => %v\n", k, dataID)
 		}
@@ -69,7 +69,7 @@ var Print = func() string {
 	// tableRouter:  db.measurement -> tableID
 	res += fmt.Sprintln("tableRouter:  db.measurement => ClusterID, DB, Measurement, IsSplitMeasurement")
 	res += fmt.Sprintln("----------------------------------------")
-	tableRouter.Range(func(k, v interface{}) bool {
+	tableRouter.Range(func(k, v any) bool {
 		if tableID, ok := v.(*consul.TableID); ok {
 			res += fmt.Sprintf(
 				"%v => %v, %v, %v, %v\n",
@@ -100,7 +100,7 @@ func GetTsDBRouter() *TsDBRouter {
 }
 
 // Value
-func (r *TsDBRouter) Value(v interface{}) []*consul.TableID {
+func (r *TsDBRouter) Value(v any) []*consul.TableID {
 	return v.([]*consul.TableID)
 }
 
@@ -150,7 +150,7 @@ func GetBizRouter() *BizRouter {
 }
 
 // Value
-func (b *BizRouter) Value(v interface{}) consul.DataIDs {
+func (b *BizRouter) Value(v any) consul.DataIDs {
 	return v.(consul.DataIDs)
 }
 
@@ -210,7 +210,7 @@ func (t *TableRouter) Key(db, measurement string) string {
 // GetTableID
 func (t *TableRouter) GetTableID(db, measurement string) *consul.TableID {
 	var (
-		res interface{}
+		res any
 		ok  bool
 	)
 
@@ -312,7 +312,7 @@ func GetMetricRouter() *MetricRouter {
 }
 
 // Value
-func (m *MetricRouter) Value(v interface{}) consul.DataIDs {
+func (m *MetricRouter) Value(v any) consul.DataIDs {
 	return v.(consul.DataIDs)
 }
 

@@ -351,7 +351,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Percentiles,
-						Args: []interface{}{
+						Args: []any{
 							50.0,
 						},
 					},
@@ -373,7 +373,7 @@ func TestInstance_queryReference(t *testing.T) {
 				Aggregates: metadata.Aggregates{
 					{
 						Name: Percentiles,
-						Args: []interface{}{
+						Args: []any{
 							50.0, 90.0,
 						},
 					},

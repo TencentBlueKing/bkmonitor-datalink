@@ -1167,8 +1167,8 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 		err error
 		ok  bool
 
-		timestamp interface{}
-		value     interface{}
+		timestamp any
+		value     any
 
 		sample = prompb.Sample{}
 	)
@@ -1264,7 +1264,7 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 			value = fmt.Sprintf("%.f", d)
 		case int64, int32, int:
 			value = fmt.Sprintf("%d", d)
-		case []interface{}:
+		case []any:
 			o, _ := json.Marshal(d)
 			value = fmt.Sprintf("%s", o)
 		default:

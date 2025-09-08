@@ -119,7 +119,7 @@ func FormatBCSInfo(kvPairs api.KVPairs) error {
 }
 
 // WatchBCSInfo 监听consul路径，拿到es和influxdb等对应的查询信息
-var WatchBCSInfo = func(ctx context.Context) (<-chan interface{}, error) {
+var WatchBCSInfo = func(ctx context.Context) (<-chan any, error) {
 	path := BCSInfoPath
 	// 多个查询服务都需要此监听开启，但只运行一次就可以
 	return WatchChangeOnce(ctx, path, "/")

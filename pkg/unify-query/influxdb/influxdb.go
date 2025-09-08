@@ -165,7 +165,7 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 		totalTables = MergeTables(tableList, false)
 	}()
 
-	p, _ := ants.NewPoolWithFunc(perQueryMaxGoroutine, func(i interface{}) {
+	p, _ := ants.NewPoolWithFunc(perQueryMaxGoroutine, func(i any) {
 		defer wg.Done()
 		index, ok := i.(int)
 		if ok {
@@ -269,7 +269,7 @@ func QueryAsync(ctx context.Context, sqlInfos []SQLInfo, precision string) (*Tab
 		totalTables = MergeTables(tableList, true)
 	}()
 
-	p, _ := ants.NewPoolWithFunc(perQueryMaxGoroutine, func(i interface{}) {
+	p, _ := ants.NewPoolWithFunc(perQueryMaxGoroutine, func(i any) {
 		defer wg.Done()
 		index, ok := i.(int)
 		if ok {

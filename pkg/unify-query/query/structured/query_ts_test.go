@@ -909,7 +909,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							},
 							{
 								Method: "topk",
-								VArgsList: []interface{}{
+								VArgsList: []any{
 									5,
 								},
 							},
@@ -1131,7 +1131,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							},
 							{
 								Method: "topk",
-								VArgsList: []interface{}{
+								VArgsList: []any{
 									1,
 								},
 							},
@@ -1211,7 +1211,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							},
 							{
 								Method: "topk",
-								VArgsList: []interface{}{
+								VArgsList: []any{
 									1,
 								},
 							},
@@ -1280,7 +1280,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							},
 							{
 								Method: "topk",
-								VArgsList: []interface{}{
+								VArgsList: []any{
 									1,
 								},
 							},
@@ -1492,7 +1492,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							},
 							{
 								Method: "topk",
-								VArgsList: []interface{}{
+								VArgsList: []any{
 									1,
 								},
 							},

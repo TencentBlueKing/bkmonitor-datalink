@@ -14,9 +14,9 @@ import (
 )
 
 type Cache interface {
-	Get(string) (interface{}, bool)
-	Set(string, interface{}, int64) bool
-	SetWithTTL(string, interface{}, int64, time.Duration) bool
+	Get(string) (any, bool)
+	Set(string, any, int64) bool
+	SetWithTTL(string, any, int64, time.Duration) bool
 	Del(string)
 	Clear()
 }

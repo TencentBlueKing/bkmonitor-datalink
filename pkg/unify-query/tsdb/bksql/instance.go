@@ -528,7 +528,7 @@ func (i *Instance) InstanceType() string {
 	return consul.BkSqlStorageType
 }
 
-func getValue(k string, d map[string]interface{}) (string, error) {
+func getValue(k string, d map[string]any) (string, error) {
 	var value string
 	if v, ok := d[k]; ok {
 		// 增加 nil 判断，避免回传的数值为空

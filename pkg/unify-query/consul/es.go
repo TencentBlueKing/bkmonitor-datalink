@@ -52,7 +52,7 @@ func FormatESTableInfo(kvPairs api.KVPairs) (map[string]*ESTableInfo, error) {
 }
 
 // WatchESTableInfo
-func WatchESTableInfo(ctx context.Context) (<-chan interface{}, error) {
+func WatchESTableInfo(ctx context.Context) (<-chan any, error) {
 	path := fmt.Sprintf("%s/%s/%s", basePath, versionPath, esInfoPath)
 	return WatchChange(ctx, path)
 }

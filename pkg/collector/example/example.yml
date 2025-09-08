@@ -101,11 +101,6 @@ bk-collector:
     patterns:
       - "./example/fixtures/pingserver_sub*.yml"
 
-  # ================================ Cluster =================================
-  cluster:
-    disabled: false
-    address: ":4316"
-
   # =============================== Receiver =================================
   receiver:
     disabled: false

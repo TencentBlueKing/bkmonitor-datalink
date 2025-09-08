@@ -98,11 +98,6 @@ bk-collector:
     metric_relabel_configs:
 
 
-  # ================================ Cluster =================================
-  cluster:
-    disabled: true
-
-
   # ================================= Proxy ==================================
   proxy:
     disabled: false

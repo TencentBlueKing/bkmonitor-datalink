@@ -41,8 +41,7 @@
 
       bk_metrics_pusher:
         disabled: true
-      cluster:
-        disabled: true
+
       proxy:
         disabled: false
         http:
@@ -52,6 +51,7 @@
           middlewares:
             - "logging"
             - "maxconns;maxConnectionsRatio=256"
+
       pingserver:
         disabled: true
 

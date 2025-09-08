@@ -17,8 +17,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/batchspliter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/forwarder/batchspliter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/sampler/queue"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/fasttime"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"

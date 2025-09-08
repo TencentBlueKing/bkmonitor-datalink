@@ -27,7 +27,7 @@ func TestCommonProcessor(t *testing.T) {
 }
 
 func TestRegisterCreateFunc(t *testing.T) {
-	Register("NoopFuncForTest", func(config map[string]interface{}, customized []SubConfigProcessor) (Processor, error) {
+	Register("NoopFuncForTest", func(config map[string]any, customized []SubConfigProcessor) (Processor, error) {
 		return nil, nil
 	})
 
@@ -80,7 +80,7 @@ processor:
          keys:
            - "attributes.http.host"
 `
-		MustCreateFactory(content, func(config map[string]interface{}, customized []SubConfigProcessor) (Processor, error) {
+		MustCreateFactory(content, func(config map[string]any, customized []SubConfigProcessor) (Processor, error) {
 			return nil, errors.New("MUST ERROR")
 		})
 	})
@@ -292,9 +292,9 @@ processor:
 		})
 
 		assert.Equal(t, "foo", ret.Updated[0].ID)
-		assert.Equal(t, map[string]interface{}{"keys": []interface{}{"attributes.http.hostip"}}, ret.Updated[0].Config.Config["as_string"])
+		assert.Equal(t, map[string]any{"keys": []any{"attributes.http.hostip"}}, ret.Updated[0].Config.Config["as_string"])
 		assert.Equal(t, "orz", ret.Updated[1].ID)
-		assert.Equal(t, map[string]interface{}{"keys": []interface{}{"attributes.http.tls"}}, ret.Updated[1].Config.Config["as_string"])
+		assert.Equal(t, map[string]any{"keys": []any{"attributes.http.tls"}}, ret.Updated[1].Config.Config["as_string"])
 
 		assert.Len(t, ret.Deleted, 1)
 		assert.Equal(t, "bar", ret.Deleted[0].ID)

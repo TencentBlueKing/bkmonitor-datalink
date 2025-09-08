@@ -41,8 +41,7 @@
 
       bk_metrics_pusher:
         disabled: true
-      cluster:
-        disabled: true
+
       proxy:
         disabled: false
         http:
@@ -52,6 +51,7 @@
           middlewares:
             - "logging"
             - "maxconns;maxConnectionsRatio=256"
+
       pingserver:
         disabled: true
 
@@ -83,26 +83,6 @@
           enabled: true
           transport: "tcp"
           endpoint: ":4319"
-
-        components:
-          jaeger:
-            enabled: true
-          zipkin:
-            enabled: true
-          otlp:
-            enabled: true
-          pushgateway:
-            enabled: true
-          remotewrite:
-            enabled: true
-          pyroscope:
-            enabled: true
-          beat:
-            enabled: true
-          tars:
-            enabled: true
-          logpush:
-            enabled: true
 
       processor:
         # ApdexCalculator: 健康度状态计算器

@@ -228,6 +228,6 @@ func LoadDownsampledInfo() error {
 }
 
 // WatchDownsampledInfo 监听 consul 配置信息是否变化
-func WatchDownsampledInfo(ctx context.Context) (<-chan interface{}, error) {
+func WatchDownsampledInfo(ctx context.Context) (<-chan any, error) {
 	return WatchChange(ctx, consulPath())
 }

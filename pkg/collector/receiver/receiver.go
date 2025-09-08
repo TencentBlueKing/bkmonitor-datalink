@@ -72,11 +72,6 @@ func (p Publisher) Publish(r *define.Record) {
 	publishRecord(r)
 }
 
-// GetComponentConfig 获取组件全局配置项
-func GetComponentConfig() ComponentConfig {
-	return globalConfig.Components
-}
-
 type SkywalkingConfigFetcher struct {
 	Func func(s string) SkywalkingConfig
 }
@@ -127,10 +122,9 @@ func New(conf *confengine.Config) (*Receiver, error) {
 }
 
 func (r *Receiver) ready() {
-	config := GetComponentConfig()
-	for k, f := range componentsReady {
-		f(config)
-		logger.Infof("register '%s' component", k)
+	for name, f := range componentsReady {
+		f()
+		logger.Infof("register '%s' component", name)
 	}
 }
 

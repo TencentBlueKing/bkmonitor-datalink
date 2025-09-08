@@ -31,10 +31,7 @@ func init() {
 	receiver.RegisterReadyFunc(define.SourceLogPush, Ready)
 }
 
-func Ready(config receiver.ComponentConfig) {
-	if !config.LogPsuh.Enabled {
-		return
-	}
+func Ready() {
 	receiver.RegisterRecvHttpRoute(define.SourceLogPush, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,

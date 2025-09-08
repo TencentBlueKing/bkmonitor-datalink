@@ -38,10 +38,7 @@ func init() {
 
 var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourceZipkin)
 
-func Ready(config receiver.ComponentConfig) {
-	if !config.Zipkin.Enabled {
-		return
-	}
+func Ready() {
 	receiver.RegisterRecvHttpRoute(define.SourceZipkin, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,

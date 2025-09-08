@@ -11,15 +11,11 @@ package metadata
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 )
 
 func TestVmExpand(t *testing.T) {
@@ -192,52 +188,4 @@ func TestVmExpand(t *testing.T) {
 			assert.Equal(t, c.vmExpand, vmExpand)
 		})
 	}
-}
-
-func TestQuery_ConfigureAlias(t *testing.T) {
-	o := "__ext.container_name"
-	n := "container_name"
-
-	query := Query{
-		FieldAlias: FieldAlias{
-			n: o,
-		},
-		Field: n,
-		AllConditions: AllConditions{
-			{
-				{
-					DimensionName: n,
-					Operator:      ConditionNotEqual,
-					Value:         []string{""},
-				},
-			},
-		},
-		Aggregates: Aggregates{
-			{
-				Dimensions: []string{n},
-				Field:      n,
-				Name:       function.Count,
-				Window:     time.Hour,
-			},
-		},
-		Source: []string{n},
-		Orders: Orders{
-			{
-				Name: n,
-			},
-		},
-		Collapse: &Collapse{
-			Field: n,
-		},
-	}
-
-	var queryStr []byte
-	queryStr, _ = json.Marshal(query)
-	assert.Equal(t, string(queryStr), `{"field":"container_name","time_field":{},"field_alias":{"container_name":"__ext.container_name"},"aggregates":[{"name":"count","field":"container_name","dimensions":["container_name"],"window":3600000000000}],"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"container_name","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]],"source":["container_name"],"orders":[{"Name":"container_name","Ast":false}],"collapse":{"field":"container_name"}}`)
-
-	query.ConfigureAlias(context.TODO())
-
-	queryStr, _ = json.Marshal(query)
-	assert.Equal(t, string(queryStr), `{"field":"__ext.container_name","time_field":{},"field_alias":{"container_name":"__ext.container_name"},"aggregates":[{"name":"count","field":"__ext.container_name","dimensions":["__ext.container_name"],"window":3600000000000}],"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"__ext.container_name","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]],"source":["__ext.container_name"],"orders":[{"Name":"__ext.container_name","Ast":false}],"collapse":{"field":"__ext.container_name"}}`)
-
 }

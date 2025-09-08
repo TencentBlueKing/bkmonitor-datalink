@@ -285,7 +285,7 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 				}
 
 				// 获取参数，参数的长度有可能会大于等于 argTypes，所以要单独循环获取
-				vargsList := make([]interface{}, 0)
+				vargsList := make([]any, 0)
 				for _, arg := range e.Args {
 					// 其他类型判断是否是常量参数，是则加入到函数参数列表里面
 					switch at := arg.(type) {
@@ -358,7 +358,7 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 				if method == "" {
 					return &QueryTs{}, fmt.Errorf("aggregate expr op: %d is not exist", e.Op)
 				}
-				vargsList := make([]interface{}, 1)
+				vargsList := make([]any, 1)
 				aggregateMethod := AggregateMethod{
 					Method:     method,
 					Dimensions: e.Grouping,

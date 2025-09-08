@@ -23,11 +23,11 @@ func init() {
 	processor.Register(define.ProcessorTextSpliter, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*textSpliter, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*textSpliter, error) {
 	configs := confengine.NewTierConfig()
 
 	c := &Config{}
@@ -68,7 +68,7 @@ func (p *textSpliter) IsPreCheck() bool {
 	return false
 }
 
-func (p *textSpliter) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *textSpliter) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)

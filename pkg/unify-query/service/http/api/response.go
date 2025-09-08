@@ -47,7 +47,7 @@ func (r *response) failed(ctx context.Context, err error) {
 	})
 }
 
-func (r *response) success(ctx context.Context, data interface{}) {
+func (r *response) success(ctx context.Context, data any) {
 	log.Debugf(ctx, "query data size is %s", fmt.Sprint(unsafe.Sizeof(data)))
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUID, user.Source)

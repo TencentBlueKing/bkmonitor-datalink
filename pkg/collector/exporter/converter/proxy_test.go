@@ -19,8 +19,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-func unmarshalProxyData(s string) interface{} {
-	var data interface{}
+func unmarshalProxyData(s string) any {
+	var data any
 	if err := json.Unmarshal([]byte(s), &data); err != nil {
 		panic(err)
 	}
@@ -84,7 +84,7 @@ func TestConvertProxyEventsData(t *testing.T) {
 	excepted := []common.MapStr{
 		{
 			"event_name": "event1",
-			"event": map[string]interface{}{
+			"event": map[string]any{
 				"content": "user foo login failed",
 			},
 			"target": "127.0.0.1",
@@ -97,7 +97,7 @@ func TestConvertProxyEventsData(t *testing.T) {
 		},
 		{
 			"event_name": "event2",
-			"event": map[string]interface{}{
+			"event": map[string]any{
 				"content": "user bar login failed",
 			},
 			"target": "127.0.0.1",

@@ -17,8 +17,8 @@ import (
 
 // TestIter
 func TestIter(t *testing.T) {
-	c := Iter([]interface{}{"a", "b"}, []interface{}{"1", "2", "3"}, []interface{}{"&"})
-	result := make([]interface{}, 0)
+	c := Iter([]any{"a", "b"}, []any{"1", "2", "3"}, []any{"&"})
+	result := make([]any, 0)
 
 	for r := range c {
 		result = append(result, r)
@@ -27,7 +27,7 @@ func TestIter(t *testing.T) {
 	assert.Equal(t, 6, len(result))
 
 	for _, r := range result {
-		assert.Equal(t, 3, len(r.([]interface{})))
+		assert.Equal(t, 3, len(r.([]any)))
 	}
 
 }

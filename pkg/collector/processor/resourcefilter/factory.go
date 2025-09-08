@@ -30,11 +30,11 @@ func init() {
 	processor.Register(define.ProcessorResourceFilter, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*resourceFilter, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*resourceFilter, error) {
 	configs := confengine.NewTierConfig()
 	caches := confengine.NewTierConfig()
 
@@ -88,7 +88,7 @@ func (p *resourceFilter) IsPreCheck() bool {
 	return false
 }
 
-func (p *resourceFilter) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *resourceFilter) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)

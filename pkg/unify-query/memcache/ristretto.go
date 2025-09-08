@@ -52,15 +52,15 @@ func NewRistretto() (*Ristretto, error) {
 	return &Ristretto{cache: c}, nil
 }
 
-func (c *Ristretto) Get(key string) (interface{}, bool) {
+func (c *Ristretto) Get(key string) (any, bool) {
 	return c.cache.Get(key)
 }
 
-func (c *Ristretto) Set(key string, val interface{}, cost int64) bool {
+func (c *Ristretto) Set(key string, val any, cost int64) bool {
 	return c.cache.Set(key, val, cost)
 }
 
-func (c *Ristretto) SetWithTTL(key string, val interface{}, cost int64, t time.Duration) bool {
+func (c *Ristretto) SetWithTTL(key string, val any, cost int64, t time.Duration) bool {
 	return c.cache.SetWithTTL(key, val, cost, t)
 }
 

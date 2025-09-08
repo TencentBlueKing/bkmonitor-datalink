@@ -168,7 +168,7 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 	return
 }
 
-func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[string]interface{}) (*prompb.QueryResult, error) {
+func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[string]any) (*prompb.QueryResult, error) {
 	res := &prompb.QueryResult{}
 
 	if len(list) == 0 {
@@ -191,8 +191,8 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 			vt int64
 			vv float64
 
-			vtLong   interface{}
-			vvDouble interface{}
+			vtLong   any
+			vvDouble any
 
 			ok bool
 		)

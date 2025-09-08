@@ -65,20 +65,20 @@ func TestRoute(t *testing.T) {
 		},
 	}
 
-	for _, c := range tests {
-		var resp *http.Response
+	for _, tt := range tests {
+		var rsp *http.Response
 		var err error
 
-		url := "http://localhost:59999" + c.path
-		switch c.method {
+		url := "http://localhost:59999" + tt.path
+		switch tt.method {
 		case http.MethodGet:
-			resp, err = http.Get(url)
+			rsp, err = http.Get(url)
 		case http.MethodPost:
-			resp, err = http.Post(url, "", bytes.NewBufferString(""))
+			rsp, err = http.Post(url, "", bytes.NewBufferString(""))
 		}
 		assert.NoError(t, err)
-		assert.NotNil(t, resp)
-		assert.Equal(t, 200, resp.StatusCode)
+		assert.NotNil(t, rsp)
+		assert.Equal(t, 200, rsp.StatusCode)
 	}
 
 	assert.NoError(t, r.Stop())

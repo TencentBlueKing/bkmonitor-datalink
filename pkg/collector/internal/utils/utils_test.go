@@ -20,17 +20,27 @@ import (
 )
 
 func TestParseRequestIP(t *testing.T) {
-	t.Run("localhost", func(t *testing.T) {
-		assert.Equal(t, "", ParseRequestIP("localhost", nil))
-	})
+	tests := []struct {
+		input  string
+		output string
+	}{
+		{
+			input:  "localhost",
+			output: "",
+		},
+		{
+			input:  "127.0.0.1",
+			output: "127.0.0.1",
+		},
+		{
+			input:  "127.0.0.1:8080",
+			output: "127.0.0.1",
+		},
+	}
 
-	t.Run("127.0.0.1", func(t *testing.T) {
-		assert.Equal(t, "127.0.0.1", ParseRequestIP("127.0.0.1", nil))
-	})
-
-	t.Run("127.0.0.1:8080", func(t *testing.T) {
-		assert.Equal(t, "127.0.0.1", ParseRequestIP("127.0.0.1:8080", nil))
-	})
+	for _, tt := range tests {
+		assert.Equal(t, tt.output, ParseRequestIP(tt.input, nil))
+	}
 }
 
 func TestGetGrpcIpFromContext(t *testing.T) {
@@ -82,7 +92,7 @@ func TestFirstUpper(t *testing.T) {
 		},
 	}
 
-	for _, c := range tests {
-		assert.Equal(t, c.output, FirstUpper(c.input, "x"))
+	for _, tt := range tests {
+		assert.Equal(t, tt.output, FirstUpper(tt.input, "x"))
 	}
 }

@@ -51,8 +51,8 @@ func TestNormalize(t *testing.T) {
 		},
 	}
 
-	for _, c := range tests {
-		assert.Equal(t, c.output, NormalizeName(c.input))
+	for _, tt := range tests {
+		assert.Equal(t, tt.output, NormalizeName(tt.input))
 	}
 }
 

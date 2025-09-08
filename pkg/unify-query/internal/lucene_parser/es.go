@@ -19,92 +19,36 @@ import (
 
 const DefaultEmptyField = ""
 
-type FieldType string
+const Separator = "."
 
 const (
-	FieldTypeText    FieldType = "text"
-	FieldTypeKeyword FieldType = "keyword"
-	FieldTypeLong    FieldType = "long"
-	FieldTypeInteger FieldType = "integer"
-	FieldTypeFloat   FieldType = "float"
-	FieldTypeDouble  FieldType = "double"
-	FieldTypeDate    FieldType = "date"
-	FieldTypeBoolean FieldType = "boolean"
+	FieldTypeText    = "text"
+	FieldTypeKeyword = "keyword"
+	FieldTypeLong    = "long"
+	FieldTypeInteger = "integer"
+	FieldTypeFloat   = "float"
+	FieldTypeDouble  = "double"
+	FieldTypeDate    = "date"
+	FieldTypeBoolean = "boolean"
 )
 
-type FieldSchema interface {
-	GetFieldType(fieldName string) (FieldType, bool)
-	GetNestedPath(fieldName string) (string, bool)
-	GetActualFieldName(aliasName string) string
-}
-
-type Schema struct {
-	fieldTypes   map[string]FieldType
-	nestedFields map[string]struct{} // 存储nested根路径
-	fieldAliases map[string]string   // 存储字段别名映射：别名->实际字段名
-}
-
-func NewSchema() *Schema {
-	return &Schema{
-		fieldTypes:   make(map[string]FieldType),
-		nestedFields: make(map[string]struct{}),
-		fieldAliases: make(map[string]string),
-	}
-}
-
-func (d *Schema) GetFieldType(fieldName string) (FieldType, bool) {
-	fieldType, exists := d.fieldTypes[fieldName]
+func (d *Schema) GetFieldType(fieldName string) (string, bool) {
+	fieldType, exists := d.mapping[fieldName]
 	return fieldType, exists
 }
 
-func (d *Schema) SetFieldType(fieldName string, fieldType FieldType) {
-	d.fieldTypes[fieldName] = fieldType
-}
-
 func (d *Schema) GetNestedPath(fieldName string) (string, bool) {
-	parts := strings.Split(fieldName, ".")
+	parts := strings.Split(fieldName, Separator)
 	if len(parts) > 1 {
 		nestedPath := parts[0]
-		if _, ok := d.nestedFields[nestedPath]; ok {
+		if _, ok := d.mapping[nestedPath]; ok {
 			return nestedPath, true
 		}
 	}
 	return "", false
 }
 
-func (d *Schema) SetNestedField(nestedPath string) {
-	d.nestedFields[nestedPath] = struct{}{}
-}
-
-func (d *Schema) GetActualFieldName(aliasName string) string {
-	if actualName, exists := d.fieldAliases[aliasName]; exists {
-		return actualName
-	}
-	return aliasName
-}
-
-func (d *Schema) SetFieldAlias(alias, actualField string) {
-	d.fieldAliases[alias] = actualField
-}
-
-func es(expr Expr, isPrefix bool, mappings ...FieldSchema) elastic.Query {
-	var schema FieldSchema
-	if len(mappings) > 0 {
-		schema = mappings[0]
-	} else {
-		schema = &Schema{fieldTypes: make(map[string]FieldType)}
-	}
-	return ToESWithSchemaAndPrefix(expr, schema, isPrefix)
-}
-
-func ToESWithSchemaAndPrefix(expr Expr, schema FieldSchema, isPrefix bool) elastic.Query {
-	if expr == nil {
-		return nil
-	}
-	return walkESWithSchema(expr, schema, isPrefix, true)
-}
-
-func walkESWithSchema(expr Expr, schema FieldSchema, isPrefix bool, allowNestedWrap bool) elastic.Query {
+func walkESWithSchema(expr Expr, schema Schema, isPrefix bool, allowNestedWrap bool) elastic.Query {
 	if expr == nil {
 		return nil
 	}
@@ -166,7 +110,7 @@ func getESFieldName(fieldExpr Expr) string {
 	return DefaultEmptyField
 }
 
-func getESFieldNameWithSchema(fieldExpr Expr, schema FieldSchema) string {
+func getESFieldNameWithSchema(fieldExpr Expr, schema Schema) string {
 	fieldName := getESFieldName(fieldExpr)
 	if fieldName != DefaultEmptyField {
 		return schema.GetActualFieldName(fieldName)
@@ -222,7 +166,7 @@ func isSimpleTermsQuery(e *ConditionMatchExpr) bool {
 	return true
 }
 
-func buildAndQueryWithSchema(e *AndExpr, schema FieldSchema, isPrefix bool) elastic.Query {
+func buildAndQueryWithSchema(e *AndExpr, schema Schema, isPrefix bool) elastic.Query {
 	// 1. 收集所有AND条件的表达式
 	exprs := collectAndExprs(e)
 
@@ -281,7 +225,7 @@ func buildAndQueryWithSchema(e *AndExpr, schema FieldSchema, isPrefix bool) elas
 	return elastic.NewBoolQuery().Must(finalClauses...)
 }
 
-func buildOrQueryWithSchema(e *OrExpr, schema FieldSchema, isPrefix bool) elastic.Query {
+func buildOrQueryWithSchema(e *OrExpr, schema Schema, isPrefix bool) elastic.Query {
 	// 1. 收集所有OR条件的表达式
 	exprs := collectOrExprs(e)
 
@@ -344,7 +288,7 @@ func buildOrQueryWithSchema(e *OrExpr, schema FieldSchema, isPrefix bool) elasti
 	return boolQuery
 }
 
-func buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, schema FieldSchema, isPrefix bool) elastic.Query {
+func buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, schema Schema, isPrefix bool) elastic.Query {
 	field := getESFieldNameWithSchema(e.Field, schema)
 
 	if e.Value == nil || len(e.Value.Values) == 0 {
@@ -420,7 +364,7 @@ func buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, schema FieldSchem
 }
 
 // 新的 OperatorExpr 构建函数
-func buildOperatorMatchQueryWithSchema(e *OperatorExpr, schema FieldSchema, isPrefix bool) elastic.Query {
+func buildOperatorMatchQueryWithSchema(e *OperatorExpr, schema Schema, isPrefix bool) elastic.Query {
 	field := getESFieldNameWithSchema(e.Field, schema)
 	value := getESValue(e.Value)
 	valueInterface := getESValueInterface(e.Value)
@@ -503,7 +447,7 @@ func buildOperatorMatchQueryWithSchema(e *OperatorExpr, schema FieldSchema, isPr
 	return elastic.NewTermQuery(field, valueInterface)
 }
 
-func buildOperatorWildcardQueryWithSchema(e *OperatorExpr, schema FieldSchema, isPrefix bool) elastic.Query {
+func buildOperatorWildcardQueryWithSchema(e *OperatorExpr, schema Schema, isPrefix bool) elastic.Query {
 	field := getESFieldNameWithSchema(e.Field, schema)
 	value := getESValue(e.Value)
 
@@ -514,7 +458,7 @@ func buildOperatorWildcardQueryWithSchema(e *OperatorExpr, schema FieldSchema, i
 	return elastic.NewWildcardQuery(field, value)
 }
 
-func buildOperatorRegexpQueryWithSchema(e *OperatorExpr, schema FieldSchema, isPrefix bool) elastic.Query {
+func buildOperatorRegexpQueryWithSchema(e *OperatorExpr, schema Schema, isPrefix bool) elastic.Query {
 	field := getESFieldNameWithSchema(e.Field, schema)
 	value := getESValue(e.Value)
 
@@ -525,7 +469,7 @@ func buildOperatorRegexpQueryWithSchema(e *OperatorExpr, schema FieldSchema, isP
 	return elastic.NewRegexpQuery(field, value)
 }
 
-func buildOperatorRangeQueryWithSchema(e *OperatorExpr, schema FieldSchema) elastic.Query {
+func buildOperatorRangeQueryWithSchema(e *OperatorExpr, schema Schema) elastic.Query {
 	field := getESFieldNameWithSchema(e.Field, schema)
 	rangeExpr, ok := e.Value.(*RangeExpr)
 	if !ok {
@@ -594,7 +538,7 @@ func getFieldNameFromExpr(expr Expr) string {
 	}
 }
 
-func getFieldNameFromExprWithSchema(expr Expr, schema FieldSchema) string {
+func getFieldNameFromExprWithSchema(expr Expr, schema Schema) string {
 	fieldName := getFieldNameFromExpr(expr)
 	if fieldName != DefaultEmptyField {
 		return schema.GetActualFieldName(fieldName)

@@ -772,10 +772,18 @@ func TestParser(t *testing.T) {
 			sql: "(`loglevel` LIKE '%TRACE%' OR `loglevel` LIKE '%DEBUG%' OR `loglevel` LIKE '%INFO %' OR `loglevel` LIKE '%WARN %' OR `loglevel` LIKE '%ERROR%') AND ((`log` LIKE '%friendsvr%' AND `log` LIKE '%game_app%' AND `log` LIKE '%testAnd%') OR (`log` LIKE '%friendsvr%' AND `log` LIKE '%testOr%' AND `log` LIKE '%testAnd%') OR `log` LIKE '%test111%')",
 		},
 	}
-	parser := NewParser(WithEsSchema(loadEsMapping()))
+
+	encoder := func(str string) string {
+		return str
+	}
+
+	decoder := func(str string) string {
+		return str
+	}
+	parser := NewParser(loadEsMapping(), encoder, decoder)
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
-			rt, err := parser.Do(c.q)
+			rt, err := parser.Do(c.q, false)
 			if err != nil {
 				t.Errorf("Parse returned an error: %s", err)
 				return
@@ -796,20 +804,20 @@ func TestParser(t *testing.T) {
 	}
 }
 
-func loadEsMapping() *Schema {
-	testSchema := &Schema{fieldTypes: make(map[string]FieldType)}
-	testSchema.SetFieldType("age", FieldTypeLong)
-	testSchema.SetFieldType("count", FieldTypeLong)
-	testSchema.SetFieldType("a", FieldTypeLong)
-	testSchema.SetFieldType("b", FieldTypeLong)
-	testSchema.SetFieldType("c", FieldTypeLong)
-	testSchema.SetFieldType("d", FieldTypeLong)
-	testSchema.SetFieldType("status", FieldTypeKeyword)
-	testSchema.SetFieldType("level", FieldTypeText)
-	testSchema.SetFieldType("loglevel", FieldTypeKeyword)
-	testSchema.SetFieldType("author", FieldTypeText)
-	testSchema.SetFieldType("message", FieldTypeText)
-	testSchema.SetFieldType("log", FieldTypeText)
-	testSchema.SetFieldType("path", FieldTypeKeyword)
-	return testSchema
+func loadEsMapping() map[string]string {
+	m := make(map[string]string)
+	m["age"] = "long"
+	m["count"] = "long"
+	m["a"] = "long"
+	m["b"] = "long"
+	m["c"] = "long"
+	m["d"] = "long"
+	m["status"] = "keyword"
+	m["level"] = "text"
+	m["loglevel"] = "keyword"
+	m["author"] = "text"
+	m["message"] = "text"
+	m["log"] = "text"
+	m["path"] = "keyword"
+	return m
 }

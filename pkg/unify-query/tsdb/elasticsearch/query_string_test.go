@@ -11,41 +11,40 @@ package elasticsearch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
-	elastic "github.com/olivere/elastic/v7"
+	"github.com/spf13/cast"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
-func createTestSchema() lucene_parser.FieldSchema {
-	schema := lucene_parser.NewSchema()
-	schema.SetFieldType("log", lucene_parser.FieldTypeText)
-	schema.SetFieldType("level", lucene_parser.FieldTypeKeyword)
-	schema.SetFieldType("loglevel", lucene_parser.FieldTypeKeyword)
-	schema.SetFieldType("word.key", lucene_parser.FieldTypeText)
-	schema.SetFieldType("ms", lucene_parser.FieldTypeLong)
-	schema.SetFieldType("events.attributes.message.detail", lucene_parser.FieldTypeText)
-	schema.SetFieldType("event_detail", lucene_parser.FieldTypeText)
-	schema.SetFieldType("nested.key", lucene_parser.FieldTypeText)
-
-	schema.SetNestedField("events")
-	schema.SetNestedField("nested")
-	schema.SetNestedField("user")
-
-	schema.SetFieldAlias("event_detail", "events.attributes.message.detail")
-
-	return schema
-}
-
 func TestQsToDsl(t *testing.T) {
 	mock.Init()
+	testMapping := func() map[string]string {
+		m := make(map[string]string)
+		m["log"] = "text"
+		m["level"] = "keyword"
+		m["loglevel"] = "keyword"
+		m["word.key"] = "text"
+		m["ms"] = "long"
+		m["events.attributes.message.detail"] = "text"
+		m["event_detail"] = "text"
+		m["nested.key"] = "text"
 
+		return m
+		//schema.SetNestedField("events")
+		//schema.SetNestedField("nested")
+		//schema.SetNestedField("user")
+		//
+		//schema.SetFieldAlias("event_detail", "events.attributes.message.detail")
+
+	}
 	ctx := metadata.InitHashID(context.Background())
 	for i, c := range []struct {
 		q        string
@@ -164,35 +163,21 @@ func TestQsToDsl(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-
-			schema := createTestSchema()
-
-			parser := lucene_parser.NewParser(
-				lucene_parser.WithIsPrefix(c.isPrefix),
-				lucene_parser.WithEsSchema(schema),
-			)
-			result, err := parser.Do(c.q)
-
-			var query elastic.Query
-			if err == nil {
-				query = result.ES
+			encoder := func(str string) string {
+				return str
 			}
-			if err == nil {
-				if query != nil {
-					body, err := query.Source()
-					assert.Nil(t, err)
 
-					if body != nil {
-						bodyJson, _ := json.Marshal(body)
-						bodyString := string(bodyJson)
-						assert.JSONEq(t, c.expected, bodyString)
-						return
-					}
-				}
-				assert.Empty(t, c.expected)
-			} else {
-				assert.Equal(t, c.err, err)
+			decoder := func(str string) string {
+				return str
 			}
+			parser := lucene_parser.NewParser(testMapping(), encoder, decoder)
+			result, err := parser.Do(c.q, false)
+			require.NoError(t, err)
+			body, err := result.ES.Source()
+			assert.Nil(t, err)
+			require.NotNil(t, body)
+			bodyJson, _ := json.Marshal(body)
+			assert.JSONEq(t, c.expected, cast.ToString(bodyJson))
 		})
 	}
 }

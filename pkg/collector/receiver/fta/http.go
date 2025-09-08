@@ -37,10 +37,7 @@ func init() {
 	receiver.RegisterReadyFunc(define.SourceFta, Ready)
 }
 
-func Ready(config receiver.ComponentConfig) {
-	if !config.Fta.Enabled {
-		return
-	}
+func Ready() {
 	receiver.RegisterRecvHttpRoute(define.SourceFta, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,

@@ -84,26 +84,6 @@
           transport: "tcp"
           endpoint: ":4319"
 
-        components:
-          jaeger:
-            enabled: true
-          zipkin:
-            enabled: true
-          otlp:
-            enabled: true
-          pushgateway:
-            enabled: true
-          remotewrite:
-            enabled: true
-          pyroscope:
-            enabled: true
-          beat:
-            enabled: true
-          tars:
-            enabled: true
-          logpush:
-            enabled: true
-
       processor:
         # ApdexCalculator: 健康度状态计算器
         - name: "apdex_calculator/standard"

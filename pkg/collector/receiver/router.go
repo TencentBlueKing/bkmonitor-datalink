@@ -20,7 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-type Ready func(config ComponentConfig)
+type Ready func()
 
 var componentsReady = map[string]Ready{}
 
@@ -92,12 +92,12 @@ func RegisterRecvHttpRoute(source string, routes []RouteWithFunc) {
 }
 
 // RegisterRecvGrpcRoute 注册 Grpc 路由
-func RegisterRecvGrpcRoute(register func(s *grpc.Server)) {
-	serviceMgr.grpcServices = append(serviceMgr.grpcServices, register)
+func RegisterRecvGrpcRoute(service func(s *grpc.Server)) {
+	serviceMgr.grpcServices = append(serviceMgr.grpcServices, service)
 }
 
 // registerRecvTarsRoute 注册 Tars Servant
-func registerRecvTarsRoute(o string, server string, impl any, dispatch TarsDispatch, mgr *serviceManager) error {
+func registerRecvTarsRoute(o, server string, impl any, dispatch TarsDispatch, mgr *serviceManager) error {
 	s := NewTarsServant(o, server, impl, dispatch)
 	if _, ok := mgr.tarsServants[s.Obj]; ok {
 		return errors.Errorf("duplicated tars servant '%v'", s.Obj)
@@ -107,7 +107,7 @@ func registerRecvTarsRoute(o string, server string, impl any, dispatch TarsDispa
 }
 
 // RegisterRecvTarsRoute 注册 Tars Servant
-func RegisterRecvTarsRoute(o string, server string, impl any, dispatch TarsDispatch) {
+func RegisterRecvTarsRoute(o, server string, impl any, dispatch TarsDispatch) {
 	if err := registerRecvTarsRoute(o, server, impl, dispatch, serviceMgr); err != nil {
 		panic(err)
 	}

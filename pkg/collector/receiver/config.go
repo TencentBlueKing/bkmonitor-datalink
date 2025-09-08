@@ -17,30 +17,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 )
 
-type ComponentConfig struct {
-	Jaeger      ComponentCommon `config:"jaeger"`
-	Otlp        ComponentCommon `config:"otlp"`
-	PushGateway ComponentCommon `config:"pushgateway"`
-	RemoteWrite ComponentCommon `config:"remotewrite"`
-	Zipkin      ComponentCommon `config:"zipkin"`
-	Skywalking  ComponentCommon `config:"skywalking"`
-	Pyroscope   ComponentCommon `config:"pyroscope"`
-	Fta         ComponentCommon `config:"fta"`
-	Beat        ComponentCommon `config:"beat"`
-	Tars        ComponentCommon `config:"tars"`
-	LogPsuh     ComponentCommon `config:"logpush"`
-}
-
-type ComponentCommon struct {
-	Enabled bool `config:"enabled"`
-}
-
 type Config struct {
 	RecvServer  HttpServerConfig `config:"http_server"`
 	AdminServer HttpServerConfig `config:"admin_server"`
 	GrpcServer  GrpcServerConfig `config:"grpc_server"`
 	TarsServer  TarsServerConfig `config:"tars_server"`
-	Components  ComponentConfig  `config:"components"`
 }
 
 type HttpServerConfig struct {

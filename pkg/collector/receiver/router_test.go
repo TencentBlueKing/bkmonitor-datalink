@@ -23,7 +23,7 @@ import (
 func TestRegister(t *testing.T) {
 	RegisterRecvGrpcRoute(nil)
 	RegisterRecvHttpRoute("x", nil)
-	RegisterReadyFunc("x", func(_ ComponentConfig) {})
+	RegisterReadyFunc("x", func() {})
 }
 
 func TestRoute(t *testing.T) {
@@ -47,12 +47,10 @@ func TestRoute(t *testing.T) {
 
 	time.Sleep(time.Second)
 
-	type Case struct {
+	tests := []struct {
 		method string
 		path   string
-	}
-
-	cases := []Case{
+	}{
 		{
 			method: http.MethodGet,
 			path:   "/metrics",
@@ -67,7 +65,7 @@ func TestRoute(t *testing.T) {
 		},
 	}
 
-	for _, c := range cases {
+	for _, c := range tests {
 		var resp *http.Response
 		var err error
 

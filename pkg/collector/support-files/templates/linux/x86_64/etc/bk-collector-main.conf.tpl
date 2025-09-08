@@ -186,30 +186,6 @@ bk-collector:
       # default: ""
       endpoint: ":4319"
 
-    components:
-      jaeger:
-        enabled: true
-      otlp:
-        enabled: true
-      pushgateway:
-        enabled: true
-      remotewrite:
-        enabled: true
-      zipkin:
-        enabled: true
-      skywalking:
-        enabled: false
-      pyroscope:
-        enabled: true
-      fta:
-        enabled: true
-      beat:
-        enabled: true
-      tars:
-        enabled: false
-      logpush:
-        enabled: true
-
   processor:
     # ApdexCalculator: 健康度状态计算器
     - name: "apdex_calculator/standard"

@@ -102,8 +102,6 @@ func (e *statusCodeEvaluator) processTraces(record *define.Record) {
 	var batch []ptrace.Traces
 	if e.policy.IsFull() {
 		batch = batchspliter.SplitEachSpans(pdTraces)
-	} else {
-		batch = []ptrace.Traces{pdTraces}
 	}
 
 	// 移除无须采样的 span 并记录需要缓存的 spanID
@@ -118,7 +116,7 @@ func (e *statusCodeEvaluator) processTraces(record *define.Record) {
 		return !ok
 	})
 
-	// 没有 batch 则无须后续处理流程
+	// batch 为空无需处理
 	if len(batch) == 0 {
 		return
 	}

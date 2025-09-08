@@ -101,11 +101,6 @@ bk-collector:
     patterns:
       - "./example/fixtures/pingserver_sub*.yml"
 
-  # ================================ Cluster =================================
-  cluster:
-    disabled: false
-    address: ":4316"
-
   # =============================== Receiver =================================
   receiver:
     disabled: false
@@ -161,30 +156,6 @@ bk-collector:
       # 服务监听端点
       # default: ""
       endpoint: ":4319"
-
-    components:
-      jaeger:
-        enabled: true
-      otlp:
-        enabled: true
-      pushgateway:
-        enabled: true
-      remotewrite:
-        enabled: true
-      zipkin:
-        enabled: true
-      skywalking:
-        enabled: true
-      pyroscope:
-        enabled: true
-      fta:
-        enabled: true
-      beat:
-        enabled: true
-      tars:
-        enabled: true
-      logpush:
-        enabled: true
 
   # =============================== Processor ================================
   # name: 名称规则为 ${processor}[/${id}]，id 字段为可选项
@@ -496,6 +467,8 @@ bk-collector:
     # TokenChecker: 权限校验处理器
     # Aes256
     - name: "token_checker/aes256"
+
+    - name: "token_checker/fixed"
 
     # Beat 鉴权
     - name: "token_checker/beat"
@@ -1071,7 +1044,7 @@ bk-collector:
     - name: "pushgateway_pipeline/common"
       type: "pushgateway"
       processors:
-        - "token_checker/aes256"
+        - "token_checker/fixed"
         - "rate_limiter/token_bucket"
 
     - name: "remotewrite_pipeline/common"

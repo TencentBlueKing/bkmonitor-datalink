@@ -749,17 +749,17 @@ var ResultTableFieldOptionDBSchema = struct {
 // Update updates ResultTableFieldOption fields by primary key
 // nolint: dupl
 func (o *ResultTableFieldOption) Update(db *gorm.DB, fields ...ResultTableFieldOptionDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"bk_tenant_id": o.BkTenantId,
-		"value_type":  o.ValueType,
-		"value":       o.Value,
-		"creator":     o.Creator,
-		"create_time": o.CreateTime,
-		"table_id":    o.TableID,
-		"field_name":  o.FieldName,
-		"name":        o.Name,
+		"value_type":   o.ValueType,
+		"value":        o.Value,
+		"creator":      o.Creator,
+		"create_time":  o.CreateTime,
+		"table_id":     o.TableID,
+		"field_name":   o.FieldName,
+		"name":         o.Name,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -778,7 +778,7 @@ func (o *ResultTableFieldOption) Update(db *gorm.DB, fields ...ResultTableFieldO
 
 // ResultTableFieldOptionUpdater is an ResultTableFieldOption updates manager
 type ResultTableFieldOptionUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -786,7 +786,7 @@ type ResultTableFieldOptionUpdater struct {
 // nolint: dupl
 func NewResultTableFieldOptionUpdater(db *gorm.DB) ResultTableFieldOptionUpdater {
 	return ResultTableFieldOptionUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&ResultTableFieldOption{}),
 	}
 }

@@ -33,14 +33,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-var TSDefaultStorageConfig = map[string]interface{}{"use_default_rp": true}
+var TSDefaultStorageConfig = map[string]any{"use_default_rp": true}
 
-var TSStorageFieldList = []map[string]interface{}{
+var TSStorageFieldList = []map[string]any{
 	{
 		"field_name":        "target",
 		"field_type":        "string",
 		"tag":               models.ResultTableFieldTagDimension,
-		"option":            map[string]interface{}{},
+		"option":            map[string]any{},
 		"is_config_by_user": true,
 	},
 }
@@ -102,7 +102,7 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, queryFromBkDat
 			}
 
 			// 过滤metricInfo，只保留白名单中的字段
-			var filteredMetricInfo []map[string]interface{}
+			var filteredMetricInfo []map[string]any
 			for _, metric := range metricInfo {
 				fieldName, ok := metric["field_name"].(string)
 				if !ok {
@@ -124,7 +124,7 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, queryFromBkDat
 }
 
 // QueryMetricAndDimension RefreshMetric 更新指标
-func (s *TimeSeriesGroupSvc) QueryMetricAndDimension(vmRt string) (vmRtMetrics *[]map[string]interface{}, err error) {
+func (s *TimeSeriesGroupSvc) QueryMetricAndDimension(vmRt string) (vmRtMetrics *[]map[string]any, err error) {
 	// NOTE: 现阶段仅支持 vm 存储
 	vmStorage := "vm"
 
@@ -137,7 +137,7 @@ func (s *TimeSeriesGroupSvc) QueryMetricAndDimension(vmRt string) (vmRtMetrics *
 }
 
 // GetRedisData get data from redis
-func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interface{}, error) {
+func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]any, error) {
 	/*
 		[{
 			'field_name': 'test',
@@ -171,7 +171,7 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 	if err != nil {
 		return nil, fmt.Errorf("redis zcount cmd error, %v", err)
 	}
-	var metricInfo []map[string]interface{}
+	var metricInfo []map[string]any
 	ceilCount := math.Ceil(float64(zcountVal) / float64(fetchStep))
 	for i := 0; float64(i) < ceilCount; i++ {
 		opt := goRedis.ZRangeBy{
@@ -209,7 +209,7 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 				continue
 			}
 			// 解析
-			var dimensionsMap map[string]interface{}
+			var dimensionsMap map[string]any
 			if err := jsonx.Unmarshal([]byte(fmt.Sprint(dimension)), &dimensionsMap); err != nil {
 				logger.Errorf("GetRedisData:failed to parse dimension from dimensions info, dimension: %v", dimension)
 				continue
@@ -223,7 +223,7 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 			memStr := fmt.Sprintf("%v", m.Member)
 			metricInfo = append(
 				metricInfo,
-				map[string]interface{}{
+				map[string]any{
 					"field_name":       memStr,
 					"tag_value_list":   dimensionInfo,
 					"last_modify_time": m.Score,
@@ -234,8 +234,8 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 	return metricInfo, nil
 }
 
-func (s *TimeSeriesGroupSvc) filterInvalidMetrics(metricInfoList []map[string]interface{}) []map[string]interface{} {
-	validMetricInfoList := make([]map[string]interface{}, 0)
+func (s *TimeSeriesGroupSvc) filterInvalidMetrics(metricInfoList []map[string]any) []map[string]any {
+	validMetricInfoList := make([]map[string]any, 0)
 	compiledRegex := regexp.MustCompile(metricNamePattern)
 	for _, metric := range metricInfoList {
 		metricName, ok := metric["field_name"].(string)
@@ -253,7 +253,7 @@ func (s *TimeSeriesGroupSvc) filterInvalidMetrics(metricInfoList []map[string]in
 }
 
 // UpdateMetrics update ts metrics
-func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]interface{}) (bool, error) {
+func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]any) (bool, error) {
 	isAutoDiscovery, err := s.IsAutoDiscovery()
 	tsmSvc := NewTimeSeriesMetricSvcSvc(nil)
 	logger.Infof("UpdateMetrics: TimeSeriesGroupId: %v,table_id: %v,isAutoDiscovery: %v", s.TimeSeriesGroupID, s.TableID, isAutoDiscovery)
@@ -275,7 +275,7 @@ func (s *TimeSeriesGroupSvc) UpdateMetrics(metricInfoList []map[string]interface
 }
 
 // BulkRefreshRtFields 批量刷新结果表打平的指标和维度
-func (s *TimeSeriesGroupSvc) BulkRefreshRtFields(tableId string, metricInfoList []map[string]interface{}) error {
+func (s *TimeSeriesGroupSvc) BulkRefreshRtFields(tableId string, metricInfoList []map[string]any) error {
 	metricTagInfo, err := s.refineMetricTags(metricInfoList)
 	if err != nil {
 		return errors.Wrap(err, "refineMetricTags failed")
@@ -325,7 +325,7 @@ func (s *TimeSeriesGroupSvc) BulkRefreshRtFields(tableId string, metricInfoList 
 }
 
 // 去除重复的维度
-func (s *TimeSeriesGroupSvc) refineMetricTags(metricInfoList []map[string]interface{}) (map[string]interface{}, error) {
+func (s *TimeSeriesGroupSvc) refineMetricTags(metricInfoList []map[string]any) (map[string]any, error) {
 	metricMap := make(map[string]bool)
 	tagMap := make(map[string]string)
 	// 标识是否需要更新描述
@@ -344,7 +344,7 @@ func (s *TimeSeriesGroupSvc) refineMetricTags(metricInfoList []map[string]interf
 		// NOTE: 取反为了方便存储和transfer使用
 		metricMap[fieldName] = !isActive
 		// 现版本只有 tag_value_list 的情况
-		if tagValue, ok := item["tag_value_list"].(map[string]interface{}); ok {
+		if tagValue, ok := item["tag_value_list"].(map[string]any); ok {
 			isUpdateDescription = false
 			for tag := range tagValue {
 				tagMap[tag] = ""
@@ -354,7 +354,7 @@ func (s *TimeSeriesGroupSvc) refineMetricTags(metricInfoList []map[string]interf
 			continue
 		}
 	}
-	return map[string]interface{}{
+	return map[string]any{
 		"isUpdateDescription": isUpdateDescription,
 		"metricMap":           metricMap,
 		"tagMap":              tagMap,

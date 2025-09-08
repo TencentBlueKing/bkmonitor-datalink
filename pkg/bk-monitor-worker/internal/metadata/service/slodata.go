@@ -91,7 +91,7 @@ type Result struct {
 
 // QueryBizV2 全量检索业务
 func QueryBizV2(db *gorm.DB, prefix string, suffixes []string) (map[int32][]string, error) {
-	//检索biz和场景
+	// 检索biz和场景
 	bkBizIDToMiddleMap := make(map[int32]map[string]struct{})
 
 	for _, suffix := range suffixes {
@@ -99,9 +99,9 @@ func QueryBizV2(db *gorm.DB, prefix string, suffixes []string) (map[int32][]stri
 		pattern := fmt.Sprintf("%s%%/%s/", prefix, suffix)
 		var results []Result
 
-		//检索alarm_strategy_label表
-		//bk_biz_id 和 strategy_id 不为0的，符合/slo/场景名称/后缀，且在alarm_strategy_v2中存在的策略
-		//输出策略所属的bk_biz_id 和 场景名称（标签中间的部分）
+		// 检索alarm_strategy_label表
+		// bk_biz_id 和 strategy_id 不为0的，符合/slo/场景名称/后缀，且在alarm_strategy_v2中存在的策略
+		// 输出策略所属的bk_biz_id 和 场景名称（标签中间的部分）
 		res := db.Table("alarm_strategy_label AS label").
 			Select("label.bk_biz_id, SUBSTRING_INDEX(SUBSTRING_INDEX(label.label_name, '/', 3), '/', -1) AS middle").
 			Joins("INNER JOIN alarm_strategy_v2 AS strategy ON label.strategy_id = strategy.id").

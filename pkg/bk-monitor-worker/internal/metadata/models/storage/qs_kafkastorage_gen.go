@@ -558,14 +558,14 @@ var KafkaStorageDBSchema = struct {
 // Update updates KafkaStorage fields by primary key
 // nolint: dupl
 func (o *KafkaStorage) Update(db *gorm.DB, fields ...KafkaStorageDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"table_id":           o.TableID,
 		"topic":              o.Topic,
 		"partition":          o.Partition,
 		"storage_cluster_id": o.StorageClusterID,
 		"retention":          o.Retention,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -584,7 +584,7 @@ func (o *KafkaStorage) Update(db *gorm.DB, fields ...KafkaStorageDBSchemaField) 
 
 // KafkaStorageUpdater is an KafkaStorage updates manager
 type KafkaStorageUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -592,7 +592,7 @@ type KafkaStorageUpdater struct {
 // nolint: dupl
 func NewKafkaStorageUpdater(db *gorm.DB) KafkaStorageUpdater {
 	return KafkaStorageUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&KafkaStorage{}),
 	}
 }

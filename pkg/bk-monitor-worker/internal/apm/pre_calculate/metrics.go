@@ -112,7 +112,6 @@ func (r *ProfileCollector) startProfiling(dataId, appIdx string) {
 			pyroscope.ProfileBlockDuration,
 		},
 	})
-
 	if err != nil {
 		apmLogger.Errorf("Start pyroscope failed, profile data not be reported, error: %s", err)
 		return

@@ -1920,7 +1920,7 @@ var DataSourceDBSchema = struct {
 // Update updates DataSource fields by primary key
 // nolint: dupl
 func (o *DataSource) Update(db *gorm.DB, fields ...DataSourceDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"bk_tenant_id":        o.BkTenantId,
 		"bk_data_id":          o.BkDataId,
 		"token":               o.Token,
@@ -1945,7 +1945,7 @@ func (o *DataSource) Update(db *gorm.DB, fields ...DataSourceDBSchemaField) erro
 		"space_uid":           o.SpaceUid,
 		"created_from":        o.CreatedFrom,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -1964,7 +1964,7 @@ func (o *DataSource) Update(db *gorm.DB, fields ...DataSourceDBSchemaField) erro
 
 // DataSourceUpdater is an DataSource updates manager
 type DataSourceUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -1972,7 +1972,7 @@ type DataSourceUpdater struct {
 // nolint: dupl
 func NewDataSourceUpdater(db *gorm.DB) DataSourceUpdater {
 	return DataSourceUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&DataSource{}),
 	}
 }

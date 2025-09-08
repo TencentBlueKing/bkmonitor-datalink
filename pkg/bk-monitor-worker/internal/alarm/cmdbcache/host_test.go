@@ -28,7 +28,6 @@ import (
 )
 
 var DemoHosts = []*AlarmHostInfo{
-
 	{
 		BkBizId:       2,
 		BkHostId:      1,
@@ -58,7 +57,7 @@ var DemoHosts = []*AlarmHostInfo{
 				"finish_time_stamp": 1753839153,
 			},
 		},
-		TopoLinks: map[string][]map[string]interface{}{
+		TopoLinks: map[string][]map[string]any{
 			"module|3": {
 				{"bk_inst_id": 3, "bk_inst_name": "空闲机", "bk_obj_id": "module", "bk_obj_name": "模块"},
 				{"bk_inst_id": 2, "bk_inst_name": "空闲机池", "bk_obj_id": "set", "bk_obj_name": "集群"},
@@ -81,7 +80,7 @@ var DemoHosts = []*AlarmHostInfo{
 		BkAgentId:     "",
 		BkSetIds:      []int{2},
 		BkModuleIds:   []int{4},
-		TopoLinks: map[string][]map[string]interface{}{
+		TopoLinks: map[string][]map[string]any{
 			"module|4": {
 				{"bk_inst_id": 4, "bk_inst_name": "故障机", "bk_obj_id": "module", "bk_obj_name": "模块"},
 				{"bk_inst_id": 2, "bk_inst_name": "空闲机池", "bk_obj_id": "set", "bk_obj_name": "集群"},
@@ -98,7 +97,7 @@ var DemoHosts = []*AlarmHostInfo{
 		BkAgentId:     "12345678901234567890123456789014",
 		BkSetIds:      []int{3},
 		BkModuleIds:   []int{6},
-		TopoLinks: map[string][]map[string]interface{}{
+		TopoLinks: map[string][]map[string]any{
 			"module|6": {
 				{"bk_inst_id": 6, "bk_inst_name": "测试模块", "bk_obj_id": "module", "bk_obj_name": "模块"},
 				{"bk_inst_id": 3, "bk_inst_name": "测试集群", "bk_obj_id": "set", "bk_obj_name": "集群"},
@@ -259,7 +258,7 @@ host_with_system_relation{bk_biz_id="2",bk_cloud_id="0",bk_target_ip="127.0.0.3"
 			t.Error(allResult.Err())
 			return
 		}
-		events := make([]map[string]interface{}, 0, len(allResult.Val()))
+		events := make([]map[string]any, 0, len(allResult.Val()))
 		for _, v := range allResult.Val() {
 			var host *AlarmHostInfo
 			err := json.Unmarshal([]byte(v), &host)
@@ -267,7 +266,7 @@ host_with_system_relation{bk_biz_id="2",bk_cloud_id="0",bk_target_ip="127.0.0.3"
 				t.Error(err)
 				return
 			}
-			events = append(events, map[string]interface{}{
+			events = append(events, map[string]any{
 				"bk_host_id":      float64(host.BkHostId),
 				"bk_host_innerip": host.BkHostInnerip,
 				"bk_cloud_id":     float64(host.BkCloudId),
@@ -301,14 +300,14 @@ host_with_system_relation{bk_biz_id="2",bk_cloud_id="0",bk_target_ip="127.0.0.3"
 			return
 		}
 
-		topoEvent := map[string]interface{}{
+		topoEvent := map[string]any{
 			"bk_obj_id":    "module",
 			"bk_inst_id":   float64(6),
 			"bk_inst_name": "测试模块",
 			"bk_obj_name":  "模块",
 		}
 
-		err = cacheManager.CleanByEvents(ctx, "mainline_instance", []map[string]interface{}{topoEvent})
+		err = cacheManager.CleanByEvents(ctx, "mainline_instance", []map[string]any{topoEvent})
 		if err != nil {
 			t.Error(err)
 			return
@@ -316,7 +315,7 @@ host_with_system_relation{bk_biz_id="2",bk_cloud_id="0",bk_target_ip="127.0.0.3"
 
 		assert.False(t, client.HExists(ctx, cacheManager.GetCacheKey(topoCacheKey), "module|6").Val())
 
-		err = cacheManager.UpdateByEvents(ctx, "mainline_instance", []map[string]interface{}{topoEvent})
+		err = cacheManager.UpdateByEvents(ctx, "mainline_instance", []map[string]any{topoEvent})
 		if err != nil {
 			t.Error(err)
 			return

@@ -26,14 +26,14 @@ func TestResultTableFieldOption_InterfaceValue(t *testing.T) {
 	tests := []struct {
 		name    string
 		fields  fields
-		want    interface{}
+		want    any
 		wantErr bool
 	}{
-		{name: "string", fields: fields{OptionBase: models.OptionBase{ValueType: "string", Value: "abcd"}}, want: func() interface{} { return "abcd" }(), wantErr: false},
-		{name: "bool_true", fields: fields{OptionBase: models.OptionBase{ValueType: "bool", Value: "true"}}, want: func() interface{} { return true }(), wantErr: false},
-		{name: "bool_false", fields: fields{OptionBase: models.OptionBase{ValueType: "bool", Value: "false"}}, want: func() interface{} { return false }(), wantErr: false},
-		{name: "list", fields: fields{OptionBase: models.OptionBase{ValueType: "list", Value: "[1,2]"}}, want: func() interface{} { return []interface{}{float64(1), float64(2)} }(), wantErr: false},
-		{name: "dict", fields: fields{OptionBase: models.OptionBase{ValueType: "list", Value: `{"k":"v"}`}}, want: func() interface{} { return map[string]interface{}{"k": "v"} }(), wantErr: false},
+		{name: "string", fields: fields{OptionBase: models.OptionBase{ValueType: "string", Value: "abcd"}}, want: func() any { return "abcd" }(), wantErr: false},
+		{name: "bool_true", fields: fields{OptionBase: models.OptionBase{ValueType: "bool", Value: "true"}}, want: func() any { return true }(), wantErr: false},
+		{name: "bool_false", fields: fields{OptionBase: models.OptionBase{ValueType: "bool", Value: "false"}}, want: func() any { return false }(), wantErr: false},
+		{name: "list", fields: fields{OptionBase: models.OptionBase{ValueType: "list", Value: "[1,2]"}}, want: func() any { return []any{float64(1), float64(2)} }(), wantErr: false},
+		{name: "dict", fields: fields{OptionBase: models.OptionBase{ValueType: "list", Value: `{"k":"v"}`}}, want: func() any { return map[string]any{"k": "v"} }(), wantErr: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

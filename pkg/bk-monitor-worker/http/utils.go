@@ -21,7 +21,7 @@ import (
 )
 
 // BindJSON bind http params to obj
-func BindJSON(c *gin.Context, obj interface{}) error {
+func BindJSON(c *gin.Context, obj any) error {
 	return c.ShouldBindWith(obj, binding.JSON)
 }
 
@@ -37,7 +37,7 @@ func MergeGinH(h1 *gin.H, h2 *gin.H) *gin.H {
 }
 
 // GetMessage : return candidate if format is empty
-func GetMessage(candidate string, format string, v []interface{}) string {
+func GetMessage(candidate string, format string, v []any) string {
 	if format == "" {
 		return candidate
 	}
@@ -61,7 +61,7 @@ func Response(c *gin.Context, h *gin.H) {
 }
 
 // ResponseWithMessage 返回数据
-func ResponseWithMessage(c *gin.Context, h interface{}, message string, v ...interface{}) {
+func ResponseWithMessage(c *gin.Context, h any, message string, v ...any) {
 	response := &gin.H{
 		"result":  true,
 		"code":    0,
@@ -72,7 +72,7 @@ func ResponseWithMessage(c *gin.Context, h interface{}, message string, v ...int
 }
 
 // BadReqResponse return a bad request response
-func BadReqResponse(c *gin.Context, message string, v ...interface{}) {
+func BadReqResponse(c *gin.Context, message string, v ...any) {
 	status := 400
 	response := &gin.H{
 		"result":  false,
@@ -84,7 +84,7 @@ func BadReqResponse(c *gin.Context, message string, v ...interface{}) {
 }
 
 // ServerErrResponse return a error response
-func ServerErrResponse(c *gin.Context, message string, v ...interface{}) {
+func ServerErrResponse(c *gin.Context, message string, v ...any) {
 	status := 500
 	response := &gin.H{
 		"result":  false,

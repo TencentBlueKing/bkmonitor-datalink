@@ -40,8 +40,8 @@ func (r *ResultTableFieldOption) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
-func (r *ResultTableFieldOption) InterfaceValue() (interface{}, error) {
-	var value interface{}
+func (r *ResultTableFieldOption) InterfaceValue() (any, error) {
+	var value any
 	switch r.ValueType {
 	case "string":
 		value = r.Value
@@ -56,5 +56,4 @@ func (r *ResultTableFieldOption) InterfaceValue() (interface{}, error) {
 		}
 		return value, nil
 	}
-
 }

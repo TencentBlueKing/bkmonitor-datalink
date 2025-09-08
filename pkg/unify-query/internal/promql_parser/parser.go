@@ -57,7 +57,7 @@ type promqlErrorListener struct {
 	err error
 }
 
-func (l *promqlErrorListener) SyntaxError(recognizer antlr.Recognizer, offendingSymbol interface{}, line, column int, msg string, e antlr.RecognitionException) {
+func (l *promqlErrorListener) SyntaxError(recognizer antlr.Recognizer, offendingSymbol any, line, column int, msg string, e antlr.RecognitionException) {
 	l.err = errors.Wrapf(l.err, "parse error at line %d:%d: %s", line, column, msg)
 }
 
@@ -90,7 +90,7 @@ func (n *baseNode) Matchers() []*labels.Matcher {
 	return n.matchers
 }
 
-func (n *baseNode) VisitErrorNode(ctx antlr.ErrorNode) interface{} {
+func (n *baseNode) VisitErrorNode(ctx antlr.ErrorNode) any {
 	n.err = errors.Wrapf(n.err, "parse error at: %s", ctx.GetText())
 	return nil
 }
@@ -104,7 +104,7 @@ func NewStatement() *Statement {
 	return &Statement{}
 }
 
-func (s *Statement) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (s *Statement) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node = s
 
 	switch ctx.(type) {
@@ -129,7 +129,7 @@ type GroupNode struct {
 	nodes      []Node
 }
 
-func (g *GroupNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (g *GroupNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node = g
 	switch ctx.(type) {
 	case *gen.LabelMatcherListContext:
@@ -139,22 +139,22 @@ func (g *GroupNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 	return visitChildren(next, ctx)
 }
 
-func (n *GroupNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+func (g *GroupNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	tokenType := ctx.GetSymbol().GetTokenType()
 	text := ctx.GetText()
 
 	switch tokenType {
 	case gen.PromQLLexerMETRIC_NAME:
-		n.metricName = text
+		g.metricName = text
 	}
 	return nil
 }
 
-func (n *GroupNode) Matchers() []*labels.Matcher {
+func (g *GroupNode) Matchers() []*labels.Matcher {
 	var result []*labels.Matcher
 
-	if n.metricName != "" {
-		matcher, err := labels.NewMatcher(labels.MatchEqual, labels.MetricName, n.metricName)
+	if g.metricName != "" {
+		matcher, err := labels.NewMatcher(labels.MatchEqual, labels.MetricName, g.metricName)
 		if err != nil {
 			log.Errorf(context.TODO(), "failed to create metric name matcher: %v", err)
 		} else {
@@ -162,7 +162,7 @@ func (n *GroupNode) Matchers() []*labels.Matcher {
 		}
 	}
 
-	for _, labelNode := range n.nodes {
+	for _, labelNode := range g.nodes {
 		result = append(result, labelNode.Matchers()...)
 	}
 
@@ -174,13 +174,13 @@ type LabelListNode struct {
 	parent *GroupNode
 }
 
-func (n *LabelListNode) VisitChildren(ctx antlr.RuleNode) interface{} {
-	var next Node = n
+func (l *LabelListNode) VisitChildren(ctx antlr.RuleNode) any {
+	var next Node = l
 
 	switch ctx.(type) {
 	case *gen.LabelMatcherContext:
 		m := &MatcherNode{}
-		n.parent.nodes = append(n.parent.nodes, m)
+		l.parent.nodes = append(l.parent.nodes, m)
 		next = m
 	}
 
@@ -194,37 +194,37 @@ type MatcherNode struct {
 	value     string
 }
 
-func (n *MatcherNode) VisitChildren(ctx antlr.RuleNode) interface{} {
-	var next Node = n
+func (m *MatcherNode) VisitChildren(ctx antlr.RuleNode) any {
+	var next Node = m
 
 	switch ctx.(type) {
 	case *gen.LabelNameContext:
-		next = &LabelNameNode{parent: n}
+		next = &LabelNameNode{parent: m}
 	case *gen.LabelMatcherOperatorContext:
-		next = &OperatorNode{parent: n}
+		next = &OperatorNode{parent: m}
 	}
 
 	return visitChildren(next, ctx)
 }
 
-func (n *MatcherNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+func (m *MatcherNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	tokenType := ctx.GetSymbol().GetTokenType()
 	text := ctx.GetText()
 
 	switch tokenType {
 	case gen.PromQLLexerSTRING:
 		if len(text) >= 2 && ((text[0] == '"' && text[len(text)-1] == '"') || (text[0] == '\'' && text[len(text)-1] == '\'')) {
-			n.value = text[1 : len(text)-1]
+			m.value = text[1 : len(text)-1]
 		} else {
-			n.value = text
+			m.value = text
 		}
 	}
 	return nil
 }
 
-func (n *MatcherNode) Matchers() []*labels.Matcher {
-	if n.labelName != "" && n.value != "" {
-		matcher, err := labels.NewMatcher(operatorFromString(n.operator), n.labelName, n.value)
+func (m *MatcherNode) Matchers() []*labels.Matcher {
+	if m.labelName != "" && m.value != "" {
+		matcher, err := labels.NewMatcher(operatorFromString(m.operator), m.labelName, m.value)
 		if err != nil {
 			log.Errorf(context.TODO(), "failed to create label matcher: %v", err)
 			return nil
@@ -261,24 +261,24 @@ type LabelNameNode struct {
 	parent *MatcherNode
 }
 
-func (n *LabelNameNode) VisitChildren(ctx antlr.RuleNode) interface{} {
-	var next Node = n
+func (l *LabelNameNode) VisitChildren(ctx antlr.RuleNode) any {
+	var next Node = l
 
 	switch ctx.(type) {
 	case *gen.KeywordContext:
-		next = &KeywordNode{labelParent: n.parent}
+		next = &KeywordNode{labelParent: l.parent}
 	}
 
 	return visitChildren(next, ctx)
 }
 
-func (n *LabelNameNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+func (l *LabelNameNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	tokenType := ctx.GetSymbol().GetTokenType()
 	text := ctx.GetText()
 
 	switch tokenType {
 	case gen.PromQLLexerMETRIC_NAME, gen.PromQLLexerLABEL_NAME:
-		n.parent.labelName = text
+		l.parent.labelName = text
 		log.Debugf(context.TODO(), `"LABEL_NAME","%s"`, text)
 	}
 	return nil
@@ -289,24 +289,20 @@ type OperatorNode struct {
 	parent *MatcherNode
 }
 
-func (n *OperatorNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+func (o *OperatorNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	tokenType := ctx.GetSymbol().GetTokenType()
 
 	switch tokenType {
 	case gen.PromQLLexerEQ:
-		n.parent.operator = OperatorEqual
-		log.Debugf(context.TODO(), `"OPERATOR","="`)
+		o.parent.operator = OperatorEqual
 	case gen.PromQLLexerNE:
-		n.parent.operator = OperatorNotEqual
-		log.Debugf(context.TODO(), `"OPERATOR","!="`)
+		o.parent.operator = OperatorNotEqual
 	case gen.PromQLLexerRE:
-		n.parent.operator = OperatorRegexp
-		log.Debugf(context.TODO(), `"OPERATOR","=~"`)
+		o.parent.operator = OperatorRegexp
 	case gen.PromQLLexerNRE:
-		n.parent.operator = OperatorNotRegexp
-		log.Debugf(context.TODO(), `"OPERATOR","!~"`)
+		o.parent.operator = OperatorNotRegexp
 	default:
-		n.parent.operator = OperatorEqual
+		o.parent.operator = OperatorEqual
 	}
 	return nil
 }
@@ -317,15 +313,14 @@ type KeywordNode struct {
 	labelParent *MatcherNode
 }
 
-func (n *KeywordNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+func (n *KeywordNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	text := ctx.GetText()
 	n.labelParent.labelName = text
-	log.Debugf(context.TODO(), `"KEYWORD_AS_LABEL","%s"`, text)
 	return nil
 }
 
 // visitChildren traverses child nodes
-func visitChildren(next Node, node antlr.RuleNode) interface{} {
+func visitChildren(next Node, node antlr.RuleNode) any {
 	for _, child := range node.GetChildren() {
 		switch tree := child.(type) {
 		case antlr.ParseTree:

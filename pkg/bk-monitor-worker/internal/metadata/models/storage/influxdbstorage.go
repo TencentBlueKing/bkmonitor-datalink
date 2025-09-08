@@ -98,12 +98,12 @@ func (i InfluxdbStorage) StorageCluster() (*ClusterInfo, error) {
 }
 
 // ConsulClusterConfig 获取集群配置信息
-func (i InfluxdbStorage) ConsulClusterConfig() (map[string]interface{}, error) {
+func (i InfluxdbStorage) ConsulClusterConfig() (map[string]any, error) {
 	proxyStorage, err := i.InfluxdbProxyStorage()
 	if err != nil {
 		return nil, err
 	}
-	config := map[string]interface{}{
+	config := map[string]any{
 		"cluster": proxyStorage.InstanceClusterName,
 	}
 	if i.PartitionTag != "" {

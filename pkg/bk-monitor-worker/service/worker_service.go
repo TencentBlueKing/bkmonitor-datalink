@@ -72,7 +72,6 @@ func NewWorkerService(ctx context.Context, queues []string) (*WorkerService, err
 		BaseContext: func() context.Context { return ctx },
 		Queues:      qs,
 	})
-
 	if err != nil {
 		logger.Errorf("Failed to create worker. error: %s", err)
 		return nil, err
@@ -127,7 +126,6 @@ func (w *WorkerHealthMaintainer) Start() {
 }
 
 func NewWorkerHealthMaintainer(ctx context.Context, queues []string) (*WorkerHealthMaintainer, error) {
-
 	options := MaintainerOptions{
 		checkInternal: config.WorkerHealthCheckInterval,
 		infoTtl:       config.WorkerHealthCheckInfoDuration,

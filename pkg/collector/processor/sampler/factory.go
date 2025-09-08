@@ -22,11 +22,11 @@ func init() {
 	processor.Register(define.ProcessorSampler, NewFactory)
 }
 
-func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
+func NewFactory(conf map[string]any, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*sampler, error) {
+func newFactory(conf map[string]any, customized []processor.SubConfigProcessor) (*sampler, error) {
 	evaluators := confengine.NewTierConfig()
 
 	var c evaluator.Config
@@ -73,7 +73,7 @@ func (p *sampler) Clean() {
 	}
 }
 
-func (p *sampler) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *sampler) Reload(config map[string]any, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)

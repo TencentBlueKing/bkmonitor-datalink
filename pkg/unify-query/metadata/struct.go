@@ -81,7 +81,7 @@ type Aggregate struct {
 	TimeZone       string        `json:"time_zone,omitempty"`
 	TimeZoneOffset int64         `json:"time_zone_offset,omitempty"`
 
-	Args []interface{} `json:"args,omitempty"`
+	Args []any `json:"args,omitempty"`
 }
 
 // OffSetInfo Offset的信息存储，供promql查询转换为influxdb查询语句时使用

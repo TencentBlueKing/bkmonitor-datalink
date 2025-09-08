@@ -51,21 +51,21 @@ type Options struct {
 }
 
 type Curl interface {
-	WithDecoder(decoder func(ctx context.Context, reader io.Reader, resp interface{}) (int, error))
-	Request(ctx context.Context, method string, opt Options, res interface{}) (int, error)
+	WithDecoder(decoder func(ctx context.Context, reader io.Reader, resp any) (int, error))
+	Request(ctx context.Context, method string, opt Options, res any) (int, error)
 }
 
 // HttpCurl http 请求方法
 type HttpCurl struct {
 	Log     *log.Logger
-	decoder func(ctx context.Context, reader io.Reader, res interface{}) (int, error)
+	decoder func(ctx context.Context, reader io.Reader, res any) (int, error)
 }
 
-func (c *HttpCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reader, res interface{}) (int, error)) {
+func (c *HttpCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reader, res any) (int, error)) {
 	c.decoder = decoder
 }
 
-func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res interface{}) (size int, err error) {
+func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res any) (size int, err error) {
 
 	ctx, span := trace.NewSpan(ctx, "http-curl")
 	defer span.End(&err)

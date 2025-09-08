@@ -26,7 +26,7 @@ func onPretty() bool {
 	return logger.LoggerLevel() == logger.DebugLevelDesc
 }
 
-func Pretty(rtype define.RecordType, data interface{}) {
+func Pretty(rtype define.RecordType, data any) {
 	if !onPretty() {
 		return
 	}
@@ -98,7 +98,7 @@ func bToMb(b uint64) uint64 {
 	return b / 1024 / 1024
 }
 
-func RuntimeMemStats(f func(format string, args ...interface{})) {
+func RuntimeMemStats(f func(format string, args ...any)) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	// For info on each, see: https://golang.org/pkg/runtime/#MemStats

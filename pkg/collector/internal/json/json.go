@@ -21,11 +21,11 @@ var sonicAPI = sonic.Config{
 	CopyString:       true, // 正确性
 }.Froze()
 
-func Marshal(v interface{}) ([]byte, error) {
+func Marshal(v any) ([]byte, error) {
 	return sonicAPI.Marshal(v)
 }
 
-func Unmarshal(data []byte, v interface{}) error {
+func Unmarshal(data []byte, v any) error {
 	return sonicAPI.Unmarshal(data, v)
 }
 

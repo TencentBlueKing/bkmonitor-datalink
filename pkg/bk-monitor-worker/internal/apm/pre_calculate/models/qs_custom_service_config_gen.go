@@ -852,7 +852,7 @@ var CustomServiceConfigDBSchema = struct {
 // Update updates CustomServiceConfig fields by primary key
 // nolint: dupl
 func (o *CustomServiceConfig) Update(db *gorm.DB, fields ...CustomServiceConfigDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"id":           o.Id,
 		"bk_biz_id":    o.BkBizId,
 		"app_name":     o.AppName,
@@ -863,7 +863,7 @@ func (o *CustomServiceConfig) Update(db *gorm.DB, fields ...CustomServiceConfigD
 		"rule":         o.Rule,
 		"match_type":   o.MatchType,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -882,7 +882,7 @@ func (o *CustomServiceConfig) Update(db *gorm.DB, fields ...CustomServiceConfigD
 
 // CustomServiceConfigUpdater is an CustomServiceConfig updates manager
 type CustomServiceConfigUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -890,7 +890,7 @@ type CustomServiceConfigUpdater struct {
 // nolint: dupl
 func NewCustomServiceConfigUpdater(db *gorm.DB) CustomServiceConfigUpdater {
 	return CustomServiceConfigUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&CustomServiceConfig{}),
 	}
 }

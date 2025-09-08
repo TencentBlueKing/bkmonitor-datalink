@@ -18,7 +18,7 @@ import (
 )
 
 func TestAESDecrypt(t *testing.T) {
-	var encryptedAndPlainMap = map[string]string{
+	encryptedAndPlainMap := map[string]string{
 		"":              "",
 		"abcde":         "abcde",
 		"aes_str:::abc": "",
@@ -35,7 +35,6 @@ func TestAESDecrypt(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, plain, pwd)
 	}
-
 }
 
 func TestAESEncrypt(t *testing.T) {

@@ -259,9 +259,9 @@ func (d *InfoData) Fill(tables *influxdb.Tables) error {
 			tableItem.Types = append(tableItem.Types, table.Types[index])
 			indexList = append(indexList, index)
 		}
-		values := make([][]interface{}, 0)
+		values := make([][]any, 0)
 		for _, data := range table.Data {
-			value := make([]interface{}, len(indexList))
+			value := make([]any, len(indexList))
 			for valueIndex, headerIndex := range indexList {
 				value[valueIndex] = data[headerIndex]
 			}
@@ -330,7 +330,7 @@ func HandleFeatureFlag(c *gin.Context) {
 				k string
 			)
 
-			ffUser := featureFlag.FFUser(fmt.Sprintf("%d", i), map[string]interface{}{
+			ffUser := featureFlag.FFUser(fmt.Sprintf("%d", i), map[string]any{
 				key: value,
 			})
 
@@ -450,7 +450,7 @@ func HandleTsDBPrint(c *gin.Context) {
 	}
 	rtIds := make([]string, 0)
 	if len(tableId) == 0 {
-		for rtId, _ := range space {
+		for rtId := range space {
 			rt := router.GetResultTable(ctx, rtId, true)
 			if rt != nil {
 				for _, rtFieldName := range rt.Fields {
@@ -538,7 +538,7 @@ func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 // convertInfoData: 转化influxdb数据
 func convertInfoData(
 	ctx context.Context, infoType infos.InfoType, params *infos.Params, tables *influxdb.Tables,
-) (interface{}, error) {
+) (any, error) {
 	resp := NewInfoData(nil)
 	if tables == nil {
 		return resp, nil
@@ -573,7 +573,7 @@ func convertInfoData(
 	case infos.TagKeys:
 		// tagKeys需要进行提取values
 		if len(resp.Tables) == 0 {
-			return []interface{}{}, nil
+			return []any{}, nil
 		}
 
 		// 合并多table数据，并去重
@@ -595,7 +595,7 @@ func convertInfoData(
 		return result, nil
 	case infos.FieldKeys:
 		if len(resp.Tables) == 0 {
-			return []interface{}{}, nil
+			return []any{}, nil
 		}
 
 		res := make(map[string]struct{}, 0)

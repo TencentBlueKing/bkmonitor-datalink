@@ -7,18 +7,33 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-/*
-# Forwarder: 数据转发器
+package promlabels
 
-processor:
-   - name: "forwarder/traces"
-     config:
-       resolver:
-         identifier: "localhost:4316" # 本机标识
-         type: "static" # 静态解析器
-         endpoints: # 集群服务端点
-         - "localhost:4316"
-         - "localhost:4315"
-*/
+import "github.com/prometheus/prometheus/prompb"
 
-package forwarder
+type Labels []prompb.Label
+
+func (ls *Labels) Get(name string) (prompb.Label, bool) {
+	if ls == nil {
+		return prompb.Label{}, false
+	}
+	for i := 0; i < len(*ls); i++ {
+		if (*ls)[i].Name == name {
+			return (*ls)[i], true
+		}
+	}
+	return prompb.Label{}, false
+}
+
+func (ls *Labels) Upsert(name, value string) {
+	if ls == nil {
+		return
+	}
+	for i := 0; i < len(*ls); i++ {
+		if (*ls)[i].Name == name {
+			(*ls)[i].Value = value
+			return
+		}
+	}
+	*ls = append(*ls, prompb.Label{Name: name, Value: value})
+}

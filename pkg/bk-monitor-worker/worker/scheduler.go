@@ -60,7 +60,6 @@ type SchedulerOpts struct {
 
 // NewScheduler returns a new Scheduler
 func NewScheduler(ctx context.Context, opts SchedulerOpts) (*Scheduler, error) {
-
 	// 如果不指定，则使用 utc 时间
 	loc := opts.Location
 	if loc == nil {
@@ -167,7 +166,6 @@ func (s *Scheduler) waitForSignals() {
 // Run starts the scheduler until an os signal to exit the program is received.
 // It returns an error if scheduler is already running or has been shutdown.
 func (s *Scheduler) Run() error {
-
 	s.cron.Start()
 
 	ticker := time.NewTicker(5 * time.Second)

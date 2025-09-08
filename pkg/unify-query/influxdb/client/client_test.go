@@ -42,7 +42,7 @@ func TestDecodeResp(t *testing.T) {
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:00:00Z", "1"},
 									{"2022-04-14T01:01:00Z", "1"},
 									{"2022-04-14T01:02:00Z", "1"},
@@ -55,7 +55,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:00:00Z", "2"},
 									{"2022-04-14T01:01:00Z", "2"},
 									{"2022-04-14T01:02:00Z", "2"},
@@ -79,7 +79,7 @@ func TestDecodeResp(t *testing.T) {
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:00:00Z", "1"},
 									{"2022-04-14T01:01:00Z", "1"},
 								},
@@ -96,7 +96,7 @@ func TestDecodeResp(t *testing.T) {
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:02:00Z", "1"},
 									{"2022-04-14T01:03:00Z", "1"},
 								},
@@ -113,7 +113,7 @@ func TestDecodeResp(t *testing.T) {
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:04:00Z", "1"},
 									{"2022-04-14T01:05:00Z", "1"},
 								},
@@ -130,7 +130,7 @@ func TestDecodeResp(t *testing.T) {
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:06:00Z", "1"},
 								},
 								Partial: false,
@@ -145,7 +145,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:00:00Z", "2"},
 									{"2022-04-14T01:01:00Z", "2"},
 								},
@@ -161,7 +161,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:02:00Z", "2"},
 									{"2022-04-14T01:03:00Z", "2"},
 								},
@@ -176,7 +176,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:04:00Z", "2"},
 									{"2022-04-14T01:05:00Z", "2"},
 								},
@@ -191,7 +191,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Tags:    map[string]string{"ip": "127.0.0.1"},
 								Columns: []string{"_time", "_value"},
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:06:00Z", "2"},
 								},
 								Partial: false,
@@ -215,7 +215,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:00:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:00:00Z", "2", "127.0.0.1"},
 									{"2022-04-14T01:01:00Z", "1", "127.0.0.1"},
@@ -245,7 +245,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:00:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:00:00Z", "2", "127.0.0.1"},
 								},
@@ -261,7 +261,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:01:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:01:00Z", "2", "127.0.0.1"},
 								},
@@ -277,7 +277,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:02:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:02:00Z", "2", "127.0.0.1"},
 								},
@@ -292,7 +292,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:03:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:03:00Z", "2", "127.0.0.1"},
 								},
@@ -307,7 +307,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:04:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:04:00Z", "2", "127.0.0.1"},
 								},
@@ -322,7 +322,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:05:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:05:00Z", "2", "127.0.0.1"},
 								},
@@ -337,7 +337,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    "metric_name",
 								Columns: []string{"_time", "_value", "ip"},
 								// Vals 中的值这里用字符串：因为ChunkResponse 使用了json.UseNumber，这里方便断言，用字符串做值
-								Values: [][]interface{}{
+								Values: [][]any{
 									{"2022-04-14T01:06:00Z", "1", "127.0.0.1"},
 									{"2022-04-14T01:06:00Z", "2", "127.0.0.1"},
 								},
@@ -412,7 +412,7 @@ func TestDecodeResp(t *testing.T) {
 								Name:    series.Name,
 								Tags:    series.Tags,
 								Columns: series.Columns,
-								Values:  make([][]interface{}, 0),
+								Values:  make([][]any, 0),
 							},
 						}
 						if i+chunkSize < lenVals {

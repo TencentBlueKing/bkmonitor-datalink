@@ -45,7 +45,7 @@ func (r *response) failed(ctx context.Context, err error) {
 	})
 }
 
-func (r *response) success(ctx context.Context, data interface{}) {
+func (r *response) success(ctx context.Context, data any) {
 	log.Debugf(ctx, "query data size is %s", fmt.Sprint(unsafe.Sizeof(data)))
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUID, user.Source)
@@ -67,6 +67,7 @@ type ListData struct {
 	Total              int64                       `json:"total,omitempty"`
 	List               []map[string]any            `json:"list" json:"list,omitempty"`
 	Done               bool                        `json:"done"`
+	Cache              bool                        `json:"cache"`
 	TraceID            string                      `json:"trace_id,omitempty"`
 	Status             *metadata.Status            `json:"status,omitempty" json:"status,omitempty"`
 	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`

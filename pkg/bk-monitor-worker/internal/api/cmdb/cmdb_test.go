@@ -67,9 +67,9 @@ func TestListBizHostsTopo(t *testing.T) {
 		return
 	}
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"bk_biz_id": 2,
-		"page": map[string]interface{}{
+		"page": map[string]any{
 			"start": 0,
 			"limit": 10,
 		},
@@ -91,8 +91,8 @@ func TestListHostsWithoutBiz(t *testing.T) {
 		return
 	}
 
-	params := map[string]interface{}{
-		"page": map[string]interface{}{
+	params := map[string]any{
+		"page": map[string]any{
 			"start": 0,
 			"limit": 10,
 		},
@@ -115,7 +115,7 @@ func TestFindHostBizRelation(t *testing.T) {
 		return
 	}
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"bk_host_id": []int{1, 2, 3},
 	}
 
@@ -137,7 +137,7 @@ func TestSearchBizInstTopo(t *testing.T) {
 	}
 
 	var result cmdb.SearchBizInstTopoResp
-	_, err = cmdbApi.SearchBizInstTopo().SetPathParams(map[string]string{"bk_biz_id": "2"}).SetBody(map[string]interface{}{"bk_biz_id": 2}).SetResult(&result).Request()
+	_, err = cmdbApi.SearchBizInstTopo().SetPathParams(map[string]string{"bk_biz_id": "2"}).SetBody(map[string]any{"bk_biz_id": 2}).SetResult(&result).Request()
 	if err != nil {
 		t.Errorf("TestSearchBizInstTopo failed, err: %v", err)
 		return
@@ -154,7 +154,7 @@ func TestGetBizInternalModule(t *testing.T) {
 	}
 
 	var result cmdb.GetBizInternalModuleResp
-	params := map[string]interface{}{
+	params := map[string]any{
 		"bk_supplier_account": "0",
 		"bk_biz_id":           2,
 	}
@@ -174,7 +174,7 @@ func TestSearchObjectAttribute(t *testing.T) {
 		return
 	}
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"bk_obj_id": "biz",
 	}
 
@@ -202,7 +202,7 @@ func TestSearchModule(t *testing.T) {
 	}
 
 	var result cmdb.SearchModuleResp
-	_, err = cmdbApi.SearchModule().SetPathParams(params).SetBody(map[string]interface{}{"bk_biz_id": 2, "bk_supplier_account": "0"}).SetResult(&result).Request()
+	_, err = cmdbApi.SearchModule().SetPathParams(params).SetBody(map[string]any{"bk_biz_id": 2, "bk_supplier_account": "0"}).SetResult(&result).Request()
 	if err != nil {
 		t.Errorf("TestSearchModule failed, err: %v", err)
 		return
@@ -212,7 +212,7 @@ func TestSearchModule(t *testing.T) {
 
 	params["bk_set_id"] = "2"
 
-	_, err = cmdbApi.SearchModule().SetPathParams(params).SetBody(map[string]interface{}{"bk_biz_id": 2, "bk_supplier_account": "0", "bk_set_id": "2"}).SetResult(&result).Request()
+	_, err = cmdbApi.SearchModule().SetPathParams(params).SetBody(map[string]any{"bk_biz_id": 2, "bk_supplier_account": "0", "bk_set_id": "2"}).SetResult(&result).Request()
 	if err != nil {
 		t.Errorf("TestSearchModule failed, err: %v", err)
 		return
@@ -234,7 +234,7 @@ func TestSearchSet(t *testing.T) {
 	}
 
 	var result cmdb.SearchSetResp
-	_, err = cmdbApi.SearchSet().SetPathParams(params).SetBody(map[string]interface{}{"bk_biz_id": 2, "bk_supplier_account": "0"}).SetResult(&result).Request()
+	_, err = cmdbApi.SearchSet().SetPathParams(params).SetBody(map[string]any{"bk_biz_id": 2, "bk_supplier_account": "0"}).SetResult(&result).Request()
 	if err != nil {
 		t.Errorf("TestSearchSet failed, err: %v", err)
 		return
@@ -250,9 +250,9 @@ func TestListServiceInstanceDetail(t *testing.T) {
 		return
 	}
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"bk_biz_id": 2,
-		"page": map[string]interface{}{
+		"page": map[string]any{
 			"start": 0,
 			"limit": 10,
 		},
@@ -275,9 +275,9 @@ func TestDynamicGroup(t *testing.T) {
 		return
 	}
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"bk_biz_id": 2,
-		"page": map[string]interface{}{
+		"page": map[string]any{
 			"start": 0,
 			"limit": 10,
 		},
@@ -297,11 +297,11 @@ func TestDynamicGroup(t *testing.T) {
 		"id":        searchResult.Data.Info[len(searchResult.Data.Info)-1].ID,
 	}
 
-	params = map[string]interface{}{
+	params = map[string]any{
 		"bk_biz_id": 2,
 		"id":        searchResult.Data.Info[len(searchResult.Data.Info)-1].ID,
 		"fields":    []string{"bk_host_id"},
-		"page": map[string]interface{}{
+		"page": map[string]any{
 			"start": 0,
 			"limit": 10,
 		},

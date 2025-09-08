@@ -23,7 +23,7 @@ import (
 type RedisClientMocker struct {
 	ZcountValue                  int64
 	ZRangeByScoreWithScoresValue []goRedis.Z
-	HMGetValue                   []interface{}
+	HMGetValue                   []any
 	SetMap                       map[string]mapset.Set[string]
 	HKeysValue                   []string
 	goRedis.UniversalClient
@@ -61,7 +61,7 @@ func (r *RedisClientMocker) HMGet(ctx context.Context, key string, fields ...str
 	return c
 }
 
-func (r *RedisClientMocker) HSet(ctx context.Context, key string, values ...interface{}) *goRedis.IntCmd {
+func (r *RedisClientMocker) HSet(ctx context.Context, key string, values ...any) *goRedis.IntCmd {
 	c := goRedis.NewIntCmd(ctx)
 	s, ok := r.SetMap[key]
 	if !ok {
@@ -75,7 +75,7 @@ func (r *RedisClientMocker) HSet(ctx context.Context, key string, values ...inte
 	return c
 }
 
-func (r *RedisClientMocker) SAdd(ctx context.Context, key string, members ...interface{}) *goRedis.IntCmd {
+func (r *RedisClientMocker) SAdd(ctx context.Context, key string, members ...any) *goRedis.IntCmd {
 	c := goRedis.NewIntCmd(ctx)
 	m, ok := r.SetMap[key]
 	if !ok {
@@ -88,7 +88,7 @@ func (r *RedisClientMocker) SAdd(ctx context.Context, key string, members ...int
 	return c
 }
 
-func (r *RedisClientMocker) Publish(ctx context.Context, channel string, message interface{}) *goRedis.IntCmd {
+func (r *RedisClientMocker) Publish(ctx context.Context, channel string, message any) *goRedis.IntCmd {
 	return goRedis.NewIntCmd(ctx)
 }
 

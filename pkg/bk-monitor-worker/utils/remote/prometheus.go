@@ -92,7 +92,6 @@ func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, writeRe
 	}
 
 	resp, err := p.client.Do(req)
-
 	if err != nil {
 		return errors.Errorf("[PromRemoteWrite] request failed: %s", err)
 	}

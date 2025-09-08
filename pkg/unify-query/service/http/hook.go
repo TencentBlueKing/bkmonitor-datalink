@@ -80,7 +80,6 @@ func setDefaultConfig() {
 
 	// scroll
 	viper.SetDefault(ScrollSliceLimitConfigPath, 10000)
-	viper.SetDefault(ScrollMaxSliceConfigPath, 3)
 	viper.SetDefault(ScrollSessionLockTimeoutConfigPath, "60s")
 	viper.SetDefault(ScrollWindowTimeoutConfigPath, "3m")
 }
@@ -102,9 +101,8 @@ func LoadConfig() {
 	DefaultQueryListLimit = viper.GetInt(DefaultQueryListLimitPath)
 
 	ScrollSliceLimit = viper.GetInt(ScrollSliceLimitConfigPath)
-	ScrollMaxSlice = viper.GetInt(ScrollMaxSliceConfigPath)
-	ScrollSessionLockTimeout = viper.GetDuration(ScrollSessionLockTimeoutConfigPath)
 	ScrollWindowTimeout = viper.GetString(ScrollWindowTimeoutConfigPath)
+	ScrollSessionLockTimeout = viper.GetString(ScrollSessionLockTimeoutConfigPath)
 
 	QueryMaxRouting = viper.GetInt(QueryMaxRoutingConfigPath)
 

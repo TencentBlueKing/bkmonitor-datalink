@@ -42,7 +42,7 @@ func fakeData(t *testing.T) (*gomock.Controller, *gostub.Stubs) {
 						"tag1": "tagv1",
 						"tag2": "tagv2",
 					},
-					Values: [][]interface{}{
+					Values: [][]any{
 						{"2021-05-20T07:45:04Z", 12334},
 						{"2021-05-20T07:46:04Z", 12334},
 						{"2021-05-20T07:47:14Z", 12334},
@@ -77,7 +77,7 @@ func TestAsyncOutput(t *testing.T) {
 				{
 					Name:    "table1",
 					Columns: []string{"_time", "_value"},
-					Values: [][]interface{}{
+					Values: [][]any{
 						{"2021-05-20T07:45:04Z", 12334},
 						{"2021-05-20T07:46:04Z", 12334},
 						{"2021-05-20T07:47:14Z", 12334},

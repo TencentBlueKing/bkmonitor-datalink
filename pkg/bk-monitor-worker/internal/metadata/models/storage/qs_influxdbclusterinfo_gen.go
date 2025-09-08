@@ -380,12 +380,12 @@ var InfluxdbClusterInfoDBSchema = struct {
 // Update updates InfluxdbClusterInfo fields by primary key
 // nolint: dupl
 func (o *InfluxdbClusterInfo) Update(db *gorm.DB, fields ...InfluxdbClusterInfoDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"host_name":     o.HostName,
 		"cluster_name":  o.ClusterName,
 		"host_readable": o.HostReadable,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -404,7 +404,7 @@ func (o *InfluxdbClusterInfo) Update(db *gorm.DB, fields ...InfluxdbClusterInfoD
 
 // InfluxdbClusterInfoUpdater is an InfluxdbClusterInfo updates manager
 type InfluxdbClusterInfoUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -412,7 +412,7 @@ type InfluxdbClusterInfoUpdater struct {
 // nolint: dupl
 func NewInfluxdbClusterInfoUpdater(db *gorm.DB) InfluxdbClusterInfoUpdater {
 	return InfluxdbClusterInfoUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&InfluxdbClusterInfo{}),
 	}
 }

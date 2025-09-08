@@ -39,7 +39,7 @@ const (
 type apiGwResponse struct {
 	c       *gin.Context `json:"-"`
 	Result  bool         `json:"result"`
-	Data    interface{}  `json:"data"`
+	Data    any          `json:"data"`
 	Message string       `json:"message"`
 }
 
@@ -51,7 +51,7 @@ func (a *apiGwResponse) failed(msg error) {
 	})
 }
 
-func (a *apiGwResponse) success(data interface{}) {
+func (a *apiGwResponse) success(data any) {
 	a.c.JSON(http.StatusOK, &apiGwResponse{
 		Result:  true,
 		Data:    data,

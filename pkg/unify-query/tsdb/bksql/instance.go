@@ -131,6 +131,11 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	log.Infof(ctx, "%s: %s", i.InstanceType(), sql)
 	span.Set("query-sql", sql)
 
+	user := metadata.GetUser(ctx)
+
+	span.Set("query-source", user.Key)
+	span.Set("query-username", user.Name)
+
 	ctx, cancel := context.WithTimeout(ctx, i.timeout)
 	defer cancel()
 
@@ -240,7 +245,7 @@ func (i *Instance) Table(query *metadata.Query) string {
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, option *metadata.ResultTableOption, err error) {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (size int64, total int64, option *metadata.ResultTableOption, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("doris query panic: %s", r)
@@ -319,7 +324,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		dataCh <- newData
 	}
 
-	total = int64(data.TotalRecordSize)
+	size = int64(len(data.List))
+	total = int64(data.TotalRecords)
+
 	return
 }
 
@@ -523,7 +530,7 @@ func (i *Instance) InstanceType() string {
 	return consul.BkSqlStorageType
 }
 
-func getValue(k string, d map[string]interface{}) (string, error) {
+func getValue(k string, d map[string]any) (string, error) {
 	var value string
 	if v, ok := d[k]; ok {
 		// 增加 nil 判断，避免回传的数值为空

@@ -131,7 +131,7 @@ func (w *CmdbResourceWatcher) setBkCursor(ctx context.Context, resourceType Cmdb
 
 // Watch 监听资源变更事件并记录
 func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResourceType) (bool, error) {
-	params := map[string]interface{}{
+	params := map[string]any{
 		"bk_fields":           CmdbResourceTypeFields[resourceType],
 		"bk_resource":         resourceType,
 		"bk_supplier_account": "0",
@@ -419,8 +419,8 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 			continue
 		}
 
-		updateEvents := make([]map[string]interface{}, 0)
-		cleanEvents := make([]map[string]interface{}, 0)
+		updateEvents := make([]map[string]any, 0)
+		cleanEvents := make([]map[string]any, 0)
 
 		for _, event := range events {
 			switch event.BkEventType {

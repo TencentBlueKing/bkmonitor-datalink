@@ -164,7 +164,6 @@ func readAndWrite(bloomFilter BloomOperator, count, magnitude int) ([]float64, [
 }
 
 func exportChart(x, y []float64, duration time.Duration, title string) {
-
 	graph := chart.Chart{
 		Title:      fmt.Sprintf("%s - duration: %s", title, duration),
 		TitleStyle: chart.Style{FontSize: 15},

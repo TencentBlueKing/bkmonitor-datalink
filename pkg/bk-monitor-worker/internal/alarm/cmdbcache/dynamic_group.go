@@ -33,7 +33,7 @@ type DynamicGroupCacheManager struct {
 }
 
 func (m *DynamicGroupCacheManager) BuildRelationMetrics(ctx context.Context) error {
-	//TODO implement me
+	// TODO implement me
 	return errors.New("BuildRelationMetrics not implemented for DynamicGroupCacheManager")
 }
 
@@ -81,7 +81,7 @@ func getDynamicGroupRelatedIds(ctx context.Context, bkTenantId string, bizID int
 	// 获取动态分组下的资源列表
 	result, err := api.BatchApiRequest(
 		cmdbApiPageSize,
-		func(resp interface{}) (int, error) {
+		func(resp any) (int, error) {
 			var result cmdb.ExecuteDynamicGroupResp
 			err := mapstructure.Decode(resp, &result)
 			if err != nil {
@@ -93,11 +93,10 @@ func getDynamicGroupRelatedIds(ctx context.Context, bkTenantId string, bizID int
 			return result.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.ExecuteDynamicGroup().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID), "id": dynamicGroupID}).SetBody(map[string]interface{}{"bk_biz_id": bizID, "id": dynamicGroupID, "fields": []string{field}, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.ExecuteDynamicGroup().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID), "id": dynamicGroupID}).SetBody(map[string]any{"bk_biz_id": bizID, "id": dynamicGroupID, "fields": []string{field}, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)
-
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +123,7 @@ func getDynamicGroupRelatedIds(ctx context.Context, bkTenantId string, bizID int
 }
 
 // getDynamicGroupList 获取动态分组列表
-func getDynamicGroupList(ctx context.Context, bkTenantId string, bizID int) (map[string]map[string]interface{}, error) {
+func getDynamicGroupList(ctx context.Context, bkTenantId string, bizID int) (map[string]map[string]any, error) {
 	cmdbApi, err := api.GetCmdbApi(bkTenantId)
 	if err != nil {
 		return nil, errors.Wrapf(err, "GetCmdbApi failed, bkTenantId: %s", bkTenantId)
@@ -132,7 +131,7 @@ func getDynamicGroupList(ctx context.Context, bkTenantId string, bizID int) (map
 
 	result, err := api.BatchApiRequest(
 		cmdbApiPageSize,
-		func(resp interface{}) (int, error) {
+		func(resp any) (int, error) {
 			var result cmdb.SearchDynamicGroupResp
 			err := mapstructure.Decode(resp, &result)
 			if err != nil {
@@ -144,17 +143,16 @@ func getDynamicGroupList(ctx context.Context, bkTenantId string, bizID int) (map
 			return result.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.SearchDynamicGroup().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID)}).SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.SearchDynamicGroup().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID)}).SetBody(map[string]any{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)
-
 	if err != nil {
 		return nil, err
 	}
 
 	// 获取所有动态分组信息
-	dynamicGroupToRelatedIDs := make(map[string]map[string]interface{})
+	dynamicGroupToRelatedIDs := make(map[string]map[string]any)
 	for _, item := range result {
 		if item == nil {
 			logger.Warn("dynamic group item is nil")
@@ -172,7 +170,7 @@ func getDynamicGroupList(ctx context.Context, bkTenantId string, bizID int) (map
 				return nil, errors.Wrap(err, "failed to get dynamic group related ids")
 			}
 
-			dynamicGroupToRelatedIDs[dg.ID] = map[string]interface{}{
+			dynamicGroupToRelatedIDs[dg.ID] = map[string]any{
 				"bk_biz_id":   bizID,
 				"bk_inst_ids": relatedIDs,
 				"bk_obj_id":   dg.BkObjId,
@@ -228,11 +226,11 @@ func (m *DynamicGroupCacheManager) CleanGlobal(ctx context.Context) error {
 }
 
 // CleanByEvents 清除事件相关的动态分组缓存
-func (m *DynamicGroupCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *DynamicGroupCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	return nil
 }
 
 // UpdateByEvents 更新事件相关的动态分组缓存
-func (m *DynamicGroupCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *DynamicGroupCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	return nil
 }

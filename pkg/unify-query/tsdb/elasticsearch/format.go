@@ -306,6 +306,9 @@ func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField,
 	if timeFormat == "" {
 		timeFormat = function.Second
 	}
+	if f.decode != nil {
+		valueKey = f.decode(valueKey)
+	}
 
 	f.start = start
 	f.end = end
@@ -333,7 +336,7 @@ func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
 	f.orders = make(metadata.Orders, 0, len(orders))
 	for _, order := range orders {
 		if f.decode != nil {
-			order.Name = f.encode(order.Name)
+			order.Name = f.decode(order.Name)
 		}
 		f.orders = append(f.orders, order)
 	}
@@ -840,6 +843,33 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 	return f.Agg()
 }
 
+func (f *FormatFactory) Collapse(collapse *metadata.Collapse) string {
+	if collapse == nil {
+		return ""
+	}
+	if collapse.Field == "" {
+		return ""
+	}
+
+	field := collapse.Field
+	if f.decode != nil {
+		field = f.decode(field)
+	}
+
+	return field
+}
+
+func (f *FormatFactory) Source(sources []string) []string {
+	res := make([]string, len(sources))
+	for i, s := range sources {
+		if f.decode != nil {
+			s = f.decode(s)
+		}
+		res[i] = s
+	}
+	return res
+}
+
 func (f *FormatFactory) Orders() metadata.Orders {
 	orders := make(metadata.Orders, 0, len(f.orders))
 	for _, order := range f.orders {
@@ -1137,8 +1167,8 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 		err error
 		ok  bool
 
-		timestamp interface{}
-		value     interface{}
+		timestamp any
+		value     any
 
 		sample = prompb.Sample{}
 	)
@@ -1234,7 +1264,7 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 			value = fmt.Sprintf("%.f", d)
 		case int64, int32, int:
 			value = fmt.Sprintf("%d", d)
-		case []interface{}:
+		case []any:
 			o, _ := json.Marshal(d)
 			value = fmt.Sprintf("%s", o)
 		default:

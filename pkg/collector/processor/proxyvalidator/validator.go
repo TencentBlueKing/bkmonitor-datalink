@@ -48,15 +48,15 @@ type dimensionValidator struct {
 	nameValidator *nameValidator
 }
 
-func (dv *dimensionValidator) Validate(objs map[string]interface{}) (map[string]interface{}, error) {
+func (dv *dimensionValidator) Validate(objs map[string]any) (map[string]any, error) {
 	dimensionObj, ok := objs["dimension"]
 	if !ok {
-		return map[string]interface{}{}, nil
+		return map[string]any{}, nil
 	}
 
-	dimension, ok := dimensionObj.(map[string]interface{})
+	dimension, ok := dimensionObj.(map[string]any)
 	if !ok {
-		return nil, errors.Errorf("dimension expected map[string]interface{} type, got %T", dimensionObj)
+		return nil, errors.Errorf("dimension expected map[string]any type, got %T", dimensionObj)
 	}
 
 	conv := make(map[string]string)
@@ -94,7 +94,7 @@ type timestampValidator struct {
 	offset int64
 }
 
-func (tv *timestampValidator) Validate(objs map[string]interface{}) (float64, error) {
+func (tv *timestampValidator) Validate(objs map[string]any) (float64, error) {
 	timestampObj, ok := objs["timestamp"]
 	if !ok {
 		return float64(time.Now().UnixMilli()), nil
@@ -152,18 +152,18 @@ func newTimeSeriesValidator(config Config) Validator {
 }
 
 func (tc *timeSeriesValidator) Validate(pd *define.ProxyData) error {
-	objs, ok := pd.Data.([]interface{})
+	objs, ok := pd.Data.([]any)
 	if !ok {
-		return errors.Errorf("timeseries data expected []interface{}, got %T", pd.Data)
+		return errors.Errorf("timeseries data expected []any, got %T", pd.Data)
 	}
 	if len(objs) == 0 {
 		return errors.New("timeseries data cannot be empty")
 	}
 
 	for _, obj := range objs {
-		mapObj, ok := obj.(map[string]interface{})
+		mapObj, ok := obj.(map[string]any)
 		if !ok {
-			return errors.Errorf("timeseries each item expected map[string]interface{} type, got %T", obj)
+			return errors.Errorf("timeseries each item expected map[string]any type, got %T", obj)
 		}
 
 		// 校验 metrics 字段
@@ -171,9 +171,9 @@ func (tc *timeSeriesValidator) Validate(pd *define.ProxyData) error {
 		if !ok {
 			return errors.New("metrics missing")
 		}
-		metrics, ok := metricsObj.(map[string]interface{})
+		metrics, ok := metricsObj.(map[string]any)
 		if !ok {
-			return errors.Errorf("metrics expected map[string]interface{} type, got %T", metricsObj)
+			return errors.Errorf("metrics expected map[string]any type, got %T", metricsObj)
 		}
 		if len(metrics) == 0 {
 			return errors.New("metrics cannot be empty")
@@ -223,18 +223,18 @@ func newEventValidator(config Config) Validator {
 }
 
 func (tc *eventValidator) Validate(pd *define.ProxyData) error {
-	objs, ok := pd.Data.([]interface{})
+	objs, ok := pd.Data.([]any)
 	if !ok {
-		return errors.Errorf("event data expected []interface{}, got %T", pd.Data)
+		return errors.Errorf("event data expected []any, got %T", pd.Data)
 	}
 	if len(objs) == 0 {
 		return errors.New("event data cannot be empty")
 	}
 
 	for _, obj := range objs {
-		mapObj, ok := obj.(map[string]interface{})
+		mapObj, ok := obj.(map[string]any)
 		if !ok {
-			return errors.Errorf("event each item expected map[string]interface{} type, got %T", obj)
+			return errors.Errorf("event each item expected map[string]any type, got %T", obj)
 		}
 
 		// 校验 target 字段
@@ -265,9 +265,9 @@ func (tc *eventValidator) Validate(pd *define.ProxyData) error {
 		if !ok {
 			return errors.New("event missing")
 		}
-		event, ok := eventObj.(map[string]interface{})
+		event, ok := eventObj.(map[string]any)
 		if !ok {
-			return errors.Errorf("event expected map[string]interface{} type, got %T", eventObj)
+			return errors.Errorf("event expected map[string]any type, got %T", eventObj)
 		}
 		if _, ok = event["content"]; !ok {
 			return errors.New("event.content missing")

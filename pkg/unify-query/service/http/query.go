@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
+	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
@@ -40,7 +41,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
 
-func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
+func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) {
 	var (
 		err error
 
@@ -350,7 +351,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 					return
 				}
 
-				size, option, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
+				_, size, option, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
 				if queryErr != nil {
 					errCh <- queryErr
 					return
@@ -388,11 +389,12 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-scroll")
 	defer span.End(&err)
-	_, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
+	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if timeErr != nil {
 		err = timeErr
 		return
 	}
+	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 
 	queryRef, err = queryTs.ToQueryReference(ctx)
 	if err != nil {
@@ -429,17 +431,11 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	defer p.Release()
 
 	queryRef.Range("", func(qry *metadata.Query) {
-		for k, s := range session.ScrollIDs {
-			if s.Done() {
-				continue
-			}
-
-			log.Infof(ctx, "query with sliceID: %s, sliceMax: %d, offset: %d, limit: %d", s.ScrollID, s.SliceMax, s.Offset, s.Limit)
+		for i := 0; i < session.SliceLength(); i++ {
 			wg.Add(1)
 
 			err = p.Submit(func() {
 				defer func() {
-					session.UpdateSliceStatus(k, s)
 					wg.Done()
 				}()
 
@@ -452,13 +448,25 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				}
 
 				// 使用 slice 配置查询
-				newQry.SliceID = s.ScrollID
-				newQry.Size = s.Limit
+				newQry.SliceID = cast.ToString(i)
+
+				// slice info
+				slice := session.Slice(newQry.TableUUID())
+				defer func() {
+					session.UpdateSliceStatus(newQry.TableUUID(), slice)
+				}()
+
+				if slice.Done() {
+					return
+				}
+
+				from := slice.Offset + i*slice.Limit
+				newQry.Size = slice.Limit
 				newQry.ResultTableOption = &metadata.ResultTableOption{
-					ScrollID:   s.ScrollID,
-					SliceIndex: &s.SliceIdx,
-					SliceMax:   &s.SliceMax,
-					From:       &s.Offset,
+					SliceIndex: i,
+					ScrollID:   slice.ScrollID,
+					SliceMax:   slice.SliceMax,
+					From:       &from,
 				}
 
 				instance := prometheus.GetTsDbInstance(ctx, newQry)
@@ -467,9 +475,9 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 					return
 				}
 
-				size, option, err := instance.QueryRawData(ctx, newQry, start, end, dataCh)
+				size, _, option, err := instance.QueryRawData(ctx, newQry, start, end, dataCh)
 				if err != nil {
-					s.FailedNum++
+					slice.FailedNum++
 					errCh <- err
 					return
 				}
@@ -477,16 +485,16 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 				// 如果配置了 IsMultiFrom，则无需使用 scroll 和 searchAfter 配置
 				if option != nil {
 					if option.ScrollID != "" {
-						s.ScrollID = option.ScrollID
+						slice.ScrollID = option.ScrollID
 					}
-					s.Offset = s.Offset + s.Limit*s.SliceMax
+					slice.Offset = slice.Offset + slice.Limit*session.SliceLength()
 					lock.Lock()
 					resultTableOptions.SetOption(newQry.TableUUID(), option)
 					lock.Unlock()
 				}
 
 				if size == 0 {
-					s.Status = redisUtil.StatusCompleted
+					slice.Status = redisUtil.StatusCompleted
 				}
 				total += size
 			})
@@ -978,7 +986,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 	return
 }
 
-func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
+func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any, error) {
 	var (
 		err       error
 		res       any

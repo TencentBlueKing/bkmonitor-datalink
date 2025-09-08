@@ -90,31 +90,20 @@ func (p *ProfileBuilder) AddExternalSampleWithLabels(
 	if labelsSnapshot == nil {
 		return
 	}
-	const LabelProfileId = "profile_id"
-	const LabelSpanName = "span_name"
-	capacity := 0
+
 	if labelsCtx != nil {
-		capacity += len(labelsCtx.Labels)
-	}
-	if correlation.SpanId != 0 {
-		capacity++
-	}
-	if correlation.SpanName != 0 {
-		capacity++
-	}
-	if labelsCtx != nil {
-		sample.Label = make(map[string][]string, capacity)
+		sample.Label = make(map[string][]string)
 		for k, v := range labelsCtx.Labels {
 			sample.Label[labelsSnapshot.Strings[k]] = []string{labelsSnapshot.Strings[v]}
 		}
 	}
 	if correlation.SpanId != 0 {
-		sample.Label[LabelProfileId] = []string{profileIdString(correlation.SpanId)}
+		sample.Label["profile_id"] = []string{profileIdString(correlation.SpanId)}
 	}
 	if correlation.SpanName != 0 {
 		spanName := labelsSnapshot.Strings[int64(correlation.SpanName)]
 		if spanName != "" {
-			sample.Label[LabelSpanName] = []string{spanName}
+			sample.Label["span_name"] = []string{spanName}
 		}
 	}
 }

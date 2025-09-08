@@ -52,7 +52,7 @@ func (m *MockClient) AliasWithIndex(arg0 string) (string, error) {
 }
 
 // AliasWithIndex indicates an expected call of AliasWithIndex.
-func (mr *MockClientMockRecorder) AliasWithIndex(arg0 interface{}) *gomock.Call {
+func (mr *MockClientMockRecorder) AliasWithIndex(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AliasWithIndex", reflect.TypeOf((*MockClient)(nil).AliasWithIndex), arg0)
 }
@@ -90,7 +90,7 @@ func (mr *MockClientMockRecorder) Indices() *gomock.Call {
 // Search mocks base method.
 func (m *MockClient) Search(arg0 string, arg1 ...string) (string, error) {
 	m.ctrl.T.Helper()
-	varargs := []interface{}{arg0}
+	varargs := []any{arg0}
 	for _, a := range arg1 {
 		varargs = append(varargs, a)
 	}
@@ -101,8 +101,8 @@ func (m *MockClient) Search(arg0 string, arg1 ...string) (string, error) {
 }
 
 // Search indicates an expected call of Search.
-func (mr *MockClientMockRecorder) Search(arg0 interface{}, arg1 ...interface{}) *gomock.Call {
+func (mr *MockClientMockRecorder) Search(arg0 any, arg1 ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]interface{}{arg0}, arg1...)
+	varargs := append([]any{arg0}, arg1...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Search", reflect.TypeOf((*MockClient)(nil).Search), varargs...)
 }

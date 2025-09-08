@@ -18,7 +18,7 @@ type DataIDFilter struct {
 	onlyCondition bool
 	metricDataID  []consul.DataID
 	// [{"bk_biz_id": [1,12]},{"cluster_id": ["cluster1", "cluster2"]}]，这里interface{} 的类型有 []int, []string
-	conditions []map[string]interface{}
+	conditions []map[string]any
 }
 
 // NewDataIDFilter
@@ -44,7 +44,7 @@ func (d *DataIDFilter) FilterByBizIDs(bizIDs ...int) *DataIDFilter {
 	if len(bizIDs) == 0 {
 		return d
 	}
-	d.conditions = append(d.conditions, map[string]interface{}{
+	d.conditions = append(d.conditions, map[string]any{
 		consul.BizID: bizIDs,
 	})
 	return d
@@ -55,7 +55,7 @@ func (d *DataIDFilter) FilterByProjectIDs(projectIDs ...string) *DataIDFilter {
 	if len(projectIDs) == 0 {
 		return d
 	}
-	d.conditions = append(d.conditions, map[string]interface{}{
+	d.conditions = append(d.conditions, map[string]any{
 		consul.ProjectID: projectIDs,
 	})
 	return d
@@ -66,7 +66,7 @@ func (d *DataIDFilter) FilterByClusterIDs(clusterIDs ...string) *DataIDFilter {
 	if len(clusterIDs) == 0 {
 		return d
 	}
-	d.conditions = append(d.conditions, map[string]interface{}{
+	d.conditions = append(d.conditions, map[string]any{
 		consul.ClusterID: clusterIDs,
 	})
 	return d

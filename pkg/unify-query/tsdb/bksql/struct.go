@@ -28,10 +28,10 @@ type Params struct {
 }
 
 type Result struct {
-	Result  bool        `json:"result"`
-	Message string      `json:"message"`
-	Code    string      `json:"code"`
-	Data    interface{} `json:"data"`
+	Result  bool   `json:"result"`
+	Message string `json:"message"`
+	Code    string `json:"code"`
+	Data    any    `json:"data"`
 	Errors  struct {
 		Error   string `json:"error"`
 		QueryId string `json:"query_id"`
@@ -39,16 +39,16 @@ type Result struct {
 }
 
 type QueryAsyncData struct {
-	TraceId              string                 `json:"trace_id"`
-	SpanId               string                 `json:"span_id"`
-	QueryId              string                 `json:"query_id"`
-	StatementType        string                 `json:"statement_type"`
-	HasPlan              bool                   `json:"has_plan"`
-	PreferStorage        string                 `json:"prefer_storage"`
-	Sql                  string                 `json:"sql"`
-	ResultTableScanRange map[string]interface{} `json:"result_table_scan_range"`
-	ResultTableIds       []string               `json:"result_table_ids"`
-	QueryStartTime       string                 `json:"query_start_time"`
+	TraceId              string         `json:"trace_id"`
+	SpanId               string         `json:"span_id"`
+	QueryId              string         `json:"query_id"`
+	StatementType        string         `json:"statement_type"`
+	HasPlan              bool           `json:"has_plan"`
+	PreferStorage        string         `json:"prefer_storage"`
+	Sql                  string         `json:"sql"`
+	ResultTableScanRange map[string]any `json:"result_table_scan_range"`
+	ResultTableIds       []string       `json:"result_table_ids"`
+	QueryStartTime       string         `json:"query_start_time"`
 }
 
 type QuerySyncResultData struct {
@@ -62,16 +62,16 @@ type QuerySyncResultData struct {
 		ProcessedBytes int `json:"processed_bytes"`
 		ProcessedRows  int `json:"processed_rows"`
 	} `json:"resource_use_summary"`
-	Source               string                   `json:"source"`
-	List                 []map[string]interface{} `json:"list"`
-	SelectFieldsOrder    []string                 `json:"select_fields_order"`
-	Sql                  string                   `json:"sql"`
-	TotalRecordSize      int                      `json:"total_record_size"`
-	Timetaken            float64                  `json:"timetaken"`
-	BksqlCallElapsedTime int                      `json:"bksql_call_elapsed_time"`
-	Device               string                   `json:"device"`
-	ResultTableIds       []string                 `json:"result_table_ids"`
-	ResultSchema         []map[string]interface{} `json:"result_schema"`
+	Source               string           `json:"source"`
+	List                 []map[string]any `json:"list"`
+	SelectFieldsOrder    []string         `json:"select_fields_order"`
+	Sql                  string           `json:"sql"`
+	TotalRecordSize      int              `json:"total_record_size"`
+	Timetaken            float64          `json:"timetaken"`
+	BksqlCallElapsedTime int              `json:"bksql_call_elapsed_time"`
+	Device               string           `json:"device"`
+	ResultTableIds       []string         `json:"result_table_ids"`
+	ResultSchema         []map[string]any `json:"result_schema"`
 }
 
 type QueryAsyncResultData struct {
@@ -97,10 +97,10 @@ type QueryAsyncResultData struct {
 		FieldAlias string `json:"field_alias"`
 		FieldIndex int    `json:"field_index"`
 	} `json:"result_schema"`
-	List              []map[string]interface{} `json:"list"`
-	TimeTaken         int                      `json:"time_taken"`
-	SelectFieldsOrder []string                 `json:"select_fields_order"`
-	Status            string                   `json:"status"`
+	List              []map[string]any `json:"list"`
+	TimeTaken         int              `json:"time_taken"`
+	SelectFieldsOrder []string         `json:"select_fields_order"`
+	Status            string           `json:"status"`
 }
 
 type QueryAsyncStateData struct {

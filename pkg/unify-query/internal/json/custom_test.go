@@ -34,7 +34,7 @@ func TestParseJson(t *testing.T) {
 		{
 			name:  "normal nested json",
 			input: `{"a": {"b": 1, "c": "test"}, "d": true}`,
-			expected: map[string]interface{}{
+			expected: map[string]any{
 				"__ext.a.b": float64(1),
 				"__ext.a.c": "test",
 				"__ext.d":   true,
@@ -44,7 +44,7 @@ func TestParseJson(t *testing.T) {
 		{
 			name:  "single level json",
 			input: `{"key1": "value1", "key2": 123}`,
-			expected: map[string]interface{}{
+			expected: map[string]any{
 				"__ext.key1": "value1",
 				"__ext.key2": float64(123), // JSON numbers are decoded as float64
 			},
@@ -53,19 +53,19 @@ func TestParseJson(t *testing.T) {
 		{
 			name:     "empty json",
 			input:    `{}`,
-			expected: map[string]interface{}{},
+			expected: map[string]any{},
 			wantErr:  false,
 		},
 		{
 			name:     "invalid json",
 			input:    `{"key": "value"`,
-			expected: map[string]interface{}{},
+			expected: map[string]any{},
 			wantErr:  true,
 		},
 		{
 			name:  "json with special characters in keys",
 			input: `{"a.b": {"c-d": "value"}}`,
-			expected: map[string]interface{}{
+			expected: map[string]any{
 				"__ext.a.b.c-d": "value",
 			},
 			wantErr: false,
@@ -73,7 +73,7 @@ func TestParseJson(t *testing.T) {
 		{
 			name:  "deeply nested json",
 			input: `{"a": {"b": {"c": {"d": "value"}}}}`,
-			expected: map[string]interface{}{
+			expected: map[string]any{
 				"__ext.a.b.c.d": "value",
 			},
 			wantErr: false,

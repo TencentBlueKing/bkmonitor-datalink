@@ -105,6 +105,7 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, allConditions AllConditions,
 	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool) []*query.TsDBV2 {
+
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
 		return nil
@@ -190,19 +191,24 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		for _, mName := range metricNames {
 			sepRt := s.GetMetricSepRT(tableID, mName)
 			if sepRt != nil {
+				log.Infof(s.ctx, "table_id_change: (%s: %s => %s)", mName, defaultTsDB.TableID, sepRt.TableId)
+
 				defaultTsDB.ExpandMetricNames = []string{mName}
 				sepTsDB := s.getTsDBWithResultTableDetail(defaultTsDB, sepRt)
+
 				tsDBs = append(tsDBs, &sepTsDB)
 			} else {
 				defaultMetricNames = append(defaultMetricNames, mName)
 			}
 		}
 	}
+
 	// 如果这里出现指标列表为空，则说明指标都有独立的配置，不需要将默认的结果表配置写入
 	if len(defaultMetricNames) > 0 {
 		defaultTsDB.ExpandMetricNames = defaultMetricNames
 		tsDBs = append(tsDBs, &defaultTsDB)
 	}
+
 	return tsDBs
 }
 
@@ -240,7 +246,10 @@ func (s *SpaceFilter) GetSpaceRtIDs() []string {
 }
 
 func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
-	var routerMessage string
+	var (
+		routerMessage string
+	)
+
 	defer func() {
 		if routerMessage != "" {
 			metric.SpaceRouterNotExistInc(s.ctx, opt.SpaceUid, string(opt.TableID), opt.FieldName, metadata.SpaceTableIDFieldIsNotExists)
@@ -340,14 +349,6 @@ type TsDBOption struct {
 }
 
 type TsDBs []*query.TsDBV2
-
-func (t TsDBs) StringSlice() []string {
-	arr := make([]string, len(t))
-	for i, tsDB := range t {
-		arr[i] = tsDB.String()
-	}
-	return arr
-}
 
 // GetTsDBList : 通过 spaceUid  约定该空间查询范围
 func GetTsDBList(ctx context.Context, option *TsDBOption) (TsDBs, error) {

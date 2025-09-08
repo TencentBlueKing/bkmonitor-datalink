@@ -70,11 +70,6 @@ func (i *Instance) InstanceType() string {
 	}
 }
 
-// QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
-	return 0, nil, nil
-}
-
 // QuerySeriesSet 给 PromEngine 提供查询接口
 func (i *Instance) QuerySeriesSet(
 	ctx context.Context,
@@ -88,7 +83,7 @@ func (i *Instance) QuerySeriesSet(
 func (i *Instance) DirectQueryRange(
 	ctx context.Context, stmt string,
 	start, end time.Time, step time.Duration,
-) (promql.Matrix, error) {
+) (promql.Matrix, bool, error) {
 
 	var (
 		err error
@@ -109,26 +104,26 @@ func (i *Instance) DirectQueryRange(
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, false, err
 	}
 	result := query.Exec(ctx)
 	if result.Err != nil {
 		log.Errorf(ctx, result.Err.Error())
-		return nil, result.Err
+		return nil, false, result.Err
 	}
 
 	for _, err = range result.Warnings {
 		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, false, err
 	}
 
 	matrix, err := result.Matrix()
 	if err != nil {
 		log.Errorf(ctx, err.Error())
-		return nil, err
+		return nil, false, err
 	}
 
-	return matrix, nil
+	return matrix, false, nil
 }
 
 // Query instant 查询

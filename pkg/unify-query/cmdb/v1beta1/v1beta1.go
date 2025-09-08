@@ -467,7 +467,7 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 		vector, err = instance.DirectQuery(ctx, statement, opt.End)
 		matrix = vectorToMatrix(vector)
 	} else {
-		matrix, err = instance.DirectQueryRange(ctx, statement, opt.Start, opt.End, opt.Step)
+		matrix, _, err = instance.DirectQueryRange(ctx, statement, opt.Start, opt.End, opt.Step)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("instance query error: %s", err)

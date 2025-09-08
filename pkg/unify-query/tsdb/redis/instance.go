@@ -45,10 +45,6 @@ type Instance struct {
 	ClusterMetricPrefix string
 }
 
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, metadata.ResultTableOptions, error) {
-	return 0, nil, nil
-}
-
 func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
 	return ""
 }
@@ -93,10 +89,10 @@ func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (p
 	return i.vectorFormat(ctx, *df)
 }
 
-func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, bool, error) {
 	df, err := i.rawQuery(ctx, start, end, step)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	return i.matrixFormat(ctx, *df)
 }
@@ -157,7 +153,7 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 
 func (i *Instance) vectorFormat(ctx context.Context, df dataframe.DataFrame) (promql.Vector, error) {
 	vector := make(promql.Vector, 0)
-	matrix, err := i.matrixFormat(ctx, df)
+	matrix, _, err := i.matrixFormat(ctx, df)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +166,7 @@ func (i *Instance) vectorFormat(ctx context.Context, df dataframe.DataFrame) (pr
 	return vector, nil
 }
 
-func (i *Instance) matrixFormat(ctx context.Context, df dataframe.DataFrame) (promql.Matrix, error) {
+func (i *Instance) matrixFormat(ctx context.Context, df dataframe.DataFrame) (promql.Matrix, bool, error) {
 	names := df.Names()
 	groupPoints := map[string]promql.Series{}
 	for idx, row := range df.Records() {
@@ -181,7 +177,7 @@ func (i *Instance) matrixFormat(ctx context.Context, df dataframe.DataFrame) (pr
 		// 处理一行完整的数据，分桶塞点
 		labelsGroup, point, err := arrToPoint(names, row)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		h := consul.HashIt(labelsGroup)
 		var oneSeries promql.Series
@@ -200,7 +196,7 @@ func (i *Instance) matrixFormat(ctx context.Context, df dataframe.DataFrame) (pr
 	for _, mSeries := range groupPoints {
 		matrix = append(matrix, mSeries)
 	}
-	return matrix, nil
+	return matrix, false, nil
 }
 
 func arrToPoint(colNames []string, row []string) (labels.Labels, *promql.Point, error) {

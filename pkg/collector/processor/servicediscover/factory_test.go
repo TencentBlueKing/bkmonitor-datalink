@@ -401,7 +401,7 @@ processor:
 	factoryReplaceMissing := processor.MustCreateFactory(fmt.Sprintf(content, "missing"), NewFactory)
 	factoryReplaceForce := processor.MustCreateFactory(fmt.Sprintf(content, "force"), NewFactory)
 
-	testCases := []struct {
+	tests := []struct {
 		name      string
 		httpUrl   string
 		attrs     map[string]string
@@ -438,13 +438,14 @@ processor:
 			factory: factoryReplaceForce,
 		},
 	}
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			traces := generator.NewTracesGenerator(define.TracesOptions{
 				GeneratorOptions: define.GeneratorOptions{
 					Attributes: map[string]string{
 						"http.method": "GET",
-						"http.url":    tc.httpUrl,
+						"http.url":    tt.httpUrl,
 					},
 				},
 				SpanCount: 1,
@@ -456,12 +457,12 @@ processor:
 				RecordType: define.RecordTraces,
 				Data:       data,
 			}
-			_, err := tc.factory.Process(record)
+			_, err := tt.factory.Process(record)
 			assert.NoError(t, err)
 
 			data = record.Data.(ptrace.Traces)
 			foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
-				for k, v := range tc.attrs {
+				for k, v := range tt.attrs {
 					testkits.AssertAttrsStringVal(t, span.Attributes(), k, v)
 				}
 			})

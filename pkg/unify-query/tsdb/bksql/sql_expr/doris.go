@@ -68,7 +68,7 @@ type DorisSQLExpr struct {
 	valueField string
 
 	keepColumns []string
-	fieldsMap   map[string]string
+	fieldsMap   map[string]FieldOption
 	fieldAlias  metadata.FieldAlias
 
 	isSetLabels bool
@@ -97,7 +97,7 @@ func (d *DorisSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 	return d
 }
 
-func (d *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]string) SQLExpr {
+func (d *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]FieldOption) SQLExpr {
 	d.fieldsMap = fieldsMap
 	return d
 }
@@ -107,7 +107,7 @@ func (d *DorisSQLExpr) WithKeepColumns(cols []string) SQLExpr {
 	return d
 }
 
-func (d *DorisSQLExpr) FieldMap() map[string]string {
+func (d *DorisSQLExpr) FieldMap() map[string]FieldOption {
 	return d.fieldsMap
 }
 
@@ -167,17 +167,16 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
 			var (
-				isObject = false
-
+				as          string
 				newDim      string
 				selectAlias string
 			)
 
 			dimensionSet.Add(dim)
 
-			newDim, isObject = d.dimTransform(dim)
-			if isObject && d.encodeFunc != nil {
-				selectAlias = fmt.Sprintf("%s AS `%s`", newDim, d.encodeFunc(dim))
+			newDim, as = d.dimTransform(dim)
+			if as != "" {
+				selectAlias = fmt.Sprintf("%s AS `%s`", newDim, as)
 				newDim = d.encodeFunc(dim)
 			} else {
 				selectAlias = newDim
@@ -208,7 +207,6 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 
 	if window > 0 {
 		// 获取时区偏移量
-		// 如果是按天聚合，则增加时区偏移量
 		if function.IsAlignTime(window) {
 			// 时间聚合函数兼容时区
 			loc, locErr := time.LoadLocation(timezone)
@@ -387,13 +385,15 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 					op = "MATCH_PHRASE_PREFIX"
 				} else if c.IsSuffix {
 					op = "MATCH_PHRASE_EDGE"
-				} else if c.IsForceEq {
-					op = "="
 				} else {
-					if d.isText(c.DimensionName) {
+					if c.Operator == metadata.ConditionContains {
 						op = "MATCH_PHRASE"
 					} else {
-						op = "="
+						if d.isAnalyzed(c.DimensionName) {
+							op = "MATCH_PHRASE"
+						} else {
+							op = "="
+						}
 					}
 				}
 			}
@@ -444,10 +444,14 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 				} else if c.IsSuffix {
 					op = "NOT MATCH_PHRASE_EDGE"
 				} else {
-					if d.isText(c.DimensionName) {
+					if c.Operator == metadata.ConditionNotContains {
 						op = "NOT MATCH_PHRASE"
 					} else {
-						op = "!="
+						if d.isAnalyzed(c.DimensionName) {
+							op = "NOT MATCH_PHRASE"
+						} else {
+							op = "!="
+						}
 					}
 				}
 			}
@@ -514,12 +518,16 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 func (d *DorisSQLExpr) isArray(k string) bool {
 	fieldType := d.getFieldType(k)
-	_, ok := d.caseAs(fieldType)
+	_, ok := d.caseAs(fieldType.Type)
 	return ok
 }
 
 func (d *DorisSQLExpr) isText(k string) bool {
-	return d.getFieldType(k) == DorisTypeText
+	return d.getFieldType(k).Type == DorisTypeText
+}
+
+func (d *DorisSQLExpr) isAnalyzed(k string) bool {
+	return d.getFieldType(k).Analyzed
 }
 
 func (d *DorisSQLExpr) likeValue(s string) string {
@@ -600,7 +608,7 @@ func (d *DorisSQLExpr) walk(e querystring_parser.Expr) (string, error) {
 			c.Field = DefaultKey
 		}
 		field, _ := d.dimTransform(c.Field)
-		if d.isText(c.Field) {
+		if d.isAnalyzed(c.Field) {
 			return fmt.Sprintf("%s MATCH_PHRASE '%s'", field, c.Value), nil
 		}
 
@@ -639,14 +647,14 @@ func (d *DorisSQLExpr) walk(e querystring_parser.Expr) (string, error) {
 	return "", err
 }
 
-func (d *DorisSQLExpr) getFieldType(s string) (fieldType string) {
+func (d *DorisSQLExpr) getFieldType(s string) (opt FieldOption) {
 	if d.fieldsMap == nil {
 		return
 	}
 
 	var ok bool
-	if fieldType, ok = d.fieldsMap[s]; ok {
-		fieldType = strings.ToUpper(fieldType)
+	if opt, ok = d.fieldsMap[s]; ok {
+		opt.Type = strings.ToUpper(opt.Type)
 	}
 	return
 }
@@ -674,17 +682,23 @@ func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
 	return fmt.Sprintf(DorisTypeArrayTransform, s)
 }
 
-func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
+func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
+	ns = s
 	if s == "" || s == "*" {
-		return s, false
+		return
+	}
+	if alias, ok := d.fieldAlias[s]; ok {
+		ns = alias
+		as = s
 	}
 
 	fieldType := d.getFieldType(s)
-	castType, _ := d.caseAs(fieldType)
+	castType, _ := d.caseAs(fieldType.Type)
 
 	fs := strings.Split(s, ".")
 	if len(fs) == 1 {
-		return fmt.Sprintf("`%s`", s), false
+		ns = fmt.Sprintf("`%s`", ns)
+		return
 	}
 
 	// 如果是 resource 或 attributes 字段里都是用户上报的内容，采用 . 作为 key 上报，所以这里增加了特殊处理
@@ -714,7 +728,15 @@ func (d *DorisSQLExpr) dimTransform(s string) (string, bool) {
 		}
 	}
 
-	return fmt.Sprintf(`CAST(%s AS %s)`, suffixFields.String(), castType), true
+	if as == "" {
+		as = s
+	}
+	if d.encodeFunc != nil {
+		as = d.encodeFunc(as)
+	}
+
+	ns = fmt.Sprintf(`CAST(%s AS %s)`, suffixFields.String(), castType)
+	return
 }
 
 func (d *DorisSQLExpr) valueTransform(s string) string {

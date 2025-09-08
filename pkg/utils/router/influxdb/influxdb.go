@@ -20,18 +20,19 @@ import (
 )
 
 const (
-	ClusterInfoKey                   = "cluster_info"
-	HostInfoKey                      = "host_info"
-	TagInfoKey                       = "tag_info"
-	HostStatusInfoKey                = "host_info:status"
-	ProxyKey                         = "influxdb_proxy"
-	QueryRouterInfoKey               = "query_router_info"
-	SpaceToResultTableKey            = "space_to_result_table"
-	DataLabelToResultTableKey        = "data_label_to_result_table"
-	ResultTableDetailKey             = "result_table_detail"
-	SpaceToResultTableChannelKey     = "space_to_result_table:channel"
-	DataLabelToResultTableChannelKey = "data_label_to_result_table:channel"
-	ResultTableDetailChannelKey      = "result_table_detail:channel"
+	ClusterInfoKey                    = "cluster_info"
+	HostInfoKey                       = "host_info"
+	TagInfoKey                        = "tag_info"
+	HostStatusInfoKey                 = "host_info:status"
+	ProxyKey                          = "influxdb_proxy"
+	QueryRouterInfoKey                = "query_router_info"
+	SpaceToResultTableKey             = "space_to_result_table"
+	DataLabelToResultTableKey         = "data_label_to_result_table"
+	ResultTableDetailKey              = "result_table_detail"
+	SpaceToResultTableChannelKey      = "space_to_result_table:channel"
+	DataLabelToResultTableChannelKey  = "data_label_to_result_table:channel"
+	ResultTableDetailChannelKey       = "result_table_detail:channel"
+	ResultTableDetailChannelDeleteKey = "result_table_detail:channel:delete"
 
 	BkAppToSpaceKey        = "bk_app_to_space"
 	BkAppToSpaceChannelKey = "bk_app_to_space:channel"
@@ -40,7 +41,7 @@ const (
 var (
 	AllKey           = []string{ClusterInfoKey, HostInfoKey, TagInfoKey}
 	SpaceAllKey      = []string{SpaceToResultTableKey, DataLabelToResultTableKey, ResultTableDetailKey, BkAppToSpaceKey}
-	SpaceChannelKeys = []string{SpaceToResultTableChannelKey, DataLabelToResultTableChannelKey, ResultTableDetailChannelKey, BkAppToSpaceChannelKey}
+	SpaceChannelKeys = []string{SpaceToResultTableChannelKey, DataLabelToResultTableChannelKey, ResultTableDetailChannelKey, ResultTableDetailChannelDeleteKey, BkAppToSpaceChannelKey}
 )
 
 type Router interface {

@@ -98,11 +98,6 @@ bk-collector:
     metric_relabel_configs:
 
 
-  # ================================ Cluster =================================
-  cluster:
-    disabled: true
-
-
   # ================================= Proxy ==================================
   proxy:
     disabled: false
@@ -185,30 +180,6 @@ bk-collector:
       # 服务监听端点
       # default: ""
       endpoint: ":4319"
-
-    components:
-      jaeger:
-        enabled: true
-      otlp:
-        enabled: true
-      pushgateway:
-        enabled: true
-      remotewrite:
-        enabled: true
-      zipkin:
-        enabled: true
-      skywalking:
-        enabled: false
-      pyroscope:
-        enabled: true
-      fta:
-        enabled: true
-      beat:
-        enabled: true
-      tars:
-        enabled: false
-      logpush:
-        enabled: true
 
   processor:
     # ApdexCalculator: 健康度状态计算器

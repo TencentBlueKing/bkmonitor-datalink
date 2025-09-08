@@ -109,6 +109,12 @@ func (r *resultData) Set(in map[string]any) {
 	}
 }
 
+func (r *resultData) Clear() {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	r.data = make(map[string]any)
+}
+
 func (r *resultData) Get(k string) (any, bool) {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
@@ -180,6 +186,7 @@ const (
 var FieldType = map[string]string{
 	"a":                        "keyword",
 	"b":                        "keyword",
+	"level":                    "keyword",
 	"dtEventTimeStamp":         "date",
 	"events":                   "nested",
 	"events.name":              "keyword",
@@ -217,7 +224,7 @@ func mockElasticSearchHandler(ctx context.Context) {
 		return
 	}
 
-	mappings := `{"es_index":{"mappings":{"properties":{"a":{"type":"keyword"},"time":{"type":"date"},"b":{"type":"keyword"},"group":{"type":"keyword"},"kibana_stats":{"properties":{"kibana":{"properties":{"name":{"type":"keyword"}}}}},"timestamp":{"type":"text"},"type":{"type":"keyword"},"dtEventTimeStamp":{"type":"date"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}},"events":{"type":"nested","properties":{"name":{"type":"keyword"}}}}}}}`
+	mappings := `{"es_index":{"mappings":{"properties":{"a":{"type":"keyword"},"time":{"type":"date"},"b":{"type":"keyword"},"level":{"type":"keyword"},"group":{"type":"keyword"},"kibana_stats":{"properties":{"kibana":{"properties":{"name":{"type":"keyword"}}}}},"timestamp":{"type":"text"},"type":{"type":"keyword"},"dtEventTimeStamp":{"type":"date"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}},"events":{"type":"nested","properties":{"name":{"type":"keyword"}}}}}}}`
 	mappingResp := httpmock.NewStringResponder(http.StatusOK, mappings)
 	httpmock.RegisterResponder(http.MethodGet, bkBaseEsUrl+"/es_index/_mapping/", mappingResp)
 	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/es_index/_mapping/", mappingResp)

@@ -14,7 +14,6 @@ import (
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/apdexcalculator"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/attributefilter"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/dbfilter"
-	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/forwarder"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/licensechecker"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/metricsfilter"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pproftranslator"

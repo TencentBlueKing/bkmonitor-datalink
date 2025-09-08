@@ -206,15 +206,13 @@ processor:
 }
 
 func TestProcessLicenseStatus(t *testing.T) {
-	type Case struct {
+	tests := []struct {
 		agentStatus   Status
 		licenseStatus Status
 		nodeStatus    Status
 		pass          bool
 		err           error
-	}
-
-	cases := []Case{
+	}{
 		{
 			agentStatus:   statusAgentOld,
 			licenseStatus: statusLicenseAccess,
@@ -294,14 +292,14 @@ func TestProcessLicenseStatus(t *testing.T) {
 		},
 	}
 
-	for _, v := range cases {
+	for _, tt := range tests {
 		pass, err := processLicenseStatus(statusInfo{
-			agent:   v.agentStatus,
-			node:    v.nodeStatus,
-			license: v.licenseStatus,
+			agent:   tt.agentStatus,
+			node:    tt.nodeStatus,
+			license: tt.licenseStatus,
 		})
-		assert.Equal(t, v.err, err)
-		assert.Equal(t, v.pass, pass)
+		assert.Equal(t, tt.err, err)
+		assert.Equal(t, tt.pass, pass)
 	}
 
 	pass, err := processLicenseStatus(statusInfo{

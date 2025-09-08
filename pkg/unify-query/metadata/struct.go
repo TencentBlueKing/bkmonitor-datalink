@@ -77,10 +77,11 @@ type Aggregate struct {
 	Dimensions []string `json:"dimensions,omitempty"`
 	Without    bool     `json:"without,omitempty"`
 
-	Window   time.Duration `json:"window,omitempty"`
-	TimeZone string        `json:"time_zone,omitempty"`
+	Window         time.Duration `json:"window,omitempty"`
+	TimeZone       string        `json:"time_zone,omitempty"`
+	TimeZoneOffset int64         `json:"time_zone_offset,omitempty"`
 
-	Args []interface{} `json:"args,omitempty"`
+	Args []any `json:"args,omitempty"`
 }
 
 // OffSetInfo Offset的信息存储，供promql查询转换为influxdb查询语句时使用
@@ -101,10 +102,9 @@ type Query struct {
 	ClusterID string `json:"cluster_id,omitempty"` // 存储 ID
 
 	StorageType string `json:"storage_type,omitempty"` // 存储类型
-
-	StorageIDs  []string `json:"storage_ids,omitempty"`
-	StorageID   string   `json:"storage_id,omitempty"`
-	StorageName string   `json:"storage_name,omitempty"`
+	SliceID     string `json:"slice_id,omitempty"`     // 切片 ID
+	StorageID   string `json:"storage_id,omitempty"`
+	StorageName string `json:"storage_name,omitempty"`
 
 	ClusterName string   `json:"cluster_name,omitempty"`
 	TagsKey     []string `json:"tags_key,omitempty"`
@@ -160,8 +160,8 @@ type Query struct {
 	From   int      `json:"from,omitempty"`
 	Size   int      `json:"size,omitempty"`
 
-	Scroll             string             `json:"scroll,omitempty"`
-	ResultTableOptions ResultTableOptions `json:"result_table_options,omitempty"`
+	Scroll            string             `json:"scroll,omitempty"`
+	ResultTableOption *ResultTableOption `json:"result_table_option,omitempty"`
 
 	Orders      Orders    `json:"orders,omitempty"`
 	NeedAddTime bool      `json:"need_add_time,omitempty"`
@@ -275,9 +275,6 @@ type ConditionField struct {
 
 	// IsSuffix 是否是后缀匹配
 	IsSuffix bool
-
-	// IsForceEq 是否强制等于
-	IsForceEq bool
 }
 
 // TimeAggregation 时间聚合字段
@@ -374,6 +371,15 @@ func (qMetric *QueryMetric) ToJson(isSort bool) string {
 	return string(s)
 }
 
+func (qRef QueryReference) Count() int {
+	var i int
+	qRef.Range("", func(qry *Query) {
+		i++
+	})
+
+	return i
+}
+
 // Range 遍历查询列表
 func (qRef QueryReference) Range(name string, fn func(qry *Query)) {
 	for refName, references := range qRef {
@@ -396,6 +402,23 @@ func (qRef QueryReference) Range(name string, fn func(qry *Query)) {
 			}
 		}
 	}
+}
+
+func (qRef QueryReference) GetMaxWindowAndTimezone() (time.Duration, string) {
+	var (
+		window   time.Duration = 0
+		timezone string
+	)
+	qRef.Range("", func(q *Query) {
+		for _, a := range q.Aggregates {
+			if a.Window > window {
+				window = a.Window
+				timezone = a.TimeZone
+			}
+		}
+	})
+
+	return window, timezone
 }
 
 // ToVmExpand 判断是否是直查，如果都是 vm 查询的情况下，则使用直查模式
@@ -465,6 +488,22 @@ func (a Aggregates) LastAggName() string {
 	}
 
 	return a[len(a)-1].Name
+}
+
+func (a Aggregates) Copy() Aggregates {
+	aggs := make(Aggregates, len(a))
+	for i, agg := range a {
+		aggs[i] = Aggregate{
+			Name:           agg.Name,
+			Field:          agg.Field,
+			Dimensions:     append([]string{}, agg.Dimensions...),
+			Window:         agg.Window,
+			TimeZone:       agg.TimeZone,
+			TimeZoneOffset: agg.TimeZoneOffset,
+			Args:           append([]any{}, agg.Args...),
+		}
+	}
+	return aggs
 }
 
 func (os Orders) SortSliceList(list []map[string]any, fieldType map[string]string) {

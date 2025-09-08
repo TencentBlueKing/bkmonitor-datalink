@@ -32,12 +32,9 @@ import (
 )
 
 const (
-	KeyIndex     = "__index"
-	KeyTableID   = "__result_table"
-	KeyDataLabel = "__data_label"
-
-	TableFieldName = "Field"
-	TableFieldType = "Type"
+	TableFieldName     = "Field"
+	TableFieldType     = "Type"
+	TableFieldAnalyzed = "Analyzed"
 
 	TableTypeVariant = "variant"
 )
@@ -55,8 +52,9 @@ type Instance struct {
 	timeout      time.Duration
 	intervalTime time.Duration
 
-	maxLimit  int
-	tolerance int
+	maxLimit   int
+	tolerance  int
+	sliceLimit int
 
 	client *Client
 }
@@ -67,9 +65,10 @@ type Options struct {
 	Address string
 	Headers map[string]string
 
-	Timeout   time.Duration
-	MaxLimit  int
-	Tolerance int
+	Timeout    time.Duration
+	MaxLimit   int
+	SliceLimit int
+	Tolerance  int
 
 	Curl curl.Curl
 }
@@ -79,11 +78,12 @@ func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 		return nil, fmt.Errorf("address is empty")
 	}
 	instance := &Instance{
-		ctx:       ctx,
-		timeout:   opt.Timeout,
-		maxLimit:  opt.MaxLimit,
-		tolerance: opt.Tolerance,
-		client:    (&Client{}).WithUrl(opt.Address).WithHeader(opt.Headers).WithCurl(opt.Curl),
+		ctx:        ctx,
+		timeout:    opt.Timeout,
+		maxLimit:   opt.MaxLimit,
+		tolerance:  opt.Tolerance,
+		sliceLimit: opt.SliceLimit,
+		client:     (&Client{}).WithUrl(opt.Address).WithHeader(opt.Headers).WithCurl(opt.Curl),
 	}
 	return instance, nil
 }
@@ -131,6 +131,11 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	log.Infof(ctx, "%s: %s", i.InstanceType(), sql)
 	span.Set("query-sql", sql)
 
+	user := metadata.GetUser(ctx)
+
+	span.Set("query-source", user.Key)
+	span.Set("query-username", user.Name)
+
 	ctx, cancel := context.WithTimeout(ctx, i.timeout)
 	defer cancel()
 
@@ -153,8 +158,8 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	return data, nil
 }
 
-func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]string, error) {
-	fieldsMap := make(map[string]string)
+func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]sql_expr.FieldOption, error) {
+	fieldsMap := make(map[string]sql_expr.FieldOption)
 
 	if sql == "" {
 		return nil, nil
@@ -167,8 +172,10 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]str
 
 	for _, list := range data.List {
 		var (
-			k  string
-			v  string
+			k             string
+			fieldType     string
+			fieldAnalyzed string
+
 			ok bool
 		)
 		k, ok = list[TableFieldName].(string)
@@ -176,12 +183,22 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]str
 			continue
 		}
 
-		v, ok = list[TableFieldType].(string)
+		fieldType, ok = list[TableFieldType].(string)
 		if !ok {
 			continue
 		}
 
-		fieldsMap[k] = v
+		opt := sql_expr.FieldOption{
+			Type: fieldType,
+		}
+
+		if fieldAnalyzed, ok = list[TableFieldAnalyzed].(string); ok {
+			if fieldAnalyzed == "true" {
+				opt.Analyzed = true
+			}
+		}
+
+		fieldsMap[k] = opt
 	}
 
 	return fieldsMap, nil
@@ -228,21 +245,17 @@ func (i *Instance) Table(query *metadata.Query) string {
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, resultTableOptions metadata.ResultTableOptions, err error) {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (size int64, total int64, option *metadata.ResultTableOption, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("doris query panic: %s", r)
 		}
 	}()
 
-	resultTableOptions = make(metadata.ResultTableOptions)
-	option := query.ResultTableOptions.GetOption(query.TableID, "")
+	option = query.ResultTableOption
 	if option == nil {
 		option = &metadata.ResultTableOption{}
 	}
-	defer func() {
-		resultTableOptions.SetOption(query.TableID, "", option)
-	}()
 
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-raw")
 	defer span.End(&err)
@@ -304,13 +317,16 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	for _, list := range data.List {
 		newData := queryFactory.ReloadListData(list, false)
-		newData[KeyIndex] = query.DB
-		newData[KeyTableID] = query.TableID
-		newData[KeyDataLabel] = query.DataLabel
+		newData[metadata.KeyIndex] = query.DB
+		// 注入原始数据需要的字段
+		query.DataReload(newData)
+
 		dataCh <- newData
 	}
 
-	total = int64(data.TotalRecordSize)
+	size = int64(len(data.List))
+	total = int64(data.TotalRecords)
+
 	return
 }
 
@@ -379,9 +395,9 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 	return remote.FromQueryResult(true, qr)
 }
 
-func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, bool, error) {
 	log.Warnf(ctx, "%s not support direct query range", i.InstanceType())
-	return nil, nil
+	return nil, false, nil
 }
 
 func (i *Instance) DirectQuery(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
@@ -474,6 +490,11 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		return nil, err
 	}
 
+	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
+	if encodeFunc != nil {
+		name = encodeFunc(name)
+	}
+
 	for _, d := range data.List {
 		value, err := getValue(name, d)
 		if err != nil {
@@ -509,7 +530,7 @@ func (i *Instance) InstanceType() string {
 	return consul.BkSqlStorageType
 }
 
-func getValue(k string, d map[string]interface{}) (string, error) {
+func getValue(k string, d map[string]any) (string, error) {
 	var value string
 	if v, ok := d[k]; ok {
 		// 增加 nil 判断，避免回传的数值为空

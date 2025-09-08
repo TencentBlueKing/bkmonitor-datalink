@@ -21,7 +21,7 @@ func TestConvertPingserverData(t *testing.T) {
 	pd := &define.PingserverData{
 		DataId:  1001,
 		Version: "1.0",
-		Data:    map[string]interface{}{"data": "data"},
+		Data:    map[string]any{"data": "data"},
 	}
 
 	events := make([]define.Event, 0)
@@ -46,6 +46,6 @@ func TestConvertPingserverData(t *testing.T) {
 
 	data := event.Data()
 	assert.Equal(t, data["dataid"], int64(1001))
-	assert.Equal(t, data["data"], []map[string]interface{}{{"data": "data"}})
+	assert.Equal(t, data["data"], []map[string]any{{"data": "data"}})
 	assert.Equal(t, data["version"], "1.0")
 }

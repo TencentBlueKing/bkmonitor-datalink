@@ -189,6 +189,9 @@ func MockSpaceRouter(ctx context.Context) {
 					ResultTableEs: &ir.SpaceResultTable{
 						TableId: ResultTableEs,
 					},
+					"alias_es_1": &ir.SpaceResultTable{
+						TableId: "alias_es_1",
+					},
 					ResultTableEsWithTimeFiled: &ir.SpaceResultTable{
 						TableId: ResultTableEsWithTimeFiled,
 					},
@@ -308,6 +311,32 @@ func MockSpaceRouter(ctx context.Context) {
 						},
 					},
 					DataLabel: "es",
+					FieldAlias: map[string]string{
+						"alias_ns": "__ext.host.bk_set_name",
+					},
+				},
+				"alias_es_1": &ir.ResultTableDetail{
+					StorageId:   3,
+					TableId:     ResultTableEs,
+					DB:          "es_index",
+					SourceType:  "",
+					StorageType: consul.ElasticsearchStorageType,
+					StorageClusterRecords: []ir.Record{
+						{
+							StorageID: 3,
+							// 2019-12-02 08:00:00
+							EnableTime: 1575244800,
+						},
+						{
+							StorageID: 4,
+							// 2019-11-02 08:00:00
+							EnableTime: 1572652800,
+						},
+					},
+					DataLabel: "es",
+					FieldAlias: map[string]string{
+						"alias_ns": "__ext.namespace",
+					},
 				},
 				ResultTableEsWithTimeFiled: &ir.ResultTableDetail{
 					StorageId:   3,
@@ -362,6 +391,10 @@ func MockSpaceRouter(ctx context.Context) {
 				},
 			}, nil,
 			ir.DataLabelToResultTable{
+				"alias_es": ir.ResultTableList{
+					ResultTableEs,
+					"alias_es_1",
+				},
 				"influxdb": ir.ResultTableList{
 					"result_table.influxdb",
 					"result_table.vm",
@@ -369,6 +402,10 @@ func MockSpaceRouter(ctx context.Context) {
 				"multi_es": ir.ResultTableList{
 					ResultTableEs,
 					ResultTableEsWithTimeFiled,
+				},
+				"es_and_doris": ir.ResultTableList{
+					ResultTableEs,
+					ResultTableDoris,
 				},
 			},
 		)

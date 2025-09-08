@@ -22,7 +22,7 @@ import (
 )
 
 // isEqual 因为 sdk 里面解析原因，原始数组中空数组会被解析为 nil，所以测试时需要认为他们是一致的
-func isEqual(a, b interface{}) bool {
+func isEqual(a, b any) bool {
 	v1 := reflect.ValueOf(a)
 	v2 := reflect.ValueOf(b)
 

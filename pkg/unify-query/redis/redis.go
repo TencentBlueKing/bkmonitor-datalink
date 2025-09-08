@@ -111,7 +111,7 @@ var Get = func(ctx context.Context, key string) (string, error) {
 	return res.Result()
 }
 
-var MGet = func(ctx context.Context, key string) ([]interface{}, error) {
+var MGet = func(ctx context.Context, key string) ([]any, error) {
 	if key == "" {
 		key = globalInstance.serviceName
 	}

@@ -124,7 +124,7 @@ func TestQueryTsWithDoris(t *testing.T) {
 							},
 							{
 								Method: "topk",
-								VArgsList: []interface{}{
+								VArgsList: []any{
 									5,
 								},
 							},
@@ -228,7 +228,7 @@ func TestQueryTsWithEs(t *testing.T) {
 							},
 							{
 								Method: "topk",
-								VArgsList: []interface{}{
+								VArgsList: []any{
 									5,
 								},
 							},
@@ -2892,7 +2892,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 						AggregateMethodList: []structured.AggregateMethod{
 							{
 								Method: "label_replace",
-								VArgsList: []interface{}{
+								VArgsList: []any{
 									"metric_name",
 									"$1",
 									"__name__",
@@ -2930,7 +2930,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 						AggregateMethodList: []structured.AggregateMethod{
 							{
 								Method: "topk",
-								VArgsList: []interface{}{
+								VArgsList: []any{
 									1,
 								},
 							},
@@ -3052,7 +3052,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 							Function:  "quantile_over_time",
 							Window:    "1m0s",
 							NodeIndex: 2,
-							VargsList: []interface{}{
+							VargsList: []any{
 								0.9,
 							},
 							Position: 1,
@@ -3060,7 +3060,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 						AggregateMethodList: []structured.AggregateMethod{
 							{
 								Method: "quantile",
-								VArgsList: []interface{}{
+								VArgsList: []any{
 									0.9,
 								},
 							},
@@ -3169,7 +3169,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 							Function:  "predict_linear",
 							Window:    "1h0m0s",
 							NodeIndex: 2,
-							VargsList: []interface{}{4 * 3600},
+							VargsList: []any{4 * 3600},
 						},
 					},
 				},
@@ -3229,7 +3229,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 						AggregateMethodList: []structured.AggregateMethod{
 							{
 								Method: "label_replace",
-								VArgsList: []interface{}{
+								VArgsList: []any{
 									"name",
 									"$0",
 									"__name__",
@@ -3257,7 +3257,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 							},
 							{
 								Method: "topk",
-								VArgsList: []interface{}{
+								VArgsList: []any{
 									5,
 								},
 							},
@@ -3631,7 +3631,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 							},
 							{
 								Method:     "quantile_over_time",
-								VArgsList:  []interface{}{0.95},
+								VArgsList:  []any{0.95},
 								Position:   1,
 								Window:     "1h0m0s",
 								IsSubQuery: true,
@@ -3689,7 +3689,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 	}
 }
 
-func equalWithJson(t *testing.T, a, b interface{}) {
+func equalWithJson(t *testing.T, a, b any) {
 	a1, a1Err := json.Marshal(a)
 	assert.Nil(t, a1Err)
 
@@ -4155,7 +4155,7 @@ func TestMultiRouteQuerySortingIssues(t *testing.T) {
 		t.Logf("merge data success: route1=%d, route2=%d", route1Count, route2Count)
 	}
 
-	expectedOrder := []map[string]interface{}{
+	expectedOrder := []map[string]any{
 		{"dtEventTimeStamp": int64(1752141800000), "gseIndex": int64(3), "iterationIndex": int64(2), "__data_label": "route2"},
 		{"dtEventTimeStamp": int64(1752141800000), "gseIndex": int64(3), "iterationIndex": int64(1), "__data_label": "route2"},
 		{"dtEventTimeStamp": int64(1752141800000), "gseIndex": int64(3), "iterationIndex": int64(0), "__data_label": "route2"},
@@ -4183,7 +4183,7 @@ func TestMultiRouteQuerySortingIssues(t *testing.T) {
 	}
 }
 
-func getIntValue(value interface{}) int64 {
+func getIntValue(value any) int64 {
 	switch v := value.(type) {
 	case string:
 		var result int64

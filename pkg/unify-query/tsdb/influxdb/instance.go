@@ -187,7 +187,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 		return nil, err
 	}
 
-	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
 		dr := resp.(*decoder.Response)
 		return dec.Decode(ctx, reader, dr)
 	})
@@ -209,7 +209,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 	return res, nil
 }
 
-func (i *Instance) getRawData(columns []string, data []interface{}) (time.Time, float64, error) {
+func (i *Instance) getRawData(columns []string, data []any) (time.Time, float64, error) {
 	var (
 		t        time.Time
 		err      error
@@ -485,7 +485,7 @@ func (i *Instance) query(
 		return nil, err
 	}
 
-	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
 		dr := resp.(*decoder.Response)
 		return dec.Decode(ctx, reader, dr)
 	})
@@ -847,7 +847,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 			return nil, err
 		}
 
-		i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+		i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
 			dr := resp.(*decoder.Response)
 			return dec.Decode(ctx, reader, dr)
 		})
@@ -958,7 +958,7 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 		return nil, err
 	}
 
-	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
 		dr := resp.(*decoder.Response)
 		return dec.Decode(ctx, reader, dr)
 	})
@@ -1100,7 +1100,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 			return nil, err
 		}
 
-		i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+		i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp any) (int, error) {
 			dr := resp.(*decoder.Response)
 			return dec.Decode(ctx, reader, dr)
 		})

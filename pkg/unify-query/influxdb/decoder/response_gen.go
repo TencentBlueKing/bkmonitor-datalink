@@ -930,7 +930,7 @@ func (z *Row) DecodeMsg(dc *msgp.Reader) (err error) {
 			if cap(z.Values) >= int(zb0004) {
 				z.Values = (z.Values)[:zb0004]
 			} else {
-				z.Values = make([][]interface{}, zb0004)
+				z.Values = make([][]any, zb0004)
 			}
 			for za0004 := range z.Values {
 				var zb0005 uint32
@@ -942,7 +942,7 @@ func (z *Row) DecodeMsg(dc *msgp.Reader) (err error) {
 				if cap(z.Values[za0004]) >= int(zb0005) {
 					z.Values[za0004] = (z.Values[za0004])[:zb0005]
 				} else {
-					z.Values[za0004] = make([]interface{}, zb0005)
+					z.Values[za0004] = make([]any, zb0005)
 				}
 				for za0005 := range z.Values[za0004] {
 					z.Values[za0004][za0005], err = dc.ReadIntf()
@@ -1180,7 +1180,7 @@ func (z *Row) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			if cap(z.Values) >= int(zb0004) {
 				z.Values = (z.Values)[:zb0004]
 			} else {
-				z.Values = make([][]interface{}, zb0004)
+				z.Values = make([][]any, zb0004)
 			}
 			for za0004 := range z.Values {
 				var zb0005 uint32
@@ -1192,7 +1192,7 @@ func (z *Row) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				if cap(z.Values[za0004]) >= int(zb0005) {
 					z.Values[za0004] = (z.Values[za0004])[:zb0005]
 				} else {
-					z.Values[za0004] = make([]interface{}, zb0005)
+					z.Values[za0004] = make([]any, zb0005)
 				}
 				for za0005 := range z.Values[za0004] {
 					z.Values[za0004][za0005], bts, err = msgp.ReadIntfBytes(bts)

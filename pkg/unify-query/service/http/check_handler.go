@@ -46,7 +46,7 @@ type CheckResponse struct {
 	List []*CheckItem `json:"list"`
 }
 
-func (c *CheckResponse) Step(name string, data interface{}) {
+func (c *CheckResponse) Step(name string, data any) {
 	var jsonData string
 	s, err := json.Marshal(data)
 	if err != nil {

@@ -31,5 +31,5 @@ type TableInfo struct {
 
 // AliasInfo
 type AliasInfo struct {
-	Aliases map[string]interface{} `json:"aliases"`
+	Aliases map[string]any `json:"aliases"`
 }

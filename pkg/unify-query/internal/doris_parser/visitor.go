@@ -135,12 +135,12 @@ func (v *Statement) Error() error {
 	return nil
 }
 
-func (v *Statement) VisitErrorNode(ctx antlr.ErrorNode) interface{} {
+func (v *Statement) VisitErrorNode(ctx antlr.ErrorNode) any {
 	v.errNode = append(v.errNode, ctx.GetText())
 	return nil
 }
 
-func (v *Statement) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = v
 
@@ -194,7 +194,7 @@ func (v *LimitNode) String() string {
 	return strings.Join(ns, " ")
 }
 
-func (v *LimitNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+func (v *LimitNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	result := strings.ToUpper(ctx.GetText())
 	v.nodes = append(v.nodes, &StringNode{
 		Name: result,
@@ -220,7 +220,7 @@ func (v *SortNode) String() string {
 	return strings.Join(ns, ", ")
 }
 
-func (v *SortNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *SortNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = v
 
@@ -254,7 +254,7 @@ func (v *OrderNode) String() string {
 	return strings.Join(ns, " ")
 }
 
-func (v *OrderNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+func (v *OrderNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	result := strings.ToUpper(ctx.GetText())
 	v.sort = &StringNode{
 		Name: result,
@@ -262,7 +262,7 @@ func (v *OrderNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
 	return nil
 }
 
-func (v *OrderNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *OrderNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = v
 
@@ -292,7 +292,7 @@ func (v *AggNode) String() string {
 	return strings.Join(ns, ", ")
 }
 
-func (v *AggNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *AggNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = v
 
@@ -346,7 +346,7 @@ func (v *WhereNode) String() string {
 	return strings.Join(list, " ")
 }
 
-func (v *WhereNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *WhereNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = v
 
@@ -402,7 +402,7 @@ func (v *ParentNode) String() string {
 	return fmt.Sprintf("(%s)", nodeToString(v.node))
 }
 
-func (v *ParentNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *ParentNode) VisitChildren(ctx antlr.RuleNode) any {
 	v.node = &ConditionNode{}
 	next := v.node
 	return visitChildren(v.Encode, v.SetAs, next, ctx)
@@ -473,7 +473,7 @@ func (v *ConditionNode) String() string {
 	return nodeToString(v.node)
 }
 
-func (v *ConditionNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *ConditionNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = v
 
@@ -510,7 +510,7 @@ func (v *OperatorNode) String() string {
 	return result
 }
 
-func (v *OperatorNode) VisitTerminal(node antlr.TerminalNode) interface{} {
+func (v *OperatorNode) VisitTerminal(node antlr.TerminalNode) any {
 	banTokens := []string{"(", ")", ","}
 	token := node.GetText()
 
@@ -528,7 +528,7 @@ func (v *OperatorNode) VisitTerminal(node antlr.TerminalNode) interface{} {
 	return nil
 }
 
-func (v *OperatorNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *OperatorNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = v
 
@@ -561,7 +561,7 @@ func (v *TableNode) String() string {
 	return table
 }
 
-func (v *TableNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *TableNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = v
 
@@ -580,7 +580,7 @@ type SelectNode struct {
 	fieldsNode    []Node
 }
 
-func (v *SelectNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+func (v *SelectNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	name := ctx.GetText()
 	switch name {
 	case "DISTINCT":
@@ -605,7 +605,7 @@ func (v *SelectNode) String() string {
 	return strings.Join(ns, ", ")
 }
 
-func (v *SelectNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *SelectNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = v
 
@@ -670,7 +670,7 @@ func (v *FieldNode) String() string {
 	return result
 }
 
-func (v *FieldNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *FieldNode) VisitChildren(ctx antlr.RuleNode) any {
 	next := visitFieldNode(ctx, v)
 	return visitChildren(v.Encode, v.SetAs, next, ctx)
 }
@@ -686,14 +686,14 @@ func (v *BinaryNode) String() string {
 	return fmt.Sprintf("%s %s %s", nodeToString(v.Left), nodeToString(v.Op), nodeToString(v.Right))
 }
 
-func (v *BinaryNode) VisitTerminal(node antlr.TerminalNode) interface{} {
+func (v *BinaryNode) VisitTerminal(node antlr.TerminalNode) any {
 	v.Op = &StringNode{
 		Name: node.GetText(),
 	}
 	return nil
 }
 
-func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = v
 
@@ -756,7 +756,7 @@ func (v *FunctionNode) String() string {
 	return result
 }
 
-func (v *FunctionNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+func (v *FunctionNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	name := ctx.GetText()
 	switch name {
 	case "DISTINCT":
@@ -765,7 +765,7 @@ func (v *FunctionNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
 	return nil
 }
 
-func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = v
 
@@ -828,12 +828,12 @@ func (v *SearchCaseNode) String() string {
 	return s.String()
 }
 
-func (v *SearchCaseNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+func (v *SearchCaseNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	v.ops = append(v.ops, strings.ToUpper(ctx.GetText()))
 	return nil
 }
 
-func (v *SearchCaseNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *SearchCaseNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = v
 
@@ -883,7 +883,7 @@ func (v *CastNode) String() string {
 	return result
 }
 
-func (v *CastNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *CastNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = v
 
@@ -953,7 +953,7 @@ func (v *ColumnNode) String() string {
 	return s
 }
 
-func (v *ColumnNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *ColumnNode) VisitChildren(ctx antlr.RuleNode) any {
 	return visitChildren(v.Encode, v.SetAs, v, ctx)
 }
 
@@ -975,7 +975,7 @@ func (v *ValueNode) String() string {
 	return fmt.Sprintf("(%s)", strings.Join(names, ", "))
 }
 
-func (v *ValueNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *ValueNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node
 	next = v
 
@@ -1003,7 +1003,7 @@ func (v *StringsNode) String() string {
 	return strings.Join(v.Names, " ")
 }
 
-func (v *StringsNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *StringsNode) VisitChildren(ctx antlr.RuleNode) any {
 	return visitChildren(v.Encode, v.SetAs, v, ctx)
 }
 
@@ -1016,7 +1016,7 @@ func (v *StringNode) String() string {
 	return v.Name
 }
 
-func (v *StringNode) VisitChildren(ctx antlr.RuleNode) interface{} {
+func (v *StringNode) VisitChildren(ctx antlr.RuleNode) any {
 	return visitChildren(v.Encode, v.SetAs, v, ctx)
 }
 
@@ -1087,7 +1087,7 @@ func nodeToString(node Node) string {
 	return node.String()
 }
 
-func visitChildren(encode Encode, setAs bool, next Node, node antlr.RuleNode) interface{} {
+func visitChildren(encode Encode, setAs bool, next Node, node antlr.RuleNode) any {
 	next.WithEncode(encode)
 	next.WithSetAs(setAs)
 	for _, child := range node.GetChildren() {

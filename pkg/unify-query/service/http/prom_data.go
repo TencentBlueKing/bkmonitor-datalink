@@ -70,9 +70,9 @@ func (d *PromData) Fill(tables *promql.Tables) error {
 			tableItem.Types = append(tableItem.Types, table.Types[index])
 			indexList = append(indexList, index)
 		}
-		values := make([][]interface{}, 0)
+		values := make([][]any, 0)
 		for _, data := range table.Data {
-			value := make([]interface{}, len(indexList))
+			value := make([]any, len(indexList))
 			for valueIndex, headerIndex := range indexList {
 				value[valueIndex] = data[headerIndex]
 			}

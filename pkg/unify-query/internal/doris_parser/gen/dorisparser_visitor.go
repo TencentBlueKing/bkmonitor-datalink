@@ -8,1880 +8,1880 @@ type DorisParserVisitor interface {
 	antlr.ParseTreeVisitor
 
 	// Visit a parse tree produced by DorisParserParser#multiStatements.
-	VisitMultiStatements(ctx *MultiStatementsContext) interface{}
+	VisitMultiStatements(ctx *MultiStatementsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#singleStatement.
-	VisitSingleStatement(ctx *SingleStatementContext) interface{}
+	VisitSingleStatement(ctx *SingleStatementContext) any
 
 	// Visit a parse tree produced by DorisParserParser#statementBaseAlias.
-	VisitStatementBaseAlias(ctx *StatementBaseAliasContext) interface{}
+	VisitStatementBaseAlias(ctx *StatementBaseAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#callProcedure.
-	VisitCallProcedure(ctx *CallProcedureContext) interface{}
+	VisitCallProcedure(ctx *CallProcedureContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createProcedure.
-	VisitCreateProcedure(ctx *CreateProcedureContext) interface{}
+	VisitCreateProcedure(ctx *CreateProcedureContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropProcedure.
-	VisitDropProcedure(ctx *DropProcedureContext) interface{}
+	VisitDropProcedure(ctx *DropProcedureContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showProcedureStatus.
-	VisitShowProcedureStatus(ctx *ShowProcedureStatusContext) interface{}
+	VisitShowProcedureStatus(ctx *ShowProcedureStatusContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCreateProcedure.
-	VisitShowCreateProcedure(ctx *ShowCreateProcedureContext) interface{}
+	VisitShowCreateProcedure(ctx *ShowCreateProcedureContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showConfig.
-	VisitShowConfig(ctx *ShowConfigContext) interface{}
+	VisitShowConfig(ctx *ShowConfigContext) any
 
 	// Visit a parse tree produced by DorisParserParser#statementDefault.
-	VisitStatementDefault(ctx *StatementDefaultContext) interface{}
+	VisitStatementDefault(ctx *StatementDefaultContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedDmlStatementAlias.
-	VisitSupportedDmlStatementAlias(ctx *SupportedDmlStatementAliasContext) interface{}
+	VisitSupportedDmlStatementAlias(ctx *SupportedDmlStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedCreateStatementAlias.
-	VisitSupportedCreateStatementAlias(ctx *SupportedCreateStatementAliasContext) interface{}
+	VisitSupportedCreateStatementAlias(ctx *SupportedCreateStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedAlterStatementAlias.
-	VisitSupportedAlterStatementAlias(ctx *SupportedAlterStatementAliasContext) interface{}
+	VisitSupportedAlterStatementAlias(ctx *SupportedAlterStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#materializedViewStatementAlias.
-	VisitMaterializedViewStatementAlias(ctx *MaterializedViewStatementAliasContext) interface{}
+	VisitMaterializedViewStatementAlias(ctx *MaterializedViewStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedJobStatementAlias.
-	VisitSupportedJobStatementAlias(ctx *SupportedJobStatementAliasContext) interface{}
+	VisitSupportedJobStatementAlias(ctx *SupportedJobStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#constraintStatementAlias.
-	VisitConstraintStatementAlias(ctx *ConstraintStatementAliasContext) interface{}
+	VisitConstraintStatementAlias(ctx *ConstraintStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedCleanStatementAlias.
-	VisitSupportedCleanStatementAlias(ctx *SupportedCleanStatementAliasContext) interface{}
+	VisitSupportedCleanStatementAlias(ctx *SupportedCleanStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedDescribeStatementAlias.
-	VisitSupportedDescribeStatementAlias(ctx *SupportedDescribeStatementAliasContext) interface{}
+	VisitSupportedDescribeStatementAlias(ctx *SupportedDescribeStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedDropStatementAlias.
-	VisitSupportedDropStatementAlias(ctx *SupportedDropStatementAliasContext) interface{}
+	VisitSupportedDropStatementAlias(ctx *SupportedDropStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedSetStatementAlias.
-	VisitSupportedSetStatementAlias(ctx *SupportedSetStatementAliasContext) interface{}
+	VisitSupportedSetStatementAlias(ctx *SupportedSetStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedUnsetStatementAlias.
-	VisitSupportedUnsetStatementAlias(ctx *SupportedUnsetStatementAliasContext) interface{}
+	VisitSupportedUnsetStatementAlias(ctx *SupportedUnsetStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedRefreshStatementAlias.
-	VisitSupportedRefreshStatementAlias(ctx *SupportedRefreshStatementAliasContext) interface{}
+	VisitSupportedRefreshStatementAlias(ctx *SupportedRefreshStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedShowStatementAlias.
-	VisitSupportedShowStatementAlias(ctx *SupportedShowStatementAliasContext) interface{}
+	VisitSupportedShowStatementAlias(ctx *SupportedShowStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedLoadStatementAlias.
-	VisitSupportedLoadStatementAlias(ctx *SupportedLoadStatementAliasContext) interface{}
+	VisitSupportedLoadStatementAlias(ctx *SupportedLoadStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedCancelStatementAlias.
-	VisitSupportedCancelStatementAlias(ctx *SupportedCancelStatementAliasContext) interface{}
+	VisitSupportedCancelStatementAlias(ctx *SupportedCancelStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedRecoverStatementAlias.
-	VisitSupportedRecoverStatementAlias(ctx *SupportedRecoverStatementAliasContext) interface{}
+	VisitSupportedRecoverStatementAlias(ctx *SupportedRecoverStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedAdminStatementAlias.
-	VisitSupportedAdminStatementAlias(ctx *SupportedAdminStatementAliasContext) interface{}
+	VisitSupportedAdminStatementAlias(ctx *SupportedAdminStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedUseStatementAlias.
-	VisitSupportedUseStatementAlias(ctx *SupportedUseStatementAliasContext) interface{}
+	VisitSupportedUseStatementAlias(ctx *SupportedUseStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedOtherStatementAlias.
-	VisitSupportedOtherStatementAlias(ctx *SupportedOtherStatementAliasContext) interface{}
+	VisitSupportedOtherStatementAlias(ctx *SupportedOtherStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedKillStatementAlias.
-	VisitSupportedKillStatementAlias(ctx *SupportedKillStatementAliasContext) interface{}
+	VisitSupportedKillStatementAlias(ctx *SupportedKillStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedStatsStatementAlias.
-	VisitSupportedStatsStatementAlias(ctx *SupportedStatsStatementAliasContext) interface{}
+	VisitSupportedStatsStatementAlias(ctx *SupportedStatsStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedTransactionStatementAlias.
-	VisitSupportedTransactionStatementAlias(ctx *SupportedTransactionStatementAliasContext) interface{}
+	VisitSupportedTransactionStatementAlias(ctx *SupportedTransactionStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedGrantRevokeStatementAlias.
-	VisitSupportedGrantRevokeStatementAlias(ctx *SupportedGrantRevokeStatementAliasContext) interface{}
+	VisitSupportedGrantRevokeStatementAlias(ctx *SupportedGrantRevokeStatementAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#unsupported.
-	VisitUnsupported(ctx *UnsupportedContext) interface{}
+	VisitUnsupported(ctx *UnsupportedContext) any
 
 	// Visit a parse tree produced by DorisParserParser#unsupportedStatement.
-	VisitUnsupportedStatement(ctx *UnsupportedStatementContext) interface{}
+	VisitUnsupportedStatement(ctx *UnsupportedStatementContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createMTMV.
-	VisitCreateMTMV(ctx *CreateMTMVContext) interface{}
+	VisitCreateMTMV(ctx *CreateMTMVContext) any
 
 	// Visit a parse tree produced by DorisParserParser#refreshMTMV.
-	VisitRefreshMTMV(ctx *RefreshMTMVContext) interface{}
+	VisitRefreshMTMV(ctx *RefreshMTMVContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterMTMV.
-	VisitAlterMTMV(ctx *AlterMTMVContext) interface{}
+	VisitAlterMTMV(ctx *AlterMTMVContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropMTMV.
-	VisitDropMTMV(ctx *DropMTMVContext) interface{}
+	VisitDropMTMV(ctx *DropMTMVContext) any
 
 	// Visit a parse tree produced by DorisParserParser#pauseMTMV.
-	VisitPauseMTMV(ctx *PauseMTMVContext) interface{}
+	VisitPauseMTMV(ctx *PauseMTMVContext) any
 
 	// Visit a parse tree produced by DorisParserParser#resumeMTMV.
-	VisitResumeMTMV(ctx *ResumeMTMVContext) interface{}
+	VisitResumeMTMV(ctx *ResumeMTMVContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cancelMTMVTask.
-	VisitCancelMTMVTask(ctx *CancelMTMVTaskContext) interface{}
+	VisitCancelMTMVTask(ctx *CancelMTMVTaskContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCreateMTMV.
-	VisitShowCreateMTMV(ctx *ShowCreateMTMVContext) interface{}
+	VisitShowCreateMTMV(ctx *ShowCreateMTMVContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createScheduledJob.
-	VisitCreateScheduledJob(ctx *CreateScheduledJobContext) interface{}
+	VisitCreateScheduledJob(ctx *CreateScheduledJobContext) any
 
 	// Visit a parse tree produced by DorisParserParser#pauseJob.
-	VisitPauseJob(ctx *PauseJobContext) interface{}
+	VisitPauseJob(ctx *PauseJobContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropJob.
-	VisitDropJob(ctx *DropJobContext) interface{}
+	VisitDropJob(ctx *DropJobContext) any
 
 	// Visit a parse tree produced by DorisParserParser#resumeJob.
-	VisitResumeJob(ctx *ResumeJobContext) interface{}
+	VisitResumeJob(ctx *ResumeJobContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cancelJobTask.
-	VisitCancelJobTask(ctx *CancelJobTaskContext) interface{}
+	VisitCancelJobTask(ctx *CancelJobTaskContext) any
 
 	// Visit a parse tree produced by DorisParserParser#addConstraint.
-	VisitAddConstraint(ctx *AddConstraintContext) interface{}
+	VisitAddConstraint(ctx *AddConstraintContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropConstraint.
-	VisitDropConstraint(ctx *DropConstraintContext) interface{}
+	VisitDropConstraint(ctx *DropConstraintContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showConstraint.
-	VisitShowConstraint(ctx *ShowConstraintContext) interface{}
+	VisitShowConstraint(ctx *ShowConstraintContext) any
 
 	// Visit a parse tree produced by DorisParserParser#insertTable.
-	VisitInsertTable(ctx *InsertTableContext) interface{}
+	VisitInsertTable(ctx *InsertTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#update.
-	VisitUpdate(ctx *UpdateContext) interface{}
+	VisitUpdate(ctx *UpdateContext) any
 
 	// Visit a parse tree produced by DorisParserParser#delete.
-	VisitDelete(ctx *DeleteContext) interface{}
+	VisitDelete(ctx *DeleteContext) any
 
 	// Visit a parse tree produced by DorisParserParser#load.
-	VisitLoad(ctx *LoadContext) interface{}
+	VisitLoad(ctx *LoadContext) any
 
 	// Visit a parse tree produced by DorisParserParser#export.
-	VisitExport(ctx *ExportContext) interface{}
+	VisitExport(ctx *ExportContext) any
 
 	// Visit a parse tree produced by DorisParserParser#replay.
-	VisitReplay(ctx *ReplayContext) interface{}
+	VisitReplay(ctx *ReplayContext) any
 
 	// Visit a parse tree produced by DorisParserParser#copyInto.
-	VisitCopyInto(ctx *CopyIntoContext) interface{}
+	VisitCopyInto(ctx *CopyIntoContext) any
 
 	// Visit a parse tree produced by DorisParserParser#truncateTable.
-	VisitTruncateTable(ctx *TruncateTableContext) interface{}
+	VisitTruncateTable(ctx *TruncateTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createTable.
-	VisitCreateTable(ctx *CreateTableContext) interface{}
+	VisitCreateTable(ctx *CreateTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createView.
-	VisitCreateView(ctx *CreateViewContext) interface{}
+	VisitCreateView(ctx *CreateViewContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createFile.
-	VisitCreateFile(ctx *CreateFileContext) interface{}
+	VisitCreateFile(ctx *CreateFileContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createTableLike.
-	VisitCreateTableLike(ctx *CreateTableLikeContext) interface{}
+	VisitCreateTableLike(ctx *CreateTableLikeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createRole.
-	VisitCreateRole(ctx *CreateRoleContext) interface{}
+	VisitCreateRole(ctx *CreateRoleContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createWorkloadGroup.
-	VisitCreateWorkloadGroup(ctx *CreateWorkloadGroupContext) interface{}
+	VisitCreateWorkloadGroup(ctx *CreateWorkloadGroupContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createCatalog.
-	VisitCreateCatalog(ctx *CreateCatalogContext) interface{}
+	VisitCreateCatalog(ctx *CreateCatalogContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createRowPolicy.
-	VisitCreateRowPolicy(ctx *CreateRowPolicyContext) interface{}
+	VisitCreateRowPolicy(ctx *CreateRowPolicyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createStoragePolicy.
-	VisitCreateStoragePolicy(ctx *CreateStoragePolicyContext) interface{}
+	VisitCreateStoragePolicy(ctx *CreateStoragePolicyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#buildIndex.
-	VisitBuildIndex(ctx *BuildIndexContext) interface{}
+	VisitBuildIndex(ctx *BuildIndexContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createIndex.
-	VisitCreateIndex(ctx *CreateIndexContext) interface{}
+	VisitCreateIndex(ctx *CreateIndexContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createWorkloadPolicy.
-	VisitCreateWorkloadPolicy(ctx *CreateWorkloadPolicyContext) interface{}
+	VisitCreateWorkloadPolicy(ctx *CreateWorkloadPolicyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createSqlBlockRule.
-	VisitCreateSqlBlockRule(ctx *CreateSqlBlockRuleContext) interface{}
+	VisitCreateSqlBlockRule(ctx *CreateSqlBlockRuleContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createEncryptkey.
-	VisitCreateEncryptkey(ctx *CreateEncryptkeyContext) interface{}
+	VisitCreateEncryptkey(ctx *CreateEncryptkeyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createUserDefineFunction.
-	VisitCreateUserDefineFunction(ctx *CreateUserDefineFunctionContext) interface{}
+	VisitCreateUserDefineFunction(ctx *CreateUserDefineFunctionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createAliasFunction.
-	VisitCreateAliasFunction(ctx *CreateAliasFunctionContext) interface{}
+	VisitCreateAliasFunction(ctx *CreateAliasFunctionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createUser.
-	VisitCreateUser(ctx *CreateUserContext) interface{}
+	VisitCreateUser(ctx *CreateUserContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createDatabase.
-	VisitCreateDatabase(ctx *CreateDatabaseContext) interface{}
+	VisitCreateDatabase(ctx *CreateDatabaseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createRepository.
-	VisitCreateRepository(ctx *CreateRepositoryContext) interface{}
+	VisitCreateRepository(ctx *CreateRepositoryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createResource.
-	VisitCreateResource(ctx *CreateResourceContext) interface{}
+	VisitCreateResource(ctx *CreateResourceContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createDictionary.
-	VisitCreateDictionary(ctx *CreateDictionaryContext) interface{}
+	VisitCreateDictionary(ctx *CreateDictionaryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createStage.
-	VisitCreateStage(ctx *CreateStageContext) interface{}
+	VisitCreateStage(ctx *CreateStageContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createStorageVault.
-	VisitCreateStorageVault(ctx *CreateStorageVaultContext) interface{}
+	VisitCreateStorageVault(ctx *CreateStorageVaultContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createIndexAnalyzer.
-	VisitCreateIndexAnalyzer(ctx *CreateIndexAnalyzerContext) interface{}
+	VisitCreateIndexAnalyzer(ctx *CreateIndexAnalyzerContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createIndexTokenizer.
-	VisitCreateIndexTokenizer(ctx *CreateIndexTokenizerContext) interface{}
+	VisitCreateIndexTokenizer(ctx *CreateIndexTokenizerContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createIndexTokenFilter.
-	VisitCreateIndexTokenFilter(ctx *CreateIndexTokenFilterContext) interface{}
+	VisitCreateIndexTokenFilter(ctx *CreateIndexTokenFilterContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dictionaryColumnDefs.
-	VisitDictionaryColumnDefs(ctx *DictionaryColumnDefsContext) interface{}
+	VisitDictionaryColumnDefs(ctx *DictionaryColumnDefsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dictionaryColumnDef.
-	VisitDictionaryColumnDef(ctx *DictionaryColumnDefContext) interface{}
+	VisitDictionaryColumnDef(ctx *DictionaryColumnDefContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterSystem.
-	VisitAlterSystem(ctx *AlterSystemContext) interface{}
+	VisitAlterSystem(ctx *AlterSystemContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterView.
-	VisitAlterView(ctx *AlterViewContext) interface{}
+	VisitAlterView(ctx *AlterViewContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterCatalogRename.
-	VisitAlterCatalogRename(ctx *AlterCatalogRenameContext) interface{}
+	VisitAlterCatalogRename(ctx *AlterCatalogRenameContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterRole.
-	VisitAlterRole(ctx *AlterRoleContext) interface{}
+	VisitAlterRole(ctx *AlterRoleContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterStorageVault.
-	VisitAlterStorageVault(ctx *AlterStorageVaultContext) interface{}
+	VisitAlterStorageVault(ctx *AlterStorageVaultContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterWorkloadGroup.
-	VisitAlterWorkloadGroup(ctx *AlterWorkloadGroupContext) interface{}
+	VisitAlterWorkloadGroup(ctx *AlterWorkloadGroupContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterCatalogProperties.
-	VisitAlterCatalogProperties(ctx *AlterCatalogPropertiesContext) interface{}
+	VisitAlterCatalogProperties(ctx *AlterCatalogPropertiesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterWorkloadPolicy.
-	VisitAlterWorkloadPolicy(ctx *AlterWorkloadPolicyContext) interface{}
+	VisitAlterWorkloadPolicy(ctx *AlterWorkloadPolicyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterSqlBlockRule.
-	VisitAlterSqlBlockRule(ctx *AlterSqlBlockRuleContext) interface{}
+	VisitAlterSqlBlockRule(ctx *AlterSqlBlockRuleContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterCatalogComment.
-	VisitAlterCatalogComment(ctx *AlterCatalogCommentContext) interface{}
+	VisitAlterCatalogComment(ctx *AlterCatalogCommentContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterDatabaseRename.
-	VisitAlterDatabaseRename(ctx *AlterDatabaseRenameContext) interface{}
+	VisitAlterDatabaseRename(ctx *AlterDatabaseRenameContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterStoragePolicy.
-	VisitAlterStoragePolicy(ctx *AlterStoragePolicyContext) interface{}
+	VisitAlterStoragePolicy(ctx *AlterStoragePolicyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterTable.
-	VisitAlterTable(ctx *AlterTableContext) interface{}
+	VisitAlterTable(ctx *AlterTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterTableAddRollup.
-	VisitAlterTableAddRollup(ctx *AlterTableAddRollupContext) interface{}
+	VisitAlterTableAddRollup(ctx *AlterTableAddRollupContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterTableDropRollup.
-	VisitAlterTableDropRollup(ctx *AlterTableDropRollupContext) interface{}
+	VisitAlterTableDropRollup(ctx *AlterTableDropRollupContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterTableProperties.
-	VisitAlterTableProperties(ctx *AlterTablePropertiesContext) interface{}
+	VisitAlterTableProperties(ctx *AlterTablePropertiesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterDatabaseSetQuota.
-	VisitAlterDatabaseSetQuota(ctx *AlterDatabaseSetQuotaContext) interface{}
+	VisitAlterDatabaseSetQuota(ctx *AlterDatabaseSetQuotaContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterDatabaseProperties.
-	VisitAlterDatabaseProperties(ctx *AlterDatabasePropertiesContext) interface{}
+	VisitAlterDatabaseProperties(ctx *AlterDatabasePropertiesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterSystemRenameComputeGroup.
-	VisitAlterSystemRenameComputeGroup(ctx *AlterSystemRenameComputeGroupContext) interface{}
+	VisitAlterSystemRenameComputeGroup(ctx *AlterSystemRenameComputeGroupContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterResource.
-	VisitAlterResource(ctx *AlterResourceContext) interface{}
+	VisitAlterResource(ctx *AlterResourceContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterRepository.
-	VisitAlterRepository(ctx *AlterRepositoryContext) interface{}
+	VisitAlterRepository(ctx *AlterRepositoryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterRoutineLoad.
-	VisitAlterRoutineLoad(ctx *AlterRoutineLoadContext) interface{}
+	VisitAlterRoutineLoad(ctx *AlterRoutineLoadContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterColocateGroup.
-	VisitAlterColocateGroup(ctx *AlterColocateGroupContext) interface{}
+	VisitAlterColocateGroup(ctx *AlterColocateGroupContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterUser.
-	VisitAlterUser(ctx *AlterUserContext) interface{}
+	VisitAlterUser(ctx *AlterUserContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropCatalogRecycleBin.
-	VisitDropCatalogRecycleBin(ctx *DropCatalogRecycleBinContext) interface{}
+	VisitDropCatalogRecycleBin(ctx *DropCatalogRecycleBinContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropEncryptkey.
-	VisitDropEncryptkey(ctx *DropEncryptkeyContext) interface{}
+	VisitDropEncryptkey(ctx *DropEncryptkeyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropRole.
-	VisitDropRole(ctx *DropRoleContext) interface{}
+	VisitDropRole(ctx *DropRoleContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropSqlBlockRule.
-	VisitDropSqlBlockRule(ctx *DropSqlBlockRuleContext) interface{}
+	VisitDropSqlBlockRule(ctx *DropSqlBlockRuleContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropUser.
-	VisitDropUser(ctx *DropUserContext) interface{}
+	VisitDropUser(ctx *DropUserContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropStoragePolicy.
-	VisitDropStoragePolicy(ctx *DropStoragePolicyContext) interface{}
+	VisitDropStoragePolicy(ctx *DropStoragePolicyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropWorkloadGroup.
-	VisitDropWorkloadGroup(ctx *DropWorkloadGroupContext) interface{}
+	VisitDropWorkloadGroup(ctx *DropWorkloadGroupContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropCatalog.
-	VisitDropCatalog(ctx *DropCatalogContext) interface{}
+	VisitDropCatalog(ctx *DropCatalogContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropFile.
-	VisitDropFile(ctx *DropFileContext) interface{}
+	VisitDropFile(ctx *DropFileContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropWorkloadPolicy.
-	VisitDropWorkloadPolicy(ctx *DropWorkloadPolicyContext) interface{}
+	VisitDropWorkloadPolicy(ctx *DropWorkloadPolicyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropRepository.
-	VisitDropRepository(ctx *DropRepositoryContext) interface{}
+	VisitDropRepository(ctx *DropRepositoryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropTable.
-	VisitDropTable(ctx *DropTableContext) interface{}
+	VisitDropTable(ctx *DropTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropDatabase.
-	VisitDropDatabase(ctx *DropDatabaseContext) interface{}
+	VisitDropDatabase(ctx *DropDatabaseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropFunction.
-	VisitDropFunction(ctx *DropFunctionContext) interface{}
+	VisitDropFunction(ctx *DropFunctionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropIndex.
-	VisitDropIndex(ctx *DropIndexContext) interface{}
+	VisitDropIndex(ctx *DropIndexContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropResource.
-	VisitDropResource(ctx *DropResourceContext) interface{}
+	VisitDropResource(ctx *DropResourceContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropRowPolicy.
-	VisitDropRowPolicy(ctx *DropRowPolicyContext) interface{}
+	VisitDropRowPolicy(ctx *DropRowPolicyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropDictionary.
-	VisitDropDictionary(ctx *DropDictionaryContext) interface{}
+	VisitDropDictionary(ctx *DropDictionaryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropStage.
-	VisitDropStage(ctx *DropStageContext) interface{}
+	VisitDropStage(ctx *DropStageContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropView.
-	VisitDropView(ctx *DropViewContext) interface{}
+	VisitDropView(ctx *DropViewContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropIndexAnalyzer.
-	VisitDropIndexAnalyzer(ctx *DropIndexAnalyzerContext) interface{}
+	VisitDropIndexAnalyzer(ctx *DropIndexAnalyzerContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropIndexTokenizer.
-	VisitDropIndexTokenizer(ctx *DropIndexTokenizerContext) interface{}
+	VisitDropIndexTokenizer(ctx *DropIndexTokenizerContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropIndexTokenFilter.
-	VisitDropIndexTokenFilter(ctx *DropIndexTokenFilterContext) interface{}
+	VisitDropIndexTokenFilter(ctx *DropIndexTokenFilterContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showVariables.
-	VisitShowVariables(ctx *ShowVariablesContext) interface{}
+	VisitShowVariables(ctx *ShowVariablesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showAuthors.
-	VisitShowAuthors(ctx *ShowAuthorsContext) interface{}
+	VisitShowAuthors(ctx *ShowAuthorsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showAlterTable.
-	VisitShowAlterTable(ctx *ShowAlterTableContext) interface{}
+	VisitShowAlterTable(ctx *ShowAlterTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCreateDatabase.
-	VisitShowCreateDatabase(ctx *ShowCreateDatabaseContext) interface{}
+	VisitShowCreateDatabase(ctx *ShowCreateDatabaseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showBackup.
-	VisitShowBackup(ctx *ShowBackupContext) interface{}
+	VisitShowBackup(ctx *ShowBackupContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showBroker.
-	VisitShowBroker(ctx *ShowBrokerContext) interface{}
+	VisitShowBroker(ctx *ShowBrokerContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showBuildIndex.
-	VisitShowBuildIndex(ctx *ShowBuildIndexContext) interface{}
+	VisitShowBuildIndex(ctx *ShowBuildIndexContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showDynamicPartition.
-	VisitShowDynamicPartition(ctx *ShowDynamicPartitionContext) interface{}
+	VisitShowDynamicPartition(ctx *ShowDynamicPartitionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showEvents.
-	VisitShowEvents(ctx *ShowEventsContext) interface{}
+	VisitShowEvents(ctx *ShowEventsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showExport.
-	VisitShowExport(ctx *ShowExportContext) interface{}
+	VisitShowExport(ctx *ShowExportContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showLastInsert.
-	VisitShowLastInsert(ctx *ShowLastInsertContext) interface{}
+	VisitShowLastInsert(ctx *ShowLastInsertContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCharset.
-	VisitShowCharset(ctx *ShowCharsetContext) interface{}
+	VisitShowCharset(ctx *ShowCharsetContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showDelete.
-	VisitShowDelete(ctx *ShowDeleteContext) interface{}
+	VisitShowDelete(ctx *ShowDeleteContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCreateFunction.
-	VisitShowCreateFunction(ctx *ShowCreateFunctionContext) interface{}
+	VisitShowCreateFunction(ctx *ShowCreateFunctionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showFunctions.
-	VisitShowFunctions(ctx *ShowFunctionsContext) interface{}
+	VisitShowFunctions(ctx *ShowFunctionsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showGlobalFunctions.
-	VisitShowGlobalFunctions(ctx *ShowGlobalFunctionsContext) interface{}
+	VisitShowGlobalFunctions(ctx *ShowGlobalFunctionsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showGrants.
-	VisitShowGrants(ctx *ShowGrantsContext) interface{}
+	VisitShowGrants(ctx *ShowGrantsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showGrantsForUser.
-	VisitShowGrantsForUser(ctx *ShowGrantsForUserContext) interface{}
+	VisitShowGrantsForUser(ctx *ShowGrantsForUserContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCreateUser.
-	VisitShowCreateUser(ctx *ShowCreateUserContext) interface{}
+	VisitShowCreateUser(ctx *ShowCreateUserContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showSnapshot.
-	VisitShowSnapshot(ctx *ShowSnapshotContext) interface{}
+	VisitShowSnapshot(ctx *ShowSnapshotContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showLoadProfile.
-	VisitShowLoadProfile(ctx *ShowLoadProfileContext) interface{}
+	VisitShowLoadProfile(ctx *ShowLoadProfileContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCreateRepository.
-	VisitShowCreateRepository(ctx *ShowCreateRepositoryContext) interface{}
+	VisitShowCreateRepository(ctx *ShowCreateRepositoryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showView.
-	VisitShowView(ctx *ShowViewContext) interface{}
+	VisitShowView(ctx *ShowViewContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showPlugins.
-	VisitShowPlugins(ctx *ShowPluginsContext) interface{}
+	VisitShowPlugins(ctx *ShowPluginsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showStorageVault.
-	VisitShowStorageVault(ctx *ShowStorageVaultContext) interface{}
+	VisitShowStorageVault(ctx *ShowStorageVaultContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showRepositories.
-	VisitShowRepositories(ctx *ShowRepositoriesContext) interface{}
+	VisitShowRepositories(ctx *ShowRepositoriesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showEncryptKeys.
-	VisitShowEncryptKeys(ctx *ShowEncryptKeysContext) interface{}
+	VisitShowEncryptKeys(ctx *ShowEncryptKeysContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCreateTable.
-	VisitShowCreateTable(ctx *ShowCreateTableContext) interface{}
+	VisitShowCreateTable(ctx *ShowCreateTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showProcessList.
-	VisitShowProcessList(ctx *ShowProcessListContext) interface{}
+	VisitShowProcessList(ctx *ShowProcessListContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showPartitions.
-	VisitShowPartitions(ctx *ShowPartitionsContext) interface{}
+	VisitShowPartitions(ctx *ShowPartitionsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showRestore.
-	VisitShowRestore(ctx *ShowRestoreContext) interface{}
+	VisitShowRestore(ctx *ShowRestoreContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showRoles.
-	VisitShowRoles(ctx *ShowRolesContext) interface{}
+	VisitShowRoles(ctx *ShowRolesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showPartitionId.
-	VisitShowPartitionId(ctx *ShowPartitionIdContext) interface{}
+	VisitShowPartitionId(ctx *ShowPartitionIdContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showPrivileges.
-	VisitShowPrivileges(ctx *ShowPrivilegesContext) interface{}
+	VisitShowPrivileges(ctx *ShowPrivilegesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showProc.
-	VisitShowProc(ctx *ShowProcContext) interface{}
+	VisitShowProc(ctx *ShowProcContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showSmallFiles.
-	VisitShowSmallFiles(ctx *ShowSmallFilesContext) interface{}
+	VisitShowSmallFiles(ctx *ShowSmallFilesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showStorageEngines.
-	VisitShowStorageEngines(ctx *ShowStorageEnginesContext) interface{}
+	VisitShowStorageEngines(ctx *ShowStorageEnginesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCreateCatalog.
-	VisitShowCreateCatalog(ctx *ShowCreateCatalogContext) interface{}
+	VisitShowCreateCatalog(ctx *ShowCreateCatalogContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCatalog.
-	VisitShowCatalog(ctx *ShowCatalogContext) interface{}
+	VisitShowCatalog(ctx *ShowCatalogContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCatalogs.
-	VisitShowCatalogs(ctx *ShowCatalogsContext) interface{}
+	VisitShowCatalogs(ctx *ShowCatalogsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showUserProperties.
-	VisitShowUserProperties(ctx *ShowUserPropertiesContext) interface{}
+	VisitShowUserProperties(ctx *ShowUserPropertiesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showAllProperties.
-	VisitShowAllProperties(ctx *ShowAllPropertiesContext) interface{}
+	VisitShowAllProperties(ctx *ShowAllPropertiesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCollation.
-	VisitShowCollation(ctx *ShowCollationContext) interface{}
+	VisitShowCollation(ctx *ShowCollationContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showRowPolicy.
-	VisitShowRowPolicy(ctx *ShowRowPolicyContext) interface{}
+	VisitShowRowPolicy(ctx *ShowRowPolicyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showStoragePolicy.
-	VisitShowStoragePolicy(ctx *ShowStoragePolicyContext) interface{}
+	VisitShowStoragePolicy(ctx *ShowStoragePolicyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showSqlBlockRule.
-	VisitShowSqlBlockRule(ctx *ShowSqlBlockRuleContext) interface{}
+	VisitShowSqlBlockRule(ctx *ShowSqlBlockRuleContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCreateView.
-	VisitShowCreateView(ctx *ShowCreateViewContext) interface{}
+	VisitShowCreateView(ctx *ShowCreateViewContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showDataTypes.
-	VisitShowDataTypes(ctx *ShowDataTypesContext) interface{}
+	VisitShowDataTypes(ctx *ShowDataTypesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showData.
-	VisitShowData(ctx *ShowDataContext) interface{}
+	VisitShowData(ctx *ShowDataContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCreateMaterializedView.
-	VisitShowCreateMaterializedView(ctx *ShowCreateMaterializedViewContext) interface{}
+	VisitShowCreateMaterializedView(ctx *ShowCreateMaterializedViewContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showWarningErrors.
-	VisitShowWarningErrors(ctx *ShowWarningErrorsContext) interface{}
+	VisitShowWarningErrors(ctx *ShowWarningErrorsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showWarningErrorCount.
-	VisitShowWarningErrorCount(ctx *ShowWarningErrorCountContext) interface{}
+	VisitShowWarningErrorCount(ctx *ShowWarningErrorCountContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showBackends.
-	VisitShowBackends(ctx *ShowBackendsContext) interface{}
+	VisitShowBackends(ctx *ShowBackendsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showStages.
-	VisitShowStages(ctx *ShowStagesContext) interface{}
+	VisitShowStages(ctx *ShowStagesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showReplicaDistribution.
-	VisitShowReplicaDistribution(ctx *ShowReplicaDistributionContext) interface{}
+	VisitShowReplicaDistribution(ctx *ShowReplicaDistributionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showResources.
-	VisitShowResources(ctx *ShowResourcesContext) interface{}
+	VisitShowResources(ctx *ShowResourcesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showLoad.
-	VisitShowLoad(ctx *ShowLoadContext) interface{}
+	VisitShowLoad(ctx *ShowLoadContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showLoadWarings.
-	VisitShowLoadWarings(ctx *ShowLoadWaringsContext) interface{}
+	VisitShowLoadWarings(ctx *ShowLoadWaringsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showTriggers.
-	VisitShowTriggers(ctx *ShowTriggersContext) interface{}
+	VisitShowTriggers(ctx *ShowTriggersContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showDiagnoseTablet.
-	VisitShowDiagnoseTablet(ctx *ShowDiagnoseTabletContext) interface{}
+	VisitShowDiagnoseTablet(ctx *ShowDiagnoseTabletContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showOpenTables.
-	VisitShowOpenTables(ctx *ShowOpenTablesContext) interface{}
+	VisitShowOpenTables(ctx *ShowOpenTablesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showFrontends.
-	VisitShowFrontends(ctx *ShowFrontendsContext) interface{}
+	VisitShowFrontends(ctx *ShowFrontendsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showDatabaseId.
-	VisitShowDatabaseId(ctx *ShowDatabaseIdContext) interface{}
+	VisitShowDatabaseId(ctx *ShowDatabaseIdContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showColumns.
-	VisitShowColumns(ctx *ShowColumnsContext) interface{}
+	VisitShowColumns(ctx *ShowColumnsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showTableId.
-	VisitShowTableId(ctx *ShowTableIdContext) interface{}
+	VisitShowTableId(ctx *ShowTableIdContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showTrash.
-	VisitShowTrash(ctx *ShowTrashContext) interface{}
+	VisitShowTrash(ctx *ShowTrashContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showTypeCast.
-	VisitShowTypeCast(ctx *ShowTypeCastContext) interface{}
+	VisitShowTypeCast(ctx *ShowTypeCastContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showClusters.
-	VisitShowClusters(ctx *ShowClustersContext) interface{}
+	VisitShowClusters(ctx *ShowClustersContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showStatus.
-	VisitShowStatus(ctx *ShowStatusContext) interface{}
+	VisitShowStatus(ctx *ShowStatusContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showWhitelist.
-	VisitShowWhitelist(ctx *ShowWhitelistContext) interface{}
+	VisitShowWhitelist(ctx *ShowWhitelistContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showTabletsBelong.
-	VisitShowTabletsBelong(ctx *ShowTabletsBelongContext) interface{}
+	VisitShowTabletsBelong(ctx *ShowTabletsBelongContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showDataSkew.
-	VisitShowDataSkew(ctx *ShowDataSkewContext) interface{}
+	VisitShowDataSkew(ctx *ShowDataSkewContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showTableCreation.
-	VisitShowTableCreation(ctx *ShowTableCreationContext) interface{}
+	VisitShowTableCreation(ctx *ShowTableCreationContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showTabletStorageFormat.
-	VisitShowTabletStorageFormat(ctx *ShowTabletStorageFormatContext) interface{}
+	VisitShowTabletStorageFormat(ctx *ShowTabletStorageFormatContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showQueryProfile.
-	VisitShowQueryProfile(ctx *ShowQueryProfileContext) interface{}
+	VisitShowQueryProfile(ctx *ShowQueryProfileContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showConvertLsc.
-	VisitShowConvertLsc(ctx *ShowConvertLscContext) interface{}
+	VisitShowConvertLsc(ctx *ShowConvertLscContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showTables.
-	VisitShowTables(ctx *ShowTablesContext) interface{}
+	VisitShowTables(ctx *ShowTablesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showViews.
-	VisitShowViews(ctx *ShowViewsContext) interface{}
+	VisitShowViews(ctx *ShowViewsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showTableStatus.
-	VisitShowTableStatus(ctx *ShowTableStatusContext) interface{}
+	VisitShowTableStatus(ctx *ShowTableStatusContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showDatabases.
-	VisitShowDatabases(ctx *ShowDatabasesContext) interface{}
+	VisitShowDatabases(ctx *ShowDatabasesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showTabletsFromTable.
-	VisitShowTabletsFromTable(ctx *ShowTabletsFromTableContext) interface{}
+	VisitShowTabletsFromTable(ctx *ShowTabletsFromTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCatalogRecycleBin.
-	VisitShowCatalogRecycleBin(ctx *ShowCatalogRecycleBinContext) interface{}
+	VisitShowCatalogRecycleBin(ctx *ShowCatalogRecycleBinContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showTabletId.
-	VisitShowTabletId(ctx *ShowTabletIdContext) interface{}
+	VisitShowTabletId(ctx *ShowTabletIdContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showDictionaries.
-	VisitShowDictionaries(ctx *ShowDictionariesContext) interface{}
+	VisitShowDictionaries(ctx *ShowDictionariesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showTransaction.
-	VisitShowTransaction(ctx *ShowTransactionContext) interface{}
+	VisitShowTransaction(ctx *ShowTransactionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showReplicaStatus.
-	VisitShowReplicaStatus(ctx *ShowReplicaStatusContext) interface{}
+	VisitShowReplicaStatus(ctx *ShowReplicaStatusContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showWorkloadGroups.
-	VisitShowWorkloadGroups(ctx *ShowWorkloadGroupsContext) interface{}
+	VisitShowWorkloadGroups(ctx *ShowWorkloadGroupsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCopy.
-	VisitShowCopy(ctx *ShowCopyContext) interface{}
+	VisitShowCopy(ctx *ShowCopyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showQueryStats.
-	VisitShowQueryStats(ctx *ShowQueryStatsContext) interface{}
+	VisitShowQueryStats(ctx *ShowQueryStatsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showIndex.
-	VisitShowIndex(ctx *ShowIndexContext) interface{}
+	VisitShowIndex(ctx *ShowIndexContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showWarmUpJob.
-	VisitShowWarmUpJob(ctx *ShowWarmUpJobContext) interface{}
+	VisitShowWarmUpJob(ctx *ShowWarmUpJobContext) any
 
 	// Visit a parse tree produced by DorisParserParser#sync.
-	VisitSync(ctx *SyncContext) interface{}
+	VisitSync(ctx *SyncContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createRoutineLoadAlias.
-	VisitCreateRoutineLoadAlias(ctx *CreateRoutineLoadAliasContext) interface{}
+	VisitCreateRoutineLoadAlias(ctx *CreateRoutineLoadAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCreateRoutineLoad.
-	VisitShowCreateRoutineLoad(ctx *ShowCreateRoutineLoadContext) interface{}
+	VisitShowCreateRoutineLoad(ctx *ShowCreateRoutineLoadContext) any
 
 	// Visit a parse tree produced by DorisParserParser#pauseRoutineLoad.
-	VisitPauseRoutineLoad(ctx *PauseRoutineLoadContext) interface{}
+	VisitPauseRoutineLoad(ctx *PauseRoutineLoadContext) any
 
 	// Visit a parse tree produced by DorisParserParser#pauseAllRoutineLoad.
-	VisitPauseAllRoutineLoad(ctx *PauseAllRoutineLoadContext) interface{}
+	VisitPauseAllRoutineLoad(ctx *PauseAllRoutineLoadContext) any
 
 	// Visit a parse tree produced by DorisParserParser#resumeRoutineLoad.
-	VisitResumeRoutineLoad(ctx *ResumeRoutineLoadContext) interface{}
+	VisitResumeRoutineLoad(ctx *ResumeRoutineLoadContext) any
 
 	// Visit a parse tree produced by DorisParserParser#resumeAllRoutineLoad.
-	VisitResumeAllRoutineLoad(ctx *ResumeAllRoutineLoadContext) interface{}
+	VisitResumeAllRoutineLoad(ctx *ResumeAllRoutineLoadContext) any
 
 	// Visit a parse tree produced by DorisParserParser#stopRoutineLoad.
-	VisitStopRoutineLoad(ctx *StopRoutineLoadContext) interface{}
+	VisitStopRoutineLoad(ctx *StopRoutineLoadContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showRoutineLoad.
-	VisitShowRoutineLoad(ctx *ShowRoutineLoadContext) interface{}
+	VisitShowRoutineLoad(ctx *ShowRoutineLoadContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showRoutineLoadTask.
-	VisitShowRoutineLoadTask(ctx *ShowRoutineLoadTaskContext) interface{}
+	VisitShowRoutineLoadTask(ctx *ShowRoutineLoadTaskContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showIndexAnalyzer.
-	VisitShowIndexAnalyzer(ctx *ShowIndexAnalyzerContext) interface{}
+	VisitShowIndexAnalyzer(ctx *ShowIndexAnalyzerContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showIndexTokenizer.
-	VisitShowIndexTokenizer(ctx *ShowIndexTokenizerContext) interface{}
+	VisitShowIndexTokenizer(ctx *ShowIndexTokenizerContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showIndexTokenFilter.
-	VisitShowIndexTokenFilter(ctx *ShowIndexTokenFilterContext) interface{}
+	VisitShowIndexTokenFilter(ctx *ShowIndexTokenFilterContext) any
 
 	// Visit a parse tree produced by DorisParserParser#killConnection.
-	VisitKillConnection(ctx *KillConnectionContext) interface{}
+	VisitKillConnection(ctx *KillConnectionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#killQuery.
-	VisitKillQuery(ctx *KillQueryContext) interface{}
+	VisitKillQuery(ctx *KillQueryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#help.
-	VisitHelp(ctx *HelpContext) interface{}
+	VisitHelp(ctx *HelpContext) any
 
 	// Visit a parse tree produced by DorisParserParser#unlockTables.
-	VisitUnlockTables(ctx *UnlockTablesContext) interface{}
+	VisitUnlockTables(ctx *UnlockTablesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#installPlugin.
-	VisitInstallPlugin(ctx *InstallPluginContext) interface{}
+	VisitInstallPlugin(ctx *InstallPluginContext) any
 
 	// Visit a parse tree produced by DorisParserParser#uninstallPlugin.
-	VisitUninstallPlugin(ctx *UninstallPluginContext) interface{}
+	VisitUninstallPlugin(ctx *UninstallPluginContext) any
 
 	// Visit a parse tree produced by DorisParserParser#lockTables.
-	VisitLockTables(ctx *LockTablesContext) interface{}
+	VisitLockTables(ctx *LockTablesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#restore.
-	VisitRestore(ctx *RestoreContext) interface{}
+	VisitRestore(ctx *RestoreContext) any
 
 	// Visit a parse tree produced by DorisParserParser#warmUpCluster.
-	VisitWarmUpCluster(ctx *WarmUpClusterContext) interface{}
+	VisitWarmUpCluster(ctx *WarmUpClusterContext) any
 
 	// Visit a parse tree produced by DorisParserParser#backup.
-	VisitBackup(ctx *BackupContext) interface{}
+	VisitBackup(ctx *BackupContext) any
 
 	// Visit a parse tree produced by DorisParserParser#unsupportedStartTransaction.
-	VisitUnsupportedStartTransaction(ctx *UnsupportedStartTransactionContext) interface{}
+	VisitUnsupportedStartTransaction(ctx *UnsupportedStartTransactionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#warmUpItem.
-	VisitWarmUpItem(ctx *WarmUpItemContext) interface{}
+	VisitWarmUpItem(ctx *WarmUpItemContext) any
 
 	// Visit a parse tree produced by DorisParserParser#lockTable.
-	VisitLockTable(ctx *LockTableContext) interface{}
+	VisitLockTable(ctx *LockTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createRoutineLoad.
-	VisitCreateRoutineLoad(ctx *CreateRoutineLoadContext) interface{}
+	VisitCreateRoutineLoad(ctx *CreateRoutineLoadContext) any
 
 	// Visit a parse tree produced by DorisParserParser#mysqlLoad.
-	VisitMysqlLoad(ctx *MysqlLoadContext) interface{}
+	VisitMysqlLoad(ctx *MysqlLoadContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showCreateLoad.
-	VisitShowCreateLoad(ctx *ShowCreateLoadContext) interface{}
+	VisitShowCreateLoad(ctx *ShowCreateLoadContext) any
 
 	// Visit a parse tree produced by DorisParserParser#separator.
-	VisitSeparator(ctx *SeparatorContext) interface{}
+	VisitSeparator(ctx *SeparatorContext) any
 
 	// Visit a parse tree produced by DorisParserParser#importColumns.
-	VisitImportColumns(ctx *ImportColumnsContext) interface{}
+	VisitImportColumns(ctx *ImportColumnsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#importPrecedingFilter.
-	VisitImportPrecedingFilter(ctx *ImportPrecedingFilterContext) interface{}
+	VisitImportPrecedingFilter(ctx *ImportPrecedingFilterContext) any
 
 	// Visit a parse tree produced by DorisParserParser#importWhere.
-	VisitImportWhere(ctx *ImportWhereContext) interface{}
+	VisitImportWhere(ctx *ImportWhereContext) any
 
 	// Visit a parse tree produced by DorisParserParser#importDeleteOn.
-	VisitImportDeleteOn(ctx *ImportDeleteOnContext) interface{}
+	VisitImportDeleteOn(ctx *ImportDeleteOnContext) any
 
 	// Visit a parse tree produced by DorisParserParser#importSequence.
-	VisitImportSequence(ctx *ImportSequenceContext) interface{}
+	VisitImportSequence(ctx *ImportSequenceContext) any
 
 	// Visit a parse tree produced by DorisParserParser#importPartitions.
-	VisitImportPartitions(ctx *ImportPartitionsContext) interface{}
+	VisitImportPartitions(ctx *ImportPartitionsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#importSequenceStatement.
-	VisitImportSequenceStatement(ctx *ImportSequenceStatementContext) interface{}
+	VisitImportSequenceStatement(ctx *ImportSequenceStatementContext) any
 
 	// Visit a parse tree produced by DorisParserParser#importDeleteOnStatement.
-	VisitImportDeleteOnStatement(ctx *ImportDeleteOnStatementContext) interface{}
+	VisitImportDeleteOnStatement(ctx *ImportDeleteOnStatementContext) any
 
 	// Visit a parse tree produced by DorisParserParser#importWhereStatement.
-	VisitImportWhereStatement(ctx *ImportWhereStatementContext) interface{}
+	VisitImportWhereStatement(ctx *ImportWhereStatementContext) any
 
 	// Visit a parse tree produced by DorisParserParser#importPrecedingFilterStatement.
-	VisitImportPrecedingFilterStatement(ctx *ImportPrecedingFilterStatementContext) interface{}
+	VisitImportPrecedingFilterStatement(ctx *ImportPrecedingFilterStatementContext) any
 
 	// Visit a parse tree produced by DorisParserParser#importColumnsStatement.
-	VisitImportColumnsStatement(ctx *ImportColumnsStatementContext) interface{}
+	VisitImportColumnsStatement(ctx *ImportColumnsStatementContext) any
 
 	// Visit a parse tree produced by DorisParserParser#importColumnDesc.
-	VisitImportColumnDesc(ctx *ImportColumnDescContext) interface{}
+	VisitImportColumnDesc(ctx *ImportColumnDescContext) any
 
 	// Visit a parse tree produced by DorisParserParser#refreshCatalog.
-	VisitRefreshCatalog(ctx *RefreshCatalogContext) interface{}
+	VisitRefreshCatalog(ctx *RefreshCatalogContext) any
 
 	// Visit a parse tree produced by DorisParserParser#refreshDatabase.
-	VisitRefreshDatabase(ctx *RefreshDatabaseContext) interface{}
+	VisitRefreshDatabase(ctx *RefreshDatabaseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#refreshTable.
-	VisitRefreshTable(ctx *RefreshTableContext) interface{}
+	VisitRefreshTable(ctx *RefreshTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#refreshDictionary.
-	VisitRefreshDictionary(ctx *RefreshDictionaryContext) interface{}
+	VisitRefreshDictionary(ctx *RefreshDictionaryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#refreshLdap.
-	VisitRefreshLdap(ctx *RefreshLdapContext) interface{}
+	VisitRefreshLdap(ctx *RefreshLdapContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cleanAllProfile.
-	VisitCleanAllProfile(ctx *CleanAllProfileContext) interface{}
+	VisitCleanAllProfile(ctx *CleanAllProfileContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cleanLabel.
-	VisitCleanLabel(ctx *CleanLabelContext) interface{}
+	VisitCleanLabel(ctx *CleanLabelContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cleanQueryStats.
-	VisitCleanQueryStats(ctx *CleanQueryStatsContext) interface{}
+	VisitCleanQueryStats(ctx *CleanQueryStatsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cleanAllQueryStats.
-	VisitCleanAllQueryStats(ctx *CleanAllQueryStatsContext) interface{}
+	VisitCleanAllQueryStats(ctx *CleanAllQueryStatsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cancelLoad.
-	VisitCancelLoad(ctx *CancelLoadContext) interface{}
+	VisitCancelLoad(ctx *CancelLoadContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cancelExport.
-	VisitCancelExport(ctx *CancelExportContext) interface{}
+	VisitCancelExport(ctx *CancelExportContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cancelWarmUpJob.
-	VisitCancelWarmUpJob(ctx *CancelWarmUpJobContext) interface{}
+	VisitCancelWarmUpJob(ctx *CancelWarmUpJobContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cancelDecommisionBackend.
-	VisitCancelDecommisionBackend(ctx *CancelDecommisionBackendContext) interface{}
+	VisitCancelDecommisionBackend(ctx *CancelDecommisionBackendContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cancelBackup.
-	VisitCancelBackup(ctx *CancelBackupContext) interface{}
+	VisitCancelBackup(ctx *CancelBackupContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cancelRestore.
-	VisitCancelRestore(ctx *CancelRestoreContext) interface{}
+	VisitCancelRestore(ctx *CancelRestoreContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cancelBuildIndex.
-	VisitCancelBuildIndex(ctx *CancelBuildIndexContext) interface{}
+	VisitCancelBuildIndex(ctx *CancelBuildIndexContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cancelAlterTable.
-	VisitCancelAlterTable(ctx *CancelAlterTableContext) interface{}
+	VisitCancelAlterTable(ctx *CancelAlterTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminShowReplicaDistribution.
-	VisitAdminShowReplicaDistribution(ctx *AdminShowReplicaDistributionContext) interface{}
+	VisitAdminShowReplicaDistribution(ctx *AdminShowReplicaDistributionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminRebalanceDisk.
-	VisitAdminRebalanceDisk(ctx *AdminRebalanceDiskContext) interface{}
+	VisitAdminRebalanceDisk(ctx *AdminRebalanceDiskContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminCancelRebalanceDisk.
-	VisitAdminCancelRebalanceDisk(ctx *AdminCancelRebalanceDiskContext) interface{}
+	VisitAdminCancelRebalanceDisk(ctx *AdminCancelRebalanceDiskContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminDiagnoseTablet.
-	VisitAdminDiagnoseTablet(ctx *AdminDiagnoseTabletContext) interface{}
+	VisitAdminDiagnoseTablet(ctx *AdminDiagnoseTabletContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminShowReplicaStatus.
-	VisitAdminShowReplicaStatus(ctx *AdminShowReplicaStatusContext) interface{}
+	VisitAdminShowReplicaStatus(ctx *AdminShowReplicaStatusContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminCompactTable.
-	VisitAdminCompactTable(ctx *AdminCompactTableContext) interface{}
+	VisitAdminCompactTable(ctx *AdminCompactTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminCheckTablets.
-	VisitAdminCheckTablets(ctx *AdminCheckTabletsContext) interface{}
+	VisitAdminCheckTablets(ctx *AdminCheckTabletsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminShowTabletStorageFormat.
-	VisitAdminShowTabletStorageFormat(ctx *AdminShowTabletStorageFormatContext) interface{}
+	VisitAdminShowTabletStorageFormat(ctx *AdminShowTabletStorageFormatContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminSetFrontendConfig.
-	VisitAdminSetFrontendConfig(ctx *AdminSetFrontendConfigContext) interface{}
+	VisitAdminSetFrontendConfig(ctx *AdminSetFrontendConfigContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminCleanTrash.
-	VisitAdminCleanTrash(ctx *AdminCleanTrashContext) interface{}
+	VisitAdminCleanTrash(ctx *AdminCleanTrashContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminSetReplicaVersion.
-	VisitAdminSetReplicaVersion(ctx *AdminSetReplicaVersionContext) interface{}
+	VisitAdminSetReplicaVersion(ctx *AdminSetReplicaVersionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminSetTableStatus.
-	VisitAdminSetTableStatus(ctx *AdminSetTableStatusContext) interface{}
+	VisitAdminSetTableStatus(ctx *AdminSetTableStatusContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminSetReplicaStatus.
-	VisitAdminSetReplicaStatus(ctx *AdminSetReplicaStatusContext) interface{}
+	VisitAdminSetReplicaStatus(ctx *AdminSetReplicaStatusContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminRepairTable.
-	VisitAdminRepairTable(ctx *AdminRepairTableContext) interface{}
+	VisitAdminRepairTable(ctx *AdminRepairTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminCancelRepairTable.
-	VisitAdminCancelRepairTable(ctx *AdminCancelRepairTableContext) interface{}
+	VisitAdminCancelRepairTable(ctx *AdminCancelRepairTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminCopyTablet.
-	VisitAdminCopyTablet(ctx *AdminCopyTabletContext) interface{}
+	VisitAdminCopyTablet(ctx *AdminCopyTabletContext) any
 
 	// Visit a parse tree produced by DorisParserParser#recoverDatabase.
-	VisitRecoverDatabase(ctx *RecoverDatabaseContext) interface{}
+	VisitRecoverDatabase(ctx *RecoverDatabaseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#recoverTable.
-	VisitRecoverTable(ctx *RecoverTableContext) interface{}
+	VisitRecoverTable(ctx *RecoverTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#recoverPartition.
-	VisitRecoverPartition(ctx *RecoverPartitionContext) interface{}
+	VisitRecoverPartition(ctx *RecoverPartitionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#adminSetPartitionVersion.
-	VisitAdminSetPartitionVersion(ctx *AdminSetPartitionVersionContext) interface{}
+	VisitAdminSetPartitionVersion(ctx *AdminSetPartitionVersionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#baseTableRef.
-	VisitBaseTableRef(ctx *BaseTableRefContext) interface{}
+	VisitBaseTableRef(ctx *BaseTableRefContext) any
 
 	// Visit a parse tree produced by DorisParserParser#wildWhere.
-	VisitWildWhere(ctx *WildWhereContext) interface{}
+	VisitWildWhere(ctx *WildWhereContext) any
 
 	// Visit a parse tree produced by DorisParserParser#transactionBegin.
-	VisitTransactionBegin(ctx *TransactionBeginContext) interface{}
+	VisitTransactionBegin(ctx *TransactionBeginContext) any
 
 	// Visit a parse tree produced by DorisParserParser#transcationCommit.
-	VisitTranscationCommit(ctx *TranscationCommitContext) interface{}
+	VisitTranscationCommit(ctx *TranscationCommitContext) any
 
 	// Visit a parse tree produced by DorisParserParser#transactionRollback.
-	VisitTransactionRollback(ctx *TransactionRollbackContext) interface{}
+	VisitTransactionRollback(ctx *TransactionRollbackContext) any
 
 	// Visit a parse tree produced by DorisParserParser#grantTablePrivilege.
-	VisitGrantTablePrivilege(ctx *GrantTablePrivilegeContext) interface{}
+	VisitGrantTablePrivilege(ctx *GrantTablePrivilegeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#grantResourcePrivilege.
-	VisitGrantResourcePrivilege(ctx *GrantResourcePrivilegeContext) interface{}
+	VisitGrantResourcePrivilege(ctx *GrantResourcePrivilegeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#grantRole.
-	VisitGrantRole(ctx *GrantRoleContext) interface{}
+	VisitGrantRole(ctx *GrantRoleContext) any
 
 	// Visit a parse tree produced by DorisParserParser#revokeRole.
-	VisitRevokeRole(ctx *RevokeRoleContext) interface{}
+	VisitRevokeRole(ctx *RevokeRoleContext) any
 
 	// Visit a parse tree produced by DorisParserParser#revokeResourcePrivilege.
-	VisitRevokeResourcePrivilege(ctx *RevokeResourcePrivilegeContext) interface{}
+	VisitRevokeResourcePrivilege(ctx *RevokeResourcePrivilegeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#revokeTablePrivilege.
-	VisitRevokeTablePrivilege(ctx *RevokeTablePrivilegeContext) interface{}
+	VisitRevokeTablePrivilege(ctx *RevokeTablePrivilegeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#privilege.
-	VisitPrivilege(ctx *PrivilegeContext) interface{}
+	VisitPrivilege(ctx *PrivilegeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#privilegeList.
-	VisitPrivilegeList(ctx *PrivilegeListContext) interface{}
+	VisitPrivilegeList(ctx *PrivilegeListContext) any
 
 	// Visit a parse tree produced by DorisParserParser#addBackendClause.
-	VisitAddBackendClause(ctx *AddBackendClauseContext) interface{}
+	VisitAddBackendClause(ctx *AddBackendClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropBackendClause.
-	VisitDropBackendClause(ctx *DropBackendClauseContext) interface{}
+	VisitDropBackendClause(ctx *DropBackendClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#decommissionBackendClause.
-	VisitDecommissionBackendClause(ctx *DecommissionBackendClauseContext) interface{}
+	VisitDecommissionBackendClause(ctx *DecommissionBackendClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#addObserverClause.
-	VisitAddObserverClause(ctx *AddObserverClauseContext) interface{}
+	VisitAddObserverClause(ctx *AddObserverClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropObserverClause.
-	VisitDropObserverClause(ctx *DropObserverClauseContext) interface{}
+	VisitDropObserverClause(ctx *DropObserverClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#addFollowerClause.
-	VisitAddFollowerClause(ctx *AddFollowerClauseContext) interface{}
+	VisitAddFollowerClause(ctx *AddFollowerClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropFollowerClause.
-	VisitDropFollowerClause(ctx *DropFollowerClauseContext) interface{}
+	VisitDropFollowerClause(ctx *DropFollowerClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#addBrokerClause.
-	VisitAddBrokerClause(ctx *AddBrokerClauseContext) interface{}
+	VisitAddBrokerClause(ctx *AddBrokerClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropBrokerClause.
-	VisitDropBrokerClause(ctx *DropBrokerClauseContext) interface{}
+	VisitDropBrokerClause(ctx *DropBrokerClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropAllBrokerClause.
-	VisitDropAllBrokerClause(ctx *DropAllBrokerClauseContext) interface{}
+	VisitDropAllBrokerClause(ctx *DropAllBrokerClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterLoadErrorUrlClause.
-	VisitAlterLoadErrorUrlClause(ctx *AlterLoadErrorUrlClauseContext) interface{}
+	VisitAlterLoadErrorUrlClause(ctx *AlterLoadErrorUrlClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#modifyBackendClause.
-	VisitModifyBackendClause(ctx *ModifyBackendClauseContext) interface{}
+	VisitModifyBackendClause(ctx *ModifyBackendClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#modifyFrontendOrBackendHostNameClause.
-	VisitModifyFrontendOrBackendHostNameClause(ctx *ModifyFrontendOrBackendHostNameClauseContext) interface{}
+	VisitModifyFrontendOrBackendHostNameClause(ctx *ModifyFrontendOrBackendHostNameClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropRollupClause.
-	VisitDropRollupClause(ctx *DropRollupClauseContext) interface{}
+	VisitDropRollupClause(ctx *DropRollupClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#addRollupClause.
-	VisitAddRollupClause(ctx *AddRollupClauseContext) interface{}
+	VisitAddRollupClause(ctx *AddRollupClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#addColumnClause.
-	VisitAddColumnClause(ctx *AddColumnClauseContext) interface{}
+	VisitAddColumnClause(ctx *AddColumnClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#addColumnsClause.
-	VisitAddColumnsClause(ctx *AddColumnsClauseContext) interface{}
+	VisitAddColumnsClause(ctx *AddColumnsClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropColumnClause.
-	VisitDropColumnClause(ctx *DropColumnClauseContext) interface{}
+	VisitDropColumnClause(ctx *DropColumnClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#modifyColumnClause.
-	VisitModifyColumnClause(ctx *ModifyColumnClauseContext) interface{}
+	VisitModifyColumnClause(ctx *ModifyColumnClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#reorderColumnsClause.
-	VisitReorderColumnsClause(ctx *ReorderColumnsClauseContext) interface{}
+	VisitReorderColumnsClause(ctx *ReorderColumnsClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#addPartitionClause.
-	VisitAddPartitionClause(ctx *AddPartitionClauseContext) interface{}
+	VisitAddPartitionClause(ctx *AddPartitionClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropPartitionClause.
-	VisitDropPartitionClause(ctx *DropPartitionClauseContext) interface{}
+	VisitDropPartitionClause(ctx *DropPartitionClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#modifyPartitionClause.
-	VisitModifyPartitionClause(ctx *ModifyPartitionClauseContext) interface{}
+	VisitModifyPartitionClause(ctx *ModifyPartitionClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#replacePartitionClause.
-	VisitReplacePartitionClause(ctx *ReplacePartitionClauseContext) interface{}
+	VisitReplacePartitionClause(ctx *ReplacePartitionClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#replaceTableClause.
-	VisitReplaceTableClause(ctx *ReplaceTableClauseContext) interface{}
+	VisitReplaceTableClause(ctx *ReplaceTableClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#renameClause.
-	VisitRenameClause(ctx *RenameClauseContext) interface{}
+	VisitRenameClause(ctx *RenameClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#renameRollupClause.
-	VisitRenameRollupClause(ctx *RenameRollupClauseContext) interface{}
+	VisitRenameRollupClause(ctx *RenameRollupClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#renamePartitionClause.
-	VisitRenamePartitionClause(ctx *RenamePartitionClauseContext) interface{}
+	VisitRenamePartitionClause(ctx *RenamePartitionClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#renameColumnClause.
-	VisitRenameColumnClause(ctx *RenameColumnClauseContext) interface{}
+	VisitRenameColumnClause(ctx *RenameColumnClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#addIndexClause.
-	VisitAddIndexClause(ctx *AddIndexClauseContext) interface{}
+	VisitAddIndexClause(ctx *AddIndexClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropIndexClause.
-	VisitDropIndexClause(ctx *DropIndexClauseContext) interface{}
+	VisitDropIndexClause(ctx *DropIndexClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#enableFeatureClause.
-	VisitEnableFeatureClause(ctx *EnableFeatureClauseContext) interface{}
+	VisitEnableFeatureClause(ctx *EnableFeatureClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#modifyDistributionClause.
-	VisitModifyDistributionClause(ctx *ModifyDistributionClauseContext) interface{}
+	VisitModifyDistributionClause(ctx *ModifyDistributionClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#modifyTableCommentClause.
-	VisitModifyTableCommentClause(ctx *ModifyTableCommentClauseContext) interface{}
+	VisitModifyTableCommentClause(ctx *ModifyTableCommentClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#modifyColumnCommentClause.
-	VisitModifyColumnCommentClause(ctx *ModifyColumnCommentClauseContext) interface{}
+	VisitModifyColumnCommentClause(ctx *ModifyColumnCommentClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#modifyEngineClause.
-	VisitModifyEngineClause(ctx *ModifyEngineClauseContext) interface{}
+	VisitModifyEngineClause(ctx *ModifyEngineClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterMultiPartitionClause.
-	VisitAlterMultiPartitionClause(ctx *AlterMultiPartitionClauseContext) interface{}
+	VisitAlterMultiPartitionClause(ctx *AlterMultiPartitionClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createOrReplaceTagClauses.
-	VisitCreateOrReplaceTagClauses(ctx *CreateOrReplaceTagClausesContext) interface{}
+	VisitCreateOrReplaceTagClauses(ctx *CreateOrReplaceTagClausesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createOrReplaceBranchClauses.
-	VisitCreateOrReplaceBranchClauses(ctx *CreateOrReplaceBranchClausesContext) interface{}
+	VisitCreateOrReplaceBranchClauses(ctx *CreateOrReplaceBranchClausesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropBranchClauses.
-	VisitDropBranchClauses(ctx *DropBranchClausesContext) interface{}
+	VisitDropBranchClauses(ctx *DropBranchClausesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropTagClauses.
-	VisitDropTagClauses(ctx *DropTagClausesContext) interface{}
+	VisitDropTagClauses(ctx *DropTagClausesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createOrReplaceTagClause.
-	VisitCreateOrReplaceTagClause(ctx *CreateOrReplaceTagClauseContext) interface{}
+	VisitCreateOrReplaceTagClause(ctx *CreateOrReplaceTagClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#createOrReplaceBranchClause.
-	VisitCreateOrReplaceBranchClause(ctx *CreateOrReplaceBranchClauseContext) interface{}
+	VisitCreateOrReplaceBranchClause(ctx *CreateOrReplaceBranchClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#tagOptions.
-	VisitTagOptions(ctx *TagOptionsContext) interface{}
+	VisitTagOptions(ctx *TagOptionsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#branchOptions.
-	VisitBranchOptions(ctx *BranchOptionsContext) interface{}
+	VisitBranchOptions(ctx *BranchOptionsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#retainTime.
-	VisitRetainTime(ctx *RetainTimeContext) interface{}
+	VisitRetainTime(ctx *RetainTimeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#retentionSnapshot.
-	VisitRetentionSnapshot(ctx *RetentionSnapshotContext) interface{}
+	VisitRetentionSnapshot(ctx *RetentionSnapshotContext) any
 
 	// Visit a parse tree produced by DorisParserParser#minSnapshotsToKeep.
-	VisitMinSnapshotsToKeep(ctx *MinSnapshotsToKeepContext) interface{}
+	VisitMinSnapshotsToKeep(ctx *MinSnapshotsToKeepContext) any
 
 	// Visit a parse tree produced by DorisParserParser#timeValueWithUnit.
-	VisitTimeValueWithUnit(ctx *TimeValueWithUnitContext) interface{}
+	VisitTimeValueWithUnit(ctx *TimeValueWithUnitContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropBranchClause.
-	VisitDropBranchClause(ctx *DropBranchClauseContext) interface{}
+	VisitDropBranchClause(ctx *DropBranchClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropTagClause.
-	VisitDropTagClause(ctx *DropTagClauseContext) interface{}
+	VisitDropTagClause(ctx *DropTagClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#columnPosition.
-	VisitColumnPosition(ctx *ColumnPositionContext) interface{}
+	VisitColumnPosition(ctx *ColumnPositionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#toRollup.
-	VisitToRollup(ctx *ToRollupContext) interface{}
+	VisitToRollup(ctx *ToRollupContext) any
 
 	// Visit a parse tree produced by DorisParserParser#fromRollup.
-	VisitFromRollup(ctx *FromRollupContext) interface{}
+	VisitFromRollup(ctx *FromRollupContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showAnalyze.
-	VisitShowAnalyze(ctx *ShowAnalyzeContext) interface{}
+	VisitShowAnalyze(ctx *ShowAnalyzeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showQueuedAnalyzeJobs.
-	VisitShowQueuedAnalyzeJobs(ctx *ShowQueuedAnalyzeJobsContext) interface{}
+	VisitShowQueuedAnalyzeJobs(ctx *ShowQueuedAnalyzeJobsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showColumnHistogramStats.
-	VisitShowColumnHistogramStats(ctx *ShowColumnHistogramStatsContext) interface{}
+	VisitShowColumnHistogramStats(ctx *ShowColumnHistogramStatsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#analyzeDatabase.
-	VisitAnalyzeDatabase(ctx *AnalyzeDatabaseContext) interface{}
+	VisitAnalyzeDatabase(ctx *AnalyzeDatabaseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#analyzeTable.
-	VisitAnalyzeTable(ctx *AnalyzeTableContext) interface{}
+	VisitAnalyzeTable(ctx *AnalyzeTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterTableStats.
-	VisitAlterTableStats(ctx *AlterTableStatsContext) interface{}
+	VisitAlterTableStats(ctx *AlterTableStatsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#alterColumnStats.
-	VisitAlterColumnStats(ctx *AlterColumnStatsContext) interface{}
+	VisitAlterColumnStats(ctx *AlterColumnStatsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showIndexStats.
-	VisitShowIndexStats(ctx *ShowIndexStatsContext) interface{}
+	VisitShowIndexStats(ctx *ShowIndexStatsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropStats.
-	VisitDropStats(ctx *DropStatsContext) interface{}
+	VisitDropStats(ctx *DropStatsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropCachedStats.
-	VisitDropCachedStats(ctx *DropCachedStatsContext) interface{}
+	VisitDropCachedStats(ctx *DropCachedStatsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropExpiredStats.
-	VisitDropExpiredStats(ctx *DropExpiredStatsContext) interface{}
+	VisitDropExpiredStats(ctx *DropExpiredStatsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#killAnalyzeJob.
-	VisitKillAnalyzeJob(ctx *KillAnalyzeJobContext) interface{}
+	VisitKillAnalyzeJob(ctx *KillAnalyzeJobContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dropAnalyzeJob.
-	VisitDropAnalyzeJob(ctx *DropAnalyzeJobContext) interface{}
+	VisitDropAnalyzeJob(ctx *DropAnalyzeJobContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showTableStats.
-	VisitShowTableStats(ctx *ShowTableStatsContext) interface{}
+	VisitShowTableStats(ctx *ShowTableStatsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showColumnStats.
-	VisitShowColumnStats(ctx *ShowColumnStatsContext) interface{}
+	VisitShowColumnStats(ctx *ShowColumnStatsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#showAnalyzeTask.
-	VisitShowAnalyzeTask(ctx *ShowAnalyzeTaskContext) interface{}
+	VisitShowAnalyzeTask(ctx *ShowAnalyzeTaskContext) any
 
 	// Visit a parse tree produced by DorisParserParser#analyzeProperties.
-	VisitAnalyzeProperties(ctx *AnalyzePropertiesContext) interface{}
+	VisitAnalyzeProperties(ctx *AnalyzePropertiesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#workloadPolicyActions.
-	VisitWorkloadPolicyActions(ctx *WorkloadPolicyActionsContext) interface{}
+	VisitWorkloadPolicyActions(ctx *WorkloadPolicyActionsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#workloadPolicyAction.
-	VisitWorkloadPolicyAction(ctx *WorkloadPolicyActionContext) interface{}
+	VisitWorkloadPolicyAction(ctx *WorkloadPolicyActionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#workloadPolicyConditions.
-	VisitWorkloadPolicyConditions(ctx *WorkloadPolicyConditionsContext) interface{}
+	VisitWorkloadPolicyConditions(ctx *WorkloadPolicyConditionsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#workloadPolicyCondition.
-	VisitWorkloadPolicyCondition(ctx *WorkloadPolicyConditionContext) interface{}
+	VisitWorkloadPolicyCondition(ctx *WorkloadPolicyConditionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#storageBackend.
-	VisitStorageBackend(ctx *StorageBackendContext) interface{}
+	VisitStorageBackend(ctx *StorageBackendContext) any
 
 	// Visit a parse tree produced by DorisParserParser#passwordOption.
-	VisitPasswordOption(ctx *PasswordOptionContext) interface{}
+	VisitPasswordOption(ctx *PasswordOptionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#functionArguments.
-	VisitFunctionArguments(ctx *FunctionArgumentsContext) interface{}
+	VisitFunctionArguments(ctx *FunctionArgumentsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dataTypeList.
-	VisitDataTypeList(ctx *DataTypeListContext) interface{}
+	VisitDataTypeList(ctx *DataTypeListContext) any
 
 	// Visit a parse tree produced by DorisParserParser#setOptions.
-	VisitSetOptions(ctx *SetOptionsContext) interface{}
+	VisitSetOptions(ctx *SetOptionsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#setDefaultStorageVault.
-	VisitSetDefaultStorageVault(ctx *SetDefaultStorageVaultContext) interface{}
+	VisitSetDefaultStorageVault(ctx *SetDefaultStorageVaultContext) any
 
 	// Visit a parse tree produced by DorisParserParser#setUserProperties.
-	VisitSetUserProperties(ctx *SetUserPropertiesContext) interface{}
+	VisitSetUserProperties(ctx *SetUserPropertiesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#setTransaction.
-	VisitSetTransaction(ctx *SetTransactionContext) interface{}
+	VisitSetTransaction(ctx *SetTransactionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#setVariableWithType.
-	VisitSetVariableWithType(ctx *SetVariableWithTypeContext) interface{}
+	VisitSetVariableWithType(ctx *SetVariableWithTypeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#setNames.
-	VisitSetNames(ctx *SetNamesContext) interface{}
+	VisitSetNames(ctx *SetNamesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#setCharset.
-	VisitSetCharset(ctx *SetCharsetContext) interface{}
+	VisitSetCharset(ctx *SetCharsetContext) any
 
 	// Visit a parse tree produced by DorisParserParser#setCollate.
-	VisitSetCollate(ctx *SetCollateContext) interface{}
+	VisitSetCollate(ctx *SetCollateContext) any
 
 	// Visit a parse tree produced by DorisParserParser#setPassword.
-	VisitSetPassword(ctx *SetPasswordContext) interface{}
+	VisitSetPassword(ctx *SetPasswordContext) any
 
 	// Visit a parse tree produced by DorisParserParser#setLdapAdminPassword.
-	VisitSetLdapAdminPassword(ctx *SetLdapAdminPasswordContext) interface{}
+	VisitSetLdapAdminPassword(ctx *SetLdapAdminPasswordContext) any
 
 	// Visit a parse tree produced by DorisParserParser#setVariableWithoutType.
-	VisitSetVariableWithoutType(ctx *SetVariableWithoutTypeContext) interface{}
+	VisitSetVariableWithoutType(ctx *SetVariableWithoutTypeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#setSystemVariable.
-	VisitSetSystemVariable(ctx *SetSystemVariableContext) interface{}
+	VisitSetSystemVariable(ctx *SetSystemVariableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#setUserVariable.
-	VisitSetUserVariable(ctx *SetUserVariableContext) interface{}
+	VisitSetUserVariable(ctx *SetUserVariableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#transactionAccessMode.
-	VisitTransactionAccessMode(ctx *TransactionAccessModeContext) interface{}
+	VisitTransactionAccessMode(ctx *TransactionAccessModeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#isolationLevel.
-	VisitIsolationLevel(ctx *IsolationLevelContext) interface{}
+	VisitIsolationLevel(ctx *IsolationLevelContext) any
 
 	// Visit a parse tree produced by DorisParserParser#supportedUnsetStatement.
-	VisitSupportedUnsetStatement(ctx *SupportedUnsetStatementContext) interface{}
+	VisitSupportedUnsetStatement(ctx *SupportedUnsetStatementContext) any
 
 	// Visit a parse tree produced by DorisParserParser#switchCatalog.
-	VisitSwitchCatalog(ctx *SwitchCatalogContext) interface{}
+	VisitSwitchCatalog(ctx *SwitchCatalogContext) any
 
 	// Visit a parse tree produced by DorisParserParser#useDatabase.
-	VisitUseDatabase(ctx *UseDatabaseContext) interface{}
+	VisitUseDatabase(ctx *UseDatabaseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#useCloudCluster.
-	VisitUseCloudCluster(ctx *UseCloudClusterContext) interface{}
+	VisitUseCloudCluster(ctx *UseCloudClusterContext) any
 
 	// Visit a parse tree produced by DorisParserParser#stageAndPattern.
-	VisitStageAndPattern(ctx *StageAndPatternContext) interface{}
+	VisitStageAndPattern(ctx *StageAndPatternContext) any
 
 	// Visit a parse tree produced by DorisParserParser#describeTableValuedFunction.
-	VisitDescribeTableValuedFunction(ctx *DescribeTableValuedFunctionContext) interface{}
+	VisitDescribeTableValuedFunction(ctx *DescribeTableValuedFunctionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#describeTableAll.
-	VisitDescribeTableAll(ctx *DescribeTableAllContext) interface{}
+	VisitDescribeTableAll(ctx *DescribeTableAllContext) any
 
 	// Visit a parse tree produced by DorisParserParser#describeTable.
-	VisitDescribeTable(ctx *DescribeTableContext) interface{}
+	VisitDescribeTable(ctx *DescribeTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#describeDictionary.
-	VisitDescribeDictionary(ctx *DescribeDictionaryContext) interface{}
+	VisitDescribeDictionary(ctx *DescribeDictionaryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#constraint.
-	VisitConstraint(ctx *ConstraintContext) interface{}
+	VisitConstraint(ctx *ConstraintContext) any
 
 	// Visit a parse tree produced by DorisParserParser#partitionSpec.
-	VisitPartitionSpec(ctx *PartitionSpecContext) interface{}
+	VisitPartitionSpec(ctx *PartitionSpecContext) any
 
 	// Visit a parse tree produced by DorisParserParser#partitionTable.
-	VisitPartitionTable(ctx *PartitionTableContext) interface{}
+	VisitPartitionTable(ctx *PartitionTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#identityOrFunctionList.
-	VisitIdentityOrFunctionList(ctx *IdentityOrFunctionListContext) interface{}
+	VisitIdentityOrFunctionList(ctx *IdentityOrFunctionListContext) any
 
 	// Visit a parse tree produced by DorisParserParser#identityOrFunction.
-	VisitIdentityOrFunction(ctx *IdentityOrFunctionContext) interface{}
+	VisitIdentityOrFunction(ctx *IdentityOrFunctionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dataDesc.
-	VisitDataDesc(ctx *DataDescContext) interface{}
+	VisitDataDesc(ctx *DataDescContext) any
 
 	// Visit a parse tree produced by DorisParserParser#statementScope.
-	VisitStatementScope(ctx *StatementScopeContext) interface{}
+	VisitStatementScope(ctx *StatementScopeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#buildMode.
-	VisitBuildMode(ctx *BuildModeContext) interface{}
+	VisitBuildMode(ctx *BuildModeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#refreshTrigger.
-	VisitRefreshTrigger(ctx *RefreshTriggerContext) interface{}
+	VisitRefreshTrigger(ctx *RefreshTriggerContext) any
 
 	// Visit a parse tree produced by DorisParserParser#refreshSchedule.
-	VisitRefreshSchedule(ctx *RefreshScheduleContext) interface{}
+	VisitRefreshSchedule(ctx *RefreshScheduleContext) any
 
 	// Visit a parse tree produced by DorisParserParser#refreshMethod.
-	VisitRefreshMethod(ctx *RefreshMethodContext) interface{}
+	VisitRefreshMethod(ctx *RefreshMethodContext) any
 
 	// Visit a parse tree produced by DorisParserParser#mvPartition.
-	VisitMvPartition(ctx *MvPartitionContext) interface{}
+	VisitMvPartition(ctx *MvPartitionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#identifierOrText.
-	VisitIdentifierOrText(ctx *IdentifierOrTextContext) interface{}
+	VisitIdentifierOrText(ctx *IdentifierOrTextContext) any
 
 	// Visit a parse tree produced by DorisParserParser#identifierOrTextOrAsterisk.
-	VisitIdentifierOrTextOrAsterisk(ctx *IdentifierOrTextOrAsteriskContext) interface{}
+	VisitIdentifierOrTextOrAsterisk(ctx *IdentifierOrTextOrAsteriskContext) any
 
 	// Visit a parse tree produced by DorisParserParser#multipartIdentifierOrAsterisk.
-	VisitMultipartIdentifierOrAsterisk(ctx *MultipartIdentifierOrAsteriskContext) interface{}
+	VisitMultipartIdentifierOrAsterisk(ctx *MultipartIdentifierOrAsteriskContext) any
 
 	// Visit a parse tree produced by DorisParserParser#identifierOrAsterisk.
-	VisitIdentifierOrAsterisk(ctx *IdentifierOrAsteriskContext) interface{}
+	VisitIdentifierOrAsterisk(ctx *IdentifierOrAsteriskContext) any
 
 	// Visit a parse tree produced by DorisParserParser#userIdentify.
-	VisitUserIdentify(ctx *UserIdentifyContext) interface{}
+	VisitUserIdentify(ctx *UserIdentifyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#grantUserIdentify.
-	VisitGrantUserIdentify(ctx *GrantUserIdentifyContext) interface{}
+	VisitGrantUserIdentify(ctx *GrantUserIdentifyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#explain.
-	VisitExplain(ctx *ExplainContext) interface{}
+	VisitExplain(ctx *ExplainContext) any
 
 	// Visit a parse tree produced by DorisParserParser#explainCommand.
-	VisitExplainCommand(ctx *ExplainCommandContext) interface{}
+	VisitExplainCommand(ctx *ExplainCommandContext) any
 
 	// Visit a parse tree produced by DorisParserParser#planType.
-	VisitPlanType(ctx *PlanTypeContext) interface{}
+	VisitPlanType(ctx *PlanTypeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#replayCommand.
-	VisitReplayCommand(ctx *ReplayCommandContext) interface{}
+	VisitReplayCommand(ctx *ReplayCommandContext) any
 
 	// Visit a parse tree produced by DorisParserParser#replayType.
-	VisitReplayType(ctx *ReplayTypeContext) interface{}
+	VisitReplayType(ctx *ReplayTypeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#mergeType.
-	VisitMergeType(ctx *MergeTypeContext) interface{}
+	VisitMergeType(ctx *MergeTypeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#preFilterClause.
-	VisitPreFilterClause(ctx *PreFilterClauseContext) interface{}
+	VisitPreFilterClause(ctx *PreFilterClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#deleteOnClause.
-	VisitDeleteOnClause(ctx *DeleteOnClauseContext) interface{}
+	VisitDeleteOnClause(ctx *DeleteOnClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#sequenceColClause.
-	VisitSequenceColClause(ctx *SequenceColClauseContext) interface{}
+	VisitSequenceColClause(ctx *SequenceColClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#colFromPath.
-	VisitColFromPath(ctx *ColFromPathContext) interface{}
+	VisitColFromPath(ctx *ColFromPathContext) any
 
 	// Visit a parse tree produced by DorisParserParser#colMappingList.
-	VisitColMappingList(ctx *ColMappingListContext) interface{}
+	VisitColMappingList(ctx *ColMappingListContext) any
 
 	// Visit a parse tree produced by DorisParserParser#mappingExpr.
-	VisitMappingExpr(ctx *MappingExprContext) interface{}
+	VisitMappingExpr(ctx *MappingExprContext) any
 
 	// Visit a parse tree produced by DorisParserParser#withRemoteStorageSystem.
-	VisitWithRemoteStorageSystem(ctx *WithRemoteStorageSystemContext) interface{}
+	VisitWithRemoteStorageSystem(ctx *WithRemoteStorageSystemContext) any
 
 	// Visit a parse tree produced by DorisParserParser#resourceDesc.
-	VisitResourceDesc(ctx *ResourceDescContext) interface{}
+	VisitResourceDesc(ctx *ResourceDescContext) any
 
 	// Visit a parse tree produced by DorisParserParser#mysqlDataDesc.
-	VisitMysqlDataDesc(ctx *MysqlDataDescContext) interface{}
+	VisitMysqlDataDesc(ctx *MysqlDataDescContext) any
 
 	// Visit a parse tree produced by DorisParserParser#skipLines.
-	VisitSkipLines(ctx *SkipLinesContext) interface{}
+	VisitSkipLines(ctx *SkipLinesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#outFileClause.
-	VisitOutFileClause(ctx *OutFileClauseContext) interface{}
+	VisitOutFileClause(ctx *OutFileClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#query.
-	VisitQuery(ctx *QueryContext) interface{}
+	VisitQuery(ctx *QueryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#queryTermDefault.
-	VisitQueryTermDefault(ctx *QueryTermDefaultContext) interface{}
+	VisitQueryTermDefault(ctx *QueryTermDefaultContext) any
 
 	// Visit a parse tree produced by DorisParserParser#setOperation.
-	VisitSetOperation(ctx *SetOperationContext) interface{}
+	VisitSetOperation(ctx *SetOperationContext) any
 
 	// Visit a parse tree produced by DorisParserParser#setQuantifier.
-	VisitSetQuantifier(ctx *SetQuantifierContext) interface{}
+	VisitSetQuantifier(ctx *SetQuantifierContext) any
 
 	// Visit a parse tree produced by DorisParserParser#queryPrimaryDefault.
-	VisitQueryPrimaryDefault(ctx *QueryPrimaryDefaultContext) interface{}
+	VisitQueryPrimaryDefault(ctx *QueryPrimaryDefaultContext) any
 
 	// Visit a parse tree produced by DorisParserParser#subquery.
-	VisitSubquery(ctx *SubqueryContext) interface{}
+	VisitSubquery(ctx *SubqueryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#valuesTable.
-	VisitValuesTable(ctx *ValuesTableContext) interface{}
+	VisitValuesTable(ctx *ValuesTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#regularQuerySpecification.
-	VisitRegularQuerySpecification(ctx *RegularQuerySpecificationContext) interface{}
+	VisitRegularQuerySpecification(ctx *RegularQuerySpecificationContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cte.
-	VisitCte(ctx *CteContext) interface{}
+	VisitCte(ctx *CteContext) any
 
 	// Visit a parse tree produced by DorisParserParser#aliasQuery.
-	VisitAliasQuery(ctx *AliasQueryContext) interface{}
+	VisitAliasQuery(ctx *AliasQueryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#columnAliases.
-	VisitColumnAliases(ctx *ColumnAliasesContext) interface{}
+	VisitColumnAliases(ctx *ColumnAliasesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#selectClause.
-	VisitSelectClause(ctx *SelectClauseContext) interface{}
+	VisitSelectClause(ctx *SelectClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#selectColumnClause.
-	VisitSelectColumnClause(ctx *SelectColumnClauseContext) interface{}
+	VisitSelectColumnClause(ctx *SelectColumnClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#whereClause.
-	VisitWhereClause(ctx *WhereClauseContext) interface{}
+	VisitWhereClause(ctx *WhereClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#fromClause.
-	VisitFromClause(ctx *FromClauseContext) interface{}
+	VisitFromClause(ctx *FromClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#intoClause.
-	VisitIntoClause(ctx *IntoClauseContext) interface{}
+	VisitIntoClause(ctx *IntoClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#bulkCollectClause.
-	VisitBulkCollectClause(ctx *BulkCollectClauseContext) interface{}
+	VisitBulkCollectClause(ctx *BulkCollectClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#tableRow.
-	VisitTableRow(ctx *TableRowContext) interface{}
+	VisitTableRow(ctx *TableRowContext) any
 
 	// Visit a parse tree produced by DorisParserParser#relations.
-	VisitRelations(ctx *RelationsContext) interface{}
+	VisitRelations(ctx *RelationsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#relation.
-	VisitRelation(ctx *RelationContext) interface{}
+	VisitRelation(ctx *RelationContext) any
 
 	// Visit a parse tree produced by DorisParserParser#joinRelation.
-	VisitJoinRelation(ctx *JoinRelationContext) interface{}
+	VisitJoinRelation(ctx *JoinRelationContext) any
 
 	// Visit a parse tree produced by DorisParserParser#bracketDistributeType.
-	VisitBracketDistributeType(ctx *BracketDistributeTypeContext) interface{}
+	VisitBracketDistributeType(ctx *BracketDistributeTypeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#commentDistributeType.
-	VisitCommentDistributeType(ctx *CommentDistributeTypeContext) interface{}
+	VisitCommentDistributeType(ctx *CommentDistributeTypeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#bracketRelationHint.
-	VisitBracketRelationHint(ctx *BracketRelationHintContext) interface{}
+	VisitBracketRelationHint(ctx *BracketRelationHintContext) any
 
 	// Visit a parse tree produced by DorisParserParser#commentRelationHint.
-	VisitCommentRelationHint(ctx *CommentRelationHintContext) interface{}
+	VisitCommentRelationHint(ctx *CommentRelationHintContext) any
 
 	// Visit a parse tree produced by DorisParserParser#aggClause.
-	VisitAggClause(ctx *AggClauseContext) interface{}
+	VisitAggClause(ctx *AggClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#groupingElement.
-	VisitGroupingElement(ctx *GroupingElementContext) interface{}
+	VisitGroupingElement(ctx *GroupingElementContext) any
 
 	// Visit a parse tree produced by DorisParserParser#groupingSet.
-	VisitGroupingSet(ctx *GroupingSetContext) interface{}
+	VisitGroupingSet(ctx *GroupingSetContext) any
 
 	// Visit a parse tree produced by DorisParserParser#havingClause.
-	VisitHavingClause(ctx *HavingClauseContext) interface{}
+	VisitHavingClause(ctx *HavingClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#qualifyClause.
-	VisitQualifyClause(ctx *QualifyClauseContext) interface{}
+	VisitQualifyClause(ctx *QualifyClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#selectHint.
-	VisitSelectHint(ctx *SelectHintContext) interface{}
+	VisitSelectHint(ctx *SelectHintContext) any
 
 	// Visit a parse tree produced by DorisParserParser#hintStatement.
-	VisitHintStatement(ctx *HintStatementContext) interface{}
+	VisitHintStatement(ctx *HintStatementContext) any
 
 	// Visit a parse tree produced by DorisParserParser#hintAssignment.
-	VisitHintAssignment(ctx *HintAssignmentContext) interface{}
+	VisitHintAssignment(ctx *HintAssignmentContext) any
 
 	// Visit a parse tree produced by DorisParserParser#updateAssignment.
-	VisitUpdateAssignment(ctx *UpdateAssignmentContext) interface{}
+	VisitUpdateAssignment(ctx *UpdateAssignmentContext) any
 
 	// Visit a parse tree produced by DorisParserParser#updateAssignmentSeq.
-	VisitUpdateAssignmentSeq(ctx *UpdateAssignmentSeqContext) interface{}
+	VisitUpdateAssignmentSeq(ctx *UpdateAssignmentSeqContext) any
 
 	// Visit a parse tree produced by DorisParserParser#lateralView.
-	VisitLateralView(ctx *LateralViewContext) interface{}
+	VisitLateralView(ctx *LateralViewContext) any
 
 	// Visit a parse tree produced by DorisParserParser#queryOrganization.
-	VisitQueryOrganization(ctx *QueryOrganizationContext) interface{}
+	VisitQueryOrganization(ctx *QueryOrganizationContext) any
 
 	// Visit a parse tree produced by DorisParserParser#sortClause.
-	VisitSortClause(ctx *SortClauseContext) interface{}
+	VisitSortClause(ctx *SortClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#sortItem.
-	VisitSortItem(ctx *SortItemContext) interface{}
+	VisitSortItem(ctx *SortItemContext) any
 
 	// Visit a parse tree produced by DorisParserParser#limitClause.
-	VisitLimitClause(ctx *LimitClauseContext) interface{}
+	VisitLimitClause(ctx *LimitClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#partitionClause.
-	VisitPartitionClause(ctx *PartitionClauseContext) interface{}
+	VisitPartitionClause(ctx *PartitionClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#joinType.
-	VisitJoinType(ctx *JoinTypeContext) interface{}
+	VisitJoinType(ctx *JoinTypeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#joinCriteria.
-	VisitJoinCriteria(ctx *JoinCriteriaContext) interface{}
+	VisitJoinCriteria(ctx *JoinCriteriaContext) any
 
 	// Visit a parse tree produced by DorisParserParser#identifierList.
-	VisitIdentifierList(ctx *IdentifierListContext) interface{}
+	VisitIdentifierList(ctx *IdentifierListContext) any
 
 	// Visit a parse tree produced by DorisParserParser#identifierSeq.
-	VisitIdentifierSeq(ctx *IdentifierSeqContext) interface{}
+	VisitIdentifierSeq(ctx *IdentifierSeqContext) any
 
 	// Visit a parse tree produced by DorisParserParser#optScanParams.
-	VisitOptScanParams(ctx *OptScanParamsContext) interface{}
+	VisitOptScanParams(ctx *OptScanParamsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#tableName.
-	VisitTableName(ctx *TableNameContext) interface{}
+	VisitTableName(ctx *TableNameContext) any
 
 	// Visit a parse tree produced by DorisParserParser#aliasedQuery.
-	VisitAliasedQuery(ctx *AliasedQueryContext) interface{}
+	VisitAliasedQuery(ctx *AliasedQueryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#tableValuedFunction.
-	VisitTableValuedFunction(ctx *TableValuedFunctionContext) interface{}
+	VisitTableValuedFunction(ctx *TableValuedFunctionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#relationList.
-	VisitRelationList(ctx *RelationListContext) interface{}
+	VisitRelationList(ctx *RelationListContext) any
 
 	// Visit a parse tree produced by DorisParserParser#materializedViewName.
-	VisitMaterializedViewName(ctx *MaterializedViewNameContext) interface{}
+	VisitMaterializedViewName(ctx *MaterializedViewNameContext) any
 
 	// Visit a parse tree produced by DorisParserParser#propertyClause.
-	VisitPropertyClause(ctx *PropertyClauseContext) interface{}
+	VisitPropertyClause(ctx *PropertyClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#propertyItemList.
-	VisitPropertyItemList(ctx *PropertyItemListContext) interface{}
+	VisitPropertyItemList(ctx *PropertyItemListContext) any
 
 	// Visit a parse tree produced by DorisParserParser#propertyItem.
-	VisitPropertyItem(ctx *PropertyItemContext) interface{}
+	VisitPropertyItem(ctx *PropertyItemContext) any
 
 	// Visit a parse tree produced by DorisParserParser#propertyKey.
-	VisitPropertyKey(ctx *PropertyKeyContext) interface{}
+	VisitPropertyKey(ctx *PropertyKeyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#propertyValue.
-	VisitPropertyValue(ctx *PropertyValueContext) interface{}
+	VisitPropertyValue(ctx *PropertyValueContext) any
 
 	// Visit a parse tree produced by DorisParserParser#tableAlias.
-	VisitTableAlias(ctx *TableAliasContext) interface{}
+	VisitTableAlias(ctx *TableAliasContext) any
 
 	// Visit a parse tree produced by DorisParserParser#multipartIdentifier.
-	VisitMultipartIdentifier(ctx *MultipartIdentifierContext) interface{}
+	VisitMultipartIdentifier(ctx *MultipartIdentifierContext) any
 
 	// Visit a parse tree produced by DorisParserParser#simpleColumnDefs.
-	VisitSimpleColumnDefs(ctx *SimpleColumnDefsContext) interface{}
+	VisitSimpleColumnDefs(ctx *SimpleColumnDefsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#simpleColumnDef.
-	VisitSimpleColumnDef(ctx *SimpleColumnDefContext) interface{}
+	VisitSimpleColumnDef(ctx *SimpleColumnDefContext) any
 
 	// Visit a parse tree produced by DorisParserParser#columnDefs.
-	VisitColumnDefs(ctx *ColumnDefsContext) interface{}
+	VisitColumnDefs(ctx *ColumnDefsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#columnDef.
-	VisitColumnDef(ctx *ColumnDefContext) interface{}
+	VisitColumnDef(ctx *ColumnDefContext) any
 
 	// Visit a parse tree produced by DorisParserParser#indexDefs.
-	VisitIndexDefs(ctx *IndexDefsContext) interface{}
+	VisitIndexDefs(ctx *IndexDefsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#indexDef.
-	VisitIndexDef(ctx *IndexDefContext) interface{}
+	VisitIndexDef(ctx *IndexDefContext) any
 
 	// Visit a parse tree produced by DorisParserParser#partitionsDef.
-	VisitPartitionsDef(ctx *PartitionsDefContext) interface{}
+	VisitPartitionsDef(ctx *PartitionsDefContext) any
 
 	// Visit a parse tree produced by DorisParserParser#partitionDef.
-	VisitPartitionDef(ctx *PartitionDefContext) interface{}
+	VisitPartitionDef(ctx *PartitionDefContext) any
 
 	// Visit a parse tree produced by DorisParserParser#lessThanPartitionDef.
-	VisitLessThanPartitionDef(ctx *LessThanPartitionDefContext) interface{}
+	VisitLessThanPartitionDef(ctx *LessThanPartitionDefContext) any
 
 	// Visit a parse tree produced by DorisParserParser#fixedPartitionDef.
-	VisitFixedPartitionDef(ctx *FixedPartitionDefContext) interface{}
+	VisitFixedPartitionDef(ctx *FixedPartitionDefContext) any
 
 	// Visit a parse tree produced by DorisParserParser#stepPartitionDef.
-	VisitStepPartitionDef(ctx *StepPartitionDefContext) interface{}
+	VisitStepPartitionDef(ctx *StepPartitionDefContext) any
 
 	// Visit a parse tree produced by DorisParserParser#inPartitionDef.
-	VisitInPartitionDef(ctx *InPartitionDefContext) interface{}
+	VisitInPartitionDef(ctx *InPartitionDefContext) any
 
 	// Visit a parse tree produced by DorisParserParser#partitionValueList.
-	VisitPartitionValueList(ctx *PartitionValueListContext) interface{}
+	VisitPartitionValueList(ctx *PartitionValueListContext) any
 
 	// Visit a parse tree produced by DorisParserParser#partitionValueDef.
-	VisitPartitionValueDef(ctx *PartitionValueDefContext) interface{}
+	VisitPartitionValueDef(ctx *PartitionValueDefContext) any
 
 	// Visit a parse tree produced by DorisParserParser#rollupDefs.
-	VisitRollupDefs(ctx *RollupDefsContext) interface{}
+	VisitRollupDefs(ctx *RollupDefsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#rollupDef.
-	VisitRollupDef(ctx *RollupDefContext) interface{}
+	VisitRollupDef(ctx *RollupDefContext) any
 
 	// Visit a parse tree produced by DorisParserParser#aggTypeDef.
-	VisitAggTypeDef(ctx *AggTypeDefContext) interface{}
+	VisitAggTypeDef(ctx *AggTypeDefContext) any
 
 	// Visit a parse tree produced by DorisParserParser#tabletList.
-	VisitTabletList(ctx *TabletListContext) interface{}
+	VisitTabletList(ctx *TabletListContext) any
 
 	// Visit a parse tree produced by DorisParserParser#inlineTable.
-	VisitInlineTable(ctx *InlineTableContext) interface{}
+	VisitInlineTable(ctx *InlineTableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#namedExpression.
-	VisitNamedExpression(ctx *NamedExpressionContext) interface{}
+	VisitNamedExpression(ctx *NamedExpressionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#namedExpressionSeq.
-	VisitNamedExpressionSeq(ctx *NamedExpressionSeqContext) interface{}
+	VisitNamedExpressionSeq(ctx *NamedExpressionSeqContext) any
 
 	// Visit a parse tree produced by DorisParserParser#expression.
-	VisitExpression(ctx *ExpressionContext) interface{}
+	VisitExpression(ctx *ExpressionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#lambdaExpression.
-	VisitLambdaExpression(ctx *LambdaExpressionContext) interface{}
+	VisitLambdaExpression(ctx *LambdaExpressionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#exist.
-	VisitExist(ctx *ExistContext) interface{}
+	VisitExist(ctx *ExistContext) any
 
 	// Visit a parse tree produced by DorisParserParser#logicalNot.
-	VisitLogicalNot(ctx *LogicalNotContext) interface{}
+	VisitLogicalNot(ctx *LogicalNotContext) any
 
 	// Visit a parse tree produced by DorisParserParser#predicated.
-	VisitPredicated(ctx *PredicatedContext) interface{}
+	VisitPredicated(ctx *PredicatedContext) any
 
 	// Visit a parse tree produced by DorisParserParser#isnull.
-	VisitIsnull(ctx *IsnullContext) interface{}
+	VisitIsnull(ctx *IsnullContext) any
 
 	// Visit a parse tree produced by DorisParserParser#is_not_null_pred.
-	VisitIs_not_null_pred(ctx *Is_not_null_predContext) interface{}
+	VisitIs_not_null_pred(ctx *Is_not_null_predContext) any
 
 	// Visit a parse tree produced by DorisParserParser#logicalBinary.
-	VisitLogicalBinary(ctx *LogicalBinaryContext) interface{}
+	VisitLogicalBinary(ctx *LogicalBinaryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#doublePipes.
-	VisitDoublePipes(ctx *DoublePipesContext) interface{}
+	VisitDoublePipes(ctx *DoublePipesContext) any
 
 	// Visit a parse tree produced by DorisParserParser#rowConstructor.
-	VisitRowConstructor(ctx *RowConstructorContext) interface{}
+	VisitRowConstructor(ctx *RowConstructorContext) any
 
 	// Visit a parse tree produced by DorisParserParser#rowConstructorItem.
-	VisitRowConstructorItem(ctx *RowConstructorItemContext) interface{}
+	VisitRowConstructorItem(ctx *RowConstructorItemContext) any
 
 	// Visit a parse tree produced by DorisParserParser#predicate.
-	VisitPredicate(ctx *PredicateContext) interface{}
+	VisitPredicate(ctx *PredicateContext) any
 
 	// Visit a parse tree produced by DorisParserParser#valueExpressionDefault.
-	VisitValueExpressionDefault(ctx *ValueExpressionDefaultContext) interface{}
+	VisitValueExpressionDefault(ctx *ValueExpressionDefaultContext) any
 
 	// Visit a parse tree produced by DorisParserParser#comparison.
-	VisitComparison(ctx *ComparisonContext) interface{}
+	VisitComparison(ctx *ComparisonContext) any
 
 	// Visit a parse tree produced by DorisParserParser#arithmeticBinary.
-	VisitArithmeticBinary(ctx *ArithmeticBinaryContext) interface{}
+	VisitArithmeticBinary(ctx *ArithmeticBinaryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#arithmeticUnary.
-	VisitArithmeticUnary(ctx *ArithmeticUnaryContext) interface{}
+	VisitArithmeticUnary(ctx *ArithmeticUnaryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dereference.
-	VisitDereference(ctx *DereferenceContext) interface{}
+	VisitDereference(ctx *DereferenceContext) any
 
 	// Visit a parse tree produced by DorisParserParser#currentDate.
-	VisitCurrentDate(ctx *CurrentDateContext) interface{}
+	VisitCurrentDate(ctx *CurrentDateContext) any
 
 	// Visit a parse tree produced by DorisParserParser#cast.
-	VisitCast(ctx *CastContext) interface{}
+	VisitCast(ctx *CastContext) any
 
 	// Visit a parse tree produced by DorisParserParser#parenthesizedExpression.
-	VisitParenthesizedExpression(ctx *ParenthesizedExpressionContext) interface{}
+	VisitParenthesizedExpression(ctx *ParenthesizedExpressionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#userVariable.
-	VisitUserVariable(ctx *UserVariableContext) interface{}
+	VisitUserVariable(ctx *UserVariableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#elementAt.
-	VisitElementAt(ctx *ElementAtContext) interface{}
+	VisitElementAt(ctx *ElementAtContext) any
 
 	// Visit a parse tree produced by DorisParserParser#localTimestamp.
-	VisitLocalTimestamp(ctx *LocalTimestampContext) interface{}
+	VisitLocalTimestamp(ctx *LocalTimestampContext) any
 
 	// Visit a parse tree produced by DorisParserParser#charFunction.
-	VisitCharFunction(ctx *CharFunctionContext) interface{}
+	VisitCharFunction(ctx *CharFunctionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#intervalLiteral.
-	VisitIntervalLiteral(ctx *IntervalLiteralContext) interface{}
+	VisitIntervalLiteral(ctx *IntervalLiteralContext) any
 
 	// Visit a parse tree produced by DorisParserParser#simpleCase.
-	VisitSimpleCase(ctx *SimpleCaseContext) interface{}
+	VisitSimpleCase(ctx *SimpleCaseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#columnReference.
-	VisitColumnReference(ctx *ColumnReferenceContext) interface{}
+	VisitColumnReference(ctx *ColumnReferenceContext) any
 
 	// Visit a parse tree produced by DorisParserParser#star.
-	VisitStar(ctx *StarContext) interface{}
+	VisitStar(ctx *StarContext) any
 
 	// Visit a parse tree produced by DorisParserParser#sessionUser.
-	VisitSessionUser(ctx *SessionUserContext) interface{}
+	VisitSessionUser(ctx *SessionUserContext) any
 
 	// Visit a parse tree produced by DorisParserParser#convertType.
-	VisitConvertType(ctx *ConvertTypeContext) interface{}
+	VisitConvertType(ctx *ConvertTypeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#convertCharSet.
-	VisitConvertCharSet(ctx *ConvertCharSetContext) interface{}
+	VisitConvertCharSet(ctx *ConvertCharSetContext) any
 
 	// Visit a parse tree produced by DorisParserParser#subqueryExpression.
-	VisitSubqueryExpression(ctx *SubqueryExpressionContext) interface{}
+	VisitSubqueryExpression(ctx *SubqueryExpressionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#encryptKey.
-	VisitEncryptKey(ctx *EncryptKeyContext) interface{}
+	VisitEncryptKey(ctx *EncryptKeyContext) any
 
 	// Visit a parse tree produced by DorisParserParser#currentTime.
-	VisitCurrentTime(ctx *CurrentTimeContext) interface{}
+	VisitCurrentTime(ctx *CurrentTimeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#localTime.
-	VisitLocalTime(ctx *LocalTimeContext) interface{}
+	VisitLocalTime(ctx *LocalTimeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#systemVariable.
-	VisitSystemVariable(ctx *SystemVariableContext) interface{}
+	VisitSystemVariable(ctx *SystemVariableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#collate.
-	VisitCollate(ctx *CollateContext) interface{}
+	VisitCollate(ctx *CollateContext) any
 
 	// Visit a parse tree produced by DorisParserParser#currentUser.
-	VisitCurrentUser(ctx *CurrentUserContext) interface{}
+	VisitCurrentUser(ctx *CurrentUserContext) any
 
 	// Visit a parse tree produced by DorisParserParser#constantDefault.
-	VisitConstantDefault(ctx *ConstantDefaultContext) interface{}
+	VisitConstantDefault(ctx *ConstantDefaultContext) any
 
 	// Visit a parse tree produced by DorisParserParser#extract.
-	VisitExtract(ctx *ExtractContext) interface{}
+	VisitExtract(ctx *ExtractContext) any
 
 	// Visit a parse tree produced by DorisParserParser#currentTimestamp.
-	VisitCurrentTimestamp(ctx *CurrentTimestampContext) interface{}
+	VisitCurrentTimestamp(ctx *CurrentTimestampContext) any
 
 	// Visit a parse tree produced by DorisParserParser#functionCall.
-	VisitFunctionCall(ctx *FunctionCallContext) interface{}
+	VisitFunctionCall(ctx *FunctionCallContext) any
 
 	// Visit a parse tree produced by DorisParserParser#arraySlice.
-	VisitArraySlice(ctx *ArraySliceContext) interface{}
+	VisitArraySlice(ctx *ArraySliceContext) any
 
 	// Visit a parse tree produced by DorisParserParser#searchedCase.
-	VisitSearchedCase(ctx *SearchedCaseContext) interface{}
+	VisitSearchedCase(ctx *SearchedCaseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#except.
-	VisitExcept(ctx *ExceptContext) interface{}
+	VisitExcept(ctx *ExceptContext) any
 
 	// Visit a parse tree produced by DorisParserParser#replace.
-	VisitReplace(ctx *ReplaceContext) interface{}
+	VisitReplace(ctx *ReplaceContext) any
 
 	// Visit a parse tree produced by DorisParserParser#castDataType.
-	VisitCastDataType(ctx *CastDataTypeContext) interface{}
+	VisitCastDataType(ctx *CastDataTypeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#functionCallExpression.
-	VisitFunctionCallExpression(ctx *FunctionCallExpressionContext) interface{}
+	VisitFunctionCallExpression(ctx *FunctionCallExpressionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#functionIdentifier.
-	VisitFunctionIdentifier(ctx *FunctionIdentifierContext) interface{}
+	VisitFunctionIdentifier(ctx *FunctionIdentifierContext) any
 
 	// Visit a parse tree produced by DorisParserParser#functionNameIdentifier.
-	VisitFunctionNameIdentifier(ctx *FunctionNameIdentifierContext) interface{}
+	VisitFunctionNameIdentifier(ctx *FunctionNameIdentifierContext) any
 
 	// Visit a parse tree produced by DorisParserParser#windowSpec.
-	VisitWindowSpec(ctx *WindowSpecContext) interface{}
+	VisitWindowSpec(ctx *WindowSpecContext) any
 
 	// Visit a parse tree produced by DorisParserParser#windowFrame.
-	VisitWindowFrame(ctx *WindowFrameContext) interface{}
+	VisitWindowFrame(ctx *WindowFrameContext) any
 
 	// Visit a parse tree produced by DorisParserParser#frameUnits.
-	VisitFrameUnits(ctx *FrameUnitsContext) interface{}
+	VisitFrameUnits(ctx *FrameUnitsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#frameBoundary.
-	VisitFrameBoundary(ctx *FrameBoundaryContext) interface{}
+	VisitFrameBoundary(ctx *FrameBoundaryContext) any
 
 	// Visit a parse tree produced by DorisParserParser#qualifiedName.
-	VisitQualifiedName(ctx *QualifiedNameContext) interface{}
+	VisitQualifiedName(ctx *QualifiedNameContext) any
 
 	// Visit a parse tree produced by DorisParserParser#specifiedPartition.
-	VisitSpecifiedPartition(ctx *SpecifiedPartitionContext) interface{}
+	VisitSpecifiedPartition(ctx *SpecifiedPartitionContext) any
 
 	// Visit a parse tree produced by DorisParserParser#nullLiteral.
-	VisitNullLiteral(ctx *NullLiteralContext) interface{}
+	VisitNullLiteral(ctx *NullLiteralContext) any
 
 	// Visit a parse tree produced by DorisParserParser#typeConstructor.
-	VisitTypeConstructor(ctx *TypeConstructorContext) interface{}
+	VisitTypeConstructor(ctx *TypeConstructorContext) any
 
 	// Visit a parse tree produced by DorisParserParser#numericLiteral.
-	VisitNumericLiteral(ctx *NumericLiteralContext) interface{}
+	VisitNumericLiteral(ctx *NumericLiteralContext) any
 
 	// Visit a parse tree produced by DorisParserParser#booleanLiteral.
-	VisitBooleanLiteral(ctx *BooleanLiteralContext) interface{}
+	VisitBooleanLiteral(ctx *BooleanLiteralContext) any
 
 	// Visit a parse tree produced by DorisParserParser#stringLiteral.
-	VisitStringLiteral(ctx *StringLiteralContext) interface{}
+	VisitStringLiteral(ctx *StringLiteralContext) any
 
 	// Visit a parse tree produced by DorisParserParser#arrayLiteral.
-	VisitArrayLiteral(ctx *ArrayLiteralContext) interface{}
+	VisitArrayLiteral(ctx *ArrayLiteralContext) any
 
 	// Visit a parse tree produced by DorisParserParser#mapLiteral.
-	VisitMapLiteral(ctx *MapLiteralContext) interface{}
+	VisitMapLiteral(ctx *MapLiteralContext) any
 
 	// Visit a parse tree produced by DorisParserParser#structLiteral.
-	VisitStructLiteral(ctx *StructLiteralContext) interface{}
+	VisitStructLiteral(ctx *StructLiteralContext) any
 
 	// Visit a parse tree produced by DorisParserParser#placeholder.
-	VisitPlaceholder(ctx *PlaceholderContext) interface{}
+	VisitPlaceholder(ctx *PlaceholderContext) any
 
 	// Visit a parse tree produced by DorisParserParser#comparisonOperator.
-	VisitComparisonOperator(ctx *ComparisonOperatorContext) interface{}
+	VisitComparisonOperator(ctx *ComparisonOperatorContext) any
 
 	// Visit a parse tree produced by DorisParserParser#booleanValue.
-	VisitBooleanValue(ctx *BooleanValueContext) interface{}
+	VisitBooleanValue(ctx *BooleanValueContext) any
 
 	// Visit a parse tree produced by DorisParserParser#whenClause.
-	VisitWhenClause(ctx *WhenClauseContext) interface{}
+	VisitWhenClause(ctx *WhenClauseContext) any
 
 	// Visit a parse tree produced by DorisParserParser#interval.
-	VisitInterval(ctx *IntervalContext) interface{}
+	VisitInterval(ctx *IntervalContext) any
 
 	// Visit a parse tree produced by DorisParserParser#unitIdentifier.
-	VisitUnitIdentifier(ctx *UnitIdentifierContext) interface{}
+	VisitUnitIdentifier(ctx *UnitIdentifierContext) any
 
 	// Visit a parse tree produced by DorisParserParser#dataTypeWithNullable.
-	VisitDataTypeWithNullable(ctx *DataTypeWithNullableContext) interface{}
+	VisitDataTypeWithNullable(ctx *DataTypeWithNullableContext) any
 
 	// Visit a parse tree produced by DorisParserParser#complexDataType.
-	VisitComplexDataType(ctx *ComplexDataTypeContext) interface{}
+	VisitComplexDataType(ctx *ComplexDataTypeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#aggStateDataType.
-	VisitAggStateDataType(ctx *AggStateDataTypeContext) interface{}
+	VisitAggStateDataType(ctx *AggStateDataTypeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#primitiveDataType.
-	VisitPrimitiveDataType(ctx *PrimitiveDataTypeContext) interface{}
+	VisitPrimitiveDataType(ctx *PrimitiveDataTypeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#primitiveColType.
-	VisitPrimitiveColType(ctx *PrimitiveColTypeContext) interface{}
+	VisitPrimitiveColType(ctx *PrimitiveColTypeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#complexColTypeList.
-	VisitComplexColTypeList(ctx *ComplexColTypeListContext) interface{}
+	VisitComplexColTypeList(ctx *ComplexColTypeListContext) any
 
 	// Visit a parse tree produced by DorisParserParser#complexColType.
-	VisitComplexColType(ctx *ComplexColTypeContext) interface{}
+	VisitComplexColType(ctx *ComplexColTypeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#commentSpec.
-	VisitCommentSpec(ctx *CommentSpecContext) interface{}
+	VisitCommentSpec(ctx *CommentSpecContext) any
 
 	// Visit a parse tree produced by DorisParserParser#sample.
-	VisitSample(ctx *SampleContext) interface{}
+	VisitSample(ctx *SampleContext) any
 
 	// Visit a parse tree produced by DorisParserParser#sampleByPercentile.
-	VisitSampleByPercentile(ctx *SampleByPercentileContext) interface{}
+	VisitSampleByPercentile(ctx *SampleByPercentileContext) any
 
 	// Visit a parse tree produced by DorisParserParser#sampleByRows.
-	VisitSampleByRows(ctx *SampleByRowsContext) interface{}
+	VisitSampleByRows(ctx *SampleByRowsContext) any
 
 	// Visit a parse tree produced by DorisParserParser#tableSnapshot.
-	VisitTableSnapshot(ctx *TableSnapshotContext) interface{}
+	VisitTableSnapshot(ctx *TableSnapshotContext) any
 
 	// Visit a parse tree produced by DorisParserParser#errorCapturingIdentifier.
-	VisitErrorCapturingIdentifier(ctx *ErrorCapturingIdentifierContext) interface{}
+	VisitErrorCapturingIdentifier(ctx *ErrorCapturingIdentifierContext) any
 
 	// Visit a parse tree produced by DorisParserParser#errorIdent.
-	VisitErrorIdent(ctx *ErrorIdentContext) interface{}
+	VisitErrorIdent(ctx *ErrorIdentContext) any
 
 	// Visit a parse tree produced by DorisParserParser#realIdent.
-	VisitRealIdent(ctx *RealIdentContext) interface{}
+	VisitRealIdent(ctx *RealIdentContext) any
 
 	// Visit a parse tree produced by DorisParserParser#identifier.
-	VisitIdentifier(ctx *IdentifierContext) interface{}
+	VisitIdentifier(ctx *IdentifierContext) any
 
 	// Visit a parse tree produced by DorisParserParser#unquotedIdentifier.
-	VisitUnquotedIdentifier(ctx *UnquotedIdentifierContext) interface{}
+	VisitUnquotedIdentifier(ctx *UnquotedIdentifierContext) any
 
 	// Visit a parse tree produced by DorisParserParser#quotedIdentifierAlternative.
-	VisitQuotedIdentifierAlternative(ctx *QuotedIdentifierAlternativeContext) interface{}
+	VisitQuotedIdentifierAlternative(ctx *QuotedIdentifierAlternativeContext) any
 
 	// Visit a parse tree produced by DorisParserParser#quotedIdentifier.
-	VisitQuotedIdentifier(ctx *QuotedIdentifierContext) interface{}
+	VisitQuotedIdentifier(ctx *QuotedIdentifierContext) any
 
 	// Visit a parse tree produced by DorisParserParser#integerLiteral.
-	VisitIntegerLiteral(ctx *IntegerLiteralContext) interface{}
+	VisitIntegerLiteral(ctx *IntegerLiteralContext) any
 
 	// Visit a parse tree produced by DorisParserParser#decimalLiteral.
-	VisitDecimalLiteral(ctx *DecimalLiteralContext) interface{}
+	VisitDecimalLiteral(ctx *DecimalLiteralContext) any
 
 	// Visit a parse tree produced by DorisParserParser#nonReserved.
-	VisitNonReserved(ctx *NonReservedContext) interface{}
+	VisitNonReserved(ctx *NonReservedContext) any
 }

@@ -359,7 +359,7 @@ func (i *Instance) noCache(ctx context.Context, start, step int64) int {
 
 // vmQuery
 func (i *Instance) vmQuery(
-	ctx context.Context, sql string, data interface{}, span *trace.Span,
+	ctx context.Context, sql string, data any, span *trace.Span,
 ) error {
 	var (
 		cancel        context.CancelFunc

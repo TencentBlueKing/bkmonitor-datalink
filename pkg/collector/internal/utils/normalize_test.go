@@ -17,73 +17,69 @@ import (
 )
 
 func TestNormalize(t *testing.T) {
-	type Case struct {
-		Input  string
-		Output string
-	}
-
-	cases := []Case{
+	tests := []struct {
+		input  string
+		output string
+	}{
 		{
-			Input:  "foo.bar",
-			Output: "foo_bar",
+			input:  "foo.bar",
+			output: "foo_bar",
 		},
 		{
-			Input:  "foo.bar.zzz",
-			Output: "foo_bar_zzz",
+			input:  "foo.bar.zzz",
+			output: "foo_bar_zzz",
 		},
 		{
-			Input:  "foo.bar..",
-			Output: "foo_bar",
+			input:  "foo.bar..",
+			output: "foo_bar",
 		},
 		{
-			Input:  "TestApp.HelloGo.HelloGoObjAdapter.connectRate",
-			Output: "TestApp_HelloGo_HelloGoObjAdapter_connectRate",
+			input:  "TestApp.HelloGo.HelloGoObjAdapter.connectRate",
+			output: "TestApp_HelloGo_HelloGoObjAdapter_connectRate",
 		},
 		{
-			Input:  "TestApp.HelloGo.exception_single_log_more_than_3M",
-			Output: "TestApp_HelloGo_exception_single_log_more_than_3M",
+			input:  "TestApp.HelloGo.exception_single_log_more_than_3M",
+			output: "TestApp_HelloGo_exception_single_log_more_than_3M",
 		},
 		{
-			Input:  "TestApp.HelloGo.asyncqueue0",
-			Output: "TestApp_HelloGo_asyncqueue0",
+			input:  "TestApp.HelloGo.asyncqueue0",
+			output: "TestApp_HelloGo_asyncqueue0",
 		},
 		{
-			Input:  "Exception-Log",
-			Output: "Exception_Log",
+			input:  "Exception-Log",
+			output: "Exception_Log",
 		},
 	}
 
-	for _, c := range cases {
-		assert.Equal(t, c.Output, NormalizeName(c.Input))
+	for _, c := range tests {
+		assert.Equal(t, c.output, NormalizeName(c.input))
 	}
 }
 
 func benchmarkIsNormalized(b *testing.B, f func(string) bool) {
-	type Case struct {
-		Input     string
-		Validated bool
-	}
-
-	cases := []Case{
-		{Input: "foo.bar", Validated: false},
-		{Input: "foo.bar.zzz", Validated: false},
-		{Input: "foo.bar..", Validated: false},
-		{Input: "TestApp_HelloGo_HelloGoObjAdapter_connectRate", Validated: true},
-		{Input: "TestApp_HelloGo_HelloGoObjAdapter.connectRate", Validated: false},
-		{Input: "TestApp.HelloGo.exception_single_log_more_than_3M", Validated: false},
-		{Input: "TestApp_HelloGo_exception_single_log_more_than_3M", Validated: true},
-		{Input: "TestApp.HelloGo.asyncqueue0", Validated: false},
-		{Input: "Exception-Log", Validated: false},
-		{Input: "┓(-´∀`-)┏", Validated: false},
+	cases := []struct {
+		input     string
+		validated bool
+	}{
+		{input: "foo.bar", validated: false},
+		{input: "foo.bar.zzz", validated: false},
+		{input: "foo.bar..", validated: false},
+		{input: "TestApp_HelloGo_HelloGoObjAdapter_connectRate", validated: true},
+		{input: "TestApp_HelloGo_HelloGoObjAdapter.connectRate", validated: false},
+		{input: "TestApp.HelloGo.exception_single_log_more_than_3M", validated: false},
+		{input: "TestApp_HelloGo_exception_single_log_more_than_3M", validated: true},
+		{input: "TestApp.HelloGo.asyncqueue0", validated: false},
+		{input: "Exception-Log", validated: false},
+		{input: "┓(-´∀`-)┏", validated: false},
 	}
 
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			for _, c := range cases {
-				ok := f(c.Input)
-				if c.Validated != ok {
-					b.Errorf("input=(%v), want '%v' but go '%v'", c.Input, c.Validated, ok)
+				ok := f(c.input)
+				if c.validated != ok {
+					b.Errorf("input=(%v), want '%v' but go '%v'", c.input, c.validated, ok)
 				}
 			}
 		}

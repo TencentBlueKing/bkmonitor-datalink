@@ -64,27 +64,25 @@ func TestCalcSpanDuration(t *testing.T) {
 }
 
 func TestFirstUpper(t *testing.T) {
-	type Case struct {
-		Input  string
-		Output string
-	}
-
-	cases := []Case{
+	tests := []struct {
+		input  string
+		output string
+	}{
 		{
-			Input:  "foo",
-			Output: "Foo",
+			input:  "foo",
+			output: "Foo",
 		},
 		{
-			Input:  "FOO",
-			Output: "Foo",
+			input:  "FOO",
+			output: "Foo",
 		},
 		{
-			Input:  "",
-			Output: "x",
+			input:  "",
+			output: "x",
 		},
 	}
 
-	for _, c := range cases {
-		assert.Equal(t, c.Output, FirstUpper(c.Input, "x"))
+	for _, c := range tests {
+		assert.Equal(t, c.output, FirstUpper(c.input, "x"))
 	}
 }

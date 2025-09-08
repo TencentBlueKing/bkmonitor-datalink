@@ -93,7 +93,7 @@ func TestParseMetricSelector(t *testing.T) {
 		},
 		{
 			name:     "seprate by dot",
-			selector: "metric.name{label=\"value\"}",
+			selector: `metric.name{label="value"}`,
 			want: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "metric.name"),
 				labels.MustNewMatcher(labels.MatchEqual, "label", "value"),

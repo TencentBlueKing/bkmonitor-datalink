@@ -29,7 +29,7 @@ func podMonitorID(obj *promv1.PodMonitor) string {
 	return fmt.Sprintf("%s/%s", obj.Namespace, obj.Name)
 }
 
-func (c *Operator) handlePodMonitorAdd(obj interface{}) {
+func (c *Operator) handlePodMonitorAdd(obj any) {
 	podMonitor, ok := obj.(*promv1.PodMonitor)
 	if !ok {
 		logger.Errorf("expected PodMonitor type, got %T", obj)
@@ -50,7 +50,7 @@ func (c *Operator) handlePodMonitorAdd(obj interface{}) {
 	}
 }
 
-func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}) {
+func (c *Operator) handlePodMonitorUpdate(oldObj any, newObj any) {
 	old, ok := oldObj.(*promv1.PodMonitor)
 	if !ok {
 		logger.Errorf("expected PodMonitor type, got %T", oldObj)
@@ -86,7 +86,7 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 	}
 }
 
-func (c *Operator) handlePodMonitorDelete(obj interface{}) {
+func (c *Operator) handlePodMonitorDelete(obj any) {
 	podMonitor, ok := obj.(*promv1.PodMonitor)
 	if !ok {
 		logger.Errorf("expected PodMonitor type, got %T", obj)

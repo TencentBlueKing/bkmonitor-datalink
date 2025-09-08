@@ -28,7 +28,7 @@ func serviceMonitorID(obj *promv1.ServiceMonitor) string {
 	return fmt.Sprintf("%s/%s", obj.Namespace, obj.Name)
 }
 
-func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
+func (c *Operator) handleServiceMonitorAdd(obj any) {
 	serviceMonitor, ok := obj.(*promv1.ServiceMonitor)
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", obj)
@@ -49,7 +49,7 @@ func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
 	}
 }
 
-func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interface{}) {
+func (c *Operator) handleServiceMonitorUpdate(oldObj any, newObj any) {
 	old, ok := oldObj.(*promv1.ServiceMonitor)
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", oldObj)
@@ -85,7 +85,7 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 	}
 }
 
-func (c *Operator) handleServiceMonitorDelete(obj interface{}) {
+func (c *Operator) handleServiceMonitorDelete(obj any) {
 	serviceMonitor, ok := obj.(*promv1.ServiceMonitor)
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", obj)

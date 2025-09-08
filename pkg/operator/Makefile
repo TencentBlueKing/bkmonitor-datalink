@@ -32,6 +32,7 @@ mod:
 
 .PHONY: lint
 lint:
+	gofmt -r 'interface{} -> any' -w .
 	diff -u <(echo -n) <(gofumpt -w .)
 	diff -u <(echo -n) <(goimports-reviser -project-name "github.com/TencentBlueKing/bkmonitor-datalink/pkg" ./...)
 

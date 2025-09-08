@@ -153,19 +153,19 @@ func (r *Reloader) Stop() {
 	r.wg.Wait()
 }
 
-func (r *Reloader) handleSecretAdd(obj interface{}) {
+func (r *Reloader) handleSecretAdd(obj any) {
 	r.handleSecrets(action.Add, obj)
 }
 
-func (r *Reloader) handleSecretDelete(obj interface{}) {
+func (r *Reloader) handleSecretDelete(obj any) {
 	r.handleSecrets(action.Delete, obj)
 }
 
-func (r *Reloader) handleSecretUpdate(_ interface{}, newObj interface{}) {
+func (r *Reloader) handleSecretUpdate(_ any, newObj any) {
 	r.handleSecrets(action.Update, newObj)
 }
 
-func (r *Reloader) handleSecrets(act string, obj interface{}) {
+func (r *Reloader) handleSecrets(act string, obj any) {
 	var secretName string
 	switch configs.G().TaskType {
 	case tasks.TaskTypeDaemonSet:

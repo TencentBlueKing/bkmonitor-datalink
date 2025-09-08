@@ -53,7 +53,7 @@ func newSyncEventHandler(syncer Syncer) *syncEventHandler {
 	}
 }
 
-func (r *syncEventHandler) objectKey(obj interface{}) (string, bool) {
+func (r *syncEventHandler) objectKey(obj any) (string, bool) {
 	k, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err != nil {
 		return "", false
@@ -86,7 +86,7 @@ func (r *syncEventHandler) hasObjectChanged(old, cur metav1.Object) bool {
 	return false
 }
 
-func (r *syncEventHandler) OnAdd(obj interface{}, _ bool) {
+func (r *syncEventHandler) OnAdd(obj any, _ bool) {
 	key, ok := r.objectKey(obj)
 	if !ok {
 		return
@@ -101,7 +101,7 @@ func (r *syncEventHandler) OnAdd(obj interface{}, _ bool) {
 	r.reconcileQ.Add(key)
 }
 
-func (r *syncEventHandler) OnUpdate(old, cur interface{}) {
+func (r *syncEventHandler) OnUpdate(old, cur any) {
 	key, ok := r.objectKey(cur)
 	if !ok {
 		return
@@ -129,7 +129,7 @@ func (r *syncEventHandler) OnUpdate(old, cur interface{}) {
 	r.reconcileQ.Add(key)
 }
 
-func (r *syncEventHandler) OnDelete(obj interface{}) {
+func (r *syncEventHandler) OnDelete(obj any) {
 	key, ok := r.objectKey(obj)
 	if !ok {
 		return

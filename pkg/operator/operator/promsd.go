@@ -137,7 +137,7 @@ func (sk SecretKey) Key() string {
 }
 
 func unmarshalPromSdConfigs(b []byte) ([]config.ScrapeConfig, error) {
-	var objs []interface{}
+	var objs []any
 	if err := yaml.Unmarshal(b, &objs); err != nil {
 		return nil, err
 	}
@@ -167,7 +167,7 @@ func castDuration(d model.Duration) string {
 	return d.String()
 }
 
-func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig interface{}, kind string, index int) (discover.Discover, error) {
+func (c *Operator) createHttpLikeSdDiscover(rsc resourceScrapConfig, sdConfig any, kind string, index int) (discover.Discover, error) {
 	metricRelabelings := make([]yaml.MapSlice, 0)
 	if len(rsc.Config.MetricRelabelConfigs) != 0 {
 		for _, cfg := range rsc.Config.MetricRelabelConfigs {

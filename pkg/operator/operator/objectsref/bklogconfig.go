@@ -274,7 +274,7 @@ func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, re
 	informer := factory.Bk().V1alpha1().BkLogConfigs().Informer()
 
 	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			bklogconfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
 			if !ok {
 				logger.Errorf("expected BkLogConfig type, got %T", obj)
@@ -286,7 +286,7 @@ func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, re
 				objsMap.Set(entity)
 			}
 		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
+		UpdateFunc: func(oldObj, newObj any) {
 			old, ok := oldObj.(*loggingv1alpha1.BkLogConfig)
 			if !ok {
 				logger.Errorf("expected BkLogConfig type, got %T", oldObj)
@@ -306,7 +306,7 @@ func newBklogConfigObjects(ctx context.Context, client bkversioned.Interface, re
 				objsMap.Set(entity)
 			}
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			bklogconfig, ok := obj.(*loggingv1alpha1.BkLogConfig)
 			if !ok {
 				logger.Errorf("expected BkLogConfig type, got %T", obj)

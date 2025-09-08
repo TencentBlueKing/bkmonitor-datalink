@@ -341,7 +341,7 @@ func (w *dataIDWatcher) Stop() {
 	w.wg.Wait()
 }
 
-func (w *dataIDWatcher) handleDataIDAdd(obj interface{}) {
+func (w *dataIDWatcher) handleDataIDAdd(obj any) {
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
 		logger.Errorf("expected DataID type, got %T", obj)
@@ -357,7 +357,7 @@ func (w *dataIDWatcher) handleDataIDAdd(obj interface{}) {
 	w.updateDataID(dataID)
 }
 
-func (w *dataIDWatcher) handleDataIDDelete(obj interface{}) {
+func (w *dataIDWatcher) handleDataIDDelete(obj any) {
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
 		logger.Errorf("expected DataID type, got %T", obj)
@@ -373,7 +373,7 @@ func (w *dataIDWatcher) handleDataIDDelete(obj interface{}) {
 	w.deleteDataID(dataID)
 }
 
-func (w *dataIDWatcher) handleDataIDUpdate(oldObj interface{}, newObj interface{}) {
+func (w *dataIDWatcher) handleDataIDUpdate(oldObj any, newObj any) {
 	old, ok := oldObj.(*bkv1beta1.DataID)
 	if !ok {
 		logger.Errorf("expected DataID type, got %T", oldObj)

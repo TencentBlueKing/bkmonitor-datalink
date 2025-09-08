@@ -35,7 +35,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/pprofsnapshot"
 )
 
-func writeResponse(w http.ResponseWriter, data interface{}) {
+func writeResponse(w http.ResponseWriter, data any) {
 	bs, err := json.Marshal(data)
 	if err != nil {
 		w.Write([]byte(fmt.Sprintf(`{"msg": "%s"}`, err.Error())))
@@ -279,7 +279,7 @@ const (
 // 检查处理 secrets 是否有问题
 // 检查给定关键字监测资源
 func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
-	writef := func(format string, a ...interface{}) {
+	writef := func(format string, a ...any) {
 		w.Write([]byte(fmt.Sprintf(format, a...)))
 	}
 

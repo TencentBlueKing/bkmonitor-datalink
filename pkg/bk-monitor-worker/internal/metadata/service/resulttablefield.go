@@ -16,7 +16,7 @@ import (
 )
 
 // FieldDefBkAgentId GSE agent ID
-var FieldDefBkAgentId = map[string]interface{}{
+var FieldDefBkAgentId = map[string]any{
 	"field_name":        "bk_agent_id",
 	"field_type":        models.ResultTableFieldTypeString,
 	"unit":              "",
@@ -29,7 +29,7 @@ var FieldDefBkAgentId = map[string]interface{}{
 }
 
 // FieldDefBkHostId CMDB host ID
-var FieldDefBkHostId = map[string]interface{}{
+var FieldDefBkHostId = map[string]any{
 	"field_name":        "bk_host_id",
 	"field_type":        models.ResultTableFieldTypeString,
 	"unit":              "",
@@ -42,7 +42,7 @@ var FieldDefBkHostId = map[string]interface{}{
 }
 
 // CMDB host ID
-var FieldDefBkTargetHostId = map[string]interface{}{
+var FieldDefBkTargetHostId = map[string]any{
 	"field_name":        "bk_target_host_id",
 	"field_type":        models.ResultTableFieldTypeString,
 	"unit":              "",
@@ -65,7 +65,7 @@ func NewResultTableFieldSvc(obj *resulttable.ResultTableField) ResultTableFieldS
 	}
 }
 
-func (ResultTableFieldSvc) BatchGetFields(tableIdList []string, isConsulConfig bool) (map[string][]interface{}, error) {
+func (ResultTableFieldSvc) BatchGetFields(tableIdList []string, isConsulConfig bool) (map[string][]any, error) {
 	tableFieldOptionData, err := NewResultTableFieldOptionSvc(nil).BathFieldOption(tableIdList)
 	if err != nil {
 		return nil, err
@@ -75,19 +75,19 @@ func (ResultTableFieldSvc) BatchGetFields(tableIdList []string, isConsulConfig b
 		TableIDIn(tableIdList...).All(&rtFieldList); err != nil {
 		return nil, err
 	}
-	var data = make(map[string][]interface{})
+	data := make(map[string][]any)
 	for _, field := range rtFieldList {
-		var option interface{}
+		var option any
 		if _, ok := tableFieldOptionData[field.TableID]; ok {
 			if _, ok := tableFieldOptionData[field.TableID][field.FieldName]; ok {
 				option = tableFieldOptionData[field.TableID][field.FieldName]
 			} else {
-				option = make(map[string]interface{})
+				option = make(map[string]any)
 			}
 		} else {
-			option = make(map[string]interface{})
+			option = make(map[string]any)
 		}
-		item := map[string]interface{}{
+		item := map[string]any{
 			"field_name":        field.FieldName,
 			"type":              field.FieldType,
 			"tag":               field.Tag,
@@ -106,7 +106,7 @@ func (ResultTableFieldSvc) BatchGetFields(tableIdList []string, isConsulConfig b
 		if items, ok := data[field.TableID]; ok {
 			data[field.TableID] = append(items, item)
 		} else {
-			data[field.TableID] = []interface{}{item}
+			data[field.TableID] = []any{item}
 		}
 	}
 	return data, nil

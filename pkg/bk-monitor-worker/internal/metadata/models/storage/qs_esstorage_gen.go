@@ -1376,7 +1376,7 @@ var ESStorageDBSchema = struct {
 // Update updates ESStorage fields by primary key
 // nolint: dupl
 func (o *ESStorage) Update(db *gorm.DB, fields ...ESStorageDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"table_id":            o.TableID,
 		"date_format":         o.DateFormat,
 		"slice_size":          o.SliceSize,
@@ -1393,7 +1393,7 @@ func (o *ESStorage) Update(db *gorm.DB, fields ...ESStorageDBSchemaField) error 
 		"need_create_index":   o.NeedCreateIndex,
 		"origin_table_id":     o.OriginTableId,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -1412,7 +1412,7 @@ func (o *ESStorage) Update(db *gorm.DB, fields ...ESStorageDBSchemaField) error 
 
 // ESStorageUpdater is an ESStorage updates manager
 type ESStorageUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -1420,7 +1420,7 @@ type ESStorageUpdater struct {
 // nolint: dupl
 func NewESStorageUpdater(db *gorm.DB) ESStorageUpdater {
 	return ESStorageUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&ESStorage{}),
 	}
 }

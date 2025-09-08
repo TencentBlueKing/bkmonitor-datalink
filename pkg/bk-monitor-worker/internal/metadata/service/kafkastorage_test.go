@@ -52,5 +52,4 @@ func TestKafkaStorageSvc_ConsulConfig(t *testing.T) {
 	storageConfigStr, err := jsonx.MarshalString(config.StorageConfig)
 	assert.NoError(t, err)
 	assert.JSONEq(t, storageConfigStr, `{"partition":1,"topic":"kafka_topic"}`)
-
 }

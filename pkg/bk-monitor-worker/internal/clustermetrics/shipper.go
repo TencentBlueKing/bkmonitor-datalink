@@ -26,7 +26,7 @@ import (
 type Record struct {
 	Instance ClusterInstance
 	Metric   *ClusterMetric
-	Data     []map[string]interface{}
+	Data     []map[string]any
 }
 
 func (r *Record) Print() string {
@@ -60,7 +60,7 @@ func (kw *KvShipper) Write(ctx context.Context, record *Record) {
 	}
 	ttl := time.Duration(config.ClusterMetricStorageTTL)
 	// 提取已经保存的指标数据
-	savedData := make([]map[string]interface{}, 0)
+	savedData := make([]map[string]any, 0)
 	savedContent := kw.RedisClient.HGet(config.ClusterMetricKey, key)
 	if savedContent == "" {
 		logger.Infof("No key(%s) contents", key)
@@ -72,7 +72,7 @@ func (kw *KvShipper) Write(ctx context.Context, record *Record) {
 		}
 	}
 	// 合并新旧指标数据
-	var validData []map[string]interface{}
+	var validData []map[string]any
 	if len(savedData) > 0 {
 		data := append(record.Data, savedData...)
 		// 数据以秒为单位进行存储，移除过期数据

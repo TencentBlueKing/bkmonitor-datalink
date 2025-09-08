@@ -113,7 +113,7 @@ type AlarmHostInfo struct {
 	BkCloudName string `json:"bk_cloud_name"`
 	DisplayName string `json:"display_name"`
 
-	TopoLinks map[string][]map[string]interface{} `json:"topo_link"`
+	TopoLinks map[string][]map[string]any `json:"topo_link"`
 
 	Expands map[string]map[string]any `json:"expands"`
 }
@@ -232,7 +232,7 @@ func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataI
 		BkModuleIds: bkModuleIds,
 		BkCloudName: "",
 		DisplayName: displayName,
-		TopoLinks:   make(map[string][]map[string]interface{}),
+		TopoLinks:   make(map[string][]map[string]any),
 		Expands:     expands,
 	}
 
@@ -516,7 +516,7 @@ func (m *HostAndTopoCacheManager) refreshTopoCache(ctx context.Context, bkBizId 
 
 	topoNodes := make(map[string]string)
 	topo.Traverse(func(node *cmdb.SearchBizInstTopoData) {
-		value, _ := json.Marshal(map[string]interface{}{
+		value, _ := json.Marshal(map[string]any{
 			"bk_inst_id":   node.BkInstId,
 			"bk_inst_name": node.BkInstName,
 			"bk_obj_id":    node.BkObjId,
@@ -587,7 +587,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([
 	// 批量拉取业务下的主机信息
 	results, err := api.BatchApiRequest(
 		cmdbApiPageSize,
-		func(resp interface{}) (int, error) {
+		func(resp any) (int, error) {
 			var res cmdb.ListBizHostsTopoResp
 			err := mapstructure.Decode(resp, &res)
 			if err != nil {
@@ -596,7 +596,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([
 			return res.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.ListBizHostsTopo().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]interface{}{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}, "bk_biz_id": bkBizID, "fields": hostFields})
+			return cmdbApi.ListBizHostsTopo().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]any{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}, "bk_biz_id": bkBizID, "fields": hostFields})
 		},
 		10,
 	)
@@ -619,7 +619,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([
 
 	// 拉取云区域信息
 	var cloudAreaResp cmdb.SearchCloudAreaResp
-	_, err = cmdbApi.SearchCloudArea().SetContext(ctx).SetBody(map[string]interface{}{"page": map[string]int{"start": 0, "limit": 1000}}).SetResult(&cloudAreaResp).Request()
+	_, err = cmdbApi.SearchCloudArea().SetContext(ctx).SetBody(map[string]any{"page": map[string]int{"start": 0, "limit": 1000}}).SetResult(&cloudAreaResp).Request()
 	err = api.HandleApiResultError(cloudAreaResp.ApiCommonRespMeta, err, "search cloud area failed")
 	if err != nil {
 		return nil, nil, err
@@ -640,7 +640,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([
 
 	// 查询业务下的拓扑信息
 	var bizInstTopoResp cmdb.SearchBizInstTopoResp
-	_, err = cmdbApi.SearchBizInstTopo().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]interface{}{"bk_biz_id": bkBizID}).SetResult(&bizInstTopoResp).Request()
+	_, err = cmdbApi.SearchBizInstTopo().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]any{"bk_biz_id": bkBizID}).SetResult(&bizInstTopoResp).Request()
 	err = api.HandleApiResultError(bizInstTopoResp.ApiCommonRespMeta, err, "search biz inst topo failed")
 	if err != nil {
 		logger.Errorf("search biz inst topo failed, bk_biz_id: %d, err: %v", bkBizID, err)
@@ -653,7 +653,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([
 
 	// 查询业务下的内置节点
 	var bizInternalModuleResp cmdb.GetBizInternalModuleResp
-	_, err = cmdbApi.GetBizInternalModule().SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]interface{}{"bk_biz_id": bkBizID}).SetResult(&bizInternalModuleResp).Request()
+	_, err = cmdbApi.GetBizInternalModule().SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]any{"bk_biz_id": bkBizID}).SetResult(&bizInternalModuleResp).Request()
 	err = api.HandleApiResultError(bizInternalModuleResp.ApiCommonRespMeta, err, "get biz internal module failed")
 	if err != nil {
 		logger.Errorf("get biz internal module failed, bk_biz_id: %d, err: %v", bkBizID, err)
@@ -680,8 +680,8 @@ func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([
 	bizInstTopoResp.Data[0].Child = append(bizInstTopoResp.Data[0].Child, *setNode)
 
 	// 构建模块ID到拓扑链路的映射
-	moduleIdToTopoLinks := make(map[int][]map[string]interface{})
-	bizInstTopoResp.Data[0].ToTopoLinks(&moduleIdToTopoLinks, []map[string]interface{}{})
+	moduleIdToTopoLinks := make(map[int][]map[string]any)
+	bizInstTopoResp.Data[0].ToTopoLinks(&moduleIdToTopoLinks, []map[string]any{})
 
 	// 补充拓扑信息到主机
 	for _, host := range hosts {
@@ -696,7 +696,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([
 }
 
 // CleanByEvents 通过变更事件清理缓存
-func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -782,7 +782,7 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 }
 
 // UpdateByEvents 通过变更事件更新缓存
-func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]any) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -849,7 +849,7 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 		for _, event := range events {
 			bkObjId := event["bk_obj_id"].(string)
 			bkInstId := event["bk_inst_id"].(float64)
-			topo := map[string]interface{}{
+			topo := map[string]any{
 				"bk_inst_id":   int(bkInstId),
 				"bk_inst_name": event["bk_inst_name"],
 				"bk_obj_id":    bkObjId,

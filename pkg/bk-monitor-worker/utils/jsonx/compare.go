@@ -15,7 +15,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-func CompareObjects(objA, objB interface{}) (bool, error) {
+func CompareObjects(objA, objB any) (bool, error) {
 	jStrA, err := sonic.MarshalString(objA)
 	if err != nil {
 		return false, errors.Wrapf(err, "marshal obj [%#v] failed", objA)

@@ -48,7 +48,7 @@ func (a KafkaStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 	// kafka的consul配置
 	consulConfig := &StorageConsulConfig{
 		ClusterInfoConsulConfig: clusterConsulConfig,
-		StorageConfig: map[string]interface{}{
+		StorageConfig: map[string]any{
 			"topic":     a.Topic,
 			"partition": a.Partition,
 		},

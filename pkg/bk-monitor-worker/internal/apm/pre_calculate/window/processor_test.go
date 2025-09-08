@@ -157,7 +157,6 @@ func TestProcessorHandleResult(t *testing.T) {
 			t.Fatal("Not equal")
 		}
 	})
-
 }
 
 // initialProcessor 初始化预计算处理器
@@ -189,7 +188,8 @@ func initialProcessor(t *testing.T, dataId string, enabledMetrics bool) Processo
 
 func runCase(
 	p Processor, traceFileName string, exceptSaveRequests []storage.SaveRequest,
-	filterResult func([]storage.SaveRequest) []storage.SaveRequest) bool {
+	filterResult func([]storage.SaveRequest) []storage.SaveRequest,
+) bool {
 	event := fileTracesToEvent(traceFileName)
 	resultChan := make(chan storage.SaveRequest, 1000)
 	p.PreProcess(resultChan, event)
@@ -221,7 +221,6 @@ func assertResult(
 
 // assertSliceEqual 判断两个SaveRequests列表是否相等
 func assertSliceEqual(result, except []storage.SaveRequest) bool {
-
 	if len(result) != len(except) {
 		return false
 	}

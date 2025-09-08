@@ -56,13 +56,13 @@ func (i *InfluxdbHostInfo) BeforeCreate(tx *gorm.DB) error {
 }
 
 // GetConsulConfig 生成consul配置信息
-func (i InfluxdbHostInfo) GetConsulConfig() map[string]interface{} {
+func (i InfluxdbHostInfo) GetConsulConfig() map[string]any {
 	pwd, err := cipher.GetDBAESCipher().AESDecrypt(i.Password)
 	if err != nil {
 		logger.Error("GetConsulConfig:get influxdb host info password error", err)
 		return nil
 	}
-	return map[string]interface{}{
+	return map[string]any{
 		"domain_name":       i.DomainName,
 		"port":              i.Port,
 		"username":          i.Username,
@@ -90,7 +90,7 @@ func JudgeShardByDuration(duration string) (string, error) {
 	if durationValue < time.Hour {
 		return "", errors.New("duration must gte 1h")
 	} else if durationValue < time.Hour*48 {
-		//小于2d时，shard为1h
+		// 小于2d时，shard为1h
 		return "1h", nil
 	} else if durationValue <= time.Hour*180*24 {
 		// duration大于2d小于180d时，shard为1d

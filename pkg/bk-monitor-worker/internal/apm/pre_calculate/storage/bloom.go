@@ -287,7 +287,6 @@ func (m *OverlapBloom) TestAndAdd(key []byte) bool {
 }
 
 func (m *OverlapBloom) AddOverlap() {
-
 	intervalTicker := time.NewTicker(m.resetDuration / 2)
 	m.logger.Infof("overlap bloom add overlap interval: %s", m.resetDuration/2)
 
@@ -381,34 +380,32 @@ func Layers(s int) LayersBloomOption {
 
 type layerStrategy func(string) []byte
 
-var (
-	strategies = []layerStrategy{
-		// truncated 16
-		func(s string) []byte {
-			return []byte(s[16:])
-		},
-		// truncated 8
-		func(s string) []byte {
-			return []byte(s[24:])
-		},
-		// full
-		func(s string) []byte {
-			return []byte(s)
-		},
-		// md5
-		func(s string) []byte {
-			hash := md5.New()
-			hash.Write([]byte(s))
-			return hash.Sum(nil)
-		},
-		// hash
-		func(s string) []byte {
-			h, _ := highwayhash.New([]byte(config.HashSecret))
-			h.Write([]byte(s))
-			return h.Sum(nil)
-		},
-	}
-)
+var strategies = []layerStrategy{
+	// truncated 16
+	func(s string) []byte {
+		return []byte(s[16:])
+	},
+	// truncated 8
+	func(s string) []byte {
+		return []byte(s[24:])
+	},
+	// full
+	func(s string) []byte {
+		return []byte(s)
+	},
+	// md5
+	func(s string) []byte {
+		hash := md5.New()
+		hash.Write([]byte(s))
+		return hash.Sum(nil)
+	},
+	// hash
+	func(s string) []byte {
+		h, _ := highwayhash.New([]byte(config.HashSecret))
+		h.Write([]byte(s))
+		return h.Sum(nil)
+	},
+}
 
 func LayerBloomConfig(opts ...LayersBloomOption) BloomOption {
 	return func(options *BloomOptions) {
@@ -448,7 +445,6 @@ func (l *LayersMemoryBloom) Add(data BloomStorageData) error {
 }
 
 func (l *LayersMemoryBloom) Exist(originKey string) (bool, error) {
-
 	for index, b := range l.blooms {
 		key := l.strategies[index](originKey)
 		e := b.Test(key)

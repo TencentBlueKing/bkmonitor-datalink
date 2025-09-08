@@ -87,7 +87,7 @@ func TestEsStorageSvc_ConsulConfig(t *testing.T) {
 	// 判断 instance_cluster_name 不存在
 	clusterConfig, err := jsonx.MarshalString(config.ClusterInfoConsulConfig.ClusterConfig)
 	assert.NoError(t, err)
-	var clusterConfigMap map[string]interface{}
+	var clusterConfigMap map[string]any
 	err = jsonx.Unmarshal([]byte(clusterConfig), &clusterConfigMap)
 	assert.NoError(t, err)
 	_, ok := clusterConfigMap["instance_cluster_name"]
@@ -96,5 +96,4 @@ func TestEsStorageSvc_ConsulConfig(t *testing.T) {
 	storageConfigStr, err := jsonx.MarshalString(config.StorageConfig)
 	assert.NoError(t, err)
 	assert.JSONEq(t, storageConfigStr, `{"base_index":"es_table_id","date_format":"%Y%m%d","index_datetime_format":"write_20060102","index_datetime_timezone":0,"index_settings":{"a":"a"},"mapping_settings":{"b":"b"},"retention":3,"slice_gap":2,"slice_size":1,"warm_phase_days":4,"warm_phase_settings":{"c":"c"}}`)
-
 }

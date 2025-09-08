@@ -26,13 +26,13 @@ func NewDataSourceOptionSvc(obj *resulttable.DataSourceOption) DataSourceOptionS
 }
 
 // GetOptions 获取datasource的配置项
-func (DataSourceOptionSvc) GetOptions(bkDataId uint) (map[string]interface{}, error) {
+func (DataSourceOptionSvc) GetOptions(bkDataId uint) (map[string]any, error) {
 	var dataSourceOptionList []resulttable.DataSourceOption
 	if err := resulttable.NewDataSourceOptionQuerySet(mysql.GetDBSession().DB).
 		BkDataIdEq(bkDataId).All(&dataSourceOptionList); err != nil {
 		return nil, err
 	}
-	optionData := make(map[string]interface{})
+	optionData := make(map[string]any)
 	for _, option := range dataSourceOptionList {
 		value, err := option.InterfaceValue()
 		if err != nil {

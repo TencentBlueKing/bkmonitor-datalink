@@ -224,7 +224,6 @@ func (*CustomServiceConfig) TableName() string {
 }
 
 func (c *CustomServiceConfig) ToRule() CustomServiceRule {
-
 	instance := CustomServiceRule{
 		Type: c.Type,
 		// fixed value

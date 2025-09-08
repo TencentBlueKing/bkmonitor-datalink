@@ -73,10 +73,8 @@ host_info_relation{bk_biz_id="138",bk_host_id="93475",env_name="LIVE",env_type="
 
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, b.String())
-
 		})
 	}
-
 }
 
 func TestBuildMetricsWithMultiBkBizID(t *testing.T) {

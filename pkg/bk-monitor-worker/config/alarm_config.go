@@ -39,5 +39,4 @@ func initAlarmConfig() {
 	if CmdbApiRateLimitTimeout == 0 {
 		CmdbApiRateLimitTimeout = 10
 	}
-
 }

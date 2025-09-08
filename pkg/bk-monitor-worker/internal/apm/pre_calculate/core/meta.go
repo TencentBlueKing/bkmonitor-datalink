@@ -81,9 +81,7 @@ type TraceKafkaConfig struct {
 	Password string `json:"password"`
 }
 
-var (
-	centerInstance *MetadataCenter
-)
+var centerInstance *MetadataCenter
 
 // CreateMetadataCenter globally unique config provider
 func CreateMetadataCenter() error {

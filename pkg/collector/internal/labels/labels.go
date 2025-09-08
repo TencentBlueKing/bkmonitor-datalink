@@ -35,7 +35,7 @@ func (ls Labels) Swap(i, j int)      { ls[i], ls[j] = ls[j], ls[i] }
 func (ls Labels) Less(i, j int) bool { return ls[i].Name < ls[j].Name }
 
 var bytesPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return make([]byte, 0, 1024)
 	},
 }
@@ -76,7 +76,7 @@ func FromMap(m map[string]string) Labels {
 }
 
 var labelsPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return make(Labels, 0)
 	},
 }

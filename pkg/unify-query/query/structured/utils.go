@@ -20,7 +20,7 @@ import (
 )
 
 // getExpressionByParam
-func getExpressionByParam(param interface{}) (parser.Expr, error) {
+func getExpressionByParam(param any) (parser.Expr, error) {
 	switch t := param.(type) {
 	case string:
 		return &parser.StringLiteral{Val: param.(string)}, nil
@@ -41,7 +41,7 @@ func getExpressionByParam(param interface{}) (parser.Expr, error) {
 }
 
 // 拼接一个参数列表
-func combineExprList(position int, expr parser.Expr, exprParams []interface{}) ([]parser.Expr, error) {
+func combineExprList(position int, expr parser.Expr, exprParams []any) ([]parser.Expr, error) {
 	var params = make([]parser.Expr, 0)
 	// 判断是否需要追加参数
 	if len(exprParams) != 0 {

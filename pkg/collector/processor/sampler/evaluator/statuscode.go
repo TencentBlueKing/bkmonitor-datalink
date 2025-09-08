@@ -17,8 +17,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/batchspliter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/forwarder/batchspliter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/sampler/queue"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/fasttime"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -116,7 +116,7 @@ func (e *statusCodeEvaluator) processTraces(record *define.Record) {
 		return !ok
 	})
 
-	// 没有 batch 则无须后续处理流程
+	// batch 为空无需处理
 	if len(batch) == 0 {
 		return
 	}

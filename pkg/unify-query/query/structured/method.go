@@ -82,7 +82,7 @@ type AggregateMethod struct {
 	// ArgsList 弃用参数
 	ArgsList Args `json:"args_list,omitempty" swaggerignore:"true"`
 	// VArgsList 函数参数，结合 Position 一起使用，类似 topk, histogram_quantile 需要用到
-	VArgsList []interface{} `json:"vargs_list,omitempty" swaggerignore:"true"`
+	VArgsList []any `json:"vargs_list,omitempty" swaggerignore:"true"`
 
 	// Window 聚合周期
 	Window Window `json:"window,omitempty" example:"60s"`

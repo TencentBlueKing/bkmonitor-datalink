@@ -242,9 +242,10 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		source.Query(esQuery)
 	}
 
-	if len(qb.Source) > 0 {
+	sources := fact.Source(qb.Source)
+	if len(sources) > 0 {
 		fetchSource := elastic.NewFetchSourceContext(true)
-		fetchSource.Include(qb.Source...)
+		fetchSource.Include(sources...)
 		source.FetchSourceContext(fetchSource)
 	}
 
@@ -263,8 +264,9 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 	}
 
-	if qb.Collapse != nil && qb.Collapse.Field != "" {
-		source.Collapse(elastic.NewCollapseBuilder(qb.Collapse.Field))
+	collapse := fact.Collapse(qb.Collapse)
+	if collapse != "" {
+		source.Collapse(elastic.NewCollapseBuilder(collapse))
 	}
 
 	if source == nil {
@@ -552,7 +554,40 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		log.Warnf(ctx, "query label map error: %s", queryLabelErr)
 	}
 
+	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
+	reverseAlias := make(map[string]string, len(query.FieldAlias))
+	for k, v := range query.FieldAlias {
+		reverseAlias[v] = k
+	}
+
 	fact := NewFormatFactory(ctx).
+		WithTransform(func(s string) string {
+			// 别名替换
+			ns := s
+			if alias, ok := reverseAlias[ns]; ok {
+				ns = alias
+			}
+
+			// 格式转换
+			if encodeFunc != nil {
+				ns = encodeFunc(ns)
+			}
+			return ns
+		}, func(s string) string {
+			ns := s
+			// 格式转换
+			if decodeFunc != nil {
+				ns = decodeFunc(ns)
+			}
+
+			// 别名替换
+			if alias, ok := query.FieldAlias[ns]; ok {
+				ns = alias
+			}
+			return ns
+		},
+		).
 		WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 		WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.Size).
 		WithMappings(mappings...).
@@ -568,11 +603,6 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	option = &metadata.ResultTableOption{
 		FieldType: fact.FieldType(),
 		From:      &query.From,
-	}
-
-	reverseAlias := make(map[string]string, len(query.FieldAlias))
-	for k, v := range query.FieldAlias {
-		reverseAlias[v] = k
 	}
 
 	if sr != nil {
@@ -720,13 +750,46 @@ func (i *Instance) QuerySeriesSet(
 		log.Warnf(ctx, "query label map error: %s", queryLabelErr)
 	}
 
+	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
+	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
+
+	reverseAlias := make(map[string]string, len(query.FieldAlias))
+	for k, v := range query.FieldAlias {
+		reverseAlias[v] = k
+	}
+
 	fact := NewFormatFactory(ctx).
+		WithTransform(func(s string) string {
+			// 别名替换
+			ns := s
+			if alias, ok := reverseAlias[ns]; ok {
+				ns = alias
+			}
+
+			// 格式转换
+			if encodeFunc != nil {
+				ns = encodeFunc(ns)
+			}
+			return ns
+		}, func(s string) string {
+			ns := s
+			// 格式转换
+			if decodeFunc != nil {
+				ns = decodeFunc(ns)
+			}
+
+			// 别名替换
+			if alias, ok := query.FieldAlias[ns]; ok {
+				ns = alias
+			}
+			return ns
+		},
+		).
+		WithIncludeValues(queryLabelMap).
 		WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 		WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
 		WithMappings(mappings...).
-		WithOrders(query.Orders).
-		WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc()).
-		WithIncludeValues(queryLabelMap)
+		WithOrders(query.Orders)
 
 	if len(query.Aggregates) == 0 {
 		return storage.ErrSeriesSet(fmt.Errorf("aggregates is empty"))

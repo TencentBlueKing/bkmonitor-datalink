@@ -45,10 +45,7 @@ func init() {
 	receiver.RegisterReadyFunc(define.SourceOtlp, Ready)
 }
 
-func Ready(config receiver.ComponentConfig) {
-	if !config.Otlp.Enabled {
-		return
-	}
+func Ready() {
 	receiver.RegisterRecvHttpRoute(define.SourceOtlp, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
@@ -215,11 +212,11 @@ func (h httpPbResponseHandler) Response(rtype define.RecordType) ([]byte, error)
 	return nil, define.ErrUnknownRecordType
 }
 
-func (h httpPbResponseHandler) Unmarshal(rtype define.RecordType, b []byte) (interface{}, error) {
+func (h httpPbResponseHandler) Unmarshal(rtype define.RecordType, b []byte) (any, error) {
 	return unmarshalRecordData(h.encoder, rtype, b)
 }
 
-func (h httpPbResponseHandler) ErrorStatus(status interface{}) ([]byte, error) {
+func (h httpPbResponseHandler) ErrorStatus(status any) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	s, ok := status.(*spb.Status)
 	if !ok {
@@ -258,11 +255,11 @@ func (h httpJsonResponseHandler) Response(rtype define.RecordType) ([]byte, erro
 	return nil, define.ErrUnknownRecordType
 }
 
-func (h httpJsonResponseHandler) Unmarshal(rtype define.RecordType, b []byte) (interface{}, error) {
+func (h httpJsonResponseHandler) Unmarshal(rtype define.RecordType, b []byte) (any, error) {
 	return unmarshalRecordData(h.encoder, rtype, b)
 }
 
-func (h httpJsonResponseHandler) ErrorStatus(status interface{}) ([]byte, error) {
+func (h httpJsonResponseHandler) ErrorStatus(status any) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	s, ok := status.(*spb.Status)
 	if !ok {

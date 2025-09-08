@@ -55,7 +55,7 @@ func (m *MockClient) Query(arg0 context.Context, arg1, arg2, arg3, arg4 string, 
 }
 
 // Query indicates an expected call of Query.
-func (mr *MockClientMockRecorder) Query(arg0, arg1, arg2, arg3, arg4, arg5 interface{}) *gomock.Call {
+func (mr *MockClientMockRecorder) Query(arg0, arg1, arg2, arg3, arg4, arg5 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Query", reflect.TypeOf((*MockClient)(nil).Query), arg0, arg1, arg2, arg3, arg4, arg5)
 }

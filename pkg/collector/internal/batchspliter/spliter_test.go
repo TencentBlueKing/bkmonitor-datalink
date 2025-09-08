@@ -180,7 +180,7 @@ func TestSplitEachSpans(t *testing.T) {
 }
 
 func TestSplitTracesWithJson(t *testing.T) {
-	b, err := os.ReadFile("../../../example/fixtures/traces1.json")
+	b, err := os.ReadFile("../../example/fixtures/traces1.json")
 	assert.NoError(t, err)
 	traces, err := generator.FromJsonToTraces(b)
 	assert.NoError(t, err)
@@ -191,7 +191,7 @@ func TestSplitTracesWithJson(t *testing.T) {
 }
 
 func TestSplitEachSpansWithJson(t *testing.T) {
-	b, err := os.ReadFile("../../../example/fixtures/traces1.json")
+	b, err := os.ReadFile("../../example/fixtures/traces1.json")
 	assert.NoError(t, err)
 	traces, err := generator.FromJsonToTraces(b)
 	assert.NoError(t, err)

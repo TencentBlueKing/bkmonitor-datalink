@@ -41,7 +41,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
 
-func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
+func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) {
 	var (
 		err error
 
@@ -986,7 +986,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 	return
 }
 
-func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
+func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any, error) {
 	var (
 		err       error
 		res       any

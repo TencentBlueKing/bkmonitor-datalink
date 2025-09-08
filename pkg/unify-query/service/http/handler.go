@@ -333,14 +333,12 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 		span.Set("clear-cache", "true")
 		err = session.Clear(ctx)
 		if err != nil {
-			log.Errorf(ctx, "clear scroll session failed, err: %v", err)
 			return
 		}
 		// 清理后需要重新初始化 session，确保从头开始查询
 		// 重新创建一个新的 session 来替换被清理的 session
 		session, err = redis.GetOrCreateScrollSession(ctx, queryStrWithUserName, ScrollWindowTimeout, ScrollSessionLockTimeout, queryTs.SliceMax, queryTs.Limit)
 		if err != nil {
-			log.Errorf(ctx, "recreate scroll session failed, err: %v", err)
 			return
 		}
 	}
@@ -356,13 +354,11 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 			err = session.Clear(ctx)
 			span.Set("clear-cache", "true")
 			if err != nil {
-				log.Errorf(ctx, "clear scroll session failed, err: %v", err)
 				return
 			}
 		} else {
 			err = session.Update(ctx)
 			if err != nil {
-				log.Errorf(ctx, "update scroll session failed, err: %v", err)
 				return
 			}
 		}

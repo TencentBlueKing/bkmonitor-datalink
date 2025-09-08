@@ -299,10 +299,9 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		return nil, err
 	}
 	defer client.Stop()
-
+	opt := qb.ResultTableOption
 	var res *elastic.SearchResult
 	func() {
-		opt := qb.ResultTableOption
 		if opt != nil {
 			if opt.ScrollID != "" {
 				span.Set("query-scroll-id", opt.ScrollID)
@@ -327,10 +326,11 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 					span.Set("query-scroll-id", option.ScrollID)
 					scroll.ScrollId(option.ScrollID)
 				}
-				if option.SliceIndex != nil && option.SliceMax != nil {
-					span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", *option.SliceIndex, *option.SliceMax))
-					scroll.Slice(elastic.NewSliceQuery().Id(*option.SliceIndex).Max(*option.SliceMax))
+				if option.SliceMax > 1 {
+					span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", option.SliceIndex, option.SliceMax))
+					scroll.Slice(elastic.NewSliceQuery().Id(option.SliceIndex).Max(option.SliceMax))
 				}
+
 			}
 			res, err = scroll.Do(ctx)
 		} else {
@@ -387,7 +387,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	metric.TsDBRequestSecond(
 		ctx, queryCost, consul.ElasticsearchStorageType, qo.conn.Address,
 	)
-
 	return res, err
 }
 
@@ -498,7 +497,7 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (total int64, option *metadata.ResultTableOption, err error) {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (size int64, total int64, option *metadata.ResultTableOption, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("es query error: %s", r)
@@ -644,8 +643,9 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			}
 
 			if sr.Hits.TotalHits != nil {
-				total += sr.Hits.TotalHits.Value
+				total = sr.Hits.TotalHits.Value
 			}
+			size = int64(len(sr.Hits.Hits))
 		}
 
 		if query.Scroll != "" {

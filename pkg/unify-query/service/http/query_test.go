@@ -13,17 +13,16 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
-	miniredis "github.com/alicebob/miniredis/v2"
-	goRedis "github.com/go-redis/redis/v8"
 	"github.com/jarcoal/httpmock"
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
@@ -1961,7 +1960,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 				End:    end,
 				DryRun: false,
 			},
-			total:    5136,
+			total:    1,
 			options:  `{"result_table.doris|4":{"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"dteventtimestamp","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dteventtime","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"localtime","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"__shard_key__","field_index":4,"field_name":"__c4","field_type":"long"},{"field_alias":"_starttime_","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"_endtime_","field_index":6,"field_name":"__c6","field_type":"string"},{"field_alias":"bk_host_id","field_index":7,"field_name":"__c7","field_type":"int"},{"field_alias":"__ext","field_index":8,"field_name":"__c8","field_type":"string"},{"field_alias":"cloudid","field_index":9,"field_name":"__c9","field_type":"int"},{"field_alias":"serverip","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"path","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"gseindex","field_index":12,"field_name":"__c12","field_type":"long"},{"field_alias":"iterationindex","field_index":13,"field_name":"__c13","field_type":"int"},{"field_alias":"log","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"time","field_index":15,"field_name":"__c15","field_type":"long"},{"field_alias":"_value_","field_index":16,"field_name":"__c16","field_type":"long"},{"field_alias":"_timestamp_","field_index":17,"field_name":"__c17","field_type":"long"}]}}`,
 			expected: `[{"__data_label":"bksql","__index":"2_bklog_bkunify_query_doris","__result_table":"result_table.doris","__shard_key__":2.921808301e+10,"_endtime_":"2025-07-21 16:03:40","_starttime_":"2025-07-21 16:03:40","_timestamp_":1.75308502e+12,"_value_":1.75308502e+12,"bk_host_id":1234,"cloudid":0,"dteventtime":"2025-07-21 16:03:40","dteventtimestamp":1.75308502e+12,"gseindex":44444,"iterationindex":8,"localtime":"2025-07-21 16:03:45","path":"/proz/logds/Player/gggggggggggg.log","thedate":2.0250721e+07,"time":1.75308502e+09}]`,
 		},
@@ -2066,7 +2065,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 				Step: start,
 				End:  end,
 			},
-			total:    327384,
+			total:    100,
 			expected: `[{"__data_label":"bksql","__ext":<nil>,"__index":"2_bklog_bkunify_query_doris","__result_table":"result_table.doris","__shard_key__":5.853918203e+09,"__unique_key__":"12395782465323060901","cloudId":0,"content":" [on_update_cos_ci_info] success uid: 2199033031264, path_name: highlight/1/2199033031264/649651764779846687_c133e9abb8b600235143a96366a6ac03.jpg","dtEventTime":1.756175592e+12,"dtEventTimeStamp":1.756175592e+12,"func":"Lua","gseIndex":1.1483283e+07,"iterationIndex":7,"level":"INFO","localTime":"2025-08-26 10:33:12","log":"[20250826 10:33:11:328884][INFO    ][httpgatesvr][(httpgatesvr/cos_file_ci_callback.lua:167) (Lua)] [on_update_cos_ci_info] success uid: 2199033031264, path_name: highlight/1/2199033031264/649651764779846687_c133e9abb8b600235143a96366a6ac03.jpg","log_file":"httpgatesvr/cos_file_ci_callback.lua:167","log_time":"20250826 10:33:11:328884","path":"/data/home/user00/pangusvr/bin/log/httpgatesvr.log","svr":"httpgatesvr","thedate":2.0250826e+07,"time":1.756175592e+09}]`,
 			options:  `{"result_table.doris|4":{"result_schema":[{"field_alias":"dtEventTime","field_index":0,"field_name":"__c0","field_type":"long"},{"field_alias":"__shard_key__","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"__unique_key__","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"dtEventTimeStamp","field_index":3,"field_name":"__c3","field_type":"long"},{"field_alias":"thedate","field_index":4,"field_name":"__c4","field_type":"int"},{"field_alias":"localTime","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"iterationIndex","field_index":6,"field_name":"__c6","field_type":"long"},{"field_alias":"__ext","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"bk_host_id","field_index":8,"field_name":"__c8","field_type":"long"},{"field_alias":"cloudId","field_index":9,"field_name":"__c9","field_type":"long"},{"field_alias":"gseIndex","field_index":10,"field_name":"__c10","field_type":"long"},{"field_alias":"path","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"serverIp","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"time","field_index":13,"field_name":"__c13","field_type":"long"},{"field_alias":"log","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"content","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"func","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"level","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"log_file","field_index":18,"field_name":"__c18","field_type":"string"},{"field_alias":"log_time","field_index":19,"field_name":"__c19","field_type":"string"},{"field_alias":"svr","field_index":20,"field_name":"__c20","field_type":"string"}]}}`,
 		},
@@ -3864,7 +3863,6 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 			out, err := json.Marshal(res)
 			actual := string(out)
 			assert.Nil(t, err)
-			fmt.Printf("ActualResult: %v\n", actual)
 			assert.JSONEq(t, c.result, actual)
 		})
 	}
@@ -4202,349 +4200,357 @@ func getIntValue(value any) int64 {
 	}
 }
 
-func TestQueryRawWithScroll_ESFlow(t *testing.T) {
-	ctx := metadata.InitHashID(context.Background())
+func TestRedis(t *testing.T) {
+	mock.Init()
+	newSession := `{"session_key":"scroll:session:test","lock_key":"scroll:lock:test","scroll_window_timeout":180000000000,"scroll_lock_timeout":60000000000,"max_slice":3,"slice_max_failed_num":3,"limit":100,"cache":false,"slices_map":{}}`
+	cacheSession := `{"session_key":"scroll:session:test","lock_key":"scroll:lock:test","scroll_window_timeout":180000000000,"scroll_lock_timeout":60000000000,"max_slice":3,"slice_max_failed_num":3,"limit":100,"cache":true,"slices_map":{"test":{"slice_key":"","slice_max":0,"scroll_id":"test","offset":0,"status":"Pending","failed_num":0,"max_failed_num":0,"limit":0}}}`
 
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
+	key := "test"
+
+	// 新建
+	session, err := redisUtil.GetOrCreateScrollSession(ctx, key, ScrollWindowTimeout, ScrollSessionLockTimeout, 3, 100)
+	assert.Nil(t, err)
+	actual, _ := json.Marshal(session)
+	assert.Equal(t, newSession, string(actual))
+
+	// 缓存
+	session.SlicesMap = map[string]*redisUtil.SliceStatus{
+		"test": {
+			ScrollID: "test",
+			Status:   "Pending",
+		},
+	}
+	_ = session.Update(ctx)
+	session, err = redisUtil.GetOrCreateScrollSession(ctx, key, ScrollWindowTimeout, ScrollSessionLockTimeout, 3, 100)
+	assert.Nil(t, err)
+	actual, _ = json.Marshal(session)
+	assert.Equal(t, cacheSession, string(actual))
+
+	// 清理
+	err = session.Clear(ctx)
+	assert.Nil(t, err)
+
+	// 新建
+	session, err = redisUtil.GetOrCreateScrollSession(ctx, key, ScrollWindowTimeout, ScrollSessionLockTimeout, 3, 100)
+	assert.Nil(t, err)
+	actual, _ = json.Marshal(session)
+	assert.Equal(t, newSession, string(actual))
+}
+
+func TestQueryRawWithScroll_ES(t *testing.T) {
+	type Case struct {
+		name    string
+		queryTs *structured.QueryTs
+
+		list   []string
+		total  []int64
+		option []string
+	}
+
+	mockSet := []func(){
+		func() {
+			mock.Es.Set(map[string]any{
+				`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1757051309,"include_lower":true,"include_upper":true,"to":1757054909}}}}},"size":2,"slice":{"id":0,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"00","took":2235,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":11,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"5453114629550017335","_score":null,"_source":{"level":"info"},"sort":[16598541]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"17835216159845548629","_score":null,"_source":{"level":"info"},"sort":[16598543]}]}}`,
+				`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1757051309,"include_lower":true,"include_upper":true,"to":1757054909}}}}},"size":2,"slice":{"id":1,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"01","took":2899,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":12,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"10623991376064743108","_score":null,"_source":{"level":"info"},"sort":[16598542]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"8864386387027044153","_score":null,"_source":{"level":"info"},"sort":[16598544]}]}}`,
+				`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1757051309,"include_lower":true,"include_upper":true,"to":1757054909}}}}},"size":2,"slice":{"id":2,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"02","took":2433,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":13,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"18273955038741147447","_score":null,"_source":{"level":"info"},"sort":[16598546]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"14800640324679701284","_score":null,"_source":{"level":"info"},"sort":[16598548]}]}}`,
+
+				`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"end_time":{"from":1757051309000000,"include_lower":true,"include_upper":true,"to":1757054909000000}}}}},"size":2,"slice":{"id":0,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"10","took":2235,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":100,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"5453114629550017335","_score":null,"_source":{"level":"info"},"sort":[16598541]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"17835216159845548629","_score":null,"_source":{"level":"info"},"sort":[16598543]}]}}`,
+				`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"end_time":{"from":1757051309000000,"include_lower":true,"include_upper":true,"to":1757054909000000}}}}},"size":2,"slice":{"id":1,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"11","took":2899,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":200,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"10623991376064743108","_score":null,"_source":{"level":"info"},"sort":[16598542]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"8864386387027044153","_score":null,"_source":{"level":"info"},"sort":[16598544]}]}}`,
+				`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"end_time":{"from":1757051309000000,"include_lower":true,"include_upper":true,"to":1757054909000000}}}}},"size":2,"slice":{"id":2,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"12","took":2433,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":300,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"18273955038741147447","_score":null,"_source":{"level":"info"},"sort":[16598546]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"14800640324679701284","_score":null,"_source":{"level":"info"},"sort":[16598548]}]}}`,
+			})
+		},
+		func() {
+			mock.Es.Set(map[string]any{
+				`{"scroll":"1m","scroll_id":"00"}`: `{"_scroll_id":"00","took":37,"timed_out":false,"terminated_early":true,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":106573,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"1564732741680274134","_score":null,"_source":{"level":"info"},"sort":[16163976]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"16543745574480876791","_score":null,"_source":{"level":"info"},"sort":[16163978]}]}}`,
+				`{"scroll":"1m","scroll_id":"01"}`: `{"_scroll_id":"01","took":37,"timed_out":false,"terminated_early":true,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":106573,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"1564732741680274134","_score":null,"_source":{"level":"info"},"sort":[16163976]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"16543745574480876791","_score":null,"_source":{"level":"info"},"sort":[16163978]}]}}`,
+				`{"scroll":"1m","scroll_id":"02"}`: `{"_scroll_id":"02","took":37,"timed_out":false,"terminated_early":true,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":106573,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"1564732741680274134","_score":null,"_source":{"level":"info"},"sort":[16163976]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"16543745574480876791","_score":null,"_source":{"level":"info"},"sort":[16163978]}]}}`,
+
+				`{"scroll":"1m","scroll_id":"10"}`: `{"_scroll_id":"10","took":37,"timed_out":false,"terminated_early":true,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":106573,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"1564732741680274134","_score":null,"_source":{"level":"info"},"sort":[16163976]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"16543745574480876791","_score":null,"_source":{"level":"info"},"sort":[16163978]}]}}`,
+				`{"scroll":"1m","scroll_id":"11"}`: `{"_scroll_id":"11","took":37,"timed_out":false,"terminated_early":true,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":106573,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"1564732741680274134","_score":null,"_source":{"level":"info"},"sort":[16163976]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"16543745574480876791","_score":null,"_source":{"level":"info"},"sort":[16163978]}]}}`,
+				`{"scroll":"1m","scroll_id":"12"}`: `{"_scroll_id":"12","took":37,"timed_out":false,"terminated_early":true,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":106573,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"1564732741680274134","_score":null,"_source":{"level":"info"},"sort":[16163976]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"16543745574480876791","_score":null,"_source":{"level":"info"},"sort":[16163978]}]}}`,
+			})
+		},
+		func() {
+			mock.Es.Set(map[string]any{
+				`{"scroll":"1m","scroll_id":"00"}`: `{"_scroll_id":"00","took":65,"timed_out":false,"terminated_early":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":300,"relation":"eq"},"max_score":null,"hits":[]}}`,
+				`{"scroll":"1m","scroll_id":"01"}`: `{"_scroll_id":"01","took":65,"timed_out":false,"terminated_early":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":300,"relation":"eq"},"max_score":null,"hits":[]}}`,
+				`{"scroll":"1m","scroll_id":"02"}`: `{"_scroll_id":"02","took":65,"timed_out":false,"terminated_early":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":300,"relation":"eq"},"max_score":null,"hits":[]}}`,
+
+				`{"scroll":"1m","scroll_id":"10"}`: `{"_scroll_id":"10","took":65,"timed_out":false,"terminated_early":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":300,"relation":"eq"},"max_score":null,"hits":[]}}`,
+				`{"scroll":"1m","scroll_id":"11"}`: `{"_scroll_id":"11","took":65,"timed_out":false,"terminated_early":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":300,"relation":"eq"},"max_score":null,"hits":[]}}`,
+				`{"scroll":"1m","scroll_id":"12"}`: `{"_scroll_id":"12","took":65,"timed_out":false,"terminated_early":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":300,"relation":"eq"},"max_score":null,"hits":[]}}`,
+			})
+		},
+	}
+
+	ctx := metadata.InitHashID(context.Background())
 	mock.Init()
 	influxdb.MockSpaceRouter(ctx)
-	promql.MockEngine()
 
-	testTableId := "result_table.es"
-	spaceUid := influxdb.SpaceUid
-	testDataLabel := influxdb.ResultTableEs
-	router, err := influxdb.GetSpaceTsDbRouter()
-	require.NoError(t, err, "Failed to get space router")
-	err = router.Add(ctx, ir.ResultTableDetailKey, testTableId, &ir.ResultTableDetail{
-		StorageId:   3,
-		TableId:     testTableId,
-		DB:          "es_index",
-		StorageType: consul.ElasticsearchStorageType,
-		DataLabel:   "es",
-	})
-	assert.NoError(t, err)
-
-	resultTableList := ir.ResultTableList{testTableId}
-	err = router.Add(ctx, ir.DataLabelToResultTableKey, "es", &resultTableList)
-	assert.NoError(t, err)
-
-	err = router.Add(ctx, ir.DataLabelToResultTableKey, testTableId, &resultTableList)
-	assert.NoError(t, err)
-
-	route01 := "route1_table"
-	err = router.Add(ctx, ir.ResultTableDetailKey, route01, &ir.ResultTableDetail{
-		StorageId:   3,
-		TableId:     route01,
-		DB:          route01,
-		StorageType: consul.ElasticsearchStorageType,
-		DataLabel:   route01,
-	})
-	assert.NoError(t, err)
-
-	err = router.Add(ctx, ir.ResultTableDetailKey, "route2_table", &ir.ResultTableDetail{
-		StorageId:   3,
-		TableId:     "route2_table",
-		DB:          "route2",
-		StorageType: consul.ElasticsearchStorageType,
-		DataLabel:   "route2",
-	})
-	assert.NoError(t, err)
-
-	type expectResult struct {
-		desc     string
-		total    int64
-		done     bool
-		hasData  bool
-		mockData map[string]any
-	}
-
-	require.NoError(t, err, "Failed to add space mapping")
-
-	s, err := miniredis.Run()
-	require.NoError(t, err, "Failed to start miniredis")
-	defer s.Close()
-
-	options := &goRedis.UniversalOptions{
-		Addrs: []string{s.Addr()},
-		DB:    0,
-	}
-
-	err = redisUtil.SetInstance(ctx, "test-scroll", options)
-	require.NoError(t, err, "Failed to set unify-query redis instance")
-
-	initEsMockData := map[string]any{
-		`{"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":10,"slice":{"id":0,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"scroll_id_0","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"1","_source":{"dtEventTimeStamp":"1723594001000","data":"es_test1"}}]}}`,
-		`{"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":10,"slice":{"id":1,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"scroll_id_1","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"2","_source":{"dtEventTimeStamp":"1723594002000","data":"es_test2"}}]}}`,
-		`{"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723594000,"include_lower":true,"include_upper":true,"to":1723595000}}}}},"size":10,"slice":{"id":2,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"scroll_id_2","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"3","_source":{"dtEventTimeStamp":"1723594003000","data":"es_test3"}}]}}`,
-	}
-	secondRoundEsMockData := map[string]any{
-		`{"scroll":"9m","scroll_id":"scroll_id_0"}`: `{"_scroll_id":"scroll_id_0_next","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"4","_source":{"dtEventTimeStamp":"1723594004000","data":"es_test4"}}]}}`,
-		`{"scroll":"9m","scroll_id":"scroll_id_1"}`: `{"_scroll_id":"scroll_id_1_next","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"5","_source":{"dtEventTimeStamp":"1723594005000","data":"es_test5"}}]}}`,
-		`{"scroll":"9m","scroll_id":"scroll_id_2"}`: `{"_scroll_id":"scroll_id_2_next","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"6","_source":{"dtEventTimeStamp":"1723594006000","data":"es_test6"}}]}}`,
-	}
-
-	thirdRoundEsMockData := map[string]any{
-		`{"scroll":"9m","scroll_id":"scroll_id_0_next"}`: `{"_scroll_id":"","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
-		`{"scroll":"9m","scroll_id":"scroll_id_1_next"}`: `{"_scroll_id":"scroll_id_1_final","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"7","_source":{"dtEventTimeStamp":"1723594007000","data":"es_test7"}}]}}`,
-		`{"scroll":"9m","scroll_id":"scroll_id_2_next"}`: `{"_scroll_id":"scroll_id_2_final","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"result_table.es","_id":"8","_source":{"dtEventTimeStamp":"1723594008000","data":"es_test8"}}]}}`,
-	}
-
-	allDoneMockData := map[string]any{
-		`{"scroll":"9m","scroll_id":"scroll_id_1_final"}`: `{"_scroll_id":"","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
-		`{"scroll":"9m","scroll_id":"scroll_id_2_final"}`: `{"_scroll_id":"","hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`,
-	}
-
-	start := "1723594000"
-	end := "1723595000"
-	type testCase struct {
-		queryTs  *structured.QueryTs
-		expected []expectResult
-	}
-
-	tCase := testCase{
-		queryTs: &structured.QueryTs{
-			SpaceUid: spaceUid,
-			QueryList: []*structured.Query{
-				{
-					TableID: structured.TableID(testDataLabel),
+	for _, c := range []Case{
+		{
+			name: "test-1",
+			queryTs: &structured.QueryTs{
+				SpaceUid: influxdb.SpaceUid,
+				QueryList: []*structured.Query{
+					{
+						TableID:     "multi_es",
+						KeepColumns: []string{"level"},
+					},
 				},
+				MetricMerge: "a",
+				Start:       "1757051309",
+				End:         "1757054909",
+				Step:        "1m",
+				Limit:       2,
+				Scroll:      "1m",
+				SliceMax:    3,
 			},
-			Scroll:   "9m",
-			Timezone: "Asia/Shanghai",
-			Limit:    10,
-			Start:    start,
-			End:      end,
-		},
-		expected: []expectResult{
-			{
-				desc:     "First scroll request",
-				total:    3,
-				done:     false,
-				hasData:  true,
-				mockData: initEsMockData,
+			total: []int64{
+				12,
+				12,
+				0,
 			},
-			{
-				desc:     "Second scroll request",
-				total:    3,
-				done:     false,
-				hasData:  true,
-				mockData: secondRoundEsMockData,
+			list: []string{
+				`[{"__data_label":"es","__doc_id":"10623991376064743108","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|1","level":"info"},{"__data_label":"es","__doc_id":"10623991376064743108","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|1","level":"info"},{"__data_label":"es","__doc_id":"14800640324679701284","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|2","level":"info"},{"__data_label":"es","__doc_id":"14800640324679701284","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|2","level":"info"},{"__data_label":"es","__doc_id":"17835216159845548629","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|0","level":"info"},{"__data_label":"es","__doc_id":"17835216159845548629","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|0","level":"info"},{"__data_label":"es","__doc_id":"18273955038741147447","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|2","level":"info"},{"__data_label":"es","__doc_id":"18273955038741147447","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|2","level":"info"},{"__data_label":"es","__doc_id":"5453114629550017335","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|0","level":"info"},{"__data_label":"es","__doc_id":"5453114629550017335","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|0","level":"info"},{"__data_label":"es","__doc_id":"8864386387027044153","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|1","level":"info"},{"__data_label":"es","__doc_id":"8864386387027044153","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|1","level":"info"}]`, `[{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|0","level":"info"},{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|1","level":"info"},{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|2","level":"info"},{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|0","level":"info"},{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|1","level":"info"},{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|2","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|0","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|1","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es_with_time_filed","__table_uuid":"result_table.es_with_time_filed|3|2","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|0","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|1","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|2","level":"info"}]`,
+				`[]`,
 			},
-			{
-				desc:     "Third scroll request - slice 0 ends, others continue",
-				total:    2,
-				done:     false,
-				hasData:  true,
-				mockData: thirdRoundEsMockData,
-			},
-			{
-				desc:     "Fourth scroll request - should be done",
-				total:    0,
-				done:     true,
-				hasData:  false,
-				mockData: allDoneMockData,
+			option: []string{
+				`{"result_table.es_with_time_filed|3|0":{"from":0,"scroll_id":"10","search_after":[16598543],"slice_max":3},"result_table.es_with_time_filed|3|1":{"from":2,"scroll_id":"11","search_after":[16598544],"slice_index":1,"slice_max":3},"result_table.es_with_time_filed|3|2":{"from":4,"scroll_id":"12","search_after":[16598548],"slice_index":2,"slice_max":3},"result_table.es|3|0":{"from":0,"scroll_id":"00","search_after":[16598543],"slice_max":3},"result_table.es|3|1":{"from":2,"scroll_id":"01","search_after":[16598544],"slice_index":1,"slice_max":3},"result_table.es|3|2":{"from":4,"scroll_id":"02","search_after":[16598548],"slice_index":2,"slice_max":3}}`,
+				`{"result_table.es_with_time_filed|3|0":{"from":6,"scroll_id":"10","search_after":[16163978],"slice_max":3},"result_table.es_with_time_filed|3|1":{"from":8,"scroll_id":"11","search_after":[16163978],"slice_index":1,"slice_max":3},"result_table.es_with_time_filed|3|2":{"from":10,"scroll_id":"12","search_after":[16163978],"slice_index":2,"slice_max":3},"result_table.es|3|0":{"from":6,"scroll_id":"00","search_after":[16163978],"slice_max":3},"result_table.es|3|1":{"from":8,"scroll_id":"01","search_after":[16163978],"slice_index":1,"slice_max":3},"result_table.es|3|2":{"from":10,"scroll_id":"02","search_after":[16163978],"slice_index":2,"slice_max":3}}`,
+				`{"result_table.es_with_time_filed|3|0":{"from":12},"result_table.es_with_time_filed|3|1":{"from":14},"result_table.es_with_time_filed|3|2":{"from":16},"result_table.es|3|0":{"from":12},"result_table.es|3|1":{"from":14},"result_table.es|3|2":{"from":16}}`,
 			},
 		},
-	}
-	user := &metadata.User{
-		Key:       "username:test_scroll_user",
-		SpaceUID:  spaceUid,
-		SkipSpace: "true",
-	}
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
 
-	queryTsBytes, err := json.Marshal(tCase.queryTs)
-	require.NoError(t, err, "Failed to marshal queryTs")
-	queryTsStr := string(queryTsBytes)
+			queryByte, _ := json.Marshal(c.queryTs)
+			queryStr := string(queryByte)
+			session, err := redisUtil.GetOrCreateScrollSession(ctx, queryStr, ScrollWindowTimeout, ScrollSessionLockTimeout, c.queryTs.SliceMax, c.queryTs.Limit)
+			if err != nil {
+				return
+			}
+			defer func() {
+				_ = session.Clear(ctx)
+			}()
 
-	for i, c := range tCase.expected {
-		t.Logf("Running step %d: %s", i+1, c.desc)
+			loop := 0
+			for {
+				if len(mockSet) == loop {
+					break
+				}
 
-		ctx = metadata.InitHashID(context.Background())
+				if mockSet[loop] != nil {
+					mockSet[loop]()
+				}
 
-		metadata.SetUser(ctx, user)
+				log.Infof(ctx, "[%d] loop", loop)
+				if loop > 10 {
+					break
+				}
 
-		mock.Es.Set(c.mockData)
+				if session.Done() {
+					break
+				}
 
-		session, err := redisUtil.GetOrCreateScrollSession(ctx, queryTsStr, ScrollWindowTimeout, ScrollMaxSlice, 10)
-		require.NoError(t, err, "Failed to get scroll session")
-		err = session.AcquireLock(ctx)
-		require.NoErrorf(t, err, "Failed to acquire lock for scroll session in step %d", i+1)
+				total, list, option, err := queryRawWithScroll(ctx, c.queryTs, session)
+				assert.Nil(t, err)
 
-		var queryTsCopy structured.QueryTs
-		err = json.Unmarshal([]byte(queryTsStr), &queryTsCopy)
-		require.NoError(t, err, "Failed to unmarshal queryTs")
+				sort.SliceStable(list, func(i, j int) bool {
+					f1 := fmt.Sprintf("%s,%s", list[i]["__doc_id"].(string), list[i]["__table_uuid"].(string))
+					f2 := fmt.Sprintf("%s,%s", list[j]["__doc_id"].(string), list[j]["__table_uuid"].(string))
 
-		t.Logf("Starting queryRawWithScroll with session: %+v", session)
-		total, list, _, err := queryRawWithScroll(ctx, &queryTsCopy, session)
-		done := session.Done()
-		t.Logf("queryRawWithScroll returned: total=%d, len(list)=%d, done=%v, err=%v", total, len(list), done, err)
-		hasData := len(list) > 0
-		assert.NoError(t, err, "QueryRawWithScroll should not return error for step %d", i+1)
-		assert.Equal(t, c.total, total, "Total should match expected value for step %d", i+1)
-		assert.Equal(t, c.done, session.Done(), "Done should match expected value for step %d", i+1)
-		assert.Equal(t, c.hasData, hasData, "HasData should match expected value for step %d", i+1)
+					return f1 < f2
+				})
 
-		if c.hasData {
-			assert.Greater(t, len(list), 0, "Should have data when hasData is true for step %d", i+1)
-		} else {
-			assert.Equal(t, 0, len(list), "Should have no data when hasData is false for step %d", i+1)
-		}
-		err = session.ReleaseLock(ctx)
-		require.NoError(t, err, "Failed to release lock for scroll session in step %d", i+1)
-		t.Logf("Session: %+v", session)
+				actual, _ := json.Marshal(list)
+				opt, _ := json.Marshal(option)
+
+				assert.JSONEq(t, c.list[loop], string(actual))
+				assert.Equal(t, c.total[loop], total)
+				assert.JSONEq(t, c.option[loop], string(opt))
+
+				loop++
+			}
+		})
 	}
 }
 
-func TestQueryRawWithScroll_DorisFlow(t *testing.T) {
-	ctx := metadata.InitHashID(context.Background())
-	spaceUid := influxdb.SpaceUid
+func TestQueryRawWithScroll_Doris(t *testing.T) {
+	type Case struct {
+		name    string
+		queryTs *structured.QueryTs
 
+		list   []string
+		total  []int64
+		option []string
+	}
+
+	mock.BkSQL.Set(map[string]any{
+		"SHOW CREATE TABLE `2_bklog_bkunify_query_doris`.doris": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":18,"external_api_call_time_mills":{"bkbase_auth_api":43,"bkbase_meta_api":0,"bkbase_apigw_api":33},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtimestamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dteventtime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"localtime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__shard_key__","Type":"bigint","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__ext","Type":"variant","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"cloudid","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"file","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"gseindex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"iterationindex","Type":"double","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"level","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"log","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"message","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"path","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"report_time","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"serverip","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"time","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"trace_id","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"}],"stage_elapsed_time_mills":{"check_query_syntax":0,"query_db":5,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":45,"match_query_routing_rule":0,"check_permission":43,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["Field","Type","Null","Key","Default","Extra"],"sql":"SHOW COLUMNS FROM mapleleaf_2.bklog_bkunify_query_doris_2","total_record_size":11776,"timetaken":0.096,"result_schema":[{"field_type":"string","field_name":"Field","field_alias":"Field","field_index":0},{"field_type":"string","field_name":"Type","field_alias":"Type","field_index":1},{"field_type":"string","field_name":"Null","field_alias":"Null","field_index":2},{"field_type":"string","field_name":"Key","field_alias":"Key","field_index":3},{"field_type":"string","field_name":"Default","field_alias":"Default","field_index":4},{"field_type":"string","field_name":"Extra","field_alias":"Extra","field_index":5}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+	})
+
+	mockSet := []func(){
+		func() {
+			mock.Es.Set(map[string]any{
+				`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1757051309,"include_lower":true,"include_upper":true,"to":1757054909}}}}},"size":2,"slice":{"id":0,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"00","took":2235,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":11,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"5453114629550017335","_score":null,"_source":{"level":"info"},"sort":[16598541]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"17835216159845548629","_score":null,"_source":{"level":"info"},"sort":[16598543]}]}}`,
+				`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1757051309,"include_lower":true,"include_upper":true,"to":1757054909}}}}},"size":2,"slice":{"id":1,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"01","took":2899,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":12,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"10623991376064743108","_score":null,"_source":{"level":"info"},"sort":[16598542]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"8864386387027044153","_score":null,"_source":{"level":"info"},"sort":[16598544]}]}}`,
+				`{"_source":{"includes":["level"]},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1757051309,"include_lower":true,"include_upper":true,"to":1757054909}}}}},"size":2,"slice":{"id":2,"max":3},"sort":["_doc"]}`: `{"_scroll_id":"02","took":2433,"timed_out":false,"_shards":{"total":2,"successful":2,"skipped":1,"failed":0},"hits":{"total":{"value":13,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"18273955038741147447","_score":null,"_source":{"level":"info"},"sort":[16598546]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"14800640324679701284","_score":null,"_source":{"level":"info"},"sort":[16598548]}]}}`,
+			})
+
+			mock.BkSQL.Set(map[string]any{
+				"SELECT level, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1757051309000 AND `dtEventTimeStamp` <= 1757054909000 AND `dtEventTime` >= '2025-09-05 13:48:29' AND `dtEventTime` <= '2025-09-05 14:48:30' AND `thedate` = '20250905' LIMIT 2":          `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"2_bklog_bkunify_query_doris":{"start":"2025041500","end":"2025041523"}},"cluster":"doris-test","totalRecords":1,"external_api_call_time_mills":{"bkbase_auth_api":12,"bkbase_meta_api":0,"bkbase_apigw_api":0},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"thedate":20250415,"dteventtimestamp":1744662180000,"dteventtime":null,"localtime":null,"__shard_key__":29077703953,"__ext":"{\"container_id\":\"375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2\",\"container_image\":\"sha256:3a0506f06f1467e93c3a582203aac1a7501e77091572ec9612ddeee4a4dbbdb8\",\"container_name\":\"unify-query\",\"io_kubernetes_pod\":\"bk-datalink-unify-query-6df8bcc4c9-rk4sc\",\"io_kubernetes_pod_ip\":\"127.0.0.1\",\"io_kubernetes_pod_namespace\":\"blueking\",\"io_kubernetes_pod_uid\":\"558c5b17-b221-47e1-aa66-036cc9b43e2a\",\"io_kubernetes_workload_name\":\"bk-datalink-unify-query-6df8bcc4c9\",\"io_kubernetes_workload_type\":\"ReplicaSet\"}","cloudid":0.0,"file":"http/handler.go:320","gseindex":2450131.0,"iterationindex":19.0,"level":"info","log":"2025-04-14T20:22:59.982Z\tinfo\thttp/handler.go:320\t[5108397435e997364f8dc1251533e65e] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","path":"/var/host/data/bcs/lib/docker/containers/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2-json.log","report_time":"2025-04-14T20:22:59.982Z","serverip":"127.0.0.1","time":"1744662180000","trace_id":"5108397435e997364f8dc1251533e65e","_value_":2450131.0,"_timestamp_":1744662180000}],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":182,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":56,"match_query_routing_rule":0,"check_permission":13,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["thedate","dteventtimestamp","dteventtime","localtime","__shard_key__","__ext","cloudid","file","gseindex","iterationindex","level","log","message","path","report_time","serverip","time","trace_id","_value_","_timestamp_"],"total_record_size":8856,"timetaken":0.255,"result_schema":[{"field_type":"int","field_name":"__c0","field_alias":"thedate","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"dteventtimestamp","field_index":1},{"field_type":"string","field_name":"__c2","field_alias":"dteventtime","field_index":2},{"field_type":"string","field_name":"__c3","field_alias":"localtime","field_index":3},{"field_type":"long","field_name":"__c4","field_alias":"__shard_key__","field_index":4},{"field_type":"string","field_name":"__c5","field_alias":"__ext","field_index":5},{"field_type":"double","field_name":"__c6","field_alias":"cloudid","field_index":6},{"field_type":"string","field_name":"__c7","field_alias":"file","field_index":7},{"field_type":"double","field_name":"__c8","field_alias":"gseindex","field_index":8},{"field_type":"double","field_name":"__c9","field_alias":"iterationindex","field_index":9},{"field_type":"string","field_name":"__c10","field_alias":"level","field_index":10},{"field_type":"string","field_name":"__c11","field_alias":"log","field_index":11},{"field_type":"string","field_name":"__c12","field_alias":"message","field_index":12},{"field_type":"string","field_name":"__c13","field_alias":"path","field_index":13},{"field_type":"string","field_name":"__c14","field_alias":"report_time","field_index":14},{"field_type":"string","field_name":"__c15","field_alias":"serverip","field_index":15},{"field_type":"string","field_name":"__c16","field_alias":"time","field_index":16},{"field_type":"string","field_name":"__c17","field_alias":"trace_id","field_index":17},{"field_type":"double","field_name":"__c18","field_alias":"_value_","field_index":18},{"field_type":"long","field_name":"__c19","field_alias":"_timestamp_","field_index":19}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+				"SELECT level, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1757051309000 AND `dtEventTimeStamp` <= 1757054909000 AND `dtEventTime` >= '2025-09-05 13:48:29' AND `dtEventTime` <= '2025-09-05 14:48:30' AND `thedate` = '20250905' LIMIT 2 OFFSET 2": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"2_bklog_bkunify_query_doris":{"start":"2025041500","end":"2025041523"}},"cluster":"doris-test","totalRecords":1,"external_api_call_time_mills":{"bkbase_auth_api":12,"bkbase_meta_api":0,"bkbase_apigw_api":0},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"thedate":20250415,"dteventtimestamp":1744662180000,"dteventtime":null,"localtime":null,"__shard_key__":29077703953,"__ext":"{\"container_id\":\"375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2\",\"container_image\":\"sha256:3a0506f06f1467e93c3a582203aac1a7501e77091572ec9612ddeee4a4dbbdb8\",\"container_name\":\"unify-query\",\"io_kubernetes_pod\":\"bk-datalink-unify-query-6df8bcc4c9-rk4sc\",\"io_kubernetes_pod_ip\":\"127.0.0.1\",\"io_kubernetes_pod_namespace\":\"blueking\",\"io_kubernetes_pod_uid\":\"558c5b17-b221-47e1-aa66-036cc9b43e2a\",\"io_kubernetes_workload_name\":\"bk-datalink-unify-query-6df8bcc4c9\",\"io_kubernetes_workload_type\":\"ReplicaSet\"}","cloudid":0.0,"file":"http/handler.go:320","gseindex":2450131.0,"iterationindex":19.0,"level":"info","log":"2025-04-14T20:22:59.982Z\tinfo\thttp/handler.go:320\t[5108397435e997364f8dc1251533e65e] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","path":"/var/host/data/bcs/lib/docker/containers/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2-json.log","report_time":"2025-04-14T20:22:59.982Z","serverip":"127.0.0.1","time":"1744662180000","trace_id":"5108397435e997364f8dc1251533e65e","_value_":2450131.0,"_timestamp_":1744662180000}],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":182,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":56,"match_query_routing_rule":0,"check_permission":13,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["thedate","dteventtimestamp","dteventtime","localtime","__shard_key__","__ext","cloudid","file","gseindex","iterationindex","level","log","message","path","report_time","serverip","time","trace_id","_value_","_timestamp_"],"total_record_size":8856,"timetaken":0.255,"result_schema":[{"field_type":"int","field_name":"__c0","field_alias":"thedate","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"dteventtimestamp","field_index":1},{"field_type":"string","field_name":"__c2","field_alias":"dteventtime","field_index":2},{"field_type":"string","field_name":"__c3","field_alias":"localtime","field_index":3},{"field_type":"long","field_name":"__c4","field_alias":"__shard_key__","field_index":4},{"field_type":"string","field_name":"__c5","field_alias":"__ext","field_index":5},{"field_type":"double","field_name":"__c6","field_alias":"cloudid","field_index":6},{"field_type":"string","field_name":"__c7","field_alias":"file","field_index":7},{"field_type":"double","field_name":"__c8","field_alias":"gseindex","field_index":8},{"field_type":"double","field_name":"__c9","field_alias":"iterationindex","field_index":9},{"field_type":"string","field_name":"__c10","field_alias":"level","field_index":10},{"field_type":"string","field_name":"__c11","field_alias":"log","field_index":11},{"field_type":"string","field_name":"__c12","field_alias":"message","field_index":12},{"field_type":"string","field_name":"__c13","field_alias":"path","field_index":13},{"field_type":"string","field_name":"__c14","field_alias":"report_time","field_index":14},{"field_type":"string","field_name":"__c15","field_alias":"serverip","field_index":15},{"field_type":"string","field_name":"__c16","field_alias":"time","field_index":16},{"field_type":"string","field_name":"__c17","field_alias":"trace_id","field_index":17},{"field_type":"double","field_name":"__c18","field_alias":"_value_","field_index":18},{"field_type":"long","field_name":"__c19","field_alias":"_timestamp_","field_index":19}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+				"SELECT level, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1757051309000 AND `dtEventTimeStamp` <= 1757054909000 AND `dtEventTime` >= '2025-09-05 13:48:29' AND `dtEventTime` <= '2025-09-05 14:48:30' AND `thedate` = '20250905' LIMIT 2 OFFSET 4": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"2_bklog_bkunify_query_doris":{"start":"2025041500","end":"2025041523"}},"cluster":"doris-test","totalRecords":1,"external_api_call_time_mills":{"bkbase_auth_api":12,"bkbase_meta_api":0,"bkbase_apigw_api":0},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"thedate":20250415,"dteventtimestamp":1744662180000,"dteventtime":null,"localtime":null,"__shard_key__":29077703953,"__ext":"{\"container_id\":\"375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2\",\"container_image\":\"sha256:3a0506f06f1467e93c3a582203aac1a7501e77091572ec9612ddeee4a4dbbdb8\",\"container_name\":\"unify-query\",\"io_kubernetes_pod\":\"bk-datalink-unify-query-6df8bcc4c9-rk4sc\",\"io_kubernetes_pod_ip\":\"127.0.0.1\",\"io_kubernetes_pod_namespace\":\"blueking\",\"io_kubernetes_pod_uid\":\"558c5b17-b221-47e1-aa66-036cc9b43e2a\",\"io_kubernetes_workload_name\":\"bk-datalink-unify-query-6df8bcc4c9\",\"io_kubernetes_workload_type\":\"ReplicaSet\"}","cloudid":0.0,"file":"http/handler.go:320","gseindex":2450131.0,"iterationindex":19.0,"level":"info","log":"2025-04-14T20:22:59.982Z\tinfo\thttp/handler.go:320\t[5108397435e997364f8dc1251533e65e] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","path":"/var/host/data/bcs/lib/docker/containers/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2-json.log","report_time":"2025-04-14T20:22:59.982Z","serverip":"127.0.0.1","time":"1744662180000","trace_id":"5108397435e997364f8dc1251533e65e","_value_":2450131.0,"_timestamp_":1744662180000}],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":182,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":56,"match_query_routing_rule":0,"check_permission":13,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["thedate","dteventtimestamp","dteventtime","localtime","__shard_key__","__ext","cloudid","file","gseindex","iterationindex","level","log","message","path","report_time","serverip","time","trace_id","_value_","_timestamp_"],"total_record_size":8856,"timetaken":0.255,"result_schema":[{"field_type":"int","field_name":"__c0","field_alias":"thedate","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"dteventtimestamp","field_index":1},{"field_type":"string","field_name":"__c2","field_alias":"dteventtime","field_index":2},{"field_type":"string","field_name":"__c3","field_alias":"localtime","field_index":3},{"field_type":"long","field_name":"__c4","field_alias":"__shard_key__","field_index":4},{"field_type":"string","field_name":"__c5","field_alias":"__ext","field_index":5},{"field_type":"double","field_name":"__c6","field_alias":"cloudid","field_index":6},{"field_type":"string","field_name":"__c7","field_alias":"file","field_index":7},{"field_type":"double","field_name":"__c8","field_alias":"gseindex","field_index":8},{"field_type":"double","field_name":"__c9","field_alias":"iterationindex","field_index":9},{"field_type":"string","field_name":"__c10","field_alias":"level","field_index":10},{"field_type":"string","field_name":"__c11","field_alias":"log","field_index":11},{"field_type":"string","field_name":"__c12","field_alias":"message","field_index":12},{"field_type":"string","field_name":"__c13","field_alias":"path","field_index":13},{"field_type":"string","field_name":"__c14","field_alias":"report_time","field_index":14},{"field_type":"string","field_name":"__c15","field_alias":"serverip","field_index":15},{"field_type":"string","field_name":"__c16","field_alias":"time","field_index":16},{"field_type":"string","field_name":"__c17","field_alias":"trace_id","field_index":17},{"field_type":"double","field_name":"__c18","field_alias":"_value_","field_index":18},{"field_type":"long","field_name":"__c19","field_alias":"_timestamp_","field_index":19}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+			})
+		},
+		func() {
+			mock.Es.Set(map[string]any{
+				`{"scroll":"1m","scroll_id":"00"}`: `{"_scroll_id":"00","took":37,"timed_out":false,"terminated_early":true,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":106573,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"1564732741680274134","_score":null,"_source":{"level":"info"},"sort":[16163976]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"16543745574480876791","_score":null,"_source":{"level":"info"},"sort":[16163978]}]}}`,
+				`{"scroll":"1m","scroll_id":"01"}`: `{"_scroll_id":"01","took":37,"timed_out":false,"terminated_early":true,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":106573,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"1564732741680274134","_score":null,"_source":{"level":"info"},"sort":[16163976]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"16543745574480876791","_score":null,"_source":{"level":"info"},"sort":[16163978]}]}}`,
+				`{"scroll":"1m","scroll_id":"02"}`: `{"_scroll_id":"02","took":37,"timed_out":false,"terminated_early":true,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":106573,"relation":"eq"},"max_score":null,"hits":[{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"1564732741680274134","_score":null,"_source":{"level":"info"},"sort":[16163976]},{"_index":"v2_2_bklog_bkunify_query_20250903_0","_type":"_doc","_id":"16543745574480876791","_score":null,"_source":{"level":"info"},"sort":[16163978]}]}}`,
+			})
+
+			mock.BkSQL.Set(map[string]any{
+				"SELECT level, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1757051309000 AND `dtEventTimeStamp` <= 1757054909000 AND `dtEventTime` >= '2025-09-05 13:48:29' AND `dtEventTime` <= '2025-09-05 14:48:30' AND `thedate` = '20250905' LIMIT 2 OFFSET 6":  `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"2_bklog_bkunify_query_doris":{"start":"2025041500","end":"2025041523"}},"cluster":"doris-test","totalRecords":1,"external_api_call_time_mills":{"bkbase_auth_api":12,"bkbase_meta_api":0,"bkbase_apigw_api":0},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"thedate":20250415,"dteventtimestamp":1744662180000,"dteventtime":null,"localtime":null,"__shard_key__":29077703953,"__ext":"{\"container_id\":\"375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2\",\"container_image\":\"sha256:3a0506f06f1467e93c3a582203aac1a7501e77091572ec9612ddeee4a4dbbdb8\",\"container_name\":\"unify-query\",\"io_kubernetes_pod\":\"bk-datalink-unify-query-6df8bcc4c9-rk4sc\",\"io_kubernetes_pod_ip\":\"127.0.0.1\",\"io_kubernetes_pod_namespace\":\"blueking\",\"io_kubernetes_pod_uid\":\"558c5b17-b221-47e1-aa66-036cc9b43e2a\",\"io_kubernetes_workload_name\":\"bk-datalink-unify-query-6df8bcc4c9\",\"io_kubernetes_workload_type\":\"ReplicaSet\"}","cloudid":0.0,"file":"http/handler.go:320","gseindex":2450131.0,"iterationindex":19.0,"level":"info","log":"2025-04-14T20:22:59.982Z\tinfo\thttp/handler.go:320\t[5108397435e997364f8dc1251533e65e] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","path":"/var/host/data/bcs/lib/docker/containers/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2-json.log","report_time":"2025-04-14T20:22:59.982Z","serverip":"127.0.0.1","time":"1744662180000","trace_id":"5108397435e997364f8dc1251533e65e","_value_":2450131.0,"_timestamp_":1744662180000}],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":182,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":56,"match_query_routing_rule":0,"check_permission":13,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["thedate","dteventtimestamp","dteventtime","localtime","__shard_key__","__ext","cloudid","file","gseindex","iterationindex","level","log","message","path","report_time","serverip","time","trace_id","_value_","_timestamp_"],"total_record_size":8856,"timetaken":0.255,"result_schema":[{"field_type":"int","field_name":"__c0","field_alias":"thedate","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"dteventtimestamp","field_index":1},{"field_type":"string","field_name":"__c2","field_alias":"dteventtime","field_index":2},{"field_type":"string","field_name":"__c3","field_alias":"localtime","field_index":3},{"field_type":"long","field_name":"__c4","field_alias":"__shard_key__","field_index":4},{"field_type":"string","field_name":"__c5","field_alias":"__ext","field_index":5},{"field_type":"double","field_name":"__c6","field_alias":"cloudid","field_index":6},{"field_type":"string","field_name":"__c7","field_alias":"file","field_index":7},{"field_type":"double","field_name":"__c8","field_alias":"gseindex","field_index":8},{"field_type":"double","field_name":"__c9","field_alias":"iterationindex","field_index":9},{"field_type":"string","field_name":"__c10","field_alias":"level","field_index":10},{"field_type":"string","field_name":"__c11","field_alias":"log","field_index":11},{"field_type":"string","field_name":"__c12","field_alias":"message","field_index":12},{"field_type":"string","field_name":"__c13","field_alias":"path","field_index":13},{"field_type":"string","field_name":"__c14","field_alias":"report_time","field_index":14},{"field_type":"string","field_name":"__c15","field_alias":"serverip","field_index":15},{"field_type":"string","field_name":"__c16","field_alias":"time","field_index":16},{"field_type":"string","field_name":"__c17","field_alias":"trace_id","field_index":17},{"field_type":"double","field_name":"__c18","field_alias":"_value_","field_index":18},{"field_type":"long","field_name":"__c19","field_alias":"_timestamp_","field_index":19}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+				"SELECT level, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1757051309000 AND `dtEventTimeStamp` <= 1757054909000 AND `dtEventTime` >= '2025-09-05 13:48:29' AND `dtEventTime` <= '2025-09-05 14:48:30' AND `thedate` = '20250905' LIMIT 2 OFFSET 8":  `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"2_bklog_bkunify_query_doris":{"start":"2025041500","end":"2025041523"}},"cluster":"doris-test","totalRecords":1,"external_api_call_time_mills":{"bkbase_auth_api":12,"bkbase_meta_api":0,"bkbase_apigw_api":0},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":182,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":56,"match_query_routing_rule":0,"check_permission":13,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["thedate","dteventtimestamp","dteventtime","localtime","__shard_key__","__ext","cloudid","file","gseindex","iterationindex","level","log","message","path","report_time","serverip","time","trace_id","_value_","_timestamp_"],"total_record_size":8856,"timetaken":0.255,"result_schema":[{"field_type":"int","field_name":"__c0","field_alias":"thedate","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"dteventtimestamp","field_index":1},{"field_type":"string","field_name":"__c2","field_alias":"dteventtime","field_index":2},{"field_type":"string","field_name":"__c3","field_alias":"localtime","field_index":3},{"field_type":"long","field_name":"__c4","field_alias":"__shard_key__","field_index":4},{"field_type":"string","field_name":"__c5","field_alias":"__ext","field_index":5},{"field_type":"double","field_name":"__c6","field_alias":"cloudid","field_index":6},{"field_type":"string","field_name":"__c7","field_alias":"file","field_index":7},{"field_type":"double","field_name":"__c8","field_alias":"gseindex","field_index":8},{"field_type":"double","field_name":"__c9","field_alias":"iterationindex","field_index":9},{"field_type":"string","field_name":"__c10","field_alias":"level","field_index":10},{"field_type":"string","field_name":"__c11","field_alias":"log","field_index":11},{"field_type":"string","field_name":"__c12","field_alias":"message","field_index":12},{"field_type":"string","field_name":"__c13","field_alias":"path","field_index":13},{"field_type":"string","field_name":"__c14","field_alias":"report_time","field_index":14},{"field_type":"string","field_name":"__c15","field_alias":"serverip","field_index":15},{"field_type":"string","field_name":"__c16","field_alias":"time","field_index":16},{"field_type":"string","field_name":"__c17","field_alias":"trace_id","field_index":17},{"field_type":"double","field_name":"__c18","field_alias":"_value_","field_index":18},{"field_type":"long","field_name":"__c19","field_alias":"_timestamp_","field_index":19}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+				"SELECT level, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1757051309000 AND `dtEventTimeStamp` <= 1757054909000 AND `dtEventTime` >= '2025-09-05 13:48:29' AND `dtEventTime` <= '2025-09-05 14:48:30' AND `thedate` = '20250905' LIMIT 2 OFFSET 10": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"2_bklog_bkunify_query_doris":{"start":"2025041500","end":"2025041523"}},"cluster":"doris-test","totalRecords":1,"external_api_call_time_mills":{"bkbase_auth_api":12,"bkbase_meta_api":0,"bkbase_apigw_api":0},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":182,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":56,"match_query_routing_rule":0,"check_permission":13,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["thedate","dteventtimestamp","dteventtime","localtime","__shard_key__","__ext","cloudid","file","gseindex","iterationindex","level","log","message","path","report_time","serverip","time","trace_id","_value_","_timestamp_"],"total_record_size":8856,"timetaken":0.255,"result_schema":[{"field_type":"int","field_name":"__c0","field_alias":"thedate","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"dteventtimestamp","field_index":1},{"field_type":"string","field_name":"__c2","field_alias":"dteventtime","field_index":2},{"field_type":"string","field_name":"__c3","field_alias":"localtime","field_index":3},{"field_type":"long","field_name":"__c4","field_alias":"__shard_key__","field_index":4},{"field_type":"string","field_name":"__c5","field_alias":"__ext","field_index":5},{"field_type":"double","field_name":"__c6","field_alias":"cloudid","field_index":6},{"field_type":"string","field_name":"__c7","field_alias":"file","field_index":7},{"field_type":"double","field_name":"__c8","field_alias":"gseindex","field_index":8},{"field_type":"double","field_name":"__c9","field_alias":"iterationindex","field_index":9},{"field_type":"string","field_name":"__c10","field_alias":"level","field_index":10},{"field_type":"string","field_name":"__c11","field_alias":"log","field_index":11},{"field_type":"string","field_name":"__c12","field_alias":"message","field_index":12},{"field_type":"string","field_name":"__c13","field_alias":"path","field_index":13},{"field_type":"string","field_name":"__c14","field_alias":"report_time","field_index":14},{"field_type":"string","field_name":"__c15","field_alias":"serverip","field_index":15},{"field_type":"string","field_name":"__c16","field_alias":"time","field_index":16},{"field_type":"string","field_name":"__c17","field_alias":"trace_id","field_index":17},{"field_type":"double","field_name":"__c18","field_alias":"_value_","field_index":18},{"field_type":"long","field_name":"__c19","field_alias":"_timestamp_","field_index":19}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+			})
+		},
+		func() {
+			mock.Es.Set(map[string]any{
+				`{"scroll":"1m","scroll_id":"00"}`: `{"_scroll_id":"00","took":65,"timed_out":false,"terminated_early":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":300,"relation":"eq"},"max_score":null,"hits":[]}}`,
+				`{"scroll":"1m","scroll_id":"01"}`: `{"_scroll_id":"01","took":65,"timed_out":false,"terminated_early":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":300,"relation":"eq"},"max_score":null,"hits":[]}}`,
+				`{"scroll":"1m","scroll_id":"02"}`: `{"_scroll_id":"02","took":65,"timed_out":false,"terminated_early":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":300,"relation":"eq"},"max_score":null,"hits":[]}}`,
+			})
+
+			mock.BkSQL.Set(map[string]any{
+				"SELECT level, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_bkunify_query_doris`.doris WHERE `dtEventTimeStamp` >= 1757051309000 AND `dtEventTimeStamp` <= 1757054909000 AND `dtEventTime` >= '2025-09-05 13:48:29' AND `dtEventTime` <= '2025-09-05 14:48:30' AND `thedate` = '20250905' LIMIT 2 OFFSET 12": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{"2_bklog_bkunify_query_doris":{"start":"2025041500","end":"2025041523"}},"cluster":"doris-test","totalRecords":1,"external_api_call_time_mills":{"bkbase_auth_api":12,"bkbase_meta_api":0,"bkbase_apigw_api":0},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":182,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":2,"connect_db":56,"match_query_routing_rule":0,"check_permission":13,"check_query_semantic":0,"pick_valid_storage":1},"select_fields_order":["thedate","dteventtimestamp","dteventtime","localtime","__shard_key__","__ext","cloudid","file","gseindex","iterationindex","level","log","message","path","report_time","serverip","time","trace_id","_value_","_timestamp_"],"total_record_size":8856,"timetaken":0.255,"result_schema":[{"field_type":"int","field_name":"__c0","field_alias":"thedate","field_index":0},{"field_type":"long","field_name":"__c1","field_alias":"dteventtimestamp","field_index":1},{"field_type":"string","field_name":"__c2","field_alias":"dteventtime","field_index":2},{"field_type":"string","field_name":"__c3","field_alias":"localtime","field_index":3},{"field_type":"long","field_name":"__c4","field_alias":"__shard_key__","field_index":4},{"field_type":"string","field_name":"__c5","field_alias":"__ext","field_index":5},{"field_type":"double","field_name":"__c6","field_alias":"cloudid","field_index":6},{"field_type":"string","field_name":"__c7","field_alias":"file","field_index":7},{"field_type":"double","field_name":"__c8","field_alias":"gseindex","field_index":8},{"field_type":"double","field_name":"__c9","field_alias":"iterationindex","field_index":9},{"field_type":"string","field_name":"__c10","field_alias":"level","field_index":10},{"field_type":"string","field_name":"__c11","field_alias":"log","field_index":11},{"field_type":"string","field_name":"__c12","field_alias":"message","field_index":12},{"field_type":"string","field_name":"__c13","field_alias":"path","field_index":13},{"field_type":"string","field_name":"__c14","field_alias":"report_time","field_index":14},{"field_type":"string","field_name":"__c15","field_alias":"serverip","field_index":15},{"field_type":"string","field_name":"__c16","field_alias":"time","field_index":16},{"field_type":"string","field_name":"__c17","field_alias":"trace_id","field_index":17},{"field_type":"double","field_name":"__c18","field_alias":"_value_","field_index":18},{"field_type":"long","field_name":"__c19","field_alias":"_timestamp_","field_index":19}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_bkunify_query_doris"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
+			})
+		},
+	}
+
+	ctx := metadata.InitHashID(context.Background())
 	mock.Init()
 	influxdb.MockSpaceRouter(ctx)
-	promql.MockEngine()
 
-	testTableId := "result_table.doris"
-
-	router, err := influxdb.GetSpaceTsDbRouter()
-	require.NoError(t, err, "Failed to get space router")
-
-	err = router.Add(ctx, ir.ResultTableDetailKey, testTableId, &ir.ResultTableDetail{
-		StorageId:   4,
-		TableId:     testTableId,
-		DB:          "doris_db",
-		StorageType: consul.BkSqlStorageType,
-		DataLabel:   "doris_test",
-	})
-	assert.NoError(t, err)
-
-	type expectResult struct {
-		desc     string
-		total    int64
-		done     bool
-		hasData  bool
-		mockData map[string]any
-	}
-
-	require.NoError(t, err, "Failed to add space mapping")
-
-	s, err := miniredis.Run()
-	require.NoError(t, err, "Failed to start miniredis")
-	defer s.Close()
-
-	options := &goRedis.UniversalOptions{
-		Addrs: []string{s.Addr()},
-		DB:    0,
-	}
-
-	err = redisUtil.SetInstance(ctx, "test", options)
-	require.NoError(t, err, "Failed to set unify-query redis instance")
-
-	initDorisMockData := map[string]any{
-		"SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `doris_db` WHERE `dtEventTimeStamp` >= 1723594000000 AND `dtEventTimeStamp` < 1723595000000 AND `dtEventTime` >= '2024-08-14 08:06:40' AND `dtEventTime` <= '2024-08-14 08:23:21' AND `thedate` = '20240814' LIMIT 10":           `{"result":true,"code":"00","message":"","data":{"totalRecords":2,"total_record_size":2,"list":[{"dtEventTimeStamp":"1723594001000","data":"doris_test1"},{"dtEventTimeStamp":"1723594002000","data":"doris_test2"}]}}`,
-		"SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `doris_db` WHERE `dtEventTimeStamp` >= 1723594000000 AND `dtEventTimeStamp` < 1723595000000 AND `dtEventTime` >= '2024-08-14 08:06:40' AND `dtEventTime` <= '2024-08-14 08:23:21' AND `thedate` = '20240814' LIMIT 10 OFFSET 10": `{"result":true,"code":"00","message":"","data":{"totalRecords":2,"total_record_size":2,"list":[{"dtEventTimeStamp":"1723594003000","data":"doris_test3"},{"dtEventTimeStamp":"1723594004000","data":"doris_test4"}]}}`,
-		"SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `doris_db` WHERE `dtEventTimeStamp` >= 1723594000000 AND `dtEventTimeStamp` < 1723595000000 AND `dtEventTime` >= '2024-08-14 08:06:40' AND `dtEventTime` <= '2024-08-14 08:23:21' AND `thedate` = '20240814' LIMIT 10 OFFSET 20": `{"result":true,"code":"00","message":"","data":{"totalRecords":2,"total_record_size":2,"list":[{"dtEventTimeStamp":"1723594005000","data":"doris_test5"},{"dtEventTimeStamp":"1723594006000","data":"doris_test6"}]}}`,
-	}
-
-	inProgressDorisMockData := map[string]any{
-		"SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `doris_db` WHERE `dtEventTimeStamp` >= 1723594000000 AND `dtEventTimeStamp` < 1723595000000 AND `dtEventTime` >= '2024-08-14 08:06:40' AND `dtEventTime` <= '2024-08-14 08:23:21' AND `thedate` = '20240814' LIMIT 10 OFFSET 30": `{"result":true,"code":"00","message":"","data":{"totalRecords":2,"total_record_size":2,"list":[{"dtEventTimeStamp":"1723594007000","data":"doris_test7"},{"dtEventTimeStamp":"1723594008000","data":"doris_test8"}]}}`,
-		"SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `doris_db` WHERE `dtEventTimeStamp` >= 1723594000000 AND `dtEventTimeStamp` < 1723595000000 AND `dtEventTime` >= '2024-08-14 08:06:40' AND `dtEventTime` <= '2024-08-14 08:23:21' AND `thedate` = '20240814' LIMIT 10 OFFSET 40": `{"result":true,"code":"00","message":"","data":{"totalRecords":2,"total_record_size":2,"list":[{"dtEventTimeStamp":"1723594009000","data":"doris_test9"},{"dtEventTimeStamp":"1723594010000","data":"doris_test10"}]}}`,
-		"SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `doris_db` WHERE `dtEventTimeStamp` >= 1723594000000 AND `dtEventTimeStamp` < 1723595000000 AND `dtEventTime` >= '2024-08-14 08:06:40' AND `dtEventTime` <= '2024-08-14 08:23:21' AND `thedate` = '20240814' LIMIT 10 OFFSET 50": `{"result":true,"code":"00","message":"","data":{"totalRecords":2,"total_record_size":2,"list":[{"dtEventTimeStamp":"1723594011000","data":"doris_test11"},{"dtEventTimeStamp":"1723594012000","data":"doris_test12"}]}}`,
-	}
-
-	thirdRoundDorisMockData := map[string]any{
-		"SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `doris_db` WHERE `dtEventTimeStamp` >= 1723594000000 AND `dtEventTimeStamp` < 1723595000000 AND `dtEventTime` >= '2024-08-14 08:06:40' AND `dtEventTime` <= '2024-08-14 08:23:21' AND `thedate` = '20240814' LIMIT 10 OFFSET 60": `{"result":true,"code":"00","message":"","data":{"totalRecords":0,"total_record_size":0,"list":[]}}`,
-		"SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `doris_db` WHERE `dtEventTimeStamp` >= 1723594000000 AND `dtEventTimeStamp` < 1723595000000 AND `dtEventTime` >= '2024-08-14 08:06:40' AND `dtEventTime` <= '2024-08-14 08:23:21' AND `thedate` = '20240814' LIMIT 10 OFFSET 70": `{"result":true,"code":"00","message":"","data":{"totalRecords":0,"total_record_size":0,"list":[]}}`,
-		"SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `doris_db` WHERE `dtEventTimeStamp` >= 1723594000000 AND `dtEventTimeStamp` < 1723595000000 AND `dtEventTime` >= '2024-08-14 08:06:40' AND `dtEventTime` <= '2024-08-14 08:23:21' AND `thedate` = '20240814' LIMIT 10 OFFSET 80": `{"result":true,"code":"00","message":"","data":{"totalRecords":0,"total_record_size":0,"list":[]}}`,
-	}
-
-	start := "1723594000"
-	end := "1723595000"
-	type testCase struct {
-		queryTs  *structured.QueryTs
-		expected []expectResult
-	}
-
-	tCase := testCase{
-		queryTs: &structured.QueryTs{
-			SpaceUid: spaceUid,
-			QueryList: []*structured.Query{
-				{
-					TableID: structured.TableID(testTableId),
+	for _, c := range []Case{
+		{
+			name: "test-1",
+			queryTs: &structured.QueryTs{
+				SpaceUid: influxdb.SpaceUid,
+				QueryList: []*structured.Query{
+					{
+						TableID:     "es_and_doris",
+						KeepColumns: []string{"level"},
+					},
 				},
+				MetricMerge: "a",
+				Start:       "1757051309",
+				End:         "1757054909",
+				Step:        "1m",
+				Limit:       2,
+				Scroll:      "1m",
+				SliceMax:    3,
 			},
-			Timezone: "Asia/Shanghai",
-			Scroll:   "9m",
-			Limit:    10,
-			Start:    start,
-			End:      end,
-		},
-		expected: []expectResult{
-			{
-				desc:     "First scroll request - slice 0,1,2 with OFFSET 0,10,20",
-				total:    6,
-				done:     false,
-				hasData:  true,
-				mockData: initDorisMockData,
+			total: []int64{
+				9,
+				7,
+				0,
 			},
-			{
-				desc:     "Second scroll request - slice 0,1,2 with OFFSET 30,40,50",
-				total:    6,
-				done:     false,
-				hasData:  true,
-				mockData: inProgressDorisMockData,
+			list: []string{
+				`[{"__data_label":"es","__doc_id":"10623991376064743108","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|1","level":"info"},{"__data_label":"es","__doc_id":"14800640324679701284","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|2","level":"info"},{"__data_label":"es","__doc_id":"17835216159845548629","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|0","level":"info"},{"__data_label":"es","__doc_id":"18273955038741147447","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|2","level":"info"},{"__data_label":"es","__doc_id":"5453114629550017335","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|0","level":"info"},{"__data_label":"es","__doc_id":"8864386387027044153","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|1","level":"info"},{"__data_label":"bksql","__ext.container_id":"375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2","__ext.container_image":"sha256:3a0506f06f1467e93c3a582203aac1a7501e77091572ec9612ddeee4a4dbbdb8","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bk-datalink-unify-query-6df8bcc4c9-rk4sc","__ext.io_kubernetes_pod_ip":"127.0.0.1","__ext.io_kubernetes_pod_namespace":"blueking","__ext.io_kubernetes_pod_uid":"558c5b17-b221-47e1-aa66-036cc9b43e2a","__ext.io_kubernetes_workload_name":"bk-datalink-unify-query-6df8bcc4c9","__ext.io_kubernetes_workload_type":"ReplicaSet","__index":"2_bklog_bkunify_query_doris","__result_table":"result_table.doris","__shard_key__":29077703953,"__table_uuid":"result_table.doris|4|0","_timestamp_":1744662180000,"_value_":2450131,"cloudid":0,"dteventtime":null,"dteventtimestamp":1744662180000,"file":"http/handler.go:320","gseindex":2450131,"iterationindex":19,"level":"info","localtime":null,"log":"2025-04-14T20:22:59.982Z\tinfo\thttp/handler.go:320\t[5108397435e997364f8dc1251533e65e] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","path":"/var/host/data/bcs/lib/docker/containers/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2-json.log","report_time":"2025-04-14T20:22:59.982Z","serverip":"127.0.0.1","thedate":20250415,"time":"1744662180000","trace_id":"5108397435e997364f8dc1251533e65e"},{"__data_label":"bksql","__ext.container_id":"375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2","__ext.container_image":"sha256:3a0506f06f1467e93c3a582203aac1a7501e77091572ec9612ddeee4a4dbbdb8","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bk-datalink-unify-query-6df8bcc4c9-rk4sc","__ext.io_kubernetes_pod_ip":"127.0.0.1","__ext.io_kubernetes_pod_namespace":"blueking","__ext.io_kubernetes_pod_uid":"558c5b17-b221-47e1-aa66-036cc9b43e2a","__ext.io_kubernetes_workload_name":"bk-datalink-unify-query-6df8bcc4c9","__ext.io_kubernetes_workload_type":"ReplicaSet","__index":"2_bklog_bkunify_query_doris","__result_table":"result_table.doris","__shard_key__":29077703953,"__table_uuid":"result_table.doris|4|1","_timestamp_":1744662180000,"_value_":2450131,"cloudid":0,"dteventtime":null,"dteventtimestamp":1744662180000,"file":"http/handler.go:320","gseindex":2450131,"iterationindex":19,"level":"info","localtime":null,"log":"2025-04-14T20:22:59.982Z\tinfo\thttp/handler.go:320\t[5108397435e997364f8dc1251533e65e] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","path":"/var/host/data/bcs/lib/docker/containers/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2-json.log","report_time":"2025-04-14T20:22:59.982Z","serverip":"127.0.0.1","thedate":20250415,"time":"1744662180000","trace_id":"5108397435e997364f8dc1251533e65e"},{"__data_label":"bksql","__ext.container_id":"375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2","__ext.container_image":"sha256:3a0506f06f1467e93c3a582203aac1a7501e77091572ec9612ddeee4a4dbbdb8","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bk-datalink-unify-query-6df8bcc4c9-rk4sc","__ext.io_kubernetes_pod_ip":"127.0.0.1","__ext.io_kubernetes_pod_namespace":"blueking","__ext.io_kubernetes_pod_uid":"558c5b17-b221-47e1-aa66-036cc9b43e2a","__ext.io_kubernetes_workload_name":"bk-datalink-unify-query-6df8bcc4c9","__ext.io_kubernetes_workload_type":"ReplicaSet","__index":"2_bklog_bkunify_query_doris","__result_table":"result_table.doris","__shard_key__":29077703953,"__table_uuid":"result_table.doris|4|2","_timestamp_":1744662180000,"_value_":2450131,"cloudid":0,"dteventtime":null,"dteventtimestamp":1744662180000,"file":"http/handler.go:320","gseindex":2450131,"iterationindex":19,"level":"info","localtime":null,"log":"2025-04-14T20:22:59.982Z\tinfo\thttp/handler.go:320\t[5108397435e997364f8dc1251533e65e] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","path":"/var/host/data/bcs/lib/docker/containers/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2-json.log","report_time":"2025-04-14T20:22:59.982Z","serverip":"127.0.0.1","thedate":20250415,"time":"1744662180000","trace_id":"5108397435e997364f8dc1251533e65e"}]`,
+				`[{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|0","level":"info"},{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|1","level":"info"},{"__data_label":"es","__doc_id":"1564732741680274134","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|2","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|0","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|1","level":"info"},{"__data_label":"es","__doc_id":"16543745574480876791","__index":"v2_2_bklog_bkunify_query_20250903_0","__result_table":"result_table.es","__table_uuid":"result_table.es|3|2","level":"info"},{"__data_label":"bksql","__ext.container_id":"375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2","__ext.container_image":"sha256:3a0506f06f1467e93c3a582203aac1a7501e77091572ec9612ddeee4a4dbbdb8","__ext.container_name":"unify-query","__ext.io_kubernetes_pod":"bk-datalink-unify-query-6df8bcc4c9-rk4sc","__ext.io_kubernetes_pod_ip":"127.0.0.1","__ext.io_kubernetes_pod_namespace":"blueking","__ext.io_kubernetes_pod_uid":"558c5b17-b221-47e1-aa66-036cc9b43e2a","__ext.io_kubernetes_workload_name":"bk-datalink-unify-query-6df8bcc4c9","__ext.io_kubernetes_workload_type":"ReplicaSet","__index":"2_bklog_bkunify_query_doris","__result_table":"result_table.doris","__shard_key__":29077703953,"__table_uuid":"result_table.doris|4|0","_timestamp_":1744662180000,"_value_":2450131,"cloudid":0,"dteventtime":null,"dteventtimestamp":1744662180000,"file":"http/handler.go:320","gseindex":2450131,"iterationindex":19,"level":"info","localtime":null,"log":"2025-04-14T20:22:59.982Z\tinfo\thttp/handler.go:320\t[5108397435e997364f8dc1251533e65e] header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","message":" header: map[Accept:[*/*] Accept-Encoding:[gzip, deflate] Bk-Query-Source:[strategy:9155] Connection:[keep-alive] Content-Length:[863] Content-Type:[application/json] Traceparent:[00-5108397435e997364f8dc1251533e65e-ca18e72c0f0eafd4-00] User-Agent:[python-requests/2.31.0] X-Bk-Scope-Space-Uid:[bkcc__2]], body: {\"space_uid\":\"bkcc__2\",\"query_list\":[{\"field_name\":\"bscp_config_consume_total_file_change_count\",\"is_regexp\":false,\"function\":[{\"method\":\"mean\",\"without\":false,\"dimensions\":[\"app\",\"biz\",\"clientType\"]}],\"time_aggregation\":{\"function\":\"increase\",\"window\":\"1m\"},\"is_dom_sampled\":false,\"reference_name\":\"a\",\"dimensions\":[\"app\",\"biz\",\"clientType\"],\"conditions\":{\"field_list\":[{\"field_name\":\"releaseChangeStatus\",\"value\":[\"Failed\"],\"op\":\"contains\"},{\"field_name\":\"bcs_cluster_id\",\"value\":[\"BCS-K8S-00000\"],\"op\":\"contains\"}],\"condition_list\":[\"and\"]},\"keep_columns\":[\"_time\",\"a\",\"app\",\"biz\",\"clientType\"],\"query_string\":\"\"}],\"metric_merge\":\"a\",\"start_time\":\"1744660260\",\"end_time\":\"1744662120\",\"step\":\"60s\",\"timezone\":\"Asia/Shanghai\",\"instant\":false}","path":"/var/host/data/bcs/lib/docker/containers/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2/375597ee636fd5d53cb7b0958823d9ba6534bd24cd698e485c41ca2f01b78ed2-json.log","report_time":"2025-04-14T20:22:59.982Z","serverip":"127.0.0.1","thedate":20250415,"time":"1744662180000","trace_id":"5108397435e997364f8dc1251533e65e"}]`,
+				`[]`,
 			},
-			{
-				desc:     "Third scroll request - slice 0,1,2 with OFFSET 60,70,80 - should be done",
-				total:    0,
-				done:     true,
-				hasData:  false,
-				mockData: thirdRoundDorisMockData,
-			},
-			{
-				desc:     "Fourth scroll request - should still be done",
-				total:    0,
-				done:     true,
-				hasData:  false,
-				mockData: thirdRoundDorisMockData,
+			option: []string{
+				`[{"from":0,"slice_max":3,"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"dteventtimestamp","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dteventtime","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"localtime","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"__shard_key__","field_index":4,"field_name":"__c4","field_type":"long"},{"field_alias":"__ext","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"cloudid","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"file","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"gseindex","field_index":8,"field_name":"__c8","field_type":"double"},{"field_alias":"iterationindex","field_index":9,"field_name":"__c9","field_type":"double"},{"field_alias":"level","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"path","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"report_time","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"serverip","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"double"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]},{"from":2,"slice_index":1,"slice_max":3,"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"dteventtimestamp","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dteventtime","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"localtime","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"__shard_key__","field_index":4,"field_name":"__c4","field_type":"long"},{"field_alias":"__ext","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"cloudid","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"file","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"gseindex","field_index":8,"field_name":"__c8","field_type":"double"},{"field_alias":"iterationindex","field_index":9,"field_name":"__c9","field_type":"double"},{"field_alias":"level","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"path","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"report_time","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"serverip","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"double"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]},{"from":4,"slice_index":2,"slice_max":3,"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"dteventtimestamp","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dteventtime","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"localtime","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"__shard_key__","field_index":4,"field_name":"__c4","field_type":"long"},{"field_alias":"__ext","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"cloudid","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"file","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"gseindex","field_index":8,"field_name":"__c8","field_type":"double"},{"field_alias":"iterationindex","field_index":9,"field_name":"__c9","field_type":"double"},{"field_alias":"level","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"path","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"report_time","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"serverip","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"double"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]},{"from":0,"scroll_id":"00","search_after":[16598543],"slice_max":3},{"from":2,"scroll_id":"01","search_after":[16598544],"slice_index":1,"slice_max":3},{"from":4,"scroll_id":"02","search_after":[16598548],"slice_index":2,"slice_max":3}]`,
+				`[{"from":6,"slice_max":3,"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"dteventtimestamp","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dteventtime","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"localtime","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"__shard_key__","field_index":4,"field_name":"__c4","field_type":"long"},{"field_alias":"__ext","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"cloudid","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"file","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"gseindex","field_index":8,"field_name":"__c8","field_type":"double"},{"field_alias":"iterationindex","field_index":9,"field_name":"__c9","field_type":"double"},{"field_alias":"level","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"path","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"report_time","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"serverip","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"double"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]},{"from":8,"slice_index":1,"slice_max":3,"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"dteventtimestamp","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dteventtime","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"localtime","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"__shard_key__","field_index":4,"field_name":"__c4","field_type":"long"},{"field_alias":"__ext","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"cloudid","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"file","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"gseindex","field_index":8,"field_name":"__c8","field_type":"double"},{"field_alias":"iterationindex","field_index":9,"field_name":"__c9","field_type":"double"},{"field_alias":"level","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"path","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"report_time","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"serverip","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"double"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]},{"from":10,"slice_index":2,"slice_max":3,"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"dteventtimestamp","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dteventtime","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"localtime","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"__shard_key__","field_index":4,"field_name":"__c4","field_type":"long"},{"field_alias":"__ext","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"cloudid","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"file","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"gseindex","field_index":8,"field_name":"__c8","field_type":"double"},{"field_alias":"iterationindex","field_index":9,"field_name":"__c9","field_type":"double"},{"field_alias":"level","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"path","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"report_time","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"serverip","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"double"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]},{"from":6,"scroll_id":"00","search_after":[16163978],"slice_max":3},{"from":8,"scroll_id":"01","search_after":[16163978],"slice_index":1,"slice_max":3},{"from":10,"scroll_id":"02","search_after":[16163978],"slice_index":2,"slice_max":3}]`,
+				`[{"from":12,"slice_max":3,"result_schema":[{"field_alias":"thedate","field_index":0,"field_name":"__c0","field_type":"int"},{"field_alias":"dteventtimestamp","field_index":1,"field_name":"__c1","field_type":"long"},{"field_alias":"dteventtime","field_index":2,"field_name":"__c2","field_type":"string"},{"field_alias":"localtime","field_index":3,"field_name":"__c3","field_type":"string"},{"field_alias":"__shard_key__","field_index":4,"field_name":"__c4","field_type":"long"},{"field_alias":"__ext","field_index":5,"field_name":"__c5","field_type":"string"},{"field_alias":"cloudid","field_index":6,"field_name":"__c6","field_type":"double"},{"field_alias":"file","field_index":7,"field_name":"__c7","field_type":"string"},{"field_alias":"gseindex","field_index":8,"field_name":"__c8","field_type":"double"},{"field_alias":"iterationindex","field_index":9,"field_name":"__c9","field_type":"double"},{"field_alias":"level","field_index":10,"field_name":"__c10","field_type":"string"},{"field_alias":"log","field_index":11,"field_name":"__c11","field_type":"string"},{"field_alias":"message","field_index":12,"field_name":"__c12","field_type":"string"},{"field_alias":"path","field_index":13,"field_name":"__c13","field_type":"string"},{"field_alias":"report_time","field_index":14,"field_name":"__c14","field_type":"string"},{"field_alias":"serverip","field_index":15,"field_name":"__c15","field_type":"string"},{"field_alias":"time","field_index":16,"field_name":"__c16","field_type":"string"},{"field_alias":"trace_id","field_index":17,"field_name":"__c17","field_type":"string"},{"field_alias":"_value_","field_index":18,"field_name":"__c18","field_type":"double"},{"field_alias":"_timestamp_","field_index":19,"field_name":"__c19","field_type":"long"}]},{"from":12},{"from":14},{"from":16}]`,
 			},
 		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+
+			queryByte, _ := json.Marshal(c.queryTs)
+			queryStr := string(queryByte)
+			session, err := redisUtil.GetOrCreateScrollSession(ctx, queryStr, ScrollWindowTimeout, ScrollSessionLockTimeout, c.queryTs.SliceMax, c.queryTs.Limit)
+			if err != nil {
+				return
+			}
+			defer func() {
+				_ = session.Clear(ctx)
+			}()
+
+			loop := 0
+			for {
+				if len(mockSet) == loop {
+					break
+				}
+
+				if mockSet[loop] != nil {
+					mockSet[loop]()
+				}
+
+				if loop > 10 {
+					break
+				}
+
+				if session.Done() {
+					break
+				}
+
+				total, list, option, err := queryRawWithScroll(ctx, c.queryTs, session)
+				assert.Nil(t, err)
+
+				sort.SliceStable(list, func(i, j int) bool {
+					var (
+						f1 strings.Builder
+						f2 strings.Builder
+					)
+					for _, k := range []string{"__doc_id", "__table_uuid"} {
+						f1.WriteString(getVal(list[i], k))
+						f2.WriteString(getVal(list[j], k))
+					}
+
+					return f1.String() < f2.String()
+				})
+
+				actual, _ := json.Marshal(list)
+
+				assert.JSONEq(t, c.list[loop], string(actual))
+				assert.Equal(t, c.total[loop], total)
+
+				var ks []string
+				for k := range option {
+					ks = append(ks, k)
+				}
+				sort.Strings(ks)
+				os := make([]*metadata.ResultTableOption, 0, len(option))
+				for _, k := range ks {
+					os = append(os, option[k])
+				}
+
+				optActual, _ := json.Marshal(os)
+
+				assert.JSONEq(t, c.option[loop], string(optActual))
+				loop++
+			}
+		})
 	}
-	queryTsBytes, err := json.Marshal(tCase.queryTs)
-	require.NoError(t, err, "Failed to marshal queryTs")
-	queryTsStr := string(queryTsBytes)
+}
 
-	user := &metadata.User{
-		Key:       "username:test_doris_scroll_user",
-		SpaceUID:  spaceUid,
-		SkipSpace: "true",
+func getVal(m map[string]any, k string) string {
+	if v, ok := m[k]; ok {
+		if vv, ok := v.(string); ok {
+			return vv
+		}
 	}
-	session, err := redisUtil.GetOrCreateScrollSession(t.Context(), queryTsStr, ScrollWindowTimeout, ScrollMaxSlice, 10)
-	require.NoError(t, err, "Failed to get scroll session")
 
-	for i, c := range tCase.expected {
-		t.Logf("Running step %d: %s", i+1, c.desc)
-
-		ctx = metadata.InitHashID(context.Background())
-		metadata.SetUser(ctx, user)
-
-		mock.BkSQL.Set(c.mockData)
-
-		require.NoError(t, err, "Failed to make slices")
-
-		var queryTsCopy structured.QueryTs
-		err = json.Unmarshal([]byte(queryTsStr), &queryTsCopy)
-		require.NoError(t, err, "Failed to unmarshal queryTs")
-		err = session.AcquireLock(ctx)
-		require.NoErrorf(t, err, "Failed to acquire lock for scroll session in step %d", i+1)
-		total, list, _, err := queryRawWithScroll(ctx, &queryTsCopy, session)
-		done := session.Done()
-		t.Logf("queryRawWithScroll returned: total=%d, len(list)=%d, done=%v, err=%v", total, len(list), done, err)
-		err = session.ReleaseLock(ctx)
-		require.NoError(t, err, "Failed to release lock for scroll session in step %d", i+1)
-		hasData := len(list) > 0
-		t.Logf("Session: %+v", session)
-		assert.NoError(t, err, "QueryRawWithScroll should not return error for step %d", i+1)
-		assert.Equal(t, c.total, total, "Total should match expected value for step %d", i+1)
-		assert.Equal(t, c.done, session.Done(), "Done should match expected value for step %d", i+1)
-		assert.Equal(t, c.hasData, hasData, "HasData should match expected value for step %d", i+1)
-	}
+	return ""
 }

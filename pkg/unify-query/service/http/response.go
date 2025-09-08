@@ -67,6 +67,7 @@ type ListData struct {
 	Total              int64                       `json:"total,omitempty"`
 	List               []map[string]any            `json:"list" json:"list,omitempty"`
 	Done               bool                        `json:"done"`
+	Cache              bool                        `json:"cache"`
 	TraceID            string                      `json:"trace_id,omitempty"`
 	Status             *metadata.Status            `json:"status,omitempty" json:"status,omitempty"`
 	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`

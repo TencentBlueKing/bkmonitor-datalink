@@ -22,7 +22,7 @@ import (
 )
 
 type Instance interface {
-	QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]map[string]string, error)
+	QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (metadata.FieldMap, error)
 	QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, int64, *metadata.ResultTableOption, error)
 	QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet
 	QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error)
@@ -44,7 +44,7 @@ var _ Instance = &DefaultInstance{}
 
 type DefaultInstance struct{}
 
-func (d *DefaultInstance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]map[string]string, error) {
+func (d *DefaultInstance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (metadata.FieldMap, error) {
 	return nil, nil
 }
 

@@ -30,4 +30,4 @@ type FieldOption struct {
 	TokenizeOnChars string `json:"tokenize_on_chars"`
 }
 
-type FieldMap map[string]FieldOption
+type FieldMap map[string]*FieldOption

@@ -4208,8 +4208,12 @@ func TestRedis(t *testing.T) {
 
 	key := "test"
 
-	// 新建
+	// 清理
 	session, err := redisUtil.GetOrCreateScrollSession(ctx, key, ScrollWindowTimeout, ScrollSessionLockTimeout, 3, 100)
+	_ = session.Clear(ctx)
+
+	// 新建
+	session, err = redisUtil.GetOrCreateScrollSession(ctx, key, ScrollWindowTimeout, ScrollSessionLockTimeout, 3, 100)
 	assert.Nil(t, err)
 	actual, _ := json.Marshal(session)
 	assert.Equal(t, newSession, string(actual))

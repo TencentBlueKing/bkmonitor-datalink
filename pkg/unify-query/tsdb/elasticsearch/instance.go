@@ -490,8 +490,37 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 	return newAliases, nil
 }
 
-func (d *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]map[string]string, error) {
-	return nil, nil
+// QueryFieldMap 查询字段映射
+func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (metadata.FieldMap, error) {
+	var err error
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("es query error: %s", r)
+		}
+	}()
+
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-field-map")
+	defer span.End(&err)
+
+	if query.DB == "" {
+		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
+		return nil, err
+	}
+
+	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
+	if err != nil {
+		return nil, err
+	}
+	span.Set("aliases", aliases)
+
+	mappings, mappingErr := i.getMappings(ctx, i.connect, aliases)
+	if len(mappings) == 0 {
+		err = fmt.Errorf("mapping is empty with %s error %w", aliases, mappingErr)
+		return nil, err
+	}
+	span.Set("mapping-length", len(mappings))
+
+	return NewFormatFactory(ctx).WithMappings(mappings...).Mapping(), nil
 }
 
 // QueryRawData 直接查询原始返回

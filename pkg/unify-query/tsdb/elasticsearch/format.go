@@ -41,10 +41,6 @@ const (
 
 	DefaultReverseAggName = "reverse_nested"
 
-	Type = "type"
-
-	Properties = "properties"
-
 	Min         = "min"
 	Max         = "max"
 	Sum         = "sum"
@@ -96,6 +92,60 @@ type TimeSeriesResult struct {
 	Error         error
 }
 
+func getValue[T comparable](k string, data map[string]any) T {
+	v, _ := data[k].(T)
+	return v
+}
+
+func esToFieldMap(k string, data map[string]any) *metadata.FieldOption {
+	opt := &metadata.FieldOption{}
+	if k == "" {
+		return nil
+	}
+
+	fieldType := getValue[string]("type", data)
+	if fieldType == "" {
+		return nil
+	}
+
+	opt.FieldName = k
+	opt.FieldType = fieldType
+	ks := strings.Split(k, ESStep)
+	opt.OriginField = ks[0]
+	opt.IsAgg = getValue[bool]("doc_values", data)
+	opt.IsAnalyzed = strings.ToLower(opt.FieldType) == Text
+	normalizer := getValue[string]("normalizer", data)
+	opt.IsCaseSensitive = normalizer != ""
+	opt.TokenizeOnChars = getValue[string]("tokenize_on_chars", data)
+	return opt
+}
+
+func mapProperties(prefix string, data map[string]any, res metadata.FieldMap) {
+	if data == nil {
+		return
+	}
+
+	if properties, ok := data["properties"].(map[string]any); ok {
+		for k, v := range properties {
+			if prefix != "" {
+				k = fmt.Sprintf("%s%s%s", prefix, ESStep, k)
+			}
+
+			switch nv := v.(type) {
+			case map[string]any:
+				mapProperties(k, nv, res)
+			}
+		}
+	}
+
+	if prefix != "" {
+		fm := esToFieldMap(prefix, data)
+		if fm != nil {
+			res[prefix] = fm
+		}
+	}
+}
+
 func mapData(prefix string, data map[string]any, res map[string]any) {
 	for k, v := range data {
 		if prefix != "" {
@@ -106,29 +156,6 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 			mapData(k, nv, res)
 		default:
 			res[k] = nv
-		}
-	}
-}
-
-func mapProperties(prefix string, data map[string]any, res map[string]string) {
-	if prefix != "" {
-		if t, ok := data[Type]; ok {
-			switch ts := t.(type) {
-			case string:
-				res[prefix] = ts
-			}
-		}
-	}
-
-	if properties, ok := data[Properties]; ok {
-		for k, v := range properties.(map[string]any) {
-			if prefix != "" {
-				k = prefix + ESStep + k
-			}
-			switch v.(type) {
-			case map[string]any:
-				mapProperties(k, v.(map[string]any), res)
-			}
 		}
 	}
 }
@@ -173,7 +200,7 @@ type FormatFactory struct {
 	decode func(k string) string
 	encode func(k string) string
 
-	mapping map[string]string
+	mapping metadata.FieldMap
 
 	data map[string]any
 
@@ -195,8 +222,8 @@ type FormatFactory struct {
 func NewFormatFactory(ctx context.Context) *FormatFactory {
 	f := &FormatFactory{
 		ctx:         ctx,
-		mapping:     make(map[string]string),
 		aggInfoList: make(aggInfoList, 0),
+		mapping:     make(metadata.FieldMap),
 
 		// default encode / decode
 		encode: func(k string) string {
@@ -345,7 +372,7 @@ func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
 // WithMappings 合并 mapping，后面的合并前面的
 func (f *FormatFactory) WithMappings(mappings ...map[string]any) *FormatFactory {
 	for _, mapping := range mappings {
-		if _, ok := mapping[Properties]; ok {
+		if _, ok := mapping["properties"]; ok {
 			mapProperties("", mapping, f.mapping)
 		} else {
 			// 有的 es 因为版本不同，properties 不在第一层，所以需要往下一层找
@@ -360,8 +387,24 @@ func (f *FormatFactory) WithMappings(mappings ...map[string]any) *FormatFactory 
 	return f
 }
 
-func (f *FormatFactory) FieldType() map[string]string {
+func (f *FormatFactory) GetFieldType(k string) string {
+	if v, ok := f.mapping[k]; ok {
+		return v.FieldType
+	}
+
+	return ""
+}
+
+func (f *FormatFactory) Mapping() metadata.FieldMap {
 	return f.mapping
+}
+
+func (f *FormatFactory) FieldType() map[string]string {
+	ft := make(map[string]string, len(f.mapping))
+	for k, v := range f.mapping {
+		ft[k] = v.FieldType
+	}
+	return ft
 }
 
 func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
@@ -432,7 +475,7 @@ func (f *FormatFactory) NestedField(field string) string {
 	for i := len(lbs) - 1; i >= 0; i-- {
 		checkKey := strings.Join(lbs[0:i], ESStep)
 		if v, ok := f.mapping[checkKey]; ok {
-			if v == Nested {
+			if v.FieldType == Nested {
 				return checkKey
 			}
 		}
@@ -758,8 +801,8 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		case TermAgg:
 			curName := info.Name
 			curAgg := elastic.NewTermsAggregation().Field(info.Name)
-			fieldType, ok := f.mapping[info.Name]
-			if !ok || fieldType == Text || fieldType == KeyWord {
+			fieldType := f.GetFieldType(info.Name)
+			if fieldType == "" || fieldType == Text || fieldType == KeyWord {
 				curAgg = curAgg.Missing(" ")
 			}
 
@@ -965,12 +1008,10 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 					q = f.getQuery(MustNot, q)
 				default:
 					// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
-					fieldType, ok := f.mapping[key]
+					fieldType := f.GetFieldType(key)
 					isExistsQuery := true
-					if ok {
-						if fieldType == Text || fieldType == KeyWord {
-							isExistsQuery = false
-						}
+					if fieldType == Text || fieldType == KeyWord {
+						isExistsQuery = false
 					}
 
 					queries := make([]elastic.Query, 0)

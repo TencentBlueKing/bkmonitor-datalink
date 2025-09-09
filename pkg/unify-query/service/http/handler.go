@@ -524,7 +524,7 @@ func HandlerQueryPromQL(c *gin.Context) {
 
 // HandlerQueryReference
 // @Summary  query monitor by reference
-// @ID       query_ts
+// @ID       query_reference
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)

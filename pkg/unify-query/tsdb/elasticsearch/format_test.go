@@ -651,7 +651,7 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 	testCases := []struct {
 		name     string
 		mappings []map[string]any
-		expected map[string]string
+		expected string
 	}{
 		{
 			name: "test normal mappings",
@@ -672,11 +672,7 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string]string{
-				"nested1":     "nested",
-				"nested1.key": "keyword",
-				"keyword":     "keyword",
-			},
+			expected: `{"keyword":{"field_name":"keyword","field_type":"keyword","origin_field":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":""},"nested1":{"field_name":"nested1","field_type":"nested","origin_field":"nested1","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":""},"nested1.key":{"field_name":"nested1.key","field_type":"keyword","origin_field":"nested1","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":""}}`,
 		},
 		{
 			name: "test old es version mapping",
@@ -699,18 +695,17 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string]string{
-				"nested1":     "nested",
-				"nested1.key": "keyword",
-				"keyword":     "keyword",
-			},
+			expected: `{"keyword":{"field_name":"keyword","field_type":"keyword","origin_field":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":""},"nested1":{"field_name":"nested1","field_type":"nested","origin_field":"nested1","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":""},"nested1.key":{"field_name":"nested1.key","field_type":"keyword","origin_field":"nested1","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":""}}`,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			fact := NewFormatFactory(context.Background()).WithMappings(tc.mappings...)
-			assert.Equal(t, tc.expected, fact.mapping)
+
+			actual, _ := json.Marshal(fact.mapping)
+
+			assert.JSONEq(t, tc.expected, string(actual))
 		})
 	}
 }

@@ -34,15 +34,21 @@ func ParseMetricSelector(selector string) ([]*labels.Matcher, error) {
 func parseWithANTLR(selector string) ([]*labels.Matcher, error) {
 	inputStream := antlr.NewInputStream(selector)
 	lexer := gen.NewPromQLLexer(inputStream)
-	tokens := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
-	parser := gen.NewPromQLParser(tokens)
 
 	errorListener := &promqlErrorListener{}
+	lexer.RemoveErrorListeners()
+	lexer.AddErrorListener(errorListener)
+	tokens := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
+	parser := gen.NewPromQLParser(tokens)
 	parser.RemoveErrorListeners()
 	parser.AddErrorListener(errorListener)
 	tree := parser.InstantSelector()
 	if errorListener.err != nil {
 		return nil, errorListener.err
+	}
+	tokenStream := parser.GetTokenStream().(*antlr.CommonTokenStream)
+	if tokenStream.LA(1) != antlr.TokenEOF {
+		return nil, fmt.Errorf("unexpected tokens after selector: %s", selector)
 	}
 
 	statement := NewStatement()
@@ -50,6 +56,7 @@ func parseWithANTLR(selector string) ([]*labels.Matcher, error) {
 	if statement.Error() != nil {
 		return nil, statement.Error()
 	}
+
 	return statement.Matchers(), nil
 }
 
@@ -58,7 +65,11 @@ type promqlErrorListener struct {
 }
 
 func (l *promqlErrorListener) SyntaxError(recognizer antlr.Recognizer, offendingSymbol any, line, column int, msg string, e antlr.RecognitionException) {
-	l.err = errors.Wrapf(l.err, "parse error at line %d:%d: %s", line, column, msg)
+	if l.err == nil {
+		l.err = fmt.Errorf("syntax error at line %d:%d: %s", line, column, msg)
+	} else {
+		l.err = fmt.Errorf("%w; syntax error at line %d:%d: %s", l.err, line, column, msg)
+	}
 }
 
 func (l *promqlErrorListener) ReportAmbiguity(recognizer antlr.Parser, dfa *antlr.DFA, startIndex, stopIndex int, exact bool, ambigAlts *antlr.BitSet, configs *antlr.ATNConfigSet) {
@@ -307,7 +318,6 @@ func (o *OperatorNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	return nil
 }
 
-// KeywordNode handles keyword as label names
 type KeywordNode struct {
 	baseNode
 	labelParent *MatcherNode
@@ -319,7 +329,6 @@ func (n *KeywordNode) VisitTerminal(ctx antlr.TerminalNode) any {
 	return nil
 }
 
-// visitChildren traverses child nodes
 func visitChildren(next Node, node antlr.RuleNode) any {
 	for _, child := range node.GetChildren() {
 		switch tree := child.(type) {

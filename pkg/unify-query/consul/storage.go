@@ -19,9 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
-var (
-	storagePath = "storage"
-)
+var storagePath = "storage"
 
 // Storage
 type Storage struct {

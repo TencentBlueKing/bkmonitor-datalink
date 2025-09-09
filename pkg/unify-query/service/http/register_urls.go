@@ -86,7 +86,6 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 	// query/es/
 	handlerPath = viper.GetString(ESHandlePathConfigPath)
 	registerHandler.Register(http.MethodPost, handlerPath, HandleESQueryRequest)
-
 }
 
 func registerOtherHandlers(ctx context.Context, g *gin.RouterGroup) {

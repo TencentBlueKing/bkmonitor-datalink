@@ -78,7 +78,7 @@ type vecGroup struct {
 // queryPromQLExpr
 type queryPromQLExpr struct {
 	q string
-	//promql     []string
+	// promql     []string
 	promqlByte []byte
 	ref        *refMgr
 	expr       parser.Expr
@@ -213,7 +213,7 @@ func (sp *queryPromQLExpr) QueryTs() (*QueryTs, error) {
 		return &QueryTs{}, err
 	}
 
-	//sp.promql = strings.Split(sp.q, "")
+	// sp.promql = strings.Split(sp.q, "")
 	sp.promqlByte = []byte(sp.q)
 
 	sp.inspect()

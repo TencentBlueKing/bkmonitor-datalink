@@ -53,9 +53,7 @@ func TestGetBkDataTableIDCheck(t *testing.T) {
     }
 }`)
 
-	var (
-		actual bool
-	)
+	var actual bool
 
 	SetUser(ctx, &User{SpaceUID: "bkdata_1"})
 	actual = GetBkDataTableIDCheck(ctx, "")
@@ -182,5 +180,4 @@ func TestGetMustVmQueryFeatureFlag(t *testing.T) {
 			assert.Equal(t, c.Expected, actual)
 		})
 	}
-
 }

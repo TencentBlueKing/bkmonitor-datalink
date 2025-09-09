@@ -33,9 +33,9 @@ func (s *Set[T]) First() (v T) {
 	defer s.lock.RUnlock()
 	for k := range s.m {
 		v = k
-		return
+		return v
 	}
-	return
+	return v
 }
 
 func (s *Set[T]) Size() int {

@@ -13,6 +13,4 @@ import (
 	"errors"
 )
 
-var (
-	ErrNoAliases = errors.New("no aliases found")
-)
+var ErrNoAliases = errors.New("no aliases found")

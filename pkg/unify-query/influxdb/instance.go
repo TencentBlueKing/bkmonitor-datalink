@@ -175,7 +175,7 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 
 // limit
 func (i *Instance) limit(limit int) int {
-	var max = 0
+	max := 0
 	if i.maxLimit > 0 {
 		max = i.maxLimit + i.tolerance
 	}
@@ -193,7 +193,7 @@ func (i *Instance) limit(limit int) int {
 
 // slimit
 func (i *Instance) slimit(slimit int) int {
-	var max = 0
+	max := 0
 	if i.maxSLimit > 0 {
 		max = i.maxSLimit + i.tolerance
 	}

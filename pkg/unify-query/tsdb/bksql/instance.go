@@ -265,7 +265,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	if start.UnixMilli() > end.UnixMilli() || start.UnixMilli() == 0 {
 		err = fmt.Errorf("start time must less than end time")
-		return
+		return size, total, option, err
 	}
 
 	rangeLeftTime := end.Sub(start)
@@ -285,27 +285,27 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
 	if err != nil {
-		return
+		return size, total, option, err
 	}
 	sql, err := queryFactory.SQL()
 	if err != nil {
-		return
+		return size, total, option, err
 	}
 
 	// 如果是 dry run 则直接返回 sql 查询语句
 	if query.DryRun {
 		option.SQL = sql
-		return
+		return size, total, option, err
 	}
 
 	data, err := i.sqlQuery(ctx, sql)
 	if err != nil {
 		err = fmt.Errorf("sql [%s] query err: %s", sql, err.Error())
-		return
+		return size, total, option, err
 	}
 
 	if data == nil {
-		return
+		return size, total, option, err
 	}
 
 	if data.ResultSchema != nil {
@@ -327,13 +327,11 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	size = int64(len(data.List))
 	total = int64(data.TotalRecords)
 
-	return
+	return size, total, option, err
 }
 
 func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
-	var (
-		err error
-	)
+	var err error
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query-series-set")
 	defer span.End(&err)
 
@@ -411,9 +409,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 }
 
 func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "bk-sql-label-name")
 	defer span.End(&err)

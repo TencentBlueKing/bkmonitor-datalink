@@ -39,12 +39,9 @@ type Instance interface {
 	InstanceType() string
 }
 
-var (
-	_ Instance = &DefaultInstance{}
-)
+var _ Instance = &DefaultInstance{}
 
-type DefaultInstance struct {
-}
+type DefaultInstance struct{}
 
 func (d *DefaultInstance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, int64, *metadata.ResultTableOption, error) {
 	return 0, 0, nil, nil

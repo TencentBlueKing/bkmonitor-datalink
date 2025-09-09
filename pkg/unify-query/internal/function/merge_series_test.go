@@ -123,7 +123,6 @@ func TestMergeSeriesSet(t *testing.T) {
 		"one set": {
 			qrs: []*prompb.QueryResult{
 				{
-
 					Timeseries: []*prompb.TimeSeries{
 						ts1,
 					},
@@ -136,7 +135,6 @@ func TestMergeSeriesSet(t *testing.T) {
 		"two timeSeries with chainedSeriesMerge": {
 			qrs: []*prompb.QueryResult{
 				{
-
 					Timeseries: []*prompb.TimeSeries{
 						ts1, ts2, ts3, ts4,
 					},
@@ -149,7 +147,6 @@ func TestMergeSeriesSet(t *testing.T) {
 		"two timeSeries with mergeSeriesSetWithFuncAndSort": {
 			qrs: []*prompb.QueryResult{
 				{
-
 					Timeseries: []*prompb.TimeSeries{
 						ts1, ts2, ts3, ts4,
 					},
@@ -163,13 +160,11 @@ func TestMergeSeriesSet(t *testing.T) {
 		"two queryResult with chainedSeriesMerge": {
 			qrs: []*prompb.QueryResult{
 				{
-
 					Timeseries: []*prompb.TimeSeries{
 						ts1, ts2,
 					},
 				},
 				{
-
 					Timeseries: []*prompb.TimeSeries{
 						ts3, ts4,
 					},
@@ -229,13 +224,11 @@ func TestMergeSeriesSet(t *testing.T) {
 		"two queryResult with mergeSeriesSetWithFuncAndSort": {
 			qrs: []*prompb.QueryResult{
 				{
-
 					Timeseries: []*prompb.TimeSeries{
 						ts1, ts2,
 					},
 				},
 				{
-
 					Timeseries: []*prompb.TimeSeries{
 						ts3, ts4,
 					},
@@ -296,13 +289,11 @@ func TestMergeSeriesSet(t *testing.T) {
 		"two queryResult with mergeSeriesSetWithFuncAndSort max": {
 			qrs: []*prompb.QueryResult{
 				{
-
 					Timeseries: []*prompb.TimeSeries{
 						ts1, ts2,
 					},
 				},
 				{
-
 					Timeseries: []*prompb.TimeSeries{
 						ts3, ts4,
 					},
@@ -363,13 +354,11 @@ func TestMergeSeriesSet(t *testing.T) {
 		"two queryResult with mergeSeriesSetWithFuncAndSort min": {
 			qrs: []*prompb.QueryResult{
 				{
-
 					Timeseries: []*prompb.TimeSeries{
 						ts1, ts2,
 					},
 				},
 				{
-
 					Timeseries: []*prompb.TimeSeries{
 						ts3, ts4,
 					},

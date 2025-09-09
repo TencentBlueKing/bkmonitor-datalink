@@ -44,7 +44,7 @@ var (
 func getRedisRouterKey(ctx context.Context, key string) (newKey string) {
 	newKey = key
 	if !MultiTenantMode {
-		return
+		return newKey
 	}
 
 	user := metadata.GetUser(ctx)
@@ -52,7 +52,7 @@ func getRedisRouterKey(ctx context.Context, key string) (newKey string) {
 
 	newKey = key + "|" + tenantID
 
-	return
+	return newKey
 }
 
 type SpaceTsDbRouter struct {
@@ -119,9 +119,7 @@ func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entiti
 	createdCount := 0
 	updatedCount := 0
 	for _, entity := range entities {
-		var (
-			keyNotFound bool
-		)
+		var keyNotFound bool
 		k := fmt.Sprintf("%s:%s", stoPrefix, entity.Key)
 		v, err := entity.Val.Marshal(nil)
 		if err != nil {
@@ -435,7 +433,6 @@ func (r *SpaceTsDbRouter) GetSpaceUIDList(ctx context.Context, bkAppCode string)
 	genericRet := r.Get(ctx, influxdb.BkAppToSpaceKey, bkAppCode, true, true)
 	if genericRet != nil {
 		return genericRet.(*influxdb.SpaceUIDList)
-
 	}
 	return nil
 }

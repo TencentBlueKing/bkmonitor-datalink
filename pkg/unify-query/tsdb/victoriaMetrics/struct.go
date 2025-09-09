@@ -95,7 +95,7 @@ type Value []any
 func (f Value) Point() (t int64, v float64, err error) {
 	if len(f) != 2 {
 		err = fmt.Errorf("%+v length is not 2", f)
-		return
+		return t, v, err
 	}
 
 	switch pt := f[0].(type) {
@@ -104,7 +104,7 @@ func (f Value) Point() (t int64, v float64, err error) {
 		t = int64(pt) * 1e3
 	default:
 		err = fmt.Errorf("%+v type is not float64", f[0])
-		return
+		return t, v, err
 	}
 
 	// 值从 string 转换为 float64
@@ -113,16 +113,16 @@ func (f Value) Point() (t int64, v float64, err error) {
 		v, err = strconv.ParseFloat(pv, 64)
 		if err != nil {
 			err = fmt.Errorf("%+v %s", f[1], err)
-			return
+			return t, v, err
 		}
 	case int, int64, int32:
 		v = float64(v)
 	default:
 		err = fmt.Errorf("%+v type is not string", f[0])
-		return
+		return t, v, err
 	}
 
-	return
+	return t, v, err
 }
 
 type Series struct {

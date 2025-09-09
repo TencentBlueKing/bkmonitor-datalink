@@ -556,9 +556,7 @@ func (i *Instance) DirectQuery(
 }
 
 func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) (series []map[string]string, err error) {
-	var (
-		resp = &VmSeriesResponse{}
-	)
+	resp := &VmSeriesResponse{}
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-query-series")
 	defer span.End(&err)
@@ -570,7 +568,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 	span.Set("query-storage-name", query.StorageName)
 
 	if query.VmRt == "" {
-		return
+		return series, err
 	}
 
 	paramsQuery := &ParamsSeries{
@@ -596,16 +594,16 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
-		return
+		return series, err
 	}
 
 	err = i.vmQuery(ctx, string(sql), resp, span)
 	if err != nil {
-		return
+		return series, err
 	}
 
 	series, err = i.seriesFormat(ctx, resp, span)
-	return
+	return series, err
 }
 
 func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
@@ -661,9 +659,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 }
 
 func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) (res []string, err error) {
-	var (
-		resp = &VmResponse{}
-	)
+	resp := &VmResponse{}
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-label-values")
 	defer span.End(&err)
@@ -749,7 +745,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 }
 
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
@@ -764,12 +760,12 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	vmExpand = metadata.GetExpand(ctx)
 	if vmExpand == nil {
-		return
+		return list, err
 	}
 
 	metricName := function.MatcherToMetricName(matchers...)
 	if metricName == "" {
-		return
+		return list, err
 	}
 
 	var match strings.Builder
@@ -780,7 +776,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 	}
 
 	if match.Len() == 0 {
-		return
+		return list, err
 	}
 
 	paramsQuery := &ParamsLabelValues{
@@ -818,12 +814,12 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
-		return
+		return list, err
 	}
 
 	err = i.vmQuery(ctx, string(sql), resp, span)
 	if err != nil {
-		return
+		return list, err
 	}
 
 	return i.labelFormat(ctx, resp, span)

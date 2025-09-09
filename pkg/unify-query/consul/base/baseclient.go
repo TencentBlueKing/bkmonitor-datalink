@@ -35,7 +35,6 @@ type Client struct {
 
 // NewClient 传入的address应符合IP:Port的结构，例如: 127.0.0.1:8080
 func NewClient(address, caFile, keyFile, certFile string) (*Client, error) {
-
 	var (
 		err    error
 		client = &Client{
@@ -58,7 +57,6 @@ func NewClient(address, caFile, keyFile, certFile string) (*Client, error) {
 
 // GetAPI 获取api包中的对象
 var GetAPI = func(client *Client) error {
-
 	conf := api.DefaultConfig()
 
 	// 添加链接配置信息
@@ -137,7 +135,6 @@ func (bc *Client) ServiceAwake(serviceID, serviceName string, tags []string, add
 		return nil
 	}
 	return nil
-
 }
 
 // CheckRegister 注册check
@@ -157,7 +154,6 @@ func (bc *Client) CheckRegister(serviceID, checkID string, ttl string) error {
 
 // CheckDeregister 取消注册
 func (bc *Client) CheckDeregister(checkID string) error {
-
 	err := bc.Agent.CheckDeregister(checkID)
 	if err != nil {
 		return err
@@ -271,7 +267,6 @@ func (bc *Client) GetChild(prefix string, separator string) ([]string, error) {
 		return nil, err
 	}
 	return childs, nil
-
 }
 
 // makeWatchParams 获取建立监听对象所需要的
@@ -307,7 +302,6 @@ func (bc *Client) addPlanIntoList(plan *watch.Plan, path string, separator strin
 	}
 	bc.watchPrefixPlanMap[path] = plan
 	return nil
-
 }
 
 // Watch 监听单个地址,返回一个通道用于提供信号

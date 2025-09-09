@@ -300,7 +300,6 @@ func QueryAsync(ctx context.Context, sqlInfos []SQLInfo, precision string) (*Tab
 				tables, err := instance.Query(
 					ctx, metricName, db, sql, precision, withGroupBy, isCountGroup, expandMap, limit, slimit,
 				)
-
 				if err != nil {
 					errs = append(errs, fmt.Errorf("db: %s, err:[%s]", db, err))
 					return

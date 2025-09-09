@@ -170,7 +170,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if timeErr != nil {
 		err = timeErr
-		return
+		return total, list, resultTableOptions, err
 	}
 	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 
@@ -189,7 +189,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 	queryRef, err = queryTs.ToQueryReference(ctx)
 	if err != nil {
-		return
+		return total, list, resultTableOptions, err
 	}
 
 	receiveWg.Add(1)
@@ -369,7 +369,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 	// 等待数据组装完毕
 	receiveWg.Wait()
-	return
+	return total, list, resultTableOptions, err
 }
 
 func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (total int64, list []map[string]any, resultTableOptions metadata.ResultTableOptions, err error) {
@@ -392,13 +392,13 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	unit, start, end, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
 	if timeErr != nil {
 		err = timeErr
-		return
+		return total, list, resultTableOptions, err
 	}
 	metadata.GetQueryParams(ctx).SetTime(start, end, unit)
 
 	queryRef, err = queryTs.ToQueryReference(ctx)
 	if err != nil {
-		return
+		return total, list, resultTableOptions, err
 	}
 
 	receiveWg.Add(1)
@@ -511,7 +511,7 @@ func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, sessio
 	close(errCh)
 
 	receiveWg.Wait()
-	return
+	return total, list, resultTableOptions, err
 }
 
 func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.QueryTs) (*PromData, error) {
@@ -681,7 +681,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 		unit, startTime, endTime, timeErr := function.QueryTimestamp(queryTs.Start, queryTs.End)
 		if timeErr != nil {
 			err = timeErr
-			return
+			return instance, stmt, err
 		}
 
 		metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit).SetIsReference(true)
@@ -714,7 +714,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 	if queryTs.LookBackDelta != "" {
 		lookBackDelta, err = time.ParseDuration(queryTs.LookBackDelta)
 		if err != nil {
-			return
+			return instance, stmt, err
 		}
 	}
 
@@ -726,7 +726,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 	// 转换成 queryRef
 	queryRef, err := queryTs.ToQueryReference(ctx)
 	if err != nil {
-		return
+		return instance, stmt, err
 	}
 
 	if metadata.GetQueryParams(ctx).IsDirectQuery() {
@@ -755,19 +755,19 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 
 	expr, err := queryTs.ToPromExpr(ctx, promExprOpt)
 	if err != nil {
-		return
+		return instance, stmt, err
 	}
 
 	stmt = expr.String()
 
 	if instance == nil {
 		err = fmt.Errorf("storage get error")
-		return
+		return instance, stmt, err
 	}
 
 	span.Set("storage-type", instance.InstanceType())
 	span.Set("stmt", stmt)
-	return
+	return instance, stmt, err
 }
 
 func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any, error) {
@@ -889,18 +889,16 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 }
 
 func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (query *structured.QueryTs, err error) {
-	var (
-		matchers []*labels.Matcher
-	)
+	var matchers []*labels.Matcher
 
 	if queryPromQL == nil {
-		return
+		return query, err
 	}
 
 	sp := structured.NewQueryPromQLExpr(queryPromQL.PromQL)
 	query, err = sp.QueryTs()
 	if err != nil {
-		return
+		return query, err
 	}
 
 	query.Start = queryPromQL.Start
@@ -915,7 +913,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 	if queryPromQL.Match != "" {
 		matchers, err = parser.ParseMetricSelector(queryPromQL.Match)
 		if err != nil {
-			return
+			return query, err
 		}
 	}
 
@@ -953,7 +951,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 		}
 
 		// 补充 Match
-		var verifyDimensions = func(key string) bool {
+		verifyDimensions := func(key string) bool {
 			return true
 		}
 
@@ -983,7 +981,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (q
 		}
 	}
 
-	return
+	return query, err
 }
 
 func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (any, error) {

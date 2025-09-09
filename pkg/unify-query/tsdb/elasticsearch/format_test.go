@@ -646,7 +646,7 @@ func TestFormatFactory_Query(t *testing.T) {
 	}
 }
 
-func TestFOrmatFactory_WithMapping(t *testing.T) {
+func TestFormatFactory_WithMapping(t *testing.T) {
 	testCases := []struct {
 		name     string
 		mappings []map[string]any

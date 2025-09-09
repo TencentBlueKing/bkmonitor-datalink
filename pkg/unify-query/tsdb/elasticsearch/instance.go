@@ -496,6 +496,10 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 	return newAliases, nil
 }
 
+func (d *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]map[string]string, error) {
+	return nil, nil
+}
+
 // QueryRawData 直接查询原始返回
 func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (size int64, total int64, option *metadata.ResultTableOption, err error) {
 	defer func() {

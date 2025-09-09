@@ -247,7 +247,6 @@ func NewTable(metricName string, series *decoder.Row, expandTag map[string]strin
 	}
 
 	return t
-
 }
 
 // String
@@ -308,7 +307,7 @@ func (t *Tables) Clear() error {
 // MergeTables : 直接合并相同维度的数据
 func MergeTables(tableList []*Tables, ignoreMetric bool) *Tables {
 	resultTab := NewTables()
-	var mapTag = make(map[uint64]*Table, 0)
+	mapTag := make(map[uint64]*Table, 0)
 
 	// 增加排序逻辑
 	sort.SliceStable(tableList, func(i, j int) bool {

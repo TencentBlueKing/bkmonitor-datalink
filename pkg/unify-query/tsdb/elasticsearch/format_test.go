@@ -428,7 +428,8 @@ func TestFormatFactory_Query(t *testing.T) {
 						Operator:      structured.ConditionNotEqual,
 						Value:         []string{""},
 					},
-				}},
+				},
+			},
 			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"11"}}}}}}},{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":""}}}}}}},{"nested":{"path":"nested1","query":{"exists":{"field":"nested1.active"}}}}]}}}`,
 		},
 		"nested_must_not_query_type_mix_2": {
@@ -449,7 +450,8 @@ func TestFormatFactory_Query(t *testing.T) {
 						Operator:      structured.ConditionNotEqual,
 						Value:         []string{""},
 					},
-				}},
+				},
+			},
 			expected: `{"query":{"bool":{"must":[{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"11"}}}}}}},{"bool":{"must_not":{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":""}}}}}}},{"nested":{"path":"nested1","query":{"match_phrase":{"nested1.key":{"query":"22"}}}}}]}}}`,
 		},
 		"nested_must_not_query_key_is_not_keyword_or_text": {
@@ -641,7 +643,6 @@ func TestFormatFactory_Query(t *testing.T) {
 			bodyString := string(bodyJson)
 			assert.NotEmpty(t, c.expected)
 			assert.JSONEq(t, c.expected, bodyString)
-
 		})
 	}
 }
@@ -715,9 +716,9 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 }
 
 func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
-	var start = time.Unix(1721024820, 0)
-	var end = time.Unix(1721046420, 0)
-	var timeFormat = function.Second
+	start := time.Unix(1721024820, 0)
+	end := time.Unix(1721046420, 0)
+	timeFormat := function.Second
 
 	for name, c := range map[string]struct {
 		timeField  metadata.TimeField
@@ -1023,9 +1024,9 @@ func TestToFixInterval(t *testing.T) {
 }
 
 func TestBuildQuery(t *testing.T) {
-	var start = time.Unix(1721024820, 0)
-	var end = time.Unix(1721046420, 0)
-	var timeFormat = function.Second
+	start := time.Unix(1721024820, 0)
+	end := time.Unix(1721046420, 0)
+	timeFormat := function.Second
 
 	for name, c := range map[string]struct {
 		query     *metadata.Query
@@ -1216,7 +1217,6 @@ func TestBuildQuery(t *testing.T) {
 }
 
 func TestFactory_Agg(t *testing.T) {
-
 	testCases := map[string]struct {
 		aggInfoList []any
 		expected    string
@@ -1495,7 +1495,6 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 			expected:   `{"aggregations":{"age":{"aggregations":{"name":{"aggregations":{"events":{"aggregations":{"events.name":{"aggregations":{"_value":{"value_count":{"field":"events.name"}}},"terms":{"field":"events.name","missing":" "}}},"nested":{"path":"events"}}},"terms":{"field":"name","missing":" "}}},"terms":{"field":"age"}}},"size":0}`,
 		},
 	} {
-
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).

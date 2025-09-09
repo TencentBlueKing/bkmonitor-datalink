@@ -13,6 +13,4 @@ const (
 	MultiTenantModeConfigPath = "http.multi_tenant_mode"
 )
 
-var (
-	MultiTenantMode bool
-)
+var MultiTenantMode bool

@@ -84,10 +84,7 @@ func (i *Instance) DirectQueryRange(
 	ctx context.Context, stmt string,
 	start, end time.Time, step time.Duration,
 ) (promql.Matrix, bool, error) {
-
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "prometheus-query-range")
 	defer span.End(&err)
@@ -131,9 +128,7 @@ func (i *Instance) DirectQuery(
 	ctx context.Context, qs string,
 	end time.Time,
 ) (promql.Vector, error) {
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "prometheus-query-range")
 	defer span.End(&err)
@@ -170,7 +165,7 @@ func (i *Instance) DirectQuery(
 }
 
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
@@ -188,7 +183,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	metricName := function.MatcherToMetricName(matchers...)
 	if metricName == "" {
-		return
+		return list, err
 	}
 
 	p, _ := ants.NewPool(i.maxRouting)
@@ -220,7 +215,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	wg.Wait()
 	list = res.ToArray()
-	return
+	return list, err
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {

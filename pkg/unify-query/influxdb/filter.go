@@ -23,7 +23,7 @@ type DataIDFilter struct {
 
 // NewDataIDFilter
 func NewDataIDFilter(metric string) *DataIDFilter {
-	var dataIDFilter = &DataIDFilter{}
+	dataIDFilter := &DataIDFilter{}
 
 	// 如果metricName为空，则代表仅仅过滤condition
 	if metric == "" {
@@ -75,7 +75,6 @@ func (d *DataIDFilter) FilterByClusterIDs(clusterIDs ...string) *DataIDFilter {
 // Values 将metric过滤的dataIDList与biz，projectID等过滤的做交集
 // 如果metric过滤出的结果为空，则以biz, projectID等过滤的结果为准
 func (d *DataIDFilter) Values() []consul.DataID {
-
 	// 如果不仅仅是过滤 mcondition 且metricName匹配为空，则unify-query不知道metric的所在db，直接返回空dataID列表
 	if !d.onlyCondition && len(d.metricDataID) == 0 {
 		return nil
@@ -83,8 +82,8 @@ func (d *DataIDFilter) Values() []consul.DataID {
 
 	// 根据bizID，projectID，clusterID过滤出dataID
 	var tmpDataIDList []consul.DataID
-	var bizIDRouter = GetBizRouter()
-	var bcsInfo = consul.GetBcsInfo()
+	bizIDRouter := GetBizRouter()
+	bcsInfo := consul.GetBcsInfo()
 	for index, cond := range d.conditions {
 		for key, filterIDs := range cond {
 			var dataIDs []consul.DataID

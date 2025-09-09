@@ -145,8 +145,6 @@ func TestQueryPromQLExpr(t *testing.T) {
 				assert.Nil(t, err)
 				assert.Equal(t, c.r, result.String())
 			}
-
 		})
 	}
-
 }

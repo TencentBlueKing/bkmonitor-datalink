@@ -40,12 +40,9 @@ type Instance interface {
 	InstanceType() string
 }
 
-var (
-	_ Instance = &DefaultInstance{}
-)
+var _ Instance = &DefaultInstance{}
 
-type DefaultInstance struct {
-}
+type DefaultInstance struct{}
 
 func (d *DefaultInstance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]map[string]string, error) {
 	return nil, nil

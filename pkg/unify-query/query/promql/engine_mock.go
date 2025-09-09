@@ -14,9 +14,7 @@ import (
 	"time"
 )
 
-var (
-	mockOnce sync.Once
-)
+var mockOnce sync.Once
 
 func MockEngine() {
 	mockOnce.Do(func() {

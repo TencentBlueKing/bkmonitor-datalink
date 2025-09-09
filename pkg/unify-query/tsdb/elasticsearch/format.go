@@ -365,9 +365,7 @@ func (f *FormatFactory) FieldType() map[string]string {
 }
 
 func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
-	var (
-		err error
-	)
+	var err error
 
 	fieldName := f.timeField.Name
 	fieldType := f.timeField.Type
@@ -489,9 +487,7 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 	keySort := make([]string, 0)
 
 	for _, im := range af.items {
-		var (
-			tsLabels []prompb.Label
-		)
+		var tsLabels []prompb.Label
 		if len(im.labels) > 0 {
 			for _, dim := range af.dims {
 				tsLabels = append(tsLabels, prompb.Label{
@@ -690,7 +686,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			default:
 				err = fmt.Errorf("valueagg aggregation is not support this type %s, info: %+v", info.FuncType, info)
-				return
+				return name, agg, err
 			}
 		case ReverNested:
 			curName := info.Name
@@ -711,7 +707,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			if f.timeField.Type == TimeFieldTypeInt {
 				interval, err = f.toFixInterval(info.Window)
 				if err != nil {
-					return
+					return name, agg, err
 				}
 			} else {
 				interval = shortDur(info.Window)
@@ -726,7 +722,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 					// https://github.com/elastic/elasticsearch/issues/42270 非date类型不支持timezone, time format也无效
 					curAgg = curAgg.TimeZone(info.TimeZone)
 				} else {
-					//https://www.elastic.co/docs/reference/aggregations/search-aggregations-bucket-datehistogram-aggregation#search-aggregations-bucket-datehistogram-offset
+					// https://www.elastic.co/docs/reference/aggregations/search-aggregations-bucket-datehistogram-aggregation#search-aggregations-bucket-datehistogram-offset
 					var (
 						fh = "+"
 						ot = info.TimeZoneOffset
@@ -739,7 +735,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 					if ot > 0 {
 						offset, err = f.toFixInterval(time.Duration(ot) * time.Millisecond)
 						if err != nil {
-							return
+							return name, agg, err
 						}
 						curAgg = curAgg.Offset(fmt.Sprintf("%s%s", fh, offset))
 					}
@@ -797,11 +793,11 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			name = curName
 		default:
 			err = fmt.Errorf("aggInfoList aggregation is not support this type %T, info: %+v", info, info)
-			return
+			return name, agg, err
 		}
 	}
 
-	return
+	return name, agg, err
 }
 
 func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
@@ -897,7 +893,7 @@ func (f *FormatFactory) timeFieldUnix(t time.Time) (u int64) {
 		u = t.Unix()
 	}
 
-	return
+	return u
 }
 
 func (f *FormatFactory) getQuery(key string, qs ...elastic.Query) (q elastic.Query) {
@@ -1101,7 +1097,6 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 
 				return nil
 			}()
-
 			if err != nil {
 				return nil, err
 			}
@@ -1268,7 +1263,7 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 			value = fmt.Sprintf("%s", o)
 		default:
 			err = fmt.Errorf("dimensions key type is error: %T, %v", d, d)
-			return
+			return lbs, err
 		}
 
 		lbs.Labels = append(lbs.Labels, prompb.Label{
@@ -1277,7 +1272,7 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 		})
 	}
 
-	return
+	return lbs, err
 }
 
 func (f *FormatFactory) GetTimeField() metadata.TimeField {

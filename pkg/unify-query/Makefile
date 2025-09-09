@@ -36,11 +36,12 @@ swag:
 	swag init --parseDependency true --parseInternal true
 
 .PHONY: fmt
-fmt:
-	gofmt -r 'interface{} -> any' -w . && gofmt -w -s .
+fmt: imports
+	gofmt -r 'interface{} -> any' -w .
+	gofumpt -w .
 
 .PHONY: lint
-lint:
+lint: fmt
 	golangci-lint run -c ${ROOTPATH}/.golangci.yml
 
 .PHONY: addlicense

@@ -149,9 +149,7 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 }
 
 func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []string) ([]map[string]any, error) {
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-get-mapping")
 	defer span.End(&err)
@@ -391,9 +389,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 }
 
 func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *FormatFactory) storage.SeriesSet {
-	var (
-		err error
-	)
+	var err error
 	ctx, span := trace.NewSpan(ctx, "query-with-aggregation")
 	defer func() {
 		span.End(&err)
@@ -468,9 +464,7 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 	span.Set("end", end.String())
 	span.Set("left", left)
 
-	var (
-		unit string
-	)
+	var unit string
 
 	if left > int64(time.Hour.Seconds()*24*14) {
 		halfYear := time.Hour * 24 * 30 * 6
@@ -516,12 +510,12 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	if query.DB == "" {
 		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
-		return
+		return size, total, option, err
 	}
 
 	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
 	if err != nil {
-		return
+		return size, total, option, err
 	}
 
 	unit := metadata.GetQueryParams(ctx).TimeUnit
@@ -538,7 +532,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	mappings, mappingErr := i.getMappings(ctx, qo.conn, aliases)
 	if len(mappings) == 0 {
 		log.Warnf(ctx, "index is empty with %v with %s error %s", aliases, qo.conn.String(), mappingErr)
-		return
+		return size, total, option, err
 	}
 	span.Set("mapping-length", len(mappings))
 
@@ -601,7 +595,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	sr, err := i.esQuery(ctx, qo, fact)
 	if err != nil {
 		log.Errorf(ctx, fmt.Sprintf("es query raw data error: %s", err.Error()))
-		return
+		return size, total, option, err
 	}
 
 	option = &metadata.ResultTableOption{
@@ -617,7 +611,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 			for idx, d := range sr.Hits.Hits {
 				data := make(map[string]any)
 				if err = json.Unmarshal(d.Source, &data); err != nil {
-					return
+					return size, total, option, err
 				}
 
 				fact.SetData(data)
@@ -627,7 +621,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 					if _, ok := fact.data[k]; ok {
 						fact.data[v] = fact.data[k]
 						// TODO: 等前端适配之后，再移除
-						//delete(fact.data, k)
+						// delete(fact.data, k)
 					}
 				}
 
@@ -668,7 +662,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	span.Set("instance-out-total", total)
 	span.Set("instance-out-result-table-option", option)
 
-	return
+	return size, total, option, err
 }
 
 // QuerySeriesSet 给 PromEngine 提供查询接口
@@ -678,9 +672,7 @@ func (i *Instance) QuerySeriesSet(
 	start time.Time,
 	end time.Time,
 ) storage.SeriesSet {
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-series-set")
 	defer func() {

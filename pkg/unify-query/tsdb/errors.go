@@ -13,6 +13,4 @@ import (
 	"errors"
 )
 
-var (
-	ErrStorageNotFound = errors.New("tsdb storage not found")
-)
+var ErrStorageNotFound = errors.New("tsdb storage not found")

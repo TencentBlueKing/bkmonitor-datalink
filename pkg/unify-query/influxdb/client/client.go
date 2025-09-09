@@ -135,7 +135,7 @@ func (c *BasicClient) decodeWithContentType(
 		log.Errorf(ctx, "get decoder:%s error:%s,data in body:%s", respContentType, err, data)
 		return nil, err
 	}
-	var result = new(decoder.Response)
+	result := new(decoder.Response)
 	_, err = dec.Decode(ctx, resp.Body, result)
 	if err != nil {
 		log.Errorf(ctx, "decoder:%s decode error:%s", respContentType, err)

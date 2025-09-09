@@ -83,9 +83,7 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 
 // Reload
 func (s *Service) Reload(ctx context.Context) {
-	var (
-		err error
-	)
+	var err error
 	if s.wg == nil {
 		s.wg = new(sync.WaitGroup)
 	}
@@ -114,7 +112,6 @@ func (s *Service) Reload(ctx context.Context) {
 			Exporter:         &featureFlag.CustomExport{},
 		},
 	})
-
 	if err != nil {
 		log.Errorf(s.ctx, err.Error())
 		return

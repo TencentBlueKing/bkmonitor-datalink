@@ -21,7 +21,7 @@ import (
 
 func ParseMetricSelector(selector string) ([]*labels.Matcher, error) {
 	if selector == "" {
-		return nil, fmt.Errorf("empty selector")
+		return nil, nil
 	}
 
 	selector = strings.TrimSpace(selector)

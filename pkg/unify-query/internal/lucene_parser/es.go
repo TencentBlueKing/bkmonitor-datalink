@@ -39,10 +39,12 @@ func (d *Schema) GetFieldType(fieldName string) (string, bool) {
 
 func (d *Schema) GetNestedPath(fieldName string) (string, bool) {
 	parts := strings.Split(fieldName, Separator)
-	if len(parts) > 1 {
-		nestedPath := parts[0]
-		if _, ok := d.mapping[nestedPath]; ok {
-			return nestedPath, true
+	for i := len(parts) - 1; i >= 0; i-- {
+		checkKey := strings.Join(parts[0:i], Separator)
+		if fieldType, ok := d.mapping[checkKey]; ok {
+			if fieldType == "nested" {
+				return checkKey, true
+			}
 		}
 	}
 	return "", false

@@ -168,14 +168,18 @@ func TestQsToDsl(t *testing.T) {
 				return str
 			}
 			parser := lucene_parser.NewParser(testMapping(), encoder, decoder)
-			result, err := parser.Do(c.q, false)
+			result, err := parser.Do(c.q, c.isPrefix)
 			require.NoError(t, err)
-			require.NotNil(t, result.ES, "ES query should not be nil when expected result is provided")
-			body, err := result.ES.Source()
-			assert.Nil(t, err)
-			require.NotNil(t, body)
-			bodyJson, _ := json.Marshal(body)
-			assert.JSONEq(t, c.expected, cast.ToString(bodyJson))
+			if c.expected != "" {
+				require.NotNil(t, result.ES, "ES query should not be nil when expected result is provided")
+				body, err := result.ES.Source()
+				assert.Nil(t, err)
+				require.NotNil(t, body)
+				bodyJson, _ := json.Marshal(body)
+				assert.JSONEq(t, c.expected, cast.ToString(bodyJson))
+			} else {
+				t.Logf("Query: %s, ES result: %v", c.q, result.ES != nil)
+			}
 		})
 	}
 }

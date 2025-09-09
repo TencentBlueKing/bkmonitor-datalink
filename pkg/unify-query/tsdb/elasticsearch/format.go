@@ -220,7 +220,6 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 			return k
 		},
 	}
-	f.luceneParser = lucene_parser.NewParser(f.mapping, f.encode, f.decode)
 	return f
 }
 
@@ -339,8 +338,6 @@ func (f *FormatFactory) WithTransform(encode func(string) string, decode func(st
 		// 如果有 decode valueField 需要重新载入
 		f.valueField = decode(f.valueField)
 	}
-	// 重新初始化 luceneParser，因为 encode/decode 函数可能已经改变
-	f.luceneParser = lucene_parser.NewParser(f.mapping, f.encode, f.decode)
 	return f
 }
 
@@ -370,7 +367,6 @@ func (f *FormatFactory) WithMappings(mappings ...map[string]any) *FormatFactory 
 			}
 		}
 	}
-	// 重新初始化 luceneParser，因为 mapping 可能已经改变
 	f.luceneParser = lucene_parser.NewParser(f.mapping, f.encode, f.decode)
 	return f
 }

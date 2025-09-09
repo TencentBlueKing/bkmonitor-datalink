@@ -110,7 +110,7 @@ func (m *AggregateMethod) ToProm(expr parser.Expr) (parser.Expr, error) {
 	// 参数在聚合集合里，就用聚合方法
 	if method, ok := AggregateMap[strings.ToLower(m.Method)]; ok {
 		log.Debugf(context.TODO(), "method->[%s] is aggregate method, will make to AggregateExpr", m.Method)
-		var result = new(parser.AggregateExpr)
+		result := new(parser.AggregateExpr)
 		result.Expr = expr
 		result.Op = method
 		if len(m.VArgsList) > 0 {
@@ -128,7 +128,7 @@ func (m *AggregateMethod) ToProm(expr parser.Expr) (parser.Expr, error) {
 	}
 
 	// 否则视为普通函数调用
-	var result = new(parser.Call)
+	result := new(parser.Call)
 	log.Debugf(context.TODO(), "method->[%s] is call method, will make to call expr.", m.Method)
 	result.Func = &parser.Function{
 		Name:       m.Method,

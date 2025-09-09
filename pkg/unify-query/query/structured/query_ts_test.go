@@ -26,7 +26,6 @@ import (
 )
 
 func TestQueryToMetric(t *testing.T) {
-
 	db := "result_table"
 	tableID := influxdb.ResultTableInfluxDB
 	field := "kube_pod_info"
@@ -42,7 +41,7 @@ func TestQueryToMetric(t *testing.T) {
 	start := "1741056443"
 	end := "1741060043"
 
-	var testCases = map[string]struct {
+	testCases := map[string]struct {
 		spaceUID string
 		query    *Query
 		metric   *md.QueryMetric
@@ -823,7 +822,6 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 		},
 		"vm 聚合查询验证 - 2": {
 			ts: &QueryTs{
-
 				QueryList: []*Query{
 					{
 						TableID:       "system.cpu_detail",

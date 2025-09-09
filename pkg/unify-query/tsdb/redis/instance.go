@@ -98,9 +98,7 @@ func (i *Instance) DirectQueryRange(ctx context.Context, promql string, start, e
 }
 
 func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time.Duration) (*dataframe.DataFrame, error) {
-	var (
-		startAnaylize time.Time
-	)
+	var startAnaylize time.Time
 
 	// 根据现有支持情况检查 QueryTs 请求体
 	query := metadata.GetQueryClusterMetric(ctx)
@@ -200,9 +198,7 @@ func (i *Instance) matrixFormat(ctx context.Context, df dataframe.DataFrame) (pr
 }
 
 func arrToPoint(colNames []string, row []string) (labels.Labels, *promql.Point, error) {
-	var (
-		err error
-	)
+	var err error
 	labelsGroup := make(labels.Labels, 0)
 	point := promql.Point{}
 
@@ -228,7 +224,8 @@ func arrToPoint(colNames []string, row []string) (labels.Labels, *promql.Point, 
 
 // handleDFQuery 根据传入的查询配置，处理 DF 数据
 func (i *Instance) handleDFQuery(
-	df dataframe.DataFrame, query *metadata.QueryClusterMetric, start, end time.Time, step time.Duration) dataframe.DataFrame {
+	df dataframe.DataFrame, query *metadata.QueryClusterMetric, start, end time.Time, step time.Duration,
+) dataframe.DataFrame {
 	// 时间过滤
 	df = df.FilterAggregation(
 		dataframe.And,

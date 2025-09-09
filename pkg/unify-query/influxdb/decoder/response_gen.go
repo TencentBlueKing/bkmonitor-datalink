@@ -28,37 +28,37 @@ func (z *Message) DecodeMsg(dc *msgp.Reader) (err error) {
 	zb0001, err = dc.ReadMapHeader()
 	if err != nil {
 		err = msgp.WrapError(err)
-		return
+		return err
 	}
 	for zb0001 > 0 {
 		zb0001--
 		field, err = dc.ReadMapKeyPtr()
 		if err != nil {
 			err = msgp.WrapError(err)
-			return
+			return err
 		}
 		switch msgp.UnsafeString(field) {
 		case "level":
 			z.Level, err = dc.ReadString()
 			if err != nil {
 				err = msgp.WrapError(err, "Level")
-				return
+				return err
 			}
 		case "text":
 			z.Text, err = dc.ReadString()
 			if err != nil {
 				err = msgp.WrapError(err, "Text")
-				return
+				return err
 			}
 		default:
 			err = dc.Skip()
 			if err != nil {
 				err = msgp.WrapError(err)
-				return
+				return err
 			}
 		}
 	}
-	return
+	return err
 }
 
 // EncodeMsg implements msgp.Encodable
@@ -67,24 +67,24 @@ func (z Message) EncodeMsg(en *msgp.Writer) (err error) {
 	// write "level"
 	err = en.Append(0x82, 0xa5, 0x6c, 0x65, 0x76, 0x65, 0x6c)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteString(z.Level)
 	if err != nil {
 		err = msgp.WrapError(err, "Level")
-		return
+		return err
 	}
 	// write "text"
 	err = en.Append(0xa4, 0x74, 0x65, 0x78, 0x74)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteString(z.Text)
 	if err != nil {
 		err = msgp.WrapError(err, "Text")
-		return
+		return err
 	}
-	return
+	return err
 }
 
 // MarshalMsg implements msgp.Marshaler
@@ -97,7 +97,7 @@ func (z Message) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "text"
 	o = append(o, 0xa4, 0x74, 0x65, 0x78, 0x74)
 	o = msgp.AppendString(o, z.Text)
-	return
+	return o, err
 }
 
 // UnmarshalMsg implements msgp.Unmarshaler
@@ -108,44 +108,44 @@ func (z *Message) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	zb0001, bts, err = msgp.ReadMapHeaderBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err)
-		return
+		return o, err
 	}
 	for zb0001 > 0 {
 		zb0001--
 		field, bts, err = msgp.ReadMapKeyZC(bts)
 		if err != nil {
 			err = msgp.WrapError(err)
-			return
+			return o, err
 		}
 		switch msgp.UnsafeString(field) {
 		case "level":
 			z.Level, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Level")
-				return
+				return o, err
 			}
 		case "text":
 			z.Text, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Text")
-				return
+				return o, err
 			}
 		default:
 			bts, err = msgp.Skip(bts)
 			if err != nil {
 				err = msgp.WrapError(err)
-				return
+				return o, err
 			}
 		}
 	}
 	o = bts
-	return
+	return o, err
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z Message) Msgsize() (s int) {
 	s = 1 + 6 + msgp.StringPrefixSize + len(z.Level) + 5 + msgp.StringPrefixSize + len(z.Text)
-	return
+	return s
 }
 
 // DecodeMsg implements msgp.Decodable
@@ -166,13 +166,13 @@ func (z *Response) DecodeMsg(dc *msgp.Reader) (err error) {
 			}
 			if err != nil {
 				err = msgp.WrapError(err)
-				return
+				return err
 			}
 
 			field, err = dc.ReadMapKeyPtr()
 			if err != nil {
 				err = msgp.WrapError(err)
-				return
+				return err
 			}
 			switch msgp.UnsafeString(field) {
 			case "results":
@@ -180,14 +180,14 @@ func (z *Response) DecodeMsg(dc *msgp.Reader) (err error) {
 				zb0002, err = dc.ReadArrayHeader()
 				if err != nil {
 					err = msgp.WrapError(err, "Results")
-					return
+					return err
 				}
 				result := make([]Result, zb0002)
 				for za0001 := range result {
 					err = result[za0001].DecodeMsg(dc)
 					if err != nil {
 						err = msgp.WrapError(err, "Results", za0001)
-						return
+						return err
 					}
 				}
 				// 无法知道具体有多少 chunk 片，所以只能给一个可扩容的切片
@@ -200,13 +200,13 @@ func (z *Response) DecodeMsg(dc *msgp.Reader) (err error) {
 				z.Err, err = dc.ReadString()
 				if err != nil {
 					err = msgp.WrapError(err, "Err")
-					return
+					return err
 				}
 			default:
 				err = dc.Skip()
 				if err != nil {
 					err = msgp.WrapError(err)
-					return
+					return err
 				}
 			}
 
@@ -214,12 +214,12 @@ func (z *Response) DecodeMsg(dc *msgp.Reader) (err error) {
 			sub := end.Sub(start)
 			if sub.Seconds() >= 30 {
 				err = msgp.WrapError(errors.New(fmt.Sprintf("msgpack decoder timeout: %f seconds", sub.Seconds())))
-				return
+				return err
 			}
 			start = end
 		}
 	}
-	return
+	return err
 }
 
 // EncodeMsg implements msgp.Encodable
@@ -330,13 +330,13 @@ func (z *Response) MarshalMsg(b []byte) (o []byte, err error) {
 		o, err = z.Results[za0001].MarshalMsg(o)
 		if err != nil {
 			err = msgp.WrapError(err, "Results", za0001)
-			return
+			return o, err
 		}
 	}
 	// string "error"
 	o = append(o, 0xa5, 0x65, 0x72, 0x72, 0x6f, 0x72)
 	o = msgp.AppendString(o, z.Err)
-	return
+	return o, err
 }
 
 // UnmarshalMsg implements msgp.Unmarshaler
@@ -347,14 +347,14 @@ func (z *Response) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	zb0001, bts, err = msgp.ReadMapHeaderBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err)
-		return
+		return o, err
 	}
 	for zb0001 > 0 {
 		zb0001--
 		field, bts, err = msgp.ReadMapKeyZC(bts)
 		if err != nil {
 			err = msgp.WrapError(err)
-			return
+			return o, err
 		}
 		switch msgp.UnsafeString(field) {
 		case "results":
@@ -362,7 +362,7 @@ func (z *Response) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Results")
-				return
+				return o, err
 			}
 			if cap(z.Results) >= int(zb0002) {
 				z.Results = (z.Results)[:zb0002]
@@ -373,25 +373,25 @@ func (z *Response) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				bts, err = z.Results[za0001].UnmarshalMsg(bts)
 				if err != nil {
 					err = msgp.WrapError(err, "Results", za0001)
-					return
+					return o, err
 				}
 			}
 		case "error":
 			z.Err, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Err")
-				return
+				return o, err
 			}
 		default:
 			bts, err = msgp.Skip(bts)
 			if err != nil {
 				err = msgp.WrapError(err)
-				return
+				return o, err
 			}
 		}
 	}
 	o = bts
-	return
+	return o, err
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
@@ -401,7 +401,7 @@ func (z *Response) Msgsize() (s int) {
 		s += z.Results[za0001].Msgsize()
 	}
 	s += 6 + msgp.StringPrefixSize + len(z.Err)
-	return
+	return s
 }
 
 // DecodeMsg implements msgp.Decodable
@@ -412,28 +412,28 @@ func (z *Result) DecodeMsg(dc *msgp.Reader) (err error) {
 	zb0001, err = dc.ReadMapHeader()
 	if err != nil {
 		err = msgp.WrapError(err)
-		return
+		return err
 	}
 	for zb0001 > 0 {
 		zb0001--
 		field, err = dc.ReadMapKeyPtr()
 		if err != nil {
 			err = msgp.WrapError(err)
-			return
+			return err
 		}
 		switch msgp.UnsafeString(field) {
 		case "statement_id":
 			z.StatementID, err = dc.ReadInt()
 			if err != nil {
 				err = msgp.WrapError(err, "StatementID")
-				return
+				return err
 			}
 		case "series":
 			var zb0002 uint32
 			zb0002, err = dc.ReadArrayHeader()
 			if err != nil {
 				err = msgp.WrapError(err, "Series")
-				return
+				return err
 			}
 			if cap(z.Series) >= int(zb0002) {
 				z.Series = (z.Series)[:zb0002]
@@ -445,7 +445,7 @@ func (z *Result) DecodeMsg(dc *msgp.Reader) (err error) {
 					err = dc.ReadNil()
 					if err != nil {
 						err = msgp.WrapError(err, "Series", za0001)
-						return
+						return err
 					}
 					z.Series[za0001] = nil
 				} else {
@@ -455,7 +455,7 @@ func (z *Result) DecodeMsg(dc *msgp.Reader) (err error) {
 					err = z.Series[za0001].DecodeMsg(dc)
 					if err != nil {
 						err = msgp.WrapError(err, "Series", za0001)
-						return
+						return err
 					}
 				}
 			}
@@ -464,7 +464,7 @@ func (z *Result) DecodeMsg(dc *msgp.Reader) (err error) {
 			zb0003, err = dc.ReadArrayHeader()
 			if err != nil {
 				err = msgp.WrapError(err, "Messages")
-				return
+				return err
 			}
 			if cap(z.Messages) >= int(zb0003) {
 				z.Messages = (z.Messages)[:zb0003]
@@ -476,7 +476,7 @@ func (z *Result) DecodeMsg(dc *msgp.Reader) (err error) {
 					err = dc.ReadNil()
 					if err != nil {
 						err = msgp.WrapError(err, "Messages", za0002)
-						return
+						return err
 					}
 					z.Messages[za0002] = nil
 				} else {
@@ -487,33 +487,33 @@ func (z *Result) DecodeMsg(dc *msgp.Reader) (err error) {
 					zb0004, err = dc.ReadMapHeader()
 					if err != nil {
 						err = msgp.WrapError(err, "Messages", za0002)
-						return
+						return err
 					}
 					for zb0004 > 0 {
 						zb0004--
 						field, err = dc.ReadMapKeyPtr()
 						if err != nil {
 							err = msgp.WrapError(err, "Messages", za0002)
-							return
+							return err
 						}
 						switch msgp.UnsafeString(field) {
 						case "level":
 							z.Messages[za0002].Level, err = dc.ReadString()
 							if err != nil {
 								err = msgp.WrapError(err, "Messages", za0002, "Level")
-								return
+								return err
 							}
 						case "text":
 							z.Messages[za0002].Text, err = dc.ReadString()
 							if err != nil {
 								err = msgp.WrapError(err, "Messages", za0002, "Text")
-								return
+								return err
 							}
 						default:
 							err = dc.Skip()
 							if err != nil {
 								err = msgp.WrapError(err, "Messages", za0002)
-								return
+								return err
 							}
 						}
 					}
@@ -523,23 +523,23 @@ func (z *Result) DecodeMsg(dc *msgp.Reader) (err error) {
 			z.Partial, err = dc.ReadBool()
 			if err != nil {
 				err = msgp.WrapError(err, "Partial")
-				return
+				return err
 			}
 		case "error":
 			z.Err, err = dc.ReadString()
 			if err != nil {
 				err = msgp.WrapError(err, "Err")
-				return
+				return err
 			}
 		default:
 			err = dc.Skip()
 			if err != nil {
 				err = msgp.WrapError(err)
-				return
+				return err
 			}
 		}
 	}
-	return
+	return err
 }
 
 // EncodeMsg implements msgp.Encodable
@@ -548,98 +548,98 @@ func (z *Result) EncodeMsg(en *msgp.Writer) (err error) {
 	// write "statement_id"
 	err = en.Append(0x85, 0xac, 0x73, 0x74, 0x61, 0x74, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x5f, 0x69, 0x64)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteInt(z.StatementID)
 	if err != nil {
 		err = msgp.WrapError(err, "StatementID")
-		return
+		return err
 	}
 	// write "series"
 	err = en.Append(0xa6, 0x73, 0x65, 0x72, 0x69, 0x65, 0x73)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteArrayHeader(uint32(len(z.Series)))
 	if err != nil {
 		err = msgp.WrapError(err, "Series")
-		return
+		return err
 	}
 	for za0001 := range z.Series {
 		if z.Series[za0001] == nil {
 			err = en.WriteNil()
 			if err != nil {
-				return
+				return err
 			}
 		} else {
 			err = z.Series[za0001].EncodeMsg(en)
 			if err != nil {
 				err = msgp.WrapError(err, "Series", za0001)
-				return
+				return err
 			}
 		}
 	}
 	// write "messages"
 	err = en.Append(0xa8, 0x6d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x73)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteArrayHeader(uint32(len(z.Messages)))
 	if err != nil {
 		err = msgp.WrapError(err, "Messages")
-		return
+		return err
 	}
 	for za0002 := range z.Messages {
 		if z.Messages[za0002] == nil {
 			err = en.WriteNil()
 			if err != nil {
-				return
+				return err
 			}
 		} else {
 			// map header, size 2
 			// write "level"
 			err = en.Append(0x82, 0xa5, 0x6c, 0x65, 0x76, 0x65, 0x6c)
 			if err != nil {
-				return
+				return err
 			}
 			err = en.WriteString(z.Messages[za0002].Level)
 			if err != nil {
 				err = msgp.WrapError(err, "Messages", za0002, "Level")
-				return
+				return err
 			}
 			// write "text"
 			err = en.Append(0xa4, 0x74, 0x65, 0x78, 0x74)
 			if err != nil {
-				return
+				return err
 			}
 			err = en.WriteString(z.Messages[za0002].Text)
 			if err != nil {
 				err = msgp.WrapError(err, "Messages", za0002, "Text")
-				return
+				return err
 			}
 		}
 	}
 	// write "partial"
 	err = en.Append(0xa7, 0x70, 0x61, 0x72, 0x74, 0x69, 0x61, 0x6c)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteBool(z.Partial)
 	if err != nil {
 		err = msgp.WrapError(err, "Partial")
-		return
+		return err
 	}
 	// write "error"
 	err = en.Append(0xa5, 0x65, 0x72, 0x72, 0x6f, 0x72)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteString(z.Err)
 	if err != nil {
 		err = msgp.WrapError(err, "Err")
-		return
+		return err
 	}
-	return
+	return err
 }
 
 // MarshalMsg implements msgp.Marshaler
@@ -659,7 +659,7 @@ func (z *Result) MarshalMsg(b []byte) (o []byte, err error) {
 			o, err = z.Series[za0001].MarshalMsg(o)
 			if err != nil {
 				err = msgp.WrapError(err, "Series", za0001)
-				return
+				return o, err
 			}
 		}
 	}
@@ -685,7 +685,7 @@ func (z *Result) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "error"
 	o = append(o, 0xa5, 0x65, 0x72, 0x72, 0x6f, 0x72)
 	o = msgp.AppendString(o, z.Err)
-	return
+	return o, err
 }
 
 // UnmarshalMsg implements msgp.Unmarshaler
@@ -696,28 +696,28 @@ func (z *Result) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	zb0001, bts, err = msgp.ReadMapHeaderBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err)
-		return
+		return o, err
 	}
 	for zb0001 > 0 {
 		zb0001--
 		field, bts, err = msgp.ReadMapKeyZC(bts)
 		if err != nil {
 			err = msgp.WrapError(err)
-			return
+			return o, err
 		}
 		switch msgp.UnsafeString(field) {
 		case "statement_id":
 			z.StatementID, bts, err = msgp.ReadIntBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "StatementID")
-				return
+				return o, err
 			}
 		case "series":
 			var zb0002 uint32
 			zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Series")
-				return
+				return o, err
 			}
 			if cap(z.Series) >= int(zb0002) {
 				z.Series = (z.Series)[:zb0002]
@@ -728,7 +728,7 @@ func (z *Result) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				if msgp.IsNil(bts) {
 					bts, err = msgp.ReadNilBytes(bts)
 					if err != nil {
-						return
+						return o, err
 					}
 					z.Series[za0001] = nil
 				} else {
@@ -738,7 +738,7 @@ func (z *Result) UnmarshalMsg(bts []byte) (o []byte, err error) {
 					bts, err = z.Series[za0001].UnmarshalMsg(bts)
 					if err != nil {
 						err = msgp.WrapError(err, "Series", za0001)
-						return
+						return o, err
 					}
 				}
 			}
@@ -747,7 +747,7 @@ func (z *Result) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Messages")
-				return
+				return o, err
 			}
 			if cap(z.Messages) >= int(zb0003) {
 				z.Messages = (z.Messages)[:zb0003]
@@ -758,7 +758,7 @@ func (z *Result) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				if msgp.IsNil(bts) {
 					bts, err = msgp.ReadNilBytes(bts)
 					if err != nil {
-						return
+						return o, err
 					}
 					z.Messages[za0002] = nil
 				} else {
@@ -769,33 +769,33 @@ func (z *Result) UnmarshalMsg(bts []byte) (o []byte, err error) {
 					zb0004, bts, err = msgp.ReadMapHeaderBytes(bts)
 					if err != nil {
 						err = msgp.WrapError(err, "Messages", za0002)
-						return
+						return o, err
 					}
 					for zb0004 > 0 {
 						zb0004--
 						field, bts, err = msgp.ReadMapKeyZC(bts)
 						if err != nil {
 							err = msgp.WrapError(err, "Messages", za0002)
-							return
+							return o, err
 						}
 						switch msgp.UnsafeString(field) {
 						case "level":
 							z.Messages[za0002].Level, bts, err = msgp.ReadStringBytes(bts)
 							if err != nil {
 								err = msgp.WrapError(err, "Messages", za0002, "Level")
-								return
+								return o, err
 							}
 						case "text":
 							z.Messages[za0002].Text, bts, err = msgp.ReadStringBytes(bts)
 							if err != nil {
 								err = msgp.WrapError(err, "Messages", za0002, "Text")
-								return
+								return o, err
 							}
 						default:
 							bts, err = msgp.Skip(bts)
 							if err != nil {
 								err = msgp.WrapError(err, "Messages", za0002)
-								return
+								return o, err
 							}
 						}
 					}
@@ -805,24 +805,24 @@ func (z *Result) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			z.Partial, bts, err = msgp.ReadBoolBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Partial")
-				return
+				return o, err
 			}
 		case "error":
 			z.Err, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Err")
-				return
+				return o, err
 			}
 		default:
 			bts, err = msgp.Skip(bts)
 			if err != nil {
 				err = msgp.WrapError(err)
-				return
+				return o, err
 			}
 		}
 	}
 	o = bts
-	return
+	return o, err
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
@@ -844,7 +844,7 @@ func (z *Result) Msgsize() (s int) {
 		}
 	}
 	s += 8 + msgp.BoolSize + 6 + msgp.StringPrefixSize + len(z.Err)
-	return
+	return s
 }
 
 // DecodeMsg implements msgp.Decodable
@@ -855,28 +855,28 @@ func (z *Row) DecodeMsg(dc *msgp.Reader) (err error) {
 	zb0001, err = dc.ReadMapHeader()
 	if err != nil {
 		err = msgp.WrapError(err)
-		return
+		return err
 	}
 	for zb0001 > 0 {
 		zb0001--
 		field, err = dc.ReadMapKeyPtr()
 		if err != nil {
 			err = msgp.WrapError(err)
-			return
+			return err
 		}
 		switch msgp.UnsafeString(field) {
 		case "name":
 			z.Name, err = dc.ReadString()
 			if err != nil {
 				err = msgp.WrapError(err, "Name")
-				return
+				return err
 			}
 		case "tags":
 			var zb0002 uint32
 			zb0002, err = dc.ReadMapHeader()
 			if err != nil {
 				err = msgp.WrapError(err, "Tags")
-				return
+				return err
 			}
 			if z.Tags == nil {
 				z.Tags = make(map[string]string, zb0002)
@@ -892,12 +892,12 @@ func (z *Row) DecodeMsg(dc *msgp.Reader) (err error) {
 				za0001, err = dc.ReadString()
 				if err != nil {
 					err = msgp.WrapError(err, "Tags")
-					return
+					return err
 				}
 				za0002, err = dc.ReadString()
 				if err != nil {
 					err = msgp.WrapError(err, "Tags", za0001)
-					return
+					return err
 				}
 				z.Tags[za0001] = za0002
 			}
@@ -906,7 +906,7 @@ func (z *Row) DecodeMsg(dc *msgp.Reader) (err error) {
 			zb0003, err = dc.ReadArrayHeader()
 			if err != nil {
 				err = msgp.WrapError(err, "Columns")
-				return
+				return err
 			}
 			if cap(z.Columns) >= int(zb0003) {
 				z.Columns = (z.Columns)[:zb0003]
@@ -917,7 +917,7 @@ func (z *Row) DecodeMsg(dc *msgp.Reader) (err error) {
 				z.Columns[za0003], err = dc.ReadString()
 				if err != nil {
 					err = msgp.WrapError(err, "Columns", za0003)
-					return
+					return err
 				}
 			}
 		case "values":
@@ -925,7 +925,7 @@ func (z *Row) DecodeMsg(dc *msgp.Reader) (err error) {
 			zb0004, err = dc.ReadArrayHeader()
 			if err != nil {
 				err = msgp.WrapError(err, "Values")
-				return
+				return err
 			}
 			if cap(z.Values) >= int(zb0004) {
 				z.Values = (z.Values)[:zb0004]
@@ -937,7 +937,7 @@ func (z *Row) DecodeMsg(dc *msgp.Reader) (err error) {
 				zb0005, err = dc.ReadArrayHeader()
 				if err != nil {
 					err = msgp.WrapError(err, "Values", za0004)
-					return
+					return err
 				}
 				if cap(z.Values[za0004]) >= int(zb0005) {
 					z.Values[za0004] = (z.Values[za0004])[:zb0005]
@@ -948,7 +948,7 @@ func (z *Row) DecodeMsg(dc *msgp.Reader) (err error) {
 					z.Values[za0004][za0005], err = dc.ReadIntf()
 					if err != nil {
 						err = msgp.WrapError(err, "Values", za0004, za0005)
-						return
+						return err
 					}
 				}
 			}
@@ -956,17 +956,17 @@ func (z *Row) DecodeMsg(dc *msgp.Reader) (err error) {
 			z.Partial, err = dc.ReadBool()
 			if err != nil {
 				err = msgp.WrapError(err, "Partial")
-				return
+				return err
 			}
 		default:
 			err = dc.Skip()
 			if err != nil {
 				err = msgp.WrapError(err)
-				return
+				return err
 			}
 		}
 	}
-	return
+	return err
 }
 
 // EncodeMsg implements msgp.Encodable
@@ -975,87 +975,87 @@ func (z *Row) EncodeMsg(en *msgp.Writer) (err error) {
 	// write "name"
 	err = en.Append(0x85, 0xa4, 0x6e, 0x61, 0x6d, 0x65)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteString(z.Name)
 	if err != nil {
 		err = msgp.WrapError(err, "Name")
-		return
+		return err
 	}
 	// write "tags"
 	err = en.Append(0xa4, 0x74, 0x61, 0x67, 0x73)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteMapHeader(uint32(len(z.Tags)))
 	if err != nil {
 		err = msgp.WrapError(err, "Tags")
-		return
+		return err
 	}
 	for za0001, za0002 := range z.Tags {
 		err = en.WriteString(za0001)
 		if err != nil {
 			err = msgp.WrapError(err, "Tags")
-			return
+			return err
 		}
 		err = en.WriteString(za0002)
 		if err != nil {
 			err = msgp.WrapError(err, "Tags", za0001)
-			return
+			return err
 		}
 	}
 	// write "columns"
 	err = en.Append(0xa7, 0x63, 0x6f, 0x6c, 0x75, 0x6d, 0x6e, 0x73)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteArrayHeader(uint32(len(z.Columns)))
 	if err != nil {
 		err = msgp.WrapError(err, "Columns")
-		return
+		return err
 	}
 	for za0003 := range z.Columns {
 		err = en.WriteString(z.Columns[za0003])
 		if err != nil {
 			err = msgp.WrapError(err, "Columns", za0003)
-			return
+			return err
 		}
 	}
 	// write "values"
 	err = en.Append(0xa6, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x73)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteArrayHeader(uint32(len(z.Values)))
 	if err != nil {
 		err = msgp.WrapError(err, "Values")
-		return
+		return err
 	}
 	for za0004 := range z.Values {
 		err = en.WriteArrayHeader(uint32(len(z.Values[za0004])))
 		if err != nil {
 			err = msgp.WrapError(err, "Values", za0004)
-			return
+			return err
 		}
 		for za0005 := range z.Values[za0004] {
 			err = en.WriteIntf(z.Values[za0004][za0005])
 			if err != nil {
 				err = msgp.WrapError(err, "Values", za0004, za0005)
-				return
+				return err
 			}
 		}
 	}
 	// write "partial"
 	err = en.Append(0xa7, 0x70, 0x61, 0x72, 0x74, 0x69, 0x61, 0x6c)
 	if err != nil {
-		return
+		return err
 	}
 	err = en.WriteBool(z.Partial)
 	if err != nil {
 		err = msgp.WrapError(err, "Partial")
-		return
+		return err
 	}
-	return
+	return err
 }
 
 // MarshalMsg implements msgp.Marshaler
@@ -1087,14 +1087,14 @@ func (z *Row) MarshalMsg(b []byte) (o []byte, err error) {
 			o, err = msgp.AppendIntf(o, z.Values[za0004][za0005])
 			if err != nil {
 				err = msgp.WrapError(err, "Values", za0004, za0005)
-				return
+				return o, err
 			}
 		}
 	}
 	// string "partial"
 	o = append(o, 0xa7, 0x70, 0x61, 0x72, 0x74, 0x69, 0x61, 0x6c)
 	o = msgp.AppendBool(o, z.Partial)
-	return
+	return o, err
 }
 
 // UnmarshalMsg implements msgp.Unmarshaler
@@ -1105,28 +1105,28 @@ func (z *Row) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	zb0001, bts, err = msgp.ReadMapHeaderBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err)
-		return
+		return o, err
 	}
 	for zb0001 > 0 {
 		zb0001--
 		field, bts, err = msgp.ReadMapKeyZC(bts)
 		if err != nil {
 			err = msgp.WrapError(err)
-			return
+			return o, err
 		}
 		switch msgp.UnsafeString(field) {
 		case "name":
 			z.Name, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Name")
-				return
+				return o, err
 			}
 		case "tags":
 			var zb0002 uint32
 			zb0002, bts, err = msgp.ReadMapHeaderBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Tags")
-				return
+				return o, err
 			}
 			if z.Tags == nil {
 				z.Tags = make(map[string]string, zb0002)
@@ -1142,12 +1142,12 @@ func (z *Row) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				za0001, bts, err = msgp.ReadStringBytes(bts)
 				if err != nil {
 					err = msgp.WrapError(err, "Tags")
-					return
+					return o, err
 				}
 				za0002, bts, err = msgp.ReadStringBytes(bts)
 				if err != nil {
 					err = msgp.WrapError(err, "Tags", za0001)
-					return
+					return o, err
 				}
 				z.Tags[za0001] = za0002
 			}
@@ -1156,7 +1156,7 @@ func (z *Row) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Columns")
-				return
+				return o, err
 			}
 			if cap(z.Columns) >= int(zb0003) {
 				z.Columns = (z.Columns)[:zb0003]
@@ -1167,7 +1167,7 @@ func (z *Row) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				z.Columns[za0003], bts, err = msgp.ReadStringBytes(bts)
 				if err != nil {
 					err = msgp.WrapError(err, "Columns", za0003)
-					return
+					return o, err
 				}
 			}
 		case "values":
@@ -1175,7 +1175,7 @@ func (z *Row) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			zb0004, bts, err = msgp.ReadArrayHeaderBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Values")
-				return
+				return o, err
 			}
 			if cap(z.Values) >= int(zb0004) {
 				z.Values = (z.Values)[:zb0004]
@@ -1187,7 +1187,7 @@ func (z *Row) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				zb0005, bts, err = msgp.ReadArrayHeaderBytes(bts)
 				if err != nil {
 					err = msgp.WrapError(err, "Values", za0004)
-					return
+					return o, err
 				}
 				if cap(z.Values[za0004]) >= int(zb0005) {
 					z.Values[za0004] = (z.Values[za0004])[:zb0005]
@@ -1198,7 +1198,7 @@ func (z *Row) UnmarshalMsg(bts []byte) (o []byte, err error) {
 					z.Values[za0004][za0005], bts, err = msgp.ReadIntfBytes(bts)
 					if err != nil {
 						err = msgp.WrapError(err, "Values", za0004, za0005)
-						return
+						return o, err
 					}
 				}
 			}
@@ -1206,18 +1206,18 @@ func (z *Row) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			z.Partial, bts, err = msgp.ReadBoolBytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "Partial")
-				return
+				return o, err
 			}
 		default:
 			bts, err = msgp.Skip(bts)
 			if err != nil {
 				err = msgp.WrapError(err)
-				return
+				return o, err
 			}
 		}
 	}
 	o = bts
-	return
+	return o, err
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
@@ -1241,5 +1241,5 @@ func (z *Row) Msgsize() (s int) {
 		}
 	}
 	s += 8 + msgp.BoolSize
-	return
+	return s
 }

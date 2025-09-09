@@ -47,7 +47,7 @@ func SeriesSetToTimeSeries(ss storage.SeriesSet) (timeSeries TimeSeriesList, err
 		}
 		if it.Err() != nil {
 			err = it.Err()
-			return
+			return timeSeries, err
 		}
 
 		timeSeries = append(timeSeries, prompb.TimeSeries{Labels: newLbs, Samples: newSamples})
@@ -59,19 +59,19 @@ func SeriesSetToTimeSeries(ss storage.SeriesSet) (timeSeries TimeSeriesList, err
 			errorString.WriteString(w.Error())
 		}
 		err = errors.New(errorString.String())
-		return
+		return timeSeries, err
 	}
 
 	if ss.Err() != nil {
 		err = ss.Err()
-		return
+		return timeSeries, err
 	}
 
 	sort.SliceStable(timeSeries, func(i, j int) bool {
 		return timeSeries[i].String() < timeSeries[j].String()
 	})
 
-	return
+	return timeSeries, err
 }
 
 func (t *TimeSeriesList) String() string {

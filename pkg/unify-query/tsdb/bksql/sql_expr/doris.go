@@ -288,7 +288,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		OffsetMillis: offsetMinutes,
 	}
 
-	return
+	return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 }
 
 func (d *DorisSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {
@@ -328,7 +328,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	}
 
 	// doris 里面 array<int> 类型需要特殊处理
-	var checkArrayIntByOp = func(o string) (string, string, error) {
+	checkArrayIntByOp := func(o string) (string, string, error) {
 		if len(c.Value) != 1 {
 			return "", "", fmt.Errorf("operator %s only support 1 value", o)
 		}
@@ -342,7 +342,7 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 	}
 
 	// doris 里面 array<string> 类型需要特殊处理
-	var checkArrayStringByOp = func(op string) (string, string) {
+	checkArrayStringByOp := func(op string) (string, string) {
 		if d.isArray(c.DimensionName) {
 			val = fmt.Sprintf("ARRAY_MATCH_ANY(x -> x %s '%s', %s)", op, strings.Join(c.Value, "|"), key)
 			key = ""
@@ -535,7 +535,7 @@ func (d *DorisSQLExpr) likeValue(s string) string {
 		return s
 	}
 
-	var charChange = func(cur, last rune) rune {
+	charChange := func(cur, last rune) rune {
 		if last == '\\' {
 			return cur
 		}
@@ -649,14 +649,14 @@ func (d *DorisSQLExpr) walk(e querystring_parser.Expr) (string, error) {
 
 func (d *DorisSQLExpr) getFieldType(s string) (opt FieldOption) {
 	if d.fieldsMap == nil {
-		return
+		return opt
 	}
 
 	var ok bool
 	if opt, ok = d.fieldsMap[s]; ok {
 		opt.Type = strings.ToUpper(opt.Type)
 	}
-	return
+	return opt
 }
 
 func (d *DorisSQLExpr) caseAs(s string) (string, bool) {
@@ -678,14 +678,13 @@ func (d *DorisSQLExpr) getArrayType(s string) string {
 }
 
 func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
-
 	return fmt.Sprintf(DorisTypeArrayTransform, s)
 }
 
 func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	ns = s
 	if s == "" || s == "*" {
-		return
+		return ns, as
 	}
 	if alias, ok := d.fieldAlias[s]; ok {
 		ns = alias
@@ -698,7 +697,7 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	fs := strings.Split(s, ".")
 	if len(fs) == 1 {
 		ns = fmt.Sprintf("`%s`", ns)
-		return
+		return ns, as
 	}
 
 	// 如果是 resource 或 attributes 字段里都是用户上报的内容，采用 . 作为 key 上报，所以这里增加了特殊处理
@@ -736,7 +735,7 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	}
 
 	ns = fmt.Sprintf(`CAST(%s AS %s)`, suffixFields.String(), castType)
-	return
+	return ns, as
 }
 
 func (d *DorisSQLExpr) valueTransform(s string) string {

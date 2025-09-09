@@ -169,7 +169,8 @@ func TestDecodeResp(t *testing.T) {
 							},
 						},
 						Partial: true,
-					}, {
+					},
+					{
 						StatementID: 0,
 						Series: []*decoder.Row{
 							{
@@ -184,7 +185,8 @@ func TestDecodeResp(t *testing.T) {
 							},
 						},
 						Partial: true,
-					}, {
+					},
+					{
 						StatementID: 0,
 						Series: []*decoder.Row{
 							{
@@ -285,7 +287,8 @@ func TestDecodeResp(t *testing.T) {
 							},
 						},
 						Partial: true,
-					}, {
+					},
+					{
 						StatementID: 0,
 						Series: []*decoder.Row{
 							{
@@ -300,7 +303,8 @@ func TestDecodeResp(t *testing.T) {
 							},
 						},
 						Partial: true,
-					}, {
+					},
+					{
 						StatementID: 0,
 						Series: []*decoder.Row{
 							{
@@ -315,7 +319,8 @@ func TestDecodeResp(t *testing.T) {
 							},
 						},
 						Partial: true,
-					}, {
+					},
+					{
 						StatementID: 0,
 						Series: []*decoder.Row{
 							{
@@ -330,7 +335,8 @@ func TestDecodeResp(t *testing.T) {
 							},
 						},
 						Partial: true,
-					}, {
+					},
+					{
 						StatementID: 0,
 						Series: []*decoder.Row{
 							{
@@ -355,7 +361,6 @@ func TestDecodeResp(t *testing.T) {
 
 	handlerGen := func(clientResp *decoder.Response, expectChunk bool, expectChunkSize int) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-
 			assert.Equal(t, "db", r.FormValue("db"))
 			assert.Equal(t, "sql", r.FormValue("q"))
 			chunkedStr := r.FormValue("chunked")
@@ -381,7 +386,7 @@ func TestDecodeResp(t *testing.T) {
 			}
 
 			for _, res := range clientResp.Results {
-				var baseResult = decoder.Result{
+				baseResult := decoder.Result{
 					StatementID: res.StatementID,
 					Messages:    res.Messages,
 					Err:         res.Err,
@@ -390,7 +395,7 @@ func TestDecodeResp(t *testing.T) {
 
 				// 否则按照chunkSize按点数返回
 				for si, series := range res.Series {
-					var resp = new(decoder.Response)
+					resp := new(decoder.Response)
 					resp.Err = clientResp.Err
 
 					// chunkSize 等于0，一条条的series返回
@@ -438,7 +443,6 @@ func TestDecodeResp(t *testing.T) {
 
 	for name, testCase := range testCases {
 		t.Run(name, func(t *testing.T) {
-
 			mux := http.NewServeMux()
 			mux.Handle("/query", handlerGen(testCase.data, testCase.chunked, testCase.chunkSize))
 			s := httptest.NewServer(mux)
@@ -460,8 +464,8 @@ func TestDecodeResp(t *testing.T) {
 
 				actualSeries := resp.Results[i].Series
 				for j, series := range r.Series {
-					//series.SameSeries(actualSeries[j])
-					//assert.Equal(t, tagsHash(series), tagsHash(actualSeries[j]))
+					// series.SameSeries(actualSeries[j])
+					// assert.Equal(t, tagsHash(series), tagsHash(actualSeries[j]))
 					assert.Equal(t, series.Name, actualSeries[j].Name)
 					assert.Equal(t, series.Columns, actualSeries[j].Columns)
 					assert.Equal(t, series.Partial, actualSeries[j].Partial)
@@ -469,8 +473,6 @@ func TestDecodeResp(t *testing.T) {
 					assert.Equal(t, series.Values, actualSeries[j].Values)
 				}
 			}
-
 		})
 	}
-
 }

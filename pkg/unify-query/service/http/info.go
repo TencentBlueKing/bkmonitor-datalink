@@ -271,7 +271,6 @@ func (d *InfoData) Fill(tables *influxdb.Tables) error {
 		d.Tables = append(d.Tables, tableItem)
 	}
 	return nil
-
 }
 
 // HandleTimeSeries :
@@ -326,9 +325,7 @@ func HandleFeatureFlag(c *gin.Context) {
 	if flagKey != "" {
 		data := make(map[string]int, 0)
 		for i := 0; i < 100; i++ {
-			var (
-				k string
-			)
+			var k string
 
 			ffUser := featureFlag.FFUser(fmt.Sprintf("%d", i), map[string]any{
 				key: value,
@@ -532,7 +529,6 @@ func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 		return
 	}
 	c.JSON(200, data)
-
 }
 
 // convertInfoData: 转化influxdb数据
@@ -544,7 +540,6 @@ func convertInfoData(
 		return resp, nil
 	}
 	err := resp.Fill(tables)
-
 	if err != nil {
 		log.Errorf(context.TODO(), "fill info data failed for->[%s]", err)
 		return nil, err

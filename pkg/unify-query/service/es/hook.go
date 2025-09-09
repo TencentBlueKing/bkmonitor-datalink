@@ -27,7 +27,6 @@ func setDefaultConfig() {
 
 // LoadConfig
 func LoadConfig() {
-
 	MaxConcurrency = viper.GetInt(MaxConcurrencyConfigPath)
 	AliasRefreshPeriod = viper.GetDuration(AliasRefreshPeriodConfigPath)
 

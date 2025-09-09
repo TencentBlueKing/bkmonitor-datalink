@@ -39,7 +39,7 @@ func NewReopenableWriteSyncer(path string) (*ReopenableWriteSyncer, error) {
 
 	// 增加判断，如果没有指定文件则走标准输出 os.stdout
 	if path != "" {
-		if file, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err != nil {
+		if file, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666); err != nil {
 			fmt.Printf("failed to open file for->[%s]", err)
 			return nil, errors.Wrapf(err, "open file failed")
 		}
@@ -63,7 +63,7 @@ func (ws *ReopenableWriteSyncer) Reload() error {
 	_ = currentFile.Close()
 
 	// 重新打开新的文件
-	f, err := os.OpenFile(ws.filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	f, err := os.OpenFile(ws.filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
 	if err != nil {
 		fmt.Printf("failed to open file->[%s] for->[%s]", ws.filePath, err)
 		return err

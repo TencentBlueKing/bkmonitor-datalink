@@ -59,7 +59,6 @@ func MetaData(p *Params) gin.HandlerFunc {
 
 		if span != nil {
 			defer func() {
-
 				span.Set("local-ip", ip)
 				span.Set("local-host-name", hostName)
 

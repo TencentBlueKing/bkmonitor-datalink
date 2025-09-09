@@ -437,9 +437,7 @@ func GetTagRouter(ctx context.Context, tagsKey []string, condition string) (stri
 		return "", nil
 	}
 
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "get-tag-values")
 	defer span.End(&err)

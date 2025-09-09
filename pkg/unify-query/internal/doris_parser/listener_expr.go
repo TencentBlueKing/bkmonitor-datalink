@@ -27,8 +27,7 @@ type Expr interface {
 	WithAliasEncode(Encode) Expr
 }
 
-type defaultExpr struct {
-}
+type defaultExpr struct{}
 
 func (d *defaultExpr) Log() bool {
 	return false
@@ -294,7 +293,6 @@ func (e *Where) Exit(ctx antlr.ParserRuleContext) {
 	default:
 		if e.cur != nil && e.cur.Field != nil {
 			e.cur.Field.Exit(ctx)
-
 		}
 	}
 }

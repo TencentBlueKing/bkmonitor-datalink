@@ -21,9 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/eventbus"
 )
 
-var (
-	once sync.Once
-)
+var once sync.Once
 
 // setDefaultConfig
 func setDefaultConfig() {

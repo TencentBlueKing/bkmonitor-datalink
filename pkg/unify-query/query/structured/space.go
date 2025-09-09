@@ -104,8 +104,8 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 }
 
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, allConditions AllConditions,
-	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool) []*query.TsDBV2 {
-
+	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool,
+) []*query.TsDBV2 {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
 		return nil
@@ -187,7 +187,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	if !defaultTsDB.IsSplit() {
 		defaultMetricNames = metricNames
 	} else {
-		//当指标类型为单指标单表时，则需要对每个指标检查是否有独立的路由配置
+		// 当指标类型为单指标单表时，则需要对每个指标检查是否有独立的路由配置
 		for _, mName := range metricNames {
 			sepRt := s.GetMetricSepRT(tableID, mName)
 			if sepRt != nil {
@@ -246,9 +246,7 @@ func (s *SpaceFilter) GetSpaceRtIDs() []string {
 }
 
 func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
-	var (
-		routerMessage string
-	)
+	var routerMessage string
 
 	defer func() {
 		if routerMessage != "" {

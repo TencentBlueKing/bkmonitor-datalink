@@ -20,9 +20,7 @@ func SetExpand(ctx context.Context, expand *VmExpand) {
 
 // GetExpand
 func GetExpand(ctx context.Context) *VmExpand {
-	var (
-		v *VmExpand
-	)
+	var v *VmExpand
 	r, ok := md.get(ctx, ExpandKey)
 	if ok {
 		if v, ok = r.(*VmExpand); ok {

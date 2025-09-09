@@ -314,9 +314,7 @@ func (i *Instance) getRawData(columns []string, data []any) (time.Time, float64,
 
 // getLimitAndSlimit 获取真实的 limit 和 slimit
 func (i *Instance) getLimitAndSlimit(limit, slimit int) (int64, int64) {
-	var (
-		resultLimit, resultSLimit int
-	)
+	var resultLimit, resultSLimit int
 
 	if limit > 0 {
 		resultLimit = limit
@@ -671,9 +669,7 @@ func (i *Instance) QuerySeriesSet(
 	start time.Time,
 	end time.Time,
 ) storage.SeriesSet {
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "influxdb-query-raw")
 	defer span.End(&err)
@@ -1154,7 +1150,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 
 	if ss.Err() != nil {
 		err = ss.Err()
-		return
+		return series, err
 	}
 
 	series = make([]map[string]string, 0)
@@ -1170,11 +1166,11 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 }
 
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }

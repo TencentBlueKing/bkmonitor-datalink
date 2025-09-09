@@ -14,6 +14,8 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 func TestParseMetricSelector(t *testing.T) {
@@ -267,6 +269,8 @@ func TestParseMetricSelector(t *testing.T) {
 			wantErr: false,
 		},
 	}
+
+	mock.Init()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

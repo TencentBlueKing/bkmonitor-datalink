@@ -143,8 +143,9 @@ type GroupNode struct {
 func (g *GroupNode) VisitChildren(ctx antlr.RuleNode) any {
 	var next Node = g
 	switch ctx.(type) {
-	case *gen.LabelMatcherListContext:
-		next = &LabelListNode{parent: g}
+	case *gen.LabelMatcherContext:
+		next = &MatcherNode{}
+		g.nodes = append(g.nodes, next)
 	}
 
 	return visitChildren(next, ctx)
@@ -180,24 +181,6 @@ func (g *GroupNode) Matchers() []*labels.Matcher {
 	return result
 }
 
-type LabelListNode struct {
-	baseNode
-	parent *GroupNode
-}
-
-func (l *LabelListNode) VisitChildren(ctx antlr.RuleNode) any {
-	var next Node = l
-
-	switch ctx.(type) {
-	case *gen.LabelMatcherContext:
-		m := &MatcherNode{}
-		l.parent.nodes = append(l.parent.nodes, m)
-		next = m
-	}
-
-	return visitChildren(next, ctx)
-}
-
 type MatcherNode struct {
 	baseNode
 	labelName string
@@ -210,26 +193,22 @@ func (m *MatcherNode) VisitChildren(ctx antlr.RuleNode) any {
 
 	switch ctx.(type) {
 	case *gen.LabelNameContext:
-		next = &LabelNameNode{parent: m}
+		m.labelName = ctx.GetText()
 	case *gen.LabelMatcherOperatorContext:
-		next = &OperatorNode{parent: m}
+		m.operator = ctx.GetText()
 	}
 
 	return visitChildren(next, ctx)
 }
 
 func (m *MatcherNode) VisitTerminal(ctx antlr.TerminalNode) any {
-	tokenType := ctx.GetSymbol().GetTokenType()
 	text := ctx.GetText()
 
-	switch tokenType {
-	case gen.PromQLLexerSTRING:
-		if len(text) >= 2 && ((text[0] == '"' && text[len(text)-1] == '"') || (text[0] == '\'' && text[len(text)-1] == '\'')) {
-			m.value = text[1 : len(text)-1]
-		} else {
-			m.value = text
-		}
+	text = strings.Trim(text, `"`)
+	if m.operator != "" {
+		m.value = text
 	}
+
 	return nil
 }
 
@@ -265,68 +244,6 @@ func operatorFromString(op string) labels.MatchType {
 	default:
 		return labels.MatchEqual
 	}
-}
-
-type LabelNameNode struct {
-	baseNode
-	parent *MatcherNode
-}
-
-func (l *LabelNameNode) VisitChildren(ctx antlr.RuleNode) any {
-	var next Node = l
-
-	switch ctx.(type) {
-	case *gen.KeywordContext:
-		next = &KeywordNode{labelParent: l.parent}
-	}
-
-	return visitChildren(next, ctx)
-}
-
-func (l *LabelNameNode) VisitTerminal(ctx antlr.TerminalNode) any {
-	tokenType := ctx.GetSymbol().GetTokenType()
-	text := ctx.GetText()
-
-	switch tokenType {
-	case gen.PromQLLexerMETRIC_NAME, gen.PromQLLexerLABEL_NAME:
-		l.parent.labelName = text
-		log.Debugf(context.TODO(), `"LABEL_NAME","%s"`, text)
-	}
-	return nil
-}
-
-type OperatorNode struct {
-	baseNode
-	parent *MatcherNode
-}
-
-func (o *OperatorNode) VisitTerminal(ctx antlr.TerminalNode) any {
-	tokenType := ctx.GetSymbol().GetTokenType()
-
-	switch tokenType {
-	case gen.PromQLLexerEQ:
-		o.parent.operator = OperatorEqual
-	case gen.PromQLLexerNE:
-		o.parent.operator = OperatorNotEqual
-	case gen.PromQLLexerRE:
-		o.parent.operator = OperatorRegexp
-	case gen.PromQLLexerNRE:
-		o.parent.operator = OperatorNotRegexp
-	default:
-		o.parent.operator = OperatorEqual
-	}
-	return nil
-}
-
-type KeywordNode struct {
-	baseNode
-	labelParent *MatcherNode
-}
-
-func (n *KeywordNode) VisitTerminal(ctx antlr.TerminalNode) any {
-	text := ctx.GetText()
-	n.labelParent.labelName = text
-	return nil
 }
 
 func visitChildren(next Node, node antlr.RuleNode) any {

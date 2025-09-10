@@ -46,7 +46,6 @@ type Receiver struct {
 
 var (
 	globalRecords          = define.NewRecordQueue(define.PushModeGuarantee)
-	globalConfig           Config
 	globalSkywalkingConfig map[string]SkywalkingConfig
 )
 
@@ -102,7 +101,6 @@ func New(conf *confengine.Config) (*Receiver, error) {
 	}
 
 	// 全局状态记录
-	globalConfig = c
 	globalSkywalkingConfig = LoadConfigFrom(conf)
 
 	return &Receiver{

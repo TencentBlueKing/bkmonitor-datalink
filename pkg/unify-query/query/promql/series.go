@@ -90,14 +90,11 @@ type InfluxdbSeries struct {
 
 // NewInfluxdbSeries
 func NewInfluxdbSeries(t *influxdb.Table) *InfluxdbSeries {
-
-	var (
-		is = &InfluxdbSeries{
-			table:  t,
-			labels: make([]labels.Label, 0, len(t.GroupValues)), // 直接优先分配group长度
-			isi:    NewInfluxdbSeriesIterator(t),
-		}
-	)
+	is := &InfluxdbSeries{
+		table:  t,
+		labels: make([]labels.Label, 0, len(t.GroupValues)), // 直接优先分配group长度
+		isi:    NewInfluxdbSeriesIterator(t),
+	}
 
 	// 提前获取所有的label信息
 	if len(t.GroupKeys) != len(t.GroupValues) {

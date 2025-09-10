@@ -67,9 +67,7 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 
 // getLimitAndSlimit 获取真实的 limit 和 slimit
 func (i *Instance) getLimitAndSlimit(limit, slimit int) (int64, int64) {
-	var (
-		resultLimit, resultSLimit int
-	)
+	var resultLimit, resultSLimit int
 
 	if limit > 0 {
 		resultLimit = limit
@@ -115,9 +113,7 @@ func (i Instance) QuerySeriesSet(
 	ctx context.Context, query *metadata.Query,
 	start, end time.Time,
 ) storage.SeriesSet {
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "offline-data-archive-query-raw-grpc-stream")
 

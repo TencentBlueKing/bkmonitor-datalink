@@ -24,9 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
 )
 
-var (
-	client *bksql.Client
-)
+var client *bksql.Client
 
 func MockClient() *bksql.Client {
 	if client == nil {

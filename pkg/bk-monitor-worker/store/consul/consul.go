@@ -138,6 +138,4 @@ func (c *Instance) Close() error {
 	return nil
 }
 
-var (
-	NotFoundErr = errors.New("path not found")
-)
+var NotFoundErr = errors.New("path not found")

@@ -218,10 +218,10 @@ func mockElasticSearchHandler(ctx context.Context) {
 		if !ok {
 			err = fmt.Errorf(`es mock data is empty in "%s"`, body)
 			log.Errorf(ctx, err.Error())
-			return
+			return w, err
 		}
 		w = httpmock.NewStringResponse(http.StatusOK, fmt.Sprintf("%s", d))
-		return
+		return w, err
 	}
 
 	mappings := `{"es_index":{"mappings":{"properties":{"a":{"type":"keyword"},"time":{"type":"date"},"b":{"type":"keyword"},"level":{"type":"keyword"},"group":{"type":"keyword"},"kibana_stats":{"properties":{"kibana":{"properties":{"name":{"type":"keyword"}}}}},"timestamp":{"type":"text"},"type":{"type":"keyword"},"dtEventTimeStamp":{"type":"date"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}},"events":{"type":"nested","properties":{"name":{"type":"keyword"}}}}}}}`
@@ -254,13 +254,13 @@ func mockInfluxDBHandler(ctx context.Context) {
 	httpmock.RegisterResponder(http.MethodGet, address+"/query", func(r *http.Request) (w *http.Response, err error) {
 		params, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil {
-			return
+			return w, err
 		}
 		key := params.Get("q")
 		d, ok := InfluxDB.Get(key)
 		if !ok {
 			err = fmt.Errorf(`influxdb mock data is empty in "%s"`, key)
-			return
+			return w, err
 		}
 
 		switch t := d.(type) {
@@ -269,7 +269,7 @@ func mockInfluxDBHandler(ctx context.Context) {
 		default:
 			w, err = httpmock.NewJsonResponse(http.StatusOK, d)
 		}
-		return
+		return w, err
 	})
 }
 
@@ -281,7 +281,7 @@ func mockBKBaseHandler(ctx context.Context) {
 		)
 		err = json.NewDecoder(r.Body).Decode(&request)
 		if err != nil {
-			return
+			return w, err
 		}
 
 		if request.PreferStorage != "vm" {
@@ -289,7 +289,7 @@ func mockBKBaseHandler(ctx context.Context) {
 			if !ok {
 				err = fmt.Errorf(`bksql mock data is empty in "%s"`, request.Sql)
 				log.Errorf(ctx, err.Error())
-				return
+				return w, err
 			}
 			switch t := d.(type) {
 			case string:
@@ -298,12 +298,12 @@ func mockBKBaseHandler(ctx context.Context) {
 				w, err = httpmock.NewJsonResponse(http.StatusOK, d)
 			}
 
-			return
+			return w, err
 		}
 
 		err = json.Unmarshal([]byte(request.Sql), &params)
 		if err != nil {
-			return
+			return w, err
 		}
 
 		p := params.ApiParams
@@ -321,14 +321,14 @@ func mockBKBaseHandler(ctx context.Context) {
 			key = fmt.Sprintf("%.f%s", p["time"], p["query"])
 		default:
 			err = fmt.Errorf("api type %s is empty ", params.ApiType)
-			return
+			return w, err
 		}
 
 		key = params.ApiType + ":" + key
 		d, ok := Vm.Get(key)
 		if !ok {
 			err = fmt.Errorf(`vm mock data is empty in "%s"`, key)
-			return
+			return w, err
 		}
 
 		switch v := d.(type) {
@@ -337,6 +337,6 @@ func mockBKBaseHandler(ctx context.Context) {
 		default:
 			w, err = httpmock.NewJsonResponse(http.StatusOK, v)
 		}
-		return
+		return w, err
 	})
 }

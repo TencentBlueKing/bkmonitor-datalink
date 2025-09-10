@@ -35,7 +35,7 @@ func GetClient(address, username, password string, timeout int) (client.Client, 
 }
 
 // QueryDB convenience function to query the database
-func QueryDB(clnt client.Client, cmd string, database string, params map[string]interface{}) (res []client.Result, err error) {
+func QueryDB(clnt client.Client, cmd string, database string, params map[string]any) (res []client.Result, err error) {
 	q := client.Query{
 		Command:    cmd,
 		Database:   database,
@@ -52,11 +52,11 @@ func QueryDB(clnt client.Client, cmd string, database string, params map[string]
 	return res, nil
 }
 
-func ParseResult(result client.Result) []map[string]interface{} {
-	var dataList = make([]map[string]interface{}, 0)
+func ParseResult(result client.Result) []map[string]any {
+	dataList := make([]map[string]any, 0)
 	for _, series := range result.Series {
 		for _, row := range series.Values {
-			data := make(map[string]interface{})
+			data := make(map[string]any)
 			for i, colName := range series.Columns {
 				data[colName] = row[i]
 			}

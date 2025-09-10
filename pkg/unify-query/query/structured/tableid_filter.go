@@ -108,7 +108,7 @@ func (t *TableIDFilter) GetRoutes() []*Route {
 
 	tableIDs := influxdb.GetTsDBRouter().GetTableIDs(t.dataIDList...)
 
-	var result = make([]*Route, 0, len(t.values))
+	result := make([]*Route, 0, len(t.values))
 	for _, tableID := range tableIDs {
 		var route *Route
 		route.SetClusterID(tableID.ClusterID)

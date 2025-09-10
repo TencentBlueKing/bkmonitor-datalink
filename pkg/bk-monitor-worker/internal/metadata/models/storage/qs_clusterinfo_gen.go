@@ -2552,7 +2552,7 @@ var ClusterInfoDBSchema = struct {
 // Update updates ClusterInfo fields by primary key
 // nolint: dupl
 func (o *ClusterInfo) Update(db *gorm.DB, fields ...ClusterInfoDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"cluster_id":                  o.ClusterID,
 		"cluster_name":                o.ClusterName,
 		"cluster_type":                o.ClusterType,
@@ -2584,7 +2584,7 @@ func (o *ClusterInfo) Update(db *gorm.DB, fields ...ClusterInfoDBSchemaField) er
 		"extranet_port":               o.ExtranetPort,
 		"is_auth":                     o.IsAuth,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -2603,7 +2603,7 @@ func (o *ClusterInfo) Update(db *gorm.DB, fields ...ClusterInfoDBSchemaField) er
 
 // ClusterInfoUpdater is an ClusterInfo updates manager
 type ClusterInfoUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -2611,7 +2611,7 @@ type ClusterInfoUpdater struct {
 // nolint: dupl
 func NewClusterInfoUpdater(db *gorm.DB) ClusterInfoUpdater {
 	return ClusterInfoUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&ClusterInfo{}),
 	}
 }

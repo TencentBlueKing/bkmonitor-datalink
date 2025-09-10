@@ -42,7 +42,7 @@ func getExpressionByParam(param any) (parser.Expr, error) {
 
 // 拼接一个参数列表
 func combineExprList(position int, expr parser.Expr, exprParams []any) ([]parser.Expr, error) {
-	var params = make([]parser.Expr, 0)
+	params := make([]parser.Expr, 0)
 	// 判断是否需要追加参数
 	if len(exprParams) != 0 {
 		for _, vArg := range exprParams {
@@ -162,7 +162,7 @@ func compressFilterCondition(tKeys []string, filters []query.Filter) [][]Conditi
 	// 开始组装 condition
 	filterConditions := make([][]ConditionField, 0)
 	for k, v := range compressMap {
-		var cond = make([]ConditionField, 0, 2)
+		cond := make([]ConditionField, 0, 2)
 		cond = []ConditionField{{
 			DimensionName: groupKey,
 			Value:         []string{k},

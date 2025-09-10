@@ -658,7 +658,7 @@ var ResultTableOptionDBSchema = struct {
 // Update updates ResultTableOption fields by primary key
 // nolint: dupl
 func (o *ResultTableOption) Update(db *gorm.DB, fields ...ResultTableOptionDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"value_type":  o.ValueType,
 		"value":       o.Value,
 		"creator":     o.Creator,
@@ -666,7 +666,7 @@ func (o *ResultTableOption) Update(db *gorm.DB, fields ...ResultTableOptionDBSch
 		"table_id":    o.TableID,
 		"name":        o.Name,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -685,7 +685,7 @@ func (o *ResultTableOption) Update(db *gorm.DB, fields ...ResultTableOptionDBSch
 
 // ResultTableOptionUpdater is an ResultTableOption updates manager
 type ResultTableOptionUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -693,7 +693,7 @@ type ResultTableOptionUpdater struct {
 // nolint: dupl
 func NewResultTableOptionUpdater(db *gorm.DB) ResultTableOptionUpdater {
 	return ResultTableOptionUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&ResultTableOption{}),
 	}
 }

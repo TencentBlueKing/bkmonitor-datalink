@@ -300,7 +300,6 @@ func ListTask(c *gin.Context) {
 	default:
 		BadReqResponse(c, fmt.Sprintf("Task list not support type: %s", taskType))
 	}
-
 }
 
 // SetLogLevel 动态设置日志级别

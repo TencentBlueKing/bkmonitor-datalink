@@ -239,25 +239,23 @@ type PromExprOption struct {
 }
 
 func (q *QueryTs) ToPromQL(ctx context.Context) (promQLString string, checkErr error) {
-	var (
-		promExprOpt = &PromExprOption{
-			ReferenceNameMetric:       make(map[string]string),
-			ReferenceNameLabelMatcher: make(map[string][]*labels.Matcher),
-		}
-	)
+	promExprOpt := &PromExprOption{
+		ReferenceNameMetric:       make(map[string]string),
+		ReferenceNameLabelMatcher: make(map[string][]*labels.Matcher),
+	}
 	for _, ql := range q.QueryList {
 		// 保留查询条件
 		matcher, _, err := ql.Conditions.ToProm()
 		if err != nil {
 			checkErr = err
-			return
+			return promQLString, checkErr
 		}
 		promExprOpt.ReferenceNameLabelMatcher[ql.ReferenceName] = matcher
 
 		router, err := ql.ToRouter()
 		if err != nil {
 			checkErr = err
-			return
+			return promQLString, checkErr
 		}
 		promExprOpt.ReferenceNameMetric[ql.ReferenceName] = router.RealMetricName()
 	}
@@ -265,7 +263,7 @@ func (q *QueryTs) ToPromQL(ctx context.Context) (promQLString string, checkErr e
 	promExpr, err := q.ToPromExpr(ctx, promExprOpt)
 	if err != nil {
 		checkErr = err
-		return
+		return promQLString, checkErr
 	}
 
 	return promExpr.String(), nil
@@ -417,48 +415,48 @@ func (q *Query) ToRouter() (*Route, error) {
 
 func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 	if len(q.AggregateMethodList) == 0 {
-		return
+		return aggs, err
 	}
 
 	// 非时间聚合函数使用透传的方式
 	if q.NotPromFunc {
 		aggs, err = q.AggregateMethodList.ToQry(q.Timezone)
-		return
+		return aggs, err
 	}
 
 	// PromQL 聚合方式需要找到 TimeAggregation 共同判断
 	if q.TimeAggregation.Function == "" {
-		return
+		return aggs, err
 	}
 
 	// 只支持第一层级的将采样，所以时间聚合函数一定要在指标之后
 	if q.TimeAggregation.NodeIndex > 2 {
-		return
+		return aggs, err
 	}
 
 	if len(q.AggregateMethodList) < 1 {
-		return
+		return aggs, err
 	}
 
 	am := q.AggregateMethodList[0]
 	// 将采样不支持 without
 	if am.Without {
-		return
+		return aggs, err
 	}
 
 	window, err := model.ParseDuration(string(q.TimeAggregation.Window))
 	if err != nil {
-		return
+		return aggs, err
 	}
 
 	step, err := model.ParseDuration(q.Step)
 	if err != nil {
-		return
+		return aggs, err
 	}
 
 	// 如果 step < window 则不进行降采样聚合处理,因为计算出来的数据不准确
 	if step < window {
-		return
+		return aggs, err
 	}
 	key := fmt.Sprintf("%s%s", am.Method, q.TimeAggregation.Function)
 	if name, ok := domSampledFunc[key]; ok {
@@ -477,7 +475,7 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 		q.IsDomSampled = true
 	}
 
-	return
+	return aggs, err
 }
 
 // ToQueryMetric 通过 spaceUid 转换成可查询结构体

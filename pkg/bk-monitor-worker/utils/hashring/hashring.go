@@ -40,7 +40,7 @@ func NewHashRing[T comparable](nodes map[T]int, numVnodes int) *HashRing[T] {
 		sumWeight += weight
 	}
 
-	var multiple = 1
+	multiple := 1
 	if numVnodes/sumWeight > 1 {
 		multiple = numVnodes / sumWeight
 	}

@@ -30,7 +30,6 @@ func TestPrometheusWriter_WriteBatch(t *testing.T) {
 	metric := fmt.Sprintf("prometheus_%s", time.Now().Format("2006010215"))
 	prometheusWriter := NewPrometheusWriterClient("", config.PromRemoteWriteUrl, config.PromRemoteWriteHeaders)
 	ts := append([]prompb.TimeSeries{
-
 		{
 			Labels: []prompb.Label{
 				{

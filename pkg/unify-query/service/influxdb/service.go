@@ -47,9 +47,7 @@ func (s *Service) Start(ctx context.Context) {
 
 // Reload
 func (s *Service) Reload(ctx context.Context) {
-	var (
-		err error
-	)
+	var err error
 	if s.wg == nil {
 		s.wg = new(sync.WaitGroup)
 	}
@@ -246,16 +244,14 @@ func (s *Service) loopReloadTableInfo(ctx context.Context) error {
 
 // reloadInfluxDBRouter 重新加载 InfluxDBRouter
 func (s *Service) reloadInfluxDBRouter(ctx context.Context) error {
-	var (
-		dialOpts = []grpc.DialOption{
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithBlock(),
-			grpc.WithDefaultCallOptions(
-				grpc.MaxCallRecvMsgSize(GrpcMaxCallRecvMsgSize),
-				grpc.MaxCallSendMsgSize(GrpcMaxCallSendMsgSize),
-			),
-		}
-	)
+	dialOpts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(GrpcMaxCallRecvMsgSize),
+			grpc.MaxCallSendMsgSize(GrpcMaxCallSendMsgSize),
+		),
+	}
 
 	ir := inner.GetInfluxDBRouter()
 	err := ir.ReloadRouter(ctx, RouterPrefix, dialOpts)

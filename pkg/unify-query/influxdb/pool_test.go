@@ -18,7 +18,6 @@ import (
 
 // TestPool_Run
 func TestPool_Run(t *testing.T) {
-
 	pool := NewPool(2)
 	var res int64
 	task := NewTask(func(v ...any) {

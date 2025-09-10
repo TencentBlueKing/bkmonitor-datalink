@@ -62,13 +62,11 @@ func TestInstance_ShowCreateTable(t *testing.T) {
 
 			actual, _ := json.Marshal(fact.FieldMap())
 			assert.JSONEq(t, c.expected, string(actual))
-
 		})
 	}
 }
 
 func TestInstance_QuerySeriesSet(t *testing.T) {
-
 	ctx := metadata.InitHashID(context.Background())
 	ins := createTestInstance(ctx)
 
@@ -233,7 +231,6 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
 }
 
 func TestInstance_QueryRaw(t *testing.T) {
-
 	ctx := metadata.InitHashID(context.Background())
 	ins := createTestInstance(ctx)
 

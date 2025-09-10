@@ -264,7 +264,6 @@ func (d *DefaultWatcher) watchReloadRequest() {
 }
 
 func (d *DefaultWatcher) reassign(mark watchTaskMark) {
-
 	// Step1: 判断 Binding 是否存在
 	workerId, err := GetBinding().GetBindingWorkerIdByTaskUniId(mark.taskUniId)
 	if err != nil {
@@ -382,7 +381,6 @@ func (d *DefaultWatcher) getDaemonTask(taskUniId string) (*task.SerializerTask, 
 }
 
 func NewDefaultWatcher(ctx context.Context) Watcher {
-
 	options := DefaultWatcherOptions{
 		watchWorkerInterval: config.SchedulerDaemonTaskWorkerWatcherInterval,
 		watchTaskInterval:   config.SchedulerDaemonTaskTaskWatcherInterval,

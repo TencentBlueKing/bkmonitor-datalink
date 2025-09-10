@@ -86,7 +86,6 @@ func setDefaultConfig() {
 
 // LoadConfig
 func LoadConfig() {
-
 	TestV = viper.GetBool(AlignInfluxdbResultConfigPath)
 
 	AlignInfluxdbResult = viper.GetBool(AlignInfluxdbResultConfigPath)

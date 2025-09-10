@@ -33,9 +33,7 @@ func TestGetBkAPI(t *testing.T) {
 
 	actual := make(map[string]any)
 	for k, v := range headers {
-		var (
-			nv map[string]string
-		)
+		var nv map[string]string
 		if err := json.Unmarshal([]byte(v), &nv); err != nil {
 			actual[k] = v
 		} else {

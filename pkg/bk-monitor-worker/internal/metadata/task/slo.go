@@ -38,7 +38,7 @@ func SloPush(ctx context.Context, t *t.Task) error {
 
 	logger.Info("start auto SloPush task")
 
-	//检索所有满足标签的业务
+	// 检索所有满足标签的业务
 	bizID, err := service.FindAllBiz()
 	if err != nil {
 		logger.Errorf("find all biz_id for slo failed, %v", err)
@@ -51,17 +51,17 @@ func SloPush(ctx context.Context, t *t.Task) error {
 
 	for _, bizChunk := range chunks {
 		var wg sync.WaitGroup
-		//注册全局Registry
-		var sloRegistry = prometheus.NewRegistry()
-		//初始化注册表
+		// 注册全局Registry
+		sloRegistry := prometheus.NewRegistry()
+		// 初始化注册表
 		metrics.InitGauge(sloRegistry)
-		//获取当前时间
+		// 获取当前时间
 		now := time.Now().Unix()
 		// 定义错误通道
 		errChan := make(chan error, len(bizChunk))
 
 		for bkBizID, scenes := range bizChunk {
-			//按照业务数据上报
+			// 按照业务数据上报
 			wg.Add(1)
 			scenes := scenes
 			bkBizID := bkBizID

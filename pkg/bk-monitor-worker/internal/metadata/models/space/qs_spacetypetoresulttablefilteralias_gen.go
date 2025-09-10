@@ -604,7 +604,7 @@ var SpaceTypeToResultTableFilterAliasDBSchema = struct {
 // Update updates SpaceTypeToResultTableFilterAlias fields by primary key
 // nolint: dupl
 func (o *SpaceTypeToResultTableFilterAlias) Update(db *gorm.DB, fields ...SpaceTypeToResultTableFilterAliasDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"id":           o.Id,
 		"space_type":   o.SpaceType,
 		"table_id":     o.TableId,
@@ -612,7 +612,7 @@ func (o *SpaceTypeToResultTableFilterAlias) Update(db *gorm.DB, fields ...SpaceT
 		"status":       o.Status,
 		"create_time":  o.CreateTime,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -631,7 +631,7 @@ func (o *SpaceTypeToResultTableFilterAlias) Update(db *gorm.DB, fields ...SpaceT
 
 // SpaceTypeToResultTableFilterAliasUpdater is an SpaceTypeToResultTableFilterAlias updates manager
 type SpaceTypeToResultTableFilterAliasUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -639,7 +639,7 @@ type SpaceTypeToResultTableFilterAliasUpdater struct {
 // nolint: dupl
 func NewSpaceTypeToResultTableFilterAliasUpdater(db *gorm.DB) SpaceTypeToResultTableFilterAliasUpdater {
 	return SpaceTypeToResultTableFilterAliasUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&SpaceTypeToResultTableFilterAlias{}),
 	}
 }

@@ -70,10 +70,7 @@ func clusterIDToSourceType(clusterID string) (string, error) {
 
 // tsDBToMetadataQuery tsDBs 结构转换为 metadata.Query 结构体
 func tsDBToMetadataQuery(ctx context.Context, metricName string, queryInfo *QueryInfo) (metadata.QueryList, error) {
-
-	var (
-		err error
-	)
+	var err error
 
 	ctx, span := trace.NewSpan(ctx, "ts-db-metadata-query")
 	defer span.End(&err)

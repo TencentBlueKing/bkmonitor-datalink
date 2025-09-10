@@ -258,9 +258,7 @@ func HandlerTagValues(c *gin.Context) {
 					return
 				}
 
-				var (
-					res []string
-				)
+				var res []string
 
 				res, err = instance.QueryLabelValues(ctx, qry, name, start, end)
 				if err != nil {
@@ -544,5 +542,5 @@ func infoParamsToQueryRefAndTime(ctx context.Context, params *infos.Params) (que
 	// 写入查询时间到全局缓存
 	metadata.GetQueryParams(ctx).SetTime(startTime, endTime, unit)
 	queryRef, err = queryTs.ToQueryReference(ctx)
-	return
+	return queryRef, startTime, endTime, err
 }

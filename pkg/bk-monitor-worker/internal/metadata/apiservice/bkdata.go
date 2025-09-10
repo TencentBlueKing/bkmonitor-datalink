@@ -22,7 +22,7 @@ var Bkdata BkdataService
 type BkdataService struct{}
 
 // QueryMetricAndDimension 查询指标和维度数据
-func (s BkdataService) QueryMetricAndDimension(bkTenantId string, storage string, rt string) ([]map[string]interface{}, error) {
+func (s BkdataService) QueryMetricAndDimension(bkTenantId string, storage string, rt string) ([]map[string]any, error) {
 	bkdataApi, err := api.GetBkdataApi(bkTenantId)
 	if err != nil {
 		return nil, errors.Wrap(err, "get bkdata api failed")
@@ -38,25 +38,25 @@ func (s BkdataService) QueryMetricAndDimension(bkTenantId string, storage string
 	}
 
 	metrics := resp.Data["metrics"]
-	metricInfo, ok := metrics.([]interface{})
+	metricInfo, ok := metrics.([]any)
 	if !ok || len(metricInfo) == 0 {
 		logger.Errorf("query bkdata metrics error, params: %v, metrics: %v", params, metricInfo)
 		return nil, errors.New("query metrics error, no data")
 	}
 
 	// parse metrics and dimensions
-	var MetricsDimension []map[string]interface{}
+	var MetricsDimension []map[string]any
 	for _, dataInfo := range metricInfo {
-		data, ok := dataInfo.(map[string]interface{})
+		data, ok := dataInfo.(map[string]any)
 		if !ok {
 			logger.Errorf("metric data not map[string]interface{}, data: %v", params, metricInfo)
 			continue
 		}
 		lastModifyTime := data["update_time"].(float64)
-		dimensions := data["dimensions"].([]interface{})
-		tagValueList := make(map[string]interface{})
+		dimensions := data["dimensions"].([]any)
+		tagValueList := make(map[string]any)
 		for _, dimInfo := range dimensions {
-			dim, ok := dimInfo.(map[string]interface{})
+			dim, ok := dimInfo.(map[string]any)
 			if !ok {
 				logger.Errorf("dimension data not map[string]interface{}, dimInfo: %v", dimInfo)
 				continue
@@ -73,10 +73,10 @@ func (s BkdataService) QueryMetricAndDimension(bkTenantId string, storage string
 				logger.Errorf("dimension: %s is not string", dim["name"])
 				continue
 			}
-			tagValueList[tag_name] = map[string]interface{}{"last_update_time": tagUpdateTime / 1000}
+			tagValueList[tag_name] = map[string]any{"last_update_time": tagUpdateTime / 1000}
 		}
 
-		item := map[string]interface{}{
+		item := map[string]any{
 			"field_name":       data["name"],
 			"last_modify_time": lastModifyTime / 1000,
 			"tag_value_list":   tagValueList,

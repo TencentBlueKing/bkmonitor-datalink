@@ -37,47 +37,47 @@ type Writer struct {
 }
 
 func (w *Writer) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) Flush() {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) CloseNotify() <-chan bool {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) Status() int {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) Size() int {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) WriteString(s string) (int, error) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) Written() bool {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) WriteHeaderNow() {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
 func (w *Writer) Pusher() http.Pusher {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 
@@ -100,9 +100,7 @@ func (w *Writer) body() string {
 	return string(w.b.Bytes())
 }
 
-var (
-	_ http.ResponseWriter = (*Writer)(nil)
-)
+var _ http.ResponseWriter = (*Writer)(nil)
 
 func TestAPIHandler(t *testing.T) {
 	mock.Init()
@@ -543,7 +541,6 @@ func TestQueryHandler(t *testing.T) {
 				b := w.body()
 				assert.Equal(t, c.expected, b)
 			}
-
 		})
 	}
 }

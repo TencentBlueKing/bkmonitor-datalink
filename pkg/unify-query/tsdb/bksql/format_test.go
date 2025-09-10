@@ -383,7 +383,7 @@ func TestWindowWithTimezone(t *testing.T) {
 			nTime1 := (cTime + offset) - (cTime+offset)%window - offset
 			nTime2 := (cTime+offset)/window*window - offset
 
-			var milliUnixToString = func(milliUnix int64) string {
+			milliUnixToString := func(milliUnix int64) string {
 				return time.UnixMilli(milliUnix).In(loc).String()
 			}
 
@@ -418,7 +418,7 @@ func TestTimeZone(t *testing.T) {
 
 		st := time.Date(2025, 3, 18, 0, 0, 0, 0, time.UTC)
 		for i := 0; i < 50; i++ {
-			//milli := (st.UnixMilli() + offset) - (st.UnixMilli()+offset)%window - offset
+			// milli := (st.UnixMilli() + offset) - (st.UnixMilli()+offset)%window - offset
 			milli := (st.UnixMilli())/window*window - offset
 			ct := st.In(loc).String()
 			ot := time.UnixMilli(milli).In(loc).String()
@@ -685,5 +685,4 @@ UTC
 2025-03-20 00:00:00 +0000 UTC => 2025-03-20 00:00:00 +0000 UTC => 2025-03-20 00:00:00 +0000 UTC
 2025-03-20 01:00:00 +0000 UTC => 2025-03-20 01:00:00 +0000 UTC => 2025-03-20 00:00:00 +0000 UTC
 `)
-
 }

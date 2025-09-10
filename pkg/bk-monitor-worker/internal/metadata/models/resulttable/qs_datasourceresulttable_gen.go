@@ -470,14 +470,14 @@ var DataSourceResultTableDBSchema = struct {
 // Update updates DataSourceResultTable fields by primary key
 // nolint: dupl
 func (o *DataSourceResultTable) Update(db *gorm.DB, fields ...DataSourceResultTableDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"bk_tenant_id": o.BkTenantId,
-		"bk_data_id":  o.BkDataId,
-		"table_id":    o.TableId,
-		"creator":     o.Creator,
-		"create_time": o.CreateTime,
+		"bk_data_id":   o.BkDataId,
+		"table_id":     o.TableId,
+		"creator":      o.Creator,
+		"create_time":  o.CreateTime,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -496,7 +496,7 @@ func (o *DataSourceResultTable) Update(db *gorm.DB, fields ...DataSourceResultTa
 
 // DataSourceResultTableUpdater is an DataSourceResultTable updates manager
 type DataSourceResultTableUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -504,7 +504,7 @@ type DataSourceResultTableUpdater struct {
 // nolint: dupl
 func NewDataSourceResultTableUpdater(db *gorm.DB) DataSourceResultTableUpdater {
 	return DataSourceResultTableUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&DataSourceResultTable{}),
 	}
 }

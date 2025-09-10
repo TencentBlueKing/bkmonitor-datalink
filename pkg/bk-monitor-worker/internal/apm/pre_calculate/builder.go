@@ -132,7 +132,6 @@ func (p *Precalculate) WithMetricReport(options ...MetricOption) Builder {
 }
 
 func (p *Precalculate) Build() PreCalculateProcessor {
-
 	preCalculateOnce.Do(func() {
 		preCalculateInstance = p
 	})
@@ -169,7 +168,6 @@ func (p *Precalculate) GetTaskDimension(payload []byte) string {
 }
 
 func (p *Precalculate) Start(runInstanceCtx context.Context, errorReceiveChan chan<- error, payload []byte) {
-
 	var startInfo StartInfo
 	if err := jsonx.Unmarshal(payload, &startInfo); err != nil {
 		errorReceiveChan <- fmt.Errorf(
@@ -334,7 +332,6 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 }
 
 func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpan, saveReqChan chan<- storage.SaveRequest) {
-
 	processor := window.NewProcessor(p.ctx, p.startInfo.DataId, p.proxy, p.config.processorConfig...)
 
 	operation := window.Operation{
@@ -404,7 +401,6 @@ func (p *RunInstance) startProfileReport() {
 }
 
 func (p *RunInstance) startRecordSemaphoreAcquired() {
-
 	ticker := time.NewTicker(p.profileCollector.config.reportInterval)
 	apmLogger.Infof(
 		"[RecordSemaphoreAcquired] start report chan metric every %s",
@@ -447,5 +443,4 @@ func (p *RunInstance) watchConsulConfigUpdate(errorReceiveChan chan<- error) {
 			return
 		}
 	}
-
 }

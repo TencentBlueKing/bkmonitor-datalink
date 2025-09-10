@@ -58,8 +58,8 @@ var demoModuleStr = `
 `
 
 func TestModuleCacheManager(t *testing.T) {
-	patch := gomonkey.ApplyFunc(getModuleListByBizID, func(ctx context.Context, bkTenantId string, bizID int) ([]map[string]interface{}, error) {
-		var demoModules []map[string]interface{}
+	patch := gomonkey.ApplyFunc(getModuleListByBizID, func(ctx context.Context, bkTenantId string, bizID int) ([]map[string]any, error) {
+		var demoModules []map[string]any
 		err := json.Unmarshal([]byte(demoModuleStr), &demoModules)
 		if err != nil {
 			return nil, err
@@ -109,7 +109,7 @@ func TestModuleCacheManager(t *testing.T) {
 			return
 		}
 
-		events := []map[string]interface{}{
+		events := []map[string]any{
 			{
 				"bk_biz_id":    float64(2),
 				"bk_module_id": float64(1),
@@ -125,7 +125,7 @@ func TestModuleCacheManager(t *testing.T) {
 		assert.EqualValues(t, 3, client.HLen(ctx, cacheManager.GetCacheKey(moduleCacheKey)).Val())
 		assert.EqualValues(t, 2, client.HLen(ctx, cacheManager.GetCacheKey(serviceTemplateCacheKey)).Val())
 
-		events = []map[string]interface{}{
+		events = []map[string]any{
 			{
 				"bk_biz_id":           float64(2),
 				"bk_module_id":        float64(1),

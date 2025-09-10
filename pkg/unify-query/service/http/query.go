@@ -231,8 +231,8 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		span.Set("query-scroll", queryTs.Scroll)
 		span.Set("query-result-table", queryTs.ResultTableOptions)
 
-		// scroll 和 searchAfter 模式不进行裁剪
-		if queryTs.Scroll == "" && queryTs.ResultTableOptions.IsCrop() {
+		//  scroll 和 searchAfter 模式不进行裁剪
+		if queryTs.Scroll == "" && !queryTs.IsSearchAfter && queryTs.ResultTableOptions.IsCrop() {
 			// 判定是否启用 multi from 特性
 			span.Set("query-multi-from", queryTs.IsMultiFrom)
 			span.Set("data-length", len(data))

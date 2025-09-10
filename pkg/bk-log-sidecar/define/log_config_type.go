@@ -17,9 +17,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/TencentBlueKing/bk-log-sidecar/api/v1alpha1"
-	"github.com/TencentBlueKing/bk-log-sidecar/config"
-	"github.com/TencentBlueKing/bk-log-sidecar/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/api/bk.tencent.com/v1alpha1"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
 )
 
 // LogConfigType log config type

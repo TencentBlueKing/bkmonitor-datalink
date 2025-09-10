@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 
 	"github.com/containerd/containerd"
 	apievents "github.com/containerd/containerd/api/events"
@@ -23,7 +24,8 @@ import (
 	"github.com/go-logr/logr"
 	"k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 
-	"github.com/TencentBlueKing/bk-log-sidecar/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
 )
 
 const (
@@ -65,6 +67,23 @@ func (r *ContainerdRuntime) Containers(ctx context.Context) ([]define.SimpleCont
 		})
 	}
 	return result, nil
+}
+
+func resolveContainerdPath(containerStatus *v1alpha2.ContainerStatusResponse, pid int) (string, string, error) {
+	rootPath := fmt.Sprintf("/proc/%d/root", pid)
+	if pid == 0 {
+		rootPath = filepath.Join(config.ContainerdStatePath, ContainerdTaskDirName, config.ContainerdNamespace, containerStatus.Status.Id, ContainerdRootFsDirName)
+	}
+
+	logPath := containerStatus.Status.LogPath
+
+	// 如果logPath是软链，需要转换为真实路径
+	realLogPath, err := define.EvalSymlinks(logPath)
+	if err == nil {
+		logPath = realLogPath
+	}
+
+	return rootPath, logPath, err
 }
 
 // Inspect check container status and mount info

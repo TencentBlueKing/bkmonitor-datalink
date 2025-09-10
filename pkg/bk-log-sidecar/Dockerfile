@@ -18,13 +18,13 @@ COPY utils/ utils/
 COPY config/ config/
 
 # Build
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o bk-log-sidecar pkg/bk-log-sidecar/main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o bk-log-sidecar main.go
 
 # Use distroless as minimal base image to package the bk-log-sidecar binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
-COPY --from=builder /workspace/pkg/bk-log-sidecar/bk-log-sidecar .
+COPY --from=builder /workspace/bk-log-sidecar .
 USER 65532:65532
 
 ENTRYPOINT ["/bk-log-sidecar"]

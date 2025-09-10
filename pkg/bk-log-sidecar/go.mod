@@ -1,4 +1,4 @@
-module github.com/TencentBlueKing/bk-log-sidecar
+module github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar
 
 go 1.16
 

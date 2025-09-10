@@ -22,9 +22,9 @@ import (
 	sync "sync"
 	time "time"
 
-	versioned "github.com/TencentBlueKing/bk-log-sidecar/pkg/generated/clientset/versioned"
-	bktencentcom "github.com/TencentBlueKing/bk-log-sidecar/pkg/generated/informers/externalversions/bk.tencent.com"
-	internalinterfaces "github.com/TencentBlueKing/bk-log-sidecar/pkg/generated/informers/externalversions/internalinterfaces"
+	versioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/pkg/generated/clientset/versioned"
+	bktencentcom "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/pkg/generated/informers/externalversions/bk.tencent.com"
+	internalinterfaces "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/pkg/generated/informers/externalversions/internalinterfaces"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"

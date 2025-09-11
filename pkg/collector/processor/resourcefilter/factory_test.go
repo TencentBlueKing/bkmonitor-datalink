@@ -85,7 +85,7 @@ const (
 	resourceKey4 = "resource_key4"
 )
 
-func makeTracesGenerator(n int, valueType string) *generator.TracesGenerator {
+func makeTracesRecord(n int, valueType string) ptrace.Traces {
 	opts := define.TracesOptions{SpanCount: n}
 	opts.Resources = map[string]string{
 		resourceKey1: "key1",
@@ -94,10 +94,10 @@ func makeTracesGenerator(n int, valueType string) *generator.TracesGenerator {
 		resourceKey4: "key4",
 	}
 	opts.DimensionsValueType = valueType
-	return generator.NewTracesGenerator(opts)
+	return generator.NewTracesGenerator(opts).Generate()
 }
 
-func makeMetricsGenerator(n int, valueType string) *generator.MetricsGenerator {
+func makeMetricsRecord(n int, valueType string) pmetric.Metrics {
 	opts := define.MetricsOptions{
 		GaugeCount:     n,
 		CounterCount:   n,
@@ -110,10 +110,10 @@ func makeMetricsGenerator(n int, valueType string) *generator.MetricsGenerator {
 		resourceKey4,
 	}
 	opts.DimensionsValueType = valueType
-	return generator.NewMetricsGenerator(opts)
+	return generator.NewMetricsGenerator(opts).Generate()
 }
 
-func makeLogsGenerator(count, length int, valueType string) *generator.LogsGenerator {
+func makeLogsRecord(count, length int, valueType string) plog.Logs {
 	opts := define.LogsOptions{
 		LogCount:  count,
 		LogLength: length,
@@ -125,7 +125,7 @@ func makeLogsGenerator(count, length int, valueType string) *generator.LogsGener
 		resourceKey4,
 	}
 	opts.DimensionsValueType = valueType
-	return generator.NewLogsGenerator(opts)
+	return generator.NewLogsGenerator(opts).Generate()
 }
 
 func TestAssembleAction(t *testing.T) {
@@ -145,18 +145,14 @@ processor:
 `
 	t.Run("traces", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeTracesGenerator(1, "string")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesRecord(1, "string"),
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-		testkits.AssertAttrsFoundStringVal(t, attrs, "resource_final", "key1::key2:key3:key4")
+		testkits.MustProcess(t, factory, record)
+		attrs := testkits.FirstSpanAttrs(record.Data)
+		testkits.AssertAttrsStringKeyVal(t, attrs, "resource_final", "key1::key2:key3:key4")
 	})
 }
 
@@ -178,50 +174,35 @@ processor:
 
 	t.Run("traces", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeTracesGenerator(1, "string")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesRecord(1, "string"),
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-		assertDropActionAttrs(t, attrs)
+		testkits.MustProcess(t, factory, record)
+		assertDropActionAttrs(t, testkits.FirstSpanAttrs(record.Data))
 	})
 
 	t.Run("metrics", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeMetricsGenerator(1, "string")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordMetrics,
-			Data:       data,
+			Data:       makeMetricsRecord(1, "string"),
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
-		assertDropActionAttrs(t, attrs)
+		testkits.MustProcess(t, factory, record)
+		assertDropActionAttrs(t, testkits.FirstMetricAttrs(record.Data))
 	})
 
 	t.Run("logs", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeLogsGenerator(10, 10, "string")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsRecord(10, 10, "string"),
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
-		assertDropActionAttrs(t, attrs)
+		testkits.MustProcess(t, factory, record)
+		assertDropActionAttrs(t, testkits.FirstLogRecordAttrs(record.Data))
 	})
 }
 
@@ -242,50 +223,35 @@ processor:
 
 	t.Run("traces", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeTracesGenerator(1, "string")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesRecord(1, "string"),
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-		assertReplaceActionAttrs(t, attrs)
+		testkits.MustProcess(t, factory, record)
+		assertReplaceActionAttrs(t, testkits.FirstSpanAttrs(record.Data))
 	})
 
 	t.Run("metrics", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeMetricsGenerator(1, "float")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordMetrics,
-			Data:       data,
+			Data:       makeMetricsRecord(1, "float"),
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
-		assertReplaceActionAttrs(t, attrs)
+		testkits.MustProcess(t, factory, record)
+		assertReplaceActionAttrs(t, testkits.FirstMetricAttrs(record.Data))
 	})
 
 	t.Run("logs", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeLogsGenerator(10, 10, "float")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsRecord(10, 10, "float"),
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
-		assertReplaceActionAttrs(t, attrs)
+		testkits.MustProcess(t, factory, record)
+		assertReplaceActionAttrs(t, testkits.FirstLogRecordAttrs(record.Data))
 	})
 }
 
@@ -300,57 +266,41 @@ processor:
           - label: label2
             value: value2
 `
-	assertAddActionLabels := func(t *testing.T, attrs pcommon.Map) {
-		testkits.AssertAttrsFoundStringVal(t, attrs, "label1", "value1")
-		testkits.AssertAttrsFoundStringVal(t, attrs, "label2", "value2")
+	assertFunc := func(t *testing.T, attrs pcommon.Map) {
+		testkits.AssertAttrsStringKeyVal(t, attrs, "label1", "value1", "label2", "value2")
 	}
 
 	t.Run("traces", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeTracesGenerator(1, "bool")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesRecord(1, "bool"),
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-		assertAddActionLabels(t, attrs)
+		testkits.MustProcess(t, factory, record)
+		assertFunc(t, testkits.FirstSpanAttrs(record.Data))
 	})
 
 	t.Run("metrics", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeMetricsGenerator(1, "int")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordMetrics,
-			Data:       data,
+			Data:       makeMetricsRecord(1, "int"),
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
-		assertAddActionLabels(t, attrs)
+		testkits.MustProcess(t, factory, record)
+		assertFunc(t, testkits.FirstMetricAttrs(record.Data))
 	})
 
 	t.Run("logs", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeLogsGenerator(10, 10, "int")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsRecord(10, 10, "int"),
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
-		assertAddActionLabels(t, attrs)
+		testkits.MustProcess(t, factory, record)
+		assertFunc(t, testkits.FirstLogRecordAttrs(record.Data))
 	})
 }
 
@@ -364,21 +314,32 @@ processor:
             destination: "resource.client.ip"
 `
 
+	assertFunc := func(t *testing.T, attrs pcommon.Map) {
+		testkits.AssertAttrsStringKeyVal(t, attrs, "client.ip", "127.1.1.1")
+	}
+
 	t.Run("traces", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeTracesGenerator(1, "bool")
-		data := g.Generate()
 		record := define.Record{
 			RecordType:    define.RecordTraces,
-			Data:          data,
+			Data:          makeTracesRecord(1, "bool"),
 			RequestClient: define.RequestClient{IP: "127.1.1.1"},
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
+		assertFunc(t, testkits.FirstSpanAttrs(record.Data))
+	})
 
-		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-		testkits.AssertAttrsFoundStringVal(t, attrs, "client.ip", "127.1.1.1")
+	t.Run("metrics", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		record := define.Record{
+			RecordType:    define.RecordMetrics,
+			Data:          makeMetricsRecord(1, "int"),
+			RequestClient: define.RequestClient{IP: "127.1.1.1"},
+		}
+
+		testkits.MustProcess(t, factory, record)
+		assertFunc(t, testkits.FirstMetricAttrs(record.Data))
 	})
 }
 
@@ -398,6 +359,13 @@ func TestFromCacheAction(t *testing.T) {
 					"ip":        "127.1.0.2",
 					"name":      "myapp2",
 					"namespace": "my-ns2",
+					"cluster":   "K8S-BCS-90000",
+				},
+				{
+					"action":    "CreateOrUpdate",
+					"ip":        "127.1.0.3",
+					"name":      "myapp3",
+					"namespace": "my-ns3",
 					"cluster":   "K8S-BCS-90000",
 				},
 			},
@@ -421,45 +389,64 @@ processor:
 	t.Run("traces net.host.ip", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
 		time.Sleep(time.Second) // wait for syncing
-		g := makeTracesGenerator(1, "bool")
-		data := g.Generate()
-		data.ResourceSpans().At(0).Resource().Attributes().InsertString("net.host.ip", "127.1.0.1")
+		data := makeTracesRecord(1, "bool")
+		testkits.FirstSpanAttrs(data).InsertString("net.host.ip", "127.1.0.1")
+
 		record := define.Record{
 			RecordType: define.RecordTraces,
 			Data:       data,
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-
-		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.pod.ip", "127.1.0.1")
-		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.pod.name", "myapp1")
-		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.namespace.name", "my-ns1")
-		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.bcs.cluster.id", "K8S-BCS-00000")
+		testkits.MustProcess(t, factory, record)
+		attrs := testkits.FirstSpanAttrs(record.Data)
+		testkits.AssertAttrsStringKeyVal(t, attrs,
+			"k8s.pod.ip", "127.1.0.1",
+			"k8s.pod.name", "myapp1",
+			"k8s.namespace.name", "my-ns1",
+			"k8s.bcs.cluster.id", "K8S-BCS-00000",
+		)
 	})
 
 	t.Run("traces client.ip", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
 		time.Sleep(time.Second) // wait for syncing
-		g := makeTracesGenerator(1, "bool")
-		data := g.Generate()
-		data.ResourceSpans().At(0).Resource().Attributes().InsertString("client.ip", "127.1.0.2")
+		data := makeTracesRecord(1, "bool")
+		testkits.FirstSpanAttrs(data).InsertString("client.ip", "127.1.0.2")
+
 		record := define.Record{
 			RecordType: define.RecordTraces,
 			Data:       data,
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
+		attrs := testkits.FirstSpanAttrs(record.Data)
+		testkits.AssertAttrsStringKeyVal(t, attrs,
+			"k8s.pod.ip", "127.1.0.2",
+			"k8s.pod.name", "myapp2",
+			"k8s.namespace.name", "my-ns2",
+			"k8s.bcs.cluster.id", "K8S-BCS-90000",
+		)
+	})
 
-		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+	t.Run("metrics net.host.ip", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		time.Sleep(time.Second) // wait for syncing
+		data := makeMetricsRecord(1, "bool")
+		testkits.FirstMetricAttrs(data).InsertString("net.host.ip", "127.1.0.3")
 
-		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.pod.ip", "127.1.0.2")
-		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.pod.name", "myapp2")
-		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.namespace.name", "my-ns2")
-		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.bcs.cluster.id", "K8S-BCS-90000")
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+		}
+
+		testkits.MustProcess(t, factory, record)
+		attrs := testkits.FirstMetricAttrs(record.Data)
+		testkits.AssertAttrsStringKeyVal(t, attrs,
+			"k8s.pod.ip", "127.1.0.3",
+			"k8s.pod.name", "myapp3",
+			"k8s.namespace.name", "my-ns3",
+			"k8s.bcs.cluster.id", "K8S-BCS-90000",
+		)
 	})
 }
 
@@ -477,23 +464,20 @@ processor:
 
 	t.Run("traces from_metadata", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeTracesGenerator(1, "bool")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesRecord(1, "bool"),
 			Metadata:   tokenparser.FromHttpUserMetadata(r),
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-
-		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.pod.ip", "127.1.0.2")
-		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.pod.name", "myapp2")
-		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.namespace.name", "my-ns2")
-		testkits.AssertAttrsFoundStringVal(t, attrs, "k8s.bcs.cluster.id", "K8S-BCS-90000")
+		testkits.MustProcess(t, factory, record)
+		attrs := testkits.FirstSpanAttrs(record.Data)
+		testkits.AssertAttrsStringKeyVal(t, attrs,
+			"k8s.pod.ip", "127.1.0.2",
+			"k8s.pod.name", "myapp2",
+			"k8s.namespace.name", "my-ns2",
+			"k8s.bcs.cluster.id", "K8S-BCS-90000",
+		)
 	})
 }
 
@@ -507,66 +491,56 @@ processor:
             - "app_name"
 `
 
-	assertFromTokenAction := func(t *testing.T, attrs pcommon.Map) {
-		testkits.AssertAttrsFoundStringVal(t, attrs, "app_name", "test_app")
+	assertFunc := func(t *testing.T, attrs pcommon.Map) {
+		testkits.AssertAttrsStringKeyVal(t, attrs, "app_name", "test_app")
 	}
 
 	t.Run("traces from_token", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeTracesGenerator(1, "string")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesRecord(1, "string"),
 			Token:      define.Token{AppName: "test_app"},
 		}
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
 
-		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-		assertFromTokenAction(t, attrs)
+		testkits.MustProcess(t, factory, record)
+		assertFunc(t, testkits.FirstSpanAttrs(record.Data))
 	})
 
-	t.Run("metrics from_token", func(t *testing.T) {
+	t.Run("metrics.derived from_token", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeMetricsGenerator(1, "string")
-		data := g.Generate()
-		record1 := define.Record{
-			RecordType: define.RecordMetrics,
-			Data:       data,
-			Token:      define.Token{AppName: "test_app"},
-		}
-		record2 := define.Record{
+		data := makeMetricsRecord(1, "string")
+
+		record := define.Record{
 			RecordType: define.RecordMetricsDerived,
 			Data:       data,
 			Token:      define.Token{AppName: "test_app"},
 		}
-		_, err := factory.Process(&record1)
-		assert.NoError(t, err)
-		_, err = factory.Process(&record2)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
+		assertFunc(t, testkits.FirstMetricAttrs(record.Data))
+	})
 
-		attrs := record1.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
-		assertFromTokenAction(t, attrs)
-		attrs = record2.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
-		assertFromTokenAction(t, attrs)
+	t.Run("metrics from_token", func(t *testing.T) {
+		factory := processor.MustCreateFactory(content, NewFactory)
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       makeMetricsRecord(1, "string"),
+			Token:      define.Token{AppName: "test_app"},
+		}
+		testkits.MustProcess(t, factory, record)
+		assertFunc(t, testkits.FirstMetricAttrs(record.Data))
 	})
 
 	t.Run("logs from_token", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeLogsGenerator(1, 10, "string")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsRecord(1, 10, "string"),
 			Token:      define.Token{AppName: "test_app"},
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
-		assertFromTokenAction(t, attrs)
+		testkits.MustProcess(t, factory, record)
+		assertFunc(t, testkits.FirstLogRecordAttrs(record.Data))
 	})
 }
 
@@ -582,106 +556,79 @@ processor:
 `
 	t.Run("traces", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeTracesGenerator(1, "bool")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesRecord(1, "bool"),
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "unknown_service")
+		testkits.MustProcess(t, factory, record)
+		attrs := testkits.FirstSpanAttrs(record.Data)
+		testkits.AssertAttrsStringKeyVal(t, attrs, "service.name", "unknown_service")
 	})
 
 	t.Run("traces skipped", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeTracesGenerator(1, "bool")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordTraces,
-			Data:       data,
+			Data:       makeTracesRecord(1, "bool"),
 		}
 
-		attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-		attrs.InsertString("service.name", "app.v1")
+		testkits.FirstSpanAttrs(record.Data).InsertString("service.name", "app.v1")
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs = record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "app.v1")
+		testkits.MustProcess(t, factory, record)
+		attrs := testkits.FirstSpanAttrs(record.Data)
+		testkits.AssertAttrsStringKeyVal(t, attrs, "service.name", "app.v1")
 	})
 
 	t.Run("metrics", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeMetricsGenerator(1, "bool")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordMetrics,
-			Data:       data,
+			Data:       makeMetricsRecord(1, "bool"),
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
-		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "unknown_service")
+		testkits.MustProcess(t, factory, record)
+		attrs := testkits.FirstMetricAttrs(record.Data)
+		testkits.AssertAttrsStringKeyVal(t, attrs, "service.name", "unknown_service")
 	})
 
 	t.Run("metrics skipped", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeMetricsGenerator(1, "bool")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordMetrics,
-			Data:       data,
+			Data:       makeMetricsRecord(1, "bool"),
 		}
 
-		attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
-		attrs.InsertString("service.name", "app.v1")
+		testkits.FirstMetricAttrs(record.Data).InsertString("service.name", "app.v1")
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs = record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
-		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "app.v1")
+		testkits.MustProcess(t, factory, record)
+		attrs := testkits.FirstMetricAttrs(record.Data)
+		testkits.AssertAttrsStringKeyVal(t, attrs, "service.name", "app.v1")
 	})
 
 	t.Run("logs", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeLogsGenerator(1, 10, "bool")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsRecord(1, 10, "bool"),
 		}
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
-		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "unknown_service")
+		testkits.MustProcess(t, factory, record)
+		attrs := testkits.FirstLogRecordAttrs(record.Data)
+		testkits.AssertAttrsStringKeyVal(t, attrs, "service.name", "unknown_service")
 	})
 
 	t.Run("logs skipped", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
-		g := makeLogsGenerator(1, 10, "bool")
-		data := g.Generate()
 		record := define.Record{
 			RecordType: define.RecordLogs,
-			Data:       data,
+			Data:       makeLogsRecord(1, 10, "bool"),
 		}
 
-		attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
-		attrs.InsertString("service.name", "app.v1")
+		testkits.FirstLogRecordAttrs(record.Data).InsertString("service.name", "app.v1")
 
-		_, err := factory.Process(&record)
-		assert.NoError(t, err)
-
-		attrs = record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
-		testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "app.v1")
+		testkits.MustProcess(t, factory, record)
+		attrs := testkits.FirstLogRecordAttrs(record.Data)
+		testkits.AssertAttrsStringKeyVal(t, attrs, "service.name", "app.v1")
 	})
 }

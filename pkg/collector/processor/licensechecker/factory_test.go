@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/licensechecker/licensecache"
 )
@@ -100,14 +101,13 @@ processor:
 			SpanCount: 1,
 		})
 		for i := 0; i < 10; i++ {
-			r := &define.Record{
+			record := define.Record{
 				Token:       define.Token{Original: "token1"},
 				RequestType: define.RequestGrpc,
 				RecordType:  define.RecordTraces,
 				Data:        g.Generate(),
 			}
-			_, err := factory.Process(r)
-			assert.NoError(t, err)
+			testkits.MustProcess(t, factory, record)
 		}
 	})
 

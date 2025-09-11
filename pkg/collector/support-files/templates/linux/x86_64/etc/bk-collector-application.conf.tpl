@@ -83,6 +83,28 @@ default:
           enabled: {{ profiles_drop_sampler_config.enabled }}
 {%- endif %}
 
+{% if metrics_filter_config is defined %}
+  - name: "{{ metrics_filter_config.name }}"
+    config:
+      code_relabel:
+        {%- for item in metrics_filter_config.config.relabel %}
+        - metrics: {{ item.metrics | tojson }}
+          source: "{{ item.target }}"
+          services:
+          {%- for svc in item.services %}
+          - name: "{{ svc.name }}"
+            codes:
+            {%- for c in svc.codes %}
+            - rule: "{{ c.rule }}"
+              target:
+                action: "{{ c.actions.type }}"
+                label: "{{ c.actions.label }}"
+                value: "{{ c.actions.value }}"
+            {%- endfor %}
+          {%- endfor %}
+        {%- endfor %}
+{%- endif %}
+
 {% if db_slow_command_config is defined %}
       - name: "{{ db_slow_command_config.name }}"
         config:

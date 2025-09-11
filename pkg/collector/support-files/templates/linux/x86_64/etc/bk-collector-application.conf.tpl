@@ -87,9 +87,9 @@ default:
   - name: "{{ metrics_filter_config.name }}"
     config:
       code_relabel:
-        {%- for item in metrics_filter_config.config.relabel %}
+        {%- for item in metrics_filter_config.code_relabel %}
         - metrics: {{ item.metrics | tojson }}
-          source: "{{ item.target }}"
+          source: "{{ item.source }}"
           services:
           {%- for svc in item.services %}
           - name: "{{ svc.name }}"
@@ -97,9 +97,9 @@ default:
             {%- for c in svc.codes %}
             - rule: "{{ c.rule }}"
               target:
-                action: "{{ c.actions.type }}"
-                label: "{{ c.actions.label }}"
-                value: "{{ c.actions.value }}"
+                action: "{{ c.target.action }}"
+                label: "{{ c.target.label }}"
+                value: "{{ c.target.value }}"
             {%- endfor %}
           {%- endfor %}
         {%- endfor %}

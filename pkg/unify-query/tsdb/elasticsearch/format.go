@@ -367,7 +367,10 @@ func (f *FormatFactory) WithMappings(mappings ...map[string]any) *FormatFactory 
 			}
 		}
 	}
-	f.luceneParser = lucene_parser.NewParser(f.mapping, f.encode, f.decode)
+	f.luceneParser = lucene_parser.NewParser(
+		lucene_parser.WithMapping(f.mapping),
+		lucene_parser.WithAliasFunc(f.decode),
+	)
 	return f
 }
 

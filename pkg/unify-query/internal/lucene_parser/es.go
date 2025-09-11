@@ -10,47 +10,27 @@
 package lucene_parser
 
 import (
-	"strconv"
 	"strings"
 
 	elastic "github.com/olivere/elastic/v7"
-	"github.com/spf13/cast"
 )
-
-const DefaultEmptyField = ""
 
 const Separator = "."
 
-const (
-	FieldTypeText    = "text"
-	FieldTypeKeyword = "keyword"
-	FieldTypeLong    = "long"
-	FieldTypeInteger = "integer"
-	FieldTypeFloat   = "float"
-	FieldTypeDouble  = "double"
-	FieldTypeDate    = "date"
-	FieldTypeBoolean = "boolean"
-)
+func (p *Parser) toES(expr Expr, isPrefix bool) elastic.Query {
+	baseQuery := p.walkEs(expr, isPrefix, false)
 
-func (d *Schema) GetFieldType(fieldName string) (string, bool) {
-	fieldType, exists := d.mapping[fieldName]
-	return fieldType, exists
-}
-
-func (d *Schema) GetNestedPath(fieldName string) (string, bool) {
-	parts := strings.Split(fieldName, Separator)
-	for i := len(parts) - 1; i >= 0; i-- {
-		checkKey := strings.Join(parts[0:i], Separator)
-		if fieldType, ok := d.mapping[checkKey]; ok {
-			if fieldType == "nested" {
-				return checkKey, true
-			}
+	if baseQuery != nil {
+		fieldName := p.getFieldNameFromExprWithSchema(expr)
+		if path, isNested := p.esSchema.getNestedPath(fieldName); isNested {
+			return elastic.NewNestedQuery(path, baseQuery)
 		}
 	}
-	return "", false
+
+	return baseQuery
 }
 
-func walkESWithSchema(expr Expr, schema Schema, isPrefix bool, allowNestedWrap bool) elastic.Query {
+func (p *Parser) walkEs(expr Expr, isPrefix bool, allowNestedWrap bool) elastic.Query {
 	if expr == nil {
 		return nil
 	}
@@ -59,34 +39,42 @@ func walkESWithSchema(expr Expr, schema Schema, isPrefix bool, allowNestedWrap b
 
 	switch e := expr.(type) {
 	case *AndExpr:
-		return buildAndQueryWithSchema(e, schema, isPrefix)
+		return p.buildAndQueryWithSchema(e, isPrefix)
 
 	case *OrExpr:
-		return buildOrQueryWithSchema(e, schema, isPrefix)
+		return p.buildOrQueryWithSchema(e, isPrefix)
 
 	case *NotExpr:
-		innerQuery := walkESWithSchema(e.Expr, schema, isPrefix, allowNestedWrap)
+		innerQuery := p.walkEs(e.Expr, isPrefix, allowNestedWrap)
 		if innerQuery == nil {
 			return nil
 		}
 		return elastic.NewBoolQuery().MustNot(innerQuery)
 	case *GroupingExpr:
-		return walkESWithSchema(e.Expr, schema, isPrefix, allowNestedWrap)
+		baseQuery = p.walkEs(e.Expr, isPrefix, allowNestedWrap)
+		if baseQuery != nil && e.Boost > 0 && e.Boost != 1.0 {
+			if boostedQuery := applyBoostToQuery(baseQuery, e.Boost); boostedQuery != nil {
+				baseQuery = boostedQuery
+			}
+		}
+		return baseQuery
 
 	case *OperatorExpr:
 		switch e.Op {
 		case OpMatch:
-			baseQuery = buildOperatorMatchQueryWithSchema(e, schema, isPrefix)
+			baseQuery = p.buildOperatorMatchQueryWithSchema(e, isPrefix)
 		case OpWildcard:
-			baseQuery = buildOperatorWildcardQueryWithSchema(e, schema, isPrefix)
+			baseQuery = p.buildOperatorWildcardQueryWithSchema(e, isPrefix)
 		case OpRegex:
-			baseQuery = buildOperatorRegexpQueryWithSchema(e, schema, isPrefix)
+			baseQuery = p.buildOperatorRegexpQueryWithSchema(e, isPrefix)
 		case OpRange:
-			baseQuery = buildOperatorRangeQueryWithSchema(e, schema)
+			baseQuery = p.buildOperatorRangeQueryWithSchema(e)
+		case OpFuzzy:
+			baseQuery = p.buildOperatorFuzzyQueryWithSchema(e)
 		}
 
 	case *ConditionMatchExpr:
-		baseQuery = buildConditionMatchQueryWithSchema(e, schema, isPrefix)
+		baseQuery = p.buildConditionMatchQueryWithSchema(e, isPrefix)
 
 	default:
 		return nil
@@ -94,45 +82,13 @@ func walkESWithSchema(expr Expr, schema Schema, isPrefix bool, allowNestedWrap b
 
 	// 检查是否需要nested包装（仅针对单个表达式且允许包装时）
 	if baseQuery != nil && allowNestedWrap {
-		fieldName := getFieldNameFromExprWithSchema(expr, schema)
-		if path, isNested := schema.GetNestedPath(fieldName); isNested {
+		fieldName := p.getFieldNameFromExprWithSchema(expr)
+		if path, isNested := p.esSchema.getNestedPath(fieldName); isNested {
 			return elastic.NewNestedQuery(path, baseQuery)
 		}
 	}
 
 	return baseQuery
-}
-
-func getESFieldName(fieldExpr Expr) string {
-	if fieldExpr != nil {
-		if s, ok := fieldExpr.(*StringExpr); ok {
-			return s.Value
-		}
-	}
-	return DefaultEmptyField
-}
-
-func getESFieldNameWithSchema(fieldExpr Expr, schema Schema) string {
-	fieldName := getESFieldName(fieldExpr)
-	if fieldName != DefaultEmptyField {
-		return schema.GetActualFieldName(fieldName)
-	}
-	return fieldName
-}
-
-func getESValue(expr Expr) string {
-	if expr == nil {
-		return ""
-	}
-	switch e := expr.(type) {
-	case *StringExpr:
-		return e.Value
-	case *NumberExpr:
-		return cast.ToString(e.Value)
-	case *BoolExpr:
-		return cast.ToString(e.Value)
-	}
-	return ""
 }
 
 // getESValueInterface returns the interface{} value for ES queries
@@ -154,11 +110,6 @@ func getESValueInterface(expr Expr) interface{} {
 	return nil
 }
 
-func isNumeric(value string) bool {
-	_, err := strconv.ParseFloat(value, 64)
-	return err == nil
-}
-
 func isSimpleTermsQuery(e *ConditionMatchExpr) bool {
 	for _, andGroup := range e.Value.Values {
 		if len(andGroup) != 1 {
@@ -168,15 +119,15 @@ func isSimpleTermsQuery(e *ConditionMatchExpr) bool {
 	return true
 }
 
-func buildAndQueryWithSchema(e *AndExpr, schema Schema, isPrefix bool) elastic.Query {
+func (p *Parser) buildAndQueryWithSchema(e *AndExpr, isPrefix bool) elastic.Query {
 	// 1. 收集所有AND条件的表达式
 	exprs := collectAndExprs(e)
 
 	// 2. 按nested路径分组
 	groupedExprs := make(map[string][]Expr)
 	for _, expr := range exprs {
-		fieldName := getFieldNameFromExprWithSchema(expr, schema)
-		if path, isNested := schema.GetNestedPath(fieldName); isNested {
+		fieldName := p.getFieldNameFromExprWithSchema(expr)
+		if path, isNested := p.esSchema.getNestedPath(fieldName); isNested {
 			groupedExprs[path] = append(groupedExprs[path], expr)
 		} else {
 			// 非nested字段，路径设为空字符串
@@ -190,7 +141,7 @@ func buildAndQueryWithSchema(e *AndExpr, schema Schema, isPrefix bool) elastic.Q
 		if path == "" {
 			// 处理非nested字段
 			for _, exp := range expressions {
-				if q := walkESWithSchema(exp, schema, isPrefix, true); q != nil {
+				if q := p.walkEs(exp, isPrefix, true); q != nil {
 					finalClauses = append(finalClauses, q)
 				}
 			}
@@ -198,7 +149,7 @@ func buildAndQueryWithSchema(e *AndExpr, schema Schema, isPrefix bool) elastic.Q
 			// 处理nested字段
 			innerClauses := make([]elastic.Query, 0)
 			for _, exp := range expressions {
-				if q := walkESWithSchema(exp, schema, isPrefix, false); q != nil {
+				if q := p.walkEs(exp, isPrefix, false); q != nil {
 					innerClauses = append(innerClauses, q)
 				}
 			}
@@ -227,15 +178,15 @@ func buildAndQueryWithSchema(e *AndExpr, schema Schema, isPrefix bool) elastic.Q
 	return elastic.NewBoolQuery().Must(finalClauses...)
 }
 
-func buildOrQueryWithSchema(e *OrExpr, schema Schema, isPrefix bool) elastic.Query {
+func (p *Parser) buildOrQueryWithSchema(e *OrExpr, isPrefix bool) elastic.Query {
 	// 1. 收集所有OR条件的表达式
 	exprs := collectOrExprs(e)
 
 	// 2. 按nested路径分组
 	groupedExprs := make(map[string][]Expr)
 	for _, expr := range exprs {
-		fieldName := getFieldNameFromExprWithSchema(expr, schema)
-		if path, isNested := schema.GetNestedPath(fieldName); isNested {
+		fieldName := p.getFieldNameFromExprWithSchema(expr)
+		if path, isNested := p.esSchema.getNestedPath(fieldName); isNested {
 			groupedExprs[path] = append(groupedExprs[path], expr)
 		} else {
 			// 非nested字段，路径设为空字符串
@@ -249,7 +200,7 @@ func buildOrQueryWithSchema(e *OrExpr, schema Schema, isPrefix bool) elastic.Que
 		if path == "" {
 			// 处理非nested字段
 			for _, exp := range expressions {
-				if q := walkESWithSchema(exp, schema, isPrefix, true); q != nil {
+				if q := p.walkEs(exp, isPrefix, true); q != nil {
 					finalClauses = append(finalClauses, q)
 				}
 			}
@@ -257,7 +208,7 @@ func buildOrQueryWithSchema(e *OrExpr, schema Schema, isPrefix bool) elastic.Que
 			// 处理nested字段
 			innerClauses := make([]elastic.Query, 0)
 			for _, exp := range expressions {
-				if q := walkESWithSchema(exp, schema, isPrefix, false); q != nil {
+				if q := p.walkEs(exp, isPrefix, false); q != nil {
 					innerClauses = append(innerClauses, q)
 				}
 			}
@@ -290,20 +241,18 @@ func buildOrQueryWithSchema(e *OrExpr, schema Schema, isPrefix bool) elastic.Que
 	return boolQuery
 }
 
-func buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, schema Schema, isPrefix bool) elastic.Query {
-	field := getESFieldNameWithSchema(e.Field, schema)
-
+func (p *Parser) buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, isPrefix bool) elastic.Query {
+	field := p.esSchema.getFieldName(getString(e.Field))
 	if e.Value == nil || len(e.Value.Values) == 0 {
 		return nil
 	}
 
-	fieldType, hasSchema := schema.GetFieldType(field)
-
-	if isSimpleTermsQuery(e) && hasSchema && fieldType == FieldTypeKeyword {
+	fieldType, exist := p.esSchema.getFieldType(field)
+	if isSimpleTermsQuery(e) && exist && fieldType == FieldTypeKeyword {
 		var terms []interface{}
 		for _, andGroup := range e.Value.Values {
 			if len(andGroup) == 1 {
-				terms = append(terms, getESValue(andGroup[0]))
+				terms = append(terms, getValue(andGroup[0]))
 			}
 		}
 		return elastic.NewTermsQuery(field, terms...)
@@ -317,9 +266,9 @@ func buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, schema Schema, is
 		}
 
 		if len(andGroup) == 1 {
-			value := getESValue(andGroup[0])
+			value := getValue(andGroup[0])
 
-			if hasSchema {
+			if exist {
 				switch fieldType {
 				case FieldTypeKeyword:
 					boolQuery.Should(elastic.NewTermQuery(field, value))
@@ -346,9 +295,9 @@ func buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, schema Schema, is
 		} else {
 			andBoolQuery := elastic.NewBoolQuery()
 			for _, expr := range andGroup {
-				value := getESValue(expr)
+				value := getValue(expr)
 
-				if hasSchema && fieldType == FieldTypeKeyword {
+				if exist && fieldType == FieldTypeKeyword {
 					andBoolQuery.Must(elastic.NewTermQuery(field, value))
 				} else {
 					if isPrefix {
@@ -365,121 +314,172 @@ func buildConditionMatchQueryWithSchema(e *ConditionMatchExpr, schema Schema, is
 	return boolQuery
 }
 
-// 新的 OperatorExpr 构建函数
-func buildOperatorMatchQueryWithSchema(e *OperatorExpr, schema Schema, isPrefix bool) elastic.Query {
-	field := getESFieldNameWithSchema(e.Field, schema)
-	value := getESValue(e.Value)
+func (p *Parser) buildOperatorMatchQueryWithSchema(e *OperatorExpr, isPrefix bool) elastic.Query {
+	field := p.esSchema.getFieldName(getString(e.Field))
+	value := getValue(e.Value)
 	valueInterface := getESValueInterface(e.Value)
 
-	fieldType, hasSchema := schema.GetFieldType(field)
-	if e.IsQuoted {
-		if field == DefaultEmptyField && e.Field == nil {
-			return createEnhancedQueryStringQuery("\""+value+"\"", isPrefix)
-		}
+	fieldType, hasSchema := p.esSchema.getFieldType(field)
+	var baseQuery elastic.Query
 
+	if e.IsQuoted {
+		if field == Empty && e.Field == nil && e.Slop == 0 {
+			baseQuery = createEnhancedQueryStringQuery("\""+value+"\"", isPrefix)
+		} else {
+			// 对于引号字符串，使用match_phrase查询，并考虑slop
+			if e.Slop > 0 {
+				// 邻近搜索 (Proximity Search)
+				targetField := field
+				if targetField == Empty {
+					targetField = DefaultEmptyField
+				}
+				matchPhraseQuery := elastic.NewMatchPhraseQuery(targetField, value).Slop(e.Slop)
+				baseQuery = matchPhraseQuery
+			} else {
+				// 精确短语匹配
+				if hasSchema {
+					switch fieldType {
+					case FieldTypeKeyword:
+						baseQuery = elastic.NewTermQuery(field, valueInterface)
+					case FieldTypeText:
+						if isPrefix {
+							baseQuery = elastic.NewMatchPhrasePrefixQuery(field, value)
+						} else {
+							baseQuery = elastic.NewMatchPhraseQuery(field, value)
+						}
+					default:
+						if isPrefix {
+							baseQuery = elastic.NewMatchPhrasePrefixQuery(field, value)
+						} else {
+							baseQuery = elastic.NewMatchPhraseQuery(field, value)
+						}
+					}
+				} else {
+					if isPrefix {
+						baseQuery = elastic.NewMatchPhrasePrefixQuery(field, value)
+					} else {
+						baseQuery = elastic.NewMatchPhraseQuery(field, value)
+					}
+				}
+			}
+		}
+	} else {
+		// 处理非引号字符串
 		if hasSchema {
 			switch fieldType {
 			case FieldTypeKeyword:
-				return elastic.NewTermQuery(field, valueInterface)
+				baseQuery = elastic.NewTermQuery(field, valueInterface)
 			case FieldTypeText:
-				if isPrefix {
-					return elastic.NewMatchPhrasePrefixQuery(field, value)
+				if field == Empty {
+					baseQuery = createEnhancedQueryStringQuery(value, isPrefix)
+				} else {
+					if strings.Contains(value, " ") {
+						if isPrefix {
+							baseQuery = elastic.NewMatchPhrasePrefixQuery(field, value)
+						} else {
+							baseQuery = elastic.NewMatchPhraseQuery(field, value)
+						}
+					} else {
+						if isPrefix {
+							baseQuery = elastic.NewMatchPhrasePrefixQuery(field, value)
+						} else {
+							baseQuery = elastic.NewMatchPhraseQuery(field, value)
+						}
+					}
 				}
-				return elastic.NewMatchPhraseQuery(field, value)
+			case FieldTypeLong, FieldTypeInteger:
+				baseQuery = elastic.NewTermQuery(field, valueInterface)
+			case FieldTypeFloat, FieldTypeDouble:
+				baseQuery = elastic.NewTermQuery(field, valueInterface)
+			case FieldTypeBoolean:
+				baseQuery = elastic.NewTermQuery(field, valueInterface)
+			case FieldTypeDate:
+				baseQuery = elastic.NewRangeQuery(field).Gte(valueInterface).Lte(valueInterface)
 			default:
-				if isPrefix {
-					return elastic.NewMatchPhrasePrefixQuery(field, value)
+				baseQuery = elastic.NewTermQuery(field, valueInterface)
+			}
+		} else {
+			if field == Empty {
+				baseQuery = createEnhancedQueryStringQuery(value, isPrefix)
+			} else {
+				if strings.Contains(value, " ") {
+					if isPrefix {
+						baseQuery = elastic.NewMatchPhrasePrefixQuery(field, value)
+					} else {
+						baseQuery = elastic.NewMatchPhraseQuery(field, value)
+					}
+				} else {
+					if _, ok := e.Value.(*NumberExpr); ok {
+						baseQuery = elastic.NewTermQuery(field, valueInterface)
+					} else {
+						baseQuery = elastic.NewTermQuery(field, valueInterface)
+					}
 				}
-				return elastic.NewMatchPhraseQuery(field, value)
 			}
 		}
-
-		if isPrefix {
-			return elastic.NewMatchPhrasePrefixQuery(field, value)
-		}
-		return elastic.NewMatchPhraseQuery(field, value)
 	}
 
-	if hasSchema {
-		switch fieldType {
-		case FieldTypeKeyword:
-			return elastic.NewTermQuery(field, valueInterface)
-		case FieldTypeText:
-			if field == DefaultEmptyField {
-				return createEnhancedQueryStringQuery(value, isPrefix)
-			}
-			if strings.Contains(value, " ") {
-				if isPrefix {
-					return elastic.NewMatchPhrasePrefixQuery(field, value)
-				}
-				return elastic.NewMatchPhraseQuery(field, value)
-			}
-			if isPrefix {
-				return elastic.NewMatchPhrasePrefixQuery(field, value)
-			}
-			return elastic.NewMatchPhraseQuery(field, value)
-		case FieldTypeLong, FieldTypeInteger:
-			return elastic.NewTermQuery(field, valueInterface)
-		case FieldTypeFloat, FieldTypeDouble:
-			return elastic.NewTermQuery(field, valueInterface)
-		case FieldTypeBoolean:
-			return elastic.NewTermQuery(field, valueInterface)
-		case FieldTypeDate:
-			return elastic.NewRangeQuery(field).Gte(valueInterface).Lte(valueInterface)
-		default:
-			return elastic.NewTermQuery(field, valueInterface)
+	// 应用boost
+	if baseQuery != nil && e.Boost > 0 && e.Boost != 1.0 {
+		if boostedQuery := applyBoostToQuery(baseQuery, e.Boost); boostedQuery != nil {
+			baseQuery = boostedQuery
 		}
 	}
 
-	if field == DefaultEmptyField {
-		return createEnhancedQueryStringQuery(value, isPrefix)
-	}
-
-	if strings.Contains(value, " ") {
-		if isPrefix {
-			return elastic.NewMatchPhrasePrefixQuery(field, value)
-		}
-		return elastic.NewMatchPhraseQuery(field, value)
-	}
-
-	if _, ok := e.Value.(*NumberExpr); ok {
-		return elastic.NewTermQuery(field, valueInterface)
-	}
-
-	return elastic.NewTermQuery(field, valueInterface)
+	return baseQuery
 }
 
-func buildOperatorWildcardQueryWithSchema(e *OperatorExpr, schema Schema, isPrefix bool) elastic.Query {
-	field := getESFieldNameWithSchema(e.Field, schema)
-	value := getESValue(e.Value)
+func (p *Parser) buildOperatorWildcardQueryWithSchema(e *OperatorExpr, isPrefix bool) elastic.Query {
+	field := p.esSchema.getFieldName(getString(e.Field))
+	value := getValue(e.Value)
 
-	if field == DefaultEmptyField {
-		return createEnhancedQueryStringQuery(value, isPrefix)
+	var baseQuery elastic.Query
+	if field == Empty {
+		baseQuery = createEnhancedQueryStringQuery(value, isPrefix)
+	} else {
+		baseQuery = elastic.NewWildcardQuery(field, value)
 	}
 
-	return elastic.NewWildcardQuery(field, value)
-}
-
-func buildOperatorRegexpQueryWithSchema(e *OperatorExpr, schema Schema, isPrefix bool) elastic.Query {
-	field := getESFieldNameWithSchema(e.Field, schema)
-	value := getESValue(e.Value)
-
-	if field == DefaultEmptyField {
-		return createEnhancedQueryStringQuery("/"+value+"/", isPrefix)
+	// 应用boost
+	if baseQuery != nil && e.Boost > 0 && e.Boost != 1.0 {
+		if boostedQuery := applyBoostToQuery(baseQuery, e.Boost); boostedQuery != nil {
+			baseQuery = boostedQuery
+		}
 	}
 
-	return elastic.NewRegexpQuery(field, value)
+	return baseQuery
 }
 
-func buildOperatorRangeQueryWithSchema(e *OperatorExpr, schema Schema) elastic.Query {
-	field := getESFieldNameWithSchema(e.Field, schema)
+func (p *Parser) buildOperatorRegexpQueryWithSchema(e *OperatorExpr, isPrefix bool) elastic.Query {
+	field := getField(e)
+	value := getValue(e.Value)
+
+	var baseQuery elastic.Query
+	if field == Empty {
+		// 如果没有提供字段名，使用query_string查询
+		baseQuery = createEnhancedQueryStringQuery("/"+value+"/", isPrefix)
+	} else {
+		baseQuery = elastic.NewRegexpQuery(field, value)
+	}
+
+	// 应用boost
+	if baseQuery != nil && e.Boost > 0 && e.Boost != 1.0 {
+		if boostedQuery := applyBoostToQuery(baseQuery, e.Boost); boostedQuery != nil {
+			baseQuery = boostedQuery
+		}
+	}
+
+	return baseQuery
+}
+
+func (p *Parser) buildOperatorRangeQueryWithSchema(e *OperatorExpr) elastic.Query {
+	field := p.esSchema.getFieldName(getString(e.Field))
 	rangeExpr, ok := e.Value.(*RangeExpr)
 	if !ok {
 		return nil
 	}
 
 	query := elastic.NewRangeQuery(field)
-
 	if rangeExpr.Start != nil {
 		startValue := getESValueInterface(rangeExpr.Start)
 		if startValue != nil {
@@ -512,6 +512,11 @@ func buildOperatorRangeQueryWithSchema(e *OperatorExpr, schema Schema) elastic.Q
 		}
 	}
 
+	// 应用boost
+	if e.Boost > 0 && e.Boost != 1.0 {
+		query = query.Boost(e.Boost)
+	}
+
 	return query
 }
 
@@ -530,9 +535,9 @@ func createEnhancedQueryStringQuery(query string, isPrefix ...bool) elastic.Quer
 func getFieldNameFromExpr(expr Expr) string {
 	switch e := expr.(type) {
 	case *OperatorExpr:
-		return getESFieldName(e.Field)
+		return getString(e.Field)
 	case *ConditionMatchExpr:
-		return getESFieldName(e.Field)
+		return getString(e.Field)
 	case *GroupingExpr:
 		return getFieldNameFromExpr(e.Expr)
 	default:
@@ -540,10 +545,10 @@ func getFieldNameFromExpr(expr Expr) string {
 	}
 }
 
-func getFieldNameFromExprWithSchema(expr Expr, schema Schema) string {
+func (p *Parser) getFieldNameFromExprWithSchema(expr Expr) string {
 	fieldName := getFieldNameFromExpr(expr)
-	if fieldName != DefaultEmptyField {
-		return schema.GetActualFieldName(fieldName)
+	if fieldName != Empty {
+		return p.esSchema.getAlias(fieldName)
 	}
 	return fieldName
 }
@@ -568,4 +573,58 @@ func collectOrExprs(expr Expr) []Expr {
 		clauses = append(clauses, expr)
 	}
 	return clauses
+}
+
+func (p *Parser) buildOperatorFuzzyQueryWithSchema(e *OperatorExpr) elastic.Query {
+	field := p.esSchema.getFieldName(getString(e.Field))
+	value := getValue(e.Value)
+
+	targetField := field
+	if targetField == Empty {
+		targetField = DefaultEmptyField
+	}
+
+	// 创建模糊查询
+	fuzzyQuery := elastic.NewFuzzyQuery(targetField, value)
+	if e.Fuzziness != "" {
+		fuzzyQuery.Fuzziness(e.Fuzziness)
+	}
+
+	// 应用boost
+	if e.Boost > 0 && e.Boost != 1.0 {
+		fuzzyQuery.Boost(e.Boost)
+	}
+
+	return fuzzyQuery
+}
+
+func applyBoostToQuery(query elastic.Query, boost float64) elastic.Query {
+	if boost <= 0 || boost == 1.0 {
+		return query
+	}
+
+	switch q := query.(type) {
+	case *elastic.TermQuery:
+		return q.Boost(boost)
+	case *elastic.MatchQuery:
+		return q.Boost(boost)
+	case *elastic.MatchPhraseQuery:
+		return q.Boost(boost)
+	case *elastic.MatchPhrasePrefixQuery:
+		return q.Boost(boost)
+	case *elastic.WildcardQuery:
+		return q.Boost(boost)
+	case *elastic.RegexpQuery:
+		return q.Boost(boost)
+	case *elastic.FuzzyQuery:
+		return q.Boost(boost)
+	case *elastic.RangeQuery:
+		return q.Boost(boost)
+	case *elastic.BoolQuery:
+		return q.Boost(boost)
+	case *elastic.QueryStringQuery:
+		return q.Boost(boost)
+	default:
+		return elastic.NewBoolQuery().Must(query).Boost(boost)
+	}
 }

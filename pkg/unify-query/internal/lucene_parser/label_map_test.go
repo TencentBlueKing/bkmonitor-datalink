@@ -12,6 +12,7 @@ package lucene_parser
 import (
 	"testing"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
@@ -89,6 +90,7 @@ func TestLabelMap(t *testing.T) {
 			name:        "空 QueryString",
 			queryString: "",
 			expected:    map[string][]function.LabelMapValue{},
+			expectedErr: errors.New("syntax error: mismatched input '<EOF>' expecting {NOT, '+', '-', '(', QUOTED, NUMBER, TERM, REGEXPTERM, '[', '{'}"),
 		},
 		{
 			name:        "通配符 QueryString",

@@ -24,78 +24,150 @@ const (
 	opTypeAnd
 )
 
-func toSql(expr Expr) string {
+func (p *Parser) toSql(expr Expr) string {
 	if expr == nil {
 		return ""
 	}
-	return walkSQL(expr, opTypeNone)
+
+	sql := p.walkSQL(expr, opTypeNone)
+
+	if needsTopLevelParentheses(expr) {
+		return fmt.Sprintf("(%s)", sql)
+	}
+
+	// 如果顶层表达式是OR，总是加括号
+	if _, isOr := expr.(*OrExpr); isOr {
+		return fmt.Sprintf("(%s)", sql)
+	}
+
+	return sql
 }
 
-func walkSQL(expr Expr, parentOpType int) string {
+func needsTopLevelParentheses(expr Expr) bool {
+	switch e := expr.(type) {
+	case *OrExpr:
+		// 如果包含AND或复杂嵌套，需要加括号
+		return containsAndOrComplexNesting(e)
+	case *AndExpr:
+		if _, hasOr := e.Right.(*OrExpr); hasOr {
+			return false
+		}
+		return containsOrInAndExpression(e)
+	}
+	return false
+}
+
+func containsAndOrComplexNesting(expr *OrExpr) bool {
+	if _, hasAnd := expr.Left.(*AndExpr); hasAnd {
+		return true
+	}
+	if _, hasAnd := expr.Right.(*AndExpr); hasAnd {
+		return true
+	}
+	if _, hasNot := expr.Left.(*NotExpr); hasNot {
+		return true
+	}
+	if _, hasNot := expr.Right.(*NotExpr); hasNot {
+		return true
+	}
+	return false
+}
+
+func containsOrInAndExpression(expr *AndExpr) bool {
+	if _, hasOr := expr.Left.(*OrExpr); hasOr {
+		return true
+	}
+	if _, hasOr := expr.Right.(*OrExpr); hasOr {
+		return true
+	}
+	return false
+}
+
+func (p *Parser) walkSQL(expr Expr, parentOpType int) string {
 	if expr == nil {
 		return ""
 	}
 
 	switch e := expr.(type) {
 	case *AndExpr:
-		left := walkSQL(e.Left, opTypeAnd)
-		right := walkSQL(e.Right, opTypeAnd)
-		if needsLeftParentheses(e.Left) {
-			left = fmt.Sprintf("(%s)", left)
+		left := p.walkSQL(e.Left, opTypeAnd)
+		right := p.walkSQL(e.Right, opTypeAnd)
+
+		if _, isOr := e.Right.(*OrExpr); isOr {
+			right = fmt.Sprintf("(%s)", right)
 		}
 
 		sql := fmt.Sprintf("%s AND %s", left, right)
-		if parentOpType == opTypeOr {
-			return fmt.Sprintf("(%s)", sql)
-		}
 		return sql
 
 	case *OrExpr:
-		sql := fmt.Sprintf("%s OR %s", walkSQL(e.Left, opTypeOr), walkSQL(e.Right, opTypeOr))
+		left := p.walkSQL(e.Left, opTypeOr)
+		right := p.walkSQL(e.Right, opTypeOr)
+
+		// 右侧如果是OR表达式，需要加括号
+		if _, isOr := e.Right.(*OrExpr); isOr {
+			right = fmt.Sprintf("(%s)", right)
+		}
+
+		sql := fmt.Sprintf("%s OR %s", left, right)
+
+		// 只有当父操作是AND时才加括号
 		if parentOpType == opTypeAnd {
 			return fmt.Sprintf("(%s)", sql)
 		}
 		return sql
 
 	case *NotExpr:
-		return fmt.Sprintf("NOT (%s)", walkSQL(e.Expr, opTypeNone))
+		return fmt.Sprintf("NOT (%s)", p.walkSQL(e.Expr, opTypeNone))
 
 	case *GroupingExpr:
-		return fmt.Sprintf("(%s)", walkSQL(e.Expr, opTypeNone))
+		// 这里的处理忽略了Boost
+		result := fmt.Sprintf("(%s)", p.walkSQL(e.Expr, opTypeNone))
+		return result
 
 	case *OperatorExpr:
-		field := getFieldName(e.Field)
+		rawField := getField(expr)
+		if rawField == Empty {
+			rawField = DefaultLogField
+		}
+		field := p.dorisSchema.transformField(rawField)
+		isText := p.dorisSchema.isText(rawField)
 		switch e.Op {
-		case OpMatch:
-			value := getValue(e.Value)
-			var formattedValue string
-
-			if _, ok := e.Value.(*NumberExpr); ok {
-				formattedValue = value
+		case OpFuzzy:
+			value := p.getValue(e.Value)
+			formattedValue := p.dorisSchema.formatValue(rawField, value)
+			if isText {
+				return fmt.Sprintf("%s MATCH_PHRASE %s", field, formattedValue)
 			} else {
-				formattedValue = fmt.Sprintf("'%s'", escapeSQL(value))
+				return fmt.Sprintf("%s LIKE '%%%s%%'", field, escapeSQL(value))
 			}
+		case OpMatch:
+			value := p.getValue(e.Value)
+			formattedValue := p.dorisSchema.formatValue(rawField, value)
+			var result string
 
-			if parentOpType == opTypeNone && expr != nil {
-				if _, ok := expr.(*NotExpr); ok {
-					return fmt.Sprintf("(%s)", fmt.Sprintf("%s = %s", field, formattedValue))
-				}
+			if isText || e.Slop > 0 {
+				result = fmt.Sprintf("%s MATCH_PHRASE %s", field, formattedValue)
+			} else {
+				result = fmt.Sprintf("%s = %s", field, formattedValue)
 			}
-			return fmt.Sprintf("%s = %s", field, formattedValue)
+			return result
 
 		case OpWildcard:
-			value := getValue(e.Value)
+			value := p.getValue(e.Value)
 			value = strings.ReplaceAll(value, "?", "_")
 			if !strings.Contains(value, "*") {
 				value = "%" + value + "%"
 			} else {
 				value = strings.ReplaceAll(value, "*", "%")
 			}
-			return fmt.Sprintf("%s LIKE '%s'", field, escapeSQL(value))
+			result := fmt.Sprintf("%s LIKE '%s'", field, escapeSQL(value))
+			return result
 
 		case OpRegex:
-			value := getValue(e.Value)
-			return fmt.Sprintf("%s REGEXP '%s'", field, escapeSQL(value))
+			value := p.getValue(e.Value)
+			result := fmt.Sprintf("%s REGEXP '%s'", field, escapeSQL(value))
+			return result
 
 		case OpRange:
 			rangeExpr, ok := e.Value.(*RangeExpr)
@@ -105,8 +177,8 @@ func walkSQL(expr Expr, parentOpType int) string {
 
 			// Check if this is a time range (for datetime field handling)
 			isTimeRange := field == fmt.Sprintf("`%s`", DefaultLogField) ||
-				(rangeExpr.Start != nil && looksLikeDate(getValue(rangeExpr.Start))) ||
-				(rangeExpr.End != nil && looksLikeDate(getValue(rangeExpr.End)))
+				(rangeExpr.Start != nil && looksLikeDate(p.getValue(rangeExpr.Start))) ||
+				(rangeExpr.End != nil && looksLikeDate(p.getValue(rangeExpr.End)))
 
 			if isTimeRange && field == fmt.Sprintf("`%s`", DefaultLogField) {
 				field = "`datetime`"
@@ -114,7 +186,7 @@ func walkSQL(expr Expr, parentOpType int) string {
 
 			var conditions []string
 			if rangeExpr.Start != nil {
-				startValue := getValue(rangeExpr.Start)
+				startValue := p.getValue(rangeExpr.Start)
 				if startValue != "*" {
 					op := ">"
 					if b, ok := rangeExpr.IncludeStart.(*BoolExpr); ok && b.Value {
@@ -128,7 +200,7 @@ func walkSQL(expr Expr, parentOpType int) string {
 				}
 			}
 			if rangeExpr.End != nil {
-				endValue := getValue(rangeExpr.End)
+				endValue := p.getValue(rangeExpr.End)
 				if endValue != "*" {
 					op := "<"
 					if b, ok := rangeExpr.IncludeEnd.(*BoolExpr); ok && b.Value {
@@ -150,7 +222,11 @@ func walkSQL(expr Expr, parentOpType int) string {
 		return ""
 
 	case *ConditionMatchExpr:
-		field := getFieldName(e.Field)
+		rawField := getField(expr)
+		if rawField == Empty {
+			rawField = DefaultLogField
+		}
+		field := p.dorisSchema.transformField(rawField)
 		if e.Value == nil || len(e.Value.Values) == 0 {
 			return ""
 		}
@@ -161,7 +237,7 @@ func walkSQL(expr Expr, parentOpType int) string {
 			}
 			var andConditions []string
 			for _, expr := range andGroup {
-				value := getValue(expr)
+				value := p.getValue(expr)
 				andConditions = append(andConditions, fmt.Sprintf("%s LIKE '%%%s%%'", field, escapeSQL(value)))
 			}
 			if len(andConditions) > 1 {
@@ -190,35 +266,14 @@ func walkSQL(expr Expr, parentOpType int) string {
 	}
 }
 
-func getFieldName(fieldExpr Expr) string {
-	if fieldExpr != nil {
-		if s, ok := fieldExpr.(*StringExpr); ok {
-			return fmt.Sprintf("`%s`", s.Value)
-		}
-	}
-	return fmt.Sprintf("`%s`", DefaultLogField)
-}
-
-func getValue(expr Expr) string {
+func (p *Parser) getValue(expr Expr) string {
 	if expr == nil {
 		return ""
 	}
-	return walkSQL(expr, opTypeNone)
+	return p.walkSQL(expr, opTypeNone)
 }
 
 func escapeSQL(s string) string {
 	s = strings.ReplaceAll(s, "\\\"", "\"")
 	return strings.ReplaceAll(s, "'", "\\'")
-}
-
-func needsLeftParentheses(expr Expr) bool {
-	switch e := expr.(type) {
-	case *AndExpr:
-		if _, ok := e.Left.(*ConditionMatchExpr); ok {
-			if _, ok := e.Right.(*ConditionMatchExpr); ok {
-				return true
-			}
-		}
-	}
-	return false
 }

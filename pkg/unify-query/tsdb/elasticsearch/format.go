@@ -92,60 +92,6 @@ type TimeSeriesResult struct {
 	Error         error
 }
 
-func getValue[T comparable](k string, data map[string]any) T {
-	v, _ := data[k].(T)
-	return v
-}
-
-func esToFieldMap(k string, data map[string]any) *metadata.FieldOption {
-	opt := &metadata.FieldOption{}
-	if k == "" {
-		return nil
-	}
-
-	fieldType := getValue[string]("type", data)
-	if fieldType == "" {
-		return nil
-	}
-
-	opt.FieldName = k
-	opt.FieldType = fieldType
-	ks := strings.Split(k, ESStep)
-	opt.OriginField = ks[0]
-	opt.IsAgg = getValue[bool]("doc_values", data)
-	opt.IsAnalyzed = strings.ToLower(opt.FieldType) == Text
-	normalizer := getValue[string]("normalizer", data)
-	opt.IsCaseSensitive = normalizer != ""
-	opt.TokenizeOnChars = getValue[string]("tokenize_on_chars", data)
-	return opt
-}
-
-func mapProperties(prefix string, data map[string]any, res metadata.FieldMap) {
-	if data == nil {
-		return
-	}
-
-	if properties, ok := data["properties"].(map[string]any); ok {
-		for k, v := range properties {
-			if prefix != "" {
-				k = fmt.Sprintf("%s%s%s", prefix, ESStep, k)
-			}
-
-			switch nv := v.(type) {
-			case map[string]any:
-				mapProperties(k, nv, res)
-			}
-		}
-	}
-
-	if prefix != "" {
-		fm := esToFieldMap(prefix, data)
-		if fm != nil {
-			res[prefix] = fm
-		}
-	}
-}
-
 func mapData(prefix string, data map[string]any, res map[string]any) {
 	for k, v := range data {
 		if prefix != "" {
@@ -200,7 +146,7 @@ type FormatFactory struct {
 	decode func(k string) string
 	encode func(k string) string
 
-	mapping metadata.FieldMap
+	fieldMap map[string]map[string]any
 
 	data map[string]any
 
@@ -223,7 +169,6 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 	f := &FormatFactory{
 		ctx:         ctx,
 		aggInfoList: make(aggInfoList, 0),
-		mapping:     make(metadata.FieldMap),
 
 		// default encode / decode
 		encode: func(k string) string {
@@ -234,6 +179,11 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 		},
 	}
 
+	return f
+}
+
+func (f *FormatFactory) WithFieldMap(fieldMap map[string]map[string]any) *FormatFactory {
+	f.fieldMap = fieldMap
 	return f
 }
 
@@ -369,40 +319,21 @@ func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
 	return f
 }
 
-// WithMappings 合并 mapping，后面的合并前面的
-func (f *FormatFactory) WithMappings(mappings ...map[string]any) *FormatFactory {
-	for _, mapping := range mappings {
-		if _, ok := mapping["properties"]; ok {
-			mapProperties("", mapping, f.mapping)
-		} else {
-			// 有的 es 因为版本不同，properties 不在第一层，所以需要往下一层找
-			for _, m := range mapping {
-				switch nm := m.(type) {
-				case map[string]any:
-					f.WithMappings(nm)
-				}
-			}
-		}
-	}
-	return f
-}
-
 func (f *FormatFactory) GetFieldType(k string) string {
-	if v, ok := f.mapping[k]; ok {
-		return v.FieldType
+	if v, ok := f.fieldMap[k]["type"].(string); ok {
+		return v
 	}
 
 	return ""
 }
 
-func (f *FormatFactory) Mapping() metadata.FieldMap {
-	return f.mapping
-}
-
 func (f *FormatFactory) FieldType() map[string]string {
-	ft := make(map[string]string, len(f.mapping))
-	for k, v := range f.mapping {
-		ft[k] = v.FieldType
+	ft := make(map[string]string)
+	for k := range f.fieldMap {
+		nv := f.GetFieldType(k)
+		if nv != "" {
+			ft[k] = nv
+		}
 	}
 	return ft
 }
@@ -474,10 +405,8 @@ func (f *FormatFactory) NestedField(field string) string {
 	lbs := strings.Split(field, ESStep)
 	for i := len(lbs) - 1; i >= 0; i-- {
 		checkKey := strings.Join(lbs[0:i], ESStep)
-		if v, ok := f.mapping[checkKey]; ok {
-			if v.FieldType == Nested {
-				return checkKey
-			}
+		if f.GetFieldType(checkKey) == Nested {
+			return checkKey
 		}
 	}
 	return ""
@@ -917,7 +846,7 @@ func (f *FormatFactory) Orders() metadata.Orders {
 			order.Name = f.timeField.Name
 		}
 
-		if _, ok := f.mapping[order.Name]; ok {
+		if v := f.GetFieldType(order.Name); v != "" {
 			orders = append(orders, order)
 		}
 	}

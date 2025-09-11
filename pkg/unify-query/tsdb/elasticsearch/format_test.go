@@ -632,7 +632,13 @@ func TestFormatFactory_Query(t *testing.T) {
 					},
 				},
 			}
-			fact := NewFormatFactory(ctx).WithMappings(mappings...)
+
+			iof := &IndexOptionFormat{}
+			for _, mapping := range mappings {
+				iof.Parse(nil, mapping)
+			}
+
+			fact := NewFormatFactory(ctx).WithFieldMap(iof.FieldMap())
 			ss := elastic.NewSearchSource()
 			query, err := fact.Query(c.conditions)
 			assert.Nil(t, err)
@@ -697,14 +703,19 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 			},
 			expected: `{"keyword":{"field_name":"keyword","field_type":"keyword","origin_field":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":""},"nested1":{"field_name":"nested1","field_type":"nested","origin_field":"nested1","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":""},"nested1.key":{"field_name":"nested1.key","field_type":"keyword","origin_field":"nested1","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":""}}`,
 		},
+		{
+			name: "analyzer",
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			fact := NewFormatFactory(context.Background()).WithMappings(tc.mappings...)
+			iof := &IndexOptionFormat{}
+			for _, mapping := range tc.mappings {
+				iof.Parse(nil, mapping)
+			}
 
-			actual, _ := json.Marshal(fact.mapping)
-
+			actual, _ := json.Marshal(iof.FieldMap())
 			assert.JSONEq(t, tc.expected, string(actual))
 		})
 	}
@@ -1357,12 +1368,18 @@ func TestFactory_Agg(t *testing.T) {
 			},
 		},
 	}
+
+	iof := &IndexOptionFormat{}
+	for _, mapping := range commonMapping {
+		iof.Parse(nil, mapping)
+	}
+
 	for idx, c := range testCases {
 		t.Run(idx, func(t *testing.T) {
 			mock.Init()
 			ctx := metadata.InitHashID(context.Background())
 			fact := NewFormatFactory(ctx).
-				WithMappings(commonMapping...).
+				WithFieldMap(iof.FieldMap()).
 				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 			fact.valueField = "value"
 			fact.aggInfoList = c.aggInfoList
@@ -1401,6 +1418,11 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 				},
 			},
 		},
+	}
+
+	iof := &IndexOptionFormat{}
+	for _, mapping := range commonMapping {
+		iof.Parse(nil, mapping)
 	}
 
 	for name, c := range map[string]struct {
@@ -1498,7 +1520,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 					Type: DefaultTimeFieldType,
 					Unit: DefaultTimeFieldUnit,
 				}, time.Time{}, time.Time{}, "", 0).
-				WithMappings(commonMapping...).
+				WithFieldMap(iof.FieldMap()).
 				WithTransform(metadata.GetFieldFormat(ctx).EncodeFunc(), metadata.GetFieldFormat(ctx).DecodeFunc())
 			fact.valueField = c.valueField
 			ss := elastic.NewSearchSource()

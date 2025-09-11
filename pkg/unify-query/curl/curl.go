@@ -12,6 +12,7 @@ package curl
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 
@@ -56,10 +57,11 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*ht
 		defer span.End()
 	}
 
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	client := http.Client{
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Transport: otelhttp.NewTransport(transport),
 	}
-
 	c.Log.Ctx(ctx).Info(fmt.Sprintf("[%s] %s", method, opt.UrlPath))
 
 	req, err := http.NewRequestWithContext(ctx, method, opt.UrlPath, bytes.NewBuffer(opt.Body))

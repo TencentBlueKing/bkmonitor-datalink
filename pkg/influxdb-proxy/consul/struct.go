@@ -34,6 +34,8 @@ type HostInfo struct {
 	Port       int    `json:"port"`
 	Username   string `json:"username"`
 	Password   string `json:"password"`
+	// support https and http
+	Protocol string `json:"protocol"`
 	// 兼容默认值为 false 需要保持开启，所以用反状态
 	Disabled        bool    `json:"status,omitempty"`
 	BackupRateLimit float64 `json:"backup_rate_limit,omitempty"`

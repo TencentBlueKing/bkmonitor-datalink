@@ -12,6 +12,7 @@ package influxdb
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -131,7 +132,14 @@ func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int)
 	}
 
 	// 开始进行 Ping influxdb
-	clint := &http.Client{Timeout: timeout}
+	clint := &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
 	for _, v := range r.hostInfo {
 		// 重试 pingCount 次数
 		var read bool

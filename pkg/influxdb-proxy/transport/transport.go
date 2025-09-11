@@ -47,6 +47,9 @@ func NewTransport(ctx context.Context, queryDuration string, maxQueryLines int, 
 // 获取backend实例
 func (t *Transport) getClientInstance(ctx context.Context, name string, hostInfo *consul.HostInfo) (client.Client, error) {
 	address := fmt.Sprintf("http://%s:%d", hostInfo.DomainName, hostInfo.Port)
+	if hostInfo.Protocol == "https" {
+		address = fmt.Sprintf("https://%s:%d", hostInfo.DomainName, hostInfo.Port)
+	}
 	cli, err := GetClient(address, hostInfo.Username, hostInfo.Password)
 	return cli, err
 }

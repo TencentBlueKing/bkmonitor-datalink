@@ -23,8 +23,9 @@ import (
 )
 
 const (
-	GRPC = "grpc"
-	HTTP = "http"
+	GRPC  = "grpc"
+	HTTP  = "http"
+	HTTPS = "https"
 )
 
 type BackendRef struct {

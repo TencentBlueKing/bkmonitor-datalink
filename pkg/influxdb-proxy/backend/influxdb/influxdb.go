@@ -12,6 +12,7 @@ package influxdb
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -101,6 +102,11 @@ var moduleName = "influxdb"
 var NewHTTPClient = func(timeout time.Duration) Client {
 	return &http.Client{
 		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, // 跳过证书验证
+			},
+		},
 	}
 }
 
@@ -113,6 +119,9 @@ func NewInfluxDBFrontend(rootCtx context.Context, config *backend.BasicConfig, m
 	var err error
 	ctx, cancelFunc := context.WithCancel(rootCtx)
 	addr := fmt.Sprintf("http://%s:%d", config.Address, config.Port)
+	if config.Protocol == "https" {
+		addr = fmt.Sprintf("https://%s:%d", config.Address, config.Port)
+	}
 	// 认证信息
 	auth := config.GetBasicAuth()
 
@@ -426,6 +435,9 @@ func (b *Backend) Reset(config *backend.BasicConfig) error {
 
 	flowLog.Debugf("start reset")
 	addr := fmt.Sprintf("http://%s:%d", config.Address, config.Port)
+	if config.Protocol == "https" {
+		addr = fmt.Sprintf("https://%s:%d", config.Address, config.Port)
+	}
 	b.domain = config.Address
 	b.port = config.Port
 	b.addr = addr
@@ -488,7 +500,7 @@ func (b *Backend) Close() error {
 
 // String : 返回唯一字符描述标识
 func (b *Backend) String() string {
-	return fmt.Sprintf("influxdb_backend[%s:%s:%d]disabled[%v]backup_rate_limit[%v]", b.name, b.domain, b.port, b.disabled, b.backupLimiter.Limit())
+	return fmt.Sprintf("influxdb_backend[%s:%s:%d-%s]disabled[%v]backup_rate_limit[%v]", b.name, b.domain, b.port, b.addr, b.disabled, b.backupLimiter.Limit())
 }
 
 // 写入失败后的数据备份

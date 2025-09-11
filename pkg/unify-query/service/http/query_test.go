@@ -1796,7 +1796,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 				End:   end,
 			},
 			total:    3,
-			expected: `[{"__data_label":"es","__doc_id":"6","__highlight":{"gseIndex":["<mark>12345</mark>"]},"__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"1","gseIndex":12345},{"__data_label":"es","__doc_id":"7","__highlight":{"gseIndex":["<mark>12345</mark>"]},"__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"2","gseIndex":12345},{"__data_label":"es","__doc_id":"9","__highlight":{"gseIndex":["<mark>12345</mark>"]},"__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"4","gseIndex":12345}]`,
+			expected: `[{"__data_label":"es","__doc_id":"6","__highlight":{"a":["<mark>2</mark>"],"gseIndex":["<mark>12345</mark>"]},"__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"1","gseIndex":12345},{"__data_label":"es","__doc_id":"7","__highlight":{"a":["<mark>2</mark>"],"b":["<mark>2</mark>"],"gseIndex":["<mark>12345</mark>"]},"__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"2","gseIndex":12345},{"__data_label":"es","__doc_id":"9","__highlight":{"a":["<mark>2</mark>"],"gseIndex":["<mark>12345</mark>"]},"__index":"result_table_index","__result_table":"result_table.es","a":"2","b":"4","gseIndex":12345}]`,
 			options:  `{"result_table.es|http://127.0.0.1:93002":{"from":0}}`,
 		},
 		"highlight with gseIndex 8019256.12": {

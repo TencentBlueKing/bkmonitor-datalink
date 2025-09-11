@@ -9,6 +9,8 @@
 
 package lucene_parser
 
+import "fmt"
+
 func LabelMap(query string, addLabel func(key string, operator string, values ...string)) error {
 	expr, err := buildExpr(query)
 	if err != nil {
@@ -56,6 +58,7 @@ func parseExprToKeyValue(expr Expr, addLabel func(key string, operator string, v
 		fieldStr := extractStringValue(e.Field)
 		valueStr := extractStringValue(e.Value)
 
+		// 如果字段和值都为空，跳过
 		if fieldStr == "" && valueStr == "" {
 			return nil
 		}
@@ -109,8 +112,7 @@ func extractStringValue(expr Expr) string {
 	case *StringExpr:
 		return e.Value
 	case *NumberExpr:
-		// 可以考虑将数值转换为字符串，但通常数值不用于标签索引
-		return ""
+		return fmt.Sprintf("%v", e.Value)
 	case *BoolExpr:
 		// 布尔值通常不用于标签索引
 		return ""

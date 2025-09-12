@@ -149,8 +149,8 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 }
 
 // fieldMap 获取es索引的字段映射
-func (i *Instance) fieldMap(ctx context.Context, conn Connect, indexes ...string) (map[string]map[string]any, error) {
-	if len(indexes) == 0 {
+func (i *Instance) fieldMap(ctx context.Context, conn Connect, aliases ...string) (map[string]map[string]any, error) {
+	if len(aliases) == 0 {
 		return nil, fmt.Errorf("query indexes is empty")
 	}
 
@@ -162,14 +162,14 @@ func (i *Instance) fieldMap(ctx context.Context, conn Connect, indexes ...string
 		}
 		span.End(&err)
 	}()
-	span.Set("indexes", indexes)
+	span.Set("aliases", aliases)
 	cli, err := i.getClient(ctx, conn)
 	if err != nil {
 		return nil, fmt.Errorf("get client error: %w", err)
 	}
 	defer cli.Stop()
 
-	indices, err := cli.IndexGet(indexes...).Do(ctx)
+	indices, err := cli.IndexGet(aliases...).Do(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("index get error: %w", err)
 	}
@@ -177,8 +177,12 @@ func (i *Instance) fieldMap(ctx context.Context, conn Connect, indexes ...string
 		return nil, fmt.Errorf("query indexes is empty")
 	}
 
-	indicesStr, _ := json.Marshal(indices)
-	span.Set("indices", string(indicesStr))
+	span.Set("indices-length", len(indices))
+
+	indexes := make([]string, 0)
+	for k := range indices {
+		indexes = append(indexes, k)
+	}
 
 	sort.Strings(indexes)
 

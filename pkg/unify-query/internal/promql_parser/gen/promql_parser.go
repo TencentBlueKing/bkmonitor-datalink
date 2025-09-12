@@ -407,7 +407,7 @@ func (s *ExpressionContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *ExpressionContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ExpressionContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitExpression(s)
@@ -730,7 +730,7 @@ func (s *VectorOperationContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *VectorOperationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *VectorOperationContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitVectorOperation(s)
@@ -1072,7 +1072,7 @@ func (s *UnaryOpContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *UnaryOpContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *UnaryOpContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitUnaryOp(s)
@@ -1200,7 +1200,7 @@ func (s *PowOpContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *PowOpContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *PowOpContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitPowOp(s)
@@ -1349,7 +1349,7 @@ func (s *MultOpContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *MultOpContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *MultOpContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitMultOp(s)
@@ -1496,7 +1496,7 @@ func (s *AddOpContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *AddOpContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AddOpContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitAddOp(s)
@@ -1668,7 +1668,7 @@ func (s *CompareOpContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *CompareOpContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *CompareOpContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitCompareOp(s)
@@ -1833,7 +1833,7 @@ func (s *AndUnlessOpContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *AndUnlessOpContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AndUnlessOpContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitAndUnlessOp(s)
@@ -1975,7 +1975,7 @@ func (s *OrOpContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *OrOpContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *OrOpContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitOrOp(s)
@@ -2119,7 +2119,7 @@ func (s *VectorMatchOpContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *VectorMatchOpContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *VectorMatchOpContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitVectorMatchOp(s)
@@ -2261,7 +2261,7 @@ func (s *SubqueryOpContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *SubqueryOpContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *SubqueryOpContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitSubqueryOp(s)
@@ -2384,7 +2384,7 @@ func (s *OffsetOpContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *OffsetOpContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *OffsetOpContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitOffsetOp(s)
@@ -2612,7 +2612,7 @@ func (s *VectorContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *VectorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *VectorContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitVector(s)
@@ -2790,7 +2790,7 @@ func (s *ParensContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *ParensContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ParensContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitParens(s)
@@ -2935,7 +2935,7 @@ func (s *InstantSelectorContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *InstantSelectorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *InstantSelectorContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitInstantSelector(s)
@@ -3151,7 +3151,7 @@ func (s *LabelMatcherContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *LabelMatcherContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LabelMatcherContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitLabelMatcher(s)
@@ -3280,7 +3280,7 @@ func (s *LabelMatcherOperatorContext) ExitRule(listener antlr.ParseTreeListener)
 	}
 }
 
-func (s *LabelMatcherOperatorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LabelMatcherOperatorContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitLabelMatcherOperator(s)
@@ -3439,7 +3439,7 @@ func (s *LabelMatcherListContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *LabelMatcherListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LabelMatcherListContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitLabelMatcherList(s)
@@ -3615,7 +3615,7 @@ func (s *MatrixSelectorContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *MatrixSelectorContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *MatrixSelectorContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitMatrixSelector(s)
@@ -3764,7 +3764,7 @@ func (s *OffsetContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *OffsetContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *OffsetContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitOffset(s)
@@ -3980,7 +3980,7 @@ func (s *Function_Context) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *Function_Context) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *Function_Context) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitFunction_(s)
@@ -4175,7 +4175,7 @@ func (s *ParameterContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *ParameterContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ParameterContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitParameter(s)
@@ -4354,7 +4354,7 @@ func (s *ParameterListContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *ParameterListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ParameterListContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitParameterList(s)
@@ -4563,7 +4563,7 @@ func (s *AggregationContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *AggregationContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *AggregationContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitAggregation(s)
@@ -4778,7 +4778,7 @@ func (s *ByContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *ByContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *ByContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitBy(s)
@@ -4905,7 +4905,7 @@ func (s *WithoutContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *WithoutContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *WithoutContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitWithout(s)
@@ -5078,7 +5078,7 @@ func (s *GroupingContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *GroupingContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *GroupingContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitGrouping(s)
@@ -5238,7 +5238,7 @@ func (s *On_Context) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *On_Context) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *On_Context) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitOn_(s)
@@ -5365,7 +5365,7 @@ func (s *IgnoringContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *IgnoringContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *IgnoringContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitIgnoring(s)
@@ -5492,7 +5492,7 @@ func (s *GroupLeftContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *GroupLeftContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *GroupLeftContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitGroupLeft(s)
@@ -5627,7 +5627,7 @@ func (s *GroupRightContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *GroupRightContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *GroupRightContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitGroupRight(s)
@@ -5767,7 +5767,7 @@ func (s *LabelNameContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *LabelNameContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LabelNameContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitLabelName(s)
@@ -5962,7 +5962,7 @@ func (s *LabelNameListContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *LabelNameListContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LabelNameListContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitLabelNameList(s)
@@ -6180,7 +6180,7 @@ func (s *KeywordContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *KeywordContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *KeywordContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitKeyword(s)
@@ -6296,7 +6296,7 @@ func (s *LiteralContext) ExitRule(listener antlr.ParseTreeListener) {
 	}
 }
 
-func (s *LiteralContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
+func (s *LiteralContext) Accept(visitor antlr.ParseTreeVisitor) any {
 	switch t := visitor.(type) {
 	case PromQLParserVisitor:
 		return t.VisitLiteral(s)

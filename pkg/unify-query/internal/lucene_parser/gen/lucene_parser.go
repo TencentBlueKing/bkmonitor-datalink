@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 // Code generated from LuceneParser.g4 by ANTLR 4.13.2. DO NOT EDIT.
 
 package gen // LuceneParser
@@ -65,66 +56,67 @@ func luceneparserParserInit() {
 	}
 	staticData.PredictionContextCache = antlr.NewPredictionContextCache()
 	staticData.serializedATN = []int32{
-		4, 1, 52, 139, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2, 2, 3, 7, 3, 2, 4, 7,
+		4, 1, 52, 142, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2, 2, 3, 7, 3, 2, 4, 7,
 		4, 2, 5, 7, 5, 2, 6, 7, 6, 2, 7, 7, 7, 2, 8, 7, 8, 2, 9, 7, 9, 2, 10, 7,
 		10, 2, 11, 7, 11, 2, 12, 7, 12, 2, 13, 7, 13, 1, 0, 1, 0, 1, 0, 1, 1, 4,
 		1, 33, 8, 1, 11, 1, 12, 1, 34, 1, 2, 1, 2, 1, 2, 5, 2, 40, 8, 2, 10, 2,
 		12, 2, 43, 9, 2, 1, 3, 1, 3, 1, 3, 5, 3, 48, 8, 3, 10, 3, 12, 3, 51, 9,
 		3, 1, 4, 3, 4, 54, 8, 4, 1, 4, 1, 4, 1, 5, 1, 5, 1, 6, 1, 6, 1, 6, 1, 6,
 		3, 6, 64, 8, 6, 1, 6, 1, 6, 3, 6, 68, 8, 6, 3, 6, 70, 8, 6, 1, 7, 1, 7,
-		1, 7, 1, 7, 1, 8, 1, 8, 1, 8, 1, 8, 3, 8, 80, 8, 8, 1, 8, 1, 8, 1, 8, 3,
-		8, 85, 8, 8, 1, 8, 1, 8, 1, 8, 3, 8, 90, 8, 8, 1, 8, 1, 8, 1, 8, 3, 8,
-		95, 8, 8, 1, 8, 1, 8, 1, 8, 3, 8, 100, 8, 8, 3, 8, 102, 8, 8, 1, 8, 1,
-		8, 1, 8, 1, 8, 3, 8, 108, 8, 8, 5, 8, 110, 8, 8, 10, 8, 12, 8, 113, 9,
-		8, 1, 9, 1, 9, 1, 9, 1, 9, 1, 9, 3, 9, 120, 8, 9, 1, 10, 1, 10, 1, 11,
-		1, 11, 1, 11, 1, 11, 1, 11, 1, 11, 1, 12, 1, 12, 1, 12, 3, 12, 133, 8,
-		12, 1, 13, 1, 13, 3, 13, 137, 8, 13, 1, 13, 0, 1, 16, 14, 0, 2, 4, 6, 8,
-		10, 12, 14, 16, 18, 20, 22, 24, 26, 0, 7, 2, 0, 3, 3, 5, 6, 1, 0, 9, 10,
-		1, 0, 11, 14, 1, 0, 17, 19, 1, 0, 21, 22, 2, 0, 48, 48, 51, 52, 1, 0, 49,
-		50, 145, 0, 28, 1, 0, 0, 0, 2, 32, 1, 0, 0, 0, 4, 36, 1, 0, 0, 0, 6, 44,
-		1, 0, 0, 0, 8, 53, 1, 0, 0, 0, 10, 57, 1, 0, 0, 0, 12, 69, 1, 0, 0, 0,
-		14, 71, 1, 0, 0, 0, 16, 101, 1, 0, 0, 0, 18, 114, 1, 0, 0, 0, 20, 121,
-		1, 0, 0, 0, 22, 123, 1, 0, 0, 0, 24, 129, 1, 0, 0, 0, 26, 134, 1, 0, 0,
-		0, 28, 29, 3, 2, 1, 0, 29, 30, 5, 0, 0, 1, 30, 1, 1, 0, 0, 0, 31, 33, 3,
-		4, 2, 0, 32, 31, 1, 0, 0, 0, 33, 34, 1, 0, 0, 0, 34, 32, 1, 0, 0, 0, 34,
-		35, 1, 0, 0, 0, 35, 3, 1, 0, 0, 0, 36, 41, 3, 6, 3, 0, 37, 38, 5, 2, 0,
-		0, 38, 40, 3, 6, 3, 0, 39, 37, 1, 0, 0, 0, 40, 43, 1, 0, 0, 0, 41, 39,
-		1, 0, 0, 0, 41, 42, 1, 0, 0, 0, 42, 5, 1, 0, 0, 0, 43, 41, 1, 0, 0, 0,
-		44, 49, 3, 8, 4, 0, 45, 46, 5, 1, 0, 0, 46, 48, 3, 8, 4, 0, 47, 45, 1,
-		0, 0, 0, 48, 51, 1, 0, 0, 0, 49, 47, 1, 0, 0, 0, 49, 50, 1, 0, 0, 0, 50,
-		7, 1, 0, 0, 0, 51, 49, 1, 0, 0, 0, 52, 54, 3, 10, 5, 0, 53, 52, 1, 0, 0,
-		0, 53, 54, 1, 0, 0, 0, 54, 55, 1, 0, 0, 0, 55, 56, 3, 12, 6, 0, 56, 9,
-		1, 0, 0, 0, 57, 58, 7, 0, 0, 0, 58, 11, 1, 0, 0, 0, 59, 70, 3, 14, 7, 0,
-		60, 61, 3, 20, 10, 0, 61, 62, 7, 1, 0, 0, 62, 64, 1, 0, 0, 0, 63, 60, 1,
-		0, 0, 0, 63, 64, 1, 0, 0, 0, 64, 67, 1, 0, 0, 0, 65, 68, 3, 16, 8, 0, 66,
-		68, 3, 18, 9, 0, 67, 65, 1, 0, 0, 0, 67, 66, 1, 0, 0, 0, 68, 70, 1, 0,
-		0, 0, 69, 59, 1, 0, 0, 0, 69, 63, 1, 0, 0, 0, 70, 13, 1, 0, 0, 0, 71, 72,
-		3, 20, 10, 0, 72, 73, 7, 2, 0, 0, 73, 74, 7, 3, 0, 0, 74, 15, 1, 0, 0,
-		0, 75, 76, 6, 8, -1, 0, 76, 79, 5, 20, 0, 0, 77, 78, 5, 15, 0, 0, 78, 80,
-		5, 18, 0, 0, 79, 77, 1, 0, 0, 0, 79, 80, 1, 0, 0, 0, 80, 102, 1, 0, 0,
-		0, 81, 84, 3, 22, 11, 0, 82, 83, 5, 15, 0, 0, 83, 85, 5, 18, 0, 0, 84,
-		82, 1, 0, 0, 0, 84, 85, 1, 0, 0, 0, 85, 102, 1, 0, 0, 0, 86, 89, 3, 24,
-		12, 0, 87, 88, 5, 15, 0, 0, 88, 90, 5, 18, 0, 0, 89, 87, 1, 0, 0, 0, 89,
-		90, 1, 0, 0, 0, 90, 102, 1, 0, 0, 0, 91, 94, 5, 18, 0, 0, 92, 93, 5, 15,
-		0, 0, 93, 95, 5, 18, 0, 0, 94, 92, 1, 0, 0, 0, 94, 95, 1, 0, 0, 0, 95,
-		102, 1, 0, 0, 0, 96, 99, 5, 19, 0, 0, 97, 98, 5, 15, 0, 0, 98, 100, 5,
-		18, 0, 0, 99, 97, 1, 0, 0, 0, 99, 100, 1, 0, 0, 0, 100, 102, 1, 0, 0, 0,
-		101, 75, 1, 0, 0, 0, 101, 81, 1, 0, 0, 0, 101, 86, 1, 0, 0, 0, 101, 91,
-		1, 0, 0, 0, 101, 96, 1, 0, 0, 0, 102, 111, 1, 0, 0, 0, 103, 104, 10, 6,
-		0, 0, 104, 107, 3, 26, 13, 0, 105, 106, 5, 15, 0, 0, 106, 108, 5, 18, 0,
-		0, 107, 105, 1, 0, 0, 0, 107, 108, 1, 0, 0, 0, 108, 110, 1, 0, 0, 0, 109,
-		103, 1, 0, 0, 0, 110, 113, 1, 0, 0, 0, 111, 109, 1, 0, 0, 0, 111, 112,
-		1, 0, 0, 0, 112, 17, 1, 0, 0, 0, 113, 111, 1, 0, 0, 0, 114, 115, 5, 7,
-		0, 0, 115, 116, 3, 2, 1, 0, 116, 119, 5, 8, 0, 0, 117, 118, 5, 15, 0, 0,
-		118, 120, 5, 18, 0, 0, 119, 117, 1, 0, 0, 0, 119, 120, 1, 0, 0, 0, 120,
-		19, 1, 0, 0, 0, 121, 122, 5, 19, 0, 0, 122, 21, 1, 0, 0, 0, 123, 124, 7,
-		4, 0, 0, 124, 125, 7, 5, 0, 0, 125, 126, 5, 48, 0, 0, 126, 127, 7, 5, 0,
-		0, 127, 128, 7, 6, 0, 0, 128, 23, 1, 0, 0, 0, 129, 132, 5, 17, 0, 0, 130,
-		131, 5, 15, 0, 0, 131, 133, 5, 18, 0, 0, 132, 130, 1, 0, 0, 0, 132, 133,
-		1, 0, 0, 0, 133, 25, 1, 0, 0, 0, 134, 136, 5, 16, 0, 0, 135, 137, 5, 18,
-		0, 0, 136, 135, 1, 0, 0, 0, 136, 137, 1, 0, 0, 0, 137, 27, 1, 0, 0, 0,
-		18, 34, 41, 49, 53, 63, 67, 69, 79, 84, 89, 94, 99, 101, 107, 111, 119,
-		132, 136,
+		3, 7, 74, 8, 7, 1, 7, 1, 7, 1, 7, 1, 8, 1, 8, 1, 8, 1, 8, 3, 8, 83, 8,
+		8, 1, 8, 1, 8, 1, 8, 3, 8, 88, 8, 8, 1, 8, 1, 8, 1, 8, 3, 8, 93, 8, 8,
+		1, 8, 1, 8, 1, 8, 3, 8, 98, 8, 8, 1, 8, 1, 8, 1, 8, 3, 8, 103, 8, 8, 3,
+		8, 105, 8, 8, 1, 8, 1, 8, 1, 8, 1, 8, 3, 8, 111, 8, 8, 5, 8, 113, 8, 8,
+		10, 8, 12, 8, 116, 9, 8, 1, 9, 1, 9, 1, 9, 1, 9, 1, 9, 3, 9, 123, 8, 9,
+		1, 10, 1, 10, 1, 11, 1, 11, 1, 11, 1, 11, 1, 11, 1, 11, 1, 12, 1, 12, 1,
+		12, 3, 12, 136, 8, 12, 1, 13, 1, 13, 3, 13, 140, 8, 13, 1, 13, 0, 1, 16,
+		14, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 0, 7, 2, 0, 3, 3,
+		5, 6, 1, 0, 9, 10, 1, 0, 11, 14, 1, 0, 17, 19, 1, 0, 21, 22, 2, 0, 48,
+		48, 51, 52, 1, 0, 49, 50, 149, 0, 28, 1, 0, 0, 0, 2, 32, 1, 0, 0, 0, 4,
+		36, 1, 0, 0, 0, 6, 44, 1, 0, 0, 0, 8, 53, 1, 0, 0, 0, 10, 57, 1, 0, 0,
+		0, 12, 69, 1, 0, 0, 0, 14, 71, 1, 0, 0, 0, 16, 104, 1, 0, 0, 0, 18, 117,
+		1, 0, 0, 0, 20, 124, 1, 0, 0, 0, 22, 126, 1, 0, 0, 0, 24, 132, 1, 0, 0,
+		0, 26, 137, 1, 0, 0, 0, 28, 29, 3, 2, 1, 0, 29, 30, 5, 0, 0, 1, 30, 1,
+		1, 0, 0, 0, 31, 33, 3, 4, 2, 0, 32, 31, 1, 0, 0, 0, 33, 34, 1, 0, 0, 0,
+		34, 32, 1, 0, 0, 0, 34, 35, 1, 0, 0, 0, 35, 3, 1, 0, 0, 0, 36, 41, 3, 6,
+		3, 0, 37, 38, 5, 2, 0, 0, 38, 40, 3, 6, 3, 0, 39, 37, 1, 0, 0, 0, 40, 43,
+		1, 0, 0, 0, 41, 39, 1, 0, 0, 0, 41, 42, 1, 0, 0, 0, 42, 5, 1, 0, 0, 0,
+		43, 41, 1, 0, 0, 0, 44, 49, 3, 8, 4, 0, 45, 46, 5, 1, 0, 0, 46, 48, 3,
+		8, 4, 0, 47, 45, 1, 0, 0, 0, 48, 51, 1, 0, 0, 0, 49, 47, 1, 0, 0, 0, 49,
+		50, 1, 0, 0, 0, 50, 7, 1, 0, 0, 0, 51, 49, 1, 0, 0, 0, 52, 54, 3, 10, 5,
+		0, 53, 52, 1, 0, 0, 0, 53, 54, 1, 0, 0, 0, 54, 55, 1, 0, 0, 0, 55, 56,
+		3, 12, 6, 0, 56, 9, 1, 0, 0, 0, 57, 58, 7, 0, 0, 0, 58, 11, 1, 0, 0, 0,
+		59, 70, 3, 14, 7, 0, 60, 61, 3, 20, 10, 0, 61, 62, 7, 1, 0, 0, 62, 64,
+		1, 0, 0, 0, 63, 60, 1, 0, 0, 0, 63, 64, 1, 0, 0, 0, 64, 67, 1, 0, 0, 0,
+		65, 68, 3, 16, 8, 0, 66, 68, 3, 18, 9, 0, 67, 65, 1, 0, 0, 0, 67, 66, 1,
+		0, 0, 0, 68, 70, 1, 0, 0, 0, 69, 59, 1, 0, 0, 0, 69, 63, 1, 0, 0, 0, 70,
+		13, 1, 0, 0, 0, 71, 73, 3, 20, 10, 0, 72, 74, 5, 9, 0, 0, 73, 72, 1, 0,
+		0, 0, 73, 74, 1, 0, 0, 0, 74, 75, 1, 0, 0, 0, 75, 76, 7, 2, 0, 0, 76, 77,
+		7, 3, 0, 0, 77, 15, 1, 0, 0, 0, 78, 79, 6, 8, -1, 0, 79, 82, 5, 20, 0,
+		0, 80, 81, 5, 15, 0, 0, 81, 83, 5, 18, 0, 0, 82, 80, 1, 0, 0, 0, 82, 83,
+		1, 0, 0, 0, 83, 105, 1, 0, 0, 0, 84, 87, 3, 22, 11, 0, 85, 86, 5, 15, 0,
+		0, 86, 88, 5, 18, 0, 0, 87, 85, 1, 0, 0, 0, 87, 88, 1, 0, 0, 0, 88, 105,
+		1, 0, 0, 0, 89, 92, 3, 24, 12, 0, 90, 91, 5, 15, 0, 0, 91, 93, 5, 18, 0,
+		0, 92, 90, 1, 0, 0, 0, 92, 93, 1, 0, 0, 0, 93, 105, 1, 0, 0, 0, 94, 97,
+		5, 18, 0, 0, 95, 96, 5, 15, 0, 0, 96, 98, 5, 18, 0, 0, 97, 95, 1, 0, 0,
+		0, 97, 98, 1, 0, 0, 0, 98, 105, 1, 0, 0, 0, 99, 102, 5, 19, 0, 0, 100,
+		101, 5, 15, 0, 0, 101, 103, 5, 18, 0, 0, 102, 100, 1, 0, 0, 0, 102, 103,
+		1, 0, 0, 0, 103, 105, 1, 0, 0, 0, 104, 78, 1, 0, 0, 0, 104, 84, 1, 0, 0,
+		0, 104, 89, 1, 0, 0, 0, 104, 94, 1, 0, 0, 0, 104, 99, 1, 0, 0, 0, 105,
+		114, 1, 0, 0, 0, 106, 107, 10, 6, 0, 0, 107, 110, 3, 26, 13, 0, 108, 109,
+		5, 15, 0, 0, 109, 111, 5, 18, 0, 0, 110, 108, 1, 0, 0, 0, 110, 111, 1,
+		0, 0, 0, 111, 113, 1, 0, 0, 0, 112, 106, 1, 0, 0, 0, 113, 116, 1, 0, 0,
+		0, 114, 112, 1, 0, 0, 0, 114, 115, 1, 0, 0, 0, 115, 17, 1, 0, 0, 0, 116,
+		114, 1, 0, 0, 0, 117, 118, 5, 7, 0, 0, 118, 119, 3, 2, 1, 0, 119, 122,
+		5, 8, 0, 0, 120, 121, 5, 15, 0, 0, 121, 123, 5, 18, 0, 0, 122, 120, 1,
+		0, 0, 0, 122, 123, 1, 0, 0, 0, 123, 19, 1, 0, 0, 0, 124, 125, 5, 19, 0,
+		0, 125, 21, 1, 0, 0, 0, 126, 127, 7, 4, 0, 0, 127, 128, 7, 5, 0, 0, 128,
+		129, 5, 48, 0, 0, 129, 130, 7, 5, 0, 0, 130, 131, 7, 6, 0, 0, 131, 23,
+		1, 0, 0, 0, 132, 135, 5, 17, 0, 0, 133, 134, 5, 15, 0, 0, 134, 136, 5,
+		18, 0, 0, 135, 133, 1, 0, 0, 0, 135, 136, 1, 0, 0, 0, 136, 25, 1, 0, 0,
+		0, 137, 139, 5, 16, 0, 0, 138, 140, 5, 18, 0, 0, 139, 138, 1, 0, 0, 0,
+		139, 140, 1, 0, 0, 0, 140, 27, 1, 0, 0, 0, 19, 34, 41, 49, 53, 63, 67,
+		69, 73, 82, 87, 92, 97, 102, 104, 110, 114, 122, 135, 139,
 	}
 	deserializer := antlr.NewATNDeserializer(nil)
 	staticData.atn = deserializer.Deserialize(staticData.serializedATN)
@@ -606,6 +598,7 @@ func (s *DisjQueryContext) Accept(visitor antlr.ParseTreeVisitor) interface{} {
 	switch t := visitor.(type) {
 	case LuceneParserVisitor:
 		return t.VisitDisjQuery(s)
+
 	default:
 		return t.VisitChildren(s)
 	}
@@ -1317,6 +1310,7 @@ type IFieldRangeExprContext interface {
 	TERM() antlr.TerminalNode
 	QUOTED() antlr.TerminalNode
 	NUMBER() antlr.TerminalNode
+	OP_COLON() antlr.TerminalNode
 
 	// IsFieldRangeExprContext differentiates from other interfaces.
 	IsFieldRangeExprContext()
@@ -1398,6 +1392,10 @@ func (s *FieldRangeExprContext) NUMBER() antlr.TerminalNode {
 	return s.GetToken(LuceneParserNUMBER, 0)
 }
 
+func (s *FieldRangeExprContext) OP_COLON() antlr.TerminalNode {
+	return s.GetToken(LuceneParserOP_COLON, 0)
+}
+
 func (s *FieldRangeExprContext) GetRuleContext() antlr.RuleContext {
 	return s
 }
@@ -1426,8 +1424,26 @@ func (p *LuceneParser) FieldRangeExpr() (localctx IFieldRangeExprContext) {
 		p.SetState(71)
 		p.FieldName()
 	}
+	p.SetState(73)
+	p.GetErrorHandler().Sync(p)
+	if p.HasError() {
+		goto errorExit
+	}
+	_la = p.GetTokenStream().LA(1)
+
+	if _la == LuceneParserOP_COLON {
+		{
+			p.SetState(72)
+			p.Match(LuceneParserOP_COLON)
+			if p.HasError() {
+				// Recognition error - abort rule
+				goto errorExit
+			}
+		}
+
+	}
 	{
-		p.SetState(72)
+		p.SetState(75)
 		_la = p.GetTokenStream().LA(1)
 
 		if !((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&30720) != 0) {
@@ -1438,7 +1454,7 @@ func (p *LuceneParser) FieldRangeExpr() (localctx IFieldRangeExprContext) {
 		}
 	}
 	{
-		p.SetState(73)
+		p.SetState(76)
 		_la = p.GetTokenStream().LA(1)
 
 		if !((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&917504) != 0) {
@@ -1634,7 +1650,7 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 	var _alt int
 
 	p.EnterOuterAlt(localctx, 1)
-	p.SetState(101)
+	p.SetState(104)
 	p.GetErrorHandler().Sync(p)
 	if p.HasError() {
 		goto errorExit
@@ -1643,19 +1659,19 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 	switch p.GetTokenStream().LA(1) {
 	case LuceneParserREGEXPTERM:
 		{
-			p.SetState(76)
+			p.SetState(79)
 			p.Match(LuceneParserREGEXPTERM)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
 			}
 		}
-		p.SetState(79)
+		p.SetState(82)
 		p.GetErrorHandler().Sync(p)
 
-		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 7, p.GetParserRuleContext()) == 1 {
+		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 8, p.GetParserRuleContext()) == 1 {
 			{
-				p.SetState(77)
+				p.SetState(80)
 				p.Match(LuceneParserCARAT)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1663,7 +1679,7 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 				}
 			}
 			{
-				p.SetState(78)
+				p.SetState(81)
 				p.Match(LuceneParserNUMBER)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1677,15 +1693,15 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 
 	case LuceneParserRANGEIN_START, LuceneParserRANGEEX_START:
 		{
-			p.SetState(81)
+			p.SetState(84)
 			p.TermRangeExpr()
 		}
-		p.SetState(84)
+		p.SetState(87)
 		p.GetErrorHandler().Sync(p)
 
-		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 8, p.GetParserRuleContext()) == 1 {
+		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 9, p.GetParserRuleContext()) == 1 {
 			{
-				p.SetState(82)
+				p.SetState(85)
 				p.Match(LuceneParserCARAT)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1693,7 +1709,7 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 				}
 			}
 			{
-				p.SetState(83)
+				p.SetState(86)
 				p.Match(LuceneParserNUMBER)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1707,15 +1723,15 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 
 	case LuceneParserQUOTED:
 		{
-			p.SetState(86)
+			p.SetState(89)
 			p.QuotedTerm()
 		}
-		p.SetState(89)
+		p.SetState(92)
 		p.GetErrorHandler().Sync(p)
 
-		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 9, p.GetParserRuleContext()) == 1 {
+		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 10, p.GetParserRuleContext()) == 1 {
 			{
-				p.SetState(87)
+				p.SetState(90)
 				p.Match(LuceneParserCARAT)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1723,7 +1739,7 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 				}
 			}
 			{
-				p.SetState(88)
+				p.SetState(91)
 				p.Match(LuceneParserNUMBER)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1737,19 +1753,19 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 
 	case LuceneParserNUMBER:
 		{
-			p.SetState(91)
+			p.SetState(94)
 			p.Match(LuceneParserNUMBER)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
 			}
 		}
-		p.SetState(94)
+		p.SetState(97)
 		p.GetErrorHandler().Sync(p)
 
-		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 10, p.GetParserRuleContext()) == 1 {
+		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 11, p.GetParserRuleContext()) == 1 {
 			{
-				p.SetState(92)
+				p.SetState(95)
 				p.Match(LuceneParserCARAT)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1757,7 +1773,7 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 				}
 			}
 			{
-				p.SetState(93)
+				p.SetState(96)
 				p.Match(LuceneParserNUMBER)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1771,19 +1787,19 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 
 	case LuceneParserTERM:
 		{
-			p.SetState(96)
+			p.SetState(99)
 			p.Match(LuceneParserTERM)
 			if p.HasError() {
 				// Recognition error - abort rule
 				goto errorExit
 			}
 		}
-		p.SetState(99)
+		p.SetState(102)
 		p.GetErrorHandler().Sync(p)
 
-		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 11, p.GetParserRuleContext()) == 1 {
+		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 12, p.GetParserRuleContext()) == 1 {
 			{
-				p.SetState(97)
+				p.SetState(100)
 				p.Match(LuceneParserCARAT)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1791,7 +1807,7 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 				}
 			}
 			{
-				p.SetState(98)
+				p.SetState(101)
 				p.Match(LuceneParserNUMBER)
 				if p.HasError() {
 					// Recognition error - abort rule
@@ -1808,12 +1824,12 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 		goto errorExit
 	}
 	p.GetParserRuleContext().SetStop(p.GetTokenStream().LT(-1))
-	p.SetState(111)
+	p.SetState(114)
 	p.GetErrorHandler().Sync(p)
 	if p.HasError() {
 		goto errorExit
 	}
-	_alt = p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 14, p.GetParserRuleContext())
+	_alt = p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 15, p.GetParserRuleContext())
 	if p.HasError() {
 		goto errorExit
 	}
@@ -1825,22 +1841,22 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 			_prevctx = localctx
 			localctx = NewTermContext(p, _parentctx, _parentState)
 			p.PushNewRecursionContext(localctx, _startState, LuceneParserRULE_term)
-			p.SetState(103)
+			p.SetState(106)
 
 			if !(p.Precpred(p.GetParserRuleContext(), 6)) {
 				p.SetError(antlr.NewFailedPredicateException(p, "p.Precpred(p.GetParserRuleContext(), 6)", ""))
 				goto errorExit
 			}
 			{
-				p.SetState(104)
+				p.SetState(107)
 				p.Fuzzy()
 			}
-			p.SetState(107)
+			p.SetState(110)
 			p.GetErrorHandler().Sync(p)
 
-			if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 13, p.GetParserRuleContext()) == 1 {
+			if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 14, p.GetParserRuleContext()) == 1 {
 				{
-					p.SetState(105)
+					p.SetState(108)
 					p.Match(LuceneParserCARAT)
 					if p.HasError() {
 						// Recognition error - abort rule
@@ -1848,7 +1864,7 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 					}
 				}
 				{
-					p.SetState(106)
+					p.SetState(109)
 					p.Match(LuceneParserNUMBER)
 					if p.HasError() {
 						// Recognition error - abort rule
@@ -1861,12 +1877,12 @@ func (p *LuceneParser) term(_p int) (localctx ITermContext) {
 			}
 
 		}
-		p.SetState(113)
+		p.SetState(116)
 		p.GetErrorHandler().Sync(p)
 		if p.HasError() {
 			goto errorExit
 		}
-		_alt = p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 14, p.GetParserRuleContext())
+		_alt = p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 15, p.GetParserRuleContext())
 		if p.HasError() {
 			goto errorExit
 		}
@@ -1992,7 +2008,7 @@ func (p *LuceneParser) GroupingExpr() (localctx IGroupingExprContext) {
 
 	p.EnterOuterAlt(localctx, 1)
 	{
-		p.SetState(114)
+		p.SetState(117)
 		p.Match(LuceneParserLPAREN)
 		if p.HasError() {
 			// Recognition error - abort rule
@@ -2000,18 +2016,18 @@ func (p *LuceneParser) GroupingExpr() (localctx IGroupingExprContext) {
 		}
 	}
 	{
-		p.SetState(115)
+		p.SetState(118)
 		p.Query()
 	}
 	{
-		p.SetState(116)
+		p.SetState(119)
 		p.Match(LuceneParserRPAREN)
 		if p.HasError() {
 			// Recognition error - abort rule
 			goto errorExit
 		}
 	}
-	p.SetState(119)
+	p.SetState(122)
 	p.GetErrorHandler().Sync(p)
 	if p.HasError() {
 		goto errorExit
@@ -2020,7 +2036,7 @@ func (p *LuceneParser) GroupingExpr() (localctx IGroupingExprContext) {
 
 	if _la == LuceneParserCARAT {
 		{
-			p.SetState(117)
+			p.SetState(120)
 			p.Match(LuceneParserCARAT)
 			if p.HasError() {
 				// Recognition error - abort rule
@@ -2028,7 +2044,7 @@ func (p *LuceneParser) GroupingExpr() (localctx IGroupingExprContext) {
 			}
 		}
 		{
-			p.SetState(118)
+			p.SetState(121)
 			p.Match(LuceneParserNUMBER)
 			if p.HasError() {
 				// Recognition error - abort rule
@@ -2124,7 +2140,7 @@ func (p *LuceneParser) FieldName() (localctx IFieldNameContext) {
 	p.EnterRule(localctx, 20, LuceneParserRULE_fieldName)
 	p.EnterOuterAlt(localctx, 1)
 	{
-		p.SetState(121)
+		p.SetState(124)
 		p.Match(LuceneParserTERM)
 		if p.HasError() {
 			// Recognition error - abort rule
@@ -2287,7 +2303,7 @@ func (p *LuceneParser) TermRangeExpr() (localctx ITermRangeExprContext) {
 
 	p.EnterOuterAlt(localctx, 1)
 	{
-		p.SetState(123)
+		p.SetState(126)
 		_la = p.GetTokenStream().LA(1)
 
 		if !(_la == LuceneParserRANGEIN_START || _la == LuceneParserRANGEEX_START) {
@@ -2298,7 +2314,7 @@ func (p *LuceneParser) TermRangeExpr() (localctx ITermRangeExprContext) {
 		}
 	}
 	{
-		p.SetState(124)
+		p.SetState(127)
 
 		var _lt = p.GetTokenStream().LT(1)
 
@@ -2316,7 +2332,7 @@ func (p *LuceneParser) TermRangeExpr() (localctx ITermRangeExprContext) {
 		}
 	}
 	{
-		p.SetState(125)
+		p.SetState(128)
 		p.Match(LuceneParserRANGE_TO)
 		if p.HasError() {
 			// Recognition error - abort rule
@@ -2324,7 +2340,7 @@ func (p *LuceneParser) TermRangeExpr() (localctx ITermRangeExprContext) {
 		}
 	}
 	{
-		p.SetState(126)
+		p.SetState(129)
 
 		var _lt = p.GetTokenStream().LT(1)
 
@@ -2342,7 +2358,7 @@ func (p *LuceneParser) TermRangeExpr() (localctx ITermRangeExprContext) {
 		}
 	}
 	{
-		p.SetState(127)
+		p.SetState(130)
 		_la = p.GetTokenStream().LA(1)
 
 		if !(_la == LuceneParserRANGEIN_END || _la == LuceneParserRANGEEX_END) {
@@ -2449,19 +2465,19 @@ func (p *LuceneParser) QuotedTerm() (localctx IQuotedTermContext) {
 	p.EnterRule(localctx, 24, LuceneParserRULE_quotedTerm)
 	p.EnterOuterAlt(localctx, 1)
 	{
-		p.SetState(129)
+		p.SetState(132)
 		p.Match(LuceneParserQUOTED)
 		if p.HasError() {
 			// Recognition error - abort rule
 			goto errorExit
 		}
 	}
-	p.SetState(132)
+	p.SetState(135)
 	p.GetErrorHandler().Sync(p)
 
-	if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 16, p.GetParserRuleContext()) == 1 {
+	if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 17, p.GetParserRuleContext()) == 1 {
 		{
-			p.SetState(130)
+			p.SetState(133)
 			p.Match(LuceneParserCARAT)
 			if p.HasError() {
 				// Recognition error - abort rule
@@ -2469,7 +2485,7 @@ func (p *LuceneParser) QuotedTerm() (localctx IQuotedTermContext) {
 			}
 		}
 		{
-			p.SetState(131)
+			p.SetState(134)
 			p.Match(LuceneParserNUMBER)
 			if p.HasError() {
 				// Recognition error - abort rule
@@ -2572,19 +2588,19 @@ func (p *LuceneParser) Fuzzy() (localctx IFuzzyContext) {
 	p.EnterRule(localctx, 26, LuceneParserRULE_fuzzy)
 	p.EnterOuterAlt(localctx, 1)
 	{
-		p.SetState(134)
+		p.SetState(137)
 		p.Match(LuceneParserTILDE)
 		if p.HasError() {
 			// Recognition error - abort rule
 			goto errorExit
 		}
 	}
-	p.SetState(136)
+	p.SetState(139)
 	p.GetErrorHandler().Sync(p)
 
-	if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 17, p.GetParserRuleContext()) == 1 {
+	if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 18, p.GetParserRuleContext()) == 1 {
 		{
-			p.SetState(135)
+			p.SetState(138)
 			p.Match(LuceneParserNUMBER)
 			if p.HasError() {
 				// Recognition error - abort rule

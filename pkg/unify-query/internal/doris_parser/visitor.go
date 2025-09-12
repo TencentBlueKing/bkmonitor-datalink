@@ -594,7 +594,12 @@ func (v *SelectNode) String() string {
 		ss := nodeToString(fn)
 		if ss != "" {
 			if v.Distinct && idx == v.DistinctIndex {
-				ss = fmt.Sprintf("DISTINCT(%s)", ss)
+				// 如果字段包含AS别名，则不添加外层括号
+				if strings.Contains(ss, " AS ") {
+					ss = fmt.Sprintf("DISTINCT %s", ss)
+				} else {
+					ss = fmt.Sprintf("DISTINCT (%s)", ss)
+				}
 			}
 			ns = append(ns, ss)
 		}

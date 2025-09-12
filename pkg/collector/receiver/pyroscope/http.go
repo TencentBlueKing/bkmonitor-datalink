@@ -183,6 +183,10 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	aggregationType := query.Get("aggregationType")
 	units := query.Get("units")
 	spyName := query.Get("spyName")
+	sampleRate, err := strconv.ParseUint(query.Get("sampleRate"), 10, 64)
+	if err != nil {
+		sampleRate = 0
+	}
 
 	var origin any
 	format := query.Get("format")
@@ -229,6 +233,7 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 			Format:          format,
 			AggregationType: aggregationType,
 			Units:           units,
+			SampleRate:      uint32(sampleRate),
 			Tags:            tags,
 			AppName:         appName,
 		},

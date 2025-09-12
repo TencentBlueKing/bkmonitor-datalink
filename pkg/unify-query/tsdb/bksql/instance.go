@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -242,6 +243,50 @@ func (i *Instance) Table(query *metadata.Query) string {
 		table += "." + query.Measurement
 	}
 	return table
+}
+
+// QueryFieldMap 查询字段映射
+func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]map[string]any, error) {
+	var err error
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("es query error: %s", r)
+		}
+	}()
+
+	ctx, span := trace.NewSpan(ctx, "bk-sql-query-field-map")
+	defer span.End(&err)
+
+	if query.DB == "" {
+		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
+		return nil, err
+	}
+
+	f := NewQueryFactory(ctx, query).WithRangeTime(start, end)
+	fieldMap, err := i.getFieldsMap(ctx, f.DescribeTableSQL())
+	if err != nil {
+		return nil, err
+	}
+
+	res := make(map[string]map[string]any)
+	for k, v := range fieldMap {
+		if k == "" || v.Type == "" {
+			continue
+		}
+
+		ks := strings.Split(k, ".")
+		res[k] = map[string]any{
+			"field_name":        k,
+			"field_type":        v.Type,
+			"origin_field":      ks[0],
+			"is_agg":            false,
+			"is_analyzed":       v.Analyzed,
+			"is_case_sensitive": false,
+			"tokenize_on_chars": "",
+		}
+	}
+
+	return res, nil
 }
 
 // QueryRawData 直接查询原始返回

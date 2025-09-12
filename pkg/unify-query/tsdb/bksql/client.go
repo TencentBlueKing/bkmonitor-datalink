@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/client_errors"
 )
 
 type Client struct {
@@ -77,7 +78,7 @@ func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, s
 		res,
 	)
 	if err != nil {
-		return err
+		return client_errors.HandleClientError(ctx, err)
 	}
 
 	metric.TsDBRequestBytes(ctx, size, consul.BkSqlStorageType)

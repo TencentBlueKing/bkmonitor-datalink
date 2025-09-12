@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/client_errors"
 )
 
 const (
@@ -100,7 +101,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return size, err
+		return size, client_errors.HandleClientError(ctx, err)
 	}
 
 	buf := bufPool.Get().(*bytes.Buffer)

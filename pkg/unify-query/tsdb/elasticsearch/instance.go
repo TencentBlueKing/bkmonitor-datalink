@@ -177,6 +177,9 @@ func (i *Instance) fieldMap(ctx context.Context, conn Connect, indexes ...string
 		return nil, fmt.Errorf("query indexes is empty")
 	}
 
+	indicesStr, _ := json.Marshal(indices)
+	span.Set("indices", string(indicesStr))
+
 	sort.Strings(indexes)
 
 	iof := &IndexOptionFormat{}

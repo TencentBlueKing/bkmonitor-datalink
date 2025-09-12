@@ -112,6 +112,7 @@ var Refresh = func() error {
 			Port:            info.Port,
 			Disabled:        info.Disabled,
 			BackupRateLimit: info.BackupRateLimit,
+			Protocol:        info.Protocol,
 		}
 	}
 	err = BackendManager.Refresh(hostInfoMap)

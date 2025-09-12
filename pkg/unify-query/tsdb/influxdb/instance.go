@@ -152,7 +152,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 
 	urlPath := fmt.Sprintf(
 		"%s://%s:%d/%s?%s",
-		"http", i.host, i.port, "query", values.Encode(),
+		i.protocol, i.host, i.port, "query", values.Encode(),
 	)
 
 	trace.InsertStringIntoSpan("query-params", values.Encode(), span)
@@ -452,7 +452,7 @@ func (i *Instance) query(
 
 	urlPath := fmt.Sprintf(
 		"%s://%s:%d/%s?%s",
-		"http", i.host, i.port, "query", values.Encode(),
+		i.protocol, i.host, i.port, "query", values.Encode(),
 	)
 
 	trace.InsertStringIntoSpan("query-params", values.Encode(), span)
@@ -771,7 +771,7 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 
 		urlPath := fmt.Sprintf(
 			"%s://%s:%d/%s?%s",
-			"http", i.host, i.port, "query", values.Encode(),
+			i.protocol, i.host, i.port, "query", values.Encode(),
 		)
 
 		trace.InsertStringIntoSpan("query-params", values.Encode(), span)
@@ -893,7 +893,7 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 
 	urlPath := fmt.Sprintf(
 		"%s://%s:%d/%s?%s",
-		"http", i.host, i.port, "query", values.Encode(),
+		i.protocol, i.host, i.port, "query", values.Encode(),
 	)
 
 	trace.InsertStringIntoSpan("query-params", values.Encode(), span)
@@ -1041,7 +1041,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 
 		urlPath := fmt.Sprintf(
 			"%s://%s:%d/%s?%s",
-			"http", i.host, i.port, "query", values.Encode(),
+			i.protocol, i.host, i.port, "query", values.Encode(),
 		)
 
 		trace.InsertStringIntoSpan("query-params", values.Encode(), span)

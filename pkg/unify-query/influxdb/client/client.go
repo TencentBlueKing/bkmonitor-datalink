@@ -11,6 +11,7 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -79,7 +80,9 @@ func (c *BasicClient) Query(
 	trace.InsertStringIntoSpan("query-params", values.Encode(), span)
 	trace.InsertStringIntoSpan("http-url", urlPath, span)
 
-	client := http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	client := &http.Client{Transport: otelhttp.NewTransport(transport)}
 	req, err := http.NewRequestWithContext(ctx, "GET", urlPath, nil)
 	if err != nil {
 		log.Errorf(ctx, "client new request error:%s", err)

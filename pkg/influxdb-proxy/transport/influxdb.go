@@ -24,9 +24,10 @@ import (
 // GetClient 根据参数获取influxdb实例
 func GetClient(address, username, password string) (client.Client, error) {
 	clientItem, err := client.NewHTTPClient(client.HTTPConfig{
-		Addr:     address,
-		Username: username,
-		Password: password,
+		Addr:               address,
+		Username:           username,
+		Password:           password,
+		InsecureSkipVerify: true,
 	})
 	if err != nil {
 		return nil, err

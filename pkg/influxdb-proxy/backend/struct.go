@@ -21,6 +21,7 @@ type BasicConfig struct {
 	Port     int
 	Username string
 	Password string
+	Protocol string
 
 	Disabled        bool
 	BackupRateLimit float64
@@ -40,6 +41,7 @@ func MakeBasicConfig(name string, host *Info, forceBackup bool, ignoreKafka bool
 		Port:            host.Port,
 		Username:        host.Username,
 		Password:        host.Password,
+		Protocol:        host.Protocol,
 		Disabled:        host.Disabled,
 		BackupRateLimit: host.BackupRateLimit,
 		ForceBackup:     forceBackup,
@@ -112,6 +114,7 @@ type Info struct {
 	Port       int    `json:"port"`
 	Username   string `json:"username"`
 	Password   string `json:"password"`
+	Protocol   string `json:"protocol"`
 	// 兼容默认值为 false 需要保持开启，所以用反状态
 	Disabled        bool    `json:"status,omitempty"`
 	BackupRateLimit float64 `json:"backup_rate_limit,omitempty"`

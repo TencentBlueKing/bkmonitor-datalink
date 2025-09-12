@@ -166,7 +166,7 @@ processor:
             - "resource.resource_key1"
 `
 
-	assertDropActionAttrs := func(t *testing.T, attrs pcommon.Map) {
+	assertFunc := func(t *testing.T, attrs pcommon.Map) {
 		testkits.AssertAttrsNotFound(t, attrs, "resource_key1")
 		testkits.AssertAttrsFound(t, attrs, "resource_key2")
 		testkits.AssertAttrsFound(t, attrs, "resource_key3")
@@ -180,7 +180,7 @@ processor:
 		}
 
 		testkits.MustProcess(t, factory, record)
-		assertDropActionAttrs(t, testkits.FirstSpanAttrs(record.Data))
+		assertFunc(t, testkits.FirstSpanAttrs(record.Data))
 	})
 
 	t.Run("metrics", func(t *testing.T) {
@@ -191,7 +191,7 @@ processor:
 		}
 
 		testkits.MustProcess(t, factory, record)
-		assertDropActionAttrs(t, testkits.FirstMetricAttrs(record.Data))
+		assertFunc(t, testkits.FirstMetricAttrs(record.Data))
 	})
 
 	t.Run("logs", func(t *testing.T) {
@@ -202,7 +202,7 @@ processor:
 		}
 
 		testkits.MustProcess(t, factory, record)
-		assertDropActionAttrs(t, testkits.FirstLogRecordAttrs(record.Data))
+		assertFunc(t, testkits.FirstLogRecordAttrs(record.Data))
 	})
 }
 
@@ -216,7 +216,7 @@ processor:
             destination: resource_key4
 `
 
-	assertReplaceActionAttrs := func(t *testing.T, attrs pcommon.Map) {
+	assertFunc := func(t *testing.T, attrs pcommon.Map) {
 		testkits.AssertAttrsNotFound(t, attrs, resourceKey1)
 		testkits.AssertAttrsFound(t, attrs, resourceKey4)
 	}
@@ -229,7 +229,7 @@ processor:
 		}
 
 		testkits.MustProcess(t, factory, record)
-		assertReplaceActionAttrs(t, testkits.FirstSpanAttrs(record.Data))
+		assertFunc(t, testkits.FirstSpanAttrs(record.Data))
 	})
 
 	t.Run("metrics", func(t *testing.T) {
@@ -240,7 +240,7 @@ processor:
 		}
 
 		testkits.MustProcess(t, factory, record)
-		assertReplaceActionAttrs(t, testkits.FirstMetricAttrs(record.Data))
+		assertFunc(t, testkits.FirstMetricAttrs(record.Data))
 	})
 
 	t.Run("logs", func(t *testing.T) {
@@ -251,7 +251,7 @@ processor:
 		}
 
 		testkits.MustProcess(t, factory, record)
-		assertReplaceActionAttrs(t, testkits.FirstLogRecordAttrs(record.Data))
+		assertFunc(t, testkits.FirstLogRecordAttrs(record.Data))
 	})
 }
 

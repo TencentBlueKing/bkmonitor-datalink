@@ -41,6 +41,8 @@ func NewEchoBackend(ctx context.Context, name string) (*EchoBackend, error) {
 	return backend, nil
 }
 
+func (b *EchoBackend) SetETLRecordFields(f *define.ETLRecordFields) {}
+
 // Push : raw data from payload
 func (b *EchoBackend) Push(d define.Payload, killChan chan<- error) {
 	if !b.enable {

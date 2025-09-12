@@ -633,7 +633,7 @@ func TestFormatFactory_Query(t *testing.T) {
 				},
 			}
 
-			iof := &IndexOptionFormat{}
+			iof := NewIndexOptionFormat(nil)
 			for _, mapping := range mappings {
 				iof.Parse(nil, mapping)
 			}
@@ -679,7 +679,7 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"keyword":{"field_name":"keyword","field_type":"keyword","origin_field":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":""},"nested1":{"field_name":"nested1","field_type":"nested","origin_field":"nested1","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":""},"nested1.key":{"field_name":"nested1.key","field_type":"keyword","origin_field":"nested1","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":""}}`,
+			expected: `{"keyword":{"alias_name":"","field_name":"keyword","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"keyword","tokenize_on_chars":""},"nested1":{"alias_name":"","field_name":"nested1","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":""},"nested1.key":{"alias_name":"","field_name":"nested1.key","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":""}}`,
 		},
 		{
 			name: "test old es version mapping",
@@ -702,7 +702,7 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"keyword":{"field_name":"keyword","field_type":"keyword","origin_field":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":""},"nested1":{"field_name":"nested1","field_type":"nested","origin_field":"nested1","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":""},"nested1.key":{"field_name":"nested1.key","field_type":"keyword","origin_field":"nested1","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":""}}`,
+			expected: `{"keyword":{"alias_name":"","field_name":"keyword","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"keyword","tokenize_on_chars":""},"nested1":{"alias_name":"","field_name":"nested1","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":""},"nested1.key":{"alias_name":"","field_name":"nested1.key","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"nested1","tokenize_on_chars":""}}`,
 		},
 		{
 			name: "analyzer",
@@ -780,13 +780,13 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"event":{"field_name":"event","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":""},"event.name":{"field_name":"event.name","field_type":"text","is_agg":true,"is_analyzed":true,"is_case_sensitive":true,"origin_field":"event","tokenize_on_chars":["-"]},"log_message":{"field_name":"log_message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log_message","tokenize_on_chars":["-","\n"," "]},"value":{"field_name":"value","field_type":"double","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"value","tokenize_on_chars":""}}`,
+			expected: `{"event":{"alias_name":"","field_name":"event","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":""},"event.name":{"alias_name":"","field_name":"event.name","field_type":"text","is_agg":true,"is_analyzed":true,"is_case_sensitive":true,"origin_field":"event","tokenize_on_chars":["-"]},"log_message":{"alias_name":"","field_name":"log_message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log_message","tokenize_on_chars":["-","\n"," "]},"value":{"alias_name":"","field_name":"value","field_type":"double","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"value","tokenize_on_chars":""}}`,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			iof := &IndexOptionFormat{}
+			iof := NewIndexOptionFormat(nil)
 			for _, mapping := range tc.mappings {
 				iof.Parse(tc.settings, mapping)
 			}
@@ -1445,7 +1445,7 @@ func TestFactory_Agg(t *testing.T) {
 		},
 	}
 
-	iof := &IndexOptionFormat{}
+	iof := NewIndexOptionFormat(nil)
 	for _, mapping := range commonMapping {
 		iof.Parse(nil, mapping)
 	}
@@ -1496,7 +1496,7 @@ func TestFormatFactory_AggregateCases(t *testing.T) {
 		},
 	}
 
-	iof := &IndexOptionFormat{}
+	iof := NewIndexOptionFormat(nil)
 	for _, mapping := range commonMapping {
 		iof.Parse(nil, mapping)
 	}

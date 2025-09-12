@@ -185,7 +185,7 @@ func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]sql
 		}
 
 		fieldType, ok = list[TableFieldType].(string)
-		if !ok {
+		if !ok || fieldType == "" {
 			continue
 		}
 
@@ -276,6 +276,7 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 
 		ks := strings.Split(k, ".")
 		res[k] = map[string]any{
+			"alias_name":        query.FieldAlias.AliasName(k),
 			"field_name":        k,
 			"field_type":        v.Type,
 			"origin_field":      ks[0],

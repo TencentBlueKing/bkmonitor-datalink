@@ -149,7 +149,7 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 }
 
 // fieldMap 获取es索引的字段映射
-func (i *Instance) fieldMap(ctx context.Context, conn Connect, aliases ...string) (map[string]map[string]any, error) {
+func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (map[string]map[string]any, error) {
 	if len(aliases) == 0 {
 		return nil, fmt.Errorf("query indexes is empty")
 	}
@@ -163,7 +163,7 @@ func (i *Instance) fieldMap(ctx context.Context, conn Connect, aliases ...string
 		span.End(&err)
 	}()
 	span.Set("aliases", aliases)
-	cli, err := i.getClient(ctx, conn)
+	cli, err := i.getClient(ctx, i.connect)
 	if err != nil {
 		return nil, fmt.Errorf("get client error: %w", err)
 	}
@@ -186,7 +186,7 @@ func (i *Instance) fieldMap(ctx context.Context, conn Connect, aliases ...string
 
 	sort.Strings(indexes)
 
-	iof := &IndexOptionFormat{}
+	iof := NewIndexOptionFormat(fieldAlias)
 	// 按照时间倒序排列
 	for idx := len(indexes) - 1; idx >= 0; idx-- {
 		if in, ok := indices[indexes[idx]]; ok && in != nil {
@@ -194,6 +194,7 @@ func (i *Instance) fieldMap(ctx context.Context, conn Connect, aliases ...string
 		}
 	}
 
+	span.Set("field-map-length", len(iof.FieldMap()))
 	return iof.FieldMap(), nil
 }
 
@@ -518,7 +519,7 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 	}
 	span.Set("aliases", aliases)
 
-	fieldMap, err := i.fieldMap(ctx, i.connect, aliases...)
+	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
 	if err != nil {
 		return nil, err
 	}
@@ -561,7 +562,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		conn:    i.connect,
 	}
 
-	fieldMap, err := i.fieldMap(ctx, i.connect, aliases...)
+	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
 	if err != nil {
 		log.Warnf(ctx, "index is empty with %v with %s error %s", aliases, qo.conn.String(), err)
 		return size, total, option, err
@@ -758,7 +759,7 @@ func (i *Instance) QuerySeriesSet(
 		query:   query,
 		conn:    i.connect,
 	}
-	fieldMap, err := i.fieldMap(ctx, i.connect, aliases...)
+	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
 	if err != nil {
 		log.Warnf(ctx, "index is empty with %v with %s error %s", aliases, qo.conn.String(), err)
 		return storage.EmptySeriesSet()

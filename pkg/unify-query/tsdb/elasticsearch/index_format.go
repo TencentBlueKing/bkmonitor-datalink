@@ -12,6 +12,8 @@ package elasticsearch
 import (
 	"fmt"
 	"strings"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 const (
@@ -26,6 +28,17 @@ const (
 type IndexOptionFormat struct {
 	analyzer map[string]map[string]any
 	fieldMap map[string]map[string]any
+
+	fieldAlias metadata.FieldAlias
+}
+
+func NewIndexOptionFormat(fieldAlias map[string]string) *IndexOptionFormat {
+	return &IndexOptionFormat{
+		analyzer:   make(map[string]map[string]any),
+		fieldMap:   make(map[string]map[string]any),
+		fieldAlias: fieldAlias,
+	}
+
 }
 
 func (f *IndexOptionFormat) FieldMap() map[string]map[string]any {
@@ -33,13 +46,6 @@ func (f *IndexOptionFormat) FieldMap() map[string]map[string]any {
 }
 
 func (f *IndexOptionFormat) Parse(settings, mappings map[string]any) {
-	if f.analyzer == nil {
-		f.analyzer = make(map[string]map[string]any)
-	}
-	if f.fieldMap == nil {
-		f.fieldMap = make(map[string]map[string]any)
-	}
-
 	// 解析 settings 里面的 analysis
 	if analysis, ok := settings["analysis"].(map[string]any); ok {
 		tokenizer, _ := analysis["tokenizer"].(map[string]any)
@@ -116,13 +122,15 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) map[stri
 	if k == "" {
 		return nil
 	}
-	if data["type"] == "" {
+	if data["type"] == nil {
 		return nil
 	}
 
 	fieldMap := make(map[string]any)
+	fieldMap["alias_name"] = f.fieldAlias.AliasName(k)
 	fieldMap["field_name"] = k
 	fieldMap["field_type"] = data["type"]
+
 	fieldMap["is_agg"] = false
 	fieldMap["tokenize_on_chars"] = ""
 	ks := strings.Split(k, ESStep)

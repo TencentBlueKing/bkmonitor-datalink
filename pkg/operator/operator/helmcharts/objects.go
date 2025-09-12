@@ -95,7 +95,7 @@ func newHelmChartsObjects(ctx context.Context, sharedInformer informers.SharedIn
 	}
 
 	informer := genericInformer.Informer()
-	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+	err = informer.SetTransform(func(obj any) (any, error) {
 		secret, ok := obj.(*corev1.Secret)
 		if !ok {
 			logger.Errorf("excepted Secret type, got %T", obj)
@@ -113,7 +113,7 @@ func newHelmChartsObjects(ctx context.Context, sharedInformer informers.SharedIn
 
 	objs := &Objects{elements: make(map[innerKey]ReleaseElement)}
 	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			secret, ok := obj.(*corev1.Secret)
 			if !ok {
 				logger.Errorf("excepted Secret type, got %T", obj)
@@ -127,7 +127,7 @@ func newHelmChartsObjects(ctx context.Context, sharedInformer informers.SharedIn
 			}
 			objs.Set(castReleaseElement(rls))
 		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
+		UpdateFunc: func(oldObj, newObj any) {
 			old, ok := oldObj.(*corev1.Secret)
 			if !ok {
 				logger.Errorf("expected Secret type, got %T", oldObj)
@@ -150,7 +150,7 @@ func newHelmChartsObjects(ctx context.Context, sharedInformer informers.SharedIn
 			}
 			objs.Set(castReleaseElement(rls))
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			secret, ok := obj.(*corev1.Secret)
 			if !ok {
 				logger.Errorf("excepted Secret type, got %T", obj)

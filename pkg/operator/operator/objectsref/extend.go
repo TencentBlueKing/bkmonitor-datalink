@@ -108,7 +108,7 @@ func newGameStatefulObjects(ctx context.Context, sharedInformer metadatainformer
 	}
 
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			gamestatefulset, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted GameStatefulSet/PartialObjectMetadata type, got %T", obj)
@@ -122,7 +122,7 @@ func newGameStatefulObjects(ctx context.Context, sharedInformer metadatainformer
 				OwnerRefs: toRefs(gamestatefulset.OwnerReferences),
 			})
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			gamestatefulset, ok := newObj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted GameStatefulSet/PartialObjectMetadata type, got %T", newObj)
@@ -136,7 +136,7 @@ func newGameStatefulObjects(ctx context.Context, sharedInformer metadatainformer
 				OwnerRefs: toRefs(gamestatefulset.OwnerReferences),
 			})
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			gamestatefulset, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted GameStatefulSet/PartialObjectMetadata type, got %T", obj)
@@ -171,7 +171,7 @@ func newGameDeploymentObjects(ctx context.Context, sharedInformer metadatainform
 	}
 
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			gamedeployment, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted GameDeployment/PartialObjectMetadata type, got %T", obj)
@@ -185,7 +185,7 @@ func newGameDeploymentObjects(ctx context.Context, sharedInformer metadatainform
 				OwnerRefs: toRefs(gamedeployment.OwnerReferences),
 			})
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			gamedeployment, ok := newObj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted GameDeployment/PartialObjectMetadata type, got %T", newObj)
@@ -199,7 +199,7 @@ func newGameDeploymentObjects(ctx context.Context, sharedInformer metadatainform
 				OwnerRefs: toRefs(gamedeployment.OwnerReferences),
 			})
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			gamedeployment, ok := obj.(*metav1.PartialObjectMetadata)
 			if !ok {
 				logger.Errorf("excepted GameDeployment/PartialObjectMetadata type, got %T", obj)

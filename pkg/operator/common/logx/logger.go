@@ -31,7 +31,7 @@ func New(prefix string) *Logger {
 	return l
 }
 
-func (l *Logger) Log(keyvals ...interface{}) error {
+func (l *Logger) Log(keyvals ...any) error {
 	return l.w.Log(keyvals...)
 }
 

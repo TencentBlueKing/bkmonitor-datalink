@@ -142,7 +142,7 @@ func newIngressV1Objects(ctx context.Context, sharedInformer informers.SharedInf
 	}
 
 	informer := genericInformer.Informer()
-	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+	err = informer.SetTransform(func(obj any) (any, error) {
 		ingress, ok := obj.(*networkingv1.Ingress)
 		if !ok {
 			logger.Errorf("excepted Ingress type, got %T", obj)
@@ -160,7 +160,7 @@ func newIngressV1Objects(ctx context.Context, sharedInformer informers.SharedInf
 	}
 
 	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			ingress, ok := obj.(*networkingv1.Ingress)
 			if !ok {
 				logger.Errorf("excepted Ingress type, got %T", obj)
@@ -168,7 +168,7 @@ func newIngressV1Objects(ctx context.Context, sharedInformer informers.SharedInf
 			}
 			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			ingress, ok := newObj.(*networkingv1.Ingress)
 			if !ok {
 				logger.Errorf("excepted Ingress type, got %T", newObj)
@@ -176,7 +176,7 @@ func newIngressV1Objects(ctx context.Context, sharedInformer informers.SharedInf
 			}
 			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			ingress, ok := obj.(*networkingv1.Ingress)
 			if !ok {
 				logger.Errorf("excepted Ingress type, got %T", obj)
@@ -231,7 +231,7 @@ func newIngressV1Beta1Objects(ctx context.Context, sharedInformer informers.Shar
 	}
 
 	informer := genericInformer.Informer()
-	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+	err = informer.SetTransform(func(obj any) (any, error) {
 		ingress, ok := obj.(*networkingv1beta1.Ingress)
 		if !ok {
 			logger.Errorf("excepted Ingress type, got %T", obj)
@@ -249,7 +249,7 @@ func newIngressV1Beta1Objects(ctx context.Context, sharedInformer informers.Shar
 	}
 
 	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			ingress, ok := obj.(*networkingv1beta1.Ingress)
 			if !ok {
 				logger.Errorf("excepted Ingress type, got %T", obj)
@@ -257,7 +257,7 @@ func newIngressV1Beta1Objects(ctx context.Context, sharedInformer informers.Shar
 			}
 			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			ingress, ok := newObj.(*networkingv1beta1.Ingress)
 			if !ok {
 				logger.Errorf("excepted Ingress type, got %T", newObj)
@@ -265,7 +265,7 @@ func newIngressV1Beta1Objects(ctx context.Context, sharedInformer informers.Shar
 			}
 			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			ingress, ok := obj.(*networkingv1beta1.Ingress)
 			if !ok {
 				logger.Errorf("excepted Ingress type, got %T", obj)
@@ -320,7 +320,7 @@ func newIngressV1Beta1ExtensionsObjects(ctx context.Context, sharedInformer info
 	}
 
 	informer := genericInformer.Informer()
-	err = informer.SetTransform(func(obj interface{}) (interface{}, error) {
+	err = informer.SetTransform(func(obj any) (any, error) {
 		ingress, ok := obj.(*extensionsv1beta1.Ingress)
 		if !ok {
 			logger.Errorf("excepted Ingress type, got %T", obj)
@@ -338,7 +338,7 @@ func newIngressV1Beta1ExtensionsObjects(ctx context.Context, sharedInformer info
 	}
 
 	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			ingress, ok := obj.(*extensionsv1beta1.Ingress)
 			if !ok {
 				logger.Errorf("excepted Ingress type, got %T", obj)
@@ -346,7 +346,7 @@ func newIngressV1Beta1ExtensionsObjects(ctx context.Context, sharedInformer info
 			}
 			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
 		},
-		UpdateFunc: func(_, newObj interface{}) {
+		UpdateFunc: func(_, newObj any) {
 			ingress, ok := newObj.(*extensionsv1beta1.Ingress)
 			if !ok {
 				logger.Errorf("excepted Ingress type, got %T", newObj)
@@ -354,7 +354,7 @@ func newIngressV1Beta1ExtensionsObjects(ctx context.Context, sharedInformer info
 			}
 			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			ingress, ok := obj.(*extensionsv1beta1.Ingress)
 			if !ok {
 				logger.Errorf("excepted Ingress type, got %T", obj)

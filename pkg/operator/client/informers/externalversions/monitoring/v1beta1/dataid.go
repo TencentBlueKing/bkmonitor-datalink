@@ -12,13 +12,13 @@
 package v1beta1
 
 import (
-	"context"
+	context "context"
 	time "time"
 
-	monitoringv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
+	apismonitoringv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/monitoring/v1beta1"
 	versioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	internalinterfaces "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions/internalinterfaces"
-	v1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/listers/monitoring/v1beta1"
+	monitoringv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/listers/monitoring/v1beta1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -29,7 +29,7 @@ import (
 // DataIDs.
 type DataIDInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() v1beta1.DataIDLister
+	Lister() monitoringv1beta1.DataIDLister
 }
 
 type dataIDInformer struct {
@@ -55,16 +55,28 @@ func NewFilteredDataIDInformer(client versioned.Interface, namespace string, res
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.MonitoringV1beta1().DataIDs(namespace).List(context.TODO(), options)
+				return client.MonitoringV1beta1().DataIDs(namespace).List(context.Background(), options)
 			},
 			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.MonitoringV1beta1().DataIDs(namespace).Watch(context.TODO(), options)
+				return client.MonitoringV1beta1().DataIDs(namespace).Watch(context.Background(), options)
+			},
+			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
+				if tweakListOptions != nil {
+					tweakListOptions(&options)
+				}
+				return client.MonitoringV1beta1().DataIDs(namespace).List(ctx, options)
+			},
+			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
+				if tweakListOptions != nil {
+					tweakListOptions(&options)
+				}
+				return client.MonitoringV1beta1().DataIDs(namespace).Watch(ctx, options)
 			},
 		},
-		&monitoringv1beta1.DataID{},
+		&apismonitoringv1beta1.DataID{},
 		resyncPeriod,
 		indexers,
 	)
@@ -75,9 +87,9 @@ func (f *dataIDInformer) defaultInformer(client versioned.Interface, resyncPerio
 }
 
 func (f *dataIDInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&monitoringv1beta1.DataID{}, f.defaultInformer)
+	return f.factory.InformerFor(&apismonitoringv1beta1.DataID{}, f.defaultInformer)
 }
 
-func (f *dataIDInformer) Lister() v1beta1.DataIDLister {
-	return v1beta1.NewDataIDLister(f.Informer().GetIndexer())
+func (f *dataIDInformer) Lister() monitoringv1beta1.DataIDLister {
+	return monitoringv1beta1.NewDataIDLister(f.Informer().GetIndexer())
 }

@@ -66,7 +66,7 @@ func TestAes256Decoder(t *testing.T) {
 		token2 = "Ymtia2JrYmtia2JrYmtia/0ZJ3tXGU6OT2oEqyruVbvWr0kNl7AzgSWPsnVzNBYWRULf8XE/mtQBHLas+jYCrw=="
 	)
 
-	cases := []struct {
+	tests := []struct {
 		Input     string
 		Token     define.Token
 		ErrPrefix string
@@ -111,16 +111,16 @@ func TestAes256Decoder(t *testing.T) {
 		},
 	}
 
-	for _, c := range cases {
-		token, err := decoder.Decode(c.Input)
+	for _, tt := range tests {
+		token, err := decoder.Decode(tt.Input)
 		switch err {
 		case nil:
-			assert.Empty(t, c.ErrPrefix)
+			assert.Empty(t, tt.ErrPrefix)
 		default:
-			assert.True(t, strings.Contains(err.Error(), c.ErrPrefix))
+			assert.True(t, strings.Contains(err.Error(), tt.ErrPrefix))
 		}
 
-		assert.Equal(t, c.Token, token)
+		assert.Equal(t, tt.Token, token)
 	}
 }
 
@@ -157,7 +157,7 @@ func TestAes256WithMetaDecoder(t *testing.T) {
 	assert.Equal(t, decoderTypeAes256WithMeta, decoder.Type())
 	assert.False(t, decoder.Skip())
 
-	cases := []struct {
+	tests := []struct {
 		Input     string
 		Token     define.Token
 		ErrPrefix string
@@ -206,16 +206,16 @@ func TestAes256WithMetaDecoder(t *testing.T) {
 		},
 	}
 
-	for _, c := range cases {
-		token, err := decoder.Decode(c.Input)
+	for _, tt := range tests {
+		token, err := decoder.Decode(tt.Input)
 		switch err {
 		case nil:
-			assert.Empty(t, c.ErrPrefix)
+			assert.Empty(t, tt.ErrPrefix)
 		default:
-			assert.True(t, strings.Contains(err.Error(), c.ErrPrefix))
+			assert.True(t, strings.Contains(err.Error(), tt.ErrPrefix))
 		}
 
-		assert.Equal(t, c.Token, token)
+		assert.Equal(t, tt.Token, token)
 	}
 }
 
@@ -240,7 +240,7 @@ func TestAes256WithMetaDecoderAndFixedBackup(t *testing.T) {
 		return *c
 	}
 
-	cases := []struct {
+	tests := []struct {
 		Input     string
 		Token     define.Token
 		ErrPrefix string
@@ -274,18 +274,18 @@ func TestAes256WithMetaDecoderAndFixedBackup(t *testing.T) {
 		},
 	}
 
-	for _, c := range cases {
-		token, err := c.Decoder.Decode(c.Input)
+	for _, tt := range tests {
+		token, err := tt.Decoder.Decode(tt.Input)
 		switch err {
 		case nil:
-			assert.Empty(t, c.ErrPrefix)
+			assert.Empty(t, tt.ErrPrefix)
 		default:
-			assert.True(t, strings.Contains(err.Error(), c.ErrPrefix))
+			assert.True(t, strings.Contains(err.Error(), tt.ErrPrefix))
 		}
 
-		assert.Len(t, c.Decoder.decoders, 2)
-		assert.Equal(t, c.Token, token)
-		assert.Equal(t, "aes256", c.Decoder.Type())
+		assert.Len(t, tt.Decoder.decoders, 2)
+		assert.Equal(t, tt.Token, token)
+		assert.Equal(t, "aes256", tt.Decoder.Type())
 	}
 }
 

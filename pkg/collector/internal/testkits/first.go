@@ -10,6 +10,7 @@
 package testkits
 
 import (
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -17,6 +18,11 @@ import (
 
 func FirstSpan(traces ptrace.Traces) ptrace.Span {
 	return traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+}
+
+func FirstSpanAttrs(a any) pcommon.Map {
+	traces := a.(ptrace.Traces)
+	return traces.ResourceSpans().At(0).Resource().Attributes()
 }
 
 func FirstGaugeDataPoint(metrics pmetric.Metrics) pmetric.NumberDataPoint {
@@ -39,6 +45,16 @@ func FirstMetric(metrics pmetric.Metrics) pmetric.Metric {
 	return metrics.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0)
 }
 
+func FirstMetricAttrs(a any) pcommon.Map {
+	metrics := a.(pmetric.Metrics)
+	return metrics.ResourceMetrics().At(0).Resource().Attributes()
+}
+
 func FirstLogRecord(logs plog.Logs) plog.LogRecord {
 	return logs.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0)
+}
+
+func FirstLogRecordAttrs(a any) pcommon.Map {
+	logs := a.(plog.Logs)
+	return logs.ResourceLogs().At(0).Resource().Attributes()
 }

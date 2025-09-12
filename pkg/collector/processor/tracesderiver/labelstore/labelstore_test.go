@@ -21,7 +21,7 @@ import (
 )
 
 func TestStorageMulti(t *testing.T) {
-	cases := []struct {
+	tests := []struct {
 		h   uint64
 		lbs map[string]string
 	}{
@@ -52,18 +52,18 @@ func TestStorageMulti(t *testing.T) {
 	}
 
 	storage := New()
-	for _, c := range cases {
-		storage.SetIf(c.h, c.lbs)
+	for _, tt := range tests {
+		storage.SetIf(tt.h, tt.lbs)
 	}
 
-	for _, c := range cases {
-		v, ok := storage.Get(c.h)
+	for _, tt := range tests {
+		v, ok := storage.Get(tt.h)
 		assert.True(t, ok)
-		assert.Equal(t, c.lbs, v)
+		assert.Equal(t, tt.lbs, v)
 	}
 
-	for _, c := range cases {
-		assert.True(t, storage.Exist(c.h))
+	for _, tt := range tests {
+		assert.True(t, storage.Exist(tt.h))
 	}
 	assert.False(t, storage.Exist(3))
 

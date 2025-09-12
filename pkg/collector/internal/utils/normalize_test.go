@@ -57,7 +57,7 @@ func TestNormalize(t *testing.T) {
 }
 
 func benchmarkIsNormalized(b *testing.B, f func(string) bool) {
-	cases := []struct {
+	tests := []struct {
 		input     string
 		validated bool
 	}{
@@ -76,10 +76,10 @@ func benchmarkIsNormalized(b *testing.B, f func(string) bool) {
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			for _, c := range cases {
-				ok := f(c.input)
-				if c.validated != ok {
-					b.Errorf("input=(%v), want '%v' but go '%v'", c.input, c.validated, ok)
+			for _, tt := range tests {
+				ok := f(tt.input)
+				if tt.validated != ok {
+					b.Errorf("input=(%v), want '%v' but go '%v'", tt.input, tt.validated, ok)
 				}
 			}
 		}

@@ -14,7 +14,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pcommon"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 )
+
+func MustProcess(t *testing.T, f processor.Processor, r define.Record) {
+	_, err := f.Process(&r)
+	assert.NoError(t, err)
+}
 
 func AssertAttrsFound(t *testing.T, attrs pcommon.Map, key string) {
 	assertAttrsKey(t, attrs, key, true)
@@ -29,22 +37,23 @@ func assertAttrsKey(t *testing.T, attrs pcommon.Map, key string, found bool) {
 	assert.Equal(t, ok, found)
 }
 
-func AssertAttrsFoundStringVal(t *testing.T, attrs pcommon.Map, key, val string) {
-	v, ok := attrs.Get(key)
-	assert.True(t, ok)
-	assert.Equal(t, val, v.StringVal())
-}
-
-func AssertAttrsStringVal(t *testing.T, attrs pcommon.Map, key, val string) {
-	var s string
-	v, ok := attrs.Get(key)
-	if ok {
-		s = v.AsString()
+func AssertAttrsStringKeyVal(t *testing.T, attrs pcommon.Map, kv ...string) {
+	if len(kv)%2 != 0 {
+		panic("kv must be even")
 	}
-	assert.Equal(t, val, s)
+
+	for i := 0; i < len(kv); i += 2 {
+		key, val := kv[i], kv[i+1]
+		v, ok := attrs.Get(key)
+		if ok {
+			assert.Equal(t, val, v.StringVal())
+		} else {
+			assert.Equal(t, val, "")
+		}
+	}
 }
 
-func AssertAttrsFoundIntVal(t *testing.T, attrs pcommon.Map, key string, val int) {
+func AssertAttrsIntVal(t *testing.T, attrs pcommon.Map, key string, val int) {
 	v, ok := attrs.Get(key)
 	assert.True(t, ok)
 	assert.Equal(t, int64(val), v.IntVal())

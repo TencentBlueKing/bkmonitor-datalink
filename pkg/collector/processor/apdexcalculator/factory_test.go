@@ -93,12 +93,11 @@ func testMetricsDimension(t *testing.T, data any, conf *Config, exist bool) {
 	assert.NoError(t, mapstructure.Decode(conf, &confMap))
 
 	factory, _ := NewFactory(confMap, nil)
-	record := &define.Record{
+	record := define.Record{
 		RecordType: define.RecordMetrics,
 		Data:       data,
 	}
-	_, err := factory.Process(record)
-	assert.NoError(t, err)
+	testkits.MustProcess(t, factory, record)
 
 	pdMetrics := record.Data.(pmetric.Metrics)
 	assert.Equal(t, 1, pdMetrics.MetricCount())

@@ -106,15 +106,14 @@ processor:
 		span.SetEndTimestamp(pcommon.Timestamp(3 * time.Second))
 		span.SetStartTimestamp(pcommon.Timestamp(1 * time.Second))
 
-		record := &define.Record{
+		record := define.Record{
 			RecordType: define.RecordTraces,
 			Data:       data,
 		}
-		_, err := factory.Process(record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 
 		span = testkits.FirstSpan(record.Data.(ptrace.Traces))
-		testkits.AssertAttrsFoundIntVal(t, span.Attributes(), "db.is_slow", 1)
+		testkits.AssertAttrsIntVal(t, span.Attributes(), "db.is_slow", 1)
 	})
 
 	t.Run("mysql normal query", func(t *testing.T) {
@@ -125,15 +124,14 @@ processor:
 		span.SetEndTimestamp(pcommon.Timestamp(1500 * time.Millisecond))
 		span.SetStartTimestamp(pcommon.Timestamp(1 * time.Second))
 
-		record := &define.Record{
+		record := define.Record{
 			RecordType: define.RecordTraces,
 			Data:       data,
 		}
-		_, err := factory.Process(record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 
 		span = testkits.FirstSpan(record.Data.(ptrace.Traces))
-		testkits.AssertAttrsFoundIntVal(t, span.Attributes(), "db.is_slow", 0)
+		testkits.AssertAttrsIntVal(t, span.Attributes(), "db.is_slow", 0)
 	})
 }
 
@@ -166,15 +164,14 @@ processor:
 		span.SetEndTimestamp(pcommon.Timestamp(10 * time.Second))
 		span.SetStartTimestamp(pcommon.Timestamp(1 * time.Second))
 
-		record := &define.Record{
+		record := define.Record{
 			RecordType: define.RecordTraces,
 			Data:       data,
 		}
-		_, err := factory.Process(record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 
 		span = testkits.FirstSpan(record.Data.(ptrace.Traces))
-		testkits.AssertAttrsFoundIntVal(t, span.Attributes(), "db.is_slow_or_else_name", 1)
+		testkits.AssertAttrsIntVal(t, span.Attributes(), "db.is_slow_or_else_name", 1)
 	})
 
 	t.Run("not db system", func(t *testing.T) {
@@ -182,12 +179,11 @@ processor:
 		span := testkits.FirstSpan(data)
 		span.Attributes().Remove(semconv.AttributeDBSystem)
 
-		record := &define.Record{
+		record := define.Record{
 			RecordType: define.RecordTraces,
 			Data:       data,
 		}
-		_, err := factory.Process(record)
-		assert.NoError(t, err)
+		testkits.MustProcess(t, factory, record)
 
 		span = testkits.FirstSpan(record.Data.(ptrace.Traces))
 		testkits.AssertAttrsNotFound(t, span.Attributes(), "db.is_slow_or_else_name")

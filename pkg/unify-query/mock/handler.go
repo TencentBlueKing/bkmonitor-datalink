@@ -224,10 +224,10 @@ func mockElasticSearchHandler(ctx context.Context) {
 		return w, err
 	}
 
-	mappings := `{"es_index":{"mappings":{"properties":{"a":{"type":"keyword"},"time":{"type":"date"},"b":{"type":"keyword"},"level":{"type":"keyword"},"group":{"type":"keyword"},"kibana_stats":{"properties":{"kibana":{"properties":{"name":{"type":"keyword"}}}}},"timestamp":{"type":"text"},"type":{"type":"keyword"},"dtEventTimeStamp":{"type":"date"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}},"events":{"type":"nested","properties":{"name":{"type":"keyword"}}}}}}}`
-	mappingResp := httpmock.NewStringResponder(http.StatusOK, mappings)
-	httpmock.RegisterResponder(http.MethodGet, bkBaseEsUrl+"/es_index/_mapping/", mappingResp)
-	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/es_index/_mapping/", mappingResp)
+	index := `{"es_index":{"settings":{"analysis":{"analyzer":{"my_custom_analyzer":{"type":"custom","tokenizer":"my_char_group_tokenizer","filter":["lowercase"]}},"tokenizer":{"my_char_group_tokenizer":{"type":"char_group","tokenize_on_chars":["-","\n"," "],"max_token_length":512}}}},"mappings":{"properties":{"a":{"type":"keyword"},"time":{"type":"date"},"b":{"type":"keyword"},"level":{"type":"keyword"},"group":{"type":"keyword"},"kibana_stats":{"properties":{"kibana":{"properties":{"name":{"type":"keyword"}}}}},"timestamp":{"type":"text"},"type":{"type":"keyword"},"dtEventTimeStamp":{"type":"date"},"user":{"type":"nested","properties":{"first":{"type":"keyword"},"last":{"type":"keyword"}}},"events":{"type":"nested","properties":{"name":{"type":"keyword"}}}}}}}`
+	indexResp := httpmock.NewStringResponder(http.StatusOK, index)
+	httpmock.RegisterResponder(http.MethodGet, bkBaseEsUrl+"/es_index", indexResp)
+	httpmock.RegisterResponder(http.MethodGet, EsUrl+"/es_index", indexResp)
 
 	httpmock.RegisterResponder(http.MethodPost, bkBaseEsUrl+"/es_index/_search", searchHandler)
 	httpmock.RegisterResponder(http.MethodPost, EsUrl+"/es_index/_search", searchHandler)

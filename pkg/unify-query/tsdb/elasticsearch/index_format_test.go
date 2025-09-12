@@ -10,6 +10,7 @@
 package elasticsearch
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,27 +22,64 @@ func TestIndexFormatFieldMap(t *testing.T) {
 		settings map[string]any
 		mappings map[string]any
 
-		fieldMap map[string]map[string]any
+		fieldMap string
 	}{
 		{
-			name: "test",
+			name: "test my_char_group_tokenizer",
 			settings: map[string]any{
-				"index": map[string]any{
-					"lifecycle": map[string]any{
-						"name": "test",
+				"analysis": map[string]any{
+					"analyzer": map[string]any{
+						"my_custom_analyzer": map[string]any{
+							"type":      "custom",
+							"tokenizer": "my_char_group_tokenizer",
+							"filter":    []string{"lowercase"},
+						},
+						"my_custom_analyzer_1": map[string]any{
+							"type":      "custom",
+							"tokenizer": "my_char_group_tokenizer_1",
+							"filter":    []string{"lowercase"},
+						},
+					},
+					"tokenizer": map[string]any{
+						"my_char_group_tokenizer": map[string]any{
+							"type":              "char_group",
+							"tokenize_on_chars": []string{"-", "\n", " "},
+							"max_token_length":  512,
+						},
+						"my_char_group_tokenizer_1": map[string]any{
+							"type":              "char_group",
+							"tokenize_on_chars": []string{"-"},
+							"max_token_length":  512,
+						},
 					},
 				},
 			},
 			mappings: map[string]any{
 				"properties": map[string]any{
-					"timestamp": map[string]any{
-						"type": "date",
+					"log_message": map[string]any{
+						"type":     "text",
+						"analyzer": "my_custom_analyzer",
+						"fields": map[string]any{
+							"raw": map[string]any{
+								"type": "keyword",
+							},
+						},
 					},
 					"value": map[string]any{
 						"type": "double",
 					},
+					"event": map[string]any{
+						"type": "nested",
+					},
+					"event.name": map[string]any{
+						"type":       "text",
+						"doc_values": true,
+						"normalizer": true,
+						"analyzer":   "my_custom_analyzer_1",
+					},
 				},
 			},
+			fieldMap: `{"event":{"field_name":"event","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":""},"event.name":{"field_name":"event.name","field_type":"text","is_agg":true,"is_analyzed":true,"is_case_sensitive":true,"origin_field":"event","tokenize_on_chars":["-"]},"log_message":{"field_name":"log_message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log_message","tokenize_on_chars":["-","\n"," "]},"value":{"field_name":"value","field_type":"double","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"value","tokenize_on_chars":""}}`,
 		},
 	}
 
@@ -51,7 +89,10 @@ func TestIndexFormatFieldMap(t *testing.T) {
 			iof.Parse(c.settings, c.mappings)
 
 			fieldMap := iof.FieldMap()
-			assert.Equal(t, c.fieldMap, fieldMap)
+
+			actual, _ := json.Marshal(fieldMap)
+
+			assert.Equal(t, c.fieldMap, string(actual))
 		})
 	}
 }

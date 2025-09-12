@@ -33,18 +33,28 @@ func (f *IndexOptionFormat) FieldMap() map[string]map[string]any {
 }
 
 func (f *IndexOptionFormat) Parse(settings, mappings map[string]any) {
-	// 解析 settings 里面的 analysis
-	for _, s := range settings {
-		if setting, ok := s.(map[string]any); ok && setting["analysis"] != nil {
-			if analysis, ok := setting["analysis"].(map[string]any); ok {
-				for k, v := range analysis {
-					// 已经解析过了
-					if _, ok := f.analyzer[k]; ok {
-						continue
-					}
+	if f.analyzer == nil {
+		f.analyzer = make(map[string]map[string]any)
+	}
+	if f.fieldMap == nil {
+		f.fieldMap = make(map[string]map[string]any)
+	}
 
-					if d, ok := v.(map[string]any); ok {
-						f.analyzer[k] = d
+	// 解析 settings 里面的 analysis
+	if analysis, ok := settings["analysis"].(map[string]any); ok {
+		tokenizer, _ := analysis["tokenizer"].(map[string]any)
+		analyzer, _ := analysis["analyzer"].(map[string]any)
+
+		for k, v := range analyzer {
+			if nv, ok := v.(map[string]any); ok {
+				f.analyzer[k] = nv
+				if ck, ok := nv["tokenizer"].(string); ok && ck != "" {
+					if cv, ok := tokenizer[ck]; ok {
+						if ncv, ok := cv.(map[string]any); ok {
+							for tk, tv := range ncv {
+								f.analyzer[k][tk] = tv
+							}
+						}
 					}
 				}
 			}
@@ -85,10 +95,6 @@ func (f *IndexOptionFormat) mapMappings(prefix string, data map[string]any) {
 	if prefix != "" {
 		if _, ok := f.fieldMap[prefix]; ok {
 			return
-		}
-
-		if f.fieldMap == nil {
-			f.fieldMap = make(map[string]map[string]any)
 		}
 
 		fm := f.esToFieldMap(prefix, data)
@@ -137,7 +143,10 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) map[stri
 	}
 
 	if name, ok := data["analyzer"].(string); ok {
-		fieldMap["tokenize_on_chars"] = f.analyzer[name]["tokenize_on_chars"]
+		analyzer := f.analyzer[name]
+		if analyzer != nil {
+			fieldMap["tokenize_on_chars"] = analyzer["tokenize_on_chars"]
+		}
 	}
 
 	return fieldMap

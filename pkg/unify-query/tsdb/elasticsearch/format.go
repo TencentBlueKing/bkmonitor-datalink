@@ -320,7 +320,7 @@ func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
 }
 
 func (f *FormatFactory) GetFieldType(k string) string {
-	if v, ok := f.fieldMap[k]["type"].(string); ok {
+	if v, ok := f.fieldMap[k]["field_type"].(string); ok {
 		return v
 	}
 

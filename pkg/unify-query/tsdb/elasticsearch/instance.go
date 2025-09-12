@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -176,9 +177,14 @@ func (i *Instance) fieldMap(ctx context.Context, conn Connect, indexes ...string
 		return nil, fmt.Errorf("query indexes is empty")
 	}
 
+	sort.Strings(indexes)
+
 	iof := &IndexOptionFormat{}
-	for _, in := range indices {
-		iof.Parse(in.Settings, in.Mappings)
+	// 按照时间倒序排列
+	for idx := len(indexes) - 1; idx >= 0; idx-- {
+		if in, ok := indices[indexes[idx]]; ok && in != nil {
+			iof.Parse(in.Settings, in.Mappings)
+		}
 	}
 
 	return iof.FieldMap(), nil

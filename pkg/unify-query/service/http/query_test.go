@@ -4001,10 +4001,10 @@ func TestMultiRouteQuerySortingIssues(t *testing.T) {
 	const EsUrlDomain = "http://127.0.0.1:93002"
 
 	route1Mappings := `{"route1":{"mappings":{"properties":{"dtEventTimeStamp":{"type":"date"},"gseIndex":{"type":"long"},"iterationIndex":{"type":"long"},"__data_label":{"type":"keyword"},"log":{"type":"text"}}}}}`
-	httpmock.RegisterResponder(http.MethodGet, EsUrlDomain+"/route1/_mapping/", httpmock.NewStringResponder(http.StatusOK, route1Mappings))
+	httpmock.RegisterResponder(http.MethodGet, EsUrlDomain+"/route1", httpmock.NewStringResponder(http.StatusOK, route1Mappings))
 
 	route2Mappings := `{"route2":{"mappings":{"properties":{"dtEventTimeStamp":{"type":"date"},"gseIndex":{"type":"long"},"iterationIndex":{"type":"long"},"__data_label":{"type":"keyword"},"log":{"type":"text"}}}}}`
-	httpmock.RegisterResponder(http.MethodGet, EsUrlDomain+"/route2/_mapping/", httpmock.NewStringResponder(http.StatusOK, route2Mappings))
+	httpmock.RegisterResponder(http.MethodGet, EsUrlDomain+"/route2", httpmock.NewStringResponder(http.StatusOK, route2Mappings))
 
 	route1SearchResponse := `{
 		"took": 5,

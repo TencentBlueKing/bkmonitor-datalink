@@ -656,6 +656,7 @@ func TestFormatFactory_Query(t *testing.T) {
 func TestFormatFactory_WithMapping(t *testing.T) {
 	testCases := []struct {
 		name     string
+		settings map[string]any
 		mappings []map[string]any
 		expected string
 	}{
@@ -705,6 +706,81 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 		},
 		{
 			name: "analyzer",
+			settings: map[string]any{
+				"analysis": map[string]any{
+					"analyzer": map[string]any{
+						"my_custom_analyzer": map[string]any{
+							"type":      "custom",
+							"tokenizer": "my_char_group_tokenizer",
+							"filter":    []string{"lowercase"},
+						},
+						"my_custom_analyzer_1": map[string]any{
+							"type":      "custom",
+							"tokenizer": "my_char_group_tokenizer_1",
+							"filter":    []string{"lowercase"},
+						},
+					},
+					"tokenizer": map[string]any{
+						"my_char_group_tokenizer": map[string]any{
+							"type":              "char_group",
+							"tokenize_on_chars": []string{"-", "\n", " "},
+							"max_token_length":  512,
+						},
+						"my_char_group_tokenizer_1": map[string]any{
+							"type":              "char_group",
+							"tokenize_on_chars": []string{"-"},
+							"max_token_length":  512,
+						},
+					},
+				},
+			},
+			mappings: []map[string]any{
+				{
+					"properties": map[string]any{
+						"log_message": map[string]any{
+							"type":     "text",
+							"analyzer": "my_custom_analyzer",
+							"fields": map[string]any{
+								"raw": map[string]any{
+									"type": "keyword",
+								},
+							},
+						},
+						"value": map[string]any{
+							"type": "double",
+						},
+						"event": map[string]any{
+							"type": "nested",
+						},
+					},
+				},
+				{
+					"properties": map[string]any{
+						"log_message": map[string]any{
+							"type":     "text",
+							"analyzer": "my_custom_analyzer",
+							"fields": map[string]any{
+								"raw": map[string]any{
+									"type": "keyword",
+								},
+							},
+						},
+						"value": map[string]any{
+							"type": "text",
+						},
+						"event": map[string]any{
+							"type": "nested",
+						},
+						"event.name": map[string]any{
+							"type":       "text",
+							"doc_values": true,
+							"normalizer": true,
+							"analyzer":   "my_custom_analyzer_1",
+						},
+					},
+				},
+			},
+			expected: `{"event":{"field_name":"event","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":""},"event.name":{"field_name":"event.name","field_type":"text","is_agg":true,"is_analyzed":true,"is_case_sensitive":true,"origin_field":"event","tokenize_on_chars":["-"]},"log_message":{"field_name":"log_message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log_message","tokenize_on_chars":["-","\n"," "]},"value":{"field_name":"value","field_type":"double","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"value","tokenize_on_chars":""}}`,
 		},
 	}
 
@@ -712,7 +788,7 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			iof := &IndexOptionFormat{}
 			for _, mapping := range tc.mappings {
-				iof.Parse(nil, mapping)
+				iof.Parse(tc.settings, mapping)
 			}
 
 			actual, _ := json.Marshal(iof.FieldMap())

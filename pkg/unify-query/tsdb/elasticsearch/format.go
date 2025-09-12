@@ -24,6 +24,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -175,6 +176,8 @@ type FormatFactory struct {
 
 	mapping map[string]string
 
+	luceneParser *lucene_parser.Parser
+
 	data map[string]any
 
 	aggInfoList aggInfoList
@@ -206,7 +209,6 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 			return k
 		},
 	}
-
 	return f
 }
 
@@ -357,6 +359,10 @@ func (f *FormatFactory) WithMappings(mappings ...map[string]any) *FormatFactory 
 			}
 		}
 	}
+	f.luceneParser = lucene_parser.NewParser(
+		lucene_parser.WithMapping(f.mapping),
+		lucene_parser.WithAliasFunc(f.decode),
+	)
 	return f
 }
 

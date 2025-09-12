@@ -97,7 +97,7 @@ const docTemplate = `{
                         "in": "header"
                     },
                     {
-                        "description": "json data",
+						"description": "json data",
                         "name": "data",
                         "in": "body",
                         "required": true,

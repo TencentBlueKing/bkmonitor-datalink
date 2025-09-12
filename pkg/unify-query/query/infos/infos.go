@@ -39,6 +39,7 @@ const (
 	FieldKeys  InfoType = "field_keys"
 	Series     InfoType = "series"
 	TimeSeries InfoType = "time_series"
+	FieldMap   InfoType = "field_map"
 )
 
 // Params

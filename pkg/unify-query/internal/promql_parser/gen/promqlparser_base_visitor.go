@@ -7,142 +7,142 @@ type BasePromQLParserVisitor struct {
 	*antlr.BaseParseTreeVisitor
 }
 
-func (v *BasePromQLParserVisitor) VisitExpression(ctx *ExpressionContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitExpression(ctx *ExpressionContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitVectorOperation(ctx *VectorOperationContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitVectorOperation(ctx *VectorOperationContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitUnaryOp(ctx *UnaryOpContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitUnaryOp(ctx *UnaryOpContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitPowOp(ctx *PowOpContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitPowOp(ctx *PowOpContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitMultOp(ctx *MultOpContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitMultOp(ctx *MultOpContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitAddOp(ctx *AddOpContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitAddOp(ctx *AddOpContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitCompareOp(ctx *CompareOpContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitCompareOp(ctx *CompareOpContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitAndUnlessOp(ctx *AndUnlessOpContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitAndUnlessOp(ctx *AndUnlessOpContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitOrOp(ctx *OrOpContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitOrOp(ctx *OrOpContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitVectorMatchOp(ctx *VectorMatchOpContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitVectorMatchOp(ctx *VectorMatchOpContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitSubqueryOp(ctx *SubqueryOpContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitSubqueryOp(ctx *SubqueryOpContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitOffsetOp(ctx *OffsetOpContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitOffsetOp(ctx *OffsetOpContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitVector(ctx *VectorContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitVector(ctx *VectorContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitParens(ctx *ParensContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitParens(ctx *ParensContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitInstantSelector(ctx *InstantSelectorContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitInstantSelector(ctx *InstantSelectorContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitLabelMatcher(ctx *LabelMatcherContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitLabelMatcher(ctx *LabelMatcherContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitLabelMatcherOperator(ctx *LabelMatcherOperatorContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitLabelMatcherOperator(ctx *LabelMatcherOperatorContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitLabelMatcherList(ctx *LabelMatcherListContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitLabelMatcherList(ctx *LabelMatcherListContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitMatrixSelector(ctx *MatrixSelectorContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitMatrixSelector(ctx *MatrixSelectorContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitOffset(ctx *OffsetContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitOffset(ctx *OffsetContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitFunction_(ctx *Function_Context) interface{} {
+func (v *BasePromQLParserVisitor) VisitFunction_(ctx *Function_Context) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitParameter(ctx *ParameterContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitParameter(ctx *ParameterContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitParameterList(ctx *ParameterListContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitParameterList(ctx *ParameterListContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitAggregation(ctx *AggregationContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitAggregation(ctx *AggregationContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitBy(ctx *ByContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitBy(ctx *ByContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitWithout(ctx *WithoutContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitWithout(ctx *WithoutContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitGrouping(ctx *GroupingContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitGrouping(ctx *GroupingContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitOn_(ctx *On_Context) interface{} {
+func (v *BasePromQLParserVisitor) VisitOn_(ctx *On_Context) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitIgnoring(ctx *IgnoringContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitIgnoring(ctx *IgnoringContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitGroupLeft(ctx *GroupLeftContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitGroupLeft(ctx *GroupLeftContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitGroupRight(ctx *GroupRightContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitGroupRight(ctx *GroupRightContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitLabelName(ctx *LabelNameContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitLabelName(ctx *LabelNameContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitLabelNameList(ctx *LabelNameListContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitLabelNameList(ctx *LabelNameListContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitKeyword(ctx *KeywordContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitKeyword(ctx *KeywordContext) any {
 	return v.VisitChildren(ctx)
 }
 
-func (v *BasePromQLParserVisitor) VisitLiteral(ctx *LiteralContext) interface{} {
+func (v *BasePromQLParserVisitor) VisitLiteral(ctx *LiteralContext) any {
 	return v.VisitChildren(ctx)
 }

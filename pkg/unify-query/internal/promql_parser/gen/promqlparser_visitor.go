@@ -8,107 +8,107 @@ type PromQLParserVisitor interface {
 	antlr.ParseTreeVisitor
 
 	// VisitChildren a parse tree produced by PromQLParser#expression.
-	VisitExpression(ctx *ExpressionContext) interface{}
+	VisitExpression(ctx *ExpressionContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#vectorOperation.
-	VisitVectorOperation(ctx *VectorOperationContext) interface{}
+	VisitVectorOperation(ctx *VectorOperationContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#unaryOp.
-	VisitUnaryOp(ctx *UnaryOpContext) interface{}
+	VisitUnaryOp(ctx *UnaryOpContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#powOp.
-	VisitPowOp(ctx *PowOpContext) interface{}
+	VisitPowOp(ctx *PowOpContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#multOp.
-	VisitMultOp(ctx *MultOpContext) interface{}
+	VisitMultOp(ctx *MultOpContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#addOp.
-	VisitAddOp(ctx *AddOpContext) interface{}
+	VisitAddOp(ctx *AddOpContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#compareOp.
-	VisitCompareOp(ctx *CompareOpContext) interface{}
+	VisitCompareOp(ctx *CompareOpContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#andUnlessOp.
-	VisitAndUnlessOp(ctx *AndUnlessOpContext) interface{}
+	VisitAndUnlessOp(ctx *AndUnlessOpContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#orOp.
-	VisitOrOp(ctx *OrOpContext) interface{}
+	VisitOrOp(ctx *OrOpContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#vectorMatchOp.
-	VisitVectorMatchOp(ctx *VectorMatchOpContext) interface{}
+	VisitVectorMatchOp(ctx *VectorMatchOpContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#subqueryOp.
-	VisitSubqueryOp(ctx *SubqueryOpContext) interface{}
+	VisitSubqueryOp(ctx *SubqueryOpContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#offsetOp.
-	VisitOffsetOp(ctx *OffsetOpContext) interface{}
+	VisitOffsetOp(ctx *OffsetOpContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#vector.
-	VisitVector(ctx *VectorContext) interface{}
+	VisitVector(ctx *VectorContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#parens.
-	VisitParens(ctx *ParensContext) interface{}
+	VisitParens(ctx *ParensContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#instantSelector.
-	VisitInstantSelector(ctx *InstantSelectorContext) interface{}
+	VisitInstantSelector(ctx *InstantSelectorContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#labelMatcher.
-	VisitLabelMatcher(ctx *LabelMatcherContext) interface{}
+	VisitLabelMatcher(ctx *LabelMatcherContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#labelMatcherOperator.
-	VisitLabelMatcherOperator(ctx *LabelMatcherOperatorContext) interface{}
+	VisitLabelMatcherOperator(ctx *LabelMatcherOperatorContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#labelMatcherList.
-	VisitLabelMatcherList(ctx *LabelMatcherListContext) interface{}
+	VisitLabelMatcherList(ctx *LabelMatcherListContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#matrixSelector.
-	VisitMatrixSelector(ctx *MatrixSelectorContext) interface{}
+	VisitMatrixSelector(ctx *MatrixSelectorContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#offset.
-	VisitOffset(ctx *OffsetContext) interface{}
+	VisitOffset(ctx *OffsetContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#function_.
-	VisitFunction_(ctx *Function_Context) interface{}
+	VisitFunction_(ctx *Function_Context) any
 
 	// VisitChildren a parse tree produced by PromQLParser#parameter.
-	VisitParameter(ctx *ParameterContext) interface{}
+	VisitParameter(ctx *ParameterContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#parameterList.
-	VisitParameterList(ctx *ParameterListContext) interface{}
+	VisitParameterList(ctx *ParameterListContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#aggregation.
-	VisitAggregation(ctx *AggregationContext) interface{}
+	VisitAggregation(ctx *AggregationContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#by.
-	VisitBy(ctx *ByContext) interface{}
+	VisitBy(ctx *ByContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#without.
-	VisitWithout(ctx *WithoutContext) interface{}
+	VisitWithout(ctx *WithoutContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#grouping.
-	VisitGrouping(ctx *GroupingContext) interface{}
+	VisitGrouping(ctx *GroupingContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#on_.
-	VisitOn_(ctx *On_Context) interface{}
+	VisitOn_(ctx *On_Context) any
 
 	// VisitChildren a parse tree produced by PromQLParser#ignoring.
-	VisitIgnoring(ctx *IgnoringContext) interface{}
+	VisitIgnoring(ctx *IgnoringContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#groupLeft.
-	VisitGroupLeft(ctx *GroupLeftContext) interface{}
+	VisitGroupLeft(ctx *GroupLeftContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#groupRight.
-	VisitGroupRight(ctx *GroupRightContext) interface{}
+	VisitGroupRight(ctx *GroupRightContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#labelName.
-	VisitLabelName(ctx *LabelNameContext) interface{}
+	VisitLabelName(ctx *LabelNameContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#labelNameList.
-	VisitLabelNameList(ctx *LabelNameListContext) interface{}
+	VisitLabelNameList(ctx *LabelNameListContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#keyword.
-	VisitKeyword(ctx *KeywordContext) interface{}
+	VisitKeyword(ctx *KeywordContext) any
 
 	// VisitChildren a parse tree produced by PromQLParser#literal.
-	VisitLiteral(ctx *LiteralContext) interface{}
+	VisitLiteral(ctx *LiteralContext) any
 }

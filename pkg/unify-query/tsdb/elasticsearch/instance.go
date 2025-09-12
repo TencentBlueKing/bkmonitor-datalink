@@ -148,48 +148,54 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 	return ""
 }
 
-func (i *Instance) getMappings(ctx context.Context, conn Connect, aliases []string) ([]map[string]any, error) {
+// fieldMap 获取es索引的字段映射
+func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (map[string]map[string]any, error) {
+	if len(aliases) == 0 {
+		return nil, fmt.Errorf("query indexes is empty")
+	}
+
 	var err error
-
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-get-mapping")
-	defer span.End(&err)
-
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("get mapping error: %s", r)
 		}
 		span.End(&err)
 	}()
-
-	span.Set("alias", aliases)
-	client, err := i.getClient(ctx, conn)
+	span.Set("aliases", aliases)
+	cli, err := i.getClient(ctx, i.connect)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get client error: %w", err)
 	}
-	defer client.Stop()
+	defer cli.Stop()
 
-	mappingMap, err := client.GetMapping().Index(aliases...).Type("").Do(ctx)
+	indices, err := cli.IndexGet(aliases...).Do(ctx)
 	if err != nil {
-		log.Warnf(ctx, "get mapping error: %s", err.Error())
-		return nil, err
+		return nil, fmt.Errorf("index get error: %w", err)
+	}
+	if len(indices) == 0 {
+		return nil, fmt.Errorf("query indexes is empty")
 	}
 
-	indexes := make([]string, 0, len(mappingMap))
-	for index := range mappingMap {
-		indexes = append(indexes, index)
+	span.Set("indices-length", len(indices))
+
+	indexes := make([]string, 0)
+	for k := range indices {
+		indexes = append(indexes, k)
 	}
-	// 按照正序排列，最新的覆盖老的
+
 	sort.Strings(indexes)
-	span.Set("indexes", indexes)
 
-	mappings := make([]map[string]any, 0, len(mappingMap))
-	for _, index := range indexes {
-		if mapping, ok := mappingMap[index].(map[string]any)["mappings"].(map[string]any); ok {
-			mappings = append(mappings, mapping)
+	iof := NewIndexOptionFormat(fieldAlias)
+	// 按照时间倒序排列
+	for idx := len(indexes) - 1; idx >= 0; idx-- {
+		if in, ok := indices[indexes[idx]]; ok && in != nil {
+			iof.Parse(in.Settings, in.Mappings)
 		}
 	}
 
-	return mappings, nil
+	span.Set("field-map-length", len(iof.FieldMap()))
+	return iof.FieldMap(), nil
 }
 
 func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
@@ -490,6 +496,37 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 	return newAliases, nil
 }
 
+// QueryFieldMap 查询字段映射
+func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]map[string]any, error) {
+	var err error
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("es query error: %s", r)
+		}
+	}()
+
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-field-map")
+	defer span.End(&err)
+
+	if query.DB == "" {
+		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
+		return nil, err
+	}
+
+	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
+	if err != nil {
+		return nil, err
+	}
+	span.Set("aliases", aliases)
+
+	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
+	if err != nil {
+		return nil, err
+	}
+
+	return fieldMap, nil
+}
+
 // QueryRawData 直接查询原始返回
 func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (size int64, total int64, option *metadata.ResultTableOption, err error) {
 	defer func() {
@@ -525,12 +562,12 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		conn:    i.connect,
 	}
 
-	mappings, mappingErr := i.getMappings(ctx, qo.conn, aliases)
-	if len(mappings) == 0 {
-		log.Warnf(ctx, "index is empty with %v with %s error %s", aliases, qo.conn.String(), mappingErr)
+	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
+	if err != nil {
+		log.Warnf(ctx, "index is empty with %v with %s error %s", aliases, qo.conn.String(), err)
 		return size, total, option, err
 	}
-	span.Set("mapping-length", len(mappings))
+	span.Set("field-map-length", len(fieldMap))
 
 	if i.maxSize > 0 && query.Size > i.maxSize {
 		query.Size = i.maxSize
@@ -584,7 +621,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		).
 		WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 		WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, query.Size).
-		WithMappings(mappings...).
+		WithFieldMap(fieldMap).
 		WithOrders(query.Orders).
 		WithIncludeValues(queryLabelMaps)
 
@@ -722,13 +759,12 @@ func (i *Instance) QuerySeriesSet(
 		query:   query,
 		conn:    i.connect,
 	}
-	mappings, errMapping := i.getMappings(ctx, qo.conn, qo.indexes)
-	// index 不存在，mappings 获取异常直接返回空
-	if len(mappings) == 0 {
-		log.Warnf(ctx, "index is empty with %v with %s error %v", qo.indexes, qo.conn.String(), errMapping)
+	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
+	if err != nil {
+		log.Warnf(ctx, "index is empty with %v with %s error %s", aliases, qo.conn.String(), err)
 		return storage.EmptySeriesSet()
 	}
-	span.Set("mapping-length", len(mappings))
+	span.Set("field-map-length", len(fieldMap))
 
 	var size int
 	if query.Size > 0 && query.Size < i.maxSize {
@@ -780,7 +816,7 @@ func (i *Instance) QuerySeriesSet(
 		WithIncludeValues(queryLabelMap).
 		WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 		WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
-		WithMappings(mappings...).
+		WithFieldMap(fieldMap).
 		WithOrders(query.Orders)
 
 	if len(query.Aggregates) == 0 {

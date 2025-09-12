@@ -36,7 +36,7 @@ swag:
 	swag init --parseDependency true --parseInternal true
 
 .PHONY: fmt
-fmt: imports
+fmt:
 	gofmt -r 'interface{} -> any' -w .
 	gofumpt -w .
 
@@ -45,7 +45,7 @@ lint: fmt
 	golangci-lint run -c ${ROOTPATH}/.golangci.yml
 
 .PHONY: addlicense
-addlicense:
+addlicense: fmt
 	find ./ -type f \( -iname \*.go -o -iname \*.py -iname \*.sh \) | xargs addlicense -v -f ../../scripts/license.txt -ignore vendor/*
 
 .PHONY: imports

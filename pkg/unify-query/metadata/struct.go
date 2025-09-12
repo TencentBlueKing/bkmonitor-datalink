@@ -562,9 +562,18 @@ func (os Orders) SortSliceList(list []map[string]any, fieldType map[string]strin
 	})
 }
 
-func (fa FieldAlias) Alias(f string) string {
+func (fa FieldAlias) OriginField(f string) string {
 	if v, ok := fa[f]; ok {
 		return v
 	}
-	return f
+	return ""
+}
+
+func (fa FieldAlias) AliasName(f string) string {
+	for k, v := range fa {
+		if v == f {
+			return k
+		}
+	}
+	return ""
 }

@@ -79,6 +79,10 @@ func registerDefaultHandlers(ctx context.Context, g *gin.RouterGroup) {
 	handlerPath = viper.GetString(TSQueryLabelValuesPathConfigPath)
 	registerHandler.Register(http.MethodGet, handlerPath, HandlerLabelValues)
 
+	// query/ts/info/field_map
+	handlerPath = path.Join(infoPath, string(infos.FieldMap))
+	registerHandler.Register(http.MethodPost, handlerPath, HandlerFieldMap)
+
 	// query/ts/cluster_metrics/
 	handlerPath = viper.GetString(TSQueryClusterMetricsPathConfigPath)
 	registerHandler.Register(http.MethodPost, handlerPath, HandlerQueryTsClusterMetrics)

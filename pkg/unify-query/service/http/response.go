@@ -72,3 +72,9 @@ type ListData struct {
 	Status             *metadata.Status            `json:"status,omitempty" json:"status,omitempty"`
 	ResultTableOptions metadata.ResultTableOptions `json:"result_table_options,omitempty"`
 }
+
+// DataResponse 返回数据结构体
+type DataResponse struct {
+	Data    any    `json:"data"`
+	TraceID string `json:"trace_id,omitempty"`
+}

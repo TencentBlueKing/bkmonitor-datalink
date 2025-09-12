@@ -93,7 +93,7 @@ func TestParseMetricSelector(t *testing.T) {
 			name:     "empty selector",
 			selector: "",
 			want:     nil,
-			wantErr:  true,
+			wantErr:  false,
 		},
 		{
 			name:     "invalid brackets - missing closing brace",

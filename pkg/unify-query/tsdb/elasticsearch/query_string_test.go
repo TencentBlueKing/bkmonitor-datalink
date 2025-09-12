@@ -12,7 +12,6 @@ package elasticsearch
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"testing"
 
@@ -137,8 +136,7 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        "ms: \u003e500 AND \"/fs-server\" AND NOT \"heartbeat\"",
-			expected: `{"bool":{"must":[{"term":{"ms":500}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"/fs-server\""}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"heartbeat\""}}}}]}}`,
-			err:      errors.New(`parse lucene query (ms: >500 AND "/fs-server" AND NOT "heartbeat") error: syntax error: extraneous input '>' expecting {'(', QUOTED, NUMBER, TERM, REGEXPTERM, '[', '{'}`),
+			expected: `{"bool":{"must":[{"range":{"ms":{"from":500,"include_lower":false,"include_upper":true,"to":null}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"/fs-server\""}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"heartbeat\""}}}}]}}`,
 		},
 		{
 			q:        `events.attributes.message.detail: "*66036*"`,

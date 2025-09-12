@@ -90,11 +90,26 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			input: "__ext.container_name: value",
 			want:  "CAST(__ext['container_name'] AS STRING) = 'value'",
 		},
-		//{
-		//	name:  "start",
-		//	input: "a: >100",
-		//	want:  "`a` > 100",
-		//},
+		{
+			name:  "start",
+			input: "a: >100",
+			want:  "`a` > 100",
+		},
+		{
+			name:  "start-2",
+			input: "a:>=100",
+			want:  "`a` >= 100",
+		},
+		{
+			name:  "end",
+			input: "a: <100",
+			want:  "`a` < 100",
+		},
+		{
+			name:  "end-2",
+			input: "a:<=100",
+			want:  "`a` <= 100",
+		},
 	}
 
 	for _, tt := range tests {

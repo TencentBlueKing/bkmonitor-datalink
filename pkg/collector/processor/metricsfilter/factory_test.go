@@ -391,6 +391,13 @@ processor:
                  action: "upsert"
                  label: "code_type"
                  value: "noprefix"
+          - name: "my.server;my.service4;my.method4"
+            codes: 
+            - rule: "err_5003"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "fatal"
 `
 	)
 
@@ -436,6 +443,20 @@ processor:
 				},
 			},
 			wantValue: "normal",
+		},
+		{
+			name: "rule err_5003",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				attrs: map[string]string{
+					"callee_server":  "my.server",
+					"callee_service": "my.service4",
+					"callee_method":  "my.method4",
+					"service_name":   "my.service.name",
+					"code":           "err_5003",
+				},
+			},
+			wantValue: "fatal",
 		},
 		{
 			name: "missing callee_service",

@@ -78,12 +78,12 @@ processor:
 	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
-func makeMetricsGenerator(n int) *generator.MetricsGenerator {
+func makeMetricsRecord(n int) pmetric.Metrics {
 	opts := define.MetricsOptions{
 		MetricName: "my_metrics",
 		GaugeCount: n,
 	}
-	return generator.NewMetricsGenerator(opts)
+	return generator.NewMetricsGenerator(opts).Generate()
 }
 
 func makeMetricsGeneratorWithAttrs(name string, n int, attrs map[string]string) *generator.MetricsGenerator {
@@ -98,11 +98,9 @@ func makeMetricsGeneratorWithAttrs(name string, n int, attrs map[string]string) 
 }
 
 func TestMetricsNoAction(t *testing.T) {
-	g := makeMetricsGenerator(1)
-	data := g.Generate()
 	record := define.Record{
 		RecordType: define.RecordMetrics,
-		Data:       data,
+		Data:       makeMetricsRecord(1),
 	}
 
 	metrics := record.Data.(pmetric.Metrics)
@@ -123,16 +121,12 @@ processor:
 `
 	factory := processor.MustCreateFactory(content, NewFactory)
 
-	g := makeMetricsGenerator(1)
-	data := g.Generate()
 	record := define.Record{
 		RecordType: define.RecordMetrics,
-		Data:       data,
+		Data:       makeMetricsRecord(1),
 	}
 
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
-
+	testkits.MustProcess(t, factory, record)
 	metrics := record.Data.(pmetric.Metrics).ResourceMetrics()
 	assert.Equal(t, 0, metrics.Len())
 }
@@ -148,16 +142,12 @@ processor:
 `
 	factory := processor.MustCreateFactory(content, NewFactory)
 
-	g := makeMetricsGenerator(1)
-	data := g.Generate()
 	record := define.Record{
 		RecordType: define.RecordMetrics,
-		Data:       data,
+		Data:       makeMetricsRecord(1),
 	}
 
-	_, err := factory.Process(&record)
-	assert.NoError(t, err)
-
+	testkits.MustProcess(t, factory, record)
 	metrics := record.Data.(pmetric.Metrics)
 	assert.Equal(t, 1, metrics.ResourceMetrics().Len())
 
@@ -206,12 +196,10 @@ func testRelabelBasedFactory(t *testing.T, content string, tests []relabelBasedC
 				Data:       g.Generate(),
 			}
 
-			_, err := factory.Process(&record)
-			assert.NoError(t, err)
-
+			testkits.MustProcess(t, factory, record)
 			metrics := record.Data.(pmetric.Metrics)
 			foreach.MetricsSliceDataPointsAttrs(metrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
-				testkits.AssertAttrsStringVal(t, attrs, "code_type", tt.wantValue)
+				testkits.AssertAttrsStringKeyVal(t, attrs, "code_type", tt.wantValue)
 			})
 		})
 
@@ -222,9 +210,7 @@ func testRelabelBasedFactory(t *testing.T, content string, tests []relabelBasedC
 				Data:       &rwData,
 			}
 
-			_, err := factory.Process(&record)
-			assert.NoError(t, err)
-
+			testkits.MustProcess(t, factory, record)
 			tss := record.Data.(*define.RemoteWriteData).Timeseries
 			for _, ts := range tss {
 				labels := makeLabelMap(ts.GetLabels())
@@ -405,6 +391,13 @@ processor:
                  action: "upsert"
                  label: "code_type"
                  value: "noprefix"
+          - name: "my.server;my.service4;my.method4"
+            codes: 
+            - rule: "err_5003"
+              target:
+                 action: "upsert"
+                 label: "code_type"
+                 value: "fatal"
 `
 	)
 
@@ -450,6 +443,20 @@ processor:
 				},
 			},
 			wantValue: "normal",
+		},
+		{
+			name: "rule err_5003",
+			args: relabelBasedArgs{
+				metric: "rpc_client_handled_total",
+				attrs: map[string]string{
+					"callee_server":  "my.server",
+					"callee_service": "my.service4",
+					"callee_method":  "my.method4",
+					"service_name":   "my.service.name",
+					"code":           "err_5003",
+				},
+			},
+			wantValue: "fatal",
 		},
 		{
 			name: "missing callee_service",

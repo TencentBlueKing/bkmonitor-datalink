@@ -74,9 +74,11 @@ func TestOperator(t *testing.T) {
 		for n := 0; n < dataPoints.Len(); n++ {
 			dp := dataPoints.At(n)
 			attrs := dp.Attributes()
-			testkits.AssertAttrsFoundStringVal(t, attrs, "http.uri", "/api/v1/healthz")
-			testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "echo")
-			testkits.AssertAttrsFoundStringVal(t, attrs, "kind", "3")
+			testkits.AssertAttrsStringKeyVal(t, attrs,
+				"http.uri", "/api/v1/healthz",
+				"service.name", "echo",
+				"kind", "3",
+			)
 		}
 	})
 }

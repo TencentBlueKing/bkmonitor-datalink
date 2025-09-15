@@ -41,10 +41,6 @@ const (
 
 	DefaultReverseAggName = "reverse_nested"
 
-	Type = "type"
-
-	Properties = "properties"
-
 	Min         = "min"
 	Max         = "max"
 	Sum         = "sum"
@@ -110,29 +106,6 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 	}
 }
 
-func mapProperties(prefix string, data map[string]any, res map[string]string) {
-	if prefix != "" {
-		if t, ok := data[Type]; ok {
-			switch ts := t.(type) {
-			case string:
-				res[prefix] = ts
-			}
-		}
-	}
-
-	if properties, ok := data[Properties]; ok {
-		for k, v := range properties.(map[string]any) {
-			if prefix != "" {
-				k = prefix + ESStep + k
-			}
-			switch v.(type) {
-			case map[string]any:
-				mapProperties(k, v.(map[string]any), res)
-			}
-		}
-	}
-}
-
 type ValueAgg struct {
 	FieldName string
 	Name      string
@@ -173,7 +146,7 @@ type FormatFactory struct {
 	decode func(k string) string
 	encode func(k string) string
 
-	mapping map[string]string
+	fieldMap map[string]map[string]any
 
 	data map[string]any
 
@@ -195,7 +168,6 @@ type FormatFactory struct {
 func NewFormatFactory(ctx context.Context) *FormatFactory {
 	f := &FormatFactory{
 		ctx:         ctx,
-		mapping:     make(map[string]string),
 		aggInfoList: make(aggInfoList, 0),
 
 		// default encode / decode
@@ -207,6 +179,11 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 		},
 	}
 
+	return f
+}
+
+func (f *FormatFactory) WithFieldMap(fieldMap map[string]map[string]any) *FormatFactory {
+	f.fieldMap = fieldMap
 	return f
 }
 
@@ -342,26 +319,23 @@ func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
 	return f
 }
 
-// WithMappings 合并 mapping，后面的合并前面的
-func (f *FormatFactory) WithMappings(mappings ...map[string]any) *FormatFactory {
-	for _, mapping := range mappings {
-		if _, ok := mapping[Properties]; ok {
-			mapProperties("", mapping, f.mapping)
-		} else {
-			// 有的 es 因为版本不同，properties 不在第一层，所以需要往下一层找
-			for _, m := range mapping {
-				switch nm := m.(type) {
-				case map[string]any:
-					f.WithMappings(nm)
-				}
-			}
-		}
+func (f *FormatFactory) GetFieldType(k string) string {
+	if v, ok := f.fieldMap[k]["field_type"].(string); ok {
+		return v
 	}
-	return f
+
+	return ""
 }
 
 func (f *FormatFactory) FieldType() map[string]string {
-	return f.mapping
+	ft := make(map[string]string)
+	for k := range f.fieldMap {
+		nv := f.GetFieldType(k)
+		if nv != "" {
+			ft[k] = nv
+		}
+	}
+	return ft
 }
 
 func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
@@ -431,10 +405,8 @@ func (f *FormatFactory) NestedField(field string) string {
 	lbs := strings.Split(field, ESStep)
 	for i := len(lbs) - 1; i >= 0; i-- {
 		checkKey := strings.Join(lbs[0:i], ESStep)
-		if v, ok := f.mapping[checkKey]; ok {
-			if v == Nested {
-				return checkKey
-			}
+		if f.GetFieldType(checkKey) == Nested {
+			return checkKey
 		}
 	}
 	return ""
@@ -758,8 +730,8 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		case TermAgg:
 			curName := info.Name
 			curAgg := elastic.NewTermsAggregation().Field(info.Name)
-			fieldType, ok := f.mapping[info.Name]
-			if !ok || fieldType == Text || fieldType == KeyWord {
+			fieldType := f.GetFieldType(info.Name)
+			if fieldType == "" || fieldType == Text || fieldType == KeyWord {
 				curAgg = curAgg.Missing(" ")
 			}
 
@@ -874,7 +846,7 @@ func (f *FormatFactory) Orders() metadata.Orders {
 			order.Name = f.timeField.Name
 		}
 
-		if _, ok := f.mapping[order.Name]; ok {
+		if v := f.GetFieldType(order.Name); v != "" {
 			orders = append(orders, order)
 		}
 	}
@@ -965,12 +937,10 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 					q = f.getQuery(MustNot, q)
 				default:
 					// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
-					fieldType, ok := f.mapping[key]
+					fieldType := f.GetFieldType(key)
 					isExistsQuery := true
-					if ok {
-						if fieldType == Text || fieldType == KeyWord {
-							isExistsQuery = false
-						}
+					if fieldType == Text || fieldType == KeyWord {
+						isExistsQuery = false
 					}
 
 					queries := make([]elastic.Query, 0)

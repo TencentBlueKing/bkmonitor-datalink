@@ -256,7 +256,6 @@
             - "resource_filter/metrics"
             - "metrics_filter/relabel"
 
-
         - name: "metrics_pipeline/derived"
           type: "metrics.derived"
           processors:

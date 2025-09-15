@@ -116,7 +116,7 @@ func BenchmarkMergeReplaceWithoutCache(b *testing.B) {
 }
 
 func TestAnyMap(t *testing.T) {
-	cases := []struct {
+	tests := []struct {
 		input    string
 		expected map[string]int
 	}{
@@ -155,9 +155,9 @@ func TestAnyMap(t *testing.T) {
 		},
 	}
 
-	for _, c := range cases {
-		om := NewOptMap(c.input)
-		for k, v := range c.expected {
+	for _, tt := range tests {
+		om := NewOptMap(tt.input)
+		for k, v := range tt.expected {
 			i, ok := om.GetInt(k)
 			assert.True(t, ok)
 			assert.Equal(t, v, i)
@@ -166,7 +166,7 @@ func TestAnyMap(t *testing.T) {
 }
 
 func TestNameOpts(t *testing.T) {
-	cases := []struct {
+	tests := []struct {
 		nameOpts string
 		name     string
 		opts     string
@@ -191,9 +191,9 @@ func TestNameOpts(t *testing.T) {
 		},
 	}
 
-	for _, c := range cases {
-		name, opts := NameOpts(c.nameOpts)
-		assert.Equal(t, c.name, name)
-		assert.Equal(t, c.opts, opts)
+	for _, tt := range tests {
+		name, opts := NameOpts(tt.nameOpts)
+		assert.Equal(t, tt.name, name)
+		assert.Equal(t, tt.opts, opts)
 	}
 }

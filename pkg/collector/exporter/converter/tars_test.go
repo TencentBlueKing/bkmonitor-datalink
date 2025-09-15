@@ -431,7 +431,7 @@ func TestTarsStatAggregate(t *testing.T) {
 		metricAggregateSumMap[metric] = cast.ToFloat64(fmt.Sprintf("%.9f", math.Trunc(value*shift)/shift))
 	}
 
-	assert.Equal(t, map[string]float64{
+	expected := map[string]float64{
 		"rpc_client_handled_seconds_sum":    100,
 		"rpc_client_handled_seconds_count":  400000,
 		"rpc_client_handled_seconds_bucket": 1400000,
@@ -440,7 +440,8 @@ func TestTarsStatAggregate(t *testing.T) {
 		"rpc_server_handled_seconds_count":  400000,
 		"rpc_server_handled_seconds_bucket": 1400000,
 		"rpc_server_handled_total":          400000,
-	}, metricAggregateSumMap)
+	}
+	assert.Equal(t, expected, metricAggregateSumMap)
 }
 
 // BenchmarkTarsStat 基准测试 TarsStat 转换性能

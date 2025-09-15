@@ -100,32 +100,40 @@ func (j *jfrPprofBuilder) profileBuilderForSampleType(sampleType int64) *Profile
 	case sampleTypeCPU:
 		newBuilder.AddSampleType("cpu", "nanoseconds")
 		newBuilder.AddPeriodType("cpu", "nanoseconds")
+
 	case sampleTypeWall:
 		newBuilder.AddSampleType("wall", "nanoseconds")
 		newBuilder.AddPeriodType("wall", "nanoseconds")
+
 	case sampleTypeInTLAB:
 		newBuilder.AddSampleType("alloc_in_new_tlab_objects", "count")
 		newBuilder.AddSampleType("alloc_in_new_tlab_bytes", "bytes")
 		newBuilder.AddPeriodType("space", "bytes")
+
 	case sampleTypeOutTLAB:
 		newBuilder.AddSampleType("alloc_outside_tlab_objects", "count")
 		newBuilder.AddSampleType("alloc_outside_tlab_bytes", "bytes")
 		newBuilder.AddPeriodType("space", "bytes")
+
 	case sampleTypeLock:
 		newBuilder.AddSampleType("contentions", "count")
 		newBuilder.AddSampleType("delay", "nanoseconds")
 		newBuilder.AddPeriodType("mutex", "count")
+
 	case sampleTypeThreadPark:
 		newBuilder.AddSampleType("contentions", "count")
 		newBuilder.AddSampleType("delay", "nanoseconds")
 		newBuilder.AddPeriodType("block", "count")
+
 	case sampleTypeLiveObject:
 		newBuilder.AddSampleType("live", "count")
 		newBuilder.AddPeriodType("objects", "count")
+
 	case sampleTypeAllocSample:
 		newBuilder.AddSampleType("alloc_sample_objects", "count")
 		newBuilder.AddSampleType("alloc_sample_bytes", "bytes")
 		newBuilder.AddPeriodType("space", "bytes")
+
 	case sampleTypeMalloc:
 		newBuilder.AddSampleType("malloc_objects", "count")
 		newBuilder.AddSampleType("malloc_bytes", "bytes")
@@ -163,7 +171,6 @@ func newJfrPprofBuilders(p *parser.Parser, jfrLabels *LabelsSnapshot, m define.P
 		builders:      make(map[int64]*ProfileBuilder),
 		timeNanos:     st,
 		durationNanos: et - st,
-
 		jfrLabels:     jfrLabels,
 		samplerPeriod: period,
 		parser:        p,

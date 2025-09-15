@@ -268,16 +268,15 @@ processor:
 	})
 	data := traces.Generate()
 
-	record := &define.Record{
+	record := define.Record{
 		RecordType: define.RecordTraces,
 		Data:       data,
 	}
-	_, err := factory.Process(record)
-	assert.NoError(t, err)
+	testkits.MustProcess(t, factory, record)
 
 	data = record.Data.(ptrace.Traces)
 	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
-		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", "my-service")
+		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "peer.service", "my-service")
 		assert.Equal(t, "/api/v1/users", span.Name())
 	})
 }
@@ -316,16 +315,15 @@ processor:
 	})
 	data := traces.Generate()
 
-	record := &define.Record{
+	record := define.Record{
 		RecordType: define.RecordTraces,
 		Data:       data,
 	}
-	_, err := factory.Process(record)
-	assert.NoError(t, err)
+	testkits.MustProcess(t, factory, record)
 
 	data = record.Data.(ptrace.Traces)
 	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
-		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", "doc.weixin.qq.com")
+		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "peer.service", "doc.weixin.qq.com")
 		assert.Equal(t, "api", span.Name())
 	})
 }
@@ -362,16 +360,15 @@ processor:
 	})
 	data := traces.Generate()
 
-	record := &define.Record{
+	record := define.Record{
 		RecordType: define.RecordTraces,
 		Data:       data,
 	}
-	_, err := factory.Process(record)
-	assert.NoError(t, err)
+	testkits.MustProcess(t, factory, record)
 
 	data = record.Data.(ptrace.Traces)
 	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
-		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", "doc.weixin.qq.com")
+		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "peer.service", "doc.weixin.qq.com")
 	})
 }
 
@@ -453,17 +450,16 @@ processor:
 			})
 			data := traces.Generate()
 
-			record := &define.Record{
+			record := define.Record{
 				RecordType: define.RecordTraces,
 				Data:       data,
 			}
-			_, err := tt.factory.Process(record)
-			assert.NoError(t, err)
+			testkits.MustProcess(t, tt.factory, record)
 
 			data = record.Data.(ptrace.Traces)
 			foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
 				for k, v := range tt.attrs {
-					testkits.AssertAttrsStringVal(t, span.Attributes(), k, v)
+					testkits.AssertAttrsStringKeyVal(t, span.Attributes(), k, v)
 				}
 			})
 		})
@@ -499,15 +495,14 @@ processor:
 	})
 	data := traces.Generate()
 
-	record := &define.Record{
+	record := define.Record{
 		RecordType: define.RecordTraces,
 		Data:       data,
 	}
-	_, err := factory.Process(record)
-	assert.NoError(t, err)
+	testkits.MustProcess(t, factory, record)
 
 	data = record.Data.(ptrace.Traces)
 	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
-		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", span.Name())
+		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "peer.service", span.Name())
 	})
 }

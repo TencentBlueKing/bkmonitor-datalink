@@ -598,7 +598,7 @@ func (v *SelectNode) String() string {
 				if strings.Contains(ss, " AS ") {
 					ss = fmt.Sprintf("DISTINCT %s", ss)
 				} else {
-					ss = fmt.Sprintf("DISTINCT (%s)", ss)
+					ss = fmt.Sprintf("DISTINCT(%s)", ss)
 				}
 			}
 			ns = append(ns, ss)

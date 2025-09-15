@@ -17,16 +17,16 @@ import (
 
 	elastic "github.com/olivere/elastic/v7"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/client_errors"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 )
 
-func processOnEsErr(ctx context.Context, err error) error {
+func processOnEsErr(ctx context.Context, url string, err error) error {
 	if err == nil {
 		return nil
 	}
 
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return client_errors.HandleClientError(ctx, err)
+		return curl.HandleClientError(ctx, url, err)
 	}
 
 	var elasticErr *elastic.Error
@@ -38,7 +38,7 @@ func processOnEsErr(ctx context.Context, err error) error {
 		return nil
 	}
 
-	return client_errors.HandleClientError(ctx, err)
+	return curl.HandleClientError(ctx, url, err)
 }
 
 func handleElasticSpecificError(elasticErr *elastic.Error) error {

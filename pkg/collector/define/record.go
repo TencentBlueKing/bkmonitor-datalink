@@ -10,15 +10,12 @@
 package define
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/TarsCloud/TarsGo/tars/protocol/res/propertyf"
 	"github.com/TarsCloud/TarsGo/tars/protocol/res/statf"
 	"github.com/google/pprof/profile"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/prometheus/prompb"
 )
@@ -172,23 +169,8 @@ const (
 	TarsPropertyType = "property"
 )
 
-type TarsAdapter struct {
-	Name     string
-	Servant  string
-	Endpoint string
-}
-
-type TarsServerConfig struct {
-	App      string
-	Server   string
-	LogPath  string
-	LogLevel string
-	Adapters []TarsAdapter
-}
-
 type TarsData struct {
-	// 标识为 TarsStatType 或者 ProxyEvent
-	Type      string
+	Type      string // 标识为 TarsStatType 或者 EventV2
 	Timestamp int64
 	Data      any
 }
@@ -204,16 +186,16 @@ type TarsStatData struct {
 	Stats      map[statf.StatMicMsgHead]statf.StatMicMsgBody
 }
 
+type BeatData struct {
+	Data []byte
+}
+
 type ProxyData struct {
 	DataId      int64  `json:"data_id"`
 	AccessToken string `json:"access_token"`
 	Version     string `json:"version"`
 	Data        any    `json:"data"`
-	Type        string // 标识为 ProxyMetric 或者 ProxyEvent
-}
-
-type BeatData struct {
-	Data []byte
+	Type        string // 标识为 MetricV2 或者 EventV2
 }
 
 const (
@@ -221,14 +203,16 @@ const (
 	ProxyEventType  = "event"
 )
 
-type ProxyMetric struct {
+// MetricV2 自定义指标格式
+type MetricV2 struct {
 	Metrics   map[string]float64 `json:"metrics"`
 	Target    string             `json:"target"`
 	Dimension map[string]string  `json:"dimension"`
 	Timestamp int64              `json:"timestamp"`
 }
 
-type ProxyEvent struct {
+// EventV2 自定义事件格式
+type EventV2 struct {
 	EventName string            `json:"event_name"`
 	Event     map[string]any    `json:"event"`
 	Target    string            `json:"target"`
@@ -283,68 +267,6 @@ func (q *RecordQueue) Push(r *Record) {
 
 func (q *RecordQueue) Get() <-chan *Record {
 	return q.records
-}
-
-const (
-	TokenAppName = "app_name"
-)
-
-// Token 描述了 Record 校验的必要信息
-type Token struct {
-	Type           string `config:"type"`
-	Original       string `config:"token"`
-	BizId          int32  `config:"bk_biz_id"`
-	AppName        string `config:"bk_app_name"`
-	MetricsDataId  int32  `config:"metrics_dataid"`
-	TracesDataId   int32  `config:"traces_dataid"`
-	ProfilesDataId int32  `config:"profiles_dataid"`
-	LogsDataId     int32  `config:"logs_dataid"`
-	ProxyDataId    int32  `config:"proxy_dataid"`
-	BeatDataId     int32  `config:"beat_dataid"`
-}
-
-var tokenInfo = promauto.NewGaugeVec(
-	prometheus.GaugeOpts{
-		Namespace: MonitoringNamespace,
-		Name:      "receiver_token_info",
-		Help:      "Receiver decoded token info",
-	},
-	[]string{"token", "metrics_id", "traces_id", "logs_id", "profiles_id", "proxy_id", "app_name", "biz_id"},
-)
-
-func SetTokenInfo(token Token) {
-	tokenInfo.WithLabelValues(
-		token.Original,
-		fmt.Sprintf("%d", token.MetricsDataId),
-		fmt.Sprintf("%d", token.TracesDataId),
-		fmt.Sprintf("%d", token.LogsDataId),
-		fmt.Sprintf("%d", token.ProfilesDataId),
-		fmt.Sprintf("%d", token.ProxyDataId),
-		token.AppName,
-		fmt.Sprintf("%d", token.BizId),
-	).Set(1)
-}
-
-func (t Token) BizApp() string {
-	return fmt.Sprintf("%d-%s", t.BizId, t.AppName)
-}
-
-func (t Token) GetDataID(rtype RecordType) int32 {
-	switch rtype {
-	case RecordTraces, RecordTracesDerived:
-		return t.TracesDataId
-	case RecordMetrics, RecordMetricsDerived, RecordPushGateway, RecordRemoteWrite, RecordPingserver, RecordFta, RecordTars:
-		return t.MetricsDataId
-	case RecordLogs, RecordLogsDerived:
-		return t.LogsDataId
-	case RecordProfiles:
-		return t.ProfilesDataId
-	case RecordProxy:
-		return t.ProxyDataId
-	case RecordBeat:
-		return t.BeatDataId
-	}
-	return -1
 }
 
 const (

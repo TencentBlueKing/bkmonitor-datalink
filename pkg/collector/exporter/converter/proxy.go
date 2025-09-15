@@ -53,7 +53,7 @@ func (c proxyConverter) Convert(record *define.Record, f define.GatherFunc) {
 
 func (c proxyConverter) toMetrics(token define.Token, pd *define.ProxyData) []define.Event {
 	var events []define.Event
-	var items []define.ProxyMetric
+	var items []define.MetricV2
 
 	// 使用 json 序列化再反序列化目前是最快的方式 参见 benchmark
 	b, err := json.Marshal(pd.Data)
@@ -79,7 +79,7 @@ func (c proxyConverter) toMetrics(token define.Token, pd *define.ProxyData) []de
 
 func (c proxyConverter) toEvents(token define.Token, pd *define.ProxyData) []define.Event {
 	var events []define.Event
-	var items []define.ProxyEvent
+	var items []define.EventV2
 
 	// 使用 json 序列化再反序列化目前是最快的方式 参见 benchmark
 	b, err := json.Marshal(pd.Data)

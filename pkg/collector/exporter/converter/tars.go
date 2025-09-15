@@ -326,14 +326,14 @@ func (s *stat) UpdateFrom(other *stat) {
 }
 
 // ToEvents 将 stat 转换为 Event 列表
-func (s *stat) ToEvents(metricNamePrefix string) []define.Event {
-	var pms []*promMapper
-
+func (s *stat) ToEvents(metricPrefix string) []define.Event {
 	codeTypeReqCntMap := map[string]int32{
 		rpcMetricTagsCodeTypeException: s.execCount,
 		rpcMetricTagsCodeTypeTimeout:   s.timeoutCount,
 		rpcMetricTagsCodeTypeSuccess:   s.successCount,
 	}
+
+	var pms []*promMapper
 	for codeType, reqCnt := range codeTypeReqCntMap {
 		if reqCnt == 0 {
 			continue
@@ -341,7 +341,7 @@ func (s *stat) ToEvents(metricNamePrefix string) []define.Event {
 
 		pms = append(pms, &promMapper{
 			Metrics: common.MapStr{
-				strings.Join([]string{metricNamePrefix, s.role, "handled_total"}, "_"): reqCnt,
+				metricPrefix + "_" + s.role + "_handled_total": reqCnt,
 			},
 			Target:     s.target,
 			Timestamp:  s.timestamp,
@@ -358,15 +358,14 @@ func (s *stat) ToEvents(metricNamePrefix string) []define.Event {
 		codeType = rpcMetricTagsCodeTypeTimeout
 	}
 
-	rpcHistogramMetricName := strings.Join([]string{metricNamePrefix, s.role, "handled_seconds"}, "_")
+	histogramMetric := metricPrefix + "_" + s.role + "_handled_seconds"
 	dims := utils.MergeMaps(s.dimensions, map[string]string{rpcMetricTagsCodeType: codeType})
-	rpcHistogramPms := toHistogram(rpcHistogramMetricName, s.target, s.timestamp, toSecondBuckets(s.bucketMap), dims)
-	pms = append(pms, rpcHistogramPms...)
 
 	// 协议数据仅够生成 _bucket / _count 指标，这里需要使用 TotalRspTime 补充 _sum，以构造完整的 Histogram
+	pms = append(pms, toHistogram(histogramMetric, s.target, s.timestamp, toSecondBuckets(s.bucketMap), dims)...)
 	pms = append(pms, &promMapper{
 		Metrics: common.MapStr{
-			rpcHistogramMetricName + "_sum": cast.ToFloat64(s.totalRspTime) / 1000,
+			histogramMetric + "_sum": cast.ToFloat64(s.totalRspTime) / 1000,
 		},
 		Target:     s.target,
 		Timestamp:  s.timestamp,
@@ -588,9 +587,7 @@ func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, d
 			case "Distr":
 				bucketMap := toBucketMap(info.Value)
 				if len(bucketMap) == 0 {
-					logger.Warnf(
-						"[handleProp] empty distrMap, dataID=%d, ip=%v, propertyName=%s, Distr=%s",
-						dataID, ip, head.PropertyName, info.Value)
+					logger.Warnf("empty distrMap, dataID=%d, ip=%v, propertyName=%s, Distr=%s", dataID, ip, head.PropertyName, info.Value)
 					continue
 				}
 

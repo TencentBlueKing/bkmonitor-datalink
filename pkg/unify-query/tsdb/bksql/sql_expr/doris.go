@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -156,10 +155,8 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 	valueField, _ := d.dimTransform(d.valueField)
 
 	var (
-		window        time.Duration
-		offsetMinutes int64
-
-		timezone string
+		window         time.Duration
+		timeZoneOffset int64
 	)
 
 	dimensionSet = set.New[string]([]string{FieldValue}...)
@@ -201,29 +198,27 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 
 		if agg.Window > 0 {
 			window = agg.Window
-			timezone = agg.TimeZone
+			timeZoneOffset = agg.TimeZoneOffset
 		}
 	}
 
 	if window > 0 {
-		// 获取时区偏移量
-		if function.IsAlignTime(window) {
-			// 时间聚合函数兼容时区
-			loc, locErr := time.LoadLocation(timezone)
-			if locErr != nil {
-				loc = time.UTC
-			}
-			_, offset := time.Now().In(loc).Zone()
-			offsetMinutes = int64(offset) / 60
+		fh_1 := "+"
+		fh_2 := "-"
+		if timeZoneOffset > 0 {
+			fh_1 = "-"
+			fh_2 = "+"
+		} else {
+			timeZoneOffset *= -1
 		}
 
 		// 如果是按照分钟聚合，则使用 __shard_key__ 作为时间字段
 		var timeField string
 		if int64(window.Seconds())%60 == 0 {
 			windowMinutes := int(window.Minutes())
-			timeField = fmt.Sprintf(`((CAST((FLOOR(%s / 1000) + %d) / %d AS INT) * %d - %d) * 60 * 1000)`, ShardKey, offsetMinutes, windowMinutes, windowMinutes, offsetMinutes)
+			timeField = fmt.Sprintf(`((CAST((FLOOR(%s / 1000) %s %d) / %d AS INT) * %d %s %d) * 60 * 1000)`, ShardKey, fh_1, timeZoneOffset/6e4, windowMinutes, windowMinutes, fh_2, timeZoneOffset/6e4)
 		} else {
-			timeField = fmt.Sprintf(`CAST(FLOOR(%s / %d) AS INT) * %d `, d.timeField, window.Milliseconds(), window.Milliseconds())
+			timeField = fmt.Sprintf(`(CAST((FLOOR(%s %s %d) / %d) AS INT) * %d %s %d)`, d.timeField, fh_1, timeZoneOffset, window.Milliseconds(), window.Milliseconds(), fh_2, timeZoneOffset)
 		}
 
 		selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", timeField, TimeStamp))
@@ -285,7 +280,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 	// 回传时间聚合信息
 	timeAggregate = TimeAggregate{
 		Window:       window,
-		OffsetMillis: offsetMinutes,
+		OffsetMillis: timeZoneOffset,
 	}
 
 	return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err

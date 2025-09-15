@@ -81,7 +81,7 @@ type bucket struct {
 
 // propNameToNormalizeMetricName 将属性转为标准指标名
 func propNameToNormalizeMetricName(propertyName, policy string) string {
-	name := strings.Join([]string{propertyName, strings.ToLower(policy)}, "_")
+	name := propertyName + "_" + strings.ToLower(policy)
 	// 在 NormalizeName 基础上，去掉 :
 	return utils.NormalizeName(strings.ReplaceAll(name, ":", ""))
 }
@@ -146,12 +146,12 @@ func toBucketMap(s string) map[int32]int32 {
 // toHistogram 根据分布情况，生成统计指标
 func toHistogram(name, target string, timestamp int64, buckets []bucket, dims map[string]string) []*promMapper {
 	pms := make([]*promMapper, 0, len(buckets)+1)
-	rpcHistogramBucketMetricName := strings.Join([]string{name, "bucket"}, "_")
+	bucketMetricName := name + "_bucket"
 	for _, b := range buckets {
 		dims := utils.CloneMap(dims)
 		dims["le"] = b.Val
 		pm := &promMapper{
-			Metrics:    common.MapStr{rpcHistogramBucketMetricName: b.Cnt},
+			Metrics:    common.MapStr{bucketMetricName: b.Cnt},
 			Target:     target,
 			Timestamp:  timestamp,
 			Dimensions: dims,
@@ -159,7 +159,7 @@ func toHistogram(name, target string, timestamp int64, buckets []bucket, dims ma
 		pms = append(pms, pm)
 	}
 	pms = append(pms, &promMapper{
-		Metrics:    common.MapStr{strings.Join([]string{name, "count"}, "_"): buckets[len(buckets)-1].Cnt},
+		Metrics:    common.MapStr{name + "_count": buckets[len(buckets)-1].Cnt},
 		Target:     target,
 		Timestamp:  timestamp,
 		Dimensions: utils.CloneMap(dims),
@@ -364,9 +364,10 @@ func (s *stat) ToEvents(metricNamePrefix string) []define.Event {
 	pms = append(pms, rpcHistogramPms...)
 
 	// 协议数据仅够生成 _bucket / _count 指标，这里需要使用 TotalRspTime 补充 _sum，以构造完整的 Histogram
-	rpcHistogramSumMetricName := strings.Join([]string{rpcHistogramMetricName, "sum"}, "_")
 	pms = append(pms, &promMapper{
-		Metrics:    common.MapStr{rpcHistogramSumMetricName: cast.ToFloat64(s.totalRspTime) / 1000},
+		Metrics: common.MapStr{
+			rpcHistogramMetricName + "_sum": cast.ToFloat64(s.totalRspTime) / 1000,
+		},
 		Target:     s.target,
 		Timestamp:  s.timestamp,
 		Dimensions: dims,
@@ -601,9 +602,12 @@ func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, d
 					dims,
 				)
 				pms = append(pms, customMetricHistogramPms...)
+
 			default: // Policy -> Max / Min / Avg / Sum / Count
 				pms = append(pms, &promMapper{
-					Metrics:    common.MapStr{propNameToNormalizeMetricName(head.PropertyName, info.Policy): cast.ToFloat64(info.Value)},
+					Metrics: common.MapStr{
+						propNameToNormalizeMetricName(head.PropertyName, info.Policy): cast.ToFloat64(info.Value),
+					},
 					Target:     ip,
 					Timestamp:  data.Timestamp,
 					Dimensions: dims,

@@ -13,7 +13,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/antlr4-go/antlr/v4"
+	antlr "github.com/antlr4-go/antlr/v4"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 

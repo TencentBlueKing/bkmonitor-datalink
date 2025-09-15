@@ -94,10 +94,12 @@ func (c *Translator) Translate(pd define.ProfilesRawData) (*define.ProfilesData,
 			if event == "wall" {
 				builders.addStacktrace(sampleTypeWall, correlation, execSample.StackTrace, values[:1])
 			}
+
 		case jfrParser.TypeMap.T_WALL_CLOCK_SAMPLE:
 			wallSample := jfrParser.WallClockSample
 			values[0] = int64(wallSample.Samples)
 			builders.addStacktrace(sampleTypeWall, StacktraceCorrelation{}, wallSample.StackTrace, values[:1])
+
 		case jfrParser.TypeMap.T_ALLOC_IN_NEW_TLAB:
 			memAllocInSample := jfrParser.ObjectAllocationInNewTLAB
 			values[1] = int64(memAllocInSample.TlabSize)
@@ -107,6 +109,7 @@ func (c *Translator) Translate(pd define.ProfilesRawData) (*define.ProfilesData,
 				SpanName:  memAllocInSample.SpanName,
 			}
 			builders.addStacktrace(sampleTypeInTLAB, correlation, memAllocInSample.StackTrace, values[:2])
+
 		case jfrParser.TypeMap.T_ALLOC_OUTSIDE_TLAB:
 			memAllocOutSample := jfrParser.ObjectAllocationOutsideTLAB
 			values[1] = int64(memAllocOutSample.AllocationSize)
@@ -116,10 +119,12 @@ func (c *Translator) Translate(pd define.ProfilesRawData) (*define.ProfilesData,
 				SpanName:  memAllocOutSample.SpanName,
 			}
 			builders.addStacktrace(sampleTypeOutTLAB, correlation, memAllocOutSample.StackTrace, values[:2])
+
 		case jfrParser.TypeMap.T_ALLOC_SAMPLE:
 			memAllocSample := jfrParser.ObjectAllocationSample
 			values[1] = int64(memAllocSample.Weight)
 			builders.addStacktrace(sampleTypeAllocSample, StacktraceCorrelation{}, memAllocSample.StackTrace, values[:2])
+
 		case jfrParser.TypeMap.T_MONITOR_ENTER:
 			lockSample := jfrParser.JavaMonitorEnter
 			values[1] = int64(lockSample.Duration)
@@ -129,16 +134,20 @@ func (c *Translator) Translate(pd define.ProfilesRawData) (*define.ProfilesData,
 				SpanName:  lockSample.SpanName,
 			}
 			builders.addStacktrace(sampleTypeLock, correlation, lockSample.StackTrace, values[:2])
+
 		case jfrParser.TypeMap.T_THREAD_PARK:
 			blockSample := jfrParser.ThreadPark
 			values[1] = int64(blockSample.Duration)
 			builders.addStacktrace(sampleTypeThreadPark, StacktraceCorrelation{}, blockSample.StackTrace, values[:2])
+
 		case jfrParser.TypeMap.T_LIVE_OBJECT:
 			builders.addStacktrace(sampleTypeLiveObject, StacktraceCorrelation{}, jfrParser.LiveObject.StackTrace, values[:1])
+
 		case jfrParser.TypeMap.T_MALLOC:
 			memMallocSample := jfrParser.Malloc
 			values[1] = int64(memMallocSample.Size)
 			builders.addStacktrace(sampleTypeMalloc, StacktraceCorrelation{}, memMallocSample.StackTrace, values[:2])
+
 		case jfrParser.TypeMap.T_ACTIVE_SETTING:
 			if jfrParser.ActiveSetting.Name == "event" {
 				event = jfrParser.ActiveSetting.Value

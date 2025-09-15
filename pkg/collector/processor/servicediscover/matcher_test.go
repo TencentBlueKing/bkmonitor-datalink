@@ -16,7 +16,7 @@ import (
 )
 
 func TestMatched(t *testing.T) {
-	cases := []struct {
+	tests := []struct {
 		op       Op
 		content  string
 		excepted string
@@ -62,7 +62,7 @@ func TestMatched(t *testing.T) {
 		{op: "unknown", content: "", excepted: "", pass: false},
 	}
 
-	for _, c := range cases {
-		assert.Equal(t, c.pass, OperatorMatch(c.content, c.excepted, string(c.op)))
+	for _, tt := range tests {
+		assert.Equal(t, tt.pass, OperatorMatch(tt.content, tt.excepted, string(tt.op)))
 	}
 }

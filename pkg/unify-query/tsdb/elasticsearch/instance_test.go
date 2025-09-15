@@ -705,7 +705,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			},
 			start: defaultStart,
 			end:   defaultEnd,
-			size:  1e4,
+			total: 1e4,
 			list: `[ {
   "__data_label" : "set_10",
   "__doc_id" : "27bdd842c5f2929cf4bd90f1e4534a9d",

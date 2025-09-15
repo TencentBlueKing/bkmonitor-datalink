@@ -79,6 +79,8 @@ type QueryTs struct {
 	SliceMax int `json:"slice_max,omitempty"`
 	// IsMultiFrom 是否启用 MultiFrom 查询
 	IsMultiFrom bool `json:"is_multi_from,omitempty"`
+	// IsSearchAfter 是否启用 SearchAfter 查询
+	IsSearchAfter bool `json:"is_search_after,omitempty"`
 	// ClearCache 是否强制清理已存在的缓存会话
 	ClearCache bool `json:"clear_cache,omitempty"`
 

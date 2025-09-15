@@ -44,7 +44,7 @@ require (
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/grafana/jfr-parser v0.7.2-0.20230831140626-08fa3a941bf8 // indirect
+	github.com/grafana/jfr-parser v0.11.0 // indirect
 	github.com/grafana/regexp v0.0.0-20240518133315-a468a5bfb3bc // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.24.0 // indirect
 	github.com/hashicorp/go-uuid v1.0.2 // indirect

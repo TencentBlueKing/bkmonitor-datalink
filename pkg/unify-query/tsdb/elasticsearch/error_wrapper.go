@@ -13,33 +13,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	elastic "github.com/olivere/elastic/v7"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 )
-
-func processOnEsErr(ctx context.Context, url string, err error) error {
-	if err == nil {
-		return nil
-	}
-
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return curl.HandleClientError(ctx, url, err)
-	}
-
-	var elasticErr *elastic.Error
-	if errors.As(err, &elasticErr) {
-		return handleElasticSpecificError(elasticErr)
-	}
-
-	if err.Error() == "EOF" {
-		return nil
-	}
-
-	return curl.HandleClientError(ctx, url, err)
-}
 
 func handleElasticSpecificError(elasticErr *elastic.Error) error {
 	var msgBuilder strings.Builder
@@ -61,4 +41,25 @@ func handleElasticSpecificError(elasticErr *elastic.Error) error {
 	}
 
 	return errors.New(msgBuilder.String())
+}
+
+func processOnEsErr(ctx context.Context, url string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return curl.HandleClientError(ctx, url, err)
+	}
+
+	var elasticErr *elastic.Error
+	if errors.As(err, &elasticErr) {
+		return handleElasticSpecificError(elasticErr)
+	}
+
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+
+	return curl.HandleClientError(ctx, url, err)
 }

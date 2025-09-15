@@ -160,7 +160,6 @@ func TestInstance_queryReference(t *testing.T) {
 	field := "dtEventTimeStamp"
 
 	mock.Es.Set(map[string]any{
-
 		// 统计 __ext.io_kubernetes_pod 不为空的文档数量
 		`{"aggregations":{"_value":{"value_count":{"field":"__ext.io_kubernetes_pod"}}},"query":{"bool":{"filter":{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}}}},"size":0}`: `{"took":92,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"_value":{"value":1523302}}}`,
 
@@ -551,7 +550,6 @@ func TestInstance_queryReference(t *testing.T) {
 
 			actual := timeSeries.String()
 			assert.JSONEq(t, c.expected, actual)
-
 		})
 	}
 }
@@ -578,7 +576,6 @@ func TestInstance_queryRawData(t *testing.T) {
 	field := "dtEventTimeStamp"
 
 	mock.Es.Set(map[string]any{
-
 		// nested query + query string 测试 + highlight
 		`{"_source":{"includes":["group","user.first","user.last"]},"from":0,"query":{"bool":{"filter":[{"nested":{"path":"user","query":{"match_phrase":{"user.first":{"query":"John"}}}}},{"range":{"dtEventTimeStamp":{"format":"epoch_second","from":1723593608,"include_lower":true,"include_upper":true,"to":1723679962}}},{"match_phrase":{"group":{"query":"fans"}}}]}},"size":5,"sort":[{"dtEventTimeStamp":{"order":"desc"}}]}`: `{"took":2,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"max_score":0.0,"hits":[{"_index":"bk_unify_query_demo_2","_type":"_doc","_id":"aS3KjpEBbwEm76LbcH1G","_score":0.0,"_source":{"group":"fans","user":[{"first":"John","last":"Smith"},{"first":"Alice","last":"White"}]},"highlight":{"group":["<mark>fans</mark>"],"user.first":["<mark>John</mark>"]}}]}}`,
 		// high light from condition
@@ -708,7 +705,7 @@ func TestInstance_queryRawData(t *testing.T) {
 			},
 			start: defaultStart,
 			end:   defaultEnd,
-			size:  1e4,
+			total: 1e4,
 			list: `[ {
   "__data_label" : "set_10",
   "__doc_id" : "27bdd842c5f2929cf4bd90f1e4534a9d",

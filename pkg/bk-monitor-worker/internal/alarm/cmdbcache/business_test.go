@@ -26,11 +26,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
 
-var DemoBusinesses = []map[string]interface{}{
+var DemoBusinesses = []map[string]any{
 	{
-		"data": map[string]interface{}{
-			"info": []interface{}{
-				map[string]interface{}{
+		"data": map[string]any{
+			"info": []any{
+				map[string]any{
 					"bk_biz_id":         2.0,
 					"bk_biz_name":       "BlueKing",
 					"bk_biz_developer":  "admin",
@@ -44,7 +44,7 @@ var DemoBusinesses = []map[string]interface{}{
 					"bk_pmp_qa":         "user1,user2",
 					"bk_pmp_qa2":        "user1,user2",
 				},
-				map[string]interface{}{
+				map[string]any{
 					"bk_biz_id":         3.0,
 					"bk_biz_name":       "Test",
 					"bk_biz_developer":  "user1",
@@ -61,7 +61,7 @@ var DemoBusinesses = []map[string]interface{}{
 	},
 }
 
-var DefaultTenantBusinesses = []map[string]interface{}{
+var DefaultTenantBusinesses = []map[string]any{
 	{
 		"bk_tenant_id":      tenant.DefaultTenantId,
 		"bk_biz_id":         2.0,
@@ -92,7 +92,7 @@ var DefaultTenantBusinesses = []map[string]interface{}{
 	},
 }
 
-var Tenant1Businesses = []map[string]interface{}{
+var Tenant1Businesses = []map[string]any{
 	{
 		"bk_tenant_id":      "tenant1",
 		"bk_biz_id":         4.0,
@@ -189,8 +189,8 @@ var DemoSpaces = []space.Space{
 
 func TestBusinessCacheManager(t *testing.T) {
 	// mock相关接口调用与数据库查询
-	batchApiRequestPatch := gomonkey.ApplyFunc(api.BatchApiRequest, func(pageSize int, getTotalFunc func(interface{}) (int, error), getReqFunc func(page int) define.Operation, concurrency int) ([]interface{}, error) {
-		result := make([]interface{}, len(DemoBusinesses))
+	batchApiRequestPatch := gomonkey.ApplyFunc(api.BatchApiRequest, func(pageSize int, getTotalFunc func(any) (int, error), getReqFunc func(page int) define.Operation, concurrency int) ([]any, error) {
+		result := make([]any, len(DemoBusinesses))
 		for i, v := range DemoBusinesses {
 			result[i] = v
 		}
@@ -235,9 +235,9 @@ func TestBusinessCacheManager(t *testing.T) {
 			return
 		}
 
-		businesses := make(map[string]map[string]interface{})
+		businesses := make(map[string]map[string]any)
 		for k, v := range result.Val() {
-			var business map[string]interface{}
+			var business map[string]any
 			err := json.Unmarshal([]byte(v), &business)
 			if err != nil {
 				t.Error(err)
@@ -254,12 +254,12 @@ func TestBusinessCacheManager(t *testing.T) {
 		assert.EqualValues(t, businesses["-2"]["bk_biz_name"], "[test]Test")
 
 		for _, biz := range businesses {
-			_, ok := biz["operator"].([]interface{})
+			_, ok := biz["operator"].([]any)
 			assert.Truef(t, ok, "operator type error, %v", biz["operator"])
 			assert.EqualValues(t, biz["bk_tenant_id"], tenant.DefaultTenantId)
 		}
 
-		assert.EqualValues(t, businesses["2"]["bk_pmp_qa"], []interface{}{"user1", "user2"})
+		assert.EqualValues(t, businesses["2"]["bk_pmp_qa"], []any{"user1", "user2"})
 		assert.EqualValues(t, businesses["2"]["bk_pmp_qa2"], "user1,user2")
 
 		// 清理业务缓存
@@ -283,7 +283,7 @@ func TestBusinessCacheManager(t *testing.T) {
 			return
 		}
 
-		err = cacheManager.UpdateByEvents(ctx, "biz", []map[string]interface{}{
+		err = cacheManager.UpdateByEvents(ctx, "biz", []map[string]any{
 			{"bk_biz_id": float64(2)},
 		})
 		if err != nil {
@@ -293,13 +293,13 @@ func TestBusinessCacheManager(t *testing.T) {
 
 		assert.Len(t, client.HKeys(ctx, cacheManager.GetCacheKey(businessCacheKey)).Val(), 3)
 
-		err = cacheManager.CleanByEvents(ctx, "biz", []map[string]interface{}{
+		err = cacheManager.CleanByEvents(ctx, "biz", []map[string]any{
 			{"bk_biz_id": float64(2)},
 		})
-		err = cacheManager.CleanByEvents(ctx, "other", []map[string]interface{}{
+		err = cacheManager.CleanByEvents(ctx, "other", []map[string]any{
 			{"bk_biz_id": float64(3)},
 		})
-		err = cacheManager.UpdateByEvents(ctx, "other", []map[string]interface{}{
+		err = cacheManager.UpdateByEvents(ctx, "other", []map[string]any{
 			{"bk_biz_id": float64(3)},
 		})
 
@@ -308,7 +308,7 @@ func TestBusinessCacheManager(t *testing.T) {
 }
 
 func TestMultiTenantBusinessCacheManager(t *testing.T) {
-	getBusinessListPatch := gomonkey.ApplyFunc(getBusinessList, func(ctx context.Context, bkTenantId string) ([]map[string]interface{}, error) {
+	getBusinessListPatch := gomonkey.ApplyFunc(getBusinessList, func(ctx context.Context, bkTenantId string) ([]map[string]any, error) {
 		if bkTenantId == tenant.DefaultTenantId {
 			return DefaultTenantBusinesses, nil
 		}
@@ -355,9 +355,9 @@ func TestMultiTenantBusinessCacheManager(t *testing.T) {
 		return
 	}
 
-	businesses := make(map[string]map[string]interface{})
+	businesses := make(map[string]map[string]any)
 	for k, v := range result.Val() {
-		var business map[string]interface{}
+		var business map[string]any
 		err := json.Unmarshal([]byte(v), &business)
 		if err != nil {
 			t.Error(err)

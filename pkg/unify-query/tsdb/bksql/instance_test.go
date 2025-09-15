@@ -62,13 +62,11 @@ func TestInstance_ShowCreateTable(t *testing.T) {
 
 			actual, _ := json.Marshal(fact.FieldMap())
 			assert.JSONEq(t, c.expected, string(actual))
-
 		})
 	}
 }
 
 func TestInstance_QuerySeriesSet(t *testing.T) {
-
 	ctx := metadata.InitHashID(context.Background())
 	ins := createTestInstance(ctx)
 
@@ -233,7 +231,6 @@ func TestInstance_QuerySeriesSet(t *testing.T) {
 }
 
 func TestInstance_QueryRaw(t *testing.T) {
-
 	ctx := metadata.InitHashID(context.Background())
 	ins := createTestInstance(ctx)
 
@@ -1265,6 +1262,19 @@ func TestInstance_bkSql(t *testing.T) {
 			},
 
 			expected: "SELECT `new_field` AS `origin_field`, COUNT(`new_field`) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 60 AS INT) * 60 - 0) * 60 * 1000) AS `_timestamp_` FROM `101068_MatchFullLinkTimeConsumptionFlow_CostTime`.doris WHERE `dtEventTimeStamp` >= 1733756400000 AND `dtEventTimeStamp` <= 1733846399000 AND `dtEventTime` >= '2024-12-09 23:00:00' AND `dtEventTime` <= '2024-12-11 00:00:00' AND `thedate` >= '20241209' AND `thedate` <= '20241210' AND `new_field` = '123' GROUP BY origin_field, _timestamp_",
+		},
+		{
+			name:  "query with regexp_extract and AS alias",
+			start: time.Unix(1755069858, 0),
+			end:   time.Unix(1757661858, 0),
+			query: &metadata.Query{
+				DB:          "bklog_index_set_21692_analysis",
+				Measurement: "doris",
+				DataLabel:   "100915_bklog_pub_svrlog_pangusvr_lobby_analysis",
+				QueryString: "buy weekly card success",
+				SQL:         `SELECT DISTINCT (regexp_extract(log, 'openid:(\\d+)', 1)) AS id LIMIT 100000`,
+			},
+			expected: "SELECT DISTINCT regexp_extract(`log`, 'openid:(\\\\d+)', 1) AS id FROM `bklog_index_set_21692_analysis`.doris WHERE (`dtEventTimeStamp` >= 1755069858000 AND `dtEventTimeStamp` <= 1757661858000 AND `dtEventTime` >= '2025-08-13 15:24:18' AND `dtEventTime` <= '2025-09-12 15:24:19' AND `thedate` >= '20250813' AND `thedate` <= '20250912' AND (`log` = 'buy' OR (`log` = 'weekly' OR (`log` = 'card' OR `log` = 'success')))) LIMIT 100000",
 		},
 	}
 

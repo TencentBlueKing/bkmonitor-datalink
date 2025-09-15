@@ -952,7 +952,7 @@ var SpaceVmInfoDBSchema = struct {
 // Update updates SpaceVmInfo fields by primary key
 // nolint: dupl
 func (o *SpaceVmInfo) Update(db *gorm.DB, fields ...SpaceVmInfoDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"id":                o.ID,
 		"space_type":        o.SpaceType,
 		"space_id":          o.SpaceID,
@@ -964,7 +964,7 @@ func (o *SpaceVmInfo) Update(db *gorm.DB, fields ...SpaceVmInfoDBSchemaField) er
 		"updater":           o.Updater,
 		"update_time":       o.UpdateTime,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -983,7 +983,7 @@ func (o *SpaceVmInfo) Update(db *gorm.DB, fields ...SpaceVmInfoDBSchemaField) er
 
 // SpaceVmInfoUpdater is an SpaceVmInfo updates manager
 type SpaceVmInfoUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -991,7 +991,7 @@ type SpaceVmInfoUpdater struct {
 // nolint: dupl
 func NewSpaceVmInfoUpdater(db *gorm.DB) SpaceVmInfoUpdater {
 	return SpaceVmInfoUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&SpaceVmInfo{}),
 	}
 }

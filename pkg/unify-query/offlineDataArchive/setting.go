@@ -13,6 +13,4 @@ const (
 	ServiceNameConfigPath = "offline_data_archive.service_name"
 )
 
-var (
-	ServiceName string
-)
+var ServiceName string

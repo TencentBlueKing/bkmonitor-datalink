@@ -166,7 +166,7 @@ func (d *DefaultSQLExpr) ParserQueryString(_ string) (string, error) {
 func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) (selectFields []string, groupByFields []string, orderByFields []string, dimensionSet *set.Set[string], timeAggregate TimeAggregate, err error) {
 	valueField, err := d.dimTransform(d.valueField)
 	if err != nil {
-		return
+		return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 	}
 
 	var (
@@ -179,14 +179,12 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 	dimensionSet = set.New[string]([]string{FieldValue}...)
 	for _, agg := range aggregates {
 		for _, dim := range agg.Dimensions {
-			var (
-				newDim string
-			)
+			var newDim string
 
 			dimensionSet.Add(dim)
 			newDim, err = d.dimTransform(dim)
 			if err != nil {
-				return
+				return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 			}
 
 			selectFields = append(selectFields, newDim)
@@ -264,7 +262,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 
 		orderField, err = d.dimTransform(orderField)
 		if err != nil {
-			return
+			return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 		}
 
 		// 移除重复的排序字段
@@ -286,7 +284,7 @@ func (d *DefaultSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregate
 		OffsetMillis: offsetMillis,
 	}
 
-	return
+	return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 }
 
 func (d *DefaultSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {
@@ -459,9 +457,7 @@ func (d *DefaultSQLExpr) dimTransform(s string) (string, error) {
 }
 
 func parserAllConditions(allConditions metadata.AllConditions, bc func(c metadata.ConditionField) (string, error)) (string, error) {
-	var (
-		orConditions []string
-	)
+	var orConditions []string
 
 	// 遍历所有OR条件组
 	for _, conditions := range allConditions {

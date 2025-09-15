@@ -65,7 +65,7 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 		{Score: score, Member: "metric_invalid"},
 		{Score: score - 100000, Member: "metric_expired"},
 	}...)
-	mockerClient.HMGetValue = append(mockerClient.HMGetValue, []interface{}{
+	mockerClient.HMGetValue = append(mockerClient.HMGetValue, []any{
 		"{\"dimensions\":{\"d1\":{\"last_update_time\":1685503141,\"values\":[]},\"d2\":{\"last_update_time\":1685503141,\"values\":[]}}}",
 		"{\"dimensions\":{\"d3\":{\"last_update_time\":1685503141,\"values\":[]},\"d4\":{\"last_update_time\":1685503141,\"values\":[]}}}",
 		"{\"dimensions\":{\"d5\":{\"last_update_time\":1685503141,\"values\":[]},\"d6\":{\"last_update_time\":1685503141,\"values\":[]}}}",

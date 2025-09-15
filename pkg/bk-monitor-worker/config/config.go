@@ -92,7 +92,7 @@ var (
 	StorageDependentRedisSentinelMasterName string
 	// StorageDependentRedisSentinelAddress dependent redis address
 	StorageDependentRedisSentinelAddress []string
-	//StorageDependentRedisSentinelPassword dependent redis password
+	// StorageDependentRedisSentinelPassword dependent redis password
 	StorageDependentRedisSentinelPassword string
 	// StorageDependentRedisStandaloneHost dependent redis host
 	StorageDependentRedisStandaloneHost string
@@ -390,9 +390,7 @@ func initVariables() {
 	BigResourceTaskQueueName = GetValue("taskConfig.common.queues.bigResource", "big-resource")
 }
 
-var (
-	keys []string
-)
+var keys []string
 
 // GetValue get value from config file
 func GetValue[T any](key string, def T, getter ...func(string) T) T {

@@ -172,7 +172,7 @@ func (b *MetricsBuilder) BizIDs() []int {
 	b.lock.RLock()
 	defer b.lock.RUnlock()
 
-	var bizIDs = make([]int, 0, len(b.resources))
+	bizIDs := make([]int, 0, len(b.resources))
 	for bizID := range b.resources {
 		bizIDs = append(bizIDs, bizID)
 	}

@@ -170,7 +170,7 @@ func inPhraseState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
 		l.nextToken = &yySymType{
 			s: l.buf,
 		}
-		//log.Debugf(context.TODO(), "PHRASE - '%s'", l.nextToken.s)
+		// log.Debugf(context.TODO(), "PHRASE - '%s'", l.nextToken.s)
 		l.reset()
 		return startState, true
 	} else if !l.inEscape && next == '\\' {
@@ -245,7 +245,6 @@ func inRegexState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
 }
 
 func inNumOrStrState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
-
 	// only a non-escaped space ends the tilde (or eof)
 	if eof || (!l.inEscape && next == ' ' || next == ':' || next == ')' || next == ']' || next == '}') {
 		// end number
@@ -258,7 +257,7 @@ func inNumOrStrState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
 		l.nextToken = &yySymType{
 			s: l.buf,
 		}
-		//log.Debugf(context.TODO(), "NUMBER - '%s'", l.nextToken.s)
+		// log.Debugf(context.TODO(), "NUMBER - '%s'", l.nextToken.s)
 		l.reset()
 		return startState, consumed
 	} else if !l.inEscape && next == '\\' {
@@ -325,7 +324,7 @@ func inStrState(l *queryStringLex, next rune, eof bool) (lexState, bool) {
 		l.nextToken = &yySymType{
 			s: l.buf,
 		}
-		//log.Debugf(context.TODO(), "STRING - '%s'", l.nextToken.s)
+		// log.Debugf(context.TODO(), "STRING - '%s'", l.nextToken.s)
 		l.reset()
 
 		return startState, consumed

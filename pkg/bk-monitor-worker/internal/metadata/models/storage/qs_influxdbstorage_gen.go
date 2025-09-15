@@ -1307,7 +1307,7 @@ var InfluxdbStorageDBSchema = struct {
 // Update updates InfluxdbStorage fields by primary key
 // nolint: dupl
 func (o *InfluxdbStorage) Update(db *gorm.DB, fields ...InfluxdbStorageDBSchemaField) error {
-	dbNameToFieldName := map[string]interface{}{
+	dbNameToFieldName := map[string]any{
 		"bk_tenant_id":              o.BkTenantId,
 		"table_id":                  o.TableID,
 		"storage_cluster_id":        o.StorageClusterID,
@@ -1324,7 +1324,7 @@ func (o *InfluxdbStorage) Update(db *gorm.DB, fields ...InfluxdbStorageDBSchemaF
 		"vm_table_id":               o.VmTableId,
 		"influxdb_proxy_storage_id": o.InfluxdbProxyStorageId,
 	}
-	u := map[string]interface{}{}
+	u := map[string]any{}
 	for _, f := range fields {
 		fs := f.String()
 		u[fs] = dbNameToFieldName[fs]
@@ -1343,7 +1343,7 @@ func (o *InfluxdbStorage) Update(db *gorm.DB, fields ...InfluxdbStorageDBSchemaF
 
 // InfluxdbStorageUpdater is an InfluxdbStorage updates manager
 type InfluxdbStorageUpdater struct {
-	fields map[string]interface{}
+	fields map[string]any
 	db     *gorm.DB
 }
 
@@ -1351,7 +1351,7 @@ type InfluxdbStorageUpdater struct {
 // nolint: dupl
 func NewInfluxdbStorageUpdater(db *gorm.DB) InfluxdbStorageUpdater {
 	return InfluxdbStorageUpdater{
-		fields: map[string]interface{}{},
+		fields: map[string]any{},
 		db:     db.Model(&InfluxdbStorage{}),
 	}
 }

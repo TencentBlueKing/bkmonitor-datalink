@@ -34,7 +34,7 @@ var DemoServiceInstances = []*AlarmServiceInstanceInfo{
 		ProcessInstances:  []byte(`[{"bk_host_id": 3, "bk_cloud_id": 0, "bk_host_innerip": "127.0.0.1"}]`),
 		IP:                "127.0.0.3",
 		BkCloudId:         0,
-		TopoLinks: map[string][]map[string]interface{}{
+		TopoLinks: map[string][]map[string]any{
 			"module|6": {
 				{"bk_inst_id": 6, "bk_inst_name": "测试模块", "bk_obj_id": "module", "bk_obj_name": "模块"},
 				{"bk_inst_id": 3, "bk_inst_name": "测试集群", "bk_obj_id": "set", "bk_obj_name": "集群"},

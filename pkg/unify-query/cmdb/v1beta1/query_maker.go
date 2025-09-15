@@ -63,13 +63,11 @@ func (q *QueryFactory) matcherToConditionFields(matcher cmdb.Matcher, op string)
 			Operator:      op,
 		})
 	}
-	return
+	return conditionFields
 }
 
 func (q *QueryFactory) MakeQueryTs() (*structured.QueryTs, error) {
-	var (
-		queryList []*structured.Query
-	)
+	var queryList []*structured.Query
 
 	if len(q.Path) > 1 {
 		cmdbPath, err := q.pathParser(q.Path)
@@ -165,7 +163,7 @@ func (q *QueryFactory) buildConditionFields(allIndex []string, indexMatcher, exp
 
 func (q *QueryFactory) buildInfoQuery(resource cmdb.Resource, indexMatcher, expandMatcher cmdb.Matcher) (query *structured.Query, err error) {
 	if resource == "" {
-		return
+		return query, err
 	}
 
 	allIndex := ResourcesIndex(resource)
@@ -186,12 +184,12 @@ func (q *QueryFactory) buildInfoQuery(resource cmdb.Resource, indexMatcher, expa
 
 	query.Conditions = q.buildConditionFields(allIndex, indexMatcher, expandMatcher)
 	q.index++
-	return
+	return query, err
 }
 
 func (q *QueryFactory) buildRelationQueries(path cmdb.Relation) (queries []*structured.Query, err error) {
 	if len(path.V) != 2 {
-		return
+		return queries, err
 	}
 
 	source, target := path.V[0], path.V[1]
@@ -227,7 +225,7 @@ func (q *QueryFactory) buildRelationQueries(path cmdb.Relation) (queries []*stru
 		infoQuery, infoErr := q.buildInfoQuery(source, q.IndexMatcher, q.ExpandMatcher)
 		if infoErr != nil {
 			err = infoErr
-			return
+			return queries, err
 		}
 		queries = append(queries, infoQuery)
 		ref = fmt.Sprintf("%s * on(%s) group_left() (%s)", ref, sourceIndex, infoRef)
@@ -239,5 +237,5 @@ func (q *QueryFactory) buildRelationQueries(path cmdb.Relation) (queries []*stru
 		q.metricMerge = fmt.Sprintf("count(%s * on(%s) group_left() (%s)) by (%s)", ref, sourceIndex, q.metricMerge, targetIndex)
 	}
 
-	return
+	return queries, err
 }

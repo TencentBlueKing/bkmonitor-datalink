@@ -16,9 +16,7 @@ type Segmented struct {
 	MinInterval string
 }
 
-var (
-	segmented *Segmented
-)
+var segmented *Segmented
 
 // SetSegmented
 func SetSegmented(s *Segmented) {

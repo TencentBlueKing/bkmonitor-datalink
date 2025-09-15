@@ -58,7 +58,6 @@ type MetricProcessor struct {
 func (m *MetricProcessor) ToMetrics(receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph) {
 	flowIgnoreSpanIds := m.findSpanMetric(receiver, fullTreeGraph)
 	m.findParentChildAndAloneFlowMetric(receiver, fullTreeGraph, flowIgnoreSpanIds)
-
 }
 
 func (m *MetricProcessor) findSpanMetric(
@@ -153,7 +152,6 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 	receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph,
 	ignoreSpanIds []string,
 ) {
-
 	metricRecordMapping := make(map[string]*storage.FlowMetricRecordStats)
 	metricCount := make(map[string]int)
 
@@ -492,8 +490,8 @@ func (m *MetricProcessor) findComponentInstanceRelation(
 	componentName string,
 	span StandardSpan,
 	metricCount map[string]int,
-	labels []string) []string {
-
+	labels []string,
+) []string {
 	var fields []core.CommonField
 	// 不查询 discoverRule 表 固定字段生成实例 ID (因为组件类服务的实例 Id 组成字段正常情况下不会变化)
 	switch category {

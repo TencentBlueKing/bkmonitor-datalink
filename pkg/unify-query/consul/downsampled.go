@@ -148,7 +148,7 @@ func (c *client) format(kvPairs api.KVPairs) error {
 		var cq DownsampledContinuousQuery
 		var err error
 		var key string
-		var keys = strings.Split(strings.ReplaceAll(kvPair.Key, c.prefixPath, ""), "/")
+		keys := strings.Split(strings.ReplaceAll(kvPair.Key, c.prefixPath, ""), "/")
 
 		if len(keys) > 1 {
 			switch {

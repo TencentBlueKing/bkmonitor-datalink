@@ -29,5 +29,4 @@ func TestIter(t *testing.T) {
 	for _, r := range result {
 		assert.Equal(t, 3, len(r.([]any)))
 	}
-
 }

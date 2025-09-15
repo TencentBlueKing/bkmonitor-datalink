@@ -98,5 +98,4 @@ func TestSearch(t *testing.T) {
 	result, err := inner.Query(q)
 	assert.Nil(t, err)
 	assert.Equal(t, "any result", result)
-
 }

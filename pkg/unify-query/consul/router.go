@@ -157,7 +157,6 @@ const (
 // GetTSInfo: 从配置中获取influxdb所需要的db，measurement等信息
 // db必定不为空，如果为空，则最好忽略此TableID
 func (m *MetaResultTableConfig) GetTSInfo(dataID DataID, tableID *TableID) error {
-
 	// 有值代表为分表
 
 	for _, shipper := range m.ShipperList {
@@ -224,7 +223,6 @@ const (
 // ReloadRouterInfo: 从consul获取router信息
 // 这里的path和transfer watch的路径一致
 func ReloadRouterInfo() (map[string][]*PipelineConfig, error) {
-
 	// 获取metadata路径下的transfer全部实例，并遍历获取所有path路径下的dataID
 	// 根据consul路径版本获取到所有transfer集群的data_id的路径
 	paths, err := GetPathDataIDPath(MetadataPath, MetadataPathVersion)
@@ -255,7 +253,6 @@ func ReloadRouterInfo() (map[string][]*PipelineConfig, error) {
 
 // FormatQueryRouter : 对pipelineConf序列化
 func FormatMetaData(kvPairs api.KVPairs) ([]*PipelineConfig, error) {
-
 	var (
 		PipelineConfList []*PipelineConfig
 		err              error
@@ -281,7 +278,6 @@ func FormatMetaData(kvPairs api.KVPairs) ([]*PipelineConfig, error) {
 // GetPathDataIDPath: 根据version信息，获取不同的metadata元数据信息
 // 这里路径版本与transfer对齐
 var GetPathDataIDPath = func(metadataPath, version string) ([]string, error) {
-
 	switch version {
 	case "":
 		return []string{metadataPath}, nil
@@ -316,7 +312,8 @@ var WatchQueryRouter = func(ctx context.Context) (<-chan any, error) {
 // DelayWatchPath
 func DelayWatchPath(
 	ctx context.Context, path, separator string, fn func(ctx context.Context, path, separator string,
-	) (<-chan any, error)) (<-chan any, error) {
+	) (<-chan any, error),
+) (<-chan any, error) {
 	var (
 		ticker     = time.NewTicker(checkUpdatePeriod)
 		delayT     = delayUpdateTime

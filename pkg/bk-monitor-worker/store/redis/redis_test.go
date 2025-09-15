@@ -28,7 +28,6 @@ var rs *Instance
 func newRedisClient() {
 	// 启动 server
 	s, err := miniredis.Run()
-
 	if err != nil {
 		panic(err)
 	}

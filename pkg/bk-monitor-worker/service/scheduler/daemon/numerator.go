@@ -64,13 +64,13 @@ func (d *DefaultNumerator) start() {
 			invalidTaskUniIdBindings := d.checkWorkerCorrect(workers, workerTaskMapping, taskUniIdMapping)
 			exceptAddTasks, invalidWorkerIdBindings := d.checkTaskCorrect(taskUniIdMapping, taskWorkerMapping, workers)
 
-			linq.From(invalidTaskUniIdBindings).ForEach(func(i interface{}) {
+			linq.From(invalidTaskUniIdBindings).ForEach(func(i any) {
 				if err = GetBinding().deleteBinding(i.(string)); err != nil {
 					logger.Errorf("Numerator delete binding failed, error: %s", err)
 				}
 			})
-			linq.From(exceptAddTasks).ForEach(func(i interface{}) { GetBinding().addTask(i.(task.SerializerTask)) })
-			linq.From(invalidWorkerIdBindings).ForEach(func(i interface{}) {
+			linq.From(exceptAddTasks).ForEach(func(i any) { GetBinding().addTask(i.(task.SerializerTask)) })
+			linq.From(invalidWorkerIdBindings).ForEach(func(i any) {
 				if err = GetBinding().deleteWorkerBinding(i.(string)); err != nil {
 					logger.Errorf("Numerator delete worker binding failed, error: %s", err)
 				}
@@ -126,7 +126,7 @@ func (d *DefaultNumerator) checkTaskCorrect(
 	var invalidWorkerIds []string
 	var expectAddTasks []task.SerializerTask
 	var workerIds []string
-	linq.From(workers).Select(func(i interface{}) interface{} { return i.(service.WorkerInfo).Id }).ToSlice(&workerIds)
+	linq.From(workers).Select(func(i any) any { return i.(service.WorkerInfo).Id }).ToSlice(&workerIds)
 
 	for taskUniId, taskInstance := range taskUniMapping {
 		bindingWorkerStr, taskHasWorker := taskWorkerMapping[taskUniId]
@@ -216,7 +216,7 @@ func (d *DefaultNumerator) listBindingMapping(workers []service.WorkerInfo, task
 		workerTaskMapping[workerId] = workerTaskBindings
 	}
 
-	for taskUniId, _ := range taskUniIdMapping {
+	for taskUniId := range taskUniIdMapping {
 
 		exist, err := d.redisClient.HExists(d.ctx, common.DaemonBindingTask(), taskUniId).Result()
 		if err != nil {

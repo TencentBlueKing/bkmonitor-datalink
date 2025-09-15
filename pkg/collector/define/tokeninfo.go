@@ -34,28 +34,6 @@ type Token struct {
 	BeatDataId     int32  `config:"beat_dataid"`
 }
 
-var tokenInfo = promauto.NewGaugeVec(
-	prometheus.GaugeOpts{
-		Namespace: MonitoringNamespace,
-		Name:      "receiver_token_info",
-		Help:      "Receiver decoded token info",
-	},
-	[]string{"token", "metrics_id", "traces_id", "logs_id", "profiles_id", "proxy_id", "app_name", "biz_id"},
-)
-
-func SetTokenInfo(token Token) {
-	tokenInfo.WithLabelValues(
-		token.Original,
-		fmt.Sprintf("%d", token.MetricsDataId),
-		fmt.Sprintf("%d", token.TracesDataId),
-		fmt.Sprintf("%d", token.LogsDataId),
-		fmt.Sprintf("%d", token.ProfilesDataId),
-		fmt.Sprintf("%d", token.ProxyDataId),
-		token.AppName,
-		fmt.Sprintf("%d", token.BizId),
-	).Set(1)
-}
-
 func (t Token) BizApp() string {
 	return fmt.Sprintf("%d-%s", t.BizId, t.AppName)
 }
@@ -76,4 +54,26 @@ func (t Token) GetDataID(rtype RecordType) int32 {
 		return t.BeatDataId
 	}
 	return -1
+}
+
+var tokenInfo = promauto.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Namespace: MonitoringNamespace,
+		Name:      "receiver_token_info",
+		Help:      "Receiver decoded token info",
+	},
+	[]string{"token", "metrics_id", "traces_id", "logs_id", "profiles_id", "proxy_id", "app_name", "biz_id"},
+)
+
+func SetTokenInfo(token Token) {
+	tokenInfo.WithLabelValues(
+		token.Original,
+		fmt.Sprintf("%d", token.MetricsDataId),
+		fmt.Sprintf("%d", token.TracesDataId),
+		fmt.Sprintf("%d", token.LogsDataId),
+		fmt.Sprintf("%d", token.ProfilesDataId),
+		fmt.Sprintf("%d", token.ProxyDataId),
+		token.AppName,
+		fmt.Sprintf("%d", token.BizId),
+	).Set(1)
 }

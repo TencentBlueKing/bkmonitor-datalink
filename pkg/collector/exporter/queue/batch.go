@@ -163,7 +163,7 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 		switch dc.rtype {
 		case define.RecordTraces, define.RecordLogs:
 			bq.out <- NewEventsMapStr(dc.dataID, data)
-		case define.RecordMetrics, define.RecordPushGateway, define.RecordRemoteWrite, define.RecordTars:
+		case define.RecordMetrics, define.RecordPushGateway, define.RecordRemoteWrite, define.RecordTars, define.RecordMetricV2:
 			bq.out <- NewMetricsMapStr(dc.dataID, data)
 		case define.RecordProfiles:
 			bq.out <- NewProfilesMapStr(dc.dataID, data)
@@ -233,7 +233,7 @@ func (bq *BatchQueue) Put(events ...define.Event) {
 	var batchSize int
 	if !ok {
 		switch rtype {
-		case define.RecordMetrics, define.RecordPushGateway, define.RecordRemoteWrite:
+		case define.RecordMetrics, define.RecordPushGateway, define.RecordRemoteWrite, define.RecordMetricV2:
 			batchSize = bq.conf.MetricsBatchSize
 		case define.RecordLogs:
 			batchSize = bq.conf.LogsBatchSize

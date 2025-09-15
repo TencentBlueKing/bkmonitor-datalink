@@ -19,11 +19,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"go.opentelemetry.io/collector/pdata/pcommon"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metricsbuilder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/labelstore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/fasttime"
@@ -349,7 +347,7 @@ type LeValue struct {
 	Value float64
 }
 
-func (r *recorder) calc(kind string, k uint64, stat rStats) (rStats, []metricsbuilder.Metric) {
+func (r *recorder) calc(kind string, k uint64, stat rStats) (rStats, []define.MetricV2) {
 	lbs, ok := r.storage.Get(k)
 	if !ok {
 		return stat, nil
@@ -401,27 +399,27 @@ func (r *recorder) calc(kind string, k uint64, stat rStats) (rStats, []metricsbu
 		}
 	}
 
-	var metrics []metricsbuilder.Metric
-	unixNano := uint64(time.Now().UnixNano())
+	var metrics []define.MetricV2
+	unixMill := time.Now().UnixMilli()
 
 	// histogram 类型处理
 	if len(leValues) > 0 {
 		for _, lev := range leValues {
 			dims := utils.CloneMap(lbs) // 复制新的 labels 保证读写安全
 			dims["le"] = lev.Le
-			metrics = append(metrics, metricsbuilder.Metric{
-				Val:        lev.Value,
-				Ts:         pcommon.Timestamp(unixNano),
-				Dimensions: dims,
+			metrics = append(metrics, define.MetricV2{
+				Metrics:   map[string]float64{r.metricName: lev.Value},
+				Timestamp: unixMill,
+				Dimension: dims,
 			})
 		}
 	}
 
 	if !math.IsNaN(val) {
-		metrics = append(metrics, metricsbuilder.Metric{
-			Val:        val,
-			Ts:         pcommon.Timestamp(unixNano),
-			Dimensions: utils.CloneMap(lbs),
+		metrics = append(metrics, define.MetricV2{
+			Metrics:   map[string]float64{r.metricName: val},
+			Timestamp: unixMill,
+			Dimension: utils.CloneMap(lbs),
 		})
 	}
 
@@ -444,7 +442,7 @@ func (r *recorder) buildMetrics(kind string) <-chan *define.Record {
 		defer close(ch) // 退出前必须确保 ch 被关闭
 
 		count := 0
-		mb := metricsbuilder.New()
+		ms := make([]define.MetricV2, 0, batch)
 		for _, k := range ks {
 			// 尽可能使每次持有锁的周期更小一点
 			// 保证给 Set 操作抢占的机会
@@ -457,7 +455,7 @@ func (r *recorder) buildMetrics(kind string) <-chan *define.Record {
 
 			newStat, metrics := r.calc(kind, k, stat)
 			if len(metrics) > 0 {
-				mb.Build(r.metricName, metrics...)
+				ms = append(ms, metrics...)
 			}
 			count += len(metrics)
 			r.statsMap[k] = newStat
@@ -465,23 +463,23 @@ func (r *recorder) buildMetrics(kind string) <-chan *define.Record {
 
 			if count >= batch {
 				ch <- &define.Record{
-					RecordType:  define.RecordMetrics,
+					RecordType:  define.RecordMetricV2,
 					RequestType: define.RequestDerived,
 					Token:       define.Token{MetricsDataId: r.dataID},
-					Data:        mb.Get(),
+					Data:        &define.MetricV2Data{Data: ms},
 				}
 				// 状态重置
 				count = 0
-				mb = metricsbuilder.New()
+				ms = make([]define.MetricV2, 0, batch)
 			}
 		}
 
 		if count > 0 {
 			ch <- &define.Record{
-				RecordType:  define.RecordMetrics,
+				RecordType:  define.RecordMetricV2,
 				RequestType: define.RequestDerived,
 				Token:       define.Token{MetricsDataId: r.dataID},
-				Data:        mb.Get(),
+				Data:        &define.MetricV2Data{Data: ms},
 			}
 		}
 	}()

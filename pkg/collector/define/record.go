@@ -68,6 +68,8 @@ const (
 	RecordBeat           RecordType = "beat"
 	RecordTars           RecordType = "tars"
 	RecordLogPush        RecordType = "logpush"
+	RecordMetricV2       RecordType = "metricv2"
+	RecordEventV2        RecordType = "eventv2"
 )
 
 // IntoRecordType 将字符串描述转换为 RecordType 并返回是否为 Derived 类型
@@ -104,6 +106,10 @@ func IntoRecordType(s string) (RecordType, bool) {
 		t = RecordTars
 	case RecordLogPush.S():
 		t = RecordLogPush
+	case RecordMetricV2.S():
+		t = RecordMetricV2
+	case RecordEventV2.S():
+		t = RecordEventV2
 	default:
 		t = RecordUndefined
 	}
@@ -218,6 +224,14 @@ type EventV2 struct {
 	Target    string            `json:"target"`
 	Dimension map[string]string `json:"dimension"`
 	Timestamp int64             `json:"timestamp"`
+}
+
+type MetricV2Data struct {
+	Data []MetricV2
+}
+
+type EventV2Data struct {
+	Data []EventV2
 }
 
 type PingserverData struct {

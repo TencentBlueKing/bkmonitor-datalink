@@ -61,6 +61,7 @@ func NewCommonConverter(conf *Config) Converter {
 		fta:         ftaConverter{},
 		beat:        beatConverter{},
 		logPush:     logPushConverter{},
+		metricV2:    metricV2Converter{},
 		tars:        newTarsConverter(conf.Tars),
 	}
 }
@@ -78,6 +79,7 @@ type commonConverter struct {
 	beat        EventConverter
 	logPush     EventConverter
 	tars        EventConverter
+	metricV2    EventConverter
 }
 
 func (c commonConverter) Clean() {
@@ -110,6 +112,8 @@ func (c commonConverter) Convert(record *define.Record, f define.GatherFunc) {
 		c.tars.Convert(record, f)
 	case define.RecordLogPush:
 		c.logPush.Convert(record, f)
+	case define.RecordMetricV2:
+		c.metricV2.Convert(record, f)
 	}
 }
 

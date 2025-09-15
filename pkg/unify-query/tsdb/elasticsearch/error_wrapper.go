@@ -21,7 +21,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 )
 
-func handleElasticSpecificError(elasticErr *elastic.Error) error {
+func handleESSpecificError(elasticErr *elastic.Error) error {
+	if elasticErr.Details == nil {
+		return errors.New("")
+	}
 	var msgBuilder strings.Builder
 
 	if elasticErr.Details != nil {
@@ -54,7 +57,7 @@ func processOnEsErr(ctx context.Context, url string, err error) error {
 
 	var elasticErr *elastic.Error
 	if errors.As(err, &elasticErr) {
-		return handleElasticSpecificError(elasticErr)
+		return handleESSpecificError(elasticErr)
 	}
 
 	if errors.Is(err, io.EOF) {

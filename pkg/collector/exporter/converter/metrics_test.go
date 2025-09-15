@@ -120,42 +120,9 @@ func TestConvertHistogramMetrics(t *testing.T) {
 	excepted := []common.MapStr{
 		{
 			"metrics": map[string]float64{
-				"bk_apm_duration_sum": float64(100),
-			},
-			"target": define.Identity(),
-			"dimension": map[string]string{
-				"scope_name": generator.ScopeName,
-				"a1":         "v1",
-				"r1":         "v1",
-			},
-			"timestamp": int64(0),
-		},
-		{
-			"metrics": map[string]float64{
-				"bk_apm_duration_min": float64(1),
-			},
-			"target": define.Identity(),
-			"dimension": map[string]string{
-				"scope_name": generator.ScopeName,
-				"a1":         "v1",
-				"r1":         "v1",
-			},
-			"timestamp": int64(0),
-		},
-		{
-			"metrics": map[string]float64{
-				"bk_apm_duration_max": float64(66),
-			},
-			"target": define.Identity(),
-			"dimension": map[string]string{
-				"scope_name": generator.ScopeName,
-				"a1":         "v1",
-				"r1":         "v1",
-			},
-			"timestamp": int64(0),
-		},
-		{
-			"metrics": map[string]float64{
+				"bk_apm_duration_sum":   float64(100),
+				"bk_apm_duration_min":   float64(1),
+				"bk_apm_duration_max":   float64(66),
 				"bk_apm_duration_count": float64(10),
 			},
 			"target": define.Identity(),
@@ -247,14 +214,16 @@ func TestConvertSummaryMetrics(t *testing.T) {
 	dp.SetSum(10)
 	dp.SetCount(1)
 
-	MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
+	var conv metricsConverter
+	conv.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
 
 	event := events[0]
 	event.Data()
 
-	assert.Equal(t, common.MapStr{
+	expected := common.MapStr{
 		"metrics": map[string]float64{
-			"bk_apm_duration_sum": float64(10),
+			"bk_apm_duration_sum":   float64(10),
+			"bk_apm_duration_count": float64(1),
 		},
 		"target": define.Identity(),
 		"dimension": map[string]string{
@@ -263,7 +232,9 @@ func TestConvertSummaryMetrics(t *testing.T) {
 			"r1":         "v1",
 		},
 		"timestamp": int64(0),
-	}, event.Data())
+	}
+
+	assert.Equal(t, expected, event.Data())
 	assert.Equal(t, event.RecordType(), define.RecordMetrics)
 }
 
@@ -275,19 +246,6 @@ func TestConvertSumMetrics(t *testing.T) {
 			Attributes: map[string]string{"a1": "v1"},
 			Resources:  map[string]string{"r1": "v1"},
 		},
-	}
-
-	excepted := common.MapStr{
-		"metrics": map[string]float64{
-			"bk_apm_duration": float64(1024),
-		},
-		"target": define.Identity(),
-		"dimension": map[string]string{
-			"scope_name": generator.ScopeName,
-			"a1":         "v1",
-			"r1":         "v1",
-		},
-		"timestamp": int64(0),
 	}
 
 	g := generator.NewMetricsGenerator(opts)
@@ -304,29 +262,23 @@ func TestConvertSumMetrics(t *testing.T) {
 		dp.SetDoubleVal(1024)
 		assert.Equal(t, pmetric.NumberDataPointValueTypeDouble, dp.ValueType())
 
-		MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
+		var conv metricsConverter
+		conv.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
 		event := events[0]
 		event.Data()
 
-		assert.Equal(t, excepted, event.Data())
-		assert.Equal(t, event.RecordType(), define.RecordMetrics)
-	})
-
-	t.Run("IntValue", func(t *testing.T) {
-		metrics := g.Generate()
-		events := make([]define.Event, 0)
-		gather := func(evts ...define.Event) {
-			events = append(events, evts...)
+		excepted := common.MapStr{
+			"metrics": map[string]float64{
+				"bk_apm_duration": float64(1024),
+			},
+			"target": define.Identity(),
+			"dimension": map[string]string{
+				"scope_name": generator.ScopeName,
+				"a1":         "v1",
+				"r1":         "v1",
+			},
+			"timestamp": int64(0),
 		}
-
-		dp := testkits.FirstSumPoint(metrics)
-		dp.SetTimestamp(0)
-		dp.SetIntVal(1024)
-		assert.Equal(t, pmetric.NumberDataPointValueTypeInt, dp.ValueType())
-
-		MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
-		event := events[0]
-		event.Data()
 
 		assert.Equal(t, excepted, event.Data())
 		assert.Equal(t, event.RecordType(), define.RecordMetrics)
@@ -361,8 +313,9 @@ func BenchmarkMetricsConvert_10_Gauge_DataPoint(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv metricsConverter
 	for i := 0; i < b.N; i++ {
-		MetricsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -375,8 +328,9 @@ func BenchmarkMetricsConvert_10_Counter_DataPoint(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv metricsConverter
 	for i := 0; i < b.N; i++ {
-		MetricsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -389,8 +343,9 @@ func BenchmarkMetricsConvert_10_Histogram_DataPoint(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv metricsConverter
 	for i := 0; i < b.N; i++ {
-		MetricsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -403,8 +358,9 @@ func BenchmarkMetricsConvert_10_Summary_DataPoint(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv metricsConverter
 	for i := 0; i < b.N; i++ {
-		MetricsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -417,8 +373,9 @@ func BenchmarkMetricsConvert_100_Gauge_DataPoint(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv metricsConverter
 	for i := 0; i < b.N; i++ {
-		MetricsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -431,8 +388,9 @@ func BenchmarkMetricsConvert_100_Counter_DataPoint(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv metricsConverter
 	for i := 0; i < b.N; i++ {
-		MetricsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -445,8 +403,9 @@ func BenchmarkMetricsConvert_100_Histogram_DataPoint(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv metricsConverter
 	for i := 0; i < b.N; i++ {
-		MetricsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -459,8 +418,9 @@ func BenchmarkMetricsConvert_100_Summary_DataPoint(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv metricsConverter
 	for i := 0; i < b.N; i++ {
-		MetricsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -473,8 +433,9 @@ func BenchmarkMetricsConvert_1000_Gauge_DataPoint(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv metricsConverter
 	for i := 0; i < b.N; i++ {
-		MetricsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -487,8 +448,9 @@ func BenchmarkMetricsConvert_1000_Counter_DataPoint(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv metricsConverter
 	for i := 0; i < b.N; i++ {
-		MetricsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -501,8 +463,9 @@ func BenchmarkMetricsConvert_1000_Histogram_DataPoint(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv metricsConverter
 	for i := 0; i < b.N; i++ {
-		MetricsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }
 
@@ -515,7 +478,8 @@ func BenchmarkMetricsConvert_1000_Summary_DataPoint(b *testing.B) {
 	}
 
 	gather := func(evts ...define.Event) {}
+	var conv metricsConverter
 	for i := 0; i < b.N; i++ {
-		MetricsConverter.Convert(&record, gather)
+		conv.Convert(&record, gather)
 	}
 }

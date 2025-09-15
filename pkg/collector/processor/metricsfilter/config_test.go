@@ -127,14 +127,12 @@ func TestCodeRelabelConfigValidate(t *testing.T) {
 			source:  "test.service",
 			services: []*CodeRelabelService{{
 				Name: "my.server;my.service;my.method",
-				Codes: []*CodeRelabelCode{{
-					Rule: "err_200~300",
-					Target: RelabelTarget{
-						Label:  "code_type",
-						Value:  "success",
-						Action: relabelUpsert,
-					},
-				}},
+				Codes: []*CodeRelabelCode{
+					{Rule: "err_200~300"},
+					{Rule: "err_200"},
+					{Rule: "200"},
+					{Rule: "200~300"},
+				},
 			}},
 			targets: RelabelTarget{Label: "target_label", Value: "foo", Action: relabelUpsert},
 			wantErr: false,

@@ -356,7 +356,7 @@ func BenchmarkStatsStruct(b *testing.B) {
 	b.FailNow()
 }
 
-func TestAccumulatorGrownthExceeded(t *testing.T) {
+func TestAccumulatorGrowthExceeded(t *testing.T) {
 	accumulator := New(&Config{
 		MetricName:          "bk_apm_count",
 		MaxSeries:           1000,
@@ -391,7 +391,7 @@ func TestAccumulatorGrownthExceeded(t *testing.T) {
 	accumulator.Stop()
 }
 
-func TestAccumulatorGrownthNotExceeded(t *testing.T) {
+func TestAccumulatorGrowthNotExceeded(t *testing.T) {
 	accumulator := New(&Config{
 		MetricName:          "bk_apm_count",
 		MaxSeries:           1000,

@@ -172,8 +172,11 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 	// 优先找 indices 接口
 	settings := make(map[string]map[string]any)
 	mappings := make(map[string]map[string]any)
+	span.Set("get-indexes", aliases)
 	indices, indicesErr := cli.IndexGet(aliases...).Do(ctx)
 	if indicesErr != nil {
+		log.Warnf(ctx, "get index error: %s", indicesErr)
+		span.Set("get-mapping", aliases)
 		res, err := cli.GetMapping().Index(aliases...).Type("").Do(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("index get error: %w", err)

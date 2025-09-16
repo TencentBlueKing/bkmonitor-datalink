@@ -88,7 +88,7 @@ func (to tracesOperator) Operate(record *define.Record) *define.Record {
 
 					// 派生指标补充 token app_name 维度 (´･_･) 此处硬编码
 					dim[define.TokenAppName] = record.Token.AppName
-					hash := labels.HashFromMap(dim)
+					hash := labels.HashFromMap(dim) // 避免重复计算
 
 					// extractor 处理
 					if to.extractor != nil {

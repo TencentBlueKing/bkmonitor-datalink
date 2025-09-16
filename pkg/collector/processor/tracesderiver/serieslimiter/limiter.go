@@ -18,7 +18,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
 )
 
 var (
@@ -90,9 +89,8 @@ func (l *Limiter) Stop() {
 	}
 }
 
-func (l *Limiter) Set(dataID int32, dims map[string]string) bool {
+func (l *Limiter) Set(dataID int32, hash uint64) bool {
 	var r *recorder
-	h := labels.HashFromMap(dims)
 
 	// 先尝试使用读锁获取 速度更快
 	l.mut.RLock()
@@ -101,7 +99,7 @@ func (l *Limiter) Set(dataID int32, dims map[string]string) bool {
 	}
 	l.mut.RUnlock()
 	if r != nil {
-		return r.Set(h)
+		return r.Set(hash)
 	}
 
 	// 写锁保护 确保执行流一致性
@@ -114,5 +112,5 @@ func (l *Limiter) Set(dataID int32, dims map[string]string) bool {
 	}
 	l.mut.Unlock()
 
-	return r.Set(h)
+	return r.Set(hash)
 }

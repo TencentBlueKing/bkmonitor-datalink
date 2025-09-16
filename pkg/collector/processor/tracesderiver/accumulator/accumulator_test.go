@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -44,10 +45,13 @@ func TestCalcStats(t *testing.T) {
 	dims1 := map[string]string{"label1": "value1"}
 	dims2 := map[string]string{"label2": "value2"}
 
-	r.Set(dims1, 1)
-	r.Set(dims1, 11)
-	r.Set(dims2, 2)
-	r.Set(dims2, 12)
+	h1 := labels.HashFromMap(dims1)
+	h2 := labels.HashFromMap(dims2)
+
+	r.Set(dims1, h1, 1)
+	r.Set(dims1, h1, 11)
+	r.Set(dims2, h2, 2)
+	r.Set(dims2, h2, 12)
 
 	drains := func(ch <-chan *define.Record) {
 		for range ch {
@@ -65,7 +69,7 @@ func TestCalcStats(t *testing.T) {
 		assert.Equal(t, stat.prev, stat.curr)
 	}
 
-	r.Set(dims1, 10)
+	r.Set(dims1, h1, 10)
 }
 
 func TestAccumulatorExceeded(t *testing.T) {
@@ -79,7 +83,9 @@ func TestAccumulatorExceeded(t *testing.T) {
 	ids := []int32{1001, 1002}
 	for i := 0; i < 100; i++ {
 		for _, id := range ids {
-			accumulator.Accumulate(id, random.Dimensions(6), float64(i))
+			dims := random.Dimensions(6)
+			h := labels.HashFromMap(dims)
+			accumulator.Accumulate(id, dims, h, float64(i))
 		}
 	}
 
@@ -100,7 +106,9 @@ func TestAccumulatorNotExceeded(t *testing.T) {
 	ids := []int32{1001, 1002}
 	for i := 0; i < 10; i++ {
 		for _, id := range ids {
-			accumulator.Accumulate(id, random.Dimensions(6), float64(i))
+			dims := random.Dimensions(6)
+			h := labels.HashFromMap(dims)
+			accumulator.Accumulate(id, dims, h, float64(i))
 		}
 	}
 
@@ -122,7 +130,9 @@ func TestAccumulatorGcOk(t *testing.T) {
 	ids := []int32{1001, 1002}
 	for i := 0; i < 20; i++ {
 		for _, id := range ids {
-			accumulator.Accumulate(id, random.Dimensions(6), float64(i))
+			dims := random.Dimensions(6)
+			h := labels.HashFromMap(dims)
+			accumulator.Accumulate(id, dims, h, float64(i))
 		}
 		if i == 9 {
 			exceeded := accumulator.Exceeded()
@@ -152,7 +162,9 @@ func TestAccumulatorGcNotYet(t *testing.T) {
 	ids := []int32{1001, 1002}
 	for i := 0; i < 20; i++ {
 		for _, id := range ids {
-			accumulator.Accumulate(id, random.Dimensions(6), float64(i))
+			dims := random.Dimensions(6)
+			h := labels.HashFromMap(dims)
+			accumulator.Accumulate(id, dims, h, float64(i))
 		}
 		if i == 9 {
 			exceeded := accumulator.Exceeded()
@@ -183,12 +195,14 @@ func testAccumulatorPublish(t *testing.T, dt string, value float64, count int) {
 	accumulator.noAlign = true
 
 	dimensions := random.Dimensions(3)
-	accumulator.Accumulate(1001, dimensions, 0.1*float64(time.Second))
-	accumulator.Accumulate(1001, dimensions, 0.2*float64(time.Second))
-	accumulator.Accumulate(1001, dimensions, 0.3*float64(time.Second))
-	accumulator.Accumulate(1001, dimensions, 0.4*float64(time.Second))
-	accumulator.Accumulate(1001, dimensions, 0.5*float64(time.Second))
-	accumulator.Accumulate(1001, dimensions, 1.0*float64(time.Second))
+	h := labels.HashFromMap(dimensions)
+
+	accumulator.Accumulate(1001, dimensions, h, 0.1*float64(time.Second))
+	accumulator.Accumulate(1001, dimensions, h, 0.2*float64(time.Second))
+	accumulator.Accumulate(1001, dimensions, h, 0.3*float64(time.Second))
+	accumulator.Accumulate(1001, dimensions, h, 0.4*float64(time.Second))
+	accumulator.Accumulate(1001, dimensions, h, 0.5*float64(time.Second))
+	accumulator.Accumulate(1001, dimensions, h, 1.0*float64(time.Second))
 
 	time.Sleep(time.Second)
 	record := records[0]
@@ -244,8 +258,9 @@ func TestAccumulatorPublishCount10(t *testing.T) {
 	accumulator.noAlign = true
 
 	dims := random.Dimensions(6)
+	h := labels.HashFromMap(dims)
 	for i := 0; i < 10; i++ {
-		accumulator.Accumulate(1001, dims, float64(i))
+		accumulator.Accumulate(1001, dims, h, float64(i))
 	}
 
 	time.Sleep(time.Second * 2)
@@ -282,7 +297,9 @@ func testAccumulatorMemoryConsumption(b *testing.B, dataIDCount, iter, dims int)
 		go func(id int32) {
 			defer wg.Done()
 			for i := 0; i < iter; i++ {
-				accumulator.Accumulate(id, random.FastDimensions(dims), float64(i))
+				dims1 := random.FastDimensions(dims)
+				h := labels.HashFromMap(dims1)
+				accumulator.Accumulate(id, dims1, h, float64(i))
 			}
 		}(dataid)
 	}
@@ -364,7 +381,9 @@ func TestAccumulatorGrowthExceeded(t *testing.T) {
 	ids := []int32{1001, 1002}
 	for i := 0; i < 100; i++ {
 		for _, id := range ids {
-			accumulator.Accumulate(id, random.Dimensions(6), float64(i))
+			dims := random.Dimensions(6)
+			h := labels.HashFromMap(dims)
+			accumulator.Accumulate(id, dims, h, float64(i))
 		}
 	}
 
@@ -376,7 +395,9 @@ func TestAccumulatorGrowthExceeded(t *testing.T) {
 	accumulator.resetGrowthRate()
 	for i := 0; i < 100; i++ {
 		for _, id := range ids {
-			accumulator.Accumulate(id, random.Dimensions(6), float64(i))
+			dims := random.Dimensions(6)
+			h := labels.HashFromMap(dims)
+			accumulator.Accumulate(id, dims, h, float64(i))
 		}
 	}
 
@@ -399,7 +420,9 @@ func TestAccumulatorGrowthNotExceeded(t *testing.T) {
 	ids := []int32{1001, 1002}
 	for i := 0; i < 10; i++ {
 		for _, id := range ids {
-			accumulator.Accumulate(id, random.Dimensions(6), float64(i))
+			dims := random.Dimensions(6)
+			h := labels.HashFromMap(dims)
+			accumulator.Accumulate(id, dims, h, float64(i))
 		}
 	}
 

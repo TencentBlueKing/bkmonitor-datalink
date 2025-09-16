@@ -21,7 +21,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/maps"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/labelstore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/fasttime"
@@ -219,12 +218,10 @@ func (r *recorder) Total() int {
 }
 
 // Set 更新 labels 缓存
-func (r *recorder) Set(dims map[string]string, value float64) bool {
+func (r *recorder) Set(dims map[string]string, hash uint64, value float64) bool {
 	if r.stopped.Load() {
 		return false
 	}
-
-	h := labels.HashFromMap(dims)
 
 	r.mut.Lock()
 	defer r.mut.Unlock()
@@ -236,7 +233,7 @@ func (r *recorder) Set(dims map[string]string, value float64) bool {
 		return false
 	}
 
-	s, ok := r.statsMap[h]
+	s, ok := r.statsMap[hash]
 	if !ok {
 		if r.enableLimitGrowRate() {
 			r.seriesGrowthRate += 1
@@ -272,15 +269,15 @@ func (r *recorder) Set(dims map[string]string, value float64) bool {
 	}
 
 	s.updated = fasttime.UnixTimestamp()
-	r.statsMap[h] = s
+	r.statsMap[hash] = s
 
 	// fastpath: 大多数请求都会命中缓存
-	if exist := r.storage.Exist(h); exist {
+	if exist := r.storage.Exist(hash); exist {
 		return true
 	}
 
 	// slowpath: alloc labels 开销较大 尽量减少此操作
-	r.storage.SetIf(h, dims)
+	r.storage.SetIf(hash, dims)
 	return true
 }
 
@@ -692,7 +689,7 @@ func (a *Accumulator) Exceeded() map[int32]int {
 	return ret
 }
 
-func (a *Accumulator) Accumulate(dataID int32, dims map[string]string, value float64) bool {
+func (a *Accumulator) Accumulate(dataID int32, dims map[string]string, hash uint64, value float64) bool {
 	if a.stopped.Load() {
 		return false
 	}
@@ -706,7 +703,7 @@ func (a *Accumulator) Accumulate(dataID int32, dims map[string]string, value flo
 	}
 	a.mut.RUnlock()
 	if r != nil {
-		return r.Set(dims, value)
+		return r.Set(dims, hash, value)
 	}
 
 	// 写锁保护
@@ -726,7 +723,7 @@ func (a *Accumulator) Accumulate(dataID int32, dims map[string]string, value flo
 		a.recorders[dataID] = r
 	}
 	a.mut.Unlock()
-	return r.Set(dims, value)
+	return r.Set(dims, hash, value)
 }
 
 func (a *Accumulator) enableLimitGrowRate() bool {

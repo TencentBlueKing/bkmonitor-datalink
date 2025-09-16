@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/accumulator"
@@ -87,10 +88,11 @@ func (to tracesOperator) Operate(record *define.Record) *define.Record {
 
 					// 派生指标补充 token app_name 维度 (´･_･) 此处硬编码
 					dim[define.TokenAppName] = record.Token.AppName
+					hash := labels.HashFromMap(dim)
 
 					// extractor 处理
 					if to.extractor != nil {
-						if to.extractor.Set(record.Token.MetricsDataId, dim) {
+						if to.extractor.Set(record.Token.MetricsDataId, hash) {
 							val := to.extractor.Extract(span)
 							metrics = append(metrics, define.MetricV2{
 								Metrics:   map[string]float64{t.MetricName: val},
@@ -103,7 +105,7 @@ func (to tracesOperator) Operate(record *define.Record) *define.Record {
 					// accumulator 处理
 					if to.accumulator != nil {
 						val := utils.CalcSpanDuration(span)
-						to.accumulator.Accumulate(record.Token.MetricsDataId, dim, val)
+						to.accumulator.Accumulate(record.Token.MetricsDataId, dim, hash, val)
 					}
 				}
 			}

@@ -42,8 +42,8 @@ func (e *Extractor) Extract(span ptrace.Span) float64 {
 	return utils.CalcSpanDuration(span)
 }
 
-func (e *Extractor) Set(dataID int32, dims map[string]string) bool {
-	return e.limiter.Set(dataID, dims)
+func (e *Extractor) Set(dataID int32, hash uint64) bool {
+	return e.limiter.Set(dataID, hash)
 }
 
 func (e *Extractor) Stop() {

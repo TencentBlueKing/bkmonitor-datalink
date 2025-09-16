@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
 )
 
@@ -27,7 +28,8 @@ func TestLimiterExceeded(t *testing.T) {
 	exceeded := 0
 	for i := 0; i < 100; i++ {
 		for _, id := range ids {
-			ok := limiter.Set(id, random.Dimensions(6))
+			h := labels.HashFromMap(random.Dimensions(6))
+			ok := limiter.Set(id, h)
 			if !ok {
 				exceeded++
 			}
@@ -44,7 +46,8 @@ func TestLimiterNotExceeded(t *testing.T) {
 	exceeded := 0
 	for i := 0; i < 100; i++ {
 		for _, id := range ids {
-			ok := limiter.Set(id, random.Dimensions(6))
+			h := labels.HashFromMap(random.Dimensions(6))
+			ok := limiter.Set(id, h)
 			if !ok {
 				exceeded++
 			}
@@ -61,7 +64,8 @@ func TestLimiterGcOk(t *testing.T) {
 	exceeded := 0
 	for i := 0; i < 20; i++ {
 		for _, id := range ids {
-			ok := limiter.Set(id, random.Dimensions(6))
+			h := labels.HashFromMap(random.Dimensions(6))
+			ok := limiter.Set(id, h)
 			if !ok {
 				exceeded++
 			}
@@ -81,7 +85,8 @@ func TestLimiterGcNotYet(t *testing.T) {
 	exceeded := 0
 	for i := 0; i < 20; i++ {
 		for _, id := range ids {
-			ok := limiter.Set(id, random.Dimensions(6))
+			h := labels.HashFromMap(random.Dimensions(6))
+			ok := limiter.Set(id, h)
 			if !ok {
 				exceeded++
 			}
@@ -105,7 +110,8 @@ func BenchmarkLimiterSet(b *testing.B) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < n; j++ {
-				limiter.Set(1, random.FastDimensions(1))
+				h := labels.HashFromMap(random.Dimensions(1))
+				limiter.Set(1, h)
 			}
 		}()
 	}

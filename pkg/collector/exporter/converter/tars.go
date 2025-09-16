@@ -149,8 +149,7 @@ func toHistogram(name, target string, timestamp int64, buckets []bucket, dims ma
 	pms := make([]*promMapper, 0, len(buckets)+1)
 	bucketMetricName := name + "_bucket"
 	for _, b := range buckets {
-		dims := maps.Clone(dims)
-		dims["le"] = b.Val
+		dims := maps.MergeWith(dims, "le", b.Val)
 		pm := &promMapper{
 			Metrics:    common.MapStr{bucketMetricName: b.Cnt},
 			Target:     target,
@@ -168,8 +167,8 @@ func toHistogram(name, target string, timestamp int64, buckets []bucket, dims ma
 	return pms
 }
 
-// statHeadToRPCMetricDims 将 Tars Stat 维度转为通用 RPC 模调维度
-func statHeadToRPCMetricDims(head *statf.StatMicMsgHead, role string, ip string) map[string]string {
+// statHeadToDimensions 将 Tars Stat 维度转为通用 RPC 模调维度
+func statHeadToDimensions(head *statf.StatMicMsgHead, role, ip string) map[string]string {
 	// 去掉可能存在的 Token，并提取可能存在的 Version 字段。
 	calleeServer, _ := tokenparser.FromString(head.SlaveName)
 	callerServer, _ := tokenparser.FromString(head.MasterName)
@@ -195,7 +194,7 @@ func statHeadToRPCMetricDims(head *statf.StatMicMsgHead, role string, ip string)
 
 	return map[string]string{
 		resourceTagsRPCSystem:   define.RequestTars.S(),
-		resourceTagsScopeName:   fmt.Sprintf("%s_metrics", role),
+		resourceTagsScopeName:   role + "_metrics",
 		resourceTagsVersion:     version,
 		resourceTagsInstance:    instance,
 		resourceTagsServiceName: serviceName,
@@ -213,8 +212,8 @@ func statHeadToRPCMetricDims(head *statf.StatMicMsgHead, role string, ip string)
 	}
 }
 
-// propHeadToCustomMetricDims 将 Tars Property 维度转为自定义指标维度
-func propHeadToCustomMetricDims(head *propertyf.StatPropMsgHead, ip string) map[string]string {
+// propHeadToDimensions 将 Tars Property 维度转为自定义指标维度
+func propHeadToDimensions(head *propertyf.StatPropMsgHead, ip string) map[string]string {
 	instance := head.Ip
 	if instance == "" {
 		// 原始数据中可能没有 IP 维度，使用上报 IP 填充。
@@ -299,7 +298,7 @@ func (s *stat) Copy() *stat {
 		successCount: s.successCount,
 		totalRspTime: s.totalRspTime,
 		dimensions:   maps.Clone(s.dimensions),
-		bucketMap:    make(map[int32]int32, len(s.bucketMap)),
+		bucketMap:    make(map[int32]int32),
 	}
 	for k, v := range s.bucketMap {
 		newStat.bucketMap[k] = v
@@ -549,7 +548,7 @@ func (c tarsConverter) handleStat(token define.Token, ip string, data *define.Ta
 	}
 
 	for head, body := range sd.Stats {
-		dims := statHeadToRPCMetricDims(&head, role, ip)
+		dims := statHeadToDimensions(&head, role, ip)
 		stat := newStat(token, role, ip, data.Timestamp, dims, body)
 		events = append(events, c.statToEvents(stat)...)
 
@@ -581,14 +580,14 @@ func (c tarsConverter) handleStat(token define.Token, ip string, data *define.Ta
 func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, data *define.TarsData) []define.Event {
 	pms := make([]*promMapper, 0)
 	for head, body := range data.Data.(*define.TarsPropertyData).Props {
-		commonDims := propHeadToCustomMetricDims(&head, ip)
+		commonDims := propHeadToDimensions(&head, ip)
 		for _, info := range body.VInfo {
 			dims := maps.MergeWith(commonDims, tarsPropertyTagsPropertyPolicy, info.Policy)
 			switch info.Policy {
 			case "Distr":
 				bucketMap := toBucketMap(info.Value)
 				if len(bucketMap) == 0 {
-					logger.Warnf("empty distrMap, dataID=%d, ip=%v, propertyName=%s, Distr=%s", dataID, ip, head.PropertyName, info.Value)
+					logger.Warnf("skip empty distr, dataID=%d, ip=%v, propertyName=%s, Distr=%s", dataID, ip, head.PropertyName, info.Value)
 					continue
 				}
 

@@ -418,7 +418,7 @@ func (r *recorder) calc(kind string, k uint64, stat rStats) (rStats, []define.Me
 		metrics = append(metrics, define.MetricV2{
 			Metrics:   map[string]float64{r.metricName: val},
 			Timestamp: unixMill,
-			Dimension: maps.Clone(lbs),
+			Dimension: lbs, // leValues 会拷贝 因此可直接复用此 lbs
 		})
 	}
 
@@ -453,12 +453,14 @@ func (r *recorder) buildMetrics(kind string) <-chan *define.Record {
 			}
 
 			newStat, metrics := r.calc(kind, k, stat)
+			r.statsMap[k] = newStat
+			r.mut.Unlock()
+
+			// 非原子操作无需加锁 减少写锁临界区
 			if len(metrics) > 0 {
 				ms = append(ms, metrics...)
 			}
 			count += len(metrics)
-			r.statsMap[k] = newStat
-			r.mut.Unlock()
 
 			if count >= batch {
 				ch <- &define.Record{

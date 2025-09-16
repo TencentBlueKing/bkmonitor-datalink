@@ -80,6 +80,7 @@ func (s *Storage) Get(h uint64) (map[string]string, bool) {
 	if !ok {
 		return nil, false
 	}
+
 	ret := make(map[string]string)
 	for _, vi := range vis {
 		ret[s.keys[vi.Index]] = vi.Value

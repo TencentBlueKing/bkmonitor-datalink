@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package utils
+package optmap
 
 import (
 	"strings"
@@ -31,7 +31,7 @@ type OptMap struct {
 	m map[string]any // 不会有并发读写
 }
 
-func NewOptMap(s string) *OptMap {
+func New(s string) *OptMap {
 	m := make(map[string]any)
 	pairs := strings.Split(s, ",")
 	for _, pair := range pairs {

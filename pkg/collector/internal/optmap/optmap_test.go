@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package utils
+package optmap
 
 import (
 	"testing"
@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestAnyMap(t *testing.T) {
+func TestOptMap(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected map[string]int
@@ -56,7 +56,7 @@ func TestAnyMap(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		om := NewOptMap(tt.input)
+		om := New(tt.input)
 		for k, v := range tt.expected {
 			i, ok := om.GetInt(k)
 			assert.True(t, ok)

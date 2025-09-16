@@ -95,7 +95,7 @@ func TestSplitAtLastOnce(t *testing.T) {
 	}
 }
 
-func TestPropNameToNormalized(t *testing.T) {
+func TestPropNameToMetricName(t *testing.T) {
 	tests := []struct {
 		propertyName string
 		expect       string

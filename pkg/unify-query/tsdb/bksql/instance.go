@@ -511,17 +511,18 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		return nil, fmt.Errorf("not support metric query with %s", name)
 	}
 
-	// 使用聚合的方式统计维度组合
-	query.Aggregates = metadata.Aggregates{
-		{
-			Dimensions: []string{name},
-			Name:       "count",
-		},
-	}
-
 	queryFactory, err := i.InitQueryFactory(ctx, query, start, end)
 	if err != nil {
 		return nil, err
+	}
+
+	// 使用 distinct 聚合模式
+	query.Aggregates = []metadata.Aggregate{
+		{
+			Name:       "distinct",
+			Dimensions: []string{name},
+			Without:    true,
+		},
 	}
 	sql, err := queryFactory.SQL()
 	if err != nil {
@@ -555,45 +556,6 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	}
 
 	return lbs, err
-}
-
-func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) ([]map[string]string, error) {
-	return nil, nil
-}
-
-func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	var err error
-	ctx, span := trace.NewSpan(ctx, "bk-sql-direct-label-names")
-	defer span.End(&err)
-
-	if len(matchers) == 0 {
-		return nil, fmt.Errorf("matchers cannot be empty")
-	}
-
-	route, remainingMatchers, err := structured.MetricsToRouter(matchers...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse route from matchers: %v", err)
-	}
-
-	if route == nil {
-		return nil, fmt.Errorf("cannot resolve route from matchers")
-	}
-
-	query := &metadata.Query{
-		DB:          route.DB(),
-		Measurement: route.Measurement(),
-		Field:       route.MetricName(),
-	}
-
-	if len(remainingMatchers) > 0 {
-		conditions, err := i.matchersToConditions(remainingMatchers)
-		if err != nil {
-			return nil, err
-		}
-		query.AllConditions = conditions
-	}
-
-	return i.QueryLabelNames(ctx, query, start, end)
 }
 
 func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {

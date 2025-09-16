@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
+	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -468,14 +469,21 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	span.Set("order-fields", orderFields)
 	span.Set("timeAggregate", timeAggregate)
 
-	sqlBuilder.WriteString("SELECT ")
-	sqlBuilder.WriteString(strings.Join(selectFields, ", "))
-	sqlBuilder.WriteString(" FROM ")
-	sqlBuilder.WriteString(f.Table())
+	// 检查是否为 DISTINCT 查询
+	isDistinctQuery := lo.SomeBy(f.query.Aggregates, func(agg metadata.Aggregate) bool {
+		return strings.ToLower(agg.Name) == "distinct"
+	})
 
+	// 构建 SELECT 子句
+	selectClause := lo.Ternary(isDistinctQuery, "SELECT DISTINCT ", "SELECT ")
+	sqlBuilder.WriteString(selectClause + strings.Join(selectFields, ", "))
+
+	// 构建 FROM 子句
+	sqlBuilder.WriteString(" FROM " + f.Table())
+
+	// 构建 WHERE 子句
 	whereString, err := f.BuildWhere()
 	span.Set("where-string", whereString)
-
 	if err != nil {
 		return sql, err
 	}
@@ -483,7 +491,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 		sqlBuilder.WriteString(" WHERE ")
 		sqlBuilder.WriteString(whereString)
 	}
-	if len(groupFields) > 0 {
+	if len(groupFields) > 0 && !isDistinctQuery {
 		sqlBuilder.WriteString(" GROUP BY ")
 		sqlBuilder.WriteString(strings.Join(groupFields, ", "))
 	}

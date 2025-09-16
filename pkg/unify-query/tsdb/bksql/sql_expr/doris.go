@@ -190,6 +190,10 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		switch agg.Name {
 		case "cardinality":
 			selectFields = append(selectFields, fmt.Sprintf("COUNT(DISTINCT %s) AS `%s`", valueField, Value))
+		case "distinct":
+			// distinct 聚合：生成 SELECT DISTINCT 查询，不需要聚合函数包装
+			// 字段转换已经在前面的 dimension 处理中完成
+			// 这里不添加 valueField，因为 DISTINCT 只关心维度字段
 		// date_histogram 不支持无需进行函数聚合
 		case "date_histogram":
 		default:
@@ -677,6 +681,10 @@ func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
 }
 
 func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
+	return d.DimTransform(s)
+}
+
+func (d *DorisSQLExpr) DimTransform(s string) (ns string, as string) {
 	ns = s
 	if s == "" || s == "*" {
 		return ns, as
@@ -731,6 +739,11 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 
 	ns = fmt.Sprintf(`CAST(%s AS %s)`, suffixFields.String(), castType)
 	return ns, as
+}
+
+func (d *DorisSQLExpr) TransformField(field string) (string, error) {
+	ns, _ := d.dimTransform(field)
+	return ns, nil
 }
 
 func (d *DorisSQLExpr) valueTransform(s string) string {

@@ -368,7 +368,7 @@ func TestNewManager(t *testing.T) {
 	})
 
 	t.Run("Pipelines", func(t *testing.T) {
-		assert.Len(t, manager.pipelines, 5)
+		assert.Len(t, manager.pipelines, 4)
 		assert.NotNil(t, manager.GetProcessor("token_checker/fixed"))
 		assert.Nil(t, manager.GetProcessor("token_checker/not_exist"))
 

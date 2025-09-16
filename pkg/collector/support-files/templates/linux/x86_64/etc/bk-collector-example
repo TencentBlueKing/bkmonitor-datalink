@@ -575,10 +575,6 @@ bk-collector:
         - "resource_filter/add"
         - "apdex_calculator/fixed"
 
-    - name: "metricv2_pipeline/derived"
-      type: "metricv2.derived"
-      processors:
-
     - name: "profiles_pipeline/common"
       type: "profiles"
       processors:

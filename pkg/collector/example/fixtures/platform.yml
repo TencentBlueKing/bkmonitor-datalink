@@ -16,7 +16,3 @@ pipeline:
     type: "metrics"
     processors:
       - "token_checker/fixed"
-
-  - name: "metricv2_pipeline/derived"
-    type: "metricv2.derived"
-    processors:

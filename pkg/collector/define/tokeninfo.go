@@ -38,7 +38,7 @@ func (t Token) GetDataID(rtype RecordType) int32 {
 	switch rtype {
 	case RecordTraces:
 		return t.TracesDataId
-	case RecordMetrics, RecordPushGateway, RecordRemoteWrite, RecordPingserver, RecordFta, RecordTars, RecordMetricV2, RecordMetricV2Derived:
+	case RecordMetrics, RecordPushGateway, RecordRemoteWrite, RecordPingserver, RecordFta, RecordTars, RecordMetricV2:
 		return t.MetricsDataId
 	case RecordLogs:
 		return t.LogsDataId

@@ -53,8 +53,7 @@ type Controller struct {
 	proxyMgr      *proxy.Proxy
 	pingserverMgr *pingserver.Pingserver
 
-	originalTasks *define.TaskQueue
-	derivedTasks  *define.TaskQueue
+	tasks *define.TaskQueue
 }
 
 func SetupCoreNum(conf *confengine.Config) {
@@ -173,8 +172,7 @@ func New(conf *confengine.Config, buildInfo define.BuildInfo) (*Controller, erro
 		pingserverMgr: pingserverMgr,
 		exporterMgr:   exporterMgr,
 		pipelineMgr:   pipelineMgr,
-		originalTasks: define.NewTaskQueue(define.PushModeGuarantee),
-		derivedTasks:  define.NewTaskQueue(define.PushModeGuarantee),
+		tasks:         define.NewTaskQueue(define.PushModeGuarantee),
 	}, nil
 }
 
@@ -247,8 +245,7 @@ func (c *Controller) Start() error {
 	for i := 0; i < define.Concurrency(); i++ {
 		go wait.Until(c.ctx, c.consumeRecords)
 		go wait.Until(c.ctx, c.consumeNonSchedRecords)
-		go wait.Until(c.ctx, c.dispatchOriginalTasks)
-		go wait.Until(c.ctx, c.dispatchDerivedTasks)
+		go wait.Until(c.ctx, c.dispatchTasks)
 	}
 
 	if c.hostWatcher != nil {
@@ -396,21 +393,21 @@ func (c *Controller) consumeRecords() {
 				return
 			}
 			pl := c.pipelineMgr.GetPipeline(record.RecordType)
-			c.submitTasks(c.originalTasks, record, pl)
+			c.submitTasks(c.tasks, record, pl)
 
 		case record, ok := <-proxy.Records():
 			if !ok {
 				return
 			}
 			pl := c.pipelineMgr.GetPipeline(record.RecordType)
-			c.submitTasks(c.originalTasks, record, pl)
+			c.submitTasks(c.tasks, record, pl)
 
 		case record, ok := <-pingserver.Records():
 			if !ok {
 				return
 			}
 			pl := c.pipelineMgr.GetPipeline(record.RecordType)
-			c.submitTasks(c.originalTasks, record, pl)
+			c.submitTasks(c.tasks, record, pl)
 
 		case <-c.ctx.Done():
 			return
@@ -418,15 +415,14 @@ func (c *Controller) consumeRecords() {
 	}
 }
 
-// dispatchOriginalTasks 分发原始任务
-func (c *Controller) dispatchOriginalTasks() {
+func (c *Controller) dispatchTasks() {
 	c.wg.Add(1)
 	defer c.wg.Done()
 
 loop:
 	for {
 		select {
-		case task, ok := <-c.originalTasks.Get():
+		case task, ok := <-c.tasks.Get():
 			if !ok {
 				return
 			}
@@ -453,10 +449,9 @@ loop:
 					goto loop
 				}
 
+				// 派生的 record 不会再进行处理
 				if derivedRecord != nil {
-					pl := c.pipelineMgr.GetPipeline(derivedRecord.RecordType)
-					derivedRecord.Unwrap()
-					c.submitTasks(c.derivedTasks, derivedRecord, pl)
+					exporter.PublishRecord(derivedRecord)
 				}
 			}
 
@@ -464,63 +459,6 @@ loop:
 
 			t0 := time.Now()
 			exporter.PublishRecord(task.Record())
-			logger.Debugf("original handle recordType: %s, token: %+v", rtype, token)
-
-			// no processors
-			if task.StageCount() == 0 {
-				continue
-			}
-			DefaultMetricMonitor.ObserveExportedDuration(t0, task.PipelineName(), rtype, token.GetDataID(rtype))
-			DefaultMetricMonitor.IncHandledCounter(task.PipelineName(), rtype, token.GetDataID(rtype), token.Original)
-
-		case <-c.ctx.Done():
-			return
-		}
-	}
-}
-
-// dispatchDerivedTasks 分发派生任务
-func (c *Controller) dispatchDerivedTasks() {
-	c.wg.Add(1)
-	defer c.wg.Done()
-
-loop:
-	for {
-		select {
-		case task, ok := <-c.derivedTasks.Get():
-			if !ok {
-				return
-			}
-
-			start := time.Now()
-			rtype := task.Record().RecordType
-			token := task.Record().Token
-			for i := 0; i < task.StageCount(); i++ {
-				// 任务执行应该事务的 一旦中间某一环执行失败那就整体失败
-				// 无需再关注是否为 derived 类型
-				stage := task.StageAt(i)
-				_, err := c.pipelineMgr.GetProcessor(stage).Process(task.Record())
-				if errors.Is(err, define.ErrSkipEmptyRecord) {
-					logger.Warnf("skip empty record '%s' at stage: %v, token: %+v, err: %v", rtype, stage, token, err)
-					DefaultMetricMonitor.IncSkippedCounter(task.PipelineName(), rtype, token.GetDataID(rtype), stage, token.Original)
-					goto loop
-				}
-				if errors.Is(err, define.ErrEndOfPipeline) {
-					goto loop
-				}
-
-				if err != nil {
-					logger.Errorf("failed to process task: %v", err)
-					DefaultMetricMonitor.IncDroppedCounter(task.PipelineName(), rtype, token.GetDataID(rtype), stage)
-					goto loop
-				}
-			}
-
-			DefaultMetricMonitor.ObserveHandledDuration(start, task.PipelineName(), rtype, token.GetDataID(rtype))
-
-			t0 := time.Now()
-			exporter.PublishRecord(task.Record())
-			logger.Debugf("derived handle recordType: %s, token: %+v", rtype, token)
 
 			// no processors
 			if task.StageCount() == 0 {

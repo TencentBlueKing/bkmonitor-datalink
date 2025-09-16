@@ -587,7 +587,6 @@ func (a *Accumulator) doPublish() {
 		case TypeBucket:
 			a.consumeMetrics(r.Bucket())
 		}
-		logger.Debugf("accumulator got dataid=%d, series=%d", r.dataID, r.Total())
 	}
 	DefaultMetricMonitor.ObservePublishedDuration(start)
 }

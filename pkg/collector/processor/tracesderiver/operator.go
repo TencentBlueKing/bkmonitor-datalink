@@ -111,7 +111,7 @@ func (to tracesOperator) Operate(record *define.Record) *define.Record {
 	}
 
 	return &define.Record{
-		RecordType:  define.RecordMetricV2Derived,
+		RecordType:  define.RecordMetricV2,
 		RequestType: define.RequestDerived,
 		Token:       record.Token,
 		Data:        &define.MetricV2Data{Data: metrics},

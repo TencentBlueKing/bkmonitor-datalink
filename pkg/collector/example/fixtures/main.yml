@@ -249,10 +249,6 @@ bk-collector:
         - "traces_deriver/duration"
         - "sampler/random"
 
-    - name: "metricv2_pipeline/derived"
-      type: "metricv2.derived"
-      processors:
-
     - name: "pushgateway_pipeline/common"
       type: "pushgateway"
       processors:

@@ -10,7 +10,6 @@
 package define
 
 import (
-	"strings"
 	"time"
 
 	"github.com/TarsCloud/TarsGo/tars/protocol/res/propertyf"
@@ -52,26 +51,25 @@ type RecordType string
 func (r RecordType) S() string { return string(r) }
 
 const (
-	RecordUndefined       RecordType = "undefined"
-	RecordTraces          RecordType = "traces"
-	RecordProfiles        RecordType = "profiles"
-	RecordMetrics         RecordType = "metrics"
-	RecordLogs            RecordType = "logs"
-	RecordPushGateway     RecordType = "pushgateway"
-	RecordFta             RecordType = "fta"
-	RecordRemoteWrite     RecordType = "remotewrite"
-	RecordProxy           RecordType = "proxy"
-	RecordPingserver      RecordType = "pingserver"
-	RecordBeat            RecordType = "beat"
-	RecordTars            RecordType = "tars"
-	RecordLogPush         RecordType = "logpush"
-	RecordMetricV2        RecordType = "metricv2"
-	RecordMetricV2Derived RecordType = "metricv2.derived" // 仅在内部流转使用
-	RecordEventV2         RecordType = "eventv2"
+	RecordUndefined   RecordType = "undefined"
+	RecordTraces      RecordType = "traces"
+	RecordProfiles    RecordType = "profiles"
+	RecordMetrics     RecordType = "metrics"
+	RecordLogs        RecordType = "logs"
+	RecordPushGateway RecordType = "pushgateway"
+	RecordFta         RecordType = "fta"
+	RecordRemoteWrite RecordType = "remotewrite"
+	RecordProxy       RecordType = "proxy"
+	RecordPingserver  RecordType = "pingserver"
+	RecordBeat        RecordType = "beat"
+	RecordTars        RecordType = "tars"
+	RecordLogPush     RecordType = "logpush"
+	RecordMetricV2    RecordType = "metricv2"
+	RecordEventV2     RecordType = "eventv2"
 )
 
-// IntoRecordType 将字符串描述转换为 RecordType 并返回是否为 Derived 类型
-func IntoRecordType(s string) (RecordType, bool) {
+// IntoRecordType 将字符串描述转换为 RecordType
+func IntoRecordType(s string) RecordType {
 	var t RecordType
 	switch s {
 	case RecordTraces.S():
@@ -100,14 +98,12 @@ func IntoRecordType(s string) (RecordType, bool) {
 		t = RecordLogPush
 	case RecordMetricV2.S():
 		t = RecordMetricV2
-	case RecordMetricV2Derived.S():
-		t = RecordMetricV2Derived
 	case RecordEventV2.S():
 		t = RecordEventV2
 	default:
 		t = RecordUndefined
 	}
-	return t, strings.HasSuffix(s, ".derived")
+	return t
 }
 
 // RequestType 标记请求类型：Http、Grpc 用于后续做统计
@@ -137,13 +133,6 @@ type Record struct {
 	Token         Token
 	Metadata      map[string]string
 	Data          any
-}
-
-func (r *Record) Unwrap() {
-	switch r.RecordType {
-	case RecordMetricV2Derived:
-		r.RecordType = RecordMetricV2
-	}
 }
 
 type PushGatewayData struct {

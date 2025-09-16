@@ -77,7 +77,7 @@ func parsePipelines(typ string, conf *confengine.Config, processors map[string]p
 		}
 
 		// 每个 pipelines 类型只能有唯一 pipeline
-		rtype, derived := define.IntoRecordType(plc.Type)
+		rtype := define.IntoRecordType(plc.Type)
 		if _, ok := pipelines[rtype]; ok {
 			logger.Errorf("duplicated pipeline type: %+v", rtype)
 			continue
@@ -93,12 +93,6 @@ func parsePipelines(typ string, conf *confengine.Config, processors map[string]p
 			if !ok {
 				logger.Errorf("unknown processor: %v", name)
 				break
-			}
-
-			// 派生类型的 pipeline 如果允许存在 IsDerived 为 true 的 processor【可能】会有问题
-			// 仅做 warning 提示
-			if derived && p.IsDerived() {
-				logger.Warnf("derived record type do not allow derived processor: %v", p.Name())
 			}
 			instances = append(instances, processor.NewInstance(name, p))
 		}
@@ -152,11 +146,6 @@ func parseReportV2Configs(configs []*confengine.Config) map[string][]processor.S
 		}
 	}
 
-	for _, items := range ps {
-		for _, item := range items {
-			logger.Debugf("report_v2 processor: %+v", item)
-		}
-	}
 	return ps
 }
 

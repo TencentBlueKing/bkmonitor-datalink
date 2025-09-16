@@ -377,9 +377,6 @@ func TestNewManager(t *testing.T) {
 		assert.Len(t, tracesPipeline.PreCheckProcessors(), 1)
 		assert.Len(t, tracesPipeline.SchedProcessors(), 4)
 
-		metricsDerived := manager.GetPipeline(define.RecordMetricV2Derived)
-		assert.Len(t, metricsDerived.AllProcessors(), 0)
-
 		pushGatewayPipeline := manager.GetPipeline(define.RecordPushGateway)
 		assert.Equal(t, []string{"token_checker/fixed"}, pushGatewayPipeline.AllProcessors())
 	})

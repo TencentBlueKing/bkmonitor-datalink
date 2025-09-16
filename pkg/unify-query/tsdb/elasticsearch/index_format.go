@@ -38,7 +38,6 @@ func NewIndexOptionFormat(fieldAlias map[string]string) *IndexOptionFormat {
 		fieldMap:   make(map[string]map[string]any),
 		fieldAlias: fieldAlias,
 	}
-
 }
 
 func (f *IndexOptionFormat) FieldMap() map[string]map[string]any {

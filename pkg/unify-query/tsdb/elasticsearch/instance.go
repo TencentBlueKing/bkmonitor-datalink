@@ -20,8 +20,10 @@ import (
 	"time"
 
 	elastic "github.com/olivere/elastic/v7"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
+	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
@@ -824,6 +826,250 @@ func (i *Instance) QuerySeriesSet(
 	}
 
 	return i.queryWithAgg(ctx, qo, fact)
+}
+
+func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
+	var err error
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-label-names")
+	defer span.End(&err)
+
+	if query.DB == "" {
+		return nil, fmt.Errorf("query.DB is empty")
+	}
+
+	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
+	if err != nil {
+		return nil, err
+	}
+
+	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
+	if err != nil {
+		return nil, err
+	}
+
+	ignoreLabelNames := []string{query.TimeField.Name, FieldTime, metadata.KeyDocID, metadata.KeyIndex}
+	allFieldNames := lo.Keys(fieldMap)
+
+	filteredLabelNames := lo.Filter(allFieldNames, func(fieldName string, _ int) bool {
+		return !lo.Contains(ignoreLabelNames, fieldName)
+	})
+
+	sort.Strings(filteredLabelNames)
+
+	span.Set("label-names-count", len(filteredLabelNames))
+	return filteredLabelNames, nil
+}
+
+func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time) ([]string, error) {
+	var err error
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-label-values")
+	defer span.End(&err)
+
+	if query.DB == "" {
+		return nil, fmt.Errorf("query.DB is empty")
+	}
+
+	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
+	if err != nil {
+		return nil, err
+	}
+
+	qo := &queryOption{
+		indexes: aliases,
+		start:   start,
+		end:     end,
+		query:   query,
+		conn:    i.connect,
+	}
+
+	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
+	if err != nil {
+		return nil, err
+	}
+
+	unit := metadata.GetQueryParams(ctx).TimeUnit
+	fact := NewFormatFactory(ctx).
+		WithQuery(query.Field, query.TimeField, start, end, unit, 0).
+		WithFieldMap(fieldMap)
+
+	filterQueries := make([]elastic.Query, 0)
+	if len(query.AllConditions) > 0 {
+		condQuery, err := fact.Query(query.AllConditions)
+		if err != nil {
+			return nil, err
+		}
+		if condQuery != nil {
+			filterQueries = append(filterQueries, condQuery)
+		}
+	}
+
+	rangeQuery, err := fact.RangeQuery()
+	if err != nil {
+		return nil, err
+	}
+	filterQueries = append(filterQueries, rangeQuery)
+
+	if query.QueryString != "" && query.QueryString != "*" {
+		qs := NewQueryString(query.QueryString, query.IsPrefix, fact.NestedField)
+		qsQuery, err := qs.ToDSL(ctx, query.FieldAlias)
+		if err != nil {
+			return nil, err
+		}
+		if qsQuery != nil {
+			filterQueries = append(filterQueries, qsQuery)
+		}
+	}
+
+	agg := elastic.NewTermsAggregation().
+		Field(name)
+
+	source := elastic.NewSearchSource().Size(0)
+	if len(filterQueries) > 0 {
+		esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
+		source.Query(esQuery)
+	}
+	source.Aggregation("label_values", agg)
+
+	client, err := i.getClient(ctx, qo.conn)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Stop()
+
+	searchResult, err := client.Search().
+		Index(qo.indexes...).
+		SearchSource(source).
+		Do(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var labelValues []string
+	if aggs := searchResult.Aggregations; aggs != nil {
+		if terms, found := aggs.Terms("label_values"); found {
+			labelValues = lo.FilterMap(terms.Buckets, func(bucket *elastic.AggregationBucketKeyItem, _ int) (string, bool) {
+				if bucket.Key == nil {
+					return "", false
+				}
+				if keyStr, ok := bucket.Key.(string); ok && keyStr != "" {
+					return keyStr, true
+				}
+				return "", false
+			})
+		}
+	}
+
+	// 2. 排序
+	sort.Strings(labelValues)
+
+	span.Set("label-values-count", len(labelValues))
+	return labelValues, nil
+}
+
+func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
+	var err error
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-direct-label-values")
+	defer span.End(&err)
+
+	if len(matchers) == 0 {
+		return nil, fmt.Errorf("matchers cannot be empty")
+	}
+
+	route, remainingMatchers, err := structured.MetricsToRouter(matchers...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse route from matchers: %v", err)
+	}
+
+	if route == nil {
+		return nil, fmt.Errorf("cannot resolve route from matchers")
+	}
+
+	query := &metadata.Query{
+		DB:          route.DB(),
+		Measurement: route.Measurement(),
+		Field:       route.MetricName(),
+		TableID:     string(route.TableID()),
+		Size:        limit,
+	}
+
+	if len(remainingMatchers) > 0 {
+		conditions, err := i.matchersToESConditions(ctx, remainingMatchers)
+		if err != nil {
+			return nil, err
+		}
+		query.AllConditions = conditions
+	}
+
+	return i.QueryLabelValues(ctx, query, name, start, end)
+}
+
+func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	var err error
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-direct-label-names")
+	defer span.End(&err)
+
+	if len(matchers) == 0 {
+		return nil, fmt.Errorf("matchers cannot be empty")
+	}
+
+	route, remainingMatchers, err := structured.MetricsToRouter(matchers...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse route from matchers: %v", err)
+	}
+
+	if route == nil {
+		return nil, fmt.Errorf("cannot resolve route from matchers")
+	}
+
+	query := &metadata.Query{
+		DB:          route.DB(),
+		Measurement: route.Measurement(),
+		Field:       route.MetricName(),
+		TableID:     string(route.TableID()),
+	}
+
+	if len(remainingMatchers) > 0 {
+		conditions, err := i.matchersToESConditions(ctx, remainingMatchers)
+		if err != nil {
+			return nil, err
+		}
+		query.AllConditions = conditions
+	}
+
+	return i.QueryLabelNames(ctx, query, start, end)
+}
+
+func (i *Instance) matchersToESConditions(ctx context.Context, matchers []*labels.Matcher) (metadata.AllConditions, error) {
+	var conditions metadata.AllConditions
+
+	for _, matcher := range matchers {
+		if matcher.Name == labels.MetricName {
+			continue
+		}
+
+		var operator string
+		switch matcher.Type {
+		case labels.MatchEqual:
+			operator = structured.ConditionEqual
+		case labels.MatchNotEqual:
+			operator = structured.ConditionNotEqual
+		case labels.MatchRegexp:
+			operator = structured.ConditionRegEqual
+		case labels.MatchNotRegexp:
+			operator = structured.ConditionNotRegEqual
+		default:
+			log.Warnf(ctx, "unsupported matcher type: %v", matcher.Type)
+			continue
+		}
+
+		conditions = append(conditions, []metadata.ConditionField{{
+			DimensionName: matcher.Name,
+			Value:         []string{matcher.Value},
+			Operator:      operator,
+		}})
+	}
+
+	return conditions, nil
 }
 
 func (i *Instance) InstanceType() string {

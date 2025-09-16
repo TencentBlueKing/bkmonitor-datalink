@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
@@ -561,11 +562,107 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 }
 
 func (i *Instance) DirectLabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	return nil, nil
+	var err error
+	ctx, span := trace.NewSpan(ctx, "bk-sql-direct-label-names")
+	defer span.End(&err)
+
+	if len(matchers) == 0 {
+		return nil, fmt.Errorf("matchers cannot be empty")
+	}
+
+	route, remainingMatchers, err := structured.MetricsToRouter(matchers...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse route from matchers: %v", err)
+	}
+
+	if route == nil {
+		return nil, fmt.Errorf("cannot resolve route from matchers")
+	}
+
+	query := &metadata.Query{
+		DB:          route.DB(),
+		Measurement: route.Measurement(),
+		Field:       route.MetricName(),
+	}
+
+	if len(remainingMatchers) > 0 {
+		conditions, err := i.matchersToConditions(remainingMatchers)
+		if err != nil {
+			return nil, err
+		}
+		query.AllConditions = conditions
+	}
+
+	return i.QueryLabelNames(ctx, query, start, end)
 }
 
 func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, end time.Time, limit int, matchers ...*labels.Matcher) ([]string, error) {
-	return nil, nil
+	var err error
+	ctx, span := trace.NewSpan(ctx, "bk-sql-direct-label-values")
+	defer span.End(&err)
+
+	if len(matchers) == 0 {
+		return nil, fmt.Errorf("matchers cannot be empty")
+	}
+
+	route, remainingMatchers, err := structured.MetricsToRouter(matchers...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse route from matchers: %v", err)
+	}
+
+	if route == nil {
+		return nil, fmt.Errorf("cannot resolve route from matchers")
+	}
+
+	query := &metadata.Query{
+		DB:          route.DB(),
+		Measurement: route.Measurement(),
+		Field:       route.MetricName(),
+	}
+
+	if len(remainingMatchers) > 0 {
+		conditions, err := i.matchersToConditions(remainingMatchers)
+		if err != nil {
+			return nil, err
+		}
+		query.AllConditions = conditions
+	}
+
+	return i.QueryLabelValues(ctx, query, name, start, end)
+}
+
+func (i *Instance) matchersToConditions(matchers []*labels.Matcher) (metadata.AllConditions, error) {
+	var conditions metadata.AllConditions
+
+	for _, matcher := range matchers {
+		if matcher.Name == labels.MetricName {
+			continue
+		}
+
+		var operator string
+		switch matcher.Type {
+		case labels.MatchEqual:
+			operator = "eq"
+		case labels.MatchNotEqual:
+			operator = "ne"
+		case labels.MatchRegexp:
+			operator = "reg"
+		case labels.MatchNotRegexp:
+			operator = "nreg"
+		default:
+			log.Warnf(context.Background(), "unsupported matcher type: %v", matcher.Type)
+			continue
+		}
+
+		condition := metadata.ConditionField{
+			DimensionName: matcher.Name,
+			Value:         []string{matcher.Value},
+			Operator:      operator,
+		}
+		conditions = append(conditions, []metadata.ConditionField{condition})
+	}
+
+	return conditions, nil
 }
 
 func (i *Instance) InstanceType() string {

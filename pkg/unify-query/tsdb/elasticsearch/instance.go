@@ -169,18 +169,39 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 	}
 	defer cli.Stop()
 
-	indices, err := cli.IndexGet(aliases...).Do(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("index get error: %w", err)
+	// 优先找 indices 接口
+	settings := make(map[string]map[string]any)
+	mappings := make(map[string]map[string]any)
+	span.Set("get-indexes", aliases)
+	indices, indicesErr := cli.IndexGet(aliases...).Do(ctx)
+	if indicesErr != nil {
+		log.Warnf(ctx, "get index error: %s", indicesErr)
+		span.Set("get-mapping", aliases)
+		res, err := cli.GetMapping().Index(aliases...).Type("").Do(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("index get error: %w", err)
+		}
+
+		for index, r := range res {
+			if nr, ok := r.(map[string]any); ok {
+				mappings[index] = nr
+			}
+		}
+	} else {
+		for index, indice := range indices {
+			settings[index] = indice.Settings
+			mappings[index] = indice.Mappings
+		}
 	}
-	if len(indices) == 0 {
+
+	if len(mappings) == 0 {
 		return nil, fmt.Errorf("query indexes is empty")
 	}
 
-	span.Set("indices-length", len(indices))
+	span.Set("mapping-length", len(mappings))
 
 	indexes := make([]string, 0)
-	for k := range indices {
+	for k := range mappings {
 		indexes = append(indexes, k)
 	}
 
@@ -189,8 +210,9 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 	iof := NewIndexOptionFormat(fieldAlias)
 	// 按照时间倒序排列
 	for idx := len(indexes) - 1; idx >= 0; idx-- {
-		if in, ok := indices[indexes[idx]]; ok && in != nil {
-			iof.Parse(in.Settings, in.Mappings)
+		index := indexes[idx]
+		if in, ok := mappings[index]; ok && in != nil {
+			iof.Parse(settings[index], in)
 		}
 	}
 

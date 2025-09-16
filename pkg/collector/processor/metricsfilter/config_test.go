@@ -81,7 +81,7 @@ func TestRelabelConfigValidate(t *testing.T) {
 		{
 			name:    "valid config",
 			metrics: []string{"test_metric"},
-			rules:   RelabelRules{{Label: "label1", Op: OpIn, Values: []any{"value1", "value2"}}},
+			rules:   RelabelRules{Rules: []*RelabelRule{{Label: "label1", Op: OpIn, Values: []any{"value1", "value2"}}}},
 			target:  RelabelTarget{Label: "target_label", Value: "foo", Action: relabelUpsert},
 			wantErr: false,
 		},
@@ -93,7 +93,7 @@ func TestRelabelConfigValidate(t *testing.T) {
 		},
 		{
 			name:    "invalid config - missing metric name",
-			rules:   RelabelRules{{Label: "label1", Op: OpIn, Values: []any{"value1", "value2"}}},
+			rules:   RelabelRules{Rules: []*RelabelRule{{Label: "label1", Op: OpIn, Values: []any{"value1", "value2"}}}},
 			target:  RelabelTarget{Label: "target_label", Value: "foo", Action: relabelUpsert},
 			wantErr: true,
 		},
@@ -103,7 +103,7 @@ func TestRelabelConfigValidate(t *testing.T) {
 			c := Config{
 				Relabel: []RelabelAction{{
 					Metrics: tt.metrics,
-					Rules:   tt.rules,
+					Rules:   tt.rules.Rules,
 					Target:  tt.target,
 				}},
 			}
@@ -132,6 +132,7 @@ func TestCodeRelabelConfigValidate(t *testing.T) {
 					{Rule: "err_200"},
 					{Rule: "200"},
 					{Rule: "200~300"},
+					{Rule: "100,200,300"},
 				},
 			}},
 			targets: RelabelTarget{Label: "target_label", Value: "foo", Action: relabelUpsert},
@@ -332,31 +333,31 @@ func TestRelabelActionRuleMatch(t *testing.T) {
 		},
 		{
 			name:  "single matching rule",
-			rules: RelabelRules{ruleOpIn},
+			rules: RelabelRules{Rules: []*RelabelRule{ruleOpIn}},
 			attrs: createTestMap("service", "auth-service"),
 			want:  true,
 		},
 		{
 			name:  "single non-existing label",
-			rules: RelabelRules{ruleOpIn},
+			rules: RelabelRules{Rules: []*RelabelRule{ruleOpIn}},
 			attrs: createTestMap("app", "payment-service"),
 			want:  false,
 		},
 		{
 			name:  "multiple rules all match",
-			rules: RelabelRules{ruleOpIn, ruleOpRange},
+			rules: RelabelRules{Rules: []*RelabelRule{ruleOpIn, ruleOpRange}},
 			attrs: createTestMap("service", "auth-service", "status", "200"),
 			want:  true,
 		},
 		{
 			name:  "range rule mismatch",
-			rules: RelabelRules{ruleOpRange},
+			rules: RelabelRules{Rules: []*RelabelRule{ruleOpRange}},
 			attrs: createTestMap("status", "500"),
 			want:  false,
 		},
 		{
 			name:  "mixed rules partial match",
-			rules: RelabelRules{ruleOpIn, ruleOpRange},
+			rules: RelabelRules{Rules: []*RelabelRule{ruleOpIn, ruleOpRange}},
 			attrs: createTestMap("service", "auth-service", "status", "404"),
 			want:  false,
 		},
@@ -397,9 +398,11 @@ func makeRWDataAndRule(numExtraLabel int) ([]prompb.Label, RelabelRules) {
 		prompb.Label{Name: "status", Value: "200"},
 	)
 	rules := RelabelRules{
-		{Label: "service", Op: "in", Values: []any{"auth-service"}},
-		{Label: "env", Op: "in", Values: []any{"prod"}},
-		{Label: "status", Op: "range", Values: []any{map[string]any{"min": 200, "max": 299, "prefix": "ret_"}}},
+		Rules: []*RelabelRule{
+			{Label: "service", Op: "in", Values: []any{"auth-service"}},
+			{Label: "env", Op: "in", Values: []any{"prod"}},
+			{Label: "status", Op: "range", Values: []any{map[string]any{"min": 200, "max": 299, "prefix": "ret_"}}},
+		},
 	}
 	return labels, rules
 }
@@ -422,12 +425,11 @@ func makeLabelMap(labels []prompb.Label) map[string]*prompb.Label {
 	return m
 }
 
-// 遍历一次 labels，构建 map，时间复杂度 o(n)，但申请内存造成的开销远大于遍历
 func BenchmarkMatchRWLabelsMap(b *testing.B) {
 	lbs, rules := makeRWDataAndRule(10)
 	for i := 0; i < b.N; i++ {
 		labels := makeLabelMap(lbs)
-		for _, rule := range rules {
+		for _, rule := range rules.Rules {
 			if label, ok := labels[rule.Label]; ok {
 				rule.Match(label.GetValue())
 			}

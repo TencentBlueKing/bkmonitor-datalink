@@ -145,7 +145,7 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 		for _, action := range config.Relabel {
 			pdMetrics := record.Data.(pmetric.Metrics)
 			foreach.MetricsSliceDataPointsAttrs(pdMetrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
-				if !action.IsMetricIn(name) || !action.Rules.MatchOTAttrs(attrs) {
+				if !action.IsMetricIn(name) || !action.MatchOTAttrs(attrs) {
 					return
 				}
 
@@ -164,7 +164,7 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 			if !ok || !action.IsMetricIn(nameLabel.GetValue()) {
 				return
 			}
-			if !action.Rules.MatchRWLabels(lbs) {
+			if !action.MatchRWLabels(lbs) {
 				return
 			}
 

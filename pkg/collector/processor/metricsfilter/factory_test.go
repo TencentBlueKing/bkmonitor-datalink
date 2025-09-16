@@ -393,7 +393,7 @@ processor:
                  value: "noprefix"
           - name: "my.server;my.service4;my.method4"
             codes: 
-            - rule: "err_5003"
+            - rule: "err_5003,50004"
               target:
                  action: "upsert"
                  label: "code_type"

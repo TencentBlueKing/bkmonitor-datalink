@@ -194,8 +194,11 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 		}
 	}
 
+	iof := NewIndexOptionFormat(fieldAlias)
+
+	// 忽略 mapping 为空的情况的报错
 	if len(mappings) == 0 {
-		return nil, fmt.Errorf("query indexes is empty")
+		return iof.FieldMap(), nil
 	}
 
 	span.Set("mapping-length", len(mappings))
@@ -207,7 +210,6 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 
 	sort.Strings(indexes)
 
-	iof := NewIndexOptionFormat(fieldAlias)
 	// 按照时间倒序排列
 	for idx := len(indexes) - 1; idx >= 0; idx-- {
 		index := indexes[idx]

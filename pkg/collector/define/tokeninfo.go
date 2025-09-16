@@ -40,11 +40,11 @@ func (t Token) BizApp() string {
 
 func (t Token) GetDataID(rtype RecordType) int32 {
 	switch rtype {
-	case RecordTraces, RecordTracesDerived:
+	case RecordTraces:
 		return t.TracesDataId
-	case RecordMetrics, RecordMetricsDerived, RecordPushGateway, RecordRemoteWrite, RecordPingserver, RecordFta, RecordTars:
+	case RecordMetrics, RecordPushGateway, RecordRemoteWrite, RecordPingserver, RecordFta, RecordTars, RecordMetricV2, RecordMetricV2Derived:
 		return t.MetricsDataId
-	case RecordLogs, RecordLogsDerived:
+	case RecordLogs:
 		return t.LogsDataId
 	case RecordProfiles:
 		return t.ProfilesDataId

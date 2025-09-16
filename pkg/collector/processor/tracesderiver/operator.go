@@ -13,7 +13,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metricsbuilder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/accumulator"
@@ -61,20 +60,20 @@ func (to tracesOperator) Clean() {
 
 func (to tracesOperator) Operate(record *define.Record) *define.Record {
 	pdTraces := record.Data.(ptrace.Traces)
-	mb := metricsbuilder.New()
 	resourceSpansSlice := pdTraces.ResourceSpans()
-	metricItems := map[string][]metricsbuilder.Metric{}
 	types := to.dm.Types()
 
+	var metrics []define.MetricV2
 	for i := 0; i < resourceSpansSlice.Len(); i++ {
 		scopeSpansSlice := resourceSpansSlice.At(i).ScopeSpans()
 		resources := to.dm.MatchResource(resourceSpansSlice.At(i))
 		for j := 0; j < scopeSpansSlice.Len(); j++ {
 			spans := scopeSpansSlice.At(j).Spans()
 			for k := 0; k < spans.Len(); k++ {
+				span := spans.At(k)
 				for _, t := range types {
 					// 如果该 type 没有匹配到任何指标 直接跳过
-					dim, ok := to.dm.Match(t.Type, spans.At(k))
+					dim, ok := to.dm.Match(t.Type, span)
 					if !ok {
 						logger.Debugf("span miss matched, token=%v", record.Token.Original)
 						continue
@@ -93,34 +92,29 @@ func (to tracesOperator) Operate(record *define.Record) *define.Record {
 					// extractor 处理
 					if to.extractor != nil {
 						if to.extractor.Set(record.Token.MetricsDataId, dim) {
-							val := to.extractor.Extract(spans.At(k))
-							metricItems[t.MetricName] = append(metricItems[t.MetricName], metricsbuilder.Metric{
-								Val:        val,
-								Ts:         spans.At(k).EndTimestamp(),
-								Dimensions: dim,
+							val := to.extractor.Extract(span)
+							metrics = append(metrics, define.MetricV2{
+								Metrics:   map[string]float64{t.MetricName: val},
+								Dimension: dim,
+								Timestamp: span.EndTimestamp().AsTime().UnixMilli(),
 							})
 						}
 					}
 
 					// accumulator 处理
 					if to.accumulator != nil {
-						val := utils.CalcSpanDuration(spans.At(k))
+						val := utils.CalcSpanDuration(span)
 						to.accumulator.Accumulate(record.Token.MetricsDataId, dim, val)
 					}
 				}
 			}
 		}
-
-	}
-
-	for k, v := range metricItems {
-		mb.Build(k, v...)
 	}
 
 	return &define.Record{
-		RecordType:  define.RecordMetricsDerived,
+		RecordType:  define.RecordMetricV2Derived,
 		RequestType: define.RequestDerived,
 		Token:       record.Token,
-		Data:        mb.Get(),
+		Data:        &define.MetricV2Data{Data: metrics},
 	}
 }

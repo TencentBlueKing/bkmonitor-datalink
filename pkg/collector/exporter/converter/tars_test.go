@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/maps"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
 )
 
@@ -95,7 +95,7 @@ func TestSplitAtLastOnce(t *testing.T) {
 	}
 }
 
-func TestPropNameToNormalizeMetricName(t *testing.T) {
+func TestPropNameToNormalized(t *testing.T) {
 	tests := []struct {
 		propertyName string
 		expect       string
@@ -125,7 +125,7 @@ func TestPropNameToNormalizeMetricName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.propertyName, func(t *testing.T) {
-			assert.Equal(t, propNameToNormalizeMetricName(tt.propertyName, tt.policy), tt.expect)
+			assert.Equal(t, propNameToMetricName(tt.propertyName, tt.policy), tt.expect)
 		})
 	}
 }
@@ -179,61 +179,61 @@ func TestTarsProperty(t *testing.T) {
 		}
 		expects := []common.MapStr{
 			{
-				"dimension": utils.MergeMaps(commonDims, map[string]string{tarsPropertyTagsPropertyPolicy: "Sum"}),
+				"dimension": maps.MergeWith(commonDims, tarsPropertyTagsPropertyPolicy, "Sum"),
 				"metrics":   common.MapStr{"TestApp_HelloGo_TestPropertyName_sum": float64(440)},
 				"target":    "127.0.0.1",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(commonDims, map[string]string{tarsPropertyTagsPropertyPolicy: "Avg"}),
+				"dimension": maps.MergeWith(commonDims, tarsPropertyTagsPropertyPolicy, "Avg"),
 				"metrics":   common.MapStr{"TestApp_HelloGo_TestPropertyName_avg": 73.333},
 				"target":    "127.0.0.1",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(commonDims, map[string]string{tarsPropertyTagsPropertyPolicy: "Max"}),
+				"dimension": maps.MergeWith(commonDims, tarsPropertyTagsPropertyPolicy, "Max"),
 				"metrics":   common.MapStr{"TestApp_HelloGo_TestPropertyName_max": float64(94)},
 				"target":    "127.0.0.1",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(commonDims, map[string]string{tarsPropertyTagsPropertyPolicy: "Min"}),
+				"dimension": maps.MergeWith(commonDims, tarsPropertyTagsPropertyPolicy, "Min"),
 				"metrics":   common.MapStr{"TestApp_HelloGo_TestPropertyName_min": float64(33)},
 				"target":    "127.0.0.1",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(commonDims, map[string]string{tarsPropertyTagsPropertyPolicy: "Count"}),
+				"dimension": maps.MergeWith(commonDims, tarsPropertyTagsPropertyPolicy, "Count"),
 				"metrics":   common.MapStr{"TestApp_HelloGo_TestPropertyName_count": float64(6)},
 				"target":    "127.0.0.1",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(commonDims, map[string]string{tarsPropertyTagsPropertyPolicy: "Distr", "le": "0"}),
+				"dimension": maps.MergeWith(commonDims, tarsPropertyTagsPropertyPolicy, "Distr", "le", "0"),
 				"metrics":   common.MapStr{"TestApp_HelloGo_TestPropertyName_distr_bucket": int32(0)},
 				"target":    "127.0.0.1",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(commonDims, map[string]string{tarsPropertyTagsPropertyPolicy: "Distr", "le": "50"}),
+				"dimension": maps.MergeWith(commonDims, tarsPropertyTagsPropertyPolicy, "Distr", "le", "50"),
 				"metrics":   common.MapStr{"TestApp_HelloGo_TestPropertyName_distr_bucket": int32(1)},
 				"target":    "127.0.0.1",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(commonDims, map[string]string{tarsPropertyTagsPropertyPolicy: "Distr", "le": "100"}),
+				"dimension": maps.MergeWith(commonDims, tarsPropertyTagsPropertyPolicy, "Distr", "le", "100"),
 				"metrics":   common.MapStr{"TestApp_HelloGo_TestPropertyName_distr_bucket": int32(6)},
 				"target":    "127.0.0.1",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(commonDims, map[string]string{tarsPropertyTagsPropertyPolicy: "Distr", "le": "+Inf"}),
+				"dimension": maps.MergeWith(commonDims, tarsPropertyTagsPropertyPolicy, "Distr", "le", "+Inf"),
 				"metrics":   common.MapStr{"TestApp_HelloGo_TestPropertyName_distr_bucket": int32(6)},
 				"target":    "127.0.0.1",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(commonDims, map[string]string{tarsPropertyTagsPropertyPolicy: "Distr"}),
+				"dimension": maps.MergeWith(commonDims, tarsPropertyTagsPropertyPolicy, "Distr"),
 				"metrics":   common.MapStr{"TestApp_HelloGo_TestPropertyName_distr_count": int32(6)},
 				"target":    "127.0.0.1",
 				"timestamp": int64(1719417736),
@@ -281,31 +281,31 @@ func TestTarsStat(t *testing.T) {
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(rpcClientMetricDims, map[string]string{"le": "0.1"}),
+				"dimension": maps.MergeWith(rpcClientMetricDims, "le", "0.1"),
 				"metrics":   common.MapStr{"origin_rpc_client_handled_seconds_bucket": int32(0)},
 				"target":    "127.0.0.1",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(rpcClientMetricDims, map[string]string{"le": "0.2"}),
+				"dimension": maps.MergeWith(rpcClientMetricDims, "le", "0.2"),
 				"metrics":   common.MapStr{"origin_rpc_client_handled_seconds_bucket": int32(2)},
 				"target":    "127.0.0.1",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(rpcClientMetricDims, map[string]string{"le": "0.5"}),
+				"dimension": maps.MergeWith(rpcClientMetricDims, "le", "0.5"),
 				"metrics":   common.MapStr{"origin_rpc_client_handled_seconds_bucket": int32(6)},
 				"target":    "127.0.0.1",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(rpcClientMetricDims, map[string]string{"le": "1"}),
+				"dimension": maps.MergeWith(rpcClientMetricDims, "le", "1"),
 				"metrics":   common.MapStr{"origin_rpc_client_handled_seconds_bucket": int32(6)},
 				"target":    "127.0.0.1",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(rpcClientMetricDims, map[string]string{"le": "+Inf"}),
+				"dimension": maps.MergeWith(rpcClientMetricDims, "le", "+Inf"),
 				"metrics":   common.MapStr{"origin_rpc_client_handled_seconds_bucket": int32(6)},
 				"target":    "127.0.0.1",
 				"timestamp": int64(1719417736),
@@ -329,31 +329,31 @@ func TestTarsStat(t *testing.T) {
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(rpcServerMetricDims, map[string]string{"le": "0.1"}),
+				"dimension": maps.MergeWith(rpcServerMetricDims, "le", "0.1"),
 				"metrics":   common.MapStr{"origin_rpc_server_handled_seconds_bucket": int32(0)},
 				"target":    "0.0.0.0",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(rpcServerMetricDims, map[string]string{"le": "0.2"}),
+				"dimension": maps.MergeWith(rpcServerMetricDims, "le", "0.2"),
 				"metrics":   common.MapStr{"origin_rpc_server_handled_seconds_bucket": int32(2)},
 				"target":    "0.0.0.0",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(rpcServerMetricDims, map[string]string{"le": "0.5"}),
+				"dimension": maps.MergeWith(rpcServerMetricDims, "le", "0.5"),
 				"metrics":   common.MapStr{"origin_rpc_server_handled_seconds_bucket": int32(6)},
 				"target":    "0.0.0.0",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(rpcServerMetricDims, map[string]string{"le": "1"}),
+				"dimension": maps.MergeWith(rpcServerMetricDims, "le", "1"),
 				"metrics":   common.MapStr{"origin_rpc_server_handled_seconds_bucket": int32(6)},
 				"target":    "0.0.0.0",
 				"timestamp": int64(1719417736),
 			},
 			{
-				"dimension": utils.MergeMaps(rpcServerMetricDims, map[string]string{"le": "+Inf"}),
+				"dimension": maps.MergeWith(rpcServerMetricDims, "le", "+Inf"),
 				"metrics":   common.MapStr{"origin_rpc_server_handled_seconds_bucket": int32(6)},
 				"target":    "0.0.0.0",
 				"timestamp": int64(1719417736),

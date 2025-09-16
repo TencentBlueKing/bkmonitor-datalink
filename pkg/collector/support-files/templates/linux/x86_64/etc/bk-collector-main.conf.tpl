@@ -346,8 +346,8 @@ bk-collector:
         - "resource_filter/metrics"
         - "metrics_filter/relabel"
 
-    - name: "metrics_pipeline/derived"
-      type: "metrics.derived"
+    - name: "metricv2_pipeline/derived"
+      type: "metricv2.derived"
       processors:
 
     - name: "logs_pipeline/common"

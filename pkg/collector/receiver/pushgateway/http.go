@@ -26,6 +26,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/maps"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
@@ -199,7 +200,7 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 			Token:         r.Token,
 			Data: &define.PushGatewayData{
 				MetricFamilies: mf,
-				Labels:         utils.CloneMap(labels),
+				Labels:         maps.Clone(labels),
 			},
 		})
 	}

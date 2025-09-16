@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/maps"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 )
 
@@ -121,7 +122,7 @@ func (c metricsConverter) convertSumMetrics(pdMetric pmetric.Metric, rsAttrs pco
 		m := otMetricMapper{
 			Metrics:    map[string]float64{pdMetric.Name(): val},
 			Time:       dp.Timestamp().AsTime(),
-			Dimensions: utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs),
+			Dimensions: maps.MergeReplaceAttributes(dp.Attributes(), rsAttrs),
 		}
 		items = append(items, m.AsMapStr())
 	}
@@ -134,7 +135,7 @@ func (c metricsConverter) convertHistogramMetrics(pdMetric pmetric.Metric, rsAtt
 	for i := 0; i < dps.Len(); i++ {
 		dp := dps.At(i)
 		dpTime := dp.Timestamp().AsTime()
-		dimensions := utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs)
+		dimensions := maps.MergeReplaceAttributes(dp.Attributes(), rsAttrs)
 
 		metrics := make(map[string]float64)
 
@@ -178,12 +179,10 @@ func (c metricsConverter) convertHistogramMetrics(pdMetric pmetric.Metric, rsAtt
 				val = math.Float64frombits(value.StaleNaN)
 			}
 
-			additional := map[string]string{
-				"le": strconv.FormatFloat(bounds[j], 'f', -1, 64),
-			}
+			fv := strconv.FormatFloat(bounds[j], 'f', -1, 64)
 			m := otMetricMapper{
 				Metrics:    map[string]float64{pdMetric.Name() + "_bucket": val},
-				Dimensions: utils.MergeReplaceMaps(additional, dimensions),
+				Dimensions: maps.MergeWith(dimensions, "le", fv),
 				Time:       dpTime,
 			}
 			items = append(items, m.AsMapStr())
@@ -196,7 +195,7 @@ func (c metricsConverter) convertHistogramMetrics(pdMetric pmetric.Metric, rsAtt
 		}
 		m := otMetricMapper{
 			Metrics:    map[string]float64{pdMetric.Name() + "_bucket": val},
-			Dimensions: utils.MergeReplaceMaps(map[string]string{"le": "+Inf"}, dimensions),
+			Dimensions: maps.MergeWith(dimensions, "le", "+Inf"),
 			Time:       dpTime,
 		}
 		items = append(items, m.AsMapStr())
@@ -217,7 +216,7 @@ func (c metricsConverter) convertGaugeMetrics(pdMetric pmetric.Metric, rsAttrs p
 
 		m := otMetricMapper{
 			Metrics:    map[string]float64{pdMetric.Name(): val},
-			Dimensions: utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs),
+			Dimensions: maps.MergeReplaceAttributes(dp.Attributes(), rsAttrs),
 			Time:       dp.Timestamp().AsTime(),
 		}
 		items = append(items, m.AsMapStr())
@@ -230,7 +229,7 @@ func (c metricsConverter) convertSummaryMetrics(pdMetric pmetric.Metric, rsAttrs
 	dps := pdMetric.Summary().DataPoints()
 	for i := 0; i < dps.Len(); i++ {
 		dp := dps.At(i)
-		dimensions := utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs)
+		dimensions := maps.MergeReplaceAttributes(dp.Attributes(), rsAttrs)
 
 		metrics := make(map[string]float64)
 
@@ -254,17 +253,14 @@ func (c metricsConverter) convertSummaryMetrics(pdMetric pmetric.Metric, rsAttrs
 		quantile := dp.QuantileValues()
 		for j := 0; j < quantile.Len(); j++ {
 			qua := quantile.At(j)
-			additional := map[string]string{
-				"quantile": strconv.FormatFloat(qua.Quantile(), 'f', -1, 64),
-			}
-
 			if !utils.IsValidFloat64(qua.Value()) {
 				continue
 			}
 
+			fv := strconv.FormatFloat(qua.Quantile(), 'f', -1, 64)
 			m := otMetricMapper{
 				Metrics:    map[string]float64{pdMetric.Name(): qua.Value()},
-				Dimensions: utils.MergeReplaceMaps(additional, dimensions),
+				Dimensions: maps.MergeWith(dimensions, "quantile", fv),
 				Time:       dp.Timestamp().AsTime(),
 			}
 			items = append(items, m.AsMapStr())

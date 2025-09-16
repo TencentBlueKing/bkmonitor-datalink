@@ -507,19 +507,6 @@ processor:
 		assertFunc(t, testkits.FirstSpanAttrs(record.Data))
 	})
 
-	t.Run("metrics.derived from_token", func(t *testing.T) {
-		factory := processor.MustCreateFactory(content, NewFactory)
-		data := makeMetricsRecord(1, "string")
-
-		record := define.Record{
-			RecordType: define.RecordMetricsDerived,
-			Data:       data,
-			Token:      define.Token{AppName: "test_app"},
-		}
-		testkits.MustProcess(t, factory, record)
-		assertFunc(t, testkits.FirstMetricAttrs(record.Data))
-	})
-
 	t.Run("metrics from_token", func(t *testing.T) {
 		factory := processor.MustCreateFactory(content, NewFactory)
 		record := define.Record{

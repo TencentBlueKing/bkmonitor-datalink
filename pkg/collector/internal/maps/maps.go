@@ -7,16 +7,15 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package utils
+package maps
 
 import (
 	"strings"
 
-	"github.com/spf13/cast"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 )
 
-func CloneMap(m map[string]string) map[string]string {
+func Clone(m map[string]string) map[string]string {
 	if m == nil {
 		return nil
 	}
@@ -28,12 +27,50 @@ func CloneMap(m map[string]string) map[string]string {
 	return dst
 }
 
-func MergeMaps(ms ...map[string]string) map[string]string {
+func Merge(ms ...map[string]string) map[string]string {
 	dst := make(map[string]string)
 	for _, m := range ms {
 		for k, v := range m {
 			dst[k] = v
 		}
+	}
+
+	return dst
+}
+
+// MergeWith 拷贝 map 并设置指定的键值对
+//
+// 优先考虑使用 MergeWith 而非 Merge 前者性能更优 参见 benchmark
+func MergeWith(m map[string]string, kv ...string) map[string]string {
+	dst := Merge(m)
+	for i := 0; i < len(kv); i += 2 {
+		if i+1 >= len(kv) {
+			break
+		}
+		dst[kv[i]] = kv[i+1]
+	}
+
+	return dst
+}
+
+func MergeReplaceWith(m map[string]string, kv ...string) map[string]string {
+	dst := make(map[string]string)
+	for k, v := range m {
+		newKey, ok := mappings[k]
+		if ok {
+			dst[newKey] = v
+		} else {
+			newKey = strings.ReplaceAll(k, ".", "_")
+			dst[newKey] = v
+		}
+	}
+
+	for i := 0; i < len(kv); i += 2 {
+		if i+1 >= len(kv) {
+			break
+		}
+		newKey := strings.ReplaceAll(kv[i], ".", "_")
+		dst[newKey] = kv[i+1]
 	}
 
 	return dst
@@ -67,19 +104,7 @@ var mappings = map[string]string{
 	"messaging.destination_kind": "messaging_destination_kind",
 }
 
-func MergeReplaceMaps(ms ...map[string]string) map[string]string {
-	dst := make(map[string]string)
-	for _, m := range ms {
-		for k, v := range m {
-			newKey := strings.ReplaceAll(k, ".", "_")
-			dst[newKey] = v
-		}
-	}
-
-	return dst
-}
-
-func MergeReplaceAttributeMaps(attrs ...pcommon.Map) map[string]string {
+func MergeReplaceAttributes(attrs ...pcommon.Map) map[string]string {
 	dst := make(map[string]string)
 	for _, attr := range attrs {
 		attr.Range(func(k string, v pcommon.Value) bool {
@@ -94,54 +119,4 @@ func MergeReplaceAttributeMaps(attrs ...pcommon.Map) map[string]string {
 		})
 	}
 	return dst
-}
-
-func NameOpts(s string) (string, string) {
-	if s == "" {
-		return "", ""
-	}
-
-	nameOpts := strings.Split(s, ";")
-	if len(nameOpts) == 1 {
-		return nameOpts[0], ""
-	}
-	return nameOpts[0], nameOpts[1]
-}
-
-type OptMap struct {
-	m map[string]any // 不会有并发读写
-}
-
-func NewOptMap(s string) *OptMap {
-	m := make(map[string]any)
-	pairs := strings.Split(s, ",")
-	for _, pair := range pairs {
-		kv := strings.Split(strings.TrimSpace(pair), "=")
-		if len(kv) != 2 {
-			continue
-		}
-		m[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
-	}
-	return &OptMap{m: m}
-}
-
-func (om *OptMap) GetInt(k string) (int, bool) {
-	v, ok := om.m[k]
-	if !ok {
-		return 0, false
-	}
-
-	i, err := cast.ToIntE(v)
-	if err != nil {
-		return 0, false
-	}
-	return i, true
-}
-
-func (om *OptMap) GetIntDefault(k string, defaultVal int) int {
-	i, ok := om.GetInt(k)
-	if ok {
-		return i
-	}
-	return defaultVal
 }

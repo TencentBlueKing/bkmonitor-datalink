@@ -18,12 +18,10 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
-	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -195,14 +193,12 @@ func testAccumulatorPublish(t *testing.T, dt string, value float64, count int) {
 	time.Sleep(time.Second)
 	record := records[0]
 
-	metrics := record.Data.(pmetric.Metrics)
-	assert.Equal(t, count, metrics.DataPointCount())
+	metrics := record.Data.(*define.MetricV2Data)
+	first := metrics.Data[0]
 
-	dp := testkits.FirstGaugeDataPoint(metrics)
-	assert.Equal(t, value, dp.DoubleVal())
-
-	name := testkits.FirstMetric(metrics).Name()
-	assert.Equal(t, "bk_apm_metric", name)
+	v, ok := first.Metrics["bk_apm_metric"]
+	assert.True(t, ok)
+	assert.Equal(t, value, v)
 	accumulator.Stop()
 }
 
@@ -255,12 +251,12 @@ func TestAccumulatorPublishCount10(t *testing.T) {
 	time.Sleep(time.Second * 2)
 	record := records[0]
 
-	metrics := record.Data.(pmetric.Metrics)
-	assert.Equal(t, 1, metrics.MetricCount())
-	assert.Equal(t, 1, metrics.DataPointCount())
+	metrics := record.Data.(*define.MetricV2Data)
+	first := metrics.Data[0]
 
-	val := testkits.FirstGaugeDataPoint(metrics).DoubleVal()
-	assert.Equal(t, float64(10), val)
+	v, ok := first.Metrics["bk_apm_count"]
+	assert.True(t, ok)
+	assert.Equal(t, float64(10), v)
 	accumulator.Stop()
 }
 

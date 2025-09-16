@@ -40,7 +40,7 @@ func TestConvertMetricV2Data(t *testing.T) {
 				},
 				Timestamp: ts,
 				Dimension: map[string]string{
-					"module":   "db",
+					"module.x": "db",
 					"location": "guangdong",
 				},
 			},
@@ -79,7 +79,7 @@ func TestConvertMetricV2Data(t *testing.T) {
 			},
 			"target": define.Identity(),
 			"dimension": map[string]string{
-				"module":   "db",
+				"module_x": "db",
 				"location": "guangdong",
 			},
 			"timestamp": ts,

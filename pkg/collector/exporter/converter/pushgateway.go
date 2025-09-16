@@ -19,8 +19,8 @@ import (
 	dto "github.com/prometheus/client_model/go"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/maps"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type pushGatewayEvent struct {
@@ -81,7 +81,6 @@ func (p promMapper) wrapExemplar() common.MapStr {
 		return nil
 	}
 
-	logger.Debugf("metrics [%+v] with exemplar %+v", p.Metrics, p.Exemplar)
 	if p.Exemplar != nil && p.Exemplar.Timestamp != nil && p.Exemplar.Value != nil {
 		exemplarLbs := make(map[string]string)
 		for _, pair := range p.Exemplar.Label {
@@ -148,7 +147,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				},
 				Target:     target,
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMaps(lbs, pd.Labels),
+				Dimensions: maps.Merge(lbs, pd.Labels),
 				Exemplar:   counter.Exemplar,
 			})
 		}
@@ -162,7 +161,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				},
 				Target:     target,
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMaps(lbs, pd.Labels),
+				Dimensions: maps.Merge(lbs, pd.Labels),
 			})
 		}
 
@@ -176,7 +175,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				},
 				Target:     target,
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMaps(lbs, pd.Labels),
+				Dimensions: maps.Merge(lbs, pd.Labels),
 			})
 
 			for _, quantile := range summary.GetQuantile() {
@@ -184,16 +183,14 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					continue
 				}
 
-				quantileLabels := utils.CloneMap(lbs)
-				quantileLabels["quantile"] = strconv.FormatFloat(quantile.GetQuantile(), 'f', -1, 64)
-
+				fv := strconv.FormatFloat(quantile.GetQuantile(), 'f', -1, 64)
 				pms = append(pms, &promMapper{
 					Metrics: common.MapStr{
 						name: quantile.GetValue(),
 					},
 					Target:     target,
 					Timestamp:  getTimestamp(now, metric.TimestampMs),
-					Dimensions: utils.MergeMaps(lbs, quantileLabels, pd.Labels),
+					Dimensions: maps.Merge(lbs, map[string]string{"quantile": fv}, pd.Labels),
 				})
 			}
 		}
@@ -208,7 +205,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				},
 				Target:     target,
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMaps(lbs, pd.Labels),
+				Dimensions: maps.Merge(lbs, pd.Labels),
 			})
 
 			infSeen := false
@@ -220,31 +217,28 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					infSeen = true
 				}
 
-				bucketLabels := utils.CloneMap(lbs)
-				bucketLabels["le"] = strconv.FormatFloat(bucket.GetUpperBound(), 'f', -1, 64)
-
+				fv := strconv.FormatFloat(bucket.GetUpperBound(), 'f', -1, 64)
 				pms = append(pms, &promMapper{
 					Metrics: common.MapStr{
 						name + "_bucket": bucket.GetCumulativeCount(),
 					},
 					Target:     target,
 					Timestamp:  getTimestamp(now, metric.TimestampMs),
-					Dimensions: utils.MergeMaps(lbs, bucketLabels, pd.Labels),
+					Dimensions: maps.Merge(lbs, map[string]string{"le": fv}, pd.Labels),
 					Exemplar:   bucket.Exemplar,
 				})
 			}
 			// 仅 expfmt.FmtText 格式支持 inf
 			// 其他格式需要自行检查
 			if !infSeen {
-				bucketLabels := utils.CloneMap(lbs)
-				bucketLabels["le"] = strconv.FormatFloat(math.Inf(+1), 'f', -1, 64)
+				fv := strconv.FormatFloat(math.Inf(+1), 'f', -1, 64)
 				pms = append(pms, &promMapper{
 					Metrics: common.MapStr{
 						name + "_bucket": histogram.GetSampleCount(),
 					},
 					Target:     target,
 					Timestamp:  getTimestamp(now, metric.TimestampMs),
-					Dimensions: utils.MergeMaps(lbs, bucketLabels, pd.Labels),
+					Dimensions: maps.Merge(lbs, map[string]string{"le": fv}, pd.Labels),
 				})
 			}
 		}
@@ -258,7 +252,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				},
 				Target:     target,
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMaps(lbs, pd.Labels),
+				Dimensions: maps.Merge(lbs, pd.Labels),
 			})
 		}
 	}

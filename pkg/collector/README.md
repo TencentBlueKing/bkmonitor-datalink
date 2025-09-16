@@ -203,11 +203,8 @@ type Processor interface {
 Pipeline 由 processor 实例构成，一个类型的 processor 可以有多个实现（比如参数配置不同）。目前提供了多种类型的 pipeline 类型：
 
 * traces
-* traces.derived
 * metrics
-* metrics.derived
 * logs
-* logs.derived
 * pushgateway
 * remotewrite
 * proxy

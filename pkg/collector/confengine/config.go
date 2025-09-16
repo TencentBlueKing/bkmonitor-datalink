@@ -16,7 +16,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // Config 是对 beat.Config 的封装 并提供一些简便的操作函数
@@ -144,8 +143,7 @@ func (tc *TierConfig) GetByToken(token string) any {
 }
 
 func (tc *TierConfig) Get(token, serviceID, instanceID string) any {
-	val, typ := tc.get(token, serviceID, instanceID)
-	logger.Debugf("tier config(token=%s, serviceID=%s, instanceID=%s), type: %s", token, serviceID, instanceID, typ)
+	val, _ := tc.get(token, serviceID, instanceID)
 	return val
 }
 

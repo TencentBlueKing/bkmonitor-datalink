@@ -17,9 +17,6 @@ pipeline:
     processors:
       - "token_checker/fixed"
 
-  - name: "metrics_pipeline/derived"
-    type: "metrics.derived"
+  - name: "metricv2_pipeline/derived"
+    type: "metricv2.derived"
     processors:
-      - "token_checker/fixed"
-      - "attribute_filter/as_string"
-      - "apdex_calculator/standard"

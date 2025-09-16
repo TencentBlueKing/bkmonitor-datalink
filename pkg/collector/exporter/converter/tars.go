@@ -26,6 +26,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/maps"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -79,8 +80,8 @@ type bucket struct {
 	Cnt int32
 }
 
-// propNameToNormalizeMetricName 将属性转为标准指标名
-func propNameToNormalizeMetricName(propertyName, policy string) string {
+// propNameToMetricName 将属性转为标准指标名
+func propNameToMetricName(propertyName, policy string) string {
 	name := propertyName + "_" + strings.ToLower(policy)
 	// 在 NormalizeName 基础上，去掉 :
 	return utils.NormalizeName(strings.ReplaceAll(name, ":", ""))
@@ -148,7 +149,7 @@ func toHistogram(name, target string, timestamp int64, buckets []bucket, dims ma
 	pms := make([]*promMapper, 0, len(buckets)+1)
 	bucketMetricName := name + "_bucket"
 	for _, b := range buckets {
-		dims := utils.CloneMap(dims)
+		dims := maps.Clone(dims)
 		dims["le"] = b.Val
 		pm := &promMapper{
 			Metrics:    common.MapStr{bucketMetricName: b.Cnt},
@@ -162,7 +163,7 @@ func toHistogram(name, target string, timestamp int64, buckets []bucket, dims ma
 		Metrics:    common.MapStr{name + "_count": buckets[len(buckets)-1].Cnt},
 		Target:     target,
 		Timestamp:  timestamp,
-		Dimensions: utils.CloneMap(dims),
+		Dimensions: maps.Clone(dims),
 	})
 	return pms
 }
@@ -297,7 +298,7 @@ func (s *stat) Copy() *stat {
 		timeoutCount: s.timeoutCount,
 		successCount: s.successCount,
 		totalRspTime: s.totalRspTime,
-		dimensions:   utils.CloneMap(s.dimensions),
+		dimensions:   maps.Clone(s.dimensions),
 		bucketMap:    make(map[int32]int32, len(s.bucketMap)),
 	}
 	for k, v := range s.bucketMap {
@@ -345,7 +346,7 @@ func (s *stat) ToEvents(metricPrefix string) []define.Event {
 			},
 			Target:     s.target,
 			Timestamp:  s.timestamp,
-			Dimensions: utils.MergeMaps(s.dimensions, map[string]string{rpcMetricTagsCodeType: codeType}),
+			Dimensions: maps.MergeWith(s.dimensions, rpcMetricTagsCodeType, codeType),
 		})
 	}
 
@@ -359,7 +360,7 @@ func (s *stat) ToEvents(metricPrefix string) []define.Event {
 	}
 
 	histogramMetric := metricPrefix + "_" + s.role + "_handled_seconds"
-	dims := utils.MergeMaps(s.dimensions, map[string]string{rpcMetricTagsCodeType: codeType})
+	dims := maps.MergeWith(s.dimensions, rpcMetricTagsCodeType, codeType)
 
 	// 协议数据仅够生成 _bucket / _count 指标，这里需要使用 TotalRspTime 补充 _sum，以构造完整的 Histogram
 	pms = append(pms, toHistogram(histogramMetric, s.target, s.timestamp, toSecondBuckets(s.bucketMap), dims)...)
@@ -563,11 +564,11 @@ func (c tarsConverter) handleStat(token define.Token, ip string, data *define.Ta
 				continue
 			}
 
-			serverDims := utils.MergeMaps(dims, map[string]string{
-				resourceTagsServiceName: calleeServer,
-				resourceTagsInstance:    calleeIp,
-				resourceTagsScopeName:   "server_metrics",
-			})
+			serverDims := maps.MergeWith(dims,
+				resourceTagsServiceName, calleeServer,
+				resourceTagsInstance, calleeIp,
+				resourceTagsScopeName, "server_metrics",
+			)
 			// 从 Client 切换成 Server 视角，target 取值从 ip 调整为 calleeIp，避免 target x calleeIp 不一致导致高基数。
 			serverStatFromClient := newStat(token, tarsStatTagsRoleServer, calleeIp, data.Timestamp, serverDims, body)
 			events = append(events, c.statToEvents(serverStatFromClient)...)
@@ -582,7 +583,7 @@ func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, d
 	for head, body := range data.Data.(*define.TarsPropertyData).Props {
 		commonDims := propHeadToCustomMetricDims(&head, ip)
 		for _, info := range body.VInfo {
-			dims := utils.MergeMaps(commonDims, map[string]string{tarsPropertyTagsPropertyPolicy: info.Policy})
+			dims := maps.MergeWith(commonDims, tarsPropertyTagsPropertyPolicy, info.Policy)
 			switch info.Policy {
 			case "Distr":
 				bucketMap := toBucketMap(info.Value)
@@ -592,7 +593,7 @@ func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, d
 				}
 
 				customMetricHistogramPms := toHistogram(
-					propNameToNormalizeMetricName(head.PropertyName, info.Policy),
+					propNameToMetricName(head.PropertyName, info.Policy),
 					ip,
 					data.Timestamp,
 					toIntBuckets(bucketMap),
@@ -603,7 +604,7 @@ func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, d
 			default: // Policy -> Max / Min / Avg / Sum / Count
 				pms = append(pms, &promMapper{
 					Metrics: common.MapStr{
-						propNameToNormalizeMetricName(head.PropertyName, info.Policy): cast.ToFloat64(info.Value),
+						propNameToMetricName(head.PropertyName, info.Policy): cast.ToFloat64(info.Value),
 					},
 					Target:     ip,
 					Timestamp:  data.Timestamp,

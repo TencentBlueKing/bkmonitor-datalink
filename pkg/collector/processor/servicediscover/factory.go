@@ -125,14 +125,14 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 					continue
 				}
 
-				mappings, matched, matchType := rule.Match(val)
-				logger.Debugf("matcher: mappings=%v, matched=%v, matchType=%v", mappings, matched, matchType)
+				mappings, matched, _ := rule.Match(val)
 				if !matched {
 					continue
 				}
 
 				p.matcher.Match(span, mappings, rule.ReplaceType)
 				break loop
+
 			case processor.DimensionFromMethod:
 				// 1) 先判断是否有 predicateKey
 				if s := p.fetcher.FetchMethod(span, pk); s == "" {
@@ -149,8 +149,7 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 					continue
 				}
 
-				mappings, matched, matchType := rule.Match(val)
-				logger.Debugf("matcher: mappings=%v, matched=%v, matchType=%v", mappings, matched, matchType)
+				mappings, matched, _ := rule.Match(val)
 				if !matched {
 					continue
 				}

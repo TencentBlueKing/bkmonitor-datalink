@@ -249,11 +249,9 @@ bk-collector:
         - "traces_deriver/duration"
         - "sampler/random"
 
-    - name: "metrics_pipeline/derived"
-      type: "metrics.derived"
+    - name: "metricv2_pipeline/derived"
+      type: "metricv2.derived"
       processors:
-        - "token_checker/fixed"
-        - "apdex_calculator/standard"
 
     - name: "pushgateway_pipeline/common"
       type: "pushgateway"

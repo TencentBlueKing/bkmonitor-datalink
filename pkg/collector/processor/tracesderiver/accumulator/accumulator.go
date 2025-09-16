@@ -22,7 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/maps"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/labelstore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/fasttime"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -405,8 +405,7 @@ func (r *recorder) calc(kind string, k uint64, stat rStats) (rStats, []define.Me
 	// histogram 类型处理
 	if len(leValues) > 0 {
 		for _, lev := range leValues {
-			dims := utils.CloneMap(lbs) // 复制新的 labels 保证读写安全
-			dims["le"] = lev.Le
+			dims := maps.MergeWith(lbs, "le", lev.Le) // 复制新的 labels 保证读写安全
 			metrics = append(metrics, define.MetricV2{
 				Metrics:   map[string]float64{r.metricName: lev.Value},
 				Timestamp: unixMill,
@@ -419,7 +418,7 @@ func (r *recorder) calc(kind string, k uint64, stat rStats) (rStats, []define.Me
 		metrics = append(metrics, define.MetricV2{
 			Metrics:   map[string]float64{r.metricName: val},
 			Timestamp: unixMill,
-			Dimension: utils.CloneMap(lbs),
+			Dimension: maps.Clone(lbs),
 		})
 	}
 

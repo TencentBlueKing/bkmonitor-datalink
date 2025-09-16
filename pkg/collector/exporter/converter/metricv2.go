@@ -13,6 +13,7 @@ import (
 	"github.com/elastic/beats/libbeat/common"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/maps"
 )
 
 type metricV2Event struct {
@@ -50,7 +51,7 @@ func (c metricV2Converter) Convert(record *define.Record, f define.GatherFunc) {
 			"metrics":   item.Metrics,
 			"target":    target,
 			"timestamp": item.Timestamp,
-			"dimension": item.Dimension,
+			"dimension": maps.MergeReplaceWith(item.Dimension),
 		})
 		events = append(events, event)
 	}

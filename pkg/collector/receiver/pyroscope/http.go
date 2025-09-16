@@ -25,6 +25,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/maps"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
@@ -121,7 +122,7 @@ func (s HttpService) Push(_ context.Context, req *connect.Request[pushv1.PushReq
 					Format:          define.FormatPprof,
 					AggregationType: "cpu",
 					Units:           "nanoseconds",
-					Tags:            utils.CloneMap(tags),
+					Tags:            maps.Clone(tags),
 					AppName:         serviceName,
 				},
 			}

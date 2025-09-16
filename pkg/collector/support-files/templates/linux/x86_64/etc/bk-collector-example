@@ -547,7 +547,7 @@ bk-collector:
 
   # =============================== Pipeline =================================
   # name: pipeline 名称作为标识
-  # type: pipeline 处理类型，可选项：traces/metrics/logs 以及派生项: traces.derived/metrics.derived/logs.derived
+  # type: pipeline 处理类型，可选项：traces/metrics/logs
   # processors: 上述定义的处理器名称
   pipeline:
     - name: "traces_pipeline/common"
@@ -575,10 +575,9 @@ bk-collector:
         - "resource_filter/add"
         - "apdex_calculator/fixed"
 
-    - name: "metrics_pipeline/derived"
-      type: "metrics.derived"
+    - name: "metricv2_pipeline/derived"
+      type: "metricv2.derived"
       processors:
-        - "apdex_calculator/standard"
 
     - name: "profiles_pipeline/common"
       type: "profiles"

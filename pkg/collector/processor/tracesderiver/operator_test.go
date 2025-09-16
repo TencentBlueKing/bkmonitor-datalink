@@ -13,12 +13,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 )
 
 func TestOperator(t *testing.T) {
@@ -66,21 +63,15 @@ func TestOperator(t *testing.T) {
 	operator := NewTracesOperator(c)
 	derived := operator.Operate(record)
 
-	pdMetrics := derived.Data.(pmetric.Metrics)
-	assert.Equal(t, 1, pdMetrics.MetricCount())
-	foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
-		assert.Equal(t, "test_bk_apm_duration", metric.Name())
-		dataPoints := metric.Gauge().DataPoints()
-		for n := 0; n < dataPoints.Len(); n++ {
-			dp := dataPoints.At(n)
-			attrs := dp.Attributes()
-			testkits.AssertAttrsStringKeyVal(t, attrs,
-				"http.uri", "/api/v1/healthz",
-				"service.name", "echo",
-				"kind", "3",
-			)
-		}
-	})
+	data := derived.Data.(*define.MetricV2Data)
+	for _, item := range data.Data {
+		_, ok := item.Metrics["test_bk_apm_duration"]
+		assert.True(t, ok)
+
+		assert.Equal(t, item.Dimension["http.uri"], "/api/v1/healthz")
+		assert.Equal(t, item.Dimension["service.name"], "echo")
+		assert.Equal(t, item.Dimension["kind"], "3")
+	}
 }
 
 func TestOperatorDuration(t *testing.T) {
@@ -129,12 +120,15 @@ func TestOperatorDuration(t *testing.T) {
 	})
 	assert.NotNil(t, derived)
 
-	metrics := derived.Data.(pmetric.Metrics)
-	assert.Equal(t, 2, metrics.DataPointCount())
-
-	foreach.Metrics(metrics.ResourceMetrics(), func(metric pmetric.Metric) {
-		assert.Equal(t, "test_bk_apm_duration", metric.Name())
-		assert.Equal(t, float64(100), metric.Gauge().DataPoints().At(0).DoubleVal())
-		assert.Equal(t, float64(0), metric.Gauge().DataPoints().At(1).DoubleVal())
-	})
+	metrics := derived.Data.(*define.MetricV2Data)
+	for idx, item := range metrics.Data {
+		var fv float64
+		switch idx {
+		case 0:
+			fv = float64(100)
+		case 1:
+			fv = float64(0)
+		}
+		assert.Equal(t, fv, item.Metrics["test_bk_apm_duration"])
+	}
 }

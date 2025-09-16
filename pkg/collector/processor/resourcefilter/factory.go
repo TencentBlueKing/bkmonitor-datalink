@@ -394,7 +394,7 @@ func (p *resourceFilter) fromTokenAction(record *define.Record, config Config) {
 	}
 
 	switch record.RecordType {
-	case define.RecordMetrics, define.RecordMetricsDerived:
+	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
 		foreach.MetricsSliceResource(pdMetrics.ResourceMetrics(), func(rs pcommon.Resource) {
 			handle(rs, config.FromToken)

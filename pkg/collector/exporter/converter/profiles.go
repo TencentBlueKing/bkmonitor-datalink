@@ -46,7 +46,7 @@ func (c profilesConverter) Convert(record *define.Record, f define.GatherFunc) {
 
 	profileData := record.Data.(*define.ProfilesData)
 	if profileData == nil || len(profileData.Profiles) == 0 {
-		logger.Errorf("skip empty profiles, token: %s, app: %s", token.Original, token.BizApp())
+		logger.Errorf("skip empty profiles, token: %s", token.Original)
 		return
 	}
 
@@ -60,9 +60,7 @@ func (c profilesConverter) Convert(record *define.Record, f define.GatherFunc) {
 
 		var protoBuf bytes.Buffer
 		if err := p.WriteUncompressed(&protoBuf); err != nil {
-			logger.Errorf(
-				"write uncompressed profile on index(%d) failed, token: %s app: %s, err: %s", i, token.Original, token.BizApp(), err,
-			)
+			logger.Errorf("write profile on index (%d) failed, token: %s err: %s", i, token.Original, err)
 			return
 		}
 

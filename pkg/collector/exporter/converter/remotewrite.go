@@ -14,7 +14,6 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/maps"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 )
 
@@ -49,6 +48,7 @@ func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc
 		if !ok {
 			target = define.Identity()
 		}
+
 		samples := ts.GetSamples()
 		for j := 0; j < len(samples); j++ {
 			sample := samples[j]
@@ -60,7 +60,7 @@ func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc
 				Metrics:    common.MapStr{name: sample.GetValue()},
 				Target:     target,
 				Timestamp:  sample.GetTimestamp(),
-				Dimensions: maps.Clone(dims),
+				Dimensions: dims,
 			}
 			events = append(events, c.ToEvent(record.Token, dataId, pm.AsMapStr()))
 		}

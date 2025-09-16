@@ -41,6 +41,7 @@ func Merge(ms ...map[string]string) map[string]string {
 // MergeWith 拷贝 map 并设置指定的键值对
 //
 // 优先考虑使用 MergeWith 而非 Merge 前者性能更优 参见 benchmark
+// 所有的 Map 拷贝都应遵循 COW 原则（Copy On Write）
 func MergeWith(m map[string]string, kv ...string) map[string]string {
 	dst := Merge(m)
 	for i := 0; i < len(kv); i += 2 {

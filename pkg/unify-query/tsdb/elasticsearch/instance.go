@@ -343,7 +343,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}()
 
 	if err != nil {
-		return nil, processOnEsErr(ctx, qo.conn.Address, err)
+		return nil, processOnESErr(ctx, qo.conn.Address, err)
 	}
 
 	if res.Error != nil {

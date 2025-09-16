@@ -49,7 +49,7 @@ func handleESSpecificError(elasticErr *elastic.Error) error {
 	return errors.New(msgBuilder.String())
 }
 
-func processOnEsErr(ctx context.Context, url string, err error) error {
+func processOnESErr(ctx context.Context, url string, err error) error {
 	if err == nil {
 		return nil
 	}

@@ -23,10 +23,7 @@ import (
 
 func handleESSpecificError(elasticErr *elastic.Error) error {
 	if elasticErr.Details == nil {
-		return &elastic.Error{
-			Status:  elasticErr.Status,
-			Details: nil,
-		}
+		return elasticErr
 	}
 	var msgBuilder strings.Builder
 

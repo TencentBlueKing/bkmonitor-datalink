@@ -882,7 +882,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 
 	unit := metadata.GetQueryParams(ctx).TimeUnit
 	fact := NewFormatFactory(ctx).
-		WithQuery(query.Field, query.TimeField, start, end, unit, 0).
+		WithQuery(name, query.TimeField, start, end, unit, 0).
 		WithFieldMap(fieldMap)
 
 	query.Aggregates = append(query.Aggregates, metadata.Aggregate{

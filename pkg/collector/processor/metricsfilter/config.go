@@ -88,12 +88,12 @@ func (r *RelabelAction) Validate() error {
 	return r.rrs.Validate()
 }
 
-func (r *RelabelAction) MatchRWLabels(labels promlabels.Labels) bool {
-	return r.rrs.MatchRWLabels(labels)
+func (r *RelabelAction) MatchLabels(labels promlabels.Labels) bool {
+	return r.rrs.MatchLabels(labels)
 }
 
-func (r *RelabelAction) MatchOTAttrs(attrs pcommon.Map) bool {
-	return r.rrs.MatchOTAttrs(attrs)
+func (r *RelabelAction) MatchMap(m pcommon.Map) bool {
+	return r.rrs.MatchMap(m)
 }
 
 type RelabelTarget struct {
@@ -191,7 +191,7 @@ func (rs *RelabelRules) Validate() error {
 	return nil
 }
 
-func (rs *RelabelRules) MatchRWLabels(labels promlabels.Labels) bool {
+func (rs *RelabelRules) MatchLabels(labels promlabels.Labels) bool {
 	if len(rs.Rules) == 0 {
 		return false
 	}
@@ -220,7 +220,7 @@ func (rs *RelabelRules) MatchRWLabels(labels promlabels.Labels) bool {
 	return true
 }
 
-func (rs *RelabelRules) MatchOTAttrs(attrs pcommon.Map) bool {
+func (rs *RelabelRules) MatchMap(m pcommon.Map) bool {
 	if len(rs.Rules) == 0 {
 		return false
 	}
@@ -228,7 +228,7 @@ func (rs *RelabelRules) MatchOTAttrs(attrs pcommon.Map) bool {
 	// 只匹配一种规则
 	if rs.Any {
 		for _, rule := range rs.Rules {
-			label, ok := attrs.Get(rule.Label)
+			label, ok := m.Get(rule.Label)
 			if ok && rule.Match(label.AsString()) {
 				return true
 			}
@@ -238,7 +238,7 @@ func (rs *RelabelRules) MatchOTAttrs(attrs pcommon.Map) bool {
 
 	// 匹配所有规则
 	for _, rule := range rs.Rules {
-		label, ok := attrs.Get(rule.Label)
+		label, ok := m.Get(rule.Label)
 		if !ok {
 			return false
 		}
@@ -290,12 +290,12 @@ func (c *CodeRelabelAction) Validate() error {
 	return c.rrs.Validate()
 }
 
-func (c *CodeRelabelAction) MatchRWLabels(labels promlabels.Labels) bool {
-	return c.rrs.MatchRWLabels(labels)
+func (c *CodeRelabelAction) MatchLabels(labels promlabels.Labels) bool {
+	return c.rrs.MatchLabels(labels)
 }
 
-func (c *CodeRelabelAction) MatchOTAttrs(attrs pcommon.Map) bool {
-	return c.rrs.MatchOTAttrs(attrs)
+func (c *CodeRelabelAction) MatchMap(m pcommon.Map) bool {
+	return c.rrs.MatchMap(m)
 }
 
 type CodeRelabelService struct {
@@ -348,12 +348,12 @@ func (c *CodeRelabelService) Validate() error {
 	return c.rrs.Validate()
 }
 
-func (c *CodeRelabelService) MatchRWLabels(labels promlabels.Labels) bool {
-	return c.rrs.MatchRWLabels(labels)
+func (c *CodeRelabelService) MatchLabels(labels promlabels.Labels) bool {
+	return c.rrs.MatchLabels(labels)
 }
 
-func (c *CodeRelabelService) MatchOTAttrs(attrs pcommon.Map) bool {
-	return c.rrs.MatchOTAttrs(attrs)
+func (c *CodeRelabelService) MatchMap(m pcommon.Map) bool {
+	return c.rrs.MatchMap(m)
 }
 
 type CodeRelabelCode struct {
@@ -426,10 +426,10 @@ func (c *CodeRelabelCode) Validate() error {
 	return c.rrs.Validate()
 }
 
-func (c *CodeRelabelCode) MatchRWLabels(labels promlabels.Labels) bool {
-	return c.rrs.MatchRWLabels(labels)
+func (c *CodeRelabelCode) MatchLabels(labels promlabels.Labels) bool {
+	return c.rrs.MatchLabels(labels)
 }
 
-func (c *CodeRelabelCode) MatchOTAttrs(attrs pcommon.Map) bool {
-	return c.rrs.MatchOTAttrs(attrs)
+func (c *CodeRelabelCode) MatchMap(m pcommon.Map) bool {
+	return c.rrs.MatchMap(m)
 }

@@ -375,11 +375,11 @@ func TestRelabelActionRuleMatch(t *testing.T) {
 	for _, tt := range tests {
 		assert.NoError(t, tt.rules.Validate())
 		t.Run("OT:"+tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.rules.MatchOTAttrs(tt.attrs))
+			assert.Equal(t, tt.want, tt.rules.MatchMap(tt.attrs))
 		})
 
 		t.Run("RW:"+tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.rules.MatchRWLabels(attrsToLabels(tt.attrs)))
+			assert.Equal(t, tt.want, tt.rules.MatchLabels(attrsToLabels(tt.attrs)))
 		})
 	}
 }
@@ -410,7 +410,7 @@ func makeRWDataAndRule(numExtraLabel int) ([]prompb.Label, RelabelRules) {
 func BenchmarkMatchRWLabelsSlice(b *testing.B) {
 	labels, rules := makeRWDataAndRule(10)
 	for i := 0; i < b.N; i++ {
-		rules.MatchRWLabels(labels)
+		rules.MatchLabels(labels)
 	}
 }
 

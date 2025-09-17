@@ -51,9 +51,9 @@ func Traces(traces ptrace.Traces) {
 		return
 	}
 
-	foreach.SpansWithResourceAttrs(traces.ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) {
+	foreach.SpansWithResource(traces, func(rs pcommon.Map, span ptrace.Span) {
 		logger.Debugf("Pretty/Traces: resource=%#v, traceID=%s, spanID=%s, spanName=%s, spanKind=%s, spanStatus=%s, spanAttributes=%#v",
-			rsAttrs.AsRaw(),
+			rs.AsRaw(),
 			span.TraceID().HexString(),
 			span.SpanID().HexString(),
 			span.Name(),
@@ -69,9 +69,9 @@ func Metrics(metrics pmetric.Metrics) {
 		return
 	}
 
-	foreach.MetricsWithResourceAttrs(metrics.ResourceMetrics(), func(rsAttrs pcommon.Map, metric pmetric.Metric) {
+	foreach.MetricsWithResource(metrics, func(rs pcommon.Map, metric pmetric.Metric) {
 		logger.Debugf("Pretty/Metrics: resource=%#v, metric=%s, dataType=%s, unit=%s",
-			rsAttrs.AsRaw(),
+			rs.AsRaw(),
 			metric.Name(),
 			metric.DataType().String(),
 			metric.Unit(),
@@ -84,9 +84,9 @@ func Logs(logs plog.Logs) {
 		return
 	}
 
-	foreach.LogsWithResourceAttrs(logs.ResourceLogs(), func(rsAttrs pcommon.Map, logRecord plog.LogRecord) {
+	foreach.LogsWithResource(logs, func(rs pcommon.Map, logRecord plog.LogRecord) {
 		logger.Debugf("Pretty/Logs: resource=%#v, body=%s, logAttributes=%#v, logLevel=%s",
-			rsAttrs.AsRaw(),
+			rs.AsRaw(),
 			logRecord.Body().AsString(),
 			logRecord.Attributes().AsRaw(),
 			logRecord.SeverityText(),

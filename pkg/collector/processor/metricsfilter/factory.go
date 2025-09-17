@@ -130,7 +130,7 @@ func (p *metricsFilter) replaceAction(record *define.Record, config Config) {
 	case define.RecordMetrics:
 		for _, action := range config.Replace {
 			pdMetrics := record.Data.(pmetric.Metrics)
-			foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
+			foreach.Metrics(pdMetrics, func(metric pmetric.Metric) {
 				if metric.Name() == action.Source {
 					metric.SetName(action.Destination)
 				}
@@ -144,8 +144,8 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 	case define.RecordMetrics:
 		for _, action := range config.Relabel {
 			pdMetrics := record.Data.(pmetric.Metrics)
-			foreach.MetricsSliceDataPointsAttrs(pdMetrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
-				if !action.IsMetricIn(name) || !action.MatchOTAttrs(attrs) {
+			foreach.MetricsDataPointWithResource(pdMetrics, func(metric pmetric.Metric, rs, attrs pcommon.Map) {
+				if !action.IsMetricIn(metric.Name()) || !action.MatchMap(attrs) {
 					return
 				}
 
@@ -164,7 +164,7 @@ func (p *metricsFilter) relabelAction(record *define.Record, config Config) {
 			if !ok || !action.IsMetricIn(nameLabel.GetValue()) {
 				return
 			}
-			if !action.MatchRWLabels(lbs) {
+			if !action.MatchLabels(lbs) {
 				return
 			}
 
@@ -189,18 +189,20 @@ func (p *metricsFilter) codeRelabelAction(record *define.Record, config Config) 
 	case define.RecordMetrics:
 		for _, action := range config.CodeRelabel {
 			pdMetrics := record.Data.(pmetric.Metrics)
-			foreach.MetricsSliceDataPointsAttrs(pdMetrics.ResourceMetrics(), func(name string, attrs pcommon.Map) {
-				if !action.IsMetricIn(name) || !action.MatchOTAttrs(attrs) {
+			foreach.MetricsDataPointWithResource(pdMetrics, func(metric pmetric.Metric, rs, attrs pcommon.Map) {
+				// service_name 需要从 rs 中获取
+				// 其余字段从 attrs 中获取
+				if !action.IsMetricIn(metric.Name()) || !action.MatchMap(rs) {
 					return
 				}
 
 				for _, service := range action.Services {
-					if !service.MatchOTAttrs(attrs) {
+					if !service.MatchMap(attrs) {
 						continue
 					}
 
 					for _, code := range service.Codes {
-						if !code.MatchOTAttrs(attrs) {
+						if !code.MatchMap(attrs) {
 							continue
 						}
 
@@ -222,17 +224,17 @@ func (p *metricsFilter) codeRelabelAction(record *define.Record, config Config) 
 			if !ok || !action.IsMetricIn(nameLabel.GetValue()) {
 				return
 			}
-			if !action.MatchRWLabels(lbs) {
+			if !action.MatchLabels(lbs) {
 				return
 			}
 
 			for _, service := range action.Services {
-				if !service.MatchRWLabels(lbs) {
+				if !service.MatchLabels(lbs) {
 					continue
 				}
 
 				for _, code := range service.Codes {
-					if !code.MatchRWLabels(lbs) {
+					if !code.MatchLabels(lbs) {
 						continue
 					}
 

@@ -142,7 +142,7 @@ func TestConvertJvmMetrics(t *testing.T) {
 	}
 
 	n := 0
-	foreach.Metrics(metrics.ResourceMetrics(), func(metric pmetric.Metric) {
+	foreach.Metrics(metrics, func(metric pmetric.Metric) {
 		c := tests[n]
 		assert.Equal(t, metric.Name(), c.metric)
 		assert.Equal(t, metric.Gauge().DataPoints().Len(), 1)

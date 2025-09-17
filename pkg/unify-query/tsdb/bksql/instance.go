@@ -515,14 +515,9 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		return nil, err
 	}
 
-	// 使用 distinct 聚合模式
-	query.Aggregates = []metadata.Aggregate{
-		{
-			Name:       "distinct",
-			Dimensions: []string{name},
-			Without:    true,
-		},
-	}
+	queryFactory.WithKeepColumns([]string{name})
+	query.DistinctSelect = true
+
 	sql, err := queryFactory.SQL()
 	if err != nil {
 		return nil, err

@@ -862,8 +862,17 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		WithQuery(name, query.TimeField, start, end, unit, 0).
 		WithFieldMap(fieldMap)
 
+	// 添加 exists 条件确保字段存在
+	query.AllConditions = append(query.AllConditions, []metadata.ConditionField{
+		{
+			DimensionName: name,
+			Value:         []string{},
+			Operator:      "existed",
+		},
+	})
+
 	query.Aggregates = append(query.Aggregates, metadata.Aggregate{
-		Name:       "count",
+		Name:       "cardinality",
 		Field:      name,
 		Dimensions: []string{name},
 		Without:    true,

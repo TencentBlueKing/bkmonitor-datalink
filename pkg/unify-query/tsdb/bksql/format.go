@@ -469,10 +469,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	span.Set("order-fields", orderFields)
 	span.Set("timeAggregate", timeAggregate)
 
-	isDistinctQuery := lo.SomeBy(f.query.Aggregates, func(agg metadata.Aggregate) bool {
-		return strings.ToLower(agg.Name) == "distinct"
-	})
-	sqlBuilder.WriteString(lo.Ternary(isDistinctQuery, "SELECT DISTINCT ", "SELECT "))
+	sqlBuilder.WriteString(lo.Ternary(f.query.DistinctSelect, "SELECT DISTINCT ", "SELECT "))
 	sqlBuilder.WriteString(strings.Join(selectFields, ", "))
 	sqlBuilder.WriteString(" FROM ")
 	sqlBuilder.WriteString(f.Table())
@@ -486,7 +483,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 		sqlBuilder.WriteString(" WHERE ")
 		sqlBuilder.WriteString(whereString)
 	}
-	if len(groupFields) > 0 && !isDistinctQuery {
+	if len(groupFields) > 0 {
 		sqlBuilder.WriteString(" GROUP BY ")
 		sqlBuilder.WriteString(strings.Join(groupFields, ", "))
 	}

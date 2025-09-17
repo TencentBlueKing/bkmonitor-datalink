@@ -329,7 +329,18 @@ bk-collector:
     # MetricsFilter: 指标过滤处理器
     # Relabel: 属性重定义
     - name: "metrics_filter/relabel"
-
+      config:
+        code_relabel:
+          - metrics: ["rpc_client_started_total", "rpc_server_handled_seconds_bucket", "rpc_server_handled_seconds_count", "rpc_server_handled_seconds_sum"]
+            source: "local.helloworld"
+            services:
+              - name: "mysql.server;*;*"
+                codes:
+                  - rule: "0,1,2"
+                    target:
+                      action: "upsert"
+                      label: "code_type"
+                      value: "fatal"
 
     # RateLimiter: 流控处理器
     # TokenBucket: 令牌桶限流

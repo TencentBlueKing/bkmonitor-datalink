@@ -184,26 +184,6 @@ default:
                   - "attributes.peer.service"
                   - "attributes.apdex_type"
 
-    - name: "metrics_filter/relabel"
-      config:
-        relabel:
-          - metrics: ["gauge_int"]
-            rules:
-              - label: "callee_service"
-                op: "in"
-                values: [ "hello", "value1", "value2" ]
-              - label: "code"
-                op: "range"
-                values:
-                  - prefix: "ret_"
-                    min: 0
-                    max: 200
-            destinations:
-              - action: "upsert"
-                label: "code_type"
-                value: "success"
-
-
 service:
   - id: "Go-Tier-Name"
     processor:

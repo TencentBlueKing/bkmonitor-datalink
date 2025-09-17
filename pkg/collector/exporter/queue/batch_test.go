@@ -190,9 +190,6 @@ func TestQueueFullBatch(t *testing.T) {
 	})
 	defer queue.Close()
 
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
 	cases := map[int32]int32{
 		1001: 1,
 		1002: 2,
@@ -201,7 +198,6 @@ func TestQueueFullBatch(t *testing.T) {
 	}
 	done := make(chan struct{})
 	go func() {
-		defer wg.Done()
 		for k, v := range cases {
 			events := make([]define.Event, 0)
 			for i := 0; i < 100; i++ {
@@ -227,6 +223,7 @@ func TestQueueFullBatch(t *testing.T) {
 			assert.Equal(t, expected, actual)
 
 		case <-done:
+			time.Sleep(time.Second)
 			return
 		}
 	}

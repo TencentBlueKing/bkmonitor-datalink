@@ -68,9 +68,11 @@ type ReplaceAction struct {
 }
 
 type RelabelAction struct {
-	Metrics []string      `config:"metrics" mapstructure:"metrics"`
-	Rules   RelabelRules  `config:"rules" mapstructure:"rules"`
-	Target  RelabelTarget `config:"target" mapstructure:"target"`
+	Metrics []string       `config:"metrics" mapstructure:"metrics"`
+	Rules   []*RelabelRule `config:"rules" mapstructure:"rules"`
+	Target  RelabelTarget  `config:"target" mapstructure:"target"`
+
+	rrs *RelabelRules
 }
 
 func (r *RelabelAction) IsMetricIn(name string) bool {
@@ -81,7 +83,17 @@ func (r *RelabelAction) Validate() error {
 	if len(r.Metrics) == 0 {
 		return errors.New("relabel action: no metrics specified")
 	}
-	return r.Rules.Validate()
+
+	r.rrs = &RelabelRules{Rules: r.Rules}
+	return r.rrs.Validate()
+}
+
+func (r *RelabelAction) MatchLabels(labels promlabels.Labels) bool {
+	return r.rrs.MatchLabels(labels)
+}
+
+func (r *RelabelAction) MatchMap(m pcommon.Map) bool {
+	return r.rrs.MatchMap(m)
 }
 
 type RelabelTarget struct {
@@ -165,23 +177,38 @@ func (r *RelabelRule) Validate() error {
 	return nil
 }
 
-type RelabelRules []*RelabelRule
+type RelabelRules struct {
+	Rules []*RelabelRule
+	Any   bool
+}
 
-func (rs RelabelRules) Validate() error {
-	for i := 0; i < len(rs); i++ {
-		if err := (rs)[i].Validate(); err != nil {
+func (rs *RelabelRules) Validate() error {
+	for i := 0; i < len(rs.Rules); i++ {
+		if err := rs.Rules[i].Validate(); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// MatchRWLabels 判断 RemoteWrite labels 是否匹配所有规则
-func (rs RelabelRules) MatchRWLabels(labels promlabels.Labels) bool {
-	if len(rs) == 0 {
+func (rs *RelabelRules) MatchLabels(labels promlabels.Labels) bool {
+	if len(rs.Rules) == 0 {
 		return false
 	}
-	for _, rule := range rs {
+
+	// 只匹配一种规则
+	if rs.Any {
+		for _, rule := range rs.Rules {
+			label, ok := labels.Get(rule.Label)
+			if ok && rule.Match(label.GetValue()) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// 匹配所有规则
+	for _, rule := range rs.Rules {
 		label, ok := labels.Get(rule.Label)
 		if !ok {
 			return false
@@ -193,13 +220,25 @@ func (rs RelabelRules) MatchRWLabels(labels promlabels.Labels) bool {
 	return true
 }
 
-// MatchOTAttrs 判断 OpenTelemetry Metrics 属性是否匹配所有规则
-func (rs RelabelRules) MatchOTAttrs(attrs pcommon.Map) bool {
-	if len(rs) == 0 {
+func (rs *RelabelRules) MatchMap(m pcommon.Map) bool {
+	if len(rs.Rules) == 0 {
 		return false
 	}
-	for _, rule := range rs {
-		label, ok := attrs.Get(rule.Label)
+
+	// 只匹配一种规则
+	if rs.Any {
+		for _, rule := range rs.Rules {
+			label, ok := m.Get(rule.Label)
+			if ok && rule.Match(label.AsString()) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// 匹配所有规则
+	for _, rule := range rs.Rules {
+		label, ok := m.Get(rule.Label)
 		if !ok {
 			return false
 		}
@@ -223,7 +262,7 @@ type CodeRelabelAction struct {
 	Source   string                `config:"source" mapstructure:"source"`
 	Services []*CodeRelabelService `config:"services" mapstructure:"services"`
 
-	rrs RelabelRules
+	rrs *RelabelRules
 }
 
 func (c *CodeRelabelAction) IsMetricIn(name string) bool {
@@ -241,27 +280,29 @@ func (c *CodeRelabelAction) Validate() error {
 		}
 	}
 
-	c.rrs = RelabelRules{{
-		Label:  labelServiceName,
-		Op:     OpIn,
-		Values: []any{c.Source},
-	}}
+	c.rrs = &RelabelRules{
+		Rules: []*RelabelRule{{
+			Label:  labelServiceName,
+			Op:     OpIn,
+			Values: []any{c.Source},
+		}},
+	}
 	return c.rrs.Validate()
 }
 
-func (c *CodeRelabelAction) MatchRWLabels(labels promlabels.Labels) bool {
-	return c.rrs.MatchRWLabels(labels)
+func (c *CodeRelabelAction) MatchLabels(labels promlabels.Labels) bool {
+	return c.rrs.MatchLabels(labels)
 }
 
-func (c *CodeRelabelAction) MatchOTAttrs(attrs pcommon.Map) bool {
-	return c.rrs.MatchOTAttrs(attrs)
+func (c *CodeRelabelAction) MatchMap(m pcommon.Map) bool {
+	return c.rrs.MatchMap(m)
 }
 
 type CodeRelabelService struct {
 	Name  string             `config:"name" mapstructure:"name"`
 	Codes []*CodeRelabelCode `config:"codes" mapstructure:"codes"`
 
-	rrs RelabelRules
+	rrs *RelabelRules
 }
 
 func (c *CodeRelabelService) Validate() error {
@@ -303,23 +344,23 @@ func (c *CodeRelabelService) Validate() error {
 		})
 	}
 
-	c.rrs = rrs
+	c.rrs = &RelabelRules{Rules: rrs}
 	return c.rrs.Validate()
 }
 
-func (c *CodeRelabelService) MatchRWLabels(labels promlabels.Labels) bool {
-	return c.rrs.MatchRWLabels(labels)
+func (c *CodeRelabelService) MatchLabels(labels promlabels.Labels) bool {
+	return c.rrs.MatchLabels(labels)
 }
 
-func (c *CodeRelabelService) MatchOTAttrs(attrs pcommon.Map) bool {
-	return c.rrs.MatchOTAttrs(attrs)
+func (c *CodeRelabelService) MatchMap(m pcommon.Map) bool {
+	return c.rrs.MatchMap(m)
 }
 
 type CodeRelabelCode struct {
 	Rule   string        `config:"rule" mapstructure:"rule"`
 	Target RelabelTarget `config:"target" mapstructure:"target"`
 
-	rrs RelabelRules
+	rrs *RelabelRules
 }
 
 func (c *CodeRelabelCode) Validate() error {
@@ -381,14 +422,14 @@ func (c *CodeRelabelCode) Validate() error {
 		})
 	}
 
-	c.rrs = rrs
+	c.rrs = &RelabelRules{Rules: rrs, Any: true}
 	return c.rrs.Validate()
 }
 
-func (c *CodeRelabelCode) MatchRWLabels(labels promlabels.Labels) bool {
-	return c.rrs.MatchRWLabels(labels)
+func (c *CodeRelabelCode) MatchLabels(labels promlabels.Labels) bool {
+	return c.rrs.MatchLabels(labels)
 }
 
-func (c *CodeRelabelCode) MatchOTAttrs(attrs pcommon.Map) bool {
-	return c.rrs.MatchOTAttrs(attrs)
+func (c *CodeRelabelCode) MatchMap(m pcommon.Map) bool {
+	return c.rrs.MatchMap(m)
 }

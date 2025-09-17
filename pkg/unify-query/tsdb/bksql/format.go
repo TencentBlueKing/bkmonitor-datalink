@@ -469,17 +469,13 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	span.Set("order-fields", orderFields)
 	span.Set("timeAggregate", timeAggregate)
 
-	// 检查是否为 DISTINCT 查询
 	isDistinctQuery := lo.SomeBy(f.query.Aggregates, func(agg metadata.Aggregate) bool {
 		return strings.ToLower(agg.Name) == "distinct"
 	})
-
-	// 构建 SELECT 子句
-	selectClause := lo.Ternary(isDistinctQuery, "SELECT DISTINCT ", "SELECT ")
-	sqlBuilder.WriteString(selectClause + strings.Join(selectFields, ", "))
-
-	// 构建 FROM 子句
-	sqlBuilder.WriteString(" FROM " + f.Table())
+	sqlBuilder.WriteString(lo.Ternary(isDistinctQuery, "SELECT DISTINCT ", "SELECT "))
+	sqlBuilder.WriteString(strings.Join(selectFields, ", "))
+	sqlBuilder.WriteString(" FROM ")
+	sqlBuilder.WriteString(f.Table())
 
 	// 构建 WHERE 子句
 	whereString, err := f.BuildWhere()

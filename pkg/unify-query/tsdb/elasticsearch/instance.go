@@ -229,28 +229,50 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query")
 	defer span.End(&err)
 
-	filterQueries, err := i.buildFilterQueries(ctx, qb, fact)
+	filterQueries := make([]elastic.Query, 0)
+
+	// 过滤条件生成 elastic.query
+	query, err := fact.Query(qb.AllConditions)
 	if err != nil {
 		return nil, err
+	}
+	if query != nil {
+		filterQueries = append(filterQueries, query)
+	}
+
+	// 查询时间生成 elastic.query
+	rangeQuery, err := fact.RangeQuery()
+	if err != nil {
+		return nil, err
+	}
+	filterQueries = append(filterQueries, rangeQuery)
+
+	// querystring 生成 elastic.query
+	if qb.QueryString != "" {
+		qs := NewQueryString(qb.QueryString, qb.IsPrefix, fact.NestedField)
+		q, qsErr := qs.ToDSL(ctx, qb.FieldAlias)
+		if qsErr != nil {
+			return nil, qsErr
+		}
+		if q != nil {
+			filterQueries = append(filterQueries, q)
+		}
 	}
 
 	source := elastic.NewSearchSource()
 	for _, order := range fact.Orders() {
 		source.Sort(order.Name, order.Ast)
 	}
-
 	if len(filterQueries) > 0 {
 		esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
 		source.Query(esQuery)
 	}
-
 	sources := fact.Source(qb.Source)
 	if len(sources) > 0 {
 		fetchSource := elastic.NewFetchSourceContext(true)
 		fetchSource.Include(sources...)
 		source.FetchSourceContext(fetchSource)
 	}
-
 	// 判断是否有聚合
 	if len(qb.Aggregates) > 0 {
 		name, agg, aggErr := fact.EsAgg(qb.Aggregates)
@@ -265,36 +287,27 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			source.From(qb.From)
 		}
 	}
-
 	collapse := fact.Collapse(qb.Collapse)
 	if collapse != "" {
 		source.Collapse(elastic.NewCollapseBuilder(collapse))
 	}
-
 	if source == nil {
 		return nil, fmt.Errorf("empty es query source")
 	}
-
 	body, _ := source.Source()
 	if body == nil {
 		return nil, fmt.Errorf("empty query body")
 	}
-
 	qbString, _ := json.Marshal(qb)
-
 	span.Set("metadata-query", qbString)
 	span.Set("query-connect", qo.conn.String())
 	span.Set("query-headers", i.headers)
-
 	span.Set("query-indexes", qo.indexes)
-
 	bodyJson, _ := json.Marshal(body)
 	bodyString := string(bodyJson)
 	span.Set("query-body", bodyString)
-
 	log.Infof(ctx, "elasticsearch-query indexes: %s", qo.indexes)
 	log.Infof(ctx, "elasticsearch-query body: %s", bodyString)
-
 	startAnalyze := time.Now()
 	client, err := i.getClient(ctx, qo.conn)
 	if err != nil {
@@ -310,7 +323,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 				res, err = client.Scroll(qo.indexes...).Scroll(qb.Scroll).ScrollId(opt.ScrollID).Do(ctx)
 				return
 			}
-
 			if len(opt.SearchAfter) > 0 {
 				span.Set("query-search-after", opt.SearchAfter)
 				source.SearchAfter(opt.SearchAfter...)
@@ -318,7 +330,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 				return
 			}
 		}
-
 		if qb.Scroll != "" {
 			span.Set("query-scroll", qb.Scroll)
 			scroll := client.Scroll(qo.indexes...).Scroll(qb.Scroll).SearchSource(source)
@@ -332,7 +343,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 					span.Set("query-scroll-slice", fmt.Sprintf("%d/%d", option.SliceIndex, option.SliceMax))
 					scroll.Slice(elastic.NewSliceQuery().Id(option.SliceIndex).Max(option.SliceMax))
 				}
-
 			}
 			res, err = scroll.Do(ctx)
 		} else {
@@ -340,7 +350,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			res, err = client.Search().Index(qo.indexes...).SearchSource(source).Do(ctx)
 		}
 	}()
-
 	if err != nil {
 		var (
 			e   *elastic.Error
@@ -354,7 +363,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 						msg.WriteString(fmt.Sprintf("%s: %s \n", rc.Index, rc.Reason))
 					}
 				}
-
 				if e.Details.CausedBy != nil {
 					msg.WriteString("caused by: \n")
 					for k, v := range e.Details.CausedBy {
@@ -362,7 +370,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 					}
 				}
 			}
-
 			return nil, errors.New(msg.String())
 		} else if err.Error() == "EOF" {
 			return nil, nil
@@ -370,11 +377,9 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			return nil, err
 		}
 	}
-
 	if res.Error != nil {
 		err = fmt.Errorf("es query %v error: %s", qo.indexes, res.Error.Reason)
 	}
-
 	if res.Hits != nil {
 		span.Set("total_hits", res.Hits.TotalHits)
 		span.Set("hits_length", len(res.Hits.Hits))
@@ -382,10 +387,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	if res.Aggregations != nil {
 		span.Set("aggregations_length", len(res.Aggregations))
 	}
-
 	queryCost := time.Since(startAnalyze)
 	span.Set("query-cost", queryCost.String())
-
 	metric.TsDBRequestSecond(
 		ctx, queryCost, consul.ElasticsearchStorageType, qo.conn.Address,
 	)
@@ -421,39 +424,6 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 	span.Set("time-series-length", len(qr.Timeseries))
 
 	return remote.FromQueryResult(false, qr)
-}
-
-func (i *Instance) buildFilterQueries(ctx context.Context, query *metadata.Query, fact *FormatFactory) ([]elastic.Query, error) {
-	filterQueries := make([]elastic.Query, 0)
-
-	if len(query.AllConditions) > 0 {
-		condQuery, err := fact.Query(query.AllConditions)
-		if err != nil {
-			return nil, err
-		}
-		if condQuery != nil {
-			filterQueries = append(filterQueries, condQuery)
-		}
-	}
-
-	rangeQuery, err := fact.RangeQuery()
-	if err != nil {
-		return nil, err
-	}
-	filterQueries = append(filterQueries, rangeQuery)
-
-	if query.QueryString != "" && query.QueryString != "*" {
-		qs := NewQueryString(query.QueryString, query.IsPrefix, fact.NestedField)
-		qsQuery, err := qs.ToDSL(ctx, query.FieldAlias)
-		if err != nil {
-			return nil, err
-		}
-		if qsQuery != nil {
-			filterQueries = append(filterQueries, qsQuery)
-		}
-	}
-
-	return filterQueries, nil
 }
 
 func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time, sourceType string) ([]string, error) {

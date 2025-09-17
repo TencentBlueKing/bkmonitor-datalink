@@ -681,10 +681,6 @@ func (d *DorisSQLExpr) arrayTypeTransform(s string) string {
 }
 
 func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
-	return d.DimTransform(s)
-}
-
-func (d *DorisSQLExpr) DimTransform(s string) (ns string, as string) {
 	ns = s
 	if s == "" || s == "*" {
 		return ns, as

@@ -865,13 +865,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 	if query.DB == "" {
 		return nil, fmt.Errorf("query.DB is empty")
 	}
-
-	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
-	if err != nil {
-		return nil, err
-	}
-
-	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
+	fieldMap, err := i.QueryFieldMap(ctx, query, start, end)
 	if err != nil {
 		return nil, err
 	}

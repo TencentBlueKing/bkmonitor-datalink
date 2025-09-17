@@ -516,7 +516,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	}
 
 	queryFactory.WithKeepColumns([]string{name})
-	query.DistinctSelect = true
+	query.IsDistinct = true
 
 	sql, err := queryFactory.SQL()
 	if err != nil {

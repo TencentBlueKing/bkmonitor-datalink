@@ -469,7 +469,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	span.Set("order-fields", orderFields)
 	span.Set("timeAggregate", timeAggregate)
 
-	sqlBuilder.WriteString(lo.Ternary(f.query.DistinctSelect, "SELECT DISTINCT ", "SELECT "))
+	sqlBuilder.WriteString(lo.Ternary(f.query.IsDistinct, "SELECT DISTINCT ", "SELECT "))
 	sqlBuilder.WriteString(strings.Join(selectFields, ", "))
 	sqlBuilder.WriteString(" FROM ")
 	sqlBuilder.WriteString(f.Table())

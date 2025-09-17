@@ -170,7 +170,7 @@ type Query struct {
 	DryRun bool `json:"dry_run,omitempty"`
 
 	// sql 使用SELECT DISTINCT 语法
-	DistinctSelect bool `json:"distinct_select,omitempty"`
+	IsDistinct bool `json:"is_distinct,omitempty"`
 }
 
 func (q *Query) VMExpand() *VmExpand {

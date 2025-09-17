@@ -205,7 +205,6 @@ func (p *metricsFilter) codeRelabelAction(record *define.Record, config Config) 
 						if !code.MatchMap(attrs) {
 							continue
 						}
-
 						target := code.Target
 						switch target.Action {
 						case relabelUpsert:
@@ -237,7 +236,6 @@ func (p *metricsFilter) codeRelabelAction(record *define.Record, config Config) 
 					if !code.MatchLabels(lbs) {
 						continue
 					}
-
 					target := code.Target
 					switch target.Action {
 					case relabelUpsert:

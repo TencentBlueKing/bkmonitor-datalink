@@ -52,7 +52,7 @@ func Traces(traces ptrace.Traces) {
 	}
 
 	foreach.SpansWithResource(traces, func(rs pcommon.Map, span ptrace.Span) {
-		logger.Debugf("Pretty/Traces: resource=%#v, traceID=%s, spanID=%s, spanName=%s, spanKind=%s, spanStatus=%s, spanAttributes=%#v",
+		logger.Debugf("Pretty/Traces: resource=%#v, traceID=%s, spanID=%s, spanName=%s, spanKind=%s, spanStatus=%s, attributes=%#v",
 			rs.AsRaw(),
 			span.TraceID().HexString(),
 			span.SpanID().HexString(),
@@ -69,12 +69,12 @@ func Metrics(metrics pmetric.Metrics) {
 		return
 	}
 
-	foreach.MetricsWithResource(metrics, func(rs pcommon.Map, metric pmetric.Metric) {
-		logger.Debugf("Pretty/Metrics: resource=%#v, metric=%s, dataType=%s, unit=%s",
+	foreach.MetricsDataPointWithResource(metrics, func(metric pmetric.Metric, rs, attrs pcommon.Map) {
+		logger.Debugf("Pretty/Metrics: resource=%#v, metric=%s, dataType=%s, attributes=%#v",
 			rs.AsRaw(),
 			metric.Name(),
 			metric.DataType().String(),
-			metric.Unit(),
+			attrs.AsRaw(),
 		)
 	})
 }
@@ -85,11 +85,11 @@ func Logs(logs plog.Logs) {
 	}
 
 	foreach.LogsWithResource(logs, func(rs pcommon.Map, logRecord plog.LogRecord) {
-		logger.Debugf("Pretty/Logs: resource=%#v, body=%s, logAttributes=%#v, logLevel=%s",
+		logger.Debugf("Pretty/Logs: resource=%#v, body=%s, logLevel=%s, attributes=%#v",
 			rs.AsRaw(),
 			logRecord.Body().AsString(),
-			logRecord.Attributes().AsRaw(),
 			logRecord.SeverityText(),
+			logRecord.Attributes().AsRaw(),
 		)
 	})
 }

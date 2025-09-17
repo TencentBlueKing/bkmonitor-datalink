@@ -108,6 +108,7 @@ func HandlerFieldKeys(c *gin.Context) {
 
 	data := lbl.ToArray()
 	sort.Strings(data)
+	data = append(data, span.TraceID())
 
 	resp.success(ctx, data)
 }

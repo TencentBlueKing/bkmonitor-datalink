@@ -36,6 +36,9 @@ const (
 
 	QueryRawError = "QUERY_RAW_ERROR"
 
+	StorageTimeout = "STORAGE_TIMEOUT"
+	StorageError   = "STORAGE_ERROR"
+
 	KeyDocID     = "__doc_id"
 	KeyTableUUID = "__table_uuid"
 	KeyTableID   = "__result_table"

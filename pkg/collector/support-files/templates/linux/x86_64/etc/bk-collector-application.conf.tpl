@@ -84,25 +84,25 @@ default:
 {%- endif %}
 
 {% if metrics_filter_config is defined %}
-  - name: "{{ metrics_filter_config.name }}"
-    config:
-      code_relabel:
-        {%- for item in metrics_filter_config.code_relabel %}
-        - metrics: {{ item.metrics | tojson }}
-          source: "{{ item.source }}"
-          services:
-          {%- for svc in item.services %}
-          - name: "{{ svc.name }}"
-            codes:
-            {%- for c in svc.codes %}
-            - rule: "{{ c.rule }}"
-              target:
-                action: "{{ c.target.action }}"
-                label: "{{ c.target.label }}"
-                value: "{{ c.target.value }}"
+      - name: "{{ metrics_filter_config.name }}"
+        config:
+          code_relabel:
+            {%- for item in metrics_filter_config.code_relabel %}
+            - metrics: {{ item.metrics | tojson }}
+              source: "{{ item.source }}"
+              services:
+              {%- for svc in item.services %}
+              - name: "{{ svc.name }}"
+                codes:
+                {%- for c in svc.codes %}
+                - rule: "{{ c.rule }}"
+                  target:
+                    action: "{{ c.target.action }}"
+                    label: "{{ c.target.label }}"
+                    value: "{{ c.target.value }}"
+                {%- endfor %}
+              {%- endfor %}
             {%- endfor %}
-          {%- endfor %}
-        {%- endfor %}
 {%- endif %}
 
 {% if db_slow_command_config is defined %}

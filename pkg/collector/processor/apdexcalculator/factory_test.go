@@ -101,7 +101,7 @@ func testMetricsDimension(t *testing.T, data any, conf *Config, exist bool) {
 
 	pdMetrics := record.Data.(pmetric.Metrics)
 	assert.Equal(t, 1, pdMetrics.MetricCount())
-	foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
+	foreach.Metrics(pdMetrics, func(metric pmetric.Metric) {
 		switch metric.DataType() {
 		case pmetric.MetricDataTypeGauge:
 			dps := metric.Gauge().DataPoints()
@@ -230,7 +230,7 @@ func testProcessMetricsStandardCalculator(val time.Duration, threshold float64, 
 	}
 
 	var errs []error
-	foreach.Metrics(record.Data.(pmetric.Metrics).ResourceMetrics(), func(metric pmetric.Metric) {
+	foreach.Metrics(record.Data.(pmetric.Metrics), func(metric pmetric.Metric) {
 		switch metric.DataType() {
 		case pmetric.MetricDataTypeGauge:
 			dps := metric.Gauge().DataPoints()

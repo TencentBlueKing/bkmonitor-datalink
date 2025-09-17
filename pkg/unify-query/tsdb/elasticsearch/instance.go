@@ -11,7 +11,6 @@ package elasticsearch
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -195,8 +194,11 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 		}
 	}
 
+	iof := NewIndexOptionFormat(fieldAlias)
+
+	// 忽略 mapping 为空的情况的报错
 	if len(mappings) == 0 {
-		return nil, fmt.Errorf("query indexes is empty")
+		return iof.FieldMap(), nil
 	}
 
 	span.Set("mapping-length", len(mappings))
@@ -208,7 +210,6 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 
 	sort.Strings(indexes)
 
-	iof := NewIndexOptionFormat(fieldAlias)
 	// 按照时间倒序排列
 	for idx := len(indexes) - 1; idx >= 0; idx-- {
 		index := indexes[idx]
@@ -351,31 +352,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 	}()
 	if err != nil {
-		var (
-			e   *elastic.Error
-			msg strings.Builder
-		)
-		if errors.As(err, &e) {
-			if e.Details != nil {
-				if len(e.Details.RootCause) > 0 {
-					msg.WriteString("root cause: \n")
-					for _, rc := range e.Details.RootCause {
-						msg.WriteString(fmt.Sprintf("%s: %s \n", rc.Index, rc.Reason))
-					}
-				}
-				if e.Details.CausedBy != nil {
-					msg.WriteString("caused by: \n")
-					for k, v := range e.Details.CausedBy {
-						msg.WriteString(fmt.Sprintf("%s: %v \n", k, v))
-					}
-				}
-			}
-			return nil, errors.New(msg.String())
-		} else if err.Error() == "EOF" {
-			return nil, nil
-		} else {
-			return nil, err
-		}
+		return nil, processOnESErr(ctx, qo.conn.Address, err)
 	}
 	if res.Error != nil {
 		err = fmt.Errorf("es query %v error: %s", qo.indexes, res.Error.Reason)

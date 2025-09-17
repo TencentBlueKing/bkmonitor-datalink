@@ -100,7 +100,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return size, err
+		return size, HandleClientError(ctx, opt.UrlPath, err)
 	}
 
 	buf := bufPool.Get().(*bytes.Buffer)

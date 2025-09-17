@@ -275,7 +275,7 @@ processor:
 	testkits.MustProcess(t, factory, record)
 
 	data = record.Data.(ptrace.Traces)
-	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
+	foreach.Spans(data, func(span ptrace.Span) {
 		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "peer.service", "my-service")
 		assert.Equal(t, "/api/v1/users", span.Name())
 	})
@@ -322,7 +322,7 @@ processor:
 	testkits.MustProcess(t, factory, record)
 
 	data = record.Data.(ptrace.Traces)
-	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
+	foreach.Spans(data, func(span ptrace.Span) {
 		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "peer.service", "doc.weixin.qq.com")
 		assert.Equal(t, "api", span.Name())
 	})
@@ -367,7 +367,7 @@ processor:
 	testkits.MustProcess(t, factory, record)
 
 	data = record.Data.(ptrace.Traces)
-	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
+	foreach.Spans(data, func(span ptrace.Span) {
 		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "peer.service", "doc.weixin.qq.com")
 	})
 }
@@ -457,7 +457,7 @@ processor:
 			testkits.MustProcess(t, tt.factory, record)
 
 			data = record.Data.(ptrace.Traces)
-			foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
+			foreach.Spans(data, func(span ptrace.Span) {
 				for k, v := range tt.attrs {
 					testkits.AssertAttrsStringKeyVal(t, span.Attributes(), k, v)
 				}
@@ -502,7 +502,7 @@ processor:
 	testkits.MustProcess(t, factory, record)
 
 	data = record.Data.(ptrace.Traces)
-	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
+	foreach.Spans(data, func(span ptrace.Span) {
 		testkits.AssertAttrsStringKeyVal(t, span.Attributes(), "peer.service", span.Name())
 	})
 }

@@ -95,25 +95,23 @@ func (p *probeFilter) Reload(config map[string]any, customized []processor.SubCo
 func (p *probeFilter) Process(record *define.Record) (*define.Record, error) {
 	config := p.configs.GetByToken(record.Token.Original).(Config)
 	if len(config.AddAttrs) > 0 {
-		p.processAddAttrsAction(record, config)
+		p.addAttrsAction(record, config)
 	}
 	return nil, nil
 }
 
-// Add Attributes Action
-
-func (p *probeFilter) processAddAttrsAction(record *define.Record, config Config) {
+func (p *probeFilter) addAttrsAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansWithResourceAttrs(pdTraces.ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) {
+		foreach.SpansWithResource(pdTraces, func(rs pcommon.Map, span ptrace.Span) {
 			for _, action := range config.AddAttrs {
 				for _, rule := range action.Rules {
 					if !rule.Enabled {
 						continue
 					}
 					if v, ok := span.Attributes().Get(attributeSpanLayer); ok && v.StringVal() == rule.Type {
-						processAddAttrs(span, rule, rsAttrs)
+						processAddAttrs(span, rule, rs)
 					}
 				}
 			}
@@ -156,8 +154,8 @@ func matchAddAttrsRules(span ptrace.Span, rule Rule, attrs pcommon.Map) bool {
 }
 
 // processAddAttrs 处理并新增 attributes
-func processAddAttrs(span ptrace.Span, rule Rule, attrs pcommon.Map) {
-	if !matchAddAttrsRules(span, rule, attrs) {
+func processAddAttrs(span ptrace.Span, rule Rule, rs pcommon.Map) {
+	if !matchAddAttrsRules(span, rule, rs) {
 		return
 	}
 

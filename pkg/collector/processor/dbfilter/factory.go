@@ -100,7 +100,7 @@ func (p *dbFilter) processSlowQuery(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
+		foreach.Spans(pdTraces, func(span ptrace.Span) {
 			attrs := span.Attributes()
 
 			// 先确定 db.system 属性是否存在 不存在代表非 db 类型 span 则无需处理

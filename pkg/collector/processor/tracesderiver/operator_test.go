@@ -68,7 +68,7 @@ func TestOperator(t *testing.T) {
 
 	pdMetrics := derived.Data.(pmetric.Metrics)
 	assert.Equal(t, 1, pdMetrics.MetricCount())
-	foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
+	foreach.Metrics(pdMetrics, func(metric pmetric.Metric) {
 		assert.Equal(t, "test_bk_apm_duration", metric.Name())
 		dataPoints := metric.Gauge().DataPoints()
 		for n := 0; n < dataPoints.Len(); n++ {
@@ -132,7 +132,7 @@ func TestOperatorDuration(t *testing.T) {
 	metrics := derived.Data.(pmetric.Metrics)
 	assert.Equal(t, 2, metrics.DataPointCount())
 
-	foreach.Metrics(metrics.ResourceMetrics(), func(metric pmetric.Metric) {
+	foreach.Metrics(metrics, func(metric pmetric.Metric) {
 		assert.Equal(t, "test_bk_apm_duration", metric.Name())
 		assert.Equal(t, float64(100), metric.Gauge().DataPoints().At(0).DoubleVal())
 		assert.Equal(t, float64(0), metric.Gauge().DataPoints().At(1).DoubleVal())

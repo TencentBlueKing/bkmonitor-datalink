@@ -887,7 +887,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 
 	query.Aggregates = append(query.Aggregates, metadata.Aggregate{
 		Name:       "count",
-		Field:      query.Field,
+		Field:      name,
 		Dimensions: []string{name},
 		Without:    true,
 	})

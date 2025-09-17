@@ -71,6 +71,8 @@ func HandlerFieldKeys(c *gin.Context) {
 
 	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
 
+	metadata.SetSkipField(ctx, true)
+
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {
 		resp.failed(ctx, err)
@@ -146,6 +148,8 @@ func HandlerTagKeys(c *gin.Context) {
 	span.Set("request-data", paramsStr)
 
 	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
+
+	metadata.SetSkipField(ctx, true)
 
 	queryRef, start, end, err := infoParamsToQueryRefAndTime(ctx, params)
 	if err != nil {

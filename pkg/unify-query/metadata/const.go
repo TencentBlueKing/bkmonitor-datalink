@@ -25,6 +25,7 @@ const (
 	JwtPayLoadKey         = "jwt_payload"
 
 	FieldFormatKey = "field_format"
+	SkipFieldKey   = "skip_field"
 
 	ExceedsMaximumLimit  = "EXCEEDS_MAXIMUM_LIMIT"
 	ExceedsMaximumSlimit = "EXCEEDS_MAXIMUM_SLIMIT"

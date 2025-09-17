@@ -591,7 +591,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		return queryMetric, nil
 	}
 
-	isSkipField := false
+	isSkipField := metadata.IsSkipField(ctx)
 	if metricName == "" || q.DataSource == BkLog || q.DataSource == BkApm {
 		isSkipField = true
 	}

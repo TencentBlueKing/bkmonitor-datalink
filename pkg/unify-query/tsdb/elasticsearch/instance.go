@@ -11,7 +11,6 @@ package elasticsearch
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -368,33 +367,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}()
 
 	if err != nil {
-		var (
-			e   *elastic.Error
-			msg strings.Builder
-		)
-		if errors.As(err, &e) {
-			if e.Details != nil {
-				if len(e.Details.RootCause) > 0 {
-					msg.WriteString("root cause: \n")
-					for _, rc := range e.Details.RootCause {
-						msg.WriteString(fmt.Sprintf("%s: %s \n", rc.Index, rc.Reason))
-					}
-				}
-
-				if e.Details.CausedBy != nil {
-					msg.WriteString("caused by: \n")
-					for k, v := range e.Details.CausedBy {
-						msg.WriteString(fmt.Sprintf("%s: %v \n", k, v))
-					}
-				}
-			}
-
-			return nil, errors.New(msg.String())
-		} else if err.Error() == "EOF" {
-			return nil, nil
-		} else {
-			return nil, err
-		}
+		return nil, processOnESErr(ctx, qo.conn.Address, err)
 	}
 
 	if res.Error != nil {

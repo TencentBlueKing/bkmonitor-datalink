@@ -177,8 +177,8 @@ processor:
 			}
 			testkits.MustProcess(t, factory, record)
 
-			rsAttrs := testkits.FirstLogRecord(record.Data.(plog.Logs)).Attributes()
-			v, ok := rsAttrs.Get(resourceKeyPerIp)
+			attrs := testkits.FirstLogRecord(record.Data.(plog.Logs)).Attributes()
+			v, ok := attrs.Get(resourceKeyPerIp)
 			assert.True(t, ok)
 			assert.Equal(t, pcommon.ValueTypeString, v.Type())
 		}

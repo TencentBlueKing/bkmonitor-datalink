@@ -111,7 +111,7 @@ func TestNewSqlFactory(t *testing.T) {
 					},
 				},
 			},
-			expected: "SELECT `level`, COUNT(`gseIndex`) AS `_value_`, CAST(FLOOR(dtEventTimeStamp / 75000) AS INT) * 75000  AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313' AND `gseIndex` > 0 AND `level` = 'ERROR' GROUP BY `level`, _timestamp_ ORDER BY `level` ASC",
+			expected: "SELECT `level`, COUNT(`gseIndex`) AS `_value_`, (CAST((FLOOR(dtEventTimeStamp + 0) / 75000) AS INT) * 75000 - 0) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313' AND `gseIndex` > 0 AND `level` = 'ERROR' GROUP BY `level`, _timestamp_ ORDER BY `level` ASC",
 		},
 		"doris sum-with-promql-1": {
 			query: &metadata.Query{
@@ -219,9 +219,10 @@ func TestNewSqlFactory(t *testing.T) {
 				Field:       "__ext.container_id",
 				Aggregates: metadata.Aggregates{
 					{
-						Name:     "count",
-						Window:   time.Hour * 24,
-						TimeZone: "Asia/Shanghai",
+						Name:           "count",
+						Window:         time.Hour * 24,
+						TimeZone:       "Asia/Shanghai",
+						TimeZoneOffset: (time.Hour * -8).Milliseconds(),
 					},
 				},
 			},

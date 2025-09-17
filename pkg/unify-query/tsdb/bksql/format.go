@@ -179,6 +179,8 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 
 	tsMap := map[string]*prompb.TimeSeries{}
 	tsTimeMap := make(map[string]map[int64]float64)
+
+	// 判断是否补零
 	isAddZero := f.timeAggregate.Window > 0 && f.expr.Type() == sql_expr.Doris
 
 	// 先获取维度的 key 保证顺序一致

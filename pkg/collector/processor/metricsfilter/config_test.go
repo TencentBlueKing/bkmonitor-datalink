@@ -10,7 +10,6 @@
 package metricsfilter
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/prometheus/prometheus/prompb"
@@ -81,7 +80,7 @@ func TestRelabelConfigValidate(t *testing.T) {
 		{
 			name:    "valid config",
 			metrics: []string{"test_metric"},
-			rules:   RelabelRules{{Label: "label1", Op: OpIn, Values: []any{"value1", "value2"}}},
+			rules:   RelabelRules{Rules: []*RelabelRule{{Label: "label1", Op: OpIn, Values: []any{"value1", "value2"}}}},
 			target:  RelabelTarget{Label: "target_label", Value: "foo", Action: relabelUpsert},
 			wantErr: false,
 		},
@@ -93,7 +92,7 @@ func TestRelabelConfigValidate(t *testing.T) {
 		},
 		{
 			name:    "invalid config - missing metric name",
-			rules:   RelabelRules{{Label: "label1", Op: OpIn, Values: []any{"value1", "value2"}}},
+			rules:   RelabelRules{Rules: []*RelabelRule{{Label: "label1", Op: OpIn, Values: []any{"value1", "value2"}}}},
 			target:  RelabelTarget{Label: "target_label", Value: "foo", Action: relabelUpsert},
 			wantErr: true,
 		},
@@ -103,7 +102,7 @@ func TestRelabelConfigValidate(t *testing.T) {
 			c := Config{
 				Relabel: []RelabelAction{{
 					Metrics: tt.metrics,
-					Rules:   tt.rules,
+					Rules:   tt.rules.Rules,
 					Target:  tt.target,
 				}},
 			}
@@ -132,6 +131,7 @@ func TestCodeRelabelConfigValidate(t *testing.T) {
 					{Rule: "err_200"},
 					{Rule: "200"},
 					{Rule: "200~300"},
+					{Rule: "100,200,300"},
 				},
 			}},
 			targets: RelabelTarget{Label: "target_label", Value: "foo", Action: relabelUpsert},
@@ -332,31 +332,31 @@ func TestRelabelActionRuleMatch(t *testing.T) {
 		},
 		{
 			name:  "single matching rule",
-			rules: RelabelRules{ruleOpIn},
+			rules: RelabelRules{Rules: []*RelabelRule{ruleOpIn}},
 			attrs: createTestMap("service", "auth-service"),
 			want:  true,
 		},
 		{
 			name:  "single non-existing label",
-			rules: RelabelRules{ruleOpIn},
+			rules: RelabelRules{Rules: []*RelabelRule{ruleOpIn}},
 			attrs: createTestMap("app", "payment-service"),
 			want:  false,
 		},
 		{
 			name:  "multiple rules all match",
-			rules: RelabelRules{ruleOpIn, ruleOpRange},
+			rules: RelabelRules{Rules: []*RelabelRule{ruleOpIn, ruleOpRange}},
 			attrs: createTestMap("service", "auth-service", "status", "200"),
 			want:  true,
 		},
 		{
 			name:  "range rule mismatch",
-			rules: RelabelRules{ruleOpRange},
+			rules: RelabelRules{Rules: []*RelabelRule{ruleOpRange}},
 			attrs: createTestMap("status", "500"),
 			want:  false,
 		},
 		{
 			name:  "mixed rules partial match",
-			rules: RelabelRules{ruleOpIn, ruleOpRange},
+			rules: RelabelRules{Rules: []*RelabelRule{ruleOpIn, ruleOpRange}},
 			attrs: createTestMap("service", "auth-service", "status", "404"),
 			want:  false,
 		},
@@ -373,99 +373,12 @@ func TestRelabelActionRuleMatch(t *testing.T) {
 
 	for _, tt := range tests {
 		assert.NoError(t, tt.rules.Validate())
-		t.Run("OT:"+tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.rules.MatchOTAttrs(tt.attrs))
+		t.Run("Map_"+tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.rules.MatchMap(tt.attrs))
 		})
 
-		t.Run("RW:"+tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.rules.MatchRWLabels(attrsToLabels(tt.attrs)))
+		t.Run("Labels_"+tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.rules.MatchLabels(attrsToLabels(tt.attrs)))
 		})
 	}
-}
-
-func makeRWDataAndRule(numExtraLabel int) ([]prompb.Label, RelabelRules) {
-	var labels []prompb.Label
-	for i := 0; i < numExtraLabel; i++ {
-		labels = append(labels, prompb.Label{
-			Name:  fmt.Sprintf("label_%d", i),
-			Value: fmt.Sprintf("value_%d", i),
-		})
-	}
-	labels = append(labels,
-		prompb.Label{Name: "service", Value: "auth-service"},
-		prompb.Label{Name: "env", Value: "prod"},
-		prompb.Label{Name: "status", Value: "200"},
-	)
-	rules := RelabelRules{
-		{Label: "service", Op: "in", Values: []any{"auth-service"}},
-		{Label: "env", Op: "in", Values: []any{"prod"}},
-		{Label: "status", Op: "range", Values: []any{map[string]any{"min": 200, "max": 299, "prefix": "ret_"}}},
-	}
-	return labels, rules
-}
-
-func BenchmarkMatchRWLabelsSlice(b *testing.B) {
-	labels, rules := makeRWDataAndRule(10)
-	for i := 0; i < b.N; i++ {
-		rules.MatchRWLabels(labels)
-	}
-}
-
-func makeLabelMap(labels []prompb.Label) map[string]*prompb.Label {
-	m := make(map[string]*prompb.Label, len(labels))
-	for i := 0; i < len(labels); i++ {
-		if labels[i].GetName() == "__name__" {
-			continue
-		}
-		m[labels[i].GetName()] = &labels[i]
-	}
-	return m
-}
-
-// 遍历一次 labels，构建 map，时间复杂度 o(n)，但申请内存造成的开销远大于遍历
-func BenchmarkMatchRWLabelsMap(b *testing.B) {
-	lbs, rules := makeRWDataAndRule(10)
-	for i := 0; i < b.N; i++ {
-		labels := makeLabelMap(lbs)
-		for _, rule := range rules {
-			if label, ok := labels[rule.Label]; ok {
-				rule.Match(label.GetValue())
-			}
-		}
-	}
-}
-
-func BenchmarkMetricNamesContains(b *testing.B) {
-	const num = 10
-	b.Run("iter", func(b *testing.B) {
-		var metrics []string
-		for i := 0; i < num; i++ {
-			metrics = append(metrics, fmt.Sprintf("metric_%d", i))
-		}
-		contains := func(slice []string, item string) bool {
-			for i := 0; i < len(slice); i++ {
-				if slice[i] == item {
-					return true
-				}
-			}
-			return false
-		}
-		for i := 0; i < b.N; i++ {
-			contains(metrics, fmt.Sprintf("metric_%d", i%(2*num)))
-		}
-	})
-
-	b.Run("map", func(b *testing.B) {
-		metrics := make(map[string]struct{})
-		for i := 0; i < num; i++ {
-			metrics[fmt.Sprintf("metric_%d", i)] = struct{}{}
-		}
-		contains := func(item string) bool {
-			_, ok := metrics[item]
-			return ok
-		}
-		for i := 0; i < b.N; i++ {
-			contains(fmt.Sprintf("metric_%d", i%(2*num)))
-		}
-	})
 }

@@ -181,7 +181,7 @@ func (p *resourceFilter) assembleAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+		foreach.SpansSliceResource(pdTraces, func(rs pcommon.Resource) {
 			for _, action := range config.Assemble {
 				handle(rs, action)
 			}
@@ -198,7 +198,7 @@ func (p *resourceFilter) addAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+		foreach.SpansSliceResource(pdTraces, func(rs pcommon.Resource) {
 			for _, action := range config.Add {
 				handle(rs, action)
 			}
@@ -206,7 +206,7 @@ func (p *resourceFilter) addAction(record *define.Record, config Config) {
 
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
-		foreach.MetricsSliceResource(pdMetrics.ResourceMetrics(), func(rs pcommon.Resource) {
+		foreach.MetricsSliceResource(pdMetrics, func(rs pcommon.Resource) {
 			for _, action := range config.Add {
 				handle(rs, action)
 			}
@@ -214,7 +214,7 @@ func (p *resourceFilter) addAction(record *define.Record, config Config) {
 
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
-		foreach.LogsSliceResource(pdLogs.ResourceLogs(), func(rs pcommon.Resource) {
+		foreach.LogsSliceResource(pdLogs, func(rs pcommon.Resource) {
 			for _, action := range config.Add {
 				handle(rs, action)
 			}
@@ -233,19 +233,19 @@ func (p *resourceFilter) dropAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+		foreach.SpansSliceResource(pdTraces, func(rs pcommon.Resource) {
 			handle(rs, config.Drop)
 		})
 
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
-		foreach.MetricsSliceResource(pdMetrics.ResourceMetrics(), func(rs pcommon.Resource) {
+		foreach.MetricsSliceResource(pdMetrics, func(rs pcommon.Resource) {
 			handle(rs, config.Drop)
 		})
 
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
-		foreach.LogsSliceResource(pdLogs.ResourceLogs(), func(rs pcommon.Resource) {
+		foreach.LogsSliceResource(pdLogs, func(rs pcommon.Resource) {
 			handle(rs, config.Drop)
 		})
 	}
@@ -265,7 +265,7 @@ func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+		foreach.SpansSliceResource(pdTraces, func(rs pcommon.Resource) {
 			for _, action := range config.Replace {
 				handle(rs, action)
 			}
@@ -273,7 +273,7 @@ func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
-		foreach.MetricsSliceResource(pdMetrics.ResourceMetrics(), func(rs pcommon.Resource) {
+		foreach.MetricsSliceResource(pdMetrics, func(rs pcommon.Resource) {
 			for _, action := range config.Replace {
 				handle(rs, action)
 			}
@@ -281,7 +281,7 @@ func (p *resourceFilter) replaceAction(record *define.Record, config Config) {
 
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
-		foreach.LogsSliceResource(pdLogs.ResourceLogs(), func(rs pcommon.Resource) {
+		foreach.LogsSliceResource(pdLogs, func(rs pcommon.Resource) {
 			for _, action := range config.Replace {
 				handle(rs, action)
 			}
@@ -316,13 +316,13 @@ func (p *resourceFilter) fromCacheAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+		foreach.SpansSliceResource(pdTraces, func(rs pcommon.Resource) {
 			handle(rs)
 		})
 
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
-		foreach.MetricsSliceResource(pdMetrics.ResourceMetrics(), func(rs pcommon.Resource) {
+		foreach.MetricsSliceResource(pdMetrics, func(rs pcommon.Resource) {
 			handle(rs)
 		})
 	}
@@ -340,7 +340,7 @@ func (p *resourceFilter) fromRecordAction(record *define.Record, config Config) 
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+		foreach.SpansSliceResource(pdTraces, func(rs pcommon.Resource) {
 			for _, action := range config.FromRecord {
 				handle(rs, action)
 			}
@@ -348,7 +348,7 @@ func (p *resourceFilter) fromRecordAction(record *define.Record, config Config) 
 
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
-		foreach.MetricsSliceResource(pdMetrics.ResourceMetrics(), func(rs pcommon.Resource) {
+		foreach.MetricsSliceResource(pdMetrics, func(rs pcommon.Resource) {
 			for _, action := range config.FromRecord {
 				handle(rs, action)
 			}
@@ -376,7 +376,7 @@ func (p *resourceFilter) fromMetadataAction(record *define.Record, config Config
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+		foreach.SpansSliceResource(pdTraces, func(rs pcommon.Resource) {
 			handle(rs, config.FromMetadata)
 		})
 	}
@@ -396,19 +396,19 @@ func (p *resourceFilter) fromTokenAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
-		foreach.MetricsSliceResource(pdMetrics.ResourceMetrics(), func(rs pcommon.Resource) {
+		foreach.MetricsSliceResource(pdMetrics, func(rs pcommon.Resource) {
 			handle(rs, config.FromToken)
 		})
 
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+		foreach.SpansSliceResource(pdTraces, func(rs pcommon.Resource) {
 			handle(rs, config.FromToken)
 		})
 
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
-		foreach.LogsSliceResource(pdLogs.ResourceLogs(), func(rs pcommon.Resource) {
+		foreach.LogsSliceResource(pdLogs, func(rs pcommon.Resource) {
 			handle(rs, config.FromToken)
 		})
 	}
@@ -433,7 +433,7 @@ func (p *resourceFilter) defaultValueAction(record *define.Record, config Config
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansSliceResource(pdTraces.ResourceSpans(), func(rs pcommon.Resource) {
+		foreach.SpansSliceResource(pdTraces, func(rs pcommon.Resource) {
 			for _, action := range config.DefaultValue {
 				handle(rs, action)
 			}
@@ -441,7 +441,7 @@ func (p *resourceFilter) defaultValueAction(record *define.Record, config Config
 
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
-		foreach.MetricsSliceResource(pdMetrics.ResourceMetrics(), func(rs pcommon.Resource) {
+		foreach.MetricsSliceResource(pdMetrics, func(rs pcommon.Resource) {
 			for _, action := range config.DefaultValue {
 				handle(rs, action)
 			}
@@ -449,7 +449,7 @@ func (p *resourceFilter) defaultValueAction(record *define.Record, config Config
 
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
-		foreach.LogsSliceResource(pdLogs.ResourceLogs(), func(rs pcommon.Resource) {
+		foreach.LogsSliceResource(pdLogs, func(rs pcommon.Resource) {
 			for _, action := range config.DefaultValue {
 				handle(rs, action)
 			}

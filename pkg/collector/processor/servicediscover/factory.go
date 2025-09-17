@@ -102,7 +102,7 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 	pdTraces := record.Data.(ptrace.Traces)
 	ch := p.configs.GetByToken(record.Token.Original).(*ConfigHandler)
 
-	foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
+	foreach.Spans(pdTraces, func(span ptrace.Span) {
 		rules := ch.Get(span.Kind().String())
 	loop:
 		for _, rule := range rules {

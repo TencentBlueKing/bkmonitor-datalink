@@ -477,7 +477,6 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	sqlBuilder.WriteString(" FROM ")
 	sqlBuilder.WriteString(f.Table())
 
-	// 构建 WHERE 子句
 	whereString, err := f.BuildWhere()
 	span.Set("where-string", whereString)
 	if err != nil {

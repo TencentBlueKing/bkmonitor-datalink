@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
@@ -2117,129 +2116,6 @@ func TestInstance_QueryLabelValues_Normal(t *testing.T) {
 				assert.NoError(t, err)
 				assert.ElementsMatch(t, tt.expectedNames, names)
 			}
-		})
-	}
-}
-
-func TestInstance_matchersToConditions(t *testing.T) {
-
-	tests := []struct {
-		name     string
-		matchers []*labels.Matcher
-		expected [][]metadata.ConditionField
-		wantErr  bool
-	}{
-		{
-			name: "single equal matcher",
-			matchers: []*labels.Matcher{
-				{Type: labels.MatchEqual, Name: "cloudid", Value: "12345"},
-			},
-			expected: [][]metadata.ConditionField{
-				{
-					{
-						DimensionName: "cloudid",
-						Value:         []string{"12345"},
-						Operator:      "eq",
-					},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "multiple matchers",
-			matchers: []*labels.Matcher{
-				{Type: labels.MatchEqual, Name: "cloudid", Value: "12345"},
-				{Type: labels.MatchNotEqual, Name: "status", Value: "error"},
-			},
-			expected: [][]metadata.ConditionField{
-				{
-					{
-						DimensionName: "cloudid",
-						Value:         []string{"12345"},
-						Operator:      "eq",
-					},
-				},
-				{
-					{
-						DimensionName: "status",
-						Value:         []string{"error"},
-						Operator:      "neq",
-					},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "regex matcher",
-			matchers: []*labels.Matcher{
-				{Type: labels.MatchRegexp, Name: "service", Value: ".*api.*"},
-			},
-			expected: [][]metadata.ConditionField{
-				{
-					{
-						DimensionName: "service",
-						Value:         []string{".*api.*"},
-						Operator:      "req",
-					},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "not regex matcher",
-			matchers: []*labels.Matcher{
-				{Type: labels.MatchNotRegexp, Name: "service", Value: ".*test.*"},
-			},
-			expected: [][]metadata.ConditionField{
-				{
-					{
-						DimensionName: "service",
-						Value:         []string{".*test.*"},
-						Operator:      "nreq",
-					},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name:     "empty matchers",
-			matchers: []*labels.Matcher{},
-			expected: [][]metadata.ConditionField{},
-			wantErr:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := make([][]metadata.ConditionField, 0, len(tt.matchers))
-			for _, matcher := range tt.matchers {
-				var operator string
-				switch matcher.Type {
-				case labels.MatchEqual:
-					operator = "eq"
-				case labels.MatchNotEqual:
-					operator = "neq"
-				case labels.MatchRegexp:
-					operator = "req"
-				case labels.MatchNotRegexp:
-					operator = "nreq"
-				}
-
-				condition := []metadata.ConditionField{
-					{
-						DimensionName: matcher.Name,
-						Value:         []string{matcher.Value},
-						Operator:      operator,
-					},
-				}
-				result = append(result, condition)
-			}
-
-			if tt.wantErr {
-				return
-			}
-
-			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

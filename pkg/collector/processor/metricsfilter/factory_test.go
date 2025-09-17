@@ -182,6 +182,17 @@ func makeRemoteWriteData(name string, rs, attrs map[string]string) define.Remote
 	return rwData
 }
 
+func makeLabelMap(labels []prompb.Label) map[string]*prompb.Label {
+	m := make(map[string]*prompb.Label, len(labels))
+	for i := 0; i < len(labels); i++ {
+		if labels[i].GetName() == "__name__" {
+			continue
+		}
+		m[labels[i].GetName()] = &labels[i]
+	}
+	return m
+}
+
 type relabelBasedArgs struct {
 	metric string
 	rs     map[string]string
@@ -197,7 +208,7 @@ type relabelBasedCase struct {
 func testRelabelBasedFactory(t *testing.T, content string, tests []relabelBasedCase) {
 	factory := processor.MustCreateFactory(content, NewFactory)
 	for _, tt := range tests {
-		t.Run("OT:"+tt.name, func(t *testing.T) {
+		t.Run("Map_"+tt.name, func(t *testing.T) {
 			record := define.Record{
 				RecordType: define.RecordMetrics,
 				Data:       makeMetricsRecordWith(tt.args.metric, 1, tt.args.rs, tt.args.attrs),
@@ -210,7 +221,7 @@ func testRelabelBasedFactory(t *testing.T, content string, tests []relabelBasedC
 			})
 		})
 
-		t.Run("RW:"+tt.name, func(t *testing.T) {
+		t.Run("Labels_"+tt.name, func(t *testing.T) {
 			rwData := makeRemoteWriteData(tt.args.metric, tt.args.rs, tt.args.attrs)
 			record := define.Record{
 				RecordType: define.RecordRemoteWrite,

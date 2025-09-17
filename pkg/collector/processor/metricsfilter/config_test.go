@@ -10,7 +10,6 @@
 package metricsfilter
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/prometheus/prometheus/prompb"
@@ -374,100 +373,12 @@ func TestRelabelActionRuleMatch(t *testing.T) {
 
 	for _, tt := range tests {
 		assert.NoError(t, tt.rules.Validate())
-		t.Run("OT:"+tt.name, func(t *testing.T) {
+		t.Run("Map_"+tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, tt.rules.MatchMap(tt.attrs))
 		})
 
-		t.Run("RW:"+tt.name, func(t *testing.T) {
+		t.Run("Labels_"+tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, tt.rules.MatchLabels(attrsToLabels(tt.attrs)))
 		})
 	}
-}
-
-func makeRWDataAndRule(numExtraLabel int) ([]prompb.Label, RelabelRules) {
-	var labels []prompb.Label
-	for i := 0; i < numExtraLabel; i++ {
-		labels = append(labels, prompb.Label{
-			Name:  fmt.Sprintf("label_%d", i),
-			Value: fmt.Sprintf("value_%d", i),
-		})
-	}
-	labels = append(labels,
-		prompb.Label{Name: "service", Value: "auth-service"},
-		prompb.Label{Name: "env", Value: "prod"},
-		prompb.Label{Name: "status", Value: "200"},
-	)
-	rules := RelabelRules{
-		Rules: []*RelabelRule{
-			{Label: "service", Op: "in", Values: []any{"auth-service"}},
-			{Label: "env", Op: "in", Values: []any{"prod"}},
-			{Label: "status", Op: "range", Values: []any{map[string]any{"min": 200, "max": 299, "prefix": "ret_"}}},
-		},
-	}
-	return labels, rules
-}
-
-func BenchmarkMatchRWLabelsSlice(b *testing.B) {
-	labels, rules := makeRWDataAndRule(10)
-	for i := 0; i < b.N; i++ {
-		rules.MatchLabels(labels)
-	}
-}
-
-func makeLabelMap(labels []prompb.Label) map[string]*prompb.Label {
-	m := make(map[string]*prompb.Label, len(labels))
-	for i := 0; i < len(labels); i++ {
-		if labels[i].GetName() == "__name__" {
-			continue
-		}
-		m[labels[i].GetName()] = &labels[i]
-	}
-	return m
-}
-
-func BenchmarkMatchRWLabelsMap(b *testing.B) {
-	lbs, rules := makeRWDataAndRule(10)
-	for i := 0; i < b.N; i++ {
-		labels := makeLabelMap(lbs)
-		for _, rule := range rules.Rules {
-			if label, ok := labels[rule.Label]; ok {
-				rule.Match(label.GetValue())
-			}
-		}
-	}
-}
-
-func BenchmarkMetricNamesContains(b *testing.B) {
-	const num = 10
-	b.Run("iter", func(b *testing.B) {
-		var metrics []string
-		for i := 0; i < num; i++ {
-			metrics = append(metrics, fmt.Sprintf("metric_%d", i))
-		}
-		contains := func(slice []string, item string) bool {
-			for i := 0; i < len(slice); i++ {
-				if slice[i] == item {
-					return true
-				}
-			}
-			return false
-		}
-		for i := 0; i < b.N; i++ {
-			contains(metrics, fmt.Sprintf("metric_%d", i%(2*num)))
-		}
-	})
-
-	b.Run("map", func(b *testing.B) {
-		metrics := make(map[string]struct{})
-		for i := 0; i < num; i++ {
-			metrics[fmt.Sprintf("metric_%d", i)] = struct{}{}
-		}
-		contains := func(item string) bool {
-			_, ok := metrics[item]
-			return ok
-		}
-		for i := 0; i < b.N; i++ {
-			contains(fmt.Sprintf("metric_%d", i%(2*num)))
-		}
-	})
 }

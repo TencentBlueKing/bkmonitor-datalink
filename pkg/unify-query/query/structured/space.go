@@ -261,7 +261,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 		return nil, fmt.Errorf("%s, %s", ErrEmptyTableID.Error(), ErrMetricMissing.Error())
 	}
 
-	if opt.TableID == "" && opt.FieldName == "" {
+	if opt.TableID == "" && (opt.FieldName == "" && !opt.IsSkipField) {
 		return nil, fmt.Errorf("%s, %s", ErrEmptyTableID.Error(), ErrMetricMissing.Error())
 	}
 	tsDBs := make([]*query.TsDBV2, 0)

@@ -741,11 +741,6 @@ func (d *DorisSQLExpr) DimTransform(s string) (ns string, as string) {
 	return ns, as
 }
 
-func (d *DorisSQLExpr) TransformField(field string) (string, error) {
-	ns, _ := d.dimTransform(field)
-	return ns, nil
-}
-
 func (d *DorisSQLExpr) valueTransform(s string) string {
 	if strings.Contains(s, "'") {
 		s = strings.ReplaceAll(s, "'", "''")

@@ -27,7 +27,8 @@ type NotExpr struct {
 }
 
 type GroupingExpr struct {
-	Expr Expr
+	Expr  Expr
+	Boost float64
 }
 
 // OpType defines the operation type for OperatorExpr
@@ -38,17 +39,25 @@ const (
 	OpWildcard OpType = "wildcard" // 通配符匹配
 	OpRegex    OpType = "regex"    // 正则表达式匹配
 	OpRange    OpType = "range"    // 范围查询
+	OpFuzzy    OpType = "fuzzy"    // 模糊匹配
 )
 
 // OperatorExpr represents a unified operator expression
 type OperatorExpr struct {
-	Field    Expr
-	Op       OpType
-	Value    Expr // 可以是StringExpr、NumberExpr或RangeExpr
-	IsQuoted bool
+	Field     Expr
+	Op        OpType
+	Value     Expr // 可以是StringExpr、NumberExpr或RangeExpr
+	IsQuoted  bool
+	Boost     float64
+	Fuzziness string
+	Slop      int
 }
 
-func (o *OperatorExpr) SetField(field string) {
+func (o *OperatorExpr) getField() string {
+	return getString(o.Field)
+}
+
+func (o *OperatorExpr) setField(field string) {
 	o.Field = &StringExpr{Value: field}
 }
 
@@ -69,8 +78,30 @@ type ConditionMatchExpr struct {
 	Value *ConditionsExpr
 }
 
-func (cm *ConditionMatchExpr) SetField(field string) {
+func (cm *ConditionMatchExpr) getField() string {
+	return getString(cm.Field)
+}
+
+func (cm *ConditionMatchExpr) setField(field string) {
 	cm.Field = &StringExpr{Value: field}
+}
+
+func (o *OrExpr) setField(field string) {
+	if fieldSetter, ok := o.Left.(FieldSetter); ok {
+		fieldSetter.setField(field)
+	}
+	if fieldSetter, ok := o.Right.(FieldSetter); ok {
+		fieldSetter.setField(field)
+	}
+}
+
+func (a *AndExpr) setField(field string) {
+	if fieldSetter, ok := a.Left.(FieldSetter); ok {
+		fieldSetter.setField(field)
+	}
+	if fieldSetter, ok := a.Right.(FieldSetter); ok {
+		fieldSetter.setField(field)
+	}
 }
 
 type StringExpr struct {
@@ -83,4 +114,15 @@ type BoolExpr struct {
 
 type NumberExpr struct {
 	Value float64
+}
+
+type FieldGettable interface {
+	getField() string
+}
+
+func getField(e Expr) string {
+	if fg, ok := e.(FieldGettable); ok {
+		return fg.getField()
+	}
+	return Empty
 }

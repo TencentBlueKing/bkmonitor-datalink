@@ -18,38 +18,80 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
 )
 
-type Schema struct {
-	mapping map[string]string
-	encode  func(k string) string
-	decode  func(k string) string
-}
-
 type Parser struct {
-	schema   Schema
-	IsPrefix bool
+	esSchema    esSchemaProvider
+	dorisSchema dorisSchemaProvider
+	IsPrefix    bool
 }
 
-func (s *Schema) GetActualFieldName(field string) string {
-	if actual, ok := s.mapping[field]; ok {
-		switch actual {
-		case "text", "keyword", "long", "integer", "date", "nested", "object", "float", "double", "boolean":
-			return field
-		default:
-			// 如果进入到这里，说明是字段别名，需要继续解析
-			return actual
-		}
+type parserOption struct {
+	Mapping          map[string]string
+	Alias            map[string]string
+	AliasFunc        func(k string) string
+	GetFieldTypeFunc func(field string) (string, bool)
+}
+
+type OptionFunc func(*parserOption)
+
+func WithMapping(mapping map[string]string) OptionFunc {
+	return func(o *parserOption) {
+		o.Mapping = mapping
 	}
-	return field
 }
 
-func NewParser(mapping map[string]string, encode, decode func(k string) string) *Parser {
+func WithAlias(alias map[string]string) OptionFunc {
+	return func(o *parserOption) {
+		o.Alias = alias
+	}
+}
+
+func WithAliasFunc(f func(k string) string) OptionFunc {
+	return func(o *parserOption) {
+		o.Alias = nil
+		o.AliasFunc = f
+	}
+}
+
+func NewParser(opts ...OptionFunc) *Parser {
+	option := &parserOption{}
+
+	for _, o := range opts {
+		o(option)
+	}
+
+	getFieldType := func(field string) (string, bool) {
+		if option.GetFieldTypeFunc != nil {
+			return option.GetFieldTypeFunc(field)
+		}
+		if option.Mapping != nil {
+			if t, ok := option.Mapping[field]; ok {
+				return t, true
+			} else {
+				return "", false
+			}
+		}
+		return "", false
+	}
+
+	getAlias := func(k string) string {
+		if option.AliasFunc != nil {
+			return option.AliasFunc(k)
+		}
+		if option.Alias != nil {
+			if v, ok := option.Alias[k]; ok {
+				return v
+			}
+		}
+		return k
+	}
+
+	esSchema := NewESSchema(getFieldType, getAlias, option.Mapping)
+	dorisSchemaEntry := NewDorisSchema(getFieldType, getAlias)
+
 	p := &Parser{
-		schema: Schema{
-			mapping: mapping,
-			encode:  encode,
-			decode:  decode,
-		},
-		IsPrefix: false,
+		esSchema:    esSchema,
+		dorisSchema: dorisSchemaEntry,
+		IsPrefix:    false,
 	}
 	return p
 }
@@ -60,7 +102,7 @@ type ParseResult struct {
 	SQL  string
 }
 
-func (p *Parser) Do(q string, isPrefix bool) (rt ParseResult, err error) {
+func (p *Parser) Parse(q string, isPrefix bool) (rt ParseResult, err error) {
 	if q == "" || q == "*" {
 		return ParseResult{
 			Expr: nil,
@@ -68,25 +110,67 @@ func (p *Parser) Do(q string, isPrefix bool) (rt ParseResult, err error) {
 			SQL:  "",
 		}, nil
 	}
-
 	expr, err := buildExpr(q)
 	if err != nil {
-		return
+		return rt, fmt.Errorf("parse lucene query (%s) error: %w", q, err)
 	}
-	return ParseResult{
-		Expr: expr,
-		ES:   walkESWithSchema(expr, p.schema, isPrefix, true),
-		SQL:  toSql(expr),
-	}, nil
+	rt.Expr = expr
+	rt.SQL = p.toSql(expr)
+	rt.ES = p.toES(expr, isPrefix)
+	return rt, nil
+}
+
+// CustomErrorListener captures syntax errors during parsing
+type CustomErrorListener struct {
+	*antlr.DefaultErrorListener
+	errors []string
+}
+
+func NewCustomErrorListener() *CustomErrorListener {
+	return &CustomErrorListener{
+		DefaultErrorListener: antlr.NewDefaultErrorListener(),
+		errors:               make([]string, 0),
+	}
+}
+
+func (c *CustomErrorListener) SyntaxError(recognizer antlr.Recognizer, offendingSymbol interface{}, line, column int, msg string, e antlr.RecognitionException) {
+	c.errors = append(c.errors, fmt.Sprintf("syntax error: %s", msg))
+}
+
+func (c *CustomErrorListener) HasErrors() bool {
+	return len(c.errors) > 0
+}
+
+func (c *CustomErrorListener) GetFirstError() string {
+	if len(c.errors) > 0 {
+		return c.errors[0]
+	}
+	return ""
 }
 
 func buildExpr(queryString string) (Expr, error) {
 	is := antlr.NewInputStream(queryString)
 	lexer := gen.NewLuceneLexer(is)
+
+	lexerErrorListener := NewCustomErrorListener()
+	lexer.RemoveErrorListeners()
+	lexer.AddErrorListener(lexerErrorListener)
+
 	tokens := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
 	parser := gen.NewLuceneParser(tokens)
+	parserErrorListener := NewCustomErrorListener()
+	parser.RemoveErrorListeners()
+	parser.AddErrorListener(parserErrorListener)
+
 	visitor := NewStatementVisitor()
 	query := parser.TopLevelQuery()
+	if lexerErrorListener.HasErrors() {
+		return nil, fmt.Errorf(lexerErrorListener.GetFirstError())
+	}
+	if parserErrorListener.HasErrors() {
+		return nil, fmt.Errorf(parserErrorListener.GetFirstError())
+	}
+
 	if query == nil {
 		return nil, fmt.Errorf("parse lucene query (%s) error: query is nil", queryString)
 	}

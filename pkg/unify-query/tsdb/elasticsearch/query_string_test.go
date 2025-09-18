@@ -12,6 +12,7 @@ package elasticsearch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -39,8 +40,13 @@ func TestQsToDsl(t *testing.T) {
 		m["nested"] = "nested"
 		m["user"] = "nested"
 		m["event_detail"] = "events.attributes.message.detail"
-
 		return m
+	}
+
+	testAlias := func() map[string]string {
+		a := make(map[string]string)
+		a["event_detail"] = "events.attributes.message.detail"
+		return a
 	}
 	ctx := metadata.InitHashID(context.Background())
 	for i, c := range []struct {
@@ -131,6 +137,7 @@ func TestQsToDsl(t *testing.T) {
 		{
 			q:        "ms: \u003e500 AND \"/fs-server\" AND NOT \"heartbeat\"",
 			expected: `{"bool":{"must":[{"term":{"ms":500}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"/fs-server\""}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"heartbeat\""}}}}]}}`,
+			err:      errors.New(`parse lucene query (ms: >500 AND "/fs-server" AND NOT "heartbeat") error: syntax error: extraneous input '>' expecting {'(', QUOTED, NUMBER, TERM, REGEXPTERM, '[', '{'}`),
 		},
 		{
 			q:        `events.attributes.message.detail: "*66036*"`,
@@ -160,17 +167,14 @@ func TestQsToDsl(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			encoder := func(str string) string {
-				return str
-			}
-
-			decoder := func(str string) string {
-				return str
-			}
-			parser := lucene_parser.NewParser(testMapping(), encoder, decoder)
-			result, err := parser.Do(c.q, c.isPrefix)
-			require.NoError(t, err)
-			if c.expected != "" {
+			parser := lucene_parser.NewParser(
+				lucene_parser.WithMapping(testMapping()),
+				lucene_parser.WithAlias(testAlias()),
+			)
+			result, err := parser.Parse(c.q, c.isPrefix)
+			if c.err != nil {
+				assert.Equal(t, c.err.Error(), err.Error())
+			} else if c.expected != "" {
 				require.NotNil(t, result.ES, "ES query should not be nil when expected result is provided")
 				body, err := result.ES.Source()
 				assert.Nil(t, err)

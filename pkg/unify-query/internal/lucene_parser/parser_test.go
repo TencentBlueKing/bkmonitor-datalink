@@ -45,7 +45,7 @@ func TestParser(t *testing.T) {
 				Value: &StringExpr{Value: `test`},
 			},
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"test"}}`,
-			sql: "`log` = 'test'",
+			sql: "`log` MATCH_PHRASE 'test'",
 		},
 		"负数查询": {
 			q: `-test`,
@@ -56,7 +56,7 @@ func TestParser(t *testing.T) {
 				},
 			},
 			es:  `{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"test"}}}}`,
-			sql: "NOT (`log` = 'test')",
+			sql: "NOT (`log` MATCH_PHRASE 'test')",
 		},
 		"负数查询多条件": {
 			q: `-test AND good`,
@@ -73,7 +73,7 @@ func TestParser(t *testing.T) {
 				},
 			},
 			es:  `{"bool":{"must":[{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"test"}}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"good"}}]}}`,
-			sql: "NOT (`log` = 'test') AND `log` = 'good'",
+			sql: "NOT (`log` MATCH_PHRASE 'test') AND `log` MATCH_PHRASE 'good'",
 		},
 		"通配符匹配": {
 			q: `qu?ck bro*`,
@@ -88,7 +88,7 @@ func TestParser(t *testing.T) {
 				},
 			},
 			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"qu?ck"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"bro*"}}]}}`,
-			sql: "`log` LIKE '%qu_ck%' OR `log` LIKE 'bro%'",
+			sql: "(`log` LIKE '%qu_ck%' OR `log` LIKE 'bro%')",
 		},
 		"无条件正则匹配": {
 			q: `/joh?n(ath[oa]n)/`,
@@ -245,8 +245,8 @@ func TestParser(t *testing.T) {
 					},
 				},
 			},
-			es:  `{"bool":{"must":[{"match_phrase":{"author":{"query":"John Smith"}}},{"bool":{"should":[{"term":{"age":20}},{"term":{"status":"active"}}]}}]}}`,
-			sql: "`author` = 'John Smith' AND (`age` = 20 OR `status` = 'active')",
+			es:  ``,
+			sql: "`author` MATCH_PHRASE 'John Smith' AND (`age` = '20' OR `status` = 'active')",
 		},
 		"多条件组合，and 和 or 的优先级": {
 			q: `(author:"John Smith" AND age:20) OR status:active`,
@@ -273,7 +273,7 @@ func TestParser(t *testing.T) {
 				},
 			},
 			es:  `{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"author":{"query":"John Smith"}}},{"term":{"age":20}}]}},{"term":{"status":"active"}}]}}`,
-			sql: "(`author` = 'John Smith' AND `age` = 20) OR `status` = 'active'",
+			sql: "((`author` MATCH_PHRASE 'John Smith' AND `age` = '20') OR `status` = 'active')",
 		},
 		"嵌套逻辑表达式": {
 			q: `a:1 AND (b:2 OR c:3)`,
@@ -299,7 +299,7 @@ func TestParser(t *testing.T) {
 				},
 			},
 			es:  `{"bool":{"must":[{"term":{"a":1}},{"bool":{"should":[{"term":{"b":2}},{"term":{"c":3}}]}}]}}`,
-			sql: "`a` = 1 AND (`b` = 2 OR `c` = 3)",
+			sql: "`a` = '1' AND (`b` = '2' OR `c` = '3')",
 		},
 		"嵌套逻辑表达式 - 2": {
 			q: `a:1 OR b:2 OR (c:3 OR d:4)`,
@@ -332,7 +332,7 @@ func TestParser(t *testing.T) {
 				},
 			},
 			es:  `{"bool":{"should":[{"term":{"a":1}},{"term":{"b":2}},{"bool":{"should":[{"term":{"c":3}},{"term":{"d":4}}]}}]}}`,
-			sql: "`a` = 1 OR `b` = 2 OR (`c` = 3 OR `d` = 4)",
+			sql: "(`a` = '1' OR (`b` = '2' OR (`c` = '3' OR `d` = '4')))",
 		},
 		"嵌套逻辑表达式 - 3": {
 			q: `a:1 OR (b:2 OR c:3) OR d:4`,
@@ -365,7 +365,7 @@ func TestParser(t *testing.T) {
 				},
 			},
 			es:  `{"bool":{"should":[{"term":{"a":1}},{"bool":{"should":[{"term":{"b":2}},{"term":{"c":3}}]}},{"term":{"d":4}}]}}`,
-			sql: "`a` = 1 OR (`b` = 2 OR `c` = 3) OR `d` = 4",
+			sql: "(`a` = '1' OR ((`b` = '2' OR `c` = '3') OR `d` = '4'))",
 		},
 		"嵌套逻辑表达式 - 4": {
 			q: `a:1 OR (b:2 OR c:3) AND d:4`,
@@ -398,32 +398,20 @@ func TestParser(t *testing.T) {
 				},
 			},
 			es:  `{"bool":{"should":[{"term":{"a":1}},{"bool":{"must":[{"bool":{"should":[{"term":{"b":2}},{"term":{"c":3}}]}},{"term":{"d":4}}]}}]}}`,
-			sql: "`a` = 1 OR ((`b` = 2 OR `c` = 3) AND `d` = 4)",
+			sql: "(`a` = '1' OR (`b` = '2' OR `c` = '3') AND `d` = '4')",
 		},
 		"new-1": {
 			q: `quick brown +fox -news`,
-			e: &AndExpr{
+			e: &OrExpr{
 				Left: &OrExpr{
 					Left: &OrExpr{
-						Left: &AndExpr{
-							Left: &OperatorExpr{
-								Op:    OpMatch,
-								Value: &StringExpr{Value: "quick"},
-							},
-							Right: &OperatorExpr{
-								Op:    OpMatch,
-								Value: &StringExpr{Value: "fox"},
-							},
+						Left: &OperatorExpr{
+							Op:    OpMatch,
+							Value: &StringExpr{Value: "quick"},
 						},
-						Right: &AndExpr{
-							Left: &OperatorExpr{
-								Op:    OpMatch,
-								Value: &StringExpr{Value: "brown"},
-							},
-							Right: &OperatorExpr{
-								Op:    OpMatch,
-								Value: &StringExpr{Value: "fox"},
-							},
+						Right: &OperatorExpr{
+							Op:    OpMatch,
+							Value: &StringExpr{Value: "brown"},
 						},
 					},
 					Right: &OperatorExpr{
@@ -438,8 +426,8 @@ func TestParser(t *testing.T) {
 					},
 				},
 			},
-			es:  `{"bool":{"must":[{"bool":{"should":[{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"quick"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"fox"}}]}},{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"brown"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"fox"}}]}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"fox"}}]}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"news"}}}}]}}`,
-			sql: "((`log` = 'quick' AND `log` = 'fox') OR (`log` = 'brown' AND `log` = 'fox') OR `log` = 'fox') AND NOT (`log` = 'news')",
+			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"quick"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"brown"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"fox"}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"news"}}}}]}}`,
+			sql: "(`log` MATCH_PHRASE 'quick' OR `log` MATCH_PHRASE 'brown' OR `log` MATCH_PHRASE 'fox' OR NOT (`log` MATCH_PHRASE 'news'))",
 		},
 		"模糊匹配": {
 			q: `quick brown fox`,
@@ -460,7 +448,7 @@ func TestParser(t *testing.T) {
 				},
 			},
 			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"quick"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"brown"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"fox"}}]}}`,
-			sql: "`log` = 'quick' OR `log` = 'brown' OR `log` = 'fox'",
+			sql: "(`log` MATCH_PHRASE 'quick' OR `log` MATCH_PHRASE 'brown' OR `log` MATCH_PHRASE 'fox')",
 		},
 		"单个条件精确匹配": {
 			q: `log: "ERROR MSG"`,
@@ -471,7 +459,7 @@ func TestParser(t *testing.T) {
 				IsQuoted: true,
 			},
 			es:  `{"match_phrase":{"log":{"query":"ERROR MSG"}}}`,
-			sql: "`log` = 'ERROR MSG'",
+			sql: "`log` MATCH_PHRASE 'ERROR MSG'",
 		},
 		"match and time range": {
 			q: "message: test\\ node AND datetime: [\"2020-01-01T00:00:00\" TO \"2020-12-31T00:00:00\"]",
@@ -518,7 +506,7 @@ func TestParser(t *testing.T) {
 				},
 			},
 			es:  `{"bool":{"should":[{"term":{"a":1}},{"bool":{"must":[{"term":{"b":2}},{"term":{"c":4}}]}}]}}`,
-			sql: "`a` = 1 OR (`b` = 2 AND `c` = 4)",
+			sql: "(`a` = '1' OR (`b` = '2' AND `c` = '4'))",
 		},
 		"start without tCOLON": {
 			q: "a > 100",
@@ -629,7 +617,7 @@ func TestParser(t *testing.T) {
 				Value: &StringExpr{Value: "*66036*"},
 			},
 			es:  `{"wildcard":{"events.attributes.message.detail":{"value":"*66036*"}}}`,
-			sql: "`events.attributes.message.detail` LIKE '%66036%'",
+			sql: "CAST(events['attributes.message.detail'] AS STRING) LIKE '%66036%'",
 		},
 		"node like regex": {
 			q: `"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log" AND level: "error" AND "2_bklog.bkunify_query"`,
@@ -654,7 +642,7 @@ func TestParser(t *testing.T) {
 				},
 			},
 			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log\""}},{"match_phrase":{"level":{"query":"error"}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"2_bklog.bkunify_query\""}}]}}`,
-			sql: "`log` = '/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log' AND `level` = 'error' AND `log` = '2_bklog.bkunify_query'",
+			sql: "`log` MATCH_PHRASE '/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log' AND `level` MATCH_PHRASE 'error' AND `log` MATCH_PHRASE '2_bklog.bkunify_query'",
 		},
 		"双引号转义符号支持": {
 			q: `log: "(reading \\\"remove\\\")"`,
@@ -665,7 +653,7 @@ func TestParser(t *testing.T) {
 				IsQuoted: true,
 			},
 			es:  `{"match_phrase":{"log":{"query":"(reading \\\"remove\\\")"}}}`,
-			sql: "`log` = '(reading \"remove\")'",
+			sql: "`log` MATCH_PHRASE '(reading \"remove\")'",
 		},
 		"test": {
 			q: `path: "/proz/logds/ds-5910974792526317*"`,
@@ -692,7 +680,7 @@ func TestParser(t *testing.T) {
 				},
 			},
 			es:  `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"32221112\""}},{"wildcard":{"path":{"value":"/data/home/user00/log/zonesvr*"}}}]}}`,
-			sql: "`log` = 32221112 AND `path` LIKE '/data/home/user00/log/zonesvr%'",
+			sql: "`log` MATCH_PHRASE '32221112' AND `path` LIKE '/data/home/user00/log/zonesvr%'",
 		},
 		"test - Many Brack ": {
 			q: `(loglevel: ("TRACE" OR "DEBUG" OR "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")) AND "test111"`,
@@ -720,7 +708,7 @@ func TestParser(t *testing.T) {
 				},
 			},
 			es:  `{"bool":{"must":[{"bool":{"must":[{"terms":{"loglevel":["TRACE","DEBUG","INFO ","WARN ","ERROR"]}},{"bool":{"minimum_should_match":"1","should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"testOr"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"match_phrase":{"log":{"query":"test111"}}}]}}]}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"test111\""}}]}}`,
-			sql: "((`loglevel` LIKE '%TRACE%' OR `loglevel` LIKE '%DEBUG%' OR `loglevel` LIKE '%INFO %' OR `loglevel` LIKE '%WARN %' OR `loglevel` LIKE '%ERROR%') AND ((`log` LIKE '%friendsvr%' AND `log` LIKE '%game_app%' AND `log` LIKE '%testAnd%') OR (`log` LIKE '%friendsvr%' AND `log` LIKE '%testOr%' AND `log` LIKE '%testAnd%') OR `log` LIKE '%test111%')) AND `log` = 'test111'",
+			sql: "((`loglevel` LIKE '%TRACE%' OR `loglevel` LIKE '%DEBUG%' OR `loglevel` LIKE '%INFO %' OR `loglevel` LIKE '%WARN %' OR `loglevel` LIKE '%ERROR%') AND ((`log` LIKE '%friendsvr%' AND `log` LIKE '%game_app%' AND `log` LIKE '%testAnd%') OR (`log` LIKE '%friendsvr%' AND `log` LIKE '%testOr%' AND `log` LIKE '%testAnd%') OR `log` LIKE '%test111%')) AND `log` MATCH_PHRASE 'test111'",
 		},
 		"test - many tPHRASE ": {
 			q: `loglevel: ("TRACE" OR "DEBUG" OR "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
@@ -773,17 +761,10 @@ func TestParser(t *testing.T) {
 		},
 	}
 
-	encoder := func(str string) string {
-		return str
-	}
-
-	decoder := func(str string) string {
-		return str
-	}
-	parser := NewParser(loadEsMapping(), encoder, decoder)
+	parser := NewParser(WithMapping(loadTestParserEsMapping()))
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
-			rt, err := parser.Do(c.q, false)
+			rt, err := parser.Parse(c.q, false)
 			if err != nil {
 				t.Errorf("Parse returned an error: %s", err)
 				return
@@ -804,7 +785,7 @@ func TestParser(t *testing.T) {
 	}
 }
 
-func loadEsMapping() map[string]string {
+func loadTestParserEsMapping() map[string]string {
 	m := make(map[string]string)
 	m["age"] = "long"
 	m["count"] = "long"

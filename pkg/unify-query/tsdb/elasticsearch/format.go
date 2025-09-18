@@ -784,7 +784,7 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 	for _, am := range aggregates {
 		switch am.Name {
 		case DateHistogram:
-			f.timeAgg(f.timeField.Name, am.Window, am.TimeZoneOffset, am.TimeZone)
+			f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
 			f.valueAgg(f.valueField, FieldValue, am.Name, am.Args...)
 

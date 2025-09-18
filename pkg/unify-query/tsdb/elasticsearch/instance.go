@@ -249,7 +249,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
-		result, err := fact.luceneParser.Do(qb.QueryString, qb.IsPrefix)
+		result, err := fact.luceneParser.Parse(qb.QueryString, qb.IsPrefix)
 		if err != nil {
 			return nil, err
 		}

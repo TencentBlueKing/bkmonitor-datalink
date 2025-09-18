@@ -10,7 +10,6 @@
 package lucene_parser
 
 import (
-	"context"
 	"strconv"
 	"strings"
 
@@ -18,13 +17,17 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser/gen"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+)
+
+var (
+	autoFuzz     = "AUTO"
+	defaultBoost = 1.0
 )
 
 type Encode func(string) (string, bool)
 
 type FieldSetter interface {
-	SetField(string)
+	setField(string)
 }
 
 type Node interface {
@@ -306,20 +309,6 @@ func (n *AndNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 	return visitChildren(next, ctx)
 }
 
-func (n *AndNode) splitClause() (mustClauses, mustNotClauses, shouldClauses []Expr) {
-	return splitClauseHelper(n.nodes, func(child Node) []Expr {
-		if modClause, ok := child.(*ModClauseNode); ok {
-			if modClause.hasModifier() {
-				return nil
-			}
-		}
-		if expr := child.Expr(); expr != nil {
-			return []Expr{expr}
-		}
-		return nil
-	})
-}
-
 type ModClauseNode struct {
 	baseNode
 	modifier string
@@ -397,7 +386,7 @@ func (n *ClauseNode) Expr() Expr {
 	if expr != nil && n.field != "" {
 		switch fieldSetter := expr.(type) {
 		case FieldSetter:
-			fieldSetter.SetField(n.field)
+			fieldSetter.setField(n.field)
 		}
 	}
 
@@ -443,31 +432,49 @@ type TermNode struct {
 	isQuoted   bool
 	isRegex    bool
 	isWildcard bool
+	boost      float64
+	fuzziness  string
+	slop       int
+	// 因为整个遍历是从左到右的, 所以需要一些状态标记来表示当前是否在期待某个值
+	// 例如: status:200^2.0 先解析到 status:200, 然后遇到 ^, 这时就需要标记 expectingBoost = true 之后遇到数字时就知道这是 boost 的值
+	expectingFuzziness bool
+	expectingSlop      bool
+	expectingBoost     bool
 }
 
 func (n *TermNode) Expr() Expr {
 	var expr *OperatorExpr
-	if n.isRegex {
-		regexValue := strings.Trim(n.value, "/")
-		expr = &OperatorExpr{
-			Op:    OpRegex,
-			Value: &StringExpr{Value: regexValue},
-		}
+	var opType OpType
+
+	if n.fuzziness != "" {
+		opType = OpFuzzy
+	} else if n.isRegex {
+		opType = OpRegex
 	} else if n.isWildcard {
-		expr = &OperatorExpr{
-			Op:    OpWildcard,
-			Value: &StringExpr{Value: n.value},
-		}
+		opType = OpWildcard
 	} else {
-		expr = &OperatorExpr{
-			Op:       OpMatch,
-			Value:    n.createValueExpr(),
-			IsQuoted: n.isQuoted,
-		}
+		opType = OpMatch
+	}
+
+	var value Expr
+	if opType == OpRegex {
+		regexValue := strings.Trim(n.value, "/")
+		value = &StringExpr{Value: regexValue}
+	} else {
+		value = n.createValueExpr()
+	}
+
+	expr = &OperatorExpr{
+		Op:        opType,
+		Value:     value,
+		IsQuoted:  n.isQuoted,
+		Boost:     n.boost,
+		Fuzziness: n.fuzziness,
+		Slop:      n.slop,
 	}
 
 	if n.field != "" {
-		expr.SetField(n.field)
+		expr.setField(n.field)
 	}
 
 	return expr
@@ -479,10 +486,18 @@ func (n *TermNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 
 	switch c := ctx.(type) {
 	case *gen.QuotedTermContext:
-		cleanValue, isWildcard, isQuoted := parseAndClassifyString(c.GetText())
-		n.value = cleanValue
-		n.isWildcard = isWildcard
-		n.isQuoted = isQuoted
+		if quotedNode := c.QUOTED(); quotedNode != nil {
+			quotedText := quotedNode.GetText()
+			cleanValue, isWildcard, isQuoted := parseAndClassifyString(quotedText)
+			n.value = cleanValue
+			n.isWildcard = isWildcard
+			n.isQuoted = isQuoted
+		}
+		if c.CARAT() != nil && c.NUMBER() != nil {
+			if boostVal, err := strconv.ParseFloat(c.NUMBER().GetText(), 64); err == nil {
+				n.boost = boostVal
+			}
+		}
 		return nil
 	}
 
@@ -524,7 +539,41 @@ func (n *TermNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
 		n.value = text
 		return nil
 	case gen.LuceneLexerNUMBER:
-		n.value = text
+		// 检查是否是紧跟在 ~ 或 ^ 后面的数字
+		if n.expectingFuzziness {
+			n.fuzziness = text
+			// 恢复默认值
+			n.expectingFuzziness = false
+		} else if n.expectingSlop {
+			if slopVal, err := strconv.Atoi(text); err == nil {
+				n.slop = slopVal
+			}
+			n.expectingSlop = false
+		} else if n.expectingBoost {
+			if boostVal, err := strconv.ParseFloat(text, 64); err == nil {
+				n.boost = boostVal
+			}
+			n.expectingBoost = false
+		} else {
+			n.value = text
+		}
+		return nil
+	case gen.LuceneLexerTILDE:
+		// Tilde是模糊匹配或邻近搜索的开始标记(~)
+		// Lucene中的 ~ 既可以表示模糊匹配(Fuzzy Search) 也可以表示邻近搜索(Proximity Search)
+		if n.isQuoted {
+			// 例如: "quick fox"~5 表示邻近搜索
+			n.expectingSlop = true
+		} else {
+			// 例如: quick~2 或 roam~ 表示模糊搜索
+			n.expectingFuzziness = true
+			n.fuzziness = autoFuzz
+		}
+		return nil
+	case gen.LuceneLexerCARAT:
+		// Carat是权重提升的开始标记(^)
+		n.expectingBoost = true
+		n.boost = defaultBoost
 		return nil
 	}
 	return nil
@@ -573,7 +622,7 @@ func (n *RangeNode) Expr() Expr {
 			Value: rangeExpr,
 		}
 		if n.field != "" {
-			expr.SetField(n.field)
+			expr.setField(n.field)
 		}
 		return expr
 	}
@@ -603,7 +652,7 @@ func (n *RangeNode) Expr() Expr {
 		Value: rangeExpr,
 	}
 	if n.field != "" {
-		expr.SetField(n.field)
+		expr.setField(n.field)
 	}
 	return expr
 }
@@ -649,8 +698,10 @@ func (n *RangeNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
 
 type GroupNode struct {
 	baseNode
-	node  Node
-	field string // Set when this is a field:(grouped expression)
+	node           Node
+	field          string  // Set when this is a field:(grouped expression)
+	boost          float64 // 权重提升
+	expectingBoost bool    // 临时状态标记
 }
 
 func (n *GroupNode) VisitChildren(ctx antlr.RuleNode) interface{} {
@@ -665,6 +716,28 @@ func (n *GroupNode) VisitChildren(ctx antlr.RuleNode) interface{} {
 	}
 
 	return visitChildren(next, ctx)
+}
+
+func (n *GroupNode) VisitTerminal(ctx antlr.TerminalNode) interface{} {
+	text := ctx.GetText()
+	tokenType := ctx.GetSymbol().GetTokenType()
+
+	switch tokenType {
+	case gen.LuceneLexerCARAT:
+		// 权重提升的开始标记
+		n.expectingBoost = true
+		n.boost = 1.0 // 默认值
+		return nil
+	case gen.LuceneLexerNUMBER:
+		if n.expectingBoost {
+			if boostVal, err := strconv.ParseFloat(text, 64); err == nil {
+				n.boost = boostVal
+			}
+			n.expectingBoost = false
+		}
+		return nil
+	}
+	return nil
 }
 
 func (n *GroupNode) Expr() Expr {
@@ -688,12 +761,15 @@ func (n *GroupNode) Expr() Expr {
 	}
 
 	// Always create GroupingExpr to represent parentheses structure
-	expr := &GroupingExpr{Expr: innerExpr}
+	expr := &GroupingExpr{
+		Expr:  innerExpr,
+		Boost: n.boost,
+	}
 
 	// Apply field to the inner expression if needed
 	if n.field != "" {
 		if fieldSetter, ok := innerExpr.(FieldSetter); ok {
-			fieldSetter.SetField(n.field)
+			fieldSetter.setField(n.field)
 		}
 	}
 
@@ -826,9 +902,9 @@ func visitChildren(next Node, node antlr.RuleNode) interface{} {
 	for _, child := range node.GetChildren() {
 		switch tree := child.(type) {
 		case antlr.ParseTree:
-			log.Debugf(context.TODO(), `"ENTER","%T","%s"`, tree, tree.GetText())
+			//log.Debugf(context.TODO(), `"ENTER","%T","%s"`, tree, tree.GetText())
 			tree.Accept(next)
-			log.Debugf(context.TODO(), `"EXIT","%T","%s"`, tree, tree.GetText())
+			//log.Debugf(context.TODO(), `"EXIT","%T","%s"`, tree, tree.GetText())
 		}
 	}
 	return nil

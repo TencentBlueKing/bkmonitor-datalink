@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -70,6 +72,8 @@ type DorisSQLExpr struct {
 	fieldsMap   map[string]FieldOption
 	fieldAlias  metadata.FieldAlias
 
+	queryStringParser *lucene_parser.Parser
+
 	isSetLabels bool
 	lock        sync.Mutex
 }
@@ -98,7 +102,15 @@ func (d *DorisSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 
 func (d *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]FieldOption) SQLExpr {
 	d.fieldsMap = fieldsMap
+	d.initQueryStringParser()
 	return d
+}
+
+func (d *DorisSQLExpr) initQueryStringParser() {
+	d.queryStringParser = lucene_parser.NewParser(
+		lucene_parser.WithAlias(d.fieldAlias),
+		lucene_parser.WithMapping(d.fieldsMap),
+	)
 }
 
 func (d *DorisSQLExpr) WithKeepColumns(cols []string) SQLExpr {
@@ -283,7 +295,7 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(aggregates metadata.Aggregates,
 		OffsetMillis: timeZoneOffset,
 	}
 
-	return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
+	return
 }
 
 func (d *DorisSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {

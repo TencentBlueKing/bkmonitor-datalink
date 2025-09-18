@@ -18,9 +18,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/querystring_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -123,15 +121,12 @@ func (d *DorisSQLExpr) FieldMap() map[string]FieldOption {
 }
 
 func (d *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
-	expr, err := querystring_parser.ParseWithFieldAlias(qs, d.fieldAlias)
+	result, err := d.queryStringParser.Parse(qs, false)
 	if err != nil {
 		return "", err
 	}
-	if expr == nil {
-		return "", nil
-	}
 
-	return d.walk(expr)
+	return result.SQL, nil
 }
 
 func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
@@ -570,91 +565,7 @@ func (d *DorisSQLExpr) likeValue(s string) string {
 	return string(ns)
 }
 
-func (d *DorisSQLExpr) walk(e querystring_parser.Expr) (string, error) {
-	var (
-		err   error
-		left  string
-		right string
-	)
-
-	switch c := e.(type) {
-	case *querystring_parser.NotExpr:
-		left, err = d.walk(c.Expr)
-		if err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("NOT (%s)", left), nil
-	case *querystring_parser.OrExpr:
-		left, err = d.walk(c.Left)
-		if err != nil {
-			return "", err
-		}
-		right, err = d.walk(c.Right)
-		if err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("(%s OR %s)", left, right), nil
-	case *querystring_parser.AndExpr:
-		left, err = d.walk(c.Left)
-		if err != nil {
-			return "", err
-		}
-		right, err = d.walk(c.Right)
-		if err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("%s AND %s", left, right), nil
-	case *querystring_parser.WildcardExpr:
-		if c.Field == "" {
-			c.Field = DefaultKey
-		}
-		field, _ := d.dimTransform(c.Field)
-		return fmt.Sprintf("%s LIKE '%s'", field, d.likeValue(c.Value)), nil
-	case *querystring_parser.MatchExpr:
-		if c.Field == "" {
-			c.Field = DefaultKey
-		}
-		field, _ := d.dimTransform(c.Field)
-		if d.isAnalyzed(c.Field) {
-			return fmt.Sprintf("%s MATCH_PHRASE '%s'", field, c.Value), nil
-		}
-
-		return fmt.Sprintf("%s = '%s'", field, c.Value), nil
-	case *querystring_parser.NumberRangeExpr:
-		if c.Field == "" {
-			c.Field = DefaultKey
-		}
-		field, _ := d.dimTransform(c.Field)
-		var timeFilter []string
-		if c.Start != nil && *c.Start != "*" {
-			var op string
-			if c.IncludeStart {
-				op = ">="
-			} else {
-				op = ">"
-			}
-			timeFilter = append(timeFilter, fmt.Sprintf("%s %s %s", field, op, *c.Start))
-		}
-
-		if c.End != nil && *c.End != "*" {
-			var op string
-			if c.IncludeEnd {
-				op = "<="
-			} else {
-				op = "<"
-			}
-			timeFilter = append(timeFilter, fmt.Sprintf("%s %s %s", field, op, *c.End))
-		}
-
-		return fmt.Sprintf("%s", strings.Join(timeFilter, " AND ")), nil
-	default:
-		err = fmt.Errorf("expr type is not match %T", e)
-	}
-
-	return "", err
-}
-
-func (d *DorisSQLExpr) getFieldType(s string) (opt FieldOption) {
+func (d *DorisSQLExpr) getFieldType(s string) (fieldType string) {
 	if d.fieldsMap == nil {
 		return opt
 	}

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
+	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -468,14 +469,13 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	span.Set("order-fields", orderFields)
 	span.Set("timeAggregate", timeAggregate)
 
-	sqlBuilder.WriteString("SELECT ")
+	sqlBuilder.WriteString(lo.Ternary(f.query.IsDistinct, "SELECT DISTINCT ", "SELECT "))
 	sqlBuilder.WriteString(strings.Join(selectFields, ", "))
 	sqlBuilder.WriteString(" FROM ")
 	sqlBuilder.WriteString(f.Table())
 
 	whereString, err := f.BuildWhere()
 	span.Set("where-string", whereString)
-
 	if err != nil {
 		return sql, err
 	}

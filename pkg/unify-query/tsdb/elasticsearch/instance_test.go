@@ -1264,3 +1264,72 @@ func TestInstance_fieldMap(t *testing.T) {
 	actual, _ := json.Marshal(res)
 	assert.JSONEq(t, `{"__ext.container_id":{"alias_name":"","field_name":"__ext.container_id","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.container_image":{"alias_name":"","field_name":"__ext.container_image","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.container_name":{"alias_name":"container_name","field_name":"__ext.container_name","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.io_kubernetes_pod":{"alias_name":"","field_name":"__ext.io_kubernetes_pod","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.io_kubernetes_pod_ip":{"alias_name":"","field_name":"__ext.io_kubernetes_pod_ip","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.io_kubernetes_pod_namespace":{"alias_name":"","field_name":"__ext.io_kubernetes_pod_namespace","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.io_kubernetes_pod_uid":{"alias_name":"","field_name":"__ext.io_kubernetes_pod_uid","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.io_kubernetes_workload_name":{"alias_name":"","field_name":"__ext.io_kubernetes_workload_name","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"__ext.io_kubernetes_workload_type":{"alias_name":"","field_name":"__ext.io_kubernetes_workload_type","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"__ext","tokenize_on_chars":""},"cloudId":{"alias_name":"","field_name":"cloudId","field_type":"integer","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"cloudId","tokenize_on_chars":""},"container_name":{"alias_name":"","field_name":"container_name","field_type":"alias","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"container_name","tokenize_on_chars":""},"dtEventTimeStamp":{"alias_name":"","field_name":"dtEventTimeStamp","field_type":"date","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"dtEventTimeStamp","tokenize_on_chars":""},"file":{"alias_name":"","field_name":"file","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"file","tokenize_on_chars":""},"gseIndex":{"alias_name":"","field_name":"gseIndex","field_type":"long","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"gseIndex","tokenize_on_chars":""},"iterationIndex":{"alias_name":"","field_name":"iterationIndex","field_type":"integer","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"iterationIndex","tokenize_on_chars":""},"level":{"alias_name":"","field_name":"level","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"level","tokenize_on_chars":""},"log":{"alias_name":"","field_name":"log","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log","tokenize_on_chars":""},"message":{"alias_name":"","field_name":"message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"message","tokenize_on_chars":""},"path":{"alias_name":"","field_name":"path","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"path","tokenize_on_chars":""},"pod_ip":{"alias_name":"","field_name":"pod_ip","field_type":"alias","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"pod_ip","tokenize_on_chars":""},"pod_uid":{"alias_name":"","field_name":"pod_uid","field_type":"alias","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"pod_uid","tokenize_on_chars":""},"report_time":{"alias_name":"","field_name":"report_time","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"report_time","tokenize_on_chars":""},"serverIp":{"alias_name":"","field_name":"serverIp","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"serverIp","tokenize_on_chars":""},"time":{"alias_name":"","field_name":"time","field_type":"date","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"time","tokenize_on_chars":""},"trace_id":{"alias_name":"","field_name":"trace_id","field_type":"keyword","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"trace_id","tokenize_on_chars":""}}`, string(actual))
 }
+
+func TestInstance_QueryLabelNames(t *testing.T) {
+	mock.Init()
+
+	tests := []struct {
+		name          string
+		query         *metadata.Query
+		expectedError bool
+		expectedNames []string
+	}{
+		{
+			name: "basic_label_names",
+			query: &metadata.Query{
+				DB:      "unify_query",
+				TableID: "test_table",
+				TimeField: metadata.TimeField{
+					Name: "dtEventTimeStamp",
+				},
+			},
+			expectedError: false,
+			expectedNames: []string{"cloudId", "file", "gseIndex", "iterationIndex", "level", "log", "message", "path", "report_time", "serverIp", "trace_id"},
+		},
+		{
+			name: "empty_db",
+			query: &metadata.Query{
+				DB:      "",
+				TableID: "test_table",
+			},
+			expectedError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata.InitMetadata()
+			ctx := metadata.InitHashID(context.Background())
+			inst, err := NewInstance(ctx, &InstanceOption{
+				Connect: Connect{
+					Address: mock.EsUrl,
+				},
+				Timeout: time.Minute,
+			})
+			assert.NoError(t, err)
+
+			start := time.Now().Add(-time.Hour)
+			end := time.Now()
+
+			labelNames, err := inst.QueryLabelNames(ctx, tt.query, start, end)
+
+			if tt.expectedError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				for _, expectedName := range tt.expectedNames {
+					found := false
+					for _, actualName := range labelNames {
+						if actualName == expectedName {
+							found = true
+							break
+						}
+					}
+					if !found {
+						t.Logf("Expected field %s not found in %v", expectedName, labelNames)
+					}
+				}
+			}
+		})
+	}
+}

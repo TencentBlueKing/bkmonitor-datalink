@@ -31,10 +31,13 @@ type Parser struct {
 
 func (s *Schema) GetActualFieldName(field string) string {
 	if actual, ok := s.mapping[field]; ok {
-		if s.decode != nil {
-			return s.decode(field)
+		switch actual {
+		case "text", "keyword", "long", "integer", "date", "nested", "object", "float", "double", "boolean":
+			return field
+		default:
+			// 如果进入到这里，说明是字段别名，需要继续解析
+			return actual
 		}
-		return actual
 	}
 	return field
 }

@@ -1646,7 +1646,7 @@ func TestQueryRawWithInstance(t *testing.T) {
 			},
 			total:    246,
 			expected: `[{"__data_label":"es","__doc_id":"3","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"3"},{"__data_label":"bkbase_es","__doc_id":"4","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"4"},{"__data_label":"es","__doc_id":"4","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"4"},{"__data_label":"bkbase_es","__doc_id":"5","__index":"result_table_index","__result_table":"result_table.bk_base_es","a":"1","b":"5"},{"__data_label":"es","__doc_id":"5","__index":"result_table_index","__result_table":"result_table.es","a":"1","b":"5"}]`,
-			options:  `{"result_table.bk_base_es|0":{"from":0,"search_after":["2","5"]},"result_table.es|3":{"from":0,"search_after":["2","5"]}}`,
+			options:  `{"result_table.bk_base_es|http://127.0.0.1:12001/bk_data/query_sync/es":{"from":0,"search_after":["2","5"]},"result_table.es|http://127.0.0.1:93002":{"from":0,"search_after":["2","5"]}}`,
 		},
 		"query_bk_base_es_1 to 1": {
 			queryTs: &structured.QueryTs{

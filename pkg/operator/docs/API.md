@@ -12,7 +12,6 @@
     $ curl -XPOST -d 'level=debug' http://locahost:8080/-/logger 
     ```
 
-* POST /-/reload: 运行时重载 operator
 * POST /-/dispatch: 运行时重新触发任务分发
 
 ### 版本信息

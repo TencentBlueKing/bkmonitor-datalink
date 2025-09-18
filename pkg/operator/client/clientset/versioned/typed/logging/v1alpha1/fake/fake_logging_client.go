@@ -22,7 +22,7 @@ type FakeBkV1alpha1 struct {
 }
 
 func (c *FakeBkV1alpha1) BkLogConfigs(namespace string) v1alpha1.BkLogConfigInterface {
-	return &FakeBkLogConfigs{c, namespace}
+	return newFakeBkLogConfigs(c, namespace)
 }
 
 // RESTClient returns a RESTClient that is used to communicate

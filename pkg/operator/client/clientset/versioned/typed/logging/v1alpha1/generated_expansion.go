@@ -11,4 +11,4 @@
 
 package v1alpha1
 
-type BkLogConfigExpansion interface{}
+type BkLogConfigExpansion any

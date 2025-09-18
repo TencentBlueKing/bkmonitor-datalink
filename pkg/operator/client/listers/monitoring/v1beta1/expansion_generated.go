@@ -13,8 +13,16 @@ package v1beta1
 
 // DataIDListerExpansion allows custom methods to be added to
 // DataIDLister.
-type DataIDListerExpansion interface{}
+type DataIDListerExpansion any
 
 // DataIDNamespaceListerExpansion allows custom methods to be added to
 // DataIDNamespaceLister.
-type DataIDNamespaceListerExpansion interface{}
+type DataIDNamespaceListerExpansion any
+
+// QCloudMonitorListerExpansion allows custom methods to be added to
+// QCloudMonitorLister.
+type QCloudMonitorListerExpansion any
+
+// QCloudMonitorNamespaceListerExpansion allows custom methods to be added to
+// QCloudMonitorNamespaceLister.
+type QCloudMonitorNamespaceListerExpansion any

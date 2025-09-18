@@ -29,7 +29,7 @@ func New(size int) *Ring {
 
 type event struct {
 	resourceVersion int
-	obj             interface{}
+	obj             any
 }
 
 type ring struct {
@@ -115,16 +115,16 @@ func (r *ring) maxResourceVersion() int {
 }
 
 // Put 将 obj 存放至环内 同时返回当前最新版次号
-func (q *Ring) Put(obj interface{}) ResourceVersion {
+func (q *Ring) Put(obj any) ResourceVersion {
 	return ResourceVersion(q.ring.put(event{
 		obj: obj,
 	}))
 }
 
 // ReadGt 读取 > rv 的所有资源对象
-func (q *Ring) ReadGt(rv ResourceVersion) []interface{} {
+func (q *Ring) ReadGt(rv ResourceVersion) []any {
 	events := q.ring.readGt(int(rv))
-	objs := make([]interface{}, 0, len(events))
+	objs := make([]any, 0, len(events))
 	for _, evt := range events {
 		objs = append(objs, evt.obj)
 	}

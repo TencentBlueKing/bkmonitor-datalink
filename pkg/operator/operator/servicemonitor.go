@@ -28,7 +28,7 @@ func serviceMonitorID(obj *promv1.ServiceMonitor) string {
 	return fmt.Sprintf("%s/%s", obj.Namespace, obj.Name)
 }
 
-func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
+func (c *Operator) handleServiceMonitorAdd(obj any) {
 	serviceMonitor, ok := obj.(*promv1.ServiceMonitor)
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", obj)
@@ -49,7 +49,7 @@ func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
 	}
 }
 
-func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interface{}) {
+func (c *Operator) handleServiceMonitorUpdate(oldObj any, newObj any) {
 	old, ok := oldObj.(*promv1.ServiceMonitor)
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", oldObj)
@@ -85,7 +85,7 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 	}
 }
 
-func (c *Operator) handleServiceMonitorDelete(obj interface{}) {
+func (c *Operator) handleServiceMonitorDelete(obj any) {
 	serviceMonitor, ok := obj.(*promv1.ServiceMonitor)
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", obj)
@@ -123,9 +123,9 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 		Kind:      monitorKindServiceMonitor,
 		Namespace: serviceMonitor.Namespace,
 	}
-	dataID, err := c.dw.MatchMetricDataID(meta, systemResource)
+	dataID, err := c.pickMonitorDataID(meta, serviceMonitor.Annotations)
 	if err != nil {
-		logger.Errorf("servicemonitor(%+v) no dataid matched", meta)
+		logger.Errorf("servicemonitor (%+v) no dataid matched", meta)
 		return discovers
 	}
 	specLabels := dataID.Spec.Labels

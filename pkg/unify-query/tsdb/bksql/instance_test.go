@@ -1274,7 +1274,7 @@ func TestInstance_bkSql(t *testing.T) {
 				QueryString: "buy weekly card success",
 				SQL:         `SELECT DISTINCT (regexp_extract(log, 'openid:(\\d+)', 1)) AS id LIMIT 100000`,
 			},
-			expected: "SELECT DISTINCT regexp_extract(`log`, 'openid:(\\\\d+)', 1) AS id FROM `bklog_index_set_21692_analysis`.doris WHERE (`dtEventTimeStamp` >= 1755069858000 AND `dtEventTimeStamp` <= 1757661858000 AND `dtEventTime` >= '2025-08-13 15:24:18' AND `dtEventTime` <= '2025-09-12 15:24:19' AND `thedate` >= '20250813' AND `thedate` <= '20250912' AND (`log` = 'buy' OR (`log` = 'weekly' OR (`log` = 'card' OR `log` = 'success')))) LIMIT 100000",
+			expected: "SELECT DISTINCT regexp_extract(`log`, 'openid:(\\\\d+)', 1) AS id FROM `bklog_index_set_21692_analysis`.doris WHERE (`dtEventTimeStamp` >= 1755069858000 AND `dtEventTimeStamp` <= 1757661858000 AND `dtEventTime` >= '2025-08-13 15:24:18' AND `dtEventTime` <= '2025-09-12 15:24:19' AND `thedate` >= '20250813' AND `thedate` <= '20250912' AND (`log` = 'buy' OR `log` = 'weekly' OR `log` = 'card' OR `log` = 'success')) LIMIT 100000",
 		},
 	}
 

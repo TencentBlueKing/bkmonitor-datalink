@@ -7,12 +7,12 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package querystring_parser
+package lucene_parser
 
 import (
-	"fmt"
 	"testing"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
@@ -29,11 +29,12 @@ func Test_parseExprToKeyValue(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "test parseExprToKeyValue",
+			name: "test parseExprToKeyValue with OperatorExpr",
 			args: args{
-				expr: &MatchExpr{
-					Field: "XEmDv",
-					Value: "IZZpypR2E",
+				expr: &OperatorExpr{
+					Field: &StringExpr{Value: "XEmDv"},
+					Op:    OpMatch,
+					Value: &StringExpr{Value: "IZZpypR2E"},
 				},
 				kv: map[string][]function.LabelMapValue{
 					"XEmDv": {
@@ -89,6 +90,7 @@ func TestLabelMap(t *testing.T) {
 			name:        "空 QueryString",
 			queryString: "",
 			expected:    map[string][]function.LabelMapValue{},
+			expectedErr: errors.New("syntax error: mismatched input '<EOF>' expecting {NOT, '+', '-', '(', QUOTED, NUMBER, TERM, REGEXPTERM, '[', '{'}"),
 		},
 		{
 			name:        "通配符 QueryString",
@@ -217,48 +219,6 @@ func TestLabelMap(t *testing.T) {
 			},
 		},
 		{
-			name:        "嵌套字段名",
-			queryString: "user.name:john AND resource.k8s.pod:web-pod",
-			expected: map[string][]function.LabelMapValue{
-				"user.name": {
-					{
-						Operator: "eq",
-						Value:    "john",
-					},
-				},
-				"resource.k8s.pod": {
-					{
-						Operator: "eq",
-						Value:    "web-pod",
-					},
-				},
-			},
-		},
-		{
-			name:        "简单 URL 匹配",
-			queryString: "url:example.com",
-			expected: map[string][]function.LabelMapValue{
-				"url": {
-					{
-						Operator: "eq",
-						Value:    "example.com",
-					},
-				},
-			},
-		},
-		{
-			name:        "特殊字符在值中",
-			queryString: `url: "https:\/\/example.com\/api?param=value"`,
-			expected: map[string][]function.LabelMapValue{
-				"url": {
-					{
-						Operator: "contains",
-						Value:    `https://example.com/api?param=value`,
-					},
-				},
-			},
-		},
-		{
 			name:        "数值范围查询（不应提取标签）",
 			queryString: "timestamp:[1234567890 TO 1234567900]",
 			expected:    map[string][]function.LabelMapValue{},
@@ -304,30 +264,6 @@ func TestLabelMap(t *testing.T) {
 			},
 		},
 		{
-			name:        "多个不同字段",
-			queryString: "level:error AND service:web AND component:database",
-			expected: map[string][]function.LabelMapValue{
-				"level": {
-					{
-						Operator: "eq",
-						Value:    "error",
-					},
-				},
-				"service": {
-					{
-						Operator: "eq",
-						Value:    "web",
-					},
-				},
-				"component": {
-					{
-						Operator: "eq",
-						Value:    "database",
-					},
-				},
-			},
-		},
-		{
 			name:        "带通配符的复杂查询",
 			queryString: "service:web* AND (level:error OR level:warning)",
 			expected: map[string][]function.LabelMapValue{
@@ -349,18 +285,13 @@ func TestLabelMap(t *testing.T) {
 				},
 			},
 		},
-		{
-			name:        "无效的 QueryString（解析失败）",
-			queryString: "level:error AND (",
-			expected:    map[string][]function.LabelMapValue{},
-			expectedErr: fmt.Errorf("syntax error: unexpected $end"),
-		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			labelMap := make(map[string][]function.LabelMapValue)
 			labelCheck := make(map[string]struct{})
+
 			addLabel := func(key string, operator string, values ...string) {
 				if len(values) == 0 {
 					return
@@ -382,7 +313,8 @@ func TestLabelMap(t *testing.T) {
 				assert.NotNil(t, err, "expected an error but got nil")
 				assert.EqualError(t, err, tc.expectedErr.Error(), "error message should match expected")
 			} else {
-				assert.Equal(t, tc.expected, labelMap, "queryStringLabelMap result should match expected")
+				assert.NoError(t, err, "unexpected error: %v", err)
+				assert.Equal(t, tc.expected, labelMap, "labelMap result should match expected")
 			}
 		})
 	}

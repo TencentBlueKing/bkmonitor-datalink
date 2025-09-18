@@ -80,6 +80,8 @@ func (b *Backend) Close() error {
 	return b.file.Close()
 }
 
+func (b *Backend) SetETLRecordFields(f *define.ETLRecordFields) {}
+
 func init() {
 	define.RegisterBackend("file", func(ctx context.Context, name string) (define.Backend, error) {
 		return NewBackend(ctx, name), nil

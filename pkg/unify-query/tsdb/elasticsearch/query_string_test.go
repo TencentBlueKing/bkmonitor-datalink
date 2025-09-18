@@ -34,16 +34,13 @@ func TestQsToDsl(t *testing.T) {
 		m["word.key"] = "text"
 		m["ms"] = "long"
 		m["events.attributes.message.detail"] = "text"
-		m["event_detail"] = "text"
 		m["nested.key"] = "text"
+		m["events"] = "nested"
+		m["nested"] = "nested"
+		m["user"] = "nested"
+		m["event_detail"] = "events.attributes.message.detail"
 
 		return m
-		//schema.SetNestedField("events")
-		//schema.SetNestedField("nested")
-		//schema.SetNestedField("user")
-		//
-		//schema.SetFieldAlias("event_detail", "events.attributes.message.detail")
-
 	}
 	ctx := metadata.InitHashID(context.Background())
 	for i, c := range []struct {
@@ -173,6 +170,7 @@ func TestQsToDsl(t *testing.T) {
 			parser := lucene_parser.NewParser(testMapping(), encoder, decoder)
 			result, err := parser.Do(c.q, false)
 			require.NoError(t, err)
+			require.NotNil(t, result.ES, "ES query should not be nil when expected result is provided")
 			body, err := result.ES.Source()
 			assert.Nil(t, err)
 			require.NotNil(t, body)

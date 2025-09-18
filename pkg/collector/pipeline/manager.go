@@ -152,11 +152,6 @@ func parseReportV2Configs(configs []*confengine.Config) map[string][]processor.S
 		}
 	}
 
-	for _, items := range ps {
-		for _, item := range items {
-			logger.Debugf("report_v2 processor: %+v", item)
-		}
-	}
 	return ps
 }
 
@@ -231,11 +226,6 @@ func parseProcessorSubConfigs(configs []*confengine.Config) map[string][]process
 		}
 	}
 
-	for _, items := range ps {
-		for _, item := range items {
-			logger.Debugf("subconfig processor: %+v", item)
-		}
-	}
 	return ps
 }
 

@@ -428,7 +428,6 @@ func (d proxyTokenDecoder) Skip() bool {
 }
 
 func (d proxyTokenDecoder) Decode(s string) (define.Token, error) {
-	logger.Debugf("proxy token=%v", s)
 	if tokenparser.WrapProxyToken(define.Token{}) == s {
 		return define.Token{}, errors.New("reject empty token")
 	}
@@ -456,7 +455,6 @@ func (d beatDecoder) Skip() bool {
 }
 
 func (d beatDecoder) Decode(s string) (define.Token, error) {
-	logger.Debugf("beat dataid=%s", s)
 	if len(s) == 0 {
 		return define.Token{}, errors.New("reject empty dataid")
 	}

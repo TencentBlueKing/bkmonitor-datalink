@@ -11,7 +11,6 @@ package apdexcalculator
 
 import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/mapstrings"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type Config struct {
@@ -60,7 +59,6 @@ func (c *Config) Rule(kind, predicateKey string) (RuleConfig, bool) {
 		return *c.defaultRule, true
 	}
 
-	logger.Debugf("no default rule: kind=%v, predicateKey=%v", kind, predicateKey)
 	return RuleConfig{}, false
 }
 

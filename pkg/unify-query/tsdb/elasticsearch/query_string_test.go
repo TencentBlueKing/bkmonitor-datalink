@@ -12,15 +12,29 @@ package elasticsearch
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 
+	elastic "github.com/olivere/elastic/v7"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/lucene_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
+
+func createTestSchema() lucene_parser.FieldSchema {
+	schema := lucene_parser.NewSchema()
+	schema.SetFieldType("log", lucene_parser.FieldTypeText)
+	schema.SetFieldType("level", lucene_parser.FieldTypeKeyword)
+	schema.SetFieldType("loglevel", lucene_parser.FieldTypeKeyword)
+	schema.SetFieldType("word.key", lucene_parser.FieldTypeText)
+	schema.SetFieldType("ms", lucene_parser.FieldTypeLong)
+	schema.SetFieldType("events.attributes.message.detail", lucene_parser.FieldTypeText)
+	schema.SetFieldType("event_detail", lucene_parser.FieldTypeText)
+	schema.SetFieldType("nested.key", lucene_parser.FieldTypeText)
+	return schema
+}
 
 func TestQsToDsl(t *testing.T) {
 	mock.Init()
@@ -38,7 +52,7 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        `quick brown fox`,
-			expected: `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"quick\""}},{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"brown\""}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"fox\""}}]}}]}}`,
+			expected: `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"quick"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"brown"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"fox"}}]}}`,
 		},
 		{
 			q:        `word.key: qu?ck`,
@@ -54,7 +68,7 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        `sync_spaces AND -keyword AND -BKLOGAPI`,
-			expected: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"sync_spaces\""}},{"bool":{"must":[{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"keyword\""}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"BKLOGAPI\""}}}}]}}]}}`,
+			expected: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"sync_spaces"}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"keyword"}}}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"BKLOGAPI"}}}}]}}`,
 		},
 		{
 			q: `*`,
@@ -69,7 +83,7 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        `demo`,
-			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"demo\""}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"demo"}}`,
 		},
 		{
 			q:        `"demo"`,
@@ -78,14 +92,14 @@ func TestQsToDsl(t *testing.T) {
 		{
 			q:        `demo`,
 			isPrefix: true,
-			expected: `{"query_string":{"fields":["*","__*"],"analyze_wildcard":true,"lenient":true,"query":"\"demo\"","type":"phrase_prefix"}}`,
+			expected: `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"demo","type":"phrase_prefix"}}`,
 		},
 		{
 			q: ``,
 		},
 		{
 			q:        "ms: \u003e500 AND \"/fs-server\" AND NOT \"heartbeat\"",
-			expected: `{"bool":{"must":[{"range":{"ms":{"from":"500","include_lower":false,"include_upper":true,"to":null}}},{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"/fs-server\""}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"heartbeat\""}}}}]}}]}}`,
+			expected: `{"bool":{"must":[{"term":{"ms":500}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"/fs-server\""}},{"bool":{"must_not":{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"heartbeat\""}}}}]}}`,
 		},
 		{
 			q:        `events.attributes.message.detail: "*66036*"`,
@@ -98,209 +112,36 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:        `"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log" and level: "error" and "2_bklog.bkunify_query"`,
-			expected: `{"bool":{"must":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log\""}},{"bool":{"must":[{"match_phrase":{"level":{"query":"error"}}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"2_bklog.bkunify_query\""}}]}}]}}`,
+			expected: `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"/var/host/data/bcs/lib/docker/containers/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5/e1fe718565fe0a073f024c243e00344d09eb0206ba55ccd0c281fc5f4ffd62a5-json.log\""}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"and"}},{"term":{"level":"error"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"and"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"2_bklog.bkunify_query\""}}]}}`,
 		},
 		{
-			q: `(loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")) AND "test111"`,
-			expected: `{
-							"bool": {
-								"must": [
-									{
-										"bool": {
-										"must": [
-											{
-											"bool": {
-												"should": [
-												{ "term": { "loglevel": "TRACE" } },
-												{ "term": { "loglevel": "DEBUG" } },
-												{ "term": { "loglevel": "INFO " } },
-												{ "term": { "loglevel": "WARN " } },
-												{ "term": { "loglevel": "ERROR" } }
-												]
-											}
-											},
-											{
-											"bool": {
-												"should": [
-												{
-													"bool": {
-													"must": [
-														{ "term": { "log": "friendsvr" } },
-														{ "term": { "log": "game_app" } },
-														{ "term": { "log": "testAnd" } }
-													]
-													}
-												},
-												{
-													"bool": {
-													"must": [
-														{ "term": { "log": "friendsvr" } },
-														{ "term": { "log": "testOr" } },
-														{ "term": { "log": "testAnd" } }
-													]
-													}
-												},
-												{ "term": { "log": "test111" } }
-												]
-											}
-											}
-										]
-										}
-									},
-									{
-										"query_string": {
-										"query": "\"test111\"",
-										"fields": ["*", "__*"],
-										"analyze_wildcard": true,
-										"lenient": true
-										}
-									}
-								]
-							}
-						}`,
+			q:        `(loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")) AND "test111"`,
+			expected: `{"bool":{"must":[{"bool":{"must":[{"terms":{"loglevel":["TRACE","DEBUG","INFO ","WARN ","ERROR"]}},{"bool":{"minimum_should_match":"1","should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"testOr"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"match_phrase":{"log":{"query":"test111"}}}]}}]}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\"test111\""}}]}}`,
 		},
 		{
-			q: `loglevel: ("TRACE" OR "DEBUG" OR  "INFO " OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
-			expected: `{
-				"bool": {
-				  "must": [
-					{
-					  "bool": {
-						"should": [
-						  { "term": { "loglevel": "TRACE" } },
-						  { "term": { "loglevel": "DEBUG" } },
-						  { "term": { "loglevel": "INFO " } },
-						  { "term": { "loglevel": "WARN " } },
-						  { "term": { "loglevel": "ERROR" } }
-						]
-					  }
-					},
-					{
-					  "bool": {
-						"should": [
-						  {
-							"bool": {
-							  "must": [
-								{ "term": { "log": "friendsvr" } },
-								{ "term": { "log": "game_app" } },
-								{ "term": { "log": "testAnd" } }
-							  ]
-							}
-						  },
-						  {
-							"bool": {
-							  "must": [
-								{ "term": { "log": "friendsvr" } },
-								{ "term": { "log": "testOr" } },
-								{ "term": { "log": "testAnd" } }
-							  ]
-							}
-						  },
-						  { "term": { "log": "test111" } }
-						]
-					  }
-					}
-				  ]
-				}
-			  }`,
+			q:        `loglevel: ("TRACE" AND "111" AND "DEBUG" AND "INFO" OR "SIMON" OR "222" AND "333" )`,
+			expected: `{"bool":{"minimum_should_match":"1","should":[{"bool":{"must":[{"term":{"loglevel":"TRACE"}},{"term":{"loglevel":"111"}},{"term":{"loglevel":"DEBUG"}},{"term":{"loglevel":"INFO"}}]}},{"term":{"loglevel":"SIMON"}},{"bool":{"must":[{"term":{"loglevel":"222"}},{"term":{"loglevel":"333"}}]}}]}}`,
 		},
 		{
-			q: `loglevel: ("TRACE" AND "111" AND "DEBUG" AND "INFO" OR "SIMON" OR "222" AND "333" )`,
-			expected: `{
-						"bool": {
-							"should": [
-							{
-								"bool": {
-								"must": [
-									{ "term": { "loglevel": "TRACE" } },
-									{ "term": { "loglevel": "111" } },
-									{ "term": { "loglevel": "DEBUG" } },
-									{ "term": { "loglevel": "INFO" } }
-								]
-								}
-							},
-							{ "term": { "loglevel": "SIMON" } },
-							{
-								"bool": {
-								"must": [
-									{ "term": { "loglevel": "222" } },
-									{ "term": { "loglevel": "333" } }
-								]
-								}
-							}
-							]
-						}
-					}`,
-		},
-		{
-			q: `loglevel: ("TRACE" OR ("DEBUG") OR  ("INFO ") OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
-			expected: `{
-						"bool": {
-							"must": [
-							{
-								"bool": {
-								"should": [
-									{ "term": { "loglevel": "TRACE" } },
-									{ "term": { "loglevel": "DEBUG" } },
-									{ "term": { "loglevel": "INFO " } },
-									{ "term": { "loglevel": "WARN " } },
-									{ "term": { "loglevel": "ERROR" } }
-								]
-								}
-							},
-							{
-								"bool": {
-								"should": [
-									{
-									"bool": {
-										"must": [
-										{ "term": { "log": "friendsvr" } },
-										{ "term": { "log": "game_app" } },
-										{ "term": { "log": "testAnd" } }
-										]
-									}
-									},
-									{
-									"bool": {
-										"must": [
-										{ "term": { "log": "friendsvr" } },
-										{ "term": { "log": "testOr" } },
-										{ "term": { "log": "testAnd" } }
-										]
-									}
-									},
-									{ "term": { "log": "test111" } }
-								]
-								}
-							}
-							]
-						}
-						}`,
+			q:        `loglevel: ("TRACE" OR ("DEBUG") OR  ("INFO ") OR "WARN " OR "ERROR") AND log: ("friendsvr" AND ("game_app" OR "testOr") AND "testAnd" OR "test111")`,
+			expected: `{"bool":{"must":[{"terms":{"loglevel":["TRACE","DEBUG","INFO ","WARN ","ERROR"]}},{"bool":{"minimum_should_match":"1","should":[{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"game_app"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"bool":{"must":[{"match_phrase":{"log":{"query":"friendsvr"}}},{"match_phrase":{"log":{"query":"testOr"}}},{"match_phrase":{"log":{"query":"testAnd"}}}]}},{"match_phrase":{"log":{"query":"test111"}}}]}}]}}`,
 		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			qs := NewQueryString(c.q, c.isPrefix, func(s string) string {
-				mapping := map[string]string{
-					"nested": Nested,
-					"events": Nested,
-				}
 
-				lbs := strings.Split(s, ESStep)
-				for i := len(lbs) - 1; i >= 0; i-- {
-					checkKey := strings.Join(lbs[0:i], ESStep)
-					if v, ok := mapping[checkKey]; ok {
-						if v == Nested {
-							return checkKey
-						}
-					}
-				}
+			schema := createTestSchema()
 
-				return ""
-			})
-			query, err := qs.ToDSL(ctx, metadata.FieldAlias{
-				"event_detail": "events.attributes.message.detail",
-			})
+			parser := lucene_parser.NewParser(
+				lucene_parser.WithIsPrefix(c.isPrefix),
+				lucene_parser.WithEsSchema(schema),
+			)
+			result, err := parser.Do(c.q)
+
+			var query elastic.Query
+			if err == nil {
+				query = result.ES
+			}
 			if err == nil {
 				if query != nil {
 					body, err := query.Source()

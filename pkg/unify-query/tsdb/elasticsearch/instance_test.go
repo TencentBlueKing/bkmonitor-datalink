@@ -131,7 +131,7 @@ func TestInstance_getAlias(t *testing.T) {
 				c.db = "db_test"
 			}
 			ctx = metadata.InitHashID(ctx)
-			actual, err := inst.getAlias(ctx, c.db, c.needAddTime, c.start, c.end, c.sourceType)
+			actual, err := inst.getAlias(ctx, &metadata.Query{DB: c.db, NeedAddTime: c.needAddTime, SourceType: c.sourceType}, c.start, c.end)
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, actual)
 		})

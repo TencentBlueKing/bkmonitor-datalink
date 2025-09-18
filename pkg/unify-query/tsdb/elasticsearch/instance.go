@@ -422,7 +422,32 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 	return remote.FromQueryResult(false, qr)
 }
 
-func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time, sourceType string) ([]string, error) {
+func (i *Instance) getAlias(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
+	allAlias := make([]string, 0)
+
+	dbs := query.DBs
+	if len(dbs) == 0 {
+		dbs = map[string]struct{}{query.DB: {}}
+	}
+
+	for db := range dbs {
+		if db == "" {
+			continue
+		}
+
+		alias, err := i.explainDB(ctx, db, query.NeedAddTime, start, end, query.SourceType)
+		if err != nil {
+			return nil, err
+		}
+		allAlias = append(allAlias, alias...)
+	}
+	if len(allAlias) == 0 {
+		return nil, fmt.Errorf("查询别名为空")
+	}
+	return allAlias, nil
+}
+
+func (i *Instance) explainDB(ctx context.Context, db string, needAddTime bool, start, end time.Time, sourceType string) ([]string, error) {
 	var (
 		aliases []string
 		_, span = trace.NewSpan(ctx, "get-alias")
@@ -432,7 +457,7 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 	defer span.End(&err)
 
 	if db == "" {
-		return nil, fmt.Errorf("alias is empty")
+		return nil, nil
 	}
 
 	aliases = strings.Split(db, ",")
@@ -505,12 +530,10 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-field-map")
 	defer span.End(&err)
 
-	if query.DB == "" {
-		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
-		return nil, err
-	}
+	span.Set("query-db", query.DB)
+	span.Set("query-dbs", query.DBs)
 
-	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
+	aliases, err := i.getAlias(ctx, query, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -538,12 +561,10 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	span.Set("instance-connect", i.connect.String())
 	span.Set("instance-query-result-table-option", query.ResultTableOption)
 
-	if query.DB == "" {
-		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
-		return size, total, option, err
-	}
+	span.Set("query-db", query.DB)
+	span.Set("query-dbs", query.DBs)
 
-	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
+	aliases, err := i.getAlias(ctx, query, start, end)
 	if err != nil {
 		return size, total, option, err
 	}
@@ -717,11 +738,6 @@ func (i *Instance) QuerySeriesSet(
 		return storage.ErrSeriesSet(err)
 	}
 
-	if query.DB == "" {
-		err = fmt.Errorf("%s 配置的查询别名为空", query.TableID)
-		return storage.ErrSeriesSet(err)
-	}
-
 	unit := metadata.GetQueryParams(ctx).TimeUnit
 
 	rangeLeftTime := end.Sub(start)
@@ -737,12 +753,13 @@ func (i *Instance) QuerySeriesSet(
 
 	span.Set("query-max-size", i.maxSize)
 	span.Set("query-db", query.DB)
+	span.Set("query-dbs", query.DBs)
 	span.Set("query-measurement", query.Measurement)
 	span.Set("query-measurements", query.Measurements)
 	span.Set("query-field", query.Field)
 	span.Set("query-fields", query.Fields)
 
-	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.SourceType)
+	aliases, err := i.getAlias(ctx, query, start, end)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}

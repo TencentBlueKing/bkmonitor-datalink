@@ -11,6 +11,7 @@ package metadata
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -42,6 +43,33 @@ func (q *Query) DataReload(data map[string]any) {
 	data[KeyTableID] = q.TableID
 	data[KeyDataLabel] = q.DataLabel
 	data[KeyTableUUID] = q.TableUUID()
+}
+
+// StorageUUID 获取存储唯一标识
+// storageType 存储类型
+// storageID 存储唯一标识
+// storageName 集群名称
+// measurementType 表类型
+// timeField 内置时间配置
+func (q *Query) StorageUUID() string {
+	var l []string
+	for _, s := range []any{
+		q.StorageType, q.StorageID, q.StorageName, q.MeasurementType, q.TimeField,
+	} {
+		switch ns := s.(type) {
+		case string:
+			if ns != "" {
+				l = append(l, ns)
+			}
+		default:
+			nt, _ := json.Marshal(ns)
+			if len(nt) > 0 {
+				l = append(l, string(nt))
+			}
+		}
+	}
+
+	return strings.Join(l, "|")
 }
 
 // TableUUID 查询主体 tableID + storageID + sliceID 作为查询主体的唯一标识

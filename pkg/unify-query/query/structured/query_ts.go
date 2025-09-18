@@ -642,14 +642,15 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		}
 	}
 
+	// 构建 query map，相同的 storage 可以进行合并
+	queryMap := make(map[string]*metadata.Query)
+
 	// 查询路由匹配中的 tsDB 列表
 	for _, tsDB := range tsDBs {
 		storageIDs := tsDB.GetStorageIDs(start, end)
 
 		for _, storageID := range storageIDs {
-			query, err := q.BuildMetadataQuery(ctx, tsDB, allConditions)
-			if err != nil {
-			}
+			query, _ := q.BuildMetadataQuery(ctx, tsDB, allConditions)
 
 			query.Aggregates = aggregates.Copy()
 			query.Timezone = timezone
@@ -723,9 +724,30 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 			metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 
-			queryMetric.QueryList = append(queryMetric.QueryList, query)
+			// query.DB 不存在则无需进行合并
+			if query.DB == "" {
+				queryMetric.QueryList = append(queryMetric.QueryList, query)
+				continue
+			}
+
+			storageUUID := query.StorageUUID()
+			if oq, ok := queryMap[storageUUID]; ok {
+				span.Set(fmt.Sprintf("query_merge_%s", oq.TableID), query.TableID)
+				oq.DBs[query.DB] = struct{}{}
+			} else {
+				query.DBs = map[string]struct{}{query.DB: {}}
+				queryMap[storageUUID] = query
+			}
 		}
 	}
+
+	span.Set("query_map_length", len(queryMap))
+
+	for _, qry := range queryMap {
+		queryMetric.QueryList = append(queryMetric.QueryList, qry)
+	}
+
+	span.Set("query_metric_length", len(queryMetric.QueryList))
 
 	return queryMetric, nil
 }

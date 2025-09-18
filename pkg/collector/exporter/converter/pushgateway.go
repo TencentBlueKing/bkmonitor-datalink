@@ -20,7 +20,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type pushGatewayEvent struct {
@@ -81,7 +80,6 @@ func (p promMapper) wrapExemplar() common.MapStr {
 		return nil
 	}
 
-	logger.Debugf("metrics [%+v] with exemplar %+v", p.Metrics, p.Exemplar)
 	if p.Exemplar != nil && p.Exemplar.Timestamp != nil && p.Exemplar.Value != nil {
 		exemplarLbs := make(map[string]string)
 		for _, pair := range p.Exemplar.Label {

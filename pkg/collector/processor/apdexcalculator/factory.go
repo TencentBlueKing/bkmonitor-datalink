@@ -130,7 +130,6 @@ func (p *apdexCalculator) processTraces(record *define.Record) {
 
 		rule, found := config.Rule(kind, foundPk)
 		if !found {
-			logger.Debugf("no rules found, kind=%v, pk=%v", kind, foundPk)
 			return
 		}
 
@@ -186,7 +185,6 @@ func (p *apdexCalculator) processMetrics(record *define.Record) {
 
 				rule, found := matchRules(config, kind, foundPk, name)
 				if !found {
-					logger.Debugf("no rules found, kind=%v, pk=%v, name=%v", kind, foundPk, name)
 					continue
 				}
 

@@ -105,9 +105,19 @@ func (d *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]FieldOption) SQLExpr {
 }
 
 func (d *DorisSQLExpr) initQueryStringParser() {
+	var luceneFieldsMap map[string]lucene_parser.FieldOption
+	if len(d.fieldsMap) > 0 {
+		luceneFieldsMap = make(map[string]lucene_parser.FieldOption, len(d.fieldsMap))
+		for field, option := range d.fieldsMap {
+			luceneFieldsMap[field] = lucene_parser.FieldOption{
+				Type:     strings.ToUpper(option.Type),
+				Analyzed: option.Analyzed,
+			}
+		}
+	}
 	d.queryStringParser = lucene_parser.NewParser(
 		lucene_parser.WithAlias(d.fieldAlias),
-		lucene_parser.WithMapping(d.fieldsMap),
+		lucene_parser.WithMapping(luceneFieldsMap),
 	)
 }
 
@@ -565,16 +575,16 @@ func (d *DorisSQLExpr) likeValue(s string) string {
 	return string(ns)
 }
 
-func (d *DorisSQLExpr) getFieldType(s string) (fieldType string) {
+func (d *DorisSQLExpr) getFieldType(s string) (opt FieldOption) {
 	if d.fieldsMap == nil {
-		return opt
+		return
 	}
 
 	var ok bool
 	if opt, ok = d.fieldsMap[s]; ok {
 		opt.Type = strings.ToUpper(opt.Type)
 	}
-	return opt
+	return
 }
 
 func (d *DorisSQLExpr) caseAs(s string) (string, bool) {

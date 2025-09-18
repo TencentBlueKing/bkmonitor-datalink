@@ -187,6 +187,10 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 
 func (f *FormatFactory) WithFieldMap(fieldMap map[string]map[string]any) *FormatFactory {
 	f.fieldMap = fieldMap
+	
+	// 初始化 luceneParser
+	f.initLuceneParser()
+	
 	return f
 }
 
@@ -207,6 +211,54 @@ func (f *FormatFactory) WithIncludeValues(labelMap map[string][]function.LabelMa
 
 	f.labelMap = newLabelMap
 	return f
+}
+
+func (f *FormatFactory) initLuceneParser() {
+	if f.fieldMap == nil {
+		return
+	}
+	
+	// 从 fieldMap 构建 lucene parser 所需的字段映射
+	var esFieldsMap map[string]lucene_parser.FieldOption
+	if len(f.fieldMap) > 0 {
+		esFieldsMap = make(map[string]lucene_parser.FieldOption)
+		for indexName, indexMapping := range f.fieldMap {
+			_ = indexName // 忽略索引名
+			if properties, ok := indexMapping["properties"].(map[string]any); ok {
+				for fieldName, fieldProps := range properties {
+					if fieldMap, ok := fieldProps.(map[string]any); ok {
+						fieldType := ""
+						analyzed := false
+						
+						if typeValue, exists := fieldMap["type"]; exists {
+							if typeStr, ok := typeValue.(string); ok {
+								fieldType = typeStr
+								// ES 中的 text 类型通常是分析过的
+								if typeStr == "text" {
+									analyzed = true
+								}
+							}
+						}
+						
+						// 检查是否明确设置了 analyzer
+						if _, hasAnalyzer := fieldMap["analyzer"]; hasAnalyzer {
+							analyzed = true
+						}
+						
+						esFieldsMap[fieldName] = lucene_parser.FieldOption{
+							Type:     fieldType,
+							Analyzed: analyzed,
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// 初始化 lucene parser
+	f.luceneParser = lucene_parser.NewParser(
+		lucene_parser.WithMapping(esFieldsMap),
+	)
 }
 
 func (f *FormatFactory) WithIsReference(isReference bool) *FormatFactory {
@@ -784,7 +836,7 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 	for _, am := range aggregates {
 		switch am.Name {
 		case DateHistogram:
-			f.timeAgg(f.timeField.Name, am.Window, am.TimeZone)
+			f.timeAgg(f.timeField.Name, am.Window, am.TimeZoneOffset, am.TimeZone)
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
 			f.valueAgg(f.valueField, FieldValue, am.Name, am.Args...)
 

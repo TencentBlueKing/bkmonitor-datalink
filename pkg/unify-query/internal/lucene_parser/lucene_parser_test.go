@@ -495,22 +495,22 @@ func TestLuceneParser(t *testing.T) {
 	}
 }
 
-func loadTestMapping() map[string]string {
-	m := make(map[string]string)
-	m["age"] = "long"
-	m["count"] = "long"
-	m["price"] = "float"
-	m["a"] = "long"
-	m["b"] = "long"
-	m["c"] = "long"
-	m["d"] = "long"
-	m["status"] = "keyword"
-	m["level"] = "text"
-	m["loglevel"] = "keyword"
-	m["author"] = "text"
-	m["message"] = "text"
-	m["log"] = "text"
-	m["path"] = "keyword"
-	m["datetime"] = "date"
-	return m
+func loadTestMapping() map[string]FieldOption {
+	return map[string]FieldOption{
+		"age":      {Type: FieldTypeLong},
+		"count":    {Type: FieldTypeLong},
+		"price":    {Type: FieldTypeFloat},
+		"a":        {Type: FieldTypeLong},
+		"b":        {Type: FieldTypeLong},
+		"c":        {Type: FieldTypeLong},
+		"d":        {Type: FieldTypeLong},
+		"status":   {Type: FieldTypeKeyword},
+		"level":    {Type: FieldTypeText},
+		"loglevel": {Type: FieldTypeKeyword},
+		"author":   {Type: FieldTypeText},
+		"message":  {Type: FieldTypeText},
+		"log":      {Type: FieldTypeText},
+		"path":     {Type: FieldTypeKeyword},
+		"datetime": {Type: FieldTypeDate},
+	}
 }

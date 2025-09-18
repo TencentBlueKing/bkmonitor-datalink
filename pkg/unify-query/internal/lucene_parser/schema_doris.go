@@ -48,9 +48,14 @@ type dorisSchemaProvider interface {
 
 type dorisSchema struct {
 	*baseSchema
+	fieldOptions map[string]FieldOption
 }
 
-func NewDorisSchema(getFieldType func(field string) (string, bool), getAlias func(field string) string) *dorisSchema {
+func NewDorisSchema(
+	getFieldType func(field string) (string, bool),
+	getAlias func(field string) string,
+	fieldOptions map[string]FieldOption,
+) *dorisSchema {
 	// Wrap getFieldType to convert types to uppercase
 	dorisGetFieldType := func(field string) (string, bool) {
 		fieldType, exists := getFieldType(field)
@@ -61,18 +66,37 @@ func NewDorisSchema(getFieldType func(field string) (string, bool), getAlias fun
 	}
 
 	return &dorisSchema{
-		baseSchema: NewBaseSchema(dorisGetFieldType, getAlias),
+		baseSchema:   NewBaseSchema(dorisGetFieldType, getAlias),
+		fieldOptions: fieldOptions,
 	}
 }
 
 func (s *dorisSchema) isText(field string) bool {
-	cleanField := strings.Trim(field, "`")
+    cleanField := strings.Trim(field, "`")
 
-	if fieldType, ok := s.getFieldType(cleanField); ok && fieldType == DorisTypeText {
-		return true
-	}
+    if s.fieldOptions != nil {
+        if option, ok := s.fieldOptions[cleanField]; ok {
+            // 若显式声明为分词字段，则直接认为是文本类型
+            if option.Analyzed {
+                return true
+            }
+            // 未显式声明 Analyzed 时，根据类型兜底判断：
+            // - 兼容 ES 映射中的 "text"
+            // - 兼容 Doris 类型中的 "TEXT"
+            if option.Type != "" {
+                if strings.EqualFold(option.Type, FieldTypeText) || strings.EqualFold(option.Type, DorisTypeText) {
+                    return true
+                }
+            }
+            // 没有类型信息时，继续走下方的 getFieldType 兜底逻辑
+        }
+    }
 
-	return false
+    if fieldType, ok := s.getFieldType(cleanField); ok && fieldType == DorisTypeText {
+        return true
+    }
+
+    return false
 }
 
 // transformField 转换字段名，处理对象字段的CAST逻辑

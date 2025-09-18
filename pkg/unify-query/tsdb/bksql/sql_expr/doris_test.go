@@ -83,7 +83,7 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "text filter",
 			input: "text:value",
-			want:  "`text` = 'value'",
+			want:  "`text` MATCH_PHRASE 'value'",
 		},
 		{
 			name:  "object field",

@@ -24,8 +24,18 @@ type Parser struct {
 	IsPrefix    bool
 }
 
+// FieldOption describes schema information for a field that is required by the
+// Lucene parser when generating downstream queries.
+// Type follows the underlying storage type definition (e.g. elasticsearch
+// field type, Doris column type) and Analyzed indicates whether the field is
+// tokenized.
+type FieldOption struct {
+	Type     string
+	Analyzed bool
+}
+
 type parserOption struct {
-	Mapping          map[string]string
+	Mapping          map[string]FieldOption
 	Alias            map[string]string
 	AliasFunc        func(k string) string
 	GetFieldTypeFunc func(field string) (string, bool)
@@ -33,9 +43,17 @@ type parserOption struct {
 
 type OptionFunc func(*parserOption)
 
-func WithMapping(mapping map[string]string) OptionFunc {
+func WithMapping(mapping map[string]FieldOption) OptionFunc {
 	return func(o *parserOption) {
-		o.Mapping = mapping
+		if mapping == nil {
+			o.Mapping = nil
+			return
+		}
+		cloned := make(map[string]FieldOption, len(mapping))
+		for field, option := range mapping {
+			cloned[field] = option
+		}
+		o.Mapping = cloned
 	}
 }
 
@@ -64,10 +82,11 @@ func NewParser(opts ...OptionFunc) *Parser {
 			return option.GetFieldTypeFunc(field)
 		}
 		if option.Mapping != nil {
-			if t, ok := option.Mapping[field]; ok {
-				return t, true
-			} else {
-				return "", false
+			if opt, ok := option.Mapping[field]; ok {
+				if opt.Type == "" {
+					return "", false
+				}
+				return opt.Type, true
 			}
 		}
 		return "", false
@@ -85,8 +104,16 @@ func NewParser(opts ...OptionFunc) *Parser {
 		return k
 	}
 
-	esSchema := NewESSchema(getFieldType, getAlias, option.Mapping)
-	dorisSchemaEntry := NewDorisSchema(getFieldType, getAlias)
+	var esMapping map[string]string
+	if option.Mapping != nil {
+		esMapping = make(map[string]string, len(option.Mapping))
+		for field, opt := range option.Mapping {
+			esMapping[field] = opt.Type
+		}
+	}
+
+	esSchema := NewESSchema(getFieldType, getAlias, esMapping)
+	dorisSchemaEntry := NewDorisSchema(getFieldType, getAlias, option.Mapping)
 
 	p := &Parser{
 		esSchema:    esSchema,

@@ -26,21 +26,23 @@ import (
 
 func TestQsToDsl(t *testing.T) {
 	mock.Init()
-	testMapping := func() map[string]string {
-		m := make(map[string]string)
-		m["log"] = "text"
-		m["level"] = "keyword"
-		m["loglevel"] = "keyword"
-		m["word.key"] = "text"
-		m["ms"] = "long"
-		m["events.attributes.message.detail"] = "text"
-		m["nested.key"] = "text"
-		m["events"] = "nested"
-		m["nested"] = "nested"
-		m["user"] = "nested"
-		m["event_detail"] = "events.attributes.message.detail"
-		m["group"] = "text"
-		return m
+	testMapping := func() map[string]lucene_parser.FieldOption {
+		return map[string]lucene_parser.FieldOption{
+			"log":                              {Type: lucene_parser.FieldTypeText},
+			"level":                            {Type: lucene_parser.FieldTypeKeyword},
+			"loglevel":                         {Type: lucene_parser.FieldTypeKeyword},
+			"word.key":                         {Type: lucene_parser.FieldTypeText},
+			"ms":                               {Type: lucene_parser.FieldTypeLong},
+			"events.attributes.message.detail": {Type: lucene_parser.FieldTypeText},
+			"nested.key":                       {Type: lucene_parser.FieldTypeText},
+			"events":                           {Type: lucene_parser.FieldTypeNested},
+			"nested":                           {Type: lucene_parser.FieldTypeNested},
+			"user":                             {Type: lucene_parser.FieldTypeNested},
+			"event_detail": {
+				Type: "events.attributes.message.detail",
+			},
+			"group": {Type: lucene_parser.FieldTypeText},
+		}
 	}
 
 	testAlias := func() map[string]string {

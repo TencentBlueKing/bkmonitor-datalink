@@ -1328,8 +1328,6 @@ func TestQueryTs(t *testing.T) {
 			out, err := json.Marshal(res)
 			assert.Nil(t, err)
 			actual := string(out)
-			fmt.Printf("ActualResult: %v\n", actual)
-			log.Infof(t.Context(), "ActualResult: %v", actual)
 			assert.Equal(t, c.result, actual)
 		})
 	}

@@ -163,6 +163,15 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 		cServiceSpanName := pairs[0].GetFieldValue(core.SpanNameField)
 		sServiceSpanName := pairs[1].GetFieldValue(core.SpanNameField)
 
+		cBcsClusterId := pairs[0].GetFieldValue(core.K8sBcsClusterId)
+		sBcsClusterId := pairs[1].GetFieldValue(core.K8sBcsClusterId)
+
+		cPodName := pairs[0].GetFieldValue(core.K8sPodName, core.NetHostnameField)
+		sPodName := pairs[1].GetFieldValue(core.K8sPodName, core.NetHostnameField)
+
+		cPodIp := pairs[0].GetFieldValue(core.K8sPodIp, core.NetHostIpField)
+		sPodIp := pairs[1].GetFieldValue(core.K8sPodIp, core.NetHostIpField)
+
 		cSpanKind := pairs[0].Kind
 		sSpanKind := pairs[1].Kind
 		// unit: μs
@@ -205,11 +214,105 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 			metricCount[storage.ApmServiceFlow]++
 		}
 
+		// Only traffic of error needs to consider the caller and callee of the pod.
+		cStatusCode := pairs[0].StatusCode
+		if cStatusCode == core.StatusCodeError {
+			if cBcsClusterId != "" && sBcsClusterId != "" {
+				// ---> find pod -> pod relation
+				labelKey := strings.Join(
+					[]string{
+						pair("__name__", storage.InstanceErrorFlow),
+						pair("from_instance_type", storage.Pod),
+						pair("from_instance_name", cPodName),
+						pair("from_bcs_cluster_id", pairs[0].GetFieldValue(core.K8sBcsClusterId)),
+						pair("from_namespace", pairs[0].GetFieldValue(core.K8sNamespace)),
+						pair("from_pod_name", cPodName),
+						pair("from_pod_ip", cPodIp),
+						pair("to_instance_type", storage.Pod),
+						pair("to_instance_name", sPodName),
+						pair("to_bcs_cluster_id", pairs[1].GetFieldValue(core.K8sBcsClusterId)),
+						pair("to_namespace", pairs[1].GetFieldValue(core.K8sNamespace)),
+						pair("to_pod_name", sPodName),
+						pair("to_pod_ip", sPodIp),
+						pair("from_span_error", strconv.FormatBool(pairs[0].IsError())),
+						pair("to_span_error", strconv.FormatBool(pairs[1].IsError())),
+					},
+					",",
+				)
+				m.addToStats(labelKey, duration, metricRecordMapping)
+				metricCount[storage.InstanceErrorFlow]++
+			}
+
+			if cBcsClusterId != "" && sService != "" {
+				// ---> find pod -> service relation
+				labelKey := strings.Join(
+					[]string{
+						pair("__name__", storage.InstanceErrorFlow),
+						pair("from_instance_type", storage.Pod),
+						pair("from_instance_name", cPodName),
+						pair("from_bcs_cluster_id", pairs[0].GetFieldValue(core.K8sBcsClusterId)),
+						pair("from_namespace", pairs[0].GetFieldValue(core.K8sNamespace)),
+						pair("from_pod_name", cPodName),
+						pair("from_pod_ip", cPodIp),
+						pair("to_instance_type", storage.ApmService),
+						pair("to_instance_name", sService),
+						pair("to_span_name", sServiceSpanName),
+						pair("to_apm_service_name", sService),
+						pair("to_apm_application_name", m.appName),
+						pair("to_apm_service_category", storage.CategoryHttp),
+						pair("to_apm_service_kind", storage.KindService),
+						pair("to_apm_service_span_kind", strconv.Itoa(sSpanKind)),
+						pair("to_span_http_status_code", pairs[1].GetFieldValue(core.HttpStatusCodeField)),
+						pair("to_span_grpc_status_code", pairs[1].GetFieldValue(core.RpcGrpcStatusCode)),
+						pair("from_span_error", strconv.FormatBool(pairs[0].IsError())),
+						pair("to_span_error", strconv.FormatBool(pairs[1].IsError())),
+					},
+					",",
+				)
+				m.addToStats(labelKey, duration, metricRecordMapping)
+				metricCount[storage.InstanceErrorFlow]++
+			}
+
+			if cService != "" && sBcsClusterId != "" {
+				// ---> find service -> pod relation
+				labelKey := strings.Join(
+					[]string{
+						pair("__name__", storage.InstanceErrorFlow),
+						pair("from_instance_type", storage.ApmService),
+						pair("from_instance_name", cService),
+						pair("from_span_name", cServiceSpanName),
+						pair("from_apm_service_name", cService),
+						pair("from_apm_application_name", m.appName),
+						pair("from_apm_service_category", storage.CategoryHttp),
+						pair("from_apm_service_kind", storage.KindService),
+						pair("from_apm_service_span_kind", strconv.Itoa(cSpanKind)),
+						pair("from_span_http_status_code", pairs[0].GetFieldValue(core.HttpStatusCodeField)),
+						pair("from_span_grpc_status_code", pairs[0].GetFieldValue(core.RpcGrpcStatusCode)),
+						pair("to_instance_type", storage.Pod),
+						pair("to_instance_name", sPodName),
+						pair("to_bcs_cluster_id", pairs[1].GetFieldValue(core.K8sBcsClusterId)),
+						pair("to_namespace", pairs[1].GetFieldValue(core.K8sNamespace)),
+						pair("to_pod_name", sPodName),
+						pair("to_pod_ip", sPodIp),
+						pair("from_span_error", strconv.FormatBool(pairs[0].IsError())),
+						pair("to_span_error", strconv.FormatBool(pairs[1].IsError())),
+					},
+					",",
+				)
+				m.addToStats(labelKey, duration, metricRecordMapping)
+				metricCount[storage.InstanceErrorFlow]++
+			}
+		}
+
 		if !m.enabledLayer4Report {
 			continue
 		}
 		parentIp := pairs[0].GetFieldValue(core.NetHostIpField, core.HostIpField)
 		childIp := pairs[1].GetFieldValue(core.NetHostIpField, core.HostIpField)
+
+		parentHostName := pairs[0].GetFieldValue(core.NetHostnameField, core.HostIpField, core.NetHostIpField)
+		childHostName := pairs[1].GetFieldValue(core.NetHostnameField, core.HostIpField, core.NetHostIpField)
+
 		if parentIp != "" {
 			// ----> Find system -> service relation
 			labelKey := strings.Join(
@@ -268,6 +371,55 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 			)
 			m.addToStats(labelKey, duration, metricRecordMapping)
 			metricCount[storage.SystemFlow]++
+		}
+
+		// Only traffic of error needs to consider the caller and callee of the pod.
+		if cStatusCode == core.StatusCodeError {
+			if cBcsClusterId != "" && childIp != "" {
+				// ---> find pod -> system relation
+				labelKey := strings.Join(
+					[]string{
+						pair("__name__", storage.InstanceErrorFlow),
+						pair("from_instance_type", storage.Pod),
+						pair("from_instance_name", cPodName),
+						pair("from_bcs_cluster_id", pairs[0].GetFieldValue(core.K8sBcsClusterId)),
+						pair("from_namespace", pairs[0].GetFieldValue(core.K8sNamespace)),
+						pair("from_pod_name", cPodName),
+						pair("from_pod_ip", cPodIp),
+						pair("to_instance_type", storage.System),
+						pair("to_instance_name", childHostName),
+						pair("to_bk_target_ip", childIp),
+						pair("from_span_error", strconv.FormatBool(pairs[0].IsError())),
+						pair("to_span_error", strconv.FormatBool(pairs[1].IsError())),
+					},
+					",",
+				)
+				m.addToStats(labelKey, duration, metricRecordMapping)
+				metricCount[storage.InstanceErrorFlow]++
+			}
+
+			if parentIp != "" && sBcsClusterId != "" {
+				// ---> system -> pod relation
+				labelKey := strings.Join(
+					[]string{
+						pair("__name__", storage.InstanceErrorFlow),
+						pair("from_instance_type", storage.System),
+						pair("from_instance_name", parentHostName),
+						pair("from_bk_target_ip", parentIp),
+						pair("to_instance_type", storage.Pod),
+						pair("to_instance_name", sPodName),
+						pair("to_bcs_cluster_id", pairs[1].GetFieldValue(core.K8sBcsClusterId)),
+						pair("to_namespace", pairs[1].GetFieldValue(core.K8sNamespace)),
+						pair("to_pod_name", sPodName),
+						pair("to_pod_ip", sPodIp),
+						pair("from_span_error", strconv.FormatBool(pairs[0].IsError())),
+						pair("to_span_error", strconv.FormatBool(pairs[1].IsError())),
+					},
+					",",
+				)
+				m.addToStats(labelKey, duration, metricRecordMapping)
+				metricCount[storage.InstanceErrorFlow]++
+			}
 		}
 	}
 

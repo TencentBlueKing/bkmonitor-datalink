@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/es"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // ErrResponse
@@ -65,7 +66,7 @@ func HandleESQueryRequest(c *gin.Context) {
 
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		log.Errorf(context.TODO(), "read es request body failed for->[%s]", err)
+		log.Errorf(context.TODO(), "%s [%s] | 操作: 读取ES请求体 | 错误: %s | 解决: 检查请求体格式和大小", errors.ErrBusinessParamInvalid, errors.GetErrorCode(errors.ErrBusinessParamInvalid), err)
 		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUID, user.Source)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
@@ -73,7 +74,7 @@ func HandleESQueryRequest(c *gin.Context) {
 	var req *ESRequest
 	err = json.Unmarshal(body, &req)
 	if err != nil {
-		log.Errorf(context.TODO(), "anaylize es request body failed for->[%s]", err)
+		log.Errorf(context.TODO(), "%s [%s] | 操作: 解析ES请求体 | 错误: %s | 解决: 检查JSON格式和查询语法", errors.ErrQueryParseInvalidSQL, errors.GetErrorCode(errors.ErrQueryParseInvalidSQL), err)
 		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUID, user.Source)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
@@ -87,7 +88,7 @@ func HandleESQueryRequest(c *gin.Context) {
 	}
 	result, err := es.Query(params)
 	if err != nil {
-		log.Errorf(context.TODO(), "query es failed for->[%s]", err)
+		log.Errorf(context.TODO(), "%s [%s] | 操作: 执行ES查询 | 错误: %s | 解决: 检查ES连接和查询参数", errors.ErrBusinessQueryExecution, errors.GetErrorCode(errors.ErrBusinessQueryExecution), err)
 		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUID, user.Source)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return

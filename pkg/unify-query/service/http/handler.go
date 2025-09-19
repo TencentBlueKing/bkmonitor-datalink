@@ -22,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // HandlerPromQLToStruct
@@ -53,7 +54,7 @@ func HandlerPromQLToStruct(c *gin.Context) {
 	promQL := &structured.QueryPromQL{}
 	err = json.NewDecoder(c.Request.Body).Decode(promQL)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		log.Errorf(ctx, "%s [%s] | 操作: JSON解析PromQL | 错误: %s | 解决: 检查请求体格式", errors.ErrBusinessParamInvalid, errors.GetErrorCode(errors.ErrBusinessParamInvalid), err.Error())
 		resp.failed(ctx, err)
 		return
 	}
@@ -102,7 +103,7 @@ func HandlerStructToPromQL(c *gin.Context) {
 	query := &structured.QueryTs{}
 	err = json.NewDecoder(c.Request.Body).Decode(query)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		log.Errorf(ctx, "%s [%s] | 操作: JSON解析查询结构 | 错误: %s | 解决: 检查请求体格式", errors.ErrBusinessParamInvalid, errors.GetErrorCode(errors.ErrBusinessParamInvalid), err.Error())
 		resp.failed(ctx, err)
 		return
 	}
@@ -111,7 +112,7 @@ func HandlerStructToPromQL(c *gin.Context) {
 
 	promQL, err := structToPromQL(ctx, query)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		log.Errorf(ctx, "%s [%s] | 操作: 结构转换PromQL | 错误: %s | 解决: 检查查询结构格式", errors.ErrQueryParseInvalidSQL, errors.GetErrorCode(errors.ErrQueryParseInvalidSQL), err.Error())
 		resp.failed(ctx, err)
 		return
 	}
@@ -172,7 +173,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 	queryStr, _ := json.Marshal(query)
 	span.Set("query-body", string(queryStr))
 
-	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+	log.Infof(ctx, "查询请求 [INFO] | 操作: 查询示例数据 | 请求大小: %d | 头部信息: %+v", len(queryStr), c.Request.Header)
 
 	res, err := queryExemplar(ctx, query)
 	if err != nil {
@@ -209,7 +210,7 @@ func HandlerQueryRaw(c *gin.Context) {
 	ctx, span = trace.NewSpan(ctx, "handler-query-raw")
 	defer func() {
 		if err != nil {
-			log.Errorf(ctx, err.Error())
+			log.Errorf(ctx, "%s [%s] | 操作: 原始查询处理 | 错误: %s | 解决: 检查查询参数和数据源", errors.ErrBusinessOperationFailed, errors.GetErrorCode(errors.ErrBusinessOperationFailed), err.Error())
 			resp.failed(ctx, err)
 		}
 

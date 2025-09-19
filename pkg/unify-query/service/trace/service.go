@@ -26,6 +26,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // Service
@@ -100,7 +101,7 @@ func (s *Service) Start(ctx context.Context) {
 
 	exporter, err = otlptrace.New(ctx, client)
 	if err != nil {
-		log.Errorf(context.TODO(), "sdktrace.WithBatcher(exporter), %s", err.Error())
+		log.Errorf(context.TODO(), "%s [%s] | 配置: Trace跟踪 | 操作: 创建批处理器 | 错误: %s | 解决: 检查Trace导出器配置", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err.Error())
 		return
 	}
 
@@ -136,7 +137,7 @@ func (s *Service) Close() {
 	go func(tracerProvider *sdktrace.TracerProvider) {
 		defer s.wg.Done()
 		if err := tracerProvider.Shutdown(s.ctx); err != nil {
-			log.Errorf(context.TODO(), "failed to shutdown the exporter for->[%s]", err)
+			log.Errorf(context.TODO(), "%s [%s] | 配置: Trace跟踪 | 操作: 关闭导出器 | 错误: %s | 解决: 检查导出器状态和连接", errors.ErrBusinessOperationFailed, errors.GetErrorCode(errors.ErrBusinessOperationFailed), err)
 		}
 
 		log.Infof(context.TODO(), "trace exporter is shutdown now.")

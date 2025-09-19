@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // 服务侧初始化consul实例使用
@@ -52,12 +53,12 @@ func (s *Service) Reload(ctx context.Context) {
 		HTTPAddress, Port, TTL, CaFilePath, KeyFilePath, CertFilePath,
 	)
 	if err != nil {
-		log.Errorf(context.TODO(), "consul service init failed for->[%s]", err)
+		log.Errorf(context.TODO(), "%s [%s] | 存储: Consul | 操作: 初始化服务实例 | 错误: %s | 解决: 检查Consul服务器连接和配置", errors.ErrStorageConnFailed, errors.GetErrorCode(errors.ErrStorageConnFailed), err)
 		return
 	}
 	err = consul.LoopAwakeService()
 	if err != nil {
-		log.Errorf(context.TODO(), "consul service loop awake failed for->[%s]", err)
+		log.Errorf(context.TODO(), "%s [%s] | 存储: Consul | 操作: 启动服务心跳循环 | 错误: %s | 解决: 检查Consul服务注册和心跳配置", errors.ErrStorageConnFailed, errors.GetErrorCode(errors.ErrStorageConnFailed), err)
 		return
 	}
 

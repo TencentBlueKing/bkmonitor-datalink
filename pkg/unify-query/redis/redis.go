@@ -17,6 +17,7 @@ import (
 	goRedis "github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 var globalInstance *Instance
@@ -54,7 +55,7 @@ func SetInstance(ctx context.Context, serviceName string, options *goRedis.Unive
 	log.Debugf(ctx, "[redis] set instance %s, %+v", serviceName, options)
 	globalInstance, err = NewRedisInstance(ctx, serviceName, options)
 	if err != nil {
-		log.Errorf(ctx, "new redis instance error: %s", err)
+		log.Errorf(ctx, "%s [%s] | 存储: Redis | 操作: 创建实例 | 服务: %s | 错误: %s | 解决: 检查Redis连接配置和网络", errors.ErrStorageConnFailed, errors.GetErrorCode(errors.ErrStorageConnFailed), serviceName, err)
 	}
 	return err
 }

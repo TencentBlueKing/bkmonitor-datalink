@@ -28,6 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	queryMod "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
+	queryErrors "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -284,13 +285,13 @@ func (q *QueryTs) ToPromExpr(
 
 	if q.MetricMerge == "" {
 		err = fmt.Errorf("metric merge is empty")
-		log.Errorf(ctx, err.Error())
+		log.Errorf(ctx, "%s [%s] | 操作: 查询处理 | 错误: %s | 解决: 检查查询逻辑和数据格式", queryErrors.ErrBusinessQueryExecution, queryErrors.GetErrorCode(queryErrors.ErrBusinessQueryExecution), err.Error())
 		return nil, err
 	}
 
 	// 先解析表达式
 	if result, err = parser.ParseExpr(q.MetricMerge); err != nil {
-		log.Errorf(ctx, "failed to parser metric_merge->[%s] for err->[%s]", string(q.MetricMerge), err)
+		log.Errorf(ctx, "%s [%s] | 操作: 解析指标合并配置 | 配置: %s | 错误: %s | 解决: 检查MetricMerge配置格式", queryErrors.ErrQueryParseInvalidSQL, queryErrors.GetErrorCode(queryErrors.ErrQueryParseInvalidSQL), string(q.MetricMerge), err)
 		return nil, err
 	}
 
@@ -620,14 +621,14 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	// 时间转换格式
 	_, startTime, endTime, err := function.QueryTimestamp(q.Start, q.End)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		log.Errorf(ctx, "%s [%s] | 操作: 时间参数解析 | 开始时间: %s | 结束时间: %s | 错误: %s | 解决: 检查时间格式是否正确", queryErrors.ErrQueryParseInvalidSQL, queryErrors.GetErrorCode(queryErrors.ErrQueryParseInvalidSQL), q.Start, q.End, err.Error())
 		return nil, err
 	}
 
 	// 时间对齐
 	start, end, _, timezone, err := AlignTime(startTime, endTime, q.Step, q.Timezone)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		log.Errorf(ctx, "%s [%s] | 操作: 时间对齐处理 | 步长: %s | 时区: %s | 错误: %s | 解决: 检查Step参数和Timezone设置", queryErrors.ErrQueryParseInvalidSQL, queryErrors.GetErrorCode(queryErrors.ErrQueryParseInvalidSQL), q.Step, q.Timezone, err.Error())
 		return nil, err
 	}
 
@@ -1005,7 +1006,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		dTmp, err = model.ParseDuration(q.Step)
 		if err != nil {
 			err = errors.WithMessagef(err, "step parse error")
-			log.Errorf(ctx, err.Error())
+			log.Errorf(ctx, "%s [%s] | 操作: 查询处理 | 错误: %s | 解决: 检查查询逻辑和数据格式", queryErrors.ErrBusinessQueryExecution, queryErrors.GetErrorCode(queryErrors.ErrBusinessQueryExecution), err.Error())
 			return nil, err
 		}
 		step = time.Duration(dTmp)

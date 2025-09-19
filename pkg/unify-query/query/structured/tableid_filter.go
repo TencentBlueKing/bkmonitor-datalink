@@ -16,6 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // TableIDFilter
@@ -45,7 +46,7 @@ func NewTableIDFilter(
 		return tableIDFilter, nil
 	}
 	if err != ErrEmptyTableID {
-		log.Errorf(context.TODO(), "search metric:[%s] ,format tableid:[%s], err:[%s]", metricName, tableID, err)
+		log.Errorf(context.TODO(), "%s [%s] | 操作: 搜索指标表ID | 指标: %s | 表ID: %s | 错误: %s | 解决: 检查指标路由配置", errors.ErrDataProcessFailed, errors.GetErrorCode(errors.ErrDataProcessFailed), metricName, tableID, err)
 		return tableIDFilter, err
 	}
 
@@ -55,7 +56,7 @@ func NewTableIDFilter(
 	// 进行查询时，需要找出bk_biz_id, bk_project_id, cluster_id
 	bizIDs, projectIDs, clusterIDs, err := conditions.GetRequiredFiled()
 	if err != nil {
-		log.Errorf(context.TODO(), "get required field error:%s", err)
+		log.Errorf(context.TODO(), "%s [%s] | 操作: 获取必需字段 | 错误: %s | 解决: 检查字段配置和数据结构", errors.ErrDataProcessFailed, errors.GetErrorCode(errors.ErrDataProcessFailed), err)
 		return tableIDFilter, err
 	}
 

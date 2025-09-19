@@ -21,6 +21,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul/base"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // Instance
@@ -128,11 +129,11 @@ func (i *Instance) LoopAwakeService() error {
 		defer func() {
 			err := i.CheckDeregister()
 			if err != nil {
-				log.Errorf(context.TODO(), "deregister check:%s failed,error:%s", i.checkID, err)
+				log.Errorf(context.TODO(), "%s [%s] | 存储: Consul | 操作: 取消注册检查 | 检查ID: %s | 错误: %s | 解决: 检查Consul连接状态", errors.ErrStorageConnFailed, errors.GetErrorCode(errors.ErrStorageConnFailed), i.checkID, err)
 			}
 			err = i.CancelService()
 			if err != nil {
-				log.Errorf(context.TODO(), "cancel service:%s failed,error:%s", i.serviceID, err)
+				log.Errorf(context.TODO(), "%s [%s] | 存储: Consul | 操作: 注销服务 | 服务ID: %s | 错误: %s | 解决: 检查Consul服务注册状态", errors.ErrStorageConnFailed, errors.GetErrorCode(errors.ErrStorageConnFailed), i.serviceID, err)
 			}
 			log.Warnf(context.TODO(), "cancel service:%s with check:%s done", i.serviceID, i.checkID)
 		}()
@@ -145,7 +146,7 @@ func (i *Instance) LoopAwakeService() error {
 			case <-ticker.C:
 				log.Debugf(context.TODO(), "consul check id:%s send", i.checkID)
 				if err := i.CheckPass(); err != nil {
-					log.Errorf(context.TODO(), "FAILED TO CHECK CONSUL, may cause the domain name failed for err->[%s]!", err)
+					log.Errorf(context.TODO(), "%s [%s] | 存储: Consul | 操作: 健康检查通过 | 检查ID: %s | 错误: %s | 解决: 检查Consul服务注册和网络连接", errors.ErrStorageConnFailed, errors.GetErrorCode(errors.ErrStorageConnFailed), i.checkID, err)
 				}
 			}
 		}

@@ -33,6 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 var _ tsdb.Instance = (*Instance)(nil)
@@ -186,7 +187,7 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 	span.Set("get-indexes", aliases)
 	indices, indicesErr := cli.IndexGet(aliases...).Do(ctx)
 	if indicesErr != nil {
-		log.Warnf(ctx, "get index error: %s", indicesErr)
+		log.Warnf(ctx, "%s [%s] | 存储: Elasticsearch | 操作: 获取索引 | 错误: %s | 建议: 检查ES集群和索引配置", errors.ErrWarningServiceDegraded, errors.GetErrorCode(errors.ErrWarningServiceDegraded), indicesErr)
 		span.Set("get-mapping", aliases)
 		res, err := cli.GetMapping().Index(aliases...).Type("").Do(ctx)
 		if err != nil {
@@ -552,7 +553,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
 	if err != nil {
-		log.Warnf(ctx, "index is empty with %v with %s error %s", aliases, qo.conn.String(), err)
+		log.Warnf(ctx, "%s [警告] | 存储: Elasticsearch | 操作: 获取空索引 | 别名: %v | 连接: %s | 错误: %s | 建议: 检查索引存在性", "存储警告", aliases, qo.conn.String(), err)
 		return size, total, option, err
 	}
 	span.Set("field-map-length", len(fieldMap))
@@ -570,7 +571,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	queryLabelMaps, queryLabelErr := query.LabelMap()
 	if queryLabelErr != nil {
-		log.Warnf(ctx, "query label map error: %s", queryLabelErr)
+		log.Warnf(ctx, "%s [警告] | 存储: Elasticsearch | 操作: 查询标签映射 | 错误: %s | 建议: 检查标签字段配置", "查询警告", queryLabelErr)
 	}
 
 	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
@@ -615,7 +616,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	sr, err := i.esQuery(ctx, qo, fact)
 	if err != nil {
-		log.Errorf(ctx, fmt.Sprintf("es query raw data error: %s", err.Error()))
+		log.Errorf(ctx, "%s [%s] | 存储: Elasticsearch | 操作: 查询原始数据 | 错误: %s | 解决: 检查ES查询语法和索引结构", errors.ErrBusinessQueryExecution, errors.GetErrorCode(errors.ErrBusinessQueryExecution), err.Error())
 		return size, total, option, err
 	}
 
@@ -749,7 +750,7 @@ func (i *Instance) QuerySeriesSet(
 	}
 	fieldMap, err := i.fieldMap(ctx, query.FieldAlias, aliases...)
 	if err != nil {
-		log.Warnf(ctx, "index is empty with %v with %s error %s", aliases, qo.conn.String(), err)
+		log.Warnf(ctx, "%s [警告] | 存储: Elasticsearch | 操作: 获取空索引(标签值) | 别名: %v | 连接: %s | 错误: %s | 建议: 检查索引数据", "存储警告", aliases, qo.conn.String(), err)
 		return storage.EmptySeriesSet()
 	}
 	span.Set("field-map-length", len(fieldMap))
@@ -763,7 +764,7 @@ func (i *Instance) QuerySeriesSet(
 
 	queryLabelMap, queryLabelErr := query.LabelMap()
 	if queryLabelErr != nil {
-		log.Warnf(ctx, "query label map error: %s", queryLabelErr)
+		log.Warnf(ctx, "%s [警告] | 存储: Elasticsearch | 操作: 查询标签映射(标签值) | 错误: %s | 建议: 检查标签字段配置", "查询警告", queryLabelErr)
 	}
 
 	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()

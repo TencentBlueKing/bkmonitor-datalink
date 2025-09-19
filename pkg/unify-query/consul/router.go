@@ -20,6 +20,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // MetaFieldType :
@@ -166,7 +167,7 @@ func (m *MetaResultTableConfig) GetTSInfo(dataID DataID, tableID *TableID) error
 		db, has := shipper.StorageConfig[MetadataStorageDataBaseKey]
 		dbStr, ok := db.(string)
 		if !has || !ok {
-			log.Errorf(context.TODO(), "influxdb get database error, dataid:[%d], database:[%v]", dataID, db)
+			log.Errorf(context.TODO(), "%s [%s] | 存储: InfluxDB | 操作: 获取数据库 | 数据ID: %d | 数据库: %v | 错误: 数据库不存在 | 解决: 检查DataID和数据库配置", errors.ErrDataProcessFailed, errors.GetErrorCode(errors.ErrDataProcessFailed), dataID, db)
 			continue
 		}
 		tableID.ClusterID = fmt.Sprintf("%d", shipper.ClusterConfig.ClusterID)
@@ -180,7 +181,7 @@ func (m *MetaResultTableConfig) GetTSInfo(dataID DataID, tableID *TableID) error
 			measurement, has := shipper.StorageConfig[MetadataStorageTableKey]
 			measurementStr, ok := measurement.(string)
 			if !has || !ok {
-				log.Errorf(context.TODO(), "influxdb get database error, dataid:[%d], measurement:[%v]", dataID, measurement)
+				log.Errorf(context.TODO(), "%s [%s] | 存储: InfluxDB | 操作: 获取测量表 | 数据ID: %d | 测量表: %v | 错误: 测量表不存在 | 解决: 检查测量表配置和数据源", errors.ErrDataProcessFailed, errors.GetErrorCode(errors.ErrDataProcessFailed), dataID, measurement)
 				continue
 			}
 			tableID.Measurement = measurementStr
@@ -262,7 +263,7 @@ func FormatMetaData(kvPairs api.KVPairs) ([]*PipelineConfig, error) {
 		var pipeConf *PipelineConfig
 		err = json.Unmarshal(kvPair.Value, &pipeConf)
 		if err != nil {
-			log.Errorf(context.TODO(), "marshal pipelineConfig error: %s", err)
+			log.Errorf(context.TODO(), "%s [%s] | 操作: 序列化管道配置 | 错误: %s | 解决: 检查配置格式和数据结构", errors.ErrDataProcessFailed, errors.GetErrorCode(errors.ErrDataProcessFailed), err)
 			continue
 		}
 		PipelineConfList = append(PipelineConfList, pipeConf)
@@ -390,12 +391,12 @@ func getDataidMetrics(kvPairs api.KVPairs, prefix string) (map[int][]string, err
 		}
 		dataid, err := strconv.Atoi(items[0])
 		if err != nil {
-			log.Errorf(context.TODO(), "get dataid metrics, Atoi err: %v, dataid: %s", err, items[0])
+			log.Errorf(context.TODO(), "%s [%s] | 存储: Consul | 操作: 解析DataID数值 | DataID: %s | 错误: %v | 解决: 检查DataID格式是否为数字", errors.ErrDataProcessFailed, errors.GetErrorCode(errors.ErrDataProcessFailed), items[0], err)
 			continue
 		}
 		metrics := make([]string, 0)
 		if err := json.Unmarshal(kv.Value, &metrics); err != nil {
-			log.Warnf(context.TODO(), "get dataid metrics, Unmarshar err: %v, metrics: %s", err, kv.Value)
+			log.Warnf(context.TODO(), "%s [%s] | 存储: Consul | 操作: 反序列化DataID指标 | 指标数据: %s | 错误: %v | 建议: 检查指标数据JSON格式", errors.ErrWarningDataIncomplete, errors.GetErrorCode(errors.ErrWarningDataIncomplete), kv.Value, err)
 			continue
 		}
 		result[dataid] = metrics

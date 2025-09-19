@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // Instance prometheus 查询引擎
@@ -100,17 +101,17 @@ func (i *Instance) DirectQueryRange(
 
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		log.Errorf(ctx, "%s [%s] | 操作: 创建PromQL范围查询 | 错误: %s | 解决: 检查PromQL语法和时间范围", errors.ErrQueryParseInvalidSQL, errors.GetErrorCode(errors.ErrQueryParseInvalidSQL), err.Error())
 		return nil, false, err
 	}
 	result := query.Exec(ctx)
 	if result.Err != nil {
-		log.Errorf(ctx, result.Err.Error())
+		log.Errorf(ctx, "%s [%s] | 操作: Prometheus查询执行 | 错误: %s | 解决: 检查PromQL语法和数据源", errors.ErrBusinessQueryExecution, errors.GetErrorCode(errors.ErrBusinessQueryExecution), result.Err.Error())
 		return nil, false, result.Err
 	}
 
 	for _, err = range result.Warnings {
-		log.Errorf(ctx, err.Error())
+		log.Warnf(ctx, "%s [%s] | 操作: Prometheus查询警告 | 警告: %s | 建议: 检查查询优化", "查询警告", "WARN", err.Error())
 		return nil, false, err
 	}
 

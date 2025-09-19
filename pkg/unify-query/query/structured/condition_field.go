@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 const (
@@ -69,7 +70,7 @@ func PromOperatorToConditions(matchType labels.MatchType) string {
 	case labels.MatchNotRegexp:
 		return ConditionNotRegEqual
 	default:
-		log.Errorf(context.TODO(), "failed to translate op->[%s] to condition op.Will return default op", matchType)
+		log.Errorf(context.TODO(), "%s [%s] | 操作: 翻译操作符 | 操作符: %s | 问题: 无法转换条件操作符 | 处理: 使用默认操作符 | 解决: 检查操作符支持列表", errors.ErrQueryParseUnsupported, errors.GetErrorCode(errors.ErrQueryParseUnsupported), matchType)
 		return ConditionEqual
 	}
 }

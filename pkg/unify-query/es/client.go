@@ -17,6 +17,7 @@ import (
 	elasticsearch "github.com/elastic/go-elasticsearch/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 type Client interface {
@@ -60,7 +61,7 @@ func (c *ESClient) Search(body string, indexNames ...string) (string, error) {
 	es := c.client
 	result, err := es.Search(es.Search.WithIndex(indexNames...), es.Search.WithBody(strings.NewReader(body)))
 	if err != nil {
-		log.Errorf(context.TODO(), "search index:%v,body:%s failed for:%s", indexNames, body, err)
+		log.Errorf(context.TODO(), "%s [%s] | 存储: Elasticsearch | 操作: 搜索查询 | 索引: %v | 错误: %s | 解决: 检查ES集群状态和连接配置", errors.ErrStorageConnFailed, errors.GetErrorCode(errors.ErrStorageConnFailed), indexNames, err)
 		return "", err
 	}
 	res, err := io.ReadAll(result.Body)
@@ -77,7 +78,7 @@ func (c *ESClient) Aliases() (string, error) {
 	es := c.client
 	result, err := es.Cat.Aliases()
 	if err != nil {
-		log.Errorf(context.TODO(), "cat aliases failed for:%s", err)
+		log.Errorf(context.TODO(), "%s [%s] | 存储: Elasticsearch | 操作: 获取别名列表 | 错误: %s | 解决: 检查ES集群状态", errors.ErrStorageConnFailed, errors.GetErrorCode(errors.ErrStorageConnFailed), err)
 		return "", err
 	}
 	res, err := io.ReadAll(result.Body)
@@ -94,7 +95,7 @@ func (c *ESClient) AliasWithIndex(index string) (string, error) {
 	es := c.client
 	result, err := es.Indices.GetAlias(es.Indices.GetAlias.WithIndex(index))
 	if err != nil {
-		log.Errorf(context.TODO(), "cat aliases with index:%s, failed for:%s", index, err)
+		log.Errorf(context.TODO(), "%s [%s] | 存储: Elasticsearch | 操作: 获取索引别名 | 索引: %s | 错误: %s | 解决: 检查索引和别名配置", errors.ErrStorageConnFailed, errors.GetErrorCode(errors.ErrStorageConnFailed), index, err)
 		return "", err
 	}
 	res, err := io.ReadAll(result.Body)
@@ -111,7 +112,7 @@ func (c *ESClient) Indices() (string, error) {
 	es := c.client
 	result, err := es.API.Cat.Indices()
 	if err != nil {
-		log.Errorf(context.TODO(), "cat indices failed for:%s", err)
+		log.Errorf(context.TODO(), "%s [%s] | 存储: Elasticsearch | 操作: 获取索引列表 | 错误: %s | 解决: 检查ES集群状态和权限", errors.ErrStorageConnFailed, errors.GetErrorCode(errors.ErrStorageConnFailed), err)
 		return "", err
 	}
 	res, err := io.ReadAll(result.Body)

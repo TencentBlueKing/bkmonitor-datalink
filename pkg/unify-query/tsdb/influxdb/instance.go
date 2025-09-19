@@ -43,6 +43,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	queryErrors "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 const (
@@ -183,7 +184,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 
 	dec, err := decoder.GetDecoder(i.contentType)
 	if err != nil {
-		log.Errorf(ctx, "get decoder:%s error:%s", i.contentType, err)
+		log.Errorf(ctx, "%s [%s] | 存储: InfluxDB | 操作: 获取解码器 | 类型: %s | 错误: %s | 解决: 检查内容类型配置", queryErrors.ErrDataProcessFailed, queryErrors.GetErrorCode(queryErrors.ErrDataProcessFailed), i.contentType, err)
 		return nil, err
 	}
 
@@ -479,7 +480,7 @@ func (i *Instance) query(
 
 	dec, err := decoder.GetDecoder(i.contentType)
 	if err != nil {
-		log.Errorf(ctx, "get decoder:%s error:%s", i.contentType, err)
+		log.Errorf(ctx, "%s [%s] | 存储: InfluxDB | 操作: 获取解码器 | 类型: %s | 错误: %s | 解决: 检查内容类型配置", queryErrors.ErrDataProcessFailed, queryErrors.GetErrorCode(queryErrors.ErrDataProcessFailed), i.contentType, err)
 		return nil, err
 	}
 
@@ -640,7 +641,7 @@ func (i *Instance) grpcStream(
 
 	stream, err := client.Raw(ctx, req)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
+		log.Errorf(ctx, "%s [%s] | 存储: InfluxDB | 操作: GRPC原始查询 | 错误: %s | 解决: 检查GRPC连接和查询参数", queryErrors.ErrBusinessQueryExecution, queryErrors.GetErrorCode(queryErrors.ErrBusinessQueryExecution), err.Error())
 		return storage.EmptySeriesSet()
 	}
 	limiter := rate.NewLimiter(rate.Limit(i.readRateLimit), int(i.readRateLimit))
@@ -839,7 +840,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 		)
 		dec, err := decoder.GetDecoder(i.contentType)
 		if err != nil {
-			log.Errorf(ctx, "get decoder:%s error:%s", i.contentType, err)
+			log.Errorf(ctx, "%s [%s] | 存储: InfluxDB | 操作: 获取解码器 | 类型: %s | 错误: %s | 解决: 检查内容类型配置", queryErrors.ErrDataProcessFailed, queryErrors.GetErrorCode(queryErrors.ErrDataProcessFailed), i.contentType, err)
 			return nil, err
 		}
 
@@ -950,7 +951,7 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 	)
 	dec, err := decoder.GetDecoder(i.contentType)
 	if err != nil {
-		log.Errorf(ctx, "get decoder:%s error:%s", i.contentType, err)
+		log.Errorf(ctx, "%s [%s] | 存储: InfluxDB | 操作: 获取解码器 | 类型: %s | 错误: %s | 解决: 检查内容类型配置", queryErrors.ErrDataProcessFailed, queryErrors.GetErrorCode(queryErrors.ErrDataProcessFailed), i.contentType, err)
 		return nil, err
 	}
 
@@ -1092,7 +1093,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		)
 		dec, err := decoder.GetDecoder(i.contentType)
 		if err != nil {
-			log.Errorf(ctx, "get decoder:%s error:%s", i.contentType, err)
+			log.Errorf(ctx, "%s [%s] | 存储: InfluxDB | 操作: 获取解码器 | 类型: %s | 错误: %s | 解决: 检查内容类型配置", queryErrors.ErrDataProcessFailed, queryErrors.GetErrorCode(queryErrors.ErrDataProcessFailed), i.contentType, err)
 			return nil, err
 		}
 

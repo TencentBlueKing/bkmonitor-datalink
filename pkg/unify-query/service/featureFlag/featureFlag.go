@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // Service
@@ -43,7 +44,7 @@ func (s *Service) Start(ctx context.Context) {
 func (s *Service) reloadFeatureFlags(ctx context.Context) error {
 	data, err := consul.GetFeatureFlags()
 	if err != nil {
-		log.Errorf(context.TODO(), "get feature flags from consul failed,error:%s", err)
+		log.Errorf(context.TODO(), "%s [%s] | 配置: 功能开关 | 操作: 从Consul获取功能开关 | 错误: %s | 解决: 检查Consul连接和功能开关配置", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
 		return err
 	}
 	err = featureFlag.ReloadFeatureFlags(data)
@@ -54,7 +55,7 @@ func (s *Service) reloadFeatureFlags(ctx context.Context) error {
 func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 	err := s.reloadFeatureFlags(ctx)
 	if err != nil {
-		log.Errorf(ctx, "realod feature flags failed, error: %s", err)
+		log.Errorf(ctx, "%s [%s] | 配置: 功能开关 | 操作: 重载功能开关 | 错误: %s | 解决: 检查功能开关重载逻辑", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
 		return err
 	}
 	ch, err := consul.WatchFeatureFlags(ctx)
@@ -67,13 +68,13 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
-				log.Warnf(context.TODO(), "feature flags reload loop exit")
+				log.Warnf(context.TODO(), "%s [%s] | 配置: 功能开关 | 操作: 功能开关重载循环退出 | 说明: 服务正在关闭", errors.ErrWarningServiceDegraded, errors.GetErrorCode(errors.ErrWarningServiceDegraded))
 				return
 			case <-ch:
 				log.Debugf(context.TODO(), "get feature flags changed notify")
 				err = s.reloadFeatureFlags(ctx)
 				if err != nil {
-					log.Errorf(context.TODO(), "reload feature flags  failed,error:%s", err)
+					log.Errorf(context.TODO(), "%s [%s] | 配置: 功能开关 | 操作: 动态重载功能开关 | 错误: %s | 解决: 检查Consul通知和功能开关数据", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
 				}
 			}
 		}
@@ -97,7 +98,7 @@ func (s *Service) Reload(ctx context.Context) {
 
 	err = s.loopReloadFeatureFlags(s.ctx)
 	if err != nil {
-		log.Errorf(s.ctx, "start loop feature flags failed,error: %s", err)
+		log.Errorf(s.ctx, "%s [%s] | 配置: 功能开关 | 操作: 启动功能开关循环 | 错误: %s | 解决: 检查服务初始化和配置", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
 		return
 	}
 
@@ -113,7 +114,7 @@ func (s *Service) Reload(ctx context.Context) {
 		},
 	})
 	if err != nil {
-		log.Errorf(s.ctx, err.Error())
+		log.Errorf(s.ctx, "%s [%s] | 配置: 功能开关 | 操作: 处理服务错误 | 错误: %s | 解决: 检查服务整体状态", errors.ErrBusinessOperationFailed, errors.GetErrorCode(errors.ErrBusinessOperationFailed), err.Error())
 		return
 	}
 

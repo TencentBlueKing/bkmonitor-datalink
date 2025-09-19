@@ -37,7 +37,7 @@ func HandleClientError(ctx context.Context, url string, err error) error {
 	}
 
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		friendlyMsg := fmt.Sprintf("Query Timeout: the request to %s timed out", url)
+		friendlyMsg := fmt.Sprintf("查询超时: 请求 %s 超时", url)
 		metadata.SetStatus(ctx, metadata.StorageTimeout, friendlyMsg)
 		return &ClientErr{
 			OriginalError: err,
@@ -45,7 +45,7 @@ func HandleClientError(ctx context.Context, url string, err error) error {
 		}
 	}
 
-	friendlyMsg := fmt.Sprintf("Query Error: failed to connect to %s, error: %v", url, err)
+	friendlyMsg := fmt.Sprintf("查询出错: 请求地址: %s", url)
 	metadata.SetStatus(ctx, metadata.StorageError, friendlyMsg)
 	return &ClientErr{
 		OriginalError: err,

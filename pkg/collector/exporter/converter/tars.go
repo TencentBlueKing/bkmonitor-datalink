@@ -81,7 +81,7 @@ type bucket struct {
 
 // propNameToNormalizeMetricName 将属性转为标准指标名
 func propNameToNormalizeMetricName(propertyName, policy string) string {
-	name := strings.Join([]string{propertyName, strings.ToLower(policy)}, "_")
+	name := propertyName + "_" + strings.ToLower(policy)
 	// 在 NormalizeName 基础上，去掉 :
 	return utils.NormalizeName(strings.ReplaceAll(name, ":", ""))
 }
@@ -146,7 +146,7 @@ func toBucketMap(s string) map[int32]int32 {
 // toHistogram 根据分布情况，生成统计指标
 func toHistogram(name, target string, timestamp int64, buckets []bucket, dims map[string]string) []*promMapper {
 	pms := make([]*promMapper, 0, len(buckets)+1)
-	rpcHistogramBucketMetricName := strings.Join([]string{name, "bucket"}, "_")
+	rpcHistogramBucketMetricName := name + "_bucket"
 	for _, b := range buckets {
 		dims := utils.CloneMap(dims)
 		dims["le"] = b.Val
@@ -159,7 +159,7 @@ func toHistogram(name, target string, timestamp int64, buckets []bucket, dims ma
 		pms = append(pms, pm)
 	}
 	pms = append(pms, &promMapper{
-		Metrics:    common.MapStr{strings.Join([]string{name, "count"}, "_"): buckets[len(buckets)-1].Cnt},
+		Metrics:    common.MapStr{name + "_count": buckets[len(buckets)-1].Cnt},
 		Target:     target,
 		Timestamp:  timestamp,
 		Dimensions: utils.CloneMap(dims),
@@ -341,7 +341,7 @@ func (s *stat) ToEvents(metricNamePrefix string) []define.Event {
 
 		pms = append(pms, &promMapper{
 			Metrics: common.MapStr{
-				strings.Join([]string{metricNamePrefix, s.role, "handled_total"}, "_"): reqCnt,
+				metricNamePrefix + "_" + s.role + "_handled_total": reqCnt,
 			},
 			Target:     s.target,
 			Timestamp:  s.timestamp,
@@ -358,13 +358,13 @@ func (s *stat) ToEvents(metricNamePrefix string) []define.Event {
 		codeType = rpcMetricTagsCodeTypeTimeout
 	}
 
-	rpcHistogramMetricName := strings.Join([]string{metricNamePrefix, s.role, "handled_seconds"}, "_")
+	rpcHistogramMetricName := metricNamePrefix + "_" + s.role + "_handled_seconds"
 	dims := utils.MergeMaps(s.dimensions, map[string]string{rpcMetricTagsCodeType: codeType})
 	rpcHistogramPms := toHistogram(rpcHistogramMetricName, s.target, s.timestamp, toSecondBuckets(s.bucketMap), dims)
 	pms = append(pms, rpcHistogramPms...)
 
 	// 协议数据仅够生成 _bucket / _count 指标，这里需要使用 TotalRspTime 补充 _sum，以构造完整的 Histogram
-	rpcHistogramSumMetricName := strings.Join([]string{rpcHistogramMetricName, "sum"}, "_")
+	rpcHistogramSumMetricName := rpcHistogramMetricName + "_sum"
 	pms = append(pms, &promMapper{
 		Metrics:    common.MapStr{rpcHistogramSumMetricName: cast.ToFloat64(s.totalRspTime) / 1000},
 		Target:     s.target,

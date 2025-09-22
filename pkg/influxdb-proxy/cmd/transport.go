@@ -38,6 +38,11 @@ to quickly create a Cobra application.`,
 		defer cancel()
 		address := common.Config.GetString(common.ConfigKeyConsulAddress)
 		prefix := common.Config.GetString(common.ConfigKeyConsulPrefix)
+		caCertFile := common.Config.GetString(common.ConfigKeyConsulCACertFile)
+		certFile := common.Config.GetString(common.ConfigKeyConsulCertFile)
+		keyFile := common.Config.GetString(common.ConfigKeyConsulKeyFile)
+		skipVerify := common.Config.GetBool(common.ConfigKeyConsulSkipVerify)
+
 		periodParam, err := cmd.Flags().GetString("period")
 		if err != nil {
 			logging.StdLogger.Errorf("get period failed,error:%s", err)
@@ -65,7 +70,7 @@ to quickly create a Cobra application.`,
 			return
 		}
 
-		err = consul.Init(address, prefix)
+		err = consul.Init(address, prefix, caCertFile, certFile, keyFile, skipVerify)
 		if err != nil {
 			logging.StdLogger.Errorf("consul init failed,error:%s", err)
 			return

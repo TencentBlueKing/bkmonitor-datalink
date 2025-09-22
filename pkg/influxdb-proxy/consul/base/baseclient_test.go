@@ -62,7 +62,7 @@ func (t *TestSuite) SetupSuite() {
 	mockPlan.EXPECT().IsStopped().Return(false).AnyTimes()
 	mockPlan.EXPECT().Stop().Return().AnyTimes()
 
-	t.stub = gostub.Stub(&base.GetAPI, func(client *base.BasicClient, address string) error {
+	t.stub = gostub.Stub(&base.GetAPI, func(client *base.BasicClient, address string, scheme string, skip_verify bool) error {
 		client.KV = mockKV
 		client.Agent = mockAgent
 		return nil
@@ -76,7 +76,7 @@ func (t *TestSuite) TearDownSuite() {
 }
 
 func (t *TestSuite) TestPut() {
-	client, err := base.NewBasicClient("")
+	client, err := base.NewBasicClient("", "", "", "", false)
 	if err != nil {
 		t.Error(err)
 	}
@@ -87,7 +87,7 @@ func (t *TestSuite) TestPut() {
 }
 
 func (t *TestSuite) TestGet() {
-	client, err := base.NewBasicClient("")
+	client, err := base.NewBasicClient("", "", "", "", false)
 	if err != nil {
 		t.Error(err)
 	}
@@ -99,7 +99,7 @@ func (t *TestSuite) TestGet() {
 }
 
 func (t *TestSuite) TestGetPrefix() {
-	client, err := base.NewBasicClient("")
+	client, err := base.NewBasicClient("", "", "", "", false)
 	if err != nil {
 		t.Error(err)
 	}
@@ -113,7 +113,7 @@ func (t *TestSuite) TestGetPrefix() {
 }
 
 func (t *TestSuite) TestGetChild() {
-	client, err := base.NewBasicClient("")
+	client, err := base.NewBasicClient("", "", "", "", false)
 	if err != nil {
 		t.Error(err)
 	}
@@ -125,7 +125,7 @@ func (t *TestSuite) TestGetChild() {
 }
 
 func (t *TestSuite) TestWatch() {
-	client, err := base.NewBasicClient("")
+	client, err := base.NewBasicClient("", "", "", "", false)
 	if err != nil {
 		t.Error(err)
 	}
@@ -140,7 +140,7 @@ func (t *TestSuite) TestWatch() {
 }
 
 func (t *TestSuite) TestClose() {
-	client, err := base.NewBasicClient("")
+	client, err := base.NewBasicClient("", "", "", "", false)
 	if err != nil {
 		t.Error(err)
 	}
@@ -159,7 +159,7 @@ func (t *TestSuite) TestClose() {
 }
 
 func (t *TestSuite) TestWatchPrefix() {
-	client, err := base.NewBasicClient("")
+	client, err := base.NewBasicClient("", "", "", "", false)
 	if err != nil {
 		t.Error(err)
 	}
@@ -176,7 +176,7 @@ func (t *TestSuite) TestWatchPrefix() {
 func (t *TestSuite) TestCheckStatus() {
 	var err error
 	var res string
-	client, err := base.NewBasicClient("")
+	client, err := base.NewBasicClient("", "", "", "", false)
 	t.Nil(err)
 	res, err = client.CheckStatus("t1")
 	t.Nil(err)
@@ -184,14 +184,14 @@ func (t *TestSuite) TestCheckStatus() {
 }
 
 func (t *TestSuite) TestChangeStatus() {
-	client, err := base.NewBasicClient("")
+	client, err := base.NewBasicClient("", "", "", "", false)
 	t.Nil(err)
 	err = client.CheckPass("t1", "test")
 	t.Nil(err)
 }
 
 func (t *TestSuite) TestCheckRegister() {
-	client, err := base.NewBasicClient("")
+	client, err := base.NewBasicClient("", "", "", "", false)
 	t.Nil(err)
 	err = client.ServiceAwake("influxdb_proxy")
 	t.Nil(err)
@@ -200,14 +200,14 @@ func (t *TestSuite) TestCheckRegister() {
 }
 
 func (t *TestSuite) TestCheckDeregister() {
-	client, err := base.NewBasicClient("")
+	client, err := base.NewBasicClient("", "", "", "", false)
 	t.Nil(err)
 	err = client.CheckDeregister("t1")
 	t.Nil(err)
 }
 
 func (t *TestSuite) TestServiceStatus() {
-	client, err := base.NewBasicClient("127.0.0.1:8500")
+	client, err := base.NewBasicClient("127.0.0.1:8500", "", "", "", false)
 	t.Nil(err)
 	err = client.ServiceAwake("influxdb_proxy")
 	t.Nil(err)

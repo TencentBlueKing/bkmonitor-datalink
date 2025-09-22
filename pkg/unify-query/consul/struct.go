@@ -44,6 +44,7 @@ type Instance struct {
 func NewConsulInstance(
 	ctx context.Context, serviceName, consulAddress string, tags []string,
 	address string, port int, ttl string, caFile, keyFile, certFile string,
+	skipTlsVerify bool,
 ) (*Instance, error) {
 	hash := fnv.New32a()
 	_, err := hash.Write([]byte(fmt.Sprintf("%s:%d", address, port)))
@@ -52,7 +53,7 @@ func NewConsulInstance(
 	}
 	serviceID := fmt.Sprintf("%s-unify-query-%d", serviceName, hash.Sum32())
 	checkID := fmt.Sprintf("%s:%d", address, port)
-	client, err := base.NewClient(consulAddress, caFile, keyFile, certFile)
+	client, err := base.NewClient(consulAddress, caFile, keyFile, certFile, skipTlsVerify)
 	if err != nil {
 		return nil, err
 	}

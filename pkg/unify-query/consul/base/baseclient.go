@@ -27,14 +27,15 @@ type Client struct {
 
 	// 链接相关信息
 	// address IP:Port
-	address      string
-	caFilePath   string // ca根证书路径
-	keyFilePath  string // client端身份证书，供server验证client身份
-	certFilePath string // server端身份证书
+	address       string
+	caFilePath    string // ca根证书路径
+	keyFilePath   string // client端身份证书，供server验证client身份
+	certFilePath  string // server端身份证书
+	skipTlsVerify bool   // 是否跳过hostname验证
 }
 
 // NewClient 传入的address应符合IP:Port的结构，例如: 127.0.0.1:8080
-func NewClient(address, caFile, keyFile, certFile string) (*Client, error) {
+func NewClient(address, caFile, keyFile, certFile string, skipTlsVerify bool) (*Client, error) {
 
 	var (
 		err    error
@@ -43,6 +44,7 @@ func NewClient(address, caFile, keyFile, certFile string) (*Client, error) {
 			caFilePath:         caFile,
 			keyFilePath:        keyFile,
 			certFilePath:       certFile,
+			skipTlsVerify:      skipTlsVerify,
 			watchPlanMap:       make(map[string]*watch.Plan),
 			watchPrefixPlanMap: make(map[string]*watch.Plan),
 		}
@@ -66,7 +68,7 @@ var GetAPI = func(client *Client) error {
 	conf.TLSConfig.CAFile = client.caFilePath
 	conf.TLSConfig.KeyFile = client.keyFilePath
 	conf.TLSConfig.CertFile = client.certFilePath
-
+	conf.TLSConfig.InsecureSkipVerify = client.skipTlsVerify
 	// 这里的client是api接口的，不是本地的Client，不要搞混了
 	apiClient, err := api.NewClient(conf)
 	if err != nil {

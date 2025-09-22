@@ -47,9 +47,9 @@ func (s *Service) Reload(ctx context.Context) {
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
 	log.Debugf(context.TODO(), "consul service context update success.")
 
-	err := consul.SetInstance(
+	err := consul.SetInstanceWithTLS(
 		s.ctx, KVBasePath, ServiceName, Address, []string{"unify-query"},
-		HTTPAddress, Port, TTL, CaFilePath, KeyFilePath, CertFilePath,
+		HTTPAddress, Port, TTL, CaFilePath, KeyFilePath, CertFilePath, SkipTLSVerify,
 	)
 	if err != nil {
 		log.Errorf(context.TODO(), "consul service init failed for->[%s]", err)

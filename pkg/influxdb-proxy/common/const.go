@@ -41,4 +41,8 @@ const (
 	ConfigKeyConsulHealthServiceName = "consul.health.service_name"
 	ConfigKeyConsulAddress           = "consul.address"
 	ConfigKeyConsulPrefix            = "consul.prefix"
+	ConfigKeyConsulCACertFile        = "consul.ca_cert_file"
+	ConfigKeyConsulCertFile          = "consul.client_cert_file"
+	ConfigKeyConsulKeyFile           = "consul.client_key_file"
+	ConfigKeyConsulSkipVerify        = "consul.skip_tls_verify"
 )

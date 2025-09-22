@@ -40,6 +40,13 @@ func Wait() {
 func SetInstance(ctx context.Context, kvBasePath, serviceName, consulAddress string,
 	tags []string, address string, port int, ttl string, caFile, keyFile, certFile string,
 ) error {
+	return SetInstanceWithTLS(ctx, kvBasePath, serviceName, consulAddress, tags, address, port, ttl, caFile, keyFile, certFile, false)
+}
+
+// SetInstanceWithTLS 创建 consul 实例(适配tls)
+func SetInstanceWithTLS(ctx context.Context, kvBasePath, serviceName, consulAddress string,
+	tags []string, address string, port int, ttl string, caFile, keyFile, certFile string, skipVerify bool,
+) error {
 	lock.Lock()
 	defer lock.Unlock()
 	var err error
@@ -48,7 +55,7 @@ func SetInstance(ctx context.Context, kvBasePath, serviceName, consulAddress str
 	}
 
 	globalInstance, err = NewConsulInstance(
-		ctx, serviceName, consulAddress, tags, address, port, ttl, caFile, keyFile, certFile,
+		ctx, serviceName, consulAddress, tags, address, port, ttl, caFile, keyFile, certFile, skipVerify,
 	)
 	if err != nil {
 		return err

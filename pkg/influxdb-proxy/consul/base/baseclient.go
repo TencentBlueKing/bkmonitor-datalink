@@ -31,14 +31,19 @@ type BasicClient struct {
 	Agent   Agent
 	Session Session
 	// address IP:Port
-	address            string
+	address       string
+	caFilePath    string // ca根证书路径
+	keyFilePath   string // client端身份证书，供server验证client身份
+	certFilePath  string // server端身份证书
+	skipTlsVerify bool   // 是否跳过hostname验证
+
 	watchPlanMap       map[string]Plan
 	watchPrefixPlanMap map[string]Plan
 	outChanMap         map[string]chan interface{}
 }
 
 // NewBasicClient 传入的address应符合IP:Port的结构，例如: 127.0.0.1:8080
-func NewBasicClient(address string) (ConsulClient, error) {
+func NewBasicClient(address string, caCertFilePath, clientCertFilePath, clientKeyFilePath string, skipVerify bool) (ConsulClient, error) {
 	flowLog := logging.NewEntry(map[string]interface{}{
 		"module": moduleName,
 	})
@@ -46,7 +51,11 @@ func NewBasicClient(address string) (ConsulClient, error) {
 	var err error
 	client := new(BasicClient)
 	client.address = address
-	err = GetAPI(client, address)
+	client.caFilePath = caCertFilePath
+	client.certFilePath = clientCertFilePath
+	client.keyFilePath = clientKeyFilePath
+	client.skipTlsVerify = skipVerify
+	err = GetAPI(client)
 	if err != nil {
 		return nil, err
 	}
@@ -59,14 +68,19 @@ func NewBasicClient(address string) (ConsulClient, error) {
 }
 
 // GetAPI 获取api包中的对象
-var GetAPI = func(client *BasicClient, address string) error {
+var GetAPI = func(client *BasicClient) error {
 	flowLog := logging.NewEntry(map[string]interface{}{
 		"module": moduleName,
 	})
 	flowLog.Debugf("called")
 	conf := api.DefaultConfig()
-	conf.Address = address
-	// 这里的client是api接口的，不是本地的BasicClient，不要搞混了
+	conf.Address = client.address
+	conf.TLSConfig.InsecureSkipVerify = client.skipTlsVerify
+
+	conf.TLSConfig.CAFile = client.caFilePath
+	conf.TLSConfig.CertFile = client.certFilePath
+	conf.TLSConfig.KeyFile = client.keyFilePath
+
 	apiClient, err := api.NewClient(conf)
 	if err != nil {
 		return err
@@ -450,6 +464,14 @@ func (bc *BasicClient) Watch(path string, separator string) (<-chan interface{},
 	})
 	var err error
 	var watchParams map[string]interface{}
+
+	conf := api.DefaultConfig()
+	conf.Address = bc.address
+	conf.TLSConfig.InsecureSkipVerify = bc.skipTlsVerify
+	conf.TLSConfig.CAFile = bc.caFilePath
+	conf.TLSConfig.CertFile = bc.certFilePath
+	conf.TLSConfig.KeyFile = bc.keyFilePath
+
 	// NOTE: 暂时不用考虑删除 集群和 backend 对应路径的场景
 	// 1. 检查 path 对应的 plan 是否已经存在
 	_, exist := bc.watchPlanMap[path]
@@ -481,7 +503,7 @@ func (bc *BasicClient) Watch(path string, separator string) (<-chan interface{},
 			close(outChan)
 			flowLog.Debugf("outChan closed")
 		}()
-		err := plan.Run(bc.address)
+		err := plan.RunWithConfig(bc.address, conf)
 		if err != nil {
 			flowLog.Errorf("plan run failed,error:%s", err)
 			if !plan.IsStopped() {

@@ -26,6 +26,7 @@ func setDefaultConfig() {
 	viper.SetDefault(AddressConfigPath, "http://127.0.0.1:8500")
 	viper.SetDefault(TTLConfigPath, "30s")
 	viper.SetDefault(TLSCertFileConfigPath, "")
+	viper.SetDefault(TLSSkipVerifyConfigPath, false)
 	viper.SetDefault(TLSCaFileConfigPath, "")
 	viper.SetDefault(TLSKeyFileConfigPath, "")
 }
@@ -44,6 +45,7 @@ func LoadConfig() {
 	CaFilePath = viper.GetString(TLSCaFileConfigPath)
 	KeyFilePath = viper.GetString(TLSKeyFileConfigPath)
 	CertFilePath = viper.GetString(TLSCertFileConfigPath)
+	SkipTLSVerify = viper.GetBool(TLSSkipVerifyConfigPath)
 
 	log.Debugf(context.TODO(),
 		"reload success new config target service name:%s,consul address:%s,address:%s,port:%d,ttl:%s",

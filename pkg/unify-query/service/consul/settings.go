@@ -10,15 +10,16 @@
 package consul
 
 const (
-	ServiceNameConfigPath = "consul.service_name"
-	KVBasePathConfigPath  = "consul.kv_base_path"
-	AddressConfigPath     = "consul.consul_address"
-	TLSCaFileConfigPath   = "consul.tls.ca_file"
-	TLSKeyFileConfigPath  = "consul.tls.key_file"
-	TLSCertFileConfigPath = "consul.tls.cert_file"
-	HTTPAddressConfigPath = "http.address"
-	PortConfigPath        = "http.port"
-	TTLConfigPath         = "consul.check_ttl"
+	ServiceNameConfigPath   = "consul.service_name"
+	KVBasePathConfigPath    = "consul.kv_base_path"
+	AddressConfigPath       = "consul.consul_address"
+	TLSCaFileConfigPath     = "consul.tls.ca_file"
+	TLSKeyFileConfigPath    = "consul.tls.key_file"
+	TLSCertFileConfigPath   = "consul.tls.cert_file"
+	TLSSkipVerifyConfigPath = "consul.tls.skip_verify"
+	HTTPAddressConfigPath   = "http.address"
+	PortConfigPath          = "http.port"
+	TTLConfigPath           = "consul.check_ttl"
 )
 
 var (
@@ -29,8 +30,9 @@ var (
 	Port        int
 	TTL         string
 
-	Address      string
-	CaFilePath   string
-	KeyFilePath  string
-	CertFilePath string
+	Address       string
+	CaFilePath    string
+	KeyFilePath   string
+	CertFilePath  string
+	SkipTLSVerify bool
 )

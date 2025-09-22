@@ -36,12 +36,12 @@ var TotalPrefix string
 var LockPath string
 
 // GetConsulClient :
-var GetConsulClient = func(address string) (base.ConsulClient, error) {
-	return base.NewBasicClient(address)
+var GetConsulClient = func(address string, caCertFilePath, clientCertFilePath, clientKeyFilePath string, skipVerify bool) (base.ConsulClient, error) {
+	return base.NewBasicClient(address, caCertFilePath, clientCertFilePath, clientKeyFilePath, skipVerify)
 }
 
 // Init 初始化操作，在调用consul包其他函数前应执行该函数
-var Init = func(address string, prefix string) error {
+var Init = func(address string, prefix string, caCertFilePath, clientCertFilePath, clientKeyFilePath string, skipVerify bool) error {
 	flowLog := logging.NewEntry(map[string]interface{}{
 		"module": moduleName,
 	})
@@ -57,7 +57,7 @@ var Init = func(address string, prefix string) error {
 	initHostPath()
 	initClusterPath()
 	initTagPath()
-	consulClient, err = GetConsulClient(address)
+	consulClient, err = GetConsulClient(address, caCertFilePath, clientCertFilePath, clientKeyFilePath, skipVerify)
 	if err != nil {
 		flowLog.Errorf("create consul client failed,error:%s", err)
 		return err
@@ -67,7 +67,7 @@ var Init = func(address string, prefix string) error {
 }
 
 // Reload 重启consul，通常是因为处理http的reload
-var Reload = func(address string, prefix string) error {
+var Reload = func(address string, prefix string, caCertFilePath, clientCertFilePath, clientKeyFilePath string, skipVerify bool) error {
 	flowLog := logging.NewEntry(map[string]interface{}{
 		"module": moduleName,
 	})
@@ -77,7 +77,7 @@ var Reload = func(address string, prefix string) error {
 	if err != nil {
 		return err
 	}
-	err = Init(address, prefix)
+	err = Init(address, prefix, caCertFilePath, clientCertFilePath, clientKeyFilePath, skipVerify)
 	if err != nil {
 		return err
 	}

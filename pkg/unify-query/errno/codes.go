@@ -14,46 +14,45 @@ type ErrorDefinition struct {
 	Code     string // 错误代码，如 "QP001"
 	Message  string // 错误消息，如 "SQL语法错误"
 	Category string // 错误分类，如 "查询解析"
-	Severity string // 严重程度，如 "error"
 }
 
 // 统一的错误定义映射表 - 每个错误一个独立定义，实现一对一映射
 var errorDefinitions = map[string]ErrorDefinition{
 	// 查询解析类错误 (Query Parse - QP)
-	"ErrQueryParseInvalidSQL":       {"QP001", "SQL语法错误", "查询解析", "error"},
-	"ErrQueryParseInvalidPromQL":    {"QP002", "PromQL语法错误", "查询解析", "error"},
-	"ErrQueryParseInvalidField":     {"QP003", "字段名称无效", "查询解析", "error"},
-	"ErrQueryParseInvalidCondition": {"QP004", "查询条件格式错误", "查询解析", "error"},
+	"ErrQueryParseInvalidSQL":       {"QP001", "SQL语法错误", "查询解析"},
+	"ErrQueryParseInvalidPromQL":    {"QP002", "PromQL语法错误", "查询解析"},
+	"ErrQueryParseInvalidField":     {"QP003", "字段名称无效", "查询解析"},
+	"ErrQueryParseInvalidCondition": {"QP004", "查询条件格式错误", "查询解析"},
 
 	// 存储连接类错误 (Storage Connection - SC)
-	"ErrStorageConnFailed": {"SC001", "存储连接失败", "存储连接", "error"},
+	"ErrStorageConnFailed": {"SC001", "存储连接失败", "存储连接"},
 
 	// 数据处理类错误 (Data Processing - DP)
-	"ErrDataProcessFailed":     {"DP001", "数据处理失败", "数据处理", "error"},
-	"ErrDataFormatInvalid":     {"DP002", "数据格式错误", "数据处理", "error"},
-	"ErrDataDeserializeFailed": {"DP003", "数据反序列化失败", "数据处理", "error"},
+	"ErrDataProcessFailed":     {"DP001", "数据处理失败", "数据处理"},
+	"ErrDataFormatInvalid":     {"DP002", "数据格式错误", "数据处理"},
+	"ErrDataDeserializeFailed": {"DP003", "数据反序列化失败", "数据处理"},
 
 	// 配置管理类错误 (Configuration - CF)
-	"ErrConfigReloadFailed": {"CF001", "配置重载失败", "配置管理", "error"},
+	"ErrConfigReloadFailed": {"CF001", "配置重载失败", "配置管理"},
 
 	// 业务逻辑类错误 (Business Logic - BL)
-	"ErrBusinessParamInvalid":   {"BL001", "业务参数无效", "业务逻辑", "error"},
-	"ErrBusinessLogicError":     {"BL002", "业务逻辑错误", "业务逻辑", "error"},
-	"ErrBusinessQueryExecution": {"BL003", "业务查询执行失败", "业务逻辑", "error"},
+	"ErrBusinessParamInvalid":   {"BL001", "业务参数无效", "业务逻辑"},
+	"ErrBusinessLogicError":     {"BL002", "业务逻辑错误", "业务逻辑"},
+	"ErrBusinessQueryExecution": {"BL003", "业务查询执行失败", "业务逻辑"},
 
 	// 警告类错误 (Warning - WN)
-	"ErrWarningConfigDegraded":  {"WN001", "配置降级处理", "警告", "warning"},
-	"ErrWarningDataIncomplete":  {"WN002", "数据不完整", "警告", "warning"},
-	"ErrWarningServiceDegraded": {"WN003", "服务降级", "警告", "warning"},
+	"ErrWarningConfigDegraded":  {"WN001", "配置降级处理", "警告"},
+	"ErrWarningDataIncomplete":  {"WN002", "数据不完整", "警告"},
+	"ErrWarningServiceDegraded": {"WN003", "服务降级", "警告"},
 }
 
 func newError(name string) *ErrCode {
 	def, exists := errorDefinitions[name]
 	if !exists {
-		return NewErrCode("UNKNOWN", "未知错误", "未知", "error")
+		return NewErrCode("UNKNOWN", "未知错误", "未知")
 	}
 
-	return NewErrCode(def.Code, def.Message, def.Category, def.Severity)
+	return NewErrCode(def.Code, def.Message, def.Category)
 }
 
 func ErrQueryParseInvalidSQL() *ErrCode       { return newError("ErrQueryParseInvalidSQL") }

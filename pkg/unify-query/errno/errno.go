@@ -49,7 +49,6 @@ func (e *ErrCode) String() string {
 		SolutionField:  "解决方案",
 		SeverityField:  "严重程度",
 	}
-
 	for field, label := range fieldMap {
 		if value := e.getString(field); value != "" {
 			parts = append(parts, fmt.Sprintf("%s: %s", label, value))
@@ -77,7 +76,6 @@ func (e *ErrCode) String() string {
 			parts = append(parts, fmt.Sprintf("错误: %v", e.err))
 		}
 	}
-
 	return lo.Reduce(parts, func(acc string, part string, index int) string {
 		if index == 0 {
 			return part
@@ -99,7 +97,6 @@ func (e *ErrCode) Category() string { return e.getString(CategoryField) }
 func (e *ErrCode) Component() string { return e.getString(ComponentField) }
 
 func (e *ErrCode) Operation() string { return e.getString(OperationField) }
-
 func (e *ErrCode) Solution() string { return e.getString(SolutionField) }
 
 func (e *ErrCode) Severity() string { return e.getString(SeverityField) }

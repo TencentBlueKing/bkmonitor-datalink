@@ -25,6 +25,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
@@ -39,7 +40,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
-	queryErrors "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) {
@@ -62,19 +62,31 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (any, error) 
 	// 验证 queryList 限制长度
 	if DefaultQueryListLimit > 0 && len(query.QueryList) > DefaultQueryListLimit {
 		err = fmt.Errorf("the number of query lists cannot be greater than %d", DefaultQueryListLimit)
-		log.Errorf(ctx, "%s [%s] | 操作: 查询列表验证 | 错误: %s | 解决: 减少查询数量至%d以下", queryErrors.ErrBusinessParamInvalid, queryErrors.GetErrorCode(queryErrors.ErrBusinessParamInvalid), err.Error(), DefaultQueryListLimit)
+		codedErr := errno.ErrBusinessParamInvalid().
+			WithOperation("查询列表验证").
+			WithError(err).
+			WithSolution(fmt.Sprintf("减少查询数量至%d以下", DefaultQueryListLimit))
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
 	_, startTime, endTime, err := function.QueryTimestamp(query.Start, query.End)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 操作: 时间参数解析 | 错误: %s | 解决: 检查开始和结束时间格式", queryErrors.ErrBusinessParamInvalid, queryErrors.GetErrorCode(queryErrors.ErrBusinessParamInvalid), err.Error())
+		codedErr := errno.ErrBusinessParamInvalid().
+			WithOperation("时间参数解析").
+			WithError(err).
+			WithSolution("检查开始和结束时间格式")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
 	start, end, _, timezone, err := structured.AlignTime(startTime, endTime, query.Step, query.Timezone)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 操作: 时间对齐处理 | 错误: %s | 解决: 检查步长和时区设置", queryErrors.ErrBusinessParamInvalid, queryErrors.GetErrorCode(queryErrors.ErrBusinessParamInvalid), err.Error())
+		codedErr := errno.ErrBusinessParamInvalid().
+			WithOperation("时间对齐处理").
+			WithError(err).
+			WithSolution("检查步长和时区设置")
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 

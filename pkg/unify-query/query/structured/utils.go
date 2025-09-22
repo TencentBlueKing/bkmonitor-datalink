@@ -11,13 +11,14 @@ package structured
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/prometheus/prometheus/promql/parser"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // getExpressionByParam
@@ -36,8 +37,14 @@ func getExpressionByParam(param any) (parser.Expr, error) {
 	case int:
 		return &parser.NumberLiteral{Val: float64(param.(int))}, nil
 	default:
-		log.Errorf(context.TODO(), "%s [%s] | 操作: 参数类型转换 | 问题: 未知参数类型 | 类型: %#v | 解决: 检查参数类型支持", errors.ErrQueryParseUnsupported, errors.GetErrorCode(errors.ErrQueryParseUnsupported), t)
-		return nil, ErrExprNotAllow
+		codedErr := errno.ErrQueryParseInvalidField().
+			WithOperation("参数类型转换").
+			WithErrorf("未知参数类型: %#v", t).
+			WithParam(fmt.Sprintf("%T", t)).
+			WithSolution("检查参数类型是否为支持的基础类型（string, float64, bool等）")
+
+		log.ErrorWithCodef(context.TODO(), codedErr)
+		return nil, codedErr
 	}
 }
 

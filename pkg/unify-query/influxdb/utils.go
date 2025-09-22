@@ -14,24 +14,48 @@ import (
 
 	"github.com/influxdata/influxql"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // CheckSelectSQL 检查是否是查询语句，防止sql注入
 func CheckSelectSQL(ctx context.Context, sql string) error {
 	query, err := influxql.ParseQuery(sql)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | SQL: %s | 错误: %s | 解决: 检查InfluxQL语法规范", errors.ErrQueryParseInvalidSQL, errors.GetErrorCode(errors.ErrQueryParseInvalidSQL), sql, err)
-		return err
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithOperation("InfluxQL解析").
+			WithError(err).
+			WithContexts(map[string]interface{}{
+				"SQL": sql,
+				"解决":  "检查InfluxQL语法规范，确保字段名和表名正确",
+			})
+
+		log.ErrorWithCodef(ctx, codedErr)
+		return codedErr
 	}
 	if len(query.Statements) != 1 {
-		log.Errorf(ctx, "%s [%s] | SQL: %s | 问题: 语句数量应为1个 | 解决: 确保查询只包含一个语句", errors.ErrQueryParseUnsupported, errors.GetErrorCode(errors.ErrQueryParseUnsupported), sql)
-		return ErrWrongInfluxdbSQLFormat
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithOperation("SQL语句数量检查").
+			WithErrorf("语句数量应为1个，实际为%d个", len(query.Statements)).
+			WithContexts(map[string]interface{}{
+				"SQL": sql,
+				"解决":  "确保查询只包含一个语句，移除多余的分号和语句",
+			})
+
+		log.ErrorWithCodef(ctx, codedErr)
+		return codedErr
 	}
 	if _, ok := query.Statements[0].(*influxql.SelectStatement); !ok {
-		log.Errorf(ctx, "%s [%s] | SQL: %s | 问题: 非SELECT语句 | 解决: 使用SELECT查询语句", errors.ErrQueryParseUnsupported, errors.GetErrorCode(errors.ErrQueryParseUnsupported), sql)
-		return ErrWrongInfluxdbSQLFormat
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithOperation("SQL类型检查").
+			WithErrorf("非SELECT语句，禁止执行").
+			WithContexts(map[string]interface{}{
+				"SQL": sql,
+				"解决":  "只允许执行SELECT查询语句，请使用正确的查询语法",
+			})
+
+		log.ErrorWithCodef(ctx, codedErr)
+		return codedErr
 	}
 	return nil
 }
@@ -40,12 +64,22 @@ func CheckSelectSQL(ctx context.Context, sql string) error {
 func CheckSQLInject(sql string) error {
 	query, err := influxql.ParseQuery(sql)
 	if err != nil {
-		log.Errorf(context.TODO(), "%s [%s] | SQL: %s | 错误: %s | 解决: 检查InfluxQL语法规范", errors.ErrQueryParseInvalidSQL, errors.GetErrorCode(errors.ErrQueryParseInvalidSQL), sql, err)
-		return err
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithOperation("SQL注入检查").
+			WithError(err).
+			WithContext("SQL", sql)
+
+		log.ErrorWithCodef(context.TODO(), codedErr)
+		return codedErr
 	}
 	if len(query.Statements) != 1 {
-		log.Errorf(context.TODO(), "%s [%s] | SQL: %s | 问题: 语句数量应为1个 | 解决: 确保查询只包含一个语句", errors.ErrQueryParseUnsupported, errors.GetErrorCode(errors.ErrQueryParseUnsupported), sql)
-		return ErrWrongInfluxdbSQLFormat
+		codedErr := errno.ErrQueryParseInvalidSQL().
+			WithOperation("SQL注入检查").
+			WithErrorf("语句数量应为1个，实际为%d个", len(query.Statements)).
+			WithContext("SQL", sql)
+
+		log.ErrorWithCodef(context.TODO(), codedErr)
+		return codedErr
 	}
 	return nil
 }

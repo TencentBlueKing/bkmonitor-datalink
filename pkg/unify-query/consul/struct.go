@@ -20,8 +20,8 @@ import (
 	"github.com/prometheus/common/model"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul/base"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // Instance
@@ -129,11 +129,24 @@ func (i *Instance) LoopAwakeService() error {
 		defer func() {
 			err := i.CheckDeregister()
 			if err != nil {
-				log.Errorf(context.TODO(), "%s [%s] | 存储: Consul | 操作: 取消注册检查 | 检查ID: %s | 错误: %s | 解决: 检查Consul连接状态", errors.ErrStorageConnFailed, errors.GetErrorCode(errors.ErrStorageConnFailed), i.checkID, err)
+				errCode := errno.ErrStorageConnFailed().
+					WithComponent("Consul").
+					WithOperation("取消注册检查").
+					WithContext("检查ID", i.checkID).
+					WithError(err)
+
+				log.ErrorWithCodef(context.TODO(), errCode)
 			}
 			err = i.CancelService()
 			if err != nil {
-				log.Errorf(context.TODO(), "%s [%s] | 存储: Consul | 操作: 注销服务 | 服务ID: %s | 错误: %s | 解决: 检查Consul服务注册状态", errors.ErrStorageConnFailed, errors.GetErrorCode(errors.ErrStorageConnFailed), i.serviceID, err)
+				errCode := errno.ErrStorageConnFailed().
+					WithComponent("Consul").
+					WithOperation("注销服务").
+					WithContexts(map[string]interface{}{
+						"服务ID": i.serviceID,
+						"错误":   err.Error(),
+					})
+				log.ErrorWithCodef(context.TODO(), errCode)
 			}
 			log.Warnf(context.TODO(), "cancel service:%s with check:%s done", i.serviceID, i.checkID)
 		}()
@@ -146,7 +159,15 @@ func (i *Instance) LoopAwakeService() error {
 			case <-ticker.C:
 				log.Debugf(context.TODO(), "consul check id:%s send", i.checkID)
 				if err := i.CheckPass(); err != nil {
-					log.Errorf(context.TODO(), "%s [%s] | 存储: Consul | 操作: 健康检查通过 | 检查ID: %s | 错误: %s | 解决: 检查Consul服务注册和网络连接", errors.ErrStorageConnFailed, errors.GetErrorCode(errors.ErrStorageConnFailed), i.checkID, err)
+					errCode := errno.ErrStorageConnFailed().
+						WithComponent("Consul").
+						WithOperation("健康检查通过").
+						WithContexts(map[string]interface{}{
+							"检查ID": i.checkID,
+							"错误":   err.Error(),
+						})
+
+					log.ErrorWithCodef(context.TODO(), errCode)
 				}
 			}
 		}

@@ -31,6 +31,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
@@ -43,7 +44,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	queryErrors "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 const (
@@ -184,7 +184,14 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 
 	dec, err := decoder.GetDecoder(i.contentType)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 存储: InfluxDB | 操作: 获取解码器 | 类型: %s | 错误: %s | 解决: 检查内容类型配置", queryErrors.ErrDataProcessFailed, queryErrors.GetErrorCode(queryErrors.ErrDataProcessFailed), i.contentType, err)
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("InfluxDB").
+			WithOperation("获取解码器").
+			WithError(err).
+			WithDetail("类型", i.contentType).
+			WithSolution("检查内容类型配置")
+
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
@@ -480,7 +487,14 @@ func (i *Instance) query(
 
 	dec, err := decoder.GetDecoder(i.contentType)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 存储: InfluxDB | 操作: 获取解码器 | 类型: %s | 错误: %s | 解决: 检查内容类型配置", queryErrors.ErrDataProcessFailed, queryErrors.GetErrorCode(queryErrors.ErrDataProcessFailed), i.contentType, err)
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("InfluxDB").
+			WithOperation("获取解码器").
+			WithError(err).
+			WithDetail("类型", i.contentType).
+			WithSolution("检查内容类型配置")
+
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
@@ -641,7 +655,13 @@ func (i *Instance) grpcStream(
 
 	stream, err := client.Raw(ctx, req)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 存储: InfluxDB | 操作: GRPC原始查询 | 错误: %s | 解决: 检查GRPC连接和查询参数", queryErrors.ErrBusinessQueryExecution, queryErrors.GetErrorCode(queryErrors.ErrBusinessQueryExecution), err.Error())
+		codedErr := errno.ErrStorageConnFailed().
+			WithComponent("InfluxDB").
+			WithOperation("GRPC原始查询").
+			WithError(err).
+			WithSolution("检查GRPC连接和查询参数")
+
+		log.ErrorWithCodef(ctx, codedErr)
 		return storage.EmptySeriesSet()
 	}
 	limiter := rate.NewLimiter(rate.Limit(i.readRateLimit), int(i.readRateLimit))
@@ -840,7 +860,14 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 		)
 		dec, err := decoder.GetDecoder(i.contentType)
 		if err != nil {
-			log.Errorf(ctx, "%s [%s] | 存储: InfluxDB | 操作: 获取解码器 | 类型: %s | 错误: %s | 解决: 检查内容类型配置", queryErrors.ErrDataProcessFailed, queryErrors.GetErrorCode(queryErrors.ErrDataProcessFailed), i.contentType, err)
+			codedErr := errno.ErrDataProcessFailed().
+				WithComponent("InfluxDB").
+				WithOperation("获取解码器").
+				WithError(err).
+				WithDetail("类型", i.contentType).
+				WithSolution("检查内容类型配置")
+
+			log.ErrorWithCodef(ctx, codedErr)
 			return nil, err
 		}
 
@@ -951,7 +978,14 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 	)
 	dec, err := decoder.GetDecoder(i.contentType)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 存储: InfluxDB | 操作: 获取解码器 | 类型: %s | 错误: %s | 解决: 检查内容类型配置", queryErrors.ErrDataProcessFailed, queryErrors.GetErrorCode(queryErrors.ErrDataProcessFailed), i.contentType, err)
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("InfluxDB").
+			WithOperation("获取解码器").
+			WithError(err).
+			WithDetail("类型", i.contentType).
+			WithSolution("检查内容类型配置")
+
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, err
 	}
 
@@ -1093,7 +1127,14 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 		)
 		dec, err := decoder.GetDecoder(i.contentType)
 		if err != nil {
-			log.Errorf(ctx, "%s [%s] | 存储: InfluxDB | 操作: 获取解码器 | 类型: %s | 错误: %s | 解决: 检查内容类型配置", queryErrors.ErrDataProcessFailed, queryErrors.GetErrorCode(queryErrors.ErrDataProcessFailed), i.contentType, err)
+			codedErr := errno.ErrDataProcessFailed().
+				WithComponent("InfluxDB").
+				WithOperation("获取解码器").
+				WithError(err).
+				WithDetail("类型", i.contentType).
+				WithSolution("检查内容类型配置")
+
+			log.ErrorWithCodef(ctx, codedErr)
 			return nil, err
 		}
 

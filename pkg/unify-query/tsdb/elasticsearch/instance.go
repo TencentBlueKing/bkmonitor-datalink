@@ -24,6 +24,7 @@ import (
 	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -33,7 +34,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 var _ tsdb.Instance = (*Instance)(nil)
@@ -187,7 +187,12 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 	span.Set("get-indexes", aliases)
 	indices, indicesErr := cli.IndexGet(aliases...).Do(ctx)
 	if indicesErr != nil {
-		log.Warnf(ctx, "%s [%s] | 存储: Elasticsearch | 操作: 获取索引 | 错误: %s | 建议: 检查ES集群和索引配置", errors.ErrWarningServiceDegraded, errors.GetErrorCode(errors.ErrWarningServiceDegraded), indicesErr)
+		codedErr := errno.ErrWarningServiceDegraded().
+			WithComponent("Elasticsearch").
+			WithOperation("获取索引").
+			WithError(indicesErr)
+
+		log.WarnWithCodef(ctx, codedErr)
 		span.Set("get-mapping", aliases)
 		res, err := cli.GetMapping().Index(aliases...).Type("").Do(ctx)
 		if err != nil {
@@ -616,8 +621,13 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	sr, err := i.esQuery(ctx, qo, fact)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 存储: Elasticsearch | 操作: 查询原始数据 | 错误: %s | 解决: 检查ES查询语法和索引结构", errors.ErrBusinessQueryExecution, errors.GetErrorCode(errors.ErrBusinessQueryExecution), err.Error())
-		return size, total, option, err
+		codedErr := errno.ErrBusinessQueryExecution().
+			WithComponent("Elasticsearch").
+			WithOperation("查询原始数据").
+			WithError(err)
+
+		log.ErrorWithCodef(ctx, codedErr)
+		return size, total, option, codedErr
 	}
 
 	option = &metadata.ResultTableOption{

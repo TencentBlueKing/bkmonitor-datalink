@@ -17,9 +17,9 @@ import (
 	ffclient "github.com/thomaspoignant/go-feature-flag"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // Service
@@ -44,8 +44,13 @@ func (s *Service) Start(ctx context.Context) {
 func (s *Service) reloadFeatureFlags(ctx context.Context) error {
 	data, err := consul.GetFeatureFlags()
 	if err != nil {
-		log.Errorf(context.TODO(), "%s [%s] | 配置: 功能开关 | 操作: 从Consul获取功能开关 | 错误: %s | 解决: 检查Consul连接和功能开关配置", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
-		return err
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("功能开关").
+			WithOperation("从Consul获取功能开关").
+			WithError(err).
+			WithSolution("检查Consul连接状态和功能开关配置文件路径")
+		log.ErrorWithCodef(context.TODO(), codedErr)
+		return codedErr
 	}
 	err = featureFlag.ReloadFeatureFlags(data)
 	return err
@@ -55,8 +60,13 @@ func (s *Service) reloadFeatureFlags(ctx context.Context) error {
 func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 	err := s.reloadFeatureFlags(ctx)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 配置: 功能开关 | 操作: 重载功能开关 | 错误: %s | 解决: 检查功能开关重载逻辑", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
-		return err
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("功能开关").
+			WithOperation("重载功能开关").
+			WithError(err).
+			WithSolution("检查功能开关重载逻辑和配置格式有效性")
+		log.ErrorWithCodef(ctx, codedErr)
+		return codedErr
 	}
 	ch, err := consul.WatchFeatureFlags(ctx)
 	if err != nil {
@@ -68,13 +78,22 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
-				log.Warnf(context.TODO(), "%s [%s] | 配置: 功能开关 | 操作: 功能开关重载循环退出 | 说明: 服务正在关闭", errors.ErrWarningServiceDegraded, errors.GetErrorCode(errors.ErrWarningServiceDegraded))
+				codedErr := errno.ErrWarningServiceDegraded().
+					WithComponent("功能开关").
+					WithOperation("重载循环退出").
+					WithDetail("说明", "服务正在关闭，功能开关服务将停止")
+				log.WarnWithCodef(context.TODO(), codedErr)
 				return
 			case <-ch:
 				log.Debugf(context.TODO(), "get feature flags changed notify")
 				err = s.reloadFeatureFlags(ctx)
 				if err != nil {
-					log.Errorf(context.TODO(), "%s [%s] | 配置: 功能开关 | 操作: 动态重载功能开关 | 错误: %s | 解决: 检查Consul通知和功能开关数据", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
+					codedErr := errno.ErrConfigReloadFailed().
+						WithComponent("功能开关").
+						WithOperation("动态重载功能开关").
+						WithError(err).
+						WithSolution("检查Consul通知机制和功能开关数据格式")
+					log.ErrorWithCodef(context.TODO(), codedErr)
 				}
 			}
 		}
@@ -98,7 +117,12 @@ func (s *Service) Reload(ctx context.Context) {
 
 	err = s.loopReloadFeatureFlags(s.ctx)
 	if err != nil {
-		log.Errorf(s.ctx, "%s [%s] | 配置: 功能开关 | 操作: 启动功能开关循环 | 错误: %s | 解决: 检查服务初始化和配置", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("功能开关").
+			WithOperation("启动功能开关循环").
+			WithError(err).
+			WithSolution("检查服务初始化状态和功能开关配置文件")
+		log.ErrorWithCodef(s.ctx, codedErr)
 		return
 	}
 
@@ -114,7 +138,12 @@ func (s *Service) Reload(ctx context.Context) {
 		},
 	})
 	if err != nil {
-		log.Errorf(s.ctx, "%s [%s] | 配置: 功能开关 | 操作: 处理服务错误 | 错误: %s | 解决: 检查服务整体状态", errors.ErrBusinessOperationFailed, errors.GetErrorCode(errors.ErrBusinessOperationFailed), err.Error())
+		codedErr := errno.ErrBusinessLogicError().
+			WithComponent("功能开关").
+			WithOperation("处理服务错误").
+			WithError(err).
+			WithSolution("检查服务整体状态")
+		log.ErrorWithCodef(s.ctx, codedErr)
 		return
 	}
 

@@ -19,9 +19,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // 服务侧初始化flux实例使用
@@ -67,37 +67,67 @@ func (s *Service) Reload(ctx context.Context) {
 
 	err = s.loopReloadStorage(s.ctx)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 配置类型: InfluxDB存储 | 错误: %s | 解决: 检查Consul连接和存储配置", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("InfluxDB").
+			WithOperation("存储配置重载").
+			WithError(err)
+		log.ErrorWithCodef(ctx, codedErr)
 	}
 
 	err = s.loopReloadTableInfo(s.ctx)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 配置类型: 表信息 | 错误: %s | 解决: 检查Consul连接和表配置", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("InfluxDB").
+			WithOperation("表信息重载").
+			WithError(err)
+		log.ErrorWithCodef(ctx, codedErr)
 	}
 
 	err = s.loopReloadRouter(s.ctx)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 配置类型: 查询路由 | 错误: %s | 解决: 检查路由配置和网络连接", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("InfluxDB").
+			WithOperation("查询路由重载").
+			WithError(err)
+		log.ErrorWithCodef(ctx, codedErr)
 	}
 
 	err = s.loopReloadBCSInfo(s.ctx)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 配置类型: BCS信息 | 错误: %s | 解决: 检查BCS服务状态", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("BCS").
+			WithOperation("BCS信息重载").
+			WithError(err)
+		log.ErrorWithCodef(ctx, codedErr)
 	}
 
 	err = s.loopReloadDownsampledInfo(s.ctx)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 配置类型: 降采样信息 | 错误: %s | 解决: 检查降采样配置", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("InfluxDB").
+			WithOperation("降采样配置重载").
+			WithError(err)
+		log.ErrorWithCodef(ctx, codedErr)
 	}
 
 	err = s.reloadInfluxDBRouter(s.ctx)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 配置类型: InfluxDB路由 | 错误: %s | 解决: 检查InfluxDB路由配置", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("InfluxDB路由").
+			WithOperation("配置加载").
+			WithError(err).
+			WithSolution("检查InfluxDB路由配置")
+		log.ErrorWithCodef(ctx, codedErr)
 	}
 
 	err = s.reloadSpaceTsDbRouter(s.ctx)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 配置类型: 空间TSDB路由 | 错误: %s | 解决: 检查TSDB路由配置", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("空间TSDB路由").
+			WithOperation("配置加载").
+			WithError(err).
+			WithSolution("检查TSDB路由配置")
+		log.ErrorWithCodef(ctx, codedErr)
 	}
 
 	log.Infof(ctx, "%s [INFO] | 操作: InfluxDB服务启动 | 状态: 成功 | 说明: 服务已就绪", "InfluxDB服务就绪")
@@ -118,7 +148,12 @@ func (s *Service) Close() {
 func (s *Service) reloadTableInfo() error {
 	newData, err := consul.GetInfluxdbTableInfo()
 	if err != nil {
-		log.Errorf(context.TODO(), "%s [%s] | 存储: InfluxDB | 操作: 从Consul获取表信息 | 错误: %s | 解决: 检查Consul连接和表配置", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("InfluxDB").
+			WithOperation("从Consul获取表信息").
+			WithError(err).
+			WithSolution("检查Consul连接和表配置")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		return err
 	}
 	hash := consul.HashIt(newData)
@@ -140,7 +175,12 @@ func (s *Service) reloadStorage() error {
 	)
 	newData, err := consul.GetInfluxdbStorageInfo()
 	if err != nil {
-		log.Errorf(context.TODO(), "%s [%s] | 存储: InfluxDB | 错误: %s | 解决: 检查Consul连接和InfluxDB存储配置", errors.ErrStorageConnFailed, errors.GetErrorCode(errors.ErrStorageConnFailed), err)
+		codedErr := errno.ErrStorageConnFailed().
+			WithComponent("InfluxDB").
+			WithOperation("存储连接").
+			WithError(err).
+			WithSolution("检查Consul连接和InfluxDB存储配置")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		return err
 	}
 	hash := consul.HashIt(newData)
@@ -151,7 +191,11 @@ func (s *Service) reloadStorage() error {
 	dTmp, err = model.ParseDuration(Timeout)
 	if err != nil {
 		timeout = 30 * time.Second
-		log.Warnf(context.TODO(), "%s [%s] | 配置: InfluxDB超时配置 | 问题: 解析超时参数失败 | 处理: 使用30秒默认值", errors.ErrWarningConfigDegraded, errors.GetErrorCode(errors.ErrWarningConfigDegraded))
+		codedErr := errno.ErrWarningConfigDegraded().
+			WithComponent("InfluxDB超时配置").
+			WithOperation("解析超时参数").
+			WithDetail("处理", "使用30秒默认值")
+		log.WarnWithCodef(context.TODO(), codedErr)
 	} else {
 		timeout = time.Duration(dTmp)
 	}
@@ -175,7 +219,12 @@ func (s *Service) reloadStorage() error {
 	}
 	err = inner.ReloadStorage(s.ctx, hostList, option)
 	if err != nil {
-		log.Errorf(context.TODO(), "%s [%s] | 存储: InfluxDB | 错误: %s | 解决: 检查InfluxDB连接配置", errors.ErrStorageConnFailed, errors.GetErrorCode(errors.ErrStorageConnFailed), err)
+		codedErr := errno.ErrStorageConnFailed().
+			WithComponent("InfluxDB").
+			WithOperation("存储连接").
+			WithError(err).
+			WithSolution("检查InfluxDB连接配置")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		return err
 	}
 	return nil
@@ -185,7 +234,12 @@ func (s *Service) reloadStorage() error {
 func (s *Service) loopReloadStorage(ctx context.Context) error {
 	err := s.reloadStorage()
 	if err != nil {
-		log.Errorf(context.TODO(), "%s [%s] | 存储: InfluxDB | 操作: 循环重载存储 | 错误: %s | 解决: 检查存储重载逻辑", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("InfluxDB").
+			WithOperation("循环重载存储").
+			WithError(err).
+			WithSolution("检查存储重载逻辑")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		return err
 	}
 	ch, err := consul.WatchStorageInfo(ctx)
@@ -198,13 +252,22 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
-				log.Warnf(context.TODO(), "%s [%s] | 存储: InfluxDB | 操作: 存储重载循环退出 | 说明: 服务正在关闭", errors.ErrWarningServiceDegraded, errors.GetErrorCode(errors.ErrWarningServiceDegraded))
+				codedErr := errno.ErrWarningServiceDegraded().
+					WithComponent("InfluxDB").
+					WithOperation("存储重载循环退出").
+					WithDetail("说明", "服务正在关闭")
+				log.WarnWithCodef(context.TODO(), codedErr)
 				return
 			case <-ch:
 				log.Debugf(context.TODO(), "get storage info changed notify")
 				err = s.reloadStorage()
 				if err != nil {
-					log.Errorf(context.TODO(), "%s [%s] | 存储: InfluxDB | 操作: 动态重载存储 | 错误: %s | 解决: 检查Consul通知和存储连接", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
+					codedErr := errno.ErrConfigReloadFailed().
+						WithComponent("InfluxDB").
+						WithOperation("动态重载存储").
+						WithError(err).
+						WithSolution("检查Consul通知和存储连接")
+					log.ErrorWithCodef(context.TODO(), codedErr)
 				}
 			}
 		}
@@ -216,7 +279,12 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 func (s *Service) loopReloadTableInfo(ctx context.Context) error {
 	err := s.reloadTableInfo()
 	if err != nil {
-		log.Errorf(context.TODO(), "%s [%s] | 存储: InfluxDB | 操作: 循环重载表信息 | 错误: %s | 解决: 检查表信息重载逻辑", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err)
+		codedErr := errno.ErrConfigReloadFailed().
+			WithComponent("InfluxDB").
+			WithOperation("循环重载表信息").
+			WithError(err).
+			WithSolution("检查表信息重载逻辑")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		return err
 	}
 	ch, err := consul.WatchInfluxdbTableInfo(ctx)
@@ -229,13 +297,22 @@ func (s *Service) loopReloadTableInfo(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
-				log.Warnf(context.TODO(), "%s [%s] | 存储: InfluxDB | 操作: 表信息重载循环退出 | 说明: 服务正在关闭", errors.ErrWarningServiceDegraded, errors.GetErrorCode(errors.ErrWarningServiceDegraded))
+				codedErr := errno.ErrWarningServiceDegraded().
+					WithComponent("InfluxDB").
+					WithOperation("表信息重载循环退出").
+					WithDetail("说明", "服务正在关闭")
+				log.WarnWithCodef(context.TODO(), codedErr)
 				return
 			case <-ch:
 				log.Debugf(context.TODO(), "get table info changed notify")
 				err1 := s.reloadTableInfo()
 				if err1 != nil {
-					log.Errorf(context.TODO(), "%s [%s] | 存储: InfluxDB | 操作: 动态重载表信息 | 错误: %s | 解决: 检查Consul表信息通知", errors.ErrConfigReloadFailed, errors.GetErrorCode(errors.ErrConfigReloadFailed), err1)
+					codedErr := errno.ErrConfigReloadFailed().
+						WithComponent("InfluxDB").
+						WithOperation("动态重载表信息").
+						WithError(err1).
+						WithSolution("检查Consul表信息通知")
+					log.ErrorWithCodef(context.TODO(), codedErr)
 				}
 			}
 		}

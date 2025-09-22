@@ -17,8 +17,8 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 const (
@@ -70,7 +70,12 @@ func PromOperatorToConditions(matchType labels.MatchType) string {
 	case labels.MatchNotRegexp:
 		return ConditionNotRegEqual
 	default:
-		log.Errorf(context.TODO(), "%s [%s] | 操作: 翻译操作符 | 操作符: %s | 问题: 无法转换条件操作符 | 处理: 使用默认操作符 | 解决: 检查操作符支持列表", errors.ErrQueryParseUnsupported, errors.GetErrorCode(errors.ErrQueryParseUnsupported), matchType)
+		codedErr := errno.ErrQueryParseInvalidCondition().
+			WithOperation("操作符翻译").
+			WithErrorf("不支持的操作符: %s", matchType).
+			WithDetail("操作符", matchType).
+			WithSolution("使用支持的操作符：eq, ne, reg, nreg等，或检查操作符拼写")
+		log.ErrorWithCodef(context.TODO(), codedErr)
 		return ConditionEqual
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -27,7 +28,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // Instance prometheus 查询引擎
@@ -101,12 +101,22 @@ func (i *Instance) DirectQueryRange(
 
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
-		log.Errorf(ctx, "%s [%s] | 操作: 创建PromQL范围查询 | 错误: %s | 解决: 检查PromQL语法和时间范围", errors.ErrQueryParseInvalidSQL, errors.GetErrorCode(errors.ErrQueryParseInvalidSQL), err.Error())
+		codedErr := errno.ErrQueryParseInvalidPromQL().
+			WithComponent("Prometheus").
+			WithOperation("PromQL范围查询").
+			WithError(err)
+
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, false, err
 	}
 	result := query.Exec(ctx)
 	if result.Err != nil {
-		log.Errorf(ctx, "%s [%s] | 操作: Prometheus查询执行 | 错误: %s | 解决: 检查PromQL语法和数据源", errors.ErrBusinessQueryExecution, errors.GetErrorCode(errors.ErrBusinessQueryExecution), result.Err.Error())
+		codedErr := errno.ErrBusinessLogicError().
+			WithComponent("Prometheus").
+			WithOperation("查询执行").
+			WithError(result.Err)
+
+		log.ErrorWithCodef(ctx, codedErr)
 		return nil, false, result.Err
 	}
 

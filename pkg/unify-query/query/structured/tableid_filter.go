@@ -14,9 +14,9 @@ import (
 	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errno"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/errors"
 )
 
 // TableIDFilter
@@ -46,8 +46,16 @@ func NewTableIDFilter(
 		return tableIDFilter, nil
 	}
 	if err != ErrEmptyTableID {
-		log.Errorf(context.TODO(), "%s [%s] | 操作: 搜索指标表ID | 指标: %s | 表ID: %s | 错误: %s | 解决: 检查指标路由配置", errors.ErrDataProcessFailed, errors.GetErrorCode(errors.ErrDataProcessFailed), metricName, tableID, err)
-		return tableIDFilter, err
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("路由管理").
+			WithOperation("搜索指标表ID").
+			WithError(err).
+			WithDetail("指标", metricName).
+			WithDetail("表ID", tableID).
+			WithSolution("检查指标与表ID的映射关系和路由配置")
+
+		log.ErrorWithCodef(context.TODO(), codedErr)
+		return nil, codedErr
 	}
 
 	// 2. 如果tableID为空，则根据conditions获取bk_biz_id,bcs_cluster_id等，过滤出tableID
@@ -56,8 +64,14 @@ func NewTableIDFilter(
 	// 进行查询时，需要找出bk_biz_id, bk_project_id, cluster_id
 	bizIDs, projectIDs, clusterIDs, err := conditions.GetRequiredFiled()
 	if err != nil {
-		log.Errorf(context.TODO(), "%s [%s] | 操作: 获取必需字段 | 错误: %s | 解决: 检查字段配置和数据结构", errors.ErrDataProcessFailed, errors.GetErrorCode(errors.ErrDataProcessFailed), err)
-		return tableIDFilter, err
+		codedErr := errno.ErrDataProcessFailed().
+			WithComponent("字段管理").
+			WithOperation("获取必需字段").
+			WithError(err).
+			WithSolution("检查必需字段定义和数据源schema配置")
+
+		log.ErrorWithCodef(context.TODO(), codedErr)
+		return nil, codedErr
 	}
 
 	// 必传biz_id

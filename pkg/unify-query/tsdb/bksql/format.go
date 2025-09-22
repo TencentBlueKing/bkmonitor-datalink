@@ -137,19 +137,37 @@ func (f *QueryFactory) FieldMap() map[string]sql_expr.FieldOption {
 	return f.expr.FieldMap()
 }
 
+func (f *QueryFactory) buildFieldNameMapping() map[string]string {
+	mapping := make(map[string]string)
+	fieldMap := f.FieldMap()
+	
+	for originalField := range fieldMap {
+		lowercaseField := strings.ToLower(originalField)
+		mapping[lowercaseField] = originalField
+	}
+	
+	return mapping
+}
+
 func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimension bool) (newData map[string]any) {
 	newData = make(map[string]any)
 	fieldMap := f.FieldMap()
+	
+	fieldNameMapping := f.buildFieldNameMapping()
 
 	for k, d := range data {
-		// 忽略内置字段
-		if ignoreInternalDimension && checkInternalDimension(k) {
+		mappedFieldName := k
+		if originalName, exists := fieldNameMapping[k]; exists {
+			mappedFieldName = originalName
+		}
+		
+		if ignoreInternalDimension && checkInternalDimension(mappedFieldName) {
 			continue
 		}
 
-		if fieldOpt, existed := fieldMap[k]; existed && fieldOpt.Type == TableTypeVariant {
+		if fieldOpt, existed := fieldMap[mappedFieldName]; existed && fieldOpt.Type == TableTypeVariant {
 			if nd, ok := d.(string); ok {
-				objectData, err := json.ParseObject(k, nd)
+				objectData, err := json.ParseObject(mappedFieldName, nd)
 				if err != nil {
 					log.Errorf(f.ctx, "json.ParseObject err: %v", err)
 					continue
@@ -161,7 +179,7 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 			}
 		}
 
-		newData[k] = d
+		newData[mappedFieldName] = d
 	}
 	return newData
 }

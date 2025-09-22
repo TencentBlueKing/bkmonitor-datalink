@@ -22,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
 
 func TestNewSqlFactory(t *testing.T) {
@@ -686,4 +687,81 @@ UTC
 2025-03-20 00:00:00 +0000 UTC => 2025-03-20 00:00:00 +0000 UTC => 2025-03-20 00:00:00 +0000 UTC
 2025-03-20 01:00:00 +0000 UTC => 2025-03-20 01:00:00 +0000 UTC => 2025-03-20 00:00:00 +0000 UTC
 `)
+}
+
+func TestReloadListDataFieldMapping(t *testing.T) {
+	ctx := context.Background()
+
+	query := &metadata.Query{
+		DB:          "test_db",
+		Measurement: "doris",
+		Field:       "dtEventTimeStamp",
+		TimeField: metadata.TimeField{
+			Name: "dtEventTimeStamp",
+		},
+		AllConditions: metadata.AllConditions{
+			{
+				{
+					DimensionName: "__ext.io_kubernetes_pod_namespace",
+					Value:         []string{"nrc-release1-test4"},
+					Operator:      metadata.ConditionEqual,
+				},
+				{
+					DimensionName: "log",
+					Value:         []string{"8106479332958928896"},
+					Operator:      metadata.ConditionContains,
+				},
+			},
+		},
+	}
+
+	fieldsMap := map[string]sql_expr.FieldOption{
+		"dtEventTimeStamp":                  {Type: "BIGINT"},
+		"gseIndex":                          {Type: "BIGINT"},
+		"iterationIndex":                    {Type: "BIGINT"},
+		"log":                               {Type: "TEXT", Analyzed: true},
+		"__ext.io_kubernetes_pod_namespace": {Type: "TEXT", Analyzed: true},
+	}
+
+	factory := bksql.NewQueryFactory(ctx, query)
+	factory = factory.WithFieldsMap(fieldsMap)
+
+	dorisResponse := map[string]any{
+		"dteventtimestamp":                  int64(1758333600000), // origin：dtEventTimeStamp
+		"gseindex":                          int64(123),           // origin：gseIndex
+		"iterationindex":                    int64(456),           // origin：iterationIndex
+		"__ext.io_kubernetes_pod_namespace": "nrc-release1-test4", // nested field
+		"log":                               "some log content with 8106479332958928896",
+	}
+
+	processedData := factory.ReloadListData(dorisResponse, false)
+
+	tests := []struct {
+		name        string
+		originalKey string
+		expectedKey string
+		shouldExist bool
+	}{
+		{"时间字段映射", "dteventtimestamp", "dtEventTimeStamp", true},
+		{"索引字段映射", "gseindex", "gseIndex", true},
+		{"迭代字段映射", "iterationindex", "iterationIndex", true},
+		{"嵌套字段保持", "__ext.io_kubernetes_pod_namespace", "__ext.io_kubernetes_pod_namespace", true},
+		{"普通字段保持", "log", "log", true},
+		{"小写字段清理", "dteventtimestamp", "dteventtimestamp", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, exists := processedData[tt.expectedKey]
+			if tt.shouldExist {
+				assert.True(t, exists, "应该存在字段: %s", tt.expectedKey)
+				if exists {
+					assert.Equal(t, dorisResponse[tt.originalKey], processedData[tt.expectedKey],
+						"字段值应该正确映射: %s -> %s", tt.originalKey, tt.expectedKey)
+				}
+			} else {
+				assert.False(t, exists, "不应该存在字段: %s", tt.expectedKey)
+			}
+		})
+	}
 }

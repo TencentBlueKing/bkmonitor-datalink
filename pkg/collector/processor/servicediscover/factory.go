@@ -125,8 +125,7 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 					continue
 				}
 
-				mappings, matched, matchType := rule.Match(val)
-				logger.Debugf("matcher: mappings=%v, matched=%v, matchType=%v", mappings, matched, matchType)
+				mappings, matched := rule.Match(val)
 				if !matched {
 					continue
 				}
@@ -149,8 +148,7 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 					continue
 				}
 
-				mappings, matched, matchType := rule.Match(val)
-				logger.Debugf("matcher: mappings=%v, matched=%v, matchType=%v", mappings, matched, matchType)
+				mappings, matched := rule.Match(val)
 				if !matched {
 					continue
 				}

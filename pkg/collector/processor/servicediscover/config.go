@@ -122,17 +122,17 @@ func (r *Rule) MethodValue() string {
 	return ""
 }
 
-func (r *Rule) Match(val string) (map[string]string, bool, string) {
+func (r *Rule) Match(val string) (map[string]string, bool) {
 	switch r.MatchType {
 	case MatchTypeManual:
 		mappings, matched := r.ManualMatched(val)
-		return mappings, matched, MatchTypeManual
+		return mappings, matched
 	case MatchTypeRegex:
 		mappings, matched := r.RegexMatched(val)
-		return mappings, matched, MatchTypeRegex
+		return mappings, matched
 	default:
 		mappings, matched := r.AutoMatched(val)
-		return mappings, matched, MatchTypeAuto
+		return mappings, matched
 	}
 }
 

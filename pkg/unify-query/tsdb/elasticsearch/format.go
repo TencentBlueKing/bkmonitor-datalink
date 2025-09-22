@@ -187,8 +187,6 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 
 func (f *FormatFactory) WithFieldMap(fieldMap map[string]map[string]any) *FormatFactory {
 	f.fieldMap = fieldMap
-
-	// 初始化 luceneParser
 	f.initLuceneParser()
 
 	return f
@@ -232,54 +230,38 @@ func (f *FormatFactory) buildFieldsMap() map[string]lucene_parser.FieldOption {
 
 	esFieldsMap := make(map[string]lucene_parser.FieldOption)
 
-	for _, indexMapping := range f.fieldMap {
-		properties := f.extractProperties(indexMapping)
-		if properties == nil {
-			continue
+	for fieldName, fieldInfo := range f.fieldMap {
+		fieldOption := f.processedMap(fieldInfo)
+		if fieldOption.Type != "" {
+			esFieldsMap[fieldName] = fieldOption
 		}
-
-		f.processFields(properties, esFieldsMap)
 	}
 
 	return esFieldsMap
 }
 
-func (f *FormatFactory) extractProperties(indexMapping map[string]any) map[string]any {
-	properties, ok := indexMapping["properties"].(map[string]any)
-	if !ok {
-		return nil
-	}
-	return properties
-}
-
-func (f *FormatFactory) processFields(properties map[string]any, esFieldsMap map[string]lucene_parser.FieldOption) {
-	for fieldName, fieldProps := range properties {
-		fieldMap := f.extractFieldMap(fieldProps)
-		if fieldMap == nil {
-			continue
-		}
-
-		fieldOption := f.buildFieldOption(fieldMap)
-		esFieldsMap[fieldName] = fieldOption
-	}
-}
-
-func (f *FormatFactory) extractFieldMap(fieldProps any) map[string]any {
-	fieldMap, ok := fieldProps.(map[string]any)
-	if !ok {
-		return nil
-	}
-	return fieldMap
-}
-
-func (f *FormatFactory) buildFieldOption(fieldMap map[string]any) lucene_parser.FieldOption {
-	fieldType := f.extractFieldType(fieldMap)
-	analyzed := f.isFieldAnalyzed(fieldMap, fieldType)
+func (f *FormatFactory) processedMap(fieldInfo map[string]any) lucene_parser.FieldOption {
+	fieldType := f.extractFieldTypeFromProcessed(fieldInfo)
+	analyzed := f.extractAnalyzedFromProcessed(fieldInfo)
 
 	return lucene_parser.FieldOption{
 		Type:     fieldType,
 		Analyzed: analyzed,
 	}
+}
+
+func (f *FormatFactory) extractFieldTypeFromProcessed(fieldInfo map[string]any) string {
+	if fieldType, ok := fieldInfo["field_type"].(string); ok {
+		return fieldType
+	}
+	return ""
+}
+
+func (f *FormatFactory) extractAnalyzedFromProcessed(fieldInfo map[string]any) bool {
+	if analyzed, ok := fieldInfo["is_analyzed"].(bool); ok {
+		return analyzed
+	}
+	return false
 }
 
 func (f *FormatFactory) extractFieldType(fieldMap map[string]any) string {

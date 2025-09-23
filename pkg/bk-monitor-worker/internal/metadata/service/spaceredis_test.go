@@ -726,7 +726,7 @@ func TestSpaceRedisSvc_ComposeEsTableIds(t *testing.T) {
 	resultTable2 := resulttable.ResultTable{
 		TableId:        "-1051_space_test.__default__",
 		BkBizId:        -1050,
-		DefaultStorage: models.StorageTypeES,
+		DefaultStorage: models.StorageTypeDoris,
 		IsDeleted:      false,
 		IsEnable:       true,
 	}
@@ -738,7 +738,7 @@ func TestSpaceRedisSvc_ComposeEsTableIds(t *testing.T) {
 	err = resulttable.NewResultTableQuerySet(db).
 		Select(resulttable.ResultTableDBSchema.TableId).
 		BkBizIdEq(-1050).
-		DefaultStorageEq(models.StorageTypeES).
+		DefaultStorageIn(models.StorageTypeES, models.StorageTypeDoris).
 		IsDeletedEq(false).
 		IsEnableEq(true).
 		All(&rtList)
@@ -752,11 +752,11 @@ func TestSpaceRedisSvc_ComposeEsTableIds(t *testing.T) {
 	assert.Equal(t, len(relatedBizIds), 2)
 	assert.ElementsMatch(t, relatedBizIds, []int{-1050, -1051}) // 无序比较
 
-	// 测试 ComposeEsBkciTableIds
-	data, err := NewSpacePusher().ComposeEsBkciTableIds("bkcc", "1")
+	// 测试 ComposeRelatedBkciTableIds
+	data, err := NewSpacePusher().ComposeRelatedBkciTableIds("bkcc", "1")
 	assert.NoError(t, err)
 	assert.NotNil(t, data)
-	// 验证 ComposeEsBkciTableIds 的返回结果
+	// 验证 ComposeRelatedBkciTableIds 的返回结果
 	expectedTableId := "-1050_space_test.__default__"
 	assert.Contains(t, data, expectedTableId, "Expected table ID not found in the result")
 

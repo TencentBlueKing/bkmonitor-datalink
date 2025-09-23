@@ -23,8 +23,8 @@ func TestParserAllConditions(t *testing.T) {
 	d := sql_expr.NewSQLExpr("")
 
 	doris := sql_expr.DorisSQLExpr{}
-	doris.WithFieldsMap(map[string]sql_expr.FieldOption{
-		"text_field": {Type: "text", Analyzed: true},
+	doris.WithFieldsMap(map[string]metadata.FieldOption{
+		"text_field": {FieldType: "text", IsAnalyzed: true},
 	})
 
 	t.Run("空条件测试", func(t *testing.T) {

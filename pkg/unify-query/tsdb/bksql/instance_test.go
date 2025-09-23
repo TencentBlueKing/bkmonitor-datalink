@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,7 +52,7 @@ func TestInstance_ShowCreateTable(t *testing.T) {
 				DB:          db,
 				Measurement: measurement,
 			},
-			expected: `{"__ext":{"Type":"varchar(65533)","Analyzed":false},"__shard_key__":{"Type":"bigint","Analyzed":false},"c1":{"Type":"text","Analyzed":false},"c2":{"Type":"text","Analyzed":false},"cloudid":{"Type":"double","Analyzed":false},"dteventtime":{"Type":"varchar(32)","Analyzed":false},"dteventtimestamp":{"Type":"bigint","Analyzed":false},"file":{"Type":"varchar(65533)","Analyzed":false},"gseindex":{"Type":"double","Analyzed":false},"iterationindex":{"Type":"double","Analyzed":false},"level":{"Type":"varchar(65533)","Analyzed":false},"localtime":{"Type":"varchar(32)","Analyzed":false},"log":{"Type":"text","Analyzed":true},"message":{"Type":"varchar(65533)","Analyzed":false},"path":{"Type":"text","Analyzed":false},"report_time":{"Type":"varchar(65533)","Analyzed":false},"serverip":{"Type":"varchar(65533)","Analyzed":false},"thedate":{"Type":"int","Analyzed":false},"time":{"Type":"text","Analyzed":false},"trace_id":{"Type":"varchar(65533)","Analyzed":false}}`,
+			expected: `{"__ext":{"alias_name":"","field_name":"__ext","field_type":"varchar(65533)","origin_field":"__ext","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"__shard_key__":{"alias_name":"","field_name":"__shard_key__","field_type":"bigint","origin_field":"__shard_key__","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"c1":{"alias_name":"","field_name":"c1","field_type":"text","origin_field":"c1","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"c2":{"alias_name":"","field_name":"c2","field_type":"text","origin_field":"c2","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"cloudid":{"alias_name":"","field_name":"cloudid","field_type":"double","origin_field":"cloudid","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"dteventtime":{"alias_name":"","field_name":"dteventtime","field_type":"varchar(32)","origin_field":"dteventtime","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"dteventtimestamp":{"alias_name":"","field_name":"dteventtimestamp","field_type":"bigint","origin_field":"dteventtimestamp","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"file":{"alias_name":"","field_name":"file","field_type":"varchar(65533)","origin_field":"file","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"gseindex":{"alias_name":"","field_name":"gseindex","field_type":"double","origin_field":"gseindex","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"iterationindex":{"alias_name":"","field_name":"iterationindex","field_type":"double","origin_field":"iterationindex","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"level":{"alias_name":"","field_name":"level","field_type":"varchar(65533)","origin_field":"level","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"localtime":{"alias_name":"","field_name":"localtime","field_type":"varchar(32)","origin_field":"localtime","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"log":{"alias_name":"","field_name":"log","field_type":"text","origin_field":"log","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"tokenize_on_chars":[]},"message":{"alias_name":"","field_name":"message","field_type":"varchar(65533)","origin_field":"message","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"path":{"alias_name":"","field_name":"path","field_type":"text","origin_field":"path","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"report_time":{"alias_name":"","field_name":"report_time","field_type":"varchar(65533)","origin_field":"report_time","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"serverip":{"alias_name":"","field_name":"serverip","field_type":"varchar(65533)","origin_field":"serverip","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"thedate":{"alias_name":"","field_name":"thedate","field_type":"int","origin_field":"thedate","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"time":{"alias_name":"","field_name":"time","field_type":"text","origin_field":"time","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]},"trace_id":{"alias_name":"","field_name":"trace_id","field_type":"varchar(65533)","origin_field":"trace_id","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"tokenize_on_chars":[]}}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1288,11 +1289,20 @@ func TestInstance_bkSql(t *testing.T) {
 				c.end = end
 			}
 
-			fieldsMap := map[string]sql_expr.FieldOption{
+			fieldsMap := map[string]metadata.FieldOption{
 				"text": {
-					Type:     sql_expr.DorisTypeText,
-					Analyzed: false,
+					FieldType:  sql_expr.DorisTypeText,
+					IsAnalyzed: false,
 				},
+			}
+			for k, v := range c.query.FieldAlias {
+				ks := strings.Split(k, ".")
+				fieldsMap[k] = metadata.FieldOption{
+					AliasName:       v,
+					FieldName:       k,
+					OriginField:     ks[0],
+					TokenizeOnChars: make([]string, 0),
+				}
 			}
 
 			fact := bksql.NewQueryFactory(ctx, c.query).WithFieldsMap(fieldsMap).WithRangeTime(c.start, c.end)
@@ -1960,13 +1970,30 @@ LIMIT
 				end = baseEnd
 			}
 
+			fieldMap := map[string]metadata.FieldOption{
+				"text":                             {FieldType: sql_expr.DorisTypeText},
+				"events.attributes.exception.type": {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
+				"events.timestamp":                 {FieldType: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},
+				"extra.queueDuration":              {FieldType: sql_expr.DorisTypeInt},
+			}
+			// 注入别名
+			for k, v := range tc.query.FieldAlias {
+				ks := strings.Split(k, ".")
+				if fm, ok := fieldMap[k]; ok {
+					fm.AliasName = v
+					fm.OriginField = ks[0]
+				} else {
+					fieldMap[k] = metadata.FieldOption{
+						AliasName:       v,
+						FieldName:       k,
+						OriginField:     ks[0],
+						TokenizeOnChars: make([]string, 0),
+					}
+				}
+			}
+
 			// SQL生成验证
-			fact := bksql.NewQueryFactory(ctx, tc.query).WithFieldsMap(map[string]sql_expr.FieldOption{
-				"text":                             {Type: sql_expr.DorisTypeText},
-				"events.attributes.exception.type": {Type: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeText)},
-				"events.timestamp":                 {Type: fmt.Sprintf(sql_expr.DorisTypeArray, sql_expr.DorisTypeBigInt)},
-				"extra.queueDuration":              {Type: sql_expr.DorisTypeInt},
-			}).WithRangeTime(start, end)
+			fact := bksql.NewQueryFactory(ctx, tc.query).WithFieldsMap(fieldMap).WithRangeTime(start, end)
 			generatedSQL, err := fact.SQL()
 
 			if tc.err != nil {

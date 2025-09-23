@@ -72,8 +72,8 @@ type Statement struct {
 
 	nodeMap map[string]Node
 
-	Table string
-	Where string
+	Tables []string
+	Where  string
 
 	errNode []string
 }
@@ -95,8 +95,12 @@ func (v *Statement) String() string {
 
 		switch name {
 		case TableItem:
-			if v.Table != "" {
-				res = v.Table
+			if len(v.Tables) > 0 {
+				if len(v.Tables) == 1 {
+					res = v.Tables[0]
+				} else {
+					res = fmt.Sprintf("(%s)", strings.Join(v.Tables, " UNION ALL "))
+				}
 			}
 		case WhereItem:
 			if v.Where != "" {
@@ -1105,6 +1109,6 @@ func visitChildren(encode Encode, setAs bool, next Node, node antlr.RuleNode) an
 type Option struct {
 	DimensionTransform Encode
 
-	Table string
-	Where string
+	Tables []string
+	Where  string
 }

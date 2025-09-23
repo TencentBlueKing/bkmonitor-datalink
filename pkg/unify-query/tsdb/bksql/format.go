@@ -99,8 +99,7 @@ func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
 
 	f.expr = sql_expr.NewSQLExpr(query.Measurement).
 		WithInternalFields(f.timeField, query.Field).
-		WithEncode(metadata.GetFieldFormat(ctx).EncodeFunc()).
-		WithFieldAlias(query.FieldAlias)
+		WithEncode(metadata.GetFieldFormat(ctx).EncodeFunc())
 
 	return f
 }
@@ -111,7 +110,7 @@ func (f *QueryFactory) WithRangeTime(start, end time.Time) *QueryFactory {
 	return f
 }
 
-func (f *QueryFactory) WithFieldsMap(m map[string]sql_expr.FieldOption) *QueryFactory {
+func (f *QueryFactory) WithFieldsMap(m map[string]metadata.FieldOption) *QueryFactory {
 	f.expr.WithFieldsMap(m)
 	return f
 }
@@ -121,19 +120,30 @@ func (f *QueryFactory) WithKeepColumns(cols []string) *QueryFactory {
 	return f
 }
 
-func (f *QueryFactory) Table() string {
-	table := fmt.Sprintf("`%s`", f.query.DB)
-	if f.query.Measurement != "" {
-		table += "." + f.query.Measurement
+func (f *QueryFactory) Tables() []string {
+	dbs := f.query.DBs
+	if len(dbs) == 0 {
+		dbs = map[string]struct{}{f.query.DB: {}}
 	}
-	return table
+
+	tables := make([]string, 0, len(dbs))
+
+	for db := range dbs {
+		table := fmt.Sprintf("`%s`", db)
+		if f.query.Measurement != "" {
+			table += "." + f.query.Measurement
+		}
+		tables = append(tables, table)
+	}
+
+	return tables
 }
 
-func (f *QueryFactory) DescribeTableSQL() string {
-	return f.expr.DescribeTableSQL(f.Table())
+func (f *QueryFactory) DescribeTableSQL(table string) string {
+	return f.expr.DescribeTableSQL(table)
 }
 
-func (f *QueryFactory) FieldMap() map[string]sql_expr.FieldOption {
+func (f *QueryFactory) FieldMap() map[string]metadata.FieldOption {
 	return f.expr.FieldMap()
 }
 
@@ -147,7 +157,7 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 			continue
 		}
 
-		if fieldOpt, existed := fieldMap[k]; existed && fieldOpt.Type == TableTypeVariant {
+		if fieldOpt, existed := fieldMap[k]; existed && fieldOpt.FieldType == TableTypeVariant {
 			if nd, ok := d.(string); ok {
 				objectData, err := json.ParseObject(k, nd)
 				if err != nil {
@@ -418,9 +428,9 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 	_, span = trace.NewSpan(f.ctx, "make-sql-with-parser")
 	defer span.End(&err)
 
-	table := f.Table()
+	tables := f.Tables()
 
-	span.Set("table", table)
+	span.Set("tables", tables)
 
 	where, err := f.BuildWhere()
 	if err != nil {
@@ -431,7 +441,7 @@ func (f *QueryFactory) parserSQL() (sql string, err error) {
 		where = fmt.Sprintf("(%s)", where)
 	}
 
-	sql, err = f.expr.ParserSQL(f.ctx, f.query.SQL, table, where)
+	sql, err = f.expr.ParserSQL(f.ctx, f.query.SQL, tables, where)
 	span.Set("query-sql", f.query.SQL)
 
 	span.Set("sql", sql)
@@ -470,8 +480,17 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 
 	sqlBuilder.WriteString("SELECT ")
 	sqlBuilder.WriteString(strings.Join(selectFields, ", "))
-	sqlBuilder.WriteString(" FROM ")
-	sqlBuilder.WriteString(f.Table())
+
+	if len(f.Tables()) > 0 {
+		var table string
+		if len(f.Tables()) == 1 {
+			table = f.Tables()[0]
+		} else {
+			table = fmt.Sprintf("(%s)", strings.Join(f.Tables(), " UNION ALL "))
+		}
+		sqlBuilder.WriteString(" FROM ")
+		sqlBuilder.WriteString(table)
+	}
 
 	whereString, err := f.BuildWhere()
 	span.Set("where-string", whereString)

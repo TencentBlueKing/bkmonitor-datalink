@@ -146,7 +146,7 @@ type FormatFactory struct {
 	decode func(k string) string
 	encode func(k string) string
 
-	fieldMap map[string]map[string]any
+	fieldMap map[string]metadata.FieldOption
 
 	data map[string]any
 
@@ -182,7 +182,7 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 	return f
 }
 
-func (f *FormatFactory) WithFieldMap(fieldMap map[string]map[string]any) *FormatFactory {
+func (f *FormatFactory) WithFieldMap(fieldMap map[string]metadata.FieldOption) *FormatFactory {
 	f.fieldMap = fieldMap
 	return f
 }
@@ -320,8 +320,8 @@ func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
 }
 
 func (f *FormatFactory) GetFieldType(k string) string {
-	if v, ok := f.fieldMap[k]["field_type"].(string); ok {
-		return v
+	if v, ok := f.fieldMap[k]; ok {
+		return v.FieldType
 	}
 
 	return ""

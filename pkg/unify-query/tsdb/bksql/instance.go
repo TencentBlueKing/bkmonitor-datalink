@@ -159,52 +159,6 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string) (*QuerySyncResultDa
 	return data, nil
 }
 
-func (i *Instance) getFieldsMap(ctx context.Context, sql string) (map[string]sql_expr.FieldOption, error) {
-	fieldsMap := make(map[string]sql_expr.FieldOption)
-
-	if sql == "" {
-		return nil, nil
-	}
-
-	data, err := i.sqlQuery(ctx, sql)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, list := range data.List {
-		var (
-			k             string
-			fieldType     string
-			fieldAnalyzed string
-
-			ok bool
-		)
-		k, ok = list[TableFieldName].(string)
-		if !ok {
-			continue
-		}
-
-		fieldType, ok = list[TableFieldType].(string)
-		if !ok || fieldType == "" {
-			continue
-		}
-
-		opt := sql_expr.FieldOption{
-			Type: fieldType,
-		}
-
-		if fieldAnalyzed, ok = list[TableFieldAnalyzed].(string); ok {
-			if fieldAnalyzed == "true" {
-				opt.Analyzed = true
-			}
-		}
-
-		fieldsMap[k] = opt
-	}
-
-	return fieldsMap, nil
-}
-
 func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, start, end time.Time) (*QueryFactory, error) {
 	var err error
 
@@ -213,11 +167,16 @@ func (i *Instance) InitQueryFactory(ctx context.Context, query *metadata.Query, 
 
 	f := NewQueryFactory(ctx, query).WithRangeTime(start, end)
 
+	dbs := query.DBs
+	if len(dbs) == 0 {
+		dbs = map[string]struct{}{query.DB: {}}
+	}
+
 	// 只有 Doris 才需要获取字段表结构
 	if query.Measurement == sql_expr.Doris {
-		fieldsMap, err := i.getFieldsMap(ctx, f.DescribeTableSQL())
+		fieldsMap, err := i.QueryFieldMap(ctx, query, start, end)
 		if err != nil {
-			return f, err
+			return nil, err
 		}
 
 		// 只能使用在表结构的字段才能使用
@@ -246,7 +205,7 @@ func (i *Instance) Table(query *metadata.Query) string {
 }
 
 // QueryFieldMap 查询字段映射
-func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]map[string]any, error) {
+func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]metadata.FieldOption, error) {
 	var err error
 	defer func() {
 		if r := recover(); r != nil {
@@ -263,31 +222,60 @@ func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, sta
 	}
 
 	f := NewQueryFactory(ctx, query).WithRangeTime(start, end)
-	fieldMap, err := i.getFieldsMap(ctx, f.DescribeTableSQL())
-	if err != nil {
-		return nil, err
+	dbs := query.DBs
+	if len(dbs) == 0 {
+		dbs = map[string]struct{}{query.DB: {}}
 	}
 
-	res := make(map[string]map[string]any)
-	for k, v := range fieldMap {
-		if k == "" || v.Type == "" {
-			continue
+	fieldsMap := make(map[string]metadata.FieldOption)
+	// 合并多 db 的 fieldMap
+	for db := range dbs {
+		table := fmt.Sprintf("`%s`", db)
+		if query.Measurement != "" {
+			table += "." + query.Measurement
+		}
+		data, err := i.sqlQuery(ctx, f.DescribeTableSQL(table))
+		if err != nil {
+			return nil, err
 		}
 
-		ks := strings.Split(k, ".")
-		res[k] = map[string]any{
-			"alias_name":        query.FieldAlias.AliasName(k),
-			"field_name":        k,
-			"field_type":        v.Type,
-			"origin_field":      ks[0],
-			"is_agg":            false,
-			"is_analyzed":       v.Analyzed,
-			"is_case_sensitive": false,
-			"tokenize_on_chars": "",
+		for _, list := range data.List {
+			// 字段名
+			k, ok := list[TableFieldName].(string)
+			if !ok {
+				continue
+			}
+
+			// 判断如果已经存在的字段则跳过
+			if _, ok := fieldsMap[k]; ok {
+				continue
+			}
+
+			fieldType, ok := list[TableFieldType].(string)
+			if !ok || fieldType == "" {
+				continue
+			}
+
+			ks := strings.Split(k, ".")
+			fo := metadata.FieldOption{
+				AliasName:       query.FieldAlias.AliasName(k),
+				FieldName:       k,
+				FieldType:       fieldType,
+				OriginField:     ks[0],
+				TokenizeOnChars: make([]string, 0),
+			}
+
+			if fieldAnalyzed, ok := list[TableFieldAnalyzed].(string); ok {
+				if fieldAnalyzed == "true" {
+					fo.IsAnalyzed = true
+				}
+			}
+
+			fieldsMap[k] = fo
 		}
 	}
 
-	return res, nil
+	return fieldsMap, nil
 }
 
 // QueryRawData 直接查询原始返回

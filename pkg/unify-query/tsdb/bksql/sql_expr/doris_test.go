@@ -99,8 +99,8 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NewSQLExpr(Doris).WithFieldsMap(map[string]FieldOption{
-				"text": {Type: DorisTypeText},
+			got, err := NewSQLExpr(Doris).WithFieldsMap(map[string]metadata.FieldOption{
+				"text": {FieldType: DorisTypeText},
 			}).ParserQueryString(tt.input)
 			if err != nil {
 				assert.Equal(t, tt.err, err.Error())
@@ -341,11 +341,11 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 		},
 	}
 
-	e := NewSQLExpr(Doris).WithFieldsMap(map[string]FieldOption{
-		"object.field":                     {Type: DorisTypeText},
-		"tag.city.town.age":                {Type: DorisTypeTinyInt},
-		"events.attributes.exception.type": {Type: fmt.Sprintf(DorisTypeArray, DorisTypeText)},
-		"events.timestamp":                 {Type: fmt.Sprintf(DorisTypeArray, DorisTypeBigInt)},
+	e := NewSQLExpr(Doris).WithFieldsMap(map[string]metadata.FieldOption{
+		"object.field":                     {FieldType: DorisTypeText},
+		"tag.city.town.age":                {FieldType: DorisTypeTinyInt},
+		"events.attributes.exception.type": {FieldType: fmt.Sprintf(DorisTypeArray, DorisTypeText)},
+		"events.timestamp":                 {FieldType: fmt.Sprintf(DorisTypeArray, DorisTypeBigInt)},
 	})
 
 	for _, tt := range tests {

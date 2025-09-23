@@ -67,8 +67,7 @@ type DorisSQLExpr struct {
 	valueField string
 
 	keepColumns []string
-	fieldsMap   map[string]FieldOption
-	fieldAlias  metadata.FieldAlias
+	fieldsMap   map[string]metadata.FieldOption
 
 	isSetLabels bool
 	lock        sync.Mutex
@@ -86,17 +85,12 @@ func (d *DorisSQLExpr) WithInternalFields(timeField, valueField string) SQLExpr 
 	return d
 }
 
-func (d *DorisSQLExpr) WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr {
-	d.fieldAlias = fieldAlias
-	return d
-}
-
 func (d *DorisSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 	d.encodeFunc = fn
 	return d
 }
 
-func (d *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]FieldOption) SQLExpr {
+func (d *DorisSQLExpr) WithFieldsMap(fieldsMap map[string]metadata.FieldOption) SQLExpr {
 	d.fieldsMap = fieldsMap
 	return d
 }
@@ -106,12 +100,19 @@ func (d *DorisSQLExpr) WithKeepColumns(cols []string) SQLExpr {
 	return d
 }
 
-func (d *DorisSQLExpr) FieldMap() map[string]FieldOption {
+func (d *DorisSQLExpr) FieldMap() map[string]metadata.FieldOption {
 	return d.fieldsMap
 }
 
 func (d *DorisSQLExpr) ParserQueryString(qs string) (string, error) {
-	expr, err := querystring_parser.ParseWithFieldAlias(qs, d.fieldAlias)
+	aliasMap := make(map[string]string)
+	for k, v := range d.fieldsMap {
+		if v.AliasName != "" {
+			aliasMap[k] = v.AliasName
+		}
+	}
+
+	expr, err := querystring_parser.ParseWithFieldAlias(qs, aliasMap)
 	if err != nil {
 		return "", err
 	}
@@ -126,25 +127,23 @@ func (d *DorisSQLExpr) DescribeTableSQL(table string) string {
 	return fmt.Sprintf("SHOW CREATE TABLE %s", table)
 }
 
-func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where string) (sql string, err error) {
-	return "", nil
-}
-
-func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (sql string, err error) {
+func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string) (sql string, err error) {
 	opt := &doris_parser.Option{
 		DimensionTransform: func(field string) (string, bool) {
 			var (
-				originFiled string
-				ok          bool
+				fo metadata.FieldOption
+				ok bool
 			)
-			if originFiled, ok = d.fieldAlias[field]; ok {
-				field = originFiled
+			if fo, ok = d.fieldsMap[field]; ok {
+				if fo.AliasName != "" {
+					field = fo.AliasName
+				}
 			}
 			field, _ = d.dimTransform(field)
 			return field, ok
 		},
-		Table: table,
-		Where: where,
+		Tables: tables,
+		Where:  where,
 	}
 
 	return doris_parser.ParseDorisSQLWithVisitor(ctx, q, opt)
@@ -513,16 +512,16 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 func (d *DorisSQLExpr) isArray(k string) bool {
 	fieldType := d.getFieldType(k)
-	_, ok := d.caseAs(fieldType.Type)
+	_, ok := d.caseAs(fieldType.FieldType)
 	return ok
 }
 
 func (d *DorisSQLExpr) isText(k string) bool {
-	return d.getFieldType(k).Type == DorisTypeText
+	return d.getFieldType(k).FieldType == DorisTypeText
 }
 
 func (d *DorisSQLExpr) isAnalyzed(k string) bool {
-	return d.getFieldType(k).Analyzed
+	return d.getFieldType(k).IsAnalyzed
 }
 
 func (d *DorisSQLExpr) likeValue(s string) string {
@@ -642,14 +641,14 @@ func (d *DorisSQLExpr) walk(e querystring_parser.Expr) (string, error) {
 	return "", err
 }
 
-func (d *DorisSQLExpr) getFieldType(s string) (opt FieldOption) {
+func (d *DorisSQLExpr) getFieldType(s string) (opt metadata.FieldOption) {
 	if d.fieldsMap == nil {
 		return opt
 	}
 
 	var ok bool
 	if opt, ok = d.fieldsMap[s]; ok {
-		opt.Type = strings.ToUpper(opt.Type)
+		opt.FieldType = strings.ToUpper(opt.FieldType)
 	}
 	return opt
 }
@@ -681,13 +680,13 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 	if s == "" || s == "*" {
 		return ns, as
 	}
-	if alias, ok := d.fieldAlias[s]; ok {
-		ns = alias
+	if fm, ok := d.fieldsMap[s]; ok && fm.AliasName != "" {
+		ns = fm.AliasName
 		as = s
 	}
 
 	fieldType := d.getFieldType(s)
-	castType, _ := d.caseAs(fieldType.Type)
+	castType, _ := d.caseAs(fieldType.FieldType)
 
 	fs := strings.Split(s, ".")
 	if len(fs) == 1 {

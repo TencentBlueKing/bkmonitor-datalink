@@ -38,11 +38,6 @@ var (
 	ErrorMatchAll = "不支持全字段检索"
 )
 
-type FieldOption struct {
-	Type     string
-	Analyzed bool
-}
-
 type TimeAggregate struct {
 	Window       time.Duration
 	OffsetMillis int64
@@ -53,10 +48,8 @@ type TimeAggregate struct {
 type SQLExpr interface {
 	// WithKeepColumns 设置保留字段
 	WithKeepColumns([]string) SQLExpr
-	// WithFieldAlias 设置字段别名
-	WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr
-	// WithFieldsMap 设置字段类型
-	WithFieldsMap(fieldsMap map[string]FieldOption) SQLExpr
+	// WithFieldsMap 设置字段扩展信息
+	WithFieldsMap(fieldsMap map[string]metadata.FieldOption) SQLExpr
 	// WithEncode 字段转换方法
 	WithEncode(func(string) string) SQLExpr
 	// WithInternalFields 设置内部字段
@@ -70,11 +63,11 @@ type SQLExpr interface {
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
 	ParserAggregatesAndOrders(aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, *set.Set[string], TimeAggregate, error)
 	// ParserSQL 解析 SQL 语句
-	ParserSQL(ctx context.Context, q, table, where string) (string, error)
+	ParserSQL(ctx context.Context, q string, tables []string, where string) (string, error)
 	// DescribeTableSQL 返回当前表结构
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
-	FieldMap() map[string]FieldOption
+	FieldMap() map[string]metadata.FieldOption
 	// Type 返回表达式类型
 	Type() string
 }
@@ -106,8 +99,7 @@ type DefaultSQLExpr struct {
 	encodeFunc func(string) string
 
 	keepColumns []string
-	fieldMap    map[string]FieldOption
-	fieldAlias  metadata.FieldAlias
+	fieldMap    map[string]metadata.FieldOption
 
 	timeField  string
 	valueField string
@@ -125,22 +117,17 @@ func (d *DefaultSQLExpr) WithInternalFields(timeField, valueField string) SQLExp
 	return d
 }
 
-func (d *DefaultSQLExpr) WithFieldAlias(fieldAlias metadata.FieldAlias) SQLExpr {
-	d.fieldAlias = fieldAlias
-	return d
-}
-
 func (d *DefaultSQLExpr) WithEncode(fn func(string) string) SQLExpr {
 	d.encodeFunc = fn
 	return d
 }
 
-func (d *DefaultSQLExpr) WithFieldsMap(fieldMap map[string]FieldOption) SQLExpr {
+func (d *DefaultSQLExpr) WithFieldsMap(fieldMap map[string]metadata.FieldOption) SQLExpr {
 	d.fieldMap = fieldMap
 	return d
 }
 
-func (d *DefaultSQLExpr) ParserSQL(ctx context.Context, q, table, where string) (string, error) {
+func (d *DefaultSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string) (string, error) {
 	return "", nil
 }
 
@@ -153,7 +140,7 @@ func (d *DefaultSQLExpr) GetLabelMap() map[string][]string {
 	return nil
 }
 
-func (d *DefaultSQLExpr) FieldMap() map[string]FieldOption {
+func (d *DefaultSQLExpr) FieldMap() map[string]metadata.FieldOption {
 	return d.fieldMap
 }
 

@@ -148,7 +148,7 @@ func (i *Instance) Check(ctx context.Context, promql string, start, end time.Tim
 }
 
 // fieldMap 获取es索引的字段映射
-func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (map[string]map[string]any, error) {
+func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (map[string]metadata.FieldOption, error) {
 	if len(aliases) == 0 {
 		return nil, fmt.Errorf("query indexes is empty")
 	}
@@ -328,6 +328,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	defer client.Stop()
 	opt := qb.ResultTableOption
 	var res *elastic.SearchResult
+
 	func() {
 		if opt != nil {
 			if opt.ScrollID != "" {
@@ -519,7 +520,7 @@ func (i *Instance) explainDB(ctx context.Context, db string, needAddTime bool, s
 }
 
 // QueryFieldMap 查询字段映射
-func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]map[string]any, error) {
+func (i *Instance) QueryFieldMap(ctx context.Context, query *metadata.Query, start, end time.Time) (map[string]metadata.FieldOption, error) {
 	var err error
 	defer func() {
 		if r := recover(); r != nil {

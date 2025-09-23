@@ -12,6 +12,7 @@ package structured
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"testing"
 	"time"
 
@@ -61,6 +62,7 @@ func TestQueryToMetric(t *testing.T) {
 						DataSource:      BkMonitor,
 						TableID:         tableID,
 						DB:              db,
+						DBs:             map[string]struct{}{db: {}},
 						Measurement:     field,
 						StorageID:       storageID,
 						StorageType:     consul.InfluxDBStorageType,
@@ -94,6 +96,7 @@ func TestQueryToMetric(t *testing.T) {
 						DataSource:      BkMonitor,
 						TableID:         tableID,
 						DB:              db,
+						DBs:             map[string]struct{}{db: {}},
 						StorageType:     consul.InfluxDBStorageType,
 						StorageID:       storageID,
 						ClusterName:     clusterName,
@@ -147,6 +150,7 @@ func TestQueryToMetric(t *testing.T) {
 						TableID:         tableID,
 						DataLabel:       "influxdb",
 						DB:              db,
+						DBs:             map[string]struct{}{db: {}},
 						StorageType:     consul.InfluxDBStorageType,
 						StorageID:       storageID,
 						ClusterName:     clusterName,
@@ -199,6 +203,7 @@ func TestQueryToMetric(t *testing.T) {
 						DataSource:      BkMonitor,
 						TableID:         tableID,
 						DB:              db,
+						DBs:             map[string]struct{}{db: {}},
 						StorageType:     consul.InfluxDBStorageType,
 						StorageID:       storageID,
 						ClusterName:     clusterName,
@@ -432,6 +437,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								DataLabel:       "cpu_summary",
 								ClusterName:     "default",
 								DB:              "system",
+								DBs:             map[string]struct{}{"system": {}},
 								Measurement:     "cpu_summary",
 								Measurements:    []string{"cpu_summary"},
 								VmConditionNum:  2,
@@ -516,6 +522,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								TableID:         "system.cpu_summary",
 								DataLabel:       "cpu_summary",
 								DB:              "system",
+								DBs:             map[string]struct{}{"system": {}},
 								Measurement:     "cpu_summary",
 								Measurements:    []string{"cpu_summary"},
 								ClusterName:     "default",
@@ -1014,6 +1021,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmCondition:     `bk_biz_id="2", __name__="usage_value"`,
 								StorageID:       "2",
 								DB:              "system",
+								DBs:             map[string]struct{}{"system": {}},
 								Measurement:     "cpu_summary",
 								Measurements:    []string{"cpu_summary"},
 								ClusterName:     "default",
@@ -1084,6 +1092,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								TableID:         "system.cpu_summary",
 								DataLabel:       "cpu_summary",
 								DB:              "system",
+								DBs:             map[string]struct{}{"system": {}},
 								Measurement:     "cpu_summary",
 								Measurements:    []string{"cpu_summary"},
 								ClusterName:     "default",
@@ -1155,6 +1164,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								MetricNames:     []string{"bkmonitor:system:cpu_summary:usage"},
 								TableID:         "system.cpu_summary",
 								DB:              "system",
+								DBs:             map[string]struct{}{"system": {}},
 								Measurement:     "cpu_summary",
 								Measurements:    []string{"cpu_summary"},
 								ClusterName:     "default",
@@ -1235,6 +1245,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								MetricNames:    []string{"bklog:result_table:es:usage"},
 								DataLabel:      "es",
 								DB:             "es_index",
+								DBs:            map[string]struct{}{"es_index": {}},
 								VmConditionNum: 1,
 								VmCondition:    `__name__="usage_value"`,
 								StorageID:      "3",
@@ -1306,6 +1317,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								TableID:        "result_table.es",
 								DataLabel:      "es",
 								DB:             "es_index",
+								DBs:            map[string]struct{}{"es_index": {}},
 								VmConditionNum: 1,
 								VmCondition:    `__name__="usage_value"`,
 								StorageID:      "3",
@@ -1375,6 +1387,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmCondition:     `__name__=~".*_value"`,
 								StorageID:       "2",
 								DB:              "bk",
+								DBs:             map[string]struct{}{"bk": {}},
 								Measurement:     "exporter",
 								Measurements:    []string{"exporter"},
 								ClusterName:     "default",
@@ -1440,6 +1453,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 								VmCondition:     `__name__=~".*_value"`,
 								StorageID:       "2",
 								DB:              "bk",
+								DBs:             map[string]struct{}{"bk": {}},
 								Measurement:     "standard_v2_time_series",
 								Measurements:    []string{"standard_v2_time_series"},
 								ClusterName:     "default",
@@ -1504,7 +1518,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			},
 			isDirectQuery: false,
 			promql:        `topk(1, sum by (alias_ns) (last_over_time(a[1m])))`,
-			refString:     `{"a":[{"QueryList":[{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es","db":"es_index","field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]]},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"alias_es_1","db":"es_index","field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.namespace"},"metric_names":["bklog:alias_es_1:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]]}],"ReferenceName":"a","MetricName":"alias_ns","IsCount":false}]}`,
+			refString:     `{"a":[{"QueryList":[{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"alias_es_1","db":"es_index","dbs":{"es_index":{}},"field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.namespace"},"metric_names":["bklog:alias_es_1:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]]},{"storage_type":"elasticsearch","storage_id":"3","data_source":"bklog","data_label":"es","table_id":"result_table.es","db":"es_index","dbs":{"es_index":{}},"field":"alias_ns","time_field":{},"timezone":"UTC","fields":["alias_ns"],"field_alias":{"alias_ns":"__ext.host.bk_set_name"},"metric_names":["bklog:result_table:es:alias_ns"],"aggregates":[{"name":"sum","dimensions":["alias_ns"],"window":60000000000,"time_zone":"UTC"}],"condition":"alias_ns!=''","vm_condition":"alias_ns!=\"\", __name__=\"alias_ns_value\"","vm_condition_num":2,"offset_info":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"all_conditions":[[{"DimensionName":"alias_ns","Value":[""],"Operator":"ne","IsWildcard":false,"IsPrefix":false,"IsSuffix":false}]]}],"ReferenceName":"a","MetricName":"alias_ns","IsCount":false}]}`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1516,6 +1530,14 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 
 			md.SetUser(ctx, &md.User{SpaceUID: influxdb.SpaceUid})
 			ref, err := tc.ts.ToQueryReference(ctx)
+
+			for _, rs := range ref {
+				for _, r := range rs {
+					sort.SliceStable(r.QueryList, func(i, j int) bool {
+						return r.QueryList[i].TableID < r.QueryList[j].TableID
+					})
+				}
+			}
 
 			assert.Nil(t, err)
 			refJson, _ := json.Marshal(ref)

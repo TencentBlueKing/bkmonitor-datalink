@@ -54,7 +54,7 @@ func (q *Query) DataReload(data map[string]any) {
 func (q *Query) StorageUUID() string {
 	var l []string
 	for _, s := range []any{
-		q.StorageType, q.StorageID, q.StorageName, q.MeasurementType, q.TimeField,
+		q.StorageType, q.StorageID, q.StorageName, q.MeasurementType, q.TimeField, q.FieldAlias,
 	} {
 		switch ns := s.(type) {
 		case string:

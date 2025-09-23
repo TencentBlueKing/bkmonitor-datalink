@@ -59,6 +59,17 @@ const (
 	TypeDateNanos = "date_nanos"
 )
 
+type FieldOption struct {
+	AliasName       string   `json:"alias_name"`
+	FieldName       string   `json:"field_name"`
+	FieldType       string   `json:"field_type"`
+	OriginField     string   `json:"origin_field"`
+	IsAgg           bool     `json:"is_agg"`
+	IsAnalyzed      bool     `json:"is_analyzed"`
+	IsCaseSensitive bool     `json:"is_case_sensitive"`
+	TokenizeOnChars []string `json:"tokenize_on_chars"`
+}
+
 type VmCondition string
 
 type FieldAlias map[string]string

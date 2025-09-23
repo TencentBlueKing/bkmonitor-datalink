@@ -10,10 +10,11 @@
 package elasticsearch
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 )
 
 func TestIndexFormatFieldMap(t *testing.T) {

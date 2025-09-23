@@ -16,6 +16,8 @@ import (
 	"github.com/bytedance/sonic"
 )
 
+type RawMessage json.RawMessage
+
 type Number struct {
 	json.Number
 }

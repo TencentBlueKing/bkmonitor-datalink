@@ -10,6 +10,7 @@
 package query
 
 import (
+	"sort"
 	"testing"
 	"time"
 
@@ -47,5 +48,6 @@ func TestTsDBV2_GetStorageIDs(t *testing.T) {
 	end := time.UnixMilli(1757401605337)   // 2025-09-09 15:06:45
 
 	ids := db.GetStorageIDs(start, end)
+	sort.Strings(ids)
 	assert.Equal(t, []string{"16", "5"}, ids)
 }
